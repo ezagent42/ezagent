@@ -71,6 +71,12 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
     uri
   end
 
+  defp confirmed_user_with_caps(uri, caps) do
+    {:ok, _row} = Ezagent.Users.create(uri, "pw-not-secret-#{uniq()}", caps)
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    uri
+  end
+
   # The REAL trusted-access-point join flow: provision the per-session join
   # authority (owner-rooted §B), dispatch the join under the joiner's OWN
   # authority (so step-5.5 authorizes via the live slice read), then mount the
@@ -167,6 +173,68 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
                session_uri
              ),
              "a confirmed member must hold :subscribe_from"
+    end
+
+    test "an invalid current-identity :send artifact is replaced during participation mount" do
+      owner = confirmed_user("owner-stale-send")
+      session_uri = new_session("pc-stale-send", owner)
+
+      requested =
+        Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :send,
+          session_uri,
+          Capability.workspace_of(session_uri)
+        )
+
+      receiver = URI.new!("entity://system/user/member-stale-send-#{uniq()}")
+
+      {:ok, valid} =
+        Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, receiver, requested)
+
+      invalid = %{valid | signature: :binary.copy(<<0>>, byte_size(valid.signature))}
+      member = confirmed_user_with_caps(receiver, [invalid])
+
+      assert Capability.identity_key(invalid) == Capability.identity_key(requested)
+      :ok = access_point_join(session_uri, member)
+
+      stored =
+        member
+        |> Ezagent.Identity.list_caps_for()
+        |> Enum.find(&(Capability.identity_key(&1) == Capability.identity_key(requested)))
+
+      assert %Capability{} = stored
+
+      refute stored.signature == invalid.signature,
+             "a structurally matching artifact with an invalid signature must not suppress reissue"
+    end
+
+    test "a valid current-identity artifact makes repeated participation mount idempotent" do
+      owner = confirmed_user("owner-idempotent")
+      session_uri = new_session("pc-idempotent", owner)
+      member = confirmed_user("member-idempotent")
+
+      :ok = access_point_join(session_uri, member)
+
+      first =
+        member
+        |> Ezagent.Identity.list_caps_for()
+        |> Enum.find(
+          &(match?(%Capability{}, &1) and &1.behavior == Ezagent.ActionSet.Session and
+              Capability.action_of(&1) == :send and &1.instance == session_uri)
+        )
+
+      assert %Capability{} = first
+      :ok = Membership.mount_participation_caps(session_uri, member)
+
+      second =
+        member
+        |> Ezagent.Identity.list_caps_for()
+        |> Enum.find(&(Capability.identity_key(&1) == Capability.identity_key(first)))
+
+      assert second.signature == first.signature
+      assert second.granted_at == first.granted_at
     end
 
     test "the participation tier does NOT leak to a DIFFERENT session (no :any instance)" do

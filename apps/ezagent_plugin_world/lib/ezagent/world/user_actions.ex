@@ -46,7 +46,7 @@ defmodule Ezagent.World.UserActions do
   defp dispatch_user_create(socket, params) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
     caller_ctx = %{caller: caller, caps: caps}
 
     with %URI{scheme: "workspace"} <- workspace_uri,
@@ -96,7 +96,7 @@ defmodule Ezagent.World.UserActions do
     user_uri_str = Map.get(args, "user_uri")
     password = Map.get(args, "password")
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     with :ok <- require_admin(socket),
          {:ok, user_uri} <- parse_user_uri(user_uri_str),
@@ -193,7 +193,7 @@ defmodule Ezagent.World.UserActions do
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
       create_error: create_error
     })
     |> Map.put("layout", layout)
@@ -316,7 +316,7 @@ defmodule Ezagent.World.UserActions do
 
   defp require_admin(socket) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     if Ezagent.Identity.AdminAuthority.admin?(caller, caps),
       do: :ok,

@@ -215,6 +215,42 @@ defmodule Ezagent.Cap do
 
   def storable_for?(_artifact, _receiver), do: false
 
+  @doc """
+  Ask the artifact's target Kind whether it is signed by that Kind's current
+  authority and bound to `presenter`.
+
+  This is the target-aware validity check for reconciliation/idempotency. A
+  storage boundary cannot perform this check because the verification key is
+  deliberately confined to the target Kind process.
+  """
+  @spec valid_for_target?(artifact(), URI.t()) :: boolean()
+  def valid_for_target?(%Capability{} = artifact, %URI{} = presenter) do
+    with {:ok, target} <- Ezagent.Cap.Authority.target_uri(artifact),
+         :ok <- ensure_issue_target(target) do
+      if Ezagent.Cap.Authority.current_target?(target) do
+        Ezagent.Cap.Verifier.valid_artifact?(artifact, presenter)
+      else
+        case Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)) do
+          {:ok, pid} ->
+            GenServer.call(
+              pid,
+              {:ezagent_verify_cap_artifact, artifact, presenter},
+              Ezagent.Invocation.activate_budget_ms()
+            )
+
+          :error ->
+            false
+        end
+      end
+    else
+      _ -> false
+    end
+  catch
+    :exit, _reason -> false
+  end
+
+  def valid_for_target?(_artifact, _presenter), do: false
+
   @doc false
   @spec prepare_provenance(authorization(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}

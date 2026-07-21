@@ -24,7 +24,7 @@ defmodule EzagentPluginWorld.WorldLive do
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
     workspace = Map.get(socket.assigns, :current_workspace_uri)
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
     sessions = ConversationSessionState.list_sessions(workspace, caller)
     current_session_uri = List.first(sessions)
 
@@ -527,7 +527,7 @@ defmodule EzagentPluginWorld.WorldLive do
     # an immutable snapshot. Every external envelope must carry the newly
     # issued artifact explicitly, so reload the presenter's verified Identity
     # caps before dispatch instead of relying on hidden verifier fallback.
-    caps = refreshed_presenter_caps(socket, caller)
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     target = Ezagent.URI.with_action(session_uri, :session, :join)
 
@@ -587,15 +587,10 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
 
-  defp refreshed_presenter_caps(socket, %URI{} = caller_uri) do
-    mounted = Map.get(socket.assigns, :current_caps, MapSet.new()) || MapSet.new()
-    MapSet.union(MapSet.new(mounted), MapSet.new(Ezagent.EntityCaps.load(caller_uri)))
-  end
-
   defp dispatch_layout_manage(socket, layout) when is_map(layout) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     target = Ezagent.URI.with_action(workspace_uri, :layout, :manage)
 
@@ -645,7 +640,7 @@ defmodule EzagentPluginWorld.WorldLive do
   # rides back — `list_api_keys` returns only masked values).
   defp dispatch_api_key_put(socket, agent_uri_str, args) when is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
     provider = args |> Map.get("provider", "") |> to_string() |> String.trim()
     key = args |> Map.get("key", "") |> to_string() |> String.trim()
 
@@ -698,7 +693,7 @@ defmodule EzagentPluginWorld.WorldLive do
            args: %{bytes: bytes},
            ctx: %{
              caller: socket.assigns.current_entity_uri,
-             caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+             caps: Ezagent.World.PresenterCaps.load(socket),
              reply: :ignore
            },
            origin: :authenticated_external
@@ -799,7 +794,7 @@ defmodule EzagentPluginWorld.WorldLive do
       current_session_uri,
       socket.assigns.current_workspace_uri,
       layout,
-      Map.get(socket.assigns, :current_caps, MapSet.new()),
+      Ezagent.World.PresenterCaps.load(socket),
       socket.assigns.current_entity_uri
     )
     |> put_command_palette(socket)
@@ -815,7 +810,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> Ezagent.World.AdminData.state_for(%{
         workspace_uri: socket.assigns.current_workspace_uri,
         caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+        caller_caps: Ezagent.World.PresenterCaps.load(socket)
       })
       |> Map.put("layout", layout)
       |> put_can_manage_layout(route.component, socket)
@@ -835,7 +830,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> Ezagent.World.AdminData.state_for(%{
         workspace_uri: socket.assigns.current_workspace_uri,
         caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+        caller_caps: Ezagent.World.PresenterCaps.load(socket)
       })
       |> Map.put("layout", layout)
       |> put_can_manage_layout(route.component, socket)
@@ -880,7 +875,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> unquote(data_builder).state_for(%{
         workspace_uri: socket.assigns.current_workspace_uri,
         caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+        caller_caps: Ezagent.World.PresenterCaps.load(socket)
       })
       |> Map.put("layout", layout)
       |> Map.put("can_manage_layout", false)
@@ -893,7 +888,7 @@ defmodule EzagentPluginWorld.WorldLive do
     |> Ezagent.World.WorkspacePluginData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caller_caps: Ezagent.World.PresenterCaps.load(socket)
     })
     |> Map.put("layout", layout)
     |> put_can_manage_layout(route.component, socket)
@@ -905,7 +900,7 @@ defmodule EzagentPluginWorld.WorldLive do
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
       create_error: create_error_for_route(route, socket)
     })
     |> Map.put("layout", layout)
@@ -1055,7 +1050,7 @@ defmodule EzagentPluginWorld.WorldLive do
   defp can_manage_layout?(_component, _workspace_uri, _caps), do: false
 
   defp put_can_manage_layout(state, component, socket) do
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     Map.put(
       state,
@@ -1101,7 +1096,7 @@ defmodule EzagentPluginWorld.WorldLive do
   # check — gating only the state path would leave the live output stream
   # wide open. See `Ezagent.Domain.Pty.Access`.
   defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     if connected?(socket) and Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
       Phoenix.PubSub.subscribe(

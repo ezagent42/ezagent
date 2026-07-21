@@ -188,7 +188,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
          :ok <-
            Ezagent.Workspace.remove_member(workspace_name, member, %{
              caller: socket.assigns.current_entity_uri,
-             caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+             caps: Ezagent.World.PresenterCaps.load(socket)
            }) do
       members =
         case Ezagent.Workspace.Store.get_by_name(workspace_name) do
@@ -283,7 +283,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
       origin: :authenticated_external,
       ctx: %{
         caller: socket.assigns.current_entity_uri,
-        caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+        caps: Ezagent.World.PresenterCaps.load(socket),
         reply: {:caller_inbox, self()}
       }
     })
@@ -365,7 +365,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
   defp invite_ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
-      caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caps: Ezagent.World.PresenterCaps.load(socket)
     }
   end
 
@@ -380,7 +380,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
     # `remove_workspace_member`/`revoke_credential_grant`) so the domain-side
     # public-scope admin gate authorizes a `:public` socialware publish. Without
     # this the ctx carried no caps and a non-admin could publish a public def.
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     with true <- name != "",
          %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
@@ -446,7 +446,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
       CredentialCascade.set_default_source(
         params,
         socket.assigns.current_entity_uri,
-        Map.get(socket.assigns, :current_caps, MapSet.new())
+        Ezagent.World.PresenterCaps.load(socket)
       )
 
     case result do
@@ -488,7 +488,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
       case CredentialCascade.revoke_grant(
              uri,
              socket.assigns.current_entity_uri,
-             Map.get(socket.assigns, :current_caps, MapSet.new())
+             Ezagent.World.PresenterCaps.load(socket)
            ) do
         {:ok, _} ->
           put_auto_notice(socket, "grant_revoked", "ok")

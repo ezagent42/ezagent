@@ -41,6 +41,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     wait_ready(workspace_uri)
     wait_ready(session_uri)
     wait_ready(orchestrator_uri)
+    wait_delivery_outbox_idle(orchestrator_uri)
+    settle_boot_mailbox(orchestrator_pid)
 
     on_exit(fn ->
       _ = Ezagent.PendingDelivery.flush(orchestrator_uri)
@@ -151,6 +153,35 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
       Process.sleep(10)
       wait_ready(uri, attempts - 1)
     end
+  end
+
+  defp wait_delivery_outbox_idle(uri, attempts \\ 200)
+
+  defp wait_delivery_outbox_idle(_uri, 0),
+    do: flunk("orchestrator capability delivery outbox never became idle")
+
+  defp wait_delivery_outbox_idle(uri, attempts) do
+    pending =
+      EzagentCore.Repo.aggregate(
+        from(delivery in Delivery,
+          where: delivery.target_uri == ^URI.to_string(uri),
+          where: delivery.status == :pending
+        ),
+        :count
+      )
+
+    if pending == 0 do
+      :ok
+    else
+      Process.sleep(10)
+      wait_delivery_outbox_idle(uri, attempts - 1)
+    end
+  end
+
+  defp settle_boot_mailbox(pid) do
+    _state = :sys.get_state(pid)
+    _state = :sys.get_state(pid)
+    :ok
   end
 
   defp eventually(fun, attempts \\ 500)

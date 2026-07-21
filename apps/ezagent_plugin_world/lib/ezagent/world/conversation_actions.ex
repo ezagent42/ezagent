@@ -199,7 +199,7 @@ defmodule Ezagent.World.ConversationActions do
   def send_message(socket, %URI{} = session_uri, text, grants)
       when is_binary(text) and is_list(grants) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
     attachments = verify_grants(socket, grants, caller, session_uri)
 
     if String.trim(text) == "" and attachments == [] do
@@ -356,7 +356,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
-    caller_caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caller_caps = Ezagent.World.PresenterCaps.load(socket)
     create_session = &Ezagent.Workspace.create_session/3
 
     create_with_caller_caps = fn target_workspace, args, ctx ->
@@ -600,7 +600,7 @@ defmodule Ezagent.World.ConversationActions do
     # and pushes liveness/phase. Without the gate any authenticated user could
     # open any agent's terminal in any workspace from inside a conversation.
     # Same authority as every other exit: the agent's Manage cap.
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
@@ -703,7 +703,7 @@ defmodule Ezagent.World.ConversationActions do
   defp dispatch_session_action(socket, %URI{} = session_uri, behavior_prefix, action, args)
        when is_atom(behavior_prefix) and is_atom(action) and is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     result =
       Invocation.dispatch(%Invocation{
@@ -823,7 +823,7 @@ defmodule Ezagent.World.ConversationActions do
           {:noreply, Phoenix.LiveView.Socket.t()}
   def invite_member(socket, %URI{} = session_uri, member_str) when is_binary(member_str) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     case parse_member_uri(member_str) do
       {:ok, %URI{} = member_uri} ->
@@ -877,7 +877,7 @@ defmodule Ezagent.World.ConversationActions do
   def remove_participant(socket, %URI{} = session_uri, participant_str)
       when is_binary(participant_str) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     case parse_member_uri(participant_str) do
       {:ok, %URI{} = participant_uri} ->
@@ -908,7 +908,7 @@ defmodule Ezagent.World.ConversationActions do
   def uninstall_socialware(socket, %URI{} = session_uri, ref) when is_binary(ref) do
     caller = socket.assigns.current_entity_uri
     actor = caller || Ezagent.Entity.User.admin_uri()
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     definitions = Ezagent.Socialware.Installation.installed_definitions(session_uri)
 
@@ -1016,7 +1016,7 @@ defmodule Ezagent.World.ConversationActions do
   def assign_role(socket, %URI{} = session_uri, member_str, role_name)
       when is_binary(member_str) and is_binary(role_name) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     case parse_member_uri(member_str) do
       {:ok, %URI{} = member_uri} ->
@@ -1128,24 +1128,18 @@ defmodule Ezagent.World.ConversationActions do
 
   defp do_self_join(socket, %URI{} = session_uri) do
     caller = Map.get(socket.assigns, :current_entity_uri)
-    caps = Map.get(socket.assigns, :current_caps)
 
     case caller do
-      %URI{} = caller_uri when not is_nil(caps) ->
+      %URI{} = caller_uri ->
         # JIT, owner-rooted per-session :join cap (`:sync` so it lands before the
         # dispatch authorizes via the live slice read).
         _ = Ezagent.LocalRuntime.ensure_live(session_uri)
         _ = EzagentDomainInstanceMessage.SessionCreator.demand_spawn_member(caller_uri)
         _ = Membership.provision_join_authority(session_uri, caller_uri)
 
-        # `caps` is the mount-time snapshot. The owner-rooted JIT grant above
-        # must be carried in this authenticated envelope explicitly, so reload
-        # the verified principal slice after the synchronous grant.
-        caps =
-          MapSet.union(
-            MapSet.new(caps || MapSet.new()),
-            MapSet.new(Ezagent.EntityCaps.load(caller_uri))
-          )
+        # Reload after the synchronous JIT grant so the external envelope
+        # carries the newly issued target-signed artifact.
+        caps = Ezagent.World.PresenterCaps.load(socket)
 
         result =
           Invocation.dispatch(%Invocation{

@@ -261,7 +261,10 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     session = new_session("mc-invalid-signature", owner)
     member = URI.new!("entity://system/user/member-invalid-signature-#{uniq()}")
     valid = issued_member_cap(owner, member, session)
-    invalid = %{valid | action: :send}
+    invalid = %{valid | signature: :binary.copy(<<0>>, byte_size(valid.signature))}
+
+    assert Capability.identity_key(invalid) == Capability.identity_key(valid),
+           "the regression requires a stale artifact with the exact required identity"
 
     assert {:ok, _row} = Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [invalid])
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)

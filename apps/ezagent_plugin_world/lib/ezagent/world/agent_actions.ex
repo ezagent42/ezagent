@@ -53,7 +53,7 @@ defmodule Ezagent.World.AgentActions do
   defp dispatch_agent_create(socket, params) when is_map(params) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Map.get(socket.assigns, :current_caps, MapSet.new())}
+    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
 
     flavor = params |> Map.get("flavor", "") |> to_string() |> String.trim()
     name = params |> Map.get("name", "") |> to_string() |> String.trim()
@@ -121,7 +121,7 @@ defmodule Ezagent.World.AgentActions do
 
   defp dispatch_agent_delete(socket, agent_uri_str) when is_binary(agent_uri_str) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          # AUTHZ GATE (must run BEFORE the live-sessions preflight below).
@@ -236,7 +236,7 @@ defmodule Ezagent.World.AgentActions do
 
   defp dispatch_config_update(socket, args) when is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     agent_uri_str = Map.get(args, "agent_uri")
     key = Map.get(args, "key")
@@ -259,7 +259,7 @@ defmodule Ezagent.World.AgentActions do
 
   defp dispatch_config_delete_path(socket, args) when is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     agent_uri_str = Map.get(args, "agent_uri")
     key = Map.get(args, "key")
@@ -282,7 +282,7 @@ defmodule Ezagent.World.AgentActions do
 
   defp dispatch_config_repoint(socket, args) when is_map(args) do
     caller = socket.assigns.current_entity_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     agent_uri_str = Map.get(args, "agent_uri")
     key = Map.get(args, "key")
@@ -372,7 +372,7 @@ defmodule Ezagent.World.AgentActions do
     |> Ezagent.World.IdentityData.state_for(%{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
       create_error: Map.get(socket.assigns, :agent_create_error)
     })
     |> Map.put("layout", layout)
@@ -382,7 +382,7 @@ defmodule Ezagent.World.AgentActions do
 
   defp put_can_manage_layout(state, socket) do
     workspace_uri = socket.assigns.current_workspace_uri
-    caps = Map.get(socket.assigns, :current_caps, MapSet.new())
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     Map.put(state, "can_manage_layout", can_manage_layout?(workspace_uri, caps))
   end

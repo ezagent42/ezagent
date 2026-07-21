@@ -44,7 +44,7 @@ defmodule Ezagent.World.ErrorCards do
     fn ->
       viewer_ctx(
         Map.get(assigns, :current_entity_uri),
-        Map.get(assigns, :current_caps, MapSet.new()),
+        Ezagent.World.PresenterCaps.load(assigns),
         Map.get(assigns, :current_workspace_uri)
       )
     end

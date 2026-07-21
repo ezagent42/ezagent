@@ -56,7 +56,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
   defp spawn_bare_agent(uri \\ nil) do
     uri = uri || Ezagent.URI.agent(:system, "t7g_grantee_#{uniq()}")
 
-    {:ok, _pid} =
+    {:ok, pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
         uri: uri,
         behaviors: Ezagent.Entity.Agent.base_behaviors()
@@ -75,7 +75,43 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
     end)
 
     wait_ready(uri)
+    wait_delivery_outbox_idle(uri)
+    settle_boot_mailbox(pid)
     uri
+  end
+
+  defp wait_delivery_outbox_idle(uri, attempts \\ 200)
+
+  defp wait_delivery_outbox_idle(_uri, 0),
+    do: flunk("agent capability delivery outbox never became idle")
+
+  defp wait_delivery_outbox_idle(uri, attempts) do
+    pending =
+      Repo.aggregate(
+        from(delivery in Delivery,
+          where: delivery.target_uri == ^URI.to_string(uri),
+          where: delivery.status == :pending
+        ),
+        :count
+      )
+
+    if pending == 0 do
+      :ok
+    else
+      Process.sleep(10)
+      wait_delivery_outbox_idle(uri, attempts - 1)
+    end
+  end
+
+  # ReadyGate flips before on-ready hooks finish. ConfigEvolve's hook handles a
+  # pre-existing self-signal and enqueues absorb/reconcile casts while handling
+  # it, so one system barrier may sit between the signal and those new casts.
+  # A second barrier proves the boot mailbox is quiescent before a test
+  # deliberately moves the gate back to :not_ready.
+  defp settle_boot_mailbox(pid) do
+    _state = :sys.get_state(pid)
+    _state = :sys.get_state(pid)
+    :ok
   end
 
   defp wait_ready(uri, attempts \\ 200)
