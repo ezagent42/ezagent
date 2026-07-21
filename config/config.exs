@@ -33,8 +33,17 @@ config :ezagent_domain_session,
 # the key, boot registers it as the INTERNAL hello workspace's shared curl
 # credential source so freshly seeded hello `llm` members are born credentialed.
 # Scoped to that one workspace; never baked into the shared hello template.
+#
+# `:site_seed_boot` — the governed 官网 deploy-seed
+# (`EzagentPluginHello.OfficialSiteSeed`). When on, boot idempotently ensures
+# `session://system/hello/web` (the ruihua marketing page + greeter) exists, so
+# a reseed self-heals the 官网 instead of leaving it wiped. Same family as the
+# credential bridge above (config-gated, deploy-owned, NOT the `HELLO_DEMO_SEED`
+# demo flag); paired with it so the DeepSeek source and the site that consumes
+# it come up in the same environments.
 config :ezagent_plugin_hello,
-  credential_bridge_boot: config_env() in [:dev, :prod]
+  credential_bridge_boot: config_env() in [:dev, :prod],
+  site_seed_boot: config_env() in [:dev, :prod]
 
 config :ezagent_domain_session,
   public_scheme: "https",

@@ -134,6 +134,12 @@ config :ezagent_domain_session, :socialware_manifest_boot_scan, false
 # boot — isolation assertions depend on un-bridged workspaces staying keyless).
 config :ezagent_plugin_hello, :credential_bridge_boot, false
 
+# The governed 官网 deploy-seed (`EzagentPluginHello.OfficialSiteSeed`) is a
+# dev/prod boot lane. Tests call `OfficialSiteSeed.ensure/0` directly — the boot
+# Task must NOT provision into the shared literal `"system"` workspace at every
+# test boot (it would race the transactional DataCase sandbox).
+config :ezagent_plugin_hello, :site_seed_boot, false
+
 # PTY supervisor intensity — TEST ONLY (2026-07-13).
 #
 # The respawn-breaker suites drive REAL crash-looping children through the REAL
