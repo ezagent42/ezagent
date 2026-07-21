@@ -66,7 +66,7 @@
   "slots": {
     "kanban": {
       "category": "layout_slot",
-      "data_source": "Ezagent.World.KanbanData",
+      "data_source": "EzagentPluginKanban.WorldData",
       "renderer_family": "kanban",
       "title": "看板"
     },

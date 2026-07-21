@@ -12,11 +12,12 @@ defmodule Mix.Tasks.World.Slots.Manifest do
   """
   use Mix.Task
 
+  @requirements ["compile"]
   @shortdoc "Regenerate (or --check) the world typed-slot manifest"
 
   @impl Mix.Task
   def run(args) do
-    Mix.Task.run("app.config")
+    start_plugin_apps!()
     {opts, _, _} = OptionParser.parse(args, switches: [check: :boolean])
 
     path = manifest_path()
@@ -36,6 +37,37 @@ defmodule Mix.Tasks.World.Slots.Manifest do
       File.write!(path, generated)
       Mix.shell().info("wrote #{relative(path)}")
     end
+  end
+
+  defp start_plugin_apps! do
+    apps = Map.keys(Mix.Project.apps_paths())
+
+    Enum.each(apps, fn app ->
+      case Application.load(app) do
+        :ok -> :ok
+        {:error, {:already_loaded, ^app}} -> :ok
+      end
+    end)
+
+    apps
+    |> Enum.filter(fn app ->
+      case Application.get_env(app, :ezagent_plugin) do
+        provider when is_atom(provider) ->
+          Code.ensure_loaded?(provider) and function_exported?(provider, :pages, 0)
+
+        _ ->
+          false
+      end
+    end)
+    |> Enum.each(fn app ->
+      case Application.ensure_all_started(app) do
+        {:ok, _started} ->
+          :ok
+
+        {:error, reason} ->
+          Mix.raise("could not start plugin application #{inspect(app)}: #{inspect(reason)}")
+      end
+    end)
   end
 
   defp manifest_path do
