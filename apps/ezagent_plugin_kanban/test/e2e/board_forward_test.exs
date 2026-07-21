@@ -99,7 +99,9 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
       bob_ctx = %{
         caller: bob_uri,
         authenticated_principal: bob_uri,
-        caps: MapSet.new(Ezagent.Identity.list_caps_for(bob_uri))
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(bob_uri)),
+        assistant_role: "kanban-assistant",
+        read_actions: @read_actions
       }
 
       # to_session:有一个 kanban-assistant 成员(收只读钥匙)
@@ -173,10 +175,13 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
         URI.new!("entity://#{ws_name}/user/carol-#{System.unique_integer([:positive])}")
 
       spawn_user(carol_uri)
+
       carol_ctx = %{
         caller: carol_uri,
         authenticated_principal: carol_uri,
-        caps: MapSet.new()
+        caps: MapSet.new(),
+        assistant_role: "kanban-assistant",
+        read_actions: @read_actions
       }
 
       assert {:error, :no_forward_access} =
@@ -253,7 +258,11 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     assert :ok = Ezagent.Entity.spawn_principal(user_uri)
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
 
-    Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
+    # 深扫 2026-07-16(默认值上提):assistant_role/read_actions 业务字面归调用方。
+    # ctx 底座走 #1457 的 signed_workspace_ctx!(per-Kind 签名 workspace cap)。
+    workspace_uri
+    |> Ezagent.Test.CapHelper.signed_workspace_ctx!(user_uri)
+    |> Map.merge(%{assistant_role: "kanban-assistant", read_actions: @read_actions})
   end
 
   defp spawn_user(user_uri) do
