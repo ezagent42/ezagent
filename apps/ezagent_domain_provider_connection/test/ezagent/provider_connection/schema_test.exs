@@ -83,6 +83,21 @@ defmodule Ezagent.ProviderConnection.SchemaTest do
     assert closure =~ "provider_authorization_backend_records_handoff_coherence_check"
     assert closure =~ "provider_connection_operations_cleanup_coherence_check"
     assert closure =~ "RAISE EXCEPTION"
+
+    compensation =
+      File.read!(
+        Path.join(
+          migration_dir,
+          "20260721000000_compensate_superseded_refresh_results.exs"
+        )
+      )
+
+    refute compensation =~ "IF NOT EXISTS"
+    refute compensation =~ "if_not_exists"
+    assert compensation =~ "provider_connection_operations_durable_ownership_check"
+    assert compensation =~ "provider_connection_operations_ownership_stage_check"
+    assert compensation =~ "provider_cleanup_status IN ('pending','confirmed')"
+    assert compensation =~ "provider_cleanup_status = 'confirmed'"
   end
 
   test "active binding uniqueness is a named PostgreSQL constraint" do

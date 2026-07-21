@@ -32,14 +32,15 @@ defmodule Ezagent.ProviderConnection.Refresh do
 
     cond do
       operation.status == "prepared" and not provider_owned?(operation) ->
-        execute(
-          connection,
+        connection
+        |> execute(
           %{
             correlation_id: operation.correlation_id,
             expected_version: operation.expected_connection_version
           },
           now
         )
+        |> compensate_superseded(operation.id, now)
 
       operation.status == "prepared" and
           operation.provider_cleanup_status in ["pending", "confirmed"] ->
@@ -49,14 +50,15 @@ defmodule Ezagent.ProviderConnection.Refresh do
         operation |> cleanup_operation() |> normalize_recovery_cleanup(operation.id)
 
       true ->
-        execute(
-          connection,
+        connection
+        |> execute(
           %{
             correlation_id: operation.correlation_id,
             expected_version: operation.expected_connection_version
           },
           now
         )
+        |> compensate_superseded(operation.id, now)
     end
   end
 
@@ -128,6 +130,108 @@ defmodule Ezagent.ProviderConnection.Refresh do
   end
 
   defp reclaim_expired(operation, _connection, _now), do: {:ok, operation}
+
+  # A prepared refresh whose fenced generation is provably behind the
+  # connection can never win the pointer CAS again: a successor refresh has
+  # already advanced the generation (`refreshing -> refreshing`). Reclaim
+  # reports `:refresh_lease_lost` for a fully-expired contested lease and
+  # `:refresh_in_progress` once the connection lease is gone (a committed
+  # successor clears it), so BOTH codes are routed here. Without compensation
+  # the row would retry the lost generation forever — worse, a provider-owned
+  # row would keep a live provider-minted credential sealed behind
+  # `handoff_ref` with no path to `discard_refresh_result/1`. Persist the
+  # cleanup obligation first (no external effect inside the transaction),
+  # then run the ordinary cleanup machinery; all-NULL rows need no effect and
+  # are fenced out of the retry loop (the ownership-stage CHECK permits
+  # fencing all-NULL rows).
+  defp compensate_superseded({:error, reason} = error, operation_id, now)
+       when reason in [:refresh_lease_lost, :refresh_in_progress] do
+    operation = Repo.get!(Operation, operation_id)
+
+    if superseded_preparation?(operation, now) do
+      compensate_superseded_operation(operation)
+    else
+      error
+    end
+  end
+
+  defp compensate_superseded(result, _operation_id, _now), do: result
+
+  # The version fence is the only reliable supersession signal: a successor
+  # refresh prepare CAS-advances the connection generation past the stale
+  # operation's `expected_connection_version + 1`. A bare lease-token
+  # mismatch is NOT proof — a fresh claim legitimately re-leases the SAME
+  # operation (lease theft), and that operation must keep retrying until its
+  # own reclaim succeeds.
+  defp superseded_preparation?(%Operation{status: "prepared"} = operation, now) do
+    connection = Repo.get!(Connection, operation.connection_id)
+
+    expired_lease?(operation.lease_until, now) and
+      connection.connection_version != operation.expected_connection_version + 1
+  end
+
+  defp superseded_preparation?(_operation, _now), do: false
+
+  defp compensate_superseded_operation(operation) do
+    if provider_owned?(operation) do
+      case persist_superseded_cleanup(operation) do
+        {:ok, updated} ->
+          updated |> cleanup_operation() |> normalize_recovery_cleanup(updated.id)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      fence_superseded(operation)
+    end
+  end
+
+  defp persist_superseded_cleanup(operation) do
+    Repo.transaction(fn ->
+      locked = lock_operation(operation.id)
+      _connection = lock_connection(locked.connection_id)
+
+      if locked.status == "prepared" and provider_owned?(locked) do
+        locked
+        |> Ecto.Changeset.change(
+          status: "cleanup_pending",
+          safe_error_code: "cleanup_pending",
+          provider_cleanup_status: "pending",
+          credential_cleanup_status:
+            if(is_binary(locked.result_ref), do: "pending", else: "not_required")
+        )
+        |> Repo.update!()
+      else
+        Repo.rollback(:refresh_lease_lost)
+      end
+    end)
+  end
+
+  defp fence_superseded(operation) do
+    Repo.transaction(fn ->
+      locked = lock_operation(operation.id)
+      _connection = lock_connection(locked.connection_id)
+
+      # The durable ownership CHECK requires fenced rows to keep a non-NULL
+      # next_recovery_at; recovery never re-selects fenced rows (its phase
+      # queries only match prepared/backend_committed/connection_committed/
+      # cleanup_pending), so the row is out of the retry loop by status.
+      if locked.status == "prepared" and not provider_owned?(locked) do
+        locked
+        |> Ecto.Changeset.change(
+          status: "fenced",
+          safe_error_code: "refresh_lease_lost"
+        )
+        |> Repo.update!()
+      else
+        Repo.rollback(:refresh_lease_lost)
+      end
+    end)
+    |> case do
+      {:ok, _operation} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp expired_lease?(lease_until, now) when is_struct(lease_until, DateTime),
     do: DateTime.compare(lease_until, now) in [:lt, :eq]

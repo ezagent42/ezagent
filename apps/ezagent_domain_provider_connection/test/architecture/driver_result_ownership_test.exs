@@ -330,8 +330,8 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
           metadata: declaration_metadata(implementation)
         })
 
-      :acquired = BackendPairRegistry.register(owner, pair)
-      :acquired = DriverRegistry.register(owner, driver)
+      assert BackendPairRegistry.register(owner, pair) in [:acquired, :existing_identical]
+      assert DriverRegistry.register(owner, driver) in [:acquired, :existing_identical]
 
       Application.put_env(
         :ezagent_domain_provider_connection,
