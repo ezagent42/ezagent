@@ -86,11 +86,20 @@ services:
       RESET_DB_EACH: "${RESET_DB_EACH:-0}"
     # --- THE CORE CONSTRAINT (the flake engine) ---
     # cpuset = AFFINITY (BEAM sees N cores -> starts N schedulers). `--cpus` quota does
-    # NOT do this (nproc still reports all host cores). CI's ubuntu-latest is ~4 vCPU
-    # (its max_cases:8 == ExUnit default schedulers_online*2). Mirror = 4; amplify the
-    # race = 2 (fewer cores + oversubscribed max_cases -> more owner-teardown interleave).
-    # Override per run:  CPUSET=0-1 SCHEDULERS=2 docker compose ... run --rm ci repro
-    cpuset: "${CPUSET:-0-3}"
+    # NOT do this (nproc still reports all host cores). Only the `repro` flake-hunt needs
+    # affinity (it IS the race engine) — pass it EXPLICITLY there:
+    #   CPUSET=0-1 SCHEDULERS=2 docker compose ... run --rm ci repro   # amplify the race
+    #   CPUSET=0-3 SCHEDULERS=4 docker compose ... run --rm ci repro   # mirror CI's ~4 vCPU
+    # DEFAULT = EMPTY = NO pin (concurrency fix #1502-followup): the deterministic `gate`
+    # must NOT pin, or every self-hosted runner's gate stacks its BEAM+`mix compile --force`
+    # onto the SAME fixed cores (all runners get an identical CPUSET — Actions can't hand
+    # them disjoint ranges) while the rest of the 28-core box sits idle. That shared-core
+    # oversubscription — not postgres max_connections (per-run pool is 40 « 100) nor VM
+    # memory (~0.4G/gate « 15.66G) — is what made 3 concurrent gates crawl/flake. Unpinned,
+    # the host scheduler spreads each gate's `SCHEDULERS` threads across all cores, so N
+    # concurrent gates coexist. SCHEDULERS still bounds each gate's footprint (ERL_AFLAGS
+    # +S k:k in ci-runner.sh) so N gates don't each grab all 28 cores.
+    cpuset: "${CPUSET:-}"
     # NO bind-mount of /app: the source + fetched deps + compiled `_build` are baked into
     # the IMAGE at /app (docker/Dockerfile.ci). Running off the image keeps everything on
     # the container's own overlay fs — NOT a mac virtiofs bind-mount, whose latency would

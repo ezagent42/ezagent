@@ -96,12 +96,19 @@ jobs:
       # `trap … EXIT` tears the project down (containers, network, tmpfs volumes)
       # even on cancel/failure. `run --build` builds this run's thin source image;
       # `--rm` removes the one-shot container; the container exit code propagates,
-      # so a red gate step fails the job. CPUSET/SCHEDULERS widen the flake-repro
-      # default (0-3) for CI speed on the 28-core runner while leaving headroom.
+      # so a red gate step fails the job. NO cpuset pin: the deterministic gate needs no
+      # core affinity (that is only the `repro` flake-hunt's race engine), and pinning is
+      # actively harmful under concurrency — every self-hosted runner receives the SAME
+      # CPUSET, so 2-3 concurrent gates would stack their BEAM + `mix compile --force` onto
+      # the identical fixed cores (e.g. 0-9) while the other 18 of the 28 sit idle → CPU
+      # starvation → slow/flaky DB-invariant suites. Unpinned, the host scheduler spreads
+      # each gate across all cores, so concurrent runners coexist. SCHEDULERS=8 still bounds
+      # each gate's scheduler count (+ its max_cases = 2×8) so 3-5 concurrent gates fit the
+      # 28-core box with headroom. (Root cause was scheduling contention, NOT postgres
+      # max_connections — per-run pool is 40 « the 100 default — nor VM memory.)
       - name: Gate (dockerized — mix chain + postgres:16)
         env:
-          CPUSET: "0-9"
-          SCHEDULERS: "10"
+          SCHEDULERS: "8"
         run: |
           set -euo pipefail
           P="ci-gate-${{ github.run_id }}-${{ github.run_attempt }}"
