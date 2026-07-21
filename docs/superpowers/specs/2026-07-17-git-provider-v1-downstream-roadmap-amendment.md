@@ -160,17 +160,30 @@ GitHub App user authorization is the preferred GitHub driver candidate, not a
 cross-provider domain concept. The Plan D design must confirm its exact actor,
 installation, callback, refresh, and revocation semantics before implementation.
 
-### 4.5 Plan E — product acceptance
+**D2 is the git team's delivery endpoint.** When the GitHub plugin can be called
+independently by agents via the existing action/skill mechanisms, the git
+development line is complete. Kanban integration, socialware manifest
+registration, and agent skill orchestration are not in git plugin scope — they
+are Allen's integration layer (see §4.5).
 
-Plan E adds provider settings through the common connection read model, exact
-Kanban governance and signed capability issuance, confirmed-fact projection,
-and the real canary loop. The initial execution identity is the connected user;
-there is no fallback to an installation or service token.
+### 4.5 Plan E — integration and acceptance (Allen's layer)
 
-Final evidence includes agent-browser screenshots and transcript, a real PR URL,
-PR-head CI, review/merge status, Kanban transitions, reproduction commands,
-environment, blockers, and a dev-together return. Deployment and merge remain
-lead-controlled.
+Plan E is not a git team deliverable. Once the GitHub plugin is a working OTP
+app that exposes Driver + Adapter + CredentialBackend, Allen integrates it:
+
+- **socialware manifest registration**: the git plugin is declared as an
+  available capability in the socialware registry
+- **agent skill orchestration**: the "create PR → wait CI → review → merge"
+  workflow is an agent skill, not git plugin code
+- **Kanban fact projection**: card-level Git status (PR open, CI passing,
+  merged) is rendered from git plugin return values at the Kanban surface
+  layer, without coupling the plugin to Kanban concepts
+- **canary acceptance**: real agent → PR → CI → review → merge loop with
+  screenshots and transcript
+
+The git plugin stays provider-neutral in its domain interfaces (Driver deals
+with OAuth lifecycle state, Adapter returns closed DomainGit value types).
+Allen's layer owns the orchestration, UX, and product acceptance evidence.
 
 ## 5. OneAuth/OneSystem replacement boundary
 
