@@ -42,8 +42,8 @@ people:
   - {id: "jjkysy", name: "jjkysy", track: "挂载-撤销 infra / 协作白板", color: "#65a30d"}
   - {id: "allen", name: "Allen 轨道", track: "安全 + CI + 部署 + 统筹 + BD", color: "#2563eb"}
 
-cards:
-  # ---------- 完成 (DONE 07-20) ----------
+done_prev:
+  # ---------- 完成 (DONE 07-20) — 昨日完成, 渲染进「完成」列 ----------
   - owner: "allen"
     title: "CI 健康: 假绿→真绿 + 部署闸打通"
     goal: "挖出 halt(0) 假绿 + 搬 mac runner + honest gate"
@@ -79,7 +79,8 @@ cards:
     acceptance:
       - {text: "F2 cascade 自调 + F3 provider lane(堵无-sidecar 僵尸 agent+跳校验) + F4 nil config home", done: true}
       - {text: "双后端 live proof(deepseek+kimi+表单+杀sidecar重生), grep 零密钥; 顺手开 #1482 冷启动崩溃 issue", done: true}
-  # ---------- 进行中 (WIP) ----------
+cards:
+  # ---------- 进行中 (WIP · 今日推进) ----------
   - owner: "allen"
     title: "#195 后续 roll-out(G/D/M)"
     goal: "Phase F 已合 → G/D/M 拆分独立评审推进"
