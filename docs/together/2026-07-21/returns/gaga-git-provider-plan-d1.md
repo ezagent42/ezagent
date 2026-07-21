@@ -55,12 +55,63 @@ Two independent read-only reviews ran: amendment-range (`55e0c636c..HEAD`) and w
 
 Re-reviews: amendment-scope APPROVED; X-level APPROVED. (Verdicts finalized in the push note; both re-reviewers confirmed closure per finding.)
 
-## 6. Deferred for design adjudication (Allen sign-off requested)
+## 6. Design decisions made during acceptance (2026-07-21)
 
-1. **`provider_connection_events` has zero writers.** Design §5.4's append-only audit projection has schema/constraints/index but no writer anywhere; every D1 transition is unaudited. Adding writers is new behavior surface — not implemented unilaterally.
-2. **Selector is `status == "active"` only.** `refresh_required`/`refreshing` connections (whose current credential may still be valid) are invisible to D2 selection. Fail-closed reading is consistent, but design §4/§8 wording is ambiguous — confirm intent before D2 builds on it.
-3. **Refreshing wedge (emergent property of approved decisions).** A permanently-failing refresh retries forever at capped backoff (mandated), keeping the connection inside the active-binding unique index — so re-binding the same external account is terminally rejected with `account_conflict`, and revoke/disconnect are Decision-B-fail-closed in D1, leaving no in-D1 unblocking path. Spec-conformant; needs explicit sign-off before the follow-up phase enables these flows.
-4. **Runtime config seams** (`:command_boundary`, `:credential_backend_implementations`, `:callback_redirect_pairs`) have no production guard. Stock prod config sets none of them, so D1 is inert/fail-closed in production today (matches the deferral list), but the command-boundary swap is a convention-protected foot-gun.
+Items flagged by dual review, discussed with Allen, and resolved:
+
+### 6a. Selector — broadened to selectable states (IMPLEMENTED)
+
+**Original code** (`selector.ex:21`): `c.status == "active"` — only literal `active` connections could be selected for D2 credential operations.
+
+**Problem**: `refresh_required` and `refreshing` connections may still have a valid credential pointer (refresh is background rotation); `degraded` connections have a credential with known issues but may still serve reads. All three were invisible to D2, which would report `:connection_not_found` and treat the scope as having no available connection.
+
+**Resolution**: Selector now matches `status IN ('active','refresh_required','refreshing','degraded')`. Excluded: `pending_authorization` (no credential yet), `expired` (explicitly expired), `revoking`/`revoked`/`disconnecting`/`disconnected` (terminal or transitioning), `failed` (explicit failure).
+
+Commit: `selector 扩大选择面` (to be committed after this write-up).
+
+### 6b. Refreshing wedge — escape hatch via max retries (IMPLEMENTED)
+
+**Mechanism**: A prepared refresh operation that cannot complete its provider effect retries forever at capped backoff (recovery `@default_retry_cap_ms = 300_000` = 5 min). The connection stays `refreshing`. Since `provider_connections_active_binding_index` excludes only `revoked`/`disconnected`, the `refreshing` connection still holds the unique binding on `(provider_id, governed_host, execution_identity, external_account_id)`. Any attempt to re-bind the same account is rejected with `account_conflict`. D1's revoke/disconnect is Decision-B-fail-closed. Triple-lock → permanent wedge.
+
+**Resolution**: `Refresh.recover/2` now checks `recovery_attempts >= @max_refresh_attempts` (12). When the threshold is crossed and the connection is still `refreshing`:
+- `Transition.mutate` moves the connection `refreshing → expired` (a legal transition in the frozen graph, already present)
+- The operation is fenced with `safe_error_code: "backend_unavailable"`, keeping `next_recovery_at` intact (durable CHECK requirement); recovery never re-selects `fenced` rows by status
+- The owner can now reauthorize (the active-binding index is not cleared, but `expired` → `pending_authorization` needs a new `begin_authorization` call, which is the intended reauthorization path)
+
+Commit: `refresh 超时逃生舱 → expired` (to be committed after this write-up).
+
+### 6c. Event audit — key operations catalogued, writers deferred
+
+The `provider_connection_events` table (schema at `event.ex`, migration `20260718001000` lines 133-162) has a defined schema with Inspect allowlist (credential-safe), CHECK constraints on transition_from/to, and a workspace-scoped index — but zero `INSERT` calls anywhere in the lib code.
+
+**Operations that SHOULD write audit events** (catalogued for implementation in a follow-up):
+
+| Operation | Actor | Transition | Key fields |
+|---|---|---|---|
+| `begin_authorization` → connection created | owner (self_uri from ctx) | `nil → pending_authorization` | connection_id, correlation_id |
+| `consume_callback` → credential bound | owner | `pending_authorization → active` | connection_id, result_class |
+| `reauthorize` → new attempt created | owner | (connection stays in current status) | correlation_id |
+| `refresh` → credential rotated | owner (via recovery) | `active → active` (or degraded if partial) | connection_id, connection_version |
+| `revoke` → connection terminated | owner | `active\|degraded\|expired → revoking → revoked` | connection_id |
+| `disconnect` → connection terminated | owner | `active\|degraded\|expired → disconnecting → disconnected` | connection_id |
+
+Writer insertion point: inside `Transition.mutate/4` (single chokepoint for all status changes) and inside `Store.execute/3` for the non-transition operations (begin_authorization which creates the initial connection, reauthorize which creates a new attempt).
+
+**Decision needed from Allen**: implement now (D1) or defer to follow-up phase?
+
+### 6d. Config keys — production configuration guide
+
+Provider-connection reads 3 runtime config keys via `Application.get_env/3`, all with safe defaults (nil/empty map = fail-closed):
+
+| Key | Code location | Default | Purpose | Correct production config |
+|---|---|---|---|---|
+| `:command_boundary` | `behavior/provider_connection.ex:308` | `nil` → delegates to `Store.execute/3` | Swappable command boundary for testing; in production, always nil | **Do NOT set** — nil is the only valid D1 value |
+| `:credential_backend_implementations` | `runtime_bindings.ex:31,75` | `%{}` (empty map) → all credential effects return `{:error, :authorization_backend_unavailable}` | Maps credential backend IDs (from BackendPair.pair_id) to Elixir modules implementing `CredentialBackend` behaviour | Set by each provider plugin at application start, e.g. `Application.put_env(:ezagent_domain_provider_connection, :credential_backend_implementations, %{"github-credential-v1" => MyApp.GitHubCredentialBackend})` |
+| `:callback_redirect_pairs` | `callback_ingress.ex:243` | `%{}` (empty map) → all callbacks fail with `{:error, :callback_invalid}` | Maps OAuth redirect URI IDs to callback handler modules | Set by the provider plugin that registers OAuth endpoints, e.g. `Application.put_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{"github-oauth" => MyApp.GitHubCallbackHandler})` |
+
+Two additional keys are compile-time (`:authorization_key_ring_fixture_enabled` — test-only) or properly production-guarded (`AuthorizationKeyRing` — read from `System.fetch_env!` in `runtime.exs`).
+
+**Current prod behavior**: with no plugin registered, all three keys are absent → D1 is completely inert (every management action fails before any external effect). Safe, matches the deferral list. When provider plugins are added at D2, they'll call `Application.put_env` at startup to register their implementations.
 
 ## 7. Honest boundary
 

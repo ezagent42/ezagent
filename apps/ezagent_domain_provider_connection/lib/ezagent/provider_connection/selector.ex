@@ -1,11 +1,20 @@
 defmodule Ezagent.ProviderConnection.Selector do
-  @moduledoc "Authoritative active-connection selection."
+  @moduledoc "Authoritative selectable-connection selection for credential operations."
   import Ecto.Query
   alias EzagentCore.Repo
   alias Ezagent.ProviderConnection.Connection
 
+  # Connections that currently own or are acquiring a valid credential pointer
+  # and are not in a terminal or pre-binding state. `refresh_required` and
+  # `refreshing` may still serve a valid credential (the refresh is a
+  # background rotation); `degraded` has a credential with known issues but
+  # may still serve reads. Terminal states (revoked/disconnected/failed),
+  # the pre-binding `pending_authorization`, and explicitly `expired` are
+  # excluded.
+  @selectable ~w(active refresh_required refreshing degraded)
+
   @keys ~w(owner_uri workspace_uri provider_id governed_host execution_identity)a
-  @doc "Selects the unique active connection matching the exact governed scope."
+  @doc "Selects the unique selectable connection matching the exact governed scope."
   def select(scope) when is_map(scope) do
     with :ok <- exact_keys(scope),
          {:ok, owner} <- fetch(scope, :owner_uri),
@@ -18,7 +27,7 @@ defmodule Ezagent.ProviderConnection.Selector do
           where:
             c.owner_uri == ^owner and c.workspace_uri == ^workspace and
               c.provider_id == ^provider and c.governed_host == ^host and
-              c.execution_identity == ^identity and c.status == "active",
+              c.execution_identity == ^identity and c.status in @selectable,
           order_by: [desc: c.connection_version, asc: c.connection_id],
           limit: 2
         )
