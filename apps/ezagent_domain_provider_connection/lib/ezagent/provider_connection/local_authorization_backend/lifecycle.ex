@@ -70,6 +70,15 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Lifecycle do
   @doc false
   def reauthenticate(_request), do: {:error, :callback_invalid}
 
+  # LOCK-ORDER NOTE (final-review Minor, deferred with intent): this cancel
+  # path locks the backend record BEFORE its command row, while
+  # `LocalAuthorizationBackend.Exchange.finish_consume/4` locks the consume
+  # command row first and the backend record second — an ABBA inversion.
+  # Cancel/reauthenticate are not owner-reachable in D1 (both currently
+  # return a closed error before touching this path), so the inversion is
+  # dormant; when the follow-up phase enables these flows it MUST reorder
+  # this path to the consume order (command row, then backend record) or
+  # prove the inversion unreachable under its concurrency model.
   defp lifecycle_cancel_locked(authorization_ref, correlation_id, digest, request) do
     with %AuthorizationBackendRecord{} = row <- lifecycle_locked_record(authorization_ref),
          :ok <-
