@@ -4,13 +4,13 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
-    AuthorizationBackendRecord,
     CallbackTerminalProof,
     Connection,
     Driver,
     LocalAuthorizationBackend,
     Operation,
     ProviderAuthorizationCommand,
+    RowLock,
     RuntimeBindings
   }
 
@@ -89,7 +89,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       %Operation{} = snapshot ->
         Repo.transaction(fn ->
           connection = lock_connection(snapshot.connection_id)
-          attempt = lock_attempt(snapshot.attempt_ref)
+          attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
           operation = lock_operation(snapshot.id)
 
           {command, record} =
@@ -97,7 +97,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
               {%Operation{} = operation, %AuthorizationAttempt{} = attempt} ->
                 {
                   lock_consume_command(operation.backend_pair_id, attempt.correlation_id),
-                  lock_backend_record(attempt.authorization_ref)
+                  RowLock.authorization_backend_record(attempt.authorization_ref)
                 }
 
               _other ->
@@ -110,7 +110,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
                true <- operation.attempt_ref == attempt.attempt_ref,
                true <- attempt.status == "cancelled",
                true <- is_nil(attempt.claim_token) and is_nil(attempt.claim_until),
-               true <- provider_unowned?(operation),
+               true <- Operation.provider_result_unowned?(operation),
                true <- connection.status in ["revoking", "disconnecting"],
                true <-
                  connection.connection_version == operation.expected_connection_version + 1,
@@ -141,25 +141,6 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       nil ->
         {:error, :stale_version}
     end
-  end
-
-  defp provider_unowned?(operation) do
-    Enum.all?(
-      [
-        operation.provider_result_ref,
-        operation.handoff_ref,
-        operation.result_permission_digest,
-        operation.result_expires_at,
-        operation.result_external_account_id,
-        operation.result_display_login,
-        operation.result_execution_identity,
-        operation.result_authorization_ref,
-        operation.result_authorization_version,
-        operation.result_ref,
-        operation.result_credential_version
-      ],
-      &is_nil/1
-    )
   end
 
   @doc false
@@ -217,7 +198,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
   defp do_cas(operation) do
     Repo.transaction(fn ->
       connection = lock_connection(operation.connection_id)
-      attempt = lock_attempt(operation.attempt_ref)
+      attempt = RowLock.authorization_attempt(operation.attempt_ref)
       current = lock_operation(operation.id)
 
       with %Connection{} <- connection,
@@ -415,7 +396,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
     Repo.transaction(fn ->
       connection = lock_connection(operation.connection_id)
-      locked_attempt = lock_attempt(attempt.attempt_ref)
+      locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
       locked_operation = lock_operation(operation.id)
 
       if connection.status in ["revoking", "disconnecting"] and
@@ -449,7 +430,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
     Repo.transaction(fn ->
       connection = lock_connection(snapshot.connection_id)
-      _attempt = lock_attempt(snapshot.attempt_ref)
+      _attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
       operation = lock_operation(operation_id)
 
       if operation.status == "prepared" and
@@ -478,7 +459,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       %Operation{} = snapshot ->
         Repo.transaction(fn ->
           connection = lock_connection(snapshot.connection_id)
-          attempt = lock_attempt(snapshot.attempt_ref)
+          attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
           operation = lock_operation(operation_id)
 
           operation = transition_terminal_cleanup(operation, connection)
@@ -652,7 +633,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
 
     Repo.transaction(fn ->
       _connection = lock_connection(snapshot.connection_id)
-      _attempt = lock_attempt(snapshot.attempt_ref)
+      _attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
       operation = lock_operation(snapshot.operation_id)
 
       if operation.lease_token != snapshot.claim_token,
@@ -709,7 +690,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
   defp mark_cleanup_finalized(snapshot) do
     Repo.transaction(fn ->
       _connection = lock_connection(snapshot.connection_id)
-      attempt = lock_attempt(snapshot.attempt_ref)
+      attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
       operation = lock_operation(snapshot.operation_id)
 
       with %Operation{status: "cleanup_pending"} <- operation,
@@ -749,7 +730,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
   defp release_cleanup_claim(snapshot) do
     Repo.transaction(fn ->
       _connection = lock_connection(snapshot.connection_id)
-      _attempt = lock_attempt(snapshot.attempt_ref)
+      _attempt = RowLock.authorization_attempt(snapshot.attempt_ref)
       operation = lock_operation(snapshot.operation_id)
 
       if operation.status == "cleanup_pending" and operation.lease_token == snapshot.claim_token do
@@ -805,7 +786,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     if match?(%Operation{}, operation) do
       Repo.transaction(fn ->
         connection = lock_connection(operation.connection_id)
-        attempt = lock_attempt(operation.attempt_ref)
+        attempt = RowLock.authorization_attempt(operation.attempt_ref)
         current = lock_operation(operation.id)
 
         cond do
@@ -884,7 +865,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     Repo.transaction(fn ->
       operation_snapshot = Repo.get!(Operation, operation_id)
       _connection = lock_connection(operation_snapshot.connection_id)
-      attempt = lock_attempt(attempt_ref)
+      attempt = RowLock.authorization_attempt(attempt_ref)
       operation = lock_operation(operation_id)
 
       case operation do
@@ -919,7 +900,7 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
     if match?(%Operation{}, operation_snapshot) do
       Repo.transaction(fn ->
         _connection = lock_connection(operation_snapshot.connection_id)
-        _attempt = lock_attempt(attempt_ref)
+        _attempt = RowLock.authorization_attempt(attempt_ref)
         operation = lock_operation(operation_id)
 
         if match?(%Operation{status: "connection_committed", lease_token: ^token}, operation) do
@@ -947,13 +928,6 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
       |> lock("FOR UPDATE")
       |> Repo.one()
 
-  defp lock_attempt(id),
-    do:
-      AuthorizationAttempt
-      |> where([row], row.attempt_ref == ^id)
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
   defp lock_consume_command(backend_pair_id, correlation_id),
     do:
       ProviderAuthorizationCommand
@@ -962,13 +936,6 @@ defmodule Ezagent.ProviderConnection.CredentialReplacement do
         row.backend_pair_id == ^backend_pair_id and row.operation_class == "consume" and
           row.correlation_id == ^correlation_id
       )
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
-  defp lock_backend_record(authorization_ref),
-    do:
-      AuthorizationBackendRecord
-      |> where([row], row.authorization_ref == ^authorization_ref)
       |> lock("FOR UPDATE")
       |> Repo.one()
 end

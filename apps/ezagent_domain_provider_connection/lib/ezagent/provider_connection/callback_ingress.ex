@@ -9,7 +9,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
     CallbackBinding,
     Connection,
     LocalAuthorizationBackend,
-    Operation
+    Operation,
+    RowLock
   }
 
   alias EzagentCore.Repo
@@ -70,7 +71,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
   defp lock_validate_and_stage(candidate, pair_id, digest, raw_state, provider_envelope) do
     Repo.transaction(fn ->
       connection = lock_connection(candidate.connection_id)
-      attempt = lock_attempt(candidate.attempt_ref)
+      attempt = RowLock.authorization_attempt(candidate.attempt_ref)
       operation = lock_operation(attempt)
       backend_record = lock_backend_record(attempt)
 
@@ -199,13 +200,6 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
     do:
       Connection
       |> where([row], row.connection_id == ^connection_id)
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
-  defp lock_attempt(attempt_ref),
-    do:
-      AuthorizationAttempt
-      |> where([row], row.attempt_ref == ^attempt_ref)
       |> lock("FOR UPDATE")
       |> Repo.one()
 

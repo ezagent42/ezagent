@@ -10,6 +10,7 @@ defmodule Ezagent.ProviderConnection.Termination do
     CredentialReplacement,
     Operation,
     ProviderAuthorizationCommand,
+    RowLock,
     RuntimeBindings,
     Transition
   }
@@ -262,7 +263,7 @@ defmodule Ezagent.ProviderConnection.Termination do
 
     records =
       Map.new(callback_operations, fn operation ->
-        {operation.id, lock_backend_record(operation.expected_authorization_ref)}
+        {operation.id, RowLock.authorization_backend_record(operation.expected_authorization_ref)}
       end)
 
     complete? =
@@ -289,7 +290,8 @@ defmodule Ezagent.ProviderConnection.Termination do
          %ProviderAuthorizationCommand{} = command,
          %AuthorizationBackendRecord{} = record
        ) do
-    exact_closing_lineage?(connection, operation) and provider_unowned?(operation) and
+    exact_closing_lineage?(connection, operation) and
+      Operation.provider_result_unowned?(operation) and
       cleanup_not_required?(operation) and is_nil(attempt.claim_token) and
       is_nil(attempt.claim_until) and
       CallbackTerminalProof.classify(connection, operation, attempt, command, record) ==
@@ -454,37 +456,11 @@ defmodule Ezagent.ProviderConnection.Termination do
     |> Repo.one()
   end
 
-  defp lock_backend_record(authorization_ref) do
-    AuthorizationBackendRecord
-    |> where([row], row.authorization_ref == ^authorization_ref)
-    |> lock("FOR UPDATE")
-    |> Repo.one()
-  end
-
   defp cleanup_not_required?(operation) do
     operation.provider_cleanup_status == "not_required" and
       operation.credential_cleanup_status == "not_required" and
       is_nil(operation.provider_cleanup_error_code) and
       is_nil(operation.credential_cleanup_error_code)
-  end
-
-  defp provider_unowned?(operation) do
-    Enum.all?(
-      [
-        operation.provider_result_ref,
-        operation.handoff_ref,
-        operation.result_permission_digest,
-        operation.result_expires_at,
-        operation.result_external_account_id,
-        operation.result_display_login,
-        operation.result_execution_identity,
-        operation.result_authorization_ref,
-        operation.result_authorization_version,
-        operation.result_ref,
-        operation.result_credential_version
-      ],
-      &is_nil/1
-    )
   end
 
   defp operations(connection_id, action, expected_version) do

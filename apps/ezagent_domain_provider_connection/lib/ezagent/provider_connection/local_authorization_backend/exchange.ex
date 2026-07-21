@@ -12,6 +12,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   import Ecto.Query
 
   alias Ezagent.ProviderConnection.LocalAuthorizationBackend.Lifecycle
+  alias Ezagent.ProviderConnection.LocalAuthorizationBackend.CallbackOperation
   alias Ezagent.ProviderConnection.LocalAuthorizationBackend.Support
 
   alias Ezagent.ProviderConnection.AuthorizationBackendRecord
@@ -327,7 +328,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   defp invoke_prepared_begin(command, row, payload, snapshot) do
     with {:ok, driver} <- frozen_driver(row),
          {:ok, driver_result} <-
-           invoke_driver(driver, :begin_authorization, row, command, payload, %{}),
+           invoke_driver(driver, :begin_authorization, row, command, payload, %{}, %{}),
          {:ok, redirect} <- Support.normalize_begin_result(driver_result, payload, driver),
          {:ok, sealed} <-
            seal_with_record_key(
@@ -468,9 +469,18 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
          :ok <- Support.validate_callback(payload, callback_envelope, row),
          {:ok, _connection} <- connection_for_backend(row),
          {:ok, driver} <- frozen_driver(row),
-         {:ok, operation} <- callback_operation(row, command),
+         {:ok, {attempt, operation}} <- CallbackOperation.resolve(row, command),
+         driver_identity <- CallbackOperation.driver_identity(row, command, attempt, operation),
          {:ok, driver_result} <-
-           invoke_driver(driver, :consume_callback, row, command, payload, callback_envelope),
+           invoke_driver(
+             driver,
+             :consume_callback,
+             row,
+             command,
+             payload,
+             callback_envelope,
+             driver_identity
+           ),
          {:ok, normalized} <-
            Support.validate_consume_result(
              driver_result,
@@ -515,7 +525,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
     end
   end
 
-  defp invoke_driver(driver, operation, row, command, payload, callback_envelope) do
+  defp invoke_driver(driver, operation, row, command, payload, callback_envelope, driver_identity) do
     private_frame = %{
       state: payload.state,
       pkce_verifier: payload.pkce_verifier,
@@ -541,7 +551,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
           callback_envelope_digest: Support.secret_digest(callback_envelope),
           exchange: exchange
         },
-        driver_identity(operation, row, command)
+        driver_identity
       )
 
     try do
@@ -562,78 +572,6 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   end
 
   defp normalize_driver_reply(_reply), do: {:error, :provider_protocol_error}
-
-  defp driver_identity(:consume_callback, row, command) do
-    attempt =
-      Repo.get_by(AuthorizationAttempt,
-        authorization_ref: row.authorization_ref,
-        correlation_id: command.correlation_id
-      )
-
-    operation = lookup_callback_operation(command, attempt)
-
-    case {attempt, operation} do
-      {%AuthorizationAttempt{} = attempt, %Operation{} = operation} ->
-        %{
-          owner_uri: row.owner_uri,
-          workspace_uri: row.workspace_uri,
-          provider_id: row.provider_id,
-          acquisition_method: row.acquisition_method,
-          governed_host: row.governed_host,
-          backend_pair_id: command.backend_pair_id,
-          operation_id: operation.id,
-          connection_id: operation.connection_id,
-          correlation_id: operation.correlation_id,
-          attempt_ref: attempt.attempt_ref,
-          authorization_ref: operation.expected_authorization_ref,
-          expected_connection_version: operation.expected_connection_version,
-          expected_authorization_version: operation.expected_authorization_version,
-          expected_credential_version: operation.expected_credential_version,
-          command_digest: operation.bound_input_digest
-        }
-
-      _other ->
-        %{}
-    end
-  end
-
-  defp driver_identity(_operation, _row, _command), do: %{}
-
-  defp callback_operation(row, command) do
-    attempt =
-      Repo.get_by(AuthorizationAttempt,
-        authorization_ref: row.authorization_ref,
-        correlation_id: command.correlation_id
-      )
-
-    case lookup_callback_operation(command, attempt) do
-      %Operation{
-        expected_authorization_ref: expected_ref,
-        expected_authorization_version: expected_version
-      } = operation
-      when expected_ref == row.authorization_ref and is_integer(expected_version) ->
-        {:ok, operation}
-
-      _other ->
-        {:error, :correlation_conflict}
-    end
-  end
-
-  defp lookup_callback_operation(command, %AuthorizationAttempt{} = attempt) do
-    operation_class = callback_operation_class(attempt.purpose)
-
-    Repo.get_by(Operation,
-      backend_pair_id: command.backend_pair_id,
-      operation_class: operation_class,
-      correlation_id: "#{operation_class}:#{command.correlation_id}"
-    )
-  end
-
-  defp lookup_callback_operation(_command, _attempt), do: nil
-
-  defp callback_operation_class("initial_bind"), do: "store"
-  defp callback_operation_class("reauthorize"), do: "replace"
-  defp callback_operation_class(_purpose), do: nil
 
   defp apply_credential_effect(backend, operation, attempt, connection, credential_material) do
     command =

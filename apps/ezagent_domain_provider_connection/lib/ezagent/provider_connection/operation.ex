@@ -75,6 +75,27 @@ defmodule Ezagent.ProviderConnection.Operation do
   @type t :: %__MODULE__{}
 
   @doc false
+  @spec provider_result_unowned?(t()) :: boolean()
+  def provider_result_unowned?(%__MODULE__{} = operation) do
+    Enum.all?(
+      [
+        operation.provider_result_ref,
+        operation.handoff_ref,
+        operation.result_permission_digest,
+        operation.result_expires_at,
+        operation.result_external_account_id,
+        operation.result_display_login,
+        operation.result_execution_identity,
+        operation.result_authorization_ref,
+        operation.result_authorization_version,
+        operation.result_ref,
+        operation.result_credential_version
+      ],
+      &is_nil/1
+    )
+  end
+
+  @doc false
   @spec callback_digest(AuthorizationBackendRecord.t(), AuthorizationAttempt.t(), Connection.t()) ::
           String.t()
   def callback_digest(

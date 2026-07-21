@@ -6,12 +6,14 @@ defmodule Ezagent.ProviderConnection.Store do
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
     AuthorizationBackendRecord,
+    AuthorizationSubject,
     Connection,
     CredentialReplacement,
     LocalAuthorizationBackend,
     Operation,
     OwnerLifecycle,
     Refresh,
+    RowLock,
     Termination
   }
 
@@ -201,7 +203,7 @@ defmodule Ezagent.ProviderConnection.Store do
 
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(attempt.attempt_ref)
+      locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
 
       backend_record =
         Repo.get_by(AuthorizationBackendRecord, authorization_ref: attempt.authorization_ref)
@@ -274,7 +276,7 @@ defmodule Ezagent.ProviderConnection.Store do
 
       Repo.transaction(fn ->
         locked_connection = lock_connection(connection.connection_id)
-        locked_attempt = lock_attempt(attempt.attempt_ref)
+        locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
         locked_operation = lock_operation(operation.id)
 
         cond do
@@ -284,7 +286,7 @@ defmodule Ezagent.ProviderConnection.Store do
           provider_result_matches?(locked_operation, attrs) ->
             locked_operation
 
-          provider_unowned?(locked_operation) ->
+          Operation.provider_result_unowned?(locked_operation) ->
             locked_operation
             |> Operation.provider_ownership_changeset(attrs)
             |> Repo.update!()
@@ -311,13 +313,13 @@ defmodule Ezagent.ProviderConnection.Store do
   defp journal_terminal_provider_result(operation, attrs) do
     Repo.transaction(fn ->
       connection = lock_connection(operation.connection_id)
-      attempt = lock_attempt(operation.attempt_ref)
+      attempt = RowLock.authorization_attempt(operation.attempt_ref)
       current = lock_operation(operation.id)
 
       if connection.status in ["revoking", "disconnecting"] and
            connection.connection_version == current.expected_connection_version + 1 and
            current.status == "prepared" and current.attempt_ref == attempt.attempt_ref and
-           provider_unowned?(current) do
+           Operation.provider_result_unowned?(current) do
         current
         |> Operation.provider_ownership_changeset(attrs)
         |> Repo.update!()
@@ -335,25 +337,6 @@ defmodule Ezagent.ProviderConnection.Store do
       {:error, _reason} ->
         {:error, :credential_conflict}
     end
-  end
-
-  defp provider_unowned?(operation) do
-    Enum.all?(
-      [
-        operation.handoff_ref,
-        operation.provider_result_ref,
-        operation.result_external_account_id,
-        operation.result_display_login,
-        operation.result_execution_identity,
-        operation.result_authorization_ref,
-        operation.result_authorization_version,
-        operation.result_permission_digest,
-        operation.result_expires_at,
-        operation.result_ref,
-        operation.result_credential_version
-      ],
-      &is_nil/1
-    )
   end
 
   defp provider_result_matches?(operation, attrs) do
@@ -381,7 +364,7 @@ defmodule Ezagent.ProviderConnection.Store do
   defp journal_credential_result(operation, attempt, connection, result) do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(attempt.attempt_ref)
+      locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
       locked_operation = lock_operation(operation.id)
 
       attrs = %{
@@ -540,7 +523,7 @@ defmodule Ezagent.ProviderConnection.Store do
   defp claim_prepared(operation, attempt, connection, owner, now) do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(attempt.attempt_ref)
+      locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
       locked_operation = lock_operation(operation.id)
 
       backend_record =
@@ -605,7 +588,7 @@ defmodule Ezagent.ProviderConnection.Store do
   defp validate_fence_locked(operation, attempt, connection) do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(attempt.attempt_ref)
+      locked_attempt = RowLock.authorization_attempt(attempt.attempt_ref)
       locked_operation = lock_operation(operation.id)
 
       cond do
@@ -719,13 +702,6 @@ defmodule Ezagent.ProviderConnection.Store do
       |> lock("FOR UPDATE")
       |> Repo.one()
 
-  defp lock_attempt(attempt_ref),
-    do:
-      AuthorizationAttempt
-      |> where([row], row.attempt_ref == ^attempt_ref)
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
   defp lock_operation(operation_id),
     do:
       Operation
@@ -734,19 +710,12 @@ defmodule Ezagent.ProviderConnection.Store do
       |> Repo.one()
 
   defp subject(connection, owner),
-    do: subject(connection, owner, connection_execution_identity(connection))
-
-  defp subject(connection, owner, execution_identity) do
-    %{
-      owner_uri: owner,
-      workspace_uri: Ezagent.Capability.workspace_of(owner),
-      provider_id: connection.provider_id,
-      governed_host: connection.governed_host,
-      connection_id: connection.connection_id,
-      connection_version: connection.connection_version,
-      execution_identity: execution_identity
-    }
-  end
+    do:
+      AuthorizationSubject.from_connection(
+        connection,
+        owner,
+        connection_execution_identity(connection)
+      )
 
   defp connection_execution_identity(%Connection{status: "pending_authorization"} = connection),
     do: connection.requested_execution_identity_class

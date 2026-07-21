@@ -3,6 +3,7 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
 
   alias Ezagent.ProviderConnection.AuthorizationAttempt
 
+  @doc false
   @spec artifact_digest(Ezagent.Capability.t()) :: String.t()
   def artifact_digest(%Ezagent.Capability{} = artifact) do
     artifact
@@ -10,6 +11,7 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
     |> digest()
   end
 
+  @doc false
   @spec reservation_digest(String.t(), struct(), map(), String.t(), String.t()) ::
           String.t()
   def reservation_digest(purpose, connection, coordinates, begin_correlation_id, artifact_digest) do
@@ -30,6 +32,7 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
     })
   end
 
+  @doc false
   @spec valid?(struct(), AuthorizationAttempt.t(), struct(), Ezagent.Capability.t()) :: boolean()
   def valid?(connection, attempt, backend_record, artifact) do
     settlement_valid?(connection, attempt, backend_record, artifact) and
@@ -41,6 +44,7 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
       attempt.bound_subject_digest == backend_record.bound_input_digest
   end
 
+  @doc false
   @spec settlement_valid?(struct(), AuthorizationAttempt.t(), struct(), Ezagent.Capability.t()) ::
           boolean()
   def settlement_valid?(connection, attempt, backend_record, artifact) do
@@ -65,6 +69,7 @@ defmodule Ezagent.ProviderConnection.CallbackBinding do
       backend_record.execution_identity == attempt.requested_execution_identity_class
   end
 
+  @doc false
   @spec reservation_valid?(struct(), AuthorizationAttempt.t(), String.t(), Ezagent.Capability.t()) ::
           boolean()
   def reservation_valid?(connection, attempt, begin_correlation_id, artifact) do

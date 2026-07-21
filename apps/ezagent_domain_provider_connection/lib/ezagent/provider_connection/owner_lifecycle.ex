@@ -12,10 +12,12 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
     AuthorizationBackendRecord,
+    AuthorizationSubject,
     CallbackBinding,
     Connection,
     LocalAuthorizationBackend,
-    ProviderAuthorizationCommand
+    ProviderAuthorizationCommand,
+    RowLock
   }
 
   alias EzagentCore.Repo
@@ -24,7 +26,12 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   @spec begin_authorization(map(), map()) :: {:ok, map()} | {:error, atom()}
   def begin_authorization(args, %{self_uri: %URI{} = owner} = ctx) do
     with {:ok, {connection, reservation}} <- reserve_initial_begin(args, owner),
-         subject <- subject(connection, owner, args.requested_execution_identity_class),
+         subject <-
+           AuthorizationSubject.from_connection(
+             connection,
+             owner,
+             args.requested_execution_identity_class
+           ),
          {:ok, started} <-
            begin_authorization(
              "initial_bind",
@@ -64,7 +71,12 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   @spec reauthorize(map(), map()) :: {:ok, map()} | {:error, atom()}
   def reauthorize(args, %{self_uri: %URI{} = owner}) do
     with {:ok, {connection, reservation}} <- reserve_reauthorization(args, owner),
-         subject <- subject(connection, owner, args.requested_execution_identity_class),
+         subject <-
+           AuthorizationSubject.from_connection(
+             connection,
+             owner,
+             args.requested_execution_identity_class
+           ),
          {:ok, started} <-
            begin_authorization(
              "reauthorize",
@@ -342,8 +354,8 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
        ) do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(reservation.attempt_ref)
-      backend_record = lock_backend_record(backend_record.authorization_ref)
+      locked_attempt = RowLock.authorization_attempt(reservation.attempt_ref)
+      backend_record = RowLock.authorization_backend_record(backend_record.authorization_ref)
 
       cond do
         not match?(%Connection{status: "pending_authorization"}, locked_connection) ->
@@ -412,8 +424,8 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   defp settle_reauthorization(connection, reservation, backend_record, state_digest, artifact) do
     Repo.transaction(fn ->
       locked_connection = lock_connection(connection.connection_id)
-      locked_attempt = lock_attempt(reservation.attempt_ref)
-      backend_record = lock_backend_record(backend_record.authorization_ref)
+      locked_attempt = RowLock.authorization_attempt(reservation.attempt_ref)
+      backend_record = RowLock.authorization_backend_record(backend_record.authorization_ref)
 
       cond do
         not match?(%Connection{}, locked_connection) or
@@ -517,7 +529,7 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
     _ =
       Repo.transaction(fn ->
         locked_connection = lock_connection(connection.connection_id)
-        locked_attempt = lock_attempt(reservation.attempt_ref)
+        locked_attempt = RowLock.authorization_attempt(reservation.attempt_ref)
 
         if match?(%Connection{}, locked_connection) and
              match?(%AuthorizationAttempt{}, locked_attempt) and
@@ -605,32 +617,6 @@ defmodule Ezagent.ProviderConnection.OwnerLifecycle do
   defp lock_connection_key(connection_id) do
     Repo.query!("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [connection_id])
     :ok
-  end
-
-  defp lock_attempt(attempt_ref),
-    do:
-      AuthorizationAttempt
-      |> where([row], row.attempt_ref == ^attempt_ref)
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
-  defp lock_backend_record(authorization_ref),
-    do:
-      AuthorizationBackendRecord
-      |> where([row], row.authorization_ref == ^authorization_ref)
-      |> lock("FOR UPDATE")
-      |> Repo.one()
-
-  defp subject(connection, owner, execution_identity) do
-    %{
-      owner_uri: owner,
-      workspace_uri: Ezagent.Capability.workspace_of(owner),
-      provider_id: connection.provider_id,
-      governed_host: connection.governed_host,
-      connection_id: connection.connection_id,
-      connection_version: connection.connection_version,
-      execution_identity: execution_identity
-    }
   end
 
   defp unwrap_transaction({:ok, result}), do: {:ok, result}

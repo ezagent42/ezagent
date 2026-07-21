@@ -125,7 +125,7 @@ defmodule Ezagent.ProviderConnection.CallbackTerminalProof do
 
   defp confirmed_absence?(operation, command, record),
     do:
-      provider_unowned?(operation) and command.status == "terminal_failed" and
+      Operation.provider_result_unowned?(operation) and command.status == "terminal_failed" and
         command.safe_error_code == "not_completed" and is_nil(command.safe_result) and
         record.lifecycle_status == "cancelled" and is_nil(record.handoff_ref) and
         is_nil(record.handoff_ciphertext) and is_nil(record.shredded_at)
@@ -158,7 +158,7 @@ defmodule Ezagent.ProviderConnection.CallbackTerminalProof do
   end
 
   defp operation_result_coherent?(operation, result, expires_at) do
-    provider_unowned?(operation) or
+    Operation.provider_result_unowned?(operation) or
       (operation.handoff_ref == result["handoff_ref"] and
          operation.provider_result_ref == result["provider_result_ref"] and
          operation.result_external_account_id == result["external_account_id"] and
@@ -169,25 +169,6 @@ defmodule Ezagent.ProviderConnection.CallbackTerminalProof do
          operation.result_permission_digest == result["granted_permissions_digest"] and
          optional_datetime_equal?(operation.result_expires_at, expires_at) and
          present?(operation.result_ref) and is_integer(operation.result_credential_version))
-  end
-
-  defp provider_unowned?(operation) do
-    Enum.all?(
-      [
-        operation.provider_result_ref,
-        operation.handoff_ref,
-        operation.result_permission_digest,
-        operation.result_expires_at,
-        operation.result_external_account_id,
-        operation.result_display_login,
-        operation.result_execution_identity,
-        operation.result_authorization_ref,
-        operation.result_authorization_version,
-        operation.result_ref,
-        operation.result_credential_version
-      ],
-      &is_nil/1
-    )
   end
 
   defp callback_operation_class("initial_bind"), do: "store"
