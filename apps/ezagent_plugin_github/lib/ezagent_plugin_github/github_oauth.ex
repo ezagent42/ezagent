@@ -82,11 +82,11 @@ defmodule EzagentPluginGithub.GitHubOAuth do
       {:ok, %{status: status}} when status in 400..499 ->
         {:error, :provider_denied}
 
-      {:ok, _} ->
-        {:error, :provider_unavailable}
+      {:ok, %{status: status}} when status >= 500 ->
+        {:error, :backend_unavailable}
 
       {:error, _} ->
-        {:error, :provider_unavailable}
+        {:error, :backend_unavailable}
     end
   end
 end

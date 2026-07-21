@@ -57,17 +57,17 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
       # The test validates the shape of the result against all 10 keys that
       # validate_consume_result/5 requires. The exchange returns a fixture
       # result directly — it does NOT call the inner callback (the real
-      # GitHubOAuth HTTP call is tested separately in GitHubOAuthTest).
+      # GitHubOAuth and GitHubClient HTTP calls are tested separately).
       exchange = fn _callback_fn ->
         {:ok,
          %{
-           provider_result_ref: "gh-result-test-fixture",
+           provider_result_ref: "gh-result-corr-1",
            external_account_id: "github-user-42",
            display_login: "test-user",
            execution_identity: %{kind: :connected_user, external_account_id: "github-user-42"},
            authorization_ref: "auth-ref-1",
            authorization_version: 1,
-           credential_material: {:write_only_handoff, "github-token:gho_test_token_123"},
+           credential_material: {:write_only_handoff, "gho_test_token_123"},
            granted_permissions_digest: "repo",
            expires_at: nil,
            provider_metadata: %{}
@@ -85,7 +85,7 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
       assert {:ok, resp} = result
 
       # Validate all 10 keys that validate_consume_result/5 checks
-      assert resp.provider_result_ref == "gh-result-test-fixture"
+      assert resp.provider_result_ref == "gh-result-corr-1"
       assert resp.external_account_id == "github-user-42"
       assert resp.display_login == "test-user"
 
@@ -94,7 +94,7 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
 
       assert resp.authorization_ref == "auth-ref-1"
       assert resp.authorization_version == 1
-      assert {:write_only_handoff, "github-token:gho_test_token_123"} = resp.credential_material
+      assert {:write_only_handoff, "gho_test_token_123"} = resp.credential_material
       assert resp.granted_permissions_digest == "repo"
       assert resp.expires_at == nil
       assert resp.provider_metadata == %{}
@@ -107,8 +107,20 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
   end
 
   describe "stub callbacks" do
-    test "reconcile_callback returns not_completed" do
+    test "reconcile_callback without exchange returns not_completed" do
       assert {:ok, :not_completed} = GitHubDriver.reconcile_callback(%{})
+    end
+
+    test "reconcile_callback with exchange delegates to exchange" do
+      exchange = fn callback_fn ->
+        callback_fn.(%{state: "test-state"})
+      end
+
+      assert {:ok, :not_completed} =
+               GitHubDriver.reconcile_callback(%{
+                 exchange: exchange,
+                 correlation_id: "corr-1"
+               })
     end
 
     test "refresh without refresh_use returns error" do

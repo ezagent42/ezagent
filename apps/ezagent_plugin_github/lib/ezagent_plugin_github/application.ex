@@ -43,10 +43,30 @@ defmodule EzagentPluginGithub.Application do
   @impl Ezagent.Plugin
   def after_boot do
     pair = backend_pair()
-    _ = Ezagent.ProviderConnection.BackendPairRegistry.register(:github_plugin, pair)
+
+    case Ezagent.ProviderConnection.BackendPairRegistry.register(:github_plugin, pair) do
+      :acquired ->
+        :ok
+
+      :existing_identical ->
+        :ok
+
+      {:error, {:declaration_drift, _expected, _actual}} ->
+        raise "BackendPair registry declaration drift detected for pair #{pair.pair_id}"
+    end
 
     driver = driver_declaration()
-    _ = Ezagent.ProviderConnection.DriverRegistry.register(:github_plugin, driver)
+
+    case Ezagent.ProviderConnection.DriverRegistry.register(:github_plugin, driver) do
+      :acquired ->
+        :ok
+
+      :existing_identical ->
+        :ok
+
+      {:error, {:declaration_drift, _expected, _actual}} ->
+        raise "Driver registry declaration drift detected for #{driver.provider_id}/#{driver.acquisition_method}"
+    end
 
     :ok
   end

@@ -28,6 +28,7 @@ defmodule EzagentPluginGithub.GitHubDriver do
 
   @behaviour Ezagent.ProviderConnection.Driver
 
+  alias EzagentPluginGithub.GitHubClient
   alias EzagentPluginGithub.GitHubOAuth
 
   @redirect_uri "https://ezagent.example/github/callback"
@@ -55,28 +56,39 @@ defmodule EzagentPluginGithub.GitHubDriver do
 
   @impl true
   def consume_callback(%{exchange: exchange} = context) when is_function(exchange, 1) do
+    corr_id = Map.get(context, :correlation_id, "unknown")
+
     exchange.(fn private_frame ->
       code = private_frame.callback_envelope[:code] || private_frame.callback_envelope["code"]
 
       case GitHubOAuth.exchange_code(code, @redirect_uri) do
         {:ok, %{access_token: token}} ->
-          result_ref =
-            "gh-result-#{:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)}"
+          case GitHubClient.get("/user", token) do
+            {:ok, user} ->
+              external_account_id = Integer.to_string(user["id"])
+              display_login = user["login"]
 
-          {:ok,
-           %{
-             provider_result_ref: result_ref,
-             external_account_id: token,
-             display_login: "github-user",
-             execution_identity: %{kind: :connected_user, external_account_id: token},
-             authorization_ref: context.authorization_ref,
-             authorization_version:
-               (Map.get(context, :expected_authorization_version, 0) || 0) + 1,
-             credential_material: {:write_only_handoff, "github-token:#{token}"},
-             granted_permissions_digest: "repo",
-             expires_at: nil,
-             provider_metadata: %{}
-           }}
+              {:ok,
+               %{
+                 provider_result_ref: "gh-result-#{corr_id}",
+                 external_account_id: external_account_id,
+                 display_login: display_login,
+                 execution_identity: %{
+                   kind: :connected_user,
+                   external_account_id: external_account_id
+                 },
+                 authorization_ref: context.authorization_ref,
+                 authorization_version:
+                   (Map.get(context, :expected_authorization_version, 0) || 0) + 1,
+                 credential_material: {:write_only_handoff, token},
+                 granted_permissions_digest: "repo",
+                 expires_at: nil,
+                 provider_metadata: %{}
+               }}
+
+            {:error, _reason} ->
+              {:error, :provider_protocol_failed}
+          end
 
         {:error, reason} ->
           {:error, reason}
@@ -87,18 +99,23 @@ defmodule EzagentPluginGithub.GitHubDriver do
   def consume_callback(_context), do: {:error, :provider_protocol_failed}
 
   @impl true
+  def reconcile_callback(%{exchange: exchange, correlation_id: _corr_id}) do
+    exchange.(fn _private_frame ->
+      {:ok, :not_completed}
+    end)
+  end
+
   def reconcile_callback(_context), do: {:ok, :not_completed}
 
   @impl true
-  def refresh(%{refresh_use: refresh_use} = context) do
+  def refresh(%{refresh_use: refresh_use}) do
     Ezagent.ProviderConnection.CredentialRefreshExchange.consume_refresh_exchange(%{
       refresh_use: refresh_use,
       provider_exchange: fn _private_frame ->
         {:ok,
          %{
            provider_result_ref: "gh-refresh-noop",
-           credential_material:
-             context[:current_credential_material] || {:write_only_handoff, "github-noop-token"},
+           replacement_credential: {:write_only_handoff, "github-noop-refresh"},
            granted_permissions_digest: "repo",
            expires_at: nil,
            provider_metadata: %{}
