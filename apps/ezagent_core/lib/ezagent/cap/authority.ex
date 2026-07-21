@@ -31,12 +31,19 @@ defmodule Ezagent.Cap.Authority do
 
   @doc false
   @spec open(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
-  def open(%URI{} = uri, kind_type) when is_atom(kind_type) do
+  def open(%URI{} = uri, kind_type) when is_atom(kind_type),
+    do: open(uri, kind_type, :unknown)
+
+  @doc false
+  @spec open(URI.t(), atom(), :created | :existed | :unknown) ::
+          {:ok, t()} | {:error, term()}
+  def open(%URI{} = uri, kind_type, create_freshness)
+      when is_atom(kind_type) and create_freshness in [:created, :existed, :unknown] do
     uri_string = Ezagent.URI.stable_key(uri)
 
     case KindCapAuthority.active(uri_string) do
       %KindCapAuthority{} = row -> {:ok, from_row(row)}
-      nil -> genesis(uri, kind_type)
+      nil -> genesis(uri, kind_type, create_freshness)
     end
   end
 
@@ -294,7 +301,7 @@ defmodule Ezagent.Cap.Authority do
     "kind-g#{generation}:#{fingerprint}"
   end
 
-  defp genesis(uri, kind_type) do
+  defp genesis(uri, kind_type, create_freshness) do
     uri_string = Ezagent.URI.stable_key(uri)
 
     Repo.transaction(fn ->
@@ -314,6 +321,14 @@ defmodule Ezagent.Cap.Authority do
           end
 
           case insert_generation(uri, kind_type, 1) do
+            {:ok, authority} -> authority
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        _historical when create_freshness == :created ->
+          next_generation = next_generation(uri_string)
+
+          case insert_generation(uri, kind_type, next_generation) do
             {:ok, authority} -> authority
             {:error, reason} -> Repo.rollback(reason)
           end

@@ -109,7 +109,9 @@ defmodule Ezagent.Kind.Server do
     uri_str = URI.to_string(uri)
     create_freshness = create_freshness(kind_module, uri)
     args = Map.put(args, :create_freshness, create_freshness)
-    authority_result = Ezagent.Cap.Authority.open(uri, kind_module.type_name())
+
+    authority_result =
+      Ezagent.Cap.Authority.open(uri, kind_module.type_name(), create_freshness)
 
     snapshot_result =
       case authority_result do

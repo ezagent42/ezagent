@@ -764,6 +764,13 @@ defmodule Ezagent.Lifecycle do
           :error -> :ok
         end
 
+        # A live target retires its authority while draining developer destroy
+        # hooks in Kind.Server. A cold target has no hook process, so retire the
+        # active row here as well. Idempotency makes this the single post-
+        # termination guarantee for both paths: a later genuine create must
+        # append a strictly newer generation instead of reopening the old key.
+        :ok = Ezagent.Cap.Authority.retire(uri)
+
         # 3. Clear durable state + ever-created marker AFTER the process is
         #    gone — the final, race-free delete. If `delete` ran first
         #    (the previous order), a live `{:snapshot, :on_change}` Kind
