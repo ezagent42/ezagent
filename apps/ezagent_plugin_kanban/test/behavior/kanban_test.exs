@@ -1,12 +1,24 @@
 defmodule Ezagent.ActionSet.KanbanTest do
   @moduledoc """
   Kanban Behavior handler 单元测试（直接调 handler，桩 ctx）。
-  增量3：节点扩字段 + 认领/状态/挂载/指标 + per-node 授权 + 不变式。
+
+  协作模型（`docs/notes/2026-07-15-kanban-collab-model.md`，带认领的 excalidraw 式）：
+    - H1 加任何节点（根/子）= 创建者自动认领（owner=caller, status=:claimed）；任何持
+      板 operate cap 的成员都能加（dispatch 层 gate，handler 内不再门控加节点）。
+    - H5 单根先行：空板第一个节点=根；已有根再传 parent_id="" → :root_exists。
+    - H3 取消认领需空：有 artifacts/metrics 的节点不能 unclaim（子节点不算内容，C3）。
+    - H2 删除=drop 子树：版主/wildcard 兜底可删任何；否则子树内每个节点须
+      owner==caller 或未认领，含他人已认领后代 → :forbidden_mixed_ownership。
+    - C2 版主=本板 admin：全局 wildcard 或 caller==本板 data_owner，可编辑本板任何节点。
+  **不变式**：`owner==nil ⟺ status==:unassigned`。
   """
   use ExUnit.Case, async: true
 
   alias Ezagent.ActionSet.Kanban
   alias EzagentPluginKanban.Application, as: KanbanApp
+
+  @alice "entity://system/user/alice"
+  @bob "entity://system/user/bob"
 
   # 棒链来自 recipe config 数据（layer-2）——测试经此数据路径注入 ctx，不再依赖
   # Behavior 内硬编码的 @stages（taxonomy §4.1 de-bake）。@stages / @ci_stage /
@@ -19,6 +31,8 @@ defmodule Ezagent.ActionSet.KanbanTest do
 
   defp rd(tree), do: fn k, d -> Map.get(%{tree: tree}, k, d) end
 
+  # canonical admin ctx（#1457 后 admin?=caller==canonical admin root），带 caller
+  # （加节点自动认领需 caller）。
   defp admin_ctx(tree),
     do:
       Map.merge(@recipe_config, %{
@@ -27,6 +41,7 @@ defmodule Ezagent.ActionSet.KanbanTest do
         caller: Ezagent.Entity.User.admin_uri()
       })
 
+  # 无 cap 普通成员（handler 内不门控加节点；cap gate 在 dispatch 层，单测绕过）。
   defp user_ctx(tree, user),
     do:
       Map.merge(@recipe_config, %{
@@ -35,6 +50,20 @@ defmodule Ezagent.ActionSet.KanbanTest do
         caller: Ezagent.URI.new!(user)
       })
 
+  # 版主 ctx：非 canonical admin，但 caller == 本板 data_owner（经 :data_owner 直注，测试夹具）。
+  defp moderator_ctx(tree, owner),
+    do:
+      Map.merge(@recipe_config, %{
+        read: rd(tree),
+        caps: MapSet.new(),
+        caller: Ezagent.URI.new!(owner),
+        data_owner: Ezagent.URI.new!(owner)
+      })
+
+  # 无 caller 的 ctx（触发 :no_caller）。
+  defp no_caller_ctx(tree),
+    do: Map.merge(@recipe_config, %{read: rd(tree), caps: MapSet.new()})
+
   defp committed(effects),
     do:
       Enum.find_value(effects, fn
@@ -42,106 +71,120 @@ defmodule Ezagent.ActionSet.KanbanTest do
         _ -> nil
       end)
 
-  # 建一棵 admin 起的小树，返回 {tree, ids}
+  defp empty, do: %{nodes: %{}, root_id: nil, seq: 0}
+
+  # 由 `ctx`（已内嵌当前树）加一个节点，返回 {tree, id}。首参保留当前树仅为调用处可读。
+  defp add!(_tree, parent_id, title, ctx) do
+    assert {:ok, %{id: id}, e} =
+             Kanban.handle_add_node(%{parent_id: parent_id, title: title}, ctx)
+
+    {committed(e), id}
+  end
+
+  # admin 起一棵根+子（都自动认领给 admin），返回 {tree, root_id, child_id}。
   defp seed do
-    t0 = %{nodes: %{}, root_id: nil, seq: 0}
-    {:ok, %{id: r}, e1} = Kanban.handle_add_node(%{parent_id: "", title: "根"}, admin_ctx(t0))
-    t1 = committed(e1)
-    {:ok, %{id: c}, e2} = Kanban.handle_add_node(%{parent_id: r, title: "功能点"}, admin_ctx(t1))
-    {committed(e2), r, c}
+    {t1, r} = add!(empty(), "", "根", admin_ctx(empty()))
+    {t2, c} = add!(t1, r, "功能点", admin_ctx(t1))
+    {t2, r, c}
   end
 
   test "create 初始空树" do
     assert {:ok, %{tree: %{nodes: %{}, root_id: nil, seq: 0}}} = Kanban.create(%{})
   end
 
-  describe "add_node（默认字段 + 授权）" do
-    test "admin 建根：默认 stage=链首 / owner=nil / status=:unassigned / 空挂载" do
+  describe "add_node（H1 自动认领 + 任何人可加）" do
+    test "加根自动认领：owner=caller / status=:claimed / stage=链首 / 空挂载" do
       assert {:ok, %{id: "n1"}, e} =
-               Kanban.handle_add_node(
-                 %{parent_id: "", title: "根"},
-                 admin_ctx(%{nodes: %{}, root_id: nil, seq: 0})
-               )
+               Kanban.handle_add_node(%{parent_id: "", title: "根"}, user_ctx(empty(), @alice))
 
       n = committed(e).nodes["n1"]
-      assert n.stage == @first_stage and n.owner == nil and n.status == :unassigned
+      assert n.owner == @alice and n.status == :claimed
+      assert n.stage == @first_stage
       assert n.artifacts == [] and n.metrics == []
     end
 
-    test "非 admin 不能建根" do
-      assert {:error, :forbidden} =
-               Kanban.handle_add_node(
-                 %{parent_id: "", title: "根"},
-                 user_ctx(%{nodes: %{}, root_id: nil, seq: 0}, "entity://system/user/bob")
-               )
+    test "任何成员（无 cap）都能加根（handler 不门控，cap gate 在 dispatch 层）" do
+      assert {:ok, %{id: "n1"}, e} =
+               Kanban.handle_add_node(%{parent_id: "", title: "根"}, user_ctx(empty(), @bob))
+
+      assert committed(e).nodes["n1"].owner == @bob
     end
 
-    test "加子继承父 stage；非父owner非admin 不能加子" do
+    test "H5 单根：已有根再传 parent_id=\"\" → :root_exists" do
+      {t, _r, _c} = seed()
+
+      assert {:error, :root_exists} =
+               Kanban.handle_add_node(%{parent_id: "", title: "第二个根"}, user_ctx(t, @alice))
+    end
+
+    test "任何成员可在他人节点下加子（各自认领，子树可混主）" do
       {t, r, _c} = seed()
+      # 根由 admin 认领；bob 仍能在其下加子并认领这个子。
+      assert {:ok, %{id: id}, e} =
+               Kanban.handle_add_node(%{parent_id: r, title: "bob的子"}, user_ctx(t, @bob))
 
-      assert {:ok, %{id: _}, e} =
-               Kanban.handle_add_node(%{parent_id: r, title: "x"}, admin_ctx(t))
+      assert committed(e).nodes[id].owner == @bob and committed(e).nodes[id].status == :claimed
+    end
 
-      assert committed(e).nodes |> Map.values() |> Enum.all?(&(&1.stage == @first_stage))
+    test "加子继承父 stage" do
+      {t, r, _c} = seed()
+      {t2, id} = add!(t, r, "x", user_ctx(t, @alice))
+      assert t2.nodes[id].stage == @first_stage
+    end
 
-      assert {:error, :forbidden} =
-               Kanban.handle_add_node(
-                 %{parent_id: r, title: "x"},
-                 user_ctx(t, "entity://system/user/bob")
-               )
+    test "父不存在 → :parent_not_found" do
+      {t, _r, _c} = seed()
+
+      assert {:error, :parent_not_found} =
+               Kanban.handle_add_node(%{parent_id: "nope", title: "x"}, user_ctx(t, @alice))
+    end
+
+    test "无 caller → :no_caller（自动认领需 caller）" do
+      assert {:error, :no_caller} =
+               Kanban.handle_add_node(%{parent_id: "", title: "根"}, no_caller_ctx(empty()))
     end
   end
 
   describe "认领 / 状态 + 不变式" do
-    test "claim 未分配 → owner=caller, status=:claimed" do
+    # 认领只作用于未认领节点；自动认领后，未认领只由 unclaim 产生。
+    defp unassigned_child do
       {t, _r, c} = seed()
+      {:ok, %{}, e} = Kanban.handle_unclaim_node(%{id: c}, admin_ctx(t))
+      {committed(e), c}
+    end
 
-      assert {:ok, %{}, e} =
-               Kanban.handle_claim_node(%{id: c}, user_ctx(t, "entity://system/user/alice"))
+    test "claim 未认领 → owner=caller, status=:claimed" do
+      {t, c} = unassigned_child()
 
+      assert {:ok, %{}, e} = Kanban.handle_claim_node(%{id: c}, user_ctx(t, @alice))
       n = committed(e).nodes[c]
-      assert n.owner == "entity://system/user/alice" and n.status == :claimed
+      assert n.owner == @alice and n.status == :claimed
     end
 
     test "claim 已认领 → already_claimed" do
       {t, _r, c} = seed()
-
-      {:ok, %{}, e} =
-        Kanban.handle_claim_node(%{id: c}, user_ctx(t, "entity://system/user/alice"))
-
+      # seed 的 c 已被 admin 自动认领。
       assert {:error, :already_claimed} =
-               Kanban.handle_claim_node(
-                 %{id: c},
-                 user_ctx(committed(e), "entity://system/user/bob")
-               )
+               Kanban.handle_claim_node(%{id: c}, user_ctx(t, @bob))
     end
 
-    test "owner 可 set_status；非 owner 非 admin 被拒（per-node 授权）" do
-      {t, _r, c} = seed()
-
-      {:ok, %{}, e} =
-        Kanban.handle_claim_node(%{id: c}, user_ctx(t, "entity://system/user/alice"))
-
+    test "owner 可 set_status；非 owner 非 board_admin 被拒（per-node 授权）" do
+      {t, c} = unassigned_child()
+      {:ok, %{}, e} = Kanban.handle_claim_node(%{id: c}, user_ctx(t, @alice))
       t2 = committed(e)
 
       assert {:ok, %{}, e2} =
-               Kanban.handle_set_status(
-                 %{id: c, status: "doing"},
-                 user_ctx(t2, "entity://system/user/alice")
-               )
+               Kanban.handle_set_status(%{id: c, status: "doing"}, user_ctx(t2, @alice))
 
       assert committed(e2).nodes[c].status == :doing
 
       assert {:error, :forbidden} =
-               Kanban.handle_set_status(
-                 %{id: c, status: "done"},
-                 user_ctx(t2, "entity://system/user/bob")
-               )
+               Kanban.handle_set_status(%{id: c, status: "done"}, user_ctx(t2, @bob))
     end
 
     test "未认领不能 set_status（不变式 owner==nil ⟺ unassigned）" do
-      {t, _r, c} = seed()
-      # admin 改未认领节点状态 → 触不变式
+      {t, c} = unassigned_child()
+
       assert {:error, :must_claim_first} =
                Kanban.handle_set_status(%{id: c, status: "doing"}, admin_ctx(t))
     end
@@ -149,35 +192,80 @@ defmodule Ezagent.ActionSet.KanbanTest do
     test "非法 status 值被拒" do
       {t, _r, c} = seed()
 
-      {:ok, %{}, e} =
-        Kanban.handle_claim_node(%{id: c}, user_ctx(t, "entity://system/user/alice"))
-
       assert {:error, {:invalid_status, "wat"}} =
-               Kanban.handle_set_status(
-                 %{id: c, status: "wat"},
-                 user_ctx(committed(e), "entity://system/user/alice")
-               )
+               Kanban.handle_set_status(%{id: c, status: "wat"}, admin_ctx(t))
+    end
+  end
+
+  describe "unclaim（H3 取消认领需空 + C3 子不算内容）" do
+    test "空节点 owner 可取消认领 → owner=nil, status=:unassigned" do
+      {t, _r, c} = seed()
+
+      assert {:ok, %{}, e} = Kanban.handle_unclaim_node(%{id: c}, admin_ctx(t))
+      n = committed(e).nodes[c]
+      assert n.owner == nil and n.status == :unassigned
+    end
+
+    test "有 artifacts 的节点不能取消认领 → :has_content_cannot_unclaim" do
+      {t, _r, c} = seed()
+
+      {:ok, %{}, e} =
+        Kanban.handle_attach_artifact(%{id: c, artifact: %{"ref" => "x"}}, admin_ctx(t))
+
+      assert {:error, :has_content_cannot_unclaim} =
+               Kanban.handle_unclaim_node(%{id: c}, admin_ctx(committed(e)))
+    end
+
+    test "有 metrics 的节点不能取消认领" do
+      {t, _r, c} = seed()
+
+      {:ok, %{}, e} =
+        Kanban.handle_set_metric(%{id: c, metric: %{"name" => "m", "target" => 1}}, admin_ctx(t))
+
+      assert {:error, :has_content_cannot_unclaim} =
+               Kanban.handle_unclaim_node(%{id: c}, admin_ctx(committed(e)))
+    end
+
+    test "有子节点但无内容仍可取消认领（C3：子不算内容）" do
+      {t, _r, c} = seed()
+      # 在 c 下加子（结构容器，c 自身无 artifacts/metrics）。
+      {t2, _gc} = add!(t, c, "子", admin_ctx(t))
+
+      assert {:ok, %{}, e} = Kanban.handle_unclaim_node(%{id: c}, admin_ctx(t2))
+      assert committed(e).nodes[c].owner == nil
+    end
+
+    test "非 owner 非 board_admin 不能取消认领 → :forbidden" do
+      {t, _r, c} = seed()
+
+      assert {:error, :forbidden} =
+               Kanban.handle_unclaim_node(%{id: c}, user_ctx(t, @bob))
+    end
+
+    test "版主（board_admin）可取消认领他人的空节点" do
+      # alice 建板（版主）+ 加根；bob 在根下加子并认领。
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:ok, %{}, e} = Kanban.handle_unclaim_node(%{id: gc}, moderator_ctx(t2, @alice))
+      assert committed(e).nodes[gc].owner == nil
     end
   end
 
   describe "挂载 artifacts / metrics（owner 权限）" do
     setup do
       {t, _r, c} = seed()
-
-      {:ok, %{}, e} =
-        Kanban.handle_claim_node(%{id: c}, user_ctx(t, "entity://system/user/alice"))
-
-      %{tree: committed(e), c: c}
+      # seed 的 c 由 admin 认领；改由 alice 持有：admin 退领 → alice 认领。
+      {:ok, %{}, e0} = Kanban.handle_unclaim_node(%{id: c}, admin_ctx(t))
+      {:ok, %{}, e1} = Kanban.handle_claim_node(%{id: c}, user_ctx(committed(e0), @alice))
+      %{tree: committed(e1), c: c}
     end
 
     test "attach + detach artifact", %{tree: t, c: c} do
       art = %{"tool" => "github", "kind" => "pr", "ref" => "#123", "url" => "http://x/123"}
 
       assert {:ok, %{}, e} =
-               Kanban.handle_attach_artifact(
-                 %{id: c, artifact: art},
-                 user_ctx(t, "entity://system/user/alice")
-               )
+               Kanban.handle_attach_artifact(%{id: c, artifact: art}, user_ctx(t, @alice))
 
       [a] = committed(e).nodes[c].artifacts
       assert a.tool == "github" and a.ref == "#123"
@@ -185,7 +273,7 @@ defmodule Ezagent.ActionSet.KanbanTest do
       assert {:ok, %{}, e2} =
                Kanban.handle_detach_artifact(
                  %{id: c, ref: "#123"},
-                 user_ctx(committed(e), "entity://system/user/alice")
+                 user_ctx(committed(e), @alice)
                )
 
       assert committed(e2).nodes[c].artifacts == []
@@ -195,38 +283,109 @@ defmodule Ezagent.ActionSet.KanbanTest do
       m = %{"name" => "周闭环数", "target" => 2, "current" => nil, "unit" => "个/周"}
 
       assert {:ok, %{}, e} =
-               Kanban.handle_set_metric(
-                 %{id: c, metric: m},
-                 user_ctx(t, "entity://system/user/alice")
-               )
+               Kanban.handle_set_metric(%{id: c, metric: m}, user_ctx(t, @alice))
 
       [met] = committed(e).nodes[c].metrics
       assert met.name == "周闭环数" and met.target == 2
-      # upsert 同名
+
       m2 = %{"name" => "周闭环数", "target" => 3, "current" => 1, "unit" => "个/周"}
 
       {:ok, %{}, e2} =
-        Kanban.handle_set_metric(
-          %{id: c, metric: m2},
-          user_ctx(committed(e), "entity://system/user/alice")
-        )
+        Kanban.handle_set_metric(%{id: c, metric: m2}, user_ctx(committed(e), @alice))
 
       assert [%{target: 3, current: 1}] = committed(e2).nodes[c].metrics
+    end
+
+    test "㊳ link 产物无 scheme 的 url 存储时补 https://（带 scheme / 站内路径 / 非 link 不动）",
+         %{tree: t, c: c} do
+      link = fn url ->
+        %{
+          "tool" => "ref",
+          "kind" => "link",
+          "ref" => "l-#{System.unique_integer()}",
+          "url" => url
+        }
+      end
+
+      # 裸域名 → 补 https://
+      {:ok, %{}, e} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("example.com/pr/1")},
+          user_ctx(t, @alice)
+        )
+
+      assert %{url: "https://example.com/pr/1"} = List.last(committed(e).nodes[c].artifacts)
+
+      # 已带 scheme 原样
+      {:ok, %{}, e2} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("http://a.b/c")},
+          user_ctx(committed(e), @alice)
+        )
+
+      assert %{url: "http://a.b/c"} = List.last(committed(e2).nodes[c].artifacts)
+
+      # 站内绝对路径原样
+      {:ok, %{}, e3} =
+        Kanban.handle_attach_artifact(
+          %{id: c, artifact: link.("/uploads/x")},
+          user_ctx(committed(e2), @alice)
+        )
+
+      assert %{url: "/uploads/x"} = List.last(committed(e3).nodes[c].artifacts)
+
+      # 非 link（file 的 uploads resource URI）不动
+      {:ok, %{}, e4} =
+        Kanban.handle_attach_artifact(
+          %{
+            id: c,
+            artifact: %{
+              "tool" => "upload",
+              "kind" => "file",
+              "ref" => "f",
+              "url" => "resource://ws/uploads/a"
+            }
+          },
+          user_ctx(committed(e3), @alice)
+        )
+
+      assert %{url: "resource://ws/uploads/a"} = List.last(committed(e4).nodes[c].artifacts)
     end
 
     test "非 owner 不能挂载", %{tree: t, c: c} do
       assert {:error, :forbidden} =
                Kanban.handle_attach_artifact(
                  %{id: c, artifact: %{"ref" => "x"}},
-                 user_ctx(t, "entity://system/user/bob")
+                 user_ctx(t, @bob)
                )
     end
   end
 
-  describe "set_stage / import 授权" do
-    test "set_stage 改阶段（owner/admin）", %{} do
+  describe "版主（board_admin）编辑他人节点（C2）" do
+    test "版主可 rename 他人认领的节点" do
+      # alice 建板（版主）；bob 在根下加子并认领。
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:ok, %{}, e} =
+               Kanban.handle_rename_node(%{id: gc, title: "版主改名"}, moderator_ctx(t2, @alice))
+
+      assert committed(e).nodes[gc].title == "版主改名"
+    end
+
+    test "非版主非 owner 不能编辑他人节点 → :forbidden" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:error, :forbidden} =
+               Kanban.handle_rename_node(%{id: gc, title: "x"}, user_ctx(t2, @alice))
+    end
+  end
+
+  describe "set_stage 授权 + R1.1 固定链推进" do
+    test "set_stage 改阶段（owner/board_admin）" do
       {t, _r, c} = seed()
-      # c 父=root(链首)，只能链首或第二棒(父+1)
+
       assert {:ok, %{}, e} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
 
@@ -236,20 +395,17 @@ defmodule Ezagent.ActionSet.KanbanTest do
                Kanban.handle_set_stage(%{id: c, stage: "nope"}, admin_ctx(t))
     end
 
-    test "set_stage R1.1：stage 沿固定链推进（只父棒或父棒+1，根随子推进，不能跳棒）", %{} do
+    test "R1.1：stage 沿固定链推进（只父棒或父棒+1，根随子推进，不能跳棒）" do
       {t, r, c} = seed()
 
-      # 根（G4 拍板后无父约束、只受子约束）：子 c 还在链首 → 根设第二棒被子侧拒
       assert {:error, {:stage_order_violation, _}} =
                Kanban.handle_set_stage(%{id: r, stage: to_string(@second_stage)}, admin_ctx(t))
 
-      # 子 c（父=链首=0）：设第二棒(1=父+1) → OK
       assert {:ok, %{}, e1} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
 
       assert committed(e1).nodes[c].stage == @second_stage
 
-      # G4 开口：子到位（第二棒）后，根可推进到第二棒（不再钉死链首）
       assert {:ok, %{}, er} =
                Kanban.handle_set_stage(
                  %{id: r, stage: to_string(@second_stage)},
@@ -258,73 +414,154 @@ defmodule Ezagent.ActionSet.KanbanTest do
 
       assert committed(er).nodes[r].stage == @second_stage
 
-      # 子 c：设第三棒(2=父+2) → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
                Kanban.handle_set_stage(%{id: c, stage: to_string(@third_stage)}, admin_ctx(t))
 
-      # 子 c：设末棒 → 拒（跳棒）
       assert {:error, {:stage_order_violation, _}} =
                Kanban.handle_set_stage(
                  %{id: c, stage: to_string(List.last(@stages))},
                  admin_ctx(t)
                )
     end
+  end
 
-    test "drop_subtree：砍子树 + 记进图级别 drop 历史(:drops, 不挂某节点)", %{} do
-      {t, _r, c} = seed()
+  describe "drop_subtree（㉕ 非破坏跟踪标记）" do
+    test "认领人 drop 自己节点：子树标 dropped、节点不删 + drops 记 %{id, reason, at, by}" do
+      # alice 建根+子（都 alice 自动认领）。
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, c} = add!(t, r, "子", user_ctx(t, @alice))
 
-      {:ok, _, e1} =
-        Kanban.handle_set_stage(%{id: c, stage: to_string(@second_stage)}, admin_ctx(t))
+      assert {:ok, %{dropped: 2}, e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "北极星不达标"}, user_ctx(t2, @alice))
 
-      t1 = committed(e1)
-      {:ok, %{id: gc}, e2} = Kanban.handle_add_node(%{parent_id: c, title: "痛点X"}, admin_ctx(t1))
-      t2 = committed(e2)
+      t3 = committed(e)
+      # 非破坏：节点全都在，只是打了 dropped 标。
+      assert t3.nodes[r].dropped == true
+      assert t3.nodes[c].dropped == true
+      assert t3.root_id == r
+      assert t3.nodes[r].title == "根"
 
-      {:ok, _, e3} =
-        Kanban.handle_set_stage(%{id: gc, stage: to_string(@third_stage)}, admin_ctx(t2))
-
-      t3 = committed(e3)
-
-      {:ok, %{id: ggc}, e4} =
-        Kanban.handle_add_node(%{parent_id: gc, title: "方案A"}, admin_ctx(t3))
-
-      t4 = committed(e4)
-
-      # drop 方案A 子树
-      assert {:ok, %{dropped: 1}, e5} =
-               Kanban.handle_drop_subtree(%{id: ggc, reason: "7天阅读<500"}, admin_ctx(t4))
-
-      t5 = committed(e5)
-      refute Map.has_key?(t5.nodes, ggc), "子树应被砍掉"
-
-      # drop 历史进**图级别** tree.drops（经唯一 commit/1，不挂某个节点、不另开 set-effect 站点）
-      assert [%{title: "方案A", reason: "7天阅读<500", count: 1}] = t5.drops
-      # 痛点节点上**不再**挂 drop_record（历史是全图属性）
-      refute Enum.any?(t5.nodes[gc].artifacts, &(&1.kind == "drop_record"))
-
-      # 非 owner 非 admin → forbidden
-      assert {:error, :forbidden} =
-               Kanban.handle_drop_subtree(
-                 %{id: gc, reason: "x"},
-                 user_ctx(t4, "entity://system/user/bob")
-               )
+      # drops 历史：%{id, reason, at, by}。
+      assert [%{id: ^r, reason: "北极星不达标", at: %DateTime{}, by: @alice}] = t3.drops
     end
 
-    test "import_markmap 仅 admin", %{} do
+    test "权限=节点认领人：他人不可 drop；版主/wildcard 兜底可" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+
+      # bob 不是认领人 → 拒。
       assert {:error, :forbidden} =
-               Kanban.handle_import_markmap(
-                 %{markdown: "# 根\n"},
-                 user_ctx(%{nodes: %{}, root_id: nil, seq: 0}, "entity://system/user/bob")
-               )
+               Kanban.handle_drop_subtree(%{id: r, reason: "x"}, user_ctx(t, @bob))
 
+      # 版主（data_owner）兜底。
+      assert {:ok, %{dropped: 1}, _e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "版主标"}, moderator_ctx(t, @bob))
+
+      # wildcard admin 兜底。
+      assert {:ok, %{dropped: 1}, _e2} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "admin标"}, admin_ctx(t))
+    end
+
+    test "子树含他人认领节点不再挡（跟踪标记非删除，整树标 dropped）" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:ok, %{dropped: 2}, e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "整线撤"}, user_ctx(t2, @alice))
+
+      t3 = committed(e)
+      # bob 的节点仍在（owner/内容不动），只带 dropped 标。
+      assert t3.nodes[gc].dropped == true
+      assert t3.nodes[gc].owner == @bob
+    end
+
+    test "重复 drop 幂等：不再追加 drops 历史、无副作用" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+
+      assert {:ok, %{dropped: 1}, e} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "一次"}, user_ctx(t, @alice))
+
+      t2 = committed(e)
+
+      assert {:ok, %{dropped: 0}, e2} =
+               Kanban.handle_drop_subtree(%{id: r, reason: "两次"}, user_ctx(t2, @alice))
+
+      # 幂等：无 commit effect（树不变、历史不重复追加）。
+      assert e2 == []
+      assert length(t2.drops) == 1
+    end
+
+    test "get_tree 投影带 dropped 标（dropped=true / 未 drop=false）" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, c} = add!(t, r, "活子", user_ctx(t, @alice))
+      {t3, d} = add!(t2, r, "撤子", user_ctx(t2, @alice))
+
+      {:ok, _res, e} = Kanban.handle_drop_subtree(%{id: d, reason: "撤"}, user_ctx(t3, @alice))
+      t4 = committed(e)
+
+      assert {:ok, %{tree: %{nodes: nodes}}, []} =
+               Kanban.handle_get_tree(%{}, user_ctx(t4, @alice))
+
+      assert nodes[d].dropped == true
+      assert nodes[r].dropped == false
+      assert nodes[c].dropped == false
+    end
+  end
+
+  describe "remove_node（规则5 删除授权：整子树同主/未认领，版主兜底）" do
+    test "整子树自己认领 → 级联删除成功" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, c} = add!(t, r, "子", user_ctx(t, @alice))
+
+      assert {:ok, %{}, e} = Kanban.handle_remove_node(%{id: r}, user_ctx(t2, @alice))
+      t3 = committed(e)
+      refute Map.has_key?(t3.nodes, r)
+      refute Map.has_key?(t3.nodes, c)
+      assert t3.root_id == nil
+    end
+
+    test "子树含他人已认领后代 → :forbidden_mixed_ownership" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, _gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:error, :forbidden_mixed_ownership} =
+               Kanban.handle_remove_node(%{id: r}, user_ctx(t2, @alice))
+    end
+
+    test "含未认领后代不挡（未认领恒空谁都可删）" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, gc} = add!(t, r, "结构子", user_ctx(t, @alice))
+      {:ok, %{}, e0} = Kanban.handle_unclaim_node(%{id: gc}, user_ctx(t2, @alice))
+
+      assert {:ok, %{}, _e} =
+               Kanban.handle_remove_node(%{id: r}, user_ctx(committed(e0), @alice))
+    end
+
+    test "版主 / wildcard 兜底可删他人任何子树" do
+      {t, r} = add!(empty(), "", "根", user_ctx(empty(), @alice))
+      {t2, _gc} = add!(t, r, "bob子", user_ctx(t, @bob))
+
+      assert {:ok, %{}, _e} = Kanban.handle_remove_node(%{id: r}, moderator_ctx(t2, @alice))
+      assert {:ok, %{}, _e2} = Kanban.handle_remove_node(%{id: r}, admin_ctx(t2))
+    end
+  end
+
+  describe "import_markmap 授权（board_admin）" do
+    test "非版主非 wildcard 拒" do
+      assert {:error, :forbidden} =
+               Kanban.handle_import_markmap(%{markdown: "# 根\n"}, user_ctx(empty(), @bob))
+    end
+
+    test "wildcard admin 可导入；节点补默认字段（未认领）" do
       assert {:ok, %{count: 1}, e} =
-               Kanban.handle_import_markmap(
-                 %{markdown: "# 根\n"},
-                 admin_ctx(%{nodes: %{}, root_id: nil, seq: 0})
-               )
+               Kanban.handle_import_markmap(%{markdown: "# 根\n"}, admin_ctx(empty()))
 
-      # 导入的节点补了默认字段
-      assert committed(e).nodes["n1"].status == :unassigned
+      n = committed(e).nodes["n1"]
+      assert n.status == :unassigned and n.owner == nil
+    end
+
+    test "版主（board data_owner）可导入" do
+      assert {:ok, %{count: 1}, _e} =
+               Kanban.handle_import_markmap(%{markdown: "# 根\n"}, moderator_ctx(empty(), @alice))
     end
   end
 end

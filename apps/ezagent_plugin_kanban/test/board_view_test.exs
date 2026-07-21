@@ -10,8 +10,9 @@ defmodule EzagentPluginKanban.BoardViewTest do
     * the `SessionView` contract surface (id/label/icon);
     * cap-gating: `view_behavior/0 → Ezagent.ActionSet.KanbanRender`, so
       `SessionView.authorize_view/3` requires `{Session, :kanban_render}`;
-    * `applies_to?/1` is FAIL-SAFE and keyed on the kanban-team Definition
-      being installed (a session without it → false, junk input → false);
+    * `applies_to?/1` — D3(Allen option a,2026-07-19): kanban tab **plugin
+      级恒显** — ANY session URI → true(不再按 installed Definition 判),
+      junk input 仍 false(fail-safe);
     * the external target: `external_render?/0 → true` +
       `external_render/1` delegating to the read-only board projection.
   """
@@ -40,10 +41,11 @@ defmodule EzagentPluginKanban.BoardViewTest do
              Ezagent.UI.SessionView.render_needed_caps(Ezagent.ActionSet.KanbanRender, session_uri)
   end
 
-  test "applies_to?/1 is false for a session without the kanban-team Definition (fail-safe)" do
-    # no install rows for this session (and no DB checkout in this async test) —
-    # the check must degrade to false, never raise.
-    refute BoardView.applies_to?(Ezagent.URI.session("ws-bv", "kanban", "not-installed"))
+  test "applies_to?/1 is true for ANY session — D3 tab 恒显(含未装 kanban 的会话)" do
+    # D3 option a: tab 显隐不再按 installed Definition 判(被门控的是板内容/
+    # 钥匙,不是 tab)。未装 kanban 的会话也 true——分享链接在任何会话点开才有意义。
+    assert BoardView.applies_to?(Ezagent.URI.session("ws-bv", "kanban", "not-installed"))
+    assert BoardView.applies_to?(Ezagent.URI.session("ws-bv", "default", "plain"))
   end
 
   test "applies_to?/1 is false for junk input (fail-safe)" do
