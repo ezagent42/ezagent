@@ -71,7 +71,7 @@ defmodule EzagentCli.Application do
   defp cap_revoke_all_to_facade(parsed) do
     with {:ok, principal, caps} <- EzagentCli.Exec.authenticated_context() do
       Ezagent.Cap.revoke_all_to(parsed.args[:target], %{
-        caller: Ezagent.URI.new!("system://cli/operator"),
+        caller: Ezagent.URI.system(:cli, :operator),
         authenticated_principal: principal,
         caps: caps,
         trace_id: nil
