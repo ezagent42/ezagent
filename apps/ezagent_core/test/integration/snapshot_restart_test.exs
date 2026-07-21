@@ -112,7 +112,15 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
                  }
                })
 
-      assert length(cap_list) == 1
+      assert Enum.count(
+               cap_list,
+               &(Ezagent.Capability.action_of(&1) == :self_license)
+             ) == 1
+
+      assert Enum.count(
+               cap_list,
+               &(Ezagent.Capability.action_of(&1) == :list_caps)
+             ) == 1
     end
   end
 

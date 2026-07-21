@@ -674,6 +674,7 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
       # heals).
       %{
         caller: ctx.self_uri,
+        authenticated_principal: ctx.self_uri,
         caps: MapSet.union(agent_own_caps(ctx), inline_caps(ctx)),
         reply: :ignore
       }

@@ -21,7 +21,7 @@ defmodule Ezagent.EntityTest do
 
       assert {:ok, %{caps: caps}} = Entity.authenticate_password(uri, "correct-password")
       assert %MapSet{} = caps
-      assert caps == MapSet.new()
+      assert Enum.count(caps, &(Ezagent.Capability.action_of(&1) == :self_license)) == 1
     end
 
     test "wrong password → {:error, :invalid_credentials}" do

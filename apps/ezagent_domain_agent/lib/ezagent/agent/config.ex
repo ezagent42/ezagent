@@ -284,7 +284,12 @@ defmodule Ezagent.Agent.Config do
       target: target,
       mode: mode,
       args: args,
-      ctx: %{caller: caller, caps: normalize_caps(caps), reply: {:caller_inbox, self()}},
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: normalize_caps(caps),
+        reply: {:caller_inbox, self()}
+      },
       origin: :trusted_internal
     })
   end

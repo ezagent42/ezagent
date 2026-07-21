@@ -73,7 +73,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
     refute Enum.any?(held, &(&1.kind == :any and &1.behavior == :any)),
            "fixture: the ws-admin must NOT hold admin authority"
 
-    ws_admin_ctx = %{caller: ws_admin, caps: held}
+    ws_admin_ctx = %{caller: ws_admin, authenticated_principal: ws_admin, caps: held}
 
     admin_cap =
       signed_required_cap!(
@@ -86,6 +86,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdminCapIssueTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
+      authenticated_principal: User.admin_uri(),
       caps: MapSet.new([admin_cap])
     }
 

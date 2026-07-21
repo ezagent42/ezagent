@@ -159,17 +159,43 @@ defmodule Ezagent.ActionSet.Identity do
 
     caps = Ezagent.Cap.verified_set(caps, Map.get(args, :uri))
 
-    state =
-      case recipe_binding do
-        {:active, version, keys} ->
-          %{caps: caps, recipe_binding_version: version, recipe_binding_keys: keys}
+    with {:ok, caps} <- maybe_mint_self_license(caps, args) do
+      state =
+        case recipe_binding do
+          {:active, version, keys} ->
+            %{caps: caps, recipe_binding_version: version, recipe_binding_keys: keys}
 
-        :none ->
-          %{caps: caps}
-      end
+          :none ->
+            %{caps: caps}
+        end
 
-    {:ok, state}
+      {:ok, state}
+    end
   end
+
+  defp maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri}) do
+    if Enum.any?(caps, &(Ezagent.Capability.action_of(&1) == :self_license)) do
+      {:error, :self_license_already_present}
+    else
+      with {:ok, type} <- Ezagent.URI.type(uri),
+           kind <- String.to_existing_atom(type),
+           requested <-
+             Ezagent.Capability.cap(
+               kind,
+               __MODULE__,
+               :self_license,
+               uri,
+               Ezagent.URI.workspace_of(uri)
+             ),
+           intent <- Ezagent.Cap.Grant.freeze(uri, uri, uri, requested),
+           {:ok, license} <- Ezagent.Cap.Authority.issue_self_license_current(intent),
+           licensed <- MapSet.put(caps, license) do
+        {:ok, licensed}
+      end
+    end
+  end
+
+  defp maybe_mint_self_license(caps, _args), do: {:ok, caps}
 
   defp hydrate_recipe_binding(caps, %URI{} = uri) do
     if Ezagent.URI.type?(uri, :agent) do
@@ -211,7 +237,8 @@ defmodule Ezagent.ActionSet.Identity do
 
     state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
 
-    with {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+    with :ok <- persist_user_caps_after_marker(uri, state.caps),
+         {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
       if reconciled == original_state do
         {:ok, %{}}
       else
@@ -221,6 +248,18 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
+
+  # `activate/2` runs only after Kind.Server has atomically stored the initial
+  # snapshot together with `ever_created`. Keeping the user projection write
+  # here prevents a crash between `create/1` and that marker-bearing commit
+  # from leaving a self-license that a later retry cannot safely mint.
+  defp persist_user_caps_after_marker(uri, caps) do
+    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
+      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
+    else
+      :ok
+    end
+  end
 
   @doc false
   @spec reconcile_recipe_binding_state(map(), URI.t()) :: {:ok, map()} | {:error, term()}

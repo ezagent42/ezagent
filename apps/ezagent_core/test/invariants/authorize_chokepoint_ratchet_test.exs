@@ -87,7 +87,11 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # home: the F-1 primitive, its public facade, and the chokepoint.
         "apps/ezagent_core/lib/ezagent/cap/authority.ex",
         "apps/ezagent_core/lib/ezagent/cap.ex",
-        "apps/ezagent_core/lib/ezagent/cap/authorize.ex"
+        "apps/ezagent_core/lib/ezagent/cap/authorize.ex",
+        # home: G-3's principal-axis gate. EntityCaps.load(holder) validates
+        # the holder's independently stored self-license against the current
+        # holder authority before authorize/3 considers inline candidates.
+        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
       ]
     },
     %{

@@ -24,6 +24,9 @@ defmodule Ezagent.Cap do
   """
   @spec issue(authorization(), URI.t(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}
+  def issue(_authorization, %URI{}, %Capability{action: :self_license}),
+    do: {:error, :reserved_action}
+
   def issue(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
     {caps, context} = authorization_context(authorization)
 

@@ -317,6 +317,8 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     {target, pid} = spawn_target("permanent-auth")
     cap = capability(target)
     caller = Ezagent.URI.user("team-alpha", unique("unauthorized"))
+    assert {:ok, _user} = Ezagent.Users.create(caller, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(caller)
 
     invocation = %Invocation{
       origin: :trusted_internal,
@@ -325,6 +327,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       args: %{cap: cap},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new(),
         reply: :ignore,
         cap_delivery_producer: :identity_revoke

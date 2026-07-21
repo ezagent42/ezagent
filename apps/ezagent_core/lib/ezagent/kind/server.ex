@@ -107,18 +107,33 @@ defmodule Ezagent.Kind.Server do
 
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
+    create_freshness = create_freshness(kind_module, uri)
+    args = Map.put(args, :create_freshness, create_freshness)
+    authority_result = Ezagent.Cap.Authority.open(uri, kind_module.type_name())
+
+    snapshot_result =
+      case authority_result do
+        {:ok, authority} ->
+          Ezagent.Cap.Authority.with_current(authority, fn ->
+            Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args)
+          end)
+
+        {:error, reason} ->
+          {:authority_error, reason}
+      end
 
     # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
     # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
     # instead of an uncaught init crash, symmetric with the WRITE
     # (`persist_initial_snapshot/3`). let-it-crash, no fresh-state fallback.
-    case Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args) do
+    case snapshot_result do
+      {:authority_error, reason} ->
+        {:stop, {:authority_load_failed, reason}}
+
       {:error, reason} ->
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
-        authority_result = Ezagent.Cap.Authority.open(uri, kind_module.type_name())
-
         with {:ok, authority} <- authority_result do
           # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
           # declaration order. `post_init/2` is OPTIONAL — Behaviors that
@@ -139,7 +154,7 @@ defmodule Ezagent.Kind.Server do
             created_by: Map.get(args, :created_by),
             # Set in the put_new branch below from the Lifecycle create-vs-activate
             # signal (read BEFORE persist sets the marker).
-            create_freshness: :unknown
+            create_freshness: create_freshness
           }
 
           case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
@@ -154,16 +169,6 @@ defmodule Ezagent.Kind.Server do
               # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
               # as :unknown instead of :existed (codex review P2). Non-Lifecycle
               # Kinds have no create/activate distinction → :unknown.
-              state =
-                if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
-                  freshness =
-                    if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
-
-                  %{state | create_freshness: freshness}
-                else
-                  state
-                end
-
               case persist_initial_snapshot(uri, kind_module, slice_state) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
@@ -183,6 +188,14 @@ defmodule Ezagent.Kind.Server do
         else
           {:error, reason} -> {:stop, {:authority_load_failed, reason}}
         end
+    end
+  end
+
+  defp create_freshness(kind_module, uri) do
+    if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
+      if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+    else
+      :unknown
     end
   end
 

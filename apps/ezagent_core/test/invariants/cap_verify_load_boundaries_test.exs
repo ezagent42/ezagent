@@ -62,14 +62,16 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert definition_source(@identity_behavior, :set_caps_effect, 1) =~
              "{:set, :caps, caps}"
 
-    assert definition_source(@identity_facade, :list_caps_for, 1) =~ "verified_cap_set"
-    assert definition_source(@identity_facade, :read_held_caps, 1) =~ "verified_cap_set"
+    assert definition_source(@identity_facade, :list_caps_for, 1) =~
+             "Ezagent.EntityCaps.load"
+
+    assert definition_source(@identity_facade, :read_held_caps, 1) =~
+             "Ezagent.EntityCaps.load"
 
     assert source(@identity_facade) =~
              "defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load"
 
-    facade_verifier = definition_source(@identity_facade, :verified_cap_set, 2)
-    assert facade_verifier =~ "Ezagent.EntityCaps.verified_set"
+    refute source(@identity_facade) =~ "defp verified_cap_set"
 
     entity_caps_verifier = definition_source(@entity_caps, :verified_set, 2)
     assert entity_caps_verifier =~ "Ezagent.Cap.verified_set"

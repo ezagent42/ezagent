@@ -251,7 +251,23 @@ defmodule Ezagent.Cap.Authority do
   @spec issue_current(Ezagent.Cap.Grant.intent()) :: {:ok, Capability.t()} | {:error, term()}
   def issue_current(%Ezagent.Cap.Grant{} = intent) do
     case Process.get({__MODULE__, :current}) do
-      %__MODULE__{} = authority -> {:ok, Ezagent.Cap.Grant.issue(authority, intent)}
+      %__MODULE__{} = authority ->
+        case Ezagent.Cap.Grant.issue(authority, intent) do
+          %Capability{} = artifact -> {:ok, artifact}
+          {:error, _reason} = error -> error
+        end
+
+      nil ->
+        {:error, :authority_unavailable}
+    end
+  end
+
+  @doc false
+  @spec issue_self_license_current(Ezagent.Cap.Grant.intent()) ::
+          {:ok, Capability.t()} | {:error, term()}
+  def issue_self_license_current(%Ezagent.Cap.Grant{} = intent) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{} = authority -> Ezagent.Cap.Grant.issue_self_license(authority, intent)
       nil -> {:error, :authority_unavailable}
     end
   end

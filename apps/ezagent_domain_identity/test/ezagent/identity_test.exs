@@ -56,8 +56,13 @@ defmodule Ezagent.IdentityTest do
       invalid = %{valid | grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/other")}
 
       assert {:ok, _user} = Ezagent.Users.create(uri, nil, [valid, invalid])
+      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
 
-      assert Ezagent.Identity.read_held_caps(uri) == MapSet.new([valid])
+      held = Ezagent.Identity.read_held_caps(uri)
+
+      assert MapSet.member?(held, valid)
+      refute MapSet.member?(held, invalid)
+      assert Enum.any?(held, &(Ezagent.Capability.action_of(&1) == :self_license))
     end
   end
 

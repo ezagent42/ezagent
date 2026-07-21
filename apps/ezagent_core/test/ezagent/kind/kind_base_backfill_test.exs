@@ -244,10 +244,12 @@ defmodule Ezagent.Kind.KindBaseBackfillTest do
       assert counts.legacy_cleared >= 1
       assert counts.backfilled == 0
 
-      # The dead legacy row was DELETED ...
-      assert is_nil(KindSnapshot.get(uri))
+      # The unusable state was cleared, while the Lifecycle marker remains so
+      # a revoked principal cannot later be misclassified as a genuine create.
+      assert %KindSnapshot{ever_created: true, state: nil} = row = KindSnapshot.get(uri)
+      assert {:ok, %{}} = KindSnapshot.decode_state(row)
 
-      # ... so the gate reaches 0 (no stranded not-go row remains).
+      # The marker-only row is no longer legacy JSON, so the gate reaches 0.
       assert {:ok, 0} = KindBaseBackfill.gate()
     end
 
