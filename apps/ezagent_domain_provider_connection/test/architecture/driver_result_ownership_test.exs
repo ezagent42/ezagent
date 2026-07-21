@@ -83,7 +83,7 @@ defmodule Ezagent.ProviderConnection.DriverResultOwnershipTest do
     refute replacement =~ "backend_obligation: :handoff"
 
     assert store =~
-             ~r/defp prepare_operation.*lock_connection.*callback_source_status\(locked_connection\.status\).*Repo\.insert/s
+             ~r/defp prepare_operation.*lock_connection.*callback_source_status\(locked_attempt\.purpose, locked_connection\.status\).*Repo\.insert/s
   end
 
   test "terminal recovery proves one exact operation set and every frozen coordinate" do

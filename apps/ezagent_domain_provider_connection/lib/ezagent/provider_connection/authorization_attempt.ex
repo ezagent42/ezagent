@@ -175,7 +175,7 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
       with %Connection{} <- connection,
            %__MODULE__{} <- attempt,
            true <- connection.workspace_uri == attempt.workspace_uri,
-           :ok <- callback_source_status(connection.status) do
+           :ok <- callback_source_status(attempt.purpose, connection.status) do
         claim_locked(attempt, now, ttl_seconds,
           current_connection_version: connection.connection_version
         )
@@ -295,9 +295,18 @@ defmodule Ezagent.ProviderConnection.AuthorizationAttempt do
     |> Repo.update()
   end
 
-  defp callback_source_status(status)
-       when status in ["pending_authorization", "active", "refresh_required", "degraded"],
-       do: :ok
+  # Spec §4 callback source matrix (purpose-aware, aligned with the ingress
+  # layer): refresh_required is not a legal source; reauthorization from an
+  # expired connection is. This is the single owner of the matrix — Store
+  # delegates here rather than carrying a copy.
+  @doc false
+  def callback_source_status("initial_bind", status)
+      when status in ["pending_authorization", "active", "degraded", "expired"],
+      do: :ok
 
-  defp callback_source_status(_status), do: {:error, :connection_terminal}
+  def callback_source_status("reauthorize", status)
+      when status in ["active", "degraded", "expired"],
+      do: :ok
+
+  def callback_source_status(_purpose, _status), do: {:error, :connection_terminal}
 end
