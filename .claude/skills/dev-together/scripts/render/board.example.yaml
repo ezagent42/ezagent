@@ -264,7 +264,7 @@ review:
       y_problem: "Proof and publication were reviewed in separate files."
       x_level_correction: "Plan Closure is the correctness unit."
       y_level_correction: "Add frozen Closure review and a Stop Rule."
-      recurrence_prevention_proof: "dev-together contract workflow"
+      recurrence_prevention_proof: "dev-together local contract + reviewed return evidence"
       owner: "lead"
       destination: "skill-change"
     # Historical boards may retain string entries; the renderer supports both.

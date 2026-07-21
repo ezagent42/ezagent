@@ -4,9 +4,14 @@
 
 **Goal:** Productize lessons collected from the Git Provider incident as bilingual forensic/runbook documentation, a bounded single-channel Mix/BEAM runner, and mandatory dev-together Plan-level closure contracts.
 
-**Architecture:** Four layers carry the learning: a forensic record explains why, a runbook defines operator behavior, `scripts/guarded_mix.sh` makes the safe behavior executable, and dev-together templates plus CI contract tests make future Plans inherit it. This is a method-only branch; it never modifies Git Provider runtime code or its frozen D1 spec/plan.
+**Architecture:** Four layers carry the learning: a forensic record explains why, a runbook defines operator behavior, `scripts/guarded_mix.sh` makes the safe behavior executable, and dev-together templates plus mandatory local contract tests make future Plans inherit it. This is a method-only branch; it never modifies Git Provider runtime code or its frozen D1 spec/plan.
 
-**Tech Stack:** Markdown, Bash 4+, GNU `flock`, user systemd, GNU `time`, GitHub Actions, existing dev-together Markdown contracts.
+**Tech Stack:** Markdown, Bash 4+, GNU `flock`, user systemd, GNU `time`, Python/PyYAML via `uv`, existing dev-together Markdown contracts.
+
+> **Delivery amendment (2026-07-21, approved):** GitHub-hosted workflow files
+> are removed. The executable shell contracts remain mandatory local gates;
+> their outputs are recorded in the return artifact and independently reviewed.
+> An automated CI carrier is deferred as a separate decision.
 
 ## Global Constraints
 
@@ -168,7 +173,6 @@ git commit -m "docs: record X/Y system-closure lessons"
 
 - Create: `scripts/guarded_mix.sh`
 - Create: `.github/scripts/guarded_mix_test.sh`
-- Create: `.github/workflows/guarded-mix-contract.yml`
 
 **Interfaces:**
 
@@ -280,33 +284,11 @@ bash .github/scripts/guarded_mix_test.sh
 
 Expected: `guarded Mix contract tests OK`, exit `0`.
 
-- [ ] **Step 5: Add the isolated workflow**
+- [ ] **Step 5: Record the mandatory local contract evidence**
 
-Create `.github/workflows/guarded-mix-contract.yml`:
-
-```yaml
-name: Guarded Mix contract
-on:
-  pull_request:
-    paths:
-      - scripts/guarded_mix.sh
-      - .github/scripts/guarded_mix_test.sh
-      - .github/workflows/guarded-mix-contract.yml
-      - docs/runbook/guarded-mix-execution.md
-      - docs/runbook/guarded-mix-execution.zh_cn.md
-  push:
-    branches: [main]
-    paths:
-      - scripts/guarded_mix.sh
-      - .github/scripts/guarded_mix_test.sh
-      - .github/workflows/guarded-mix-contract.yml
-jobs:
-  contract:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: bash .github/scripts/guarded_mix_test.sh
-```
+Copy the complete contract result into the task report and return artifact.
+An independent reviewer verifies the command, exit status, and mutation cases.
+Automated CI execution is explicitly deferred.
 
 - [ ] **Step 6: Smoke-test and validate**
 
@@ -325,8 +307,7 @@ time evidence, with no runner-owned residual process.
 - [ ] **Step 7: Commit Task 2**
 
 ```bash
-git add scripts/guarded_mix.sh .github/scripts/guarded_mix_test.sh \
-  .github/workflows/guarded-mix-contract.yml
+git add scripts/guarded_mix.sh .github/scripts/guarded_mix_test.sh
 git diff --cached --check
 git diff --cached --stat
 git commit -m "build: add guarded Mix execution runner"
@@ -348,14 +329,13 @@ git commit -m "build: add guarded Mix execution runner"
 - Modify: `.claude/skills/dev-together/scripts/render/board.example.yaml`
 - Modify: `.claude/skills/dev-together/scripts/render/board2html.py`
 - Create: `.github/scripts/dev-together-system-closure-contract_test.sh`
-- Create: `.github/workflows/dev-together-system-closure-contract.yml`
 
 **Interfaces:**
 
 - Consumes: approved X/Y terminology, guarded runner, and closure matrix.
-- Produces: mandatory planning/handoff/review fields plus a CI drift contract.
+- Produces: mandatory planning/handoff/review fields plus a local executable drift contract.
 
-- [ ] **Step 1: Write the failing workflow contract**
+- [ ] **Step 1: Write the failing local executable contract**
 
 Create `.github/scripts/dev-together-system-closure-contract_test.sh` with a
 `require_text FILE TEXT` helper using `grep -Fq`. Create `test_tmp` with
@@ -497,7 +477,7 @@ review:
       y_problem: "Proof and publication were reviewed in separate files."
       x_level_correction: "Plan Closure is the correctness unit."
       y_level_correction: "Add frozen Closure review and a Stop Rule."
-      recurrence_prevention_proof: "dev-together contract workflow"
+      recurrence_prevention_proof: "dev-together local contract + reviewed return evidence"
       owner: "lead"
       destination: "skill-change"
 ```
@@ -586,30 +566,11 @@ bash .github/scripts/dev-together-system-closure-contract_test.sh
 
 Expected: `dev-together system-closure contract tests OK`, exit `0`.
 
-- [ ] **Step 9: Add the isolated workflow**
+- [ ] **Step 9: Record the mandatory local contract evidence**
 
-Create `.github/workflows/dev-together-system-closure-contract.yml`:
-
-```yaml
-name: Dev-together system-closure contract
-on:
-  pull_request:
-    paths:
-      - .claude/skills/dev-together/**
-      - .github/scripts/dev-together-system-closure-contract_test.sh
-      - .github/workflows/dev-together-system-closure-contract.yml
-  push:
-    branches: [main]
-    paths:
-      - .claude/skills/dev-together/**
-jobs:
-  contract:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
-      - run: bash .github/scripts/dev-together-system-closure-contract_test.sh
-```
+Record the structured-board, legacy-renderer, terminology, and mutation outputs
+in the task report and return artifact. An authorized lead reviewer verifies the
+evidence before integration. Automated CI execution is explicitly deferred.
 
 - [ ] **Step 10: Validate and commit Task 3**
 
@@ -627,8 +588,7 @@ git add .claude/skills/dev-together/SKILL.md \
   .claude/skills/dev-together/references/review-template.md \
   .claude/skills/dev-together/scripts/render/board.example.yaml \
   .claude/skills/dev-together/scripts/render/board2html.py \
-  .github/scripts/dev-together-system-closure-contract_test.sh \
-  .github/workflows/dev-together-system-closure-contract.yml
+  .github/scripts/dev-together-system-closure-contract_test.sh
 git diff --cached --check
 git diff --cached --stat
 git commit -m "docs(dev-together): require X/Y plan-level closure"

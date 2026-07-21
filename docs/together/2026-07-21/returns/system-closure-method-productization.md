@@ -10,11 +10,11 @@
 
 ## Outcome
 
-The method implementation is frozen and has two independent final approvals.
-It adds bilingual incident evidence and guarded-Mix operating guidance, an
-executable single-channel 5 GiB Mix runner, and structured Plan-level Closure
-contracts for dev-together. Git Provider Plan D1 / PR #1445 is evidence source
-only; it is not this work item's identity.
+The method implementation, including the approved local-carrier amendment, is
+ready for return. It adds bilingual incident evidence and guarded-Mix operating
+guidance, an executable single-channel 5 GiB Mix runner, and structured
+Plan-level Closure contracts for dev-together. Git Provider Plan D1 / PR #1445
+is evidence source only; it is not this work item's identity.
 
 This return is not marked return-ready because current `origin/main` has a
 focused, reproducible capability pending/held convergence regression that makes
@@ -42,7 +42,7 @@ The final subject-only history rewrite preserved the exact tree:
 
 | Requirement | Evidence | Status |
 |---|---|---|
-| Bilingual retrospective and runbook | English and `.zh_cn.md` peers; terminology and safety contracts checked by CI scripts | pass |
+| Bilingual retrospective and runbook | English and `.zh_cn.md` peers; terminology and safety contracts checked by local contract scripts | pass |
 | Guarded runner | exact ordered cgroup argv, lock, timeout, exit and mutation contracts | pass |
 | Real guarded smoke | `mix help`, exit 0, Max RSS 108920 KiB, swap 0 | pass |
 | dev-together Plan Closure | skill, commands, templates, structured board schema, renderer and mutation tests | pass |
@@ -53,8 +53,9 @@ The final subject-only history rewrite preserved the exact tree:
 | URI scan | no violations; Max RSS 124008 KiB; swap 0 | pass |
 | Invariants | all in-scope invariants clean; Max RSS 112532 KiB; swap 0 | pass |
 | Repository precommit | guarded run, Max RSS 1265120 KiB, swap 0; current-main regression remains | blocked |
-| Final runner review | APPROVED, no remaining findings | pass |
-| Final process review | APPROVED, no remaining findings | pass |
+| Pre-amendment runner review | APPROVED for the runner tree before the local-carrier amendment | historical |
+| Pre-amendment process review | APPROVED for the process tree before the local-carrier amendment | historical |
+| Local-carrier amendment review | APPROVED after two evidence-alignment corrections | pass |
 
 All real Mix commands were serialized through `scripts/guarded_mix.sh` with
 `MemoryHigh=4G`, `MemoryMax=5G`, `MemorySwapMax=0`, `OOMPolicy=kill`,
@@ -83,18 +84,37 @@ Root cause of the deterministic failure:
 - **Required destination:** a separate capability convergence repair on current
   main, followed by this branch rebasing and rerunning guarded precommit.
 
-## Final review evidence
+## Review evidence
 
-- Runner reviewer: `/tmp/system-closure-final-runner-review.md` — APPROVED.
-- Process reviewer: `/tmp/system-closure-final-process-review.md` — APPROVED.
+- Pre-amendment runner reviewer: `/tmp/system-closure-final-runner-review.md` —
+  APPROVED for the earlier tree.
+- Pre-amendment process reviewer: `/tmp/system-closure-final-process-review.md`
+  — APPROVED for the earlier tree.
+- Local-carrier amendment reviewer:
+  `/tmp/local-contract-carrier-review.md` — APPROVED for the amended tree after
+  two evidence-alignment corrections.
 - Upstream diagnosis: `/tmp/main-cap-count-diagnosis.md` — production-model
   repair required; do not change the test count.
 
+## Local contract evidence after carrier amendment
+
+- `bash .github/scripts/guarded_mix_test.sh` — exit 0,
+  `guarded Mix contract tests OK`.
+- `bash .github/scripts/dev-together-system-closure-contract_test.sh` — exit 0,
+  mutation checks and `dev-together system-closure contract tests OK`.
+- `bash .claude/skills/dev-together/scripts/validate_skill.sh` — exit 0,
+  `dev-together validation OK`.
+
+These commands execute shell/Python/stub contracts only; they do not start a
+real Mix/BEAM workload.
+
 ## Deferred decision
 
-CI-wide enforcement that every Mix command must use the guarded runner remains
-explicitly deferred. This increment provides the runner, operator contract, and
-focused workflows without rewriting unrelated CI jobs.
+Automated CI execution of the two local contract suites, and CI-wide enforcement
+that every Mix command must use the guarded runner, remain explicitly deferred.
+This increment provides the runner, operator contract, mandatory local contract
+commands, reviewed return evidence, and mutation proofs without consuming a
+GitHub-hosted runner or rewriting unrelated CI jobs.
 
 ## Resume condition
 

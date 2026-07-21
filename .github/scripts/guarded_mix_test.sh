@@ -66,23 +66,6 @@ assert_runbook_contract() {
   assert_contains "$runbook" 'does not prove invocation ownership'
 }
 
-assert_workflow_trigger_parity() {
-  local workflow="$1"
-  local pull_paths="$test_root/workflow-pull-paths"
-  local push_paths="$test_root/workflow-push-paths"
-  awk '/^  pull_request:/{inside=1; next} /^  push:/{inside=0} inside && /^      - /{print}' \
-    "$workflow" | sort >"$pull_paths"
-  awk '/^  push:/{inside=1; next} /^jobs:/{inside=0} inside && /^      - /{print}' \
-    "$workflow" | sort >"$push_paths"
-  cmp -s "$pull_paths" "$push_paths" || fail "workflow pull_request/push paths differ"
-  [[ "$(uniq -d "$pull_paths" | wc -l)" -eq 0 ]] || fail "workflow trigger paths contain duplicates"
-  for runbook in \
-    'docs/runbook/guarded-mix-execution.md' \
-    'docs/runbook/guarded-mix-execution.zh_cn.md'; do
-    assert_contains "$pull_paths" "- $runbook"
-  done
-}
-
 new_case() {
   case_dir="$test_root/$1"
   mkdir -p "$case_dir/bin"
@@ -143,8 +126,6 @@ sed 's/MemoryMax=5G/MemoryMax=6G/g' "$english_runbook" >"$mutated_runbook"
 if (assert_runbook_contract "$mutated_runbook") >/dev/null 2>&1; then
   fail "mutation survived: documented memory envelope drifted"
 fi
-assert_workflow_trigger_parity "$repo_root/.github/workflows/guarded-mix-contract.yml"
-
 echo "case=preserves_mix_argv_without_eval"
 new_case preserves_mix_argv_without_eval
 marker="$case_dir/eval-would-create-this"

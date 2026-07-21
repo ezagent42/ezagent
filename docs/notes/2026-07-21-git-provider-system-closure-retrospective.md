@@ -106,10 +106,12 @@ as one repair batch.
 
 ### Recurrence-prevention proof
 
-The board schema, renderer, handoff/review templates, and CI contract must all
-require Plan-level closures and structured method deltas. Review must reconcile
-durable proof and integration evidence for every closure before the Plan is
-called complete.
+The board schema, renderer, handoff/review templates, and executable local
+contract must all require Plan-level closures and structured method deltas.
+The return artifact records the contract output for independent review. Review
+must reconcile durable proof and integration evidence for every closure before
+the Plan is called complete. An automated CI carrier is a separate, deferred
+decision.
 
 ## 4. Other system findings
 
@@ -131,14 +133,15 @@ recovery, compensation, shredding, release, fixture, and gate findings. Focused
 and provider-domain checks were rerun inside a guarded resource envelope. The
 working session also produced the X/Y analysis and the approved four-layer
 productization design: forensic record, operating contract, executable guard,
-and workflow contract.
+and executable local contract with reviewed return evidence.
 
 This retrospective records method evidence; it does not change Git Provider
 runtime semantics or amend the frozen D1 specification or implementation plan.
 
 ## 6. What remains process debt
 
-- Deliver and enforce the guarded runner and its CI contract.
+- Deliver and enforce the guarded runner and its executable local contract;
+  preserve its output in the return artifact for independent review.
 - Add Plan-level closure, resource-envelope, Stop Rule, review-topology, and
   method-delta requirements to dev-together artifacts.
 - Decide separately whether every local and CI Mix command must use the runner;
@@ -153,7 +156,7 @@ runtime semantics or amend the frozen D1 specification or implementation plan.
 | Requirement | Evidence from D1 | Durable destination | Closure proof |
 |---|---|---|---|
 | Owned bounded Mix job | 230–350 MiB guarded runs contrasted with observed 6–7 GiB VmmemWSL growth; original creator unknown | bilingual runbook + guarded runner | runner contract suite and result summary |
-| Exact X/Y framing | repeated local repairs did not express the Plan invariant | retrospective + dev-together templates | CI contract rejects missing fields/terminology |
+| Exact X/Y framing | repeated local repairs did not express the Plan invariant | retrospective + dev-together templates | local contract rejects missing fields/terminology; reviewed return preserves the result |
 | Plan-level closure | ownership through terminal release crossed Task boundaries | `board.yaml` closure matrix + handoff references | review reconciles durable and integration evidence |
 | Durable proof | labels and historical facts were confused with current predicates | closure matrix and review method delta | named durable query/assertion per closure |
 | TOCTOU-safe publication | proof and publish admitted an unlock window | Plan invariant and integrated repair surface | publication under guard or guarded revalidation |

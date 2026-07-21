@@ -110,7 +110,6 @@ example=.claude/skills/dev-together/scripts/render/board.example.yaml
 renderer=.claude/skills/dev-together/scripts/render/board2html.py
 plan_command=.claude/skills/dev-together/commands/plan.md
 review_command=.claude/skills/dev-together/commands/review.md
-workflow=.github/workflows/dev-together-system-closure-contract.yml
 
 for text in 'Plan-level closure' 'guarded_mix.sh' 'frozen implementation' 'parallel read-only review'; do
   require_text "$skill" "$text"
@@ -179,17 +178,6 @@ require_text "$legacy_html" '<div class="method-delta legacy">• legacy method 
 require_text "$legacy_html" '<div class="method-delta legacy">• legacy method delta two remains visible</div>'
 
 bash .claude/skills/dev-together/scripts/validate_skill.sh
-
-push_paths="$test_tmp/workflow-push-paths"
-awk '/^  push:/{inside=1} /^jobs:/{inside=0} inside' "$workflow" >"$push_paths"
-for workflow_path in \
-  '.github/scripts/dev-together-system-closure-contract_test.sh' \
-  '.github/workflows/dev-together-system-closure-contract.yml'; do
-  if ! grep -Fq -- "$workflow_path" "$push_paths"; then
-    echo "workflow path must be covered by pull_request and push: $workflow_path" >&2
-    exit 1
-  fi
-done
 
 # Mutation evidence: the contract itself proves that removal and schema drift
 # are rejected instead of merely checking that generic tokens exist somewhere.

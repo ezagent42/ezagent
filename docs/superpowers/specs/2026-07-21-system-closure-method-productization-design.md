@@ -92,7 +92,9 @@ level of the system invariant.
 3. A single guarded local Mix/BEAM runner with contract tests.
 4. Dev-together rules and templates requiring X/Y framing, Plan-level closure,
    resource envelopes, Stop Rules, and recurrence-prevention proof.
-5. CI contract tests that keep the runner and workflow templates from drifting.
+5. Local executable contract tests, recorded in the return artifact and checked
+   by independent reviewers, that keep the runner and method templates from
+   drifting.
 
 ### Out of scope
 
@@ -118,11 +120,12 @@ question.
 | Forensic record | Why did this happen? | bilingual retrospective |
 | Operating contract | What must an operator do? | bilingual runbook |
 | Executable guard | What is the safe default command? | guarded Mix runner + tests |
-| Workflow contract | How does every future Plan inherit the lesson? | dev-together templates + CI contract |
+| Workflow contract | How does every future Plan inherit the lesson? | dev-together templates + local executable contract |
 
 No single layer is sufficient. Documentation without the runner remains a
 memory exercise; a runner without workflow adoption remains optional; workflow
-text without CI can silently disappear.
+text without an executable contract and reviewed return evidence can silently
+disappear. GitHub-hosted automation is a deferred carrier, not the contract.
 
 ## 5. Files and responsibilities
 
@@ -176,7 +179,6 @@ Create:
 
 - `scripts/guarded_mix.sh`
 - `.github/scripts/guarded_mix_test.sh`
-- `.github/workflows/guarded-mix-contract.yml`
 
 The intended CLI is:
 
@@ -207,10 +209,11 @@ The runner:
    killing unrelated processes, and does not present that snapshot as proof of
    invocation ownership.
 
-The contract test stubs external commands so CI does not require user systemd.
+The contract test stubs external commands so local verification does not require user systemd.
 It covers exact cgroup arguments, argv preservation, error propagation,
 timeout/OOM classification, missing prerequisites, stderr preservation, and
-serialization. A separate workflow runs only this shell contract test.
+serialization. Its output is mandatory return evidence until an automated CI
+carrier is separately approved.
 
 ### 5.4 Workflow contract
 
@@ -229,9 +232,8 @@ Modify:
 Create:
 
 - `.github/scripts/dev-together-system-closure-contract_test.sh`
-- `.github/workflows/dev-together-system-closure-contract.yml`
 
-The workflow contract adds the following requirements.
+The executable local method contract adds the following requirements.
 
 #### X/Y framing
 
@@ -247,7 +249,7 @@ Recurrence-prevention proof
 
 “Be more careful”, “add more tests”, and “review harder” are not accepted
 recurrence-prevention proofs without an owner and an executable or mandatory
-workflow destination.
+method destination.
 
 #### Plan-level closure matrix
 
@@ -303,8 +305,9 @@ The `board.yaml` `review.method_deltas` schema uses structured maps for these
 fields. The renderer remains backward-compatible with historical string entries
 but the plan/review commands require new boards to write the structured form.
 
-The CI contract test asserts that the required concepts remain present in the
-skill and templates. It checks the contract, not prose formatting.
+The mandatory local contract test asserts that the required concepts remain
+present in the skill and templates. Its output is captured in the return and
+independently reviewed. It checks the contract, not prose formatting.
 
 ## 6. Data and control flow
 
@@ -378,13 +381,13 @@ return captures friction
 - deterministic rendering shows both structures in `board.html`, while an old
   string method-delta fixture still renders without error;
 - the Stop Rule and review topology are unambiguous;
-- protected skill workflow is green under an authorized lead review.
+- protected skill local contract is green under an authorized lead review.
 
 ### Repository
 
 - implementation branch is rebased on current main before execution and return;
 - `git diff --check` passes;
-- relevant shell and workflow syntax checks pass;
+- relevant shell, Python, and YAML syntax checks pass;
 - existing repository gates required by the handoff standard pass through the
   guarded runner;
 - the Git Provider feature branch and its protected untracked artifacts remain
@@ -414,6 +417,7 @@ The design is complete only when all of the following are true:
 - a second cross-Task regression triggers the Stop Rule;
 - frozen implementation and parallel read-only review are distinct phases;
 - method findings must produce an owner and recurrence-prevention destination;
-- CI contract tests detect deletion or drift of these rules;
+- mandatory local contract tests detect deletion or drift of these rules and
+  their results are recorded in reviewed return evidence;
 - the method work is isolated from the Git Provider feature PR;
 - final return is rebased on current main and carries gate evidence.

@@ -130,6 +130,7 @@ full-suite 失败。
 ## 13. 修改资源边界
 
 不得临时修改上限。契约变更提案必须包含 workload、受控测量、理由、风险、
-owner、临时/永久决定，并同步更新 runner、两份 runbook、测试、工作流模板和
-CI 契约。按方法变更评审。合入前使用标准边界或报告 workload 被阻塞；不得
-静默提高 baseline 或绕过 guard。
+owner、临时/永久决定，并同步更新 runner、两份 runbook 和本地契约测试。
+按方法变更评审，并在 return artifact 中记录本地契约输出，供独立 reviewer
+核验。自动 CI 载体另行批准前，这份本地证据是强制要求。合入前使用标准边界
+或报告 workload 被阻塞；不得静默提高 baseline 或绕过 guard。

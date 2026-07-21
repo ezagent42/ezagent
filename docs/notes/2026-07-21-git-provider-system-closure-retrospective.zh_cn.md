@@ -89,9 +89,10 @@ id。同一共享状态机的实施和修复必须串行。第二次出现跨 Ta
 
 ### 防复发证明
 
-board schema、renderer、handoff/review 模板和 CI 契约必须同时要求 Plan 级
-Closure 和结构化 method delta。Plan 被称为完成前，review 必须逐个 Closure
-核对持久证明和集成证据。
+board schema、renderer、handoff/review 模板和可执行本地契约必须同时要求
+Plan 级 Closure 和结构化 method delta。return artifact 记录契约输出，供独立
+reviewer 核验。Plan 被称为完成前，review 必须逐个 Closure 核对持久证明和
+集成证据。自动 CI 载体是另一项延后决策。
 
 ## 4. 其他系统发现
 
@@ -111,14 +112,15 @@ Closure 和结构化 method delta。Plan 被称为完成前，review 必须逐�
 **已证事实。** D1 修复处理了具体的所有权、journal、credential、恢复、补偿、
 shredding、释放、fixture 和门禁发现。局部及 provider domain 检查在受控资源
 边界内重跑。工作会话还产出了 X/Y 分析和已批准的四层产品化设计：取证记录、
-操作契约、可执行保护和工作流契约。
+操作契约、可执行保护，以及带 reviewed return evidence 的可执行本地契约。
 
 这份复盘记录方法证据；它不改变 Git Provider runtime 语义，也不修订冻结的
 D1 spec 或 implementation plan。
 
 ## 6. 仍然存在的流程债务
 
-- 交付并强制执行 guarded runner 及其 CI 契约。
+- 交付并强制执行 guarded runner 及其可执行本地契约；在 return artifact 中
+  保留输出，供独立 reviewer 核验。
 - 在 dev-together artifact 加入 Plan 级 Closure、资源边界、Stop Rule、评审
   拓扑和 method-delta 要求。
 - 另行决定是否让所有本地和 CI Mix 命令经过 runner；已批准的第一步只覆盖
@@ -132,7 +134,7 @@ D1 spec 或 implementation plan。
 | 需求 | D1 证据 | 持久落点 | 闭环证明 |
 |---|---|---|---|
 | 有主有界 Mix 作业 | 230–350 MiB 受控运行对比观察到的 6–7 GiB VmmemWSL 增长；原始创建者未知 | 双语 runbook + guarded runner | runner 契约套件和结果摘要 |
-| 精确 X/Y 框架 | 重复局部修复没有表达 Plan 不变式 | 复盘 + dev-together 模板 | CI 契约拒绝缺字段/术语漂移 |
+| 精确 X/Y 框架 | 重复局部修复没有表达 Plan 不变式 | 复盘 + dev-together 模板 | 本地契约拒绝缺字段/术语漂移；reviewed return 保留结果 |
 | Plan 级闭环 | 从所有权到终态释放跨越 Task 边界 | `board.yaml` closure matrix + handoff 引用 | review 核对持久和集成证据 |
 | 持久证明 | 标签、历史事实和当前谓词曾被混用 | closure matrix 和 review method delta | 每个 Closure 有具名持久查询/断言 |
 | TOCTOU 安全发布 | 证明和发布之间存在解锁窗口 | Plan 不变式及集成修复面 | 保护内发布或保护内重新验证 |

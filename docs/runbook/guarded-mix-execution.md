@@ -144,6 +144,8 @@ Rerunning until green does not erase a recorded full-suite failure.
 
 Do not change limits ad hoc. Propose a contract change with the workload,
 guarded measurements, reason, risk, owner, expiry/permanence decision, and
-updates to the runner, both runbooks, tests, workflow templates, and CI contract.
-Review it as a method change. Until merged, use the standard envelope or report
-the workload blocked; never silently raise a baseline or bypass the guard.
+updates to the runner, both runbooks, and local contract tests. Review it as a
+method change and record the local contract output in the return artifact for
+independent verification. Until an automated CI carrier is separately approved,
+this local evidence is mandatory. Never silently raise a baseline or bypass the
+guard.
