@@ -7,109 +7,114 @@ prev_date: "07-20"
 north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
 
 progress:
-  - {label: "CI 健康 + 部署闸", pct: 100, value: "GitHub Actions 账单耗尽 → 全搬 self-hosted mac runner(#1480)；查出并修掉 ci.local `halt(0)` 假绿 → honest gate(#1479)；main full-suite 真绿 → canary 部署闸打通。CI-health 系统性红 #189 收口。"}
-  - {label: "读平面授权收口", pct: 95, value: "PR-1/2/3/4 全入 main + 已上 canary；原子 snapshot 加固(#1486)、operator 流泄漏收口(#1487)入 main；canary E2E 四图矩阵证明(owner读/非成员拒/非owner成员修复后读)；member-cap 遗留锁定已 backfill 修复。剩 PR-5(#188) + durable seed-time grant。"}
-  - {label: "统一 generation 撤销(#195)", pct: 40, value: "26→30 PR 设计收敛 epoch+delete_user+#166；v2 对抗评审 NEEDS-REVISION(10 must-fix)→修订→v2 复审再挖 4 洞(magic-link 撤销绕过等)→v3 修订(4 洞折叠,+0 PR)→v3 重审中。SOUND 后交 kimi 做 Phase F。"}
-  - {label: "dockerize CI(#196,新)", pct: 15, value: "OrbStack 验证可用 + 现有 harness 验证 + 5-PR 计划成型(prod 一致性 + 并行多 PR CI)。Task 1 镜像 base/thin 拆分实施中。"}
-  - {label: "cc-headless-custom 泛化主体(#1460)", pct: 100, value: "gaga F2 cascade 自调 + F4 nil config home + F3 provider lane(顺手堵掉无-sidecar 僵尸 agent + 跳校验)全修,双后端 live proof,入 main(#1485)。"}
-  - {label: "插件 UI 分层(去 world 硬编)", pct: 25, value: "设计定案(#1472)；zyli #1473 实施 + #1476 plugin-owned UI 在飞。"}
+  - {label: "CI 健康 + 部署闸", pct: 100, value: "★挖出比账单更深的根因: ci.local `halt(0)` 无条件退出吞掉所有 mix test 失败=系统性假绿。搬 self-hosted mac runner(账单耗尽) + honest gate(halt(1) on failure) → main 从系统性红翻到真绿 + canary 部署闸打通。3 轮 CI 迭代(修真 flake + 格式)后稳定。"}
+  - {label: "读平面授权收口", pct: 100, value: "PR-1..5 全在 main + canary。PR-5 InternalReads 网关收尾(框架内部无主体读走窄网关、两侧边界防洗白)。原子 snapshot(#1486)+operator 流泄漏门(#1487)。canary 4 图 E2E 矩阵(owner读/非成员拒零泄漏/非owner成员修复后读)。★挖出并修 member-cap 遗留锁定(beta 硬阻塞)。"}
+  - {label: "统一 generation 撤销(#195)", pct: 45, value: "26→30 PR 工程,收敛 delete_user+epoch+#166。设计 v2→v3→v4 走完 **4 轮对抗评审 → 判定收敛(非螺旋,同类洞越来越细)**。**Phase F 地基已落地入 main(#1493, MERGEABLE 复审过)**。拆分 roll-out: F 先 ship → G/D/M 各自独立评审。"}
+  - {label: "dockerize CI(#196)", pct: 20, value: "OrbStack 验证可用。Task1 镜像 base/thin 拆分 draft(#1490, 增量重建 49.3s<60s 验证)。Task2-5 押着(先不改 ci.yml, 现单 runner 能用)。prod 一致性 + 并行多 PR CI。"}
+  - {label: "cc-headless-custom 泛化主体(#1460)", pct: 100, value: "gaga F2 cascade 自调 + F4 nil config home + F3 provider lane(顺手堵掉无-sidecar 僵尸 agent + 跳校验)全修,双后端 live proof,#1485 入 main(codex 对抗评审过)。"}
+  - {label: "插件 UI 分层(去 world 硬编)", pct: 25, value: "设计定案(#1472)。zyli #1473 UiSurfaceProvider 实现 + #1476 plugin-owned UI surfaces + #1477 presenter caps 刷新,在飞。"}
+  - {label: "Git provider 接入(gaga)", pct: 15, value: "#1423 provider V1 设计+门 / #1445 provider-neutral task access 域脊,在飞。"}
+  - {label: "企业自助开通产品化(ruihua)", pct: 15, value: "#1436 用户旅程+验收 plan / #1419 Profile / #1388 DealScout demo socialware,在飞。"}
 
 efficiency:
-  - {value: "11 PR 入 main", label: "CI 线: #1480 mac-runner / #1479 honest-gate / #1484 ci.local-parity / #1483 #1488 批量集成；#1478 #185 凭证；读平面: #1486 原子snapshot / #1487 operator流门；#1481 docs防幻觉；#1485 gaga cc-headless-custom"}
-  - {value: "4 张 E2E 证明图", label: "canary 读平面矩阵: owner读渲染 / 非成员深链被拒(零泄漏) / 非owner成员 backfill 前拒后读 —— 全 agent-browser 实拍"}
-  - {value: "2 条设计线上门", label: "统一 gen 撤销 v2→v3(两轮对抗评审、共挖 14 洞全折叠) / dockerize CI 5-PR 计划"}
-efficiency_source: "07-20→21 lead 协调线实测: CI 从『系统性假绿』翻到『真绿 + 部署闸通』全程—— 先挖出 halt(0) 假绿(所有 mix test 失败被静默吞)是比账单更深的根因, 批量集成一次 CI 合(省 runner)、honest gate 一开就逼出真实 flake 并根因修(非跳过)。读平面每一步都被对抗评审门/E2E 逮到完整性缺口: operator 流泄漏(非operator 收全租户 audit)、原子读撕裂、以及最关键的 —— member-cap 遗留锁定(cutover 后老成员读不了自己会话), 全部结构性修复 + 实拍验证。kimi 双线并行(独立 worktree + 独立 test 分区)出两个 draft PR 均对抗评审 MERGEABLE。"
+  - {value: "14 PR 入 main(07-20→21)", label: "CI 线: #1480 mac-runner / #1479 honest-gate / #1484 ci.local-parity / #1483 #1488 批量集成 / #1491 flake修 / #1492 format修；#1478 #185 凭证；读平面: #1486 原子snapshot / #1487 operator流门 / #1494 InternalReads 网关；#1481 docs防幻觉；#1493 cap Phase F；#1485 gaga cc-headless-custom"}
+  - {value: "4 图 E2E 实证 + admin 密钥轮换", label: "canary 读平面矩阵(agent-browser 实拍) + member-cap backfill 15 grant 验证 + admin 密码安全轮换"}
+  - {value: "4 轮对抗评审收敛 #195", label: "统一 gen 撤销设计 v2(10 must-fix)→v3(4洞)→v4(4洞折叠+传导正文)→判定收敛→Phase F 落地。每轮同类洞越来越细=收敛信号,非螺旋"}
+  - {value: "团队 5 人并线", label: "gaga(agent自举+git) / zyli(插件UI) / ruihua(自助开通+demo) / jjkysy(挂载-撤销+白板) / Allen 轨道(安全+CI+部署+统筹)"}
+efficiency_source: "07-20→21 lead 协调线实测: CI 从『系统性假绿』翻到『真绿+部署闸通』——先挖出 halt(0) 假绿(比账单更深),批量集成一次 CI 合(省 runner),honest gate 一开就逼出真实 flake 并根因修(非跳过)。读平面每一步都被对抗评审门/E2E 逮到完整性缺口: operator 流泄漏、原子读撕裂、**member-cap 遗留锁定(cutover 后老成员读不了自己会话)**,全结构性修复+实拍验证。#195 撤销设计走完 4 轮对抗评审收敛(同类洞越来越细),Phase F 地基落地。gaga #1485 双后端 live proof 入 main。团队 PR: lead 替 jjkysy rebase #1470(零冲突)+ handoff。"
 
 deploy:
-  - {env: "canary", state: "✅ 读平面 + CI-health + #185 已上(main ef9d87fdf 重部署中)；member-cap 遗留已 backfill 修复并验证(非owner成员能读)。"}
-  - {env: "beta", state: "⏳ 待 cutover —— cutover 时必须跑 member-cap `:receive` backfill(否则老成员被锁);其余闸(honest CI/读平面)已清。"}
+  - {env: "canary", state: "✅ 今天全部工作已上线(读平面全线 + operator门 + 原子snapshot + #185 + gaga cc-headless-custom + Phase F + member-cap 修复)。dogfood 观察中。"}
+  - {env: "beta", state: "⏳ 待 cutover(观察 canary 一天后)—— cutover 时**必须跑 member-cap `:receive` backfill**(否则老成员被锁),已入清单。"}
   - {env: "stable", state: "⏳ 待 cutover —— 同 beta。"}
 
 risks:
-  - "🟡 #1482(gaga 顺手挖到): populated DB 上任何重启 → world 插件 after_boot 撞 `{:already_registered, workspace://system}`(2/2 确定性 @ fe2906431), 毒掉 boot-all-app 的 mix 任务。疑 Loader 重跑竞速。canary release 道无事(不同 boot 路径), 但影响 dev 重启 + 可能影响 full-suite/dockerize CI。已单独开 issue, 建议优先 triage。"
-  - "🟡 member-cap durable 修复未落: 本轮是数据级 re-grant 现有 roster(canary 15 grant 验证)。永久解是 seed/迁移时就发 `session:receive` cap, 让 reseed/golive 成员一出生带读门钥匙。beta/stable cutover 清单里已列此步。#195 Phase M / #166 落地后自然收口。"
-  - "🟡 #195 是 30-PR 多天大程序(F→G→D→M+S→Z): v3 SOUND 后 kimi 从 Phase F 起做, 一晚只能推进 Phase F, 后续 phase 排队。DECISION 已按 Allen 授权用 lead 推荐(签名 self-license/单代计数器/per-session supervisor 成员/全 edge 级联)。"
-  - "🟢 full-suite 对 PR 是关的(只在 push-to-main + nightly 跑): 各 PR 的回归测试在实现环境 + 本地验证过(operator-gate 本地实跑 6/0), 合到 main 后 full-suite 才独立跑。低风险但记录在案。"
+  - "🟡 #1482(gaga 顺手挖到): populated DB 上任何重启 → world after_boot 撞 `{:already_registered, workspace://system}`(2/2 确定性), 毒掉 boot-all-app 的 mix 任务。疑 Loader 重跑竞速。canary release 道无事(不同 boot 路径), 但影响 dev 重启 + dockerize CI。已开 issue, 建议优先 triage。"
+  - "🟡 member-cap durable 修复未落: 本轮是数据级 re-grant 现有 roster(canary 15 grant 验证过)。永久解=seed/迁移时就发 `session:receive` cap。beta/stable cutover 清单含此步; #195 Phase M/#166 落地后自然收口。"
+  - "🟡 #195 是多天大工程(30 PR, F→G→D→M+S→Z): Phase F 已合, 拆分 roll-out 各 phase 独立评审。G-3 一个 contained 修(marker 门 auto-enumerate 覆盖 do_destroy + gate `read_held_caps`)由 lead fold 进 plan, 供 kimi 做 G 时用。"
+  - "🟢 full-suite 对 PR 关闭(只 push-to-main+nightly 跑): PR 回归测试在实现环境+本地验证过, 合后 main full-suite 独立跑。已记录。"
 
 people:
-  - {id: "gaga", name: "gaga", track: "Git provider / agent 泛化主体", color: "#7c3aed"}
+  - {id: "gaga", name: "gaga", track: "agent 泛化主体 / Git provider", color: "#7c3aed"}
   - {id: "zyli", name: "zyli", track: "插件UI分层 / presenter caps", color: "#0891b2"}
-  - {id: "ruihua", name: "ruihua", track: "自助开通产品化 / demo", color: "#db2777"}
-  - {id: "jjkysy", name: "jjkysy", track: "协作白板 / 挂载-撤销 infra", color: "#65a30d"}
-  - {id: "allen", name: "Allen 轨道", track: "CI健康 + 读平面 + 撤销 + 部署统筹", color: "#2563eb"}
+  - {id: "ruihua", name: "ruihua", track: "自助开通产品化 / demo 设计", color: "#db2777"}
+  - {id: "jjkysy", name: "jjkysy", track: "挂载-撤销 infra / 协作白板", color: "#65a30d"}
+  - {id: "allen", name: "Allen 轨道", track: "安全 + CI + 部署 + 统筹 + BD", color: "#2563eb"}
 
-# ===== TODAY (07-21) plan — status ∈ planned|wip|review|blocked =====
+# ===== TODAY (07-21) plan + DONE(07-20) — status ∈ planned|wip|review|blocked|done =====
 cards:
   - owner: "allen"
-    title: "CI 健康收口 + 部署闸打通"
-    goal: "从系统性假绿翻到真绿 + canary 部署闸通"
-    status: "review"
-    who: "Allen 轨道 · CI-health #189 · 07-20 落地"
+    title: "CI 健康收口 + 读平面全线 + 撤销地基"
+    goal: "假绿翻真绿 + 读平面上 canary + #195 Phase F"
+    status: "done"
+    who: "Allen 轨道 · 07-20→21 · 14 PR 入 main"
     acceptance:
-      - {text: "查出根因: GitHub Actions 账单耗尽 → 全搬 self-hosted mac runner(#1480, 自身 checks 在 mac 跑绿验证)", done: true}
-      - {text: "★ 挖出比账单更深的根因: ci.local `finalize_ci_local` 无条件 halt(0) 绕过 ExUnit 上报 → 所有 mix test 失败被静默吞、一直假绿。修法: ExUnit after_suite sentinel + halt(1) on failure, 注入失败证明过(#1479)", done: true}
-      - {text: "批量集成一次 CI 合(#1483: honest-gate + flake修 + #185 + docs; #1488: ci.local-parity + 原子snapshot + operator门) —— 省 runner", done: true}
-      - {text: "main honest full-suite 真绿 → dispatch-canary 通 → canary 自动重部署", done: true, evidence: "full-suite(self-hosted macOS) conclusion=success; canary Deploy success"}
+      - {text: "★ CI: 挖出 halt(0) 假绿(比账单更深根因) + 搬 mac runner + honest gate → main 真绿 + canary 闸通(#1479/#1480/#1483/#1484/#1488/#1491/#1492)", done: true, evidence: "full-suite success; canary Deploy success"}
+      - {text: "读平面全线收口 PR-1..5 入 main+canary: 原子snapshot(#1486) + operator流门(#1487) + InternalReads 网关(#1494)。canary 4 图 E2E 矩阵实拍", done: true, evidence: "socialware 266/0; arch 29/0; 4 shots"}
+      - {text: "★ 挖出并修 member-cap 遗留锁定(beta 硬阻塞): cutover 后非owner成员读不了自己会话 → canary backfill 15 grant, fail-before/pass-after 验证, 实拍非owner成员能读", done: true}
+      - {text: "#195 统一撤销设计 v2→v4 走完 4 轮对抗评审 → 收敛 → Phase F 地基落地(#1493, verify_against_current+AuthorityCache+authorize facade, 复审 MERGEABLE)", done: true}
+      - {text: "admin 密码安全轮换 + #185 hello 凭证源(#1478) 入 main", done: true}
   - owner: "allen"
-    title: "读平面上 canary + E2E + member-cap 修复"
-    goal: "读平面在 canary 端到端证明 + 修掉遗留锁定"
-    status: "review"
-    who: "Allen 轨道 · 读平面 · jjkysy #1459 起"
-    acceptance:
-      - {text: "原子 external-feed snapshot(撕裂安全, version-first chokepoint 读)入 main —— 对抗评审 MERGEABLE + Settlement 原子性核实(#1486)", done: true, evidence: "socialware 266/0 含新撕裂+parity+fail-closed 测试"}
-      - {text: "operator 流泄漏收口: WorldLive 把全租户 audit/authz/cc_event 推给每个登录用户 → 复用 AdminAuthority.admin? 双层门(订阅+投递 live 复查) —— 对抗评审 MERGEABLE + 本地实跑 6/0(#1487)", done: true}
-      - {text: "canary E2E 四图矩阵: owner读渲染 / 非成员深链被拒(零泄漏,code-verified) / 非owner成员 —— agent-browser 实拍", done: true}
-      - {text: "★ E2E 挖出 member-cap 遗留锁定: cutover 后非owner成员读不了自己会话(golive wildcard cap 未签名+un-scoped → 0 verified cap)。根因非读平面逻辑, 是上游 provisioning。canary backfill 修复(15 grant, fail-before/pass-after 验证, 实拍非owner成员能读)", done: true}
-      - {text: "读平面 PR-5(#188 InternalReads + 两侧门 + acyclic 收口)", done: false}
-  - owner: "allen"
-    title: "统一 generation 撤销程序(#195)"
-    goal: "收敛 epoch+delete_user+#166 成一个 30-PR 程序, 交 kimi 实施"
-    status: "wip"
-    who: "Allen 轨道 · 撤销线 · 设计 + 对抗评审门"
-    acceptance:
-      - {text: "v2 设计对抗评审 NEEDS-REVISION(10 must-fix) → 修订 v2", done: true}
-      - {text: "v2 复审再挖 4 洞(最关键: magic-link 登录路径是撤销绕过 —— 用 entity_tokens 之外的持久 token 认证、无代/围栏检查) → v3 修订(4 洞折叠, +0 PR: 唯一约束改 (child,edge_kind) / self-license 门强制 / EJECT durable-bar 强制 / fence 移到 spawn_principal 唯一 chokepoint)", done: true}
-      - {text: "v3 重审 SOUND → 交 kimi 做 Phase F(authorize/3 地基, 关 3 条裸 matches? 旁路)", done: false, evidence: "重审进行中; DECISION 按 Allen 授权用 lead 推荐"}
-  - owner: "allen"
-    title: "dockerize CI(#196, 新)"
-    goal: "CI 跑 docker(OrbStack) → prod 一致性 + 并行多 PR CI"
-    status: "wip"
-    who: "Allen 轨道 · CI infra · Allen 07-20 提出"
-    acceptance:
-      - {text: "OrbStack 验证可用(docker 29.4/runc); 现有 docker/Dockerfile.ci harness 验证(honest ci.local 在容器跑起、pin 全对)", done: true}
-      - {text: "5-PR 计划成型: 镜像 base/thin 拆分(每PR<60s) / gate-vs-full-suite 入口 / 项目名并行 / ci.yml 改造 / 2-3 runner。关键洞: docker 让并行 runner 从危险变安全(各 job 独立 postgres 容器)", done: true}
-      - {text: "Task 1 镜像 base/thin 拆分实施 + 验 <60s 增量重建 → draft PR", done: false, evidence: "kimi 实施中"}
-  - owner: "gaga"
-    title: "cc-headless-custom 泛化主体 live spawn(#1460)"
-    goal: "F2/F3/F4 三缺口全修, 双后端 live 证明"
-    status: "review"
-    who: "gaga 轨道 · #1485 入 main(高质量, 已过 codex 对抗评审)"
-    acceptance:
-      - {text: "F2 cascade 自调 {:calling_self}: 自引用层从手上 content.config_dir 供给(活数据)、非自身源不变、caller 注入仍优先", done: true}
-      - {text: "F3 provider lane: custom flavor 走 file-flavor cascade 道 + 加进 @file_flavors(防静默丢弃) + catalog 门 fail-closed —— 顺手堵掉『无 sidecar 僵尸 agent + 空 flavor_config 跳校验』", done: true}
-      - {text: "F4 nil config home: ensure_config_home 分配 per-agent 规范路径 + materialize, 修 String.to_charlist(nil) sidecar 崩", done: true}
-      - {text: "双后端 live proof(deepseek + kimi-coding + world 表单 + 杀 sidecar 重生), grep 零密钥; 顺手开 #1482(冷启动崩溃)", done: true}
-  - owner: "zyli"
-    title: "presenter caps 刷新 + 插件 UI 自声明"
-    goal: "缓存 caps 新鲜度 + world 读侧去硬编"
-    status: "wip"
-    who: "zyli 轨道 · #1477 presenter caps / #1473 #1476 UiSurfaceProvider"
-    acceptance:
-      - {text: "#1477 reconcile stale presenter capabilities —— 缓存新鲜度轴(与 gen 代有效性正交), 待合", done: false}
-      - {text: "#1473/#1476 plugin-owned UI surfaces(去 world 硬编), 在飞", done: false}
-  - owner: "jjkysy"
-    title: "挂载-撤销 infra + 协作白板二轮"
-    goal: "挂载宿主退场清理 + 冷建 deadline + kanban 协作"
-    status: "wip"
-    who: "jjkysy 轨道 · #1470 / #1474 / #1376"
-    acceptance:
-      - {text: "#1470 unmount_all_for_target + 冷建 provisioning deadline — ★ lead 已替你 rebase 到最新 main(ffcdd7c1e, 零冲突, force-pushed), 现 0 落后/CI 重跑中。HANDOFF: docs/together/2026-07-21/handoffs/1470-jjkysy-rebase.md — 请确认 CI 绿 + 语义 sanity(读平面/member-cap/mount 今天动了) → 评审门 → 自己合", done: false}
-      - {text: "#1474 kanban 协作二轮(人本位分享/tab恒显), 权宜溶解对齐读面正路", done: false}
-  - owner: "ruihua"
-    title: "自助开通产品化 + demo socialware"
-    goal: "企业自助开 workspace 旅程 + Profile/DealScout demo"
+    title: "★ 对接信息协会 Feishu (NEW 07-21)"
+    goal: "把 ezagent 平台对接信息协会的 Feishu, 落地一条真实外部渠道"
     status: "planned"
-    who: "ruihua 轨道 · #1436 / #1419 / #1388 / #1301"
+    who: "Allen 轨道 · BD/对外 · 07-21 新增"
+    acceptance:
+      - {text: "信息协会 Feishu app 接入(app_id/渠道绑定/入站出站)", done: false}
+      - {text: "打通一条真实会话/agent 回复链路作为对接验证", done: false}
+  - owner: "allen"
+    title: "★ 整理创业教具方案 (NEW 07-21)"
+    goal: "把 ezagent 作为创业/教学教具的方案整理成型"
+    status: "planned"
+    who: "Allen 轨道 · 产品/对外 · 07-21 新增"
+    acceptance:
+      - {text: "创业教具方案文档(定位/场景/演示路径/落地形态)", done: false}
+  - owner: "allen"
+    title: "#195 后续 roll-out + #196 dockerize"
+    goal: "Phase F 已合 → G/D/M 拆分推进; dockerize Task2-5"
+    status: "wip"
+    who: "Allen 轨道 · 撤销主线 + CI infra"
+    acceptance:
+      - {text: "G-3 fold(marker 门 auto-enumerate 覆盖 do_destroy + gate read_held_caps) → 交 kimi 做 Phase G", done: false}
+      - {text: "dockerize #196 Task2-5(押着, 观主线节奏)", done: false}
+  - owner: "gaga"
+    title: "cc-headless-custom 泛化主体 + Git provider"
+    goal: "F2/F3/F4 三缺口修完(#1460) + git provider 接入"
+    status: "review"
+    who: "gaga 轨道 · #1485 入 main(高质量, codex 过) / #1445 #1423 在飞"
+    acceptance:
+      - {text: "#1485 F2 cascade 自调 + F3 provider lane(堵僵尸agent+跳校验) + F4 nil config home, 双后端 live proof — 入 main", done: true}
+      - {text: "顺手开 #1482(populated DB 重启崩溃) — 建议优先 triage", done: true}
+      - {text: "#1423 git provider V1 设计+门 / #1445 provider-neutral task access 域脊", done: false}
+  - owner: "zyli"
+    title: "插件 UI 分层 + presenter caps"
+    goal: "world 读侧去硬编 + 缓存 caps 新鲜度"
+    status: "wip"
+    who: "zyli 轨道 · #1476 #1473 #1477 #1447 #1327"
+    acceptance:
+      - {text: "#1477 reconcile stale presenter capabilities(缓存新鲜度轴, 与 gen 代有效性正交)", done: false}
+      - {text: "#1476 plugin-owned UI surfaces / #1473 UiSurfaceProvider 实现(去 world 硬编)", done: false}
+      - {text: "#1447 workspace self-service gaps / #1327 uninstall browser proof", done: false}
+  - owner: "ruihua"
+    title: "企业自助开通产品化 + demo socialware"
+    goal: "自助开 workspace 旅程 + Profile/DealScout demo"
+    status: "wip"
+    who: "ruihua 轨道 · #1436 #1419 #1388"
     acceptance:
       - {text: "#1436 企业自助开通 workspace 产品化(用户旅程+验收)", done: false}
       - {text: "#1419 Profile / #1388 DealScout demo socialware", done: false}
+  - owner: "ruihua"
+    title: "★ 设计信息协会 demo 方案 (NEW 07-21)"
+    goal: "为信息协会对接设计一个 demo socialware 方案(配合 Allen 的 Feishu 对接)"
+    status: "planned"
+    who: "ruihua 轨道 · demo 设计 · 07-21 新增"
+    acceptance:
+      - {text: "信息协会 demo socialware 方案(场景/旅程/页面/数据)", done: false}
+  - owner: "jjkysy"
+    title: "挂载-撤销 infra + 协作白板二轮"
+    goal: "宿主退场清理 + 冷建 deadline + kanban 协作"
+    status: "wip"
+    who: "jjkysy 轨道 · #1470(lead 已 rebase) / #1474 / #1376 / #1301"
+    acceptance:
+      - {text: "#1470 unmount_all_for_target + 冷建 provisioning deadline — ★ lead 已替你 rebase 到最新 main(ffcdd7c1e, 零冲突, force-pushed), 现 0 落后/CI 重跑中。HANDOFF: docs/together/2026-07-21/handoffs/1470-jjkysy-rebase.md — 确认 CI 绿 + 语义 sanity(读平面/member-cap/mount 今天动了) → 评审门 → 自己合", done: false}
+      - {text: "#1474 kanban 协作二轮(人本位分享/tab恒显) / #1376 通用挂载 infra / #1301 dealscout 改版", done: false}
