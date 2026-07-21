@@ -12,7 +12,10 @@ defmodule Ezagent.World.PluginPageRegistry do
     * `route` / `detail_route` — 列表页 + 详情页 pattern（`:param` 段捕获
       单个非空 path segment，语义同原 `[^/]+` 正则）
     * `nav` — 侧栏/patch 白名单派生用的 label + path
-    * `data_builder` — 插件自有的 `state_for/2` 读模型模块
+    * `data_builder` — 插件自有的 `state_for/2` 读模型模块（如
+      `EzagentPluginKanban.WorldData`）；
+      同时必须实现 `refresh_state(entity_uri, ctx)`，供 World 在收到该插件的
+      `:view_changed` 实时信号时构建局部刷新 state
     * `renderer_families` — 注入 `SlotRegistry` 的 `[{type, title}]`
     * `action_prefixes` + `actions` — dispatch 准入：前缀是粗筛，`actions`
       是细白名单，**前缀命中后仍逐动作校验**（fail-closed，对齐 P22 精神）

@@ -69,6 +69,7 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state, state)
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:world_component, "sessions_table")
+     |> assign(:current_route, nil)
      |> assign(:current_session_uri, current_session_uri)
      |> assign(:current_session_uri_str, encode_uri(current_session_uri))
      |> assign(:last_dispatch_status, "idle")
@@ -92,6 +93,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> assign(:world_state, state)
       |> assign(:world_state_json, Jason.encode!(state))
       |> assign(:world_component, route.component)
+      |> assign(:current_route, route)
 
     socket =
       if connected?(socket) do
@@ -265,10 +267,95 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_info({:slice_changed, %{} = event}, socket),
     do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
 
+  def handle_info({:view_changed, %{plugin: plugin, entity_uri: %URI{} = entity_uri}}, socket)
+      when is_binary(plugin) do
+    {:noreply, refresh_plugin_view(socket, plugin, entity_uri)}
+  end
+
+  def handle_info({:caps_changed, %URI{} = entity_uri}, socket) do
+    if same_uri?(entity_uri, socket.assigns[:current_entity_uri]) do
+      {:noreply, socket |> refresh_current_caps() |> refresh_current_route()}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   # Both views store the agent URI with a plain `URI.to_string/1` (only
   # `agent_detail_path` is www-form-encoded), so a direct compare is right.
+
+  defp refresh_plugin_view(socket, plugin, %URI{} = entity_uri) do
+    case Ezagent.World.PluginPageRegistry.by_key(plugin) do
+      nil ->
+        socket
+
+      page ->
+        case Ezagent.World.PluginPageRefresh.build_state(
+               page,
+               entity_uri,
+               page_refresh_context(socket)
+             ) do
+          {:ok, state} ->
+            push_event(socket, "world:state", state)
+
+          {:error, reason} ->
+            raise ArgumentError,
+                  "invalid plugin refresh declaration for #{inspect(plugin)}: #{inspect(reason)}"
+
+          :not_registered ->
+            raise ArgumentError,
+                  "registered plugin refresh declaration disappeared for #{inspect(plugin)}"
+        end
+    end
+  end
+
+  defp page_refresh_context(socket) do
+    %{
+      workspace_uri: socket.assigns.current_workspace_uri,
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+    }
+  end
+
+  defp refresh_current_caps(socket) do
+    caller = socket.assigns.current_entity_uri
+    caps = MapSet.new(Ezagent.EntityCaps.load(caller))
+
+    socket
+    |> assign(:current_caps, caps)
+    |> assign(
+      :caller_json,
+      Jason.encode!(
+        caller_payload(
+          caller,
+          socket.assigns.current_workspace_uri,
+          caps,
+          Map.get(socket.assigns, :is_system_member?, false)
+        )
+      )
+    )
+  end
+
+  defp refresh_current_route(socket) do
+    case Map.get(socket.assigns, :current_route) do
+      %{} = route ->
+        workspace = socket.assigns.current_workspace_uri
+        caller = socket.assigns.current_entity_uri
+        layout = layout_for_route(route, workspace, caller)
+        state = state_for_route(route, socket, layout)
+
+        socket
+        |> assign(:layout_json, Jason.encode!(layout))
+        |> assign(:world_state, state)
+        |> assign(:world_state_json, Jason.encode!(state))
+        |> push_event("world:state", state)
+
+      _ ->
+        socket
+    end
+  end
+
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
     pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
   end

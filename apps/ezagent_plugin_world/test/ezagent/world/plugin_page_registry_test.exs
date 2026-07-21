@@ -24,6 +24,8 @@ defmodule Ezagent.World.PluginPageRegistryTest do
         assert %{label: label, path: nav_path} = page.nav
         assert is_binary(label) and is_binary(nav_path)
         assert is_atom(page.data_builder)
+        assert Code.ensure_loaded?(page.data_builder)
+        assert function_exported?(page.data_builder, :refresh_state, 2)
         assert is_list(page.renderer_families) and page.renderer_families != []
 
         assert Enum.all?(
