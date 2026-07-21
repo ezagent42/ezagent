@@ -5,8 +5,14 @@ defmodule Ezagent.ProviderConnection.MigrationUpgradeTest do
 
   alias Ezagent.ProviderConnection.MigrationTestRepo
 
+  # The D1 base migration was planned and first committed as
+  # 20260718000000_create_provider_connections.exs. While this branch was
+  # still a draft, `main` landed 20260718000000_socialware_mounts_person_scope.exs
+  # with the same version, so the rebase onto main moved the D1 base to the
+  # explicitly recorded collision-safe successor 20260718001000. The migration
+  # module and content bytes are unchanged; only the version/filename yielded.
   @historical [
-    {20_260_718_000_000, "20260718000000_create_provider_connections.exs",
+    {20_260_718_001_000, "20260718001000_create_provider_connections.exs",
      EzagentCore.Repo.Migrations.CreateProviderConnections},
     {20_260_719_000_000, "20260719000000_fence_provider_callback_operations.exs",
      EzagentCore.Repo.Migrations.FenceProviderCallbackOperations},
