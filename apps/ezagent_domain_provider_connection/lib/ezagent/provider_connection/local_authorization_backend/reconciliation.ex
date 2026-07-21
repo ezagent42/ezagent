@@ -323,7 +323,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
            seal_recovered_handoff(
              recovery.snapshot,
              normalized.credential_material,
-             Support.handoff_aad(recovery.row, recovery.command.correlation_id, handoff_ref)
+             Support.handoff_aad(recovery.row, recovery.command.correlation_id, handoff_ref, recovery.operation.operation_class)
            ) do
       Repo.transaction(fn ->
         connection =
