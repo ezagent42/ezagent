@@ -240,7 +240,13 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "apps/ezagent_cli/lib/ezagent_cli/exec.ex",
         "apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex",
         "apps/ezagent_web/lib/ezagent_web/controllers/api_v1_controller.ex",
-        "apps/ezagent_web/lib/ezagent_web/live_auth.ex"
+        "apps/ezagent_web/lib/ezagent_web/live_auth.ex",
+        # ctx: #1457 strict signing 后 runtime 不再从 caller IDENTITY ambient 装载
+        # caps,空 ctx caps 会让合法 :attach 持有者被 :missing_cap 拒。该控制器在
+        # transport ingress 处装载 caller 的 durable caps 作 presenter bundle 呈交,
+        # 授权判定仍全在 Kind chokepoint(控制器不检查/枚举 cap 语义)——与同组的
+        # `live_auth.ex` / `api_v1_controller.ex` 同一类,非 ACCESS 判定点。
+        "apps/ezagent_web/lib/ezagent_web/controllers/world_uploads_controller.ex"
       ]
     },
     %{

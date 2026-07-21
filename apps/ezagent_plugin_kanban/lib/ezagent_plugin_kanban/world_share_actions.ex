@@ -100,7 +100,6 @@ defmodule EzagentPluginKanban.WorldShareActions do
     with {:ok, payload} <- verify_share_token(socket, token),
          {:ok, %{board_uri: board_uri}} <-
            EzagentPluginKanban.ShareReceive.receive_shared_board(payload, clicker) do
-      socket = refresh_caps(socket, board_uri)
       ctx = WorldActions.read_ctx(socket)
 
       instances =
@@ -136,35 +135,6 @@ defmodule EzagentPluginKanban.WorldShareActions do
       _ ->
         {:error, :bad_token}
     end
-  end
-
-  # caps assign 刷新(xy-review ①):从 Entity-cap 读面重读(live_auth 同款读面)。
-  # mint 的 absorb 半步是异步落 slice —— 有界等待新板钥匙出现(最多 ~1s),等不到
-  # 也不算失败(挂载行已落,下次页面重载可见)。fail-safe 保留旧快照。
-  defp refresh_caps(socket, %URI{} = board_uri) do
-    target = Ezagent.URI.instance(board_uri)
-
-    caps =
-      Enum.reduce_while(1..20, MapSet.new(), fn _i, _acc ->
-        caps = socket.assigns.current_entity_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
-
-        has_board_cap =
-          Enum.any?(caps, fn
-            %Ezagent.Capability{instance: %URI{} = inst} -> Ezagent.URI.instance(inst) == target
-            _ -> false
-          end)
-
-        if has_board_cap do
-          {:halt, caps}
-        else
-          Process.sleep(50)
-          {:cont, caps}
-        end
-      end)
-
-    assign(socket, :current_caps, caps)
-  rescue
-    _ -> socket
   end
 
   # --- ㉙ 分享二期:share_to_session ----------------------------------------

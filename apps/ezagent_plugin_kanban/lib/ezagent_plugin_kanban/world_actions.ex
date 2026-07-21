@@ -206,8 +206,6 @@ defmodule EzagentPluginKanban.WorldActions do
         snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
 
         if status == "ok" do
-          broadcast_kanban_changed(socket, uri)
-
           materialize_op(
             socket,
             op_text(action, args, uri, snapshot),
@@ -241,7 +239,6 @@ defmodule EzagentPluginKanban.WorldActions do
         status = status_of(result)
 
         if status == "ok" do
-          broadcast_kanban_changed(socket, uri)
           materialize_op(socket, op_text(action, args, uri, nil))
         end
 
@@ -457,9 +454,7 @@ defmodule EzagentPluginKanban.WorldActions do
              ) do
           {:ok, %{board_uri: board_uri}} ->
             # board_state 列出全量 instances（含新建的）+ 推该 agent 的空 board。
-            # 建板也广播 {:kanban_changed}（e2e r08 残留：专用路径漏接任务6的广播，
-            # 本人列表与同会话其他成员都靠它刷新）。
-            broadcast_kanban_changed(socket, board_uri)
+            # 建板后其他成员的界面刷新不在本 PR 范围（见模块 doc 的实时刷新说明）。
             materialize_op(socket, "新建了看板「#{uri_label(board_uri)}」")
 
             {:noreply,
@@ -489,7 +484,6 @@ defmodule EzagentPluginKanban.WorldActions do
              ) do
           {:ok, _report} ->
             # 板没了:清掉选中板,推刷新后的列表(前端回列表态);同会话其他成员靠广播刷新。
-            broadcast_kanban_changed(socket, uri)
             materialize_op(socket, "删除了看板「#{uri_label(uri)}」（含全部挂载）")
 
             {:noreply,
@@ -526,34 +520,6 @@ defmodule EzagentPluginKanban.WorldActions do
     end
   end
 
-  # --- X1 推送环发布侧(㉘/㉒-① 的 kanban 半) ---------------------------------
-  #
-  # kanban 写动作成功后向**当前会话的 UI events topic**(`esr:session:<uri>:events`,
-  # chat_message / member_presence 同族的 view fan-out 面)广播一条轻事件
-  # `{:kanban_changed, board_uri}` —— 同会话其他在线成员的 WorldLive 已经经
-  # `ensure_session_subscribed` 订着这个 topic,收到后按自己的 `read_ctx` 重拉
-  # `board_state` 刷画布(操作方此前只 push 自己的 socket,别人的界面永远不动,㉘)。
-  #
-  # **不是 inbound dispatch 路**(P14 红线,事故 2.1):inbound 永远走
-  # `Ezagent.Invocation.dispatch/1`;这里是 §5.7.6 的 :events 观察者 fan-out,
-  # 与 presence_fanout / read_marker 同一类(invariant #1 allowlist 同步登记)。
-  # 无当前会话(如 /plugins/kanban 独立页操作)则无处可播,静默跳过。
-  defp broadcast_kanban_changed(socket, %URI{} = board_uri) do
-    case socket.assigns[:current_session_uri] do
-      %URI{} = session_uri ->
-        Phoenix.PubSub.broadcast(
-          EzagentCore.PubSub,
-          Ezagent.ActionSet.Session.session_events_topic(session_uri),
-          {:kanban_changed, board_uri}
-        )
-
-        :ok
-
-      _ ->
-        :ok
-    end
-  end
-
   # --- 操作物化消息（2026-07-18 一等任务）-----------------------------------
   #
   # 所有 kanban 写操作成功后，以**操作者身份**往当前会话物化一条
@@ -564,8 +530,8 @@ defmodule EzagentPluginKanban.WorldActions do
   #     （不惊动 assistant / relay / 外部 channel）；
   #   * attach 的附件引用 = uploads resource URI 进 `body.attachments`
   #     （㊲ 救济半件：同会话成员日后经消息参与面可下载——serve 侧归 infra-C）。
-  # 无当前会话（/plugins/kanban 独立页）无处可记，静默跳过（与 kanban_changed 广播
-  # 同口径）；发送 best-effort（:cast），失败不回滚动作（留痕缺一条 vs 动作报错，取前者）。
+  # 无当前会话（/plugins/kanban 独立页）无处可记，静默跳过；发送 best-effort
+  # （:cast），失败不回滚动作（留痕缺一条 vs 动作报错，取前者）。
   defp materialize_op(socket, text, attachments \\ []) do
     case socket.assigns[:current_session_uri] do
       %URI{} = session_uri ->

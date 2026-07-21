@@ -84,8 +84,8 @@ defmodule Ezagent.World.PresenterCaps do
   所以 cap 新鲜度策略留在 world 这一处，插件只读 `assigns[:presenter_caps]` 这份数据；
   assign 缺失 → 插件侧取空集 = fail-closed（拒绝，不是放行）。
 
-  接缝共三处：`WorldLive` 的 `world:dispatch` 委派、`WorldLive` 的
-  `{:kanban_changed, _}` 重拉、`ConversationActions.view_switch_updates/3` 切 tab 载板。
+  接缝共两处：`WorldLive` 的 `world:dispatch` 委派、
+  `ConversationActions.view_switch_updates/3` 切 tab 载板。
   """
   @spec put(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
   def put(socket) do
