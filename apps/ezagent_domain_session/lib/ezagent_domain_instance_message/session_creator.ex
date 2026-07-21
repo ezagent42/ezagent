@@ -664,7 +664,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
     with {:ok, behaviors} <-
-           Installation.behavior_set_for_template(template_content, workspace_uri) do
+           Installation.behavior_set_for_template(template_content, workspace_uri),
+         :ok <-
+           record_session_derivation(
+             session_uri,
+             effective_owner,
+             workspace_uri,
+             session_template_uri
+           ) do
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
@@ -767,7 +774,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          template_content
        ) do
     with {:ok, behaviors} <-
-           Installation.behavior_set_for_template(template_content, workspace_uri) do
+           Installation.behavior_set_for_template(template_content, workspace_uri),
+         :ok <-
+           record_session_derivation(
+             session_uri,
+             effective_owner,
+             workspace_uri,
+             session_template_uri
+           ) do
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
@@ -935,6 +949,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     do: Map.get(content, :seed_surface) || Map.get(content, "seed_surface")
 
   defp seed_surface_of(_), do: nil
+
+  defp record_session_derivation(session_uri, owner_uri, workspace_uri, template_uri) do
+    attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
+
+    [
+      {owner_uri, :created_by},
+      {workspace_uri, :workspace_ownership},
+      {template_uri, :parent_template}
+    ]
+    |> Enum.reduce_while(:ok, fn {parent_uri, edge_kind}, :ok ->
+      case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             session_uri,
+             parent_uri,
+             edge_kind,
+             attempt_id
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
 
   defp workspace_name_of!(%URI{scheme: "workspace"} = uri), do: Ezagent.URI.name!(uri)
 

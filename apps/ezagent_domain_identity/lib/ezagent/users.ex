@@ -130,10 +130,10 @@ defmodule Ezagent.Users do
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
-    end
+    parent_uri = Keyword.get(opts, :created_by, user_workspace)
+    edge_kind = if Keyword.has_key?(opts, :created_by), do: :created_by, else: :workspace_member
+
+    insert_with_derivation(changeset, Ezagent.URI.new!(uri_str), parent_uri, edge_kind)
   end
 
   @doc """
@@ -183,9 +183,35 @@ defmodule Ezagent.Users do
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
+    insert_with_derivation(
+      changeset,
+      Ezagent.URI.new!(uri_str),
+      user_workspace,
+      :workspace_member
+    )
+  end
+
+  defp insert_with_derivation(changeset, child_uri, parent_uri, edge_kind) do
+    attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:user, changeset)
+    |> Ecto.Multi.run(:derivation_edge, fn _repo, _changes ->
+      case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             child_uri,
+             parent_uri,
+             edge_kind,
+             attempt_id
+           ) do
+        :ok -> {:ok, :recorded}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{user: row}} -> {:ok, decode(row)}
+      {:error, :user, changeset, _changes} -> {:error, changeset}
+      {:error, :derivation_edge, reason, _changes} -> {:error, reason}
     end
   end
 

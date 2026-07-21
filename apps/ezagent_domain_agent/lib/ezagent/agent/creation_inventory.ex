@@ -19,21 +19,31 @@ defmodule Ezagent.Agent.CreationInventory do
       workspace_uri: URI.to_string(workspace_uri)
     }
 
-    case Repo.get_by(CreationInventoryEntry,
-           creation_attempt_id: attempt_id,
-           agent_uri: URI.to_string(agent_uri)
-         ) do
-      %CreationInventoryEntry{} = existing ->
-        if exact_fact?(existing, attrs), do: :ok, else: {:error, :creation_fact_conflict}
+    result =
+      case Repo.get_by(CreationInventoryEntry,
+             creation_attempt_id: attempt_id,
+             agent_uri: URI.to_string(agent_uri)
+           ) do
+        %CreationInventoryEntry{} = existing ->
+          if exact_fact?(existing, attrs), do: :ok, else: {:error, :creation_fact_conflict}
 
-      nil ->
-        %CreationInventoryEntry{}
-        |> CreationInventoryEntry.changeset(attrs)
-        |> Repo.insert()
-        |> case do
-          {:ok, _entry} -> :ok
-          {:error, changeset} -> {:error, changeset}
-        end
+        nil ->
+          %CreationInventoryEntry{}
+          |> CreationInventoryEntry.changeset(attrs)
+          |> Repo.insert()
+          |> case do
+            {:ok, _entry} -> :ok
+            {:error, changeset} -> {:error, changeset}
+          end
+      end
+
+    with :ok <- result do
+      Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+        agent_uri,
+        root_uri,
+        :creation_root,
+        attempt_id
+      )
     end
   end
 

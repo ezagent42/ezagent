@@ -527,6 +527,7 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_at, DateTime.utc_now())
 
       with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri),
+           :ok <- record_derivation_edge(new_uri, parent_uri, caller_uri),
            :ok <- grant_template_owner_caps(owner_uri, new_uri, SessionTemplate) do
         {:ok, %{template_uri: new_uri}, []}
       end
@@ -553,7 +554,8 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      with {:ok, _pid} <- ensure_kind_alive(new_uri),
+      with :ok <- record_derivation_edge(new_uri, parent_uri, caller_uri),
+           {:ok, _pid} <- ensure_kind_alive(new_uri),
            {:ok, _result} <- dispatch_template_write_as_system(new_uri, content),
            :ok <- grant_template_owner_caps(owner_uri, new_uri, AgentTemplate) do
         notify_fork_owner(owner_uri, parent_uri, new_uri)
@@ -614,6 +616,23 @@ defmodule Ezagent.ActionSet.Template do
   end
 
   defp notify_fork_owner(_, _, _), do: :ok
+
+  defp record_derivation_edge(new_uri, parent_uri, caller_uri) do
+    attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
+
+    [{parent_uri, :parent_template}, {caller_uri, :created_by}]
+    |> Enum.reduce_while(:ok, fn {parent, edge_kind}, :ok ->
+      case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             new_uri,
+             parent,
+             edge_kind,
+             attempt_id
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
 
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false

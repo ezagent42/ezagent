@@ -103,6 +103,17 @@ defmodule Ezagent.WorkspaceTest do
     end
   end
 
+  describe "create/2 derivation provenance" do
+    test "workspace ownership is committed with the durable workspace row" do
+      name = "derivation-#{System.unique_integer([:positive])}"
+      owner = Ezagent.URI.user(:system, :admin)
+      workspace_uri = Ezagent.URI.workspace(name)
+
+      assert {:ok, _pid} = Ezagent.Workspace.create(name, %{created_by: owner})
+      assert workspace_uri in Ezagent.Provenance.DerivationEdges.descendants(owner)
+    end
+  end
+
   describe "add_member/2 — dispatch-first persistence (task #55 codex r2 CRIT-1)" do
     # Pre-fix: facade persisted via `Store.update_members/2` BEFORE
     # dispatching, so a Behavior-rejected cross-prefix member URI hit

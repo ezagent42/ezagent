@@ -102,6 +102,14 @@ defmodule Ezagent.AgentLineage do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
 
+    :ok =
+      Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+        a,
+        s,
+        :spawned_by,
+        stable_attempt_id(a)
+      )
+
     row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()}
 
     {:ok, _} =
@@ -204,4 +212,9 @@ defmodule Ezagent.AgentLineage do
 
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)
   defp uri_to_str(s) when is_binary(s), do: s
+
+  defp stable_attempt_id(agent_uri) do
+    digest = :crypto.hash(:sha256, agent_uri) |> Base.url_encode64(padding: false)
+    "agent-lineage:" <> digest
+  end
 end

@@ -71,6 +71,23 @@ defmodule Ezagent.UsersTest do
       {:ok, _} = Users.create(uri, "x", [])
       assert {:error, _changeset} = Users.create(uri, "y", [])
     end
+
+    test "created_by is atomically recorded as an append-only derivation edge" do
+      owner =
+        Ezagent.URI.user(
+          "team-alpha",
+          "creator-#{System.unique_integer([:positive])}"
+        )
+
+      user =
+        Ezagent.URI.user(
+          "team-alpha",
+          "derived-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:ok, _decoded} = Users.create(user, nil, [], created_by: owner)
+      assert Ezagent.Provenance.DerivationEdges.descendants(owner) == [user]
+    end
   end
 
   describe "verify_password/2" do

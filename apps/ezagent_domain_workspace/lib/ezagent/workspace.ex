@@ -62,7 +62,7 @@ defmodule Ezagent.Workspace do
   """
   @spec create(String.t(), map()) :: {:ok, pid()} | {:error, term()}
   def create(name, attrs \\ %{}) when is_binary(name) and name != "" do
-    with {:ok, _decoded} <- Store.create(name, attrs),
+    with {:ok, _decoded} <- create_workspace_record(name, attrs),
          {:ok, pid} <- spawn_workspace(name, attrs) do
       {:ok, pid}
     else
@@ -76,6 +76,41 @@ defmodule Ezagent.Workspace do
       {:exists, _decoded} -> {:error, :workspace_exists}
       {:error, _} = err -> err
     end
+  end
+
+  defp create_workspace_record(name, attrs) do
+    EzagentCore.Repo.transaction(fn ->
+      case Store.create(name, attrs) do
+        {:ok, decoded} ->
+          case record_derivation_edge(decoded.uri, Map.get(attrs, :created_by)) do
+            :ok -> decoded
+            {:error, reason} -> EzagentCore.Repo.rollback(reason)
+          end
+
+        {:exists, decoded} ->
+          EzagentCore.Repo.rollback({:exists, decoded})
+
+        {:error, reason} ->
+          EzagentCore.Repo.rollback({:error, reason})
+      end
+    end)
+    |> case do
+      {:ok, decoded} -> {:ok, decoded}
+      {:error, {:exists, decoded}} -> {:exists, decoded}
+      {:error, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp record_derivation_edge(_workspace_uri, nil), do: :ok
+
+  defp record_derivation_edge(workspace_uri, created_by) do
+    Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+      workspace_uri,
+      created_by,
+      :workspace_ownership,
+      Ezagent.Provenance.DerivationEdges.new_attempt_id()
+    )
   end
 
   # --- durable mutations --------------------------------------------
