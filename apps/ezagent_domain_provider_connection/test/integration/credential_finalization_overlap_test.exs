@@ -24,8 +24,16 @@ defmodule Ezagent.ProviderConnection.CredentialFinalizationOverlapTest do
   setup do
     state = start_supervised!({Agent, fn -> D1IdempotentCredentialBackend.new_state() end})
     owner = {__MODULE__, self()}
-    :acquired = BackendPairRegistry.register(owner, Task8Fixtures.pair())
-    :acquired = DriverRegistry.register(owner, Task8Fixtures.driver())
+
+    assert BackendPairRegistry.register(owner, Task8Fixtures.pair()) in [
+             :acquired,
+             :existing_identical
+           ]
+
+    assert DriverRegistry.register(owner, Task8Fixtures.driver()) in [
+             :acquired,
+             :existing_identical
+           ]
 
     previous =
       Application.get_env(
