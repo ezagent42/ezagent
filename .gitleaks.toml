@@ -37,4 +37,10 @@ paths = [
   # Documentation examples (illustrative keys in skill docs / scenario scripts).
   '''\.claude/skills/elixir-phoenix-helper/SKILL\.md''',
   '''docs/scenarios/08-4agent-comprehensive/scenario\.md''',
+  # Internal design/plan/spec working docs (same class as docs/together/** above):
+  # illustrative sentinels (e.g. the D0 `gho-D0-SENTINEL` test placeholder) and
+  # prose false-positives of the generic-api-key entropy heuristic (design docs
+  # narrating "tokens/secrets" flow). No real credentials; not user-facing config.
+  '''docs/superpowers/plans/.*''',
+  '''docs/superpowers/specs/.*''',
 ]

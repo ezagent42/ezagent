@@ -78,13 +78,22 @@ defmodule EzagentPluginGithub.GitHubCredentialBackend do
   defp encryption_key do
     case EzagentPluginGithub.Config.token_encryption_key() do
       nil ->
+        # Unset — dev-only ephemeral key. Production MUST configure a stable key
+        # via `:ezagent_plugin_github, :token_encryption_key` (`GITHUB_TOKEN_ENCRYPTION_KEY`).
         @fallback_key
 
       encoded when is_binary(encoded) ->
-        # Decode from base64 — the env var stores a base64-encoded 32-byte key
+        # A CONFIGURED key must be a valid base64-encoded 32-byte key. Fail loud
+        # on a malformed value (bad base64 / wrong length) — exactly like
+        # `Config.oauth_client_secret` — instead of silently falling back to the
+        # ephemeral key, which would lose ALL stored credentials on the next boot
+        # after a typo'd production key.
         case Base.decode64(encoded) do
-          {:ok, key} when byte_size(key) == 32 -> key
-          _ -> @fallback_key
+          {:ok, key} when byte_size(key) == 32 ->
+            key
+
+          _ ->
+            raise "Invalid GITHUB_TOKEN_ENCRYPTION_KEY: expected a base64-encoded 32-byte key"
         end
     end
   end
