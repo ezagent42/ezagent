@@ -132,18 +132,12 @@ defmodule EzagentPluginHello.Migrate do
     match?({:ok, @orchestrator_recipe}, agent_recipe(agent_uri))
   end
 
-  # The same ETS-fast-path → durable-resolver layering
-  # `SessionCreator.DefinitionAgents.agent_recipe/1` uses internally — both
-  # `Ezagent.Agent.RecipeAttributes` and `Ezagent.UriQuery` are public core/domain
-  # read APIs (consumed, not modified).
-  defp agent_recipe(%URI{} = agent_uri) do
-    case Ezagent.Agent.RecipeAttributes.fetch(agent_uri) do
-      {:ok, recipe} -> {:ok, recipe}
-      :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
-    end
-  rescue
-    _ -> :none
-  end
+  # Delegates to the single owner of the ETS-fast-path → durable-resolver
+  # recipe cascade (`Ezagent.Agent.RecipeAttributes.fetch_or_resolve/1`) instead
+  # of keeping a local copy (the `cross_file_duplicate_fn_groups` ratchet
+  # counted the copy).
+  defp agent_recipe(%URI{} = agent_uri),
+    do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
 
   # Free the "orchestrator" role_name via the ALREADY-sanctioned
   # `session.remove_participant` dispatch, authorized by a target-issued narrow

@@ -102,16 +102,32 @@ defmodule Ezagent.Cap.Authority do
       )
       when is_binary(signature) do
     cap.key_id == authority.key_id and
-      :crypto.verify(
-        :eddsa,
-        :none,
-        Signing.signing_payload(cap),
-        signature,
-        [authority.public_key, :ed25519]
-      )
+      verify_signature(authority.public_key, cap, presenter)
   end
 
   def verify(%__MODULE__{}, %Capability{}, %URI{}), do: false
+
+  @doc false
+  @spec verify_durable_current(URI.t(), Capability.t(), URI.t()) :: boolean()
+  def verify_durable_current(
+        %URI{} = target,
+        %Capability{grantee_uri: %URI{} = grantee} = cap,
+        %URI{} = receiver
+      ) do
+    with {:ok, artifact_target} <- target_uri(cap),
+         true <- same_uri?(artifact_target, target),
+         true <- same_uri?(grantee, receiver),
+         %{generation: generation, public_key: public_key} <-
+           KindCapAuthority.active_public(Ezagent.URI.stable_key(target)),
+         expected_key_id <- key_id(public_key, generation),
+         true <- cap.key_id == expected_key_id do
+      verify_signature(public_key, cap, receiver)
+    else
+      _reason -> false
+    end
+  end
+
+  def verify_durable_current(%URI{}, %Capability{}, %URI{}), do: false
 
   @doc false
   @spec with_current(t(), (-> result)) :: result when result: term()
@@ -224,6 +240,19 @@ defmodule Ezagent.Cap.Authority do
     fingerprint = :crypto.hash(:sha256, public_key) |> Base.url_encode64(padding: false)
     "kind-g#{generation}:#{fingerprint}"
   end
+
+  defp verify_signature(public_key, %Capability{signature: signature} = cap, %URI{})
+       when is_binary(public_key) and is_binary(signature) do
+    :crypto.verify(
+      :eddsa,
+      :none,
+      Signing.signing_payload(cap),
+      signature,
+      [public_key, :ed25519]
+    )
+  end
+
+  defp verify_signature(_public_key, %Capability{}, %URI{}), do: false
 
   defp genesis(uri, kind_type) do
     uri_string = Ezagent.URI.stable_key(uri)

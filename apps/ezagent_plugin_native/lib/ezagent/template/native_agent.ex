@@ -28,12 +28,29 @@ defmodule Ezagent.PluginNative.Template do
   def config_schema, do: []
 
   @impl Ezagent.Kind.Template
-  def validate(%{"class" => "native.agent"} = tmpl), do: Ezagent.Kind.Template.check_agent_uri(tmpl)
+  def validate(%{"class" => "native.agent"} = tmpl),
+    do: Ezagent.Kind.Template.check_agent_uri(tmpl)
+
   def validate(%{"class" => other}), do: {:error, {:wrong_class, other}}
   def validate(_), do: {:error, :missing_class_field}
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = _tmpl, _workspace_uri) do
+    instantiate_with_opts(agent_uri_str, [])
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str}, _workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_with_opts(agent_uri_str, launch_context: launch_context)
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+
+  defp instantiate_with_opts(agent_uri_str, opts) do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
 
     # native is a STORED flavor attribute (read at load via UriQuery), NOT a
@@ -43,12 +60,10 @@ defmodule Ezagent.PluginNative.Template do
     # No explicit `:behaviors` → nil `:kind_base` → the base Agent behavior
     # set. No external engine/sidecar. RF-5a layers the role's behaviors on
     # per-instance via the recipe.
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
       {:ok, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
       {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
       {:error, reason} -> {:error, reason}
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 end

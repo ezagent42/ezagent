@@ -1,0 +1,182 @@
+# Git Provider V1 D1 Fence Amendment Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
+
+**Goal:** Make callback recovery obey D0.1 stable-input idempotency while fencing stale workers and preserving cleanup obligations.
+
+**Architecture:** Keep Task 7 below pointer CAS/finalization. Separate the stable credential command from a private launch fence; compare the captured launch fence at result commit. A terminal transition and callback claim linearize on the connection row, with Task 8 owning pointer/cleanup consequences.
+
+**Tech Stack:** Elixir/OTP, Phoenix domain code, Ecto/PostgreSQL, Phoenix LiveView test helpers where applicable, telemetry, guarded Mix tests.
+
+## Global Constraints
+
+- Work only in `/home/huangjiajia/ezagent/.worktrees/git-domain-spine` on `feat/git-domain-spine`.
+- Never stage/edit/delete protected handoff/report files or any existing unrelated untracked files.
+- Never send claim token, attempt version, or lease deadline as D0.1 credential input.
+- Never hold a database transaction across provider or credential effects.
+- Task 7 ends at `backend_committed` or `cleanup_pending`; Task 8 owns pointer CAS, shred, revoke, attempt terminalization, and finalization.
+- Every Mix command uses `systemd-run --user --scope -p MemoryHigh=768M -p MemoryMax=1G -p MemorySwapMax=0 -p MemoryAccounting=yes -p OOMPolicy=kill`, `timeout`, `SHELL=/bin/bash`, and `ERL_FLAGS='+S 4:4'`; tests are serialized.
+
+## Files and responsibilities
+
+- `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`: stable operation lookup, launch-fence capture/verification, connection linearization, safe/public receipt separation.
+- `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend.ex`: stable credential command and begin-time execution-identity binding.
+- `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/operation.ex`: stable digest and receipt changeset contract.
+- `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/connection.ex` and related migration only if the shared connection fence requires a durable field.
+- `apps/ezagent_core/priv/repo_pg/migrations/20260719000000_fence_provider_callback_operations.exs`: first add nullable `attempt_version`, `attempt_claim_token`, and `handoff_ref` to the existing operations table.
+- `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs`: then add fail-closed conditional constraints. The original schema already supplies `result_ref` and `expected_credential_version`; the 00000 migration supplies the remaining fence columns.
+- `apps/ezagent_core/priv/repo_pg/migrations/20260719002000_bind_provider_execution_identity.exs`: add the non-null execution-identity binding constraint after the backend-record schema is populated by begin.
+- `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`: real lease-steal, strict digest, stale-result, terminal barrier tests.
+- `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`: command digest and execution-identity tests.
+- `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`: full operation key and conditional constraint tests.
+- `docs/superpowers/specs/2026-07-19-git-provider-v1-d1-fence-amendment-design.md`: approved protocol amendment.
+
+### Task 1: RED tests for stable command and true launch fence
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
+- Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`
+
+**Interfaces:**
+- The credential sink records canonical input digest by `{backend_pair_id, operation_class, correlation_id}` and rejects a changed digest.
+- The store exposes no new public secret-bearing API; launch fence remains private to the store.
+
+- [ ] Add a test asserting lease renewal produces byte-equivalent credential command input while the local attempt version changes.
+- [ ] Add a deterministic barrier that updates both attempt and operation fences, kills or releases the old worker, and asserts its returned result becomes `cleanup_pending`.
+- [ ] Add a conflicting-result case that rejects a different credential ref/version for the same stable correlation.
+- [ ] Run only the two test files under the guarded 1 GB scope and record the expected RED failures.
+
+### Task 2: Implement stable command and launch-fence commit
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend.ex`
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/operation.ex`
+
+**Interfaces:**
+- `credential_command/3` contains stable scope only.
+- Private `launch_fence/3` captures operation id, connection version, attempt version, and claim token.
+- `journal_credential_result/5` receives the captured fence and commits only on exact equality; mismatch persists `cleanup_pending`.
+
+- [ ] Remove mutable lease fields from the credential command and include execution identity plus all stable D0 scope fields.
+- [ ] Capture the launch fence immediately before the external credential call.
+- [ ] Lock connection, attempt, operation in order on return and compare captured versus current fence.
+- [ ] Preserve exact result ref/version/correlation for cleanup; allow only exact already-committed result reconciliation.
+- [ ] Run the Task 1 focused tests until GREEN.
+
+### Task 2A: Restore bounded prepared recovery before external effects
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/authorization_attempt.ex`
+- Test: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
+
+**Interfaces:**
+- `recover_prepared/5` returns `{:error, :callback_in_progress}` while
+  `now < claim_until`.
+- At `now >= claim_until`, one transaction locks connection -> attempt ->
+  operation and renews both attempt and operation fences while preserving the
+  stable correlation, handoff ref, and digest.
+
+- [ ] Add deterministic live-lease and exact-expiry RED tests.
+- [ ] Implement the lock-ordered atomic renewal.
+- [ ] Run the recovery focused test with the guarded 1 GB command and verify
+  only one claimant proceeds.
+
+### Task 3: Bind execution identity at begin and harden stable scope
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend.ex`
+- Inspect: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/connection.ex` and use its existing `connection_version`; this amendment adds no new connection field.
+- Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/local_authorization_backend_test.exs`
+
+**Interfaces:**
+- Begin durable backend rows and authenticated data carry execution identity.
+- Callback consume rejects any row/attempt/operation/connection execution-identity drift before driver or credential effects.
+
+- [ ] Add execution identity to begin subject, durable backend record binding, begin/row AAD, and stable operation digest.
+- [ ] Add RED then GREEN tests for drift between begin and operation creation and drift after committed receipt.
+- [ ] Verify provider-returned execution identity matches the bound value before creating the handoff.
+
+### Task 4: Enforce connection linearization and receipt boundary
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/callback_ingress.ex`
+- Modify: `apps/ezagent_domain_provider_connection/test/integration/callback_recovery_test.exs`
+
+**Interfaces:**
+- Connection transition and callback claim use the connection row lock and generation fence.
+- Public callback success contains only connection id, status, and connection version.
+
+- [ ] Add a deterministic callback-claim connection-lock/version-fence barrier. The
+  terminal-transition winner/loser barrier is deferred to Task 8 because the
+  current `Transition` module is only a pure legal-edge graph and Task 7 must
+  not introduce pointer/state mutation APIs.
+- [ ] Recheck the captured connection generation immediately before provider effect.
+- [ ] Remove credential ref/version from the public ingress result while retaining them in the internal operation receipt.
+
+Task 8 prerequisite: add the shared transition mutation API in
+`apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/transition.ex`
+and its connection row-lock/version-fence tests before implementing terminal
+transition versus callback-claim linearization. Task 7 must not claim that
+terminal barrier as complete.
+
+### Task 4A: Add durable conditional constraints
+
+**Files:**
+- Modify: `apps/ezagent_core/priv/repo_pg/migrations/20260719000000_fence_provider_callback_operations.exs` (first migration; add the three nullable fence columns)
+- Modify: `apps/ezagent_core/priv/repo_pg/migrations/20260719001000_close_provider_callback_operations.exs` (second migration; add conditional constraints)
+- Create: `apps/ezagent_core/priv/repo_pg/migrations/20260719002000_bind_provider_execution_identity.exs` (third migration; enforce durable execution identity)
+- Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`
+
+**Interfaces:**
+- Existing invalid rows fail migration; no default or backfill is permitted.
+- Store operations in `prepared`, `backend_committed`, or `cleanup_pending`
+  require connection version, attempt version, and claim token.
+- `backend_committed` and `cleanup_pending` additionally require handoff ref,
+  result ref, and credential version.
+
+- [ ] Add migration replay/constraint tests for each missing field.
+- [ ] Apply 00000 before 01000 before 02000 under the guarded test scope,
+  verify rollback order 02000 -> 01000 -> 00000, and verify all schema tests
+  pass.
+
+### Task 5: Harden operation lookup and schema constraints
+
+**Files:**
+- Modify: `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/store.ex`
+- Modify: `apps/ezagent_domain_provider_connection/test/ezagent/provider_connection/schema_test.exs`
+
+**Interfaces:**
+- All store operation reads use `{backend_pair_id, operation_class: "store", correlation_id}`.
+- The ordered conditional migration is fail-closed with no defaults/backfill.
+
+- [ ] Update prepare, reconcile, recovery, and committed fast-path queries to include operation class.
+- [ ] Add a schema test with another operation class reusing a correlation id and prove store recovery selects only the store operation.
+- [ ] Add committed receipt scope/digest verification using a real calculated digest, not a placeholder string.
+
+### Task 6: Verification, Sol review, and handoff
+
+**Files:**
+- Create: `.superpowers/sdd/task-7-amendment-report.md` as an unstaged implementation/review note; do not modify or stage protected `task-7-report.md`.
+
+- [ ] Run guarded focused callback/schema/local-backend tests.
+- [ ] Run guarded provider app suite and core artifact/signing/Cap suite serially.
+- [ ] Run `mix format --check-formatted` and `git diff --check` under the same scope.
+- [ ] Stage only intended code/tests/migrations; exclude all protected files and reports.
+- [ ] Ask Sol for a fresh independent X-first review of the staged diff.
+- [ ] If Sol reports any new Critical, stop and revise the protocol before more code.
+- [ ] Commit only after clean review with message `fix(provider-connection): fence callback effect ownership`.
+
+### Guarded command template
+
+```bash
+env XDG_RUNTIME_DIR=/run/user/1000 \
+    DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus \
+  systemd-run --user --scope \
+    -p MemoryHigh=768M -p MemoryMax=1G -p MemorySwapMax=0 \
+    -p MemoryAccounting=yes -p OOMPolicy=kill \
+    timeout 180 env SHELL=/bin/bash ERL_FLAGS='+S 4:4' MIX_ENV=test \
+    mix test path/to/focused_test.exs --no-start
+```

@@ -48,6 +48,7 @@ defmodule EzagentCore.Umbrella.MixProject do
           ezagent_plugin_email: :permanent,
           ezagent_plugin_py: :permanent,
           ezagent_plugin_feishu: :permanent,
+          ezagent_plugin_github: :permanent,
           ezagent_plugin_world: :permanent,
           ezagent_plugin_hello: :permanent,
           ezagent_plugin_protocol_api: :permanent,
@@ -319,13 +320,19 @@ defmodule EzagentCore.Umbrella.MixProject do
   # Sandbox in `:manual` mode and the task's DB query (ConfigStore.resolve) then
   # dies with `DBConnection.OwnershipError` (no ownership for the task process).
   # A child `mix` boots a clean app with a normal pool — identical to how the CI
-  # `gate` job runs it green as its own step. Inherits MIX_ENV/MIX_TEST_PARTITION
-  # from the environment, so it hits the same test DB `ecto.create` already made.
+  # `gate` job runs it green as its own step.
+  #
+  # Explicitly pass the current Mix.env() as MIX_ENV so the child process never
+  # falls back to :dev (which would require EZAGENT_PROVIDER_AUTH_* keys from
+  # config/runtime.exs). MIX_TEST_PARTITION and other env vars inherit naturally.
   defp run_socialware_check(_args) do
+    env = System.get_env() |> Map.put("MIX_ENV", to_string(Mix.env())) |> Map.to_list()
+
     {_out, status} =
       System.cmd("mix", ["ezagent.socialware.check"],
         into: IO.stream(:stdio, :line),
-        stderr_to_stdout: true
+        stderr_to_stdout: true,
+        env: env
       )
 
     if status != 0 do

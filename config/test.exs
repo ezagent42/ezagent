@@ -1,5 +1,22 @@
 import Config
 
+config :ezagent_domain_provider_connection, :authorization_key_ring_fixture_enabled, true
+
+config :ezagent_domain_provider_connection, Ezagent.ProviderConnection.AuthorizationKeyRing,
+  source: :explicit_test,
+  active_key_id: "test-v1",
+  keys: %{"test-v1" => :binary.copy(<<90>>, 32)}
+
+config :ezagent_domain_provider_connection,
+  local_authorization_backend_pairs: %{
+    {"task6-provider", "oauth_user"} => "pair-z-local-v1"
+  },
+  children: [{Ezagent.ProviderConnection.AuthorizationKeyRing, []}],
+  recovery_options: [autostart: false]
+
+config :ezagent_domain_agent,
+  launch_post_commit_publisher: Ezagent.Agent.TestLaunchPostCommitPublisher
+
 config :ezagent_domain_identity, Ezagent.Entity.Token,
   current_version: 1,
   peppers: %{1 => "test-only-pat-pepper-v1-32-bytes-minimum"}

@@ -81,28 +81,41 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    agent_uri = Ezagent.URI.new!(uri_str)
-
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
-      cond do
-        fully_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
-
-        true ->
-          spawn_for_codex_remote(agent_uri, tmpl, workspace_uri)
-      end
-    end
+    instantiate_with_opts(uri_str, tmpl, workspace_uri, [])
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_with_opts(uri_str, tmpl, workspace_uri, launch_context: launch_context)
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+
+  defp instantiate_with_opts(uri_str, tmpl, workspace_uri, opts) do
+    agent_uri = Ezagent.URI.new!(uri_str)
+
+    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
+      cond do
+        opts == [] and fully_alive?(agent_uri) ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        true ->
+          spawn_for_codex_remote(agent_uri, tmpl, workspace_uri, opts)
+      end
+    end
+  end
+
   # ---- Spawn path ---------------------------------------------------------
 
-  defp spawn_for_codex_remote(agent_uri, tmpl, workspace_uri) do
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri) do
+  defp spawn_for_codex_remote(agent_uri, tmpl, workspace_uri, opts) do
+    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, opts) do
       case started_or_adopted do
         :already_started ->
-          if owns_this_agent?(agent_uri, workspace_uri) do
+          if Ezagent.Agent.Ownership.workspace_match?(agent_uri, workspace_uri) do
             _ = ensure_subprocess_alive(agent_uri, tmpl)
           end
 
@@ -353,22 +366,13 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   # ---- Agent Kind + ownership ---------------------------------------------
 
-  defp ensure_agent_kind(agent_uri) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
+  defp ensure_agent_kind(agent_uri, opts) do
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
       {:ok, :started, _pid} -> {:ok, :started}
       {:ok, :already_started, _pid} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
     end
   end
-
-  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
-    case Ezagent.URI.workspace_name(agent_uri) do
-      {:ok, workspace} -> workspace == workspace_uri.host
-      :error -> false
-    end
-  end
-
-  defp owns_this_agent?(_agent_uri, _workspace_uri), do: false
 
   # ---- Path helpers -------------------------------------------------------
 

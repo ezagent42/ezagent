@@ -56,6 +56,29 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
            """
   end
 
+  test "ezagent_core has no Agent-domain ownership implementation references" do
+    forbidden = [
+      "Ezagent.Agent.CreationInventory",
+      "Ezagent.Agent.CreationInventoryEntry",
+      "Ezagent.Agent.LaunchAuthority",
+      "Ezagent.Agent.LaunchCoordinator",
+      "Ezagent.Workspace.TaskWorkspace"
+    ]
+
+    offenders =
+      :ezagent_core
+      |> lib_elixir_files()
+      |> Enum.flat_map(fn path ->
+        source = File.read!(path)
+
+        for module <- forbidden, String.contains?(source, module) do
+          "#{Path.relative_to(path, repo_root())} #{module}"
+        end
+      end)
+
+    assert offenders == []
+  end
+
   test "ezagent_domain_* apps only depend on core + other ezagent_domain_* apps" do
     for app <- list_apps(~r/^ezagent_domain_/) do
       deps = read_in_umbrella_deps(app)

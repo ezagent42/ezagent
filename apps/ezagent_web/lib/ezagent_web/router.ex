@@ -300,6 +300,11 @@ defmodule EzagentWeb.Router do
   # LLM Protocol API: OpenAI-compatible inbound endpoint.
   forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug
 
+  # D2 GitHub OAuth callback receiver. GitHub redirects the user's browser
+  # to this endpoint after authorization. The Plug dispatches the `code` and
+  # `state` parameters to CallbackIngress.consume/3 for processing.
+  forward "/github/callback", EzagentPluginGithub.GitHubCallbackPlug
+
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.
   # GET /api/v1 = introspection (route catalog + interfaces).

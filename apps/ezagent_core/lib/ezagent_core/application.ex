@@ -9,6 +9,10 @@ defmodule EzagentCore.Application do
   def start(_type, _args) do
     children =
       [
+        # Survives EtsOwner restarts and publishes table readiness to supervised
+        # downstream registry owners without polling registered names.
+        EzagentCore.EtsReadiness,
+
         # ① ETS tables — must be ready before any process that reads/writes them
         # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
         # See DECISIONS impl-time §ETS+Application children.
@@ -20,6 +24,10 @@ defmodule EzagentCore.Application do
         # boot-time `Ezagent.Resource.FsResolver.register_type/2`. For P0 it is
         # dormant (zero real types registered).
         Ezagent.Resource.FsResolver.Registry,
+
+        # Generic single-use launch gate, registered by the owning downstream
+        # domain when an authoritative preparation implementation is present.
+        Ezagent.Kind.Template.PreStart,
 
         # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},

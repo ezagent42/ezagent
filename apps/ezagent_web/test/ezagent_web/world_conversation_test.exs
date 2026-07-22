@@ -1744,9 +1744,10 @@ defmodule EzagentWeb.WorldConversationTest do
 
   # Poll until the post-create socialware-install transaction has joined the
   # declared `role_name` agent as a session member (rev6 / #912 async materialize).
-  # 150 × 20ms = 3s — generous headroom: the manifest-install path (py recipe +
-  # definitions + cascade caps) is heavier than a plain default create.
-  defp wait_for_role_member(session_uri, role_name, attempts \\ 150)
+  # 500 × 20ms = 10s — the manifest-install path (py recipe + definitions +
+  # cascade caps + durable ownership receipts) is heavier than a plain default
+  # create, especially when the full umbrella suite is sharing the test DB.
+  defp wait_for_role_member(session_uri, role_name, attempts \\ 500)
 
   defp wait_for_role_member(session_uri, role_name, 0) do
     flunk(

@@ -1,6 +1,6 @@
 defmodule Ezagent.World.AdminDataTest do
-  # async: false — these read global KindRegistry state. Settings state also
-  # reads `app_settings`, so the test must own a SQL Sandbox connection.
+  # async: false — these read global KindRegistry / ETS state. settings_state/1
+  # also reads DB-backed AppSettings, so the test must own a sandbox connection.
   use EzagentCore.DataCase, async: false
 
   @admin Ezagent.Entity.User.admin_uri()

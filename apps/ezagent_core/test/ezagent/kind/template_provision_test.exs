@@ -14,7 +14,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   @moduletag :umbrella_only
 
   alias Ezagent.Kind.Template
-  alias Ezagent.Kind.Template.FlavorHook
+  alias Ezagent.Kind.Template.AttributeHook
   alias Ezagent.Sandbox.ConfigDir
   alias Ezagent.TestSupport.TemplateFlavorHookProbe
 
@@ -75,7 +75,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   test "stores agent flavor attributes through the registered template hook" do
     TemplateFlavorHookProbe.attach(self())
     on_exit(fn -> TemplateFlavorHookProbe.detach() end)
-    :ok = FlavorHook.register(TemplateFlavorHookProbe)
+    :ok = AttributeHook.register(TemplateFlavorHookProbe)
 
     uri = Ezagent.URI.new!("entity://myws/agent/cc_hooked")
     data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
@@ -87,7 +87,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   end
 
   test "template flavor hook is a safe no-op when no implementation is registered" do
-    hooks_key = {FlavorHook, :hooks}
+    hooks_key = {AttributeHook, :hooks}
     previous_hooks = :persistent_term.get(hooks_key, [])
 
     :persistent_term.erase(hooks_key)
@@ -95,8 +95,8 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
 
     uri = Ezagent.URI.new!("entity://myws/agent/no_hook")
 
-    assert :ok = FlavorHook.store(uri, FakeClass)
-    assert :ok = FlavorHook.delete(uri)
+    assert :ok = AttributeHook.store(uri, FakeClass)
+    assert :ok = AttributeHook.delete(uri)
   end
 
   test "a config_dir reference without an agent_uri fails loud (no silent skip)" do
@@ -130,7 +130,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   test "deletes agent flavor attributes through the registered template hook when instantiate fails" do
     TemplateFlavorHookProbe.attach(self())
     on_exit(fn -> TemplateFlavorHookProbe.detach() end)
-    :ok = FlavorHook.register(TemplateFlavorHookProbe)
+    :ok = AttributeHook.register(TemplateFlavorHookProbe)
 
     uri = Ezagent.URI.new!("entity://myws/agent/failing-hook")
     data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}

@@ -84,7 +84,9 @@
   #   extracting them, and latest main measured modules above 1000 the manifest had
   #   not yet recorded. Record the live baseline rather than attributing unrelated
   #   module growth to this feature; the exact count is gate-measured.
-  oversized_modules_gt_1000: 5,
+  # arch-cap-bump: rebasing Plan C's audited atomic launch boundary onto the
+  #   cap-signing/G5 main baseline leaves seven pre-existing oversized modules.
+  oversized_modules_gt_1000: 7,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
@@ -372,7 +374,9 @@
   #   provider logic itself lives in the sibling `Ezagent.PluginCc.Provider` +
   #   thin `CcDeepseekAgent`/`CcHeadlessDeepseekAgent` shims (separate files, not
   #   counted here). Measured 1766→1786.
-  cc_codex_template_class_combined_loc: 1786,
+  # arch-cap-bump: custom-backend templates now forward the Plan C launch receipt
+  #   option through their shared CC instantiate boundary.
+  cc_codex_template_class_combined_loc: 1787,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

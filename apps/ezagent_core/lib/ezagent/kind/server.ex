@@ -108,22 +108,22 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
 
-    # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
-    # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
-    # instead of an uncaught init crash, symmetric with the WRITE
-    # (`persist_initial_snapshot/3`). let-it-crash, no fresh-state fallback.
+    with {:ok, args, launch_context_relay} <-
+           Ezagent.Kind.LaunchContextInit.prepare(kind_module, args) do
+      init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay)
+    else
+      {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
+      {:error, reason} -> {:stop, {:before_start_failed, reason}}
+    end
+  end
+
+  defp init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay) do
     case Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args) do
       {:error, reason} ->
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
-        authority_result = Ezagent.Cap.Authority.open(uri, kind_module.type_name())
-
-        with {:ok, authority} <- authority_result do
-          # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
-          # declaration order. `post_init/2` is OPTIONAL — Behaviors that
-          # don't export it (or return `:ok`) contribute nothing to the
-          # queue. The handle_continue/3 calls run AFTER :announce_ready.
+        with {:ok, authority} <- Ezagent.Cap.Authority.open(uri, kind_module.type_name()) do
           post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
 
           state = %{
@@ -131,29 +131,14 @@ defmodule Ezagent.Kind.Server do
             uri: uri,
             state: slice_state,
             authority: authority,
+            launch_context_relay: launch_context_relay,
             post_init_queue: post_init_queue,
-            # #533 5a (§3.10.3) — the authenticated creator, threaded as a
-            # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
-            # or when no creator is supplied. PR-5c reads this to grant the
-            # manage-cap to the right principal.
             created_by: Map.get(args, :created_by),
-            # Set in the put_new branch below from the Lifecycle create-vs-activate
-            # signal (read BEFORE persist sets the marker).
             create_freshness: :unknown
           }
 
           case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
             :ok ->
-              # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
-              # create-vs-activate decision BEFORE persist_initial_snapshot sets
-              # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
-              # (the single Lifecycle-owned signal), NOT a snapshot/save return,
-              # so the create/activate concept has one definition and can't drift.
-              # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
-              # slice shape: on cold restart the rehydrated slice can lack
-              # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
-              # as :unknown instead of :existed (codex review P2). Non-Lifecycle
-              # Kinds have no create/activate distinction → :unknown.
               state =
                 if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
                   freshness =
@@ -170,14 +155,11 @@ defmodule Ezagent.Kind.Server do
                   {:ok, state, {:continue, :announce_ready}}
 
                 {:error, reason} ->
-                  # Persistence is a durability promise. Registration is already
-                  # visible, so fail and detach any pending delivery before exit.
                   :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
                   {:stop, {:persistence_failed, reason}}
               end
 
             {:error, {:already_registered, _other_pid}} ->
-              # Let-it-crash — duplicate spawn is a bug at the caller layer.
               {:stop, {:already_registered, uri_str}}
           end
         else
@@ -186,31 +168,6 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  # Allen 2026-05-25 — CLI persistence fix.
-  #
-  # `Kind.Server.init/1` historically only wrote a snapshot when a
-  # dispatch mutated the slice (`commit_and_notify/3`), the periodic
-  # timer fired, or `terminate/2` ran (`:on_terminate` strategy). All
-  # three assume a long-lived BEAM.
-  #
-  # `mix ezagent.agent.create` (and any other `mix` task that spawns
-  # Kinds) runs in a short-lived BEAM that exits seconds after
-  # `Ezagent.Kind.spawn/2` returns — well before the periodic timer
-  # fires and before the supervisor can drain `terminate/2` reliably.
-  # Result: the freshly-init'd Kind exists in memory only, never lands
-  # in `kind_snapshots`, and is invisible to any subsequent BEAM that
-  # tries to look it up. The CLI demo
-  # `mix ezagent.agent.create entity://agent/system/cc_linyilun-default`
-  # silently lost the Agent on mix exit.
-  #
-  # Fix: synchronously write the initial slice once the Kind is in
-  # `KindRegistry`, regardless of strategy. We deliberately use
-  # `save_now/3` (not `commit/4`) because `commit/4` policy-gates and
-  # would return `:not_durable` for `:on_terminate` / `:periodic` —
-  # exactly the strategies we need to fix. For `:ephemeral` /
-  # `:external` we skip: those strategies are documented "no DB
-  # touch."
-  #
   # Issue #342 r1 (Allen 2026-05-25 — let-it-crash). Previously this
   # function discarded the result of `save_now/3` because save_now
   # itself silently returned `:ok` on DB error. With save_now now
@@ -553,9 +510,26 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, kind_module}, state}
   end
 
+  def handle_call(
+        {:ezagent_validate_cap_artifact, artifact, receiver},
+        _from,
+        state
+      ) do
+    result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Cap.validate_for_current_target(artifact, receiver)
+      end)
+
+    {:reply, result, state}
+  end
+
   def handle_call(:ezagent_runtime_view, _from, state) do
     view = Map.take(state, [:kind, :uri, :state])
     {:reply, {:ok, view}, state}
+  end
+
+  def handle_call(:ezagent_launch_context_relay, _from, state) do
+    {:reply, Map.get(state, :launch_context_relay), state}
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single

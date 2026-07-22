@@ -12,6 +12,7 @@ defmodule Ezagent.AgentLineageTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.AgentLineage
+  alias EzagentCore.Repo
 
   defp agent_uri(name),
     do:
@@ -86,6 +87,38 @@ defmodule Ezagent.AgentLineageTest do
       :ets.delete_all_objects(AgentLineage.table())
       :ok = AgentLineage.rehydrate()
       assert :error = AgentLineage.lookup(agent)
+    end
+  end
+
+  describe "record_exact/3" do
+    test "inserts and replays exact lineage without publishing the cache" do
+      agent = agent_uri("exact")
+      parent = principal_uri("owner")
+
+      assert {:ok, :inserted} = AgentLineage.record_exact(Repo, agent, parent)
+      assert :error = AgentLineage.lookup(agent)
+      assert {:ok, :exists} = AgentLineage.record_exact(Repo, agent, parent)
+
+      assert :ok = AgentLineage.publish_cache(agent, parent)
+      assert {:ok, ^parent} = AgentLineage.lookup(agent)
+    end
+
+    test "rejects a conflicting parent and never reparents the Agent" do
+      agent = agent_uri("conflict")
+      original_parent = principal_uri("original")
+      conflicting_parent = principal_uri("conflicting")
+
+      assert {:ok, :inserted} = AgentLineage.record_exact(Repo, agent, original_parent)
+
+      assert {:error, :lineage_conflict} =
+               AgentLineage.record_exact(Repo, agent, conflicting_parent)
+
+      assert %AgentLineage{spawned_by: stored_parent} =
+               Repo.get(AgentLineage, URI.to_string(agent))
+
+      assert stored_parent == URI.to_string(original_parent)
+      assert :ok = AgentLineage.publish_cache(agent, original_parent)
+      assert {:ok, ^original_parent} = AgentLineage.lookup(agent)
     end
   end
 end

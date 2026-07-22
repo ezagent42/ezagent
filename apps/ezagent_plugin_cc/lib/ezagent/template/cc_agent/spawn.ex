@@ -61,7 +61,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # Both steps are idempotent: SpawnRegistry returns
   # `{:error, {:already_started, _}}` for an existing Agent Kind, and
   # the PtyServer's :via Registry collapses concurrent starts.
-  def spawn_for_local_pty(agent_uri, tmpl, workspace_uri) do
+  @doc false
+  def spawn_for_local_pty(agent_uri, tmpl, workspace_uri, opts \\ []) do
     cwd = Map.fetch!(tmpl, "cwd")
 
     # codex round-6 HIGH-1 — `ensure_agent_kind/1` reports whether THIS
@@ -85,7 +86,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       |> put_agent_config_dir(config_dir)
       |> Map.put_new("flavor", "cc")
 
-    with {:ok, started_or_adopted} <- ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
+    with {:ok, started_or_adopted} <-
+           ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir, opts) do
       case started_or_adopted do
         :already_started ->
           # Codex PR3 round-2 HIGH-2 — DO NOT call create_agent_config_dir
@@ -116,7 +118,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # hits). When it does NOT match, this is a cross-workspace
           # adoption attempt (codex round-8's test case) — we MUST
           # refuse the PTY spawn.
-          if owns_this_agent?(agent_uri, workspace_uri) do
+          if Ezagent.Agent.Ownership.workspace_match?(agent_uri, workspace_uri) do
             _ = ensure_subprocess_alive_best_effort(agent_uri, tmpl)
           end
 
@@ -248,7 +250,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # hold the public ReadyGate at `:not_ready`. The config directory is still
   # materialized only after this call wins `:started`, preserving the
   # loser-does-not-touch-config-dir race invariant above.
-  defp ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir) do
+  defp ensure_agent_kind(agent_uri, config_dir, tmpl_with_dir, opts) do
     init_args = %{
       uri: agent_uri,
       config_dir_path: config_dir,
@@ -256,7 +258,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       respawn_template_data: tmpl_with_dir
     }
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} ->
         {:ok, :started}
 
@@ -640,19 +642,6 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # workspace segment matches the workspace we're being instantiated
   # into. A mismatch means "another workspace's template is referencing
   # our URI" — we must refuse (preserves codex round-8 invariant).
-  defp owns_this_agent?(%URI{} = agent_uri, %URI{} = workspace_uri) do
-    case {Ezagent.URI.type(agent_uri), Ezagent.URI.workspace_name(agent_uri)} do
-      {{:ok, "agent"}, {:ok, ws_segment}} -> ws_segment == workspace_uri.host
-      _ -> false
-    end
-  end
-
-  # When workspace_uri is nil (legacy callers that don't thread it),
-  # default to false — preserves the codex round-8 invariant for
-  # callers that don't know about the round-2 fix.
-  defp owns_this_agent?(_agent_uri, nil), do: false
-  defp owns_this_agent?(_, _), do: false
-
   # Wrapper for `instantiate/3`'s `:already_started` branch (codex
   # round-2 finding #1). Calls `ensure_subprocess_alive/2` but never
   # propagates its error — the adopted-Kind path's invariant is "this

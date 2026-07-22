@@ -168,11 +168,29 @@ defmodule Ezagent.PluginCc.Template.CcCustomAgent do
       # cold-restart flavor resolution reads "cc-custom". The "provider" rides
       # in tmpl already (required user input — never injected here).
       tmpl = Map.put(tmpl, "flavor", @flavor)
-      CcAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)
+      CcAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri, [])
     end
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri,
+        launch_context: launch_context
+      ) do
+    with {:ok, agent_uri} <- parse_uri(uri_str),
+         :ok <- Provider.check_backend_profile(tmpl),
+         :ok <- Provider.ensure_api_key(Map.fetch!(tmpl, Provider.provider_key()), agent_uri) do
+      tmpl = Map.put(tmpl, "flavor", @flavor)
+
+      CcAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri,
+        launch_context: launch_context
+      )
+    end
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts),
+    do: {:error, :invalid_launch_options}
 
   defp parse_uri(uri_str) do
     {:ok, Ezagent.URI.new!(uri_str)}

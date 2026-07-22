@@ -8,6 +8,48 @@ defmodule Ezagent.SpawnRegistryTest do
   alias Ezagent.SpawnRegistry
 
   describe "register/2 + spawn/1" do
+    test "unknown options fail closed" do
+      uri = URI.parse("unknown-options-#{System.unique_integer([:positive])}://x")
+
+      assert {:error, [:launch_context_typo]} =
+               SpawnRegistry.spawn_detailed(uri, launch_context_typo: make_ref())
+    end
+
+    test "option-bearing spawn transports launch context unchanged to an arity-two registration" do
+      test_pid = self()
+      scheme = "spawnreg-opts-#{System.unique_integer([:positive])}"
+      launch_context = make_ref()
+
+      SpawnRegistry.register(scheme, fn uri, opts ->
+        send(test_pid, {:spawn_called, uri, opts})
+        {:ok, self()}
+      end)
+
+      uri = URI.parse("#{scheme}://x")
+
+      assert {:ok, _pid} = SpawnRegistry.spawn(uri, launch_context: launch_context)
+      assert_receive {:spawn_called, ^uri, [launch_context: ^launch_context]}
+    end
+
+    test "arity-one registration fails closed before invocation when launch context is present" do
+      test_pid = self()
+      scheme = "spawnreg-legacy-#{System.unique_integer([:positive])}"
+
+      SpawnRegistry.register(scheme, fn uri ->
+        send(test_pid, {:legacy_spawn_called, uri})
+        {:ok, self()}
+      end)
+
+      uri = URI.parse("#{scheme}://x")
+
+      assert {:error, :launch_context_unsupported} =
+               SpawnRegistry.spawn_detailed(uri, launch_context: make_ref())
+
+      refute_receive {:legacy_spawn_called, ^uri}
+      assert {:ok, :started, _pid} = SpawnRegistry.spawn_detailed(uri)
+      assert_receive {:legacy_spawn_called, ^uri}
+    end
+
     test "registered spawn fn is invoked for matching scheme" do
       test_pid = self()
       scheme = "spawnreg-test-#{System.unique_integer([:positive])}"

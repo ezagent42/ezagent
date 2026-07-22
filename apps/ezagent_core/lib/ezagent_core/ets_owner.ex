@@ -173,6 +173,38 @@ defmodule EzagentCore.EtsOwner do
           name
       end)
 
+    :ok = EzagentCore.EtsReadiness.ready(self())
     {:ok, %{tables: table_names}}
+  end
+
+  @doc false
+  def subscribe_lifecycle(pid \\ self()) when is_pid(pid) do
+    case EzagentCore.EtsReadiness.subscribe(pid) do
+      {:ok, _owner, _generation} -> :ok
+    end
+  end
+
+  @doc false
+  def recreate_capability_tables_for_test do
+    GenServer.call(__MODULE__, :recreate_capability_tables_for_test)
+  end
+
+  @impl true
+  def handle_call(:recreate_capability_tables_for_test, _from, state) do
+    if Mix.env() == :test do
+      recreate_table(Ezagent.BehaviorRegistry.table())
+      recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
+
+      :ok = EzagentCore.EtsReadiness.ready(self())
+
+      {:reply, :ok, state}
+    else
+      {:reply, {:error, :test_only}, state}
+    end
+  end
+
+  defp recreate_table(table) do
+    if :ets.whereis(table) != :undefined, do: :ets.delete(table)
+    :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
   end
 end

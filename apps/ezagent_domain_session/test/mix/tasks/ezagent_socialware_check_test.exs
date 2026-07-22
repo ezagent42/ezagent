@@ -55,4 +55,35 @@ defmodule Mix.Tasks.Ezagent.Socialware.CheckTest do
     refute source =~ "function_exported?(DefinitionRegistry, :list"
     refute source =~ ~s(["chat", "socialware"])
   end
+
+  # Contract-level regression proof for ci.fast MIX_ENV propagation.
+  #
+  # ci.fast runs via preferred_envs (Mix.env() = :test). run_socialware_check/1
+  # (in mix.exs) spawns a child `mix` process. When the OS has no MIX_ENV set,
+  # a naive child falls back to :dev, and config/runtime.exs demands
+  # EZAGENT_PROVIDER_AUTH_* keys that are absent in CI/dev machines.
+  #
+  # The fix in mix.exs: run_socialware_check/1 explicitly passes the parent
+  # Mix.env() as MIX_ENV via System.cmd's env: option.
+  #
+  # NOTE: This test verifies the CONTRACT (child without MIX_ENV → :dev crash),
+  # not the implementation. It does not exercise run_socialware_check/1 directly
+  # (that function is private in mix.exs and unreachable from ExUnit). The
+  # implementation regression lock is the run_socialware_check/1 code itself,
+  # manually verified by running `env -u MIX_ENV mix ci.fast`.
+  test "child mix without explicit MIX_ENV falls back to :dev and fails on missing auth keys" do
+    env_no_mix = System.get_env() |> Map.delete("MIX_ENV") |> Map.to_list()
+
+    {output, status} =
+      System.cmd("mix", ["ezagent.socialware.check"],
+        env: env_no_mix,
+        stderr_to_stdout: true
+      )
+
+    assert status != 0,
+           "Without explicit MIX_ENV, child mix MUST fail on :dev fallback (requires auth keys). " <>
+             "If this assertion fails, the :dev config no longer requires provider auth keys " <>
+             "and run_socialware_check/1's explicit MIX_ENV propagation may be unnecessary.\n" <>
+             "output:\n#{output}"
+  end
 end

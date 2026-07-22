@@ -229,6 +229,38 @@ defmodule Ezagent.Cap do
 
   def verified_set(_caps, _receiver_uri), do: MapSet.new()
 
+  @doc """
+  Validate a signed artifact against the current target authority and receiver.
+
+  This validates an artifact only; it does not authorize or invoke an action.
+  """
+  @spec validate_for_current_target(artifact(), URI.t()) ::
+          :ok | {:error, :invalid_cap_signature | :wrong_grantee}
+  def validate_for_current_target(
+        %Capability{grantee_uri: %URI{} = grantee} = artifact,
+        %URI{} = receiver
+      ) do
+    if Ezagent.URI.stable_key(grantee) == Ezagent.URI.stable_key(receiver) do
+      case Ezagent.Cap.Authority.target_uri(artifact) do
+        {:ok, target} ->
+          if Ezagent.Cap.Authority.current_target?(target) do
+            if Ezagent.Cap.Authority.verify_current(artifact, receiver),
+              do: :ok,
+              else: {:error, :invalid_cap_signature}
+          else
+            Ezagent.Cap.TargetArtifactValidator.validate(artifact, receiver)
+          end
+
+        _error ->
+          {:error, :invalid_cap_signature}
+      end
+    else
+      {:error, :wrong_grantee}
+    end
+  end
+
+  def validate_for_current_target(%Capability{}, %URI{}), do: {:error, :wrong_grantee}
+
   @doc false
   @spec storable_for?(term(), URI.t()) :: boolean()
   def storable_for?(

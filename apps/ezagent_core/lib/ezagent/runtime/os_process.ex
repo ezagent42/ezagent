@@ -45,6 +45,7 @@ defmodule Ezagent.Runtime.OsProcess do
   @type spawn_opts :: [
           cd: String.t(),
           env: [{String.t(), String.t()}] | %{String.t() => String.t()},
+          clear_env: boolean(),
           stderr: :merge | :separate,
           pid_file: nil | {plugin :: String.t(), key :: URI.t()}
         ]
@@ -59,6 +60,7 @@ defmodule Ezagent.Runtime.OsProcess do
   Options:
   - `cd:` — working directory (required for most callers)
   - `env:` — additional environment variables (map or `[{k, v}]` string pairs)
+  - `clear_env:` — clear the inherited environment before applying `env:`
   - `stderr:` — `:merge` → stderr merged into stdout; `:separate` → own
     `{:stderr, os_pid, bytes}` messages (default: `:separate`)
   - `pid_file:` — `{plugin, uri}` writes a pid file on success; `nil` skips
@@ -73,10 +75,11 @@ defmodule Ezagent.Runtime.OsProcess do
 
     cd = Keyword.get(opts, :cd, System.tmp_dir!())
     env_raw = Keyword.get(opts, :env, [])
+    clear_env? = Keyword.get(opts, :clear_env, false)
     stderr_opt = Keyword.get(opts, :stderr, :separate)
     pid_file = Keyword.get(opts, :pid_file, nil)
 
-    exec_opts = build_exec_opts(cd, env_raw, stderr_opt)
+    exec_opts = build_exec_opts(cd, env_raw, stderr_opt, clear_env?)
     exec_cmd = build_cmd(cmd)
 
     case :exec.run_link(exec_cmd, exec_opts) do
@@ -143,12 +146,15 @@ defmodule Ezagent.Runtime.OsProcess do
     end
   end
 
-  defp build_exec_opts(cd, env_raw, stderr_opt) do
+  defp build_exec_opts(cd, env_raw, stderr_opt, clear_env?) do
     stderr_exec_opt =
       case stderr_opt do
         :merge -> {:stderr, :stdout}
         :separate -> :stderr
       end
+
+    env = build_env_charlists(env_raw)
+    env = if clear_env?, do: [:clear | env], else: env
 
     [
       :stdin,
@@ -157,7 +163,7 @@ defmodule Ezagent.Runtime.OsProcess do
       {:group, 0},
       :kill_group,
       {:cd, String.to_charlist(cd)},
-      {:env, build_env_charlists(env_raw)}
+      {:env, env}
     ]
   end
 

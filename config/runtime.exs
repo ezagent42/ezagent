@@ -1,5 +1,15 @@
 import Config
 
+if config_env() in [:dev, :prod] do
+  config :ezagent_domain_provider_connection, Ezagent.ProviderConnection.AuthorizationKeyRing,
+    source: :runtime_env,
+    active_key_id: System.fetch_env!("EZAGENT_PROVIDER_AUTH_ACTIVE_KEY_ID"),
+    keys_json: System.fetch_env!("EZAGENT_PROVIDER_AUTH_KEYS_JSON")
+
+  config :ezagent_domain_provider_connection,
+    children: [{Ezagent.ProviderConnection.AuthorizationKeyRing, []}]
+end
+
 pat_digest_version = String.to_integer(System.get_env("EZAGENT_PAT_DIGEST_VERSION", "1"))
 
 pat_peppers =

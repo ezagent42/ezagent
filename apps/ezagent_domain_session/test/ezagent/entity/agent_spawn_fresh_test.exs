@@ -55,6 +55,10 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
   end
 
   describe "spawn_fresh/4 — codex rev-4 HIGH-1 contract" do
+    test "Agent before_start is a no-op without trusted launch context" do
+      assert :ok = Agent.before_start(%{uri: Ezagent.URI.agent("team-alpha", "legacy")})
+    end
+
     test "first spawn → fresh?: true + lineage + binding recorded" do
       flavor = register_no_class_flavor()
       instance = "#{flavor}_first-#{uniq()}"

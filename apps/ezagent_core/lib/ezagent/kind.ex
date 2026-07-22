@@ -1,4 +1,6 @@
 defmodule Ezagent.Kind do
+  import Kernel, except: [spawn: 3]
+
   @moduledoc """
   Kind — contract for a Kind type module.
 
@@ -29,10 +31,12 @@ defmodule Ezagent.Kind do
     supervisors are encouraged when the Kind wants its own restart
     policy or domain-app ownership boundary.
   - `snapshot_version/0`: integer rev for snapshot schema migration.
+  - `before_start/1`: run a fallible hook before snapshot loading and live
+    registration. Runtime-only launch context is available only to this hook.
 
   ## V1 structural prevention (Phase 9 follow-up, Allen 2026-05-21)
 
-  All Kind processes must be spawned via `Ezagent.Kind.spawn/2` — the
+  All Kind processes must be spawned via `Ezagent.Kind.spawn/2,3` — the
   sole programmatic entry. Direct `DynamicSupervisor.start_child` for
   Kind modules is caught by the CI gate
   `Ezagent.Invariants.SingleSpawnEntryTest` plus the runtime invariant
@@ -54,6 +58,7 @@ defmodule Ezagent.Kind do
   @callback uri_from_args(args :: map()) :: URI.t()
   @callback snapshot_version() :: non_neg_integer()
   @callback supervisor() :: module()
+  @callback before_start(args :: map()) :: :ok | {:error, term()}
 
   @typedoc """
   Spawn-strategy override for Kinds that need a non-standard
@@ -190,7 +195,8 @@ defmodule Ezagent.Kind do
     spawn_strategy: 0,
     terminate_strategy: 0,
     holds_cap?: 2,
-    requires_explicit_behavior_set?: 0
+    requires_explicit_behavior_set?: 0,
+    before_start: 1
   ]
 
   @doc """
@@ -333,6 +339,11 @@ defmodule Ezagent.Kind do
   @doc """
   The SOLE programmatic entry for spawning a Kind process.
 
+  `spawn/3` accepts only `launch_context: opaque_term`. Unknown options fail
+  closed. The context is made available solely to `before_start/1` on the
+  winning initial start; it is absent from behavior initialization, live state,
+  snapshots, and permanent-child restarts.
+
   Determines the target `DynamicSupervisor` via `kind_module.supervisor/0`
   (each Kind declares its own; defaults to `Ezagent.KindSupervisor`
   when not defined). Calls `DynamicSupervisor.start_child/2` with the
@@ -362,62 +373,33 @@ defmodule Ezagent.Kind do
 
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{uri: session_uri})
   """
-  @spec spawn(module(), map()) :: DynamicSupervisor.on_start_child()
-  def spawn(kind_module, params) when is_atom(kind_module) and is_map(params) do
-    strategy = spawn_strategy(kind_module)
+  @spec spawn(module(), map(), keyword()) ::
+          DynamicSupervisor.on_start_child() | {:error, [atom()]}
+  def spawn(kind_module, params, opts \\ [])
+      when is_atom(kind_module) and is_map(params) and is_list(opts) do
+    with {:ok, validated_opts} <- Keyword.validate(opts, [:launch_context]) do
+      strategy = spawn_strategy(kind_module)
 
-    result =
-      case strategy do
-        :standard ->
-          supervisor = resolve_supervisor(kind_module)
-          DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
+      strategy =
+        if strategy == :standard, do: {:standard, resolve_supervisor(kind_module)}, else: strategy
 
-        {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
-          # Domain-owned supervision-tree layering (e.g. ExternalMirror's
-          # two-tier RootSupervisor → PerBindingSupervisor → Kind.Server,
-          # SPEC `docs/superpowers/specs/2026-05-24-external-mirror-domain.md`
-          # §6.3). The custom function returns the same on_start_child
-          # shape so idempotent reconcilers can match `{:error,
-          # {:already_started, pid}}`.
-          apply(mod, fun, [params])
-      end
-
-    # Readiness contract (remediation SPEC 2026-05-30 C-A): a `Kind.Server`
-    # returns from `start_child` BEFORE its post-init/`activate` phase
-    # completes (`handle_continue` runs async; ReadyGate stays `:not_ready`
-    # through it — see `Kind.Server` invariant #3, external CALLS fail-fast
-    # while not-ready). So a caller doing the natural `spawn` then
-    # synchronous `dispatch` (`spawn_session(...) ; join(...)`, create→use,
-    # template seed #50) raced the activate window and got
-    # `{:error, :not_ready}`. We close the window at the SPAWN boundary
-    # (NOT by buffering calls — that risks the re-entrant deadlock invariant
-    # #3 deliberately avoids): await `:ready` here so every post-spawn
-    # synchronous dispatch observes a fully-initialised Kind. Best-effort —
-    # a genuinely slow/looping `activate` degrades to the prior behaviour
-    # (logged; first dispatch may still see `:not_ready`) rather than failing
-    # the spawn.
-    #
-    # `:standard`-strategy ONLY (remediation SPEC 2026-05-30, second pass):
-    # `{:custom, …}` Kinds (today: ExternalMirrorWorker) own their OWN
-    # readiness sequencing inside a domain supervision tree, and — critically
-    # — their `activate` does a synchronous `:call` BACK to the Kind that
-    # spawned them (the Worker subscribes to its Session Publisher). When the
-    # spawning Kind runs `Kind.spawn(Worker)` from INSIDE its own
-    # `handle_call` (the canonical `external_mirror.bind` flow), awaiting the
-    # Worker's `:ready` here is a re-entrant DEADLOCK: spawn-await blocks the
-    # Session while the Worker's `activate` subscribe `:call` blocks on that
-    # same Session. The custom-spawn contract is "spawn returns immediately;
-    # the Kind self-sequences its own post-spawn readiness/subscribe" — so we
-    # do NOT await it. No caller synchronously dispatches to a freshly-spawned
-    # custom Kind (the Worker is reached only via Publisher fan-out, which it
-    # subscribes to itself), so the readiness window C-A closes does not apply.
-    case strategy do
-      :standard -> await_ready_after_spawn(result, params)
-      _ -> :ok
+      Ezagent.Kind.Spawner.spawn(
+        kind_module,
+        params,
+        validated_opts,
+        strategy,
+        &start_child/3,
+        &await_ready_after_spawn/2
+      )
     end
-
-    result
   end
+
+  defp start_child(kind_module, params, {:standard, supervisor}) do
+    DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
+  end
+
+  defp start_child(_kind_module, params, {:custom, module, function}),
+    do: apply(module, function, [params])
 
   # Only await when a process actually exists (fresh start OR idempotent
   # already-started). Other errors short-circuit. `params` without a `:uri`
@@ -527,12 +509,15 @@ defmodule Ezagent.Kind do
 
     with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri),
          {:ok, kind_module} <- safe_kind_module(pid) do
+      launch_context_relay = safe_launch_context_relay(pid)
+
       case terminate_strategy(kind_module) do
         :standard ->
           supervisor = resolve_supervisor(kind_module)
 
           case DynamicSupervisor.terminate_child(supervisor, pid) do
             :ok ->
+              discard_launch_context_relay(launch_context_relay)
               :ok
 
             {:error, :not_found} ->
@@ -563,6 +548,18 @@ defmodule Ezagent.Kind do
     _ -> :ok
   catch
     _, _ -> :ok
+  end
+
+  defp safe_launch_context_relay(pid) do
+    GenServer.call(pid, :ezagent_launch_context_relay)
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp discard_launch_context_relay(nil), do: :ok
+
+  defp discard_launch_context_relay(relay) do
+    Ezagent.Kind.LaunchContextRelay.force_discard(relay)
   end
 
   defp terminate_strategy(kind_module) do

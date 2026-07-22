@@ -25,6 +25,7 @@ defmodule EzagentDomainAgent.Application do
   def start(_type, _args) do
     children =
       [
+        Ezagent.Agent.LaunchAuthority,
         {EzagentDomainAgent.EtsOwner, []},
         # Agent Kind DynamicSupervisor — 0 children at boot; agents demand-spawn
         # / rehydrate lazily. Frozen name (D1a).
@@ -52,7 +53,7 @@ defmodule EzagentDomainAgent.Application do
     :ok = CapabilityRegistry.register(Agent, :receive, AgentReceive)
     :ok = Ezagent.Agent.TransportReadiness.init()
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.Agent.TransportReadiness)
-    :ok = Ezagent.Kind.Template.FlavorHook.register(Ezagent.Agent.FlavorTemplateHook)
+    :ok = Ezagent.Kind.Template.AttributeHook.register(Ezagent.Agent.FlavorTemplateHook)
     :ok = Ezagent.Plugin.FlavorPublishHook.register(Ezagent.Agent.FlavorPublishHook)
     # role-as-data (SPEC §4): register the role-seed hook impl so each plugin's
     # `roles/0` is seeded as a role ConfigObject at boot. Registered HERE (before

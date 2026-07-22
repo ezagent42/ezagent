@@ -14,6 +14,86 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
 
   alias Ezagent.PluginCc.Template.CcAgent
 
+  describe "launch-context callback matrix" do
+    test "every cc variant forwards its distinct launch context to Kind.spawn/3" do
+      variants = [
+        {CcAgent, "cc.agent", %{}},
+        {Ezagent.PluginCc.Template.CcHeadlessAgent, "cc_headless.agent", %{}},
+        {Ezagent.PluginCc.Template.CcCustomAgent, "cc_custom.agent", %{"provider" => "deepseek"}},
+        {Ezagent.PluginCc.Template.CcHeadlessCustomAgent, "cc_headless_custom.agent",
+         %{"provider" => "deepseek"}}
+      ]
+
+      previous_api_key = System.get_env("DEEPSEEK_API_KEY")
+      System.put_env("DEEPSEEK_API_KEY", "test-only-key")
+
+      on_exit(fn ->
+        if previous_api_key,
+          do: System.put_env("DEEPSEEK_API_KEY", previous_api_key),
+          else: System.delete_env("DEEPSEEK_API_KEY")
+      end)
+
+      for {module, class, extra} <- variants do
+        launch_context = make_ref()
+        suffix = System.unique_integer([:positive])
+
+        tmpl =
+          Map.merge(
+            %{
+              "class" => class,
+              "agent_uri" => "entity://test/agent/#{class}-launch-#{suffix}",
+              "cwd" => "/tmp"
+            },
+            extra
+          )
+
+        Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn, 3, fn ->
+          assert {:error, _reason} =
+                   module.instantiate("test", tmpl, URI.new!("workspace://test"),
+                     launch_context: launch_context
+                   )
+
+          assert_receive {:trace, _, :call,
+                          {Ezagent.Kind, :spawn,
+                           [Ezagent.Entity.Agent, _, [launch_context: ^launch_context]]}}
+        end)
+      end
+    end
+
+    test "all cc variants retain instantiate/3 and reject non-sole options with valid data" do
+      modules = [
+        {CcAgent, "cc.agent", %{}},
+        {Ezagent.PluginCc.Template.CcHeadlessAgent, "cc_headless.agent", %{}},
+        {Ezagent.PluginCc.Template.CcCustomAgent, "cc_custom.agent", %{"provider" => "deepseek"}},
+        {Ezagent.PluginCc.Template.CcHeadlessCustomAgent, "cc_headless_custom.agent",
+         %{"provider" => "deepseek"}}
+      ]
+
+      for {module, class, extra} <- modules do
+        assert function_exported?(module, :instantiate, 3)
+        assert function_exported?(module, :instantiate, 4)
+
+        assert {:error, {:invalid_template, %{}}} =
+                 module.instantiate("test", %{}, URI.new!("workspace://test"))
+
+        tmpl =
+          Map.merge(
+            %{
+              "class" => class,
+              "agent_uri" => "entity://test/agent/#{class}-invalid-options",
+              "cwd" => "/tmp"
+            },
+            extra
+          )
+
+        assert {:error, :invalid_launch_options} =
+                 module.instantiate("test", tmpl, URI.new!("workspace://test"),
+                   launch_context_typo: make_ref()
+                 )
+      end
+    end
+  end
+
   describe "template_name/0" do
     test "returns 'cc.agent'" do
       assert CcAgent.template_name() == "cc.agent"

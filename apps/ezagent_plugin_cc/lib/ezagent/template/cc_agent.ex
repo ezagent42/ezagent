@@ -429,19 +429,22 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
 
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, workspace_uri) do
-    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri)
+    instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri, [])
   end
 
   def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  defdelegate instantiate(name, template, workspace, opts), to: __MODULE__.Instantiate
 
   # Flavor-parameterized instantiate body, shared with the custom-backend shim
   # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs
   # `cc-custom`) while spawn/PTY/credential-cascade stays the single
   # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
   @doc false
-  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t()) ::
+  @spec instantiate_for_flavor(module(), String.t(), map(), URI.t(), keyword()) ::
           {:ok, [URI.t()], map()} | {:error, term()}
-  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri)
+  def instantiate_for_flavor(flavor_class, uri_str, tmpl, workspace_uri, opts)
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
@@ -452,14 +455,15 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
       # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
       cond do
-        agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
+        opts == [] and agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         true ->
           Ezagent.PluginCc.Template.CcAgent.Spawn.spawn_for_local_pty(
             agent_uri,
             tmpl,
-            workspace_uri
+            workspace_uri,
+            opts
           )
       end
     end

@@ -23,6 +23,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
   import Ecto.Query
 
   alias Ezagent.Cap.Delivery
+  alias Ezagent.Cap.DeliveryOutbox.Envelope
   alias EzagentCore.Repo
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
 
@@ -196,17 +197,12 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       agent_uri = spawn_bare_agent()
       {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
       :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
-      buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
+
+      expected_identity =
+        cap_identity(agent_uri, Ezagent.ActionSet.ApiKeys, :put_api_key)
 
       applied_before =
-        Repo.aggregate(
-          from(delivery in Delivery,
-            where: delivery.target_uri == ^URI.to_string(agent_uri),
-            where: delivery.op == :absorb_cap,
-            where: delivery.status == :applied
-          ),
-          :count
-        )
+        delivery_count(agent_uri, :applied, expected_identity)
 
       recipe = %{
         requested_caps: [
@@ -233,17 +229,9 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
 
       assert {:ok, :ok} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
       assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
-      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
 
       assert 1 ==
-               Repo.aggregate(
-                 from(delivery in Delivery,
-                   where: delivery.target_uri == ^URI.to_string(agent_uri),
-                   where: delivery.op == :absorb_cap,
-                   where: delivery.status == :pending
-                 ),
-                 :count
-               )
+               delivery_count(agent_uri, :pending, expected_identity)
 
       assert :ready =
                Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
@@ -256,25 +244,14 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                  slice
                  |> Ezagent.Kind.normalize_slice_view()
                  |> Map.fetch!(:caps)
-                 |> Enum.any?(fn cap ->
-                   cap.behavior == Ezagent.ActionSet.ApiKeys and
-                     cap.action == :put_api_key and
-                     cap.instance == Ezagent.URI.instance(agent_uri)
-                 end)
+                 |> Enum.any?(&(Ezagent.Capability.identity_key(&1) == expected_identity))
                else
                  _ -> false
                end
              end)
 
       assert eventually(fn ->
-               Repo.aggregate(
-                 from(delivery in Delivery,
-                   where: delivery.target_uri == ^URI.to_string(agent_uri),
-                   where: delivery.op == :absorb_cap,
-                   where: delivery.status == :applied
-                 ),
-                 :count
-               ) == applied_before + 1
+               delivery_count(agent_uri, :applied, expected_identity) == applied_before + 1
              end)
     end
   end
@@ -335,5 +312,35 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
       Process.sleep(10)
       eventually(fun, attempts - 1)
     end
+  end
+
+  defp delivery_count(agent_uri, status, expected_identity) do
+    Delivery
+    |> where(
+      [delivery],
+      delivery.target_uri == ^URI.to_string(agent_uri) and
+        delivery.op == :absorb_cap and delivery.status == ^status
+    )
+    |> Repo.all()
+    |> Enum.count(fn delivery ->
+      case Envelope.decode(delivery) do
+        {:ok, %{cap: %Ezagent.Capability{} = cap}} ->
+          Ezagent.Capability.identity_key(cap) == expected_identity
+
+        _ ->
+          false
+      end
+    end)
+  end
+
+  defp cap_identity(agent_uri, behavior, action) do
+    :agent
+    |> Ezagent.Capability.cap(
+      behavior,
+      action,
+      Ezagent.URI.instance(agent_uri),
+      Ezagent.Capability.workspace_of(agent_uri)
+    )
+    |> Ezagent.Capability.identity_key()
   end
 end

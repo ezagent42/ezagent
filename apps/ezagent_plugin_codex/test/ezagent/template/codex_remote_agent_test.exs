@@ -1,7 +1,53 @@
 defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
-  use EzagentCore.DataCase, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.PluginCodex.Template.CodexRemoteAgent
+
+  test "instantiate/4 forwards the identical launch context to LocalRuntime" do
+    launch_context = make_ref()
+    suffix = System.unique_integer([:positive])
+
+    tmpl = %{
+      "class" => "codex_remote.agent",
+      "agent_uri" => "entity://test/agent/codex-remote-launch-#{suffix}",
+      "cwd" => "/tmp"
+    }
+
+    Ezagent.Agent.TemplateLaunchTrace.trace_call(
+      Ezagent.LocalRuntime,
+      :ensure_started_detailed,
+      2,
+      fn ->
+        assert {:error, _reason} =
+                 CodexRemoteAgent.instantiate("test", tmpl, URI.new!("workspace://test"),
+                   launch_context: launch_context
+                 )
+
+        assert_receive {:trace, _, :call,
+                        {Ezagent.LocalRuntime, :ensure_started_detailed,
+                         [_, [launch_context: ^launch_context]]}}
+      end
+    )
+  end
+
+  test "instantiate/3 remains available and sole-option validation uses valid data" do
+    assert function_exported?(CodexRemoteAgent, :instantiate, 3)
+    assert function_exported?(CodexRemoteAgent, :instantiate, 4)
+
+    assert {:error, {:invalid_template, %{}}} =
+             CodexRemoteAgent.instantiate("test", %{}, URI.new!("workspace://test"))
+
+    tmpl = %{
+      "class" => "codex_remote.agent",
+      "agent_uri" => "entity://test/agent/codex-remote-invalid-options",
+      "cwd" => "/tmp"
+    }
+
+    assert {:error, :invalid_launch_options} =
+             CodexRemoteAgent.instantiate("test", tmpl, URI.new!("workspace://test"),
+               launch_context_typo: make_ref()
+             )
+  end
 
   describe "template_name/0" do
     test "returns codex_remote.agent" do

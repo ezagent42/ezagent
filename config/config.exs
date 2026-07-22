@@ -179,6 +179,48 @@ config :ezagent_core, Ezagent.Cap.DeliveryOutbox,
   retry_max_ms: 60_000,
   lease_ms: 30_000
 
+# D2 — GitHub App credentials (app_id 4361756). `app_id` and `client_id` are
+# public identifiers and are configured directly. Secrets are resolved at runtime
+# from env via the {:system, "ENV_VAR"} tuple (EzagentPluginGithub.Config), never
+# hardcoded. In dev/test the secret env vars must be set (or overridden per-env).
+#   * private_key  — the App's RS256 .pem, signs the App JWT (installation tokens)
+#   * client_secret — user-to-server OAuth (identity only, no repo scope)
+#   * webhook_secret — verifies inbound X-Hub-Signature-256 deliveries
+config :ezagent_plugin_github,
+  app_id: "4361756",
+  client_id: "Iv23liKq2xku34o9IBwf",
+  client_secret: {:system, "GITHUB_CLIENT_SECRET"},
+  private_key: {:system, "GITHUB_APP_PRIVATE_KEY"},
+  webhook_secret: {:system, "GITHUB_WEBHOOK_SECRET"},
+  token_encryption_key: {:system, "GITHUB_TOKEN_ENCRYPTION_KEY"}
+
+# D2 — register the GitHub credential backend module so the provider-connection
+# domain resolves it at runtime (via RuntimeBindings / Exchange).
+config :ezagent_domain_provider_connection,
+  credential_backend_implementations:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations,
+        %{}
+      ),
+      %{"github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend}
+    ),
+  callback_redirect_pairs:
+    Map.merge(
+      Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
+      %{"github-oauth" => "pair-github-v1"}
+    ),
+  local_authorization_backend_pairs:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :local_authorization_backend_pairs,
+        %{}
+      ),
+      %{{"github", "oauth_user"} => "pair-github-v1"}
+    )
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
