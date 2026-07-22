@@ -239,6 +239,12 @@ defmodule Ezagent.ActionSet.Identity do
 
     with :ok <- persist_user_caps_after_marker(uri, state.caps),
          {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+      :ok =
+        Ezagent.Identity.MembershipConvergence.converge(
+          uri,
+          MapSet.to_list(reconciled.caps)
+        )
+
       if reconciled == original_state do
         {:ok, %{}}
       else
@@ -587,7 +593,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
-        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [set_caps_effect(new_caps)] ++ membership_convergence_effects(receiver, new_caps)}
       end
     else
       {:error, _reason} ->
@@ -607,7 +614,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
-        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [set_caps_effect(new_caps)] ++ membership_convergence_effects(receiver, [cap])}
       end
     end
   end
@@ -654,7 +662,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          set_caps_effect(reconciled.caps),
          {:set, :recipe_binding_version, version},
          {:set, :recipe_binding_keys, keys}
-       ]}
+       ] ++ membership_convergence_effects(receiver, reconciled.caps)}
     else
       false -> {:error, :agent_required}
       nil -> {:error, :recipe_binding_not_found}
@@ -694,10 +702,14 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
        [
          set_caps_effect(new_caps),
          {:emit, :cap_granted, payload}
-       ]}
+       ] ++ membership_convergence_effects(Map.get(ctx, :self_uri), [cap_struct])}
     else
       {:error, :invalid_cap_artifact}
     end
+  end
+
+  defp membership_convergence_effects(receiver, caps) do
+    Ezagent.Identity.MembershipConvergence.after_commit_effects(receiver, caps)
   end
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."
