@@ -479,6 +479,13 @@ Grep of all non-test `"system"` workspace literals on the hello + serve surface 
 
 - **PR-4 — DEPLOY MIGRATION — DESCRIBE ONLY, coordinator-gated, do NOT auto-run.** See §12.
 
+- **PR-5 — socialware MARKET product surface (SEPARATE BRANCH — additive, not on the migration chain).** See §15.
+  - Build the discover/browse page + first-class 上架/下架 (publish/retract) action **on top of the existing
+    backend** (`DefinitionRegistry` + `SocialwareInstall` + the #165 public-scope admin gate). Do NOT rebuild
+    the catalog, install, or authz — they exist. See §15 for the exact reuse surface + the two things PR-5 adds.
+  - **Branch discipline (coordinator's call, §15.1):** PR-5 lands on its **own** branch, NOT the PR-1→PR-4
+    migration branch — the greeter-unmute migration must ship independently; the market UI must never gate it.
+
 ---
 
 ## 12. PR-4 — deploy migration (coordinator executes canary → beta → stable manually)
@@ -566,3 +573,111 @@ review gate (codex, or the opus subagent fallback).
 
 ### CAVEAT for kimi
 Branch from **`origin/main`**, NOT the working tree — the checked-out `spec/orchestrator-session-config-api-and-surfaces` branch has diverged and removed/trimmed several hello files. All spec file:line refs are verified against `origin/main`.
+
+---
+
+## 15. PR-5 — socialware MARKET product surface (added 2026-07-22, Allen)
+
+**This is a NEW-FEATURE PR bolted onto the hello-A spec at Allen's request — NOT part of the de-hardcode
+migration.** hello-A makes the 官网 a proper user-created socialware session in a real workspace; the market
+surface is the natural product layer above it (how any user discovers/installs socialware). It is specced
+here for continuity, but it is architecturally and schedule-independent of PR-1..4.
+
+### 15.1 Branch discipline — land PR-5 on its OWN branch (coordinator's call)
+
+The hello-A model is "single target branch, PRs land P1→P2→… onto one branch." **PR-5 does NOT join that
+chain.** Reason: PR-1..3 unmute the greeter (the urgent migration) and PR-4 is the coordinator-gated deploy;
+if the greenfield market UI rides the same branch it *schedule-couples* — the market work would block the
+migration from landing on main. PR-5 is purely additive (a new route/LiveView + world-plugin actions; it
+touches **none** of PR-1..4's files: no `credential_bridge`, no `fusion_seed`, no `official_site_seed`, no
+config keys), so it costs nothing to isolate. **Kimi: cut PR-5 from `origin/main` on its own branch
+(e.g. `feat/socialware-market-surface`); do not stack it on the hello-A branch.**
+
+### 15.2 The backend ALREADY EXISTS — audit result (do NOT rebuild any of this)
+
+Verified on `origin/main` 2026-07-22. `Ezagent.Socialware.DefinitionRegistry` + its live-wired callers are
+already the market's functional backend:
+
+| Capability | Where (reuse it) |
+|---|---|
+| Catalog store (cross-workspace) | `DefinitionRegistry` over `ConfigStore` (`@definition_layer "workspace"`, key `"socialware"`) |
+| Visibility scoping own/system/**public** | `visible_to_workspace?/4` (`def_ws == caller_ws ∨ == system ∨ public?`); `public?` = `visibility_policy.scope == :public` |
+| Browse/list (visibility-ranked) | `DefinitionRegistry.list/1` → `World.WorkspacePluginData.socialware_rows/1` — already emits card rows `{name,title,description,version,config_id,content_hash,scope}` |
+| Install (scope-gated, content-hash-pinned) | `DefinitionRegistry.resolve_installable_revision/3` → `World.SocialwareInstall.prepare_create_template/5` (a PUBLIC card installs THAT exact revision; a PRIVATE foreign def can't be installed by supplying its `config_id`) |
+| Uninstall | `World.ConversationActions.uninstall_socialware/3` |
+| Publish/write (authoring) | `Socialware.DefinitionEditor.save_authored_definition/4` → `DefinitionRegistry.write_definition/2`; already wired to a world authoring FORM (`WorkspacePluginActions.save_prepared_socialware/4`, threads caller caps) |
+| **上架-to-public admin gate** | `DefinitionRegistry.write_definition` → `authorize_public_scope_write/2` (**#165**: writing `scope: :public` requires admin caps, threaded via `save_authored_definition(..., caps:)`) |
+| **下架/上架 (retract/restore)** | `ConfigGovernance.Socialware.set_retracted/…` + `DefinitionRegistry.retracted?/2` (a retracted def is non-installable **even by exact `config_id`** — `refute_retracted/2`) |
+
+**Consequence:** PR-5 writes almost NO backend and NO new authz. It is a UI/product-surface PR that *reuses*
+the table above. The two genuinely-new pieces are §15.3.
+
+### 15.3 What PR-5 actually adds (the ONLY two new things)
+
+1. **A standalone discover/browse surface.** A dedicated market/发现 route + LiveView that aggregates the
+   installable socialware a caller can see (own + system + public) into a browsable catalog of cards, with an
+   **Install** button per card. 
+   - **HARD RULE (visibility):** the card list MUST come from `DefinitionRegistry.list/1` (or `socialware_rows`),
+     **never** a raw `ConfigStore.list_current_objects` scan — `list/1` is the only path that applies
+     `visible_to_workspace?`, so a private foreign def can never leak onto the page.
+   - Install goes through `SocialwareInstall.prepare_create_template` with the card's `{config_id, content_hash}`
+     (the revision-pinned path), **never** a bare-name install (which could grab a same-named LOCAL def).
+   - This is ~90% reuse: the data (`socialware_rows`) and the install action already exist inside the per-workspace
+     world panel; PR-5 lifts them into a first-class browse page.
+
+2. **A first-class 上架 / 下架 (publish-to-public / retract) action.** Today `scope: :public` is only ever set by
+   hand-editing the raw authoring payload (`demo/hello.ex` literally sets `"scope" => "public"`); there is no
+   ergonomic "publish this to the public market" affordance. PR-5 adds an explicit publish/retract control on a
+   workspace-owned socialware definition:
+   - **Publish (上架):** routes through `DefinitionEditor.save_authored_definition(..., caps: <caller's real caps>)`
+     so the **existing #165 `authorize_public_scope_write` admin gate fires**. PR-5 **MUST NOT** bypass, weaken, or
+     re-implement that gate — it threads real caps and surfaces the gate's `{:error, …}` LOUD (a denied publish is
+     a visible error, never a silent no-op).
+   - **Retract (下架):** routes through `ConfigGovernance.Socialware.set_retracted` (already exists).
+   - **Authz for beta (Allen's decision A — DEFAULT: keep admin-gated).** Public publish stays **admin-only** per
+     #165. *If Allen opts to open 上架 to workspace owners,* that is a DOMAIN-side authz change to
+     `authorize_public_scope_write` (allow the owning workspace's owner caps), with its own adversarial review —
+     it is NOT something the PR-5 UI decides. **Until Allen says otherwise, PR-5 keeps the admin gate and adds
+     NO new authz.**
+
+### 15.4 Explicitly OUT of scope (→ todo `docs/futures/todo.md` "socialware market")
+
+Search index; categories/tags; ratings / usage counts; author attribution; a moderation/review queue for public
+listings; cross-workspace market curation. None of these are in PR-5. PR-5 is browse + install (reuse) + a
+first-class 上架/下架 affordance (wire to existing gate). Ship the thin slice; the discovery/metadata layer is a
+later PR on the same backend.
+
+### 15.5 Fail-before / pass-after tests (kimi writes these)
+
+1. **Visibility scoping (browse):** seed a PUBLIC socialware in workspace A and a PRIVATE one in workspace A;
+   assert the market page for a caller in workspace B **lists the public one and NOT the private one**. (Fail-before:
+   a raw-scan implementation would list both.)
+2. **Revision-pinned install (browse):** installing a public card from B pins that exact `config_id`/`content_hash`
+   (assert the created install template points at the resolved revision); a private foreign def's `config_id`
+   supplied directly is **rejected** (`:socialware_revision_not_installable`).
+3. **上架 gate fires (publish):** a **non-admin** caller's publish-to-public is **DENIED** by the #165 gate
+   (`authorize_public_scope_write`), an **admin** caller's is allowed. (Fail-before: a toggle that calls
+   `write_definition` with `caps: []` / `:system_seed` authority would let a non-admin publish — the test catches
+   the bypass.)
+4. **下架 makes non-installable:** after `set_retracted(true)`, the market page does not offer the card AND a direct
+   `resolve_installable_revision` by its `config_id` returns `:socialware_revision_retracted`.
+
+### 15.6 Adversarial-review focus points (attack these)
+
+1. **Visibility leak on the browse page** — any path that surfaces a card NOT passing `visible_to_workspace?`
+   (raw ConfigStore scan, a cross-workspace list that forgets the predicate) = private socialware exposed. The
+   page MUST be `list/1`-sourced.
+2. **上架 gate bypass** — the single highest-risk change. Does the publish action thread the caller's REAL caps so
+   `authorize_public_scope_write` (#165) actually runs? A publish that passes `caps: []`, `authority: :system_seed`,
+   or an admin-service actor would silently make anyone able to publish `scope: :public`. Confirm a non-admin is
+   denied end-to-end through the new UI action, not just at the domain fn in isolation.
+3. **Install re-checks scope + retraction** — market install must go through `resolve_installable_revision`
+   (scope + `refute_retracted` + content-hash), never a bare-name resolve.
+4. **No backend/authz duplication** — PR-5 must not fork a second catalog/visibility/authz implementation; it
+   reuses §15.2. A duplicated predicate is a future drift bug (the two copies will diverge).
+
+### 15.7 Note
+
+The market's presence makes hello-A's generalization real: once `ezagent-official` is a normal user-created
+socialware session (PR-1..2) AND the market can list/install socialware (PR-5), "any user creates a hello page
+in their workspace" and "any user discovers/installs a socialware" are the same product motion on one backend.
