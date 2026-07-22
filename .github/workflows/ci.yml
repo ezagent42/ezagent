@@ -21,19 +21,26 @@ name: CI
 #                      Does NOT run the full suite, so it is fast and stable.
 #
 #   job `full-suite` — self-hosted macOS (the lead's dev machine), NATIVE mix,
-#                      needs: [gate]. The EXACT `mix ci.local` end-to-end flow
-#                      (pnpm + ecto + `precommit` full ~1856-test suite +
-#                      check_invariants + socialware.check). Runs ONLY after
-#                      `gate` passes, so a broken branch never burns the
-#                      expensive dev-machine run. NOT on pull_request (job-level
-#                      `if`): the ~500-580s run happens only on push-to-main
-#                      (pre-deploy, BLOCKING via dispatch-canary) and the
-#                      nightly `schedule` cron — every PR still gets the cheap
-#                      `gate` (a 100% subset). Kept NATIVE deliberately: it does
-#                      not run on pull_request, so a dockerized rewrite could not
-#                      be validated by this PR's own CI before merge — the proven
-#                      native run guards the deploy path (see #108 for why darwin
-#                      is the green-reliable OS for the concurrent suite).
+#                      needs: [gate]. SHARDED (ci-shard-full-suite): the EXACT
+#                      `mix ci.local` end-to-end flow (pnpm + ecto + `precommit`
+#                      full suite + check_invariants + socialware.check) is SPLIT
+#                      into a `max-parallel: 1` matrix — a deterministic `static`
+#                      gate leg + per-app-group test legs (e2e/core/session/web/
+#                      plugin/domain), each `mix ci.shard.<shard>`. The union of
+#                      legs reproduces `mix ci.local` EXACTLY (proven by the
+#                      `static` leg's `mix ci.shard.verify` + the `ci_shard_parity`
+#                      arch gate — no test ever silently dropped). WHY: a red now
+#                      isolates to ONE leg, re-runnable ALONE, instead of re-running
+#                      the whole ~500-580s suite to chase one failure/flake. PHASE 1
+#                      is SEQUENTIAL (same wall-clock, just isolated + re-runnable);
+#                      PHASE 2 (parallel) is left OFF — see the job's `strategy`
+#                      + env notes for the one-line flip + its per-shard partition/
+#                      port prerequisites. Runs ONLY after `gate` passes; NOT on
+#                      pull_request (job-level `if`) — push-to-main (pre-deploy,
+#                      BLOCKING via dispatch-canary) + the nightly `schedule` cron;
+#                      every PR still gets the cheap `gate` (a 100% subset). Kept
+#                      NATIVE deliberately (see #108 for why darwin is the green-
+#                      reliable OS for the concurrent suite).
 
 on:
   pull_request:
@@ -115,8 +122,26 @@ jobs:
           trap 'docker compose -p "$P" -f docker/docker-compose.ci.yml down -v --remove-orphans || true' EXIT
           docker compose -p "$P" -f docker/docker-compose.ci.yml run --build --rm ci gate
 
+  # full-suite is SHARDED (ci-shard-full-suite). Instead of ONE ~500-580s
+  # monolith `mix ci.local`, its work is split into named shards — a deterministic
+  # `static` gate shard + per-app-group test shards (e2e / core / session / web /
+  # plugin / domain) — each a separate matrix leg running `mix ci.shard.<shard>`.
+  # WHY: when the suite is red, the failure isolates to ONE shard and GitHub's
+  # "re-run failed jobs" re-runs ONLY that leg — no more re-running the whole
+  # suite to chase one flake/failure (e.g. the known EzagentPluginKb.E2E red
+  # lands in `e2e` alone). The union of shards reproduces `mix ci.local` EXACTLY;
+  # `mix ci.shard.verify` (a `static`-shard step) + the `ci_shard_parity_test`
+  # arch gate PROVE parity (every test file assigned to exactly one shard; the
+  # shard step-set == ci.local's) so no test is ever silently dropped.
+  #
+  # PHASE 1 (this change) is SEQUENTIAL: `max-parallel: 1`, so the legs run one
+  # after another on the single self-hosted mac — same total wall-clock as the
+  # monolith, but with per-shard failure isolation + re-run. PHASE 2 (parallel)
+  # is DELIBERATELY LEFT OFF; to enable it, flip `max-parallel` up AND give each
+  # leg its OWN DB partition + Postgres port (see the phase-2 note on the env
+  # block below) — otherwise concurrent legs corrupt the shared 55440 Postgres.
   full-suite:
-    name: full-suite (self-hosted macOS)
+    name: full-suite (${{ matrix.shard }})
     needs: [gate]
     # NOT on pull_request: the full suite is 500-580s on the lead's own dev
     # machine (self-hosted macOS) and `gate` is already a 100% subset of it —
@@ -125,18 +150,40 @@ jobs:
     # and on the nightly `schedule` cron. This keeps the dev machine free while
     # codex pushes many PRs, without ever deploying an untested main.
     if: github.event_name != 'pull_request'
+    strategy:
+      # Run EVERY shard even when one is red, so a single failure never masks the
+      # rest and each leg is independently re-runnable ("re-run failed jobs").
+      fail-fast: false
+      # PHASE 1 — SEQUENTIAL on the single self-hosted mac. The legs QUEUE onto
+      # the one runner regardless; pinning to 1 makes that explicit and keeps the
+      # shared ephemeral Postgres (port 55440, DB partition = run_id) collision-
+      # free. PHASE 2: raise this ONLY together with per-shard partition+port
+      # (see env note) and enough runners, or concurrent legs corrupt the DB.
+      max-parallel: 1
+      matrix:
+        # Keep in sync with the shard names in `ci_shards.exs` + the `static`
+        # gate shard; `mix ci.shard.verify` fails if the aliases and manifest
+        # drift, and each name here maps 1:1 to a `mix ci.shard.<name>` alias.
+        shard: [static, e2e, core, session, web, plugin, domain]
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
     runs-on: [self-hosted, macOS, ARM64]
     # Hard ceiling so a hung test (e.g. an outbound network call that stalls
-    # with no proxy — the BEAM's inet_gethost blocks forever) fails the job in
-    # minutes instead of pinning the runner for hours. The full suite finishes
-    # well under this even under load.
+    # with no proxy — the BEAM's inet_gethost blocks forever) fails the leg in
+    # minutes instead of pinning the runner for hours. Per-shard the run is well
+    # under this; the ceiling is per-leg.
     timeout-minutes: 40
     env:
       MIX_ENV: test
       # Private per-run test DB (`ezagent_pg_compat_test<run_id>`) so a CI run
-      # never collides with another concurrent run on this machine.
+      # never collides with another concurrent run on this machine. SAFE across
+      # the shard legs because they are SEQUENTIAL (max-parallel: 1) and each leg
+      # boots its OWN fresh ephemeral Postgres — so the shared partition never
+      # sees two live writers.
+      # PHASE-2 (parallel) PREREQUISITE: make this per-shard, e.g.
+      #   MIX_TEST_PARTITION: ${{ github.run_id }}-${{ matrix.shard }}
+      # AND give each leg its own POSTGRES_PORT (or its own cluster), or
+      # concurrent legs corrupt the shared 55440 Postgres + the ci-local sentinel.
       MIX_TEST_PARTITION: ${{ github.run_id }}
       POSTGRES_USER: ezagent_pg_compat
       POSTGRES_PASSWORD: ezagent_pg_compat
@@ -185,13 +232,21 @@ jobs:
           "$PG_BIN/psql" -h 127.0.0.1 -p "$POSTGRES_PORT" -U "$POSTGRES_USER" \
             -d postgres -c "ALTER ROLE $POSTGRES_USER WITH PASSWORD '$POSTGRES_PASSWORD' SUPERUSER LOGIN;"
 
-      # `mix ci.local` chains the whole gate end-to-end: deps.get, the three
-      # pnpm installs (node_modules before compile so esbuild resolves
-      # react/zod), ecto create/migrate, `precommit` (compile
-      # --warnings-as-errors --force + deps.unlock --unused + format + full
-      # test suite), ezagent.check_invariants, ezagent.socialware.check.
-      - name: mix ci.local (full precommit + invariants + socialware)
-        run: mix ci.local
+      # This leg's shard. `mix ci.shard.<shard>` reuses the EXACT ci.local chain
+      # (deps.get + pnpm + ecto + the honest arm/finalize exit) but scoped:
+      #   * `static`                — every ci.local step that is NOT `mix test`
+      #                               (compile --warnings-as-errors --force, the
+      #                               ci.shard.verify parity gate, deps.unlock,
+      #                               format, check_invariants, uri_query.scan,
+      #                               world.e2e.fixtures, cc-sdk python, socialware)
+      #                               run ONCE here.
+      #   * e2e/core/session/web/…  — ONLY that shard's assigned test files
+      #                               (first-match manifest in ci_shards.exs).
+      # Union of the 7 legs == the old monolith `mix ci.local`, EXACTLY (proven by
+      # the `static` leg's `mix ci.shard.verify` step + the ci_shard_parity arch
+      # gate). A red leg fails only itself; `dispatch-canary` needs ALL legs green.
+      - name: mix ci.shard.${{ matrix.shard }}
+        run: mix ci.shard.${{ matrix.shard }}
 
       # Always stop + delete the cluster, even on failure/cancel, so nothing
       # lingers on the port or on disk between runs.
