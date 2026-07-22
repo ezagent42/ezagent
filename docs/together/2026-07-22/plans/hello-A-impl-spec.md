@@ -540,3 +540,29 @@ review gate (codex, or the opus subagent fallback).
   manifest Definition-publish lane (§9) still uses `system` as the admin marker — confirm that is the
   intended end-state ("`system` = admin-privilege marker only" includes "reusable-template publish
   context").
+
+---
+
+## Addendum: adversarial review outcome + coordinator decisions (2026-07-22)
+
+**Adversarial review verdict: SOUND / ready for kimi.** Traced join→send→greeter→builder/concierge + the anon born-with cap path; NO residual cross-workspace `:missing_cap`. Fold the below before implementing.
+
+### Coordinator decisions (Allen)
+- **REDO, not patch.** Reuse the page materials, but RE-IMPLEMENT per ezagent's current capabilities/standards — do NOT carry forward the old workarounds that were hardcoded to dodge then-missing features.
+- **Founder principal** = the `ezagent` workspace's real DB owner (`created_by`); if absent OR system-admin, use **`entity://ezagent/user/lin_yilun`** (a real ezagent-workspace user with admin privileges). **NEVER `entity://system/user/admin`** as the 官网 owner.
+- **Credential** migrates to `ezagent` too (§6 as written).
+- **`/hello/web`** → **hard cutover** to `/hello/ezagent-official`, no redirect.
+- **Shared templates STAY in `system`.** Only the 官网 INSTANCE session moves to ezagent; the reusable socialware **definition/template publish** lane (`manifest_seed.ex:160` → `Ezagent.URI.workspace(:system)`) is a platform-admin namespace and is **out of scope** (do not move it).
+
+### Review should-fixes (fold in)
+1. **Owner must resolve to a non-admin ezagent founder BEFORE any seed-side workspace auto-creation.** On a fresh/wiped stack the credential bridge creates `ezagent` admin-owned (`credential_bridge.ex:148-149`) before owner resolution → 官网 comes up admin-owned (owner-ws=system ≠ session-ws=ezagent), silently defeating "seed as member." Fix: (a) resolve owner before seed-side `Workspace.create`; (b) treat a system/admin `created_by` as "no valid founder" → fall back to lin.yilun; (c) PR-3's fresh docker harness must seed the home workspace + a non-admin founder FIRST. (Keyless variant: `fusion_seed.ex:87-94` creates `ezagent` with no `created_by` → fail-loud — the harness precondition covers it.)
+2. **Acceptance is layered — state it.** hello A (workspace flip + §6 credential) cures the **anonymous** visitor path (the 官网's real audience; born-with `join_cap` is issued under system-admin authority, workspace-independent, verifies in ezagent). The **logged-in ezagent member** join-cap grant (`do_grant_join_cap`) is **#195 Phase M**, out of scope here. Model the fail-before test on an ezagent principal, pass-after on the **anon** path. Do NOT set acceptance as "hello A alone lets a logged-in member join."
+
+### Constraint notes (not blockers)
+- §6 test respec: also flip `Workspace.spawn_workspace("system")` / `terminate(entity("system",…))` in `hello_credential_source_test.exs:65,78`, not just the resolve/source_uri asserts.
+- Single-source accessor: call `home_workspace()` INLINE (`Keyword.get(opts, :workspace, home_workspace())`), never a compile-time `@attr` (reads config at compile time).
+- §2b: on origin/main the anon `join_cap.granted_by` is a HARDCODED `User.admin_uri()` issued under `{:admin, system-admin}` (`anon_user.ex:169-186`) — owner-independent. Do NOT wire the (ezagent) owner into the anon grant; it already verifies workspace-independently.
+- §1: anons already pass isolation TODAY on the `system` 官网 (minted into the session's ws). The present-day break is the logged-in ezagent member. Keep the fail-before using an ezagent principal.
+
+### CAVEAT for kimi
+Branch from **`origin/main`**, NOT the working tree — the checked-out `spec/orchestrator-session-config-api-and-surfaces` branch has diverged and removed/trimmed several hello files. All spec file:line refs are verified against `origin/main`.
