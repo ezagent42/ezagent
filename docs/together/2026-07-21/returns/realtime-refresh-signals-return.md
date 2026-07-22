@@ -39,6 +39,11 @@ route subscribes to its entity URI, and its caller-scoped `refresh_state/2`
 projection is rebuilt when that entity changes. A current user's `:identity`
 slice change reloads `PresenterCaps` and rebuilds the current route.
 
+Conversation sessions use that same common subscription. A committed chat
+slice rebuilds the active conversation route, so persisted messages are shown
+even if the low-latency chat notification is not observed. This is not a
+Hello-specific path.
+
 Kanban and future plugins do not broadcast `view_changed`, `caps_changed`, or
 plugin-specific refresh messages. SliceChange is content-free; data builders
 

@@ -270,6 +270,7 @@ defmodule EzagentPluginWorld.WorldLive do
     socket =
       socket
       |> refresh_caps_after_identity_change(entity_uri, event)
+      |> refresh_current_session_after_slice_change(entity_uri)
       |> refresh_active_plugin_view(event)
       |> push_inbound_event("slice_changed", event)
 
@@ -318,6 +319,14 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp refresh_caps_after_identity_change(socket, _entity_uri, _event), do: socket
+
+  defp refresh_current_session_after_slice_change(socket, entity_uri) do
+    if same_uri?(entity_uri, socket.assigns[:current_session_uri]) do
+      refresh_current_route(socket)
+    else
+      socket
+    end
+  end
 
   defp sync_page_refresh_subscription(socket, route) do
     if connected?(socket) do

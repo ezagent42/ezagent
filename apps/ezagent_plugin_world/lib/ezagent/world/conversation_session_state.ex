@@ -70,9 +70,22 @@ defmodule Ezagent.World.ConversationSessionState do
     topic = Ezagent.ActionSet.Session.session_events_topic(session_uri)
     subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
 
+    socket = ensure_slice_change_subscribed(socket, session_uri)
+
     if connected?(socket) and not MapSet.member?(subscribed, topic) do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
       assign(socket, :subscribed_topics, MapSet.put(subscribed, topic))
+    else
+      socket
+    end
+  end
+
+  defp ensure_slice_change_subscribed(socket, session_uri) do
+    subscribed = Map.get(socket.assigns, :subscribed_slice_change_uris, MapSet.new())
+
+    if connected?(socket) and not MapSet.member?(subscribed, session_uri) do
+      :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
+      assign(socket, :subscribed_slice_change_uris, MapSet.put(subscribed, session_uri))
     else
       socket
     end
