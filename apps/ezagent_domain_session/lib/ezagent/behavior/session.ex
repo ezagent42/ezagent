@@ -235,7 +235,7 @@ defmodule Ezagent.ActionSet.Session do
 
   action(:merge_member,
     args: %{from: :uri, to: :uri},
-    returns: %{members: {:list, :uri}},
+    returns: %{status: :atom, member: :uri},
     caps: [:merge_member],
     modes: [:call],
     description: "Atomically relabel one session member URI to another"
@@ -293,7 +293,7 @@ defmodule Ezagent.ActionSet.Session do
   # `:cascade_notify_managers` cap-exempt precedent (in-handler live authz).
   action(:approve_admission,
     args: %{member: :uri},
-    returns: %{members: {:list, :uri}, approved: :uri},
+    returns: %{status: :atom, member: :uri, approved: :uri},
     caps: [:approve_admission],
     modes: [:call],
     description:

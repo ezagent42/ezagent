@@ -34,7 +34,13 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
   defp authorize_and_add(holder, facets, ctx, source_module) do
     session_uri = ctx[:self_uri]
-    held = holder |> Ezagent.Identity.read_held_caps() |> Enum.to_list()
+    # This is deliberately a DURABLE read. A newly materialized agent may still
+    # be busy in its own activation/receive turn when the absorb hook casts back
+    # here; a live `GenServer.call` would time out and falsely reject a cap that
+    # has already committed. `load_persisted/1` verifies receiver/signature and
+    # generation, so it remains fail-closed without coupling projection progress
+    # to holder liveness.
+    held = Ezagent.EntityCaps.load_persisted(holder)
 
     if Ezagent.Session.MemberReceive.holds_member_cap_over?(holder, held, session_uri) do
       add_projection(holder, facets, ctx, source_module)

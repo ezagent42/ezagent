@@ -1569,7 +1569,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   end
 
   describe "invoke(:merge_member, ...)" do
-    test "joins the login user, removes anon, rewrites last_message, and repoints read markers" do
+    test "rejects a synthetic relabel when the target-backed member-cap grant cannot land" do
       session_uri =
         Ezagent.URI.new!(
           "session://team-alpha/default/merge-fresh-#{System.unique_integer([:positive])}"
@@ -1614,7 +1614,7 @@ defmodule Ezagent.ActionSet.ChatTest do
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
 
-      assert {:ok, new_slice, %{members: members}, effects} =
+      assert {:error, {:member_cap_grant_failed, _reason}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
                  Ezagent.ActionSet.Session,
                  :merge_member,
@@ -1623,40 +1623,17 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      refute Map.has_key?(new_slice.members, anon_uri)
-      assert %{online: true} = new_slice.members[login_uri]
-      assert login_uri in members
-      refute anon_uri in members
-      refute Map.has_key?(new_slice.monitors, anon_ref)
-      refute Map.has_key?(new_slice.last_seen, anon_uri)
-      assert new_slice.owner_uri == other_uri
-      assert new_slice.last_message.sender == login_uri
-      assert new_slice.last_message.mentions == [login_uri, other_uri]
-      assert Ezagent.Session.ReadMarker.last_read(session_uri, login_uri, :read) == msg_id
-      assert Ezagent.Session.ReadMarker.last_read(session_uri, anon_uri, :read) == nil
-
-      assert Enum.any?(
-               effects,
-               &match?(
-                 {:notify, _,
-                  {:session_membership_change, ^session_uri, {:member_left, ^anon_uri}}},
-                 &1
-               )
-             )
-
-      assert Enum.any?(
-               effects,
-               &match?(
-                 {:notify, _,
-                  {:session_membership_change, ^session_uri, {:member_joined, ^login_uri}}},
-                 &1
-               )
-             )
+      # A synthetic roster entry is not authority. Without a target-backed cap
+      # grant the merge aborts before repointing or rewriting anything; the real
+      # composed-seam success path is covered by FunnelCoverageTest +
+      # AnonTakeoverTest.
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, anon_uri, :read) == msg_id
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, login_uri, :read) == nil
 
       GenServer.stop(login_pid)
     end
 
-    test "dedupes when login user is already a member and is idempotent on re-run" do
+    test "does not trust an existing roster entry when its cap grant cannot be proven" do
       session_uri =
         Ezagent.URI.new!(
           "session://team-alpha/default/merge-dedup-#{System.unique_integer([:positive])}"
@@ -1686,7 +1663,7 @@ defmodule Ezagent.ActionSet.ChatTest do
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
 
-      assert {:ok, merged, _result, _effects} =
+      assert {:error, {:member_cap_grant_failed, _reason}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
                  Ezagent.ActionSet.Session,
                  :merge_member,
@@ -1694,25 +1671,6 @@ defmodule Ezagent.ActionSet.ChatTest do
                  %{from: anon_uri, to: login_uri},
                  ctx
                )
-
-      assert Map.keys(merged.members) == [login_uri]
-      assert merged.members[login_uri].role_name == "confirmed"
-      assert merged.last_message.sender == login_uri
-      assert merged.last_message.mentions == [login_uri]
-
-      assert {:ok, rerun, _result, _effects} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
-                 Ezagent.ActionSet.Session,
-                 :merge_member,
-                 merged,
-                 %{from: anon_uri, to: login_uri},
-                 ctx
-               )
-
-      assert Map.keys(rerun.members) == [login_uri]
-      assert rerun.members[login_uri].role_name == "confirmed"
-      assert rerun.last_message.sender == login_uri
-      assert rerun.last_message.mentions == [login_uri]
 
       GenServer.stop(login_pid)
     end

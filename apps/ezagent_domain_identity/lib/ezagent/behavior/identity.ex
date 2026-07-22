@@ -687,22 +687,30 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
         |> MapSet.new()
 
       new_caps = MapSet.put(deduped, cap_struct)
+      receiver = Map.get(ctx, :self_uri)
 
-      notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
+      # User authority is physically projected in `users.caps_json`, whereas
+      # non-user identities are snapshot-backed. Persist the user projection
+      # before scheduling holder-driven convergence so `add_self`'s independent
+      # durable read can observe the committed grant. The VM-internal
+      # `store_cap` path already has this ordering; absorb/grant must match it.
+      with :ok <- persist_entity_caps(receiver, new_caps) do
+        notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
-      payload =
-        %{
-          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-          cap: cap_struct,
-          at: DateTime.utc_now()
-        }
-        |> Map.merge(event_attrs)
+        payload =
+          %{
+            target_uri: receiver |> uri_to_str(),
+            cap: cap_struct,
+            at: DateTime.utc_now()
+          }
+          |> Map.merge(event_attrs)
 
-      {:ok, %{caps: MapSet.to_list(new_caps)},
-       [
-         set_caps_effect(new_caps),
-         {:emit, :cap_granted, payload}
-       ] ++ membership_convergence_effects(Map.get(ctx, :self_uri), [cap_struct])}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [
+           set_caps_effect(new_caps),
+           {:emit, :cap_granted, payload}
+         ] ++ membership_convergence_effects(receiver, [cap_struct])}
+      end
     else
       {:error, :invalid_cap_artifact}
     end
