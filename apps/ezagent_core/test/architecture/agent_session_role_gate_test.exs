@@ -52,7 +52,9 @@ defmodule EzagentCore.Architecture.AgentSessionRoleGateTest do
     "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/agent_create/role_step.ex",
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
     "apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban/shared.ex",
-    "apps/ezagent_plugin_world/lib/ezagent/world/kanban_data.ex"
+    # #1472 extracted world's kanban_data.ex → the kanban plugin's world_data.ex
+    # (git R095 rename). Repointed so the role-bake scan follows the moved file.
+    "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/world_data.ex"
   ]
 
   # The agent-level SESSION-role bake patterns. Each is a durable write or read

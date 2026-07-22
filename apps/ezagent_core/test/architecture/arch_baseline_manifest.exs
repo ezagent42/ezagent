@@ -309,7 +309,20 @@
   #   extraction, so the cap ratchets to the real value. 46→42. NOTE: when
   #   dealscout (#1264) lands, its Demo.Crawler copy switches to
   #   ShippedManifest in S2 — re-measure then.
-  cross_file_duplicate_fn_groups: 42,
+  # arch-cap-bump: 42→43 #1472 — the read-side ctx builder (`caller_uri` /
+  #   `caller_caps: Ezagent.World.PresenterCaps.load(socket)` / `workspace_uri`)
+  #   is now duplicated across `ezagent_plugin_kanban/world_actions.ex`
+  #   (`read_ctx/1`) and `ezagent_plugin_world/conversation_actions.ex`
+  #   (`session_view_ctx/1`). On main it existed ONCE (world's `kanban_actions.ex`
+  #   `read_ctx/1`); world's conversation surface reused it via a cross-module
+  #   call. #1472 extracted `kanban_actions.ex` into the kanban plugin, so world
+  #   could no longer call it (that would reverse the coupling) and re-inlined the
+  #   builder locally. A real dedup needs a shared home for a body that calls
+  #   `Ezagent.World.PresenterCaps` — either a world-side helper kanban consumes
+  #   (the exact kanban→plugin_world edge) or moving `PresenterCaps` to a neutral
+  #   tier. Both are the DEFERRED #4 plugin→UI-host ruling. Ratchet back to 42
+  #   when that lands.
+  cross_file_duplicate_fn_groups: 43,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

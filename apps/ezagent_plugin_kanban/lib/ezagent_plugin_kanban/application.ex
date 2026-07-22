@@ -171,6 +171,23 @@ defmodule EzagentPluginKanban.Application do
   @impl Ezagent.Plugin
   def config_surface, do: %{kind: :route, path: "/plugins/kanban", label: "看板"}
 
+  @doc """
+  The kanban plugin's world-page SELF-declaration (#1472).
+
+  Optional, duck-typed plugin extension point (NOT a formal `Ezagent.Plugin`
+  callback): world's `Ezagent.World.PluginPageRegistry.load/0` discovers it via
+  `function_exported?(mod, :pages, 0)` across every registered plugin, then
+  validates each returned declaration fail-closed through
+  `Ezagent.World.UiSurfaceProvider.validate_page/1` before mounting it. This is
+  the de-hardcoding #1472 performs — the `/plugins/kanban` board page is
+  contributed BY this plugin instead of being baked into the world host.
+
+  Returns the single board page declaration: the index + detail routes, the nav
+  entry, `WorldData` as both data/state builder, the `kanban` renderer family
+  rendered by `assets/src/world_page.tsx` (`KanbanWorldPage`), and the board's
+  `kanban.*` actions dispatched through `WorldActions`.
+  """
+  @spec pages() :: [map()]
   def pages do
     [
       %{

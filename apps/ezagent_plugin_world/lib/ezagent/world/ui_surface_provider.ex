@@ -152,6 +152,15 @@ defmodule Ezagent.World.UiSurfaceProvider do
 
   def validate_page(_), do: {:error, [:declaration]}
 
+  @doc """
+  Boolean, fail-closed form of `validate_page/1` (`true` iff it returns `:ok`).
+
+  The page-declaration counterpart to `valid_nav_surface?/1` /
+  `valid_session_tab?/1`, for callers that only need a yes/no verdict. The
+  registry (`PluginPageRegistry.resolve/1`) uses the detailed `validate_page/1`
+  instead, because it must record WHY a declaration was rejected; this predicate
+  is the convenience wrapper for plain guards and tests that discard that detail.
+  """
   @spec valid_page?(term()) :: boolean()
   def valid_page?(page), do: validate_page(page) == :ok
 
