@@ -16,7 +16,14 @@ defmodule EzagentCore.CiShards do
   the monolith, so parity is a HARD gate, not a convention.
   """
 
-  @shards_file Path.expand("../../../../ci_shards.exs", __DIR__)
+  # `ci_shards.exs` is a CI/dev manifest read ONCE at COMPILE time (baked below
+  # via @external_resource + Code.eval_file) — NOT a shipped runtime asset, so it
+  # is outside the DirRelativeRuntimeAsset invariant (which targets `__DIR__`-based
+  # SHIPPED-asset resolution). Anchored on the compile-time source path via
+  # `__ENV__.file` rather than an arch-allow'd `__DIR__`: `mix format` relocates an
+  # inline `# arch-allow:` off any module-attribute line, so the same-line
+  # suppression can't be kept stable here.
+  @shards_file Path.expand("../../../../ci_shards.exs", Path.dirname(__ENV__.file))
   @external_resource @shards_file
   @test_shards @shards_file |> Code.eval_file() |> elem(0) |> Map.fetch!(:test_shards)
 
