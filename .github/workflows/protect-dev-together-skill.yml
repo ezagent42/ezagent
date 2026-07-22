@@ -43,6 +43,7 @@ jobs:
           GUARDED_PATH: .claude/skills/dev-together/
           EVENT_NAME: ${{ github.event_name }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PUSH_ACTOR: ${{ github.actor }}
           BEFORE_SHA: ${{ github.event.before }}
@@ -51,7 +52,19 @@ jobs:
           set -euo pipefail
 
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            changed="$(gh pr diff "$PR_URL" --name-only)"
+            # Enumerate changed files via the paginated "list pull request files"
+            # API. The previous `gh pr diff --name-only` fetched the raw unified
+            # diff (Accept: application/vnd.github.v3.diff), which GitHub caps at
+            # 300 files and answers with HTTP 406 for larger PRs — falsely failing
+            # this REQUIRED check on any PR > 300 files (e.g. #1445, 419 files)
+            # even when it does not touch the guarded path. The files API has no
+            # such cap. We enumerate both the new path and the rename-source
+            # (previous_filename) so a guarded file *renamed out* of the dir is
+            # still caught. Fail closed: any enumeration error fails the check
+            # (never silently pass), independent of the shell's set -e nuances.
+            changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
+              --paginate --jq '.[] | .filename, (.previous_filename // empty)')" \
+              || { echo "::error::Could not enumerate changed files for PR #${PR_NUMBER} — failing closed."; exit 1; }
             actor="$PR_AUTHOR"
           else
             if printf '%s' "$BEFORE_SHA" | grep -qE '^0{40}$'; then
