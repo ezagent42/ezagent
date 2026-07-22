@@ -38,6 +38,9 @@
 - `corepack pnpm --dir apps/ezagent_plugin_world/assets run typecheck` — pass.
 - `mix ci.fast` — **not green**; see DoD item 5. The initial failure is the
   workspace-locality contract scan in `apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex` after rebasing to `240d00e0f`.
+- `mix precommit` — **not green** for the same workspace-locality baseline
+  failure. The run was stopped after the failure was reported because the ExUnit
+  formatter process did not terminate cleanly; this is not recorded as a pass.
 
 ## Deferred / lead decision
 
