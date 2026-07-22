@@ -11,6 +11,7 @@ defmodule Ezagent.World.PluginPageRefresh do
 
   @type result :: {:ok, map()} | :not_registered | {:error, atom()}
 
+  @doc "Builds refresh state through a registered page's validated data builder."
   @spec build_state(map() | nil, URI.t(), map()) :: result()
   def build_state(nil, _entity_uri, _ctx), do: :not_registered
 

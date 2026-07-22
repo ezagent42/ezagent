@@ -314,13 +314,13 @@ defmodule EzagentPluginWorld.WorldLive do
     %{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caller_caps: Ezagent.World.PresenterCaps.load(socket)
     }
   end
 
   defp refresh_current_caps(socket) do
     caller = socket.assigns.current_entity_uri
-    caps = MapSet.new(Ezagent.EntityCaps.load(caller))
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     socket
     |> assign(:current_caps, caps)
