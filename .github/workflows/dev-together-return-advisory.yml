@@ -31,7 +31,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          gh pr diff "$PR_URL" --name-only | bash .github/scripts/dev-together-return-advisory.sh
+          set -euo pipefail
+          # Enumerate changed files via the paginated files API (no 300-file cap;
+          # `gh pr diff --name-only` 406'd on PRs > 300 files — same bug as the
+          # protect-dev-together-skill guard). Capture into a variable and feed
+          # the script via a here-string rather than piping `--paginate` straight
+          # in: the advisory script exits early (label / out-of-scope / first
+          # return-file match) without draining stdin, so a direct pipe would let
+          # gh hit a closed pipe mid-pagination → SIGPIPE (141) → red check under
+          # Actions' default `-o pipefail`, on exactly the large PRs this fixes.
+          changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')"
+          bash .github/scripts/dev-together-return-advisory.sh <<< "$changed"
