@@ -231,6 +231,14 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
       {:error, _reason} = err ->
         err
+
+      other ->
+        # The provision chain can leak non-2-tuple shapes (observed: the
+        # socialware-install transaction's `{:error, reason, partial}`
+        # 3-tuple riding a `with` passthrough on a founder-less blank
+        # stack). The seed is fail-SOFT by contract — normalize instead of
+        # crashing the one-shot boot Task with a CaseClauseError.
+        {:error, {:unexpected_seed_result, other}}
     end
   end
 end
