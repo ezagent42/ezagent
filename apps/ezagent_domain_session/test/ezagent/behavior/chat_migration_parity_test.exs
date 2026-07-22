@@ -379,7 +379,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
   end
 
   describe "handle_join/2 — member not in registry" do
-    test "returns {:error, {:member_not_registered, uri}} for unregistered member" do
+    test "returns granted intent status for an unregistered member" do
       session_uri =
         URI.new!("session://team-alpha/default/join-noreg-#{System.unique_integer([:positive])}")
 
@@ -390,8 +390,10 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
-      assert {:error, {:member_not_registered, ^stranger}} =
+      assert {:ok, %{status: :granted, member: ^stranger}, effects} =
                SessionBehavior.handle_join(%{member: stranger}, ctx)
+
+      refute Enum.any?(effects, &match?({:set, :members, _}, &1))
     end
   end
 

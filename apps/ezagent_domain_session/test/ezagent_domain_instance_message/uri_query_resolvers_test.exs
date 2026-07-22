@@ -309,9 +309,14 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     role_name = "reviewer"
 
     assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "cc")
-    assert {:ok, %{members: members}} = join(session_uri, member_uri, role_name: role_name)
 
-    assert member_uri in members
+    assert {:ok, %{status: :granted, member: ^member_uri}} =
+             join(session_uri, member_uri, role_name: role_name)
+
+    assert wait_until(fn ->
+             UriQuery.resolve(:member_by_role, {session_uri, role_name}) == {:ok, member_uri}
+           end)
+
     assert {:ok, ^member_uri} = UriQuery.resolve(:member_by_role, {session_uri, role_name})
     assert :none = UriQuery.resolve(:member_by_role, {session_uri, "missing"})
   end
@@ -323,8 +328,13 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
 
     assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "cc")
     assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(other_uri, "cc")
-    assert {:ok, %{members: members}} = join(session_uri, member_uri, role_name: "worker")
-    assert member_uri in members
+
+    assert {:ok, %{status: :granted, member: ^member_uri}} =
+             join(session_uri, member_uri, role_name: "worker")
+
+    assert wait_until(fn ->
+             EzagentDomainInstanceMessage.agent_in_live_session?(member_uri) == {:ok, true}
+           end)
 
     assert {:ok, [^session_uri]} = EzagentDomainInstanceMessage.agent_live_sessions(member_uri)
     assert {:ok, true} = EzagentDomainInstanceMessage.agent_in_live_session?(member_uri)
@@ -360,10 +370,23 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
       args: Map.merge(%{member: member_uri}, Map.new(facets)),
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
     })
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: false
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      wait_until(fun, attempts - 1)
+    end
   end
 
   defp unique_session_uri(label) do

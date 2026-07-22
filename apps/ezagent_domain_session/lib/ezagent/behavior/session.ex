@@ -155,9 +155,9 @@ defmodule Ezagent.ActionSet.Session do
 
   action(:join,
     # Allow both — admin User joins via :cast at boot (non-blocking);
-    # admin or programmatic callers may :call to read members back.
+    # admin or programmatic callers may :call to observe admission status.
     args: %{member: :uri},
-    returns: %{members: {:list, :uri}},
+    returns: %{status: :atom, member: :uri},
     caps: [:join],
     modes: [:call, :cast],
     description: "Add a member to the session and replay any missed messages"
@@ -853,7 +853,7 @@ defmodule Ezagent.ActionSet.Session do
     case {Map.get(members, member_uri), KindRegistry.lookup(member_uri)} do
       {%{online: true}, {:ok, member_pid}} ->
         if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
-          {:ok, %{members: Map.keys(members), already_member: true}, []}
+          {:ok, %{status: :already_member, member: member_uri}, []}
         else
           Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
         end

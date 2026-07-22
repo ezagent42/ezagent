@@ -353,10 +353,18 @@ defmodule Ezagent.Orchestrator.Tools do
            ctx: ctx(caller, caps),
            origin: :trusted_internal
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-      other -> {:error, {:unexpected_join_result, other}}
+      {:ok, %{status: status, member: ^member_uri}}
+      when status in [:granted, :already_member] ->
+        :ok
+
+      {:ok, %{status: :pending, member: ^member_uri}} ->
+        {:error, :admission_pending}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_join_result, other}}
     end
   end
 
@@ -848,6 +856,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp ctx(%URI{} = caller, caps) do
     %{
       caller: caller,
+      authenticated_principal: caller,
       caps: to_cap_set(caps),
       reply: {:caller_inbox, self()}
     }

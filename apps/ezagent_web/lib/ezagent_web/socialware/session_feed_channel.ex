@@ -345,9 +345,15 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
            ctx: %{caller: principal, authenticated_principal: principal, reply: :ignore},
            origin: :authenticated_external
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      other -> other
+      {:ok, %{status: status, member: ^principal}}
+      when status in [:granted, :already_member] ->
+        :ok
+
+      {:ok, %{status: :pending, member: ^principal}} ->
+        {:error, :admission_pending}
+
+      other ->
+        other
     end
   end
 

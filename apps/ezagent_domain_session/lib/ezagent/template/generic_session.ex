@@ -135,6 +135,7 @@ defmodule Ezagent.Template.GenericSession do
               args: %{member: member_uri},
               ctx: %{
                 caller: admin,
+                authenticated_principal: admin,
                 caps: MapSet.new([signed_cap]),
                 reply: :ignore
               },

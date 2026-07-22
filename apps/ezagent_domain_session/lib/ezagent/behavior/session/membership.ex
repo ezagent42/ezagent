@@ -110,7 +110,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
             grant_status when grant_status in [:already_held, :enqueued] ->
               # Phase A only. Cursor/facets/owner claim commit together; the
               # holder-driven `add_self` action is the sole roster writer.
-              {:ok, %{members: Map.keys(members)},
+              {:ok, %{status: :granted, member: member_uri},
                [join_cursor_effect, join_facets_effect | owner_effects]}
           end
         end
@@ -226,7 +226,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # pending member is not mounted on either axis). The pending MEMBER's managers
   # are notified (spec §C.3) so the owner can approve.
   defp record_pending_admission(%URI{} = member_uri, ctx) do
-    members = ctx[:read].(:members, %{})
     pending = ctx[:read].(:pending_members, %{})
     request_ref = new_request_ref()
 
@@ -244,8 +243,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # the MANAGERS' Kinds, never re-enters this Session Kind.
     notify_pending_managers(member_uri, ctx[:self_uri], request_ref)
 
-    {:ok, %{members: Map.keys(members), pending: member_uri},
-     [{:set, :pending_members, new_pending}]}
+    {:ok, %{status: :pending, member: member_uri}, [{:set, :pending_members, new_pending}]}
   end
 
   # An opaque handle A approves/denies (spec §C.2). Random, dependency-free.

@@ -708,6 +708,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           args: %{member: member_uri, role_name: role_name},
           ctx: %{
             caller: admin,
+            authenticated_principal: admin,
             caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           },
@@ -716,10 +717,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       end
 
     case result do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-      other -> {:error, {:unexpected_join_result, other}}
+      {:ok, %{status: status, member: ^member_uri}}
+      when status in [:granted, :already_member] ->
+        :ok
+
+      {:ok, %{status: :pending, member: ^member_uri}} ->
+        {:error, :admission_pending}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_join_result, other}}
     end
   end
 
@@ -735,6 +744,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           args: %{},
           ctx: %{
             caller: admin,
+            authenticated_principal: admin,
             caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           },

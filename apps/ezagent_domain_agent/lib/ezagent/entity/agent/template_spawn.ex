@@ -713,6 +713,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                 },
                 ctx: %{
                   caller: worker_uri,
+                  authenticated_principal: worker_uri,
                   caps: [cap],
                   # `:ignore` — nobody awaits this write. `Kind.Server.handle_cast`
                   # unconditionally calls `Invocation.reply(inv.ctx, ...)`, which

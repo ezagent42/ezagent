@@ -117,6 +117,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -154,12 +155,21 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
                 Ezagent.Capability.workspace_of(live_uri)
               )
 
-            # Drive the production chat.join path → installs a
-            # Process.monitor on the member, populating the TRANSIENT
-            # :monitors map. This leaves a non-empty transient behind
-            # (the gate requires it).
-            assert {:ok, %{members: members}} = join(live_uri, member_uri)
-            assert member_uri in members
+            # Drive the production grant-only join path. The holder's
+            # convergence hook performs add_self and installs the monitor.
+            assert {:ok, %{status: :granted, member: ^member_uri}} =
+                     join(live_uri, member_uri)
+
+            wait_until(fn ->
+              case Ezagent.Kind.get_slice(live_uri, :session) do
+                {:ok, slice} ->
+                  state = Ezagent.Kind.normalize_slice_view(slice)
+                  Map.has_key?(Map.get(state, :members, %{}), member_uri)
+
+                _ ->
+                  false
+              end
+            end)
           end
         )
 
