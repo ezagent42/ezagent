@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanDataScopeTest do
+defmodule EzagentPluginKanban.WorldDataScopeTest do
   @moduledoc """
   Task 2 —— 看板"发现"按 CBAC 权属收敛。
 
@@ -13,7 +13,7 @@ defmodule Ezagent.World.KanbanDataScopeTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData, as: KanbanData
   alias Ezagent.Workspace
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Capability}
   alias EzagentPluginKanban.Application, as: KanbanApp

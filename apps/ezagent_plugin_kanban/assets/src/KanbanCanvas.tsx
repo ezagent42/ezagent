@@ -1,3 +1,4 @@
+// Plugin-owned renderer implementation bundled statically into the World shell.
 import {useCallback, useEffect, useMemo} from "react"
 import {
   Background,

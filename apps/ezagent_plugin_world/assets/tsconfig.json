@@ -11,6 +11,16 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "lucide-react": ["./node_modules/lucide-react"],
+      "@excalidraw/excalidraw": ["./node_modules/@excalidraw/excalidraw"],
+      "@excalidraw/excalidraw/types": ["./node_modules/@excalidraw/excalidraw/dist/types/excalidraw/types.d.ts"],
+      "@excalidraw/excalidraw/*": ["./node_modules/@excalidraw/excalidraw/*"],
+      "@xyflow/react": ["./node_modules/@xyflow/react"],
+      "dagre": ["./node_modules/@types/dagre"]
+    },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,

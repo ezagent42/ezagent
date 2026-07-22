@@ -309,6 +309,16 @@
   #   extraction, so the cap ratchets to the real value. 46→42. NOTE: when
   #   dealscout (#1264) lands, its Demo.Crawler copy switches to
   #   ShippedManifest in S2 — re-measure then.
+  # ratchet 43→42 #1476 — the #1472 cap-bump duplicate DISSOLVED. It was the
+  #   read-side ctx builder duplicated across `ezagent_plugin_kanban/world_actions.ex`
+  #   (`read_ctx/1`) and `ezagent_plugin_world/conversation_actions.ex`
+  #   (`session_view_ctx/1`), both bodies calling
+  #   `caller_caps: Ezagent.World.PresenterCaps.load(socket)`. #1476 removed the
+  #   plugin→UI-host coupling by having world INJECT the presenter caps into a
+  #   `:presenter_caps` socket assign; kanban's `read_ctx/1` now reads
+  #   `caller_caps: presenter_caps(socket)` while world's `session_view_ctx/1`
+  #   still calls `PresenterCaps.load(socket)` — so the two bodies DIVERGE and the
+  #   duplicate group is gone. Back to main's pre-extraction value.
   cross_file_duplicate_fn_groups: 42,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module

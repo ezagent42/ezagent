@@ -1,10 +1,11 @@
 import React from "react"
-import {Bug, Cable, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
+import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loader2, MessageSquare, MoreHorizontal, Paperclip, PanelTop, Plus, RotateCcw, Route, Send, Sparkles, SquareKanban, TerminalSquare, Upload, UserMinus, UserPlus, Users, X} from "lucide-react"
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
-import {Kanban, type KanbanState} from "./Kanban"
+import {Kanban, type KanbanState} from "../../../../ezagent_plugin_kanban/assets/src/Kanban"
 import {PtyTerminalSurface} from "./PtyTerminal"
+import {ExternalMirror} from "./Admin"
 
 /** G5 structured error card pushed by ErrorRenderer */
 type DispatchErrorCard = {
@@ -71,6 +72,9 @@ const orderViews = (vs: ViewTab[]) => {
   const rank = (id: string) => (id === "conversation" ? 0 : id === "pty" ? 1 : 2)
   return [...vs].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id))
 }
+
+export const toolbarViews = (views: ViewTab[]) =>
+  orderViews(views).filter((view) => view.id !== "routing")
 
 type SessionRow = {
   uri: string
@@ -152,6 +156,7 @@ export type ConversationState = {
   create_error?: string | null
   last_dispatch_status?: string | null
   dispatch_error?: DispatchErrorCard | null
+  bindings?: Array<Record<string, unknown>>
   is_hello?: boolean | null
   messages?: MessageRow[]
   oldest_cursor?: string | null
@@ -210,6 +215,15 @@ type Props = {
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
   onPublishTemplate: (sessionUri: string, name: string) => void
+}
+
+export function handleBindingsViewSwitch(
+  event: {preventDefault: () => void},
+  sessionUri: string,
+  onSwitchView: (sessionUri: string, view: string) => void,
+) {
+  event.preventDefault()
+  onSwitchView(sessionUri, "external_mirror")
 }
 
 // The conversation island stays mounted across rail session switches. Server
@@ -800,23 +814,24 @@ export function Conversation({
               </select>
             )}
             <div className="inline-flex items-center rounded-[10px] border border-border bg-muted p-[3px]" aria-label="会话视图">
-              {orderViews(views).map((v) => {
+              {toolbarViews(views).map((v) => {
                 const Icon = iconFor(v.icon)
                 const label = viewLabel(v)
-                const selected = v.id === "routing" ? membersOpen && routingOpen : activeId === v.id
+                const selected = activeId === v.id
 
                 if (v.id === "external_mirror") {
                   return (
-                    <a
+                    <button
                       key={v.id}
-                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
-                      className={segmentClass(false)}
+                      type="button"
+                      className={segmentClass(selected)}
                       aria-label={"显示" + label}
                       data-world-bindings-tab
+                      onClick={(event) => handleBindingsViewSwitch(event, sessionUri, onSwitchView)}
                     >
                       <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                       {label}
-                    </a>
+                    </button>
                   )
                 }
 
@@ -827,12 +842,6 @@ export function Conversation({
                     className={segmentClass(selected)}
                     onClick={() => {
                       if (!sessionUri) return
-                      if (v.id === "routing") {
-                        setInviteOpen(false)
-                        setMembersOpen(true)
-                        setRoutingOpen(true)
-                        return
-                      }
                       if (v.id === "pty" || v.mode === "pty") {
                         const agent = activePtyAgentUri || ptyMembers[0]?.uri
                         if (agent) onOpenPty(sessionUri, agent)
@@ -842,7 +851,6 @@ export function Conversation({
                       }
                     }}
                     aria-label={"显示" + label}
-                    data-world-routing-tab={v.id === "routing" ? true : undefined}
                   >
                     <Icon aria-hidden={true} className="h-[15px] w-[15px]" />
                     {label}
@@ -868,17 +876,6 @@ export function Conversation({
                     <RotateCcw aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
                     重启 agent runner
                   </button>
-                  {sessionUri && (
-                    <a
-                      data-world-external-mirror-link
-                      href={`/admin/sessions/${encodeURIComponent(sessionUri)}/external_mirror`}
-                      className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
-                      onClick={() => setToolsOpen(false)}
-                    >
-                      <Cable aria-hidden="true" className="h-4 w-4 text-muted-foreground" />
-                      外部镜像
-                    </a>
-                  )}
                   <button
                     type="button"
                     className="flex items-center gap-2 rounded-md px-2.5 py-2 text-left text-foreground hover:bg-muted"
@@ -910,7 +907,14 @@ export function Conversation({
         </div>
 
         <div className="flex min-h-0 flex-1 overflow-hidden">
-          {activeMode === "kanban" ? (
+          {activeId === "external_mirror" ? (
+            <div className="min-w-0 flex-1 overflow-y-auto p-4" data-world-subcomponent="external-mirror">
+              <ExternalMirror
+                state={{component: "external_mirror", session_uri: sessionUri, bindings: state.bindings || []}}
+                onAction={onKanbanAction}
+              />
+            </div>
+          ) : activeMode === "kanban" ? (
             // 权限门控的 session tab 里渲染富 Kanban 操作面（复用插件页同一组件）。
             // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
             // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；

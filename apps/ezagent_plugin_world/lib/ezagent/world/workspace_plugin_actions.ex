@@ -413,7 +413,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
         },
         "ok"
       )
-      |> patch_to_workspace_detail(workspace_name)
+      |> patch_to_workspaces()
     else
       false ->
         put_world_state(
@@ -672,9 +672,8 @@ defmodule Ezagent.World.WorkspacePluginActions do
      |> push_event("world:state", updates)}
   end
 
-  defp patch_to_workspace_detail({:noreply, socket}, workspace_name)
-       when is_binary(workspace_name) do
-    {:noreply, push_patch(socket, to: "/workspaces/#{URI.encode_www_form(workspace_name)}")}
+  defp patch_to_workspaces({:noreply, socket}) do
+    {:noreply, push_patch(socket, to: "/workspaces")}
   end
 
   defp valid_entity_uri?(caller, workspace, user_uri) do

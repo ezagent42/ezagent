@@ -75,7 +75,12 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
      malformed maps are rejected (codex PR-5 MEDIUM-5).
   7. The app source does not call `*Registry.register` /
      `RoutingRegistry.declare_table` directly — registration goes
-     through `Ezagent.Plugin.boot/1` (grep gate).
+     through `Ezagent.Plugin.boot/1` (grep gate). **Build-time Mix
+     tasks (`<elixirc_path>/mix/tasks/**.ex`) are EXEMPT** — a Mix task
+     is dev/build tooling invoked via `mix <task>`, never loaded into
+     the running app's boot path, so seeding a registry there is
+     legitimate (the target of this check is RUNTIME plugin code that
+     bypasses `boot/1`).
 
   Any failure → the compiler returns `{:error, [diagnostic]}`, which
   fails the build with a precise diagnostic.
@@ -92,6 +97,17 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   # the compile-time grep keeps the plugin contract — "declare,
   # don't call" (SPEC §3.2) — visible and enforceable at build.
   @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:ExternalMirror\.)?(?:Adapter|Binding|Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|register_module|declare_table)\b/
+
+  # Build-time Mix tasks (`<elixirc_path>/mix/tasks/**.ex`, compiled to
+  # `Mix.Tasks.*`) are EXEMPT from the check-7 grep. A Mix task is
+  # dev/build tooling invoked via `mix <task>` — it is NEVER loaded into
+  # the running application's boot path, so seeding a registry there (e.g.
+  # `mix world.e2e.fixtures` seeds `Ezagent.PluginRegistry` to project the
+  # Tier-1 fixture manifest without a full umbrella boot) is legitimate and
+  # is NOT the bypass this check guards against. The check's real target is
+  # RUNTIME plugin modules that skip the sanctioned `Ezagent.Plugin.boot/1`
+  # registration path (SPEC §3.2 — "declare, don't call").
+  @mix_task_path_pattern ~r{(^|/)mix/tasks/}
 
   @impl Mix.Task.Compiler
   def run(_argv) do
@@ -720,6 +736,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       Mix.Project.config()
       |> Keyword.get(:elixirc_paths, ["lib"])
       |> Enum.flat_map(fn path -> Path.wildcard(Path.join(path, "**/*.ex")) end)
+      |> Enum.reject(&Regex.match?(@mix_task_path_pattern, &1))
 
     offenders =
       Enum.filter(source_files, fn file ->

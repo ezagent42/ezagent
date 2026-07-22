@@ -1,4 +1,4 @@
-defmodule Ezagent.World.KanbanActions do
+defmodule EzagentPluginKanban.WorldActions do
   @moduledoc """
   Socket-side dispatch handlers for the world **kanban operating surface**。
 
@@ -10,8 +10,11 @@ defmodule Ezagent.World.KanbanActions do
   `:kanban` snapshot slice。所有节点动作经
   `Ezagent.URI.with_action(entity://<ws>/agent/<id>, :kanban, action)` =
   `entity://<ws>/agent/<id>?action=kanban.<action>` dispatch（不再 `resource://kanban`）。
-  **ctx 带登录者 `current_entity_uri`/`current_caps`**（R3：caller=人类用户，不重写成
-  agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。动作成功后 re-read
+  **ctx 带登录者 `current_entity_uri` + 注入的 `presenter_caps`**（R3：caller=人类用户，
+  不重写成 agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。caps 由
+  **world（UI 宿主）经 `Ezagent.World.PresenterCaps.load/1` 算好后注入 `:presenter_caps`
+  socket assign**（见下方 `presenter_caps/1`）——本插件只消费注入值，对 world 零编译依赖
+  （#1476：plugin 不得依赖 UI 宿主 world）。动作成功后 re-read
   树 + `push_event("world:state")` 刷前端。**新建看板** = `Ezagent.Workspace.create_agent`
   （role × native，RF-5a），不再合成 `resource://` URI。
 
@@ -21,14 +24,14 @@ defmodule Ezagent.World.KanbanActions do
   sync_prs / save_github_creds）已整体退役——gh 连通现在是 agent 的 CLI 行为，不走
   world 派发；留下的 register_pr / attach_code_file 是纯数据（拼 git 链接挂节点）。
   world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
-  passive kanban-manager 经 `KanbanData.ensure_spawned/1` 从快照 rehydrate 起活。
+  passive kanban-manager 经 `WorldData.ensure_spawned/1` 从快照 rehydrate 起活。
   """
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [push_event: 3]
 
   alias Ezagent.Invocation
-  alias Ezagent.World.KanbanData
+  alias EzagentPluginKanban.WorldData
 
   # kanban-as-role：新建看板 = 创建 role `kanban-manager` × flavor `native` 的 agent。
   @kanban_role "kanban-manager"
@@ -167,7 +170,7 @@ defmodule Ezagent.World.KanbanActions do
   defp act(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
         target = Ezagent.URI.with_action(uri, :kanban, action)
 
         result =
@@ -191,7 +194,7 @@ defmodule Ezagent.World.KanbanActions do
   defp act_board(socket, uri_str, action, args) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
 
         result =
           Invocation.dispatch(%Invocation{
@@ -209,7 +212,7 @@ defmodule Ezagent.World.KanbanActions do
          |> assign(:last_dispatch_status, status)
          |> push_event(
            "world:state",
-           Map.put(KanbanData.board_state(uri, read_ctx(socket)), "last_dispatch_status", status)
+           Map.put(WorldData.board_state(uri, read_ctx(socket)), "last_dispatch_status", status)
          )}
 
       :error ->
@@ -222,7 +225,7 @@ defmodule Ezagent.World.KanbanActions do
   defp sync_miro(socket, uri_str) do
     case parse(uri_str) do
       %URI{} = uri ->
-        :ok = KanbanData.ensure_spawned(uri)
+        :ok = WorldData.ensure_spawned(uri)
 
         result =
           Invocation.dispatch(%Invocation{
@@ -299,7 +302,7 @@ defmodule Ezagent.World.KanbanActions do
   # kanban-assistant（agent）持有，登录者（人）自身通常不持板动作 cap（他是 data_owner），
   # 故以「登录者 own / 持 cap」判 access（同 `KanbanData.visible?` 的发现口径）。
   defp share_access?(socket, %URI{} = uri) do
-    KanbanData.can_share?(uri, read_ctx(socket))
+    WorldData.can_share?(uri, read_ctx(socket))
   end
 
   defp build_share_link(socket, %URI{} = uri) do
@@ -364,7 +367,7 @@ defmodule Ezagent.World.KanbanActions do
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
+    caller_ctx = %{caller: caller, caps: presenter_caps(socket)}
     clean = sanitize(name)
 
     cond do
@@ -391,7 +394,7 @@ defmodule Ezagent.World.KanbanActions do
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", KanbanData.board_state(agent_uri, read_ctx(socket)))}
+             |> push_event("world:state", WorldData.board_state(agent_uri, read_ctx(socket)))}
 
           {:error, reason} ->
             {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
@@ -407,7 +410,7 @@ defmodule Ezagent.World.KanbanActions do
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
-         |> push_event("world:state", KanbanData.board_state(uri, read_ctx(socket)))}
+         |> push_event("world:state", WorldData.board_state(uri, read_ctx(socket)))}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
@@ -419,10 +422,23 @@ defmodule Ezagent.World.KanbanActions do
   defp ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
-      caps: Ezagent.World.PresenterCaps.load(socket),
+      caps: presenter_caps(socket),
       reply: {:caller_inbox, self()}
     }
   end
+
+  # World (the UI host) computes the presenter's freshly-loaded caps via
+  # `Ezagent.World.PresenterCaps.load/1` and INJECTS the result into this socket
+  # assign BEFORE handing off to this plugin — at world_live's `world:dispatch`
+  # chokepoint for every `handle_dispatch`, and at `KanbanPublishedReadAdapter`
+  # for the `share_link/2` web path. This plugin consumes the injected value and
+  # therefore has NO compile dependency on world's `PresenterCaps` (#1476: a
+  # plugin must not depend on the UI host `world`). The
+  # `presenter_caps_dispatch_gate` invariant stays enforced on WORLD's side —
+  # caps still originate from `PresenterCaps.load/1`, never the raw mount
+  # snapshot. `:presenter_caps` is a world→plugin socket contract, peer to the
+  # world-populated `current_entity_uri` / `current_workspace_uri` assigns.
+  defp presenter_caps(socket), do: socket.assigns.presenter_caps
 
   # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
@@ -433,7 +449,7 @@ defmodule Ezagent.World.KanbanActions do
   def read_ctx(socket) do
     %{
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Ezagent.World.PresenterCaps.load(socket),
+      caller_caps: presenter_caps(socket),
       workspace_uri: socket.assigns.current_workspace_uri
     }
   end
@@ -446,7 +462,7 @@ defmodule Ezagent.World.KanbanActions do
   defp kanban_uri(_socket, _a), do: nil
 
   defp push_tree(socket, uri, status) do
-    snapshot = KanbanData.board_snapshot(uri, read_ctx(socket))
+    snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
 
     socket
     |> assign(:last_dispatch_status, status)

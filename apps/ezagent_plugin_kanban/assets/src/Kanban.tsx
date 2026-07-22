@@ -1,7 +1,7 @@
 import {Suspense, lazy, useEffect, useState} from "react"
 import {ExternalLink, GitPullRequest, Hand, Paperclip, Pencil, Plus, RefreshCw, Scissors, Send, Trash2} from "lucide-react"
 
-import {Button} from "./ui/primitives"
+import {Button} from "../../../ezagent_plugin_world/assets/src/components/ui/primitives"
 import {KanbanCanvas, STAGE_LABEL, STAGES, gateVerdict} from "./KanbanCanvas"
 
 // 懒加载：excalidraw 组件 + 它的 CSS 都进独立 chunk，不撑主包。

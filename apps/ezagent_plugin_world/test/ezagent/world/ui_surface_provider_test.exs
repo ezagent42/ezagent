@@ -59,4 +59,65 @@ defmodule Ezagent.World.UiSurfaceProviderTest do
       refute UiSurfaceProvider.valid_session_tab?(:not_a_map)
     end
   end
+
+  describe "validate_page/1" do
+    test "accepts a complete plugin-owned page declaration" do
+      assert :ok = UiSurfaceProvider.validate_page(valid_page())
+      assert UiSurfaceProvider.valid_page?(valid_page())
+    end
+
+    test "accepts a declared session view with a state builder" do
+      page =
+        Map.put(valid_page(), :session_view, %{
+          id: "demo_view",
+          state_builder: EzagentPluginKanban.WorldData
+        })
+
+      assert :ok = UiSurfaceProvider.validate_page(page)
+    end
+
+    test "rejects malformed session view declarations" do
+      page = Map.put(valid_page(), :session_view, %{id: "Bad View", state_builder: String})
+
+      assert {:error, errors} = UiSurfaceProvider.validate_page(page)
+      assert :session_view_id in errors
+      assert :session_view_state_builder in errors
+    end
+
+    test "reports every invalid required field and fails closed" do
+      invalid =
+        valid_page()
+        |> Map.put(:key, "")
+        |> Map.put(:actions, ["demo.save", "demo.save"])
+        |> put_in([:renderer, :source], "../outside.tsx")
+
+      assert {:error, errors} = UiSurfaceProvider.validate_page(invalid)
+      assert :key in errors
+      assert :actions in errors
+      assert :renderer_import in errors
+      refute UiSurfaceProvider.valid_page?(invalid)
+    end
+
+    test "rejects missing callbacks on declared modules" do
+      invalid = %{valid_page() | data_builder: String, actions_module: Enum}
+
+      assert {:error, errors} = UiSurfaceProvider.validate_page(invalid)
+      assert :data_builder in errors
+      assert :actions_module in errors
+    end
+  end
+
+  defp valid_page do
+    %{
+      key: "demo",
+      route: {"/plugins/demo", :index},
+      detail_route: {"/plugins/demo/:id", :detail},
+      nav: %{label: "Demo", path: "/plugins/demo"},
+      data_builder: EzagentPluginKanban.WorldData,
+      renderer_families: [{"demo", "Demo"}],
+      actions: ["demo.save"],
+      actions_module: EzagentPluginKanban.WorldActions,
+      renderer: %{source: "assets/src/world_page.tsx", export: "DemoRenderer", full_bleed: true}
+    }
+  end
 end

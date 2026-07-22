@@ -14,6 +14,7 @@ defmodule Ezagent.World.SlotMountGateTest do
   @src Path.expand("../../../assets/src", __DIR__)
   @main Path.join(@src, "main.tsx")
   @components Path.join(@src, "components")
+  @plugin_page_renderers Path.join(@src, "generated/plugin-page-renderers.tsx")
   @check_mounts Path.expand("../../../assets/scripts/check-mounts.mjs", __DIR__)
 
   # Layout-slot Surface components: the renderer's leaves, mountable ONLY by the
@@ -129,12 +130,12 @@ defmodule Ezagent.World.SlotMountGateTest do
            "renderLayoutComponent default branch must not render a surface — unknown family = throw"
   end
 
-  # `const PLUGIN_PAGE_RENDERERS = { kanban: (component, context) => ... }` 的
-  # key 集合——服务端 PluginPageRegistry 的前端对应面（显式 import，Vite 静态打包）。
+  # Generated pluginPageRenderers map keys — the frontend counterpart of the
+  # server PluginPageRegistry, with static Vite imports.
   defp plugin_page_renderer_keys do
-    main = File.read!(@main)
+    main = File.read!(@plugin_page_renderers)
 
-    case :binary.match(main, "const PLUGIN_PAGE_RENDERERS") do
+    case :binary.match(main, "export const pluginPageRenderers") do
       {s, _} ->
         rest = binary_part(main, s, byte_size(main) - s)
 
@@ -144,7 +145,7 @@ defmodule Ezagent.World.SlotMountGateTest do
             :nomatch -> rest
           end
 
-        ~r/^  ([a-z_]+): \(/m
+        ~r/^  "([a-z_]+)":/m
         |> Regex.scan(block, capture: :all_but_first)
         |> List.flatten()
         |> MapSet.new()

@@ -723,7 +723,7 @@ function RoutingPanel({state}: {state: AdminState}) {
   )
 }
 
-function ExternalMirror({
+export function ExternalMirror({
   state,
   onAction,
 }: {

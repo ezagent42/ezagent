@@ -4,7 +4,7 @@ import {restoreElements} from "@excalidraw/excalidraw"
 import type {ExcalidrawImperativeAPI, ExcalidrawInitialDataState} from "@excalidraw/excalidraw/types"
 import "@excalidraw/excalidraw/index.css"
 
-import {Button} from "./ui/primitives"
+import {Button} from "../../../ezagent_plugin_world/assets/src/components/ui/primitives"
 
 // 懒加载：excalidraw 包很大(~2MB)，只在点开编辑器时才下载，不进主 bundle。
 const Excalidraw = lazy(() =>

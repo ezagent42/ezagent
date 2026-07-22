@@ -34,14 +34,6 @@ defmodule Ezagent.World.SlotRegistry do
   # 插件页面（`Ezagent.World.PluginPageRegistry`）贡献的 renderer families ——
   # 编译期由注册表派生注入 `@families`，不再逐插件手写条目（kanban 曾是
   # 硬编码 `kanban: {KanbanData, [{"kanban", "看板"}]}`）。family atom = 页面 key。
-  @plugin_page_families Map.new(
-                          Ezagent.World.PluginPageRegistry.pages(),
-                          fn page ->
-                            {String.to_atom(page.key),
-                             {page.data_builder, page.renderer_families}}
-                          end
-                        )
-
   # renderer_family => {data_source, [{type, title}]}
   #
   # data_source is the Elixir origin of the slot's state shape (the renderer-
@@ -99,12 +91,16 @@ defmodule Ezagent.World.SlotRegistry do
 
   # 编译期防呆：插件页面 key 不允许与静态 family 撞名（撞了 = 静默覆盖，违反
   # fail-closed 纪律），直接编译失败。
-  case Map.keys(Map.take(@static_families, Map.keys(@plugin_page_families))) do
-    [] -> :ok
-    clash -> raise "plugin page keys clash with static renderer families: #{inspect(clash)}"
-  end
+  defp families do
+    plugin_families =
+      Ezagent.World.PluginPageRegistry.pages()
+      |> Map.new(fn page -> {String.to_existing_atom(page.key), {page.data_builder, page.renderer_families}} end)
 
-  @families Map.merge(@static_families, @plugin_page_families)
+    case Map.keys(Map.take(@static_families, Map.keys(plugin_families))) do
+      [] -> Map.merge(@static_families, plugin_families)
+      clash -> raise "plugin page keys clash with static renderer families: #{inspect(clash)}"
+    end
+  end
 
   # Seed allowlist for the JS mount gate: universal shell chrome that mounts
   # outside the layout renderer by design. Identified by stable DOM ids /
@@ -132,7 +128,7 @@ defmodule Ezagent.World.SlotRegistry do
   @doc "All `:layout_slot` specs, keyed by stable `type` string."
   @spec layout_slots() :: %{String.t() => slot()}
   def layout_slots do
-    for {family, {data_source, types}} <- @families,
+    for {family, {data_source, types}} <- families(),
         {type, title} <- types,
         into: %{} do
       {type,
@@ -193,7 +189,7 @@ defmodule Ezagent.World.SlotRegistry do
       end
 
     renderer_families =
-      for {family, {_data_source, types}} <- @families, into: %{} do
+      for {family, {_data_source, types}} <- families(), into: %{} do
         {Atom.to_string(family), Enum.map(types, fn {type, _title} -> type end) |> Enum.sort()}
       end
 

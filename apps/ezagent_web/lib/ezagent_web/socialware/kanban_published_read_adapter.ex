@@ -12,7 +12,7 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
 
   import Phoenix.Component, only: [assign: 3]
 
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions
   alias EzagentPluginHello.PublishedBoardRef
 
   @impl true
@@ -62,7 +62,14 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
       |> assign(:current_caps, Map.get(ctx, :caps, MapSet.new()))
       |> assign(:current_workspace_uri, workspace_uri)
 
-    case KanbanActions.share_link(socket, URI.to_string(board_uri)) do
+    # This web path reaches `WorldActions.share_link/2` WITHOUT going through
+    # world_live's `world:dispatch` chokepoint, so this world-aware caller (at
+    # the ezagent_web transport edge, which legitimately deps on world) injects
+    # the presenter's caps itself — the plugin consumes `:presenter_caps` and
+    # never compile-deps on `Ezagent.World.PresenterCaps` (#1476).
+    socket = assign(socket, :presenter_caps, Ezagent.World.PresenterCaps.load(socket))
+
+    case WorldActions.share_link(socket, URI.to_string(board_uri)) do
       {:ok, receive_ref} -> {:ok, receive_ref}
       {:error, :no_access} -> {:error, :forbidden}
       {:error, :bad_kanban_uri} -> {:error, :not_found}

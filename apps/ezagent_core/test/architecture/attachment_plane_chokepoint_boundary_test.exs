@@ -42,8 +42,17 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
   #   * external_feed.ex           — the socialware approved-only MINT chokepoint
   #                                  (`mint_approved_token/4`, caller-authorizing,
   #                                  binds grantee = caller)
-  #   * kanban_data.ex             — the kanban cap-gated artifact mint (inside
-  #                                  the `get_tree`-authorized board render; #9)
+  #   * world_data.ex              — the kanban cap-gated artifact mint (inside
+  #                                  the `get_tree`-authorized board render; #9).
+  #                                  #1472 EXTRACTED this from the world plugin's
+  #                                  deleted `kanban_data.ex` into the kanban
+  #                                  plugin verbatim — the mint stays strictly
+  #                                  inside the `board_snapshot/2` `{:ok, tree}`
+  #                                  branch, AFTER the cap-gated `:get_tree`
+  #                                  dispatch (the gate lives in the core
+  #                                  CapabilityRegistry chokepoint, not the file),
+  #                                  still `grantee: caller`-bound. Relocated
+  #                                  chokepoint, unchanged authz.
   #   * conversation_data.ex       — the world conversation render mint (bound
   #                                  to the authorized viewer as grantee)
   #   * uploads_controller.ex      — the authenticated SERVE path (grantee check,
@@ -53,7 +62,7 @@ defmodule EzagentCore.AttachmentPlaneChokepointBoundaryTest do
   @allowlisted_basenames ~w(
     download_token.ex
     external_feed.ex
-    kanban_data.ex
+    world_data.ex
     conversation_data.ex
     uploads_controller.ex
     external_feed_controller.ex
