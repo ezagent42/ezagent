@@ -98,7 +98,7 @@ defmodule Ezagent.Cap do
   defp action_context(pid, instance, action) when pid == self() do
     with true <- Ezagent.Cap.Authority.current_target?(instance),
          {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
-         {:ok, {kind_module, behavior_module}} <- registered_subject(kind_type, action) do
+         {:ok, {kind_module, behavior_module}} <- self_target_subject(kind_type, action) do
       {:ok, {kind_module, behavior_module}}
     else
       false -> {:error, :self_target_without_authority}
@@ -113,6 +113,38 @@ defmodule Ezagent.Cap do
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
       {:ok, {kind_module, behavior_module}}
+    end
+  end
+
+  # Resolve a SELF-target action's `{kind_module, behavior_module}`. INSTANCE-FIRST:
+  # when a live in-process runtime view is in scope (we are inside THIS instance's
+  # own dispatch — `Ezagent.Kind.Runtime.do_handle_dispatch/4` installs it), resolve
+  # against the instance's OWN effective behavior set via
+  # `Ezagent.Kind.BehaviorSet.resolve_action/3` — the SAME authoritative truth the
+  # cross-process branch (`action_context/3` with `pid != self()`) reads from the
+  # live `slice_state` — WITHOUT a self `GenServer.call` (which would deadlock the
+  # Kind process). This lets a flavor-only, per-instance action (e.g.
+  # `:hello_sync_result`, mounted via a role recipe but NOT globally registered)
+  # resolve exactly like a globally-registered sibling (py's `:py_sync_result`).
+  #
+  # Falls back to the GLOBAL `BehaviorRegistry` (`registered_subject/2`, the prior
+  # self-target resolver) when there is no runtime view (framework/genesis paths
+  # outside a dispatch) OR the instance set does not resolve the action. That
+  # fallback is byte-identical to the previous behavior, so nothing that resolves
+  # today can regress. No authorization hole: an action the instance does NOT host
+  # still resolves to nothing (`:error` → `{:unknown_action, _}`); the
+  # `current_target?/1` authority gate in the caller still holds; and the resolved
+  # pair feeds the UNCHANGED `Ezagent.Cap.Verifier`.
+  defp self_target_subject(kind_type, action) do
+    case Ezagent.Cap.RuntimeView.current() do
+      {:ok, {kind_module, slice_state}} ->
+        case Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
+          {:ok, behavior_module} -> {:ok, {kind_module, behavior_module}}
+          {:error, {:unknown_action, _}} -> registered_subject(kind_type, action)
+        end
+
+      :error ->
+        registered_subject(kind_type, action)
     end
   end
 
