@@ -578,14 +578,10 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     {"apps/ezagent_plugin_feishu/lib/mix/tasks/ezagent_external_mirror_migrate_feishu_bindings.ex",
      270, {:print_summary, 2}, :remote, "info/1",
      "7db1d3efa66bcd3e13e0e85b72eecb7cd42326615f9992b01acde8b5b286c854"},
-    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/application.ex", 60, {:after_boot, 0},
-     :remote, "pair_id/0", "56cb06f8c0d3411855d3285f97c2ca880242cce91cf420465fc9e37d01620488"},
-    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/application.ex", 73, {:after_boot, 0},
-     :remote, "acquisition_method/0",
-     "19c06e64add9490d26bce50f1f0a4424e9c762a176fdf9c0b305fd1529e06dc1"},
-    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/application.ex", 73, {:after_boot, 0},
-     :remote, "provider_id/0",
-     "19c06e64add9490d26bce50f1f0a4424e9c762a176fdf9c0b305fd1529e06dc1"},
+    # NOTE: the three ezagent_plugin_github/application.ex `after_boot/0` sites
+    # (`pair_id/0`, `provider_id/0`, `acquisition_method/0`) were removed when
+    # #1519 deleted that after_boot override (registration is now declarative via
+    # supervised owners). Their receivers no longer exist in the tree.
     {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex", 35,
      {:resolve_repository, 2}, :remote, "external_id/0",
      "877826f750965f39c4bf962490d95bc20f0468f2636c455b3ee77d07c7638758"},
