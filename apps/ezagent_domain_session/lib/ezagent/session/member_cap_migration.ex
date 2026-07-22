@@ -2,7 +2,8 @@ defmodule Ezagent.Session.MemberCapMigration do
   @moduledoc """
   Membership-cap unification A1.4 (spec R1.5 / R2.2 / R3.2) — backfill the
   universal member-cap `cap(:session, Session, :receive, S)` onto every existing
-  session member, for sessions that pre-date the at-join grant (A1.2).
+  session member and owner, for sessions that pre-date the at-join grant (A1.2)
+  or the owner structural-bypass removal (M-1).
 
   ## READ via repo (paginated), WRITE via the LIVE grant path (R2.2)
 
@@ -83,8 +84,8 @@ defmodule Ezagent.Session.MemberCapMigration do
         acc = %{acc | sessions_scanned: acc.sessions_scanned + 1}
 
         case decode_session(row) do
-          {:ok, session_uri, members, owner} ->
-            Enum.reduce(members, acc, fn member_uri, acc ->
+          {:ok, session_uri, principals, owner} ->
+            Enum.reduce(principals, acc, fn member_uri, acc ->
               migrate_member(session_uri, member_uri, owner, dry_run?, acc)
             end)
 
@@ -105,8 +106,11 @@ defmodule Ezagent.Session.MemberCapMigration do
       session_rows()
       |> Enum.reduce(0, fn row, count ->
         case decode_session(row) do
-          {:ok, session_uri, members, _owner} ->
-            count + Enum.count(members, fn m -> not holds_member_cap_exact?(m, session_uri) end)
+          {:ok, session_uri, principals, _owner} ->
+            count +
+              Enum.count(principals, fn principal ->
+                not holds_member_cap_exact?(principal, session_uri)
+              end)
 
           :skip ->
             count
@@ -225,7 +229,8 @@ defmodule Ezagent.Session.MemberCapMigration do
       slice = session_slice(state)
       members = slice |> Map.get(:members, %{}) |> member_uris()
       owner = slice |> Map.get(:owner_uri) |> normalize_owner()
-      {:ok, session_uri, members, owner}
+      principals = [owner | members] |> Enum.reject(&is_nil/1) |> Enum.uniq()
+      {:ok, session_uri, principals, owner}
     else
       _ -> :skip
     end

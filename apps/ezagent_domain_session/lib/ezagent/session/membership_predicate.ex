@@ -12,62 +12,48 @@ defmodule Ezagent.Session.Membership do
 
   ## Shape
 
-  `authorize/2` takes the RAW `:chat` slice map (as `Ezagent.Kind.get_slice/2`
+  `authorize/4` takes the RAW `:chat` slice map (as `Ezagent.Kind.get_slice/2`
   returns it, or as the Behavior runtime injects under `ctx.siblings[:session]`)
-  and a `caller`. It returns `:ok` ONLY when ALL hold (else
+  and an authenticated `holder`. It returns `:ok` ONLY when ALL hold (else
   `{:error, :unauthorized}`):
 
-    1. `caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
+    1. `holder` is a WELL-FORMED identity-principal `%URI{}` — a canonical
        `entity://<workspace>/<user|agent|worker>/<name>` (reject nil / `:any` /
        `:vm_internal` / non-URI AND a malformed/non-canonical/non-entity `%URI{}`);
     2. `chat` is a present, readable map;
-    3. EITHER `chat.owner_uri` is a `%URI{}` AND `== caller`,
-       OR `caller` is a key of `chat.members` (URIs).
+    3. `holder` durably holds the current-generation membership cap over the
+       concrete session through `Ezagent.Cap.authorize/3`.
 
-  A nil/missing `owner_uri` matches NOTHING (an OWNERLESS chat is NOT readable
-  by a nil/`:any` caller) — there is NO "allow if owner is nil" branch. Because
-  membership is re-read LIVE on every call, an ex-member (post-LEAVE) is denied
-  immediately, and a chat `kind: :session` cap holder who is NOT a member is
-  denied.
+  `owner_uri` and `members` are projection metadata only: neither is consulted
+  for authorization. Owners receive the same born-signed tier-1 membership cap
+  at creation and therefore traverse the same generation-aware gate as every
+  other member. A missing session context fails closed.
   """
 
   @typedoc "The raw `:chat` slice map (owner_uri + members keyed by URI)."
   @type chat_slice :: %{optional(:owner_uri) => URI.t() | nil, optional(:members) => map()}
 
   @doc """
-  Authorize `caller` to read `chat` — the HELD-CAP form (membership-cap
-  unification A2.3 / spec R1.1). Identical to `authorize/2` PLUS: a non-owner
-  caller must additionally HOLD the member-cap over `session_uri` (read LIVE via
-  `Ezagent.EntityCaps.load/1`, provenance-filtered), so an ex-member
-  whose cap was revoked is denied IMMEDIATELY even if a stale roster entry lingers
-  (no "in-projection ⇒ authorized" window). `session_uri == nil` skips the held-cap
-  check (roster-only, backward-compatible with any caller lacking session context).
+  Authorize the authenticated `holder` to read `chat`. The durably-held
+  current-generation member cap is the sole enabling truth; the roster and
+  structural owner fields are never authority. This denies a revoked member
+  immediately even if a stale projection lingers, and admits a newly granted
+  member before its projection has converged.
   """
   @spec authorize(chat_slice() | term(), term(), URI.t() | nil, URI.t() | term()) ::
           :ok | {:error, :unauthorized}
   def authorize(chat, _caller, session_uri, holder) do
     with %URI{} = holder <- holder,
          true <- valid_caller_uri?(holder),
-         %{} = chat <- chat,
-         true <- owner?(chat, holder) or member_with_held_cap?(chat, holder, session_uri) do
+         %{} <- chat,
+         true <- holds_member_cap?(holder, session_uri) do
       :ok
     else
       _ -> {:error, :unauthorized}
     end
   end
 
-  # A non-owner reader must be in the roster AND HOLD the member-cap over the
-  # session (R1.1). The roster is the fast pre-filter; the held cap is the
-  # authority — a revoked ex-member with a stale roster entry is denied.
-  defp member_with_held_cap?(chat, %URI{} = caller, session_uri) do
-    member?(chat, caller) and holds_member_cap?(caller, session_uri)
-  end
-
-  # `nil` session → no session context → skip the held-cap check (roster-only,
-  # backward-compat). With a concrete session, require the LIVE held member-cap,
-  # via the ONE shared held-cap predicate (no drift vs the receive gate, K4
-  # provenance-filtered).
-  defp holds_member_cap?(_caller, nil), do: true
+  defp holds_member_cap?(_caller, nil), do: false
 
   defp holds_member_cap?(%URI{} = caller, %URI{} = session_uri) do
     held = Ezagent.EntityCaps.load(caller)
@@ -89,8 +75,8 @@ defmodule Ezagent.Session.Membership do
   @spec valid_caller_uri?(term()) :: boolean()
   def valid_caller_uri?(caller), do: Ezagent.URI.bare_principal?(caller)
 
-  # Owner match ONLY when owner_uri is a real %URI{} that equals the caller.
-  # A nil/missing owner matches NOTHING.
+  # Structural owner metadata remains available to projection/delivery callers,
+  # but authorize/4 deliberately does not use it.
   @doc false
   def owner?(%{owner_uri: %URI{} = owner}, %URI{} = caller), do: owner == caller
   def owner?(_chat, _caller), do: false

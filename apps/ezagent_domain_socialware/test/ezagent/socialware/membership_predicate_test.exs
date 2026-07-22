@@ -6,7 +6,7 @@ defmodule Ezagent.Session.MembershipTest do
   copy-paste drift on a security boundary).
 
   These cases are the EXACT branches of the P3-3 `valid_caller_uri?` +
-  owner?/member? predicate, asserted directly against the pure
+  canonical-principal and fail-closed predicate, asserted directly against the
   `(chat_slice, caller)` form. The byte-equivalence with P3-3 is also asserted
   by `socialware_publisher_read_test.exs` continuing to pass (it now delegates
   here).
@@ -15,9 +15,9 @@ defmodule Ezagent.Session.MembershipTest do
     - `caller` is a WELL-FORMED identity-principal `%URI{}` (canonical
       `entity://<ws>/<user|agent|worker>/<name>`, reconstruct-and-compare);
     - the `:chat` slice is present + readable (a map);
-    - EITHER `owner_uri` is a `%URI{}` AND `== caller`,
-      OR `caller` is a key of the slice's `members` map.
-  A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is rejected.
+    - the caller holds the current tier-1 member cap over a concrete session.
+  Owner and roster projection fields never authorize, and a missing session
+  context fails closed.
   """
   use ExUnit.Case, async: true
 
@@ -34,14 +34,14 @@ defmodule Ezagent.Session.MembershipTest do
 
   defp authorize(chat, caller), do: Membership.authorize(chat, caller, nil, caller)
 
-  describe "authorize/2 — owner / member CAN" do
-    test "owner_uri == caller authorizes" do
-      assert :ok = authorize(owned_chat(@owner), @owner)
+  describe "authorize/4 — projection fields are not authority" do
+    test "owner_uri == caller does not authorize without a concrete held cap" do
+      assert {:error, :unauthorized} = authorize(owned_chat(@owner), @owner)
     end
 
-    test "caller ∈ members authorizes even when owner differs" do
+    test "caller in members does not authorize without a concrete held cap" do
       chat = owned_chat(@owner, %{@member => %{online: true}})
-      assert :ok = authorize(chat, @member)
+      assert {:error, :unauthorized} = authorize(chat, @member)
     end
   end
 
@@ -51,9 +51,9 @@ defmodule Ezagent.Session.MembershipTest do
       assert {:error, :unauthorized} = authorize(chat, @stranger)
     end
 
-    test "ex-member: present → :ok; after LEAVE (removed) → unauthorized (live)" do
+    test "stale or absent projection is denied when no cap is held" do
       joined = owned_chat(@owner, %{@member => %{online: true}})
-      assert :ok = authorize(joined, @member)
+      assert {:error, :unauthorized} = authorize(joined, @member)
 
       left = owned_chat(@owner, %{})
       assert {:error, :unauthorized} = authorize(left, @member)

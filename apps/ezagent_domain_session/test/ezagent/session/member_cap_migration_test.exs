@@ -59,9 +59,15 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
 
   defp wait_holds(member, session, retries \\ 100) do
     cond do
-      holds_member_cap?(member, session) -> true
-      retries > 0 -> Process.sleep(10); wait_holds(member, session, retries - 1)
-      true -> false
+      holds_member_cap?(member, session) ->
+        true
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_holds(member, session, retries - 1)
+
+      true ->
+        false
     end
   end
 
@@ -78,6 +84,17 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
     assert report.members_granted >= 2
     assert wait_holds(m1, s1), "m1 must hold the member-cap over s1 after migration"
     assert wait_holds(m2, s2), "m2 must hold the member-cap over s2 after migration"
+  end
+
+  test "migration backfills an existing owner even when the owner is absent from members" do
+    owner = confirmed_user("owner-only")
+    session = seed_session([], owner)
+
+    refute holds_member_cap?(owner, session)
+    Migration.run([])
+
+    assert wait_holds(owner, session),
+           "owner backfill must pair the removal of the structural owner bypass"
   end
 
   test "idempotent: a second run grants nothing and skips already-held [test 25]" do

@@ -12,16 +12,14 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
     - `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:system` / non-URI);
     - the `:chat` sibling slice is present + readable;
-    - EITHER `owner_uri` is a `%URI{}` AND `== ctx.caller`,
-      OR `ctx.caller` is in the `:chat` slice's `members` map (keyed by URI).
-  A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
-  rejected up front.
+    - the authenticated holder has a current tier-1 member cap over the session.
+  Structural owner/roster fields do not authorize; malformed callers fail closed.
 
   Cases covered (the brief's (a)-(g)):
     (a) chat `kind: :session` cap holder who is NOT a socialware member → denied
         (the cap-exempt path never even consults caps; a non-member caller
         with the WRONG identity is denied by the live check);
-    (b) owner CAN — including the owner of a pre-existing (P0-P2) session;
+    (b) owner CAN through the same born-signed member cap as every member;
     (c) a current non-owner member CAN;
     (d) a non-member is denied;
     (e) an ex-member (post-LEAVE) is denied via the LIVE re-check;
@@ -43,7 +41,9 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.SocialwarePublisherRead, as: SPR
+  alias Ezagent.{Capability, KindRegistry}
   alias Ezagent.Publisher.Event
+  alias Ezagent.Test.CapHelper
 
   @owner Ezagent.URI.entity(:team_alpha, :user, "owner-spr")
   @member Ezagent.URI.entity(:team_alpha, :agent, "member-spr")
@@ -94,6 +94,58 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     %{owner_uri: owner, members: members, last_seen: %{}}
   end
 
+  defp owner_with_member_cap do
+    owner =
+      Ezagent.URI.entity(
+        :team_alpha,
+        :user,
+        "owner-spr-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, session_pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: @self_uri,
+        owner_uri: owner,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    on_exit(fn ->
+      if Process.alive?(session_pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid
+        )
+      end
+    end)
+
+    cap =
+      CapHelper.signed_cap!(
+        @self_uri,
+        owner,
+        Capability.cap(
+          :session,
+          Ezagent.ActionSet.Session,
+          :receive,
+          @self_uri,
+          Capability.workspace_of(@self_uri)
+        )
+      )
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: owner, initial_caps: [cap]})
+
+    on_exit(fn ->
+      case KindRegistry.lookup(owner) do
+        {:ok, pid} ->
+          DynamicSupervisor.terminate_child(EzagentDomainIdentity.Application.UserSupervisor, pid)
+
+        :error ->
+          :ok
+      end
+    end)
+
+    owner
+  end
+
   describe "action set + cap exemption (the security shape)" do
     test "action set is EXACTLY [:snapshot, :history] — no subscribe_from" do
       assert Enum.sort(SPR.actions()) == [:history, :snapshot]
@@ -113,17 +165,19 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
   end
 
-  describe "(b) owner CAN read — incl. owner of a pre-existing session (no cap, no backfill)" do
-    test "snapshot: owner_uri == caller authorizes" do
-      chat = owned_chat(@owner)
-      assert {:ok, %{cursor: 2, state: %{b: 2}}, []} = SPR.handle_snapshot(%{}, ctx(@owner, chat))
+  describe "(b) owner CAN read through the same tier-1 member cap" do
+    test "snapshot: owner member cap authorizes" do
+      owner = owner_with_member_cap()
+      chat = owned_chat(owner)
+      assert {:ok, %{cursor: 2, state: %{b: 2}}, []} = SPR.handle_snapshot(%{}, ctx(owner, chat))
     end
 
-    test "history: owner_uri == caller authorizes and returns the window" do
-      chat = owned_chat(@owner)
+    test "history: owner member cap authorizes and returns the window" do
+      owner = owner_with_member_cap()
+      chat = owned_chat(owner)
 
       assert {:ok, %{events: events}, []} =
-               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(@owner, chat))
+               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(owner, chat))
 
       assert length(events) == 2
     end
@@ -247,7 +301,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test "entity %URI{} caller carrying a QUERY → unauthorized even if it equals owner_uri (codex P3-3 r2 HIGH)" do
-      with_query = %URI{scheme: "entity", host: "team-alpha", path: "/user/alice", query: "action=x"}
+      with_query = %URI{
+        scheme: "entity",
+        host: "team-alpha",
+        path: "/user/alice",
+        query: "action=x"
+      }
+
       chat = owned_chat(with_query)
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_query, chat))
     end
@@ -259,7 +319,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test "entity %URI{} caller carrying USERINFO → unauthorized even as owner_uri AND as member (codex P3-3 r3 HIGH)" do
-      with_userinfo = %URI{scheme: "entity", host: "team-alpha", userinfo: "evil", path: "/user/alice"}
+      with_userinfo = %URI{
+        scheme: "entity",
+        host: "team-alpha",
+        userinfo: "evil",
+        path: "/user/alice"
+      }
+
       # planted as owner_uri:
       assert {:error, :unauthorized} =
                SPR.handle_snapshot(%{}, ctx(with_userinfo, owned_chat(with_userinfo)))

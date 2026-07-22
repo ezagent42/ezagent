@@ -941,8 +941,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
   Extracted from `Behavior.Session` (gt_1000 LOC gate). Runs inside the Session
   Kind process (members slice readable via `ctx`).
 
-  1. **Owner-gate (§3.3, load-bearing).** Authorize when `caller == owner_uri` OR
-     `caller == participant` (self-leave) OR the bootstrap admin. Else
+  1. **Owner-gate (§3.3, load-bearing).** Authorize an owner only when
+     `caller == owner_uri` AND the owner holds the current tier-1 member cap;
+     self-leave and bootstrap-admin remain explicit branches. Else
      `{:error, :unauthorized}` before any mutation (fail-closed) — defense-in-depth
      on the dispatch chokepoint's `:remove_participant` cap.
   2. **Provenance branch (§3.2, NOT user-vs-agent).** A participant SPAWNED INTO
@@ -967,7 +968,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     holder = ctx[:authenticated_principal]
 
     cond do
-      not remove_participant_authorized?(holder, participant_uri, owner_uri) ->
+      not remove_participant_authorized?(holder, participant_uri, owner_uri, ctx) ->
         {:error, :unauthorized}
 
       not Map.has_key?(members, participant_uri) ->
@@ -978,16 +979,36 @@ defmodule Ezagent.ActionSet.Session.Membership do
     end
   end
 
-  # Owner-gate (§3.3): owner OR self-leave OR admin. Fail-closed. The admin check
-  # goes through the canonical `Ezagent.Identity.admin?/1`, not a hand-written
-  # equality against the admin principal (cap_check_only_at_chokepoint probe p13).
-  defp remove_participant_authorized?(%URI{} = caller, %URI{} = participant_uri, owner_uri) do
+  # Owner URI equality only selects the owner branch; it never authorizes by
+  # itself. The owner must pass the same current-generation tier-1 membership
+  # gate as every other session member. Self-leave and bootstrap admin retain
+  # their explicitly-scoped semantics, and both have already crossed the
+  # dispatch authorize/3 principal gate.
+  defp remove_participant_authorized?(
+         %URI{} = caller,
+         %URI{} = participant_uri,
+         owner_uri,
+         ctx
+       ) do
     caller == participant_uri or
-      (match?(%URI{}, owner_uri) and caller == owner_uri) or
+      (match?(%URI{}, owner_uri) and caller == owner_uri and
+         owner_member_authorized?(caller, ctx)) or
       Ezagent.Identity.admin?(caller)
   end
 
-  defp remove_participant_authorized?(_caller, _participant, _owner), do: false
+  defp remove_participant_authorized?(_caller, _participant, _owner, _ctx), do: false
+
+  defp owner_member_authorized?(owner, ctx) do
+    match?(
+      :ok,
+      Ezagent.Session.Membership.authorize(
+        %{},
+        owner,
+        ctx[:self_uri],
+        ctx[:authenticated_principal]
+      )
+    )
+  end
 
   defp do_remove_participant(%URI{} = participant_uri, participant_meta, ctx)
        when is_map(participant_meta) do

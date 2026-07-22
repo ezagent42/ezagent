@@ -38,6 +38,11 @@ defmodule Ezagent.Socialware.SessionReadsTest do
     :ok =
       Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
 
+    if Ezagent.URI.stable_key(owner_uri) == Ezagent.URI.stable_key(@owner) do
+      :ok =
+        Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
+    end
+
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
         {:ok, pid} ->
@@ -245,7 +250,8 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       unfiltered_cap =
         CapHelper.signed_cap!(session, internal_reader, read_unfiltered_cap(session))
 
-      :ok = spawn_user(internal_reader, [unfiltered_cap])
+      member_cap = CapHelper.signed_cap!(session, internal_reader, member_cap(session))
+      :ok = spawn_user(internal_reader, [member_cap, unfiltered_cap])
 
       write(session, "public", visibility: :external_visible)
       write(session, "internal", visibility: :internal)
@@ -324,7 +330,8 @@ defmodule Ezagent.Socialware.SessionReadsTest do
 
       session = spawn_session(reader)
       cap = CapHelper.signed_cap!(session, reader, read_unfiltered_cap(session))
-      :ok = spawn_user(reader, [cap])
+      member_cap = CapHelper.signed_cap!(session, reader, member_cap(session))
+      :ok = spawn_user(reader, [member_cap, cap])
       assert SessionReads.read_unfiltered?(reader, session)
 
       assert {:ok, _new_authority} =
@@ -342,6 +349,16 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       :session,
       Ezagent.ActionSet.Session,
       :read_unfiltered,
+      session_uri,
+      Ezagent.Capability.workspace_of(session_uri)
+    )
+  end
+
+  defp member_cap(session_uri) do
+    Capability.cap(
+      :session,
+      Ezagent.ActionSet.Session,
+      :receive,
       session_uri,
       Ezagent.Capability.workspace_of(session_uri)
     )

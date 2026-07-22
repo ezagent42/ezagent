@@ -80,20 +80,21 @@ defmodule Ezagent.Session.SocialwareReadHeldCapTest do
              Membership.authorize(chat_slice(owner, member), member, session, member)
   end
 
-  test "the OWNER branch is unchanged — allowed regardless of a member-cap" do
+  test "the owner authorizes only through the same member-cap gate" do
     owner = confirmed_user("owner")
     session = session_uri()
+    grant_member_cap(owner, session, owner)
 
     assert :ok =
              Membership.authorize(%{owner_uri: owner, members: %{}}, owner, session, owner)
   end
 
-  test "an explicit nil session context stays roster-only" do
+  test "an explicit nil session context fails closed" do
     owner = confirmed_user("owner")
     member = confirmed_user("member")
 
-    # No session_uri → held-cap check skipped → roster membership authorizes.
-    assert :ok = Membership.authorize(chat_slice(owner, member), member, nil, member)
+    assert {:error, :unauthorized} =
+             Membership.authorize(chat_slice(owner, member), member, nil, member)
   end
 
   test "a bumped session generation invalidates a dormant member read cap" do

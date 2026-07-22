@@ -85,15 +85,31 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   @doc false
   @spec grant_for_reownership(URI.t(), URI.t()) :: :ok | {:error, term()}
   def grant_for_reownership(%URI{} = session_uri, %URI{} = new_owner) do
+    grant_guaranteed(session_uri, new_owner)
+  end
+
+  @doc """
+  Synchronously grant the session owner the born-signed tier-1 membership cap.
+
+  This runs before the owner is mounted into the roster, outside the Session
+  Kind's join handler, so creation cannot expose an owner whose structural URI
+  bypasses membership generation checks.
+  """
+  @spec grant_owner_at_creation(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_owner_at_creation(%URI{} = session_uri, %URI{} = owner) do
+    grant_guaranteed(session_uri, owner)
+  end
+
+  defp grant_guaranteed(session_uri, principal) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     cap = member_cap(session_uri, workspace_uri)
 
-    with :ok <- Ezagent.Identity.TargetAuthority.ensure(new_owner, session_uri),
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(principal, session_uri),
          :ok <-
            Ezagent.Identity.Grant.issue_and_absorb_cap(
-             new_owner,
+             principal,
              cap,
-             grant_authorization(new_owner)
+             grant_authorization(principal)
            ) do
       :ok
     end

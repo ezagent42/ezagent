@@ -857,7 +857,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        ) do
     result =
       with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
-           :ok <- Ezagent.Identity.TargetAuthority.ensure(effective_owner, session_uri),
+           :ok <-
+             Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(
+               session_uri,
+               effective_owner
+             ),
            :ok <-
              Materializer.materialize_template_declaration(
                session_uri,
