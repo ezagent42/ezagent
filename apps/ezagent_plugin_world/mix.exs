@@ -55,21 +55,6 @@ defmodule EzagentPluginWorld.MixProject do
       # seeded page but not the per-session builder). world already integrates the
       # hello vertical on the frontend (Page pane); this is the backend counterpart.
       {:ezagent_plugin_hello, in_umbrella: true},
-      # ⚠️ 过渡脚手架，**随 zyli 的 #1476 整行删除** ⚠️
-      #
-      # 债②：kanban 页面的数据/动作层（WorldData / WorldActions）已搬进 kanban
-      # plugin，但**注册那一半还留在 world**——`PluginPageRegistry` 的 `@pages` 是
-      # 编译期常量，字面写着 `EzagentPluginKanban.WorldData/WorldActions`
-      # （world_live 的 `state_for_route` 编译期 unroll 也 unquote 这些模块名），
-      # 于是 world 代码里出现了跨 app 硬引用 → `undeclared_umbrella_dep_test.exs`
-      # （#57 arch gate）要求声明它。dep 方向 world → plugin_kanban（hello 先例）；
-      # plugin_kanban **不得**反向引 world 模块（会成环——presenter cap 是经
-      # `Ezagent.World.PresenterCaps.put/1` 塞进 socket assign 传过去的，不是反向调用）。
-      #
-      # 消失条件：#1476（UiSurfaceProvider 插件 UI 自声明）把 `@pages` 从编译期常量
-      # 反转成运行时 `resolve/1` 枚举各插件的声明——模块名从插件自己的声明里来，
-      # world 里不再出现字面引用，本行连同 `@pages` 的 kanban 条目一起删。
-      {:ezagent_plugin_kanban, in_umbrella: true},
       {:phoenix_live_view, ">= 0.0.0"},
       {:phoenix_html, "~> 4.1"},
       {:jason, "~> 1.2"}

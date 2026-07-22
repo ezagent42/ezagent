@@ -75,23 +75,6 @@ defmodule Ezagent.World.PresenterCaps do
     end
   end
 
-  @doc """
-  把算好的 presenter caps 放进 socket 的 `:presenter_caps` assign —— **world 把
-  socket 交给插件代码之前的唯一接缝**。
-
-  插件（`PluginPageRegistry` 条目的 `data_builder` / `actions_module`）住在自己的
-  OTP app 里，**不得反向引用 world 模块**（world → plugin 是允许的箭头，反向会成环）。
-  所以 cap 新鲜度策略留在 world 这一处，插件只读 `assigns[:presenter_caps]` 这份数据；
-  assign 缺失 → 插件侧取空集 = fail-closed（拒绝，不是放行）。
-
-  接缝共两处：`WorldLive` 的 `world:dispatch` 委派、
-  `ConversationActions.view_switch_updates/3` 切 tab 载板。
-  """
-  @spec put(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
-  def put(socket) do
-    Phoenix.Component.assign(socket, :presenter_caps, load(socket))
-  end
-
   @doc false
   @spec context(Phoenix.LiveView.Socket.t() | map()) :: map()
   def context(%{assigns: assigns} = socket) when is_map(assigns) do
