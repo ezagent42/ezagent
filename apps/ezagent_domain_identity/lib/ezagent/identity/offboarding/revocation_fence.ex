@@ -20,6 +20,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
     field(:cleared_at, :utc_datetime_usec)
   end
 
+  @doc "Durably enroll principals before any generation bump begins."
   @spec enroll([URI.t() | String.t()]) :: :ok | {:error, term()}
   def enroll(uris) when is_list(uris) do
     now = DateTime.utc_now()
@@ -46,6 +47,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
     error -> {:error, error}
   end
 
+  @doc "Return true when authority use must fail closed for the principal."
   @spec fenced?(URI.t() | String.t()) :: boolean()
   def fenced?(uri) do
     principal_uri = uri_string(uri)
@@ -61,6 +63,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
     _, _ -> true
   end
 
+  @doc "Clear one fence only after that principal's durable invalidation commits."
   @spec clear(URI.t() | String.t()) :: :ok | {:error, term()}
   def clear(uri) do
     principal_uri = uri_string(uri)
@@ -75,6 +78,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
     error -> {:error, error}
   end
 
+  @doc "List principals whose revocation fence remains uncleared."
   @spec pending() :: [URI.t()]
   def pending do
     Repo.all(

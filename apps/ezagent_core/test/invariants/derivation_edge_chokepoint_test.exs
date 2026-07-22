@@ -12,7 +12,7 @@ defmodule Ezagent.Invariants.DerivationEdgeChokepointTest do
      "agent creation inventory"},
     {"apps/ezagent_domain_identity/lib/ezagent/users.ex", "user create"},
     {"apps/ezagent_domain_workspace/lib/ezagent/workspace.ex", "workspace create"},
-    {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex",
+    {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/derivation.ex",
      "session materialize"},
     {"apps/ezagent_domain_session/lib/ezagent/behavior/template.ex", "template fork"}
   ]

@@ -538,34 +538,10 @@ defmodule Ezagent.Kind do
          {:ok, kind_module} <- safe_kind_module(pid) do
       case terminate_strategy(kind_module) do
         :standard ->
-          supervisor = resolve_supervisor(kind_module)
-
-          case DynamicSupervisor.terminate_child(supervisor, pid) do
-            :ok ->
-              verify_dead(pid)
-
-            {:error, :not_found} ->
-              # Not under the resolved supervisor (or already gone) —
-              # bring the process down directly so the worker still
-              # terminates.
-              exit_and_verify(pid)
-
-            {:error, reason} ->
-              {:error, reason}
-          end
+          Ezagent.Kind.Termination.standard(resolve_supervisor(kind_module), pid)
 
         {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
-          # PR-EM-2 codex round-1 HIGH-2 fix (2026-05-25): Kinds with
-          # custom spawn topologies (e.g. ExternalMirror's two-tier
-          # RootSupervisor → PerBindingSupervisor → Kind.Server) need
-          # symmetric teardown — the Kind.Server pid is NOT a direct
-          # child of `supervisor()`, so the standard
-          # `terminate_child(supervisor, kind_server_pid)` returns
-          # `{:error, :not_found}` and the fallback `Process.exit`
-          # path just lets the permanent inner child restart.
-          # `terminate_strategy/0` declares the domain-owned teardown.
-          _ = apply(mod, fun, [uri, pid])
-          verify_dead(pid)
+          Ezagent.Kind.Termination.custom(mod, fun, uri, pid)
       end
     else
       :error -> :ok
@@ -583,31 +559,6 @@ defmodule Ezagent.Kind do
   def terminate!(%URI{} = uri) do
     _ = terminate(uri)
     :ok
-  end
-
-  defp exit_and_verify(pid) do
-    _ = Process.exit(pid, :shutdown)
-    verify_dead(pid)
-  end
-
-  defp verify_dead(pid) do
-    budget_ms = Application.get_env(:ezagent_core, :terminate_verify_ms, 200)
-
-    if wait_dead(pid, budget_ms), do: :ok, else: {:error, :still_alive}
-  end
-
-  defp wait_dead(pid, budget_ms)
-       when is_pid(pid) and is_integer(budget_ms) and budget_ms >= 0 do
-    ref = Process.monitor(pid)
-
-    receive do
-      {:DOWN, ^ref, :process, ^pid, _reason} ->
-        true
-    after
-      budget_ms ->
-        Process.demonitor(ref, [:flush])
-        not Process.alive?(pid)
-    end
   end
 
   defp terminate_strategy(kind_module) do

@@ -155,6 +155,12 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # in `apps/ezagent_core/priv/repo/migrations/20260601000000_phase9_pr6_workspace_uri_columns.exs`
   # under "Exempt tables".
   @exempt_tables_with_reason %{
+    "derivation_edges" =>
+      "Global append-only provenance keyed by canonical URIs; creation and transfer edges may intentionally cross workspace boundaries.",
+    "identity_reap_queue" =>
+      "System cleanup worklist keyed by canonical principal URI; retries must survive ownership and workspace transfer.",
+    "revocation_fences" =>
+      "System authority-use fence keyed by canonical principal URI; one offboarding cascade may span workspaces.",
     "kind_cap_authorities" =>
       "Framework authority rows are globally keyed by canonical Kind URI; the URI itself carries tenant identity and the admin anchor is system-scoped.",
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",

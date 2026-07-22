@@ -897,6 +897,7 @@ defmodule Ezagent.ActionSet.Session do
     end
   end
 
+  @doc false
   def handle_transfer_owner(%{owner: %URI{} = new_owner}, ctx) do
     prior_owner = ctx[:read].(:owner_uri, nil)
     members = ctx[:read].(:members, %{})

@@ -8,6 +8,7 @@ defmodule Ezagent.Identity.Offboarding.StructuralTransfer do
     Module.concat([Ezagent, Session, OffboardingAdapter])
   ]
 
+  @doc false
   @spec transfer(URI.t(), URI.t()) :: :ok | {:error, term()}
   def transfer(%URI{} = resource_uri, %URI{} = deleted_user) do
     case Enum.find(adapters(), &supports?(&1, resource_uri)) do
@@ -20,6 +21,7 @@ defmodule Ezagent.Identity.Offboarding.StructuralTransfer do
     kind, reason -> {:error, {:structural_transfer_failed, resource_uri, {kind, reason}}}
   end
 
+  @doc false
   @spec record_transfer(URI.t(), URI.t()) :: :ok | {:error, term()}
   def record_transfer(%URI{} = resource_uri, %URI{} = new_owner) do
     edge_kind = "ownership_transfer:" <> owner_digest(new_owner)

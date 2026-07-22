@@ -90,11 +90,10 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
 
     with :ok <- Ezagent.Identity.TargetAuthority.ensure(new_owner, session_uri),
          :ok <-
-           Ezagent.Identity.Grant.grant_cap_via_router(
+           Ezagent.Identity.Grant.issue_and_absorb_cap(
              new_owner,
              cap,
-             grant_authorization(new_owner),
-             :sync
+             grant_authorization(new_owner)
            ) do
       :ok
     end

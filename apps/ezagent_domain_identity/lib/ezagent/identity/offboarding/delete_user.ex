@@ -5,6 +5,7 @@ defmodule Ezagent.Identity.Offboarding.DeleteUser do
   alias Ezagent.Identity.Offboarding.{RevocationFence, StructuralTransfer}
   alias Ezagent.Provenance.DerivationEdges
 
+  @doc false
   @spec invalidate(URI.t()) :: :ok | {:error, term()}
   def invalidate(%URI{} = user_uri) do
     descendants = DerivationEdges.descendants(user_uri)
@@ -27,6 +28,7 @@ defmodule Ezagent.Identity.Offboarding.DeleteUser do
     kind, reason -> {:error, {:delete_user_invalidation_failed, {kind, reason}}}
   end
 
+  @doc false
   @spec cleanup(URI.t()) :: :ok
   def cleanup(%URI{} = user_uri) do
     user_uri

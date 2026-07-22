@@ -40,6 +40,7 @@ defmodule Ezagent.Identity.ReapQueue do
     {:noreply, state}
   end
 
+  @doc "Persist an idempotent cleanup retry for an already-revoked principal."
   @spec enqueue(URI.t() | String.t()) :: :ok | {:error, term()}
   def enqueue(uri) do
     now = DateTime.utc_now()
@@ -62,6 +63,7 @@ defmodule Ezagent.Identity.ReapQueue do
     error -> {:error, error}
   end
 
+  @doc "List principals awaiting cleanup convergence."
   @spec pending() :: [URI.t()]
   def pending do
     Repo.all(
@@ -73,6 +75,7 @@ defmodule Ezagent.Identity.ReapQueue do
     |> Enum.map(&Ezagent.URI.new!/1)
   end
 
+  @doc "Retry every pending cleanup once, retaining incomplete entries."
   @spec sweep() :: :ok
   def sweep do
     Repo.all(from(item in __MODULE__, order_by: [asc: item.updated_at, asc: item.principal_uri]))
@@ -81,6 +84,7 @@ defmodule Ezagent.Identity.ReapQueue do
     :ok
   end
 
+  @doc "Remove a cleanup entry after process death and snapshot removal are proven."
   @spec resolve(URI.t() | String.t()) :: :ok
   def resolve(uri) do
     Repo.delete_all(from(item in __MODULE__, where: item.principal_uri == ^uri_string(uri)))

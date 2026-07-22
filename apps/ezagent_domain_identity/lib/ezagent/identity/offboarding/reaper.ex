@@ -9,6 +9,7 @@ defmodule Ezagent.Identity.Offboarding.Reaper do
 
   alias Ezagent.Ecto.KindSnapshot
 
+  @doc "Destroy a principal and prove both its process and durable snapshot are gone."
   @spec teardown_and_reap(URI.t()) ::
           :ok | {:error, {:teardown_incomplete, URI.t(), term()}}
   def teardown_and_reap(%URI{} = uri) do

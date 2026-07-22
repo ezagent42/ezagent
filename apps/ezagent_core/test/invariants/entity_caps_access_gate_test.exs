@@ -34,8 +34,8 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                     ])
 
   @persisted_only_allowlist MapSet.new([
-                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex", :load,
-                               1},
+                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
+                               :do_load, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity.ex",
                                :spawn_with_hydrated_caps, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",

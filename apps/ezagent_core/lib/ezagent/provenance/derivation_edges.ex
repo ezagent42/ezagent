@@ -24,9 +24,11 @@ defmodule Ezagent.Provenance.DerivationEdges do
 
   @type edge_kind :: atom() | String.t()
 
+  @doc "Create an idempotency identifier for one principal-creation attempt."
   @spec new_attempt_id() :: Ecto.UUID.t()
   def new_attempt_id, do: Ecto.UUID.generate()
 
+  @doc "Append one immutable child-to-parent provenance fact."
   @spec record_derivation_edge(
           URI.t() | String.t(),
           URI.t() | String.t(),
@@ -52,6 +54,7 @@ defmodule Ezagent.Provenance.DerivationEdges do
     end
   end
 
+  @doc "Return the cycle-safe transitive closure over every recorded edge kind."
   @spec descendants(URI.t() | String.t()) :: [URI.t()]
   def descendants(root_uri) do
     root = uri_string(root_uri)
