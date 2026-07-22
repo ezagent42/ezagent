@@ -184,18 +184,26 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     supervisor_caps = Ezagent.Identity.list_caps_for(supervisor_a)
     assert Enum.any?(supervisor_caps, &Capability.matches?(&1, read_cap))
 
-    # assign_role grants the supervisor CAPS but does NOT make them a session
-    # member — conversation reads authorize on roster + held member-cap first.
-    # Join supervisor_a via the production session.join dispatch so the
-    # privileged read below goes through the live member path.
-    :ok = join_session(session_uri, supervisor_a)
+    # S-2: responsibility assignment grants reviewer-membership. The
+    # supervisor therefore reaches privileged row policy only after the same
+    # current member-cap gate as every other reader.
+    assert wait_until(fn ->
+             :ok ==
+               Ezagent.Session.Membership.authorize(
+                 %{},
+                 supervisor_a,
+                 session_uri,
+                 supervisor_a
+               )
+           end)
 
     turn =
       compose_supervised_turn(
         session_uri,
         User.admin_uri(),
-        lifecycle_caps(session_uri, User.admin_uri(), [turn: :open, turn: :compose])
+        lifecycle_caps(session_uri, User.admin_uri(), turn: :open, turn: :compose)
       )
+
     assert internal_message?(turn.message_id)
 
     refute "supervised draft" in visible_texts(session_uri, User.admin_uri())
@@ -284,7 +292,9 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
                supervisor_caps
              )
 
-    assert wait_until(fn -> "supervised draft" in visible_texts(session_uri, User.admin_uri()) end)
+    assert wait_until(fn ->
+             "supervised draft" in visible_texts(session_uri, User.admin_uri())
+           end)
 
     auto_template = "p10-auto-#{uniq()}"
     auto_app = "#{auto_template}-app"
@@ -485,7 +495,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   end
 
   defp compose_auto_turn(session_uri, caller) do
-    caps = lifecycle_caps(session_uri, caller, [turn: :open, turn: :compose])
+    caps = lifecycle_caps(session_uri, caller, turn: :open, turn: :compose)
 
     assert {:ok, %{turn_id: turn_id}} =
              dispatch_call(
@@ -519,7 +529,12 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       target: Ezagent.URI.with_action(session_uri, behavior, action),
       mode: :call,
       args: args,
-      ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -535,6 +550,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         args: %{message: msg},
         ctx: %{
           caller: caller_uri,
+          authenticated_principal: caller_uri,
           caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller_uri)]),
           reply: :ignore
         }
@@ -575,26 +591,6 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
       if Map.get(meta, :role_name) == role_name or Map.get(meta, "role_name") == role_name,
         do: uri
     end)
-  end
-
-  # Add `member_uri` to the session roster + grant the held member-cap, via the
-  # ONE production chokepoint (`session.join` dispatched by the admin caller).
-  # Mirrors the canonical join helper in SessionReadsTest.
-  defp join_session(session_uri, member_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-    caller = User.admin_uri()
-    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
-
-    {:ok, _} =
-      Invocation.dispatch(%Invocation{
-        origin: :trusted_internal,
-        target: target,
-        mode: :call,
-        args: %{member: member_uri},
-        ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
-      })
-
-    :ok
   end
 
   # #1464: the :read_unfiltered row-policy is sourced LIVE from the caller's

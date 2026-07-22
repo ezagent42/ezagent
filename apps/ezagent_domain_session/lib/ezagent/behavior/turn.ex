@@ -125,7 +125,11 @@ defmodule Ezagent.ActionSet.Turn do
   # Per-turn recovery effects, each side effect independently gated on its own
   # durable not-yet-done marker so replay is idempotent + minimal.
   defp recovery_effects(turn_id, turn, ctx) do
-    bootstrap_ctx = Map.put(ctx, :caps, recovery_caps(ctx))
+    bootstrap_ctx =
+      ctx
+      |> Map.put(:caller, ctx.self_uri)
+      |> Map.put(:authenticated_principal, ctx.self_uri)
+      |> Map.put(:caps, recovery_caps(ctx))
 
     # The approve/commit settlement replays KEEP their bootstrap caps (the
     # session legitimately re-performing its OWN settlement side effects; out of
@@ -190,6 +194,7 @@ defmodule Ezagent.ActionSet.Turn do
         manager_ctx =
           ctx
           |> Map.put(:caller, manager_uri)
+          |> Map.put(:authenticated_principal, manager_uri)
           |> Map.put(:caps, Ezagent.Identity.list_caps_for(manager_uri))
 
         config_update_effects(turn_id, turn, manager_ctx, :now)
@@ -324,48 +329,56 @@ defmodule Ezagent.ActionSet.Turn do
 
   @spec handle_claim(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_claim(%{turn_id: turn_id, by: by}, ctx) do
-    update_turn(ctx, turn_id, fn turn ->
-      case transition(turn.status, :awaiting_human) do
-        :ok ->
-          :ok = hold_visibility(turn)
-          updated = %{turn | owner: by, mode: :copilot, status: :awaiting_human}
-          {:ok, updated, %{status: :awaiting_human}, []}
+    with :ok <- authorize_content_actor(ctx) do
+      update_turn(ctx, turn_id, fn turn ->
+        case transition(turn.status, :awaiting_human) do
+          :ok ->
+            :ok = hold_visibility(turn)
+            updated = %{turn | owner: by, mode: :copilot, status: :awaiting_human}
+            {:ok, updated, %{status: :awaiting_human}, []}
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end)
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end)
+    end
   end
 
   @spec handle_settle(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_settle(%{turn_id: turn_id}, ctx) do
-    update_turn(ctx, turn_id, fn turn ->
-      case transition(turn.status, :settled) do
-        :ok ->
-          case prepare_settlement(turn_id, turn, ctx) do
-            :ok ->
-              # PR-3 Task 3.1b (H3) — record the MANAGER URI (the settling caller
-              # whose authority gated the config apply) on the durable turn
-              # record, keyed by turn. Recovery (`recovery_effects`) reads it to
-              # re-validate the config replay against the manager's CURRENT
-              # authority instead of bootstrap-laundering. Backward-tolerant:
-              # `nil` when the caller is absent (legacy turns → replay skipped).
-              updated = %{turn | status: :settled, settler_uri: Map.get(ctx, :caller)}
+    with :ok <- authorize_content_actor(ctx) do
+      update_turn(ctx, turn_id, fn turn ->
+        case transition(turn.status, :settled) do
+          :ok ->
+            case prepare_settlement(turn_id, turn, ctx) do
+              :ok ->
+                # PR-3 Task 3.1b (H3) — record the MANAGER URI (the settling caller
+                # whose authority gated the config apply) on the durable turn
+                # record, keyed by turn. Recovery (`recovery_effects`) reads it to
+                # re-validate the config replay against the manager's CURRENT
+                # authority instead of bootstrap-laundering. Backward-tolerant:
+                # `nil` when the caller is absent (legacy turns → replay skipped).
+                updated = %{
+                  turn
+                  | status: :settled,
+                    settler_uri: Map.get(ctx, :authenticated_principal)
+                }
 
-              # P2.5c — settle FAST PATH: emit settlement/config dispatches as
-              # `:dispatch_after_commit` so they run only after the parent
-              # `:turns` slice durably commits.
-              {:ok, updated, %{status: :settled},
-               settle_commit_effects(turn_id, turn, ctx, :after_commit)}
+                # P2.5c — settle FAST PATH: emit settlement/config dispatches as
+                # `:dispatch_after_commit` so they run only after the parent
+                # `:turns` slice durably commits.
+                {:ok, updated, %{status: :settled},
+                 settle_commit_effects(turn_id, turn, ctx, :after_commit)}
 
-            {:error, reason} ->
-              {:error, reason}
-          end
+              {:error, reason} ->
+                {:error, reason}
+            end
 
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end)
+          {:error, reason} ->
+            {:error, reason}
+        end
+      end)
+    end
   end
 
   @spec handle_cancel(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
@@ -717,12 +730,36 @@ defmodule Ezagent.ActionSet.Turn do
       # session makes to itself — the same identity the runtime's
       # `enrich_dispatch_cmd` would default to anyway).
       caller: Map.get(ctx, :caller) || Map.get(ctx, :self_uri),
+      # F-6: forward the authenticated holder explicitly. Autonomous recovery
+      # installs the Session principal in `recovery_effects/3`; ordinary action
+      # paths never fall back from a missing holder to `ctx.caller`.
+      authenticated_principal: Map.get(ctx, :authenticated_principal),
       caps: Map.get(ctx, :caps, MapSet.new()),
       reply: :ignore,
       trace_id: Map.get(ctx, :trace_id),
       deadline_ms: Map.get(ctx, :deadline_ms)
     }
   end
+
+  # Session-content mutation is membership-gated on the authenticated holder.
+  # The only non-identity exception is the Session Kind's own durable recovery
+  # replay, whose explicit self holder is installed above before dispatch.
+  defp authorize_content_actor(ctx) do
+    holder = Map.get(ctx, :authenticated_principal)
+    session_uri = Map.get(ctx, :self_uri)
+
+    if same_uri?(holder, session_uri) do
+      :ok
+    else
+      Ezagent.Session.Membership.authorize(%{}, holder, session_uri, holder)
+    end
+  end
+
+  defp same_uri?(%URI{} = left, %URI{} = right) do
+    Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+  end
+
+  defp same_uri?(_, _), do: false
 
   defp subtask_id!(subtask), do: fetch_subtask!(subtask, :id)
 

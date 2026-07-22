@@ -89,27 +89,48 @@ defmodule Ezagent.ActionSet.Surface do
 
   @spec handle_approve(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_approve(%{version: version}, ctx) do
-    versions = ctx.read.(:versions, %{})
+    with :ok <- authorize_content_actor(ctx) do
+      versions = ctx.read.(:versions, %{})
 
-    if Map.has_key?(versions, version) do
-      {:ok, %{approved: version}, [{:set, :approved, version}]}
-    else
-      {:error, :no_such_version}
+      if Map.has_key?(versions, version) do
+        {:ok, %{approved: version}, [{:set, :approved, version}]}
+      else
+        {:error, :no_such_version}
+      end
     end
   end
 
   @spec handle_commit_settlement(map(), map()) :: {:ok, map(), [term()]} | {:error, term()}
   def handle_commit_settlement(%{turn_id: turn_id}, ctx) do
-    approved = ctx.read.(:approved, nil)
+    with :ok <- authorize_content_actor(ctx) do
+      approved = ctx.read.(:approved, nil)
 
-    case Ezagent.Socialware.Settlement.commit_after_pointer(turn_id, approved) do
-      {:ok, %{status: :committed}} ->
-        {:ok, %{status: :committed}, []}
+      case Ezagent.Socialware.Settlement.commit_after_pointer(turn_id, approved) do
+        {:ok, %{status: :committed}} ->
+          {:ok, %{status: :committed}, []}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
   end
+
+  defp authorize_content_actor(ctx) do
+    holder = Map.get(ctx, :authenticated_principal)
+    session_uri = Map.get(ctx, :self_uri)
+
+    if same_uri?(holder, session_uri) do
+      :ok
+    else
+      Ezagent.Session.Membership.authorize(%{}, holder, session_uri, holder)
+    end
+  end
+
+  defp same_uri?(%URI{} = left, %URI{} = right) do
+    Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+  end
+
+  defp same_uri?(_, _), do: false
 
   @spec internal_tree(map()) :: map() | nil
   def internal_tree(surface) when is_map(surface) do

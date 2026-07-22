@@ -88,11 +88,20 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
     end
   end
 
-  defp caller_ctx(%{caller: %URI{} = caller, caps: caps}) when is_list(caps),
-    do: {:ok, %{caller: caller, caps: caps}}
+  defp caller_ctx(%{
+         caller: %URI{} = caller,
+         authenticated_principal: %URI{} = holder,
+         caps: caps
+       })
+       when is_list(caps),
+       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(%{caller: %URI{} = caller, caps: %MapSet{} = caps}),
-    do: {:ok, %{caller: caller, caps: caps}}
+  defp caller_ctx(%{
+         caller: %URI{} = caller,
+         authenticated_principal: %URI{} = holder,
+         caps: %MapSet{} = caps
+       }),
+       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
   defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
 

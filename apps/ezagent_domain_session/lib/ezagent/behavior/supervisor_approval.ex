@@ -45,25 +45,26 @@ defmodule Ezagent.ActionSet.SupervisorApproval do
         ctx
       )
       when is_binary(turn_id) and is_binary(responsibility) and is_map(quorum_policy) do
-    caller = Map.get(ctx, :caller)
+    holder = Map.get(ctx, :authenticated_principal)
     session_uri = Map.get(ctx, :self_uri)
     workspace_uri = workspace_uri_for_session(session_uri)
 
-    with %URI{} <- caller,
+    with %URI{} <- holder,
          %URI{} <- workspace_uri,
          true <-
            Ezagent.Workspace.ResponsibilityAssignment.assigned?(
              workspace_uri,
              responsibility,
-             caller
-           ) do
+             holder
+           ),
+         :ok <- Ezagent.Session.Membership.authorize(%{}, holder, session_uri, holder) do
       verdicts = ctx.read.(:verdicts, %{})
       key = {turn_id, responsibility}
       entry = Map.get(verdicts, key, %{verdicts: %{}})
 
       entry =
         entry
-        |> put_in([:verdicts, Ezagent.URI.stable_key(caller)], normalize_verdict(verdict))
+        |> put_in([:verdicts, Ezagent.URI.stable_key(holder)], normalize_verdict(verdict))
         |> Map.put(:quorum_policy, normalize_policy(quorum_policy))
         |> Map.put(:arbiter, Map.get(args, :arbiter))
 
@@ -74,6 +75,7 @@ defmodule Ezagent.ActionSet.SupervisorApproval do
       {:ok, evaluated, [{:set, :verdicts, Map.put(verdicts, key, entry)}]}
     else
       false -> {:error, :stale_holder}
+      {:error, :unauthorized} -> {:error, :not_session_member}
       _ -> {:error, :invalid_verdict_context}
     end
   end

@@ -114,6 +114,7 @@ defmodule Ezagent.Session.Config.Admission do
           args: %{},
           ctx: %{
             caller: caller,
+            authenticated_principal: caller,
             caps: operator_dispatch_caps(caller, caps),
             reply: {:caller_inbox, self()}
           },

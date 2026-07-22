@@ -57,6 +57,15 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
     assert ResponsibilityAssignment.holders(workspace_uri, "supervisor") == [holder]
     assert ResponsibilityAssignment.assigned?(workspace_uri, "supervisor", holder)
 
+    needed_member =
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        session_uri,
+        workspace_uri
+      )
+
     needed_read =
       Capability.cap(
         :session,
@@ -95,6 +104,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
 
     caps = Ezagent.Identity.list_caps_for(holder)
 
+    assert has_cap?(caps, needed_member)
     assert has_cap?(caps, needed_read)
     assert has_cap?(caps, needed_claim)
     assert has_cap?(caps, needed_settle)
@@ -130,7 +140,11 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
                "supervisor",
                holder,
                %{},
-               %{caller: assigner, caps: Ezagent.Identity.list_caps_for(assigner)}
+               %{
+                 caller: assigner,
+                 authenticated_principal: assigner,
+                 caps: Ezagent.Identity.list_caps_for(assigner)
+               }
              )
 
     needed = Capability.cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri)
@@ -164,11 +178,12 @@ defmodule Ezagent.Workspace.ResponsibilityAssignmentTest do
              )
 
     refute ResponsibilityAssignment.assigned?(workspace_uri, "supervisor", holder)
+
     needed =
       Capability.cap(
         :session,
         Ezagent.ActionSet.Session,
-        :read_unfiltered,
+        :receive,
         session_uri,
         workspace_uri
       )

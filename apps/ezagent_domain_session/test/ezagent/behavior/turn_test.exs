@@ -23,6 +23,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.TurnTest do
     %{
       self_uri: session,
       caller: Keyword.get(overrides, :caller, agent_uri()),
+      authenticated_principal: Keyword.get(overrides, :authenticated_principal, session),
       caps: MapSet.new(),
       reply: :ignore
     }
