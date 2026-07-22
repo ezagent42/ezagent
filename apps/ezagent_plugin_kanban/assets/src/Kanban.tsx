@@ -1,7 +1,7 @@
 import {Suspense, lazy, useEffect, useState} from "react"
 import {ExternalLink, GitPullRequest, Hand, Paperclip, Pencil, Plus, RefreshCw, Scissors, Send, Trash2} from "lucide-react"
 
-import {Button} from "../../../ezagent_plugin_world/assets/src/components/ui/primitives"
+import {Badge, Button} from "../../../ezagent_plugin_world/assets/src/components/ui/primitives"
 import {KanbanCanvas, STAGE_LABEL, STAGES, gateVerdict} from "./KanbanCanvas"
 
 // 懒加载：excalidraw 组件 + 它的 CSS 都进独立 chunk，不撑主包。
@@ -146,6 +146,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
   const statuses = state.statuses || ["claimed", "doing", "done"]
   const instances = state.instances || []
   const drops = tree.drops || []
+  const nodeCount = Object.keys(tree.nodes).length
   const [rootTitle, setRootTitle] = useState("")
   const [newName, setNewName] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(tree.root_id)
@@ -173,10 +174,15 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         })()
 
   return (
-    <div className="flex h-full flex-col gap-3 p-5">
-      <div className="flex items-start justify-between gap-3">
+    <div className="flex h-full flex-col gap-4 p-5" data-world-kanban-workbench>
+      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
         <div className="min-w-0">
-          <h2 className="truncate text-base font-semibold text-foreground">看板 · {uri.split("/").pop()}</h2>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">Kanban workspace</span>
+            <Badge tone="primary">当前看板</Badge>
+          </div>
+          <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">{uri.split("/").pop()}</h2>
+          <p className="mt-1 text-xs text-muted-foreground">{nodeCount} 个节点 · 从定位到 PR 的接力图</p>
           {(state.config?.github_repo || state.config?.miro_board) && (
             <p className="truncate text-xs text-muted-foreground">
               {state.config?.github_repo && <>GitHub: {state.config.github_repo}</>}
@@ -195,7 +201,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
             <RefreshCw className="h-4 w-4" /> Miro
           </Button>
         </div>
-      </div>
+      </header>
       {state.miro_board_url && (
         <a className="inline-flex items-center gap-1 text-sm text-primary hover:underline" href={state.miro_board_url} target="_blank" rel="noreferrer">
           <ExternalLink className="h-3.5 w-3.5" /> 打开 Miro 看板
@@ -213,10 +219,10 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
       {/* 画布区固定高度（不动 session 布局即可根治"左栏一长把画布滚出视野"）：
           KanbanDetail 高度=header+这块固定高，不随左栏内容增长→外层 board 不滚→画布常驻。
           左栏在这固定高内 overflow-y-auto 自己滚。 */}
-      <div className="flex h-[560px] gap-3 overflow-hidden">
+      <div className="flex h-[min(720px,calc(100vh-15rem))] min-h-[560px] gap-4 overflow-hidden">
         {/* 侧边栏：导图列表 + 本图配置 + drop历史 + 节点属性（整栏在固定高内滚动，宽松；不带动画布） */}
-        <aside className="flex w-72 flex-shrink-0 flex-col gap-3 overflow-y-auto pr-1">
-          <div className="flex-shrink-0 rounded-md border border-border p-2">
+        <aside className="flex w-80 flex-shrink-0 flex-col gap-3 overflow-y-auto rounded-xl border border-border bg-muted/25 p-2.5 pr-1.5" aria-label="kanban control panel">
+          <div className="flex-shrink-0 rounded-lg border border-border bg-card p-3 shadow-sm">
             <div className="mb-1.5 text-xs font-semibold text-muted-foreground">导图</div>
             <ul className="flex max-h-32 flex-col gap-0.5 overflow-y-auto">
               {instances.map((i) => (
@@ -224,7 +230,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
                   <button
                     type="button"
                     onClick={() => onAction("kanban.select_board", {kanban_uri: i.uri})}
-                    className={`w-full truncate rounded px-2 py-1 text-left text-sm ${i.uri === state.kanban_uri ? "bg-accent font-medium text-foreground" : "text-muted-foreground hover:bg-muted"}`}
+                    className={`w-full truncate rounded-md border px-2 py-1.5 text-left text-sm transition ${i.uri === state.kanban_uri ? "border-primary/25 bg-primary/10 font-medium text-foreground shadow-sm" : "border-transparent text-muted-foreground hover:border-border hover:bg-muted"}`}
                   >
                     {i.name}
                   </button>
@@ -240,7 +246,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
           </div>
 
           {/* 本图配置（全图属性，内联可见可编辑）——repo/miro板名按图配；token 在全局 */}
-          <div className="flex flex-shrink-0 flex-col gap-2 rounded-md border border-border p-2">
+          <div className="flex flex-shrink-0 flex-col gap-2.5 rounded-lg border border-border bg-card p-3 shadow-sm">
             <div className="text-xs font-semibold text-muted-foreground">本图配置</div>
             <label className="flex flex-col gap-1 text-xs text-muted-foreground">
               GitHub 仓库（owner/name）
@@ -260,7 +266,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
 
           {/* drop 历史（全图属性）：任何棒 drop 都记一条，全图可见，不挂某个节点 */}
           {drops.length > 0 && (
-            <div className="flex flex-shrink-0 flex-col rounded-md border border-border p-2">
+            <div className="flex flex-shrink-0 flex-col rounded-lg border border-border bg-card p-3 shadow-sm">
               <div className="mb-1.5 text-xs font-semibold text-muted-foreground">drop 历史（{drops.length}）</div>
               <ul className="flex flex-col gap-1 text-xs">
                 {drops.map((d, i) => (
@@ -275,7 +281,7 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
             </div>
           )}
 
-          <div className="flex flex-shrink-0 flex-col rounded-md border border-border p-2">
+          <div className="flex flex-shrink-0 flex-col rounded-lg border border-border bg-card p-3 shadow-sm">
             <div className="mb-1.5 text-xs font-semibold text-muted-foreground">节点属性</div>
             {sel ? (
               <NodePanel node={sel} args={nodeArgs} stages={allowedStages} statuses={statuses} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
@@ -286,16 +292,29 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
         </aside>
 
         {/* 画布 */}
-        <div className="flex-1 overflow-hidden rounded-md border border-border">
+        <div className="relative flex-1 overflow-hidden rounded-xl border border-border bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.09),transparent_30%),linear-gradient(hsl(var(--muted)/0.35)_1px,transparent_1px),linear-gradient(90deg,hsl(var(--muted)/0.35)_1px,transparent_1px)] bg-[size:auto,24px_24px,24px_24px]" data-world-kanban-canvas>
           {!tree.root_id ? (
-            <div className="flex gap-2 p-4">
-              <input className={`${inputCls} w-72`} placeholder="根节点标题（产品发心）" value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} />
-              <Button type="button" size="sm" onClick={() => rootTitle.trim() && (onAction("kanban.add_node", {kanban_uri: uri, parent_id: "", title: rootTitle.trim()}), setRootTitle(""))}>
+            <div className="flex h-full items-center justify-center p-6" data-world-kanban-empty-tree>
+              <div className="w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-lg">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.16em] text-primary">01 / 建立起点</span>
+                <h3 className="mt-2 text-lg font-semibold text-foreground">给这张看板一个明确的发心</h3>
+                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">根节点会成为后续定位、指标、痛点和功能接力的共同起点。</p>
+                <div className="mt-4 flex gap-2">
+                  <input className={`${inputCls} min-w-0 flex-1`} placeholder="根节点标题（产品发心）" value={rootTitle} onChange={(e) => setRootTitle(e.target.value)} />
+                  <Button type="button" size="sm" onClick={() => rootTitle.trim() && (onAction("kanban.add_node", {kanban_uri: uri, parent_id: "", title: rootTitle.trim()}), setRootTitle(""))}>
                 <Plus className="h-4 w-4" /> 建根
-              </Button>
+                  </Button>
+                </div>
+              </div>
             </div>
           ) : (
-            <KanbanCanvas uri={uri} tree={tree} selectedId={selectedId} onSelectNode={setSelectedId} onAction={onAction} />
+            <>
+              <div className="pointer-events-none absolute left-4 top-4 z-10 max-w-xs rounded-lg border border-border/80 bg-card/90 px-3 py-2 shadow-sm backdrop-blur">
+                <p className="text-xs font-semibold text-foreground">结构画布</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted-foreground">{nodeCount === 1 ? "从根节点添加下一棒，开始铺开接力图。" : "点击节点查看属性；用节点右侧 + 号继续展开。"}</p>
+              </div>
+              <KanbanCanvas uri={uri} tree={tree} selectedId={selectedId} onSelectNode={setSelectedId} onAction={onAction} />
+            </>
           )}
         </div>
       </div>

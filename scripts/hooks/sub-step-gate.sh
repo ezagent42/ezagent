@@ -29,6 +29,23 @@ if ! printf '%s' "$input" | grep -qE 'git[[:space:]]+(commit|tag[[:space:]]+(--?
   exit 0
 fi
 
+# Multi-repo sessions: a `git commit` may target a DIFFERENT repo than this
+# project (a sibling repo added to the session, or its worktree). This gate is
+# esr-ng-specific (mix format / mix test), so running it on a foreign commit is
+# a false gate. Bash commands cd into their target repo first, so if the first
+# `cd /abs/path` in the command resolves to a repo whose shared .git dir differs
+# from this project's, skip. Comparing git-common-dir (not toplevel) keeps
+# esr-ng's OWN worktrees gated. No `cd` → assume this project → gate as before.
+abs_common() { ( cd "$1" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P ); }
+_target_dir=$(printf '%s' "$input" | grep -oE 'cd[[:space:]]+/[^ "'\''&;|]+' | head -1 | sed -E 's/^cd[[:space:]]+//')
+if [ -n "${_target_dir:-}" ] && [ -d "$_target_dir" ]; then
+  _tc=$(abs_common "$_target_dir")
+  _pc=$(abs_common "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}")
+  if [ -n "$_tc" ] && [ -n "$_pc" ] && [ "$_tc" != "$_pc" ]; then
+    exit 0
+  fi
+fi
+
 cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" || {
   echo "[sub-step-gate] cannot cd to repo root" >&2
   exit 2
