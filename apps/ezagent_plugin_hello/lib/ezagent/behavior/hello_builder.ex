@@ -130,12 +130,9 @@ defmodule Ezagent.ActionSet.HelloBuilder do
   end
 
   defp ensure_self_member(%URI{} = session_uri, %{self_uri: %URI{} = self_uri}) do
-    members = Ezagent.Orchestrator.Tools.read_members(session_uri)
-
-    if Map.has_key?(members, Ezagent.URI.instance(self_uri)) or Map.has_key?(members, self_uri) do
-      :ok
-    else
-      {:error, {:builder_not_session_member, session_uri, self_uri}}
+    case Ezagent.Session.Membership.authorize(%{}, self_uri, session_uri, self_uri) do
+      :ok -> :ok
+      {:error, :unauthorized} -> {:error, {:builder_not_session_member, session_uri, self_uri}}
     end
   end
 

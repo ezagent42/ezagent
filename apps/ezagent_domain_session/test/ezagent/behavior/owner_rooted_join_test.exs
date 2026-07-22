@@ -76,7 +76,12 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: joiner},
-      ctx: %{caller: joiner, caps: Ezagent.Identity.list_caps_for(joiner), reply: :ignore}
+      ctx: %{
+        caller: joiner,
+        authenticated_principal: joiner,
+        caps: Ezagent.Identity.list_caps_for(joiner),
+        reply: :ignore
+      }
     })
   end
 
@@ -120,7 +125,12 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
           target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
           mode: :call,
           args: %{member: member},
-          ctx: %{caller: owner, caps: Ezagent.Identity.list_caps_for(owner), reply: :ignore}
+          ctx: %{
+            caller: owner,
+            authenticated_principal: owner,
+            caps: Ezagent.Identity.list_caps_for(owner),
+            reply: :ignore
+          }
         })
 
       # Now the member self-joins on a later navigation: provision_join_authority

@@ -74,17 +74,4 @@ defmodule Ezagent.Session.Membership do
   """
   @spec valid_caller_uri?(term()) :: boolean()
   def valid_caller_uri?(caller), do: Ezagent.URI.bare_principal?(caller)
-
-  # Structural owner metadata remains available to projection/delivery callers,
-  # but authorize/4 deliberately does not use it.
-  @doc false
-  def owner?(%{owner_uri: %URI{} = owner}, %URI{} = caller), do: owner == caller
-  def owner?(_chat, _caller), do: false
-
-  # The `:chat` slice keys `members` by the member's `%URI{}`.
-  @doc false
-  def member?(%{members: members}, %URI{} = caller) when is_map(members),
-    do: Map.has_key?(members, caller)
-
-  def member?(_chat, _caller), do: false
 end

@@ -13,7 +13,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   require Logger
 
-  alias Ezagent.ActionSet.Session.{Delivery, MemberCap, Members}
+  alias Ezagent.ActionSet.Session.{Delivery, MemberCap, Members, Reconcile}
 
   @doc """
   Add a member to the session — the `:join` handler body. Builds the
@@ -120,8 +120,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # --- Part C admission gate (spec §C.1/§C.2/§C.3, R4) ---------------------
 
   # The admission trigger predicate (spec §C.1). Fire PENDING iff:
-  #   * the member is NOT already mounted (a rejoin / re-add of an established
-  #     member is never pended — it already holds its member-cap), AND
+  #   * the member does NOT already hold the exact current member-cap (a rejoin /
+  #     re-add of an established holder is never pended), AND
   #   * `ctx.caller` is a REAL, non-system entity — a well-formed bare identity
   #     principal `entity://<ws>/<user|agent|worker>/<name>` (rejects nil /
   #     `:vm_internal` / `system://…` / malformed via `Ezagent.URI.bare_principal?/1`),
@@ -134,7 +134,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
   #     caller, whose ctx.caps carry only a narrow inline join cap, is exempt via
   #     `manages?(admin_uri, member) = true` and NEVER stalls at PENDING).
   defp admission_pending?(%URI{} = member_uri, ctx) do
-    members = ctx[:read].(:members, %{})
     caller = Map.get(ctx, :caller)
 
     # Scope to CREDENTIAL-BEARING members (agents/workers), spec §C.2. STRUCTURAL,
@@ -147,7 +146,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # be a pure over-fire with no threat-X coverage; a human's data-read access is
     # governed by the join-cap / invite-authority layer
     # (`provision_invited_join_authority`), NOT this gate.
-    not Map.has_key?(members, member_uri) and
+    not holds_member_cap?(member_uri, ctx[:self_uri]) and
       not Ezagent.URI.type?(member_uri, :user) and
       Ezagent.URI.bare_principal?(caller) and
       not same_entity?(caller, member_uri) and
@@ -683,14 +682,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # authorized join, or `:denied`.
   defp join_authority_basis(%URI{} = session_uri, %URI{} = joiner_uri, owner) do
     cond do
-      # Owner self-join, or an existing member re-joining: owner-rooted.
+      # Owner self-join, or an existing cap-holder re-joining: owner-rooted.
       match?(%URI{}, owner) and joiner_uri == owner ->
         {:authorized, owner}
 
-      already_member?(session_uri, joiner_uri) ->
-        # An existing member re-navigating; the join is owner-authorized
-        # (the member was added under the owner's authority). Granter = the
-        # owner when present, else the admin fallback (ownerless legacy).
+      holds_member_cap?(joiner_uri, session_uri) ->
+        # An existing holder re-navigating; the join is owner-authorized (the
+        # cap was granted under that authority). Granter = the owner when
+        # present, else the admin fallback (ownerless legacy).
         {:authorized, owner_or_admin(owner)}
 
       # Ownerless session + a non-anon user: the first-non-anon-join owner-claim
@@ -713,18 +712,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
     end
   end
 
-  defp already_member?(%URI{} = session_uri, %URI{} = joiner_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, %{state: %{members: members}}} when is_map(members) ->
-        Map.has_key?(members, joiner_uri)
-
-      {:ok, %{members: members}} when is_map(members) ->
-        Map.has_key?(members, joiner_uri)
-
-      _ ->
-        false
-    end
+  defp holds_member_cap?(%URI{} = member_uri, %URI{} = session_uri) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    Reconcile.member_cap_holder?(member_uri, session_uri, workspace_uri)
   end
+
+  defp holds_member_cap?(_member_uri, _session_uri), do: false
 
   defp grant_join_cap(%URI{} = session_uri, %URI{} = joiner_uri, %URI{} = granter) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)

@@ -62,6 +62,7 @@ defmodule Ezagent.ActionSet.Session.PendingNotifyTest do
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }

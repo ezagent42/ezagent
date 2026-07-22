@@ -60,6 +60,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         check_invariant_7(),
         check_invariant_9(),
         check_invariant_10(),
+        check_membership_cap_presence(),
         check_comms_participation_profile_gate(),
         check_web_external_mirror_ioc_gate()
       ]
@@ -316,6 +317,30 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
       )
 
       :ok
+    end
+  end
+
+  # M-9: the shared session-read predicate must retain the current member-cap
+  # gate. The source enumerator bans roster authority; this positive tripwire
+  # prevents an accidental edit that removes the replacement gate entirely.
+  defp check_membership_cap_presence do
+    path =
+      Path.join(
+        @repo_root,
+        "apps/ezagent_domain_session/lib/ezagent/session/membership_predicate.ex"
+      )
+
+    source = File.read!(path)
+
+    if Regex.match?(
+         ~r/def\s+authorize\([\s\S]{0,900}true\s*<-\s*holds_member_cap\?\(holder,\s*session_uri\)/,
+         source
+       ) do
+      Mix.shell().info("  ✓ M-9 session authorization retains current member-cap predicate")
+      :ok
+    else
+      {:error, "M-9",
+       "membership_predicate.ex authorize/4 no longer calls holds_member_cap?(holder, session_uri)"}
     end
   end
 
