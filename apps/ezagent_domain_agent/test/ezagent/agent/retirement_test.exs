@@ -12,6 +12,9 @@ defmodule Ezagent.Agent.RetirementTest do
     agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/worker-#{suffix}")
     creation_attempt_id = Ezagent.Agent.CreationInventory.new_attempt_id()
 
+    {:ok, _owner} = Ezagent.Users.create(owner_uri, nil, [])
+    {:ok, _owner_pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
+
     :ok =
       Ezagent.Agent.CreationInventory.record(
         creation_attempt_id,
@@ -22,6 +25,7 @@ defmodule Ezagent.Agent.RetirementTest do
 
     ctx = %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,
@@ -130,6 +134,7 @@ defmodule Ezagent.Agent.RetirementTest do
                args: %{config_dir_path: config_dir, template_class: __MODULE__.RaisingCleanup},
                ctx: %{
                  caller: owner_uri,
+                 authenticated_principal: owner_uri,
                  caps: MapSet.new([update_cap]),
                  reply: {:caller_inbox, self()}
                }

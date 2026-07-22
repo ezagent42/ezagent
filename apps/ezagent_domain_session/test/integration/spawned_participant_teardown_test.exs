@@ -60,6 +60,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
         args: %{config_dir_path: config_dir, template_class: template_class},
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps:
             MapSet.new([
               signed_action_cap!(
@@ -96,6 +97,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
         args: %{member: worker_uri, source_template_uri: tmpl},
         ctx: %{
           caller: worker_uri,
+          authenticated_principal: worker_uri,
           caps:
             MapSet.new([
               signed_action_cap!(
@@ -122,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
         caller
       )
 
-    %{caller: caller, caps: [cap]}
+    %{caller: caller, authenticated_principal: caller, caps: [cap]}
   end
 
   defp wait_until_gone(uri, tries \\ 60) do

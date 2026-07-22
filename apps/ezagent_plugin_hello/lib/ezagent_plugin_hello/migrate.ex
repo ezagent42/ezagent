@@ -159,6 +159,7 @@ defmodule EzagentPluginHello.Migrate do
          result <-
            Ezagent.Session.Participants.remove_participant(session_uri, orch_uri, %{
              caller: admin,
+             authenticated_principal: admin,
              caps: MapSet.new([signed_cap])
            }) do
       case result do

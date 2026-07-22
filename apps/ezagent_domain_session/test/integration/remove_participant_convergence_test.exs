@@ -61,11 +61,12 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
         caller
       )
 
-    %{caller: caller, caps: [cap]}
+    %{caller: caller, authenticated_principal: caller, caps: [cap]}
   end
 
   defp join_member(session_uri, member_uri) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+    admin = User.admin_uri()
 
     :ok =
       Invocation.dispatch(%Invocation{
@@ -74,8 +75,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
         mode: :cast,
         args: %{member: member_uri},
         ctx: %{
-          caller: member_uri,
-          caps: MapSet.new([signed_action_cap!(target, member_uri)]),
+          caller: admin,
+          authenticated_principal: admin,
+          caps: MapSet.new([signed_action_cap!(target, admin)]),
           reply: :ignore
         }
       })
@@ -108,6 +110,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
+          authenticated_principal: member_uri,
           caps: Ezagent.Identity.list_caps_for(member_uri),
           reply: {:caller_inbox, self()}
         }
@@ -201,7 +204,10 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     # provisions the JIT self-leave authority so the dispatch clears the
     # chokepoint and the handler's `caller == participant` gate passes (§3.3).
     assert {:ok, %{status: :removed}} =
-             Participants.remove_participant(session_uri, member_uri, %{caller: member_uri})
+             Participants.remove_participant(session_uri, member_uri, %{
+               caller: member_uri,
+               authenticated_principal: member_uri
+             })
 
     refute member_uri in Participants.list_participants(session_uri)
   end

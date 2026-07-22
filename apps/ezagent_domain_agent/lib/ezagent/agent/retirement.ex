@@ -6,6 +6,7 @@ defmodule Ezagent.Agent.Retirement do
 
   @required_context_keys [
     :caller,
+    :authenticated_principal,
     :caps,
     :workspace_uri,
     :provenance_root,
@@ -48,6 +49,7 @@ defmodule Ezagent.Agent.Retirement do
   defp validate_context(context) do
     if Enum.all?(@required_context_keys, &Map.has_key?(context, &1)) and
          match?(%URI{}, context.caller) and match?(%URI{}, context.workspace_uri) and
+         match?(%URI{}, context.authenticated_principal) and
          match?(%URI{}, context.provenance_root) and is_binary(context.creation_attempt_id) and
          context.creation_attempt_id != "" and
          (match?(%MapSet{}, context.caps) or is_list(context.caps)) do
@@ -134,6 +136,7 @@ defmodule Ezagent.Agent.Retirement do
         args: %{},
         ctx: %{
           caller: context.caller,
+          authenticated_principal: context.authenticated_principal,
           caps: context.caps,
           reply: {:caller_inbox, self()}
         },

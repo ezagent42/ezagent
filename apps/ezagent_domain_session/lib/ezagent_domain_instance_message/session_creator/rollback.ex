@@ -128,6 +128,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
        ) do
     Ezagent.Domain.Agent.retire_spawned(orchestrator_uri, %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,

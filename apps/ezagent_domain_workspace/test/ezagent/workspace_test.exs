@@ -42,13 +42,16 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.list_members")
 
       assert {:ok, %{members: listed}} =
-               Invocation.dispatch(%Invocation{origin: :trusted_internal,
+               Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
+                   authenticated_principal: Ezagent.Entity.User.admin_uri(),
+                   caps:
+                     MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -72,13 +75,16 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.instantiate")
 
       assert {:ok, %{children: children}} =
-               Invocation.dispatch(%Invocation{origin: :trusted_internal,
+               Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
+                   authenticated_principal: Ezagent.Entity.User.admin_uri(),
+                   caps:
+                     MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -211,7 +217,11 @@ defmodule Ezagent.WorkspaceTest do
       member = Ezagent.URI.new!("entity://#{name}/user/carol")
       caller = Ezagent.URI.new!("entity://#{name}/user/nonadmin")
 
-      assert Ezagent.Workspace.add_member(name, member, %{caller: caller, caps: []}) !=
+      assert Ezagent.Workspace.add_member(name, member, %{
+               caller: caller,
+               authenticated_principal: caller,
+               caps: []
+             }) !=
                {:error, :invalid_caller_ctx}
     end
   end

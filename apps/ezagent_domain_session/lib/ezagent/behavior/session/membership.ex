@@ -964,10 +964,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
   def handle_remove_participant(%URI{} = participant_uri, ctx) do
     members = ctx[:read].(:members, %{})
     owner_uri = ctx[:read].(:owner_uri, nil)
-    caller = ctx[:caller]
+    holder = ctx[:authenticated_principal]
 
     cond do
-      not remove_participant_authorized?(caller, participant_uri, owner_uri) ->
+      not remove_participant_authorized?(holder, participant_uri, owner_uri) ->
         {:error, :unauthorized}
 
       not Map.has_key?(members, participant_uri) ->

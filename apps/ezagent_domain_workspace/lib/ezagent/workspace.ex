@@ -647,11 +647,20 @@ defmodule Ezagent.Workspace do
   # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
   # `default_holds_cap?(:vm_internal)` all-caps bypass. Trusted ambient callers
   # MUST use the explicit `/2` path.
-  defp caller_ctx(%{caller: %URI{} = caller, caps: caps} = ctx) when is_list(caps),
-    do: {:ok, %{caller: caller, authenticated_principal: holder!(ctx), caps: caps}}
+  defp caller_ctx(%{
+         caller: %URI{} = caller,
+         authenticated_principal: %URI{} = holder,
+         caps: caps
+       })
+       when is_list(caps),
+       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(%{caller: %URI{} = caller, caps: %MapSet{} = caps} = ctx),
-    do: {:ok, %{caller: caller, authenticated_principal: holder!(ctx), caps: caps}}
+  defp caller_ctx(%{
+         caller: %URI{} = caller,
+         authenticated_principal: %URI{} = holder,
+         caps: %MapSet{} = caps
+       }),
+       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
   defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
 
@@ -677,8 +686,6 @@ defmodule Ezagent.Workspace do
       {:error, reason} -> raise "workspace self-cap issuance failed: #{inspect(reason)}"
     end
   end
-
-  defp holder!(ctx), do: Map.fetch!(ctx, :authenticated_principal)
 
   # --- listing -------------------------------------------------------
   #

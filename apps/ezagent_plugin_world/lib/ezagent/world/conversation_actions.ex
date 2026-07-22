@@ -711,7 +711,12 @@ defmodule Ezagent.World.ConversationActions do
         target: Ezagent.URI.with_action(session_uri, behavior_prefix, action),
         mode: :call,
         args: args,
-        ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: %{
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        },
         origin: :authenticated_external
       })
 
@@ -888,7 +893,7 @@ defmodule Ezagent.World.ConversationActions do
           case Ezagent.Session.Participants.remove_participant(
                  session_uri,
                  participant_uri,
-                 %{caller: caller, caps: caps}
+                 %{caller: caller, authenticated_principal: caller, caps: caps}
                ) do
             {:ok, _result} ->
               {:noreply, push_members(assign(socket, :last_dispatch_status, "ok"))}
@@ -957,6 +962,7 @@ defmodule Ezagent.World.ConversationActions do
           %URI{} = member_uri ->
             case Ezagent.Session.Participants.remove_participant(session_uri, member_uri, %{
                    caller: caller,
+                   authenticated_principal: caller,
                    caps: caps
                  }) do
               {:ok, _result} -> {:cont, :ok}
@@ -1147,7 +1153,12 @@ defmodule Ezagent.World.ConversationActions do
             target: Ezagent.URI.with_action(session_uri, :session, :join),
             mode: :call,
             args: %{member: caller_uri},
-            ctx: %{caller: caller_uri, authenticated_principal: caller_uri, caps: caps, reply: :ignore},
+            ctx: %{
+              caller: caller_uri,
+              authenticated_principal: caller_uri,
+              caps: caps,
+              reply: :ignore
+            },
             origin: :authenticated_external
           })
 

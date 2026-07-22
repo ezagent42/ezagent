@@ -112,6 +112,7 @@ defmodule Ezagent.Agent.RetirementSweeper do
             args: %{},
             ctx: %{
               caller: caller,
+              authenticated_principal: caller,
               caps: MapSet.new([cap]),
               reply: {:caller_inbox, self()}
             },

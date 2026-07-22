@@ -174,6 +174,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   defp retirement_context(%URI{} = worker_uri, %URI{} = owner_uri, mode) do
     %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps: owner_caps(owner_uri),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: owner_uri,
@@ -185,6 +186,7 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   defp retirement_context(%URI{} = worker_uri, _owner_uri, mode) do
     %{
       caller: worker_uri,
+      authenticated_principal: worker_uri,
       caps: MapSet.new(),
       workspace_uri: Ezagent.URI.workspace_of(worker_uri),
       provenance_root: worker_uri,
@@ -194,7 +196,10 @@ defmodule Ezagent.ActionSet.Session.Teardown do
   end
 
   defp owner_caps(owner_uri) do
-    case Ezagent.Domain.Agent.read_caps(owner_uri, %{caller: owner_uri}) do
+    case Ezagent.Domain.Agent.read_caps(owner_uri, %{
+           caller: owner_uri,
+           authenticated_principal: owner_uri
+         }) do
       {:ok, caps} -> MapSet.new(caps)
       {:error, _reason} -> MapSet.new()
     end

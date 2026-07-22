@@ -79,6 +79,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
       args: Map.put(extra_args, :member, member_uri),
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: :ignore
       }

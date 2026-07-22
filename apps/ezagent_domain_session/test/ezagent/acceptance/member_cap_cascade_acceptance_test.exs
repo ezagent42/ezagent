@@ -75,6 +75,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -117,7 +118,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
         caller
       )
 
-    %{caller: caller, caps: MapSet.new([cap])}
+    %{caller: caller, authenticated_principal: caller, caps: MapSet.new([cap])}
   end
 
   test "§14.5(A) step 5 [defense-in-depth]: revoke ⇒ immediate deny, no reconcile" do
@@ -228,6 +229,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([cap]),
         reply: :ignore
       }

@@ -47,6 +47,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
@@ -101,7 +102,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
         caller
       )
 
-    %{caller: caller, caps: MapSet.new([cap])}
+    %{caller: caller, authenticated_principal: caller, caps: MapSet.new([cap])}
   end
 
   defp joined_member(session_uri, prefix) do
