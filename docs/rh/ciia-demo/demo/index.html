@@ -1,0 +1,1429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>信息协会 · 产品展厅 · CIIA Product Showroom</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════ Bento Design Tokens ═══════════════════ */
+:root {
+  --bg:#F0F0F3; --card:#FFFFFF; --card-hover:#FAFAFC;
+  --ink:#17171B; --ink-2:#56565E; --ink-3:#8A8A92; --ink-4:#B6B6BC; --line:#E8E8EC;
+  --red:#D81830; --blueink:#0048A8; --yellow:#FFD400; --jade:#0FA06E;
+  --blue:#0B5CFF; --blue-deep:#0040C4; --blue-wash:#E7EEFF; --orange:#FF8A1E;
+  --accent-hover:#0040C4;
+  --jade-wash:#DCF1E8; --jade-deep:#0A7A52; --red-wash:#FAE0E3; --red-deep:#B01228;
+  --yellow-wash:#FFF4CC; --orange-wash:#FFEBD6;
+  --r-sm:10px; --r-md:14px; --r-card:18px; --r-lg:22px; --r-icon:14px; --r-pill:999px;
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --font-mono:'Space Mono',ui-monospace,'SF Mono',monospace;
+  --ease-out:cubic-bezier(.16,1,.3,1); --dur-fast:150ms; --dur-base:250ms; --dur-enter:400ms; --dur-split:500ms;
+  --shadow-card:0 1px 2px rgba(15,15,15,.04),0 4px 12px rgba(15,15,15,.04);
+  --shadow-lg:0 1px 2px rgba(15,15,15,.06),0 12px 30px rgba(15,15,15,.08);
+  --sidebar-w:224px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-cn-ui);font-size:14px;line-height:1.55;color:var(--ink);background:var(--bg);height:100vh;overflow:hidden;display:flex;gap:0}
+
+/* ═══════════════════ SIDEBAR ═══════════════════ */
+.sidebar{width:var(--sidebar-w);flex-shrink:0;display:flex;flex-direction:column;padding:16px 12px;gap:0;z-index:20}
+.sidebar-inner{flex:1;display:flex;flex-direction:column;background:var(--card);border-radius:var(--r-card);padding:20px 16px;box-shadow:var(--shadow-card)}
+.sb-brand{display:flex;align-items:center;gap:10px;margin-bottom:28px}
+.sb-brand .sb-icon{width:36px;height:36px;border-radius:var(--r-icon);background:var(--blueink);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.sb-brand .sb-icon svg{width:18px;height:18px}
+.sb-brand .sb-title{font-family:var(--font-cn);font-size:15px;font-weight:600;color:var(--ink);line-height:1.25}
+.sb-brand .sb-sub{font-size:10px;color:var(--ink-3);font-family:var(--font-ui);font-weight:450}
+
+.sb-nav{display:flex;flex-direction:column;gap:4px;flex:1}
+.sb-nav-item{font-family:var(--font-cn-ui);display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:var(--r-md);font-size:13px;font-weight:500;color:var(--ink-2);cursor:pointer;border:0;background:transparent;text-align:left;transition:all var(--dur-fast) var(--ease-out)}
+.sb-nav-item:hover{background:var(--bg);color:var(--ink)}
+.sb-nav-item.active{background:var(--blue-wash);color:var(--blueink);font-weight:600}
+.sb-nav-item .ni-icon{font-size:16px;width:22px;text-align:center;flex-shrink:0}
+.sb-nav-item .ni-badge{font-family:var(--font-mono);font-size:10px;background:var(--blue);color:#fff;padding:1px 7px;border-radius:var(--r-pill);margin-left:auto;font-weight:600}
+
+/* Sidebar login */
+.sb-login{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px}
+.sb-login .sl-av{width:32px;height:32px;border-radius:var(--r-icon);background:var(--line);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--ink-3);flex-shrink:0;transition:all var(--dur-fast)}
+.sb-login .sl-av.logged-in{background:var(--blueink);color:#fff}
+.sb-login .sl-info{flex:1;min-width:0}
+.sb-login .sl-name{font-size:12px;font-weight:600;color:var(--ink)}
+.sb-login .sl-role{font-size:10px;color:var(--ink-4)}
+.sb-login .sl-btn{font-family:var(--font-ui);font-size:11px;font-weight:600;padding:4px 12px;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--card);color:var(--ink-2);cursor:pointer;transition:all var(--dur-fast)}
+.sb-login .sl-btn:hover{background:var(--blue);color:#fff;border-color:var(--blue)}
+
+/* ═══════════════════ MAIN CONTENT ═══════════════════ */
+.main-content{flex:1;position:relative;overflow:hidden;padding:16px 16px 16px 0;min-width:0}
+
+/* ═══════════════════ HERO ═══════════════════ */
+.hero{position:absolute;inset:16px 16px 16px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 24px;text-align:center;z-index:10;transition:opacity var(--dur-enter) var(--ease-out);background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card)}
+.hero.fade{opacity:0;pointer-events:none}
+.hero-icon{width:56px;height:56px;border-radius:var(--r-icon);background:var(--blueink);display:flex;align-items:center;justify-content:center;margin-bottom:16px;transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out)}
+.hero.fade .hero-icon{opacity:0;transform:scale(.9)}
+.hero-icon svg{width:28px;height:28px}
+.hero h1{font-family:var(--font-cn);font-size:clamp(24px,3.5vw,36px);font-weight:600;color:var(--ink);line-height:1.15;margin-bottom:6px;transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out)}
+.hero.fade .hero-hd{opacity:0;transform:translateY(-8px)}
+.hero .sub{font-family:var(--font-ui);font-size:14px;color:var(--ink-3);margin-bottom:28px;font-weight:450;letter-spacing:-0.01em;transition:opacity var(--dur-base) var(--ease-out)}
+.hero.fade .sub{opacity:0}
+
+/* ═══════════════════ HERO SPLIT PANELS ═══════════════════ */
+.split-hero{display:flex;gap:14px;width:100%;max-width:680px;height:190px;transition:opacity var(--dur-base) var(--ease-out),transform var(--dur-base) var(--ease-out)}
+.hero.fade .split-hero{opacity:0;transform:translateY(-4px)}
+
+.split-panel{flex:1;background:var(--card);border-radius:var(--r-card);border:1.5px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;transition:flex var(--dur-split) var(--ease-out),border-color var(--dur-base) var(--ease-out),box-shadow var(--dur-base) var(--ease-out),background var(--dur-base) var(--ease-out);overflow:hidden;position:relative;min-width:90px;user-select:none}
+
+/* Add panel */
+.add-panel:hover{border-color:var(--jade);box-shadow:0 0 0 4px rgba(15,160,110,.10);background:var(--jade-wash)}
+/* Search panel */
+.search-panel:hover{border-color:var(--blue);box-shadow:0 0 0 4px rgba(11,92,255,.10);background:var(--blue-wash)}
+
+/* Flex resize: hover one → other shrinks */
+.split-hero:has(.add-panel:hover) .search-panel{flex:0.35}
+.split-hero:has(.search-panel:hover) .add-panel{flex:0.35}
+
+/* Panel inner */
+.panel-inner{display:flex;flex-direction:column;align-items:center;text-align:center;width:100%}
+
+/* Compact view (always visible when not expanded) */
+.split-compact{display:flex;flex-direction:column;align-items:center;gap:10px;transition:opacity var(--dur-base) var(--ease-out)}
+.split-compact .sc-icon{width:48px;height:48px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff;flex-shrink:0}
+.add-panel .split-compact .sc-icon{background:var(--jade)}
+.search-panel .split-compact .sc-icon{background:var(--blue)}
+.split-compact .sc-label{font-family:var(--font-cn);font-size:15px;font-weight:600;color:var(--ink)}
+.split-compact .sc-hint{font-size:11px;color:var(--ink-4);font-family:var(--font-ui);opacity:0;transition:opacity var(--dur-base)}
+.split-hero:has(.add-panel:hover) .search-panel .sc-hint,
+.split-hero:has(.search-panel:hover) .add-panel .sc-hint{opacity:1}
+
+/* Expanded view (hidden by default) */
+.split-expanded{display:flex;flex-direction:column;align-items:center;gap:10px;opacity:0;transform:translateY(8px);transition:opacity .3s .12s var(--ease-out),transform .35s .12s var(--ease-out);pointer-events:none;position:absolute;inset:0;padding:20px;justify-content:center}
+.split-panel:hover .split-expanded{opacity:1;transform:translateY(0);pointer-events:auto}
+.split-panel:hover .split-compact{opacity:0;pointer-events:none}
+
+.split-expanded .se-icon{width:42px;height:42px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;flex-shrink:0}
+.add-panel .split-expanded .se-icon{background:var(--jade)}
+.search-panel .split-expanded .se-icon{background:var(--blue)}
+.split-expanded .se-title{font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink)}
+.split-expanded .se-desc{font-size:12px;color:var(--ink-3);line-height:1.5}
+
+/* Add panel CTA */
+.se-action{font-family:var(--font-ui);font-size:13px;font-weight:600;padding:8px 20px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all var(--dur-fast);pointer-events:auto;margin-top:2px}
+.add-panel .se-action{background:var(--jade);color:#fff}
+.add-panel .se-action:hover{background:var(--jade-deep);transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,160,110,.3)}
+
+/* Search panel input */
+.se-search{display:flex;align-items:center;gap:6px;width:100%;max-width:280px;margin-top:2px}
+.se-search input{flex:1;font-family:var(--font-cn-ui);font-size:13px;padding:7px 12px;border:1.5px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--ink);outline:none;transition:border-color var(--dur-fast);min-width:0}
+.se-search input:focus{border-color:var(--blue)}
+.se-search input::placeholder{color:var(--ink-4)}
+.se-search .se-send{width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;border:0;cursor:pointer;font-size:15px;font-weight:700;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all var(--dur-fast)}
+.se-search .se-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+
+/* Marquee tags */
+.marquee-wrap{width:100%;max-width:560px;margin-top:24px;overflow:hidden;mask-image:linear-gradient(to right,transparent 0,#000 8%,#000 92%,transparent 100%)}
+.marquee-track{display:flex;gap:8px;width:max-content}
+.marquee-track.row1{animation:scroll-left 28s linear infinite}
+.marquee-track.row2{animation:scroll-right 32s linear infinite}
+.marquee-track:hover{animation-play-state:paused}
+.marquee-track button{font-family:var(--font-cn-ui);padding:6px 14px;border-radius:var(--r-pill);font-size:12px;font-weight:500;border:0;background:var(--card);color:var(--ink-2);cursor:pointer;white-space:nowrap;box-shadow:var(--shadow-card);transition:all var(--dur-fast) var(--ease-out)}
+.marquee-track button:hover{background:var(--blue);color:#fff;transform:translateY(-1px)}
+.marquee-wrap+.marquee-wrap{margin-top:8px}
+@keyframes scroll-left{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes scroll-right{0%{transform:translateX(-50%)}100%{transform:translateX(0)}}
+
+/* ═══════════════════ BROWSE (Showroom) ═══════════════════ */
+.browse{position:absolute;inset:16px 16px 16px 0;display:flex;flex-direction:column;opacity:0;pointer-events:none;transition:opacity var(--dur-enter) var(--ease-out);z-index:5;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card);overflow:hidden}
+.browse.on{opacity:1;pointer-events:auto}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 20px;background:var(--blueink);color:#fff;flex-shrink:0}
+.topbar .t-logo{width:28px;height:28px;border-radius:var(--r-icon);background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center}
+.topbar .t-logo svg{width:15px;height:15px}
+.topbar h2{font-family:var(--font-cn);font-size:14px;font-weight:600;letter-spacing:0.01em}
+.topbar .t-sub{font-family:var(--font-ui);font-size:10px;color:rgba(255,255,255,.5);font-weight:450}
+.topbar .t-actions{display:flex;gap:6px;margin-left:auto}
+.topbar .t-btn{font-family:var(--font-ui);font-size:11px;color:rgba(255,255,255,.7);cursor:pointer;padding:4px 12px;border-radius:var(--r-pill);border:1px solid rgba(255,255,255,.2);background:0;transition:all var(--dur-fast) var(--ease-out);letter-spacing:-0.01em;white-space:nowrap}
+.topbar .t-btn:hover{background:rgba(255,255,255,.12);color:#fff}
+.topbar .t-btn.primary{background:var(--jade);border-color:var(--jade);color:#fff}
+.topbar .t-btn.primary:hover{background:var(--jade-deep);border-color:var(--jade-deep)}
+.tab-bar{display:flex;gap:0;padding:0 20px;background:var(--card);border-bottom:1px solid var(--line);flex-shrink:0;overflow-x:auto}
+.tab-bar button{font-family:var(--font-cn-ui);padding:10px 16px;font-size:12px;font-weight:600;color:var(--ink-3);cursor:pointer;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;transition:all var(--dur-fast) var(--ease-out);background:0;white-space:nowrap}
+.tab-bar button:hover{color:var(--ink)}
+.tab-bar button.active{color:var(--blueink);border-bottom-color:var(--blue)}
+.tab-bar .count{font-family:var(--font-mono);font-size:10px;color:var(--ink-4);margin-left:4px}
+.product-area{flex:1;overflow-y:auto;padding:24px 20px 24px 20px}
+.pg-title{font-family:var(--font-cn);font-size:20px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.pg-sub{font-size:13px;color:var(--ink-3);margin-bottom:20px}
+.pg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.pg-card{background:var(--card);border-radius:var(--r-card);padding:20px 22px;border:1px solid var(--line);transition:all var(--dur-base) var(--ease-out);cursor:pointer;display:flex;flex-direction:column;gap:10px}
+.pg-card:hover{border-color:transparent;box-shadow:var(--shadow-lg);transform:translateY(-2px)}
+.pg-card .pg-img{width:100%;height:96px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.pg-card .pg-img svg{width:36px;height:36px}
+.pg-name{font-family:var(--font-cn);font-size:14px;font-weight:600;color:var(--ink);line-height:1.3}
+.pg-company{font-size:12px;color:var(--ink-3)}
+.pg-desc{font-size:12px;color:var(--ink-2);line-height:1.55}
+.pg-tags{display:flex;flex-wrap:wrap;gap:5px}
+.pg-tags span{padding:2px 10px;border-radius:var(--r-pill);font-size:10px;font-weight:600}
+.tag-med{background:var(--red-wash);color:var(--red-deep)}
+.tag-data{background:var(--blue-wash);color:var(--blue-deep)}
+.tag-ai{background:var(--jade-wash);color:var(--jade-deep)}
+.tag-office{background:var(--yellow-wash);color:#7A6200}
+.tag-mfg{background:#EDE9FE;color:#5B21B6}
+.tag-sec{background:var(--orange-wash);color:#9A4D00}
+.pg-actions{display:flex;gap:6px;margin-top:2px}
+.pg-btn{font-family:var(--font-ui);padding:6px 14px;border-radius:var(--r-pill);font-size:11px;font-weight:600;cursor:pointer;transition:all var(--dur-fast) var(--ease-out);border:0;text-align:center;letter-spacing:-0.01em}
+.pg-btn.primary{background:var(--blue);color:#fff}
+.pg-btn.primary:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 6px 16px -4px rgba(11,92,255,.4)}
+.pg-btn.outline{background:transparent;color:var(--blueink);box-shadow:inset 0 0 0 1px var(--line)}
+.pg-btn.outline:hover{background:var(--bg)}
+.alert-rec{padding:14px 18px;border-radius:var(--r-md);background:var(--blue-wash);color:var(--blue-deep);font-size:12px;margin-bottom:18px;line-height:1.5}
+/* Loading skeleton */
+.skel-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.skel-card{border-radius:var(--r-card);padding:20px 22px;background:var(--card);border:1px solid var(--line);overflow:hidden;display:flex;flex-direction:column;gap:12px;height:260px}
+.skel-card .skel-line{height:13px;border-radius:var(--r-pill);background:linear-gradient(90deg,var(--bg) 25%,#E8E8EC 50%,var(--bg) 75%);background-size:200% 100%;animation:shimmer 1.6s infinite}
+.skel-card .skel-line.w2{width:65%}.skel-card .skel-line.w3{width:45%}.skel-card .skel-line.w4{width:80%}
+.skel-card .skel-img{height:96px;border-radius:var(--r-md);background:linear-gradient(90deg,var(--bg) 25%,#E8E8EC 50%,var(--bg) 75%);background-size:200% 100%;animation:shimmer 1.6s infinite}
+.skel-status{font-size:13px;color:var(--ink-3);margin-bottom:18px;display:flex;align-items:center;gap:8px}
+.skel-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);animation:pulse-dot 1.2s infinite}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@keyframes pulse-dot{0%,100%{opacity:.3}50%{opacity:1}}
+
+/* ═══════════════════ SESSION VIEW ═══════════════════ */
+.session-view{position:absolute;inset:16px 16px 16px 0;display:flex;flex-direction:column;opacity:0;pointer-events:none;transition:opacity var(--dur-enter) var(--ease-out);z-index:5;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card);overflow:hidden}
+.session-view.on{opacity:1;pointer-events:auto}
+.session-body{flex:1;display:flex;overflow:hidden}
+.session-product-card{width:280px;flex-shrink:0;padding:22px 20px;border-right:1px solid var(--line);background:var(--card);overflow-y:auto}
+.session-product-card .sp-img{width:72px;height:72px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.session-product-card .sp-img svg{width:32px;height:32px}
+.session-product-card .sp-name{font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink);margin-bottom:4px;line-height:1.3}
+.session-product-card .sp-company{font-size:12px;color:var(--ink-3);margin-bottom:10px}
+.session-product-card .sp-desc{font-size:12px;color:var(--ink-2);line-height:1.6;margin-bottom:10px}
+.session-product-card .sp-tags{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:16px}
+.session-product-card .sp-tags span{padding:2px 10px;border-radius:var(--r-pill);font-size:10px;font-weight:600}
+.session-product-card .sp-meta{font-size:11px;color:var(--ink-4);line-height:1.6;padding-top:14px;border-top:1px solid var(--line)}
+.session-product-card .sp-meta b{color:var(--ink-2);font-weight:600}
+.session-chat{flex:1;display:flex;flex-direction:column;background:var(--bg);min-width:0}
+.session-chat .sc-messages{flex:1;overflow-y:auto;padding:20px 22px;display:flex;flex-direction:column;gap:10px}
+.session-chat .sc-msg{display:flex;gap:8px;max-width:80%}
+@media(prefers-reduced-motion:no-preference){.session-chat .sc-msg{animation:ez-fade-up-blur var(--dur-enter) var(--ease-out) both}}
+@keyframes ez-fade-up-blur{from{opacity:0;transform:translateY(16px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+.session-chat .sc-msg.system{align-self:center;max-width:88%}
+.session-chat .sc-msg.company{align-self:flex-start}
+.session-chat .sc-msg.user-msg{align-self:flex-end;flex-direction:row-reverse}
+.session-chat .sc-msg .sc-av{width:26px;height:26px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.session-chat .sc-msg .sc-bbl{padding:8px 13px;border-radius:var(--r-card);font-size:13px;line-height:1.55}
+.session-chat .sc-msg.company .sc-bbl{background:var(--card);color:var(--ink);border-radius:4px var(--r-card) var(--r-card) var(--r-card);box-shadow:var(--shadow-card)}
+.session-chat .sc-msg.user-msg .sc-bbl{background:var(--blueink);color:#fff;border-radius:var(--r-card) 4px var(--r-card) var(--r-card)}
+.session-chat .sc-msg.system .sc-bbl{background:transparent;color:var(--ink-3);font-size:11px;text-align:center;padding:4px 0}
+.session-composer{display:flex;align-items:center;gap:8px;padding:12px 20px;background:var(--card);border-top:1px solid var(--line)}
+.session-composer input{all:unset;flex:1;font-family:var(--font-cn-ui);font-size:13px;color:var(--ink);padding:8px 14px;background:var(--bg);border-radius:var(--r-pill);transition:background var(--dur-fast),box-shadow var(--dur-fast)}
+.session-composer input:focus{background:var(--card);box-shadow:inset 0 0 0 1px var(--blue),0 0 0 3px rgba(11,92,255,.12)}
+.session-composer input::placeholder{color:var(--ink-4)}
+.session-composer .sc-send{width:34px;height:34px;border-radius:50%;background:var(--blue);color:#fff;border:0;cursor:pointer;transition:all var(--dur-fast);flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.session-composer .sc-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+.session-composer .sc-send:active{transform:scale(.95)}
+.session-composer .sc-send svg{width:14px;height:14px}
+
+/* ═══════════════════ SESSIONS LIST VIEW ═══════════════════ */
+.sessions-list-view{position:absolute;inset:16px 16px 16px 0;display:flex;flex-direction:column;opacity:0;pointer-events:none;transition:opacity var(--dur-enter) var(--ease-out);z-index:5;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card);overflow:hidden}
+.sessions-list-view.on{opacity:1;pointer-events:auto}
+.slist-header{padding:24px 28px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.slist-header h2{font-family:var(--font-cn);font-size:22px;font-weight:600;color:var(--ink)}
+.slist-header .sh-sub{font-size:13px;color:var(--ink-3);margin-top:4px}
+.slist-body{flex:1;overflow-y:auto;padding:8px 28px 20px}
+.slist-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;text-align:center;gap:10px}
+.slist-empty .se-icon{font-size:40px;opacity:.5}
+.slist-empty .se-title{font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink-3)}
+.slist-empty .se-sub{font-size:13px;color:var(--ink-4)}
+.slist-empty .se-action{font-family:var(--font-ui);font-size:13px;font-weight:600;padding:8px 20px;border-radius:var(--r-pill);border:0;cursor:pointer;background:var(--blue);color:#fff;margin-top:8px;transition:all var(--dur-fast)}
+.slist-empty .se-action:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.sess-list-card{padding:16px 0;border-bottom:1px solid var(--line);cursor:pointer;display:flex;align-items:center;gap:14px;transition:all var(--dur-fast);border-radius:var(--r-md)}
+.sess-list-card:hover{background:var(--bg);margin:0 -12px;padding-left:12px;padding-right:12px}
+.sess-list-card:first-child{padding-top:12px}
+.sess-list-card:last-child{border-bottom:0}
+.sess-list-card .slc-av{width:40px;height:40px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff;flex-shrink:0}
+.sess-list-card .slc-info{flex:1;min-width:0}
+.sess-list-card .slc-company{font-weight:600;font-size:14px;color:var(--ink);margin-bottom:2px}
+.sess-list-card .slc-product{font-size:12px;color:var(--ink-3)}
+.sess-list-card .slc-meta{font-size:11px;color:var(--ink-4);margin-top:4px;display:flex;gap:12px}
+.sess-list-card .slc-badge{font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-pill);background:var(--jade-wash);color:var(--jade-deep);flex-shrink:0}
+
+/* ═══════════════════ MODALS / OVERLAYS ═══════════════════ */
+.overlay{display:none;position:fixed;inset:0;background:rgba(15,15,15,.35);z-index:100;align-items:center;justify-content:center;padding:24px;backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.overlay.on{display:flex}
+.overlay .dlg{background:var(--card);border-radius:var(--r-card);max-width:480px;width:100%;max-height:80vh;overflow:auto;padding:28px 30px;box-shadow:var(--shadow-lg)}
+.overlay .dlg h3{font-family:var(--font-cn);font-size:20px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.overlay .dlg .co{font-size:13px;color:var(--ink-3);margin-bottom:16px}
+.overlay .dlg .body{font-size:14px;line-height:1.65;color:var(--ink)}
+.overlay .dlg .body p{margin-bottom:10px}
+.overlay .dlg .close{float:right;background:0;border:0;font-size:22px;color:var(--ink-4);cursor:pointer;line-height:1}
+.overlay .dlg .close:hover{color:var(--ink-2)}
+.overlay .dlg .cta{margin-top:16px;padding:11px 22px;background:var(--blue);color:#fff;border:0;border-radius:var(--r-pill);font-family:var(--font-ui);font-size:14px;font-weight:600;cursor:pointer;width:100%;letter-spacing:-0.01em;transition:all var(--dur-fast) var(--ease-out)}
+.overlay .dlg .cta:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 10px 24px -8px rgba(11,92,255,.5)}
+
+/* Contact confirmation */
+.contact-cards{display:flex;gap:12px;margin:16px 0}
+.contact-card{flex:1;padding:18px 14px;border-radius:var(--r-md);background:var(--bg);text-align:center}
+.contact-card .cc-av{width:36px;height:36px;border-radius:var(--r-icon);display:inline-flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;color:#fff}
+.contact-card .cc-label{font-weight:600;font-size:13px;color:var(--ink);margin-top:6px}
+.contact-card .cc-role{font-size:11px;color:var(--ink-4);margin-top:2px}
+.contact-subtitle{font-size:12px;color:var(--ink-3);text-align:center;margin-bottom:4px}
+.contact-actions{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.contact-actions .btn{font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 22px;border-radius:var(--r-pill);border:0;cursor:pointer;width:100%;text-align:center;transition:all var(--dur-fast)}
+.contact-actions .btn-primary{background:var(--blue);color:#fff}
+.contact-actions .btn-primary:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.contact-actions .btn-ghost{background:transparent;color:var(--ink-3);font-size:12px;text-decoration:underline;padding:4px}
+.contact-actions .btn-ghost:hover{color:var(--ink)}
+
+/* Add product form */
+.form-group{margin-bottom:12px}
+.form-group label{display:block;font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:4px;font-family:var(--font-ui);letter-spacing:-0.01em}
+.form-group input,.form-group textarea,.form-group select{width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);font-family:var(--font-cn-ui);font-size:13px;color:var(--ink);background:var(--card);transition:border-color var(--dur-fast),box-shadow var(--dur-fast);box-sizing:border-box}
+.form-group input:focus,.form-group textarea:focus,.form-group select:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(11,92,255,.12)}
+.form-group textarea{resize:vertical;min-height:56px}
+.form-group .hint{font-size:11px;color:var(--ink-4);margin-top:2px}
+.form-actions{display:flex;gap:8px;margin-top:18px}
+.form-actions button{flex:1;font-family:var(--font-ui);font-size:14px;font-weight:600;padding:10px 22px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all var(--dur-fast)}
+.form-actions .btn-submit{background:var(--blue);color:#fff}
+.form-actions .btn-submit:hover{background:var(--accent-hover);transform:translateY(-1px)}
+.form-actions .btn-submit:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.form-actions .btn-cancel{background:var(--bg);color:var(--ink-2)}
+.form-actions .btn-cancel:hover{background:var(--line)}
+
+/* Login modal */
+.login-avatar-options{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap}
+.login-avatar-options button{width:40px;height:40px;border-radius:var(--r-icon);border:2px solid transparent;font-size:18px;cursor:pointer;transition:all var(--dur-fast);background:var(--bg)}
+.login-avatar-options button:hover{border-color:var(--blue);transform:scale(1.1)}
+.login-avatar-options button.sel{border-color:var(--blue);background:var(--blue-wash)}
+
+/* Toast */
+.toast{position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(12px);z-index:200;background:var(--blueink);color:#fff;padding:12px 24px;border-radius:var(--r-pill);font-size:13px;font-weight:500;box-shadow:var(--shadow-lg);opacity:0;transition:all var(--dur-base) var(--ease-out);pointer-events:none}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Responsive */
+@media(max-width:860px){
+  :root{--sidebar-w:64px}
+  .sb-brand .sb-title,.sb-brand .sb-sub,.sb-nav-item span:not(.ni-icon):not(.ni-badge),.sb-login .sl-info,.sb-login .sl-btn{display:none}
+  .sb-nav-item{justify-content:center;padding:10px 0}
+  .sb-nav-item .ni-badge{position:absolute;top:2px;right:2px;font-size:8px;padding:1px 5px}
+  .sb-login{justify-content:center}
+  .pg-grid,.skel-grid{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:600px){
+  body{flex-direction:column}
+  .sidebar{width:100%;flex-direction:row;padding:8px;flex-shrink:0}
+  .sidebar-inner{flex-direction:row;align-items:center;padding:10px 14px;gap:8px}
+  .sb-brand{margin-bottom:0;margin-right:auto}
+  .sb-nav{flex-direction:row;flex:0}
+  .sb-login{border-top:0;padding-top:0;margin-top:0;margin-left:8px}
+  .main-content{padding:8px 8px 8px 8px}
+  .hero,.browse,.session-view,.sessions-list-view{inset:8px!important}
+  .pg-grid,.skel-grid{grid-template-columns:1fr}
+  .session-body{flex-direction:column}
+  .session-product-card{width:100%;border-right:0;border-bottom:1px solid var(--line);max-height:180px}
+  .split-hero{flex-direction:column;height:auto;gap:10px}
+  .split-panel{min-height:80px}
+  .split-hero:has(.add-panel:hover) .search-panel{flex:0.3}
+  .split-hero:has(.search-panel:hover) .add-panel{flex:0.3}
+}
+@media(max-width:400px){.hero h1{font-size:22px}.split-hero{height:150px}.split-compact .sc-icon{width:38px;height:38px}}
+
+/* ═══════════════════ BROWSE CHAT — centered floating overlay ═══════════════════ */
+.browse-chat{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);width:calc(100% - 48px);max-width:520px;z-index:12;display:none;flex-direction:column;align-items:stretch;pointer-events:none}
+.browse-chat.open{display:flex}
+.bc-messages{max-height:200px;overflow-y:auto;padding:80px 4px 8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:none;mask-image:linear-gradient(to bottom,transparent 0,#000 40px,#000 80%,transparent 100%);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 40px,#000 80%,transparent 100%)}
+.bc-messages::-webkit-scrollbar{width:0}
+.bc-messages.scrolling{scrollbar-width:thin;scrollbar-color:var(--ink-4) transparent}
+.bc-messages.scrolling::-webkit-scrollbar{width:4px}
+.bc-messages.scrolling::-webkit-scrollbar-thumb{background:var(--ink-4);border-radius:2px}
+.bc-msg{display:flex;gap:8px;max-width:92%}
+@media(prefers-reduced-motion:no-preference){.bc-msg{animation:bc-fade-up 380ms cubic-bezier(.16,1,.3,1) both}}
+@keyframes bc-fade-up{from{opacity:0;transform:translateY(16px);filter:blur(6px)}to{opacity:1;transform:none;filter:blur(0)}}
+.bc-msg.user-msg{flex-direction:row-reverse;align-self:flex-end}
+.bc-msg.advisor{align-self:flex-start}
+.bc-msg.matcher{align-self:flex-start}
+.bc-msg .bc-av{width:24px;height:24px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0}
+.bc-msg .bc-bbl{padding:8px 13px;font-size:13px;line-height:1.55;border-radius:var(--r-md);transition:opacity .15s var(--ease-out)}
+.bc-msg.user-msg .bc-bbl{background:var(--blueink);color:#fff;border-radius:var(--r-md) 4px var(--r-md) var(--r-md)}
+.bc-msg.advisor .bc-bbl{background:var(--card);color:var(--ink);border-radius:4px var(--r-md) var(--r-md) var(--r-md);box-shadow:var(--shadow-card)}
+.bc-msg.matcher .bc-bbl{background:var(--blue-wash);color:var(--ink);border-radius:4px var(--r-md) var(--r-md) var(--r-md)}
+.bc-composer{display:flex;align-items:center;gap:8px;background:var(--card);border-radius:var(--r-lg);padding:8px 8px 8px 16px;box-shadow:var(--shadow-lg);transition:box-shadow var(--dur-fast),background var(--dur-fast);pointer-events:auto;margin-top:6px}
+.bc-composer:focus-within{box-shadow:inset 0 0 0 1px var(--blue),0 0 0 4px rgba(11,92,255,.25)}
+.bc-composer input{all:unset;flex:1;font-family:var(--font-cn-ui);font-size:14px;color:var(--ink);line-height:1.5;padding:6px 0;min-height:20px}
+.bc-composer input::placeholder{color:var(--ink-4)}
+.bc-composer .bc-send{width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;border:0;cursor:pointer;transition:all var(--dur-fast);flex-shrink:0;display:flex;align-items:center;justify-content:center}
+.bc-composer .bc-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+.bc-composer .bc-send:active{transform:scale(.95)}
+.bc-composer .bc-send svg{width:14px;height:14px}
+/* Chat toggle */
+.chat-toggle-btn{display:block;text-align:center;font-family:var(--font-ui);font-size:10px;color:var(--ink-4);cursor:pointer;background:0;border:0;padding:4px 0 2px;letter-spacing:-0.01em;font-weight:500;pointer-events:auto;margin-top:2px}
+.chat-toggle-btn:hover{color:var(--ink-3)}
+.typing-dots{display:flex;gap:3px;padding:2px 0}
+.typing-dots span{width:5px;height:5px;border-radius:50%;background:var(--ink-4);animation:tB 1.2s infinite}
+.typing-dots span:nth-child(2){animation-delay:.15s}.typing-dots span:nth-child(3){animation-delay:.3s}
+@keyframes tB{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-5px);opacity:1}}
+
+/* ═══════════════════ SIDEBAR GROUPING ═══════════════════ */
+.sb-group-label{font-size:10px;font-weight:600;color:var(--ink-4);text-transform:uppercase;letter-spacing:.06em;padding:18px 14px 4px;font-family:var(--font-ui)}
+.sb-group-label:first-child{padding-top:4px}
+.sb-nav-item.sub{padding-left:30px;font-size:12px}
+
+/* ═══════════════════ SOCIALWARE VIEWS (shared) ═══════════════════ */
+.sw-view{position:absolute;inset:16px 16px 16px 0;display:flex;flex-direction:column;opacity:0;pointer-events:none;transition:opacity var(--dur-enter) var(--ease-out);z-index:5;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card);overflow:hidden}
+.sw-view.on{opacity:1;pointer-events:auto}
+.sw-header{padding:24px 28px 16px;border-bottom:1px solid var(--line);flex-shrink:0}
+.sw-header h2{font-family:var(--font-cn);font-size:21px;font-weight:600;color:var(--ink)}
+.sw-header .sw-sub{font-size:13px;color:var(--ink-3);margin-top:4px}
+.sw-body{flex:1;overflow-y:auto;padding:24px 28px 100px 28px}
+.sw-body .sw-card{background:var(--bg);border-radius:var(--r-md);padding:18px 20px;margin-bottom:14px;border:1px solid var(--line)}
+.sw-body .sw-card h3{font-family:var(--font-cn);font-size:15px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.sw-body .sw-card p{font-size:13px;color:var(--ink-2);line-height:1.65;margin-bottom:6px}
+.sw-body .sw-card p:last-child{margin-bottom:0}
+.sw-stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+.sw-stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);padding:16px;text-align:center}
+.sw-stat .st-num{font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--blueink)}
+.sw-stat .st-lab{font-size:11px;color:var(--ink-3);margin-top:4px}
+
+/* Form */
+.sw-form{max-width:480px}
+.sw-form .form-row{display:flex;gap:12px}
+.sw-form .form-row .form-group{flex:1}
+.sw-form .btn-submit{background:var(--blue);color:#fff;border:0;padding:10px 24px;border-radius:var(--r-pill);font-family:var(--font-ui);font-size:14px;font-weight:600;cursor:pointer;transition:all var(--dur-fast)}
+.sw-form .btn-submit:hover{background:var(--accent-hover);transform:translateY(-1px)}
+
+/* Report list & Partner cards */
+.report-item{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer;transition:all var(--dur-fast);margin-bottom:10px}
+.report-item:hover{border-color:transparent;box-shadow:var(--shadow-card);transform:translateY(-1px)}
+.report-item .ri-icon{width:40px;height:40px;border-radius:var(--r-icon);background:var(--blue-wash);color:var(--blueink);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.report-item .ri-title{font-weight:600;font-size:14px;color:var(--ink)}
+.report-item .ri-meta{font-size:11px;color:var(--ink-4);margin-top:3px}
+.partner-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+.partner-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);padding:18px 20px;cursor:pointer;transition:all var(--dur-fast)}
+.partner-card:hover{border-color:transparent;box-shadow:var(--shadow-card);transform:translateY(-1px)}
+.partner-card .pc-badge{font-size:10px;font-weight:600;padding:2px 8px;border-radius:var(--r-pill);display:inline-block;margin-bottom:8px}
+.partner-card .pc-badge.seeking{background:var(--orange-wash);color:#9A4D00}
+.partner-card .pc-title{font-weight:600;font-size:14px;color:var(--ink);margin-bottom:4px}
+.partner-card .pc-desc{font-size:12px;color:var(--ink-3);line-height:1.5;margin-bottom:10px}
+
+/* ═══════════════════ HELLO BUILDER DIALOG ═══════════════════ */
+.hello-bar{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);width:calc(100% - 56px);max-width:520px;z-index:12;display:flex;flex-direction:column;align-items:stretch}
+.hello-pill{display:flex;align-items:center;gap:8px;padding:10px 18px;background:var(--card);border:1.5px solid var(--line);border-radius:var(--r-pill);cursor:pointer;transition:all var(--dur-base) var(--ease-out);box-shadow:var(--shadow-card);align-self:center;font-family:var(--font-ui);font-size:13px;font-weight:500;color:var(--ink-2);user-select:none}
+.hello-pill:hover{border-color:var(--blue);box-shadow:var(--shadow-lg);transform:translateY(-1px)}
+.hello-pill .hp-dot{width:8px;height:8px;border-radius:50%;background:var(--jade);flex-shrink:0}
+.hello-chat{display:none;flex-direction:column;gap:0}
+.hello-chat.open{display:flex}
+.hello-chat .hc-messages{max-height:160px;overflow-y:auto;padding:8px 4px 4px;display:flex;flex-direction:column;gap:8px;scrollbar-width:none;mask-image:linear-gradient(to bottom,transparent 0,#000 30px,#000 80%,transparent 100%);-webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 30px,#000 80%,transparent 100%)}
+.hello-chat .hc-messages::-webkit-scrollbar{width:0}
+.hello-chat .hc-msg{display:flex;gap:7px;max-width:92%}
+@media(prefers-reduced-motion:no-preference){.hello-chat .hc-msg{animation:bc-fade-up 380ms var(--ease-out) both}}
+.hello-chat .hc-msg.agent{align-self:flex-start}
+.hello-chat .hc-msg.user{align-self:flex-end;flex-direction:row-reverse}
+.hello-chat .hc-msg .hc-av{width:22px;height:22px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
+.hello-chat .hc-msg.agent .hc-bbl{padding:6px 10px;font-size:12px;line-height:1.5;background:var(--card);color:var(--ink);border-radius:4px var(--r-md) var(--r-md) var(--r-md);box-shadow:var(--shadow-card)}
+.hello-chat .hc-msg.user .hc-bbl{padding:6px 10px;font-size:12px;line-height:1.5;background:var(--blueink);color:#fff;border-radius:var(--r-md) 4px var(--r-md) var(--r-md)}
+.hello-composer{display:flex;align-items:center;gap:6px;background:var(--card);border-radius:var(--r-lg);padding:6px 6px 6px 14px;box-shadow:var(--shadow-lg);transition:box-shadow var(--dur-fast);margin-top:4px}
+.hello-composer:focus-within{box-shadow:inset 0 0 0 1px var(--blue),0 0 0 4px rgba(11,92,255,.25)}
+.hello-composer input{all:unset;flex:1;font-family:var(--font-cn-ui);font-size:13px;color:var(--ink);padding:6px 0;min-height:20px}
+.hello-composer input::placeholder{color:var(--ink-4)}
+.hello-composer .hello-send{width:32px;height:32px;border-radius:50%;background:var(--blue);border:0;cursor:pointer;color:#fff;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all var(--dur-fast)}
+.hello-composer .hello-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+.hello-composer .hello-send:active{transform:scale(.95)}
+.hello-composer .hello-send svg{width:13px;height:13px}
+.hc-close{font-size:10px;color:var(--ink-4);text-align:center;padding:4px 0 0;cursor:pointer;background:0;border:0;font-family:var(--font-ui)}
+.hc-close:hover{color:var(--ink-3)}
+
+/* Member tabs */
+.member-tabs{display:flex;gap:4px;padding:0 28px;border-bottom:1px solid var(--line);flex-shrink:0}
+.member-tabs button{font-family:var(--font-cn-ui);padding:8px 16px;font-size:12px;font-weight:600;color:var(--ink-3);border:0;border-bottom:2px solid transparent;margin-bottom:-1px;background:0;cursor:pointer;transition:all var(--dur-fast)}
+.member-tabs button:hover{color:var(--ink)}
+.member-tabs button.active{color:var(--blueink);border-bottom-color:var(--blue)}
+
+/* Admin */
+.admin-stat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px}
+.admin-stat{background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);padding:18px 20px}
+.admin-stat .as-num{font-family:var(--font-mono);font-size:28px;font-weight:700;color:var(--blueink)}
+.admin-stat .as-lab{font-size:12px;color:var(--ink-3);margin-top:4px}
+.review-item2{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--card);border:1px solid var(--line);border-radius:var(--r-md);margin-bottom:8px}
+.review-item2 .ri2-name{font-weight:600;font-size:13px;color:var(--ink)}
+.review-item2 .ri2-meta{font-size:11px;color:var(--ink-4)}
+.review-item2 .ri2-actions{display:flex;gap:6px}
+.ri2-btn{font-family:var(--font-ui);font-size:11px;font-weight:600;padding:5px 12px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all var(--dur-fast)}
+.ri2-btn.approve{background:var(--jade-wash);color:var(--jade-deep)}
+.ri2-btn.approve:hover{background:var(--jade);color:#fff}
+.ri2-btn.reject{background:var(--red-wash);color:var(--red-deep)}
+.ri2-btn.reject:hover{background:var(--red);color:#fff}
+
+@media(max-width:600px){
+  .sw-stat-grid,.admin-stat-grid{grid-template-columns:repeat(2,1fr)}
+  .partner-grid{grid-template-columns:1fr}
+  .sw-form .form-row{flex-direction:column;gap:0}
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ SIDEBAR ═══ -->
+<aside class="sidebar">
+  <div class="sidebar-inner">
+    <div class="sb-brand">
+      <div class="sb-icon">
+        <svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg>
+      </div>
+      <div>
+        <div class="sb-title">信息协会</div>
+        <div class="sb-sub">CIIA Showroom</div>
+      </div>
+    </div>
+    <nav class="sb-nav">
+      <div class="sb-group-label">公开</div>
+      <button class="sb-nav-item active" data-view="showroom" id="navShowroom">
+        <span class="ni-icon">🏛</span> 产品展厅
+      </button>
+      <button class="sb-nav-item" data-view="about" id="navAbout">
+        <span class="ni-icon">📋</span> 关于协会
+      </button>
+      <button class="sb-nav-item" data-view="join" id="navJoin">
+        <span class="ni-icon">✍️</span> 入会申请
+      </button>
+      <button class="sb-nav-item" data-view="research" id="navResearch">
+        <span class="ni-icon">📊</span> 行业研究院
+      </button>
+      <button class="sb-nav-item" data-view="partner" id="navPartner">
+        <span class="ni-icon">🤝</span> 合作对接
+      </button>
+      <div class="sb-group-label" id="memberGroupLabel" style="display:none">会员</div>
+      <button class="sb-nav-item" data-view="member" id="navMember" style="display:none">
+        <span class="ni-icon">👤</span> 会员专区
+      </button>
+      <div class="sb-group-label" id="adminGroupLabel" style="display:none">管理</div>
+      <button class="sb-nav-item" data-view="admin" id="navAdmin" style="display:none">
+        <span class="ni-icon">⚙️</span> 管理后台
+      </button>
+    </nav>
+    <!-- 个人区：Session 收件箱 -->
+    <div class="sb-personal" id="sbPersonal">
+      <div class="sb-group-label" style="padding-top:0">个人</div>
+      <button class="sb-nav-item" data-view="sessions" id="navSessions">
+        <span class="ni-icon">💬</span> 我的 Session
+        <span class="ni-badge" id="navSessBadge" style="display:none">0</span>
+      </button>
+    </div>
+    <div class="sb-login" id="sbLogin">
+      <div class="sl-av" id="slAv">👤</div>
+      <div class="sl-info">
+        <div class="sl-name" id="slName">访客</div>
+        <div class="sl-role">未登录</div>
+      </div>
+      <button class="sl-btn" id="slBtn" onclick="openLogin()">登录</button>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<div class="main-content" id="mainContent">
+
+  <!-- ═══ HERO ═══ -->
+  <div class="hero" id="hero">
+    <div class="hero-icon">
+      <svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg>
+    </div>
+    <div class="hero-hd"><h1>会员产品展厅 · Product Showroom</h1></div>
+    <p class="sub">描述需求发现产品 / 录入产品展示给客户</p>
+
+    <!-- Split Panels -->
+    <div class="split-hero" id="heroDialog">
+      <!-- LEFT: 录入产品 -->
+      <div class="split-panel add-panel" onclick="openAddProduct()">
+        <div class="split-compact">
+          <div class="sc-icon">＋</div>
+          <div class="sc-label">录入产品</div>
+          <div class="sc-hint">点击录入</div>
+        </div>
+        <div class="split-expanded">
+          <div class="se-icon">＋</div>
+          <div class="se-title">会员企业 · 录入产品</div>
+          <div class="se-desc">将产品展示给潜在客户<br>Submit your product to the showroom</div>
+          <button class="se-action" onclick="event.stopPropagation();openAddProduct()">开始录入 →</button>
+        </div>
+      </div>
+      <!-- RIGHT: 搜索产品 -->
+      <div class="split-panel search-panel" id="searchPanel" onclick="document.getElementById('heroInput').focus()">
+        <div class="split-compact">
+          <div class="sc-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div class="sc-label">搜索产品</div>
+          <div class="sc-hint">点击搜索</div>
+        </div>
+        <div class="split-expanded">
+          <div class="se-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div class="se-title">发现产品 · Discover</div>
+          <div class="se-desc">描述需求，智能匹配协会会员产品</div>
+          <div class="se-search" onclick="event.stopPropagation()">
+            <input id="heroInput" placeholder="例如：医疗影像AI诊断…" maxlength="200">
+            <button class="se-send" id="heroSend">→</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="marquee-wrap"><div class="marquee-track row1" id="mq1"></div></div>
+    <div class="marquee-wrap"><div class="marquee-track row2" id="mq2"></div></div>
+  </div>
+
+  <!-- ═══ BROWSE (Showroom) ═══ -->
+  <div class="browse" id="browse">
+    <div class="topbar">
+      <div class="t-logo">
+        <svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg>
+      </div>
+      <div><h2>会员产品展厅 · Product Showroom</h2><div class="t-sub">Product Showroom</div></div>
+      <div class="t-actions">
+        <button class="t-btn primary" id="addProductBtn">＋ 录入产品</button>
+        <button class="t-btn" id="resetBtn">重新开始</button>
+      </div>
+    </div>
+    <div class="tab-bar" id="tabBar"></div>
+    <div class="product-area" id="productArea"></div>
+    <div class="browse-chat" id="browseChat">
+      <div class="bc-messages" id="bcMessages"></div>
+      <div class="bc-composer">
+        <input id="bcInput" placeholder="继续描述需求 · Refine your search…" maxlength="200">
+        <button class="bc-send" id="bcSend" title="发送 · Send">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+        </button>
+      </div>
+      <button class="chat-toggle-btn" id="chatToggleBtn">隐藏对话记录 · Hide chat</button>
+    </div>
+  </div>
+
+  <!-- ═══ SESSION VIEW ═══ -->
+  <div class="session-view" id="sessionView">
+    <div class="topbar">
+      <div class="t-logo">
+        <svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg>
+      </div>
+      <div><h2>信息协会 · Session</h2><div class="t-sub" id="sessTopbarSub">企业对接</div></div>
+      <div class="t-actions">
+        <button class="t-btn" id="backToSessionsBtn">← 返回 Session 列表</button>
+        <button class="t-btn" id="backToBrowseBtn2">返回展厅</button>
+      </div>
+    </div>
+    <div class="session-body">
+      <div class="session-product-card" id="sessionProductCard"></div>
+      <div class="session-chat">
+        <div class="sc-messages" id="scMessages"></div>
+        <div class="session-composer">
+          <input id="scInput" placeholder="输入消息… · Type a message…" maxlength="500">
+          <button class="sc-send" id="scSend" title="发送 · Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ SESSIONS LIST VIEW ═══ -->
+  <div class="sessions-list-view" id="sessionsListView">
+    <div class="slist-header">
+      <h2>我的 Session · My Sessions</h2>
+      <div class="sh-sub">已发起联系的企业对接</div>
+    </div>
+    <div class="slist-body" id="slistBody"></div>
+  </div>
+
+
+  <!-- ═══ ABOUT ═══ -->
+  <div class="sw-view" id="aboutView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>关于协会 · About CIIA</h2><div class="t-sub">中国信息协会数据智能专业委员会</div></div></div>
+    <div class="sw-body">
+      <div class="sw-stat-grid"><div class="sw-stat"><div class="st-num">1989</div><div class="st-lab">协会注册成立</div></div><div class="sw-stat"><div class="st-num">50+</div><div class="st-lab">首批会员单位</div></div><div class="sw-stat"><div class="st-num">10+</div><div class="st-lab">联合发起单位</div></div><div class="sw-stat"><div class="st-num">5</div><div class="st-lab">内设部门</div></div></div>
+      <div class="sw-card"><h3>定位</h3><p>构建一个凝聚政、产、学、研、用多方力量的全国性协同平台，致力于成为推动数据要素价值释放与人工智能深度应用的枢纽、智库和催化剂。</p></div>
+      <div class="sw-card"><h3>宗旨</h3><p>推动数据与智能技术创新与产业应用，促进数据智能技术与实体经济各行业的深度融合，提升我国数据智能产业的整体竞争力。</p></div>
+      <div class="sw-card"><h3>使命</h3><p>聚焦于打通"数据要素×AI技术"融合闭环，破解数据孤岛、技术断层、标准缺失三大瓶颈，构建高质量数据供给体系，支撑AI模型训练与行业应用。</p></div>
+      <div class="sw-card"><h3>组织架构</h3><p><b>综合部</b> — 秘书处综合管理与运营中枢 · <b>业务管理部</b> — 产业合作与生态建设核心引擎 · <b>标准评估部</b> — 专业权威基石（T/CIIA 070-2026） · <b>人才发展部</b> — 人才培养与能力建设平台 · <b>会展部</b> — 大型品牌活动策划与执行中心</p></div>
+    </div>
+    <div class="hello-bar" id="helloAbout"><div class="hello-pill" onclick="toggleHello('about')"><span class="hp-dot"></span>💬 协会咨询 · AI Agent</div><div class="hello-chat" id="hcAbout"><div class="hc-messages" id="hcmAbout"></div><div class="hello-composer"><input id="hciAbout" placeholder="询问关于协会的任何问题…" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('about')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('about')">收起 · Close</button></div></div>
+  </div>
+
+  <!-- ═══ JOIN ═══ -->
+  <div class="sw-view" id="joinView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>入会申请 · Join CIIA</h2><div class="t-sub">加入数据智能专业委员会</div></div></div>
+    <div class="sw-body">
+      <div class="sw-card"><h3>入会条件</h3><p>从事数据、智能、信息技术及相关领域的企业、科研院所、高校及社会组织，承认协会章程，自愿申请加入。</p></div>
+      <div class="sw-card"><h3>会员权益</h3><p>🏛 产品展厅入驻 · 🤖 AI 智能体优先体验 · 📊 行业报告免费获取 · 🤝 合作对接优先匹配 · 🎓 培训课程会员价 · 📋 标准评估优先参与</p></div>
+      <div class="sw-form">
+        <h3 style="font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink);margin-bottom:14px">申请表单</h3>
+        <div class="form-row"><div class="form-group"><label>企业名称 <span style="color:var(--red)">*</span></label><input id="joinCompany" placeholder="输入企业全称" maxlength="50"></div><div class="form-group"><label>联系人 <span style="color:var(--red)">*</span></label><input id="joinContact" placeholder="联系人姓名" maxlength="20"></div></div>
+        <div class="form-group"><label>联系电话 <span style="color:var(--red)">*</span></label><input id="joinPhone" placeholder="手机号码" maxlength="15"></div>
+        <div class="form-group"><label>企业简介</label><textarea id="joinDesc" placeholder="简要介绍企业业务和数据智能相关实践（≤200字）" maxlength="200" style="width:100%;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);font-family:var(--font-cn-ui);font-size:13px;resize:vertical;min-height:70px;box-sizing:border-box"></textarea></div>
+        <button class="btn-submit" onclick="submitJoin()">提交申请 · Submit</button>
+      </div>
+    </div>
+    <div class="hello-bar" id="helloJoin"><div class="hello-pill" onclick="toggleHello('join')"><span class="hp-dot"></span>💬 入会引导 · AI Agent</div><div class="hello-chat" id="hcJoin"><div class="hc-messages" id="hcmJoin"></div><div class="hello-composer"><input id="hciJoin" placeholder="询问入会条件、流程、费用…" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('join')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('join')">收起 · Close</button></div></div>
+  </div>
+
+  <!-- ═══ RESEARCH ═══ -->
+  <div class="sw-view" id="researchView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>行业研究院 · Research</h2><div class="t-sub">行业报告 / 白皮书 / AI 洞察</div></div></div>
+    <div class="sw-body">
+      <div class="report-item"><div class="ri-icon">📄</div><div><div class="ri-title">2026 中国"数据要素×"产业发展白皮书</div><div class="ri-meta">2026-03 · 深度研究报告</div></div></div>
+      <div class="report-item"><div class="ri-icon">📄</div><div><div class="ri-title">大模型在垂直领域落地的技术路径与 ROI 分析</div><div class="ri-meta">2026-02 · 行业深度报告</div></div></div>
+      <div class="report-item"><div class="ri-icon">📄</div><div><div class="ri-title">数据要素×行业智能体 — 从数据价值释放到规模化落地</div><div class="ri-meta">WAIC 2026 分论坛主题报告</div></div></div>
+      <div class="report-item"><div class="ri-icon">📄</div><div><div class="ri-title">AI 智能体管理能力成熟度评估模型（T/CIIA 070-2026）</div><div class="ri-meta">团体标准 · 中国信息协会发布</div></div></div>
+    </div>
+    <div class="hello-bar" id="helloResearch"><div class="hello-pill" onclick="toggleHello('research')"><span class="hp-dot"></span>💬 行业洞察 · AI Agent</div><div class="hello-chat" id="hcResearch"><div class="hc-messages" id="hcmResearch"></div><div class="hello-composer"><input id="hciResearch" placeholder="询问行业趋势、报告推荐…" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('research')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('research')">收起 · Close</button></div></div>
+  </div>
+
+  <!-- ═══ PARTNER ═══ -->
+  <div class="sw-view" id="partnerView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>合作对接 · Partner Matching</h2><div class="t-sub">发布合作需求，智能匹配合作伙伴</div></div></div>
+    <div class="sw-body">
+      <div class="partner-grid">
+        <div class="partner-card"><span class="pc-badge seeking">寻找合作</span><div class="pc-title">AI 影像诊断企业寻医疗数据合作</div><div class="pc-desc">某医疗AI企业已完成30+三甲医院部署，寻求医疗数据源合作伙伴，共建训练数据集。</div><button class="pc-btn" onclick="showToast('合作意向已发送 · Request sent')">发起对接 →</button></div>
+        <div class="partner-card"><span class="pc-badge seeking">寻找合作</span><div class="pc-title">数据安全合规平台寻金融行业渠道</div><div class="pc-desc">已完成等保/GDPR 对标，为5家头部大模型厂商服务。寻金融行业代理商和系统集成商。</div><button class="pc-btn" onclick="showToast('合作意向已发送 · Request sent')">发起对接 →</button></div>
+        <div class="partner-card"><span class="pc-badge" style="background:var(--jade-wash);color:var(--jade-deep)">提供服务</span><div class="pc-title">行业数据洞察 SaaS 开放 API 接入</div><div class="pc-desc">50+行业分析模板、8种数据源接入。寻数据中台和BI厂商联合解决方案合作。</div><button class="pc-btn" onclick="showToast('合作意向已发送 · Request sent')">发起对接 →</button></div>
+        <div class="partner-card"><span class="pc-badge seeking">寻找合作</span><div class="pc-title">智慧园区平台寻 IoT 硬件供应商</div><div class="pc-desc">40+园区落地。寻传感器、边缘网关、智能安防硬件供应商，共建智慧园区生态。</div><button class="pc-btn" onclick="showToast('合作意向已发送 · Request sent')">发起对接 →</button></div>
+      </div>
+    </div>
+    <div class="hello-bar" id="helloPartner"><div class="hello-pill" onclick="toggleHello('partner')"><span class="hp-dot"></span>💬 合作匹配 · AI Agent</div><div class="hello-chat" id="hcPartner"><div class="hc-messages" id="hcmPartner"></div><div class="hello-composer"><input id="hciPartner" placeholder="描述你想找的合作类型…" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('partner')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('partner')">收起 · Close</button></div></div>
+  </div>
+
+  <!-- ═══ MEMBER ═══ -->
+  <div class="sw-view" id="memberView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>会员专区 · Member Dashboard</h2><div class="t-sub" id="memberSub">欢迎回来</div></div></div>
+    <div class="member-tabs" id="memberTabs">
+      <button class="active" data-mtab="products">我的产品</button>
+      <button data-mtab="sessions">客户 Session</button>
+      <button data-mtab="profile">企业资料</button>
+    </div>
+    <div class="sw-body" id="memberBody"></div>
+    <div class="hello-bar" id="helloMember"><div class="hello-pill" onclick="toggleHello('member')"><span class="hp-dot"></span>💬 会员助手 · AI Agent</div><div class="hello-chat" id="hcMember"><div class="hc-messages" id="hcmMember"></div><div class="hello-composer"><input id="hciMember" placeholder="需要什么帮助？" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('member')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('member')">收起 · Close</button></div></div>
+  </div>
+
+  <!-- ═══ ADMIN ═══ -->
+  <div class="sw-view" id="adminView">
+    <div class="topbar"><div class="t-logo"><svg viewBox="0 0 32 32" fill="none"><rect x="2" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".9"/><rect x="18" y="2" width="12" height="12" rx="2" fill="#fff" opacity=".6"/><rect x="10" y="18" width="12" height="12" rx="2" fill="#fff" opacity=".75"/></svg></div><div><h2>管理后台 · Admin</h2><div class="t-sub">CIIA 内部管理</div></div></div>
+    <div class="sw-body">
+      <div class="admin-stat-grid"><div class="admin-stat"><div class="as-num">50</div><div class="as-lab">会员企业</div></div><div class="admin-stat"><div class="as-num">12</div><div class="as-lab">展厅产品</div></div><div class="admin-stat"><div class="as-num">8</div><div class="as-lab">活跃 Session</div></div></div>
+      <h3 style="font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink);margin-bottom:12px">待审核产品</h3>
+      <div class="review-item2"><div><div class="ri2-name">智能文档比对系统</div><div class="ri2-meta">北京慧文科技有限公司 · 提交于 2026-07-20</div></div><div class="ri2-actions"><button class="ri2-btn approve" onclick="showToast('已通过 · Approved')">通过</button><button class="ri2-btn reject" onclick="showToast('已驳回 · Rejected')">驳回</button></div></div>
+      <h3 style="font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink);margin-bottom:12px;margin-top:20px">待审核入会</h3>
+      <div class="review-item2"><div><div class="ri2-name">深圳市和讯华谷信息技术有限公司</div><div class="ri2-meta">申请于 2026-07-21</div></div><div class="ri2-actions"><button class="ri2-btn approve" onclick="showToast('已通过 · Approved')">通过</button><button class="ri2-btn reject" onclick="showToast('已驳回 · Rejected')">驳回</button></div></div>
+    </div>
+    <div class="hello-bar" id="helloAdmin"><div class="hello-pill" onclick="toggleHello('admin')"><span class="hp-dot"></span>💬 运营助手 · AI Agent</div><div class="hello-chat" id="hcAdmin"><div class="hc-messages" id="hcmAdmin"></div><div class="hello-composer"><input id="hciAdmin" placeholder="数据查询、审核辅助…" maxlength="200"><button class="hello-send" onclick="sendHelloMsg('admin')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button></div><button class="hc-close" onclick="toggleHello('admin')">收起 · Close</button></div></div>
+  </div>
+
+</div><!-- /main-content -->
+
+<!-- ═══ OVERLAYS ═══ -->
+<div class="overlay" id="overlay"><div class="dlg" id="dlg"></div></div>
+<div class="overlay" id="addProductOverlay">
+  <div class="dlg" style="max-width:520px">
+    <button class="close" onclick="closeAddProduct()">×</button>
+    <h3>录入产品 · Add Product</h3>
+    <div class="co">将会员企业的产品录入到展厅</div>
+    <div class="form-group">
+      <label>产品名称 <span style="color:var(--red)">*</span></label>
+      <input id="apName" placeholder="例如：心脏超声辅助诊断系统" maxlength="50">
+    </div>
+    <div class="form-group">
+      <label>企业名称 <span style="color:var(--red)">*</span></label>
+      <input id="apCompany" placeholder="例如：北京智影医疗科技有限公司" maxlength="50">
+    </div>
+    <div class="form-group">
+      <label>一句话描述 <span style="color:var(--red)">*</span></label>
+      <textarea id="apDesc" placeholder="简要描述产品功能和价值（≤80字）" maxlength="80"></textarea>
+      <div class="hint"><span id="apDescCount">0</span>/80</div>
+    </div>
+    <div class="form-group">
+      <label>详细说明</label>
+      <textarea id="apDetail" placeholder="产品的详细功能、技术特点、应用场景等（≤300字）" maxlength="300" style="min-height:80px"></textarea>
+      <div class="hint"><span id="apDetailCount">0</span>/300</div>
+    </div>
+    <div class="form-group">
+      <label>所属分类 <span style="color:var(--red)">*</span></label>
+      <select id="apCat"></select>
+    </div>
+    <div class="form-group">
+      <label>标签</label>
+      <input id="apTags" placeholder="逗号分隔，2-5个标签。例如：医疗AI, 影像诊断" maxlength="60">
+      <div class="hint">用于搜索匹配，建议填写</div>
+    </div>
+    <div class="form-actions">
+      <button class="btn-cancel" onclick="closeAddProduct()">取消 · Cancel</button>
+      <button class="btn-submit" id="apSubmit" onclick="submitProduct()">提交录入 · Submit</button>
+    </div>
+  </div>
+</div>
+
+<!-- Login Modal -->
+<div class="overlay" id="loginOverlay">
+  <div class="dlg" style="max-width:380px">
+    <button class="close" onclick="closeLogin()">×</button>
+    <h3>登录 · Sign in</h3>
+    <div class="co">以会员身份使用录入产品等功能</div>
+    <div class="form-group">
+      <label>显示名称</label>
+      <input id="loginName" placeholder="输入您的姓名或昵称" maxlength="20">
+    </div>
+    <div class="form-group">
+      <label>选择头像颜色</label>
+      <div class="login-avatar-options" id="loginColors">
+        <button data-color="#0048A8" class="sel" style="background:#0048A8;color:#fff">信</button>
+        <button data-color="#0FA06E" style="background:#0FA06E;color:#fff">协</button>
+        <button data-color="#D81830" style="background:#D81830;color:#fff">会</button>
+        <button data-color="#0B5CFF" style="background:#0B5CFF;color:#fff">员</button>
+        <button data-color="#7C3AED" style="background:#7C3AED;color:#fff">企</button>
+        <button data-color="#FF8A1E" style="background:#FF8A1E;color:#fff">业</button>
+      </div>
+    </div>
+    <button class="cta" onclick="doLogin()">确认登录 · Sign in</button>
+    <button class="btn-ghost" style="display:block;width:100%;margin-top:8px" onclick="closeLogin()">取消 · Cancel</button>
+    <button class="btn-ghost" style="display:block;width:100%;margin-top:4px;color:var(--red)" onclick="doLogout()" id="logoutBtn" hidden>退出登录 · Sign out</button>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════ Product data ═══════════════════════
+const PRODUCTS = [
+  {id:1,name:'心脏超声辅助诊断系统',company:'北京智影医疗科技有限公司',desc:'基于深度学习的超声影像智能分析平台，辅助医生快速识别心脏结构异常与功能评估，准确率超95%，已部署于30+三甲医院。',tags:[{t:'医疗AI',c:'tag-med'},{t:'影像诊断',c:'tag-ai'}],kw:['医疗','影像','诊断','AI诊断','心脏','超声','健康','医院'],cat:'医疗健康',img:'#D81830',detail:'自研3D卷积神经网络架构，支持经胸/经食道超声双模态。LVEF自动计算、瓣膜反流分级、室壁运动异常检测。NMPA三类认证，阜外等30+三甲医院临床验证。'},
+  {id:2,name:'医学影像AI分析平台',company:'上海数智健康科技有限公司',desc:'覆盖CT、MRI、超声多模态影像的通用AI分析引擎，支持肺结节、脑卒中、骨折等12种常见病灶自动检出。',tags:[{t:'医疗AI',c:'tag-med'},{t:'多模态',c:'tag-ai'}],kw:['医疗','影像','CT','MRI','诊断','肺结节','脑卒中','健康'],cat:'医疗健康',img:'#0048A8',detail:'统一特征提取backbone+12个病灶专用检测头架构，单次CT平扫30秒内完成7类病灶初筛。6家区域医疗中心接入，累计超500万例。云端API与私有化部署。'},
+  {id:3,name:'区域经济大脑',company:'杭州数聚科技有限公司',desc:'融合政务、企业、舆情多源数据，构建区域经济全景监测与智能预警平台，助力精准决策。',tags:[{t:'数据分析',c:'tag-data'},{t:'政务',c:'tag-office'}],kw:['数据','分析','经济','政务','大数据','决策','监测','预警'],cat:'数据智能',img:'#FFD400',detail:'汇聚14个政务部门数据，200+经济监测指标。产业链图谱自动构建、企业风险画像、区域经济景气指数预测（LSTM+Transformer，季度误差<3%）。8个地级市部署。'},
+  {id:4,name:'行业数据洞察平台',company:'深圳前海数联科技有限公司',desc:'面向金融、零售、制造的一站式数据洞察SaaS，从数据接入到可视化报表完整闭环。',tags:[{t:'数据分析',c:'tag-data'},{t:'SaaS',c:'tag-ai'}],kw:['数据','分析','金融','零售','SaaS','报表','可视化','洞察'],cat:'数据智能',img:'#0FA06E',detail:'内置50+行业分析模板，8种数据源接入。拖拽式分析画布+自然语言查询（NL2SQL）。2000+企业客户，2025年工信部大数据优秀产品奖。'},
+  {id:5,name:'AI安全合规治理平台',company:'北京数安科技有限公司',desc:'面向AI大模型全生命周期的安全合规治理工具链，覆盖数据安全、模型安全、内容安全与合规审计。',tags:[{t:'AI安全',c:'tag-sec'},{t:'合规',c:'tag-sec'}],kw:['安全','合规','AI治理','大模型','数据安全','审计','隐私'],cat:'AI安全治理',img:'#FF8A1E',detail:'四大能力：训练数据安全审查、模型安全评估(对抗鲁棒性/后门检测/越狱防御)、生成内容安全过滤、合规审计(等保/GDPR对标)。已服务5家头部大模型厂商。'},
+  {id:6,name:'智能文档比对系统',company:'北京慧文科技有限公司',desc:'基于NLP与OCR的智能文档比对引擎，支持合同、标书、论文等语义级差异检测。',tags:[{t:'智能办公',c:'tag-office'},{t:'NLP',c:'tag-ai'}],kw:['文档','比对','合同','办公','标书','NLP','OCR','效率'],cat:'智能办公',img:'#0B5CFF',detail:'段落语义向量对齐+关键条款抽取，识别同义改写/条款增减/数字篡改等深层差异。12种格式，单次200页以上。30+律所部署，准确率99.2%。'},
+  {id:7,name:'智能语音录入系统',company:'广州声智科技有限公司',desc:'面向医疗、司法、会议等垂直场景的专业语音识别与结构化录入系统，准确率超98%。',tags:[{t:'智能办公',c:'tag-office'},{t:'语音AI',c:'tag-ai'}],kw:['语音','录入','办公','会议','医疗','司法','识别','效率'],cat:'智能办公',img:'#7C3AED',detail:'医疗/司法/会议三大场景专用声学模型，中英混合识别+实时说话人分离。医疗版内置ICD-11编码映射；司法版多角色标注笔录。离线端侧部署。'},
+  {id:8,name:'智能制造质量检测平台',company:'苏州明远智能科技有限公司',desc:'基于机器视觉与边缘AI的工业产品质量检测方案，覆盖电子、汽车、食品包装等行业。',tags:[{t:'智能制造',c:'tag-mfg'},{t:'工业AI',c:'tag-ai'}],kw:['制造','工业','质检','检测','机器视觉','电子','汽车','工厂'],cat:'智能制造',img:'#0891B2',detail:'FPGA边缘推理+云端模型训练闭环，单帧推理<50ms，适配30+产线检测场景。小样本学习，新品50-100张样本即可。富士康、比亚迪、宁德时代等500+工位部署。'},
+  {id:9,name:'智慧园区管理平台',company:'成都锦城智慧科技有限公司',desc:'IoT+AI驱动的智慧园区综合管理平台，覆盖安防、能耗、停车、访客等全场景。',tags:[{t:'智能制造',c:'tag-mfg'},{t:'IoT',c:'tag-ai'}],kw:['园区','管理','IoT','安防','能耗','智慧','停车','物业'],cat:'智能制造',img:'#059669',detail:'数字孪生引擎1:1还原建筑与设备。AI视频分析、能耗优化(HVAC动态调度，节能15-25%)、智能停车引导、访客全流程管理。40+园区落地。'},
+  {id:10,name:'行业报告智能平台',company:'信息协会数据智能研究中心',desc:'汇聚500+行业研究报告、白皮书与学术论文，支持自然语言检索与智能摘要生成。',tags:[{t:'行业报告',c:'tag-data'},{t:'知识库',c:'tag-office'}],kw:['报告','研究','白皮书','论文','行业','学术','检索','知识'],cat:'行业研究',img:'#D81830',detail:'收录500+研究资源，覆盖AI/大数据/数字经济/网络安全等12个领域。全文检索、智能摘要、相似推荐、引用格式自动生成。PDF在线阅读与下载。'},
+];
+const ALL_CATS = [...new Set(PRODUCTS.map(p=>p.cat))];
+const TAG_C = {med:'tag-med',data:'tag-data',ai:'tag-ai',office:'tag-office',mfg:'tag-mfg',sec:'tag-sec'};
+const IMG_COLORS = ['#D81830','#0048A8','#FFD400','#0FA06E','#FF8A1E','#0B5CFF','#7C3AED','#0891B2','#059669'];
+
+// ═══════════════════════ State ═══════════════════════
+let activeCat = null, currentProducts = PRODUCTS, isBrowsing = false;
+let SESSIONS = [], activeSessionId = null;
+let currentUser = null; // {name, color} or null if not logged in
+let currentView = 'showroom'; // 'showroom' | 'sessions' | 'session-detail'
+try{currentUser=JSON.parse(localStorage.getItem('ciia_user'));}catch(e){}
+
+// ═══════════════════════ DOM ═══════════════════════
+const $hero = document.getElementById('hero'), $heroDialog = document.getElementById('heroDialog');
+const $heroInput = document.getElementById('heroInput'), $heroSend = document.getElementById('heroSend');
+const $browse = document.getElementById('browse'), $tabBar = document.getElementById('tabBar');
+const $productArea = document.getElementById('productArea');
+const $resetBtn = document.getElementById('resetBtn'), $overlay = document.getElementById('overlay'), $dlg = document.getElementById('dlg');
+const $addProductBtn = document.getElementById('addProductBtn'), $addProductOverlay = document.getElementById('addProductOverlay');
+const $navShowroom = document.getElementById('navShowroom'), $navSessions = document.getElementById('navSessions');
+const $navSessBadge = document.getElementById('navSessBadge');
+const $sessionView = document.getElementById('sessionView'), $sessionProductCard = document.getElementById('sessionProductCard');
+const $scMessages = document.getElementById('scMessages'), $scInput = document.getElementById('scInput'), $scSend = document.getElementById('scSend');
+const $sessTopbarSub = document.getElementById('sessTopbarSub');
+const $sessionsListView = document.getElementById('sessionsListView'), $slistBody = document.getElementById('slistBody');
+const $browseChat=document.getElementById('browseChat'),$bcMessages=document.getElementById('bcMessages');
+const $bcInput=document.getElementById('bcInput'),$bcSend=document.getElementById('bcSend');
+const $toast = document.getElementById('toast');
+const $sbLogin = document.getElementById('sbLogin'), $slAv = document.getElementById('slAv'), $slName = document.getElementById('slName');
+const $slBtn = document.getElementById('slBtn'), $loginOverlay = document.getElementById('loginOverlay');
+const $loginName = document.getElementById('loginName'), $logoutBtn = document.getElementById('logoutBtn');
+
+// ═══════════════════════ User / Login ═══════════════════════
+function updateLoginUI(){
+  if(currentUser){
+    $slAv.textContent=currentUser.name.charAt(0);
+    $slAv.style.background=currentUser.color;
+    $slAv.style.color='#fff';
+    $slAv.classList.add('logged-in');
+    $slName.textContent=currentUser.name;
+    $sbLogin.querySelector('.sl-role').textContent='已登录';
+    $slBtn.textContent='退出';$slBtn.onclick=doLogout;$logoutBtn.hidden=false;
+    // Show member nav
+    document.getElementById('memberGroupLabel').style.display='';
+    document.getElementById('navMember').style.display='';
+  }else{
+    $slAv.textContent='👤';$slAv.style.background='var(--line)';$slAv.style.color='var(--ink-3)';
+    $slAv.classList.remove('logged-in');$slName.textContent='访客';
+    $sbLogin.querySelector('.sl-role').textContent='未登录';
+    $slBtn.textContent='登录';$slBtn.onclick=openLogin;$logoutBtn.hidden=true;
+    // Hide member nav
+    document.getElementById('memberGroupLabel').style.display='none';
+    document.getElementById('navMember').style.display='none';
+    // Go back to showroom if on a member-only view
+    if(currentView==='member')switchView('showroom');
+  }
+}
+function openLogin(){
+  $loginName.value=currentUser?currentUser.name:'';
+  $loginOverlay.classList.add('on');
+  try{$loginName.focus();}catch(e){}
+}
+function closeLogin(){$loginOverlay.classList.remove('on');}
+function doLogin(){
+  const name=$loginName.value.trim();
+  if(!name){showToast('请输入显示名称 · Name required');return;}
+  const sel=$loginOverlay.querySelector('#loginColors button.sel');
+  const color=sel?sel.dataset.color:'#0048A8';
+  currentUser={name,color};
+  localStorage.setItem('ciia_user',JSON.stringify(currentUser));
+  updateLoginUI();
+  closeLogin();
+  showToast(`已登录 · Welcome, ${name}`);
+}
+function doLogout(){
+  currentUser=null;
+  localStorage.removeItem('ciia_user');
+  updateLoginUI();
+  closeLogin();
+  showToast('已退出登录 · Signed out');
+}
+// Init login UI
+updateLoginUI();
+// Login color picker
+document.getElementById('loginColors').addEventListener('click',e=>{
+  if(e.target.tagName==='BUTTON'){
+    document.querySelectorAll('#loginColors button').forEach(b=>b.classList.remove('sel'));
+    e.target.classList.add('sel');
+  }
+});
+
+// ═══════════════════════ Navigation ═══════════════════════
+function switchView(view){
+  currentView=view;
+  // Hide all views
+  var allViews=[$hero,$browse,$sessionView,$sessionsListView,'aboutView','joinView','researchView','partnerView','memberView','adminView'];
+  $hero.classList.add('fade');$heroDialog.style.display='';
+  $browse.classList.remove('on');$sessionView.classList.remove('on');$sessionsListView.classList.remove('on');
+  ['aboutView','joinView','researchView','partnerView','memberView','adminView'].forEach(id=>document.getElementById(id).classList.remove('on'));
+  activeSessionId=null;
+
+  // Reset nav active states
+  document.querySelectorAll('.sb-nav-item').forEach(b=>b.classList.remove('active'));
+
+  if(view==='showroom'){
+    $hero.classList.remove('fade');$heroDialog.style.display='';
+    $heroInput.value='';$bcMessages.innerHTML='';$browseChat.classList.remove('open');
+    $bcMessages.style.display='';$chatToggleBtn.textContent='隐藏对话记录 · Hide chat';$bcInput.value='';
+    isBrowsing=false;activeCat=null;currentProducts=PRODUCTS;
+    $navShowroom.classList.add('active');
+  }else if(view==='sessions'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    $sessionsListView.classList.add('on');renderSessionsList();isBrowsing=false;
+    $navSessions.classList.add('active');
+  }else if(view==='about'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('aboutView').classList.add('on');isBrowsing=false;
+    document.getElementById('navAbout').classList.add('active');
+  }else if(view==='join'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('joinView').classList.add('on');isBrowsing=false;
+    document.getElementById('navJoin').classList.add('active');
+  }else if(view==='research'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('researchView').classList.add('on');isBrowsing=false;
+    document.getElementById('navResearch').classList.add('active');
+  }else if(view==='partner'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('partnerView').classList.add('on');isBrowsing=false;
+    document.getElementById('navPartner').classList.add('active');
+  }else if(view==='member'){
+    if(!currentUser){showToast('请先登录 · Please sign in first');openLogin();return;}
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('memberView').classList.add('on');isBrowsing=false;
+    document.getElementById('navMember').classList.add('active');
+    renderMemberTab('products');
+  }else if(view==='admin'){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    document.getElementById('adminView').classList.add('on');isBrowsing=false;
+    document.getElementById('navAdmin').classList.add('active');
+  }
+}
+// Wire all nav items
+document.querySelectorAll('.sb-nav-item[data-view]').forEach(b=>{
+  b.addEventListener('click',()=>switchView(b.dataset.view));
+});
+
+// ═══════════════════════ Product rendering ═══════════════════════
+function matchProducts(query) {
+  const q = query.toLowerCase();
+  if(q.includes('全部')||q.includes('所有')||q.includes('展厅'))return {products:PRODUCTS,isRec:false,isAll:true};
+  const scored = PRODUCTS.map(p=>{let s=0;p.kw.forEach(k=>{if(q.includes(k.toLowerCase()))s+=3});if(q.includes(p.cat))s+=2;if(p.name.toLowerCase().includes(q)||p.company.toLowerCase().includes(q))s+=2;p.desc.split(/[，,、\s]+/).forEach(w=>{if(q.includes(w))s+=1});return{p,s};}).filter(x=>x.s>0).sort((a,b)=>b.s-a.s);
+  if(scored.length===0){const sh=[...PRODUCTS].sort(()=>Math.random()-.5);return{products:sh.slice(0,4),isRec:true};}
+  return{products:scored.slice(0,6).map(x=>x.p),isRec:false};
+}
+
+function showLoading(){
+  $tabBar.innerHTML='';
+  $productArea.innerHTML=`<div class="skel-status"><span class="skel-dot"></span>正在匹配产品 · Matching products…</div><div class="skel-grid">${'<div class="skel-card"><div class="skel-img"></div><div class="skel-line"></div><div class="skel-line w2"></div><div class="skel-line w3"></div></div>'.repeat(6)}</div>`;
+}
+
+function renderProducts(products, title, subtitle, isRec) {
+  activeCat=null;currentProducts=products;
+  let th=`<button class="active" data-cat="">全部 · All<span class="count">${products.length}</span></button>`;
+  ALL_CATS.forEach(cat=>{const cnt=products.filter(p=>p.cat===cat).length;if(cnt>0)th+=`<button data-cat="${cat}">${cat}<span class="count">${cnt}</span></button>`;});
+  $tabBar.innerHTML=th;
+  renderGrid(products,title,subtitle,isRec);
+}
+
+function renderGrid(products,title,subtitle,isRec){
+  const cards=products.map(p=>`<div class="pg-card" onclick="showDetail(${p.id})"><div class="pg-img" style="background:${p.img}18">${glyph(p)}</div><div class="pg-name">${p.name}</div><div class="pg-company">${p.company}</div><div class="pg-desc">${p.desc}</div><div class="pg-tags">${p.tags.map(t=>`<span class="${TAG_C[t.c]}">${t.t}</span>`).join('')}</div><div class="pg-actions"><button class="pg-btn primary" onclick="event.stopPropagation();showDetail(${p.id})">了解详情 · Details</button><button class="pg-btn outline" onclick="event.stopPropagation();contactCompany(${p.id})">联系企业 · Contact</button><button class="pg-btn outline" onclick="event.stopPropagation();chatAbout('${p.name}')">追问 · Ask more</button></div></div>`).join('');
+  const alert=isRec?`<div class="alert-rec">未找到精确匹配，以下为协会精选推荐 · Curated picks. 试试换个关键词？</div>`:'';
+  $productArea.innerHTML=`<div class="pg-title">${title}</div><div class="pg-sub">${subtitle}</div>${alert}<div class="pg-grid">${cards}</div>`;
+  $productArea.scrollTop=0;
+}
+
+function glyph(p){
+  const s={
+    '医疗健康':'<circle cx="16" cy="12" r="6" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M4 28 L10 20 L16 26 L22 14 L28 22" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>',
+    '数据智能':'<rect x="4" y="18" width="7" height="10" rx="1.5" fill="currentColor" opacity=".9"/><rect x="12.5" y="10" width="7" height="18" rx="1.5" fill="currentColor" opacity=".7"/><rect x="21" y="4" width="7" height="24" rx="1.5" fill="currentColor" opacity=".5"/>',
+    'AI安全治理':'<path d="M16 4 L28 10 L28 18 C28 24 16 30 16 30 C16 30 4 24 4 18 L4 10 Z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/><circle cx="16" cy="16" r="4" fill="currentColor" opacity=".6"/>',
+    '智能办公':'<rect x="3" y="5" width="26" height="18" rx="2" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="8" y1="27" x2="24" y2="27" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><rect x="6" y="9" width="20" height="3" rx="1" fill="currentColor" opacity=".5"/>',
+    '智能制造':'<rect x="4" y="4" width="10" height="10" rx="2" fill="currentColor" opacity=".4"/><circle cx="18" cy="14" r="6" fill="none" stroke="currentColor" stroke-width="2.5"/><path d="M14 26 L22 26 L24 20 L18 24 L12 20 Z" fill="currentColor" opacity=".7"/>',
+    '行业研究':'<rect x="4" y="4" width="11" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="2.5"/><rect x="17" y="4" width="11" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="2.5"/><line x1="9" y1="9" x2="13" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><line x1="22" y1="9" x2="26" y2="9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+  };
+  return `<svg viewBox="0 0 32 32" style="color:${p.img}">${s[p.cat]||s['数据智能']}</svg>`;
+}
+function filterByCat(cat){
+  activeCat=cat;const f=cat?currentProducts.filter(p=>p.cat===cat):currentProducts;
+  renderGrid(f,`${cat||'会员产品展厅 · Product Showroom'}`,`${f.length} 款产品 · ${f.length} products`,false);
+  $tabBar.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.cat===(cat||'')));
+}
+
+// ═══════════════════════ Handle query (Hero → Browse) ═══════════════════════
+async function handleQuery(query, isFirst) {
+  if(!query.trim())return;
+  if(isFirst){
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    $browse.classList.add('on');showLoading();
+    isBrowsing=true;currentView='showroom';
+    document.querySelectorAll('.sb-nav-item').forEach(b=>b.classList.remove('active'));$navShowroom.classList.add('active');
+  }
+
+  // Show user message
+  addBcMsg('user',escapeHtml(query));
+  addBcTyping('advisor');await sleep(600+Math.random()*400);rmBcTyping();
+  addBcMsg('advisor',getAck(query));
+  addBcTyping('matcher');await sleep(800+Math.random()*500);rmBcTyping();
+
+  const result=matchProducts(query),n=result.products.length;
+  let title,subtitle;
+  if(result.isAll){title='会员产品展厅 · Product Showroom';subtitle=`${n} 款产品 · ${n} products — 医疗AI · 数据智能 · 智能制造 · AI安全 · 智能办公`;}
+  else if(result.isRec){title='精选推荐 · Curated picks';subtitle='以下为协会精选产品，换个关键词试试？';}
+  else{title=`匹配到 ${n} 个产品 · ${n} matches`;subtitle='根据您的需求智能匹配，点击卡片查看详情或联系企业。';}
+
+  const pnames=result.products.slice(0,3).map(p=>`<b>${p.name}</b>`).join('、');
+  const more=n>3?`等 <b>${n}</b> 款`:'';
+  addBcMsg('matcher',result.isRec?`为您精选了 ${more||n+'款'} 产品${pnames?`：${pnames}${more}`:''}。`:`匹配到 ${more||n+'款'} 产品${pnames?`：${pnames}${more}`:''}，已为您展示。`);
+
+  renderProducts(result.products,title,subtitle,result.isRec);
+  if(isFirst)try{$bcInput.focus();}catch(e){}
+}
+
+// ═══════════════════════ Browse chat helpers ═══════════════════════
+function addBcMsg(role,html){
+  $browseChat.classList.add('open');
+  const cls=role==='user'?'user-msg':role;
+  const av={user:{bg:'var(--blueink)',icon:'您'},advisor:{bg:'var(--ink-3)',icon:'顾'},matcher:{bg:'var(--blue)',icon:'匹'}};
+  const d=document.createElement('div');d.className='bc-msg '+cls;
+  const a=av[role]||av.advisor;
+  d.innerHTML=`<div class="bc-av" style="background:${a.bg}">${a.icon}</div><div class="bc-bbl">${html}</div>`;
+  $bcMessages.appendChild(d);$bcMessages.scrollTop=$bcMessages.scrollHeight;
+  requestAnimationFrame(updateBcOpacity);
+}
+
+// Position-based opacity: bubbles nearer the bottom → more visible
+function updateBcOpacity(){
+  const c=$bcMessages;
+  const cb=c.getBoundingClientRect().bottom;
+  const vh=c.clientHeight;
+  c.querySelectorAll('.bc-bbl').forEach(b=>{
+    const rb=b.getBoundingClientRect();
+    const center=(rb.top+rb.bottom)/2;
+    const dist=Math.max(0,cb-center);
+    const ratio=Math.max(0,Math.min(1,1-dist/vh));
+    b.style.opacity=(0.06+Math.pow(ratio,3)*0.94).toFixed(3);
+  });
+}
+function addBcTyping(role){
+  const av={advisor:'顾',matcher:'匹'};
+  const cls=role==='matcher'?'matcher':'advisor';
+  const d=document.createElement('div');d.className='bc-msg '+cls;d.id='bcTypingBubble';
+  d.innerHTML=`<div class="bc-av" style="background:${role==='matcher'?'var(--blue)':'var(--ink-3)'}">${av[role]}</div><div class="bc-bbl"><div class="typing-dots"><span></span><span></span><span></span></div></div>`;
+  $bcMessages.appendChild(d);$bcMessages.scrollTop=$bcMessages.scrollHeight;
+}
+function rmBcTyping(){const t=document.getElementById('bcTypingBubble');if(t)t.remove();}
+function getAck(q){const l=q.toLowerCase();if(l.includes('医疗')||l.includes('影像')||l.includes('诊断'))return'医疗AI是协会重点领域，正在为您匹配相关产品。';if(l.includes('数据')||l.includes('分析')||l.includes('经济'))return'数据智能方向有多家优秀会员企业，为您检索中。';if(l.includes('安全')||l.includes('合规'))return'AI安全合规是当前热点，协会标杆企业产品已就绪。';if(l.includes('制造')||l.includes('工业')||l.includes('质检'))return'智能制造领域涵盖质检、园区管理等方向，正在匹配。';if(l.includes('办公')||l.includes('语音')||l.includes('文档'))return'智能办公工具有多家会员企业提供成熟方案。';if(l.includes('报告')||l.includes('研究')||l.includes('白皮书'))return'行业研究资源是协会核心服务，帮您检索。';if(l.includes('全部')||l.includes('所有'))return'好的，为您展示全部会员产品。';return'好的，正在从会员产品库中为您精准检索。';}
+
+function chatAbout(name){
+  $bcInput.value=`请详细介绍一下「${name}」，它适合什么场景？`;
+  $bcInput.focus();
+}
+
+function showDetail(pid){
+  const p=PRODUCTS.find(x=>x.id===pid);if(!p)return;
+  $dlg.innerHTML=`<button class="close" onclick="closeDetail()">×</button><h3>${p.name}</h3><div class="co">${p.company}</div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${p.tags.map(t=>`<span class="${TAG_C[t.c]}" style="padding:2px 10px;border-radius:var(--r-pill);font-size:11px;font-weight:600">${t.t}</span>`).join('')}</div><div class="body"><p>${p.detail||p.desc}</p></div><button class="cta" onclick="contactCompany(${p.id});closeDetail();">联系企业获取方案 · Contact for details</button>`;
+  $overlay.classList.add('on');
+}
+
+function contactCompany(pid){
+  const p=PRODUCTS.find(x=>x.id===pid);if(!p)return;
+  $dlg.innerHTML=`<button class="close" onclick="closeDetail()">×</button><h3>联系企业 · Contact</h3><div class="co">${p.company}</div><p class="contact-subtitle">您的需求已发送，信息协会为您创建专属 Session</p><div class="contact-cards"><div class="contact-card"><div class="cc-av" style="background:${currentUser?currentUser.color:'var(--blueink)'}">${currentUser?currentUser.name.charAt(0):'您'}</div><div class="cc-label">${currentUser?currentUser.name:'访客 · Visitor'}</div><div class="cc-role">潜在客户</div></div><div class="contact-card"><div class="cc-av" style="background:${p.img}">企</div><div class="cc-label">${p.company}</div><div class="cc-role">企业对接人</div></div></div><div class="contact-actions"><button class="btn btn-primary" onclick="closeDetail();createAndEnterSession(${p.id})">进入 Session · Open Session</button><button class="btn btn-ghost" onclick="closeDetail()">继续浏览 · Keep browsing</button></div>`;
+  $overlay.classList.add('on');
+}
+function closeDetail(){$overlay.classList.remove('on');}
+
+// ═══════════════════════ Session management ═══════════════════════
+function createAndEnterSession(pid){
+  const p=PRODUCTS.find(x=>x.id===pid);if(!p)return;
+  let sess=SESSIONS.find(s=>s.productId===pid);
+  if(!sess){
+    sess={
+      id:'sess_'+Date.now(),
+      productId:pid,
+      companyName:p.company,
+      productName:p.name,
+      productImg:p.img,
+      createdAt:new Date().toISOString(),
+      messages:[
+        {role:'system',text:`已为您连接 <b>${p.company}</b> 的对接人。信息协会为供需双方提供可信对接通道。`},
+        {role:'company',text:`您好！感谢您关注我们的「${p.name}」。请问您想了解哪方面？是技术细节、应用场景、还是商务合作？`},
+      ],
+      unread:0,
+    };
+    SESSIONS.unshift(sess);
+  }
+  updateSessBadge();
+  openSessionView(sess.id);
+}
+
+function openSessionView(sid){
+  const sess=SESSIONS.find(s=>s.id===sid);if(!sess)return;
+  activeSessionId=sid;currentView='session-detail';
+  // Hide all views
+  $hero.classList.add('fade');$heroDialog.style.display='none';
+  $browse.classList.remove('on');
+  $sessionsListView.classList.remove('on');
+  // Show session
+  $sessionView.classList.add('on');
+  $sessTopbarSub.textContent=sess.companyName;
+  renderSessionProductCard(sess);
+  renderSessionMessages(sess);
+  document.querySelectorAll('.sb-nav-item').forEach(b=>b.classList.remove('active'));$navShowroom.classList.add('active');
+  try{document.getElementById('scInput').focus();}catch(e){}
+}
+
+function closeSessionView(backTo){
+  $sessionView.classList.remove('on');
+  activeSessionId=null;
+  updateSessBadge();
+  if(backTo==='sessions'){
+    switchView('sessions');
+  }else{
+    switchView('showroom');
+    // Go to browse state
+    $hero.classList.add('fade');$heroDialog.style.display='none';
+    $browse.classList.add('on');isBrowsing=true;
+  }
+}
+
+function renderSessionProductCard(sess){
+  const p=PRODUCTS.find(x=>x.id===sess.productId);if(!p)return;
+  $sessionProductCard.innerHTML=`
+    <div class="sp-img" style="background:${p.img}18">${glyph(p)}</div>
+    <div class="sp-name">${p.name}</div>
+    <div class="sp-company">${p.company}</div>
+    <div class="sp-desc">${p.desc}</div>
+    <div class="sp-tags">${p.tags.map(t=>`<span class="${TAG_C[t.c]||'tag-ai'}">${t.t}</span>`).join('')}</div>
+    <div class="sp-meta">
+      <b>Session 编号</b>：${sess.id}<br>
+      <b>创建时间</b>：${new Date(sess.createdAt).toLocaleString('zh-CN')}<br>
+      <b>状态</b>：<span style="color:var(--jade)">● 已连接</span><br><br>
+      <span style="color:var(--ink-4)">企业方将在 Session 中回应您的咨询。信息协会平台保障双方信息安全。</span>
+    </div>`;
+}
+
+function renderSessionMessages(sess){
+  $scMessages.innerHTML=sess.messages.map(m=>{
+    if(m.role==='system')return`<div class="sc-msg system"><div class="sc-bbl">${m.text}</div></div>`;
+    if(m.role==='company')return`<div class="sc-msg company"><div class="sc-av" style="background:var(--accent-hover)">企</div><div class="sc-bbl">${m.text}</div></div>`;
+    return`<div class="sc-msg user-msg"><div class="sc-av" style="background:${currentUser?currentUser.color:'var(--blueink)'}">${currentUser?currentUser.name.charAt(0):'您'}</div><div class="sc-bbl">${m.text}</div></div>`;
+  }).join('');
+  $scMessages.scrollTop=$scMessages.scrollHeight;
+}
+
+function sendSessionMsg(){
+  const text=$scInput.value.trim();if(!text||!activeSessionId)return;
+  const sess=SESSIONS.find(s=>s.id===activeSessionId);if(!sess)return;
+  sess.messages.push({role:'user',text:text});
+  $scInput.value='';
+  renderSessionMessages(sess);
+  const p=PRODUCTS.find(x=>x.id===sess.productId);
+  const replies=[
+    `感谢您的咨询！关于「${p?p.name:'产品'}」，我们的专业团队会尽快给您详细答复。`,
+    `好的，我理解您的需求。让我为您整理一下相关的方案资料。`,
+    `这个功能是我们的核心优势之一。需要我安排一次线上演示吗？`,
+    `谢谢您的关注！您提到的问题非常好，我来为您详细说明。`,
+  ];
+  setTimeout(()=>{
+    sess.messages.push({role:'company',text:replies[Math.floor(Math.random()*replies.length)]});
+    renderSessionMessages(sess);
+    updateSessBadge();
+  },1500+Math.random()*2000);
+}
+
+function updateSessBadge(){
+  const count=SESSIONS.length;
+  $navSessBadge.textContent=count;
+  $navSessBadge.style.display=count>0?'inline':'none';
+}
+
+// ═══════════════════════ Sessions list view ═══════════════════════
+function renderSessionsList(){
+  if(SESSIONS.length===0){
+    $slistBody.innerHTML=`<div class="slist-empty"><div class="se-icon">💬</div><div class="se-title">暂无 Session</div><div class="se-sub">在展厅中联系企业即可自动创建 Session</div><button class="se-action" onclick="switchView('showroom')">去展厅看看 →</button></div>`;
+  }else{
+    $slistBody.innerHTML=SESSIONS.map(s=>{
+      const time=new Date(s.createdAt).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+      const msgCount=s.messages.filter(m=>m.role==='user'||m.role==='company').length;
+      return`<div class="sess-list-card" onclick="openSessionView('${s.id}')">
+        <div class="slc-av" style="background:${s.productImg||'var(--blueink)'}">企</div>
+        <div class="slc-info">
+          <div class="slc-company">${s.companyName}</div>
+          <div class="slc-product">${s.productName}</div>
+          <div class="slc-meta">
+            <span>${time}</span><span>${msgCount} 条消息</span>
+          </div>
+        </div>
+        <span class="slc-badge">● 已连接</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ═══════════════════════ Product entry ═══════════════════════
+function openAddProduct(){
+  if(!currentUser){showToast('请先登录 · Please sign in first');openLogin();return;}
+  const sel=document.getElementById('apCat');
+  sel.innerHTML=`<option value="">请选择分类 · Select category</option>`+ALL_CATS.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('addProductOverlay').classList.add('on');
+  try{document.getElementById('apName').focus();}catch(e){}
+}
+function closeAddProduct(){
+  document.getElementById('addProductOverlay').classList.remove('on');
+  ['apName','apCompany','apDesc','apDetail','apCat','apTags'].forEach(id=>{
+    const el=document.getElementById(id);if(el){el.value='';}
+  });
+  document.getElementById('apDescCount').textContent='0';
+  document.getElementById('apDetailCount').textContent='0';
+}
+function submitProduct(){
+  if(!currentUser){showToast('请先登录 · Please sign in first');return;}
+  const name=document.getElementById('apName').value.trim();
+  const company=document.getElementById('apCompany').value.trim();
+  const desc=document.getElementById('apDesc').value.trim();
+  const detail=document.getElementById('apDetail').value.trim();
+  const cat=document.getElementById('apCat').value;
+  const tagsRaw=document.getElementById('apTags').value.trim();
+  if(!name||!company||!desc||!cat){showToast('请填写必填字段 · Required fields missing');return;}
+  const tagList=tagsRaw?tagsRaw.split(/[,，]/).map(t=>t.trim()).filter(Boolean).slice(0,5):[];
+  if(tagList.length===0){tagList.push(cat);}
+  const kwSet=new Set();
+  name.split(/[\s，,、]+/).forEach(w=>{if(w.length>=2)kwSet.add(w.toLowerCase());});
+  desc.split(/[\s，,、]+/).forEach(w=>{if(w.length>=2)kwSet.add(w.toLowerCase());});
+  tagList.forEach(t=>kwSet.add(t.toLowerCase()));
+  cat.split(/[\s，,、]+/).forEach(w=>{if(w.length>=2)kwSet.add(w.toLowerCase());});
+  const newProduct={
+    id:Date.now(),
+    name,company,desc,
+    detail:detail||desc,
+    tags:tagList.map(t=>{
+      const cls=Object.values(TAG_C)[Math.floor(Math.random()*Object.values(TAG_C).length)];
+      return{t,c:cls||'tag-ai'};
+    }),
+    kw:[...kwSet].slice(0,30),
+    cat:cat||ALL_CATS[0],
+    img:IMG_COLORS[Math.floor(Math.random()*IMG_COLORS.length)],
+    memberSubmitted:true,
+  };
+  PRODUCTS.unshift(newProduct);
+  ALL_CATS.length=0;ALL_CATS.push(...new Set(PRODUCTS.map(p=>p.cat)));
+  closeAddProduct();
+  if(isBrowsing){
+    const title=activeCat||'会员产品展厅 · Product Showroom';
+    renderProducts(PRODUCTS,title,`${PRODUCTS.length} 款产品 · ${PRODUCTS.length} products`,false);
+  }
+  showToast(`「${name}」已录入 · Product added`);
+}
+
+// ═══════════════════════ Toast ═══════════════════════
+let _toastTimer;
+function showToast(msg){
+  $toast.textContent=msg;$toast.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(()=>$toast.classList.remove('show'),2800);
+}
+
+// ═══════════════════════ Events ═══════════════════════
+function sendFromHero(){const v=$heroInput.value;$heroInput.value='';handleQuery(v,true);}
+$heroSend.addEventListener('click',sendFromHero);
+$heroInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendFromHero();}});
+
+
+// Browse composer
+function sendFromBrowse(){const v=$bcInput.value;$bcInput.value='';handleQuery(v,false);}
+$bcSend.addEventListener('click',sendFromBrowse);
+$bcInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendFromBrowse();}});
+
+// Chat toggle
+const $chatToggleBtn=document.getElementById('chatToggleBtn');
+$chatToggleBtn.addEventListener('click',()=>{
+  const hidden=$bcMessages.style.display==='none';
+  $bcMessages.style.display=hidden?'':'none';
+  $chatToggleBtn.textContent=hidden?'隐藏对话记录 · Hide chat':'查看对话记录 · Chat history';
+});
+
+// Position-based opacity on scroll
+$bcMessages.addEventListener('scroll',()=>{
+  updateBcOpacity();
+  $bcMessages.classList.add('scrolling');
+  clearTimeout($bcMessages._st);
+  $bcMessages._st=setTimeout(()=>$bcMessages.classList.remove('scrolling'),600);
+},{passive:true});
+$tabBar.addEventListener('click',e=>{if(e.target.tagName==='BUTTON'){filterByCat(e.target.dataset.cat||null);}});
+$resetBtn.addEventListener('click',()=>switchView('showroom'));
+$overlay.addEventListener('click',e=>{if(e.target===$overlay)closeDetail();});
+$addProductOverlay.addEventListener('click',e=>{if(e.target===$addProductOverlay)closeAddProduct();});
+$loginOverlay.addEventListener('click',e=>{if(e.target===$loginOverlay)closeLogin();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){closeDetail();closeAddProduct();closeLogin();}});
+
+// Add product
+$addProductBtn.addEventListener('click',openAddProduct);
+document.getElementById('apDesc').addEventListener('input',function(){document.getElementById('apDescCount').textContent=this.value.length;});
+document.getElementById('apDetail').addEventListener('input',function(){document.getElementById('apDetailCount').textContent=this.value.length;});
+
+// Session chat
+$scSend.addEventListener('click',sendSessionMsg);
+$scInput.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendSessionMsg();}});
+
+// Session back buttons
+document.getElementById('backToSessionsBtn').addEventListener('click',()=>closeSessionView('sessions'));
+document.getElementById('backToBrowseBtn2').addEventListener('click',()=>closeSessionView('showroom'));
+
+// ═══════════════════════ Marquee tags ═══════════════════════
+const MARQUEE_TAGS = {
+  row1: ['AI影像诊断','智慧园区管理','数据中台建设','安全合规治理','语音识别录入','机器视觉检测','数字孪生平台','知识图谱构建','行业研究报告','文档智能比对'],
+  row2: ['心脏超声AI','区域经济监测','大模型安全','智能质检方案','合同语义比对','医学影像分析','IoT能耗优化','NLP文档理解','企业风险画像','制造业数字化'],
+};
+function buildMarquee(){
+  Object.keys(MARQUEE_TAGS).forEach((key,i)=>{
+    const html=[...MARQUEE_TAGS[key],...MARQUEE_TAGS[key]].map(t=>`<button data-q="${t}">${t}</button>`).join('');
+    document.getElementById(i===0?'mq1':'mq2').innerHTML=html;
+  });
+}
+document.getElementById('mq1').addEventListener('click',e=>{if(e.target.tagName==='BUTTON'){$heroInput.value=`我需要${e.target.dataset.q}相关的产品`;handleQuery($heroInput.value,true);$heroInput.value='';}});
+document.getElementById('mq2').addEventListener('click',e=>{if(e.target.tagName==='BUTTON'){$heroInput.value=`我需要${e.target.dataset.q}相关的产品`;handleQuery($heroInput.value,true);$heroInput.value='';}});
+buildMarquee();
+
+function escapeHtml(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+// ═══════════════════════ Hello Builder Chat (shared across socialwares) ═══════════════════════
+const helloMessages = {};
+const helloGreetings = {
+  about: '您好！我是信息协会的 AI 助手。我可以帮您了解协会的定位、组织架构、会员权益和入会流程。请问有什么想了解的？',
+  join: '您好！我是入会引导助手。入会条件：从事数据、智能、信息技术领域的企业/科研院所/高校，承认协会章程即可申请。会员年费请联系协会秘书处（潘老师 13810681328）。需要我帮您填写申请表吗？',
+  research: '您好！我是行业洞察助手。我推荐您关注以下热点：① "数据要素×"产业发展白皮书 ② 大模型垂直领域落地 ROI 分析 ③ AI 智能体管理成熟度评估标准。请问您对哪个方向感兴趣？',
+  partner: '您好！我是合作匹配助手。当前平台上有 AI 医疗数据合作、金融渠道代理、数据中台联合方案、IoT 硬件供应等合作需求。描述您想找的合作类型，我帮您匹配。',
+  member: '您好！欢迎来到会员专区。我可以帮您：① 管理产品列表 ② 查看客户咨询 Session ③ 更新企业资料。需要什么帮助？',
+  admin: '您好！当前有待审核产品 1 件，待审核入会申请 1 件。需要我帮您快速审核，还是查看运营数据？',
+};
+
+function toggleHello(sw){
+  const chat=document.getElementById('hc'+sw.charAt(0).toUpperCase()+sw.slice(1));
+  const open=!chat.classList.contains('open');
+  chat.classList.toggle('open',open);
+  if(open&&!helloMessages[sw]){
+    helloMessages[sw]=[{role:'agent',text:helloGreetings[sw]}];
+    renderHelloMessages(sw);
+    try{document.getElementById('hci'+sw.charAt(0).toUpperCase()+sw.slice(1)).focus();}catch(e){}
+  }
+}
+function sendHelloMsg(sw){
+  const input=document.getElementById('hci'+sw.charAt(0).toUpperCase()+sw.slice(1));
+  const text=input.value.trim();if(!text)return;
+  if(!helloMessages[sw])helloMessages[sw]=[{role:'agent',text:helloGreetings[sw]}];
+  helloMessages[sw].push({role:'user',text:text});input.value='';
+  renderHelloMessages(sw);
+  // Mock agent reply
+  const replies={
+    about:['信息协会数据智能专委会于2025年9月28日正式成立，由10余家覆盖央企、高校、科研院所的单位共同发起。','协会定位为枢纽、智库和催化剂——推动数据要素价值释放与AI深度应用。','会员权益包括：产品展厅入驻、AI智能体优先体验、行业报告免费获取、合作对接优先匹配等。'],
+    join:['入会流程：填写申请表 → 秘书处初审 → 理事会审批 → 缴纳会费 → 正式入会。通常需要5-10个工作日。','好的，申请表已记录。如需加速处理，可联系潘老师 13810681328。'],
+    research:['我推荐您关注"数据要素×产业发展白皮书"，这是协会2026年发布的重量级报告。','AI智能体管理能力成熟度评估模型（T/CIIA 070-2026）是协会自研的团体标准，已落地医疗赛道。'],
+    partner:['好的，已为您记录合作需求。匹配引擎正在检索相关合作方，您将在 Session 中收到匹配结果。','合作对接通过 ezagent Session 引擎进行——安全、可追溯、支持文件交换。'],
+    member:['您的产品列表已更新。需要新增产品吗？点击"产品展厅 → 录入产品"即可。','您的客户 Session 可在左侧导航"客户 Session"中查看。'],
+    admin:['审核完成。已通过的产品将自动出现在展厅中。','运营数据：本月展厅访问量 1,200+，Session 创建数 45，匹配成功率 78%。'],
+  };
+  const pool=replies[sw]||['感谢您的消息，我会尽快处理。'];
+  setTimeout(()=>{
+    helloMessages[sw].push({role:'agent',text:pool[Math.floor(Math.random()*pool.length)]});
+    renderHelloMessages(sw);
+  },800+Math.random()*600);
+}
+function renderHelloMessages(sw){
+  const id='hcm'+sw.charAt(0).toUpperCase()+sw.slice(1);
+  const el=document.getElementById(id);if(!el)return;
+  const msgs=helloMessages[sw]||[];
+  el.innerHTML=msgs.map(m=>m.role==='agent'
+    ?`<div class="hc-msg agent"><div class="hc-av" style="background:var(--blue)">助</div><div class="hc-bbl">${m.text}</div></div>`
+    :`<div class="hc-msg user"><div class="hc-av" style="background:var(--blueink)">${currentUser?currentUser.name.charAt(0):'您'}</div><div class="hc-bbl">${m.text}</div></div>`
+  ).join('');
+  el.scrollTop=el.scrollHeight;
+  // Enter key handler
+  const input=document.getElementById('hci'+sw.charAt(0).toUpperCase()+sw.slice(1));
+  if(input&&!input._bound){
+    input._bound=true;
+    input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendHelloMsg(sw);}});
+  }
+}
+
+// ═══════════════════════ Member tabs ═══════════════════════
+function renderMemberTab(tab){
+  document.querySelectorAll('#memberTabs button').forEach(b=>b.classList.toggle('active',b.dataset.mtab===tab));
+  const body=document.getElementById('memberBody');
+  if(tab==='products'){
+    const myProducts=PRODUCTS.filter(p=>p.memberSubmitted).length>0?PRODUCTS.filter(p=>p.memberSubmitted):PRODUCTS.slice(0,3);
+    body.innerHTML='<div class="pg-grid">'+myProducts.map(p=>`<div class="pg-card" onclick="showDetail(${p.id})"><div class="pg-img" style="background:${p.img}18">${glyph(p)}</div><div class="pg-name">${p.name}</div><div class="pg-company">${p.company}</div><div class="pg-desc">${p.desc}</div><div class="pg-tags">${p.tags.map(t=>`<span class="${TAG_C[t.c]||'tag-ai'}">${t.t}</span>`).join('')}</div></div>`).join('')+'</div><div style="margin-top:16px;text-align:center"><button class="t-btn primary" style="display:inline-block;font-family:var(--font-ui);font-size:13px;font-weight:600;padding:10px 22px;background:var(--blue);color:#fff;border:0;border-radius:var(--r-pill);cursor:pointer" onclick="openAddProduct()">＋ 录入新产品</button></div>';
+  }else if(tab==='sessions'){
+    if(SESSIONS.length===0){
+      body.innerHTML='<div class="slist-empty"><div class="se-icon">💬</div><div class="se-title">暂无客户咨询</div><div class="se-sub">客户在展厅中联系您的企业时，Session 会自动出现在这里</div></div>';
+    }else{
+      body.innerHTML=SESSIONS.map(s=>`<div class="sess-list-card" onclick="openSessionView('${s.id}')"><div class="slc-av" style="background:${s.productImg||'var(--blueink)'}">企</div><div class="slc-info"><div class="slc-company">${s.companyName}</div><div class="slc-product">${s.productName}</div><div class="slc-meta"><span>${new Date(s.createdAt).toLocaleString('zh-CN',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span><span>${s.messages.filter(m=>m.role==='user'||m.role==='company').length} 条消息</span></div></div><span class="slc-badge">● 已连接</span></div>`).join('');
+    }
+  }else if(tab==='profile'){
+    body.innerHTML=`<div class="sw-card"><h3>企业资料</h3><p><b>企业名称：</b>${currentUser?currentUser.name:'未设置'}</p><p><b>会员编号：</b>CIIA-2025-${String(Date.now()).slice(-4)}</p><p><b>入会时间：</b>2025-10-15</p><p><b>会员等级：</b>正式会员</p></div><div class="sw-card"><h3>联系信息</h3><p>如企业资料需要更新，请联系协会秘书处：潘老师 13810681328</p></div>`;
+  }
+}
+document.getElementById('memberTabs').addEventListener('click',e=>{if(e.target.tagName==='BUTTON')renderMemberTab(e.target.dataset.mtab);});
+
+// ═══════════════════════ join form ═══════════════════════
+function submitJoin(){
+  const company=document.getElementById('joinCompany').value.trim();
+  const contact=document.getElementById('joinContact').value.trim();
+  const phone=document.getElementById('joinPhone').value.trim();
+  if(!company||!contact||!phone){showToast('请填写必填字段 · Required fields missing');return;}
+  showToast('入会申请已提交 · 秘书处将在5个工作日内联系您');
+  document.getElementById('joinCompany').value='';document.getElementById('joinContact').value='';
+  document.getElementById('joinPhone').value='';document.getElementById('joinDesc').value='';
+}
+
+// Init: show hero
+updateSessBadge();
+</script>
+</body>
+</html>
