@@ -105,7 +105,8 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
                  :approve_admission,
                  :deny_admission,
                  :withdraw_admission,
-                 :composition_consent
+                 :composition_consent,
+                 :add_self
                ])
            }
 

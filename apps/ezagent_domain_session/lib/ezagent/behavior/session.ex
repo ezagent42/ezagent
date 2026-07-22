@@ -128,6 +128,7 @@ defmodule Ezagent.ActionSet.Session do
     Members,
     Membership,
     RoleResolver,
+    SelfAdd,
     Teardown
   }
 
@@ -160,6 +161,15 @@ defmodule Ezagent.ActionSet.Session do
     caps: [:join],
     modes: [:call, :cast],
     description: "Add a member to the session and replay any missed messages"
+  )
+
+  action(:add_self,
+    args: %{member: :uri, facets: :map},
+    returns: %{status: :atom},
+    modes: [:cast],
+    description:
+      "Mount the authenticated entity into the members projection after an in-handler " <>
+        "durable tier-1 member-cap check"
   )
 
   action(:leave,
@@ -326,15 +336,20 @@ defmodule Ezagent.ActionSet.Session do
   )
 
   @doc """
-  Membership-cap Part C cap-exempt actions (spec §C.4/§C.5): the admission
-  approve/deny/withdraw actions are authorized IN-HANDLER (the approver/denier by
-  `Authority.manages?/2` over the member; the withdrawer by `requested_by`), NOT
-  via a caller-scoped session cap — the member's owner holds no session cap on the
-  session. Mirrors the `:receive` / `:cascade_notify_managers` cap-exempt
-  precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions == actions`.
+  Membership cap-exempt actions. Admission approve/deny/withdraw and composition
+  consent have their existing in-handler authority predicates. `:add_self`
+  ignores presented caps and independently loads the authenticated holder's
+  durable tier-1 cap in `Session.SelfAdd`. Keeps
+  `keys(required_caps) ∪ cap_exempt_actions == actions`.
   """
   def cap_exempt_actions,
-    do: [:approve_admission, :deny_admission, :withdraw_admission, :composition_consent]
+    do: [
+      :approve_admission,
+      :deny_admission,
+      :withdraw_admission,
+      :composition_consent,
+      :add_self
+    ]
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -785,6 +800,8 @@ defmodule Ezagent.ActionSet.Session do
   # dispatch routes `:receive` to the right Behavior by Kind.
 
   # --- :join -------------------------------------------------------------
+
+  def handle_add_self(args, ctx), do: SelfAdd.handle_add_self(args, ctx, __MODULE__)
 
   def handle_join(%{member: %URI{} = member_uri} = args, ctx) do
     # team-routing-unification §3.1 — optional, NON-authority-bearing member

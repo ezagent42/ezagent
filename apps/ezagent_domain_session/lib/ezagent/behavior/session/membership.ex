@@ -384,87 +384,16 @@ defmodule Ezagent.ActionSet.Session.Membership do
   end
 
   defp do_join_apply(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
-    session_uri = ctx[:self_uri]
-    members = ctx[:read].(:members, %{})
-    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-    last_seen = ctx[:read].(:last_seen, %{})
-    prior_owner = ctx[:read].(:owner_uri, nil)
-
-    # Drop ALL stale monitor entries for this member URI and DEMONITOR
-    # each ref (Codex r1 MEDIUM-3, 2026-05-26).
-    {old_refs_for_member, monitors_without_member} =
-      Enum.split_with(monitors, fn {_ref, uri} ->
-        URI.to_string(uri) == URI.to_string(member_uri)
-      end)
-
-    for {ref, _uri} <- old_refs_for_member do
-      _ = Process.demonitor(ref, [:flush])
-    end
-
-    monitors_without_member = Map.new(monitors_without_member)
-
-    ref = Process.monitor(member_pid)
-
-    # team-routing-unification §3.1 (codex PR-5a HIGH #2) — PRESERVE any
-    # facets a faceted member already carries when it rejoins through the
-    # stale-monitor / offline path. Start from the EXISTING meta (not a fresh
-    # `%{online: true}`), force `online: true`, then overlay only the non-nil
-    # facets this join supplied. Durable management/snapshot facets therefore
-    # survive reconnect/repair instead of being silently dropped.
-    existing_meta = Map.get(members, member_uri, %{})
-
-    new_members =
-      Map.put(
-        members,
+    {new_members, effects} =
+      Ezagent.ActionSet.Session.SelfAdd.Effects.on_add(
         member_uri,
-        Members.put_member_facets(Map.put(existing_meta, :online, true), facets)
+        member_pid,
+        facets,
+        ctx,
+        source_module
       )
 
-    new_monitors = Map.put(monitors_without_member, ref, member_uri)
-
-    # If this member has prior last_seen, replay missed messages.
-    Delivery.replay_messages_since(session_uri, member_uri, last_seen)
-    new_last_seen = Map.delete(last_seen, member_uri)
-
-    # RFC #402 (Allen 2026-05-26) — "first user to join is owner" fallback.
-    #
-    # #51 codex P1 (security): an ANONYMOUS external viewer
-    # (`entity://<ws>/user/anon-<rand>`) MUST NEVER claim ownership. If an
-    # ownerless session (spawned without `owner_uri`, or a legacy nil) is
-    # opened via the public-view flow, the joining anon user would otherwise
-    # become owner — a privilege escalation that flatly contradicts the
-    # membership-only, read-only anon model. Anon users are excluded from the
-    # owner transition; an ownerless session simply stays
-    # ownerless (read-only viewing needs no owner).
-    claims_owner? = is_nil(prior_owner) and user_uri?(member_uri) and not anon_member?(member_uri)
-
-    new_owner_uri = if claims_owner?, do: member_uri, else: prior_owner
-
-    # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
-    # coverage" — surface the join to the joinee's notification stream
-    # so a freshly-added member sees they were added to a session.
-    if user_uri?(member_uri) do
-      _ =
-        Ezagent.Notifications.notify(member_uri, %{
-          type: :session_member_joined,
-          body: %{
-            text: "You joined session #{URI.to_string(session_uri)}.",
-            session_uri: session_uri
-          },
-          source: source_module
-        })
-    end
-
-    {:ok, %{members: Map.keys(new_members)},
-     [
-       {:set, :members, new_members},
-       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2) — written via
-       # `:set_transient`, never persisted.
-       {:set_transient, :monitors, new_monitors},
-       {:set, :last_seen, new_last_seen},
-       {:set, :owner_uri, new_owner_uri}
-     ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
+    {:ok, %{members: Map.keys(new_members)}, effects}
   end
 
   @doc """

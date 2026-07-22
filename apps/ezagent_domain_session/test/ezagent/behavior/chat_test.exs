@@ -80,7 +80,9 @@ defmodule Ezagent.ActionSet.ChatTest do
                [
                  :send,
                  :join,
+                 :add_self,
                  :leave,
+                 :transfer_owner,
                  :remove_participant,
                  :assign_role,
                  :attach,
@@ -185,6 +187,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       # F7 PR-A — :remove_participant added (isomorphic participant removal).
       assert keys ==
                [
+                 :add_self,
                  :approve_admission,
                  :assign_role,
                  :attach,
@@ -198,6 +201,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :set_legends,
                  :set_prompt_templates,
                  :set_working_copy,
+                 :transfer_owner,
                  :withdraw_admission
                ]
     end
