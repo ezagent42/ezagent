@@ -19,6 +19,20 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
                            "apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex"
                          ])
 
+  # External-provider signing key material — e.g. a GitHub App's RS256 private
+  # key, used ONLY to mint that provider's own API tokens (the App JWT and
+  # installation tokens). This is NOT Ezagent capability-signing key material:
+  # the per-Kind Ed25519 authority key (#1457) never appears in plugin code.
+  # These files are exempt from the blunt `private_key` substring guard ONLY;
+  # the framework cap-signing tokens (Cap.Signing / Authority.sign /
+  # Authority.verify) below still hard-fail for them, so no plugin can reach
+  # Ezagent's own signing path.
+  @allowed_external_private_key MapSet.new([
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/config.ex",
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_app_jwt.ex",
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_credential_backend.ex"
+                                ])
+
   test "the central verifier decision dominates an executed handler" do
     uri = unique_uri("dominance")
     presenter = Ezagent.URI.new!("entity://team-alpha/user/dominance-presenter")
@@ -153,17 +167,24 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
       domain_or_plugin
       |> Enum.filter(fn file ->
         source = File.read!(file)
+        rel = relative(file)
 
-        Enum.any?(
-          [
-            "Ezagent.Cap.Signing",
-            "Cap.Signing",
-            "Authority.sign(",
-            "Authority.verify(",
-            "private_key"
-          ],
-          &String.contains?(source, &1)
-        )
+        framework_signing? =
+          Enum.any?(
+            [
+              "Ezagent.Cap.Signing",
+              "Cap.Signing",
+              "Authority.sign(",
+              "Authority.verify("
+            ],
+            &String.contains?(source, &1)
+          )
+
+        external_private_key? =
+          String.contains?(source, "private_key") and
+            not MapSet.member?(@allowed_external_private_key, rel)
+
+        framework_signing? or external_private_key?
       end)
       |> Enum.map(&relative/1)
 
