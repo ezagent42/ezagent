@@ -46,7 +46,7 @@ defmodule Ezagent.Socialware.SessionReads do
 
   ## Two authorization modes (spec §3.2 — live-first, both fail-closed)
 
-  Authorization delegates to the shared `Ezagent.Session.Membership.authorize/3`
+  Authorization delegates to the shared `Ezagent.Session.Membership.authorize/4`
   predicate — the SAME one the feeds (`ChatFeed` / `ExternalFeed`) and
   `SocialwarePublisherRead` use. It is **live-first**: it reads the live
   `:session` slice and the caller's live caps (`EntityCaps.load/1`), so an
@@ -55,7 +55,8 @@ defmodule Ezagent.Socialware.SessionReads do
   (not per row).
 
     * **Strict membership** (`:conversation` / `:chat_feed` views, `members/2`,
-      `authorized?/2`): owner/member only. A `public_view` session does NOT
+      `authorized?/2`): current tier-1 member-cap holders only (owners receive
+      the same cap and have no structural bypass). A `public_view` session does NOT
       open the internal conversation read — the deep-link fix depends on it.
     * **Public-aware read gate** (the external-feed plane: `:external_feed` /
       `:external_chat` views, delivery and surface reads): strict membership
@@ -75,6 +76,12 @@ defmodule Ezagent.Socialware.SessionReads do
   reads `:internal` messages; everyone else gets the `:external_visible` view.
   This logic used to live in `Ezagent.World.ConversationData`; consolidating it
   here makes it un-bypassable.
+
+  `:read_unfiltered` is strictly a POST-authorize row-policy modifier, never an
+  access gate. A non-member supervisor holding only that cap is denied before
+  `read_unfiltered?/2` can affect a query. The former option to add a separate
+  supervisor-read branch is deliberately dropped: a per-session supervisor
+  reads only by becoming a real tier-1 member.
   """
 
   import Ecto.Query
@@ -487,6 +494,10 @@ defmodule Ezagent.Socialware.SessionReads do
   supplied. Public so the LIVE plane can apply the SAME row-policy: the
   `world_live` broadcast handler drops a live `:internal` message for a caller
   without this cap (the row-policy the historical read already enforces).
+
+  This predicate does NOT authorize a session read. Callers must first pass the
+  strict tier-1 membership chokepoint; only then may this function widen which
+  rows that already-authorized reader sees.
   """
   @spec read_unfiltered?(URI.t() | term(), URI.t()) :: boolean()
   def read_unfiltered?(%URI{} = caller, %URI{} = session_uri) do
