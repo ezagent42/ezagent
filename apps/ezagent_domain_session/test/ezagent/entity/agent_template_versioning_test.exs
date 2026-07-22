@@ -18,6 +18,7 @@ defmodule Ezagent.Entity.AgentTemplateVersioningTest do
       args: %{},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([signed_action_cap!(target, admin)]),
         reply: {:caller_inbox, self()}
       }

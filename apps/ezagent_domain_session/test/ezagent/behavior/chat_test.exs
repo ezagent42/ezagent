@@ -120,6 +120,8 @@ defmodule Ezagent.ActionSet.ChatTest do
                  # Membership-cap unification Part C (spec §C.2) — pending
                  # admission requests; distinct from :members, empty by default.
                  pending_members: %{},
+                 join_cursors: %{},
+                 join_facets: %{},
                  owner_uri: nil,
                  last_seen: %{},
                  last_message_id: nil,
@@ -978,7 +980,17 @@ defmodule Ezagent.ActionSet.ChatTest do
             args: %{message: msg},
             ctx: %{
               caller: sender,
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              authenticated_principal: sender,
+              caps:
+                MapSet.new([
+                  signed_fixture_cap!(
+                    session_uri,
+                    :session,
+                    Ezagent.ActionSet.Session,
+                    :send,
+                    sender
+                  )
+                ]),
               reply: :ignore
             }
           },
@@ -1407,11 +1419,11 @@ defmodule Ezagent.ActionSet.ChatTest do
       refute Map.has_key?(new_slice.members, normal_uri)
     end
 
-    test "notifies the joinee when member is a user URI (todo.md notification coverage)" do
-      # med-batch MED-3 — :join must emit a `:session_member_joined`
-      # notification to the joinee's inbox so a freshly-added member
-      # learns they were added to a session. Gated by user_uri?/1:
-      # only user URIs get notifications (agents have no inbox).
+    test "grant-only join does not notify before holder self-add projects membership" do
+      # M-6 — :join grants authority only. The holder's Identity convergence
+      # later dispatches :add_self, and that projection seam owns the joined
+      # notification. Emitting here would announce roster membership before a
+      # current entitlement has actually been observed.
       session_uri =
         URI.new!("session://team-alpha/default/join-notify-#{System.unique_integer([:positive])}")
 
@@ -1434,15 +1446,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      assert_receive {:notification, ^member_uri,
-                      %{
-                        type: :session_member_joined,
-                        body: %{text: text, session_uri: ^session_uri},
-                        source: Ezagent.ActionSet.Session
-                      }},
-                     1_000
-
-      assert is_binary(text)
+      refute_receive {:notification, ^member_uri, %{type: :session_member_joined}}, 100
 
       GenServer.stop(member_pid)
     end
@@ -1486,7 +1490,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       GenServer.stop(agent_pid)
     end
 
-    test "replays missed messages on rejoin (last_seen populated)" do
+    test "grant-only rejoin preserves replay cursor until holder self-add" do
       session_uri =
         URI.new!("session://team-alpha/default/replay-#{System.unique_integer([:positive])}")
 
@@ -1528,8 +1532,9 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      # last_seen for this member is cleared
-      refute Map.has_key?(new_slice.last_seen, member_uri)
+      # M-6 — replay and cursor clearing happen only after the holder's
+      # current entitlement projects via :add_self.
+      assert new_slice.last_seen[member_uri] == base
 
       GenServer.stop(member_pid)
     end
@@ -1782,7 +1787,21 @@ defmodule Ezagent.ActionSet.ChatTest do
     @impl true
     def init(uri) do
       :ok = Ezagent.KindRegistry.put_new(uri)
-      {:ok, %{}}
+      :ok = Ezagent.ReadyGate.put(uri, :ready)
+      {:ok, %{uri: uri}}
+    end
+
+    @impl true
+    def handle_call({:ezagent_get_slice, :identity}, _from, state) do
+      {:reply, {:ok, %{caps: MapSet.new()}}, state}
+    end
+
+    @impl true
+    def handle_cast(_message, state), do: {:noreply, state}
+
+    @impl true
+    def terminate(_reason, %{uri: uri}) do
+      Ezagent.ReadyGate.put(uri, :unknown)
     end
   end
 end

@@ -24,7 +24,11 @@ defmodule Ezagent.PluginCc.Template.SpawnPlanCliIdentityTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp agent_uri, do: Ezagent.URI.agent("team-alpha", "pm-coordinator-#{uniq()}")
+  defp agent_uri do
+    uri = Ezagent.URI.agent("team-alpha", "pm-coordinator-#{uniq()}")
+    _authority = install_test_authority!(uri, :agent)
+    uri
+  end
 
   defp tmpl(role) do
     base = %{"class" => "cc.agent", "cwd" => System.tmp_dir!()}

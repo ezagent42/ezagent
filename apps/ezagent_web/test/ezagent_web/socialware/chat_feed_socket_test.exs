@@ -40,7 +40,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     workspace = Ezagent.Capability.workspace_of(session)
     # P5-0b — thread the explicit chat-Session behavior set so :kind_base is
     # non-nil and the scoped effective_set/2 guard does not crash the session.
-    {:ok, _pid} =
+    {:ok, session_pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
         owner_uri: owner,
@@ -48,9 +48,22 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, owner)
+
+    on_exit(fn ->
+      if Process.alive?(session_pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid
+        )
+      end
+    end)
 
     member = spawn_user("cfs-member")
-    {:ok, %{members: members}} = chat_join(session, member)
+    assert {:ok, %{status: :granted, member: ^member}} = chat_join(session, member)
+    :ok = converge_member_projection(session, member)
+    {:ok, slice} = Ezagent.Kind.get_slice(session, :session)
+    members = Map.keys(slice.members)
     assert member in members
     wait_until(fn -> Ezagent.Socialware.ExternalFeed.member?(session, member) end)
     wait_until(fn -> Ezagent.Socialware.ExternalFeed.member?(session, owner) end)
@@ -68,7 +81,9 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
         "#{label}-#{System.unique_integer([:positive])}"
       )
 
-    {:ok, pid} = Ezagent.Kind.spawn(User, %{uri: member, initial_caps: MapSet.new()})
+    {:ok, _row} = Ezagent.Users.create_read_only(member, [])
+    :ok = Ezagent.Entity.spawn_principal(member)
+    {:ok, pid} = Ezagent.KindRegistry.lookup(member)
 
     on_exit(fn ->
       if Process.alive?(pid) do
@@ -106,6 +121,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       args: %{member: member},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([action_cap]),
         reply: {:caller_inbox, self()}
       }
@@ -114,6 +130,31 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
 
   defp chat_join(session, member), do: chat_dispatch(session, :join, member)
   defp chat_leave(session, member), do: chat_dispatch(session, :leave, member)
+
+  defp converge_member_projection(session, member) do
+    wait_until(fn ->
+      held = Ezagent.EntityCaps.load_persisted(member)
+      Ezagent.Session.MemberReceive.holds_member_cap_over?(member, held, session)
+    end)
+
+    target = Ezagent.URI.with_action(session, :session, :add_self)
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
+           target: target,
+           mode: :call,
+           args: %{member: member, facets: %{}},
+           ctx: %{
+             caller: member,
+             authenticated_principal: member,
+             caps: MapSet.new(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{status: status}} when status in [:added, :already_member] -> :ok
+      other -> flunk("member projection failed: #{inspect(other)}")
+    end
+  end
 
   defp post_msg(session, text) do
     msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
@@ -126,12 +167,12 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
   # `{:chat_message, session_uri, msg}` advisory on `esr:session:<uri>:events` —
   # exactly the event the chat_feed channel subscribes to in production. The
   # returned `msg.id` lets the assertion bind the live push to this send.
-  defp chat_send(session, text) do
-    msg = Message.new(@sender, %{text: text, attachments: []}, visibility: :external_visible)
+  defp chat_send(session, text, actor) do
+    msg = Message.new(actor, %{text: text, attachments: []}, visibility: :external_visible)
     target = URI.new!("#{URI.to_string(session)}?action=session.send")
 
     {:ok, send_cap} =
-      Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, @sender, target)
+      Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, actor, target)
 
     {:ok, %{stored: true}} =
       Invocation.dispatch(%Invocation{
@@ -140,7 +181,8 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
         mode: :call,
         args: %{message: msg},
         ctx: %{
-          caller: @sender,
+          caller: actor,
+          authenticated_principal: actor,
           caps: MapSet.new([send_cap]),
           reply: {:caller_inbox, self()}
         }
@@ -262,7 +304,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
       # topic). NO send(self(), ...) — drive the REAL production write path.
       assert {:ok, _reply, _socket} = join_as(ctx.session, ctx.owner)
 
-      late = chat_send(ctx.session, "live update")
+      late = chat_send(ctx.session, "live update", ctx.owner)
 
       # The chat write path's {:chat_message, ...} broadcast reaches the channel,
       # which re-reads from its durable cursor and pushes the refreshed snapshot.

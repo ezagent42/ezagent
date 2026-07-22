@@ -573,6 +573,23 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, view}, state}
   end
 
+  # G-6: expose only the non-secret proof needed by bearer recredentialing.
+  # A generation-N token may rotate solely from a live Kind whose lifecycle
+  # classified this boot as a genuine create/reprovision. Cold rehydrate and
+  # an old process left behind by a standalone generation bump both fail.
+  def handle_call(
+        :ezagent_recredential_generation,
+        _from,
+        %{create_freshness: :created, authority: %{generation: generation}} = state
+      )
+      when is_integer(generation) and generation > 0 do
+    {:reply, {:ok, generation}, state}
+  end
+
+  def handle_call(:ezagent_recredential_generation, _from, state) do
+    {:reply, {:error, :principal_revoked}, state}
+  end
+
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single
   # Behavior slice. Used by `Ezagent.Kind.get_slice/2` for cross-
   # process lookups (e.g. `Session.owner/1` resolves session.owner_uri

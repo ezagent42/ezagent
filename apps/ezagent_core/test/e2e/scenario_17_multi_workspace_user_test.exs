@@ -190,17 +190,31 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
 
       # U's home URI is alpha, but membership is what drives visibility.
       u = URI.new!("entity://#{ctx.alpha_name}/user/#{uniq("u")}")
+      {:ok, _row} = Ezagent.Users.create(u, nil, [])
+      {:ok, _} = SpawnRegistry.spawn(u)
       {:ok, _} = Workspace.Store.update_members(ctx.alpha_name, [u])
       {:ok, _} = Workspace.Store.update_members(ctx.beta_name, [u])
 
+      current_caps = Ezagent.EntityCaps.load(u)
+
+      by_holder =
+        Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+      Application.put_env(
+        :ezagent_core,
+        EzagentCore.Test.CapAuthorityLoaderStub,
+        Map.put(by_holder, Ezagent.URI.stable_key(u), MapSet.new(current_caps))
+      )
+
       visible =
         u
-        |> Workspace.list_workspaces_for(MapSet.new())
+        |> Workspace.list_workspaces_for(current_caps)
         |> Enum.map(& &1.name)
         |> Enum.sort()
 
       assert ctx.alpha_name in visible and ctx.beta_name in visible,
-             "multi-workspace user must see BOTH workspaces they are a member of; got #{inspect(visible)}"
+             "multi-workspace user must see BOTH workspaces they are a member of; " <>
+               "got #{inspect(visible)} with caps #{inspect(current_caps)}"
 
       refute "system" in visible,
              "a non-system, non-admin multi-workspace user must NOT see workspace://system (INV-7); got #{inspect(visible)}"

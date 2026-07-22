@@ -132,6 +132,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
           %{
             mode: :call,
             caller: agent_uri,
+            authenticated_principal: agent_uri,
             caps: Ezagent.Identity.list_caps_for(agent_uri),
             reply: {:caller_inbox, self()}
           }
@@ -245,6 +246,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
           %{
             mode: :call,
             caller: User.admin_uri(),
+            authenticated_principal: User.admin_uri(),
             caps: admin_ctx.caps,
             reply: {:caller_inbox, self()}
           }
@@ -330,8 +332,9 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     )
     |> EzagentCore.Repo.all()
     |> Enum.map(fn payload ->
-      %{version: 3, op: :absorb_cap, cap: artifact} =
-        :erlang.binary_to_term(payload, [:safe])
+      envelope = :erlang.binary_to_term(payload, [:safe])
+      assert envelope.version == Ezagent.Cap.DeliveryOutbox.Envelope.version()
+      %{op: :absorb_cap, cap: artifact} = envelope
 
       artifact
     end)

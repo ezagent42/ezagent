@@ -85,11 +85,16 @@ defmodule EzagentPluginHello.FusionSeed do
   end
 
   defp ensure_workspace(workspace) do
-    case Workspace.create(workspace, %{}) do
-      {:ok, _workspace_uri} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, :workspace_exists} -> :ok
-      {:error, reason} -> {:error, {:workspace, reason}}
+    case Ezagent.Workspace.Store.get_by_name(workspace) do
+      nil ->
+        case Workspace.create(workspace, %{}) do
+          {:ok, _workspace_uri} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> {:error, {:workspace, reason}}
+        end
+
+      _workspace ->
+        :ok
     end
   end
 

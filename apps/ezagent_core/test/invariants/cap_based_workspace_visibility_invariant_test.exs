@@ -12,9 +12,9 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     returns `list_all/0` for everyone.
   - INV-2: workspace member sees their workspace — fails if the
     membership branch is dropped.
-  - INV-3 / INV-3a / INV-3b: admin shortcut fires on each of the 4
-    predicates independently (member_of_system, home_is_system,
-    bootstrap-wildcard).
+  - INV-3 / INV-3a: the structural admin shortcut fires for
+    member_of_system and home_is_system. INV-3b proves an unsigned legacy
+    wildcard is inert rather than bypassing the unified verifier.
   - INV-4: cap-scope branch contributes correctly — fails if cap-scope
     is dropped or if the admin shortcut over-fires.
   - INV-5: adding a member changes the visibility set with no extra
@@ -58,9 +58,8 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     end)
   end
 
-  # Wildcard 5-axis admin cap minted by
-  # `Ezagent.SystemPrincipal.caps("system://bootstrap")`. Matches
-  # `IdentityAdmin.holds_admin_caps?/1`.
+  # Legacy unsigned wildcard shape. SystemPrincipal has been eliminated and
+  # this artifact must never grant visibility without a concrete current target.
   defp bootstrap_wildcard_cap do
     %Capability{
       kind: :any,
@@ -73,18 +72,57 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     }
   end
 
-  defp scoped_workspace_cap(workspace_name) do
+  defp scoped_workspace_cap(workspace_name, caller) do
     ws_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
 
-    %Capability{
-      kind: :workspace,
-      behavior: Ezagent.ActionSet.Workspace,
-      action: :list_members,
-      instance: ws_uri,
-      workspace_uri: ws_uri,
-      granted_by: Ezagent.Entity.User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
+    requested =
+      Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :list_members,
+        ws_uri,
+        ws_uri
+      )
+
+    Ezagent.Test.CapHelper.with_test_authority(ws_uri, :workspace, fn authority ->
+      Ezagent.Test.CapHelper.authority_signed_cap!(authority, caller, requested)
+    end)
+  end
+
+  defp licensed_caller(label, workspace \\ @team_alpha) do
+    caller =
+      Ezagent.URI.user(
+        workspace,
+        "#{label}-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _row} = Ezagent.Users.create_read_only(caller, [])
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: caller, initial_caps: []})
+
+    on_exit(fn -> _ = Ezagent.Kind.terminate(caller) end)
+    wait_until_ready(caller)
+    caller
+  end
+
+  defp current_caps(caller, extra \\ []) do
+    caller
+    |> Ezagent.EntityCaps.load()
+    |> MapSet.new()
+    |> MapSet.union(MapSet.new(extra))
+  end
+
+  defp wait_until_ready(uri, attempts \\ 100)
+  defp wait_until_ready(_uri, 0), do: flunk("principal did not become ready")
+
+  defp wait_until_ready(uri, attempts) do
+    case Ezagent.ReadyGate.status(uri) do
+      :ready ->
+        :ok
+
+      _ ->
+        Process.sleep(10)
+        wait_until_ready(uri, attempts - 1)
+    end
   end
 
   defp names(workspaces), do: workspaces |> Enum.map(& &1.name) |> Enum.sort()
@@ -107,10 +145,10 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-2: workspace member sees exactly their workspace" do
       setup_workspaces()
 
-      caller = Ezagent.URI.new!("entity://team-alpha/user/member")
+      caller = licensed_caller("member")
       {:ok, _} = Workspace.Store.update_members(@team_alpha, [caller])
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new())
+      result = Workspace.list_workspaces_for(caller, current_caps(caller))
 
       assert names(result) == [@team_alpha],
              "INV-2 violation: member of team-alpha saw " <>
@@ -122,10 +160,10 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-3: caller in workspace://system.members sees all (member_of_system? path)" do
       setup_workspaces()
 
-      caller = Ezagent.URI.new!("entity://team-alpha/user/promoted")
+      caller = licensed_caller("promoted")
       {:ok, _} = Workspace.Store.update_members(@system, [caller])
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new())
+      result = Workspace.list_workspaces_for(caller, current_caps(caller))
 
       assert names(result) == [@system, @team_alpha, @team_beta] |> Enum.sort(),
              "INV-3 violation: explicit system-member saw " <>
@@ -138,10 +176,10 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       setup_workspaces()
 
       # Home IS system; explicitly NOT in members to isolate path (iii).
-      caller = Ezagent.URI.new!("entity://system/user/admin-created")
+      caller = licensed_caller("admin-created", @system)
       {:ok, _} = Workspace.Store.update_members(@system, [])
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new())
+      result = Workspace.list_workspaces_for(caller, current_caps(caller))
 
       assert names(result) == [@system, @team_alpha, @team_beta] |> Enum.sort(),
              "INV-3a violation: home-is-system caller saw " <>
@@ -151,25 +189,20 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
                "host without explicit membership."
     end
 
-    test "INV-3b: caller with bootstrap-wildcard cap sees all (holds_admin_caps? path)" do
+    test "INV-3b: unsigned legacy bootstrap wildcard does not bypass current-generation verification" do
       setup_workspaces()
 
       # Home is team-alpha (NOT system); NOT in system.members; holds
       # the full 5-axis wildcard cap.
-      caller = Ezagent.URI.new!("entity://team-alpha/user/wildcard")
+      caller = licensed_caller("wildcard")
       {:ok, _} = Workspace.Store.update_members(@system, [])
 
       result =
-        Workspace.list_workspaces_for(caller, MapSet.new([bootstrap_wildcard_cap()]))
+        Workspace.list_workspaces_for(caller, current_caps(caller, [bootstrap_wildcard_cap()]))
 
-      assert names(result) == [@system, @team_alpha, @team_beta] |> Enum.sort(),
-             "INV-3b violation: bootstrap-wildcard caller saw " <>
-               "#{inspect(names(result))} — expected all 3. The " <>
-               "holds_admin_caps? predicate (i) is not firing in the " <>
-               "admin shortcut. The 5-axis wildcard cap minted by " <>
-               "SystemPrincipal.caps(\"system://bootstrap\") must trigger " <>
-               "the admin shortcut on its own, independent of URI host or " <>
-               "system membership."
+      assert names(result) == [],
+             "INV-3b violation: an unsigned/unverifiable wildcard cap entered " <>
+               "the admin shortcut without authorize/3"
     end
 
     test "INV-4: delegated workspace admin sees exactly their cap-scoped workspace" do
@@ -179,12 +212,12 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
       # narrowly-scoped Workspace cap on team-alpha (action: :list_members,
       # NOT :any — so does NOT pass holds_cross_workspace_admin_cap?
       # or holds_admin_caps?).
-      caller = Ezagent.URI.new!("entity://team-alpha/user/admin")
+      caller = licensed_caller("delegated-admin")
       {:ok, _} = Workspace.Store.update_members(@system, [])
       {:ok, _} = Workspace.Store.update_members(@team_alpha, [])
-      cap = scoped_workspace_cap(@team_alpha)
+      cap = scoped_workspace_cap(@team_alpha, caller)
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new([cap]))
+      result = Workspace.list_workspaces_for(caller, current_caps(caller, [cap]))
 
       assert names(result) == [@team_alpha],
              "INV-4 violation: delegated workspace admin saw " <>
@@ -201,16 +234,16 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-5: adding a member changes visibility set with no cap grant" do
       setup_workspaces()
 
-      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
+      caller = licensed_caller("regular")
 
       # Initial state — no caps, no membership — sees [].
-      assert names(Workspace.list_workspaces_for(caller, MapSet.new())) == []
+      assert names(Workspace.list_workspaces_for(caller, current_caps(caller))) == []
 
       # Add caller as member of team-beta. The membership branch
       # should now surface team-beta.
       {:ok, _} = Workspace.Store.update_members(@team_beta, [caller])
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new())
+      result = Workspace.list_workspaces_for(caller, current_caps(caller))
 
       assert names(result) == [@team_beta],
              "INV-5 violation: adding a member did not surface their " <>
@@ -222,10 +255,10 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-6: granting a scoped cap surfaces the cap-target workspace" do
       setup_workspaces()
 
-      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
-      cap = scoped_workspace_cap(@team_alpha)
+      caller = licensed_caller("scoped-regular")
+      cap = scoped_workspace_cap(@team_alpha, caller)
 
-      result = Workspace.list_workspaces_for(caller, MapSet.new([cap]))
+      result = Workspace.list_workspaces_for(caller, current_caps(caller, [cap]))
 
       assert names(result) == [@team_alpha],
              "INV-6 violation: granting a narrow Workspace cap on " <>
@@ -239,13 +272,13 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
     test "INV-7: non-admin NEVER sees workspace://system regardless of non-admin caps" do
       setup_workspaces()
 
-      caller = Ezagent.URI.new!("entity://team-alpha/user/regular")
+      caller = licensed_caller("multi-scoped-regular")
       {:ok, _} = Workspace.Store.update_members(@system, [])
-      cap_a = scoped_workspace_cap(@team_alpha)
-      cap_b = scoped_workspace_cap(@team_beta)
+      cap_a = scoped_workspace_cap(@team_alpha, caller)
+      cap_b = scoped_workspace_cap(@team_beta, caller)
 
       result =
-        Workspace.list_workspaces_for(caller, MapSet.new([cap_a, cap_b]))
+        Workspace.list_workspaces_for(caller, current_caps(caller, [cap_a, cap_b]))
 
       refute @system in names(result),
              "INV-7 violation: non-admin holding 2 narrow workspace caps " <>

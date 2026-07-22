@@ -60,7 +60,9 @@ defmodule Ezagent.ActionSet.Session.Members do
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
-  defp anon_member?(%URI{scheme: "entity"} = uri) do
+  @doc false
+  @spec anon_member?(term()) :: boolean()
+  def anon_member?(%URI{scheme: "entity"} = uri) do
     user_uri?(uri) and
       case uri |> URI.to_string() |> String.split("/") |> List.last() do
         nil -> false
@@ -68,7 +70,7 @@ defmodule Ezagent.ActionSet.Session.Members do
       end
   end
 
-  defp anon_member?(_), do: false
+  def anon_member?(_), do: false
 
   @doc "Defensively drop any recognized facet whose value fails its type check (`:role_name` binary, `:in_session_template` boolean, `:source_template_uri` a `%URI{}`) — unrecognized/absent keys pass through untouched."
   @spec sanitize_facets(map()) :: map()

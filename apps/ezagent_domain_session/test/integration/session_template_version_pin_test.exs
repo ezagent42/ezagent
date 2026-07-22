@@ -35,10 +35,14 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateVersionPinTest
     template_name = "pin-team-#{uniq()}"
     workspace_uri = Ezagent.URI.new!("workspace://team-alpha")
 
-    {:ok, h1_uri} = SessionTemplate.persist_version_as_system(content(template_name, "h1"), workspace_uri)
-    {:ok, h2_uri} = SessionTemplate.persist_version_as_system(content(template_name, "h2"), workspace_uri)
+    {:ok, h1_uri} =
+      SessionTemplate.persist_version_as_system(content(template_name, "h1"), workspace_uri)
 
-    :ok = TemplateTags.put(workspace_uri, template_name, "current", hash_of(h1_uri), User.admin_uri())
+    {:ok, h2_uri} =
+      SessionTemplate.persist_version_as_system(content(template_name, "h2"), workspace_uri)
+
+    :ok =
+      TemplateTags.put(workspace_uri, template_name, "current", hash_of(h1_uri), User.admin_uri())
 
     {:ok, session_a, _meta} =
       SessionCreator.create_session("a-#{uniq()}", User.admin_uri(),
@@ -48,7 +52,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateVersionPinTest
 
     assert Session.read_template_working_copy(session_a).session_template_uri == h1_uri
 
-    :ok = TemplateTags.move(workspace_uri, template_name, "current", hash_of(h1_uri), hash_of(h2_uri))
+    :ok =
+      TemplateTags.move(workspace_uri, template_name, "current", hash_of(h1_uri), hash_of(h2_uri))
 
     {:ok, session_b, _meta} =
       SessionCreator.create_session("b-#{uniq()}", User.admin_uri(),

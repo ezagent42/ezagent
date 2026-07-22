@@ -6,28 +6,14 @@ defmodule Ezagent.Invariants.DerivationEdgeChokepointTest do
   @root Path.expand("../../../..", __DIR__)
   @allowlist []
 
-  @creation_sources [
-    {"apps/ezagent_core/lib/ezagent/agent_lineage.ex", "agent spawned_by"},
-    {"apps/ezagent_domain_agent/lib/ezagent/agent/creation_inventory.ex",
-     "agent creation inventory"},
-    {"apps/ezagent_domain_identity/lib/ezagent/users.ex", "user create"},
-    {"apps/ezagent_domain_workspace/lib/ezagent/workspace.ex", "workspace create"},
-    {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/derivation.ex",
-     "session materialize"},
-    {"apps/ezagent_domain_session/lib/ezagent/behavior/template.ex", "template fork"}
-  ]
+  @route_marker ~r/# derivation-edge: (?:recorded-by|rehydration-only|template-post-obligation|genesis-root|non-principal|test-scenario)\b/
 
-  test "every reviewed principal/structural creation source routes through the edge writer" do
+  test "every low-level Kind creation site declares its derivation-edge route" do
     violations =
-      Enum.flat_map(@creation_sources, fn {relative, label} ->
-        source = File.read!(Path.join(@root, relative))
-
-        if source =~ "record_derivation_edge" do
-          []
-        else
-          ["#{relative}: #{label}"]
-        end
-      end)
+      @root
+      |> Path.join("apps/*/lib/**/*.ex")
+      |> Path.wildcard()
+      |> Enum.flat_map(&unclassified_creation_sites/1)
 
     assert @allowlist == []
 
@@ -36,6 +22,50 @@ defmodule Ezagent.Invariants.DerivationEdgeChokepointTest do
            derivation-edge creation bypasses (empty allowlist):
            #{Enum.map_join(violations, "\n", &"  - #{&1}")}
            """
+  end
+
+  defp unclassified_creation_sites(path) do
+    source = File.read!(path)
+    lines = String.split(source, "\n")
+
+    source
+    |> Code.string_to_quoted!(columns: true)
+    |> creation_call_lines()
+    |> Enum.reject(&classified?(lines, &1))
+    |> Enum.map(&"#{Path.relative_to(path, @root)}:#{&1}")
+  end
+
+  defp creation_call_lines(ast) do
+    {_ast, lines} =
+      Macro.prewalk(ast, [], fn
+        {{:., _, [module_ast, fun]}, meta, _args} = node, acc
+        when fun in [:spawn, :spawn_detailed] ->
+          module = Macro.to_string(module_ast)
+
+          if {module, fun} in [
+               {"Ezagent.Kind", :spawn},
+               {"Kind", :spawn},
+               {"Ezagent.SpawnRegistry", :spawn_detailed},
+               {"SpawnRegistry", :spawn_detailed}
+             ] do
+            {node, [Keyword.fetch!(meta, :line) | acc]}
+          else
+            {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    lines |> Enum.uniq() |> Enum.sort()
+  end
+
+  defp classified?(lines, line) do
+    first = max(line - 4, 1)
+
+    lines
+    |> Enum.slice((first - 1)..(line - 1))
+    |> Enum.any?(&Regex.match?(@route_marker, &1))
   end
 
   test "the append-only writer and no-cutoff all-kind closure remain present" do

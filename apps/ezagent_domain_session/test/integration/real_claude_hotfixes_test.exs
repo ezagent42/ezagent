@@ -32,8 +32,6 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Message}
-  alias Ezagent.ActionSet.Session, as: SessionBehavior
-  alias Ezagent.Entity.User
 
   setup do
     # Shared sandbox provided by EzagentCore.DataCase (#92).
@@ -85,6 +83,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RealClaudeHotfixesTest do
 
       ctx = %{
         caller: session_uri,
+        authenticated_principal: session_uri,
         caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
         reply: :ignore,
         kind_module: Ezagent.Entity.Agent,

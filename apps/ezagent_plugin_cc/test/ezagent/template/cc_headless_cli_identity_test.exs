@@ -19,7 +19,11 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCliIdentityTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  defp agent_uri, do: Ezagent.URI.agent("team-alpha", "kanban-assistant-#{uniq()}")
+  defp agent_uri do
+    uri = Ezagent.URI.agent("team-alpha", "kanban-assistant-#{uniq()}")
+    _authority = install_test_authority!(uri, :agent)
+    uri
+  end
 
   defp tmpl(role) do
     base = %{"class" => "cc_headless.agent", "cwd" => System.tmp_dir!()}

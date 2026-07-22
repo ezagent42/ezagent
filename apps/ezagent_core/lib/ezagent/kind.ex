@@ -648,6 +648,15 @@ defmodule Ezagent.Kind do
     end
   end
 
+  @doc false
+  @spec recredential_generation(URI.t() | String.t()) ::
+          {:ok, pos_integer()} | {:error, term()}
+  def recredential_generation(uri) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
+      GenServer.call(pid, :ezagent_recredential_generation, 5_000)
+    end
+  end
+
   @doc "Return whether `observer` monitors a live process without exposing process state."
   @spec monitored_by?(pid(), pid()) :: boolean()
   def monitored_by?(pid, observer \\ self()) when is_pid(pid) and is_pid(observer) do

@@ -48,7 +48,7 @@ defmodule Ezagent.Socialware.ReadUnfilteredNotAGateTest do
     owner = Ezagent.Entity.User.admin_uri()
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
         owner_uri: owner,
         behaviors: Session.behaviors()

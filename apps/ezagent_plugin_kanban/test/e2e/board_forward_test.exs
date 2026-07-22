@@ -96,7 +96,11 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
       spawn_user(bob_uri)
       :ok = join_member(from_session, bob_uri, "member", admin_ctx)
 
-      bob_ctx = %{caller: bob_uri, caps: MapSet.new(Ezagent.Identity.list_caps_for(bob_uri))}
+      bob_ctx = %{
+        caller: bob_uri,
+        authenticated_principal: bob_uri,
+        caps: MapSet.new(Ezagent.Identity.list_caps_for(bob_uri))
+      }
 
       # to_session:有一个 kanban-assistant 成员(收只读钥匙)
       {to_session, to_assistant} = session_with_assistant(ws_name, workspace_uri, admin_ctx)
@@ -169,7 +173,11 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
         URI.new!("entity://#{ws_name}/user/carol-#{System.unique_integer([:positive])}")
 
       spawn_user(carol_uri)
-      carol_ctx = %{caller: carol_uri, caps: MapSet.new()}
+      carol_ctx = %{
+        caller: carol_uri,
+        authenticated_principal: carol_uri,
+        caps: MapSet.new()
+      }
 
       assert {:error, :no_forward_access} =
                BoardProvision.forward_board(
@@ -217,7 +225,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                Ezagent.ActionSet.Kanban
              ) == nil
 
-      assert {:error, :invalid_cap_signature} =
+      assert {:error, :missing_cap} =
                dispatch_as(foreign_assistant, board_uri, :get_tree, %{})
 
       # --- (c) to_session 无 assistant → 拒 ---------------------------------
@@ -241,17 +249,16 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     user_uri =
       URI.new!("entity://#{ws_name}/user/#{label}-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(User, %{
-        uri: user_uri,
-        initial_caps: MapSet.new()
-      })
+    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [])
+    assert :ok = Ezagent.Entity.spawn_principal(user_uri)
+    on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
 
     Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
   end
 
   defp spawn_user(user_uri) do
-    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: MapSet.new()})
+    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [])
+    assert :ok = Ezagent.Entity.spawn_principal(user_uri)
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
     :ok
   end
@@ -332,11 +339,41 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
-           ctx: %{caller: caller, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+           ctx: %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: MapSet.new([cap]),
+             reply: {:caller_inbox, self()}
+           }
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> converge_member_projection(session_uri, member_uri, role_name)
+      {:ok, _} -> converge_member_projection(session_uri, member_uri, role_name)
       other -> flunk("join failed: #{inspect(other)}")
+    end
+  end
+
+  defp converge_member_projection(session_uri, member_uri, role_name) do
+    assert eventually(fn ->
+             held = Ezagent.EntityCaps.load_persisted(member_uri)
+             Ezagent.Session.MemberReceive.holds_member_cap_over?(member_uri, held, session_uri)
+           end)
+
+    target = Ezagent.URI.with_action(session_uri, :session, :add_self)
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
+           target: target,
+           mode: :call,
+           args: %{member: member_uri, facets: %{role_name: role_name}},
+           ctx: %{
+             caller: member_uri,
+             authenticated_principal: member_uri,
+             caps: MapSet.new(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{status: status}} when status in [:added, :already_member] -> :ok
+      other -> flunk("member projection failed: #{inspect(other)}")
     end
   end
 
@@ -354,7 +391,13 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
         Ezagent.URI.with_action(board_uri, :kanban, action),
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
     )
   end

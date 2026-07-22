@@ -96,6 +96,7 @@ defmodule Ezagent.Socialware.ManifestYaml do
 
     %{
       caller: admin,
+      authenticated_principal: admin,
       workspace_uri: ws,
       caps:
         MapSet.new([

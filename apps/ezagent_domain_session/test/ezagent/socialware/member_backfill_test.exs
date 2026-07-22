@@ -47,7 +47,49 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
 
   # session 落 workspace://system —— 与 install 写入的 workspace 一致
   # (`installed_definitions/1` 按 session URI 推 workspace)。
-  defp session_uri, do: Ezagent.URI.new!("session://system/default/backfill-#{uniq()}")
+  defp live_session do
+    uri = Ezagent.URI.new!("session://system/default/backfill-#{uniq()}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: uri,
+        owner_uri: @actor,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  defp join_member(session, member) do
+    target = Ezagent.URI.with_action(session, :session, :join)
+    {:ok, cap} = Ezagent.Cap.issue_for_action({:admin, @actor}, @actor, target)
+
+    assert {:ok, _} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               origin: :trusted_internal,
+               target: target,
+               mode: :call,
+               args: %{member: member},
+               ctx: %{
+                 caller: @actor,
+                 authenticated_principal: @actor,
+                 caps: MapSet.new([cap]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
+
+    assert eventually(fn -> member_cap?(member, session) end)
+    :ok
+  end
+
+  defp member_cap?(member, session) do
+    Enum.any?(Ezagent.Identity.list_caps_for(member), fn cap ->
+      match?(%Ezagent.Capability{}, cap) and cap.behavior == Ezagent.ActionSet.Session and
+        cap.action == :receive and cap.instance == session
+    end)
+  end
 
   # confirmed 用户(Users.create 路 confirmed:true)+ 拉起 Kind(grant 落 slice 需要)。
   defp confirmed_user(prefix) do
@@ -141,7 +183,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
   describe "backfill/2 — confirmed 成员的三段补发" do
     test "补发 declared-view render cap + 挂载表 :operate 行的 person keys" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
       _ = install_view_definition(session)
 
       # 既有挂载:owner 建的板(target),operate 行 grantee = 助手 agent。
@@ -152,6 +194,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
         Mount.mount(session, board, assistant, Target, [:add_node, :get_tree], access: :operate)
 
       member = confirmed_user("member")
+      :ok = join_member(session, member)
       assert :ok = MemberBackfill.backfill(session, member)
 
       # ① view render cap(tag configurer = member ⇒ granted_by = member)
@@ -176,7 +219,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
 
     test "幂等:重复调用不重复发(cap 不翻倍、挂载行仍 1 行)" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
       _ = install_view_definition(session)
 
       assistant = live_agent("assistant", owner)
@@ -184,6 +227,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
       {:ok, _} = Mount.mount(session, board, assistant, Target, [:add_node], access: :operate)
 
       member = confirmed_user("member")
+      :ok = join_member(session, member)
       assert :ok = MemberBackfill.backfill(session, member)
       assert eventually(fn -> view_caps_of(member) != [] end)
       assert eventually(fn -> mount_caps_of(member, board) != [] end)
@@ -202,13 +246,14 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
 
     test ":read 行不扩散 —— 只读挂载不因入会升格" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
 
       viewer = live_agent("viewer", owner)
       shared = live_agent("shared-board", owner, [Target])
       {:ok, _} = Mount.mount(session, shared, viewer, Target, [:get_tree], access: :read)
 
       member = confirmed_user("member")
+      :ok = join_member(session, member)
       assert :ok = MemberBackfill.backfill(session, member)
 
       assert MountRow.get(session, shared, member, Target) == nil,
@@ -219,7 +264,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
 
     test "单行失败不牵连其余行、backfill 永不 raise" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
 
       assistant = live_agent("assistant", owner)
       good = live_agent("good-board", owner, [Target])
@@ -239,6 +284,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
         })
 
       member = confirmed_user("member")
+      :ok = join_member(session, member)
       assert :ok = MemberBackfill.backfill(session, member)
 
       # 好板照发,坏行只计 failed
@@ -251,7 +297,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
   describe "backfill/2 — 口径边界" do
     test "unconfirmed(anon)成员:只有 participation tier,无 view cap、无挂载钥匙" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
       _ = install_view_definition(session)
 
       assistant = live_agent("assistant", owner)
@@ -259,6 +305,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
       {:ok, _} = Mount.mount(session, board, assistant, Target, [:add_node], access: :operate)
 
       anon = unconfirmed_user("viewer")
+      :ok = join_member(session, anon)
       assert :ok = MemberBackfill.backfill(session, anon)
 
       assert eventually(fn ->
@@ -276,12 +323,13 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
 
     test "agent 成员:整体 no-op(participation mount 对 agent 也是 no-op)" do
       owner = confirmed_user("owner")
-      session = session_uri()
+      session = live_session()
       agent = live_agent("member-agent", owner)
 
-      caps_before = Enum.count(Ezagent.Identity.list_caps_for(agent))
+      refute member_cap?(agent, session)
       assert :ok = MemberBackfill.backfill(session, agent)
-      assert Enum.count(Ezagent.Identity.list_caps_for(agent)) == caps_before
+      refute member_cap?(agent, session)
+      assert view_caps_of(agent) == []
     end
   end
 end

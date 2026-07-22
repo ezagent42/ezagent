@@ -22,7 +22,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, Kind, KindRegistry}
+  alias Ezagent.{Kind, KindRegistry}
   alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias Ezagent.Message
 
@@ -38,12 +38,16 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
   # is unchecked), so we don't pin the session-domain behavior module here.
   defp with_member_cap(ctx) do
     caller = Map.fetch!(ctx, :caller)
+    holder = Map.fetch!(ctx, :self_uri)
 
-    cap = %Capability{
-      Capability.cap(:session, :any, :receive, caller, Capability.workspace_of(caller))
-      | granted_by: URI.new!("entity://system/user/owner"),
-        granted_at: DateTime.utc_now()
-    }
+    cap =
+      Ezagent.Test.CapHelper.signed_fixture_cap!(
+        caller,
+        :session,
+        :any,
+        :receive,
+        holder
+      )
 
     Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
   end

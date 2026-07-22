@@ -375,10 +375,26 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   end
 
   defp role_member_uri(session_uri, role_name) do
-    session_uri
-    |> chat_slice()
-    |> Map.get(:members, %{})
-    |> SessionBehavior.role_name_to_uri(role_name)
+    case safe_chat_slice(session_uri) do
+      %{} = slice ->
+        slice
+        |> Map.get(:members, %{})
+        |> SessionBehavior.role_name_to_uri(role_name)
+
+      nil ->
+        nil
+    end
+  end
+
+  defp safe_chat_slice(session_uri) do
+    with {:ok, pid} <- KindRegistry.lookup(session_uri),
+         %{state: %{session: %{state: slice}}} <- :sys.get_state(pid, 100) do
+      slice
+    else
+      _ -> nil
+    end
+  catch
+    :exit, _ -> nil
   end
 
   defp dispatch_send(session_uri, text) do
@@ -409,7 +425,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     |> Enum.filter(&(&1.created_by == session_str))
   end
 
-  defp wait_until(fun, retries \\ 50)
+  defp wait_until(fun, retries \\ 500)
 
   defp wait_until(fun, retries) do
     case fun.() do

@@ -45,7 +45,8 @@ defmodule Ezagent.MessageStore do
   """
 
   import Ecto.Query
-  alias Ezagent.{Message, SessionMessageSequence}
+  alias Ezagent.Message
+  alias Ezagent.Session.MessageSequence
   alias EzagentCore.Repo
 
   @replay_cap 1000
@@ -118,7 +119,7 @@ defmodule Ezagent.MessageStore do
   def current_session_sequence(%URI{} = session_uri) do
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
-    from(s in SessionMessageSequence,
+    from(s in MessageSequence,
       where: s.session_uri == ^session_uri and s.workspace_uri == ^workspace_uri,
       select: s.last_seq
     )
@@ -147,7 +148,7 @@ defmodule Ezagent.MessageStore do
     workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
 
     case Repo.insert(
-           %SessionMessageSequence{
+           %MessageSequence{
              session_uri: session_uri,
              workspace_uri: workspace_uri,
              last_seq: 0
@@ -157,7 +158,7 @@ defmodule Ezagent.MessageStore do
          ) do
       {:ok, _} ->
         {1, _} =
-          from(s in SessionMessageSequence,
+          from(s in MessageSequence,
             where: s.session_uri == ^session_uri and s.workspace_uri == ^workspace_uri
           )
           |> Repo.update_all(inc: [last_seq: 1])

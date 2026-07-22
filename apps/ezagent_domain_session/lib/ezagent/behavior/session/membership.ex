@@ -97,12 +97,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
         else
           {_join_cursor, join_cursor_effect} = MemberCap.capture_join_cursor(member_uri, ctx)
           join_facets = ctx[:read].(:join_facets, %{})
-          join_facets_effect = {:set, :join_facets, Map.put(join_facets, member_uri, facets)}
+          join_facets_effect = set_effect(:join_facets, Map.put(join_facets, member_uri, facets))
           prior_owner = ctx[:read].(:owner_uri, nil)
           new_owner = Members.owner_after_intent(member_uri, prior_owner)
 
           owner_effects =
-            if new_owner == prior_owner, do: [], else: [{:set, :owner_uri, new_owner}]
+            if new_owner == prior_owner, do: [], else: [set_effect(:owner_uri, new_owner)]
 
           case MemberCap.grant_at_join(member_uri, ctx) do
             {:error, reason} ->
@@ -243,7 +243,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # the MANAGERS' Kinds, never re-enters this Session Kind.
     notify_pending_managers(member_uri, ctx[:self_uri], request_ref)
 
-    {:ok, %{status: :pending, member: member_uri}, [{:set, :pending_members, new_pending}]}
+    {:ok, %{status: :pending, member: member_uri}, [set_effect(:pending_members, new_pending)]}
   end
 
   # An opaque handle A approves/denies (spec §C.2). Random, dependency-free.
@@ -522,16 +522,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # reworks the join flow to resolve the member CLASS at the caller/dispatch layer
   # (which holds DB access) and pass it into `handle_join`, at which point this
   # name-prefix check is replaced by the `confirmed` attribute and retired.
-  @anon_user_name_prefix "anon-"
-  def anon_member?(%URI{scheme: "entity"} = uri) do
-    user_uri?(uri) and
-      case uri |> URI.to_string() |> String.split("/") |> List.last() do
-        nil -> false
-        name -> String.starts_with?(name, @anon_user_name_prefix)
-      end
-  end
-
-  def anon_member?(_), do: false
+  defdelegate anon_member?(uri), to: Members
 
   # `:attach` (LV→world parity PR-2b) is co-granted with `:send`: a confirmed
   # member who may post a message may also upload a file attachment to it. The
@@ -584,11 +575,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
   (the caller of this function) serves owned/private sessions only.
 
   Returns `:ok` when a join cap is provisioned (or the joiner is an agent — agents
-  carry their own caps), `{:error, :no_authority}` when policy denies provisioning.
-  Best-effort on the GRANT itself: a failed grant dispatch is logged + telemetry'd
-  and still returns `:ok` (the join then fails closed at the chokepoint → observe).
+  carry their own caps), `{:error, :no_authority}` when policy denies provisioning,
+  or the original grant error when issuance/storage fails. Grant failures are
+  logged + telemetry'd and propagated so access-point `with` chains stop before
+  dispatch instead of obscuring the cause as a later `:missing_cap` denial.
   """
-  @spec provision_join_authority(URI.t(), URI.t()) :: :ok | {:error, :no_authority}
+  @spec provision_join_authority(URI.t(), URI.t()) :: :ok | {:error, term()}
   def provision_join_authority(%URI{} = session_uri, %URI{} = joiner_uri) do
     cond do
       not user_uri?(joiner_uri) ->
@@ -638,7 +630,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   spawn-lineage `AgentLineage` notion). So: forward the join; the admission gate decides.
   """
   @spec provision_invited_join_authority(URI.t(), URI.t(), URI.t()) ::
-          :ok | {:error, :no_authority}
+          :ok | {:error, term()}
   def provision_invited_join_authority(
         %URI{} = session_uri,
         %URI{} = joiner_uri,
@@ -649,8 +641,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
       |> session_owner()
       |> owner_or_admin()
       |> then(fn granter -> grant_join_cap(session_uri, joiner_uri, granter) end)
-
-      :ok
     else
       # Non-user (agent) reuse-join: forward to the Part C admission gate at
       # `handle_join` (§C.1/R4) — see the moduledoc "Why the non-user branch
@@ -676,7 +666,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
       %URI{} = granter ->
         grant_join_cap(session_uri, joiner_uri, granter)
-        :ok
     end
   end
 
@@ -1090,12 +1079,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
       :ok ->
         :ok
 
-      {:error, reason} ->
+      {:error, reason} = error ->
         Logger.warning(
           "Session.Membership.provision_join_authority: join-cap grant failed for " <>
             "joiner=#{URI.to_string(joiner_uri)} on session=" <>
             "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
-            "(best-effort; join fails closed → observe)."
+            "(propagating; join dispatch was not attempted)."
         )
 
         :telemetry.execute(
@@ -1104,7 +1093,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
           %{session_uri: session_uri, joiner_uri: joiner_uri, reason: reason}
         )
 
-        :ok
+        error
     end
   end
 

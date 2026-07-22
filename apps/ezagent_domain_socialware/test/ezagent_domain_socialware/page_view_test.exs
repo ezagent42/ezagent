@@ -8,8 +8,8 @@ defmodule EzagentDomainSocialware.PageViewTest do
   alias Ezagent.Invocation
   alias EzagentDomainSocialware.PageView
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "page-view-owner")
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "page-view-stranger")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "page-view-owner")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "page-view-stranger")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -59,14 +59,14 @@ defmodule EzagentDomainSocialware.PageViewTest do
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
           uri: session_uri,
-          owner_uri: @owner,
+          owner_uri: owner(),
           behaviors: Ezagent.Entity.Session.socialware_behaviors()
         })
 
-      assert PageView.applies_to?(session_uri, @owner)
-      refute PageView.applies_to?(session_uri, @stranger)
+      assert PageView.applies_to?(session_uri, owner())
+      refute PageView.applies_to?(session_uri, stranger())
       # The behaviour's caller-less /1 form fails closed on a private session.
       refute PageView.applies_to?(session_uri)
       refute PageView.applies_to?(Ezagent.URI.entity(:team_alpha, :agent, "not-a-session"))
@@ -79,9 +79,9 @@ defmodule EzagentDomainSocialware.PageViewTest do
       :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
           uri: session_uri,
-          owner_uri: @owner,
+          owner_uri: owner(),
           behaviors: Ezagent.Entity.Session.socialware_behaviors()
         })
 
@@ -99,7 +99,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
 
       # An authorized caller renders the page through the chokepoint.
       authorized =
-        render_component(&PageView.render/1, session_uri: session_uri, caller_uri: @owner)
+        render_component(&PageView.render/1, session_uri: session_uri, caller_uri: owner())
 
       assert authorized =~ "chokepoint page"
     end
@@ -145,7 +145,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = Ezagent.Entity.User.admin_uri()
+    caller = owner()
 
     Invocation.dispatch(%Invocation{
       origin: :trusted_internal,
@@ -154,6 +154,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
       args: args,
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }

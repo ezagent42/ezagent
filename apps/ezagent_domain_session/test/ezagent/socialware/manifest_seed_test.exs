@@ -11,18 +11,20 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kb)
     {:ok, _} = RecipeRegistry.seed_role_if_absent(EzagentPluginKb.Application.kb_recipe())
 
-    Ezagent.PluginRegistry.register(Ezagent.Socialware.ManifestYamlTest.FixturePlugin)
+    Ezagent.PluginRegistry.register(Ezagent.Socialware.ManifestSeedFixturePlugin)
     Ezagent.UI.SessionViewRegistry.init()
-    :ok = Ezagent.UI.SessionViewRegistry.register(Ezagent.Socialware.ManifestYamlTest.PageView)
+
+    :ok =
+      Ezagent.UI.SessionViewRegistry.register(Ezagent.Socialware.ManifestSeedFixturePageView)
 
     :ok =
       Ezagent.CapabilityRegistry.register(
         Ezagent.Entity.Session,
-        :yaml_render,
-        Ezagent.Socialware.ManifestYamlTest.RenderBehavior
+        :manifest_seed_yaml_render,
+        Ezagent.Socialware.ManifestSeedFixtureBehavior
       )
 
-    on_exit(fn -> Ezagent.PluginRegistry.unregister("manifest-yaml-fixture") end)
+    on_exit(fn -> Ezagent.PluginRegistry.unregister("manifest-seed-fixture") end)
     :ok
   end
 
@@ -61,7 +63,7 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
 
       yaml =
         manifest_yaml(name, recipe)
-        |> String.replace("- manifest-yaml-fixture", "- crawler")
+        |> String.replace("- manifest-seed-fixture", "- crawler")
 
       write_manifest(root, "needs-crawler", yaml)
 
@@ -139,6 +141,14 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
       deploy_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("socialware"))
       refute File.dir?(deploy_dir)
 
+      # Domain-session's isolated test application does not start the web app,
+      # but the production umbrella/release has it loaded and its priv tree is
+      # the shipped autoservice seed source enumerated by seed!/0.
+      case Application.load(:ezagent_web) do
+        :ok -> :ok
+        {:error, {:already_loaded, :ezagent_web}} -> :ok
+      end
+
       # The no-:deploy_dir path runs the deploy-seed fallback
       # (`Ezagent.Home.SocialwareSeed.seed!/0`) before resolving + scanning the
       # dir. Drive that seed + then scan the seeded dir directly.
@@ -190,11 +200,11 @@ defmodule Ezagent.Socialware.ManifestSeedTest do
     """
     name: #{name}
     uses:
-      - manifest-yaml-fixture
+      - manifest-seed-fixture
     bases:
       - Ezagent.ActionSet.Session
     views:
-      - yaml_page
+      - manifest_seed_yaml_page
     roles:
       - role_name: agent
         fill: agent

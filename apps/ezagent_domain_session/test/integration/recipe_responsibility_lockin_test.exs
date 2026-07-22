@@ -34,7 +34,6 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   alias Ezagent.{
     AgentFlavorAttributes,
     Agent.RecipeAttributes,
-    Capability,
     Invocation,
     KindRegistry
   }
@@ -118,21 +117,19 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
   # branches in do_join) or an `entity://…/user/…` principal (axis-B is
   # cross-principal — a USER can hold a responsibility).
   defp register_member(kind) when kind in [:agent, :user] do
-    uri = URI.new!("entity://team-alpha/#{kind}/#{kind}-#{uniq()}")
-    test_pid = self()
+    uri = URI.new!("entity://system/#{kind}/#{kind}-#{uniq()}")
 
-    pid =
-      spawn(fn ->
-        :ok = KindRegistry.put_new(uri)
-        send(test_pid, :registered)
+    case kind do
+      :user ->
+        {:ok, _} = Ezagent.Users.create(uri, "pw-not-secret", [])
+        {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
 
-        receive do
-          :stop -> :ok
-        end
-      end)
+      :agent ->
+        {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
+        :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
+    end
 
-    assert_receive :registered, 1_000
-    on_exit(fn -> if Process.alive?(pid), do: send(pid, :stop) end)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
     uri
   end
 
@@ -148,6 +145,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
       args: Map.put(facets, :member, member_uri),
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -183,6 +181,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
         },
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
@@ -215,6 +214,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
 
     mcp = [
       caller: orchestrator_uri,
+      authenticated_principal: orchestrator_uri,
       caps: caps,
       session_uri: session_uri,
       workspace_uri: @workspace_uri,

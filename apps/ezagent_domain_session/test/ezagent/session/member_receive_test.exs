@@ -131,7 +131,9 @@ defmodule Ezagent.Session.MemberReceiveTest do
   test "authorize denies when the identity sibling was not pre-loaded" do
     session = session_uri()
     holder = URI.new!("entity://system/user/holder-#{uniq()}")
-    assert MemberReceive.authorize(%{caller: session, self_uri: holder}) == {:error, :unauthorized}
+
+    assert MemberReceive.authorize(%{caller: session, self_uri: holder}) ==
+             {:error, :unauthorized}
 
     assert MemberReceive.authorize(%{caller: session, self_uri: holder, siblings: %{}}) ==
              {:error, :unauthorized}
@@ -142,5 +144,4 @@ defmodule Ezagent.Session.MemberReceiveTest do
       Ezagent.URI.stable_key(holder) => MapSet.new(caps)
     })
   end
-
 end

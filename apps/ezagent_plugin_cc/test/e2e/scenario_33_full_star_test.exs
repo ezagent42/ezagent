@@ -123,6 +123,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       args: args,
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -165,10 +166,15 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
   end
 
   defp ensure_workspace do
-    case Ezagent.Workspace.create("team-alpha", %{}) do
-      {:ok, _} -> :ok
-      {:error, :workspace_exists} -> :ok
-      {:error, {:already_started, _}} -> :ok
+    case Ezagent.Workspace.Store.get_by_name("team-alpha") do
+      nil ->
+        case Ezagent.Workspace.create("team-alpha", %{}) do
+          {:ok, _} -> :ok
+          {:error, {:already_started, _}} -> :ok
+        end
+
+      _workspace ->
+        :ok
     end
   end
 
@@ -196,13 +202,6 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: MapSet.new()})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, @workspace_uri)
 
-    :ok =
-      Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps(
-        orchestrator_uri,
-        session_uri,
-        User.admin_uri()
-      )
-
     join_target = Ezagent.URI.with_action(session_uri, :session, :join)
     join_cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, User.admin_uri())
 
@@ -213,6 +212,17 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
         %{role_name: "orchestrator", in_session_template: true},
         User.admin_uri(),
         MapSet.new([join_cap])
+      )
+
+    # Match the production materializer: the orchestrator first joins (which
+    # consumes its tier-0 join entitlement), then receives the durable scoped
+    # management caps. Granting in the opposite order makes the self-join
+    # correctly consume the management `:join` artifact as well.
+    :ok =
+      Ezagent.Entity.Session.Orchestrator.Caps.grant_orchestrator_scoped_caps(
+        orchestrator_uri,
+        session_uri,
+        User.admin_uri()
       )
 
     epoch = Ecto.UUID.generate()
@@ -238,6 +248,38 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
       )
 
     on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
+
+    current_caps = Ezagent.EntityCaps.load(orchestrator_uri)
+
+    preflight =
+      Ezagent.Orchestrator.Tools.preflight_within_session_cap(
+        orchestrator_uri,
+        current_caps,
+        session_uri,
+        :join
+      )
+
+    assert preflight == :ok,
+           "orchestrator scoped caps did not authorize join: " <>
+             inspect(
+               current_caps
+               |> Enum.filter(&(&1.behavior == Ezagent.ActionSet.Session))
+               |> Enum.map(&{&1.action, &1.instance})
+             )
+
+    :ok =
+      Ezagent.Session.Membership.authorize(
+        chat_slice(session_uri),
+        orchestrator_uri,
+        session_uri,
+        orchestrator_uri
+      )
+
+    {:ok, ^orchestrator_uri} =
+      Ezagent.Authentication.authenticate(%Ezagent.Authentication.BridgeCredential{
+        token: token,
+        principal: orchestrator_uri
+      })
 
     {orchestrator_uri, token}
   end

@@ -115,22 +115,7 @@ defmodule Ezagent.ActionSet.Surface do
     end
   end
 
-  defp authorize_content_actor(ctx) do
-    holder = Map.get(ctx, :authenticated_principal)
-    session_uri = Map.get(ctx, :self_uri)
-
-    if same_uri?(holder, session_uri) do
-      :ok
-    else
-      Ezagent.Session.Membership.authorize(%{}, holder, session_uri, holder)
-    end
-  end
-
-  defp same_uri?(%URI{} = left, %URI{} = right) do
-    Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
-  end
-
-  defp same_uri?(_, _), do: false
+  defp authorize_content_actor(ctx), do: Ezagent.Session.ContentActor.authorize(ctx)
 
   @spec internal_tree(map()) :: map() | nil
   def internal_tree(surface) when is_map(surface) do

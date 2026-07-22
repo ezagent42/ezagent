@@ -68,6 +68,7 @@ defmodule Ezagent.LocalRuntime do
   """
   @spec ensure_started_detailed(URI.t()) ::
           {:ok, :started | :already_started, pid()} | {:error, term()}
+  # derivation-edge: recorded-by the scheme-specific SpawnRegistry handler
   def ensure_started_detailed(%URI{} = uri), do: SpawnRegistry.spawn_detailed(uri)
 
   @doc """

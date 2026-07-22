@@ -744,22 +744,7 @@ defmodule Ezagent.ActionSet.Turn do
   # Session-content mutation is membership-gated on the authenticated holder.
   # The only non-identity exception is the Session Kind's own durable recovery
   # replay, whose explicit self holder is installed above before dispatch.
-  defp authorize_content_actor(ctx) do
-    holder = Map.get(ctx, :authenticated_principal)
-    session_uri = Map.get(ctx, :self_uri)
-
-    if same_uri?(holder, session_uri) do
-      :ok
-    else
-      Ezagent.Session.Membership.authorize(%{}, holder, session_uri, holder)
-    end
-  end
-
-  defp same_uri?(%URI{} = left, %URI{} = right) do
-    Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
-  end
-
-  defp same_uri?(_, _), do: false
+  defp authorize_content_actor(ctx), do: Ezagent.Session.ContentActor.authorize(ctx)
 
   defp subtask_id!(subtask), do: fetch_subtask!(subtask, :id)
 

@@ -711,8 +711,11 @@ defmodule Ezagent.ActionSet.Workspace do
   defp join_class_session_creator(%URI{} = session_uri, %URI{} = caller) do
     case resolve_session_facade() do
       {:ok, facade} ->
-        if function_exported?(facade, :join_session_members, 2) do
-          facade.join_session_members(session_uri, [caller])
+        if function_exported?(facade, :join_session_members, 2) and
+             function_exported?(facade, :grant_session_owner_membership, 2) do
+          with :ok <- facade.grant_session_owner_membership(session_uri, caller) do
+            facade.join_session_members(session_uri, [caller])
+          end
         else
           {:error, {:session_facade_join_unavailable, facade}}
         end

@@ -80,6 +80,25 @@ defmodule Ezagent.Session.DeliveryQueue do
   end
 
   @doc """
+  Dispatch a queued delivery from the queue's stable process.
+
+  Per-key jobs run in separate Task processes.  Sending `:ignore` invocations
+  directly from those Tasks would therefore lose BEAM's per-sender mailbox
+  ordering each time one job finishes and the next Task starts.  The queue is
+  the stable sender for the final non-blocking dispatch: same-key jobs call
+  this function in FIFO order, so their casts reach the recipient in FIFO
+  order without waiting for a slow Agent receive handler to finish.
+
+  The dispatch itself must remain non-blocking (`reply: :ignore` on the
+  command); otherwise this bookkeeping GenServer could couple unrelated
+  recipient keys.
+  """
+  @spec dispatch_from_queue(term()) :: term()
+  def dispatch_from_queue(command) do
+    GenServer.call(@name, {:dispatch_from_queue, command})
+  end
+
+  @doc """
   True when no job is running or queued. Test/diagnostics support — production
   code never needs to observe the queue.
   """
@@ -111,6 +130,10 @@ defmodule Ezagent.Session.DeliveryQueue do
   @impl GenServer
   def handle_call(:idle?, _from, state) do
     {:reply, state.running == %{} and state.queues == %{}, state}
+  end
+
+  def handle_call({:dispatch_from_queue, command}, _from, state) do
+    {:reply, Ezagent.Router.dispatch(command), state}
   end
 
   # Task success — `async_nolink` sends `{ref, result}` before the :DOWN.

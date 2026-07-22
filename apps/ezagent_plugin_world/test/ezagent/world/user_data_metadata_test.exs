@@ -22,6 +22,8 @@ defmodule Ezagent.World.UserDataMetadataTest do
     other = Ezagent.URI.user(ws_name, "other")
     {:ok, _} = Ezagent.Users.create(viewer, "viewer-pw", [])
     {:ok, _} = Ezagent.Users.create(other, "other-pw", [])
+    :ok = Ezagent.Entity.spawn_principal(viewer)
+    :ok = Ezagent.Entity.spawn_principal(other)
     {:ok, _} = Ezagent.Users.disable(other, "entity://system/user/admin", "offboarded")
 
     {:ok, _profile} =

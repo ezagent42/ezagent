@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
 
     spawn_opts = %{uri: session_uri, behaviors: behaviors, owner_uri: User.admin_uri()}
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, spawn_opts)
+    {:ok, _pid} = Ezagent.Socialware.TestCapHelper.spawn_session(spawn_opts)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
 
     :ok =
@@ -206,7 +206,10 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
         )
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{uri: bare, behaviors: Session.socialware_behaviors()})
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
+          uri: bare,
+          behaviors: Session.socialware_behaviors()
+        })
 
       :ok = Ezagent.WorkspaceRegistry.bind(bare, Capability.workspace_of(bare))
       on_exit(fn -> terminate(Session, bare) end)

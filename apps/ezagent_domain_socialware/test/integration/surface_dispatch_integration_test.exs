@@ -5,6 +5,9 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
 
+  defp owner,
+    do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "surface-dispatch-owner")
+
   defp session_uri do
     Ezagent.URI.session(
       :team_alpha,
@@ -21,16 +24,17 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -53,8 +57,9 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 

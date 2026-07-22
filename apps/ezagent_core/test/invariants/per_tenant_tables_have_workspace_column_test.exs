@@ -42,7 +42,7 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # `mix test apps/ezagent_core` in isolation).
   @per_tenant_schemas [
     {Ezagent.Message, "messages"},
-    {Ezagent.SessionMessageSequence, "session_message_sequences"},
+    {Ezagent.Session.MessageSequence, "session_message_sequences"},
     {Ezagent.Ecto.KindSnapshot, "kind_snapshots"},
     {Ezagent.Users, "users"},
     {Ezagent.Entity.Token, "entity_tokens"},

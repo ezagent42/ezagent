@@ -95,7 +95,12 @@ defmodule Ezagent.World.KanbanDataTest do
       target: target,
       mode: :call,
       args: args,
-      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new([cap]),
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 

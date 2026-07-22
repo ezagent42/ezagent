@@ -49,6 +49,7 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
       when is_binary(flavor) and is_list(opts) do
     agent_uri = Ezagent.URI.new!(URI.to_string(agent_uri))
     bootstrap_flavor = bootstrap_flavor()
+    spawned_by = Keyword.get(opts, :spawned_by, User.admin_uri())
 
     with :ok <- ensure_flavor_registered(bootstrap_flavor, noop_decl()),
          :ok <- ensure_target_flavor_registered(flavor),
@@ -56,7 +57,7 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
            Agent.spawn_from_template_content(
              template_content(bootstrap_flavor),
              agent_uri,
-             User.admin_uri(),
+             spawned_by,
              workspace_uri!(agent_uri)
            ),
          :ok <- assert_worker_returned(workers, agent_uri),
@@ -143,9 +144,10 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
              respawn_template_data: %{"class" => template_class_name(flavor), "flavor" => flavor}
            },
            ctx: %{
-            caller: agent_uri,
-            caps: [update_cap],
-            reply: {:caller_inbox, self()}
+             caller: agent_uri,
+             authenticated_principal: agent_uri,
+             caps: [update_cap],
+             reply: {:caller_inbox, self()}
            },
            origin: :trusted_internal
          }) do

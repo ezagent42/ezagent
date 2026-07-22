@@ -2,7 +2,6 @@ defmodule Ezagent.Session.RoleAssignmentTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.Session, as: SessionBehavior
-  alias Ezagent.Capability
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
   import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
@@ -67,6 +66,7 @@ defmodule Ezagent.Session.RoleAssignmentTest do
       args: %{member: user_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: {:caller_inbox, self()}
       }
@@ -78,6 +78,18 @@ defmodule Ezagent.Session.RoleAssignmentTest do
       {:ok, %{state: %{members: members}}} -> members
       {:ok, %{members: members}} -> members
       _ -> %{}
+    end
+  end
+
+  defp await_member(session_uri, user_uri, attempts \\ 100)
+  defp await_member(_session_uri, _user_uri, 0), do: flunk("member projection did not converge")
+
+  defp await_member(session_uri, user_uri, attempts) do
+    if Map.has_key?(members_of(session_uri), user_uri) do
+      :ok
+    else
+      Process.sleep(10)
+      await_member(session_uri, user_uri, attempts - 1)
     end
   end
 
@@ -98,10 +110,12 @@ defmodule Ezagent.Session.RoleAssignmentTest do
     definition = install_human_slot!(session_uri, owner, "reviewer")
 
     assert {:ok, _} = join_user(session_uri, user)
+    :ok = await_member(session_uri, user)
 
     assert {:ok, %{member: ^user, role_name: "reviewer"}} =
              Ezagent.Session.RoleAssignments.assign_role(session_uri, user, "reviewer", %{
                caller: owner,
+               authenticated_principal: owner,
                caps: MapSet.new([assign_cap(session_uri, owner)])
              })
 
@@ -120,6 +134,7 @@ defmodule Ezagent.Session.RoleAssignmentTest do
     assert {:error, :assign_role_requires_user_uri} =
              Ezagent.Session.RoleAssignments.assign_role(session_uri, agent_uri, "reviewer", %{
                caller: owner,
+               authenticated_principal: owner,
                caps: MapSet.new([assign_cap(session_uri, owner)])
              })
   end

@@ -9,7 +9,11 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
   alias Ezagent.Agent.CredentialNotifier
   alias Ezagent.Domain.Pty.Server, as: PtyServer
 
-  defp agent_uri, do: Ezagent.URI.new!("entity://team-alpha/agent/cc_crednotif-#{System.unique_integer([:positive])}")
+  defp agent_uri,
+    do:
+      Ezagent.URI.new!(
+        "entity://team-alpha/agent/cc_crednotif-#{System.unique_integer([:positive])}"
+      )
 
   describe "terminal_url/1 (D2)" do
     test "builds the deployment-host Phoenix terminal route with a URL-encoded agent URI" do
@@ -24,15 +28,22 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
     end
 
     test "honors EZAGENT_PUBLIC_SCHEME / _HOST / _PORT (dev/Tailscale http+port) — codex P2" do
-      prev = {System.get_env("EZAGENT_PUBLIC_SCHEME"), System.get_env("EZAGENT_PUBLIC_HOST"),
-              System.get_env("EZAGENT_PUBLIC_PORT")}
+      prev =
+        {System.get_env("EZAGENT_PUBLIC_SCHEME"), System.get_env("EZAGENT_PUBLIC_HOST"),
+         System.get_env("EZAGENT_PUBLIC_PORT")}
+
       System.put_env("EZAGENT_PUBLIC_SCHEME", "http")
       System.put_env("EZAGENT_PUBLIC_HOST", "100.64.0.27")
       System.put_env("EZAGENT_PUBLIC_PORT", "10042")
 
       on_exit(fn ->
         {s, h, p} = prev
-        for {k, v} <- [{"EZAGENT_PUBLIC_SCHEME", s}, {"EZAGENT_PUBLIC_HOST", h}, {"EZAGENT_PUBLIC_PORT", p}] do
+
+        for {k, v} <- [
+              {"EZAGENT_PUBLIC_SCHEME", s},
+              {"EZAGENT_PUBLIC_HOST", h},
+              {"EZAGENT_PUBLIC_PORT", p}
+            ] do
           if v, do: System.put_env(k, v), else: System.delete_env(k)
         end
       end)
@@ -81,7 +92,12 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
       # worker agent whose lineage owner is the ORCHESTRATOR (an agent), whose owner is
       # the human admin. Notifications only accepts users → must walk to admin.
       worker = agent_uri()
-      orch = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{System.unique_integer([:positive])}")
+
+      orch =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_orch-#{System.unique_integer([:positive])}"
+        )
+
       owner = Ezagent.Entity.User.admin_uri()
 
       :ets.insert(Ezagent.AgentLineage.table(), {URI.to_string(worker), URI.to_string(orch)})
@@ -95,7 +111,9 @@ defmodule Ezagent.Agent.CredentialNotifierTest do
         {:pty_auth_failed, worker, :cc_auth_failure_0}
       )
 
-      assert_receive {:notification, ^owner, %{type: :agent_auth_failed, body: %{agent_uri: ^worker}}}, 2_000
+      assert_receive {:notification, ^owner,
+                      %{type: :agent_auth_failed, body: %{agent_uri: ^worker}}},
+                     2_000
     end
   end
 end

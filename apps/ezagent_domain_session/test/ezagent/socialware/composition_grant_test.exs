@@ -40,7 +40,7 @@ defmodule Ezagent.Socialware.CompositionGrantTest do
     assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
 
     # (c) 到无关 target 越权拒
-    assert {:error, :invalid_cap_signature} = dispatch(grantee, unrelated, :get_tree)
+    assert {:error, :missing_cap} = dispatch(grantee, unrelated, :get_tree)
   end
 
   test "granting write actions mints an operate key over the same code path" do
@@ -110,12 +110,14 @@ defmodule Ezagent.Socialware.CompositionGrantTest do
   end
 
   defp dispatch(caller, target, action) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
         reply: {:caller_inbox, self()}
       }
@@ -146,8 +148,12 @@ defmodule Ezagent.Socialware.CompositionGrantTest do
   defp workspace_uri, do: Ezagent.URI.new!("workspace://composition")
 
   defp user_uri(name) do
-    uri = Ezagent.URI.new!("entity://composition/user/#{name}-#{System.unique_integer([:positive])}")
-    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{System.unique_integer([:positive])}", [])
+    uri =
+      Ezagent.URI.new!("entity://composition/user/#{name}-#{System.unique_integer([:positive])}")
+
+    {:ok, _} =
+      Ezagent.Users.create(uri, "test-password-#{System.unique_integer([:positive])}", [])
+
     {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
     on_exit(fn -> Ezagent.Kind.terminate(uri) end)
     uri

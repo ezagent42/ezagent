@@ -146,11 +146,16 @@ defmodule EzagentPluginHello.CredentialBridge do
   defp env_key_present?, do: match?(k when is_binary(k) and k != "", System.get_env(@env_var))
 
   defp ensure_workspace(workspace) do
-    case Ezagent.Workspace.create(workspace, %{created_by: User.admin_uri()}) do
-      {:ok, _pid} -> :ok
-      {:error, :workspace_exists} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
-      {:error, reason} -> {:error, {:workspace, reason}}
+    case Ezagent.Workspace.Store.get_by_name(workspace) do
+      nil ->
+        case Ezagent.Workspace.create(workspace, %{created_by: User.admin_uri()}) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> {:error, {:workspace, reason}}
+        end
+
+      _workspace ->
+        :ok
     end
   end
 
@@ -164,14 +169,23 @@ defmodule EzagentPluginHello.CredentialBridge do
     source_uri = Ezagent.URI.entity(workspace, :agent, @source_agent_name)
     :ok = Ezagent.AgentFlavorAttributes.put(source_uri, @flavor)
 
+    # derivation-edge: recorded-by AgentLineage.record/2 on the fresh branch
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
            uri: source_uri,
            behaviors: Ezagent.Entity.Agent.curl_behaviors()
          }) do
-      {:ok, _pid} -> {:ok, source_uri}
-      {:error, {:already_started, _pid}} -> {:ok, source_uri}
-      {:error, {:already_registered, _uri}} -> {:ok, source_uri}
-      {:error, reason} -> {:error, {:source_agent_spawn, reason}}
+      {:ok, _pid} ->
+        :ok = Ezagent.AgentLineage.record(source_uri, User.admin_uri())
+        {:ok, source_uri}
+
+      {:error, {:already_started, _pid}} ->
+        {:ok, source_uri}
+
+      {:error, {:already_registered, _uri}} ->
+        {:ok, source_uri}
+
+      {:error, reason} ->
+        {:error, {:source_agent_spawn, reason}}
     end
   end
 
@@ -194,6 +208,7 @@ defmodule EzagentPluginHello.CredentialBridge do
              args: %{provider: @provider, key: key},
              ctx: %{
                caller: admin,
+               authenticated_principal: admin,
                caps: MapSet.new([cap]),
                reply: {:caller_inbox, self()}
              },
@@ -250,6 +265,7 @@ defmodule EzagentPluginHello.CredentialBridge do
              args: %{flavor: @flavor, source_uri: source_str},
              ctx: %{
                caller: admin,
+               authenticated_principal: admin,
                caps: MapSet.new([cap]),
                reply: {:caller_inbox, self()}
              },

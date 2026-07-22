@@ -28,6 +28,18 @@ defmodule Ezagent.World.PresenterCaps do
   end
 
   @doc false
+  @spec context(Phoenix.LiveView.Socket.t() | map()) :: map()
+  def context(%{assigns: assigns} = socket) when is_map(assigns) do
+    presenter = Map.fetch!(assigns, :current_entity_uri)
+
+    %{
+      caller: presenter,
+      authenticated_principal: presenter,
+      caps: load(socket)
+    }
+  end
+
+  @doc false
   @spec merge(Enumerable.t(), Enumerable.t()) :: MapSet.t(Capability.t())
   def merge(mounted, current) do
     mounted

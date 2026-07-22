@@ -258,6 +258,7 @@ defmodule Ezagent.Session.Config.ExecuteTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner)
   end
 
   defp create_user(prefix) do
@@ -276,6 +277,7 @@ defmodule Ezagent.Session.Config.ExecuteTest do
       args: %{member: member, role_name: "member"},
       ctx: %{
         caller: owner,
+        authenticated_principal: owner,
         caps:
           MapSet.new([
             signed_action_cap!(

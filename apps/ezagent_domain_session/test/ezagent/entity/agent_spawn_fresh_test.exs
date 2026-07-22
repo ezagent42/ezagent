@@ -149,18 +149,14 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
       assert {:ok, agent_uri} =
                Agent.spawn(@template_uri, instance, @default_ws, first_granter)
 
-      # Second call MUST return {:ok, agent_uri} (NOT crash, NOT
-      # an error). The legacy shim semantics: pre-PR-A this would
-      # have RE-RECORDED lineage with second_granter (overwriting
-      # first). The shim explicitly preserves that contract.
-      assert {:ok, ^agent_uri} =
+      # D-1 makes derivation edges append-only: a second creator cannot
+      # overwrite the first creator's durable lineage.
+      assert {:error, :derivation_edge_conflict} =
                Agent.spawn(@template_uri, instance, @default_ws, second_granter)
 
-      # Legacy behaviour: the second call's lineage WINS (this is the
-      # very property reconciler callers avoid by using spawn_fresh/4
-      # directly — that's the WHOLE point of the split).
+      # The original lineage remains authoritative.
       assert {:ok, %URI{} = lineage} = AgentLineage.lookup(agent_uri)
-      assert URI.to_string(lineage) == URI.to_string(second_granter)
+      assert URI.to_string(lineage) == URI.to_string(first_granter)
     end
   end
 end

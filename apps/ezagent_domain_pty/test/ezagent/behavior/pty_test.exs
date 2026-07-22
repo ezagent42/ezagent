@@ -35,6 +35,45 @@ defmodule Ezagent.ActionSet.PtyTest do
   alias Ezagent.Invocation
 
   setup do
+    previous_cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+
+    previous_licenses =
+      Application.get_env(
+        :ezagent_core,
+        EzagentCore.Test.CapAuthorityLoaderStub,
+        MapSet.new()
+      )
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(
+        previous_cap_config,
+        :authority_loader,
+        EzagentCore.Test.CapAuthorityLoaderStub
+      )
+    )
+
+    # These unit fixtures fabricate principals so they can pin candidate-cap
+    # shape matching without depending on the identity domain. Independently
+    # license those holders; the presented candidate caps still must verify
+    # against the target authority and match the requested PTY action.
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      MapSet.new([:test_self_license])
+    )
+
+    on_exit(fn ->
+      Application.put_env(:ezagent_core, Ezagent.Cap, previous_cap_config)
+
+      Application.put_env(
+        :ezagent_core,
+        EzagentCore.Test.CapAuthorityLoaderStub,
+        previous_licenses
+      )
+    end)
+
     # Stable agent name (no random suffix) so spawn_or_resume idempotency
     # is exercised across tests; per-test PtyServer write_calls counter is
     # asserted with `>=` to tolerate cross-test accumulation.

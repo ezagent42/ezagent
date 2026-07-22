@@ -219,6 +219,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
     # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
     # swap can refuse adopting a worker it did not create.
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
       {:ok, _pid} ->
         case materialize_credential_slice(agent_uri, tmpl) do
@@ -337,6 +338,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
         args: %{provider: provider, key: key},
         ctx: %{
           caller: agent_uri,
+          authenticated_principal: agent_uri,
           caps: [cap],
           reply: {:caller_inbox, self()}
         },

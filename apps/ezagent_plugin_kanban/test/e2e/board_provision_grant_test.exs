@@ -11,7 +11,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
     (b) 本 session 的 kanban-assistant 持指向该新板的**实例精确** Kanban 操作 cap
         (`Identity.list_caps_for(assistant)` 含 `instance == board`);
     (c) assistant **自身份** dispatch `kanban.add_node` 到新板**成功**(minted 钥匙过 CBAC
-        step 5.5),而到无关板被 CBAC 拒(`:unauthorized`)—— 钥匙实例精确、越权拒。
+        step 5.5),而到无关板被 CBAC 拒(`:missing_cap`)—— 钥匙实例精确、越权拒。
         (root=admin 门是正交的 per-node 业务闸:admin 播根 → assistant 认领根 → assistant
         在自己认领的节点下加子 = 一次真正成功的 add_node,走的就是 minted 钥匙。)
   """
@@ -87,13 +87,17 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       create_cap =
         Ezagent.Test.CapHelper.signed_cap!(workspace_uri, owner_uri, create_cap)
 
-      {:ok, _owner_pid} =
-        Ezagent.Kind.spawn(User, %{
-          uri: owner_uri,
-          initial_caps: MapSet.new([create_cap])
-        })
+      assert {:ok, _row} =
+               Ezagent.Users.create(owner_uri, "test-password", [create_cap])
 
-      owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
+      assert :ok = Ezagent.Entity.spawn_principal(owner_uri)
+      on_exit(fn -> Ezagent.Kind.terminate(owner_uri) end)
+
+      owner_ctx = %{
+        caller: owner_uri,
+        authenticated_principal: owner_uri,
+        caps: Ezagent.Identity.list_caps_for(owner_uri)
+      }
 
       # --- 本 session 的 kanban-assistant(脑),是个活 agent 成员 ------------------
       assistant_uri =
@@ -182,7 +186,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
           admin_ctx
         )
 
-      assert {:error, :invalid_cap_signature} =
+      assert {:error, :missing_cap} =
                dispatch_as(assistant_uri, unrelated, :add_node, %{parent_id: "", title: "x"})
     end)
   end
@@ -229,11 +233,41 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
-           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           ctx: %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: caps,
+             reply: {:caller_inbox, self()}
+           }
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> converge_member_projection(session_uri, member_uri, role_name)
+      {:ok, _} -> converge_member_projection(session_uri, member_uri, role_name)
       other -> flunk("join failed: #{inspect(other)}")
+    end
+  end
+
+  defp converge_member_projection(session_uri, member_uri, role_name) do
+    assert eventually(fn ->
+             held = Ezagent.EntityCaps.load_persisted(member_uri)
+             Ezagent.Session.MemberReceive.holds_member_cap_over?(member_uri, held, session_uri)
+           end)
+
+    target = Ezagent.URI.with_action(session_uri, :session, :add_self)
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
+           target: target,
+           mode: :call,
+           args: %{member: member_uri, facets: %{role_name: role_name}},
+           ctx: %{
+             caller: member_uri,
+             authenticated_principal: member_uri,
+             caps: MapSet.new(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{status: status}} when status in [:added, :already_member] -> :ok
+      other -> flunk("member projection failed: #{inspect(other)}")
     end
   end
 
@@ -252,7 +286,13 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
         target,
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
     )
   end

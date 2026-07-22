@@ -83,6 +83,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
         },
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps: MapSet.new([signed_action_cap!(target, User.admin_uri())]),
           reply: {:caller_inbox, self()}
         }
@@ -151,6 +152,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
     # transport that DISPATCHES into this op layer.)
     mcp = [
       caller: orchestrator_uri,
+      authenticated_principal: orchestrator_uri,
       caps: caps,
       session_uri: session_uri,
       workspace_uri: @workspace_uri,
@@ -297,6 +299,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
 
     save_opts = [
       caller: orch,
+      authenticated_principal: orch,
       caps: caps,
       session_uri: session_uri,
       workspace_uri: @workspace_uri

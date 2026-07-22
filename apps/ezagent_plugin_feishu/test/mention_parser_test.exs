@@ -22,6 +22,7 @@ defmodule EzagentPluginFeishu.MentionParserTest do
       Ezagent.URI.user("team-alpha", "mention-caller-#{System.unique_integer([:positive])}")
 
     {:ok, _row} = Ezagent.Users.create(caller, nil, [])
+    :ok = Ezagent.Entity.spawn_principal(caller)
     :ok = add_workspace_member("team-alpha", caller)
 
     {:ok, caller: caller}

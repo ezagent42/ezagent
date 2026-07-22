@@ -312,6 +312,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       end)
 
       agent_uri = Ezagent.URI.agent("team-alpha", "cc_v1signoff-#{uniq()}")
+      _authority = install_test_authority!(agent_uri, :agent)
       agent_uri_str = URI.to_string(agent_uri)
 
       # The cc.agent Template Class data — exactly what
@@ -484,6 +485,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
+            authenticated_principal: admin_uri,
             caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
             reply: :ignore
           }
@@ -601,6 +603,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentAdminReplyE2eTest do
       args: %{member: member_uri},
       ctx: %{
         caller: member_uri,
+        authenticated_principal: member_uri,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }

@@ -93,6 +93,17 @@ defmodule EzagentDomainInstanceMessage.Test.BehaviorInvoker do
     # behaviors that emit no `:set_transient` are unaffected.
     enriched_ctx =
       ctx
+      |> Map.put_new(:kind_module, fixture_kind_module(behavior_module))
+      # Unit callers model an authenticated boundary with `ctx.caller`; make
+      # that boundary explicit before invoking the handler. This is test-only
+      # normalization, never a production fallback.
+      |> then(fn test_ctx ->
+        case Map.get(test_ctx, :caller) do
+          %URI{} = holder -> Map.put_new(test_ctx, :authenticated_principal, holder)
+          _other -> test_ctx
+        end
+      end)
+      |> normalize_identity_sibling_fixture()
       |> Map.put_new(:read, fn key, default -> Map.get(slice, key, default) end)
       |> Map.put_new(:transients, slice)
 
@@ -128,6 +139,79 @@ defmodule EzagentDomainInstanceMessage.Test.BehaviorInvoker do
       {:error, {:missing_handler, behavior_module, handler}}
     end
   end
+
+  # Membership-cap receive unit tests provide the recipient's pre-loaded
+  # Identity sibling directly. The production runtime obtains that sibling from
+  # a live, licensed Kind and all artifacts in it are target-signed. Preserve
+  # those two boundary facts here: start the concrete holder Kind when needed
+  # and sign any shorthand fixture cap with the target's current authority.
+  # This remains test-only fixture normalization; production authorization has
+  # no ctx.caller/self fallback and still fails closed through authorize/3.
+  defp normalize_identity_sibling_fixture(
+         %{self_uri: %URI{} = holder, kind_module: kind_module, siblings: siblings} = ctx
+       )
+       when is_atom(kind_module) and is_map(siblings) do
+    case get_in(siblings, [:identity, :caps]) do
+      nil ->
+        ctx
+
+      caps ->
+        :ok = ensure_test_holder(holder, kind_module)
+
+        signed =
+          caps
+          |> caps_to_list()
+          |> Enum.map(&sign_fixture_cap(&1, holder))
+          |> MapSet.new()
+
+        put_in(ctx, [:siblings, :identity, :caps], signed)
+    end
+  end
+
+  defp normalize_identity_sibling_fixture(ctx), do: ctx
+
+  defp fixture_kind_module(Ezagent.ActionSet.User.Receive), do: Ezagent.Entity.User
+  defp fixture_kind_module(Ezagent.ActionSet.Agent.Receive), do: Ezagent.Entity.Agent
+  defp fixture_kind_module(_behavior_module), do: Ezagent.Entity.Session
+
+  defp ensure_test_holder(holder, kind_module) do
+    case Ezagent.KindRegistry.lookup(holder) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        case Ezagent.Kind.spawn(kind_module, %{uri: holder}) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> raise "test holder spawn failed: #{inspect(reason)}"
+        end
+    end
+  end
+
+  defp sign_fixture_cap(
+         %Ezagent.Capability{signature: signature, key_id: key_id} = cap,
+         _holder
+       )
+       when is_binary(signature) and is_binary(key_id),
+       do: cap
+
+  defp sign_fixture_cap(%Ezagent.Capability{instance: %URI{} = target} = cap, holder) do
+    {:ok, authority} =
+      Ezagent.Cap.Authority.open(Ezagent.URI.instance(target), cap.kind)
+
+    {:ok, artifact} =
+      Ezagent.Cap.prepare_provenance(
+        {:admin, Ezagent.Entity.User.admin_uri()},
+        holder,
+        cap
+      )
+
+    Ezagent.Cap.Authority.sign(authority, artifact)
+  end
+
+  defp caps_to_list(%MapSet{} = caps), do: MapSet.to_list(caps)
+  defp caps_to_list(caps) when is_list(caps), do: caps
+  defp caps_to_list(cap), do: List.wrap(cap)
 
   # Folds BOTH `:set` (persistent) and `:set_transient` (volatile)
   # effects onto the single flat test slice. For a flat slice the two

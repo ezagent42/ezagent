@@ -421,7 +421,12 @@ defmodule Mix.Tasks.Ezagent.Stress do
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: admin, caps: caps, reply: :ignore},
+        ctx: %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: caps,
+          reply: :ignore
+        },
         origin: :trusted_internal
       })
 
@@ -477,6 +482,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   # --- spawn helpers -----------------------------------------------------
 
   defp spawn_kind!(kind_module, uri, extra \\ %{}) do
+    # derivation-edge: test-scenario stress fixture, never a product principal
     case Kind.spawn(kind_module, Map.merge(%{uri: uri}, extra)) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -488,6 +494,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
   defp spawn_user!(uri, workspace) do
     caps = user_default_caps(Ezagent.URI.workspace(workspace))
 
+    # derivation-edge: test-scenario stress fixture, never a product principal
     case Kind.spawn(user_mod(), %{uri: uri, initial_caps: MapSet.new(caps)}) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
@@ -527,6 +534,7 @@ defmodule Mix.Tasks.Ezagent.Stress do
         args: %{member: member_uri},
         ctx: %{
           caller: admin_uri(),
+          authenticated_principal: admin_uri(),
           caps: admin_caps(session_uri),
           reply: {:caller_inbox, self()}
         },

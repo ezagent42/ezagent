@@ -136,13 +136,18 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
     refute Ezagent.Capability.matches?(cap, needed_bind)
   end
 
-  test "the authenticated binding actor is signed provenance and the synthetic participant is the receiver" do
-    {:ok, %{principal_uri: principal_uri, caps: caps}} = issue_for(session_uri())
+  test "the binding actor is the authenticated receiver and the synthetic participant is only the content actor" do
+    {:ok,
+     %{principal_uri: principal_uri, authenticated_principal: authenticated_principal, caps: caps}} =
+      issue_for(session_uri())
+
     [cap] = MapSet.to_list(caps)
 
     assert cap.granted_by == @binding_actor
     assert %URI{scheme: "entity"} = cap.granted_by
-    assert cap.grantee_uri == principal_uri
+    assert authenticated_principal == @binding_actor
+    assert cap.grantee_uri == authenticated_principal
+    refute principal_uri == authenticated_principal
     assert is_binary(cap.signature) and byte_size(cap.signature) > 0
     assert is_binary(cap.key_id) and cap.key_id != ""
   end
@@ -155,20 +160,33 @@ defmodule Ezagent.Email.Inbound.PrincipalTest do
         template_name: "default"
       )
 
-    {:ok, %{principal_uri: principal_uri, caps: caps}} = issue_for(su)
+    {:ok,
+     %{principal_uri: principal_uri, authenticated_principal: authenticated_principal, caps: caps}} =
+      issue_for(su)
+
     message = Ezagent.Message.new(principal_uri, %{text: "inbound", attachments: []})
 
-    assert {:ok, %{stored: true}} = dispatch_send(su, principal_uri, caps, message)
-    assert Enum.all?(caps, &(&1.grantee_uri == principal_uri and is_binary(&1.signature)))
+    assert {:ok, %{stored: true}} =
+             dispatch_send(su, principal_uri, authenticated_principal, caps, message)
+
+    assert Enum.all?(
+             caps,
+             &(&1.grantee_uri == authenticated_principal and is_binary(&1.signature))
+           )
   end
 
-  defp dispatch_send(session_uri, principal_uri, caps, message) do
+  defp dispatch_send(session_uri, principal_uri, authenticated_principal, caps, message) do
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       origin: :trusted_internal,
       target: Ezagent.URI.with_action(session_uri, :session, :send),
       mode: :call,
       args: %{message: message},
-      ctx: %{caller: principal_uri, caps: caps, reply: :sync}
+      ctx: %{
+        caller: principal_uri,
+        authenticated_principal: authenticated_principal,
+        caps: caps,
+        reply: :sync
+      }
     })
   end
 end

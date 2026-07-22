@@ -108,6 +108,7 @@ defmodule Ezagent.Entity do
         # User Kind's supervisor/0 callback points at
         # `EzagentDomainIdentity.Application.UserSupervisor` so the
         # destination is preserved without naming it here.
+        # derivation-edge: rehydration-only Users row already owns its edge
         Ezagent.Kind.spawn(Ezagent.Entity.User, %{
           uri: uri,
           initial_caps: MapSet.new(caps_list)

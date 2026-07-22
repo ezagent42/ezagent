@@ -18,9 +18,9 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.Session, as: SessionBehavior
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Presence
   alias EzagentDomainInstanceMessage.PresenceFanout
-  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   # Canonical (`authority: nil`) construction — PresenceFanout rebroadcasts
   # `:member_presence` with the canonical member_uri (`Ezagent.URI.new!`
@@ -155,7 +155,7 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
       # index gets re-populated from the live Session's :chat slice.
       member_uri =
         Ezagent.URI.new!(
-          "entity://team-alpha/user/bootstrap_test_#{System.unique_integer([:positive])}"
+          "entity://system/user/bootstrap_test_#{System.unique_integer([:positive])}"
         )
 
       # Spawn the member user Kind
@@ -175,22 +175,21 @@ defmodule EzagentDomainInstanceMessage.PresenceFanoutTest do
 
       # chat.join member
       join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+      :ok = Membership.provision_invited_join_authority(session_uri, member_uri, admin_uri)
 
-      :ok =
-        case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-               origin: :trusted_internal,
-               target: join_target,
-               mode: :call,
-               args: %{member: member_uri},
-               ctx: %{
-                 caller: admin_uri,
-                 caps: MapSet.new([signed_action_cap!(join_target, admin_uri)]),
-                 reply: :inline
-               }
-             }) do
-          {:ok, _} -> :ok
-          :ok -> :ok
-        end
+      assert {:ok, %{status: :granted, member: ^member_uri}} =
+               Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                 origin: :trusted_internal,
+                 target: join_target,
+                 mode: :call,
+                 args: %{member: member_uri},
+                 ctx: %{
+                   caller: member_uri,
+                   authenticated_principal: member_uri,
+                   caps: Ezagent.Identity.list_caps_for(member_uri),
+                   reply: :inline
+                 }
+               })
 
       # Wait for the :session_membership_change → fanout to settle
       wait_for(fn -> Map.has_key?(PresenceFanout.__index__(), member_uri) end)

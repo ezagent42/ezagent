@@ -1,11 +1,6 @@
 defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
   use EzagentCore.DataCase, async: false
 
-  # DataCase's `using` block `import Ecto.Query`, whose `join/3` macro would
-  # shadow this module's `defp join/3` session-join helper (#92). This module
-  # uses no Ecto.Query macros, so exclude the colliding one.
-  import Ecto.Query, except: [join: 3]
-
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Credential.WorkspaceSharedSource
   alias Ezagent.Entity.{Session, User}
@@ -311,7 +306,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(member_uri, "cc")
 
     assert {:ok, %{status: :granted, member: ^member_uri}} =
-             join(session_uri, member_uri, role_name: role_name)
+             join_member(session_uri, member_uri, role_name: role_name)
 
     assert wait_until(fn ->
              UriQuery.resolve(:member_by_role, {session_uri, role_name}) == {:ok, member_uri}
@@ -330,7 +325,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     assert {:ok, _pid} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(other_uri, "cc")
 
     assert {:ok, %{status: :granted, member: ^member_uri}} =
-             join(session_uri, member_uri, role_name: "worker")
+             join_member(session_uri, member_uri, role_name: "worker")
 
     assert wait_until(fn ->
              EzagentDomainInstanceMessage.agent_in_live_session?(member_uri) == {:ok, true}
@@ -358,7 +353,7 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolversTest do
     session_uri
   end
 
-  defp join(session_uri, member_uri, facets) do
+  defp join_member(session_uri, member_uri, facets) do
     target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
     admin = User.admin_uri()
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)

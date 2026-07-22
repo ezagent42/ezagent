@@ -808,6 +808,7 @@ defmodule Ezagent.ActionSet.Session do
 
   # --- :join -------------------------------------------------------------
 
+  @doc false
   def handle_add_self(args, ctx), do: SelfAdd.handle_add_self(args, ctx, __MODULE__)
 
   def handle_join(%{member: %URI{} = member_uri} = args, ctx) do

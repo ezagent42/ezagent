@@ -21,7 +21,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
       )
       when is_binary(responsibility) and is_map(config) and is_map(ctx) do
     with :ok <- ensure_workspace_live(workspace_uri),
-         {:ok, dispatch_ctx} <- caller_ctx(ctx),
+         {:ok, dispatch_ctx} <- Ezagent.Workspace.caller_context(ctx),
          :ok <-
            dispatch_mutation(
              workspace_uri,
@@ -55,7 +55,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
       )
       when is_binary(responsibility) and is_map(ctx) do
     with :ok <- ensure_workspace_live(workspace_uri),
-         {:ok, dispatch_ctx} <- caller_ctx(ctx),
+         {:ok, dispatch_ctx} <- Ezagent.Workspace.caller_context(ctx),
          :ok <-
            dispatch_mutation(
              workspace_uri,
@@ -87,23 +87,6 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
       err -> err
     end
   end
-
-  defp caller_ctx(%{
-         caller: %URI{} = caller,
-         authenticated_principal: %URI{} = holder,
-         caps: caps
-       })
-       when is_list(caps),
-       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
-
-  defp caller_ctx(%{
-         caller: %URI{} = caller,
-         authenticated_principal: %URI{} = holder,
-         caps: %MapSet{} = caps
-       }),
-       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
-
-  defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
 
   defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
     name = Ezagent.URI.name!(workspace_uri)

@@ -90,6 +90,8 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
         "entity://team-alpha/user/restart-mon-#{System.unique_integer([:positive])}"
       )
 
+    {:ok, _row} = Ezagent.Users.create(member_uri, "pw-not-secret", [])
+
     {:ok, member_pid} =
       Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 

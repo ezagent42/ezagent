@@ -44,6 +44,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       args: args,
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }

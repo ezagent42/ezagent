@@ -38,7 +38,7 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
         owner_uri: @owner,
         behaviors: behaviors

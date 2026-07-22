@@ -13,6 +13,7 @@ defmodule Ezagent.Identity.MembershipConvergence do
 
   @telemetry_event [:ezagent, :identity, :membership_convergence, :dispatch]
 
+  @doc "Project every current tier-1 session membership cap into its live roster."
   @spec converge(URI.t(), Enumerable.t()) :: :ok
   def converge(%URI{} = entity_uri, held_caps) do
     entity_uri

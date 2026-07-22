@@ -110,6 +110,7 @@ defmodule Ezagent.ActionSet.CcHeadlessAgent do
         cmd =
           Cmd.new(target, :send, %{message: reply_msg}, %{
             caller: self_uri,
+            authenticated_principal: self_uri,
             caps: MapSet.new(List.wrap(reply_cap)),
             reply: :ignore
           })

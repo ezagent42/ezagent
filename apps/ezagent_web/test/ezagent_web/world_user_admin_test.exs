@@ -57,6 +57,13 @@ defmodule EzagentWeb.WorldUserAdminTest do
     assert %Profile{display_name: "Created User", email: ^email} = Profile.get(user_uri)
   end
 
+  # This E2E performs four synchronous LiveView dispatches plus two bcrypt
+  # verifications. It completes in ~2s alone, but the full umbrella sweep can
+  # delay its shared-sandbox calls behind thousands of still-draining Kind
+  # processes and exhaust ExUnit's 60s *whole-test* budget while the final
+  # enable dispatch is waiting. The domain calls remain bounded; quarantine the
+  # runner-load variance at the E2E boundary, as HomeLive's create path does.
+  @tag timeout: 180_000
   test "admin can edit profile, reset password, disable, and enable a user", %{conn: conn} do
     user_uri = Ezagent.URI.user(:system, unique_name("managed-user"))
     {:ok, _user} = Users.create(user_uri, "old-password", [])

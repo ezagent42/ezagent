@@ -54,6 +54,16 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
     pid
   end
 
+  defp live_caller do
+    caller =
+      Ezagent.URI.new!("entity://team-alpha/agent/cc_orch-#{System.unique_integer([:positive])}")
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: caller})
+    :ok = Ezagent.WorkspaceRegistry.bind(caller, Ezagent.URI.workspace("team-alpha"))
+    on_exit(fn -> Ezagent.Kind.terminate(caller) end)
+    caller
+  end
+
   defp terminate_workspace(workspace_uri) do
     case Ezagent.KindRegistry.lookup(workspace_uri) do
       {:ok, pid} ->
@@ -138,7 +148,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
   describe "build_working_copy/4 emits composition-only SessionTemplate content" do
     test "snapshots team config into socialware-def, not SessionTemplate" do
       ws = Ezagent.URI.new!("workspace://team-alpha")
-      caller = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch")
+      caller = live_caller()
 
       session_uri =
         Ezagent.URI.new!(
@@ -152,6 +162,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_uri,
                  workspace_uri: ws,
                  caller: caller,
+                 authenticated_principal: caller,
                  caps: caps_3(ws, caller)
                )
 
@@ -206,7 +217,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
 
     test "a Session with no team emits composition-only content (no crash)" do
       ws = Ezagent.URI.new!("workspace://team-alpha")
-      caller = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch")
+      caller = live_caller()
 
       session_uri =
         Ezagent.URI.new!(
@@ -232,6 +243,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_uri,
                  workspace_uri: ws,
                  caller: caller,
+                 authenticated_principal: caller,
                  caps: caps_3(ws, caller)
                )
 
@@ -281,7 +293,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
       _pid_a = spawn_session_with_state(session_a, chat_state)
       _pid_b = spawn_session_with_state(session_b, chat_state)
 
-      caller = Ezagent.URI.new!("entity://team-alpha/agent/cc_orch")
+      caller = live_caller()
       ws = Ezagent.URI.new!("workspace://team-alpha")
       caps = caps_3(ws, caller)
 
@@ -290,6 +302,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_a,
                  workspace_uri: ws,
                  caller: caller,
+                 authenticated_principal: caller,
                  caps: caps
                )
 
@@ -298,6 +311,7 @@ defmodule Ezagent.Orchestrator.BuildWorkingCopyTest do
                  session_uri: session_b,
                  workspace_uri: ws,
                  caller: caller,
+                 authenticated_principal: caller,
                  caps: caps
                )
 

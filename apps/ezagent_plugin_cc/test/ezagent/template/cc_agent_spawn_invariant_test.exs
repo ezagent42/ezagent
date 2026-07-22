@@ -59,15 +59,18 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
   Domain.Pty Server".
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.PluginCc.Template.CcAgent
   alias Ezagent.PluginCc.Template.SpawnPlan
 
-  @agent_uri Ezagent.URI.new!("entity://system/agent/cc_spawn-invariant-test")
+  @agent_uri Ezagent.URI.new!(
+               "entity://system/agent/cc_spawn-invariant-#{System.unique_integer([:positive])}"
+             )
   @cwd System.tmp_dir!()
 
   setup do
+    _authority = install_test_authority!(@agent_uri, :agent)
     original_path = System.get_env("PATH")
 
     on_exit(fn ->
@@ -86,6 +89,21 @@ defmodule Ezagent.PluginCc.Template.CcAgentSpawnInvariantTest do
 
     File.mkdir_p!(bin_dir)
     on_exit(fn -> File.rm_rf(bin_dir) end)
+
+    previous_home = System.get_env("EZAGENT_HOME")
+    previous_profile = System.get_env("EZAGENT_PROFILE")
+    System.put_env("EZAGENT_HOME", bin_dir)
+    System.put_env("EZAGENT_PROFILE", "spawn-invariant")
+
+    on_exit(fn ->
+      if previous_home,
+        do: System.put_env("EZAGENT_HOME", previous_home),
+        else: System.delete_env("EZAGENT_HOME")
+
+      if previous_profile,
+        do: System.put_env("EZAGENT_PROFILE", previous_profile),
+        else: System.delete_env("EZAGENT_PROFILE")
+    end)
 
     mock_path = Path.join(bin_dir, "claude")
 

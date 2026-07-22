@@ -53,7 +53,9 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
     {:ok, uri, _meta} =
       EzagentDomainInstanceMessage.SessionCreator.create_session(
         short,
-        Ezagent.Entity.User.admin_uri(), template_name: "default")
+        Ezagent.Entity.User.admin_uri(),
+        template_name: "default"
+      )
 
     uri
   end
@@ -66,7 +68,12 @@ defmodule EzagentDomainInstanceMessage.Integration.NonAdminGrantFlowE2ETest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :inline}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: :inline
+      }
     })
   end
 

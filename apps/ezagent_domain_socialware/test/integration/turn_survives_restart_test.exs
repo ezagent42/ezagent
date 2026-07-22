@@ -5,6 +5,8 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.{Session, User}
 
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "restart-owner")
+
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "restart-#{System.unique_integer([:positive])}")
   end
@@ -17,16 +19,17 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
 
   defp dispatch(session_uri, action, args) do
     target = target(session_uri, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -54,8 +57,9 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, pid1} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -87,8 +91,9 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
     wait_until(fn -> KindRegistry.lookup(session_uri) == :error end)
 
     {:ok, pid2} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 

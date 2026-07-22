@@ -212,6 +212,7 @@ defmodule Ezagent.LifecycleCase do
     # 1. Spawn fresh via the SOLE Kind-spawn entry (`Ezagent.Kind.spawn/2`
     #    — invariant #2 / SingleSpawnEntry gate), then wait for :ready
     #    (activate has run).
+    # derivation-edge: test-scenario lifecycle fixture, never a product principal
     {:ok, pid1} = Ezagent.Kind.spawn(kind, Map.put(spawn_args, :uri, uri))
 
     wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)

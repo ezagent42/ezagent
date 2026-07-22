@@ -175,7 +175,8 @@ defmodule Ezagent.Orchestrator.Tools do
 
       case join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          with :ok <-
+          with :ok <- DefinitionSync.await_member_projection(session_uri, member_uri),
+               :ok <-
                  DefinitionSync.member(session_uri, workspace_uri, caller, member_uri, facets,
                    caps: caps
                  ) do

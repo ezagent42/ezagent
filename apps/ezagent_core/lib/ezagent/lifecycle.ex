@@ -400,7 +400,7 @@ defmodule Ezagent.Lifecycle do
   def fresh_create?(%URI{} = uri), do: fresh_create?(URI.to_string(uri))
   def fresh_create?(uri_str) when is_binary(uri_str), do: not marker_lookup(uri_str)
   def fresh_create?(%{uri: uri}), do: fresh_create?(uri)
-  def fresh_create?(_), do: true
+  def fresh_create?(_), do: false
 
   @doc """
   Metadata predicate: does `kind_module` host at least one Lifecycle
@@ -455,16 +455,23 @@ defmodule Ezagent.Lifecycle do
   defp ever_created?(uri_str) when is_binary(uri_str), do: marker_lookup(uri_str)
   defp ever_created?(_), do: false
 
-  # Wrap the DB read so a Repo-less context (pure-macro unit tests, the
-  # `:ephemeral` no-DB path) degrades to "not created" rather than
-  # crashing — the create path then runs, which is the correct default
-  # for a brand-new in-memory entity.
+  # This is a security predicate: a marker-store failure must never be
+  # interpreted as permission to run the one-time create path again. Treat an
+  # unreadable marker as already-created so callers fail closed as not-fresh.
+  # Pure macro tests without a URI never reach this reader (`ever_created?/1`
+  # retains its no-URI unit-fixture behavior).
   defp marker_lookup(uri_str) do
-    Ezagent.Ecto.KindSnapshot.ever_created?(uri_str)
+    marker_reader().ever_created?(uri_str)
   rescue
-    _ -> false
+    _ -> true
   catch
-    _, _ -> false
+    _, _ -> true
+  end
+
+  defp marker_reader do
+    :ezagent_core
+    |> Application.get_env(__MODULE__, [])
+    |> Keyword.get(:marker_reader, Ezagent.Ecto.KindSnapshot)
   end
 
   @doc false

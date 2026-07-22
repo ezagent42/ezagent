@@ -175,6 +175,28 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
     end
   end
 
+  describe "join-cap grant failures are loud" do
+    test "an invited grant returns the original target-authority denial" do
+      owner = confirmed_user("loud-owner")
+      joiner = confirmed_user("loud-joiner")
+      session_uri = private_session("loud-private", owner)
+
+      assert {:ok, _new_authority} =
+               Ezagent.Cap.Authority.regenesis(session_uri, Session.type_name())
+
+      assert {:error, :missing_cap} =
+               Membership.provision_invited_join_authority(session_uri, joiner, owner)
+    end
+
+    test "an already-held current join cap remains an idempotent success" do
+      owner = confirmed_user("quiet-owner")
+      session_uri = private_session("quiet-private", owner)
+
+      assert :ok = Membership.provision_invited_join_authority(session_uri, owner, owner)
+      assert :ok = Membership.provision_invited_join_authority(session_uri, owner, owner)
+    end
+  end
+
   describe "g2 exception (ii): ownerless session → admin-fallback granter" do
     test "first-non-anon join of an ownerless session is provisioned granted_by admin" do
       # An ownerless session (spawned bare, no create-path owner).

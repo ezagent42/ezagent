@@ -104,6 +104,7 @@ defmodule EzagentPluginHello.KanbanDelegationTest do
       args: args,
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }

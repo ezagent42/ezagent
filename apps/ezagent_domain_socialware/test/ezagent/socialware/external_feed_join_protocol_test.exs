@@ -56,7 +56,7 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
     {:ok, _owner_pid} = Ezagent.SpawnRegistry.spawn(owner)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
         owner_uri: owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
@@ -297,7 +297,7 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
       session_b = session_uri()
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
           uri: session_b,
           owner_uri: ctx.caller,
           behaviors: Ezagent.Entity.Session.socialware_behaviors()

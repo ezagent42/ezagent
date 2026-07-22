@@ -22,9 +22,9 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
   use ExUnit.Case, async: true
 
   describe "ExternalMirrorWorker Kind composition" do
-    test "behaviors/0 returns [Ezagent.ActionSet.ExternalMirrorWorker]" do
+    test "behaviors/0 includes autonomous Identity and ExternalMirrorWorker" do
       assert Ezagent.Entity.ExternalMirrorWorker.behaviors() ==
-               [Ezagent.ActionSet.ExternalMirrorWorker]
+               [Ezagent.ActionSet.Identity, Ezagent.ActionSet.ExternalMirrorWorker]
     end
 
     test "type_name/0 is :external_mirror_worker" do

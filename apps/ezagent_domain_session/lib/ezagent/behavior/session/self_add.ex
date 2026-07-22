@@ -11,6 +11,7 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
   alias Ezagent.ActionSet.Session.{Members, SelfAdd.Effects}
 
+  @doc false
   @spec handle_add_self(map(), map(), module()) ::
           {:ok, %{status: :added | :already_member}, [term()]}
           | {:error,

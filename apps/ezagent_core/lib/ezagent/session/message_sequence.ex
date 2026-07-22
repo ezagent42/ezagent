@@ -1,4 +1,4 @@
-defmodule Ezagent.SessionMessageSequence do
+defmodule Ezagent.Session.MessageSequence do
   @moduledoc false
 
   use Ecto.Schema

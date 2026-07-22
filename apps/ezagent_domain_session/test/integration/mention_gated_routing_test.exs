@@ -29,7 +29,6 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
 
   alias Ezagent.{Invocation, Message, RoutingRegistry}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
-  alias Ezagent.Entity.User
   alias Ezagent.Routing.Resolver
 
   setup do
@@ -95,12 +94,28 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
         args: %{member: member},
         ctx: %{
           caller: member,
+          authenticated_principal: member,
           caps: MapSet.new([cap]),
           reply: :ignore
         }
       })
 
-    Process.sleep(50)
+    await_member(session, member)
+  end
+
+  defp await_member(session, member, attempts \\ 100)
+
+  defp await_member(_session, member, 0) do
+    flunk("member projection did not converge for #{inspect(member)}")
+  end
+
+  defp await_member(session, member, attempts) do
+    if member in Ezagent.Entity.Session.session_member_uris(session) do
+      :ok
+    else
+      Process.sleep(10)
+      await_member(session, member, attempts - 1)
+    end
   end
 
   defp dispatch_send(session, sender, text, mentions \\ []) do
@@ -118,6 +133,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
         args: %{message: msg},
         ctx: %{
           caller: sender,
+          authenticated_principal: sender,
           caps: MapSet.new([cap]),
           reply: :ignore
         }
@@ -161,6 +177,8 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     user_member = URI.new!("entity://team-alpha/user/#{u("usermem")}")
     agent_member = URI.new!("entity://team-alpha/agent/echo_#{u("a")}")
 
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
+    {:ok, _} = Ezagent.Users.create(user_member, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(agent_member, "echo")
@@ -196,6 +214,8 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     sender = URI.new!("entity://team-alpha/user/#{u("sender")}")
     user_member = URI.new!("entity://team-alpha/user/#{u("usermem")}")
 
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
+    {:ok, _} = Ezagent.Users.create(user_member, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.SpawnRegistry.spawn(user_member)
 
@@ -220,6 +240,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     install_default_rule_table()
     session = spawn_session()
     sender = URI.new!("entity://team-alpha/user/#{u("sender")}")
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 
@@ -240,6 +261,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     mentioned = URI.new!("entity://team-alpha/agent/echo_#{u("hit")}")
     other = URI.new!("entity://team-alpha/agent/echo_#{u("miss")}")
 
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(mentioned, "echo")
     {:ok, _} = Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(other, "echo")
@@ -265,6 +287,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     session = spawn_session()
 
     sender = URI.new!("entity://team-alpha/user/#{u("sender")}")
+    {:ok, _} = Ezagent.Users.create(sender, "pw-not-secret", [])
     {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
     join(session, sender)
 

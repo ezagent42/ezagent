@@ -249,6 +249,7 @@ defmodule EzagentCore.Application do
         # V1 prevention (Allen 2026-05-21): routed through Ezagent.Kind.spawn/2.
         # System Kind declares Ezagent.Core.SingletonSupervisor via
         # supervisor/0 callback so destination is preserved.
+        # derivation-edge: genesis-root system Kind has no parent
         Ezagent.Kind.spawn(SK, %{uri: uri})
       end)
 

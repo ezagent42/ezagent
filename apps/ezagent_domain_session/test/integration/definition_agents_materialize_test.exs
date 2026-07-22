@@ -482,6 +482,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       args: %{filename: "owner-usable-probe.txt"},
       ctx: %{
         caller: @owner_uri,
+        authenticated_principal: @owner_uri,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -654,9 +655,19 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
 
-    members = members_of(session_uri)
-    planned = SessionBehavior.role_name_to_uri(members, role_name)
+    planned =
+      RecipeCapBinding
+      |> where([binding], binding.recipe_name == ^recipe_name)
+      |> where([binding], is_nil(binding.tombstoned_at))
+      |> select([binding], binding.agent_uri)
+      |> Repo.one!()
+      |> URI.new!()
+
     on_exit(fn -> terminate(planned) end)
+
+    # A never-ready agent cannot absorb its tier-1 member cap, so cap-as-truth
+    # correctly keeps it out of the roster until readiness drains the delivery.
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
 
     assert {:ok, session_pid} = KindRegistry.lookup(session_uri)
     assert Process.alive?(session_pid)
@@ -706,8 +717,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, {:ok, %{satisfied: [^role_name], skipped: []}}} =
              Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
 
-    members = members_of(session_uri)
-    orchestrator_uri = SessionBehavior.role_name_to_uri(members, role_name)
+    assert {:ok, orchestrator_uri} = Session.orchestrator_uri(session_uri)
     on_exit(fn -> terminate(orchestrator_uri) end)
 
     assert {:ok, orchestrator_pid} = KindRegistry.lookup(orchestrator_uri)
@@ -718,8 +728,46 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert Ezagent.ReadyGate.status(orchestrator_uri) == :not_ready
 
     pending = pending_absorb_artifacts(orchestrator_uri)
-    assert length(pending) == expected_orchestrator_cap_count()
-    assert Enum.all?(pending, &concrete_orchestrator_cap?(&1, session_uri, @workspace_uri))
+    {membership_caps, delegated_caps} = Enum.split_with(pending, &tier1_membership_cap?/1)
+    delegated_cap_identities = Enum.uniq_by(delegated_caps, &Ezagent.Capability.identity_key/1)
+
+    assert [_membership_cap] = membership_caps
+    # Tier-2 participation settlement can race the full orchestrator handoff
+    # and enqueue duplicate :send/:leave artifacts while the never-ready target
+    # is buffering. Cap identity is the authority unit; the self-store and the
+    # rollback inverse are idempotent by that identity.
+
+    {session_caps, non_session_caps} =
+      Enum.split_with(delegated_cap_identities, &(&1.kind == :session))
+
+    {workspace_caps, agent_bootstrap_caps} =
+      Enum.split_with(non_session_caps, &(&1.kind == :workspace))
+
+    assert length(session_caps) == expected_orchestrator_session_cap_count()
+
+    assert MapSet.new(Enum.map(workspace_caps, &Ezagent.Capability.action_of/1)) ==
+             MapSet.new([
+               :list_agent_templates,
+               :list_session_templates,
+               :write_session_templates
+             ])
+
+    assert MapSet.new(
+             Enum.map(agent_bootstrap_caps, fn cap ->
+               {cap.behavior, Ezagent.Capability.action_of(cap)}
+             end)
+           ) ==
+             MapSet.new([
+               {Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade},
+               {Ezagent.ActionSet.Sandbox, :update_config}
+             ])
+
+    assert Enum.all?(
+             session_caps ++ workspace_caps,
+             &concrete_orchestrator_cap?(&1, session_uri, @workspace_uri)
+           )
+
+    revoked_scope_caps = session_caps ++ workspace_caps
 
     refute Enum.any?(
              Ezagent.Identity.read_entity_caps(orchestrator_uri),
@@ -753,7 +801,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              orchestrator_uri
              |> Ezagent.Identity.read_entity_caps()
              |> Enum.any?(fn held ->
-               Enum.any?(pending, fn expected ->
+               Enum.any?(revoked_scope_caps, fn expected ->
                  Ezagent.Capability.identity_key(held) ==
                    Ezagent.Capability.identity_key(expected)
                end)
@@ -863,6 +911,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                Ezagent.Cmd.new(target, :ping, %{}, %{
                  mode: :call,
                  caller: planned,
+                 authenticated_principal: planned,
                  caps: MapSet.new([cap]),
                  reply: {:caller_inbox, self()}
                })
@@ -1323,19 +1372,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     scope_cap? or template_cap?
   end
 
+  defp tier1_membership_cap?(%Ezagent.Capability{} = cap) do
+    cap.kind == :session and cap.behavior == Ezagent.ActionSet.Session and
+      Ezagent.Capability.action_of(cap) == :receive and
+      Ezagent.Capability.granted_by_entity?(cap)
+  end
+
+  defp tier1_membership_cap?(_cap), do: false
+
   defp concrete_orchestrator_cap?(cap, session_uri, workspace_uri) do
     cap.instance in [session_uri, workspace_uri] and
       cap.workspace_uri == workspace_uri and is_binary(cap.signature) and
       is_binary(cap.key_id) and match?(%URI{}, cap.grantee_uri)
   end
 
-  defp expected_orchestrator_cap_count do
-    session_count =
-      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
-      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
-      |> length()
-
-    session_count + 3
+  defp expected_orchestrator_session_cap_count do
+    Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+    |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+    |> Enum.reject(&(&1.behavior == Ezagent.ActionSet.Session and &1.action == :receive))
+    |> length()
   end
 
   defp pending_absorb_artifacts(uri) do

@@ -104,6 +104,7 @@ defmodule EzagentPluginHello.Router do
         },
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([signed_cap]),
           reply: :ignore
         },

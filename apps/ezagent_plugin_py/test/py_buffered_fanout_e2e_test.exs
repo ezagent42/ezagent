@@ -148,12 +148,14 @@ defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
     send_target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     :ok =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: send_target,
         mode: :cast,
         args: %{message: inbound_msg},
         ctx: %{
           caller: admin_uri,
+          authenticated_principal: admin_uri,
           caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
           reply: :ignore
         }
@@ -177,12 +179,14 @@ defmodule Ezagent.PluginPy.BufferedFanoutE2ETest do
     target = Ezagent.URI.with_action(session, :session, :join)
 
     :ok =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{member: member},
         ctx: %{
           caller: member,
+          authenticated_principal: member,
           caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, member)]),
           reply: :ignore
         }

@@ -195,7 +195,11 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         )
 
       # mix-task ctx: caller is the real admin entity (NOT system://mix-task).
-      operator_ctx = %{caller: User.admin_uri(), caps: admin_ctx.caps}
+      operator_ctx = %{
+        caller: User.admin_uri(),
+        authenticated_principal: User.admin_uri(),
+        caps: admin_ctx.caps
+      }
 
       assert :ok = Workspace.grant_initial_caps(agent_uri, [granted_cap], operator_ctx)
 
@@ -365,6 +369,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                  [owner_permitted, later_denied],
                  %{
                    caller: caller,
+                   authenticated_principal: caller,
                    # C1 teeth: caller-supplied caps are deliberately powerful,
                    # but ISSUE must ignore them and use the configured durable
                    # authority loader, which is empty in this test.
@@ -840,7 +845,11 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                  Workspace.create_agent(
                    workspace_uri,
                    %{flavor: "curl", name: name, cwd: "", with_pty: false},
-                   %{caller: creator_uri, caps: Ezagent.Identity.list_caps_for(creator_uri)}
+                   %{
+                     caller: creator_uri,
+                     authenticated_principal: creator_uri,
+                     caps: Ezagent.Identity.list_caps_for(creator_uri)
+                   }
                  )
 
         assert creator_has_manage_cap?(creator_uri, :agent, agent_uri, workspace_uri)

@@ -48,6 +48,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RoleSlotTwoSessionAcceptanceT
     {:ok, _pid} =
       Ezagent.Kind.spawn(Agent, %{uri: agent_uri, behaviors: Agent.base_behaviors()})
 
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, @workspace_uri)
     on_exit(fn -> terminate(agent_uri) end)
     agent_uri
   end
@@ -64,15 +65,28 @@ defmodule EzagentDomainInstanceMessage.Integration.RoleSlotTwoSessionAcceptanceT
         args: %{member: member_uri, role_name: role_name},
         ctx: %{
           caller: caller,
+          authenticated_principal: caller,
           caps: MapSet.new([signed_action_cap!(target, caller)]),
           reply: {:caller_inbox, self()}
         }
       })
 
     case result do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> await_member(session_uri, member_uri)
+      {:ok, _} -> await_member(session_uri, member_uri)
       other -> other
+    end
+  end
+
+  defp await_member(session_uri, member_uri, attempts \\ 100)
+  defp await_member(_session_uri, _member_uri, 0), do: flunk("member projection did not converge")
+
+  defp await_member(session_uri, member_uri, attempts) do
+    if Map.has_key?(members_of(session_uri), member_uri) do
+      :ok
+    else
+      Process.sleep(10)
+      await_member(session_uri, member_uri, attempts - 1)
     end
   end
 

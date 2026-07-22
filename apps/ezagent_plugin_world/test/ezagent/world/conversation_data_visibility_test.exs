@@ -16,7 +16,7 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, KindRegistry, Message, MessageStore}
-  alias Ezagent.Entity.{Session, User}
+  alias Ezagent.Entity.Session
   alias Ezagent.Test.CapHelper
   alias Ezagent.World.ConversationData
 
@@ -26,6 +26,8 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
   # ----- fixtures --------------------------------------------------------
 
   defp spawn_owned_session(owner_uri) do
+    :ok = ensure_user(owner_uri)
+
     session_uri =
       Ezagent.URI.new!("session://team-alpha/default/p8a-#{System.unique_integer([:positive])}")
 
@@ -37,6 +39,7 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
 
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
@@ -52,7 +55,22 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
   end
 
   defp spawn_user(%URI{} = user_uri, caps) do
-    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: caps})
+    :ok = ensure_user(user_uri)
+
+    Enum.each(caps, fn cap ->
+      assert :ok = Ezagent.EntityCaps.grant(user_uri, cap)
+    end)
+
+    :ok
+  end
+
+  defp ensure_user(%URI{} = user_uri) do
+    case Ezagent.Users.create(user_uri, "test-password", []) do
+      {:ok, _row} -> :ok
+      {:error, %Ecto.Changeset{errors: [uri: {"has already been taken", _}]}} -> :ok
+    end
+
+    assert :ok = Ezagent.Entity.spawn_principal(user_uri)
 
     on_exit(fn ->
       case KindRegistry.lookup(user_uri) do

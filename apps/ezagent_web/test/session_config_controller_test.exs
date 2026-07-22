@@ -136,6 +136,7 @@ defmodule EzagentWeb.SessionConfigControllerTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(uri, owner)
     :ok = Ezagent.ActionSet.Session.Membership.provision_join_authority(uri, owner)
     on_exit(fn -> Ezagent.Kind.terminate(uri) end)
     uri

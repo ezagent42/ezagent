@@ -29,6 +29,7 @@ defmodule EzagentPluginHello.Template.HelloAgent do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
     :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "hello")
 
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
       {:ok, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
       {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}

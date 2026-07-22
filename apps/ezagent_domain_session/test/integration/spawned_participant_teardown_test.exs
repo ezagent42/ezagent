@@ -21,7 +21,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
   alias Ezagent.{AgentLineage, Invocation, KindRegistry}
   alias Ezagent.ActionSet.Session.Teardown
-  alias Ezagent.Entity.{Agent, Session, User}
+  alias Ezagent.Entity.User
   alias Ezagent.Session.Participants
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
 
@@ -36,20 +36,30 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   defp uniq, do: System.unique_integer([:positive])
 
   setup do
-    _ =
-      EzagentDomainInstanceMessage.SessionCreator.create_session("main", User.admin_uri(),
+    name = "spawned-teardown-#{uniq()}"
+
+    {:ok, session_uri, _meta} =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(name, User.admin_uri(),
         template_name: "default"
       )
 
-    :ok
+    on_exit(fn -> Ezagent.Lifecycle.destroy(session_uri, :test_cleanup) end)
+    {:ok, session_uri: session_uri}
   end
 
   # A live Agent Kind hosting Sandbox, with a config_dir wired to a stub
   # Template Class that broadcasts on `destroy_config_dir/2` so the test can
   # observe the FS GC fire.
-  defp spawn_worker(config_dir, template_class \\ __MODULE__.GcStubClass) do
+  defp spawn_worker(
+         config_dir,
+         template_class \\ __MODULE__.GcStubClass,
+         spawned_by \\ User.admin_uri()
+       ) do
     uri = Ezagent.URI.new!("entity://system/agent/worker-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: uri})
+
+    {:ok, _pid} =
+      Ezagent.TestSupport.TemplateAgentSpawn.spawn_agent(uri, "test", spawned_by: spawned_by)
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, @workspace_uri)
 
     {:ok, _} =
@@ -88,29 +98,43 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   # (the provenance marker a managed member gets at spawn) under admin authority.
   defp join_spawned(session_uri, worker_uri) do
     tmpl = Ezagent.URI.new!("template://system/agent/worker-role")
+    admin = User.admin_uri()
+    :ok = Ezagent.Identity.TargetAuthority.ensure(admin, session_uri)
 
-    :ok =
+    join_cap =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :join,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    :ok = Ezagent.Identity.Grant.issue_and_absorb_cap(worker_uri, join_cap, {:admin, admin})
+
+    assert eventually(fn ->
+             Enum.any?(Ezagent.Identity.list_caps_for(worker_uri), fn cap ->
+               cap.kind == :session and cap.behavior == Ezagent.ActionSet.Session and
+                 Ezagent.Capability.action_of(cap) == :join and cap.instance == session_uri
+             end)
+           end)
+
+    result =
       Invocation.dispatch(%Invocation{
         origin: :trusted_internal,
         target: Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
-        mode: :cast,
+        mode: :call,
         args: %{member: worker_uri, source_template_uri: tmpl},
         ctx: %{
           caller: worker_uri,
           authenticated_principal: worker_uri,
-          caps:
-            MapSet.new([
-              signed_action_cap!(
-                Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
-                worker_uri
-              )
-            ]),
-          reply: :ignore
+          caps: Ezagent.Identity.list_caps_for(worker_uri),
+          reply: {:caller_inbox, self()}
         }
       })
 
-    # let the cast land
-    _ = Participants.list_participants(session_uri)
+    assert match?({:ok, %{status: status}} when status in [:granted, :already_member], result)
+    assert eventually(fn -> worker_uri in Participants.list_participants(session_uri) end)
     :ok
   end
 
@@ -170,8 +194,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   end
 
   describe "remove a spawned worker — NO ORPHAN (SPEC §3.2)" do
-    test "worker reaped + config_dir GC'd + routing pruned + lineage forgotten" do
-      session_uri = Session.default_uri()
+    test "worker reaped + config_dir GC'd + routing pruned + lineage forgotten", %{
+      session_uri: session_uri
+    } do
       owner = User.admin_uri()
       config_dir = "/tmp/f7b-worker-#{uniq()}"
 
@@ -213,13 +238,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       assert_receive {:session_membership_change, ^session_uri, {:member_left, ^worker}}, 2_000
     end
 
-    test "config_dir cleanup FAILURE still drops the member (worker reaped → no zombie; codex Q4 follow-up)" do
+    test "config_dir cleanup FAILURE still drops the member (worker reaped → no zombie; codex Q4 follow-up)",
+         %{session_uri: session_uri} do
       # Sandbox.handle_destroy rescues a raising destroy_config_dir and returns
       # {destroyed: true, cleanup: {:error, _}} — the worker process IS reaped but
       # the FS dir leaked. The membership teardown MUST still proceed (member
       # dropped + {:member_left}), NOT abort into a zombie referencing a dead
       # worker. The reap returns :worker; the leak is logged out-of-band.
-      session_uri = Session.default_uri()
       owner = User.admin_uri()
       config_dir = "/tmp/f7b-cleanupfail-#{uniq()}"
 
@@ -262,7 +287,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
       {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
 
-      worker = spawn_worker(config_dir)
+      orchestrator = URI.new!("entity://system/agent/crux-orch-#{uniq()}")
+      worker = spawn_worker(config_dir, __MODULE__.GcStubClass, orchestrator)
 
       # The only authority granted is concrete to this worker. No admin cap and
       # no broad lineage-scoped cap participates in dispatch authorization.
@@ -275,7 +301,6 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
 
       # TWO HOPS: orchestrator is NOT live (it crashed / never mattered) — only
       # the durable lineage rows exist. worker → orchestrator → owner.
-      orchestrator = URI.new!("entity://system/agent/crux-orch-#{uniq()}")
       :ok = AgentLineage.record(orchestrator, owner)
       :ok = AgentLineage.record(worker, orchestrator)
       :ok = record_creation(worker, orchestrator)
@@ -307,7 +332,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
       {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
 
-      worker = spawn_worker(config_dir)
+      worker = spawn_worker(config_dir, __MODULE__.GcStubClass, owner)
       :ok = AgentLineage.record(worker, owner)
       :ok = record_creation(worker, owner)
 
@@ -330,7 +355,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       {:ok, _} = Ezagent.Users.create(owner, "pw-#{uniq()}", [])
       {:ok, _} = Ezagent.SpawnRegistry.spawn(owner)
 
-      worker = spawn_worker(config_dir)
+      worker = spawn_worker(config_dir, __MODULE__.GcStubClass, owner)
       :ok = AgentLineage.record(worker, owner)
       :ok = record_creation(worker, owner)
 
@@ -343,8 +368,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   end
 
   describe "delete-session cascade reaps ALL spawned members (SPEC §4.1)" do
-    test "Lifecycle.destroy(session) tears down every spawned worker + config_dir + routing + lineage" do
-      session_uri = Session.default_uri()
+    test "Lifecycle.destroy(session) tears down every spawned worker + config_dir + routing + lineage",
+         %{session_uri: session_uri} do
       owner = User.admin_uri()
 
       cfg_a = "/tmp/f7b-cascade-a-#{uniq()}"
@@ -381,6 +406,18 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
       assert session_rule_ids(session_uri) == []
       assert :error == AgentLineage.lookup(w_a)
       assert :error == AgentLineage.lookup(w_b)
+    end
+  end
+
+  defp eventually(fun, attempts \\ 200)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
     end
   end
 

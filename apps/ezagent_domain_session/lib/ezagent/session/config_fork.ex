@@ -169,7 +169,7 @@ defmodule Ezagent.Session.ConfigFork do
     case Ezagent.Workspace.create_session(
            workspace_uri,
            %{short_name: short_name, template_name: template_name},
-           %{caller: caller, caps: caps}
+           %{caller: caller, authenticated_principal: caller, caps: caps}
          ) do
       {:ok, %{session_uri: %URI{} = uri}} -> {:ok, uri}
       {:error, _} = err -> err

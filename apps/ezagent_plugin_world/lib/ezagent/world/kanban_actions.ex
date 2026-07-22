@@ -364,7 +364,11 @@ defmodule Ezagent.World.KanbanActions do
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
+    caller_ctx = %{
+      caller: caller,
+      authenticated_principal: caller,
+      caps: Ezagent.World.PresenterCaps.load(socket)
+    }
     clean = sanitize(name)
 
     cond do

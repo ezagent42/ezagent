@@ -41,6 +41,7 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   def spawn_agent(%URI{} = uri) do
     case lookup_kind_module_for_agent(uri) do
       {:ok, kind_module} ->
+        # derivation-edge: rehydration-only resolver for an existing agent URI
         Ezagent.Kind.spawn(kind_module, %{uri: uri})
 
       {:error, reason} ->

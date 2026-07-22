@@ -89,17 +89,34 @@ defmodule Ezagent.Workspace.Listing do
   """
   @spec list_workspaces_for(URI.t() | nil, MapSet.t() | [Ezagent.Capability.t()]) :: [map()]
   def list_workspaces_for(caller_uri, caps) do
-    if Ezagent.Identity.AdminAuthority.admin?(caller_uri, caps) do
-      Store.list_all()
-    else
-      caller_str = caller_uri_string(caller_uri)
-      all = Store.list_all()
-      ws_uri_strs = caps_workspace_uri_strs(caps)
+    caps = caps_to_list(caps)
 
-      all
-      |> Enum.filter(fn ws ->
-        member_match?(ws, caller_str) or cap_scope_match?(ws, ws_uri_strs)
-      end)
+    # The principal-generation gate is paid exactly once before either the
+    # URI/member admin shortcut or any cap-derived workspace scope is used.
+    # Previously every cap called authorize/3 independently; a long-lived
+    # operator with N caps therefore reloaded N holder caps N times (O(N²))
+    # and the umbrella precommit suite eventually timed out. The self-license
+    # is the holder-axis proof; target caps below still pass authorize/3 on
+    # their own target axis.
+    if principal_current?(caller_uri, caps) do
+      cond do
+        uri_or_membership_admin?(caller_uri) ->
+          Store.list_all()
+
+        current_cap_admin?(caller_uri, caps) ->
+          Store.list_all()
+
+        true ->
+          caller_str = caller_uri_string(caller_uri)
+          all = Store.list_all()
+          ws_uri_strs = current_workspace_uri_strs(caller_uri, caps)
+
+          Enum.filter(all, fn ws ->
+            member_match?(ws, caller_str) or cap_scope_match?(ws, ws_uri_strs)
+          end)
+      end
+    else
+      []
     end
   end
 
@@ -125,22 +142,92 @@ defmodule Ezagent.Workspace.Listing do
 
   defp cap_scope_match?(_, _), do: false
 
-  # Extract concrete `%URI{}` `workspace_uri` values from caps, drop
-  # `:any` (per SPEC §3.3.b — wildcards do NOT contribute to the
-  # non-admin cap-scope branch). Returns the URIs as strings for O(1)
-  # `in/2` lookup.
-  defp caps_workspace_uri_strs(caps) do
+  defp principal_current?(%URI{} = caller_uri, caps) do
     caps
-    |> caps_to_list()
-    |> Enum.flat_map(fn
-      %Ezagent.Capability{workspace_uri: %URI{} = uri} -> [URI.to_string(uri)]
-      %Ezagent.Capability{workspace_uri: _} -> []
-      _ -> []
+    |> Enum.filter(fn
+      %Ezagent.Capability{} = cap ->
+        Ezagent.Capability.action_of(cap) == :self_license
+
+      _ ->
+        false
     end)
-    |> Enum.uniq()
+    |> Enum.any?(&current_authorizing_cap?(caller_uri, &1))
   end
+
+  defp principal_current?(_caller_uri, _caps), do: false
+
+  # Passing an empty cap set makes AdminAuthority evaluate only the
+  # structural URI/system-membership predicates. The self-license gate above
+  # ensures those shortcuts cannot revive a generation-bumped principal.
+  defp uri_or_membership_admin?(caller_uri) do
+    Ezagent.Identity.AdminAuthority.admin?(caller_uri, [])
+  end
+
+  # Cap-based admin is accepted only when the exact admin-shaped artifact is
+  # current on both axes. Structural prefiltering is not itself authority; it
+  # only avoids re-running the holder gate for irrelevant caps.
+  defp current_cap_admin?(%URI{} = caller_uri, caps) do
+    Enum.any?(caps, fn
+      %Ezagent.Capability{} = cap ->
+        Ezagent.Identity.AdminAuthority.admin?(nil, [cap]) and
+          current_authorizing_cap?(caller_uri, cap)
+
+      _ ->
+        false
+    end)
+  end
+
+  defp current_cap_admin?(_caller_uri, _caps), do: false
+
+  # Extract concrete workspace scopes and verify at most until the first
+  # current cap per workspace. This retains the target-generation gate while
+  # avoiding the old O(N²) all-cap holder reload for every artifact.
+  defp current_workspace_uri_strs(%URI{} = caller_uri, caps) do
+    caps
+    |> Enum.reject(fn
+      %Ezagent.Capability{} = cap ->
+        Ezagent.Capability.action_of(cap) == :self_license
+
+      _ ->
+        false
+    end)
+    |> Enum.group_by(fn
+      %Ezagent.Capability{workspace_uri: %URI{} = uri} -> URI.to_string(uri)
+      _ -> nil
+    end)
+    |> Map.delete(nil)
+    |> Enum.flat_map(fn {workspace_uri, scoped_caps} ->
+      if Enum.any?(scoped_caps, &current_authorizing_cap?(caller_uri, &1)),
+        do: [workspace_uri],
+        else: []
+    end)
+  end
+
+  defp current_workspace_uri_strs(_caller_uri, _caps), do: []
 
   defp caps_to_list(caps) when is_list(caps), do: caps
   defp caps_to_list(%MapSet{} = caps), do: MapSet.to_list(caps)
   defp caps_to_list(_), do: []
+
+  # A workspace-scope match is an authority use, not a metadata query. Verify
+  # every candidate against both the authenticated holder and the candidate's
+  # own concrete target before its workspace dimension can affect visibility.
+  # This preserves the established rule that, for example, a current Session
+  # cap scoped to W can surface W, while making a generation-N cap inert as
+  # soon as that Session/Workspace target advances to generation N+1.
+  defp current_authorizing_cap?(%URI{} = caller_uri, %Ezagent.Capability{} = cap) do
+    needed = %{
+      kind: cap.kind,
+      behavior: cap.behavior,
+      action: Ezagent.Capability.action_of(cap),
+      instance: cap.instance,
+      workspace_uri: cap.workspace_uri
+    }
+
+    match?({:ok, ^cap}, Ezagent.Cap.authorize(caller_uri, [cap], needed))
+  rescue
+    _ -> false
+  end
+
+  defp current_authorizing_cap?(_caller_uri, _cap), do: false
 end

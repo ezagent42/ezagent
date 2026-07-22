@@ -520,7 +520,7 @@ defmodule Ezagent.World.ConversationActions do
     case create.(
            workspace_uri,
            %{short_name: short_name, template_name: template_name},
-           %{caller: caller, caps: MapSet.new()}
+           %{caller: caller, authenticated_principal: caller, caps: MapSet.new()}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}
       {:error, reason} -> {:error, reason}
@@ -1029,6 +1029,7 @@ defmodule Ezagent.World.ConversationActions do
       {:ok, %URI{} = member_uri} ->
         case Ezagent.Session.RoleAssignments.assign_role(session_uri, member_uri, role_name, %{
                caller: caller,
+               authenticated_principal: caller,
                caps: caps
              }) do
           {:ok, _assigned} ->

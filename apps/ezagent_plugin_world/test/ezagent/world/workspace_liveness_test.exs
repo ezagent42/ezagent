@@ -29,7 +29,9 @@ defmodule Ezagent.World.WorkspaceLivenessTest do
     ws_name = "world-liveness-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws_name, %{})
     workspace_uri = URI.new!("workspace://#{ws_name}")
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    admin = User.admin_uri()
+    :ok = Ezagent.Entity.spawn_principal(admin)
+    admin_caps = MapSet.new(Ezagent.EntityCaps.load(admin))
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_caps: admin_caps}
   end

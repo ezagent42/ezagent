@@ -50,6 +50,7 @@ defmodule Ezagent.UI.UriOptionsTest do
     ws = Ezagent.URI.workspace(ws_name)
     caller = Ezagent.URI.user(ws_name, "member")
     {:ok, _row} = Ezagent.Users.create(caller, nil, [])
+    :ok = ensure_principal(caller)
     {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [caller])
     {ws_name, ws, caller}
   end
@@ -70,6 +71,7 @@ defmodule Ezagent.UI.UriOptionsTest do
   defp seed_session(ws_name, name, owner_uri) do
     session = Ezagent.URI.session(ws_name, "default", name)
     kind = Module.concat([Ezagent.Entity, Session])
+    :ok = ensure_principal(owner_uri)
 
     {:ok, _pid} =
       Ezagent.Kind.spawn(kind, %{
@@ -77,6 +79,8 @@ defmodule Ezagent.UI.UriOptionsTest do
         behaviors: apply(kind, :behaviors, []),
         owner_uri: owner_uri
       })
+
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, owner_uri)
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, Ezagent.URI.workspace(ws_name))
     wait_until(fn -> Ezagent.ReadyGate.status(session) == :ready end)
@@ -133,6 +137,9 @@ defmodule Ezagent.UI.UriOptionsTest do
 
       operator =
         Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+
+      {:ok, _row} = Ezagent.Users.create(operator, nil, [])
+      :ok = ensure_principal(operator)
 
       agent = seed_agent(ws_name, "rostered", Ezagent.URI.user(ws_name, "member"))
       {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [agent])
@@ -352,4 +359,18 @@ defmodule Ezagent.UI.UriOptionsTest do
   end
 
   defp wait_until(fun, _retries), do: fun.() == true
+
+  defp ensure_principal(%URI{} = uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        case Ezagent.SpawnRegistry.spawn(uri) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> flunk("principal spawn failed: #{inspect(reason)}")
+        end
+    end
+  end
 end

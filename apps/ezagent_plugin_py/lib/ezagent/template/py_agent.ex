@@ -168,6 +168,7 @@ defmodule Ezagent.Template.PyAgent do
       # never blocking this create path. When the underlying failure has
       # cleared (network back, uv installed), the retry recovers the member
       # and clears the `:last_error` marker.
+      # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
       case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
         {:ok, _pid} ->
           {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
@@ -219,6 +220,7 @@ defmodule Ezagent.Template.PyAgent do
             args: %{},
             ctx: %{
               caller: agent_uri,
+              authenticated_principal: agent_uri,
               caps: MapSet.new([signed_cap]),
               reply: :ignore
             },

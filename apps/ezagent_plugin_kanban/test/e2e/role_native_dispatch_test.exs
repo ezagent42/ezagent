@@ -147,7 +147,13 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
         target,
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     Ezagent.Router.dispatch(cmd)

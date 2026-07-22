@@ -48,7 +48,7 @@ defmodule Ezagent.Socialware.DefinitionRegistryReseedTest do
     :ok
   end
 
-  defp orchestrator_body(flavor, provider \\ nil) do
+  defp orchestrator_body(flavor, provider) do
     role = %{role_name: @orchestrator, fill: :agent, recipe: @orchestrator, flavor: flavor}
     role = if provider, do: Map.put(role, :provider, provider), else: role
 

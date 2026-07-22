@@ -203,7 +203,13 @@ defmodule EzagentPluginHello.KanbanDelegation do
 
     case Ezagent.Cap.issue(authorization, sender_uri, requested) do
       {:ok, cap} ->
-        {:ok, %{caller: sender_uri, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}}
+        {:ok,
+         %{
+           caller: sender_uri,
+           authenticated_principal: sender_uri,
+           caps: MapSet.new([cap]),
+           reply: {:caller_inbox, self()}
+         }}
 
       {:error, reason} ->
         {:error, reason}

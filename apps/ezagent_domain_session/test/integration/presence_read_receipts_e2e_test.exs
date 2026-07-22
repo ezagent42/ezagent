@@ -176,6 +176,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: :inline
       }
@@ -187,7 +188,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
     end
   end
 
-  defp admin_sends_message(session_uri, admin_uri, text, mentions \\ []) do
+  defp admin_sends_message(session_uri, admin_uri, text, mentions) do
     msg =
       Message.new(admin_uri, %{text: text, attachments: []},
         mentions: mentions,
@@ -204,6 +205,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       args: %{message: msg},
       ctx: %{
         caller: admin_uri,
+        authenticated_principal: admin_uri,
         caps: MapSet.new([cap]),
         reply: :inline
       }
@@ -227,6 +229,10 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       # ---------- Phase 1: cc-demo "comes online" via Presence ----------
       t_pre_presence = System.monotonic_time(:millisecond)
 
+      wait_until(fn ->
+        Map.has_key?(EzagentDomainInstanceMessage.PresenceFanout.__index__(), cc_demo_uri)
+      end)
+
       # Simulate the cc-demo agent connecting (e.g. its bridge attaching);
       # tracker held in a separate process so the entry stays alive
       tracker =
@@ -246,7 +252,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
       session_str_for_assert = URI.to_string(session_uri)
       cc_demo_str_for_assert = URI.to_string(cc_demo_uri)
 
-      assert_receive {:member_presence, recv_s, recv_u, %{online?: true}}, 2_000
+      {recv_s, recv_u} = await_online_presence()
 
       assert URI.to_string(recv_s) == session_str_for_assert
       assert URI.to_string(recv_u) == cc_demo_str_for_assert
@@ -360,6 +366,18 @@ defmodule EzagentDomainInstanceMessage.Integration.PresenceReadReceiptsE2ETest d
 
       # Sanity bound — full ladder should run under test conditions in <3s
       assert t_offline_observed - t_start < 3_000
+    end
+  end
+
+  defp await_online_presence do
+    receive do
+      {:member_presence, session_uri, member_uri, %{online?: true}} ->
+        {session_uri, member_uri}
+
+      {:member_joined, _member_uri} ->
+        await_online_presence()
+    after
+      2_000 -> flunk("online member_presence event was not received")
     end
   end
 

@@ -9,6 +9,7 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
 
   alias Ezagent.ActionSet.Session.{Delivery, Members}
 
+  @doc false
   @spec on_add(URI.t(), pid(), map(), map(), module()) :: {map(), [term()]}
   def on_add(%URI{} = member_uri, member_pid, facets, ctx, source_module)
       when is_pid(member_pid) and is_map(facets) do

@@ -42,11 +42,26 @@ defmodule EzagentDomainInstanceMessage.Integration.DeliveryBufferFullDropTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
 
+    # Let spawn's announce-ready continuation finish before forcing the test
+    # state. Otherwise that continuation can race this test, flip back to
+    # :ready, and flush synthetic fillers into the real Kind mailbox.
+    :ok = Ezagent.ReadyGate.await(recipient_uri, 5_000)
     :ok = Ezagent.ReadyGate.put(recipient_uri, :not_ready)
 
-    for i <- 1..Ezagent.PendingDelivery.max_per_uri() do
-      :ok = Ezagent.PendingDelivery.buffer(recipient_uri, {:filler, i})
-    end
+    # Spawn-time capability settlement can itself enqueue one or more casts
+    # after the Kind is marked not-ready. Saturate until the buffer reports its
+    # actual boundary instead of assuming this test is the only producer.
+    assert :full =
+             Enum.reduce_while(
+               1..(Ezagent.PendingDelivery.max_per_uri() + 10),
+               :not_full,
+               fn i, _acc ->
+                 case Ezagent.PendingDelivery.buffer(recipient_uri, {:filler, i}) do
+                   :ok -> {:cont, :not_full}
+                   {:error, :buffer_full} -> {:halt, :full}
+                 end
+               end
+             )
 
     on_exit(fn ->
       _ = Ezagent.PendingDelivery.flush(recipient_uri)

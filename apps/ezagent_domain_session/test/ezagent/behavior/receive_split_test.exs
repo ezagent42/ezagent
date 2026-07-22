@@ -15,7 +15,11 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
   migration).
   """
 
-  use ExUnit.Case, async: true
+  # The unified authorization fixture signs the held member-cap against the
+  # holder's current authority, which is DB-backed and starts a concrete Kind.
+  # Keep the test on DataCase's shared sandbox owner so that globally
+  # supervised Kind may use the same connection deterministically.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{BehaviorRegistry, Capability, Message}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
@@ -32,7 +36,13 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
     caller = Map.fetch!(ctx, :caller)
 
     cap = %Capability{
-      Capability.cap(:session, Ezagent.ActionSet.Session, :receive, caller, Capability.workspace_of(caller))
+      Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        caller,
+        Capability.workspace_of(caller)
+      )
       | granted_by: URI.new!("entity://system/user/owner"),
         granted_at: DateTime.utc_now()
     }
@@ -83,7 +93,8 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
         slice_change_cursor: 7
       }
 
-      assert {:ok, new_slice} = Invoker.invoke(UserReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
+      assert {:ok, new_slice} =
+               Invoker.invoke(UserReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
 
       assert new_slice.last_received.message_id == msg.id
       assert %DateTime{} = new_slice.last_received.at
@@ -121,6 +132,36 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
       assert length(new_slice.recent_messages) == depth
       assert [{999, _} | _] = new_slice.recent_messages
     end
+
+    test "a cold-revival replay does not replace a newer last_received value" do
+      user_uri =
+        URI.new!("entity://team-alpha/user/replay-#{System.unique_integer([:positive])}")
+
+      sender = URI.new!("entity://team-alpha/user/sender")
+      replayed = Message.new(sender, %{text: "replayed", attachments: []})
+      newer_at = DateTime.utc_now()
+
+      prior = %{
+        last_received: %{message_id: "newer-message", at: newer_at},
+        recent_messages: [{8, "newer-message"}, {7, replayed.id}]
+      }
+
+      ctx = %{
+        self_uri: user_uri,
+        kind_module: Ezagent.Entity.User,
+        caller: sender,
+        slice_change_cursor: 9
+      }
+
+      assert {:ok, ^prior} =
+               Invoker.invoke(
+                 UserReceive,
+                 :receive,
+                 prior,
+                 %{message: replayed},
+                 with_member_cap(ctx)
+               )
+    end
   end
 
   describe "Agent.Receive — live delivery, no slice state" do
@@ -145,7 +186,8 @@ defmodule Ezagent.ActionSet.ReceiveSplitTest do
 
       ctx = %{self_uri: agent_uri, kind_module: Ezagent.Entity.Agent, caller: session_uri}
 
-      assert {:ok, %{}} = Invoker.invoke(AgentReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
+      assert {:ok, %{}} =
+               Invoker.invoke(AgentReceive, :receive, %{}, %{message: msg}, with_member_cap(ctx))
 
       # The flavor-neutral payload reached the bound bridge channel.
       assert_receive {:agent_bridge_push, "to_claude", %{"content" => content, "meta" => meta}},

@@ -154,6 +154,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
   """
   @spec build_ctx(String.t()) :: %{
           caller: URI.t(),
+          authenticated_principal: URI.t(),
           caps: MapSet.t(Capability.t()),
           reply: :ignore
         }
@@ -161,7 +162,12 @@ defmodule Mix.Tasks.Ezagent.ExternalMirror.CLI do
     caller_uri = Ezagent.URI.new!(as_uri)
     caps = load_caps(caller_uri)
 
-    %{caller: caller_uri, caps: caps, reply: :ignore}
+    %{
+      caller: caller_uri,
+      authenticated_principal: caller_uri,
+      caps: caps,
+      reply: :ignore
+    }
   end
 
   # codex r1 MED-2 (2026-05-25): NO blanket rescue. Pre-fix, a runtime

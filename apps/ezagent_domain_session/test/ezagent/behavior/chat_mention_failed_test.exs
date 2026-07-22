@@ -18,7 +18,6 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Capability
   alias Ezagent.AgentFlavorAttributes
   alias Ezagent.Invocation
   alias Ezagent.Message
@@ -62,7 +61,7 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
   describe "notify_dropped_mentions/4 via :send" do
     test "emits :mention_failed when mention resolves but isn't a session member", ctx do
       # Spawn the sender + non_member so the URIs are known to the system.
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      spawn_user!(ctx.sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.non_member)
 
       # Spawn session with ONLY the sender as a member (non_member is
@@ -88,7 +87,7 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
     end
 
     test "does NOT emit when mention resolves AND is a session member", ctx do
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      spawn_user!(ctx.sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.member)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
 
@@ -125,7 +124,7 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
     end
 
     test "empty mentions list is silent (casual @text case)", ctx do
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.sender)
+      spawn_user!(ctx.sender)
       {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.session)
       {:ok, _members} = join_session(ctx.session, ctx.sender, ctx.sender)
 
@@ -152,23 +151,40 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        deadline_ms: 5_000
+      }
     }
 
-    # `:join` is dispatched `mode: :call`, so `Kind.Server.handle_call/3`
-    # commits the `{:set, :members, ...}` effect into the Session actor's
-    # slice state BEFORE it replies (server.ex — `commit_and_notify` then
-    # `{:reply, ..., %{state | state: new_slice_state}}`). The `:join`
-    # action also `returns: %{members: {:list, :uri}}`, so the reply carries
-    # the post-join membership snapshot. Return it so callers can SYNCHRONOUSLY
-    # confirm the new member is committed/visible before a subsequent
-    # `send_message` evaluates membership — closing any join↔send ordering
-    # window for the negative `refute_receive {:mention_failed}` assertion.
     case Invocation.dispatch(inv) do
-      {:ok, %{members: members}} -> {:ok, members}
-      :ok -> {:ok, []}
-      {:ok, _} -> {:ok, []}
+      {:ok, _} -> await_session_members(session_uri, member_uri)
+      :ok -> await_session_members(session_uri, member_uri)
       other -> raise "join_session failed: #{inspect(other)}"
+    end
+  end
+
+  defp spawn_user!(uri) do
+    {:ok, _} = Ezagent.Users.create(uri, "pw-not-secret", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+  end
+
+  defp await_session_members(session_uri, member_uri, attempts \\ 100)
+
+  defp await_session_members(_session_uri, member_uri, 0) do
+    raise "member projection did not converge for #{inspect(member_uri)}"
+  end
+
+  defp await_session_members(session_uri, member_uri, attempts) do
+    members = Ezagent.Entity.Session.session_member_uris(session_uri)
+
+    if member_uri in members do
+      {:ok, members}
+    else
+      Process.sleep(10)
+      await_session_members(session_uri, member_uri, attempts - 1)
     end
   end
 
@@ -181,7 +197,12 @@ defmodule Ezagent.ActionSet.Session.MentionFailedTest do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, deadline_ms: 5_000}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        deadline_ms: 5_000
+      }
     }
 
     case Invocation.dispatch(inv) do

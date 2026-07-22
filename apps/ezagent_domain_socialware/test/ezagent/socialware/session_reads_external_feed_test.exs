@@ -43,8 +43,8 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
   alias EzagentCore.Repo
 
   @workspace "team-alpha"
-  @owner Ezagent.URI.entity(:team_alpha, :user, "sr-feed-owner")
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "sr-feed-stranger")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-feed-owner")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-feed-stranger")
 
   # ----- fixtures ----------------------------------------------------------
 
@@ -59,9 +59,9 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: uri,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -101,7 +101,11 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: @owner, behaviors: behaviors})
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
+        uri: session_uri,
+        owner_uri: owner(),
+        behaviors: behaviors
+      })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
 
@@ -110,7 +114,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
         session_uri,
         Ezagent.URI.workspace(@workspace),
         content,
-        @owner
+        owner()
       )
 
     {:ok, _} =
@@ -241,13 +245,13 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
     test "a signed-in NON-member reads messages + deliveries + surface of a public session" do
       session = session_with_public_view(true)
 
-      assert {:ok, _} = SessionReads.messages(@stranger, session, :external_feed, %{limit: 50})
-      assert {:ok, _} = SessionReads.messages(@stranger, session, :external_chat, %{limit: 50})
-      assert {:ok, _} = SessionReads.external_deliveries_since(@stranger, session, 0)
-      assert {:ok, _} = SessionReads.latest_external_delivery_cursor(@stranger, session)
+      assert {:ok, _} = SessionReads.messages(stranger(), session, :external_feed, %{limit: 50})
+      assert {:ok, _} = SessionReads.messages(stranger(), session, :external_chat, %{limit: 50})
+      assert {:ok, _} = SessionReads.external_deliveries_since(stranger(), session, 0)
+      assert {:ok, _} = SessionReads.latest_external_delivery_cursor(stranger(), session)
 
-      assert {:ok, _} = SessionReads.committed_external_surface_version(@stranger, session)
-      assert {:ok, _} = SessionReads.external_surface(@stranger, session)
+      assert {:ok, _} = SessionReads.committed_external_surface_version(stranger(), session)
+      assert {:ok, _} = SessionReads.external_surface(stranger(), session)
     end
 
     test "a NIL (anonymous, identity-less) caller reads the public session's feed" do
@@ -265,13 +269,13 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       # conversation/member reads keep rejecting a non-member (the PR-1 deep-link
       # fix is not regressed by the open page gate).
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :conversation, %{limit: 50})
+               SessionReads.messages(stranger(), session, :conversation, %{limit: 50})
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :chat_feed, %{limit: 50})
+               SessionReads.messages(stranger(), session, :chat_feed, %{limit: 50})
 
-      assert {:error, :unauthorized} = SessionReads.members(@stranger, session)
-      refute SessionReads.authorized?(@stranger, session)
+      assert {:error, :unauthorized} = SessionReads.members(stranger(), session)
+      refute SessionReads.authorized?(stranger(), session)
     end
   end
 
@@ -283,13 +287,13 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       write(session, "secret", :external_visible)
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :external_feed, %{limit: 50})
+               SessionReads.messages(stranger(), session, :external_feed, %{limit: 50})
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :external_feed, %{ids: ["any"]})
+               SessionReads.messages(stranger(), session, :external_feed, %{ids: ["any"]})
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :external_chat, %{limit: 50})
+               SessionReads.messages(stranger(), session, :external_chat, %{limit: 50})
     end
 
     test "delivery reads reject a non-member on a private session (finding-#4)" do
@@ -298,36 +302,36 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       _turn = commit(session, [msg.id], 1)
 
       assert {:error, :unauthorized} =
-               SessionReads.external_deliveries_since(@stranger, session, 0)
+               SessionReads.external_deliveries_since(stranger(), session, 0)
 
       assert {:error, :unauthorized} =
-               SessionReads.latest_external_delivery_cursor(@stranger, session)
+               SessionReads.latest_external_delivery_cursor(stranger(), session)
 
       assert {:error, :unauthorized} =
-               SessionReads.committed_external_surface_version(@stranger, session)
+               SessionReads.committed_external_surface_version(stranger(), session)
     end
 
     test "the surface read rejects a non-member on a private session (finding-#4)" do
       session = spawn_socialware_session()
 
-      assert {:error, :unauthorized} = SessionReads.external_surface(@stranger, session)
+      assert {:error, :unauthorized} = SessionReads.external_surface(stranger(), session)
       assert {:error, :unauthorized} = SessionReads.external_surface(nil, session)
     end
 
     test "ExternalFeed's public API rejects the non-member end-to-end" do
       session = spawn_socialware_session()
 
-      assert {:error, :unauthorized} = ExternalFeed.snapshot(session, @stranger)
-      assert {:error, :unauthorized} = ExternalFeed.history(session, @stranger)
-      assert {:error, :unauthorized} = ExternalFeed.chat_messages(session, @stranger)
-      assert {:error, :unauthorized} = ExternalFeed.join(session, @stranger)
-      assert {:error, :unauthorized} = ExternalFeed.replay(session, @stranger, 0)
+      assert {:error, :unauthorized} = ExternalFeed.snapshot(session, stranger())
+      assert {:error, :unauthorized} = ExternalFeed.history(session, stranger())
+      assert {:error, :unauthorized} = ExternalFeed.chat_messages(session, stranger())
+      assert {:error, :unauthorized} = ExternalFeed.join(session, stranger())
+      assert {:error, :unauthorized} = ExternalFeed.replay(session, stranger(), 0)
 
       assert {:error, :unauthorized} =
-               ExternalFeed.committed_deliveries_since(@stranger, session, 0)
+               ExternalFeed.committed_deliveries_since(stranger(), session, 0)
 
-      assert {:error, :unauthorized} = ExternalFeed.latest_cursor(@stranger, session)
-      refute ExternalFeed.member?(session, @stranger)
+      assert {:error, :unauthorized} = ExternalFeed.latest_cursor(stranger(), session)
+      refute ExternalFeed.member?(session, stranger())
     end
   end
 
@@ -343,7 +347,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
 
       # :external_feed window — == committed_external_visible/2 verbatim.
       assert {:ok, via_chokepoint} =
-               SessionReads.messages(@owner, session, :external_feed, %{limit: 50})
+               SessionReads.messages(owner(), session, :external_feed, %{limit: 50})
 
       assert via_chokepoint == MessageStore.committed_external_visible(session, 50)
       assert Enum.map(via_chokepoint, & &1.id) == [public_msg.id]
@@ -351,13 +355,13 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       # :external_feed by-ids — == committed_external_visible_by_ids/2 verbatim.
       ids = [public_msg.id, internal_msg.id]
 
-      assert {:ok, by_ids} = SessionReads.messages(@owner, session, :external_feed, %{ids: ids})
+      assert {:ok, by_ids} = SessionReads.messages(owner(), session, :external_feed, %{ids: ids})
       assert by_ids == MessageStore.committed_external_visible_by_ids(session, ids)
       assert Enum.map(by_ids, & &1.id) == [public_msg.id]
 
       # :external_chat — == chat_visible_recent/2 verbatim (sees every
       # external_visible message, committed or not).
-      assert {:ok, chat} = SessionReads.messages(@owner, session, :external_chat, %{limit: 50})
+      assert {:ok, chat} = SessionReads.messages(owner(), session, :external_chat, %{limit: 50})
       assert chat == MessageStore.chat_visible_recent(session, 50)
     end
 
@@ -367,18 +371,18 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       turn_id = commit(session, [msg.id], 1)
 
       # Delivery replay — byte-identical to the pre-consolidation outbox query.
-      assert {:ok, deliveries} = SessionReads.external_deliveries_since(@owner, session, 0)
+      assert {:ok, deliveries} = SessionReads.external_deliveries_since(owner(), session, 0)
       assert deliveries == direct_deliveries_since(session, 0)
       assert [%{cursor: 1, turn_id: ^turn_id, message_ids: [_], surface_version: 1}] = deliveries
 
-      assert SessionReads.latest_external_delivery_cursor(@owner, session) == {:ok, 1}
-      assert SessionReads.committed_external_surface_version(@owner, session) == {:ok, 1}
+      assert SessionReads.latest_external_delivery_cursor(owner(), session) == {:ok, 1}
+      assert SessionReads.committed_external_surface_version(owner(), session) == {:ok, 1}
 
       # The surface read — byte-identical to the live :surface slice read
       # ExternalFeed made pre-consolidation.
       {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
 
-      assert {:ok, surface} = SessionReads.external_surface(@owner, session)
+      assert {:ok, surface} = SessionReads.external_surface(owner(), session)
       assert surface == live_surface
     end
 
@@ -396,7 +400,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
         shell_css: nil
       }
 
-      assert {:ok, snapshot} = ExternalFeed.snapshot(session, @owner)
+      assert {:ok, snapshot} = ExternalFeed.snapshot(session, owner())
       assert snapshot == expected
       assert expected.messages != []
     end
@@ -412,13 +416,13 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
 
       # Pre-commit sanity: nothing committed yet.
       assert MessageStore.committed_external_visible(session, 100) == []
-      assert SessionReads.committed_external_surface_version(@owner, session) == {:ok, nil}
+      assert SessionReads.committed_external_surface_version(owner(), session) == {:ok, nil}
 
       # The mid-read seam fires the atomic commit in the straddle window.
       seam = fn -> {:ok, _} = Settlement.mark_committed_for_test(turn_id) end
 
       assert {:ok, %{messages: messages, version: version}} =
-               SessionReads.external_snapshot_reads(@owner, session, mid_read: seam)
+               SessionReads.external_snapshot_reads(owner(), session, mid_read: seam)
 
       # SELF-CONSISTENCY INVARIANT: if the snapshot reports a committed page
       # version, the committed turn's messages MUST be present (no page-without-

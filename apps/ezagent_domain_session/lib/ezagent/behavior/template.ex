@@ -724,6 +724,7 @@ defmodule Ezagent.ActionSet.Template do
     with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
       dispatch_template_write(uri, content, %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       })

@@ -53,7 +53,11 @@ defmodule Ezagent.World.AgentActions do
   defp dispatch_agent_create(socket, params) when is_map(params) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
+    caller_ctx = %{
+      caller: caller,
+      authenticated_principal: caller,
+      caps: Ezagent.World.PresenterCaps.load(socket)
+    }
 
     flavor = params |> Map.get("flavor", "") |> to_string() |> String.trim()
     name = params |> Map.get("name", "") |> to_string() |> String.trim()
@@ -147,7 +151,11 @@ defmodule Ezagent.World.AgentActions do
          # learning nothing about what exists. Anyone entitled to delete is equally
          # entitled to this read, so it never blocks a legitimate delete.
          {:ok, _cascade} <-
-           Ezagent.Domain.Agent.read_config(agent_uri, %{caller: caller, caps: caps}),
+           Ezagent.Domain.Agent.read_config(agent_uri, %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: caps
+           }),
          {:ok, []} <- EzagentDomainInstanceMessage.agent_live_sessions(agent_uri),
          target = Ezagent.URI.with_action(agent_uri, :manage, :delete),
          {:ok, {:ok, :deleted}} <-

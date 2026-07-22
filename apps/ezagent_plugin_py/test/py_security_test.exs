@@ -60,8 +60,13 @@ defmodule Ezagent.PluginPy.SecurityTest do
     } do
       # A non-operator: a real user URI but an EMPTY cap set (no
       # admin_genesis_cap, no create_agent cap on this workspace).
+      intruder = URI.new!("entity://#{Ezagent.URI.name!(workspace_uri)}/user/intruder")
+      {:ok, _user} = Ezagent.Users.create(intruder, "py-security-intruder", [])
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(intruder)
+
       non_operator_ctx = %{
-        caller: URI.new!("entity://#{Ezagent.URI.name!(workspace_uri)}/user/intruder"),
+        caller: intruder,
+        authenticated_principal: intruder,
         caps: MapSet.new()
       }
 

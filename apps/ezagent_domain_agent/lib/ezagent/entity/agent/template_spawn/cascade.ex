@@ -353,6 +353,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
             agent_uri: agent_uri,
             source: source,
             caller: caller,
+            authenticated_principal: caller,
             caps: caps
           })
 
@@ -361,6 +362,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
             agent_uri: agent_uri,
             source: source,
             caller: caller,
+            authenticated_principal: caller,
             caps: MapSet.to_list(caps)
           })
 

@@ -26,7 +26,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingBootTest do
   test "SessionRouting table is NOT declared (retired 2026-05-25)" do
     # ETS table names are atoms produced via `:"ezagent_routing_..."`.
     # A whereis check is precise + does NOT raise on missing.
-    assert :ets.whereis(:"ezagent_routing_Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting") ==
+    assert :ets.whereis(
+             :"ezagent_routing_Elixir.EzagentDomainInstanceMessage.Routing.SessionRouting"
+           ) ==
              :undefined
   end
 

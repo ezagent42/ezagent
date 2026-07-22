@@ -28,6 +28,7 @@ defmodule Ezagent.ActionSet.TemplateMigrationParityTest do
         kind_module: AgentTemplate,
         self_uri: nil,
         caller: nil,
+        authenticated_principal: nil,
         caps: MapSet.new()
       },
       extras

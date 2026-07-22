@@ -14,8 +14,8 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   alias Ezagent.ActionSet.Surface
   alias EzagentDomainSocialware.PageView
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "page-ext-owner")
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "page-ext-stranger")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "page-ext-owner")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "page-ext-stranger")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -33,7 +33,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
     Invocation.dispatch(%Invocation{
       origin: :trusted_internal,
@@ -42,6 +42,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       args: args,
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
@@ -68,9 +69,9 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: uri,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -120,7 +121,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
   describe "external_render/1,2 (caller-authorizing, PR-2)" do
     test "returns nil when there is no approved version" do
       uri = spawn_session()
-      assert PageView.external_render(uri, @owner) == nil
+      assert PageView.external_render(uri, owner()) == nil
     end
 
     test "returns the APPROVED version tree (== Surface.external_tree/1) for an authorized caller" do
@@ -129,8 +130,8 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       _version = approve_page(uri, page_tree)
 
       {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
-      assert PageView.external_render(uri, @owner) == Surface.external_tree(surface)
-      assert PageView.external_render(uri, @owner) == page_tree
+      assert PageView.external_render(uri, owner()) == Surface.external_tree(surface)
+      assert PageView.external_render(uri, owner()) == page_tree
     end
 
     test "fails closed for a non-member and for a caller-less read (PR-2 authz)" do
@@ -139,7 +140,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       _version = approve_page(uri, page_tree)
 
       # A non-member gets nil even though a committed page exists...
-      assert PageView.external_render(uri, @stranger) == nil
+      assert PageView.external_render(uri, stranger()) == nil
       # ...and the caller-less /1 form (the SessionView contract) fails closed on
       # a private session — before PR-2 it returned the tree with NO authorization.
       assert PageView.external_render(uri) == nil
@@ -147,7 +148,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
 
     test "returns nil for a non-URI argument (clause fallback)" do
       assert PageView.external_render(:not_a_uri) == nil
-      assert PageView.external_render(:not_a_uri, @owner) == nil
+      assert PageView.external_render(:not_a_uri, owner()) == nil
     end
   end
 end

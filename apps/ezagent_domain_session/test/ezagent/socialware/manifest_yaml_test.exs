@@ -342,12 +342,14 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
   defp dispatch_send(session_uri, text) do
     msg = Message.new(@admin, %{text: text, attachments: []})
 
-    case Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
            target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
            mode: :cast,
            args: %{message: msg},
            ctx: %{
              caller: @admin,
+             authenticated_principal: @admin,
              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
              reply: :ignore
            }

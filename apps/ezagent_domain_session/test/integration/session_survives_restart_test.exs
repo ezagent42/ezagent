@@ -53,6 +53,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
         "entity://team-alpha/user/restart-member-#{System.unique_integer([:positive])}"
       )
 
+    {:ok, _row} = Ezagent.Users.create(member_uri, "pw-not-secret", [])
+
     {:ok, member_pid} =
       Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
@@ -213,6 +215,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
                Ezagent.WorkspaceRegistry.lookup(session_uri)
 
       {:ok, _} = join(session_uri, member_uri)
+      wait_until(fn -> Map.has_key?(list_members(session_uri), member_uri) end)
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end)
 
       # Drop the Kind AND the ETS binding — simulating a phx restart

@@ -12,7 +12,11 @@ defmodule Ezagent.Session.HeldCapReceiveTest do
   WIRING (site → `MemberReceive.authorize/1`), not just the predicate.
   """
 
-  use ExUnit.Case, async: true
+  # F-6 fixture normalization starts a real recipient Kind so the held caps
+  # can be target-signed against its current generation. Own that database
+  # work explicitly and run serially; bare async ExUnit processes have no
+  # sandbox checkout and fail nondeterministically in the umbrella suite.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Capability, Message}
   alias Ezagent.ActionSet.User.Receive, as: UserReceive
@@ -78,7 +82,9 @@ defmodule Ezagent.Session.HeldCapReceiveTest do
       Path.wildcard(Path.join(@apps_root, "*/lib/**/*.ex"))
       |> Enum.filter(fn path ->
         body = File.read!(path)
-        body =~ "action: :receive" and Regex.match?(~r/Router\.dispatch|Invocation\.dispatch|%Cmd\{|%Ezagent\.Cmd\{/, body)
+
+        body =~ "action: :receive" and
+          Regex.match?(~r/Router\.dispatch|Invocation\.dispatch|%Cmd\{|%Ezagent\.Cmd\{/, body)
       end)
       |> Enum.map(&Path.basename/1)
       |> Enum.uniq()

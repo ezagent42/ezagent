@@ -72,10 +72,18 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
     } do
       operator = URI.new!("entity://#{ws_name}/user/operator")
       target = Ezagent.URI.with_action(workspace_uri, :workspace_user_admin, :disable_user)
+      operator_cap = Ezagent.Test.CapHelper.signed_action_cap!(target, operator)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(User, %{
+          uri: operator,
+          initial_caps: MapSet.new([operator_cap])
+        })
 
       operator_ctx = %{
         caller: operator,
-        caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, operator)])
+        authenticated_principal: operator,
+        caps: Ezagent.Identity.list_caps_for(operator)
       }
 
       assert {:ok, %{user_uri: ^user_uri_str}} =
@@ -93,9 +101,13 @@ defmodule Ezagent.Integration.DisableUserDispatchTest do
       ws_name: ws_name,
       user_uri_str: user_uri_str
     } do
+      nobody = URI.new!("entity://#{ws_name}/user/nobody")
+      {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: nobody, initial_caps: MapSet.new()})
+
       nobody_ctx = %{
-        caller: URI.new!("entity://#{ws_name}/user/nobody"),
-        caps: MapSet.new()
+        caller: nobody,
+        authenticated_principal: nobody,
+        caps: Ezagent.Identity.list_caps_for(nobody)
       }
 
       assert {:error, :missing_cap} =

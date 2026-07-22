@@ -3,14 +3,14 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   Phase 2b-step 2 integration test — full dispatch path through the
   live Session GenServer started by `EzagentDomainInstanceMessage.Application`.
 
-  Verifies the boot-time admin join landed and that subsequent chat
+  Verifies an owner join landed and that subsequent chat
   send/receive routes via dispatch (not via direct invoke). Also
   covers the :DOWN forwarder path by spawning a transient member,
   joining it, killing it, and asserting Session marks it offline.
   """
 
-  # Non-async — we share the live Session GenServer + EzagentCore.Repo across
-  # examples and the :DOWN test will pollute the shared Session's slice.
+  # Non-async — these tests drive live Session GenServers + EzagentCore.Repo,
+  # and the :DOWN path waits on supervised process teardown.
   #
   # EzagentCore.DataCase (not bare ExUnit.Case): its setup_sandbox installs
   # the P6 drain-live-kinds teardown — before this test's sandbox owner is
@@ -22,42 +22,18 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   use EzagentCore.DataCase, async: false
   alias Ezagent.{Invocation, KindRegistry, Message, MessageStore}
   alias Ezagent.ActionSet.Session, as: SessionBehavior
-  alias Ezagent.Entity.{Session, User}
+  alias Ezagent.ActionSet.Session.Membership
+  alias Ezagent.Entity.User
 
   setup do
-    # session://system/default/main is a DynamicSupervisor child spawned
-    # ONCE at chat-app boot — NOT a permanent static child. Under the full
-    # concurrent umbrella run another test can terminate it before these
-    # examples run, so the boot-time seed is not guaranteed live (the
-    # "admin landed in members" + "send→broadcast→receive" assertions then
-    # see a dead/absent Session). Ensure it via the idempotent
-    # create_session facade (adopts the existing Session if alive).
-    _ =
-      EzagentDomainInstanceMessage.SessionCreator.create_session("main", User.admin_uri(),
-        template_name: "default"
-      )
-
-    session_uri = Session.default_uri()
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-
-    {:ok, _} =
-      Invocation.dispatch(%Invocation{
-        origin: :trusted_internal,
-        target: target,
-        mode: :call,
-        args: %{member: User.admin_uri()},
-        ctx: %{
-          caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, User.admin_uri())]),
-          reply: :ignore
-        }
-      })
-
-    :ok
+    # Never share the boot-time default Session: membership is now backed by
+    # single-use join authority, so rejoining a mutable global fixture makes
+    # this file order-dependent under the umbrella suite.
+    {:ok, session_uri: isolated_session("routing-setup")}
   end
 
-  test "admin User landed in session://system/default/main members after boot" do
-    {:ok, session_pid} = KindRegistry.lookup(Session.default_uri())
+  test "owner User landed in the created Session members", %{session_uri: session_uri} do
+    {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
     %{state: %{session: %{state: chat_slice}}} = :sys.get_state(session_pid)
 
@@ -69,7 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
 
   test "full send → broadcast → receive path through dispatch" do
     sender = User.admin_uri()
-    session_uri = Session.default_uri()
+    session_uri = isolated_session("routing-send")
 
     msg =
       Message.new(sender, %{text: "integration-send #{System.unique_integer()}", attachments: []})
@@ -95,7 +71,12 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: sender, caps: MapSet.new([cap]), reply: :ignore}
+        ctx: %{
+          caller: sender,
+          authenticated_principal: sender,
+          caps: MapSet.new([cap]),
+          reply: :ignore
+        }
       })
 
     # Session-level broadcast (for LV chat stream)
@@ -122,7 +103,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
   end
 
   test ":DOWN forwarder marks member offline and records last_seen" do
-    session_uri = Session.default_uri()
+    session_uri = isolated_session("routing-down")
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
     transient_uri =
@@ -139,6 +120,10 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
 
     # Join transient member to session
     join_target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
+
+    :ok =
+      Membership.provision_invited_join_authority(session_uri, transient_uri, User.admin_uri())
+
     join_cap = Ezagent.Test.CapHelper.signed_action_cap!(join_target, transient_uri)
 
     :ok =
@@ -147,11 +132,20 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: join_target,
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: MapSet.new([join_cap]), reply: :ignore}
+        ctx: %{
+          caller: transient_uri,
+          authenticated_principal: transient_uri,
+          caps: MapSet.new([join_cap]),
+          reply: :ignore
+        }
       })
 
-    # Allow cast to process
-    %{state: %{session: %{state: pre_kill_slice}}} = :sys.get_state(session_pid)
+    pre_kill_slice =
+      wait_until(fn ->
+        %{state: %{session: %{state: s}}} = :sys.get_state(session_pid)
+        if Map.has_key?(s.members, transient_uri), do: s, else: nil
+      end)
+
     assert pre_kill_slice.members[transient_uri].online == true
 
     # Issue cleanup authority while the transient user's sandbox-owned Kind is
@@ -164,7 +158,11 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
     # The :DOWN is delivered to session_pid's mailbox by BEAM directly,
     # racing with any other messages we send. Poll until Session has
     # processed it (cheap — :sys.get_state at most a few times).
-    Process.exit(transient_pid, :kill)
+    :ok =
+      DynamicSupervisor.terminate_child(
+        EzagentDomainIdentity.Application.UserSupervisor,
+        transient_pid
+      )
 
     post_kill_slice =
       wait_until(fn ->
@@ -182,8 +180,37 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatRoutingTest do
         target: leave_target,
         mode: :cast,
         args: %{member: transient_uri},
-        ctx: %{caller: transient_uri, caps: MapSet.new([leave_cap]), reply: :ignore}
+        ctx: %{
+          caller: transient_uri,
+          authenticated_principal: transient_uri,
+          caps: MapSet.new([leave_cap]),
+          reply: :ignore
+        }
       })
+  end
+
+  defp isolated_session(prefix) do
+    short = "#{prefix}-#{System.unique_integer([:positive])}"
+
+    assert {:ok, session_uri, _meta} =
+             EzagentDomainInstanceMessage.SessionCreator.create_session(
+               short,
+               User.admin_uri(),
+               template_name: "default"
+             )
+
+    assert wait_until(fn ->
+             case KindRegistry.lookup(session_uri) do
+               {:ok, pid} ->
+                 %{state: %{session: %{state: slice}}} = :sys.get_state(pid)
+                 if Map.has_key?(slice.members, User.admin_uri()), do: true, else: nil
+
+               :error ->
+                 nil
+             end
+           end)
+
+    session_uri
   end
 
   defmodule NoopServer do

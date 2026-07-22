@@ -64,12 +64,19 @@ defmodule Ezagent.ConfigGovernance.StoreInvariantTest do
       target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=config_governance.#{action}"),
       mode: :call,
       args: args,
-      ctx: %{caller: principal.uri, caps: principal.caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: principal.uri,
+        authenticated_principal: principal.uri,
+        caps: principal.caps,
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(manager, "pw-not-secret", [])
+    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: manager})
 
     cap =
       CreatorGrant.manage_cap(:agent, agent, workspace, manager)

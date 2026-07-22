@@ -41,6 +41,11 @@ defmodule Ezagent.ActionSet.User.Receive do
     `feedback_let_it_crash_no_workarounds`) via
     `recent_messages_ring_depth/0`.
 
+  A cold recipient may replay an already committed delivery while recovering.
+  Message IDs are the idempotency key: a replay already present in the ring is
+  a no-op, so a late replay cannot replace a newer `:last_received` value or
+  move an older message back to the head of the ring.
+
   ## Slice ownership / key (no snapshot migration)
 
   This Behavior OWNS the User Kind's receive-state slice. The slice key
@@ -156,18 +161,30 @@ defmodule Ezagent.ActionSet.User.Receive do
     with :ok <- Ezagent.Session.MemberReceive.authorize(ctx) do
       cursor = Map.get(ctx, :slice_change_cursor)
       prior_ring = ctx[:read].(:recent_messages, [])
-      new_entry = {cursor, msg.id}
 
-      trimmed_ring =
-        [new_entry | prior_ring]
-        |> Enum.take(@recent_messages_ring_depth)
+      if message_recorded?(prior_ring, msg.id) do
+        {:ok, %{}, []}
+      else
+        new_entry = {cursor, msg.id}
 
-      {:ok, %{},
-       [
-         {:set, :last_received, %{message_id: msg.id, at: DateTime.utc_now()}},
-         {:set, :recent_messages, trimmed_ring}
-       ]}
+        trimmed_ring =
+          [new_entry | prior_ring]
+          |> Enum.take(@recent_messages_ring_depth)
+
+        {:ok, %{},
+         [
+           {:set, :last_received, %{message_id: msg.id, at: DateTime.utc_now()}},
+           {:set, :recent_messages, trimmed_ring}
+         ]}
+      end
     end
+  end
+
+  defp message_recorded?(ring, message_id) do
+    Enum.any?(ring, fn
+      {_cursor, ^message_id} -> true
+      _other -> false
+    end)
   end
 
   # caps-data-ownership-v2 (SPEC #306 §7) — a Behavior with caps MUST declare

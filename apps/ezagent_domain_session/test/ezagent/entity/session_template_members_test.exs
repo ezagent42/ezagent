@@ -71,6 +71,7 @@ defmodule Ezagent.Entity.SessionTemplateMembersTest do
       args: %{},
       ctx: %{
         caller: User.admin_uri(),
+        authenticated_principal: User.admin_uri(),
         caps: MapSet.new([signed_action_cap!(target, User.admin_uri())]),
         reply: {:caller_inbox, self()}
       }

@@ -22,6 +22,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.KindRegistry
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Entity.User
 
   defp uniq, do: System.unique_integer([:positive])
@@ -128,24 +129,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       # Repeated chat.join with the SAME admin pid — must NOT stack
       # monitors AND must NOT install a fresh ref (the existing one
       # is for the current pid).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
-
-      :ok =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          origin: :trusted_internal,
-          target: target,
-          mode: :cast,
-          args: %{member: admin},
-          ctx: %{
-            caller: Ezagent.Entity.User.admin_uri(),
-            authenticated_principal: Ezagent.Entity.User.admin_uri(),
-            caps: MapSet.new([cap]),
-            reply: :ignore
-          }
-        })
-
-      Process.sleep(100)
+      assert {:ok, %{status: :already_member}} = rejoin(session_uri, admin)
 
       {_members_after, monitors_after, _slice} = session_members(session_uri)
 
@@ -175,27 +159,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
       # Dispatch chat.join 5 more times — every one should be a no-op
       # at the slice level (online + monitor alive → short-circuit).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
-
       for _ <- 1..5 do
-        :ok =
-          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-            origin: :trusted_internal,
-            target: target,
-            mode: :cast,
-            args: %{member: admin},
-            ctx: %{
-              caller: Ezagent.Entity.User.admin_uri(),
-              authenticated_principal: Ezagent.Entity.User.admin_uri(),
-              caps: MapSet.new([cap]),
-              reply: :ignore
-            }
-          })
+        assert {:ok, %{status: :already_member}} = rejoin(session_uri, admin)
       end
-
-      # Let the casts drain.
-      Process.sleep(150)
 
       {_members_after, monitors_after, _slice} = session_members(session_uri)
 
@@ -204,6 +170,23 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
                "#{ref_count_before}, now #{map_size(monitors_after)}) — " <>
                "Behavior.Session.invoke(:join) idempotency regression"
     end
+  end
+
+  defp rejoin(session_uri, member_uri) do
+    :ok = Membership.provision_join_authority(session_uri, member_uri)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: member_uri,
+        authenticated_principal: member_uri,
+        caps: Ezagent.Identity.list_caps_for(member_uri),
+        reply: {:caller_inbox, self()}
+      }
+    })
   end
 
   # ----------------------------------------------------------------------

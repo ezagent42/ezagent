@@ -27,7 +27,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.ChatFeed
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "chat-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "chat-owner")
   @sender Ezagent.URI.entity(:team_alpha, :agent, "chat-bot")
 
   defp session_uri do
@@ -39,9 +39,9 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.behaviors()
       })
 
@@ -74,7 +74,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
       post(ctx.session, "second")
       post(ctx.session, "third")
 
-      {:ok, snap} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, snap} = ChatFeed.snapshot(ctx.session, owner())
       assert rendered_texts(snap) == ["first", "second", "third"]
     end
 
@@ -83,7 +83,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
       post_internal(ctx.session, "secret")
       post(ctx.session, "also public")
 
-      {:ok, snap} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, snap} = ChatFeed.snapshot(ctx.session, owner())
       texts = rendered_texts(snap)
       assert texts == ["public", "also public"]
       refute "secret" in texts
@@ -91,27 +91,27 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
     test "a message posted AFTER a read appears on the next (advisory) re-read", ctx do
       post(ctx.session, "before")
-      {:ok, first} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, first} = ChatFeed.snapshot(ctx.session, owner())
       assert rendered_texts(first) == ["before"]
 
       # A new message arrives — the next snapshot (what an advisory triggers)
       # re-reads CURRENT state and includes it.
       late = post(ctx.session, "after")
-      {:ok, second} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, second} = ChatFeed.snapshot(ctx.session, owner())
       assert "after" in rendered_texts(second)
       assert late.id in rendered_keys({:ok, second})
     end
 
     test "SELF-HEALING: a dropped advisory loses nothing — a later re-read shows current state",
          ctx do
-      {:ok, _join} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, _join} = ChatFeed.snapshot(ctx.session, owner())
 
       # Simulate the advisory for THIS message being dropped (we simply don't
       # re-read here). A LATER, unrelated advisory triggers a re-read.
       dropped = post(ctx.session, "advisory-dropped")
       _later_trigger = post(ctx.session, "later")
 
-      {:ok, healed} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, healed} = ChatFeed.snapshot(ctx.session, owner())
       texts = rendered_texts(healed)
       assert "advisory-dropped" in texts
       assert "later" in texts
@@ -120,7 +120,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
     test "a cross-session relayed message windows in after the next re-read", ctx do
       post(ctx.session, "native")
-      {:ok, _first} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, _first} = ChatFeed.snapshot(ctx.session, owner())
 
       # The cross-session relay path routes the SAME %Message{} (original, OLD
       # inserted_at) into THIS session via the production write path. routed_at is
@@ -135,7 +135,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
       {:ok, _} = MessageStore.write(relayed, ctx.session)
 
-      {:ok, after_relay} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, after_relay} = ChatFeed.snapshot(ctx.session, owner())
       texts = rendered_texts(after_relay)
       assert "relayed-from-elsewhere" in texts
       # routed_at-ordered, so the relayed message windows AFTER the native one
@@ -147,7 +147,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
       n = ChatFeed.history_limit() + 5
       for i <- 1..n, do: post(ctx.session, "m#{i}")
 
-      {:ok, snap} = ChatFeed.snapshot(ctx.session, @owner)
+      {:ok, snap} = ChatFeed.snapshot(ctx.session, owner())
       texts = rendered_texts(snap)
       # The latest-N window: exactly history_limit messages, ending at the newest.
       assert length(texts) == ChatFeed.history_limit()
@@ -157,13 +157,13 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
   describe "snapshot/2 — LIVE authorization (every read, fail-closed)" do
     test "a non-member is denied", ctx do
-      stranger = Ezagent.URI.entity(:team_alpha, :user, "not-a-member")
+      stranger = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "not-a-member")
       assert {:error, :unauthorized} = ChatFeed.snapshot(ctx.session, stranger)
     end
 
     test "the owner is allowed", ctx do
       post(ctx.session, "hi")
-      assert {:ok, _snap} = ChatFeed.snapshot(ctx.session, @owner)
+      assert {:ok, _snap} = ChatFeed.snapshot(ctx.session, owner())
     end
 
     test "a nil / crafted caller is denied (delegates to ChatMembership)", ctx do

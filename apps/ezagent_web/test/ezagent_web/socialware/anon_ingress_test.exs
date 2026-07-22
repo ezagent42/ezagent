@@ -18,6 +18,16 @@ defmodule EzagentWeb.Socialware.AnonIngressTest do
   @workspace "team-alpha"
   @owner Ezagent.URI.new!("entity://team-alpha/user/anon-ingress-owner")
 
+  setup do
+    if is_nil(Ezagent.Users.get_by_uri(@owner)) do
+      {:ok, _row} = Ezagent.Users.create_read_only(@owner, [])
+    end
+
+    :ok = Ezagent.Entity.spawn_principal(@owner)
+    on_exit(fn -> Ezagent.Kind.terminate(@owner) end)
+    :ok
+  end
+
   defp public_session(flag \\ true) do
     u = System.unique_integer([:positive])
 
@@ -37,7 +47,7 @@ defmodule EzagentWeb.Socialware.AnonIngressTest do
     {:ok, behaviors} =
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
-    {:ok, _pid} =
+    {:ok, session_pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
         owner_uri: @owner,
@@ -46,6 +56,17 @@ defmodule EzagentWeb.Socialware.AnonIngressTest do
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, @owner)
+
+    on_exit(fn ->
+      if Process.alive?(session_pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid
+        )
+      end
+    end)
 
     :ok =
       Installation.install_template_installs(

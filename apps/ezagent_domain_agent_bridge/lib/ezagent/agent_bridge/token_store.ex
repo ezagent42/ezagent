@@ -41,23 +41,13 @@ defmodule Ezagent.AgentBridge.TokenStore do
           {:ok, existing}
 
         %{"token" => existing} when is_binary(existing) ->
-          {:error, :principal_revoked}
+          with :ok <- credential_generation_allowed(agent_uri, generation, opts) do
+            mint_and_persist(instances, agent_str, generation)
+          end
 
         _ ->
           with :ok <- credential_generation_allowed(agent_uri, generation, opts) do
-            token = generate_token()
-
-            new_instances =
-              Map.put(instances, agent_str, %{
-                "token" => token,
-                "minted_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
-                "bound_generation" => generation
-              })
-
-            case write_all(new_instances) do
-              :ok -> {:ok, token}
-              err -> err
-            end
+            mint_and_persist(instances, agent_str, generation)
           end
       end
     else
@@ -198,6 +188,22 @@ defmodule Ezagent.AgentBridge.TokenStore do
     "tok_" <> Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
   end
 
+  defp mint_and_persist(instances, agent_str, generation) do
+    token = generate_token()
+
+    new_instances =
+      Map.put(instances, agent_str, %{
+        "token" => token,
+        "minted_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "bound_generation" => generation
+      })
+
+    case write_all(new_instances) do
+      :ok -> {:ok, token}
+      err -> err
+    end
+  end
+
   defp current_generation(agent_uri) do
     case Ezagent.Cap.Authority.current_generation(agent_uri) do
       {:ok, generation} -> {:ok, generation}
@@ -211,9 +217,8 @@ defmodule Ezagent.AgentBridge.TokenStore do
 
   defp credential_generation_allowed(_agent_uri, 1, _opts), do: :ok
 
-  defp credential_generation_allowed(agent_uri, generation, opts) do
-    with :created <- Keyword.get(opts, :create_freshness),
-         {:ok, ^generation} <- Ezagent.Cap.Authority.current_process_generation(agent_uri) do
+  defp credential_generation_allowed(agent_uri, generation, _opts) do
+    with {:ok, ^generation} <- Ezagent.Kind.recredential_generation(agent_uri) do
       :ok
     else
       _ -> {:error, :principal_revoked}

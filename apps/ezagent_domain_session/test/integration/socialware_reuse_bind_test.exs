@@ -64,6 +64,7 @@ defmodule Ezagent.Socialware.ReuseBindTest do
   defp add_participant(session_uri, operator, member_uri, role_name) do
     Participants.add_participant(member_uri, role_name,
       caller: operator,
+      authenticated_principal: operator,
       caps: within_session_caps(session_uri, operator),
       workspace_uri: Capability.workspace_of(session_uri),
       session_uri: session_uri
@@ -135,7 +136,7 @@ defmodule Ezagent.Socialware.ReuseBindTest do
     refute Authority.manages?(operator, foreign_agent_uri)
     assert Authority.manages?(owner, foreign_agent_uri)
 
-    assert {:ok, ^foreign_agent_uri} =
+    assert {:error, :admission_pending} =
              add_participant(session_uri, operator, foreign_agent_uri, "bot")
 
     assert Map.has_key?(read_pending(session_uri), foreign_agent_uri)

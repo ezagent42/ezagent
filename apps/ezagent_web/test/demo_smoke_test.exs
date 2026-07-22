@@ -53,7 +53,11 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
            Ezagent.Workspace.create_session(
              workspace_uri,
              %{short_name: short_name, template_name: template_name},
-             %{caller: creator_uri, caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+             %{
+               caller: creator_uri,
+               authenticated_principal: creator_uri,
+               caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+             }
            ) do
       {:ok, result.session_uri, %{}}
     end

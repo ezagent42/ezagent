@@ -28,6 +28,8 @@ defmodule Ezagent.World.UserDataDetailTest do
     other = Ezagent.URI.user(ws_name, "other")
     {:ok, _} = Ezagent.Users.create(viewer, "viewer-pw", [])
     {:ok, _} = Ezagent.Users.create(other, "other-pw", [])
+    :ok = Ezagent.Entity.spawn_principal(viewer)
+    :ok = Ezagent.Entity.spawn_principal(other)
     {:ok, _} = Ezagent.Users.disable(other, "entity://system/user/admin", "offboarded")
 
     {:ok, _profile} =
@@ -44,6 +46,7 @@ defmodule Ezagent.World.UserDataDetailTest do
     {:ok, _pid} = Ezagent.Workspace.create(ws_b_name, %{})
     user_b = Ezagent.URI.user(ws_b_name, "someone")
     {:ok, _} = Ezagent.Users.create(user_b, "someone-pw", [])
+    :ok = Ezagent.Entity.spawn_principal(user_b)
 
     {:ok, _profile} =
       Ezagent.Entity.Profile.upsert(%{

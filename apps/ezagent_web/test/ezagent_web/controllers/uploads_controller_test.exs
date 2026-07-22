@@ -100,6 +100,12 @@ defmodule EzagentWeb.UploadsControllerTest do
   end
 
   defp spawn_session_owner(session, owner) do
+    if is_nil(Ezagent.Users.get_by_uri(owner)) do
+      {:ok, _row} = Ezagent.Users.create_read_only(owner, [])
+    end
+
+    :ok = Ezagent.Entity.spawn_principal(owner)
+
     {:ok, pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
         uri: session,
@@ -107,10 +113,14 @@ defmodule EzagentWeb.UploadsControllerTest do
         behaviors: Ezagent.Entity.Session.behaviors()
       })
 
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, owner)
+
     on_exit(fn ->
       if Process.alive?(pid) do
         DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
       end
+
+      Ezagent.Kind.terminate(owner)
     end)
 
     :ok

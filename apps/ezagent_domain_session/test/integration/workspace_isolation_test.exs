@@ -105,6 +105,7 @@ defmodule EzagentDomainInstanceMessage.Integration.WorkspaceIsolationTest do
       args: %{message: msg},
       ctx: %{
         caller: sender,
+        authenticated_principal: sender,
         caps: MapSet.new([signed_action_cap!(target, sender)]),
         reply: :ignore
       }

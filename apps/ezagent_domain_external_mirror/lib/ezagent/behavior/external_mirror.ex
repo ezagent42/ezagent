@@ -821,6 +821,7 @@ defmodule Ezagent.ActionSet.ExternalMirror do
       initial_publisher_cursor: initial_cursor
     }
 
+    # derivation-edge: non-principal ephemeral mirror worker
     case Ezagent.Kind.spawn(Ezagent.Entity.ExternalMirrorWorker, params) do
       {:ok, _pid} ->
         :ok

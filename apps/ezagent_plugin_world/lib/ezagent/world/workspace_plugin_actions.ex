@@ -188,6 +188,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
          :ok <-
            Ezagent.Workspace.remove_member(workspace_name, member, %{
              caller: socket.assigns.current_entity_uri,
+             authenticated_principal: socket.assigns.current_entity_uri,
              caps: Ezagent.World.PresenterCaps.load(socket)
            }) do
       members =
@@ -302,7 +303,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
            Ezagent.Workspace.Invites.mint(
              workspace_uri,
              %{max_uses: max_uses, expires_in_hours: expires_in_hours},
-             invite_ctx(socket)
+             Ezagent.World.PresenterCaps.context(socket)
            ) do
       refresh_workspace_invites(socket, "invite_created")
     else
@@ -328,7 +329,11 @@ defmodule Ezagent.World.WorkspacePluginActions do
   def revoke_workspace_invite(socket, code) do
     with %URI{scheme: "workspace"} = workspace_uri <- socket.assigns.current_workspace_uri,
          {:ok, %{invite: _invite}} <-
-           Ezagent.Workspace.Invites.revoke(workspace_uri, String.trim(code), invite_ctx(socket)) do
+           Ezagent.Workspace.Invites.revoke(
+             workspace_uri,
+             String.trim(code),
+             Ezagent.World.PresenterCaps.context(socket)
+           ) do
       refresh_workspace_invites(socket, "invite_revoked")
     else
       {:error, reason} ->
@@ -350,7 +355,10 @@ defmodule Ezagent.World.WorkspacePluginActions do
   defp refresh_workspace_invites(socket, notice) do
     workspace_uri = socket.assigns.current_workspace_uri
 
-    case Ezagent.Workspace.Invites.list(workspace_uri, invite_ctx(socket)) do
+    case Ezagent.Workspace.Invites.list(
+           workspace_uri,
+           Ezagent.World.PresenterCaps.context(socket)
+         ) do
       {:ok, %{invites: invites}} ->
         put_world_state(
           socket,
@@ -361,13 +369,6 @@ defmodule Ezagent.World.WorkspacePluginActions do
       {:error, reason} ->
         put_world_state(socket, %{"invite_error" => reason(reason)}, "error:invite_list_failed")
     end
-  end
-
-  defp invite_ctx(socket) do
-    %{
-      caller: socket.assigns.current_entity_uri,
-      caps: Ezagent.World.PresenterCaps.load(socket)
-    }
   end
 
   @doc "Create or update a SessionTemplate root version from the workspace template form."
@@ -628,7 +629,12 @@ defmodule Ezagent.World.WorkspacePluginActions do
            target: target,
            mode: :call,
            args: %{name: name, template: content},
-           ctx: %{caller: caller, authenticated_principal: caller, caps: MapSet.new(caps), reply: :ignore},
+           ctx: %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: MapSet.new(caps),
+             reply: :ignore
+           },
            origin: :authenticated_external
          }) do
       :ok -> :ok

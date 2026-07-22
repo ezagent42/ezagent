@@ -218,6 +218,7 @@ defmodule EzagentDomainIdentity.Application do
       # store. Per-target authority anchors live only in the corresponding
       # sealed authority row and are fetched on demand by `K.grant`; no ambient
       # wildcard is stored in the admin slice.
+      # derivation-edge: genesis-root test admin has no parent
       case Ezagent.Kind.spawn(User, %{
              uri: admin_uri,
              initial_caps: MapSet.new()
@@ -400,6 +401,7 @@ defmodule EzagentDomainIdentity.Application do
             initial_caps = User.initial_caps_for_spawn(uri)
 
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
+            # derivation-edge: rehydration-only persisted Users row owns its edge
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
           other ->

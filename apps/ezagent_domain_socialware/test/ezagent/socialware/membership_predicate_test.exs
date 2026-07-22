@@ -23,9 +23,9 @@ defmodule Ezagent.Session.MembershipTest do
 
   alias Ezagent.Session.Membership
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "owner-cm")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "owner-cm")
   @member Ezagent.URI.entity(:team_alpha, :agent, "member-cm")
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "stranger-cm")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "stranger-cm")
   @session Ezagent.URI.session(:team_alpha, :default, "cm-1")
 
   defp owned_chat(owner, members \\ %{}) do
@@ -36,26 +36,26 @@ defmodule Ezagent.Session.MembershipTest do
 
   describe "authorize/4 — projection fields are not authority" do
     test "owner_uri == caller does not authorize without a concrete held cap" do
-      assert {:error, :unauthorized} = authorize(owned_chat(@owner), @owner)
+      assert {:error, :unauthorized} = authorize(owned_chat(owner()), owner())
     end
 
     test "caller in members does not authorize without a concrete held cap" do
-      chat = owned_chat(@owner, %{@member => %{online: true}})
+      chat = owned_chat(owner(), %{@member => %{online: true}})
       assert {:error, :unauthorized} = authorize(chat, @member)
     end
   end
 
   describe "authorize/2 — non-member denied (incl. ex-member via LIVE re-check)" do
     test "a stranger who is neither owner nor member → unauthorized" do
-      chat = owned_chat(@owner, %{@member => %{online: true}})
-      assert {:error, :unauthorized} = authorize(chat, @stranger)
+      chat = owned_chat(owner(), %{@member => %{online: true}})
+      assert {:error, :unauthorized} = authorize(chat, stranger())
     end
 
     test "stale or absent projection is denied when no cap is held" do
-      joined = owned_chat(@owner, %{@member => %{online: true}})
+      joined = owned_chat(owner(), %{@member => %{online: true}})
       assert {:error, :unauthorized} = authorize(joined, @member)
 
-      left = owned_chat(@owner, %{})
+      left = owned_chat(owner(), %{})
       assert {:error, :unauthorized} = authorize(left, @member)
     end
   end
@@ -76,12 +76,12 @@ defmodule Ezagent.Session.MembershipTest do
 
   describe "authorize/2 — malformed / crafted caller denied" do
     test "binary caller → unauthorized" do
-      assert {:error, :unauthorized} = authorize(owned_chat(@owner), "entity://x")
+      assert {:error, :unauthorized} = authorize(owned_chat(owner()), "entity://x")
     end
 
     test "map caller → unauthorized" do
       assert {:error, :unauthorized} =
-               authorize(owned_chat(@owner), %{not: "a uri"})
+               authorize(owned_chat(owner()), %{not: "a uri"})
     end
 
     test "non-canonical (:authority-set) %URI{} → unauthorized even if equals owner_uri" do
@@ -131,17 +131,17 @@ defmodule Ezagent.Session.MembershipTest do
 
   describe "authorize/2 — missing / unreadable chat slice → fail closed" do
     test "owner caller but chat slice not a map → unauthorized" do
-      assert {:error, :unauthorized} = authorize(:not_a_map, @owner)
+      assert {:error, :unauthorized} = authorize(:not_a_map, owner())
     end
 
     test "owner caller but chat slice nil → unauthorized" do
-      assert {:error, :unauthorized} = authorize(nil, @owner)
+      assert {:error, :unauthorized} = authorize(nil, owner())
     end
   end
 
   describe "valid_caller_uri?/1 — exposed for the SPR delegation" do
     test "a canonical principal is valid" do
-      assert Membership.valid_caller_uri?(@owner)
+      assert Membership.valid_caller_uri?(owner())
     end
 
     test "a non-canonical / crafted caller is invalid" do

@@ -6,7 +6,7 @@ defmodule Ezagent.Socialware.ExternalFeedAdapterTest do
   alias Ezagent.ExternalMirror.{Adapter, AdapterRegistry, BindingRegistry}
   alias Ezagent.Socialware.{ExternalFeedAdapter, Settlement}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "efa-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "efa-owner")
   @sender Ezagent.URI.entity(:team_alpha, :agent, "efa-bot")
 
   setup do
@@ -16,9 +16,9 @@ defmodule Ezagent.Socialware.ExternalFeedAdapterTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Session.socialware_behaviors()
       })
 
@@ -56,24 +56,29 @@ defmodule Ezagent.Socialware.ExternalFeedAdapterTest do
   test "render, join_with_cursor, and replay delegate to ExternalFeed", ctx do
     committed = commit_message(ctx, "adapter-visible")
 
-    rendered = Adapter.render(ExternalFeedAdapter, ctx.session, %{caller: @owner})
+    rendered =
+      Adapter.render(ExternalFeedAdapter, ctx.session, %{
+        caller: owner(),
+        authenticated_principal: owner()
+      })
+
     assert Enum.any?(rendered.messages, &(&1.id == committed.id))
 
     assert {:ok, %{snapshot: join_snapshot, cursor: join_cursor}} =
-             ExternalFeedAdapter.join_with_cursor(ctx.session, @owner)
+             ExternalFeedAdapter.join_with_cursor(ctx.session, owner())
 
     assert Enum.any?(join_snapshot.messages, &(&1.id == committed.id))
     assert is_integer(join_cursor)
 
     assert {:ok, %{snapshot: replay_snapshot, cursor: replay_cursor}} =
-             ExternalFeedAdapter.replay(ctx.session, @owner, 0)
+             ExternalFeedAdapter.replay(ctx.session, owner(), 0)
 
     assert Enum.any?(replay_snapshot.messages, &(&1.id == committed.id))
     assert is_integer(replay_cursor)
   end
 
   test "non-member reads fail closed", ctx do
-    stranger = Ezagent.URI.entity(:team_alpha, :user, "efa-stranger")
+    stranger = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "efa-stranger")
 
     assert {:error, :unauthorized} = ExternalFeedAdapter.join_with_cursor(ctx.session, stranger)
     assert {:error, :unauthorized} = ExternalFeedAdapter.replay(ctx.session, stranger, 0)

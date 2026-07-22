@@ -252,6 +252,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       claude_session_id: claude_session_id
     }
 
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
       {:ok, _pid} -> {:ok, :started}
       {:error, {:already_started, _pid}} -> {:ok, :already_started}

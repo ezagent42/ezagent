@@ -301,7 +301,12 @@ defmodule Ezagent.Socialware.AnonUser.GC do
         target: target,
         mode: :cast,
         args: %{member: Ezagent.URI.new!(member_uri)},
-        ctx: %{caller: admin_uri, caps: MapSet.new([leave_cap]), reply: :ignore},
+        ctx: %{
+          caller: admin_uri,
+          authenticated_principal: admin_uri,
+          caps: MapSet.new([leave_cap]),
+          reply: :ignore
+        },
         origin: :trusted_internal
       })
 

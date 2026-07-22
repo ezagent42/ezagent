@@ -62,7 +62,7 @@ defmodule Ezagent.Invariants.RecredentialGenerationTest do
     membership = source("apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex")
     capability = source("apps/ezagent_core/lib/ezagent/capability.ex")
 
-    assert member_cap =~ "Ezagent.Identity.Grant.grant_cap_via_router"
+    assert member_cap =~ "Ezagent.Identity.Grant.issue_cap"
     assert membership =~ "Ezagent.Identity.Grant.grant_cap_via_router"
     assert capability =~ "def admin_genesis_cap"
     refute member_cap =~ "Authority.sign("

@@ -81,6 +81,7 @@ defmodule Ezagent.Session.Config do
   defp context_opts(principal, session_uri, workspace_uri, owner, parent_template_uri) do
     [
       caller: principal,
+      authenticated_principal: principal,
       caps: principal_caps(principal),
       session_uri: session_uri,
       workspace_uri: workspace_uri,

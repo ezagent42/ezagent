@@ -161,6 +161,29 @@ defmodule Ezagent.Provenance.DerivationEdgesTest do
              MapSet.new([owned_session, session_agent])
   end
 
+  test "spawn lineage remains revocable by its original principal after an ownership transfer" do
+    spawner = user("lineage-spawner")
+    new_owner = user("lineage-new-owner")
+    spawned = agent("lineage-transferred-agent")
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(spawned, spawner, :spawned_by, "lt1")
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               spawned,
+               new_owner,
+               "ownership_transfer:new-owner",
+               "lt2"
+             )
+
+    # Product rule: delete_user revokes the user's owned/LINEAGE agents. A
+    # transfer changes current ownership, but does not erase the immutable
+    # fact that this principal spawned the agent.
+    assert spawned in DerivationEdges.ownership_descendants(spawner)
+    assert spawned in DerivationEdges.ownership_descendants(new_owner)
+  end
+
   test "the agent-lineage compatibility writer records the durable spawned_by edge" do
     root = user("lineage-root")
     child = agent("lineage-child")

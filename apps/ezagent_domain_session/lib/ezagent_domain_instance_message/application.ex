@@ -858,6 +858,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             # User Kind's supervisor/0 callback resolves the destination
             # (EzagentDomainIdentity.Application.UserSupervisor) — chat
             # plugin no longer needs to name a sibling domain's supervisor.
+            # derivation-edge: rehydration-only persisted Users row owns its edge
             Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: initial_caps})
 
           {:ok, "agent"} ->
@@ -881,6 +882,7 @@ defmodule EzagentDomainInstanceMessage.Application do
         # socialware session is NOT downgraded to chat by this default (P5-2 /
         # the rehydration test). This covers the SpawnRegistry "session" route,
         # which `GenericSession.instantiate/3` also funnels through.
+        # derivation-edge: rehydration-only persisted Session owns its creation edges
         result = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: Session.chat_behaviors()})
 
         # Allen V1 acceptance 2026-05-22 (invariant 4): rebind the
@@ -924,10 +926,12 @@ defmodule EzagentDomainInstanceMessage.Application do
         case Ezagent.URI.type(uri) do
           {:ok, "agent"} ->
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
+            # derivation-edge: rehydration-only persisted AgentTemplate owns its edge
             Ezagent.Kind.spawn(AgentTemplate, %{uri: uri})
 
           {:ok, "session"} ->
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
+            # derivation-edge: rehydration-only persisted SessionTemplate owns its edge
             Ezagent.Kind.spawn(SessionTemplate, %{uri: uri})
 
           other ->

@@ -190,6 +190,29 @@ defmodule Ezagent.Test.CapHelper do
     Ezagent.Cap.Authority.sign(authority, artifact)
   end
 
+  @doc "Issue a current-generation self-license for a test principal."
+  @spec self_license_cap!(URI.t(), atom()) :: Capability.t()
+  def self_license_cap!(%URI{} = holder, kind_type \\ :user) when is_atom(kind_type) do
+    {:ok, authority} =
+      Ezagent.Cap.Authority.open(Ezagent.URI.instance(holder), kind_type, :created)
+
+    requested =
+      Ezagent.Capability.cap(
+        kind_type,
+        Module.concat(["Ezagent", "ActionSet", "Identity"]),
+        :self_license,
+        Ezagent.URI.instance(holder),
+        Ezagent.Capability.workspace_of(holder)
+      )
+
+    intent = Ezagent.Cap.Grant.freeze(holder, holder, holder, requested)
+
+    case Ezagent.Cap.Grant.issue_self_license(authority, intent) do
+      {:ok, %Capability{} = license} -> license
+      {:error, reason} -> raise "test self-license issuance failed: #{inspect(reason)}"
+    end
+  end
+
   @doc "Sign every unsigned capability in a test context for one concrete target Kind."
   @spec signed_ctx!(URI.t(), map(), atom()) :: map()
   def signed_ctx!(%URI{} = target, ctx, kind_type \\ :test_fixture) when is_map(ctx) do
@@ -210,6 +233,14 @@ defmodule Ezagent.Test.CapHelper do
         %Capability{signature: signature, key_id: key_id} = cap
         when is_binary(signature) and is_binary(key_id) ->
           cap
+
+        %Capability{instance: :any} = cap ->
+          # Unified target-generation verification cannot validate an
+          # instance-wildcard artifact. This helper promises to sign fixture
+          # caps for one concrete target, so concretize the target for every
+          # presenter (not only admin). Scope tuples and other deliberately
+          # invalid shapes remain untouched and continue to fail closed.
+          authority_signed_cap!(authority, presenter, %{cap | instance: target})
 
         %Capability{} = cap ->
           authority_signed_cap!(authority, presenter, cap)

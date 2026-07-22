@@ -84,6 +84,7 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
       args: %{},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: caps,
         reply: {:caller_inbox, self()}
       }
@@ -171,6 +172,7 @@ defmodule Ezagent.World.AgentDeleteDispatchTest do
         args: %{member: agent_uri},
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([cap]),
           reply: :ignore
         }

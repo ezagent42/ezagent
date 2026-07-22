@@ -166,7 +166,11 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
              Workspace.create_agent(
                workspace_uri,
                %{flavor: "curl", name: name, cwd: "", with_pty: false},
-               %{caller: admin, caps: MapSet.new([create_cap])}
+               %{
+                 caller: admin,
+                 authenticated_principal: admin,
+                 caps: MapSet.new([create_cap])
+               }
              )
 
     grant_admin_agent_read_caps!(agent_uri)
@@ -234,6 +238,7 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
         args: %{member: agent_uri},
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([join_cap]),
           reply: :ignore
         }

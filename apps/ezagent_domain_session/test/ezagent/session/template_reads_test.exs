@@ -43,6 +43,7 @@ defmodule Ezagent.Session.TemplateReadsTest do
 
     for uri <- [member, outsider] do
       {:ok, _row} = Ezagent.Users.create(uri, nil, [])
+      :ok = spawn_principal(uri)
     end
 
     {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [member])
@@ -126,6 +127,9 @@ defmodule Ezagent.Session.TemplateReadsTest do
     operator =
       Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
 
+    {:ok, _row} = Ezagent.Users.create(operator, nil, [])
+    :ok = spawn_principal(operator)
+
     assert [%{"uri" => ^live_uri}] = TemplateReads.session_templates(operator, ws_name)
   end
 
@@ -140,5 +144,13 @@ defmodule Ezagent.Session.TemplateReadsTest do
 
   defmodule Defunct do
     @moduledoc false
+  end
+
+  defp spawn_principal(%URI{} = uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> flunk("principal spawn failed: #{inspect(reason)}")
+    end
   end
 end

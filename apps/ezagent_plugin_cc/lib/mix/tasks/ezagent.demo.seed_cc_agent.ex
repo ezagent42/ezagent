@@ -149,6 +149,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
       args: %{member: agent_uri},
       ctx: %{
         caller: admin_uri,
+        authenticated_principal: admin_uri,
         caps: [signed_cap],
         reply: :ignore
       },

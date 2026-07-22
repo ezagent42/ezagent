@@ -17,11 +17,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
   alias Ezagent.ActionSet.Workspace.AgentCreate.PyTemplate
   alias Ezagent.ActionSet.Workspace.AgentCreate.RoleStep
 
-  # ===================================================================
-  # Entry point — the `:create_agent` handler body (delegated to from the
-  # Behavior's `handle_create_agent/2` engine callback). Body byte-identical
-  # to the pre-extraction handler.
-  # ===================================================================
+  # Entry point delegated from the Behavior's `handle_create_agent/2` callback.
   def handle_create_agent(args, ctx) when is_map(args) do
     raw_workspace_uri = Map.get(ctx, :self_uri)
     session_templates = ctx[:read].(:session_templates, %{})
@@ -42,25 +38,17 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
       do_create_agent(flavor, agent_uri, session_templates, %{
         cwd: cwd,
         with_pty?: with_pty?,
-        # RF-5a — the OPTIONAL role NAME. Present → the direct-spawn path
-        # resolves its recipe (RecipeRegistry) + composes it with the flavor
-        # (Recipe.Compose) into the spawn `:behaviors` + minted caps + the
-        # durable `passive` marker. Absent (nil) → every existing create path
-        # is byte-identical (the strict no-op gate).
+        # RF-5a: an optional role composes its recipe with the flavor into the
+        # spawn behaviors/caps/passive marker; nil preserves the existing path.
         role: role,
         workspace_name: workspace_name,
         workspace_uri: workspace_uri,
         source_config_dir: source_config_dir,
-        # Allen 2026-05-26 (codex HIGH-1 closure) — thread the caller
-        # URI through so the SpawnRegistry direct-spawn catch-all can
-        # record lineage (`Ezagent.AgentLineage.record/2`) for the
-        # newly-created agent.
+        # Thread the caller so direct spawn can record durable agent lineage.
         caller: Map.get(ctx, :caller),
-        # 2026-06-07 file-flavor-create-cascade — the caller's caps + the
-        # `--from` source URI are threaded to the #17 cascade chokepoint
-        # (`Agent.spawn_from_template_content/5`) for grant-mint authorization
-        # (`caps`) and to preserve single-reference clone semantics under the
-        # cascade (`from_uri` → `explicit_source`).
+        authenticated_principal: Map.get(ctx, :authenticated_principal),
+        # Thread caps and `--from` through the cascade chokepoint for grant
+        # authorization and single-reference clone semantics.
         caps: Map.get(ctx, :caps),
         from_uri: from_uri,
         flavor_config: flavor_config
@@ -68,9 +56,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
     end
   end
 
-  # =================================================================
   # `:create_agent` helpers (SPEC 2026-05-25-agent-create-cli-gui-parity)
-  # =================================================================
   # These mirror the operator UI path so the CLI and UI share one code path.
 
   # CLI builds atom-keyed maps. The current dispatch path (local-
@@ -216,7 +202,12 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
         source_uri,
         :read,
         %{},
-        %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          caller: caller,
+          authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     case Ezagent.Router.dispatch(cmd) do
@@ -497,6 +488,7 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
     with {:ok, decl} <- Ezagent.AgentFlavorRegistry.lookup(flavor),
          :ok <- validate_direct_spawn_flavor_config(flavor, decl, agent_uri, flavor_config),
          :ok <- Ezagent.AgentFlavorAttributes.put(agent_uri, flavor) do
+      # derivation-edge: recorded-by record_creator_lineage/2 on fresh success
       Ezagent.Kind.spawn(
         decl.kind,
         spawn_args_for_flavor(flavor, decl, agent_uri, flavor_config, materialized)
@@ -720,7 +712,12 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
              tmpl,
              agent_uri,
              session_templates,
-             %{caller: creator_uri, caps: caller_caps, from_uri: from_uri}
+             %{
+               caller: creator_uri,
+               authenticated_principal: creator_uri,
+               caps: caller_caps,
+               from_uri: from_uri
+             }
            ) do
       with :ok <-
              grant_agent_creator_manage_cap(agent_uri, workspace_uri, %{caller: creator_uri}) do

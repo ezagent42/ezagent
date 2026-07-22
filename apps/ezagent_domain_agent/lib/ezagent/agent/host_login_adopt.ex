@@ -209,7 +209,11 @@ defmodule Ezagent.Agent.HostLoginAdopt do
         UserDefaultSource.set_via_dispatch(
           installer_uri,
           %{flavor: flavor, source_uri: source, workspace: ws_name},
-          %{caller: installer_uri, caps: MapSet.new([signed_cap])}
+          %{
+            caller: installer_uri,
+            authenticated_principal: installer_uri,
+            caps: MapSet.new([signed_cap])
+          }
         )
       end
 

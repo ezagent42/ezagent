@@ -621,6 +621,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       workspace_uri: workspace_uri,
       owner_uri: granted_by,
       caller: granted_by,
+      authenticated_principal: granted_by,
       caps: SessionCreator.list_caps_for_materialization(granted_by),
       source_template_uri: source_template_uri,
       description: @agent_description

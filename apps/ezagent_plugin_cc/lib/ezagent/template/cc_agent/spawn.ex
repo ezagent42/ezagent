@@ -256,6 +256,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       respawn_template_data: tmpl_with_dir
     }
 
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
       {:ok, _pid} ->
         {:ok, :started}

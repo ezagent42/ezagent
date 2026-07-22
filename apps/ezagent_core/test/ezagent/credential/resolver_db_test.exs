@@ -184,6 +184,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 
@@ -207,6 +208,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [wrong_cap]
              })
 
@@ -230,6 +232,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: system_caller,
                caller: system_caller,
+               authenticated_principal: system_caller,
                caps: [good_cap]
              })
 
@@ -248,6 +251,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: Ezagent.URI.new!("entity://#{@ws}/user/someone-else"),
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 
@@ -266,6 +270,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 

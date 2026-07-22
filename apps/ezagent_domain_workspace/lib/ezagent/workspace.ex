@@ -47,6 +47,7 @@ defmodule Ezagent.Workspace do
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
         # Workspace Kind declares `Ezagent.Workspace.Supervisor` via its
         # supervisor/0 callback so the destination is preserved.
+        # derivation-edge: recorded-by record_derivation_edge/2 below
         Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri))
     end
   end
@@ -161,7 +162,7 @@ defmodule Ezagent.Workspace do
   """
   @spec add_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
-    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+    with {:ok, dispatch_ctx} <- caller_context(ctx) do
       do_add_member(name, member_uri, dispatch_ctx)
     end
   end
@@ -281,7 +282,7 @@ defmodule Ezagent.Workspace do
   """
   @spec remove_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
-    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+    with {:ok, dispatch_ctx} <- caller_context(ctx) do
       do_remove_member(name, member_uri, dispatch_ctx)
     end
   end
@@ -647,22 +648,24 @@ defmodule Ezagent.Workspace do
   # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
   # `default_holds_cap?(:vm_internal)` all-caps bypass. Trusted ambient callers
   # MUST use the explicit `/2` path.
-  defp caller_ctx(%{
-         caller: %URI{} = caller,
-         authenticated_principal: %URI{} = holder,
-         caps: caps
-       })
-       when is_list(caps),
-       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
+  @doc false
+  @spec caller_context(map()) :: {:ok, map()} | {:error, :invalid_caller_ctx}
+  def caller_context(%{
+        caller: %URI{} = caller,
+        authenticated_principal: %URI{} = holder,
+        caps: caps
+      })
+      when is_list(caps),
+      do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(%{
-         caller: %URI{} = caller,
-         authenticated_principal: %URI{} = holder,
-         caps: %MapSet{} = caps
-       }),
-       do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
+  def caller_context(%{
+        caller: %URI{} = caller,
+        authenticated_principal: %URI{} = holder,
+        caps: %MapSet{} = caps
+      }),
+      do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
+  def caller_context(_other), do: {:error, :invalid_caller_ctx}
 
   # System-principal elimination (#154 north star, 2026-06-19) — the
   # programmatic `/2` mutations + the boot-time self-maintenance dispatches

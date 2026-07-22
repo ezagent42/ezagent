@@ -54,7 +54,11 @@ defmodule Ezagent.World.CredentialCascade do
         source_uri: Map.fetch!(params, "source_uri"),
         workspace: workspace_name(Map.fetch!(params, "workspace_uri"))
       },
-      %{caller: caller_uri, caps: caller_caps}
+      %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caller_caps
+      }
     )
   end
 

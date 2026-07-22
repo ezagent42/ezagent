@@ -60,6 +60,7 @@ defmodule Ezagent.ActionSet.Publisher.SessionImplMigrationParityTest do
         transients: slice,
         self_uri: Ezagent.URI.new!("session://team-alpha/default/parity"),
         caller: nil,
+        authenticated_principal: nil,
         caps: MapSet.new()
       },
       extras

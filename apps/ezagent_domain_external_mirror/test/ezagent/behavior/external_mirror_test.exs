@@ -385,6 +385,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
 
       user_ctx = %{
         caller: unpriv_uri,
+        authenticated_principal: unpriv_uri,
         caps: MapSet.new(),
         reply: :ignore
       }
@@ -887,6 +888,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
 
       stranger_ctx = %{
         caller: stranger,
+        authenticated_principal: stranger,
         caps: MapSet.new(),
         reply: :ignore
       }
@@ -1880,6 +1882,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
   defp owner_ctx(owner_uri, adapter_id) do
     ctx = %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps:
         MapSet.new([
           # Bootstrap admin cap — passes everything for tests that
@@ -1969,6 +1972,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin_uri,
+        authenticated_principal: admin_uri,
         caps: MapSet.new([join_cap]),
         reply: :ignore
       }

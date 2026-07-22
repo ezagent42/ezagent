@@ -155,6 +155,7 @@ defmodule EzagentPluginKb.E2E.PluginPackageCodexGateTest do
       args: %{text: text},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: caps,
         reply: {:caller_inbox, self()}
       }
