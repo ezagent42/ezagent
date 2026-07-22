@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>拨号盘导航 · Dial Prototype v2</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#F0F0F3; --card:#FFFFFF; --ink:#17171B; --ink-2:#56565E; --ink-3:#8A8A92;
+  --blue:#0B5CFF; --blueink:#0048A8; --jade:#0FA06E; --jade-deep:#0A7A52;
+  --orange:#FF8A1E; --purple:#7C3AED;
+  --r-card:18px; --r-icon:14px; --r-pill:999px;
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-cn-ui);color:var(--ink);background:var(--bg);height:100vh;overflow:hidden;user-select:none}
+
+/* ═══════════════ CONTENT AREA ═══════════════ */
+.content-card{
+  position:fixed;top:6%;left:50%;transform:translateX(-50%);
+  width:min(600px, 86vw);
+  background:var(--card);border-radius:var(--r-card);
+  padding:32px 28px;
+  box-shadow:0 1px 2px rgba(15,15,15,.04),0 8px 24px rgba(15,15,15,.08);
+  z-index:2;
+  transition:opacity .3s var(--ease-out),transform .35s var(--ease-out);
+}
+.content-card.enter{opacity:1;transform:translateX(-50%) translateY(0)}
+.content-card.exit{opacity:0;transform:translateX(-50%) translateY(24px)}
+.content-card h2{font-family:var(--font-cn);font-size:24px;font-weight:600;color:var(--ink);margin-bottom:4px}
+.content-card .c-sub{font-size:13px;color:var(--ink-3);margin-bottom:14px}
+.content-card .c-body{font-size:14px;color:var(--ink-2);line-height:1.65}
+
+/* ═══════════════ LOGO — bottom-left, sliding ═══════════════ */
+.logo-stage{position:fixed;bottom:18px;left:20px;z-index:10;width:56px;height:56px;overflow:hidden}
+.logo-slot{
+  position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  font-size:26px;color:#fff;border-radius:var(--r-icon);
+  transition:transform .55s cubic-bezier(.22,1,.36,1),opacity .35s var(--ease-out);
+  box-shadow:0 4px 16px rgba(0,0,0,.15);
+  cursor:pointer;
+}
+.logo-slot.enter{transform:translate(0,0);opacity:1}
+/* Enter from: top-right (simulates rotating in from above) */
+.logo-slot.enter-from-above{transform:translate(30px,-40px);opacity:0}
+.logo-slot.enter-from-below{transform:translate(-30px,40px);opacity:0}
+/* Exit to: bottom-left (simulates rotating out downward) */
+.logo-slot.exit-to-below{transform:translate(-30px,40px);opacity:0}
+.logo-slot.exit-to-above{transform:translate(30px,-40px);opacity:0}
+
+/* ═══════════════ DIALOG — bottom-center, sliding ═══════════════ */
+.dialog-stage{position:fixed;bottom:24px;left:50%;z-index:10;width:min(480px, 76vw);height:52px;overflow:hidden;transform:translateX(-50%)}
+.dialog-slot{
+  position:absolute;inset:0;display:flex;align-items:center;gap:8px;
+  background:var(--card);border-radius:var(--r-card);
+  box-shadow:0 4px 24px rgba(15,15,15,.12);
+  border:2px solid var(--line);
+  padding:0 6px 0 16px;
+  transition:transform .55s cubic-bezier(.22,1,.36,1),opacity .35s var(--ease-out),border-color .45s var(--ease-out),box-shadow .45s var(--ease-out);
+}
+.dialog-slot.enter{transform:translate(0,0);opacity:1}
+.dialog-slot.enter-from-above{transform:translate(40px,-50px);opacity:0}
+.dialog-slot.enter-from-below{transform:translate(-40px,50px);opacity:0}
+.dialog-slot.exit-to-below{transform:translate(-40px,50px);opacity:0}
+.dialog-slot.exit-to-above{transform:translate(40px,-50px);opacity:0}
+
+.dialog-slot input{all:unset;flex:1;font-family:var(--font-cn-ui);font-size:14px;color:var(--ink)}
+.dialog-slot input::placeholder{color:var(--ink-4)}
+.dialog-slot .dl-send{width:34px;height:34px;border-radius:50%;border:0;color:#fff;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .15s var(--ease-out)}
+.dialog-slot .dl-send:hover{transform:scale(1.08)}
+
+/* Dialog accent colors */
+.dialog-slot.ac-jade{border-color:var(--jade);box-shadow:0 4px 24px rgba(15,160,110,.2)}.dialog-slot.ac-jade .dl-send{background:var(--jade)}
+.dialog-slot.ac-ink{border-color:var(--blueink);box-shadow:0 4px 24px rgba(0,72,168,.2)}.dialog-slot.ac-ink .dl-send{background:var(--blueink)}
+.dialog-slot.ac-orange{border-color:var(--orange);box-shadow:0 4px 24px rgba(255,138,30,.2)}.dialog-slot.ac-orange .dl-send{background:var(--orange)}
+.dialog-slot.ac-purple{border-color:var(--purple);box-shadow:0 4px 24px rgba(124,58,237,.2)}.dialog-slot.ac-purple .dl-send{background:var(--purple)}
+.dialog-slot.ac-blue{border-color:var(--blue);box-shadow:0 4px 24px rgba(11,92,255,.2)}.dialog-slot.ac-blue .dl-send{background:var(--blue)}
+.dialog-slot.ac-jade2{border-color:var(--jade-deep);box-shadow:0 4px 24px rgba(10,122,82,.2)}.dialog-slot.ac-jade2 .dl-send{background:var(--jade-deep)}
+
+/* ═══════════════ SCROLL HANDLE (right edge) ═══════════════ */
+.scroll-handle{
+  position:fixed;right:10px;top:50%;transform:translateY(-50%);z-index:20;
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  padding:8px 6px;
+  background:rgba(255,255,255,.6);backdrop-filter:blur(8px);
+  border-radius:var(--r-pill);box-shadow:0 1px 4px rgba(0,0,0,.06);
+  cursor:pointer;
+}
+.scroll-handle .sh-arrow{font-size:14px;color:var(--ink-4);transition:color .15s;background:0;border:0;cursor:pointer;padding:2px}
+.scroll-handle .sh-arrow:hover{color:var(--blue)}
+.scroll-handle .sh-dots{display:flex;flex-direction:column;gap:4px}
+.scroll-handle .sh-dot{width:5px;height:5px;border-radius:50%;background:var(--ink-4);transition:all .3s var(--ease-out)}
+.scroll-handle .sh-dot.active{background:var(--blue);transform:scale(1.6)}
+
+/* ═══════════════ ONBOARDING ═══════════════ */
+.onboard{
+  position:fixed;bottom:120px;right:50px;z-index:30;
+  background:var(--blueink);color:#fff;
+  padding:10px 18px;border-radius:var(--r-pill);
+  font-size:13px;box-shadow:0 4px 20px rgba(0,0,0,.2);
+  animation:obPulse 2s ease-in-out infinite;
+  pointer-events:none;opacity:0;transition:opacity .5s;
+}
+.onboard.show{opacity:1}
+@keyframes obPulse{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+
+/* ═══════════════ RADIAL LINE (subtle) ═══════════════ */
+.radial-hint{
+  position:fixed;left:0;bottom:0;width:1px;height:120px;
+  background:linear-gradient(to top,rgba(23,23,27,.06),transparent);
+  z-index:0;pointer-events:none;
+  transform-origin:bottom left;
+  transition:transform .55s cubic-bezier(.22,1,.36,1);
+}
+</style>
+</head>
+<body>
+
+<!-- RADIAL HINT — a subtle vertical line from bottom-left, swings slightly on rotation -->
+<div class="radial-hint" id="radialHint"></div>
+
+<!-- CONTENT -->
+<div id="contentArea"></div>
+
+<!-- LOGO -->
+<div class="logo-stage" id="logoStage"></div>
+
+<!-- DIALOG -->
+<div class="dialog-stage"><div class="dialog-slot enter ac-jade" id="dialogSlot">
+  <input id="dialInput" placeholder="输入消息…" maxlength="200">
+  <button class="dl-send" id="dialSend">→</button>
+</div></div>
+
+<!-- SCROLL HANDLE -->
+<div class="scroll-handle" id="scrollHandle">
+  <button class="sh-arrow" id="shUp">▲</button>
+  <div class="sh-dots" id="shDots"></div>
+  <button class="sh-arrow" id="shDown">▼</button>
+</div>
+
+<!-- ONBOARDING -->
+<div class="onboard show" id="onboard">↕ 滚轮或点击右侧箭头切换频道</div>
+
+<script>
+// ═══════════════ DATA ═══════════════
+const SW = [
+  {id:'showroom',name:'产品展厅',icon:'🏛',color:'var(--jade)',accent:'ac-jade',
+   sub:'Product Showroom',desc:'搜索和发现会员企业的产品。AI 匹配引擎根据需求推荐最相关的产品。点击"联系企业"自动创建 Session。'},
+  {id:'about',name:'关于协会',icon:'📋',color:'var(--blueink)',accent:'ac-ink',
+   sub:'About CIIA',desc:'中国信息协会数据智能专业委员会，2025年9月28日成立。构建政产学研用协同平台，推动数据要素价值释放与AI深度应用。'},
+  {id:'join',name:'入会申请',icon:'✍️',color:'var(--orange)',accent:'ac-orange',
+   sub:'Join CIIA',desc:'加入数据智能专业委员会。在线提交申请，5个工作日内秘书处联系。会员享产品展厅入驻、AI智能体优先体验等权益。'},
+  {id:'research',name:'行业研究院',icon:'📊',color:'var(--purple)',accent:'ac-purple',
+   sub:'Research',desc:'行业报告、白皮书、标准文件。AI洞察Agent可推荐最相关的研究资源。协会自研标准T/CIIA 070-2026已落地医疗赛道。'},
+  {id:'partner',name:'合作对接',icon:'🤝',color:'var(--blue)',accent:'ac-blue',
+   sub:'Partner Matching',desc:'发布合作需求，智能匹配合作伙伴。AI医疗数据、金融渠道、数据中台、IoT硬件等场景。通过Session安全对接。'},
+  {id:'member',name:'会员专区',icon:'👤',color:'var(--jade-deep)',accent:'ac-jade2',
+   sub:'Member Dashboard',desc:'管理产品、查看客户Session、更新企业资料。会员专属面板。录入新产品将自动出现在展厅搜索结果中。'},
+];
+const N = SW.length;
+let idx = 2; // Start at 入会申请
+let busy = false;
+
+// ═══════════════ BUILD ═══════════════
+function build(){
+  // Content cards
+  const ca = document.getElementById('contentArea');
+  SW.forEach((sw, i) => {
+    const card = document.createElement('div');
+    card.className = 'content-card';
+    card.id = 'cc' + i;
+    card.innerHTML = `<h2>${sw.icon} ${sw.name}</h2><div class="c-sub">${sw.sub}</div><div class="c-body">${sw.desc}</div>`;
+    if(i === idx) card.classList.add('enter');
+    ca.appendChild(card);
+  });
+
+  // Logo slots
+  const ls = document.getElementById('logoStage');
+  SW.forEach((sw, i) => {
+    const slot = document.createElement('div');
+    slot.className = 'logo-slot';
+    slot.id = 'logo' + i;
+    slot.style.background = sw.color;
+    slot.textContent = sw.icon;
+    slot.title = sw.name;
+    slot.onclick = () => alert(`${sw.name}\n${sw.desc}`);
+    if(i === idx) slot.classList.add('enter');
+    ls.appendChild(slot);
+  });
+
+  // Dots
+  const dots = document.getElementById('shDots');
+  SW.forEach((_, i) => {
+    const dot = document.createElement('div');
+    dot.className = 'sh-dot';
+    dot.id = 'dot' + i;
+    dot.onclick = () => goTo(i);
+    if(i === idx) dot.classList.add('active');
+    dots.appendChild(dot);
+  });
+
+  updateDialog();
+}
+
+// ═══════════════ ROTATE ═══════════════
+function rotate(dir){
+  if(busy) return;
+  busy = true;
+  const oldIdx = idx;
+  idx = (idx + dir + N) % N;
+  const goingDown = dir > 0; // scrolling down = next sector = clockwise
+
+  // -- Content: crossfade --
+  const oldCard = document.getElementById('cc' + oldIdx);
+  const newCard = document.getElementById('cc' + idx);
+  oldCard.classList.remove('enter'); oldCard.classList.add('exit');
+  newCard.classList.add('enter'); newCard.classList.remove('exit');
+
+  // -- Logo: slide out old, slide in new --
+  const oldLogo = document.getElementById('logo' + oldIdx);
+  const newLogo = document.getElementById('logo' + idx);
+  // Reset all logos
+  document.querySelectorAll('.logo-slot').forEach(l => {
+    l.classList.remove('enter','enter-from-above','enter-from-below','exit-to-below','exit-to-above');
+  });
+  if(goingDown){
+    oldLogo.classList.add('exit-to-below');
+    newLogo.classList.add('enter-from-above');
+  } else {
+    oldLogo.classList.add('exit-to-above');
+    newLogo.classList.add('enter-from-below');
+  }
+  // After transition, set final state
+  setTimeout(() => {
+    oldLogo.classList.remove('exit-to-below','exit-to-above');
+    newLogo.classList.remove('enter-from-above','enter-from-below');
+    newLogo.classList.add('enter');
+    oldLogo.style.transform = ''; oldLogo.style.opacity = '0';
+    newLogo.style.transform = ''; newLogo.style.opacity = '1';
+  }, 560);
+
+  // -- Dialog: slide out old content, slide in new --
+  updateDialogAnim(dir);
+
+  // -- Radial hint: subtle swing --
+  const hint = document.getElementById('radialHint');
+  hint.style.transform = `rotate(${dir * 4}deg)`;
+  setTimeout(() => hint.style.transform = 'rotate(0deg)', 560);
+
+  // -- Dots --
+  document.querySelectorAll('.sh-dot').forEach((d, i) => d.classList.toggle('active', i === idx));
+
+  setTimeout(() => { busy = false; }, 600);
+}
+
+function updateDialogAnim(dir){
+  const slot = document.getElementById('dialogSlot');
+  const goingDown = dir > 0;
+  // Quick exit animation
+  slot.style.transition = 'transform .2s ease-in, opacity .2s ease-in, border-color .45s, box-shadow .45s';
+  slot.style.transform = goingDown ? 'translate(-40px, 50px)' : 'translate(40px, -50px)';
+  slot.style.opacity = '0';
+  setTimeout(() => {
+    updateDialog();
+    slot.style.transition = 'transform .5s cubic-bezier(.22,1,.36,1), opacity .35s var(--ease-out), border-color .45s, box-shadow .45s';
+    slot.style.transform = 'translate(40px, -50px)';
+    requestAnimationFrame(() => {
+      slot.style.transform = 'translate(0, 0)';
+      slot.style.opacity = '1';
+    });
+  }, 220);
+}
+
+function updateDialog(){
+  const sw = SW[idx];
+  const slot = document.getElementById('dialogSlot');
+  slot.className = 'dialog-slot ' + sw.accent;
+  document.getElementById('dialInput').placeholder = `在「${sw.name}」中提问…`;
+}
+
+function goTo(i){
+  if(i === idx || busy) return;
+  const dir = i > idx ? 1 : -1;
+  // If wrapped around, choose the shorter direction
+  rotate(dir);
+}
+
+// ═══════════════ EVENTS ═══════════════
+document.addEventListener('wheel', e => {
+  e.preventDefault();
+  if(e.deltaY > 15) rotate(1);
+  else if(e.deltaY < -15) rotate(-1);
+}, {passive: false});
+
+document.addEventListener('keydown', e => {
+  if(e.key === 'ArrowDown'){ e.preventDefault(); rotate(1); }
+  if(e.key === 'ArrowUp'){ e.preventDefault(); rotate(-1); }
+});
+
+document.getElementById('shUp').addEventListener('click', () => rotate(-1));
+document.getElementById('shDown').addEventListener('click', () => rotate(1));
+
+// Hide onboarding
+function hideOb(){
+  const ob = document.getElementById('onboard');
+  if(ob.classList.contains('show')){ ob.classList.remove('show'); setTimeout(() => ob.style.display='none', 500); }
+}
+document.addEventListener('wheel', hideOb, {once: true});
+document.addEventListener('keydown', hideOb, {once: true});
+
+// Dialog send
+document.getElementById('dialSend').addEventListener('click', () => {
+  const inp = document.getElementById('dialInput');
+  const v = inp.value.trim(); if(!v) return;
+  alert(`[${SW[idx].name}] 你说: "${v}"\n(Demo — 对话功能会在完整版中接入)`);
+  inp.value = '';
+});
+document.getElementById('dialInput').addEventListener('keydown', e => {
+  if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('dialSend').click(); }
+});
+
+build();
+</script>
+</body>
+</html>
