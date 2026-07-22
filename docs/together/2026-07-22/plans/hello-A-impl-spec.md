@@ -589,8 +589,10 @@ The hello-A model is "single target branch, PRs land P1→P2→… onto one bran
 chain.** Reason: PR-1..3 unmute the greeter (the urgent migration) and PR-4 is the coordinator-gated deploy;
 if the greenfield market UI rides the same branch it *schedule-couples* — the market work would block the
 migration from landing on main. PR-5 is purely additive (a new route/LiveView + world-plugin actions; it
-touches **none** of PR-1..4's files: no `credential_bridge`, no `fusion_seed`, no `official_site_seed`, no
-config keys), so it costs nothing to isolate. **Kimi: cut PR-5 from `origin/main` on its own branch
+touches **no** PR-1..4 LOGIC: no `credential_bridge`, no `fusion_seed`, no `official_site_seed`, no config
+keys), so it costs nothing to isolate. (The one shared file is `router.ex` — PR-1 edits a comment at `:207`
+while PR-5 adds a market route; that is trivial additive overlap, not logic coupling — resolve by rebase, no
+sequencing needed.) **Kimi: cut PR-5 from `origin/main` on its own branch
 (e.g. `feat/socialware-market-surface`); do not stack it on the hello-A branch.**
 
 ### 15.2 The backend ALREADY EXISTS — audit result (do NOT rebuild any of this)
@@ -607,7 +609,7 @@ already the market's functional backend:
 | Uninstall | `World.ConversationActions.uninstall_socialware/3` |
 | Publish/write (authoring) | `Socialware.DefinitionEditor.save_authored_definition/4` → `DefinitionRegistry.write_definition/2`; already wired to a world authoring FORM (`WorkspacePluginActions.save_prepared_socialware/4`, threads caller caps) |
 | **上架-to-public admin gate** | `DefinitionRegistry.write_definition` → `authorize_public_scope_write/2` (**#165**: writing `scope: :public` requires admin caps, threaded via `save_authored_definition(..., caps:)`) |
-| **下架/上架 (retract/restore)** | `ConfigGovernance.Socialware.set_retracted/…` + `DefinitionRegistry.retracted?/2` (a retracted def is non-installable **even by exact `config_id`** — `refute_retracted/2`) |
+| **下架/上架 (retract/restore)** — USE THE GATED FNS | `ConfigGovernance.Socialware.retract/2` (下架) + `ConfigGovernance.Socialware.restore/2` (re-list) — these carry the admin+manage authz gate (`authorize_manage` + `authorize_admin`). `DefinitionRegistry.retracted?/2` reads state (a retracted def is non-installable **even by exact `config_id`** — `refute_retracted/2`). **⚠️ NEVER call `DefinitionRegistry.set_retracted/4` from the UI — it is the UNGATED primitive; the ONLY sanctioned caller is `ConfigGovernance.Socialware` inside its gate. Wiring the button to `set_retracted` = anyone can yank/re-list any workspace's public listing.** |
 
 **Consequence:** PR-5 writes almost NO backend and NO new authz. It is a UI/product-surface PR that *reuses*
 the table above. The two genuinely-new pieces are §15.3.
@@ -629,11 +631,20 @@ the table above. The two genuinely-new pieces are §15.3.
    hand-editing the raw authoring payload (`demo/hello.ex` literally sets `"scope" => "public"`); there is no
    ergonomic "publish this to the public market" affordance. PR-5 adds an explicit publish/retract control on a
    workspace-owned socialware definition:
-   - **Publish (上架):** routes through `DefinitionEditor.save_authored_definition(..., caps: <caller's real caps>)`
+   - **Publish (上架):** routes through `DefinitionEditor.save_authored_definition(actor_uri, ..., caps: <caller's real caps>)`
      so the **existing #165 `authorize_public_scope_write` admin gate fires**. PR-5 **MUST NOT** bypass, weaken, or
-     re-implement that gate — it threads real caps and surfaces the gate's `{:error, …}` LOUD (a denied publish is
-     a visible error, never a silent no-op).
-   - **Retract (下架):** routes through `ConfigGovernance.Socialware.set_retracted` (already exists).
+     re-implement that gate — it surfaces the gate's `{:error, …}` LOUD (a denied publish is a visible error, never
+     a silent no-op).
+     - **⚠️ TWO co-equal threading rules — the gate keys on BOTH:** the #165 gate is
+       `AdminAuthority.admin?(actor_uri, caps)` = `holds_admin_caps?(caps) ∨ holds_cross_workspace_admin_cap?(caps) ∨ home_is_system?(actor_uri) ∨ member_of_system?(actor_uri)`.
+       So (1) thread the caller's **REAL caps** (`PresenterCaps.load(socket)`), AND (2) thread the caller's **REAL
+       actor URI** (`current_entity_uri`) as `actor_uri` — **NEVER a system/service actor** (e.g. `default_seed_actor()`
+       / `system.admin`). Because `admin?` grants on `home_is_system?`/`member_of_system?` **independently of caps**,
+       passing a system/service URI as `actor_uri` bypasses the gate no matter what caps you pass — this (not empty
+       caps) is the realistic bypass a hurried implementer introduces. `caps: []` + the real non-admin URI is
+       correctly fail-**closed**; a system `actor_uri` is the hole.
+   - **Retract (下架) / restore (re-list):** routes through **`ConfigGovernance.Socialware.retract/2` / `restore/2`**
+     (the GATED path — admin+manage). **NEVER `DefinitionRegistry.set_retracted/4`** (the ungated primitive; see §15.2).
    - **Authz for beta (Allen's decision A — DEFAULT: keep admin-gated).** Public publish stays **admin-only** per
      #165. *If Allen opts to open 上架 to workspace owners,* that is a DOMAIN-side authz change to
      `authorize_public_scope_write` (allow the owning workspace's owner caps), with its own adversarial review —
@@ -655,12 +666,18 @@ later PR on the same backend.
 2. **Revision-pinned install (browse):** installing a public card from B pins that exact `config_id`/`content_hash`
    (assert the created install template points at the resolved revision); a private foreign def's `config_id`
    supplied directly is **rejected** (`:socialware_revision_not_installable`).
-3. **上架 gate fires (publish):** a **non-admin** caller's publish-to-public is **DENIED** by the #165 gate
-   (`authorize_public_scope_write`), an **admin** caller's is allowed. (Fail-before: a toggle that calls
-   `write_definition` with `caps: []` / `:system_seed` authority would let a non-admin publish — the test catches
-   the bypass.)
-4. **下架 makes non-installable:** after `set_retracted(true)`, the market page does not offer the card AND a direct
-   `resolve_installable_revision` by its `config_id` returns `:socialware_revision_retracted`.
+3. **上架 gate fires (publish) — drive the REAL UI action, not the domain fn in isolation:** on a **tenant**
+   workspace, a genuine **non-admin** operator's publish-to-public via the new market action is **DENIED** by the
+   #165 gate; an **admin** operator's is allowed. This is non-vacuous ONLY end-to-end through the action (it
+   transitively proves `PresenterCaps.load` returns real per-operator caps AND that the action threads the real
+   `actor_uri`). **Fail-before names the REAL bypasses** (not `caps: []`, which is already fail-closed, and not
+   `:system_seed`, which `authorize_definition_write` rejects *earlier* on a tenant ws): a toggle that threads a
+   **system/service `actor_uri`**, hardcoded admin caps, or a raw `write_definition` that skips the action's cap
+   load would let a non-admin publish — the test catches it.
+4. **下架 makes non-installable — via the GATED path:** after `ConfigGovernance.Socialware.retract/2` (NOT the
+   ungated `set_retracted/4`), the market page does not offer the card AND a direct `resolve_installable_revision`
+   by its `config_id` returns `:socialware_revision_retracted`. (Non-vacuous only if driven through the gated
+   retract, with a non-admin retract attempt also asserted DENIED.)
 
 ### 15.6 Adversarial-review focus points (attack these)
 
