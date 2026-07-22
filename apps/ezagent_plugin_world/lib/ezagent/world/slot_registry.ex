@@ -44,6 +44,11 @@ defmodule Ezagent.World.SlotRegistry do
     sessions: {:world_live, [{"sessions_table", "Sessions"}]},
     # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData。
     overview: {Ezagent.World.AdminData, [{"overview", "Overview"}]},
+    # 社交软件市场（PR-5 §15）— browse/install + 上架/下架。Data contract is the
+    # `socialware_rows/1` card shape owned by WorkspacePluginData (the
+    # `DefinitionRegistry.list/1`-scoped single source); actions live in
+    # `Ezagent.World.MarketActions`.
+    market: {Ezagent.World.WorkspacePluginData, [{"market", "Market"}]},
     conversation: {Ezagent.World.ConversationData, [{"conversation", "Conversation"}]},
     pty: {:world_live, [{"pty_terminal", "Terminal"}]},
     layout_editor: {:layout, [{"layout_editor", "Layout"}]},

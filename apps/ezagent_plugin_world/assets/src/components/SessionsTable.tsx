@@ -13,9 +13,11 @@ export type SocialwareRow = {
   name: string
   title?: string | null
   description?: string | null
+  version?: string | null
   config_id?: string | null
   content_hash?: string | null
   scope?: string | null
+  public?: boolean | null
   workspace_uri?: string | null
   roles?: SocialwareRole[]
 }

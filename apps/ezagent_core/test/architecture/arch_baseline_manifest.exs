@@ -240,8 +240,11 @@
   #   `&Ezagent.Workspace.create_session/3` function CAPTURE — which grep never
   #   matched either — is not a call site). The cap sat 1 above grep-current (5);
   #   AST measures the true call-site count (5) so the loose ratchet is tightened.
-  create_session_call_sites: 5,
-  create_session_modules: 5,
+  # PR-5 (market surface): market_actions.ex reuses the owner-gated
+  # `ConversationActions.create_session/6` facade for install — one new call site
+  # in one new module (a sanctioned facade reuse, not a raw spawn / bypass).
+  create_session_call_sites: 6,
+  create_session_modules: 6,
   duplicated_resolve_template_class: 1,
   # FF-1 (cleanup-1): groups of ≥2 lib files sharing a byte-identical
   # (whitespace-normalized, ≥120-char) function. Functions are extracted per
