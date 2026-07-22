@@ -25,8 +25,13 @@ defmodule Ezagent.ActionSet.Session.Membership do
   """
   @spec do_join(URI.t(), pid(), map(), map(), module()) ::
           {:ok, map(), [term()]} | {:error, term()}
-  def do_join(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
+  def do_join(%URI{} = member_uri, _member_pid, ctx, facets, _source_module) do
     members = ctx[:read].(:members, %{})
+    reserved_facets = ctx[:read].(:join_facets, %{})
+    role_claims = Map.merge(reserved_facets, members)
+
+    role_conflict =
+      Members.role_name_conflict(role_claims, member_uri, Map.get(facets, :role_name))
 
     # recipe-responsibility-split (2026-06-27, OQ-1) — `role_name` (the session
     # RESPONSIBILITY, axis B) is taken ONLY from the explicit join `facets` here;
@@ -45,19 +50,23 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # UNIQUE PER SESSION. Reject a join that would assign a role_name already
     # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
     # join leaks no monitor. A member rejoining with its OWN role_name is fine.
-    case Members.role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
-      {:error, _} = err ->
-        err
+    cond do
+      Members.passive_actor?(member_uri) ->
+        {:error, {:passive_actor_cannot_join, member_uri}}
 
-      :ok ->
+      match?({:error, _}, role_conflict) ->
+        role_conflict
+
+      true ->
         # Membership-cap unification A1.2 (spec R1.3 / R2.1 JOIN sequence —
-        # grant-first, AFTER the zero-side-effect `role_name_conflict/3`
-        # preflight, compensate on a post-grant failure). The member-cap is the
+        # issue AFTER the zero-side-effect role-name and passive-actor
+        # preflights). The member-cap is the
         # NEW universal base tier (§7): EVERY member (user, agent, anon) that
         # clears the preflight is granted `cap(:session, Session, :receive, S)`
         # into its OWN `:identity` slice, so receive/read AUTHORIZE on the held
-        # cap in A2 (never a bearer token). A1 is additive/behavior-preserving —
-        # the grant lands but delivery/receive still use the ephemeral mint.
+        # cap in A2 (never a bearer token). The intent returns after checked
+        # issuance and durable absorb; holder-authenticated self-add owns the
+        # derived roster projection.
         #
         # Placed here (in `do_join`, through the single `handle_join`
         # chokepoint) so it covers ALL member kinds uniformly — every add path
@@ -81,29 +90,28 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # holds no cap ⇒ receive is DENIED (R1.1) ⇒ the owner's credential is not
         # spent, until the member's owner approves (`:approve_admission`). All
         # non-add / manage-authorized / self / materializer mounts take the
-        # existing grant+mount path unchanged.
+        # existing grant-intent path unchanged.
         if admission_pending?(member_uri, ctx) do
           record_pending_admission(member_uri, ctx)
         else
-          {join_cursor, join_cursor_effect} = MemberCap.capture_join_cursor(member_uri, ctx)
-          granted? = MemberCap.grant_at_join(member_uri, ctx)
-          cursor_ctx = Map.put(ctx, :membership_join_cursor, join_cursor)
+          {_join_cursor, join_cursor_effect} = MemberCap.capture_join_cursor(member_uri, ctx)
+          join_facets = ctx[:read].(:join_facets, %{})
+          join_facets_effect = {:set, :join_facets, Map.put(join_facets, member_uri, facets)}
+          prior_owner = ctx[:read].(:owner_uri, nil)
+          new_owner = Members.owner_after_intent(member_uri, prior_owner)
 
-          # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
-          # (monitor error, replay/notify raise, etc.) must not orphan the
-          # just-granted member-cap. `do_join_apply` returns `{:ok, _, _}` or
-          # RAISES (it has no `{:error}` return path), so the rescue is the sole
-          # compensation trigger; it revokes only what THIS call granted, then
-          # re-propagates (let-it-crash — the join still fails loudly).
-          try do
-            case do_join_apply(member_uri, member_pid, cursor_ctx, facets, source_module) do
-              {:ok, result, effects} ->
-                {:ok, result, [join_cursor_effect | effects]}
-            end
-          rescue
-            e ->
-              if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)
-              reraise e, __STACKTRACE__
+          owner_effects =
+            if new_owner == prior_owner, do: [], else: [{:set, :owner_uri, new_owner}]
+
+          case MemberCap.grant_at_join(member_uri, ctx) do
+            {:error, reason} ->
+              {:error, {:member_cap_grant_failed, reason}}
+
+            grant_status when grant_status in [:already_held, :enqueued] ->
+              # Phase A only. Cursor/facets/owner claim commit together; the
+              # holder-driven `add_self` action is the sole roster writer.
+              {:ok, %{members: Map.keys(members)},
+               [join_cursor_effect, join_facets_effect | owner_effects]}
           end
         end
     end
@@ -231,8 +239,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
     new_pending = Map.put(pending, member_uri, entry)
 
     # spec §C.3 — notify the pending MEMBER's managers (NOT the session's) with a
-    # content-free approvable-request envelope. Inline (like the join-notify in
-    # `do_join_apply`): synchronous here is safe — `managers_of/1` GenServer.calls
+    # content-free approvable-request envelope. Synchronous here is safe —
+    # `managers_of/1` GenServer.calls
     # the MANAGERS' Kinds, never re-enters this Session Kind.
     notify_pending_managers(member_uri, ctx[:self_uri], request_ref)
 
@@ -292,24 +300,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
   @doc """
   APPROVE a pending admission request (spec §C.4) — the deferred second half of
   join. The approver MUST hold manage-authority over the member
-  (`Ezagent.Identity.Authority.manages?/2`); on approval, re-enter the EXACT
-  grant+mount tail C.1 withheld by re-running `do_join/5` under the approver's
-  authority (`manages?(approver, member) = true` ⇒ the trigger does NOT re-pend,
-  so it grants the member-cap + `do_join_apply` mounts), then drop the
-  `:pending_members` entry (as an EFFECT — so a SYNCHRONOUS raise in `do_join_apply`
-  (monitor/replay/notify) aborts the whole approval and the request stays PENDING).
-
-  ⚠️ Abort-safety scope (codex 2026-07-05, #166): the abort-safety above covers
-  SYNCHRONOUS `do_join_apply` failures. The member-cap grant itself
-  (`MemberCap.grant_at_join/2`) is `:async` best-effort — its `:ok` means the grant
-  cast was BUFFERED, not committed. So a post-cast async-grant FAILURE can drop
-  `:pending_members` and mount the member into `:members` WITHOUT the member-cap. This
-  is NOT a credential-spend hole: by R1.1 (roster ⟂ authz) a roster entry that holds
-  no member-cap CANNOT receive (`MemberReceive.authorize/1` denies) ⇒ A's credential
-  is NOT spent, and `reconcile_after_load/2` ("caps win") drops the stale roster entry
-  on the next activate. It is a stale-roster edge, not a half-mount that spends. The
-  fail-closed hardening (make the at-join grant synchronous + checked across ALL join
-  paths, not just approve) is tracked as #166.
+  (`Ezagent.Identity.Authority.manages?/2`); on approval, re-enter the exact
+  grant-only intent seam by re-running `do_join/5` under the approver's authority
+  (`manages?(approver, member) = true` means the trigger does not re-pend), then
+  drop `:pending_members` atomically with the cursor/facets intent effects. A
+  checked issuance failure returns an error and leaves the request pending; the
+  holder-authenticated `add_self` action remains the sole roster writer.
 
   Cap-EXEMPT at the CapBAC layer (the approver holds no session cap on B's
   session) — authorized HERE, in-handler, by the `manages?` predicate. Returns
@@ -386,19 +382,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
           {:error, :unauthorized}
         end
     end
-  end
-
-  defp do_join_apply(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
-    {new_members, effects} =
-      Ezagent.ActionSet.Session.SelfAdd.Effects.on_add(
-        member_uri,
-        member_pid,
-        facets,
-        ctx,
-        source_module
-      )
-
-    {:ok, %{members: Map.keys(new_members)}, effects}
   end
 
   @doc """

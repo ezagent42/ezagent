@@ -397,6 +397,9 @@ defmodule Ezagent.ActionSet.Session do
        # intent. The later self-add projects this cursor into member metadata
        # in the same commit as the roster mount.
        join_cursors: %{},
+       # M-5 — non-authority routing facets captured with the grant intent and
+       # consumed by the holder's later add_self projection.
+       join_facets: %{},
        owner_uri: Map.get(args, :owner_uri),
        # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
        # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`
@@ -663,7 +666,7 @@ defmodule Ezagent.ActionSet.Session do
                   # RF-6: inject the passive-actor predicate (parallel to
                   # `role_resolver`) so the resolver's universal final-output gate
                   # drops any PASSIVE data actor a rule resolved to (any rule type).
-                  passive?: &passive_actor?/1
+                  passive?: &Members.passive_actor?/1
                 )
 
               {recipients, Process.get(provision_key, [])}
@@ -838,62 +841,27 @@ defmodule Ezagent.ActionSet.Session do
 
     # RF-6 gate (`:join`): reject a PASSIVE data actor BEFORE lookup/monitor so it
     # never becomes a session MEMBER. Shares `passive_actor?/1` with the routing gate.
-    if passive_actor?(member_uri),
+    if Members.passive_actor?(member_uri),
       do: {:error, {:passive_actor_cannot_join, member_uri}},
       else: do_handle_join(member_uri, facets, ctx)
   end
 
   defp do_handle_join(%URI{} = member_uri, facets, ctx) do
-    case KindRegistry.lookup(member_uri) do
-      {:ok, member_pid} ->
-        # Session auto-join (Allen 2026-05-26) — idempotency: when a
-        # member rejoins we MUST NOT stack a fresh `Process.monitor` on
-        # top of the live one. Pre-fix, every rejoin leaked a monitor
-        # ref in `slice.monitors` (cleaned only on `:DOWN`, which never
-        # fired for the live member).
-        members = ctx[:read].(:members, %{})
-        # `:monitors` is a TRANSIENT now (SPEC §2.3C) — read it from
-        # `ctx.transients`, not the persistent `ctx[:read]`.
-        monitors = (ctx[:transients] || %{})[:monitors] || %{}
+    members = ctx[:read].(:members, %{})
+    monitors = (ctx[:transients] || %{})[:monitors] || %{}
 
-        case Map.get(members, member_uri) do
-          %{online: true} ->
-            if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
-              # Already a live, monitored, online member with the
-              # SAME PID we're being asked to (re)join. True no-op.
-              #
-              # team-routing-unification §3.1 (codex PR-5a #3): facets are
-              # set at join, NOT mutated by an idempotent rejoin — this branch
-              # intentionally does NOT apply `facets`. Changing a live member's
-              # role_name / in_session_template is a member-RECONFIGURE concern
-              # (PR-5b's `:manage` authority), not a side effect of re-issuing
-              # `chat.join`. The stale/offline paths below DO reach do_join and
-              # preserve+overlay facets (so reconnect never loses them).
-              {:ok, %{members: Map.keys(members), already_member: true}, []}
-            else
-              # Stale ref (different/dead PID) or no ref — drop any
-              # stale entries + install a fresh monitor.
-              Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
-            end
-
-          _ ->
-            Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
+    case {Map.get(members, member_uri), KindRegistry.lookup(member_uri)} do
+      {%{online: true}, {:ok, member_pid}} ->
+        if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
+          {:ok, %{members: Map.keys(members), already_member: true}, []}
+        else
+          Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
         end
 
-      :error ->
-        {:error, {:member_not_registered, member_uri}}
+      _ ->
+        Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
     end
   end
-
-  # RF-6: is `uri` a PASSIVE data actor? Reads the stored `:passive` attribute via
-  # `Ezagent.UriQuery` (the SAME resolver feeding the routing-gate predicate, so
-  # all RF-6 gates agree). Fail-closed-to-PRINCIPAL: only `{:ok, true}` is passive.
-  @spec passive_actor?(URI.t()) :: boolean()
-  defp passive_actor?(%URI{} = uri) do
-    match?({:ok, true}, Ezagent.UriQuery.resolve(:passive, uri))
-  end
-
-  defp passive_actor?(_), do: false
 
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable

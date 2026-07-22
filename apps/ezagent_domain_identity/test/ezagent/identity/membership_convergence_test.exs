@@ -45,6 +45,27 @@ defmodule Ezagent.Identity.MembershipConvergenceTest do
     refute_receive {:convergence_dispatch, %{session_uri: ^session}}, 100
   end
 
+  test "an offline projection remains pending so activation can reconnect it" do
+    {session, _session_pid} = spawn_session()
+    {member, member_pid} = confirmed_user("offline")
+    assert :ok = grant_member_cap(member, session)
+    assert wait_member_online(session, member, true)
+
+    assert :ok =
+             DynamicSupervisor.terminate_child(
+               EzagentDomainIdentity.Application.UserSupervisor,
+               member_pid
+             )
+
+    assert wait_member_online(session, member, false)
+
+    held_caps = Ezagent.EntityCaps.load(member)
+
+    assert [
+             {:dispatch_after_commit, %Ezagent.Cmd{action: :add_self, args: %{member: ^member}}}
+           ] = Ezagent.Identity.MembershipConvergence.after_commit_effects(member, held_caps)
+  end
+
   test "convergence has no session-domain module pin and Identity is shared by user and agent workers" do
     path =
       Path.expand(
@@ -116,6 +137,20 @@ defmodule Ezagent.Identity.MembershipConvergenceTest do
         wait_member(session, member, retries - 1)
 
       true ->
+        false
+    end
+  end
+
+  defp wait_member_online(session, member, online?, retries \\ 100) do
+    case Map.get(members_of(session), member) do
+      %{online: ^online?} ->
+        true
+
+      _ when retries > 0 ->
+        Process.sleep(10)
+        wait_member_online(session, member, online?, retries - 1)
+
+      _ ->
         false
     end
   end

@@ -13,7 +13,10 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
   @spec handle_add_self(map(), map(), module()) ::
           {:ok, %{status: :added | :already_member}, [term()]}
-          | {:error, :unauthorized | {:member_not_registered, URI.t()}}
+          | {:error,
+             :unauthorized
+             | {:member_not_registered, URI.t()}
+             | {:role_name_taken, String.t()}}
   def handle_add_self(
         %{member: %URI{} = subject, facets: facets},
         %{authenticated_principal: %URI{} = holder} = ctx,
@@ -42,21 +45,29 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
   defp add_projection(holder, facets, ctx, source_module) do
     members = ctx[:read].(:members, %{})
+    join_facets = ctx[:read].(:join_facets, %{})
+    effective_facets = Map.merge(facets, Map.get(join_facets, holder, %{}))
 
-    case Map.get(members, holder) do
-      %{} ->
-        {:ok, %{status: :already_member}, []}
+    case Members.role_name_conflict(members, holder, Map.get(effective_facets, :role_name)) do
+      {:error, _} = error ->
+        error
 
-      nil ->
-        case Ezagent.KindRegistry.lookup(holder) do
-          {:ok, member_pid} ->
-            {_members, effects} =
-              Effects.on_add(holder, member_pid, facets, ctx, source_module)
+      :ok ->
+        case Map.get(members, holder) do
+          %{online: true} ->
+            {:ok, %{status: :already_member}, []}
 
-            {:ok, %{status: :added}, effects}
+          _missing_or_offline ->
+            case Ezagent.KindRegistry.lookup(holder) do
+              {:ok, member_pid} ->
+                {_members, effects} =
+                  Effects.on_add(holder, member_pid, effective_facets, ctx, source_module)
 
-          :error ->
-            {:error, {:member_not_registered, holder}}
+                {:ok, %{status: :added}, effects}
+
+              :error ->
+                {:error, {:member_not_registered, holder}}
+            end
         end
     end
   end

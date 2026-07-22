@@ -54,10 +54,15 @@ defmodule Ezagent.Identity.MembershipConvergence do
   defp projection_missing?(session_uri, entity_uri) do
     case Ezagent.Kind.get_slice(session_uri, :session) do
       {:ok, slice} when is_map(slice) ->
-        not (slice
-             |> Ezagent.Kind.normalize_slice_view()
-             |> Map.get(:members, %{})
-             |> Map.has_key?(entity_uri))
+        members =
+          slice
+          |> Ezagent.Kind.normalize_slice_view()
+          |> Map.get(:members, %{})
+
+        case Map.get(members, entity_uri) do
+          %{online: true} -> false
+          _missing_or_offline -> true
+        end
 
       _ ->
         # A session that is absent/not-ready cannot accept the cast. Its own

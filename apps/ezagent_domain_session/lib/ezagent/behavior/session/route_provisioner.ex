@@ -106,8 +106,8 @@ defmodule Ezagent.ActionSet.Session.RouteProvisioner do
   # `DefinitionAgents` at session-CREATE (both use `caller: admin_uri` for the same
   # reason) — so the admission gate does NOT pend the session's own declared members
   # just because an ordinary participant's message happened to trigger the lazy
-  # provision. Overriding ONLY `:caller` is safe: `do_join_apply` reads
-  # `self_uri`/`read`/`transients`, never `ctx.caller`. A genuine cross-owner PULL never
+  # provision. Overriding ONLY `:caller` is safe: grant-only join reads
+  # `self_uri`/`read`, while holder binding stays explicit. A genuine cross-owner PULL never
   # reaches here — that is a DIRECT `session.join` with `caller = puller` (still pends);
   # this path fires only for a role found in THIS session's `declared_role/2`.
   defp system_mediated_ctx(ctx), do: Map.put(ctx, :caller, Ezagent.Entity.User.admin_uri())

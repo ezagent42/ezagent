@@ -9,9 +9,10 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
   UNCHANGED (still the ephemeral mint) — so these tests assert only the member-cap's
   PRESENCE/ABSENCE, never a receive/delivery behavior (that is A2).
 
-  The grant is placed inside `do_join` (spec R1.3/R2.1 JOIN sequence: preflight →
-  grant → `do_join_apply` → compensate), so it fires for ALL member kinds through
-  the ONE `handle_join` chokepoint. Tests drive the REAL `session.join` dispatch.
+  The grant is placed inside `do_join` (spec R1.3/R2.1 JOIN sequence: static
+  preflights → checked issue → durable absorb), so it fires for ALL member kinds
+  through the ONE `handle_join` chokepoint. The holder-authenticated `add_self`
+  action is the sole roster writer. Tests drive the REAL `session.join` dispatch.
   """
 
   use EzagentCore.DataCase, async: false
@@ -335,7 +336,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     cap
   end
 
-  test "join failure AFTER grant → compensating revoke leaves no member-cap [test 23 subset]" do
+  test "grant-only join has no post-grant projection failure surface" do
     owner = confirmed_user("owner")
     session = new_session("mc-compensate", owner)
     member = confirmed_user("member")
@@ -343,28 +344,23 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
     refute member_cap(member, session), "precondition: member holds no member-cap yet"
 
-    # Inject a failure INSIDE `do_join_apply` (raises when it reads `:last_seen`,
-    # which is read only AFTER the member-cap grant) by calling `do_join`
-    # directly with a `ctx.read` that raises on that key. The grant lands, then
-    # `do_join_apply` fails → compensation must revoke the just-granted cap.
+    # M-5 removes the projection tail entirely. A read that would have raised
+    # in the old monitor/replay path is now unreachable from Phase A.
     ctx = %{
       self_uri: session,
       caller: member,
       transients: %{monitors: %{}},
       read: fn
-        :last_seen, _default -> raise "injected do_join_apply failure"
+        :last_seen, _default -> raise "obsolete projection tail was reached"
         :owner_uri, _default -> owner
         _key, default -> default
       end
     }
 
-    assert_raise RuntimeError, fn ->
-      Membership.do_join(member, member_pid, ctx, %{}, Ezagent.ActionSet.Session)
-    end
+    assert {:ok, _result, effects} =
+             Membership.do_join(member, member_pid, ctx, %{}, Ezagent.ActionSet.Session)
 
-    Process.sleep(50)
-
-    refute member_cap(member, session),
-           "a post-grant do_join_apply failure must compensate — the member-cap must be revoked"
+    refute Enum.any?(effects, &match?({:set, :members, _}, &1))
+    assert wait_member_cap(member, session)
   end
 end
