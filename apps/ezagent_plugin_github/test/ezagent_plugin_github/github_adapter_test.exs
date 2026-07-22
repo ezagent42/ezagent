@@ -17,14 +17,19 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
   alias EzagentPluginGithub.GitHubAdapter
 
-  alias EzagentPluginGithub.GitHubCredentialBackend
+  alias EzagentPluginGithub.GitHubInstallation
 
   setup do
     Application.put_env(:ezagent_plugin_github, :adapter_req_opts, plug: {Req.Test, @stub_name})
 
-    # Stash a token in the process dictionary for adapter HTTP calls.
-    # The actual value is irrelevant — Req.Test mocks all HTTP responses.
-    GitHubCredentialBackend.stash_token("")
+    # Seed the installation-token cache for the fixture repo's account ("owner")
+    # so the adapter takes the cache-hit path and makes no installation-minting
+    # HTTP calls. The token value is irrelevant — Req.Test mocks all repo HTTP.
+    GitHubInstallation.put_cached_token(
+      "owner",
+      "ghs-test-token",
+      System.system_time(:second) + 3600
+    )
 
     on_exit(fn ->
       Application.delete_env(:ezagent_plugin_github, :adapter_req_opts)

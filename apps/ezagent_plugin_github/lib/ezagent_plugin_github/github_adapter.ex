@@ -4,6 +4,13 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   Each callback accepts `Ezagent.DomainGit` value types, calls the GitHub REST
   API via `GitHubClient`, and maps provider responses back to Domain Git structs.
+
+  Repository operations authenticate with a GitHub App **installation access
+  token** resolved per-repo via `EzagentPluginGithub.GitHubInstallation` — not
+  with the connecting user's token. The user token establishes identity at
+  connection time; the installation token grants the App's permissions on the
+  target repository. Every callback resolves the installation token first and
+  fails closed (mapping to a stable read/write error) if it cannot be obtained.
   """
   @behaviour Ezagent.DomainGit.Adapter
 
@@ -18,20 +25,17 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     Review
   }
 
-  alias EzagentPluginGithub.{GitHubClient, GitHubCredentialBackend}
+  alias EzagentPluginGithub.{GitHubClient, GitHubInstallation}
 
   @github_host "github.com"
 
   @impl true
   def resolve_repository(_ctx, %RepositoryRef{} = repo) do
-    path = "/repos/#{repo.external_id}"
-
-    case GitHubClient.get(path, token(), request_opts()) do
-      {:ok, data} ->
-        build_repository_ref(repo, data)
-
-      {:error, reason} ->
-        {:error, map_read_error(reason)}
+    with {:ok, token} <- installation_token(repo),
+         {:ok, data} <- GitHubClient.get("/repos/#{repo.external_id}", token, request_opts()) do
+      build_repository_ref(repo, data)
+    else
+      {:error, reason} -> {:error, map_read_error(reason)}
     end
   end
 
@@ -42,24 +46,36 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         file_changes,
         %CreateChangeRequest{} = create_req
       ) do
-    base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
+    case installation_token(repo) do
+      {:ok, token} ->
+        base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
 
-    case GitHubClient.get(base_ref_path, token(), request_opts()) do
-      {:ok, ref_data} ->
-        case verify_base_sha(ref_data, create_req.expected_base_sha) do
-          :ok ->
-            if file_changes == [] do
-              create_pr(repo, create_req)
-            else
-              create_change_request_with_files(repo, file_changes, create_req, ref_data)
+        case GitHubClient.get(base_ref_path, token, request_opts()) do
+          {:ok, ref_data} ->
+            case verify_base_sha(ref_data, create_req.expected_base_sha) do
+              :ok ->
+                if file_changes == [] do
+                  create_pr(repo, create_req, token)
+                else
+                  create_change_request_with_files(
+                    repo,
+                    file_changes,
+                    create_req,
+                    ref_data,
+                    token
+                  )
+                end
+
+              {:error, _reason} = error ->
+                error
             end
 
-          {:error, _reason} = error ->
-            error
-        end
+          {:error, :repository_not_found} ->
+            {:error, :base_ref_not_found}
 
-      {:error, :repository_not_found} ->
-        {:error, :base_ref_not_found}
+          {:error, reason} ->
+            {:error, map_read_error(reason)}
+        end
 
       {:error, reason} ->
         {:error, map_read_error(reason)}
@@ -74,26 +90,26 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   defp verify_base_sha(_ref_data, _expected_sha), do: {:error, :base_sha_mismatch}
 
-  defp create_change_request_with_files(repo, file_changes, create_req, ref_data) do
+  defp create_change_request_with_files(repo, file_changes, create_req, ref_data, token) do
     base_tree_sha = ref_data["object"]["sha"]
 
-    with {:ok, blob_shas} <- create_blobs(repo, file_changes),
-         {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha),
-         {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req),
-         :ok <- update_head_ref(repo, commit_sha, create_req.head_ref) do
-      create_pr(repo, create_req)
+    with {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
+         {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha, token),
+         {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req, token),
+         :ok <- update_head_ref(repo, commit_sha, create_req.head_ref, token) do
+      create_pr(repo, create_req, token)
     else
       {:error, reason} -> {:error, map_git_data_error(reason)}
     end
   end
 
-  defp create_blobs(repo, file_changes) do
+  defp create_blobs(repo, file_changes, token) do
     Enum.reduce_while(file_changes, {:ok, []}, fn %FileChange{content: content}, {:ok, acc} ->
       path = "/repos/#{repo.external_id}/git/blobs"
 
       case GitHubClient.post(
              path,
-             token(),
+             token,
              %{content: content, encoding: "utf-8"},
              request_opts()
            ) do
@@ -106,7 +122,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end)
   end
 
-  defp create_tree(repo, file_changes, blob_shas, base_tree_sha) do
+  defp create_tree(repo, file_changes, blob_shas, base_tree_sha, token) do
     tree_entries =
       Enum.zip(file_changes, blob_shas)
       |> Enum.map(fn {%FileChange{path: path}, sha} ->
@@ -117,7 +133,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
     case GitHubClient.post(
            path,
-           token(),
+           token,
            %{base_tree: base_tree_sha, tree: tree_entries},
            request_opts()
          ) do
@@ -129,7 +145,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp create_commit(repo, tree_sha, create_req) do
+  defp create_commit(repo, tree_sha, create_req, token) do
     path = "/repos/#{repo.external_id}/git/commits"
 
     body = %{
@@ -138,7 +154,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       parents: [create_req.expected_base_sha.value]
     }
 
-    case GitHubClient.post(path, token(), body, request_opts()) do
+    case GitHubClient.post(path, token, body, request_opts()) do
       {:ok, %{"sha" => sha}} ->
         {:ok, sha}
 
@@ -147,10 +163,10 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp update_head_ref(repo, commit_sha, head_ref) do
+  defp update_head_ref(repo, commit_sha, head_ref, token) do
     path = "/repos/#{repo.external_id}/git/refs/heads/#{head_ref}"
 
-    case GitHubClient.patch(path, token(), %{sha: commit_sha, force: false}, request_opts()) do
+    case GitHubClient.patch(path, token, %{sha: commit_sha, force: false}, request_opts()) do
       {:ok, _data} ->
         :ok
 
@@ -159,7 +175,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp create_pr(repo, create_req) do
+  defp create_pr(repo, create_req, token) do
     path = "/repos/#{repo.external_id}/pulls"
 
     body = %{
@@ -169,7 +185,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       body: create_req.body
     }
 
-    case GitHubClient.post(path, token(), body, request_opts()) do
+    case GitHubClient.post(path, token, body, request_opts()) do
       {:ok, data} ->
         build_change_request(data)
 
@@ -180,42 +196,52 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def read_change_request(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
-    path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}"
-
-    case GitHubClient.get(path, token(), request_opts()) do
-      {:ok, data} ->
-        build_change_request(data)
-
-      {:error, reason} ->
-        {:error, map_read_error(reason)}
+    with {:ok, token} <- installation_token(repo),
+         {:ok, data} <-
+           GitHubClient.get(
+             "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}",
+             token,
+             request_opts()
+           ) do
+      build_change_request(data)
+    else
+      {:error, reason} -> {:error, map_read_error(reason)}
     end
   end
 
   @impl true
   def list_checks(_ctx, %RepositoryRef{} = repo, %CommitSha{} = sha) do
-    path = "/repos/#{repo.external_id}/commits/#{sha.value}/check-runs"
-
-    case GitHubClient.get(path, token(), request_opts()) do
-      {:ok, %{"check_runs" => check_runs}} ->
-        checks = check_runs |> Enum.map(&build_check/1) |> Enum.reject(&is_nil/1)
-        {:ok, checks}
-
-      {:error, reason} ->
-        {:error, map_checks_error(reason)}
+    with {:ok, token} <- installation_token(repo),
+         {:ok, %{"check_runs" => check_runs}} <-
+           GitHubClient.get(
+             "/repos/#{repo.external_id}/commits/#{sha.value}/check-runs",
+             token,
+             request_opts()
+           ) do
+      checks = check_runs |> Enum.map(&build_check/1) |> Enum.reject(&is_nil/1)
+      {:ok, checks}
+    else
+      {:error, reason} -> {:error, map_checks_error(reason)}
     end
   end
 
   @impl true
   def list_reviews(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
-    path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}/reviews"
+    case installation_token(repo) do
+      {:ok, token} ->
+        path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}/reviews"
 
-    case GitHubClient.get(path, token(), request_opts()) do
-      {:ok, reviews} when is_list(reviews) ->
-        result = reviews |> Enum.map(&build_review/1) |> Enum.reject(&is_nil/1)
-        {:ok, result}
+        case GitHubClient.get(path, token, request_opts()) do
+          {:ok, reviews} when is_list(reviews) ->
+            result = reviews |> Enum.map(&build_review/1) |> Enum.reject(&is_nil/1)
+            {:ok, result}
 
-      {:ok, _unexpected} ->
-        {:error, :provider_unavailable}
+          {:ok, _unexpected} ->
+            {:error, :provider_unavailable}
+
+          {:error, reason} ->
+            {:error, map_read_error(reason)}
+        end
 
       {:error, reason} ->
         {:error, map_read_error(reason)}
@@ -336,12 +362,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   # ── Token resolution ───────────────────────────────────────────────────
 
-  @doc false
-  # Reads the decrypted token stashed in the process dictionary by
-  # `GitHubCredentialBackend.lease_for_operation/1`. Returns an empty string
-  # when no token is available (boot / test without a lease in progress).
-  defp token do
-    GitHubCredentialBackend.current_token() || ""
+  # Resolves the GitHub App installation access token for the repo's account.
+  # Returns `{:ok, token}` or a `GitHubClient` error atom (mapped by the caller
+  # to a stable read/write error). The token is never logged.
+  defp installation_token(%RepositoryRef{external_id: external_id}) do
+    GitHubInstallation.token_for_repo(external_id)
   end
 
   # ── Request opts (test injection point) ─────────────────────────────────

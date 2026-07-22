@@ -5,7 +5,7 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
   alias EzagentPluginGithub.TestHelpers
 
   setup do
-    TestHelpers.oauth_config()
+    TestHelpers.github_config()
     :ok
   end
 
@@ -33,7 +33,8 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
       assert uri =~ "github.com/login/oauth/authorize"
       assert uri =~ "client_id=test-client-id"
       assert uri =~ "state=test-state-123"
-      assert uri =~ "scope=repo"
+      # GitHub App user-to-server OAuth sends no scope.
+      refute uri =~ "scope="
 
       # Verify state passthrough
       assert redirect_map.redirect["state"] == "test-state-123"
@@ -67,8 +68,8 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
            execution_identity: %{kind: :connected_user, external_account_id: "github-user-42"},
            authorization_ref: "auth-ref-1",
            authorization_version: 1,
-           credential_material: {:write_only_handoff, "gho_test_token_123"},
-           granted_permissions_digest: "repo",
+           credential_material: {:write_only_handoff, "ghu_test_token_123"},
+           granted_permissions_digest: "user-to-server-identity",
            expires_at: nil,
            provider_metadata: %{}
          }}
@@ -94,8 +95,8 @@ defmodule EzagentPluginGithub.GitHubDriverTest do
 
       assert resp.authorization_ref == "auth-ref-1"
       assert resp.authorization_version == 1
-      assert {:write_only_handoff, "gho_test_token_123"} = resp.credential_material
-      assert resp.granted_permissions_digest == "repo"
+      assert {:write_only_handoff, "ghu_test_token_123"} = resp.credential_material
+      assert resp.granted_permissions_digest == "user-to-server-identity"
       assert resp.expires_at == nil
       assert resp.provider_metadata == %{}
     end

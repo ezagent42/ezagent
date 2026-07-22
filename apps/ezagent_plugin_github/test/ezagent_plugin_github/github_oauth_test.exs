@@ -6,12 +6,12 @@ defmodule EzagentPluginGithub.GitHubOAuthTest do
   @stub_name :github_oauth_test
 
   setup do
-    Application.put_env(:ezagent_plugin_github, :oauth_client_id, "test-client-id")
-    Application.put_env(:ezagent_plugin_github, :oauth_client_secret, "test-client-secret")
+    Application.put_env(:ezagent_plugin_github, :client_id, "test-client-id")
+    Application.put_env(:ezagent_plugin_github, :client_secret, "test-client-secret")
 
     on_exit(fn ->
-      Application.delete_env(:ezagent_plugin_github, :oauth_client_id)
-      Application.delete_env(:ezagent_plugin_github, :oauth_client_secret)
+      Application.delete_env(:ezagent_plugin_github, :client_id)
+      Application.delete_env(:ezagent_plugin_github, :client_secret)
     end)
 
     :ok
@@ -28,7 +28,9 @@ defmodule EzagentPluginGithub.GitHubOAuthTest do
       assert query["client_id"] == "test-client-id"
       assert query["state"] == "state-abc"
       assert query["redirect_uri"] == "https://ezagent.example/callback"
-      assert query["scope"] == "repo"
+      # A GitHub App's user-to-server OAuth takes NO scope — repo access comes
+      # from the installation, not the user token.
+      refute Map.has_key?(query, "scope")
     end
 
     test "uses different state for each invocation" do
@@ -48,10 +50,10 @@ defmodule EzagentPluginGithub.GitHubOAuthTest do
       Req.Test.stub(@stub_name, fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/login/oauth/access_token"
-        Req.Test.json(conn, %{"access_token" => "gho_test_token_123"})
+        Req.Test.json(conn, %{"access_token" => "ghu_test_token_123"})
       end)
 
-      assert {:ok, %{access_token: "gho_test_token_123"}} =
+      assert {:ok, %{access_token: "ghu_test_token_123"}} =
                GitHubOAuth.exchange_code("test-code", "https://example.com/callback",
                  plug: {Req.Test, @stub_name}
                )

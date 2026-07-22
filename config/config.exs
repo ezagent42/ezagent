@@ -179,12 +179,19 @@ config :ezagent_core, Ezagent.Cap.DeliveryOutbox,
   retry_max_ms: 60_000,
   lease_ms: 30_000
 
-# D2 — GitHub OAuth App credentials. The {:system, "ENV_VAR"} tuple is resolved
-# at runtime by EzagentPluginGithub.Config.fetch_env!/1, not at compile time.
-# In dev/test the env vars must be set (or the value overridden per-environment).
+# D2 — GitHub App credentials (app_id 4361756). `app_id` and `client_id` are
+# public identifiers and are configured directly. Secrets are resolved at runtime
+# from env via the {:system, "ENV_VAR"} tuple (EzagentPluginGithub.Config), never
+# hardcoded. In dev/test the secret env vars must be set (or overridden per-env).
+#   * private_key  — the App's RS256 .pem, signs the App JWT (installation tokens)
+#   * client_secret — user-to-server OAuth (identity only, no repo scope)
+#   * webhook_secret — verifies inbound X-Hub-Signature-256 deliveries
 config :ezagent_plugin_github,
-  oauth_client_id: {:system, "GITHUB_CLIENT_ID"},
-  oauth_client_secret: {:system, "GITHUB_CLIENT_SECRET"},
+  app_id: "4361756",
+  client_id: "Iv23liKq2xku34o9IBwf",
+  client_secret: {:system, "GITHUB_CLIENT_SECRET"},
+  private_key: {:system, "GITHUB_APP_PRIVATE_KEY"},
+  webhook_secret: {:system, "GITHUB_WEBHOOK_SECRET"},
   token_encryption_key: {:system, "GITHUB_TOKEN_ENCRYPTION_KEY"}
 
 # D2 — register the GitHub credential backend module so the provider-connection

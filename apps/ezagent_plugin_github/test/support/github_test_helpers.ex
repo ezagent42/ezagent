@@ -2,8 +2,10 @@ defmodule EzagentPluginGithub.TestHelpers do
   @moduledoc """
   Test helpers for the GitHub plugin — shared fixtures and config setup.
 
-  Provides `backend_pair/0`, `driver_declaration/0`, and `oauth_config/0` for
-  use by driver, adapter, and credential backend tests.
+  Provides `backend_pair/0`, `driver_declaration/0`, `github_config/0`, and a
+  generated test RSA key (`test_private_key_pem/0`) for driver, adapter,
+  credential-backend, JWT, and installation tests. No real GitHub App secrets are
+  needed — everything here is synthetic.
   """
 
   @doc """
@@ -46,10 +48,24 @@ defmodule EzagentPluginGithub.TestHelpers do
   end
 
   @doc """
-  Sets test OAuth client id and secret in application config.
+  Sets synthetic GitHub App config (app_id, user-to-server client_id/secret, a
+  generated private key PEM, and a webhook secret) in application env.
   """
-  def oauth_config do
-    Application.put_env(:ezagent_plugin_github, :oauth_client_id, "test-client-id")
-    Application.put_env(:ezagent_plugin_github, :oauth_client_secret, "test-secret")
+  def github_config do
+    Application.put_env(:ezagent_plugin_github, :app_id, "4361756")
+    Application.put_env(:ezagent_plugin_github, :client_id, "test-client-id")
+    Application.put_env(:ezagent_plugin_github, :client_secret, "test-secret")
+    Application.put_env(:ezagent_plugin_github, :private_key, test_private_key_pem())
+    Application.put_env(:ezagent_plugin_github, :webhook_secret, "test-webhook-secret")
+  end
+
+  @doc """
+  Generates a fresh 2048-bit RSA private key and encodes it as a PKCS#1 PEM
+  string (the `BEGIN RSA PRIVATE KEY` form GitHub Apps issue).
+  """
+  def test_private_key_pem do
+    key = :public_key.generate_key({:rsa, 2048, 65_537})
+    entry = :public_key.pem_entry_encode(:RSAPrivateKey, key)
+    :public_key.pem_encode([entry])
   end
 end

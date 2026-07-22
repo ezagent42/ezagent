@@ -1,11 +1,12 @@
 defmodule EzagentPluginGithub.Application do
   @moduledoc """
-  GitHub OAuth plugin OTP application — the `Ezagent.Plugin` contract module.
+  GitHub App plugin OTP application — the `Ezagent.Plugin` contract module.
 
-  Implements the GitHub OAuth App provider plugin for Git operations.
-  Provides OAuth-based authorization flows, Git REST API operations via
-  the DomainGit.Adapter contract, and encrypted token storage via the
-  CredentialBackend contract.
+  Implements the GitHub App provider plugin for Git operations. Provides
+  user-to-server OAuth for identity, App-JWT-minted installation access tokens
+  for repository operations (via the DomainGit.Adapter contract), webhook
+  signature verification, and encrypted token storage via the CredentialBackend
+  contract.
 
   ## Plugin authoring contract
 
@@ -31,14 +32,18 @@ defmodule EzagentPluginGithub.Application do
   def plugin_info do
     %{
       slug: "github",
-      name: "GitHub OAuth",
-      description: "GitHub OAuth App provider plugin for Git operations",
+      name: "GitHub App",
+      description: "GitHub App provider plugin for Git operations",
       version: "0.1.0"
     }
   end
 
   @impl Ezagent.Plugin
-  def children, do: [EzagentPluginGithub.GitHubCredentialBackend]
+  def children,
+    do: [
+      EzagentPluginGithub.GitHubCredentialBackend,
+      EzagentPluginGithub.GitHubInstallation
+    ]
 
   @impl Ezagent.Plugin
   def after_boot do
@@ -85,7 +90,7 @@ defmodule EzagentPluginGithub.Application do
   end
 
   @doc """
-  Returns the `BackendPair` declaration for the GitHub OAuth plugin.
+  Returns the `BackendPair` declaration for the GitHub App plugin.
 
   Declares the `pair-github-v1` pair that links the
   `local-authorization-v1` authorization backend with the
@@ -100,10 +105,10 @@ defmodule EzagentPluginGithub.Application do
   end
 
   @doc """
-  Returns the `Driver` declaration for the GitHub OAuth plugin.
+  Returns the `Driver` declaration for the GitHub App plugin.
 
-  Declares the `github` / `oauth_user` driver that maps to
-  `EzagentPluginGithub.GitHubDriver` and the `pair-github-v1` backend pair.
+  Declares the `github` / `oauth_user` driver (user-to-server identity flow) that
+  maps to `EzagentPluginGithub.GitHubDriver` and the `pair-github-v1` backend pair.
   """
   def driver_declaration do
     Ezagent.ProviderConnection.Driver.new!(%{

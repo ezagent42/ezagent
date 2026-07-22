@@ -1,21 +1,26 @@
 defmodule EzagentPluginGithub.GitHubDriver do
   @moduledoc """
-  Driver behaviour implementation for the GitHub OAuth App provider.
+  Driver behaviour implementation for the GitHub App provider (user-to-server
+  identity flow).
 
-  Implements all 8 `Ezagent.ProviderConnection.Driver` callbacks to support
-  the GitHub OAuth App authorization lifecycle — begin, consume, refresh,
-  revoke, and discard operations.
+  Implements all 8 `Ezagent.ProviderConnection.Driver` callbacks to support the
+  GitHub App user-to-server authorization lifecycle — begin, consume, refresh,
+  revoke, and discard operations. This driver establishes the connecting user's
+  IDENTITY; repository access is granted separately via the App's installation
+  token (`EzagentPluginGithub.GitHubInstallation`), not via the user token.
 
   ## Callback summary
 
-    * `begin_authorization/1` — constructs a GitHub OAuth authorization URL
-      via the exchange function. The redirect contains `authorization_uri`,
+    * `begin_authorization/1` — constructs a GitHub user-to-server authorization
+      URL via the exchange function. The redirect contains `authorization_uri`,
       `state`, and `pkce_digest` (URL-safe base64 SHA256 of the verifier).
 
-    * `consume_callback/1` — exchanges the authorization code for an access
-      token via `GitHubOAuth.exchange_code/2`.
+    * `consume_callback/1` — exchanges the authorization code for a user-to-server
+      access token via `GitHubOAuth.exchange_code/2`, then reads `/user` to bind
+      the external account identity.
 
-    * `refresh/1` — no-op (OAuth App tokens never expire). Calls
+    * `refresh/1` — no-op (the stored user identity token is treated as
+      long-lived here). Calls
       `CredentialRefreshExchange.consume_refresh_exchange/1`.
 
     * `reconcile_callback/1`, `reconcile_refresh/1` — return
@@ -78,7 +83,7 @@ defmodule EzagentPluginGithub.GitHubDriver do
                  authorization_version:
                    (Map.get(context, :expected_authorization_version, 0) || 0) + 1,
                  credential_material: {:write_only_handoff, token},
-                 granted_permissions_digest: "repo",
+                 granted_permissions_digest: "user-to-server-identity",
                  expires_at: nil,
                  provider_metadata: %{}
                }}
@@ -113,7 +118,7 @@ defmodule EzagentPluginGithub.GitHubDriver do
          %{
            provider_result_ref: "gh-refresh-noop",
            replacement_credential: {:write_only_handoff, "github-noop-refresh"},
-           granted_permissions_digest: "repo",
+           granted_permissions_digest: "user-to-server-identity",
            expires_at: nil,
            provider_metadata: %{}
          }}
