@@ -199,6 +199,57 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
     end
   end
 
+  describe "check 7 — direct *Registry.register grep gate + build-time Mix-task exemption (#1476)" do
+    # SPEC §3.2 "declare, don't call": the gate greps a plugin app's
+    # source for direct `*Registry.register` / `declare_table` calls and
+    # fails the build. #1476 EXEMPTS build-time Mix tasks
+    # (`<elixirc_path>/mix/tasks/**.ex`) — a Mix task is dev tooling, never
+    # on the running app's boot path, so seeding a registry there (e.g.
+    # `mix world.e2e.fixtures`, the crash-fix that surfaced this) is
+    # legitimate. These two tests pin BOTH directions so the exemption can
+    # never silently become a blanket disable of the gate.
+    #
+    # Both fixtures reuse the conforming contract module (`:ezagent_plugin
+    # -> EzagentPluginConforming`) so every check EXCEPT check 7 passes and
+    # the result is attributable to check 7 alone. Ensure it is loaded.
+    setup do
+      compile_fixture_module("ezagent_plugin_conforming", "ezagent_plugin_conforming.ex")
+      :ok
+    end
+
+    test "FAILS when RUNTIME plugin lib code calls *Registry.register directly" do
+      result =
+        in_fixture_project(:ezagent_plugin_reg_runtime, "ezagent_plugin_reg_runtime", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:error, diagnostics} = result
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "Registry.register" and msg =~ "grep gate"
+             end),
+             "runtime plugin code calling *Registry.register directly must STILL " <>
+               "be flagged by check 7 after the mix-task exemption — " <>
+               "got #{inspect(diagnostics)}"
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "runtime_bad_registration.ex"
+             end),
+             "the check-7 diagnostic should name the offending runtime file"
+    end
+
+    test "PASSES when the *Registry.register call is inside a build-time Mix task (exemption)" do
+      result =
+        in_fixture_project(:ezagent_plugin_reg_mixtask, "ezagent_plugin_reg_mixtask", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:ok, []} = result,
+             "a *Registry.register call inside lib/mix/tasks/** is build-time " <>
+               "tooling and MUST be exempt from check 7 (#1476) — got #{inspect(result)}"
+    end
+  end
+
   # Compile a fixture's plugin .ex file into the loaded code path so
   # `Code.ensure_compiled/1` (called inside the gate) resolves the
   # fixture modules. Same pattern as the original conforming test.
