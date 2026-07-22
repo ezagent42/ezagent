@@ -1647,3 +1647,19 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 ## Kanban read-only share — verify reflux live in a real deploy env (from #1425, 2026-07-15)
 
 Data-reflux is proven at code+test level (board_forward_test). But the Hello receipt UI is a delegation-time SNAPSHOT (not live); the live surface is the World Kanban receiver tab, which the disposable stack could not stand up to record. **Verify live reflux on a full deployed world stack + decide the Hello-receipt-snapshot UX (auto-refresh vs link to live board).** Detail: docs/notes/2026-07-15-kanban-reflux-deploy-verify.md
+
+---
+
+## 2026-07-22 — #1445 GitHub App auth follow-ups (security review SOUND; Allen: defer + record)
+
+**Threat-model note (Allen 2026-07-22):** the should-fix items defend against **in-VM (in-BEAM) malicious code** reading the token — currently OUT OF SCOPE (code admitted into the BEAM is trusted; tokens ~1h-lived). Defer; revisit later.
+
+- **[should-fix] Scope the installation token to the single repo.** `apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_installation.ex:111-116` mints with an empty body → GitHub returns an installation-WIDE full-permissions token, cached per-account (`account_of/1`, :152). Scope via `repository_ids` + minimal `permissions`; cache key per-repo. Shrinks blast-radius on leak.
+- **[should-fix] Encrypt the installation token at rest / drop `:public` ETS.** `github_installation.ex:164` stores the repo-write token CLEARTEXT in a `:public` ETS table (any process can `:ets.lookup`). Inversion: the lower-priv OAuth token IS AES-GCM encrypted (`github_credential_backend.ex:110`); the higher-priv token is not. Encrypt-at-rest or serialize through the owner process (table need not be `:public`).
+- **[nit] `token_encryption_key` fail-loud on unset-in-prod.** `github_credential_backend.ex:78-83` returns nil (ephemeral per-boot key) when UNSET → stored OAuth connections lost on reboot. Malformed fails loud; unset degrades silently. Match the PEM fail-loud path.
+- **[nit] webhook plug oversized body → 413/400 not 500.** `github_webhook_plug.ex:28` `read_body` raises on `{:more, ...}` → 500 (fails closed, no bypass; plug not yet router-wired).
+- **[follow-up] plugin-check over-matches `DomainGit.AdapterRegistry.register` (`ezagent_plugin_github/.../application.ex:78`).** Regex over-matches the DomainGit registry (after_boot is legit). Fatal for the github app-dir `mix test`/`compile` (exit 1), non-fatal from umbrella root (CI passes) → plugin app not testable in isolation. Same class as the #1476 `lib/mix/tasks/` exemption.
+
+## 2026-07-22 — extract business code out of ezagent core (Allen)
+
+ezagent currently bundles BUSINESS code (seed/manifest — the hello 官网 seed, deploy-seed manifests, demo seeds) inside the platform. **Future direction: ezagent keeps only CORE functionality; business/product code (seeds, manifests, demo content) is extracted out.** Do later. (The hello A workspace de-hardcode — user-created `ezagent-official` session instead of a platform-hardcoded `system` seed — is a step in this direction.)
