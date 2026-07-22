@@ -1664,6 +1664,20 @@ Data-reflux is proven at code+test level (board_forward_test). But the Hello rec
 
 ezagent currently bundles BUSINESS code (seed/manifest — the hello 官网 seed, deploy-seed manifests, demo seeds) inside the platform. **Future direction: ezagent keeps only CORE functionality; business/product code (seeds, manifests, demo content) is extracted out.** Do later. (The hello A workspace de-hardcode — user-created `ezagent-official` session instead of a platform-hardcoded `system` seed — is a step in this direction.)
 
-## 2026-07-22 — socialware market + listing (上架) mechanism (Allen)
+## 2026-07-22 — socialware market: BACKEND largely exists, PRODUCT SURFACE is the gap (Allen)
 
-**Not implemented (verified 2026-07-22).** Today only `Ezagent.Socialware.DefinitionRegistry` exists — `seed_builtin_definitions/0`, `seed_definition_if_absent/2`, `list(workspace_uri)` — the raw substrate. Socialware TYPE definitions are published into the `system` workspace via `manifest_seed.ex:160` (`operator_admin_ctx` → `Ezagent.URI.workspace(:system)`), a temporary unified home. There is **no market** (cross-platform browse/discover/install of socialware types) and **no listing/上架 mechanism**. Keeping shared definitions in `system` (the admin/platform namespace) is the interim answer; the durable design is a proper **socialware market + a publish/list (上架) flow**. Build later. (Layers to keep distinct: socialware DEFINITION/type = the market template; socialware INSTANCE/session = a specific deployment; page CONTENT = the instance's materials.)
+**Correction (2026-07-22).** An earlier note here claimed "no market / no 上架 mechanism" — that was WRONG (over-stated the gap). Re-audited: `Ezagent.Socialware.DefinitionRegistry` **+ its live-wired callers already ARE the market's functional backend**:
+- **Catalog store** — ConfigStore-backed, cross-workspace.
+- **Visibility scoping** — own / system / **public** (`Definition.visibility_policy.scope: :public`; `visible_to_workspace?/4` = own ∨ system ∨ public; ranked own→system→public).
+- **Browse/list** — `list/1` → `World.WorkspacePluginData.socialware_rows/1` builds catalog-card rows (name/title/description/version/config_id/content_hash/scope) → surfaced in the world sessions/plugin panel.
+- **Install** — `resolve_installable_revision/3` (scope-gated, content-hash-pinned "catalog card" install) via `World.SocialwareInstall.prepare_create_template` (a foreign PUBLIC card installs THAT exact revision; a PRIVATE foreign def can't be installed by supplying its `config_id`).
+- **Uninstall** — `World.ConversationActions.uninstall_socialware`.
+- **Publish/write** — `Socialware.DefinitionEditor.write_definition`.
+- **下架/上架 (retract/restore)** — `ConfigGovernance.Socialware.set_retracted` + `DefinitionRegistry.retracted?/2` (retracted def is non-installable even by exact `config_id`).
+
+**What's actually MISSING = the market as a discoverable PRODUCT, not the backend:**
+1. **No standalone market/discover surface** — the catalog only shows up embedded in the per-workspace world sessions/plugin panel; there is no dedicated "应用市场/发现" route/LiveView with search, categories, featured, screenshots.
+2. **No first-class public-publish (上架) FLOW** — `scope: :public` is a backend capability but is only set manually (`demo/hello.ex` hand-sets `"scope" => "public"`); built-ins ship `web_anon_access`/`publish_policy: :auto`, not `:public`. No user-facing "publish my socialware to the public market" action + review/moderation.
+3. **No discovery metadata** — search index, categories/tags, ratings/usage counts, author attribution.
+
+**Do later:** build the market product surface (discover/browse UI + first-class 上架 flow + discovery metadata + moderation) ON TOP of the existing DefinitionRegistry backend — don't rebuild the backend. Keeping shared definitions in `system` stays the interim home until (2) exists. (Layers stay distinct: DEFINITION/type = the catalog listing; INSTANCE/session = a specific install; page CONTENT = that install's materials.)
