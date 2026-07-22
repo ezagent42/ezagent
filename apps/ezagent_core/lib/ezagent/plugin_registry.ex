@@ -26,6 +26,25 @@ defmodule Ezagent.PluginRegistry do
   def table, do: @table
 
   @doc """
+  Idempotently ensure the ETS table exists.
+
+  At runtime the table is created by `EzagentCore.EtsOwner` and populated
+  when each plugin runs `Ezagent.Plugin.boot/1`. This entry point lets
+  build-time tooling that projects the plugin catalog WITHOUT booting the
+  umbrella (e.g. `mix world.e2e.fixtures`, which runs under `app.config`)
+  create the table and seed it via `register/1`. A no-op when `EtsOwner`
+  already created the table. Mirrors `Ezagent.URI.SchemeRegistry.init/0`.
+  """
+  @spec init() :: :ok
+  def init do
+    if :ets.whereis(@table) == :undefined do
+      :ets.new(@table, [:named_table, :public, :set, read_concurrency: true])
+    end
+
+    :ok
+  end
+
+  @doc """
   Register a plugin module. Reads `plugin_info/0` from the module to
   derive the `slug` key (single source of truth).
 

@@ -17,6 +17,7 @@ defmodule Mix.Tasks.World.E2e.Fixtures do
     {opts, _, _} = OptionParser.parse(args, switches: [check: :boolean])
     path = fixture_path()
     ensure_builtin_uri_schemes!()
+    ensure_plugin_registry!()
     generated = Ezagent.World.E2EFixtures.manifest_json()
 
     if opts[:check] do
@@ -58,6 +59,30 @@ defmodule Mix.Tasks.World.E2e.Fixtures do
     Enum.each(@builtin_uri_schemes, fn scheme ->
       :ok = Ezagent.URI.SchemeRegistry.register(scheme)
     end)
+  end
+
+  # `app.config` avoids booting the umbrella, so no plugin runs its
+  # `Ezagent.Plugin.boot/1` self-registration. The manifest projects plugin-page
+  # surfaces (`accepted_actions/0`, `plugin_nav`) through `Ezagent.PluginRegistry`,
+  # so seed the catalog with the SAME plugin modules the running app registers at
+  # boot — every umbrella `ezagent_plugin_*` app's OTP callback module. Reads are
+  # pure (`register/1` only pulls `plugin_info/0` into ETS; no DB, no boot), so the
+  # build-time projection matches the runtime `DispatchContract.accepted_actions/0`.
+  defp ensure_plugin_registry! do
+    :ok = Ezagent.PluginRegistry.init()
+
+    for {app, _path} <- Mix.Project.apps_paths() || %{},
+        String.starts_with?(Atom.to_string(app), "ezagent_plugin_") do
+      _ = Application.load(app)
+
+      with {module, _args} when is_atom(module) <- Application.spec(app, :mod),
+           true <- Code.ensure_loaded?(module),
+           true <- function_exported?(module, :plugin_info, 0) do
+        :ok = Ezagent.PluginRegistry.register(module)
+      end
+    end
+
+    :ok
   end
 
   defp relative(path), do: Path.relative_to_cwd(path)
