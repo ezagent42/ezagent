@@ -175,7 +175,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
     Logger.info(
       "hello official-site seed: #{reason} for workspace #{inspect(home)} — " <>
-        "官网 owner falls back to #{URI.to_string(owner)}"
+        "official-site owner falls back to #{URI.to_string(owner)}"
     )
 
     owner

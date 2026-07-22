@@ -1,8 +1,10 @@
 defmodule Mix.Tasks.Ezagent.Demo.SeedHelloFusion do
   @shortdoc "Reconstruct the complete committed Hello Fusion website"
   @moduledoc """
-  Reconstructs `session://system/hello/fusion` and applies the complete Page and
-  shell CSS committed under `ezagent_plugin_hello/priv/seed_page`.
+  Reconstructs the hello fusion session in the configured home workspace
+  (`EzagentPluginHello.home_workspace/0`, default `ezagent` — hello-A de-hardcode)
+  and applies the complete Page and shell CSS committed under
+  `ezagent_plugin_hello/priv/seed_page`.
 
   This command is designed for an independent or fresh database; it does not
   require an export or snapshot from another contributor.
