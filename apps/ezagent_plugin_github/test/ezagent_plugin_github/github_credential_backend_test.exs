@@ -34,7 +34,7 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
   describe "TokenStore encrypt/decrypt" do
     test "encrypt/decrypt round trip" do
       key = :crypto.strong_rand_bytes(32)
-      plaintext = "gho_sample_token_value"
+      plaintext = "ghu_sample_token_value"
 
       {nonce, ciphertext_with_tag} = GitHubTokenStore.encrypt(plaintext, key)
       assert byte_size(nonce) == 12
@@ -47,7 +47,7 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
     test "wrong key fails decrypt" do
       key = :crypto.strong_rand_bytes(32)
       wrong_key = :crypto.strong_rand_bytes(32)
-      plaintext = "gho_secret_token"
+      plaintext = "ghu_secret_token"
 
       encrypted = GitHubTokenStore.encrypt(plaintext, key)
       assert {:error, :authentication_failed} = GitHubTokenStore.decrypt(encrypted, wrong_key)
@@ -147,7 +147,7 @@ defmodule EzagentPluginGithub.GitHubCredentialBackendTest do
 
   describe "lease_for_operation" do
     test "returns decrypted token and stashes it in process dictionary" do
-      token_value = "gho_live_token_abc123"
+      token_value = "ghu_live_token_abc123"
 
       {:ok, %{credential_ref: ref}} =
         @backend.store(%{

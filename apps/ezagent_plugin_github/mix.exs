@@ -19,7 +19,7 @@ defmodule EzagentPluginGithub.MixProject do
 
   def application do
     [
-      extra_applications: [:logger, :inets, :ssl, :crypto],
+      extra_applications: [:logger, :inets, :ssl, :crypto, :public_key],
       mod: {EzagentPluginGithub.Application, []},
       env: [ezagent_plugin: EzagentPluginGithub.Application]
     ]

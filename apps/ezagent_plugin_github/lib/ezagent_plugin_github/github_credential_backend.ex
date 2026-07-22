@@ -85,7 +85,7 @@ defmodule EzagentPluginGithub.GitHubCredentialBackend do
       encoded when is_binary(encoded) ->
         # A CONFIGURED key must be a valid base64-encoded 32-byte key. Fail loud
         # on a malformed value (bad base64 / wrong length) — exactly like
-        # `Config.oauth_client_secret` — instead of silently falling back to the
+        # `Config.client_secret` / `Config.private_key` — instead of silently falling back to the
         # ephemeral key, which would lose ALL stored credentials on the next boot
         # after a typo'd production key.
         case Base.decode64(encoded) do

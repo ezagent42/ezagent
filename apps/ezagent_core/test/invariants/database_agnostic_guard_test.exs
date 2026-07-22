@@ -25,7 +25,7 @@ defmodule EzagentCore.Invariants.DatabaseAgnosticGuardTest do
     # False positive — `?#{query}` is a URL query-string delimiter with Elixir
     # interpolation, not a SQLite `?1` numbered placeholder.
     {:sqlite_numbered_placeholder,
-     "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_oauth.ex:39"}
+     "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_oauth.ex:50"}
   ]
 
   @excluded_path_parts [
