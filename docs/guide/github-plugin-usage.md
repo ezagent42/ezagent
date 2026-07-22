@@ -2,9 +2,9 @@
 
 ## 概述
 
-`ezagent_plugin_github` 提供两个能力：
-1. **OAuth 连接管理**——用户授权 GitHub 账号绑定到 ezagent
-2. **Git 操作**——通过 agent 调用 GitHub REST API
+`ezagent_plugin_github` 以 **GitHub App**（app_id `4361756`）身份认证，提供两个能力：
+1. **用户身份连接（user-to-server OAuth）**——用户授权，绑定 GitHub 账号身份（仅用于确认「谁」，不再申请 `scope=repo`）
+2. **Git 操作**——通过 agent 调用 GitHub REST API；仓库操作使用 **App 安装令牌（installation token）**，由 App 私钥签发，而非用户令牌
 
 使用分为三步：连接 GitHub 账号 → 签发 Git 操作权限 → agent 调用。
 
@@ -14,10 +14,17 @@
 
 ### 前置条件
 
-1. 在 GitHub 注册 OAuth App：https://github.com/settings/developers
-   - Homepage URL: `https://<你的 ezagent 地址>`
-   - Authorization callback URL: `https://<你的 ezagent 地址>/github/callback`
-2. 设置环境变量 `GITHUB_CLIENT_ID` 和 `GITHUB_CLIENT_SECRET`
+1. 配置 GitHub App（app_id `4361756`）：https://github.com/settings/apps
+   - User authorization callback URL: `https://<你的 ezagent 地址>/github/callback`
+   - 仓库权限：Contents、Pull requests、Checks
+   - 在目标账号/组织上**安装** App（安装决定仓库访问权，而非用户令牌）
+2. 设置密钥环境变量（详见 `docs/guide/github-plugin-config.md`）：
+   - `GITHUB_APP_PRIVATE_KEY`（App 私钥 PEM，签发安装令牌）
+   - `GITHUB_CLIENT_SECRET`（user-to-server OAuth）
+   - `GITHUB_WEBHOOK_SECRET`（webhook 校验）
+   - `GITHUB_TOKEN_ENCRYPTION_KEY`（凭据加密）
+
+   `app_id` 与 `client_id` 为公开标识，已写入 `config/config.exs`。
 
 ### 调用 begin_authorization
 
@@ -31,7 +38,7 @@ args = %{
   governed_host: "github.com",
   acquisition_method: "oauth_user",
   requested_execution_identity_class: "connected_user",
-  requested_permissions_digest: "repo",
+  requested_permissions_digest: "user-to-server-identity",
   redirect_uri_id: "github-oauth",
   correlation_id: "github-auth-#{System.unique_integer([:positive])}",
   callback_artifact: callback_artifact  # 需要 Ezagent.Cap.issue/3 签发
