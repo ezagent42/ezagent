@@ -7,6 +7,7 @@ defmodule Ezagent.World.Navigation do
                         "/",
                         "/sessions",
                         "/overview",
+                        "/market",
                         "/identities",
                         "/identities/users",
                         "/identities/agents",

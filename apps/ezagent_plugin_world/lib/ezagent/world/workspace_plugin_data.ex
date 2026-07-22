@@ -63,6 +63,17 @@ defmodule Ezagent.World.WorkspacePluginData do
     Map.put(base, "kb_agents", kb_agent_rows(workspace_uri))
   end
 
+  defp component_state(%{component: "market"}, base, workspace_uri, _caller, _caps) do
+    # PR-5 §15 — the market browse surface. HARD RULE: the card list comes from
+    # `socialware_rows/1` (the `DefinitionRegistry.list/1`-scoped single source),
+    # never a raw ConfigStore scan, so a private foreign def can never leak onto
+    # the page. Retracted defs are already filtered by `list/1`.
+    base
+    |> Map.put("socialwares", socialware_rows(workspace_uri))
+    |> Map.put("market_notice", nil)
+    |> Map.put("market_error", nil)
+  end
+
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
     base
     |> Map.put("plugins", list_plugins())

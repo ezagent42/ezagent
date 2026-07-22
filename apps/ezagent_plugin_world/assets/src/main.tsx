@@ -9,6 +9,7 @@ import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
 import {Overview} from "./components/Overview"
+import {MarketSurface, type MarketState} from "./components/Market"
 import {SessionsTable, type SessionsState} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
 import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
@@ -1096,6 +1097,15 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
 
     case "overview":
       return <Overview key={component.id} state={context.state} />
+
+    case "market":
+      return (
+        <MarketSurface
+          key={component.id}
+          state={context.state as MarketState}
+          onAction={context.onWorkspacePluginAction}
+        />
+      )
 
     case "admin":
       return <AdminSurface key={component.id} state={{...context.state, component: component.type} as AdminState} onAction={context.onAdminAction} />

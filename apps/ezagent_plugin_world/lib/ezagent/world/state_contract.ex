@@ -106,6 +106,31 @@ defmodule Ezagent.World.StateContract do
         "workspace_uri" => @workspace_uri
       }
     },
+    "market" => %{
+      slot_type: "market",
+      state: %{
+        "component" => "market",
+        "market_error" => nil,
+        "market_notice" => nil,
+        "path" => "/market",
+        "socialwares" => [
+          %{
+            "config_id" => "cfg-hello-1",
+            "content_hash" => "hash-hello-1",
+            "description" => "Front-desk greeter socialware",
+            "name" => "hello",
+            "public" => true,
+            "roles" => [],
+            "scope" => "public",
+            "title" => "Hello",
+            "version" => "0.1.0",
+            "workspace_uri" => @workspace_uri
+          }
+        ],
+        "title" => "Market",
+        "workspace_uri" => @workspace_uri
+      }
+    },
     "workspace_plugins" => %{
       slot_type: "workspaces_list",
       state: %{

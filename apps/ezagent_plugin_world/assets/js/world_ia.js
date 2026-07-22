@@ -1,5 +1,6 @@
 const PRIMARY_NAV_ITEMS = [
   {label: "Chat", href: "/sessions"},
+  {label: "Market", href: "/market"},
   {label: "Agents", href: "/identities/agents"},
   {label: "Manage", href: "/workspaces"},
   {label: "Overview", href: "/overview"},
@@ -19,6 +20,10 @@ export function isPrimaryNavActive(path, href) {
 
   if (href === "/overview") {
     return currentPath === "/overview"
+  }
+
+  if (href === "/market") {
+    return currentPath === "/market"
   }
 
   if (href === "/identities/agents") {
@@ -44,6 +49,7 @@ export function sectionRoot(path) {
 
   if (currentPath === "/") return null
   if (currentPath === "/sessions") return {label: "Chat", href: "/sessions"}
+  if (currentPath === "/market") return {label: "Market", href: "/market"}
   if (currentPath.startsWith("/identities")) return {label: "Agents", href: "/identities/agents"}
   if (
     currentPath.startsWith("/admin") ||
@@ -60,6 +66,8 @@ export function pageTitleForComponent(component) {
   switch (component) {
     case "overview":
       return "Overview"
+    case "market":
+      return "Market"
     case "sessions_table":
     case "conversation":
       return "Chat"
