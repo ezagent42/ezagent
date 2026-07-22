@@ -13,9 +13,21 @@ defmodule EzagentPluginGithub.Application do
   Per `docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md`,
   this module `use`s both `Application` (OTP plumbing) and
   `Ezagent.Plugin` (the declarative contract). `start/2` collapses to
-  `Ezagent.Plugin.boot(__MODULE__)`; the framework's two-phase
-  `boot/1` reads the declaration callbacks below and performs every
-  `*Registry` call — the plugin author never touches a registry API.
+  `Ezagent.Plugin.boot(__MODULE__)`; the plugin author never calls a
+  `*Registry` API directly (contract SPEC §3.2 — the `:ezagent_plugin_check`
+  grep gate enforces this). Registration is DECLARATIVE:
+
+    * the provider-connection **driver + backend-pair** are reconciled into
+      `DriverRegistry` / `BackendPairRegistry` by a supervised
+      `Ezagent.ProviderConnection.DeclarationOwner` listed in `children/0`
+      (it also restores the rows across registry restarts);
+    * the git **adapter** is registered into `Ezagent.DomainGit.AdapterRegistry`
+      by a supervised `Ezagent.DomainGit.AdapterDeclarationOwner`, also listed in
+      `children/0` (it runs in this plugin's lifecycle, where `GitHubAdapter` is
+      loaded — the registry validates `:code.is_loaded/1`).
+
+  Both registration owners live in domain code, so the `.register` calls never
+  appear in this plugin's source.
   """
 
   use Application
@@ -42,52 +54,30 @@ defmodule EzagentPluginGithub.Application do
   def children,
     do: [
       EzagentPluginGithub.GitHubCredentialBackend,
-      EzagentPluginGithub.GitHubInstallation
+      EzagentPluginGithub.GitHubInstallation,
+      # All registration is DECLARATIVE, via supervised owners started in THIS
+      # plugin's lifecycle — the plugin never calls a `*Registry` API from its
+      # own source (contract SPEC §3.2); each `.register` happens inside the
+      # owner, which is domain code:
+      #   * provider-connection driver + backend-pair → `DeclarationOwner` (also
+      #     reconciles the rows across provider-registry restarts);
+      #   * the DomainGit adapter → `AdapterDeclarationOwner`. It MUST run in the
+      #     plugin lifecycle (not domain_git's config-driven BootRegistration):
+      #     `AdapterRegistry` validates `:code.is_loaded/1` and domain_git boots
+      #     BEFORE this plugin, so only here is `GitHubAdapter` guaranteed loaded.
+      {Ezagent.ProviderConnection.DeclarationOwner,
+       owner: :github_plugin,
+       drivers: [driver_declaration()],
+       backend_pairs: [backend_pair()]},
+      {Ezagent.DomainGit.AdapterDeclarationOwner,
+       owner: :github_plugin,
+       adapters: [{"github", EzagentPluginGithub.GitHubAdapter}]}
     ]
 
-  @impl Ezagent.Plugin
-  def after_boot do
-    pair = backend_pair()
-
-    case Ezagent.ProviderConnection.BackendPairRegistry.register(:github_plugin, pair) do
-      :acquired ->
-        :ok
-
-      :existing_identical ->
-        :ok
-
-      {:error, {:declaration_drift, _expected, _actual}} ->
-        raise "BackendPair registry declaration drift detected for pair #{pair.pair_id}"
-    end
-
-    driver = driver_declaration()
-
-    case Ezagent.ProviderConnection.DriverRegistry.register(:github_plugin, driver) do
-      :acquired ->
-        :ok
-
-      :existing_identical ->
-        :ok
-
-      {:error, {:declaration_drift, _expected, _actual}} ->
-        raise "Driver registry declaration drift detected for #{driver.provider_id}/#{driver.acquisition_method}"
-    end
-
-    Code.ensure_loaded(EzagentPluginGithub.GitHubAdapter)
-
-    case Ezagent.DomainGit.AdapterRegistry.register("github", EzagentPluginGithub.GitHubAdapter) do
-      :ok ->
-        :ok
-
-      {:ok, :already_registered} ->
-        :ok
-
-      {:error, drift} ->
-        raise "Adapter registry registration drift detected for github: #{inspect(drift)}"
-    end
-
-    :ok
-  end
+  # NOTE: no `after_boot/0` override. Registration is declarative (see the
+  # moduledoc + `children/0`); `use Ezagent.Plugin` supplies the default
+  # `after_boot/0 -> :ok`. A plugin must not call a registry's register/declare
+  # API from its own source — the `:ezagent_plugin_check` grep gate rejects it.
 
   @doc """
   Returns the `BackendPair` declaration for the GitHub App plugin.
