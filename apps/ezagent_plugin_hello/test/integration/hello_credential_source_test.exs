@@ -60,14 +60,24 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
 
       home = CredentialBridge.destination_workspace()
 
+      # Stale-Kind hygiene: sibling tests in this BEAM create the SAME home
+      # workspace + source-agent names; their DB rows roll back with the
+      # sandbox but the live Kind processes (and the signed caps/keys in their
+      # state) survive, surfacing as `:invalid_cap_signature`/`:not_found` in
+      # the cap-checked chokepoint below. Terminate them so the create is a
+      # FRESH spawn consistent with this transaction.
+      terminate(Ezagent.URI.entity(home, :agent, CredentialBridge.source_agent_name()))
+      terminate(Ezagent.URI.workspace(home))
+
       # This isolated test boundary registers no `"workspace"` SpawnRegistry fn
       # (full boot does), so the bridge's cap-checked chokepoint dispatch —
       # `issue_for_action` → `ensure_started(workspace://<home>)` — can only
-      # resolve a workspace Kind that is ALREADY in the KindRegistry. Pre-spawn
-      # the home workspace live (via the Kind's own supervisor, the way the
-      # boot `Workspace.Loader` arranges in prod). Idempotent.
-      case Ezagent.Workspace.spawn_workspace(home) do
+      # resolve a workspace Kind that is ALREADY live. Create the home
+      # workspace (persist + spawn, the way the boot `Workspace.Loader`
+      # arranges in prod). Idempotent.
+      case Workspace.create(home, %{}) do
         {:ok, _pid} -> :ok
+        {:error, :workspace_exists} -> :ok
         {:error, {:already_started, _pid}} -> :ok
       end
 

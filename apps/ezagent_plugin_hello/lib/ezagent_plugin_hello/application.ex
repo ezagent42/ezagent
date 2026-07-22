@@ -218,8 +218,9 @@ defmodule EzagentPluginHello.Application do
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
   # the #185 env→curl credential bridge (env-gated; no-op without
-  # `DEEPSEEK_API_KEY`), the governed 官网 (`system/hello/web`) deploy-seed
-  # (config-gated, dev/prod), plus an OPT-IN demo boot seed (off by default).
+  # `DEEPSEEK_API_KEY`), the governed 官网 (`<home>/hello/ezagent-official`)
+  # deploy-seed (config-gated, dev/prod), plus an OPT-IN demo boot seed (off by
+  # default).
   @impl Ezagent.Plugin
   def children do
     [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
@@ -274,12 +275,13 @@ defmodule EzagentPluginHello.Application do
 
   # The governed 官网 deploy-seed. At boot (config-gated dev/prod on, test off —
   # `:site_seed_boot`, matching `:credential_bridge_boot`), idempotently ensure
-  # `session://system/hello/web` is provisioned: the marketing ruihua page +
-  # the front-desk/builder/concierge/curl-`llm` greeter, with the DeepSeek
-  # credential wired first. Absence-gated (only (re)provisions when the site has
-  # no page) so a reseed self-heals while a plain reboot preserves a live
-  # `refresh_hello_site.exs` refresh. One-shot transient Task; fail-soft (a
-  # failure is logged, never crashes boot). See `EzagentPluginHello.OfficialSiteSeed`.
+  # `session://<home>/hello/ezagent-official` is provisioned: the marketing
+  # ruihua page + the front-desk/builder/concierge/curl-`llm` greeter, owned by
+  # the home workspace's founder, with the DeepSeek credential wired first.
+  # Absence-gated (only (re)provisions when the site has no page) so a reseed
+  # self-heals while a plain reboot preserves a live `refresh_hello_site.exs`
+  # refresh. One-shot transient Task; fail-soft (a failure is logged, never
+  # crashes boot). See `EzagentPluginHello.OfficialSiteSeed`.
   defp official_site_children do
     if EzagentPluginHello.OfficialSiteSeed.boot_enabled?() do
       [
@@ -309,7 +311,7 @@ defmodule EzagentPluginHello.Application do
 
       {:ok, {:provisioned, uri, turn_id}} ->
         Logger.info(
-          "hello official-site seed: provisioned #{URI.to_string(uri)} (turn #{turn_id}) — open /hello/web"
+          "hello official-site seed: provisioned #{URI.to_string(uri)} (turn #{turn_id}) — open /hello/ezagent-official"
         )
 
       {:error, reason} ->

@@ -33,8 +33,28 @@ defmodule EzagentPluginHello.Template.HelloSession do
   def validate(_), do: {:error, :not_a_map}
 
   @impl Ezagent.Kind.Template
-  def instantiate(_tmpl_name, %{"session_name" => session_name} = tmpl, %URI{} = workspace_uri)
-      when is_binary(session_name) and session_name != "" do
+  def instantiate(tmpl_name, tmpl, workspace_uri) do
+    do_instantiate(tmpl_name, tmpl, workspace_uri, nil)
+  end
+
+  @impl Ezagent.Kind.Template
+  def instantiate(tmpl_name, tmpl, workspace_uri, opts) do
+    do_instantiate(tmpl_name, tmpl, workspace_uri, Keyword.get(opts, :caller))
+  end
+
+  # hello-A — `caller` is the create-session dispatch caller (threaded by
+  # `Behavior.Workspace.create_session_via_class` when it is available). The
+  # caller becomes the session OWNER, so any user creating a hello session in
+  # their own workspace owns it ("the caller becomes the session owner",
+  # `Behavior.Workspace` :create_session). Nil (direct/boot callers) falls back
+  # to `App.create_app/3`'s default.
+  defp do_instantiate(
+         _tmpl_name,
+         %{"session_name" => session_name} = tmpl,
+         %URI{} = workspace_uri,
+         caller
+       )
+       when is_binary(session_name) and session_name != "" do
     with :ok <- check_class(tmpl) do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
@@ -45,7 +65,9 @@ defmodule EzagentPluginHello.Template.HelloSession do
       # the declared team. `Workspace.create_session` fires the socialware-install
       # transaction once this returns. (`App.ensure_app/3` is the create+install
       # composite, for boot seeding and tests.)
-      case App.create_app(workspace_name, session_name) do
+      create_opts = if caller, do: [owner: caller], else: []
+
+      case App.create_app(workspace_name, session_name, create_opts) do
         {:ok, ^session_uri} ->
           {:ok, [session_uri], %{fresh?: fresh?, vertical: :hello}}
 
@@ -55,7 +77,8 @@ defmodule EzagentPluginHello.Template.HelloSession do
     end
   end
 
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+  defp do_instantiate(_tmpl_name, tmpl, _workspace_uri, _caller),
+    do: {:error, {:invalid_template, tmpl}}
 
   defp check_class(%{"class" => "session.hello"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}
