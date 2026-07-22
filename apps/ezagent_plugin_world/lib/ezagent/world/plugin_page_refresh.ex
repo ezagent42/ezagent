@@ -11,6 +11,13 @@ defmodule Ezagent.World.PluginPageRefresh do
 
   @type result :: {:ok, map()} | :not_registered | {:error, atom()}
 
+  @doc "Builds refresh state from the changed entity carried by SliceChange."
+  @spec build_state_for_slice_change(map() | nil, map(), map()) :: result()
+  def build_state_for_slice_change(page, %{uri: %URI{} = entity_uri}, ctx),
+    do: build_state(page, entity_uri, ctx)
+
+  def build_state_for_slice_change(_page, _event, _ctx), do: {:error, :invalid_slice_change}
+
   @doc "Builds refresh state through a registered page's validated data builder."
   @spec build_state(map() | nil, URI.t(), map()) :: result()
   def build_state(nil, _entity_uri, _ctx), do: :not_registered

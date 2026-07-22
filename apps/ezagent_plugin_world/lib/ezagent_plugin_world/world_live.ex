@@ -70,6 +70,7 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:world_component, "sessions_table")
      |> assign(:current_route, nil)
+     |> assign(:page_refresh_entity_uri, nil)
      |> assign(:current_session_uri, current_session_uri)
      |> assign(:current_session_uri_str, encode_uri(current_session_uri))
      |> assign(:last_dispatch_status, "idle")
@@ -94,6 +95,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> assign(:world_state_json, Jason.encode!(state))
       |> assign(:world_component, route.component)
       |> assign(:current_route, route)
+      |> sync_page_refresh_subscription(route)
 
     socket =
       if connected?(socket) do
@@ -264,51 +266,90 @@ defmodule EzagentPluginWorld.WorldLive do
      push_inbound_event(socket, "notification", %{user_uri: user_uri, payload: payload})}
   end
 
-  def handle_info({:slice_changed, %{} = event}, socket),
-    do: {:noreply, push_inbound_event(socket, "slice_changed", event)}
+  def handle_info({:slice_changed, %{uri: %URI{} = entity_uri} = event}, socket) do
+    socket =
+      socket
+      |> refresh_caps_after_identity_change(entity_uri, event)
+      |> refresh_active_plugin_view(event)
+      |> push_inbound_event("slice_changed", event)
 
-  def handle_info({:view_changed, %{plugin: plugin, entity_uri: %URI{} = entity_uri}}, socket)
-      when is_binary(plugin) do
-    {:noreply, refresh_plugin_view(socket, plugin, entity_uri)}
-  end
-
-  def handle_info({:caps_changed, %URI{} = entity_uri}, socket) do
-    if same_uri?(entity_uri, socket.assigns[:current_entity_uri]) do
-      {:noreply, socket |> refresh_current_caps() |> refresh_current_route()}
-    else
-      {:noreply, socket}
-    end
+    {:noreply, socket}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
 
-  # Both views store the agent URI with a plain `URI.to_string/1` (only
-  # `agent_detail_path` is www-form-encoded), so a direct compare is right.
+  # SliceChange is the sole refresh transport. A page observes the entity in
+  # its current detail route; the event carries no state, so its data builder
+  # always re-reads through the caller-scoped read model below.
+  defp refresh_active_plugin_view(socket, %{uri: %URI{} = changed_entity_uri} = event) do
+    with %{component: plugin, entity_uri: %URI{} = route_entity_uri} <-
+           socket.assigns[:current_route],
+         true <- same_uri?(route_entity_uri, changed_entity_uri),
+         %{key: ^plugin} = page <- Ezagent.World.PluginPageRegistry.by_key(plugin) do
+      case Ezagent.World.PluginPageRefresh.build_state_for_slice_change(
+             page,
+             event,
+             page_refresh_context(socket)
+           ) do
+        {:ok, state} ->
+          push_event(socket, "world:state", state)
 
-  defp refresh_plugin_view(socket, plugin, %URI{} = entity_uri) do
-    case Ezagent.World.PluginPageRegistry.by_key(plugin) do
-      nil ->
-        socket
+        {:error, reason} ->
+          raise ArgumentError,
+                "invalid plugin refresh declaration for #{inspect(plugin)}: #{inspect(reason)}"
 
-      page ->
-        case Ezagent.World.PluginPageRefresh.build_state(
-               page,
-               entity_uri,
-               page_refresh_context(socket)
-             ) do
-          {:ok, state} ->
-            push_event(socket, "world:state", state)
-
-          {:error, reason} ->
-            raise ArgumentError,
-                  "invalid plugin refresh declaration for #{inspect(plugin)}: #{inspect(reason)}"
-
-          :not_registered ->
-            raise ArgumentError,
-                  "registered plugin refresh declaration disappeared for #{inspect(plugin)}"
-        end
+        :not_registered ->
+          raise ArgumentError,
+                "registered plugin refresh declaration disappeared for #{inspect(plugin)}"
+      end
+    else
+      _ -> socket
     end
   end
+
+  defp refresh_active_plugin_view(socket, _event), do: socket
+
+  defp refresh_caps_after_identity_change(socket, entity_uri, %{slice_key: :identity}) do
+    if same_uri?(entity_uri, socket.assigns[:current_entity_uri]) do
+      socket |> refresh_current_caps() |> refresh_current_route()
+    else
+      socket
+    end
+  end
+
+  defp refresh_caps_after_identity_change(socket, _entity_uri, _event), do: socket
+
+  defp sync_page_refresh_subscription(socket, route) do
+    if connected?(socket) do
+      desired_entity_uri = page_refresh_entity_uri(route)
+      subscribed_entity_uri = socket.assigns[:page_refresh_entity_uri]
+
+      if same_uri?(desired_entity_uri, subscribed_entity_uri) do
+        socket
+      else
+        if is_struct(subscribed_entity_uri, URI) do
+          :ok = Ezagent.Notifications.unsubscribe_slice_change(subscribed_entity_uri)
+        end
+
+        if is_struct(desired_entity_uri, URI) do
+          :ok = Ezagent.Notifications.subscribe_slice_change(desired_entity_uri)
+        end
+
+        assign(socket, :page_refresh_entity_uri, desired_entity_uri)
+      end
+    else
+      socket
+    end
+  end
+
+  defp page_refresh_entity_uri(%{component: component, entity_uri: %URI{} = entity_uri}) do
+    case Ezagent.World.PluginPageRegistry.by_key(component) do
+      nil -> nil
+      _page -> entity_uri
+    end
+  end
+
+  defp page_refresh_entity_uri(_route), do: nil
 
   defp page_refresh_context(socket) do
     %{
