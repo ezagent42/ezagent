@@ -86,7 +86,16 @@
   #   module growth to this feature; the exact count is gate-measured.
   # arch-cap-bump: rebasing Plan C's audited atomic launch boundary onto the
   #   cap-signing/G5 main baseline leaves seven pre-existing oversized modules.
-  oversized_modules_gt_1000: 7,
+  # arch-cap-bump: +1 #1455/#1513 — pty/server.ex cmd_env secret-redaction
+  #   security fix. The +36-line redaction chokepoint (format_status/2 GenServer
+  #   callback + redact_cmd_env/1 + scrub_state/1) scrubs vendor API keys
+  #   (ANTHROPIC_AUTH_TOKEN, EZAGENT_AGENT_TOKEN, …) from OTP crash reports so
+  #   they never reach logs. It pushed ezagent_domain_pty/server.ex from exactly
+  #   1000 → 1036 LOC, crossing the >1000 threshold. Intentional, security-
+  #   justified growth (not bloat); burn-down = extract the redaction helpers
+  #   into a sibling module. 7→8 (on the #1445 seven-module baseline: the
+  #   redaction adds server.ex as the eighth oversized module).
+  oversized_modules_gt_1000: 8,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
