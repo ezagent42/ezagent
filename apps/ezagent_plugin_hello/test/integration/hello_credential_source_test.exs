@@ -8,9 +8,11 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
 
     * The **production entry point** `CredentialBridge.ensure_deepseek_source/0`
       is ZERO-ARITY: it reads `DEEPSEEK_API_KEY` and mints admin authority, so
-      its destination is the compile-time LITERAL `"system"` — un-redirectable.
+      its destination is the single deploy-config home workspace
+      (`EzagentPluginHello.home_workspace/0`, default `"ezagent"`) — never a
+      caller-supplied one (#185's caller-redirect hole stays closed).
       The `"prod entry"` tests below drive it against the REAL cap-checked
-      chokepoint and assert it lands in `"system"` only.
+      chokepoint and assert it lands in the home workspace only.
 
     * The **cascade + isolation behavior** for OTHER workspaces is proven with a
       test-only fixture `seed_shared_source/2` that takes an EXPLICIT key +
@@ -49,20 +51,22 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     :ok
   end
 
-  # --- production entry point (zero-arity, env-gated, LITERAL "system") --------
+  # --- production entry point (zero-arity, env-gated, deploy-config home ws) ---
 
   describe "production entry ensure_deepseek_source/0" do
     setup do
       previous = System.get_env("DEEPSEEK_API_KEY")
       System.put_env("DEEPSEEK_API_KEY", @test_key)
 
+      home = CredentialBridge.destination_workspace()
+
       # This isolated test boundary registers no `"workspace"` SpawnRegistry fn
       # (full boot does), so the bridge's cap-checked chokepoint dispatch —
-      # `issue_for_action` → `ensure_started(workspace://system)` — can only
+      # `issue_for_action` → `ensure_started(workspace://<home>)` — can only
       # resolve a workspace Kind that is ALREADY in the KindRegistry. Pre-spawn
-      # the `"system"` workspace live (via the Kind's own supervisor, the way the
+      # the home workspace live (via the Kind's own supervisor, the way the
       # boot `Workspace.Loader` arranges in prod). Idempotent.
-      case Ezagent.Workspace.spawn_workspace("system") do
+      case Ezagent.Workspace.spawn_workspace(home) do
         {:ok, _pid} -> :ok
         {:error, {:already_started, _pid}} -> :ok
       end
@@ -72,34 +76,39 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
           do: System.put_env("DEEPSEEK_API_KEY", previous),
           else: System.delete_env("DEEPSEEK_API_KEY")
 
-        # The prod path spawns the singleton "system" source live; terminate it
-        # so its process cannot bleed into other tests (its DB rows are already
-        # rolled back by the sandbox).
-        terminate(Ezagent.URI.entity("system", :agent, CredentialBridge.source_agent_name()))
+        # The prod path spawns the singleton home-workspace source live;
+        # terminate it so its process cannot bleed into other tests (its DB
+        # rows are already rolled back by the sandbox).
+        terminate(Ezagent.URI.entity(home, :agent, CredentialBridge.source_agent_name()))
       end)
 
-      :ok
+      {:ok, home: home}
     end
 
     test "is ZERO-ARITY — no workspace parameter to redirect the env key" do
       # The env-reading + admin-minting path exposes NO way to point it at an
-      # arbitrary workspace (the #185 isolation hole codex flagged).
+      # arbitrary workspace (the #185 isolation hole codex flagged). This is
+      # the PRESERVED #185 invariant: the destination moved from a compile-time
+      # `"system"` literal to the deploy-config home workspace (hello-A), but
+      # it remains non-caller-redirectable.
       assert function_exported?(CredentialBridge, :ensure_deepseek_source, 0)
       refute function_exported?(CredentialBridge, :ensure_deepseek_source, 1)
     end
 
-    test "seeds the LITERAL system workspace through the real cap-checked chokepoint (idempotent)" do
-      # No workspace argument — the destination is baked.
+    test "seeds the configured home workspace through the real cap-checked chokepoint (idempotent)",
+         %{home: home} do
+      # No workspace argument — the destination is the deploy-config constant.
       assert {:ok, source_uri} = CredentialBridge.ensure_deepseek_source()
       # …idempotent (reseed-safe): a re-run keeps the same source + pointer.
       assert {:ok, ^source_uri} = CredentialBridge.ensure_deepseek_source()
 
-      # …lands in "system" ONLY…
+      # …lands in the home workspace ONLY…
       assert source_uri ==
-               Ezagent.URI.entity("system", :agent, CredentialBridge.source_agent_name())
+               Ezagent.URI.entity(home, :agent, CredentialBridge.source_agent_name())
 
-      # …registered as "system"'s shared curl source through the REAL chokepoint…
-      assert WorkspaceSharedSource.resolve("workspace://system", "curl") ==
+      # …registered as the home workspace's shared curl source through the REAL
+      # chokepoint…
+      assert WorkspaceSharedSource.resolve("workspace://#{home}", "curl") ==
                URI.to_string(source_uri)
 
       # …and the live source agent (spawned by the prod path) carries the key.
@@ -114,7 +123,11 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     on_exit(fn -> if previous, do: System.put_env("DEEPSEEK_API_KEY", previous) end)
 
     assert {:ok, :no_env_key} = CredentialBridge.ensure_deepseek_source()
-    assert WorkspaceSharedSource.resolve("workspace://system", "curl") == nil
+
+    assert WorkspaceSharedSource.resolve(
+             "workspace://#{CredentialBridge.destination_workspace()}",
+             "curl"
+           ) == nil
   end
 
   test "boot_enabled?/0 gates on BOTH the app config AND the env key" do

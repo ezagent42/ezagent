@@ -81,15 +81,16 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
 
   @doc """
   Path-route hello pages: `GET /hello/:session_name` serves
-  `session://<hello_workspace>/hello/<name>`.
+  `session://<hello-home-workspace>/hello/<name>`.
 
-  Works like `show/2` but builds the session URI from a fixed workspace
-  (application config `:ezagent_web, :hello_workspace`, default `"demo"`)
-  and the `:hello` template type. The full socialware anonymous-access
+  Works like `show/2` but builds the session URI from the SINGLE hello home
+  workspace source (`:ezagent_plugin_hello, :home_workspace`, default
+  `"ezagent"` — the same key the boot 官网 seed and the credential bridge
+  read) and the `:hello` template type. The full socialware anonymous-access
   pipeline runs unchanged — this is just a short URL entry.
   """
   def show_by_name(conn, %{"session_name" => name}) when is_binary(name) and name != "" do
-    ws = Application.get_env(:ezagent_web, :hello_workspace, "demo")
+    ws = Application.get_env(:ezagent_plugin_hello, :home_workspace, "ezagent")
     session_uri = Ezagent.URI.session(ws, :hello, name)
     resolve_caller(conn, session_uri, :external)
   end

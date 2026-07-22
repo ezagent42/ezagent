@@ -229,12 +229,12 @@ defmodule EzagentPluginHello.Application do
 
   # #185 — the env→curl credential bridge. At boot (the SAME plugin boot the
   # hello demo/workspace publish lane rides), when `DEEPSEEK_API_KEY` is
-  # present, bridge it into the INTERNAL hello workspace's shared curl
-  # credential source (`EzagentPluginHello.CredentialBridge`) so every hello
-  # `llm` curl member born in that workspace resolves the key through the
-  # unchanged platform cascade. Scoped to the hello workspace ONLY — the
-  # shared hello template stays credential-optional and NO other workspace
-  # inherits our key. One-shot transient Task (never blocks the supervisor;
+  # present, bridge it into the hello HOME workspace's shared curl
+  # credential source (`EzagentPluginHello.CredentialBridge` — destination =
+  # `EzagentPluginHello.home_workspace/0`) so every hello `llm` curl member
+  # born in that workspace resolves the key through the unchanged platform
+  # cascade. Scoped to the home workspace ONLY — the shared hello template
+  # stays credential-optional and NO other workspace inherits our key. One-shot transient Task (never blocks the supervisor;
   # a failure is logged, not fatal). Config-gated (`:credential_bridge_boot`,
   # dev/prod on, test off) AND env-gated (`boot_enabled?/0`).
   defp credential_bridge_children do

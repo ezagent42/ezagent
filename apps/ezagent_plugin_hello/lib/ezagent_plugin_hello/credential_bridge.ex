@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.CredentialBridge do
   @moduledoc """
-  #185 — the `DEEPSEEK_API_KEY` env → curl credential bridge for the INTERNAL
-  hello workspace.
+  #185 — the `DEEPSEEK_API_KEY` env → curl credential bridge for the hello
+  HOME workspace (`EzagentPluginHello.home_workspace/0`, default `"ezagent"`).
 
   ## The gap this closes
 
@@ -19,29 +19,45 @@ defmodule EzagentPluginHello.CredentialBridge do
   arguments. When `DEEPSEEK_API_KEY` is present it idempotently:
 
     1. spawns (or reuses) a small curl-flavor **credential-source agent** in the
-       LITERAL `"system"` workspace —
-       `entity://system/agent/hello-deepseek-credential-source` — and stores the
+       hello HOME workspace —
+       `entity://<home>/agent/hello-deepseek-credential-source` — and stores the
        key in ITS `:api_keys` slice under `"deepseek"`;
-    2. registers that agent as the `"system"` workspace's SHARED credential
-       source for the `"curl"` flavor, via the EXISTING cap-checked + audited
+    2. registers that agent as the home workspace's SHARED credential source
+       for the `"curl"` flavor, via the EXISTING cap-checked + audited
        chokepoint `Ezagent.ActionSet.WorkspaceSharedCredentialSource`
        (`:set_workspace_shared_credential_source` — the single-writer lane, never
        a raw Repo write).
 
-  Thereafter every hello `llm` member cold-spawned IN THE `"system"` WORKSPACE
+  Thereafter every hello `llm` member cold-spawned IN THE HOME WORKSPACE
   resolves the source through the unchanged cascade and is born with `"deepseek"`
   in its own `:api_keys` slice.
 
   ## Hard isolation constraint (the whole point)
 
-  The destination is a compile-time LITERAL (`"system"`) — there is deliberately
-  NO parameter and NO config override by which a caller could redirect the
-  env-key seeding at an arbitrary workspace. Because this path both reads the
-  real `DEEPSEEK_API_KEY` AND mints admin authority, a redirectable destination
-  would be an isolation hole (the env key could be copied into any workspace);
-  the zero-arity entry + literal destination closes it. #185 codex review.
+  The destination is the single deploy-config constant
+  `EzagentPluginHello.home_workspace/0`, read at runtime — there is deliberately
+  NO function parameter by which a caller could redirect the env-key seeding at
+  an arbitrary workspace. Because this path both reads the real
+  `DEEPSEEK_API_KEY` AND mints admin authority, a caller-redirectable
+  destination would be an isolation hole (the env key could be copied into any
+  workspace); the zero-arity entry + config-fixed destination closes it. This
+  preserves the #185 codex-review invariant: #185's threat model was a
+  **caller-supplied, per-invocation redirect**, and that hole stays closed — a
+  single deploy-authoritative config constant is a different, acceptable class
+  (the destination is still not caller-redirectable; the key flows to exactly
+  one workspace — the hello home, now `"ezagent"` after the `system`
+  retirement, not an attacker-named one).
 
-  The source + the workspace-shared pointer therefore live in the `"system"`
+  Why the destination MOVED off `"system"` (hello-A, 2026-07-22): the shared
+  DeepSeek source is normal infrastructure, and `system` is retired to an
+  admin-privilege marker — normal infra must not live there; it follows the
+  hello home workspace. The alternative (bridge pinned to `system` + a second
+  `ezagent` source provisioned by the site seed) was considered and rejected:
+  it either re-reads `DEEPSEEK_API_KEY` in a second place (spreads the env-key
+  surface — worse for #185) or copies the key cross-workspace (the exact copy
+  #185 forbids, and blocked anyway by `validate_source_workspace`).
+
+  The source + the workspace-shared pointer therefore live in the home
   workspace ONLY. The shared hello TEMPLATE stays credential-OPTIONAL and carries
   NO `cascade_resolution.credential_source_uri`, so a hello agent spawned in ANY
   OTHER workspace still resolves NO source and stays keyless until that
@@ -74,11 +90,6 @@ defmodule EzagentPluginHello.CredentialBridge do
   @flavor "curl"
   @source_agent_name "hello-deepseek-credential-source"
 
-  # The env-key bridge destination is a compile-time LITERAL. It is NOT a
-  # parameter and NOT config-overridable — the env key + admin authority may
-  # only ever flow to the internal `"system"` workspace (isolation, #185 review).
-  @system_workspace "system"
-
   @doc "The env var this bridge reads (`#{@env_var}`)."
   @spec env_var() :: String.t()
   def env_var, do: @env_var
@@ -87,9 +98,18 @@ defmodule EzagentPluginHello.CredentialBridge do
   @spec provider() :: String.t()
   def provider, do: @provider
 
-  @doc "The deterministic credential-source agent name in the `\"system\"` workspace."
+  @doc "The deterministic credential-source agent name in the hello home workspace."
   @spec source_agent_name() :: String.t()
   def source_agent_name, do: @source_agent_name
+
+  @doc """
+  The workspace the env key + admin authority flow into — the single
+  deploy-config hello home workspace (`EzagentPluginHello.home_workspace/0`,
+  default `"ezagent"`), read at RUNTIME. Read-only accessor (it takes no
+  input): the destination remains non-caller-redirectable (#185).
+  """
+  @spec destination_workspace() :: String.t()
+  def destination_workspace, do: EzagentPluginHello.home_workspace()
 
   @doc """
   Should the boot-time bridge Task start? Config-gated (dev/prod on via
@@ -103,18 +123,19 @@ defmodule EzagentPluginHello.CredentialBridge do
   end
 
   @doc """
-  Idempotently bridge `DEEPSEEK_API_KEY` into the `"system"` workspace's shared
-  curl credential source.
+  Idempotently bridge `DEEPSEEK_API_KEY` into the hello home workspace's
+  shared curl credential source.
 
-  Zero-arity BY DESIGN: the destination is the compile-time literal `"system"`,
-  never a caller-supplied workspace (see the isolation note in the moduledoc) —
-  this env-reading + admin-minting path must not be pointable at an arbitrary
-  workspace.
+  Zero-arity BY DESIGN: the destination is the deploy-config home workspace
+  (`destination_workspace/0`), never a caller-supplied one (see the isolation
+  note in the moduledoc) — this env-reading + admin-minting path must not be
+  pointable at an arbitrary workspace.
 
-  Returns `{:ok, source_uri}` when `"system"` now has the shared source
-  registered (seeded by this call or already in place), `{:ok, :no_env_key}`
-  when the env var is absent/empty (a deliberate no-op — keyless spawn stays
-  the deployment's truth), or `{:error, reason}` on a real failure.
+  Returns `{:ok, source_uri}` when the home workspace now has the shared
+  source registered (seeded by this call or already in place),
+  `{:ok, :no_env_key}` when the env var is absent/empty (a deliberate no-op —
+  keyless spawn stays the deployment's truth), or `{:error, reason}` on a real
+  failure.
   """
   @spec ensure_deepseek_source() ::
           {:ok, URI.t()} | {:ok, :no_env_key} | {:error, term()}
@@ -124,11 +145,13 @@ defmodule EzagentPluginHello.CredentialBridge do
         {:ok, :no_env_key}
 
       {:ok, key} ->
-        with :ok <- ensure_workspace(@system_workspace),
-             {:ok, source_uri} <- ensure_source_agent(@system_workspace),
+        home = destination_workspace()
+
+        with :ok <- ensure_workspace(home),
+             {:ok, source_uri} <- ensure_source_agent(home),
              :ok <- put_api_key(source_uri, key),
              :ok <- await_snapshot(source_uri),
-             :ok <- ensure_workspace_shared_source(@system_workspace, source_uri) do
+             :ok <- ensure_workspace_shared_source(home, source_uri) do
           {:ok, source_uri}
         end
     end

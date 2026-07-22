@@ -28,20 +28,28 @@ config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
   socialware_manifest_boot_scan: config_env() in [:prod]
 
+# `:home_workspace` — the SINGLE source of truth for the hello home workspace
+# (`EzagentPluginHello.home_workspace/0`). The boot 官网 seed, the #185
+# credential bridge destination, and the `/hello/<name>` serve side ALL read
+# this one key, so a split-brain between seed-side and serve-side is
+# structurally impossible. Default `"ezagent"` for all envs; a lane that needs
+# a different home overrides THIS key only.
+#
 # #185 — the hello plugin's boot-time `DEEPSEEK_API_KEY` env → curl credential
 # bridge (`EzagentPluginHello.CredentialBridge`). When the deploy env carries
-# the key, boot registers it as the INTERNAL hello workspace's shared curl
-# credential source so freshly seeded hello `llm` members are born credentialed.
-# Scoped to that one workspace; never baked into the shared hello template.
+# the key, boot registers it as the home workspace's shared curl credential
+# source so freshly seeded hello `llm` members are born credentialed. Scoped to
+# that one workspace; never baked into the shared hello template.
 #
 # `:site_seed_boot` — the governed 官网 deploy-seed
 # (`EzagentPluginHello.OfficialSiteSeed`). When on, boot idempotently ensures
-# `session://system/hello/web` (the ruihua marketing page + greeter) exists, so
-# a reseed self-heals the 官网 instead of leaving it wiped. Same family as the
-# credential bridge above (config-gated, deploy-owned, NOT the `HELLO_DEMO_SEED`
-# demo flag); paired with it so the DeepSeek source and the site that consumes
-# it come up in the same environments.
+# `session://<home>/hello/ezagent-official` (the ruihua marketing page +
+# greeter) exists, so a reseed self-heals the 官网 instead of leaving it wiped.
+# Same family as the credential bridge above (config-gated, deploy-owned, NOT
+# the `HELLO_DEMO_SEED` demo flag); paired with it so the DeepSeek source and
+# the site that consumes it come up in the same environments.
 config :ezagent_plugin_hello,
+  home_workspace: "ezagent",
   credential_bridge_boot: config_env() in [:dev, :prod],
   site_seed_boot: config_env() in [:dev, :prod]
 
@@ -61,10 +69,7 @@ config :ezagent_web,
   # is fronted by the `*.ezagent.chat` tunnels, so the cookie is shared across the
   # `app.` / `world.` subdomains. `dev.exs` overrides this to `nil` (host-only) so
   # login works on `localhost` / `world.localhost`.
-  session_cookie_domain: ".ezagent.chat",
-  # Default workspace for short hello URLs (`/hello/<name>` → session://<ws>/hello/<name>).
-  # Override per-environment (e.g. prod sets the production workspace).
-  hello_workspace: "system"
+  session_cookie_domain: ".ezagent.chat"
 
 # Configures the endpoint
 config :ezagent_web, EzagentWeb.Endpoint,
