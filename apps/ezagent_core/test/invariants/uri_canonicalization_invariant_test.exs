@@ -58,11 +58,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # `# uri-canonical-allow` marker is NOT format-stable across Elixir patch
     # versions (some formatters hoist end-of-line comments above the code
     # line), so the suppression lives here instead of inline.
-    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
-    # github_adapter.ex parses external GitHub API URLs (html_url etc.)
-    # returned from the GitHub REST API — these are https:// URLs, not
-    # Ezagent-scheme URIs. Same class as cc_orchestrator_seed's ws:// URLs.
-    "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex"
+    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex"
   ]
 
   @lib_glob "apps/*/lib/**/*.ex"
@@ -464,5 +460,58 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     violations
     |> Enum.map(fn {path, lineno, line} -> "  #{path}:#{lineno}: #{line}" end)
     |> Enum.join("\n")
+  end
+
+  # ---------------------------------------------------------------------
+  # Mutation regression — github_adapter.ex URI.parse call-site gate
+
+  @github_adapter_rel "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex"
+
+  test "github_adapter.ex is NOT whole-file exempt from URI.parse gate" do
+    refute @github_adapter_rel in @uri_parse_allowlist,
+           "github_adapter.ex must NOT be in @uri_parse_allowlist; " <>
+             "use per-line # uri-canonical-allow: comments instead"
+  end
+
+  test "every URI.parse call in github_adapter.ex carries an inline # uri-canonical-allow: comment" do
+    path = Path.join(apps_root(), @github_adapter_rel)
+    lines = File.stream!(path) |> Enum.to_list()
+
+    uri_parse_lines =
+      lines
+      |> Enum.with_index(1)
+      |> Enum.filter(fn {line, _lineno} ->
+        Regex.match?(~r/(?<![\w.])URI\.parse\(/, line) and not in_comment?(line)
+      end)
+
+    unannotated =
+      uri_parse_lines
+      |> Enum.reject(fn {line, _lineno} -> String.contains?(line, "# uri-canonical-allow:") end)
+
+    assert unannotated == [],
+           """
+           Every URI.parse call in github_adapter.ex must carry an inline
+           `# uri-canonical-allow: <reason>` comment on the same line.
+           Unannotated call(s):
+           #{format(unannotated |> Enum.map(fn {line, lineno} -> {@github_adapter_rel, lineno, String.trim(line)} end))}
+           """
+  end
+
+  # Prove the gate still has teeth: a synthetic unannotated URI.parse in
+  # github_adapter.ex WOULD be caught (mutation test). This tests the
+  # per-line-suppression model, not the real file.
+  test "unannotated URI.parse in github_adapter.ex is NOT suppressed by the allowlist" do
+    unannotated_line = ~S|  url: URI.parse("https://example.com"),|
+
+    assert Regex.match?(~r/(?<![\w.])URI\.parse\(/, unannotated_line),
+           "synthetic test line must contain URI.parse"
+
+    refute String.contains?(unannotated_line, "# uri-canonical-allow:"),
+           "synthetic test line must NOT carry the suppression comment"
+
+    # Same filter chain as the §5.1 test: the allowlist no longer includes
+    # github_adapter.ex, so an unannotated URI.parse in this file would be
+    # flagged (the synthetic line has no # uri-canonical-allow comment).
+    refute @github_adapter_rel in @uri_parse_allowlist
   end
 end
