@@ -647,6 +647,21 @@ defmodule Ezagent.Domain.Pty.Server do
     ] ++ cmd_env
   end
 
+  # --- cmd_env redaction helpers (issue #1455) -------------------------
+  # ALL cmd_env values are replaced with "[REDACTED]" inside
+  # format_status/2 (the single chokepoint before OTP crash reports and
+  # :sys.get_status output). cmd_env carries secrets by design (vendor API
+  # keys, internal tokens); suffix-based heuristics are brittle and can
+  # miss future key names. Blanket redaction — key names stay visible for
+  # debugging, values are always scrubbed.
+
+  @doc false
+  defp redact_cmd_env(env) when is_map(env) and map_size(env) > 0 do
+    Map.new(env, fn {k, _v} -> {k, "[REDACTED]"} end)
+  end
+
+  defp redact_cmd_env(env), do: env
+
   # --- erlexec messages -----------------------------------------------
 
   @impl true
@@ -955,6 +970,27 @@ defmodule Ezagent.Domain.Pty.Server do
 
     %{state | pty_buffer: buf2}
   end
+
+  # format_status/2 — the single chokepoint that redacts cmd_env from
+  # OTP crash reports and :sys.get_status output. Every GenServer exit
+  # path (:stop / :shutdown / crash) flows through this callback before
+  # the state reaches the error logger — so vendor API keys carried in
+  # cmd_env (ANTHROPIC_AUTH_TOKEN, EZAGENT_AGENT_TOKEN, etc.) are
+  # replaced with "[REDACTED]" and never reach logs (issue #1455).
+  @impl true
+  def format_status(:normal, [pdict, %__MODULE__{} = state]) do
+    [pdict, scrub_state(state)]
+  end
+
+  def format_status(:terminate, [pdict, %__MODULE__{} = state]) do
+    [pdict, scrub_state(state)]
+  end
+
+  defp scrub_state(%__MODULE__{cmd_env: env} = state) when is_map(env) and map_size(env) > 0 do
+    %{state | cmd_env: redact_cmd_env(env)}
+  end
+
+  defp scrub_state(state), do: state
 
   @impl true
   def terminate(reason, %__MODULE__{exec_pid: nil} = state) do
