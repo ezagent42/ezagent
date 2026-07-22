@@ -96,7 +96,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     violations =
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
-          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          {line, lineno, prev} <- enumerate_with_prev(path),
           # #23 — negative lookbehind for word-char OR DOT so a module-qualified
           # `Ezagent.URI.parse(` (the canonical non-raising constructor, uri.ex:242) is
           # NOT flagged — only bare stdlib `URI.parse(`. Mirrors the §5.2 URI.new! regex.
@@ -104,7 +104,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
           # lookbehind would skip it because of the leading `.`); it is never canonical.
           Regex.match?(~r/(?<![\w.])URI\.parse\(/, line) or
             Regex.match?(~r/(?<![\w.])Elixir\.URI\.parse\(/, line),
-          not String.contains?(line, "# uri-canonical-allow"),
+          not suppressed_by_adjacent_uri_allow_comment?(line, prev),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
       end
@@ -133,7 +133,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     violations =
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
-          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          {line, lineno, prev} <- enumerate_with_prev(path),
           # Negative lookbehind `(?<![\w.])` — match the BARE stdlib
           # `URI.new!(` only, NOT a module-qualified `Ezagent.URI.new!(`
           # (the canonical chokepoint, formerly `Ezagent.URI.parse!/1`,
@@ -145,7 +145,7 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
           Regex.match?(~r/(?<![\w.])URI\.new!\(/, line) or
             Regex.match?(~r/(?<![\w.])Elixir\.URI\.new!\(/, line),
           not is_module_attribute?(line),
-          not String.contains?(line, "# uri-canonical-allow"),
+          not suppressed_by_adjacent_uri_allow_comment?(line, prev),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
       end
@@ -176,9 +176,9 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     violations =
       for path <- lib_files(),
           relative(path) not in @uri_new_allowlist,
-          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          {line, lineno, prev} <- enumerate_with_prev(path),
           matches_uri_new_no_bang?(line),
-          not String.contains?(line, "# uri-canonical-allow"),
+          not suppressed_by_adjacent_uri_allow_comment?(line, prev),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
       end
@@ -217,11 +217,11 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
       for path <- lib_files(),
           relative(path) not in @uri_parse_allowlist,
           relative(path) not in @uri_new_allowlist,
-          {line, lineno} <- Enum.with_index(File.stream!(path), 1),
+          {line, lineno, prev} <- enumerate_with_prev(path),
           Regex.match?(capture_re, line) or
             Regex.match?(apply_re, line) or
             Regex.match?(alias_re, line),
-          not String.contains?(line, "# uri-canonical-allow"),
+          not suppressed_by_adjacent_uri_allow_comment?(line, prev),
           not in_comment?(line) do
         {relative(path), lineno, String.trim(line)}
       end
@@ -445,6 +445,29 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   # ---------------------------------------------------------------------
   # helpers (kept private to the test module)
 
+  # Returns {line, lineno, prev_line} triples. prev_line is nil for the first
+  # line; otherwise it is the line immediately before the current one.
+  # The formatter moves end-of-line `# uri-canonical-allow:` comments to the
+  # preceding line — this enumeration lets the suppression check look at both.
+  defp enumerate_with_prev(path) do
+    lines = path |> File.read!() |> String.split("\n")
+    prev_lines = [nil | Enum.drop(lines, -1)]
+
+    lines
+    |> Enum.with_index(1)
+    |> Enum.zip(prev_lines)
+    |> Enum.map(fn {{line, lineno}, prev} -> {line, lineno, prev} end)
+  end
+
+  # True when a `# uri-canonical-allow:` comment sits on the current line
+  # (legacy same-line suppression) or on the immediately preceding line
+  # (formatter-displaced suppression — the formatter hoists end-of-line
+  # comments above the code line).
+  defp suppressed_by_adjacent_uri_allow_comment?(line, prev) do
+    String.contains?(line, "# uri-canonical-allow") or
+      (prev != nil and String.contains?(prev, "# uri-canonical-allow:"))
+  end
+
   defp matches_uri_new_no_bang?(line) do
     # PCRE negative lookahead — match `URI.new(` where `new` is NOT
     # immediately followed by `!`. SPEC §5.2.1 r4 fix.
@@ -473,11 +496,11 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
              "use per-line # uri-canonical-allow: comments instead"
   end
 
-  test "every URI.parse call in github_adapter.ex carries an inline # uri-canonical-allow: comment" do
+  test "every URI.parse call in github_adapter.ex carries a # uri-canonical-allow: comment (same or preceding line)" do
     path = Path.join(apps_root(), @github_adapter_rel)
-    lines = File.stream!(path) |> Enum.to_list()
+    lines = path |> File.read!() |> String.split("\n")
 
-    uri_parse_lines =
+    uri_parse_positions =
       lines
       |> Enum.with_index(1)
       |> Enum.filter(fn {line, _lineno} ->
@@ -485,21 +508,26 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
       end)
 
     unannotated =
-      uri_parse_lines
-      |> Enum.reject(fn {line, _lineno} -> String.contains?(line, "# uri-canonical-allow:") end)
+      uri_parse_positions
+      |> Enum.reject(fn {line, lineno} ->
+        prev = if lineno > 1, do: Enum.at(lines, lineno - 2)
+        suppressed_by_adjacent_uri_allow_comment?(line, prev)
+      end)
 
     assert unannotated == [],
            """
-           Every URI.parse call in github_adapter.ex must carry an inline
-           `# uri-canonical-allow: <reason>` comment on the same line.
+           Every URI.parse call in github_adapter.ex must carry a
+           `# uri-canonical-allow: <reason>` comment on the same line or
+           the immediately preceding line (formatter-compatible).
            Unannotated call(s):
            #{format(unannotated |> Enum.map(fn {line, lineno} -> {@github_adapter_rel, lineno, String.trim(line)} end))}
            """
   end
 
   # Prove the gate still has teeth: a synthetic unannotated URI.parse in
-  # github_adapter.ex WOULD be caught (mutation test). This tests the
-  # per-line-suppression model, not the real file.
+  # github_adapter.ex WOULD be caught by both the regex and the suppression
+  # check (mutation test). The synthetic line has no # uri-canonical-allow:
+  # comment on itself or the line before it.
   test "unannotated URI.parse in github_adapter.ex is NOT suppressed by the allowlist" do
     unannotated_line = ~S|  url: URI.parse("https://example.com"),|
 
@@ -509,9 +537,12 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     refute String.contains?(unannotated_line, "# uri-canonical-allow:"),
            "synthetic test line must NOT carry the suppression comment"
 
+    # Neither the synthetic line nor a nil prev-line suppress it.
+    refute suppressed_by_adjacent_uri_allow_comment?(unannotated_line, nil)
+
     # Same filter chain as the §5.1 test: the allowlist no longer includes
     # github_adapter.ex, so an unannotated URI.parse in this file would be
-    # flagged (the synthetic line has no # uri-canonical-allow comment).
+    # flagged.
     refute @github_adapter_rel in @uri_parse_allowlist
   end
 end

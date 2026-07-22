@@ -246,7 +246,8 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
     ChangeRequest.new(%{
       external_id: to_string(data["number"]),
-      url: URI.parse(data["html_url"]), # uri-canonical-allow: external GitHub API URL (not an Ezagent-scheme URI)
+      # uri-canonical-allow: external GitHub API URL (not an Ezagent-scheme URI)
+      url: URI.parse(data["html_url"]),
       head_ref: head["ref"],
       head_sha: head["sha"],
       base_ref: base["ref"],
@@ -321,7 +322,8 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   defp map_uri(nil), do: nil
 
-  defp map_uri(url) when is_binary(url), do: URI.parse(url) # uri-canonical-allow: external GitHub API URL (not an Ezagent-scheme URI)
+  # uri-canonical-allow: external GitHub API URL (not an Ezagent-scheme URI)
+  defp map_uri(url) when is_binary(url), do: URI.parse(url)
 
   defp map_datetime(nil), do: nil
 
