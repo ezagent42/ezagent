@@ -257,8 +257,99 @@ defmodule EzagentCore.Umbrella.MixProject do
         "ezagent.check_invariants",
         &run_socialware_check/1,
         "gate.arch"
+      ],
+      # ci-shard-full-suite — the DETERMINISTIC-gate shard of the full-suite split.
+      # The full-suite (`mix ci.local`) is sharded (see `ci_shard_test_aliases/0`
+      # below + `EzagentCore.CiShards` + the `.github/workflows/ci.yml` full-suite
+      # matrix) so a red isolates to ONE shard, re-runnable alone. This `static`
+      # shard runs every ci.local step that is NOT `mix test` — ONCE — so the
+      # per-app-group test shards only carry their tests. Together (static ∪ the
+      # test shards) they reproduce `ci.local` EXACTLY; `mix ci.shard.verify` proves
+      # it (step-set equality, drift-proof). `compile --warnings-as-errors --force`
+      # (the dead-code gate) + `deps.unlock`/`format`/`check_invariants`/`uri_query.
+      # scan`/`world.e2e.fixtures`/cc-sdk/socialware all live here. socialware stays
+      # a FRESH-`mix` fn (`run_socialware_check/1`) — same SQL-Sandbox reason as
+      # ci.local. `arm`+`finalize` bracket it so a clean run still `halt(0)`s past
+      # the erlexec shutdown race (see finalize_ci_local/1). No `mix test` and no
+      # pnpm (this shard never boots the web assets).
+      "ci.shard.static": [
+        &arm_ci_local_result_capture/1,
+        "deps.get",
+        "ecto.create --quiet",
+        "ecto.migrate --quiet",
+        "compile --warnings-as-errors --force",
+        # Parity self-check runs right after compile (needs `EzagentCore.CiShards`
+        # + the umbrella alias table, both available at the umbrella root): PROVES
+        # every test file is assigned to exactly one shard AND the shard step-set
+        # == ci.local's, so a manifest/alias drift reddens the full-suite. Excluded
+        # from its OWN step-parity comparison (it is a meta-gate, not coverage).
+        "ci.shard.verify",
+        "deps.unlock --unused",
+        "format",
+        "ezagent.check_invariants",
+        "ezagent.uri_query.scan",
+        "world.e2e.fixtures --check",
+        &run_cc_sdk_worker_tests/1,
+        &run_socialware_check/1,
+        &finalize_ci_local/1
       ]
-    ]
+    ] ++ ci_shard_test_aliases()
+  end
+
+  # ci-shard-full-suite — one `mix ci.shard.<name>` alias per TEST shard, generated
+  # from the single-source manifest (`ci_shards.exs`, also read by
+  # `EzagentCore.CiShards`). Each test shard reuses the EXACT ci.local honesty
+  # machinery — `arm_ci_local_result_capture` (arms the ExUnit `:after_suite`
+  # sentinel) → deps/pnpm/ecto prelude → ONLY this shard's assigned test files →
+  # `finalize_ci_local` (honest `halt/1` past the erlexec shutdown race) — so exit
+  # codes stay honest and a failure isolates to the shard. The `test` step is a
+  # closure (not a static string) because the file list is computed at RUNTIME from
+  # the manifest — it cannot be built at alias-eval time (before `EzagentCore.
+  # CiShards` compiles). pnpm runs in every test shard (idempotent/cached) so any
+  # shard whose tests boot web/world/hello assets resolves react/zod.
+  defp ci_shard_test_aliases do
+    for name <- ci_shard_names() do
+      {String.to_atom("ci.shard." <> name),
+       [
+         &arm_ci_local_result_capture/1,
+         "deps.get",
+         &pnpm_install_assets/1,
+         "ecto.create --quiet",
+         "ecto.migrate --quiet",
+         shard_test_step(name),
+         &finalize_ci_local/1
+       ]}
+    end
+  end
+
+  # Shard names come from the SAME `ci_shards.exs` `EzagentCore.CiShards` bakes in,
+  # so mix.exs's aliases and the manifest can never drift (`mix ci.shard.verify`
+  # asserts the alias keys == manifest names + `static`). Read at __DIR__ (the
+  # umbrella root) so it resolves regardless of the caller's cwd.
+  defp ci_shard_names do
+    {data, _} = Code.eval_file(Path.join(__DIR__, "ci_shards.exs"))
+    Enum.map(Map.fetch!(data, :test_shards), fn {name, _pats} -> name end)
+  end
+
+  # Alias step: run ONLY this shard's assigned test files, in-process (so `arm`'s
+  # `:after_suite` hook + `finalize_ci_local` observe the ExUnit result). Runs from
+  # the umbrella root, so path-scoped `mix test` keeps every sibling app's ebin on
+  # the code path — `:umbrella_only` cross-tier suites RUN (verified), they are not
+  # silently excluded the way a single-app `cd apps/foo && mix test` excludes them.
+  defp shard_test_step(name), do: fn _args -> run_shard_tests(name) end
+
+  defp run_shard_tests(name) do
+    files = EzagentCore.CiShards.files_for(name)
+
+    if files == [] do
+      Mix.raise(
+        "ci.shard.#{name}: manifest matched 0 test files — a stale rule or removed app. " <>
+          "Run `mix ci.shard.verify`."
+      )
+    end
+
+    Mix.shell().info("==> ci.shard.#{name}: #{length(files)} test files")
+    Mix.Task.run("test", files)
   end
 
   # The three JS-asset dirs whose node_modules must exist before `precommit`'s

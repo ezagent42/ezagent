@@ -275,8 +275,9 @@ defmodule EzagentPluginWorld.WorldLive do
 
   @impl true
   def handle_event("world:navigate", %{"to" => to}, socket) when is_binary(to) do
-    case Ezagent.World.Navigation.patch_to(to) do
-      {:ok, path} -> {:noreply, push_patch(socket, to: path)}
+    case Ezagent.World.Navigation.navigation_for(to) do
+      {:ok, :patch, path} -> {:noreply, push_patch(socket, to: path)}
+      {:ok, :navigate, path} -> {:noreply, push_navigate(socket, to: path)}
       :error -> {:noreply, socket}
     end
   end

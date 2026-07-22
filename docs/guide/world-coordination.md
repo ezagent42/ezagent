@@ -72,6 +72,7 @@ Keep this table current. Before starting world work, add your row; on finishing,
 
 | Effort | Owner | Surfaces / files owned | Status |
 |--------|-------|------------------------|--------|
+| Manage admin cross-session navigation | codex (codex/kanban-ui-polish) | world_live.ex (world:navigate only), navigation.ex, navigation tests | in-flight |
 | _active world-dev_ | (world dev) | UI polish + logic completion (assume `styles.css` + existing surfaces) | ongoing |
 | world beautification + restructure (#83) | claude (`world-beautify`) | layout/slot system (`layout_manager.ex`, `behavior/layout.ex`, `world_live.ex` route+layout fns, `main.tsx` renderer), then `styles.css`, existing surfaces, design system, `primitives.tsx` + atom layer | ✅ MERGED to main (shadcn/typed-slot) |
 | Agent Console (#84) | agent-console dev | Phase 0: standalone static demo (`apps/ezagent_web/priv/static/agent-console-demo/` + `static_paths` allowlist) — touches NO world files. Phase 1+: new `agent_console` surface + `*_data/*_actions` + `world_live.ex` route clause | Phase 0 demo merged (`#892`) |

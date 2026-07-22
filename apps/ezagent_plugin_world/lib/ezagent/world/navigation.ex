@@ -31,16 +31,49 @@ defmodule Ezagent.World.Navigation do
   Return a safe LiveView patch target for an in-app world path.
   """
   @spec patch_to(String.t()) :: {:ok, String.t()} | :error
-  def patch_to(to) when is_binary(to) do
+  def patch_to(to) do
+    case safe_destination(to) do
+      {:ok, path, query} -> {:ok, path <> query_suffix(query)}
+      :error -> :error
+    end
+  end
+
+  @doc """
+  Return a safe World destination together with the required LiveView transition.
+
+  Admin-session targets must navigate so Phoenix can mount the separate
+  `world_require_admin` live session and apply its router gate again.
+  """
+  @spec navigation_for(String.t()) :: {:ok, :patch | :navigate, String.t()} | :error
+  def navigation_for(to) do
+    case safe_destination(to) do
+      {:ok, path, query} -> {:ok, navigation_mode(path), path <> query_suffix(query)}
+      :error -> :error
+    end
+  end
+
+  defp navigation_mode(path) do
+    if admin_session_path?(path), do: :navigate, else: :patch
+  end
+
+  # Keep the cross-session seam here, next to the allowlist. This is deliberately
+  # not an authorization decision: the router's LiveAuth :require_admin gate is
+  # still the sole authority for each admin destination.
+  defp admin_session_path?("/overview"), do: true
+  defp admin_session_path?("/admin"), do: true
+  defp admin_session_path?("/admin/" <> _rest), do: true
+  defp admin_session_path?(_path), do: false
+
+  defp safe_destination(to) when is_binary(to) do
     with {:ok, path, query} <- split_patch_to(to),
          true <- patch_path?(path) do
-      {:ok, path <> query_suffix(query)}
+      {:ok, path, query}
     else
       _ -> :error
     end
   end
 
-  def patch_to(_), do: :error
+  defp safe_destination(_), do: :error
 
   defp split_patch_to(to) do
     cond do
