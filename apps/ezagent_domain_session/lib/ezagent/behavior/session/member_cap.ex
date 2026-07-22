@@ -32,7 +32,9 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   @doc """
   Enqueue the universal member-cap grant into the joining member's OWN
   `:identity` slice. Returns whether the exact cap already existed, the grant
-  was enqueued, or the enqueue failed synchronously.
+  was enqueued, or the enqueue failed synchronously. On either successful
+  branch, consumes the concrete tier-0 `:join` artifact: DROP is rejoinable,
+  but only after a fresh owner/invite/public-policy grant.
   """
   # Idempotency uses the EXACT member-cap identity (NOT broad `matches?/2`, so a
   # wildcard holder still receives the concrete member cap). An existing exact
@@ -48,8 +50,10 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
 
     case exact_member_cap(held, session_uri, workspace_uri) do
       %Ezagent.Capability{} = existing ->
-        case Ezagent.Identity.absorb_cap(member_uri, existing) do
-          :ok -> :already_held
+        with :ok <- Ezagent.Identity.absorb_cap(member_uri, existing),
+             :ok <- consume_join_entitlement(member_uri, ctx) do
+          :already_held
+        else
           {:error, reason} -> {:error, reason}
         end
 
@@ -69,7 +73,8 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
                    cap,
                    grant_authorization(granter)
                  ),
-               :ok <- Ezagent.Identity.absorb_cap(member_uri, artifact) do
+               :ok <- Ezagent.Identity.absorb_cap(member_uri, artifact),
+               :ok <- consume_join_entitlement(member_uri, ctx) do
             :ok
           end
 
@@ -85,6 +90,40 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
             log_grant_failure(member_uri, session_uri, reason)
             {:error, reason}
         end
+    end
+  end
+
+  # M-10: a concrete tier-0 join grant is single-use. A successful join consumes
+  # it after the tier-1 absorb has been durably enqueued. DROP therefore remains
+  # fully rejoinable, but only after an owner/invite/public policy grants a NEW
+  # tier-0 artifact; stale navigation cannot replay yesterday's grant to re-mint
+  # a revoked membership cap. Async is required inside the Session Kind callback
+  # (see Identity.Grant.revoke_cap_via_router/4's self-deadlock contract).
+  defp consume_join_entitlement(%URI{} = member_uri, ctx) do
+    session_uri = ctx[:self_uri]
+
+    join_cap =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :join,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    case Ezagent.Identity.Grant.revoke_cap_via_router(
+           member_uri,
+           join_cap,
+           grant_authorization(ctx),
+           :async
+         ) do
+      :ok -> :ok
+      # A cold/offline principal cannot hold a live join artifact; its tier-1
+      # absorb is already durable in the delivery outbox. Treat the idempotent
+      # consume as complete and let a future join require a newly deliverable
+      # tier-0 grant.
+      {:error, reason} when reason in [:no_such_actor, :not_ready] -> :ok
+      {:error, _reason} = error -> error
     end
   end
 

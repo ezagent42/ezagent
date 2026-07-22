@@ -42,6 +42,10 @@ defmodule Ezagent.Socialware.MemberBackfill do
   in-Kind 补员路径无法挂 caller-side 补发,成员下次导航进会话时补齐)。
   整体永不 raise:任何一段失败只降级(无 cap ⇒ 拒读,fail-closed 安全),
   绝不 fail 一次已成功的 join。
+
+  M-10:三段补发之前统一验证当前 tier-1 member-cap。`:members` roster、
+  navigation 和旧 cursor 都不是 entitlement；tier-1 已撤销时本模块完全
+  no-op，不会补回 participation/view/mount-key tier-2。
   """
 
   alias Ezagent.ActionSet.Session.Membership
@@ -56,11 +60,13 @@ defmodule Ezagent.Socialware.MemberBackfill do
   """
   @spec backfill(URI.t(), URI.t()) :: :ok
   def backfill(%URI{} = session_uri, %URI{} = member_uri) do
-    _ = Membership.mount_participation_caps(session_uri, member_uri)
+    if Membership.current_member_entitled?(session_uri, member_uri) do
+      _ = Membership.mount_participation_caps(session_uri, member_uri)
 
-    if Membership.user_uri?(member_uri) and Ezagent.Users.confirmed?(member_uri) do
-      _ = Membership.grant_member_view_caps(session_uri, member_uri)
-      _ = report_mount_backfill(session_uri, member_uri)
+      if Membership.user_uri?(member_uri) and Ezagent.Users.confirmed?(member_uri) do
+        _ = Membership.grant_member_view_caps(session_uri, member_uri)
+        _ = report_mount_backfill(session_uri, member_uri)
+      end
     end
 
     :ok

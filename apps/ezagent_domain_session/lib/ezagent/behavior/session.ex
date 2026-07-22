@@ -847,20 +847,12 @@ defmodule Ezagent.ActionSet.Session do
   end
 
   defp do_handle_join(%URI{} = member_uri, facets, ctx) do
-    members = ctx[:read].(:members, %{})
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-
-    case {Map.get(members, member_uri), KindRegistry.lookup(member_uri)} do
-      {%{online: true}, {:ok, member_pid}} ->
-        if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
-          {:ok, %{status: :already_member, member: member_uri}, []}
-        else
-          Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
-        end
-
-      _ ->
-        Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
-    end
+    # M-10: roster/monitor state is projection, never entitlement and never a
+    # reason to skip the tier-0 -> tier-1 seam. Every authorized join reaches
+    # do_join/5 so it consumes its single-use join grant and either confirms or
+    # restores current tier-1. do_join preserves :already_member as an output
+    # status when the projection was already present.
+    Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
   end
 
   @doc """

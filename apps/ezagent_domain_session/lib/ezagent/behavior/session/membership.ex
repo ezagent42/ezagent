@@ -27,6 +27,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
           {:ok, map(), [term()]} | {:error, term()}
   def do_join(%URI{} = member_uri, _member_pid, ctx, facets, _source_module) do
     members = ctx[:read].(:members, %{})
+    join_status = if Map.has_key?(members, member_uri), do: :already_member, else: :granted
     reserved_facets = ctx[:read].(:join_facets, %{})
     role_claims = Map.merge(reserved_facets, members)
 
@@ -110,7 +111,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
             grant_status when grant_status in [:already_held, :enqueued] ->
               # Phase A only. Cursor/facets/owner claim commit together; the
               # holder-driven `add_self` action is the sole roster writer.
-              {:ok, %{status: :granted, member: member_uri},
+              {:ok, %{status: join_status, member: member_uri},
                [join_cursor_effect, join_facets_effect | owner_effects]}
           end
         end
@@ -567,8 +568,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   ## Policy (who may be provisioned a join cap)
 
-    * joiner is the session OWNER, or an existing MEMBER → provision; granter =
-      owner (owner-rooted — spec §8 g2).
+    * joiner is the session OWNER, or a CURRENT tier-1 CAP-HOLDER → provision;
+      granter = owner (owner-rooted — spec §8 g2). A stale roster entry does
+      not provision tier-0.
     * ownerless session + a NON-anon user joiner → provision the first-non-anon
       join so it can claim ownership (RFC #402); granter = `entity://system/user/admin`
       (the #154 named extreme-case granter, spec §8 g2 exception (ii)).
@@ -1133,10 +1135,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   same as `anon_user.public_view_granter/1`). Best-effort: a failed grant is
   logged + telemetry'd, never raised — a missing participation cap degrades to
   "observe", it does not break the join.
+
+  M-10: this tier-2 mount first proves `member_uri` CURRENTLY holds tier-1 via
+  the shared generation-aware membership predicate. Roster presence is never a
+  precondition and cannot re-arm a revoked member.
   """
   @spec mount_participation_caps(URI.t(), URI.t()) :: :ok
   def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
-    if user_uri?(member_uri) do
+    if user_uri?(member_uri) and current_member_entitled?(session_uri, member_uri) do
       do_mount_participation_caps(session_uri, member_uri)
     else
       :ok
@@ -1195,10 +1201,13 @@ defmodule Ezagent.ActionSet.Session.Membership do
   (`:sync`),绝不许从 `handle_join` 内调(join 内 sync grant 自死锁,5s
   timeout 实证 —— docs/futures/todo.md「#161 A2 deferrals」)。
   Agent / 非 user URI → no-op(agents 的 caps 在 spawn 时 provision,甲-3)。
+
+  M-10:与 participation tier 相同，view-cap 补发只对当前 tier-1 holder
+  开放；stale `:members` projection 不构成 entitlement。
   """
   @spec grant_member_view_caps(URI.t(), URI.t()) :: :ok
   def grant_member_view_caps(%URI{} = session_uri, %URI{} = member_uri) do
-    if user_uri?(member_uri) do
+    if user_uri?(member_uri) and current_member_entitled?(session_uri, member_uri) do
       pairs = Ezagent.Socialware.Installation.declared_view_actions(session_uri)
 
       grant_session_caps(
@@ -1214,6 +1223,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   end
 
   def grant_member_view_caps(_, _), do: :ok
+
+  @doc "Whether `member_uri` currently holds the live tier-1 member cap over `session_uri`."
+  @spec current_member_entitled?(URI.t(), URI.t()) :: boolean()
+  def current_member_entitled?(%URI{} = session_uri, %URI{} = member_uri) do
+    Ezagent.Session.Membership.authorize(%{}, member_uri, session_uri, member_uri) == :ok
+  end
+
+  def current_member_entitled?(_session_uri, _member_uri), do: false
 
   # 共享 caller-side grant funnel —— participation tier 与 member view caps
   # 两路共用同一个 `grant_cap_via_router` 调用点(I12 paradigm-lock ratchet:

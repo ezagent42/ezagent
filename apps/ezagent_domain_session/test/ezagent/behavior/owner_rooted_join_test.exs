@@ -115,9 +115,10 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
       # owner-authorized join), making them an existing member.
       member = confirmed_user("g2-member")
 
-      # Owner self-join provisions the owner's join cap (owner-rooted), then the
-      # owner invites the member (join dispatched under the owner's authority).
+      # Owner self-join consumes its single-use join cap. Provision a fresh
+      # owner-rooted grant for the separate invite dispatch.
       {:ok, _} = self_join(session_uri, owner)
+      :ok = Membership.provision_join_authority(session_uri, owner)
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
