@@ -21,7 +21,12 @@ defmodule EzagentCore.Invariants.DatabaseAgnosticGuardTest do
 
   @repo_root Path.expand("../../../..", __DIR__)
 
-  @known_reviewed_dependencies []
+  @known_reviewed_dependencies [
+    # False positive — `?#{query}` is a URL query-string delimiter with Elixir
+    # interpolation, not a SQLite `?1` numbered placeholder.
+    {:sqlite_numbered_placeholder,
+     "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_oauth.ex:39"}
+  ]
 
   @excluded_path_parts [
     "/test/",

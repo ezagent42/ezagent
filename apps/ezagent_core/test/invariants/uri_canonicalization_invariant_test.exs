@@ -58,7 +58,11 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
     # `# uri-canonical-allow` marker is NOT format-stable across Elixir patch
     # versions (some formatters hoist end-of-line comments above the code
     # line), so the suppression lives here instead of inline.
-    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex"
+    "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
+    # github_adapter.ex parses external GitHub API URLs (html_url etc.)
+    # returned from the GitHub REST API — these are https:// URLs, not
+    # Ezagent-scheme URIs. Same class as cc_orchestrator_seed's ws:// URLs.
+    "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex"
   ]
 
   @lib_glob "apps/*/lib/**/*.ex"
