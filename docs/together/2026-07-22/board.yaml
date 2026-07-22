@@ -1,0 +1,203 @@
+# dev-together board.yaml — DISPLAY page for 2026-07-22.
+# Model: board for day N = PLAN(N) + DONE(N-1) + REVIEW(N-1).
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# status ∈ planned(计划) | wip(进行中) | review(待评审/验收) | done(完成)
+
+date: "2026-07-22"
+prev_date: "07-21"
+north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "CI 健康 + 部署闸(含 dockerize)", pct: 100, value: "★dockerize CI 落地: 每 PR 走容器化 mac gate(OrbStack, per-run postgres)。★根因 CPUSET pin-同核→并发饥饿(#1506 unpin),3 self-hosted runner 并跑把 60→0 队列抽干。gate 从 flake 到稳。"}
+  - {label: "读平面授权收口", pct: 100, value: "PR-1..5 全在 main + canary,InternalReads 网关收尾(#1494)。demo_smoke 并发 flake 结构性修(#1495, 断言不变量而非固定 seed)。读平面授权面闭合。"}
+  - {label: "统一 generation 撤销(#195)", pct: 50, value: "30 PR 工程。Phase F-1 地基入 main(#1493)。整程序(F→G→D→M→Z)一次性交 kimi 自驱, Phase-0 三项产品决策已定 green-light。kimi 跑到 F→G→D-partial 后夜间断线, 已重启续跑。cc+codex 在 [DONE] 时对抗评审 + 合。"}
+  - {label: "greeter-relay 修(#1457 回归)", pct: 90, value: "★官网 hello greeter 崩根因: #1457 强签名的 self-target 解析不对称 —— 只翻全局 BehaviorRegistry、漏了实例自己的 behavior 集(≠路由/挂载问题)。独立复现环境实证(fail-before badmatch → pass-after)。修法 Option 2(#1507): self 分支也查实例集, 保 RF-1 anti-shadowing。评审 gate 中, 今日合。"}
+  - {label: "插件 UI 分层(去 world 硬编)", pct: 35, value: "#1477 reconcile stale presenter caps 入 main(缓存新鲜度轴)。zyli #1476 plugin-owned UI surfaces 代码完成待评审(卡在 frozen baseline 注册)。"}
+  - {label: "Git provider 接入(gaga)", pct: 25, value: "#1445 provider-neutral task access 域脊: 4 项安全 must-fix 已修(ratchet/gitleaks/凭证 fail-loud/rebase), 安全架构评审过。卡在 frozen baseline 注册 + socialware 集成(明日)。"}
+  - {label: "企业自助开通产品化(ruihua)", pct: 15, value: "#1436 用户旅程+验收 / #1419 Profile / #1388 DealScout demo。依赖 cap-signing 收口 + #1476 前端分层。"}
+
+# efficiency: 07-21 实测(board_efficiency.py ezagent42/ezagent 2026-07-21)
+efficiency:
+  - {value: "8.3h", delta: "↓6", label: "07-21 活跃工时(git下界) · 昨 14.8h"}
+  - {value: "8", delta: "↓5", label: "07-21 merged PR · 昨 13"}
+  - {value: "0.05", delta: "↓0.04", label: "07-21 折算人月(160h) · 昨 0.09"}
+  - {value: "3", label: "self-hosted mac runner 并跑 · 队列 60→0"}
+efficiency_source: "07-21 实测 pr_session_hours.py（git-hours 下界 · ~1min 可复算）；'Allen Woods'作者=协调 agent 墙钟非人力；当日产出或次日才合入、此法略低估。07-21 PR 数/工时较 07-20 低,但当日重心是 dockerize CI 落地 + 深挖根因(CPUSET 并发饥饿 / greeter #1457 回归 / demo_smoke flake)+ #195 整程序交接 + 夜间单人协调,产出密度不体现在 PR 计数。"
+
+deploy:
+  - {env: "canary", state: "✅ 全线上线(读平面 + operator门 + 原子snapshot + #185 + cc-headless-custom + Phase F + member-cap 修复 + 官网 governed seed)。dogfood 观察中。"}
+  - {env: "beta", state: "⏳ 待 cutover —— **必须跑 member-cap `:receive` backfill**(否则老成员被锁), 已入清单。"}
+  - {env: "stable", state: "⏳ 待 cutover —— 同 beta。"}
+
+risks:
+  - "🟡 greeter-relay(#1457 回归)只在 hello 官网 self-target 路径触发; 修 #1507 是 cap-adjacent, 走对抗评审 gate 才合(不自审合)。"
+  - "🟡 合并队列卡在同一类: 插件 PR 加的新站点撞 frozen arch/invariant baseline(#1476 / #1445), app-suite 测试测不到、只有 gate 的 invariants 目录逮。作者需把新站点注册进 baseline 后才合。#1497/#1501 落后 main 需 rebase; #1501 'fixes 41≠39' 效力待验。"
+  - "🟡 #1482(gaga 挖到): populated DB 重启 → world after_boot 撞 `{:already_registered, workspace://system}`(2/2 确定性)。canary release 道无事, 影响 dev 重启 + dockerize CI。已开 issue, 建议优先 triage。"
+  - "🟡 member-cap durable 未落: 本轮数据级 re-grant 现有 roster。永久解 = seed/迁移时发 cap; #195 Phase M/#166 落地收口。"
+
+people:
+  - {id: "gaga", name: "gaga", track: "Git provider / agent 泛化主体", color: "#7c3aed"}
+  - {id: "zyli", name: "zyli", track: "插件UI分层 / presenter caps", color: "#0891b2"}
+  - {id: "ruihua", name: "ruihua", track: "自助开通产品化 / demo 设计", color: "#db2777"}
+  - {id: "jjkysy", name: "jjkysy", track: "挂载-撤销 infra / 协作白板", color: "#65a30d"}
+  - {id: "allen", name: "Allen 轨道", track: "安全 + CI + 部署 + 统筹 + BD", color: "#2563eb"}
+
+done_prev:
+  # ---------- 完成 (DONE 07-21) — 昨日完成, 渲染进「完成」列 ----------
+  - owner: "allen"
+    title: "★ dockerize CI 落地 + 3 runner 抽干队列"
+    goal: "每 PR 走容器化 mac gate + 并发不打架"
+    status: "done"
+    who: "Allen 轨道 · #1502 / #1506 + 3 self-hosted runner"
+    acceptance:
+      - {text: "dockerize gate + gitleaks 上 self-hosted mac(OrbStack, per-run postgres 容器)(#1502)", done: true}
+      - {text: "★ 根因 gate flake = CPUSET pin 同核 → 并发运行互相饥饿; unpin 让并发跨 28 核铺开(#1506)", done: true, evidence: "3×/5× 并发绿"}
+      - {text: "3 个 self-hosted mac runner 并跑, CI 队列 60→0 抽干", done: true}
+  - owner: "allen"
+    title: "读平面收口 + demo_smoke flake 结构性修"
+    goal: "InternalReads 网关收尾 + 消灭并发 flake"
+    status: "done"
+    who: "Allen 轨道 · #1494 / #1495"
+    acceptance:
+      - {text: "读平面 PR-5 InternalReads 网关(框架内部无主体读走窄网关, 两侧边界防洗白)入 main+canary(#1494)", done: true}
+      - {text: "★ demo_smoke 反复 flake 根因 = 并发套件竞争固定 seed; 改断言『非空 + 良构 session URI 不变量』而非特定 seed(#1495)", done: true}
+  - owner: "allen"
+    title: "anti-bypass ratchet 门 + ci.fast 本地闸"
+    goal: "并发开发防授权旁路回潮 + 快本地 gate"
+    status: "done"
+    who: "Allen 轨道 · #1500 / #1504"
+    acceptance:
+      - {text: "authorize chokepoint RATCHET 门(9 探针 + per-probe allowlist + presence-tripwire, offenders==[]), Z-1 前置(#1500)", done: true}
+      - {text: "`mix ci.fast` 快本地 arch/invariant 子集 + skill 规则(治 agent 120s 超时杀 precommit)(#1504)", done: true}
+  - owner: "allen"
+    title: "官网 governed deploy-seed(#1505)"
+    goal: "官网 system/hello/web 自愈式治理 seed"
+    status: "done"
+    who: "Allen 轨道 · #1505"
+    acceptance:
+      - {text: "凭证优先(CredentialBridge)+ 页面投影缺席闸 + FusionSeed 供给, config-gated(dev/prod 开、test 关); 官网缺失自愈", done: true}
+  - owner: "allen"
+    title: "★ #195 整程序交 kimi + greeter 根因"
+    goal: "统一撤销一次性交接 + 官网崩根因定位"
+    status: "done"
+    who: "Allen 轨道 · #195 Phase-0 green-light / greeter 分析"
+    acceptance:
+      - {text: "#195(30 PR/5 phase)整程序一次性交 kimi 自驱; Phase-0 三项产品决策定案 green-light(supervisor=per-session reviewer-member / delete_user=agent 撤销+结构资源转 workspace owner / 全可 rejoin)", done: true}
+      - {text: "★ 官网 greeter 崩根因: 独立复现证明是 #1457 self-target 解析不对称(非路由/挂载), fail-before/pass-after 实证 + 314 行分析", done: true}
+  - owner: "zyli"
+    title: "reconcile stale presenter caps(#1477)"
+    goal: "缓存 caps 新鲜度轴"
+    status: "done"
+    who: "zyli 轨道 · #1477 入 main"
+    acceptance:
+      - {text: "reconcile stale presenter capabilities: 缓存的 presenter caps 按新鲜度轴对账, 消除陈旧 cap 竞态", done: true}
+
+cards:
+  # ---------- 待评审/验收 (REVIEW · 今日合) ----------
+  - owner: "allen"
+    title: "★ greeter-relay 修(#1507)"
+    goal: "#1457 self-target 解析不对称的治本修 + 今日合"
+    status: "review"
+    who: "Allen 轨道 · #1507 OPEN mergeable · Option 2"
+    acceptance:
+      - {text: "self 分支新增 RuntimeView 进程字典 compartment(dispatch chokepoint 带 {kind_module,slice_state}, try/after 存复原), 解析走实例集; 保 RF-1 全局优先 anti-shadowing; 无授权洞; py/cc-headless 不回归", done: true, evidence: "cap invariants 396/0; fail-before/pass-after"}
+      - {text: "对抗评审 gate 过后 admin-合(cap-adjacent 不自审合)", done: false}
+  - owner: "zyli"
+    title: "插件自声明 UI / World 分层(#1476)"
+    goal: "World 页面+action 从插件声明动态枚举, fail-closed"
+    status: "review"
+    who: "zyli 轨道 · #1476 OPEN — 代码完成, 卡 baseline 注册"
+    acceptance:
+      - {text: "World 页面/action registry 改为从插件声明动态枚举 + 严格 fail-closed; Kanban 迁入插件自声明; Mix 构建期 renderer manifest; 前端 272/272", done: true}
+      - {text: "★ 卡点 = 新 World-UI 站点撞 frozen arch/invariant baseline(PluginWorkspaceLocalityContract 等), app-suite 测不到只有 gate invariants 逮 → 需把新站点注册进 baseline 再合", done: false}
+  - owner: "gaga"
+    title: "Git Provider V1 域脊(#1445)"
+    goal: "provider-neutral task access + 凭证隔离"
+    status: "review"
+    who: "gaga 轨道 · #1445 OPEN — 4 must-fix 已修, 卡 baseline"
+    acceptance:
+      - {text: "4 项安全 must-fix 已修(ratchet authorizing_cap 掉/grantee 绑定留 · gitleaks 0 · 凭证 fail-loud · rebase+mix.lock); 安全架构评审过(CapBAC/凭证无泄漏/CAS 围栏)", done: true, evidence: "DomainGit 155/0; GitHub plugin 63/0"}
+      - {text: "★ 同 #1476 类: 4 个 pre-existing baseline-gate 撞(新 github/cc/codex/feishu 插件站点未注册)→ gaga 注册进 baseline; ratchet/CapBAC diff 过评审门再合", done: false}
+  # ---------- 进行中 (WIP · 今日推进) ----------
+  - owner: "allen"
+    title: "#195 统一撤销(kimi 自驱)"
+    goal: "F→G→D→M→Z 跑完 → cc+codex 评审合"
+    status: "wip"
+    who: "Allen 轨道 · #1503(kimi)· 重启续跑中"
+    acceptance:
+      - {text: "kimi 跑到 F→G→D-partial(+7293 行)后夜间断线, 已重启续 M/D→Z; 未提交活备份无丢失", done: false}
+      - {text: "kimi 改标题 [DONE] → cc + codex 对抗评审 + pre-merge gate → 合", done: false}
+  - owner: "allen"
+    title: "合并队列 gate(#1497/#1501)"
+    goal: "过评审门 + 作者 rebase 后收编"
+    status: "wip"
+    who: "Allen 轨道 · #1497 / #1501"
+    acceptance:
+      - {text: "#1497 refresh plugin views/caps + #1501 unify held+pending caps: 落后 main 需作者 rebase; #1501 'fixes 41≠39' 效力待评审验证, 不赶", done: false}
+  - owner: "jjkysy"
+    title: "挂载-撤销 infra + 协作白板二轮"
+    goal: "宿主退场清理 + 冷建 deadline + kanban"
+    status: "wip"
+    who: "jjkysy 轨道 · #1470(lead 已 rebase)/ #1474 / #1376 / #1301"
+    acceptance:
+      - {text: "#1470 unmount_all_for_target + 冷建 deadline — 已替 rebase 零冲突; 确认 CI 绿 + 语义 sanity → 评审门 → 自己合", done: false}
+      - {text: "#1474 kanban 二轮 / #1376 通用挂载 infra / #1301 dealscout 改版", done: false}
+  - owner: "ruihua"
+    title: "企业自助开通产品化 + demo socialware"
+    goal: "自助开 workspace 旅程 + Profile/DealScout"
+    status: "wip"
+    who: "ruihua 轨道 · #1436 #1419 #1388"
+    acceptance:
+      - {text: "#1436 企业自助开通 workspace 产品化(旅程+验收)/ #1419 Profile / #1388 DealScout demo; 依赖 #1476 前端分层解卡", done: false}
+  # ---------- 计划 (PLANNED 07-22 新增) ----------
+  - owner: "allen"
+    title: "★ 创建 ezagent-git GitHub App (NEW)"
+    goal: "ezagent42 组织下建 ezagent-git App, 服务三环境"
+    status: "planned"
+    who: "Allen 轨道 · 一键 manifest · 07-22"
+    acceptance:
+      - {text: "用一键 manifest 表单建 App(3 callback canary/beta/app + webhook + 最小权限 contents/PR 写、checks/metadata 读); 一个 GitHub App 覆盖三环境(至多 10 callback)", done: false}
+      - {text: "拿到 app_id/private key/client_secret/webhook_secret → 写入 ezagent-deploy secrets(prod 轮换渠道里贴过的那个)", done: false}
+  - owner: "allen"
+    title: "★ 对接信息协会 Feishu"
+    goal: "把 ezagent 对接信息协会的 Feishu, 落一条真实外部渠道"
+    status: "planned"
+    who: "Allen 轨道 · BD/对外"
+    acceptance:
+      - {text: "信息协会 Feishu app 接入(app_id/渠道绑定/入站出站)+ 打通一条真实会话/agent 回复链路作为对接验证", done: false}
+  - owner: "allen"
+    title: "★ 整理创业教具方案"
+    goal: "ezagent 作为创业/教学教具的方案整理成型"
+    status: "planned"
+    who: "Allen 轨道 · 产品/对外"
+    acceptance:
+      - {text: "创业教具方案文档(定位/场景/演示路径/落地形态)", done: false}
+  - owner: "ruihua"
+    title: "★ 设计信息协会 demo 方案"
+    goal: "为信息协会对接设计 demo socialware(配合 Allen 的 Feishu 对接)"
+    status: "planned"
+    who: "ruihua 轨道 · demo 设计"
+    acceptance:
+      - {text: "信息协会 demo socialware 方案(场景/旅程/页面/数据)", done: false}
+
+review:
+  # ---------- 昨日复盘 (07-21) ----------
+  method_deltas:
+    - "dockerize CI 落地(容器化 mac gate + per-run postgres 容器)+ 3 self-hosted runner 并跑抽干 60 队列; gate flake 真根因 = CPUSET pin 同核→并发运行互相饥饿(非 docker 隔离问题), unpin 后跨 28 核铺开。"
+    - "demo_smoke 反复 flake 结构性根治: 断言『非空 + 良构 session URI 不变量』而非固定 seed —— 治的是并发套件竞争, 不是补重试。"
+    - "★ #195 整程序(30 PR/5 phase)一次性交 kimi 自驱验证了 whole-program 交接: kimi 读~99 步再写、可行; 但 whole-program 长跑需盯断线, 用 [DONE] 标题作完成信号 + 未提交活主动备份。"
+    - "★『先复现再下结论』再次兑现: 当日三个初判(CI账单/gitleaks/greeter 路由)全在独立复现/核验下被纠正 —— 结论前先造复现环境已成默认动作。"
+  incidents:
+    - "🟡 kimi #195 夜间断线一次(跑到 F→G→D-partial +7293 行后停), 已重启续 M/D→Z; 未提交活已备份, 无丢失。"
+    - "🟡 官网 greeter 崩 = #1457 强签名的 self-target 解析不对称回归(只翻全局 registry、漏实例集), 非路由/挂载; 修 #1507 走评审 gate。"
+    - "🟡 CI gate flake 真根因 = CPUSET 并发饥饿(#1506 已修); #1482 populated-DB 重启崩仍开着待 triage。"
+  delivery:
+    - {owner: "Allen 轨道", delivered: "dockerize CI+3runner / 读平面收口 #1494 / demo_smoke修 #1495 / ratchet门 #1500 / ci.fast #1504 / 官网seed #1505 / cpuset #1506 / #195交kimi / greeter根因", acceptance_result: "8 PR 合入, main 全绿, 队列抽干", carryover: "#195 续跑 · #1507 评审合"}
+    - {owner: "zyli", delivered: "reconcile stale presenter caps #1477", acceptance_result: "入 main, 绿", carryover: "#1476 待 baseline 注册后合"}
+    - {owner: "gaga", delivered: "#1445 4 项安全 must-fix + 安全架构评审", acceptance_result: "修完, DomainGit 155/0", carryover: "卡 baseline 注册 + socialware 集成"}
+    - {owner: "jjkysy", delivered: "#1470 已代 rebase(零冲突)", acceptance_result: "待确认 CI + 自合", carryover: "确认 → 评审门 → 自合"}
+  next_day:
+    - "#1507 greeter 修过对抗评审 gate → admin-合 → 官网 greeter 通(今日)。"
+    - "#195 kimi 改 [DONE] → cc + codex 对抗评审 + pre-merge gate → 合。"
+    - "#1476(zyli)/ #1445(gaga)作者把新插件站点注册进 frozen baseline 后 → 评审门 → 合。"
+    - "创建 ezagent-git GitHub App → app_id/private key/secrets 写入 ezagent-deploy(prod 轮换渠道贴过的)。"

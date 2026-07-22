@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 看板 · 2026-07-22</title>
+<style>
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · 2026-07-22</h1>
+        <div class="north"><b>北极星：</b>agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。</div>
+      </div>
+      <div class="prog"><div class="lab"><span>CI 健康 + 部署闸(含 dockerize)</span><span>★dockerize CI 落地: 每 PR 走容器化 mac gate(OrbStack, per-run postgres)。★根因 CPUSET pin-同核→并发饥饿(#1506 unpin),3 self-hosted runner 并跑把 60→0 队列抽干。gate 从 flake 到稳。</span></div><div class="bar"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>读平面授权收口</span><span>PR-1..5 全在 main + canary,InternalReads 网关收尾(#1494)。demo_smoke 并发 flake 结构性修(#1495, 断言不变量而非固定 seed)。读平面授权面闭合。</span></div><div class="bar b"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>统一 generation 撤销(#195)</span><span>30 PR 工程。Phase F-1 地基入 main(#1493)。整程序(F→G→D→M→Z)一次性交 kimi 自驱, Phase-0 三项产品决策已定 green-light。kimi 跑到 F→G→D-partial 后夜间断线, 已重启续跑。cc+codex 在 [DONE] 时对抗评审 + 合。</span></div><div class="bar b"><i style="width:50%"></i></div><div class="lab" style="margin-top:6px"><span>greeter-relay 修(#1457 回归)</span><span>★官网 hello greeter 崩根因: #1457 强签名的 self-target 解析不对称 —— 只翻全局 BehaviorRegistry、漏了实例自己的 behavior 集(≠路由/挂载问题)。独立复现环境实证(fail-before badmatch → pass-after)。修法 Option 2(#1507): self 分支也查实例集, 保 RF-1 anti-shadowing。评审 gate 中, 今日合。</span></div><div class="bar b"><i style="width:90%"></i></div><div class="lab" style="margin-top:6px"><span>插件 UI 分层(去 world 硬编)</span><span>#1477 reconcile stale presenter caps 入 main(缓存新鲜度轴)。zyli #1476 plugin-owned UI surfaces 代码完成待评审(卡在 frozen baseline 注册)。</span></div><div class="bar b"><i style="width:35%"></i></div><div class="lab" style="margin-top:6px"><span>Git provider 接入(gaga)</span><span>#1445 provider-neutral task access 域脊: 4 项安全 must-fix 已修(ratchet/gitleaks/凭证 fail-loud/rebase), 安全架构评审过。卡在 frozen baseline 注册 + socialware 集成(明日)。</span></div><div class="bar b"><i style="width:25%"></i></div><div class="lab" style="margin-top:6px"><span>企业自助开通产品化(ruihua)</span><span>#1436 用户旅程+验收 / #1419 Profile / #1388 DealScout demo。依赖 cap-signing 收口 + #1476 前端分层。</span></div><div class="bar b"><i style="width:15%"></i></div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff"><div><b>8.3h<span style="color:#f87171;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↓6</span></b><span>07-21 活跃工时(git下界) · 昨 14.8h</span></div><div><b>8<span style="color:#f87171;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↓5</span></b><span>07-21 merged PR · 昨 13</span></div><div><b>0.05<span style="color:#f87171;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↓0.04</span></b><span>07-21 折算人月(160h) · 昨 0.09</span></div><div><b>3</b><span>self-hosted mac runner 并跑 · 队列 60→0</span></div></div></div>
+    <div class="src">总效能来源：07-21 实测 pr_session_hours.py（git-hours 下界 · ~1min 可复算）；&#x27;Allen Woods&#x27;作者=协调 agent 墙钟非人力；当日产出或次日才合入、此法略低估。07-21 PR 数/工时较 07-20 低,但当日重心是 dockerize CI 落地 + 深挖根因(CPUSET 并发饥饿 / greeter #1457 回归 / demo_smoke flake)+ #195 整程序交接 + 夜间单人协调,产出密度不体现在 PR 计数。</div>
+  </div>
+  <div><div class="deploy"><div><span class="s">canary</span>✅ 全线上线(读平面 + operator门 + 原子snapshot + #185 + cc-headless-custom + Phase F + member-cap 修复 + 官网 governed seed)。dogfood 观察中。</div><div><span class="s">beta</span>⏳ 待 cutover —— **必须跑 member-cap `:receive` backfill**(否则老成员被锁), 已入清单。</div><div><span class="s">stable</span>⏳ 待 cutover —— 同 beta。</div></div></div>
+  <div class="risk"><b>风险：</b>🟡 greeter-relay(#1457 回归)只在 hello 官网 self-target 路径触发; 修 #1507 是 cap-adjacent, 走对抗评审 gate 才合(不自审合)。<br>🟡 合并队列卡在同一类: 插件 PR 加的新站点撞 frozen arch/invariant baseline(#1476 / #1445), app-suite 测试测不到、只有 gate 的 invariants 目录逮。作者需把新站点注册进 baseline 后才合。#1497/#1501 落后 main 需 rebase; #1501 &#x27;fixes 41≠39&#x27; 效力待验。<br>🟡 #1482(gaga 挖到): populated DB 重启 → world after_boot 撞 `{:already_registered, workspace://system}`(2/2 确定性)。canary release 道无事, 影响 dev 重启 + dockerize CI。已开 issue, 建议优先 triage。<br>🟡 member-cap durable 未落: 本轮数据级 re-grant 现有 roster。永久解 = seed/迁移时发 cap; #195 Phase M/#166 落地收口。</div>
+  <div class="legend">人：<span class="lg"><span class="odot" style="background:#7c3aed"></span>gaga</span> <span class="lg"><span class="odot" style="background:#0891b2"></span>zyli</span> <span class="lg"><span class="odot" style="background:#db2777"></span>ruihua</span> <span class="lg"><span class="odot" style="background:#65a30d"></span>jjkysy</span> <span class="lg"><span class="odot" style="background:#2563eb"></span>Allen 轨道</span>　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    <div class="colwrap"><div class="colhead c-plan">计划 <span class="cnt">4</span></div><div class="cell"><div class="card" style="--pc:#db2777"><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">★ 设计信息协会 demo 方案</div><div class="g">为信息协会对接设计 demo socialware(配合 Allen 的 Feishu 对接)</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ 设计信息协会 demo 方案" data-who="ruihua 轨道 · demo 设计" data-acc='[[&quot;todo&quot;, &quot;信息协会 demo socialware 方案(场景/旅程/页面/数据)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ 创建 ezagent-git GitHub App (NEW)</div><div class="g">ezagent42 组织下建 ezagent-git App, 服务三环境</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ 创建 ezagent-git GitHub App (NEW)" data-who="Allen 轨道 · 一键 manifest · 07-22" data-acc='[[&quot;todo&quot;, &quot;用一键 manifest 表单建 App(3 callback canary/beta/app + webhook + 最小权限 contents/PR 写、checks/metadata 读); 一个 GitHub App 覆盖三环境(至多 10 callback)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;拿到 app_id/private key/client_secret/webhook_secret → 写入 ezagent-deploy secrets(prod 轮换渠道里贴过的那个)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ 对接信息协会 Feishu</div><div class="g">把 ezagent 对接信息协会的 Feishu, 落一条真实外部渠道</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ 对接信息协会 Feishu" data-who="Allen 轨道 · BD/对外" data-acc='[[&quot;todo&quot;, &quot;信息协会 Feishu app 接入(app_id/渠道绑定/入站出站)+ 打通一条真实会话/agent 回复链路作为对接验证&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ 整理创业教具方案</div><div class="g">ezagent 作为创业/教学教具的方案整理成型</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ 整理创业教具方案" data-who="Allen 轨道 · 产品/对外" data-acc='[[&quot;todo&quot;, &quot;创业教具方案文档(定位/场景/演示路径/落地形态)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-wip">进行中 <span class="cnt">4</span></div><div class="cell"><div class="card" style="--pc:#db2777"><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">企业自助开通产品化 + demo socialware</div><div class="g">自助开 workspace 旅程 + Profile/DealScout</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="企业自助开通产品化 + demo socialware" data-who="ruihua 轨道 · #1436 #1419 #1388" data-acc='[[&quot;todo&quot;, &quot;#1436 企业自助开通 workspace 产品化(旅程+验收)/ #1419 Profile / #1388 DealScout demo; 依赖 #1476 前端分层解卡&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#65a30d"><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">挂载-撤销 infra + 协作白板二轮</div><div class="g">宿主退场清理 + 冷建 deadline + kanban</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="挂载-撤销 infra + 协作白板二轮" data-who="jjkysy 轨道 · #1470(lead 已 rebase)/ #1474 / #1376 / #1301" data-acc='[[&quot;todo&quot;, &quot;#1470 unmount_all_for_target + 冷建 deadline — 已替 rebase 零冲突; 确认 CI 绿 + 语义 sanity → 评审门 → 自己合&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#1474 kanban 二轮 / #1376 通用挂载 infra / #1301 dealscout 改版&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#195 统一撤销(kimi 自驱)</div><div class="g">F→G→D→M→Z 跑完 → cc+codex 评审合</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="#195 统一撤销(kimi 自驱)" data-who="Allen 轨道 · #1503(kimi)· 重启续跑中" data-acc='[[&quot;todo&quot;, &quot;kimi 跑到 F→G→D-partial(+7293 行)后夜间断线, 已重启续 M/D→Z; 未提交活备份无丢失&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;kimi 改标题 [DONE] → cc + codex 对抗评审 + pre-merge gate → 合&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">合并队列 gate(#1497/#1501)</div><div class="g">过评审门 + 作者 rebase 后收编</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="合并队列 gate(#1497/#1501)" data-who="Allen 轨道 · #1497 / #1501" data-acc='[[&quot;todo&quot;, &quot;#1497 refresh plugin views/caps + #1501 unify held+pending caps: 落后 main 需作者 rebase; #1501 &#x27;fixes 41≠39&#x27; 效力待评审验证, 不赶&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-rev">待评审 / 验收 <span class="cnt">3</span></div><div class="cell"><div class="card" style="--pc:#7c3aed"><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">Git Provider V1 域脊(#1445)</div><div class="g">provider-neutral task access + 凭证隔离</div><div class="accm"><span class="d">☑</span> 1/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="Git Provider V1 域脊(#1445)" data-who="gaga 轨道 · #1445 OPEN — 4 must-fix 已修, 卡 baseline" data-acc='[[&quot;done&quot;, &quot;4 项安全 must-fix 已修(ratchet authorizing_cap 掉/grantee 绑定留 · gitleaks 0 · 凭证 fail-loud · rebase+mix.lock); 安全架构评审过(CapBAC/凭证无泄漏/CAS 围栏)&quot;, &quot;DomainGit 155/0; GitHub plugin 63/0&quot;], [&quot;todo&quot;, &quot;★ 同 #1476 类: 4 个 pre-existing baseline-gate 撞(新 github/cc/codex/feishu 插件站点未注册)→ gaga 注册进 baseline; ratchet/CapBAC diff 过评审门再合&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#0891b2"><div class="owner"><span class="odot" style="background:#0891b2"></span>zyli</div><div class="t">插件自声明 UI / World 分层(#1476)</div><div class="g">World 页面+action 从插件声明动态枚举, fail-closed</div><div class="accm"><span class="d">☑</span> 1/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="插件自声明 UI / World 分层(#1476)" data-who="zyli 轨道 · #1476 OPEN — 代码完成, 卡 baseline 注册" data-acc='[[&quot;done&quot;, &quot;World 页面/action registry 改为从插件声明动态枚举 + 严格 fail-closed; Kanban 迁入插件自声明; Mix 构建期 renderer manifest; 前端 272/272&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;★ 卡点 = 新 World-UI 站点撞 frozen arch/invariant baseline(PluginWorkspaceLocalityContract 等), app-suite 测不到只有 gate invariants 逮 → 需把新站点注册进 baseline 再合&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ greeter-relay 修(#1507)</div><div class="g">#1457 self-target 解析不对称的治本修 + 今日合</div><div class="accm"><span class="d">☑</span> 1/2 验收</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ greeter-relay 修(#1507)" data-who="Allen 轨道 · #1507 OPEN mergeable · Option 2" data-acc='[[&quot;done&quot;, &quot;self 分支新增 RuntimeView 进程字典 compartment(dispatch chokepoint 带 {kind_module,slice_state}, try/after 存复原), 解析走实例集; 保 RF-1 全局优先 anti-shadowing; 无授权洞; py/cc-headless 不回归&quot;, &quot;cap invariants 396/0; fail-before/pass-after&quot;], [&quot;todo&quot;, &quot;对抗评审 gate 过后 admin-合(cap-adjacent 不自审合)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-done">完成 · 昨日 07-21 <span class="cnt">6</span></div><div class="cell"><div class="card done" style="--pc:#0891b2"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#0891b2"></span>zyli</div><div class="t">reconcile stale presenter caps(#1477)</div><div class="g">缓存 caps 新鲜度轴</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="reconcile stale presenter caps(#1477)" data-who="zyli 轨道 · #1477 入 main" data-acc='[[&quot;done&quot;, &quot;reconcile stale presenter capabilities: 缓存的 presenter caps 按新鲜度轴对账, 消除陈旧 cap 竞态&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ dockerize CI 落地 + 3 runner 抽干队列</div><div class="g">每 PR 走容器化 mac gate + 并发不打架</div><div class="accm"><span class="d">☑</span> 已验收 · 3/3</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ dockerize CI 落地 + 3 runner 抽干队列" data-who="Allen 轨道 · #1502 / #1506 + 3 self-hosted runner" data-acc='[[&quot;done&quot;, &quot;dockerize gate + gitleaks 上 self-hosted mac(OrbStack, per-run postgres 容器)(#1502)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;★ 根因 gate flake = CPUSET pin 同核 → 并发运行互相饥饿; unpin 让并发跨 28 核铺开(#1506)&quot;, &quot;3×/5× 并发绿&quot;], [&quot;done&quot;, &quot;3 个 self-hosted mac runner 并跑, CI 队列 60→0 抽干&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">读平面收口 + demo_smoke flake 结构性修</div><div class="g">InternalReads 网关收尾 + 消灭并发 flake</div><div class="accm"><span class="d">☑</span> 已验收 · 2/2</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="读平面收口 + demo_smoke flake 结构性修" data-who="Allen 轨道 · #1494 / #1495" data-acc='[[&quot;done&quot;, &quot;读平面 PR-5 InternalReads 网关(框架内部无主体读走窄网关, 两侧边界防洗白)入 main+canary(#1494)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;★ demo_smoke 反复 flake 根因 = 并发套件竞争固定 seed; 改断言『非空 + 良构 session URI 不变量』而非特定 seed(#1495)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">anti-bypass ratchet 门 + ci.fast 本地闸</div><div class="g">并发开发防授权旁路回潮 + 快本地 gate</div><div class="accm"><span class="d">☑</span> 已验收 · 2/2</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="anti-bypass ratchet 门 + ci.fast 本地闸" data-who="Allen 轨道 · #1500 / #1504" data-acc='[[&quot;done&quot;, &quot;authorize chokepoint RATCHET 门(9 探针 + per-probe allowlist + presence-tripwire, offenders==[]), Z-1 前置(#1500)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;`mix ci.fast` 快本地 arch/invariant 子集 + skill 规则(治 agent 120s 超时杀 precommit)(#1504)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">官网 governed deploy-seed(#1505)</div><div class="g">官网 system/hello/web 自愈式治理 seed</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="官网 governed deploy-seed(#1505)" data-who="Allen 轨道 · #1505" data-acc='[[&quot;done&quot;, &quot;凭证优先(CredentialBridge)+ 页面投影缺席闸 + FusionSeed 供给, config-gated(dev/prod 开、test 关); 官网缺失自愈&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ #195 整程序交 kimi + greeter 根因</div><div class="g">统一撤销一次性交接 + 官网崩根因定位</div><div class="accm"><span class="d">☑</span> 已验收 · 2/2</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="★ #195 整程序交 kimi + greeter 根因" data-who="Allen 轨道 · #195 Phase-0 green-light / greeter 分析" data-acc='[[&quot;done&quot;, &quot;#195(30 PR/5 phase)整程序一次性交 kimi 自驱; Phase-0 三项产品决策定案 green-light(supervisor=per-session reviewer-member / delete_user=agent 撤销+结构资源转 workspace owner / 全可 rejoin)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;★ 官网 greeter 崩根因: 独立复现证明是 #1457 self-target 解析不对称(非路由/挂载), fail-before/pass-after 实证 + 314 行分析&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+  </div>
+  <div class="review">
+    <h2>昨日复盘（07-21） · 卡片验收结果 + 方法/事故</h2>
+    <div class="grid2">
+      <div class="good"><b>方法沉淀</b><br>• dockerize CI 落地(容器化 mac gate + per-run postgres 容器)+ 3 self-hosted runner 并跑抽干 60 队列; gate flake 真根因 = CPUSET pin 同核→并发运行互相饥饿(非 docker 隔离问题), unpin 后跨 28 核铺开。<br>• demo_smoke 反复 flake 结构性根治: 断言『非空 + 良构 session URI 不变量』而非固定 seed —— 治的是并发套件竞争, 不是补重试。<br>• ★ #195 整程序(30 PR/5 phase)一次性交 kimi 自驱验证了 whole-program 交接: kimi 读~99 步再写、可行; 但 whole-program 长跑需盯断线, 用 [DONE] 标题作完成信号 + 未提交活主动备份。<br>• ★『先复现再下结论』再次兑现: 当日三个初判(CI账单/gitleaks/greeter 路由)全在独立复现/核验下被纠正 —— 结论前先造复现环境已成默认动作。</div>
+      <div class="inc"><b>风险/事故</b><br>• 🟡 kimi #195 夜间断线一次(跑到 F→G→D-partial +7293 行后停), 已重启续 M/D→Z; 未提交活已备份, 无丢失。<br>• 🟡 官网 greeter 崩 = #1457 强签名的 self-target 解析不对称回归(只翻全局 registry、漏实例集), 非路由/挂载; 修 #1507 走评审 gate。<br>• 🟡 CI gate flake 真根因 = CPUSET 并发饥饿(#1506 已修); #1482 populated-DB 重启崩仍开着待 triage。</div>
+    </div>
+    <table><tr><th>人</th><th>交付</th><th>验收结果</th><th>结转今日</th></tr><tr><td>Allen 轨道</td><td>dockerize CI+3runner / 读平面收口 #1494 / demo_smoke修 #1495 / ratchet门 #1500 / ci.fast #1504 / 官网seed #1505 / cpuset #1506 / #195交kimi / greeter根因</td><td>8 PR 合入, main 全绿, 队列抽干</td><td>#195 续跑 · #1507 评审合</td></tr><tr><td>zyli</td><td>reconcile stale presenter caps #1477</td><td>入 main, 绿</td><td>#1476 待 baseline 注册后合</td></tr><tr><td>gaga</td><td>#1445 4 项安全 must-fix + 安全架构评审</td><td>修完, DomainGit 155/0</td><td>卡 baseline 注册 + socialware 集成</td></tr><tr><td>jjkysy</td><td>#1470 已代 rebase(零冲突)</td><td>待确认 CI + 自合</td><td>确认 → 评审门 → 自合</td></tr></table>
+    <h3 style="font-size:14px;color:#374151;margin-top:14px">今日建议</h3>
+    <div style="font-size:12.5px;color:#475569">• #1507 greeter 修过对抗评审 gate → admin-合 → 官网 greeter 通(今日)。<br>• #195 kimi 改 [DONE] → cc + codex 对抗评审 + pre-merge gate → 合。<br>• #1476(zyli)/ #1445(gaga)作者把新插件站点注册进 frozen baseline 后 → 评审门 → 合。<br>• 创建 ezagent-git GitHub App → app_id/private key/secrets 写入 ezagent-deploy(prod 轮换渠道贴过的)。</div>
+  </div>
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\u5f00\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\u590d\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\u5df2\u590d\u5236 \u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+</script>
+</body>
+</html>
