@@ -315,7 +315,7 @@ defmodule Ezagent.Socialware.AnonUser.GC do
     uri = Ezagent.URI.new!(entity_uri)
 
     case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} -> Ezagent.Kind.terminate(uri)
+      {:ok, _pid} -> Ezagent.Kind.terminate!(uri)
       :error -> :ok
     end
   rescue

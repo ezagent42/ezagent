@@ -27,6 +27,15 @@ defmodule Ezagent.Identity.Offboarding.DeleteUser do
     kind, reason -> {:error, {:delete_user_invalidation_failed, {kind, reason}}}
   end
 
+  @spec cleanup(URI.t()) :: :ok
+  def cleanup(%URI{} = user_uri) do
+    user_uri
+    |> cleanup_targets()
+    |> Enum.each(&best_effort_reap/1)
+
+    :ok
+  end
+
   defp invalidate_descendants(descendants, deleted_user, owned) do
     Enum.reduce_while(descendants, :ok, fn uri, :ok ->
       case classify(uri, owned) do
@@ -78,4 +87,28 @@ defmodule Ezagent.Identity.Offboarding.DeleteUser do
 
   defp continue(:ok), do: {:cont, :ok}
   defp continue({:error, reason}), do: {:halt, {:error, reason}}
+
+  defp cleanup_targets(user_uri) do
+    agents =
+      user_uri
+      |> DerivationEdges.ownership_descendants()
+      |> Enum.filter(&(Ezagent.URI.scheme?(&1, :entity) and Ezagent.URI.type?(&1, :agent)))
+
+    Enum.uniq_by(agents ++ [user_uri], &Ezagent.URI.stable_key/1)
+  end
+
+  defp best_effort_reap(uri) do
+    case Ezagent.Identity.Offboarding.Reaper.teardown_and_reap(uri) do
+      :ok ->
+        Ezagent.Identity.ReapQueue.resolve(uri)
+
+      {:error, _reason} ->
+        _ = Ezagent.Identity.ReapQueue.enqueue(uri)
+        :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
 end

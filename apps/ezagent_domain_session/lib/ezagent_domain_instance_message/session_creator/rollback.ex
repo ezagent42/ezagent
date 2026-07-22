@@ -76,7 +76,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       )
     end)
 
-    safe(:destroy_session, fn -> Ezagent.Lifecycle.destroy(session_uri, :rollback) end)
+    safe(:destroy_session, fn -> Ezagent.Lifecycle.destroy!(session_uri, :rollback) end)
     safe(:unbind_session, fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     :ok
   end

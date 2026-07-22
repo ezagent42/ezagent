@@ -765,7 +765,7 @@ defmodule EzagentDomainInstanceMessage.Application do
 
       {:error, :failed} when retry_failed_incarnation? ->
         # SessionTemplate termination is synchronous; retry exactly once.
-        :ok = Ezagent.Kind.terminate(uri)
+        :ok = Ezagent.Kind.terminate!(uri)
         do_seed_default_session_template(workspace_uri, false)
 
       {:error, reason} ->
@@ -791,7 +791,7 @@ defmodule EzagentDomainInstanceMessage.Application do
 
   defp clear_live_template_without_snapshot(uri) do
     if Ezagent.Ecto.KindSnapshot.get(URI.to_string(uri)) == nil do
-      Ezagent.Kind.terminate(uri)
+      Ezagent.Kind.terminate!(uri)
     else
       :ok
     end

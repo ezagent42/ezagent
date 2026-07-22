@@ -226,7 +226,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
             {:ok, [agent_uri], %{fresh?: true}}
 
           {:error, reason} ->
-            Ezagent.Kind.terminate(agent_uri)
+            Ezagent.Kind.terminate!(agent_uri)
             {:error, reason}
         end
 

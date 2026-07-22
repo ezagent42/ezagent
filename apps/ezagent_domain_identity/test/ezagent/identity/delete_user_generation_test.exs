@@ -67,14 +67,15 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     assert [%{generation: next_user_generation} | _] = authority_rows_desc(user)
     assert next_user_generation == user_generation + 1
     assert Ezagent.Ecto.KindCapAuthority.active(Ezagent.URI.stable_key(user)) == nil
-    assert {:ok, next_derived_generation} = Authority.current_generation(derived)
+    assert [%{generation: next_derived_generation} | _] = authority_rows_desc(derived)
     assert next_derived_generation == derived_generation + 1
+    assert :error = Authority.current_generation(derived)
     assert {:ok, ^independent_generation} = Authority.current_generation(independent)
 
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
     assert EntityCaps.load(derived) == []
     assert EntityCaps.load_persisted(derived) == []
-    assert Process.alive?(derived_pid)
+    refute Process.alive?(derived_pid)
     assert [_ | _] = EntityCaps.load_persisted(independent)
 
     refute RevocationFence.fenced?(user)
@@ -82,11 +83,8 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     refute RevocationFence.fenced?(independent)
     assert Users.get_by_uri(user) == nil
 
-    assert {:ok, %{state: state}} = SnapshotStore.latest(derived)
-
-    refute Enum.any?(get_in(state, [:identity, :state, :caps]) || [], fn cap ->
-             Capability.action_of(cap) == :self_license
-           end)
+    assert {:error, :not_found} = SnapshotStore.latest(derived)
+    refute derived in Ezagent.Identity.ReapQueue.pending()
   end
 
   defp self_license(principal, kind_type) do

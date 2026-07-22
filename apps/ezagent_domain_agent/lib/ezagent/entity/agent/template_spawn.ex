@@ -822,7 +822,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # them — unlike the plugin Template Class, which must not touch them).
   defp undo_fresh_workers(workers) do
     Enum.each(workers, fn worker_uri ->
-      _ = Ezagent.Kind.terminate(worker_uri)
+      _ = Ezagent.Kind.terminate!(worker_uri)
 
       Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
         Ezagent.WorkspaceRegistry.unbind(worker_uri)

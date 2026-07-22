@@ -682,11 +682,18 @@ defmodule Ezagent.Lifecycle do
   Kind that wants to delete itself must emit a `:terminate` effect (which
   ends its own life) and let an EXTERNAL caller invoke `destroy/2`.
   """
-  @spec destroy(URI.t() | String.t(), term()) :: :ok | {:error, :cannot_self_destroy}
+  @spec destroy(URI.t() | String.t(), term()) :: :ok | {:error, term()}
   def destroy(uri, reason \\ :destroy) do
     uri = canonical_instance_uri(uri)
 
     with_entity_transition(uri, fn -> do_destroy(uri, reason) end)
+  end
+
+  @doc "Best-effort permanent deletion for callers that do not observe cleanup convergence."
+  @spec destroy!(URI.t() | String.t(), term()) :: :ok
+  def destroy!(uri, reason \\ :destroy) do
+    _ = destroy(uri, reason)
+    :ok
   end
 
   @doc """
@@ -752,41 +759,27 @@ defmodule Ezagent.Lifecycle do
     #    next incarnation's `activate/2` must self-heal — §OTP). The
     #    self-call guard lives HERE (before the durable clear) so a
     #    rejected self-destroy leaves the row + process untouched.
-    case run_developer_destroy_hooks(uri_str, reason) do
-      :ok ->
-        # 2. Terminate the process FIRST (synchronous —
-        #    `Kind.terminate/1` blocks on `DynamicSupervisor.terminate_child`
-        #    until the process is dead; idempotent — already-gone is :ok).
-        #    The developer destroy hooks already ran above against the live
-        #    Kind, so termination loses nothing.
-        case Ezagent.KindRegistry.lookup(uri_str) do
-          {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
-          :error -> :ok
-        end
+    with :ok <- run_developer_destroy_hooks(uri_str, reason),
+         :ok <- terminate_live(uri_str) do
+      # A live target retires its authority while draining developer destroy
+      # hooks in Kind.Server. A cold target has no hook process, so retire the
+      # active row here as well. Idempotency makes this the single post-
+      # termination guarantee for both paths: a later genuine create must
+      # append a strictly newer generation instead of reopening the old key.
+      :ok = Ezagent.Cap.Authority.retire(uri)
 
-        # A live target retires its authority while draining developer destroy
-        # hooks in Kind.Server. A cold target has no hook process, so retire the
-        # active row here as well. Idempotency makes this the single post-
-        # termination guarantee for both paths: a later genuine create must
-        # append a strictly newer generation instead of reopening the old key.
-        :ok = Ezagent.Cap.Authority.retire(uri)
+      # Clear durable state only after teardown is CONFIRMED. A failed custom
+      # teardown or module query leaves the snapshot intact for the reaper.
+      :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
 
-        # 3. Clear durable state + ever-created marker AFTER the process is
-        #    gone — the final, race-free delete. If `delete` ran first
-        #    (the previous order), a live `{:snapshot, :on_change}` Kind
-        #    could commit a queued/concurrent dispatch in the window before
-        #    terminate, re-`upsert`ing the row and resurrecting a
-        #    destroyed/rolled-back Kind on the next boot (codex review #533
-        #    5a). Terminating first closes that window; this also reaps
-        #    anything an `:on_terminate` `terminate/2` save just wrote.
-        :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
+      :ok
+    end
+  end
 
-        :ok
-
-      {:error, :cannot_self_destroy} = err ->
-        # NEVER proceed to the durable clear / terminate — that is the
-        # torn "row gone but process alive" state F2 guards against.
-        err
+  defp terminate_live(uri_str) do
+    case Ezagent.KindRegistry.lookup(uri_str) do
+      {:ok, _pid} -> Ezagent.Kind.terminate(Ezagent.URI.new!(uri_str))
+      :error -> :ok
     end
   end
 
@@ -820,12 +813,14 @@ defmodule Ezagent.Lifecycle do
 
       {:ok, pid} when is_pid(pid) ->
         try do
-          GenServer.call(pid, {:ezagent_lifecycle_destroy, reason}, 5_000)
+          case GenServer.call(pid, {:ezagent_lifecycle_destroy, reason}, 5_000) do
+            {:error, _reason} = error -> error
+            _result -> :ok
+          end
         catch
-          :exit, _ -> :ok
+          :exit, {:timeout, _} -> {:error, :destroy_hook_timeout}
+          :exit, reason -> {:error, {:destroy_hook_exit, reason}}
         end
-
-        :ok
 
       :error ->
         :ok

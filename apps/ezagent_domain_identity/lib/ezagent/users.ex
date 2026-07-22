@@ -245,7 +245,7 @@ defmodule Ezagent.Users do
             {:error, :cannot_self_destroy}
           else
             with :ok <- Ezagent.Identity.Offboarding.DeleteUser.invalidate(principal),
-                 :ok <- destroy_best_effort(principal),
+                 :ok <- Ezagent.Identity.Offboarding.DeleteUser.cleanup(principal),
                  {:ok, _deleted} <- Repo.delete(row) do
               :ok
             end
@@ -256,15 +256,6 @@ defmodule Ezagent.Users do
 
   defp self_target?(principal) do
     match?({:ok, pid} when pid == self(), Ezagent.KindRegistry.lookup(principal))
-  end
-
-  defp destroy_best_effort(principal) do
-    case Ezagent.Lifecycle.destroy(principal) do
-      {:error, :cannot_self_destroy} = error -> error
-      _ -> :ok
-    end
-  rescue
-    _ -> :ok
   end
 
   @doc "Set or rotate a user's password. Returns `{:ok, decoded}` or `{:error, :not_found}`."

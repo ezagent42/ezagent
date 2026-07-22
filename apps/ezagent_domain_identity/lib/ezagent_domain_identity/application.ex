@@ -73,7 +73,8 @@ defmodule EzagentDomainIdentity.Application do
 
     children = [
       {DynamicSupervisor, name: __MODULE__.UserSupervisor, strategy: :one_for_one},
-      Ezagent.Identity.RecipeCapBinding.Sweeper
+      Ezagent.Identity.RecipeCapBinding.Sweeper,
+      Ezagent.Identity.ReapQueue
     ]
 
     # PR #141 (SPEC v2): identity domain owns the User Kind, so it

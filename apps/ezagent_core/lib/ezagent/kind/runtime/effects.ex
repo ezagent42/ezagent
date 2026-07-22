@@ -508,11 +508,11 @@ defmodule Ezagent.Kind.Runtime.Effects do
               "is nil; skipping"
           )
         else
-          _ = Ezagent.Kind.terminate(self_uri)
+          _ = Ezagent.Kind.terminate!(self_uri)
         end
 
       {:terminate, %URI{} = target_uri} ->
-        _ = Ezagent.Kind.terminate(target_uri)
+        _ = Ezagent.Kind.terminate!(target_uri)
 
       {:terminate, other} ->
         Logger.warning(

@@ -415,7 +415,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   defp rollback_runtime(agent_uri) do
     _ = EzagentPluginCc.SdkSidecar.stop(agent_uri)
-    _ = Ezagent.Kind.terminate(agent_uri)
+    _ = Ezagent.Kind.terminate!(agent_uri)
     :ok
   end
 

@@ -196,7 +196,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
             {:ok, [agent_uri], base_meta |> Map.merge(role_meta) |> Map.merge(credential_meta)}
           else
             {:error, reason} ->
-              _ = Ezagent.Kind.terminate(agent_uri)
+              _ = Ezagent.Kind.terminate!(agent_uri)
               handle_spawn_failure(agent_uri, reason)
           end
       end

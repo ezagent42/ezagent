@@ -509,9 +509,15 @@ defmodule Ezagent.Kind do
   the child is not under the resolved supervisor.
 
   **Idempotent** — an already-absent / already-terminated URI returns
-  `:ok`. Best-effort: any error in the lookup / query / terminate path
-  is swallowed and `:ok` is returned (the caller is on a failure exit
-  and a teardown step must not mask the original error).
+  `:ok`. The return is honest: `:ok` means the resolved process is confirmed
+  dead; a module-query, custom-teardown, fallback-exit, or liveness failure is
+  returned as `{:error, reason}`. Callers that deliberately do not care about
+  cleanup convergence must use `terminate!/1`.
+
+  Standard `DynamicSupervisor.terminate_child/2` already blocks until the
+  child is dead, so honesty adds no latency there. Only custom teardown and the
+  direct-exit fallback use the short `:terminate_verify_ms` grace (default
+  200ms); setting it to `0` performs one immediate liveness poll.
 
   Before process lookup, the URI is definitively marked failed and any
   `PendingDelivery` casts are dead-lettered. This prevents an authority-bearing
@@ -524,7 +530,7 @@ defmodule Ezagent.Kind do
   Ezagent-layer caller (`Ezagent.Entity.Agent.spawn_from_template_content/4`)
   owns undoing those.
   """
-  @spec terminate(URI.t()) :: :ok
+  @spec terminate(URI.t()) :: :ok | {:error, term()}
   def terminate(%URI{} = uri) do
     :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri)
 
@@ -536,14 +542,16 @@ defmodule Ezagent.Kind do
 
           case DynamicSupervisor.terminate_child(supervisor, pid) do
             :ok ->
-              :ok
+              verify_dead(pid)
 
             {:error, :not_found} ->
               # Not under the resolved supervisor (or already gone) —
               # bring the process down directly so the worker still
               # terminates.
-              _ = Process.exit(pid, :shutdown)
-              :ok
+              exit_and_verify(pid)
+
+            {:error, reason} ->
+              {:error, reason}
           end
 
         {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
@@ -557,15 +565,49 @@ defmodule Ezagent.Kind do
           # path just lets the permanent inner child restart.
           # `terminate_strategy/0` declares the domain-owned teardown.
           _ = apply(mod, fun, [uri, pid])
-          :ok
+          verify_dead(pid)
       end
     else
-      _ -> :ok
+      :error -> :ok
+      {:error, _reason} = error -> error
     end
   rescue
-    _ -> :ok
+    error -> {:error, {:terminate_crashed, error}}
   catch
-    _, _ -> :ok
+    :exit, reason -> {:error, {:terminate_exit, reason}}
+    kind, reason -> {:error, {:terminate_caught, kind, reason}}
+  end
+
+  @doc "Best-effort teardown for don't-care callers; always returns :ok."
+  @spec terminate!(URI.t()) :: :ok
+  def terminate!(%URI{} = uri) do
+    _ = terminate(uri)
+    :ok
+  end
+
+  defp exit_and_verify(pid) do
+    _ = Process.exit(pid, :shutdown)
+    verify_dead(pid)
+  end
+
+  defp verify_dead(pid) do
+    budget_ms = Application.get_env(:ezagent_core, :terminate_verify_ms, 200)
+
+    if wait_dead(pid, budget_ms), do: :ok, else: {:error, :still_alive}
+  end
+
+  defp wait_dead(pid, budget_ms)
+       when is_pid(pid) and is_integer(budget_ms) and budget_ms >= 0 do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _reason} ->
+        true
+    after
+      budget_ms ->
+        Process.demonitor(ref, [:flush])
+        not Process.alive?(pid)
+    end
   end
 
   defp terminate_strategy(kind_module) do
@@ -667,9 +709,11 @@ defmodule Ezagent.Kind do
   defp safe_kind_module(pid) when is_pid(pid) do
     {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)
   rescue
-    _ -> :error
+    error -> {:error, {:module_query_crashed, error}}
   catch
-    _, _ -> :error
+    :exit, {:timeout, _} -> {:error, :module_query_timeout}
+    :exit, reason -> {:error, {:module_query_exit, reason}}
+    kind, reason -> {:error, {:module_query_caught, kind, reason}}
   end
 
   defp resolve_supervisor(kind_module) do
