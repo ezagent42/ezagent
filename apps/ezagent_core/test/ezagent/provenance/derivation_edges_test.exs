@@ -56,6 +56,111 @@ defmodule Ezagent.Provenance.DerivationEdgesTest do
     assert MapSet.new(DerivationEdges.descendants(a)) == MapSet.new([b, c])
   end
 
+  test "ownership closure crosses owned sessions but not child users or hosted workspaces" do
+    root = user("ownership-root")
+    child_user = user("child-user")
+    child_users_agent = agent("child-users-agent")
+    owned_session = session("owned-session")
+    owned_agent = agent("owned-agent")
+    hosted_workspace = workspace("hosted")
+    hosted_agent = agent("hosted-agent")
+
+    assert :ok = DerivationEdges.record_derivation_edge(child_user, root, :created_by, "o1")
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               child_users_agent,
+               child_user,
+               :creation_root,
+               "o2"
+             )
+
+    assert :ok = DerivationEdges.record_derivation_edge(owned_session, root, :created_by, "o3")
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               owned_agent,
+               owned_session,
+               :creation_root,
+               "o4"
+             )
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               hosted_workspace,
+               root,
+               :workspace_ownership,
+               "o5"
+             )
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               hosted_agent,
+               hosted_workspace,
+               :creation_root,
+               "o6"
+             )
+
+    assert MapSet.new(DerivationEdges.ownership_descendants(root)) ==
+             MapSet.new([child_user, owned_session, owned_agent])
+
+    assert MapSet.new(DerivationEdges.descendants(root)) ==
+             MapSet.new([
+               child_user,
+               child_users_agent,
+               owned_session,
+               owned_agent,
+               hosted_workspace,
+               hosted_agent
+             ])
+  end
+
+  test "the latest ownership transfer supersedes historical created_by for revocation" do
+    original_owner = user("original-owner")
+    next_owner = user("next-owner")
+    newest_owner = user("newest-owner")
+    owned_session = session("transferred-session")
+    session_agent = agent("transferred-session-agent")
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               owned_session,
+               original_owner,
+               :created_by,
+               "t1"
+             )
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               session_agent,
+               owned_session,
+               :creation_root,
+               "t2"
+             )
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               owned_session,
+               next_owner,
+               "ownership_transfer:next",
+               "t3"
+             )
+
+    assert :ok =
+             DerivationEdges.record_derivation_edge(
+               owned_session,
+               newest_owner,
+               "ownership_transfer:newest",
+               "t4"
+             )
+
+    refute owned_session in DerivationEdges.ownership_descendants(original_owner)
+    refute owned_session in DerivationEdges.ownership_descendants(next_owner)
+
+    assert MapSet.new(DerivationEdges.ownership_descendants(newest_owner)) ==
+             MapSet.new([owned_session, session_agent])
+  end
+
   test "the agent-lineage compatibility writer records the durable spawned_by edge" do
     root = user("lineage-root")
     child = agent("lineage-child")
@@ -77,4 +182,15 @@ defmodule Ezagent.Provenance.DerivationEdgesTest do
         :agent,
         "#{name}-#{System.unique_integer([:positive])}"
       )
+
+  defp session(name),
+    do:
+      Ezagent.URI.session(
+        "derivation-edges",
+        "ownership",
+        "#{name}-#{System.unique_integer([:positive])}"
+      )
+
+  defp workspace(name),
+    do: Ezagent.URI.workspace("#{name}-#{System.unique_integer([:positive])}")
 end

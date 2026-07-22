@@ -131,6 +131,21 @@ defmodule Ezagent.EntityCaps do
   end
 
   @doc false
+  @spec clear_self_license_persisted(URI.t() | String.t()) :: :ok | {:error, term()}
+  def clear_self_license_persisted(uri) do
+    uri = parse_uri(uri)
+
+    if user_uri?(uri) do
+      case UserStore.update(uri, fn caps -> {:ok, reject_self_license(caps)} end) do
+        {:error, :not_found} -> :ok
+        result -> result
+      end
+    else
+      clear_snapshot_self_license(uri)
+    end
+  end
+
+  @doc false
   @spec verified_set(Enumerable.t(), URI.t() | String.t()) :: MapSet.t(Capability.t())
   def verified_set(caps, uri), do: Ezagent.Cap.verified_set(caps, parse_uri(uri))
 
@@ -272,6 +287,76 @@ defmodule Ezagent.EntityCaps do
   defp raw_persisted_caps(uri) do
     if user_uri?(uri), do: UserStore.load(uri), else: snapshot_caps(uri)
   end
+
+  defp clear_snapshot_self_license(uri) do
+    case SnapshotStore.latest(uri) do
+      {:ok, %{state: state, version: version}} when is_map(state) ->
+        with {:ok, updated} <- remove_snapshot_self_license(state),
+             {:ok, _written} <-
+               SnapshotStore.write(uri, updated,
+                 kind_type: snapshot_kind_type(uri),
+                 version: version + 1
+               ) do
+          :ok
+        end
+
+      {:error, :not_found} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp remove_snapshot_self_license(state) do
+    case Map.get(state, :identity) do
+      %{state: identity_state} = container when is_map(identity_state) ->
+        updated = Map.update(identity_state, :caps, MapSet.new(), &reject_self_license/1)
+        {:ok, Map.put(state, :identity, Map.put(container, :state, updated))}
+
+      identity when is_map(identity) ->
+        updated = Map.update(identity, :caps, MapSet.new(), &reject_self_license/1)
+        {:ok, Map.put(state, :identity, updated)}
+
+      nil ->
+        {:ok, state}
+
+      _invalid ->
+        {:error, :invalid_identity_snapshot}
+    end
+  end
+
+  defp reject_self_license(%MapSet{} = caps) do
+    caps
+    |> Enum.reject(&(Capability.action_of(&1) == :self_license))
+    |> MapSet.new()
+  end
+
+  defp reject_self_license(caps) when is_list(caps) do
+    Enum.reject(caps, &(Capability.action_of(&1) == :self_license))
+  end
+
+  defp reject_self_license(_caps), do: MapSet.new()
+
+  defp snapshot_kind_type(%URI{scheme: "entity"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "agent"} -> :agent
+      {:ok, "user"} -> :user
+      _ -> :entity
+    end
+  end
+
+  defp snapshot_kind_type(%URI{scheme: "session"}), do: :session
+
+  defp snapshot_kind_type(%URI{scheme: "template"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "agent"} -> :agent_template
+      {:ok, "session"} -> :session_template
+      _ -> :template
+    end
+  end
+
+  defp snapshot_kind_type(_uri), do: :unknown
 
   defp issued_for?(
          %Capability{signature: signature, key_id: key_id, grantee_uri: %URI{} = grantee},

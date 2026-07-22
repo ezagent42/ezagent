@@ -146,6 +146,27 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
     end
   end
 
+  @doc false
+  @spec system_transfer_owner(URI.t(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def system_transfer_owner(%URI{} = session_uri, %URI{} = new_owner) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, caps} <- session_self_cap(session_uri, :transfer_owner) do
+      Ezagent.Router.dispatch(%Cmd{
+        target: session_uri,
+        action: :transfer_owner,
+        args: %{owner: new_owner},
+        ctx: %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
+  end
+
   @doc """
   Build an admin-held inline cap (as a `MapSet`) for a session self-slice config
   write (`:set_working_copy` / `:set_legends` / `:set_prompt_templates`).

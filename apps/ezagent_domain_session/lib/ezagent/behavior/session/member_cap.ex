@@ -82,6 +82,24 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     end
   end
 
+  @doc false
+  @spec grant_for_reownership(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_for_reownership(%URI{} = session_uri, %URI{} = new_owner) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    cap = member_cap(session_uri, workspace_uri)
+
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(new_owner, session_uri),
+         :ok <-
+           Ezagent.Identity.Grant.grant_cap_via_router(
+             new_owner,
+             cap,
+             grant_authorization(new_owner),
+             :sync
+           ) do
+      :ok
+    end
+  end
+
   defp log_grant_failure(member_uri, session_uri, reason) do
     Logger.warning(
       "Session.MemberCap.grant_at_join: member-cap grant failed for " <>

@@ -57,27 +57,111 @@ defmodule Ezagent.Provenance.DerivationEdges do
     root = uri_string(root_uri)
 
     [root]
-    |> closure(MapSet.new([root]), MapSet.new())
+    |> closure(MapSet.new([root]), MapSet.new(), :all)
     |> MapSet.to_list()
     |> Enum.sort()
     |> Enum.map(&Ezagent.URI.new!/1)
   end
 
-  defp closure([], _seen, descendants), do: descendants
+  @doc false
+  @spec ownership_descendants(URI.t() | String.t()) :: [URI.t()]
+  def ownership_descendants(root_uri) do
+    root = uri_string(root_uri)
 
-  defp closure(frontier, seen, descendants) when is_list(frontier) do
-    children =
+    [root]
+    |> ownership_closure(MapSet.new([root]), MapSet.new())
+    |> MapSet.to_list()
+    |> Enum.sort()
+    |> Enum.map(&Ezagent.URI.new!/1)
+  end
+
+  defp ownership_closure([], _seen, descendants), do: descendants
+
+  defp ownership_closure(frontier, seen, descendants) do
+    children = ownership_children(frontier)
+    unseen = Enum.reject(children, &MapSet.member?(seen, &1))
+    next_seen = Enum.reduce(unseen, seen, &MapSet.put(&2, &1))
+    next_descendants = Enum.reduce(unseen, descendants, &MapSet.put(&2, &1))
+    traversable = Enum.filter(unseen, &ownership_traversable?/1)
+    ownership_closure(traversable, next_seen, next_descendants)
+  end
+
+  # A derived user owns their own later work; deleting that user's creator must
+  # not jump through the user and revoke it. Likewise, a workspace ownership
+  # edge transfers the workspace record, not every agent merely hosted there.
+  defp ownership_traversable?(uri_string) do
+    case Ezagent.URI.new!(uri_string) do
+      %URI{scheme: "entity"} = uri -> Ezagent.URI.type?(uri, :agent)
+      %URI{scheme: scheme} when scheme in ["session", "template"] -> true
+      _ -> false
+    end
+  end
+
+  defp ownership_children(frontier) do
+    direct = ["created_by", "spawned_by", "creation_root"]
+
+    candidate_edges =
       Repo.all(
         from edge in __MODULE__,
-          where: edge.parent_uri in ^frontier,
-          select: edge.child_uri,
-          distinct: true
+          where:
+            edge.parent_uri in ^frontier and
+              (edge.edge_kind in ^direct or like(edge.edge_kind, "ownership_transfer:%"))
       )
+
+    candidate_children = candidate_edges |> Enum.map(& &1.child_uri) |> Enum.uniq()
+    latest_transfers = latest_transfer_ids(candidate_children)
+
+    candidate_edges
+    |> Enum.filter(&current_ownership_edge?(&1, latest_transfers))
+    |> Enum.map(& &1.child_uri)
+    |> Enum.uniq()
+  end
+
+  defp latest_transfer_ids([]), do: %{}
+
+  defp latest_transfer_ids(candidate_children) do
+    Repo.all(
+      from edge in __MODULE__,
+        where:
+          edge.child_uri in ^candidate_children and
+            like(edge.edge_kind, "ownership_transfer:%"),
+        select: {edge.child_uri, edge.id}
+    )
+    |> Enum.reduce(%{}, fn {child_uri, id}, acc ->
+      Map.update(acc, child_uri, id, &max(&1, id))
+    end)
+  end
+
+  defp current_ownership_edge?(%__MODULE__{edge_kind: "created_by", child_uri: child}, latest),
+    do: not Map.has_key?(latest, child)
+
+  defp current_ownership_edge?(%__MODULE__{edge_kind: kind, child_uri: child, id: id}, latest) do
+    cond do
+      kind in ["spawned_by", "creation_root"] -> true
+      String.starts_with?(kind, "ownership_transfer:") -> Map.get(latest, child) == id
+      true -> false
+    end
+  end
+
+  defp closure([], _seen, descendants, _edge_kinds), do: descendants
+
+  defp closure(frontier, seen, descendants, edge_kinds) when is_list(frontier) do
+    children =
+      edge_kinds
+      |> child_query(frontier)
+      |> Repo.all()
 
     unseen = Enum.reject(children, &MapSet.member?(seen, &1))
     next_seen = Enum.reduce(unseen, seen, &MapSet.put(&2, &1))
     next_descendants = Enum.reduce(unseen, descendants, &MapSet.put(&2, &1))
-    closure(unseen, next_seen, next_descendants)
+    closure(unseen, next_seen, next_descendants, edge_kinds)
+  end
+
+  defp child_query(:all, frontier) do
+    from edge in __MODULE__,
+      where: edge.parent_uri in ^frontier,
+      select: edge.child_uri,
+      distinct: true
   end
 
   defp existing(child_uri, edge_kind) do

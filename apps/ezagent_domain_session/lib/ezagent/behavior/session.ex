@@ -170,6 +170,14 @@ defmodule Ezagent.ActionSet.Session do
     description: "Remove a member from the session"
   )
 
+  action(:transfer_owner,
+    args: %{owner: :uri},
+    returns: %{owner: :uri},
+    caps: [:transfer_owner],
+    modes: [:call],
+    description: "Transfer session ownership during durable user offboarding"
+  )
+
   # F7 PR-A — ISOMORPHIC participant-removal (body+doc in Membership, SPEC §3).
   action(:remove_participant,
     args: %{participant: :uri},
@@ -887,6 +895,29 @@ defmodule Ezagent.ActionSet.Session do
            ) do
       {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
     end
+  end
+
+  def handle_transfer_owner(%{owner: %URI{} = new_owner}, ctx) do
+    prior_owner = ctx[:read].(:owner_uri, nil)
+    members = ctx[:read].(:members, %{})
+    last_seen = ctx[:read].(:last_seen, %{})
+
+    updated_members =
+      members
+      |> then(fn current ->
+        if match?(%URI{}, prior_owner), do: Map.delete(current, prior_owner), else: current
+      end)
+      |> Map.put_new(new_owner, %{online: false})
+
+    updated_last_seen =
+      if match?(%URI{}, prior_owner), do: Map.delete(last_seen, prior_owner), else: last_seen
+
+    {:ok, %{owner: new_owner},
+     [
+       {:set, :owner_uri, new_owner},
+       {:set, :members, updated_members},
+       {:set, :last_seen, updated_last_seen}
+     ]}
   end
 
   def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do

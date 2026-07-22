@@ -143,6 +143,12 @@ defmodule Ezagent.Workspace.Store do
     update_field(name, :routing_rules, Jason.encode!(rules))
   end
 
+  @doc false
+  @spec transfer_owner(String.t(), URI.t()) :: {:ok, decoded()} | {:error, term()}
+  def transfer_owner(name, %URI{} = new_owner) when is_binary(name) do
+    update_field(name, :created_by, URI.to_string(new_owner))
+  end
+
   defp update_field(name, field, value) do
     case Repo.get_by(__MODULE__, name: name) do
       nil ->
