@@ -216,8 +216,21 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
     # in-process, avoiding a synchronous self-call. Keep the bootstrap in this
     # Kind turn so authority DB access cannot outlive its sandbox owner; the two
     # absorb casts and the reconcile cast retain mailbox order.
-    :ok = issue_self_caps_and_reconcile(self_uri)
-    {:ok, []}
+    case issue_self_caps_and_reconcile(self_uri) do
+      :ok ->
+        {:ok, []}
+
+      {:error, :failed} ->
+        # `Kind.terminate/1` marks the ReadyGate failed before it removes the
+        # child. A deferred boot reconcile already in this Kind's mailbox may
+        # therefore reach its final self-cast after teardown has begun. That
+        # cast is correctly rejected, but the retiring Kind must not crash and
+        # let its permanent child restart while terminate is resolving it.
+        {:ok, []}
+
+      {:error, reason} ->
+        raise "config-evolve boot reconcile failed: #{inspect(reason)}"
+    end
   end
 
   def handle_signal(_other, _ctx), do: :ignore
