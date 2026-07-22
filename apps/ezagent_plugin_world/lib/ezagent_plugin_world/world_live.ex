@@ -409,6 +409,13 @@ defmodule EzagentPluginWorld.WorldLive do
     case Ezagent.World.PluginPageRegistry.by_action(action) do
       %{actions_module: actions_module} ->
         with_admin_operator(socket, fn ->
+          # Inject the presenter's freshly-loaded caps so the plugin's action
+          # handlers consume a world-computed value instead of compile-depending
+          # on `Ezagent.World.PresenterCaps` (#1476: a plugin must not depend on
+          # the UI host). World keeps `presenter_caps_dispatch_gate` enforced on
+          # its side — caps originate here from `PresenterCaps.load/1`, never the
+          # raw mount snapshot.
+          socket = assign(socket, :presenter_caps, Ezagent.World.PresenterCaps.load(socket))
           actions_module.handle_dispatch(socket, action, args)
         end)
 

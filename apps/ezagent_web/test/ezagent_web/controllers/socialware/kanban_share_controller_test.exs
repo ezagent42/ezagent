@@ -208,10 +208,20 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   defp s(%URI{} = uri), do: URI.to_string(uri)
 
   defp share_socket(%{caller: %URI{} = caller, caps: caps}) do
-    %Phoenix.LiveView.Socket{endpoint: @endpoint}
-    |> Phoenix.Component.assign(:current_entity_uri, caller)
-    |> Phoenix.Component.assign(:current_caps, caps)
-    |> Phoenix.Component.assign(:current_workspace_uri, workspace_of(caller))
+    socket =
+      %Phoenix.LiveView.Socket{endpoint: @endpoint}
+      |> Phoenix.Component.assign(:current_entity_uri, caller)
+      |> Phoenix.Component.assign(:current_caps, caps)
+      |> Phoenix.Component.assign(:current_workspace_uri, workspace_of(caller))
+
+    # Mirror how world_live / KanbanPublishedReadAdapter inject the presenter's
+    # caps before reaching `WorldActions.share_link/2` (#1476): the plugin reads
+    # the `:presenter_caps` assign, never `Ezagent.World.PresenterCaps` directly.
+    Phoenix.Component.assign(
+      socket,
+      :presenter_caps,
+      Ezagent.World.PresenterCaps.load(socket)
+    )
   end
 
   # entity://<ws>/user/... → workspace://<ws>（read_ctx 需要 current_workspace_uri）。

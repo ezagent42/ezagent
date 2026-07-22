@@ -38,6 +38,24 @@ defmodule Ezagent.World.UiSurfaceProvider do
 
   Both callbacks are `@optional_callbacks` and default to `[]` by convention
   (absent function ⇒ no contribution).
+
+  ## The `:presenter_caps` socket-assign contract (caps injection, #1476)
+
+  A plugin's `actions_module.handle_dispatch/3` needs the caller's CURRENT caps
+  to build dispatch ctx, but it must NOT call `Ezagent.World.PresenterCaps`
+  directly — that would be the same backwards plugin→world compile arrow the
+  duck-typed seam above avoids. So WORLD computes the caps and INJECTS them:
+  before every hand-off, world (`WorldLive`'s `world:dispatch` chokepoint — and
+  any other world-aware caller, e.g. ezagent_web's `KanbanPublishedReadAdapter`
+  for a `share_link` web path) assigns `PresenterCaps.load(socket)` into the
+  `:presenter_caps` socket assign. The plugin reads `socket.assigns.presenter_caps`
+  — a world-populated value, peer to `current_entity_uri` / `current_workspace_uri`
+  — with zero compile dep on world. This keeps the `presenter_caps_dispatch_gate`
+  invariant enforced on world's side (caps always originate from
+  `PresenterCaps.load/1`, never the raw mount snapshot). The data seams
+  (`data_builder.state_for/2`, `session_view.state_builder.session_state_for/2`)
+  instead receive world-computed `caller_caps` in their explicit ctx map — same
+  principle, different carrier.
   """
 
   @typedoc """

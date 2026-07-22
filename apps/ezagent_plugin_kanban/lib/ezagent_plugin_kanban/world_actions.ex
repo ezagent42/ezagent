@@ -10,8 +10,11 @@ defmodule EzagentPluginKanban.WorldActions do
   `:kanban` snapshot slice。所有节点动作经
   `Ezagent.URI.with_action(entity://<ws>/agent/<id>, :kanban, action)` =
   `entity://<ws>/agent/<id>?action=kanban.<action>` dispatch（不再 `resource://kanban`）。
-  **ctx 带登录者 `current_entity_uri`/`current_caps`**（R3：caller=人类用户，不重写成
-  agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。动作成功后 re-read
+  **ctx 带登录者 `current_entity_uri` + 注入的 `presenter_caps`**（R3：caller=人类用户，
+  不重写成 agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。caps 由
+  **world（UI 宿主）经 `Ezagent.World.PresenterCaps.load/1` 算好后注入 `:presenter_caps`
+  socket assign**（见下方 `presenter_caps/1`）——本插件只消费注入值，对 world 零编译依赖
+  （#1476：plugin 不得依赖 UI 宿主 world）。动作成功后 re-read
   树 + `push_event("world:state")` 刷前端。**新建看板** = `Ezagent.Workspace.create_agent`
   （role × native，RF-5a），不再合成 `resource://` URI。
 
@@ -364,7 +367,7 @@ defmodule EzagentPluginKanban.WorldActions do
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: Ezagent.World.PresenterCaps.load(socket)}
+    caller_ctx = %{caller: caller, caps: presenter_caps(socket)}
     clean = sanitize(name)
 
     cond do
@@ -419,10 +422,23 @@ defmodule EzagentPluginKanban.WorldActions do
   defp ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
-      caps: Ezagent.World.PresenterCaps.load(socket),
+      caps: presenter_caps(socket),
       reply: {:caller_inbox, self()}
     }
   end
+
+  # World (the UI host) computes the presenter's freshly-loaded caps via
+  # `Ezagent.World.PresenterCaps.load/1` and INJECTS the result into this socket
+  # assign BEFORE handing off to this plugin — at world_live's `world:dispatch`
+  # chokepoint for every `handle_dispatch`, and at `KanbanPublishedReadAdapter`
+  # for the `share_link/2` web path. This plugin consumes the injected value and
+  # therefore has NO compile dependency on world's `PresenterCaps` (#1476: a
+  # plugin must not depend on the UI host `world`). The
+  # `presenter_caps_dispatch_gate` invariant stays enforced on WORLD's side —
+  # caps still originate from `PresenterCaps.load/1`, never the raw mount
+  # snapshot. `:presenter_caps` is a world→plugin socket contract, peer to the
+  # world-populated `current_entity_uri` / `current_workspace_uri` assigns.
+  defp presenter_caps(socket), do: socket.assigns.presenter_caps
 
   # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
@@ -433,7 +449,7 @@ defmodule EzagentPluginKanban.WorldActions do
   def read_ctx(socket) do
     %{
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Ezagent.World.PresenterCaps.load(socket),
+      caller_caps: presenter_caps(socket),
       workspace_uri: socket.assigns.current_workspace_uri
     }
   end
