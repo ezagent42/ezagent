@@ -14,6 +14,7 @@ defmodule EzagentPluginGithub.GitHubCallbackPlug do
   """
   import Plug.Conn
 
+  @doc false
   def init(opts), do: opts
 
   @doc false
