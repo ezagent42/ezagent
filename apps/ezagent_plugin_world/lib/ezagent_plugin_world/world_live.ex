@@ -346,6 +346,14 @@ defmodule EzagentPluginWorld.WorldLive do
     end)
   end
 
+  @market_actions Ezagent.World.DispatchContract.actions(:market)
+  def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
+      when action in @market_actions and is_map(args) do
+    with_admin_operator(socket, fn ->
+      Ezagent.World.MarketActions.handle_dispatch(socket, action, args)
+    end)
+  end
+
   @conversation_actions Ezagent.World.DispatchContract.actions(:conversation)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @conversation_actions and is_map(args) do

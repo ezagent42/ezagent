@@ -11,7 +11,7 @@ defmodule Ezagent.World.E2EFixturesTest do
 
   @fixture_path Path.expand("../../../assets/e2e/fixtures/world.e2e.fixtures.json", __DIR__)
   @tier1_families MapSet.new(
-                    ~w(admin conversation kanban overview pty sessions workspace_plugins)a
+                    ~w(admin conversation kanban market overview pty sessions workspace_plugins)a
                   )
 
   test "checked-in browser fixtures are in sync with backend contract" do
