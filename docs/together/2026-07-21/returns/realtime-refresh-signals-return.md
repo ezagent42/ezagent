@@ -8,6 +8,8 @@ Handoff: `docs/together/2026-07-21/handoffs/realtime-refresh-signals.md` (PR #14
 ## Summary
 
 Implemented the World-side consumer contract for the two generic session-event
+> The custom-signal description retained below is historical. The active implementation is the SliceChange transport documented in the 2026-07-22 section.
+
 signals proposed in the handoff:
 
 - `{:view_changed, %{plugin: key, entity_uri: uri}}` resolves the declared
@@ -29,13 +31,22 @@ partial board-state projection. The registry test makes this callback part of
 the page declaration contract.
 
 ## Boundary Notes
+## 2026-07-22 SliceChange Transport
+
+This supersedes the custom signal transport described above. World now uses
+only post-commit `Ezagent.SliceChange`: the active registered plugin detail
+route subscribes to its entity URI, and its caller-scoped `refresh_state/2`
+projection is rebuilt when that entity changes. A current user's `:identity`
+slice change reloads `PresenterCaps` and rebuilds the current route.
+
+Kanban and future plugins do not broadcast `view_changed`, `caps_changed`, or
+plugin-specific refresh messages. SliceChange is content-free; data builders
 
 The target `origin/main` did not contain the handoff's historical
 `{:kanban_changed, ...}` handler; it exists on the separate Kanban migration
-line. Consequently this change adds the generic World consumer without
-introducing or preserving a Kanban-specific handler. The Kanban producer-side
-migration still needs to broadcast `:view_changed` after successful writes and
-`:caps_changed` after approval changes, as assigned in the handoff.
+line. Consequently this change introduces no Kanban-specific handler or
+producer broadcast. Kanban writes and Identity cap grants already emit
+post-commit SliceChange events; World routes them by the active plugin entity
 
 ## Tests Added
 

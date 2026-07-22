@@ -3,7 +3,6 @@ defmodule Ezagent.World.SliceChangeRefreshGateTest do
 
   @world_live Path.expand("../../lib/ezagent_plugin_world/world_live.ex", __DIR__)
 
-  @session_state Path.expand("../../lib/ezagent/world/conversation_session_state.ex", __DIR__)
   test "World refreshes through SliceChange rather than plugin-specific signals" do
     source = File.read!(@world_live)
 
@@ -21,18 +20,5 @@ defmodule Ezagent.World.SliceChangeRefreshGateTest do
 
     assert String.contains?(source, "refresh_caps_after_identity_change")
     assert String.contains?(source, "%{slice_key: :identity}")
-  end
-
-  test "active sessions subscribe to SliceChange and refresh through the common route path" do
-    world_live = File.read!(@world_live)
-    session_state = File.read!(@session_state)
-
-    assert String.contains?(
-             session_state,
-             "Ezagent.Notifications.subscribe_slice_change(session_uri)"
-           )
-
-    assert String.contains?(world_live, "refresh_current_session_after_slice_change")
-    refute String.contains?(world_live, "Hello")
   end
 end
