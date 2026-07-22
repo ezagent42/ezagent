@@ -45,7 +45,7 @@ defmodule Ezagent.MessageStore do
   """
 
   import Ecto.Query
-  alias Ezagent.Message
+  alias Ezagent.{Message, SessionMessageSequence}
   alias EzagentCore.Repo
 
   @replay_cap 1000
@@ -86,17 +86,83 @@ defmodule Ezagent.MessageStore do
     # time for pagination + the external feed.
     msg_with_session = Map.put(msg_with_session, :routed_at, DateTime.utc_now())
 
-    # Single insert. `on_conflict: :nothing, conflict_target: :id` keeps
-    # idempotency (re-write of the same id is a no-op); re-fetch by id to return
-    # the ACTUALLY-PERSISTED row (PR-EM-6-PRE: a conflict returns the caller's
-    # struct, but downstream mirrors via SliceChange.last_message need the durable
-    # row). The row MUST exist after an :ok insert/conflict → nil is let-it-crash.
-    case Repo.insert(msg_with_session, on_conflict: :nothing, conflict_target: :id) do
-      {:ok, _} ->
+    # Cursor allocation and message insertion are one durable transaction. The
+    # counter row is updated before it is read; the database serializes
+    # competing writers on that row, so two writes can never observe the same
+    # position. Consumed gaps from idempotent duplicate IDs are harmless: the
+    # replay contract is monotonic, not dense.
+    Repo.transaction(fn ->
+      with {:ok, session_seq} <- allocate_session_sequence(session_uri),
+           msg_with_sequence <- Map.put(msg_with_session, :session_seq, session_seq),
+           {:ok, _} <-
+             Repo.insert(msg_with_sequence,
+               on_conflict: :nothing,
+               conflict_target: :id
+             ) do
         case Repo.get(Message, msg.id) do
-          %Message{} = persisted -> {:ok, persisted}
-          nil -> {:error, {:persisted_row_missing, msg.id}}
+          %Message{} = persisted -> persisted
+          nil -> Repo.rollback({:persisted_row_missing, msg.id})
         end
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, %Message{} = persisted} -> {:ok, persisted}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "Return the latest durable message position for a session."
+  @spec current_session_sequence(URI.t()) :: non_neg_integer()
+  def current_session_sequence(%URI{} = session_uri) do
+    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(s in SessionMessageSequence,
+      where: s.session_uri == ^session_uri and s.workspace_uri == ^workspace_uri,
+      select: s.last_seq
+    )
+    |> Repo.one()
+    |> Kernel.||(0)
+  end
+
+  @doc "Messages strictly after a durable per-session sequence, in send order."
+  @spec in_session_after_sequence(URI.t(), non_neg_integer()) :: [Message.t()]
+  def in_session_after_sequence(%URI{} = session_uri, sequence)
+      when is_integer(sequence) and sequence >= 0 do
+    session_str = URI.to_string(session_uri)
+    workspace_str = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    from(m in Message,
+      where:
+        m.session_uri == ^session_str and m.session_seq > ^sequence and
+          m.workspace_uri == ^workspace_str,
+      order_by: [asc: m.session_seq],
+      limit: @replay_cap
+    )
+    |> Repo.all()
+  end
+
+  defp allocate_session_sequence(session_uri) do
+    workspace_uri = Ezagent.Persistence.workspace_uri_for!(session_uri)
+
+    case Repo.insert(
+           %SessionMessageSequence{
+             session_uri: session_uri,
+             workspace_uri: workspace_uri,
+             last_seq: 0
+           },
+           on_conflict: :nothing,
+           conflict_target: :session_uri
+         ) do
+      {:ok, _} ->
+        {1, _} =
+          from(s in SessionMessageSequence,
+            where: s.session_uri == ^session_uri and s.workspace_uri == ^workspace_uri
+          )
+          |> Repo.update_all(inc: [last_seq: 1])
+
+        {:ok, current_session_sequence(session_uri)}
 
       {:error, reason} ->
         {:error, reason}

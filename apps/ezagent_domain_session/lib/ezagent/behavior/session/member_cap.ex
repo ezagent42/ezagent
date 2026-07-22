@@ -14,6 +14,21 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
 
   require Logger
 
+  alias Ezagent.Session.InternalReads
+
+  @doc "Capture the durable message floor for a membership grant intent."
+  @spec capture_join_cursor(URI.t(), map()) :: {non_neg_integer(), term()}
+  def capture_join_cursor(%URI{} = member_uri, ctx) do
+    cursors = ctx[:read].(:join_cursors, %{})
+
+    cursor =
+      Map.get_lazy(cursors, member_uri, fn ->
+        InternalReads.current_message_sequence(ctx[:self_uri])
+      end)
+
+    {cursor, {:set, :join_cursors, Map.put(cursors, member_uri, cursor)}}
+  end
+
   @doc """
   Grant the universal member-cap into the joining member's OWN `:identity`
   slice (A1.2). Returns `true` iff THIS call actually committed the grant.

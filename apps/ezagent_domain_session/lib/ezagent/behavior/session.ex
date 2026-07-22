@@ -393,6 +393,10 @@ defmodule Ezagent.ActionSet.Session do
        # Persistent (survives restart, never silently lost). Legacy snapshots
        # lack this key; readers MUST default via `ctx[:read].(:pending_members, %{})`.
        pending_members: %{},
+       # M-4 — per-member durable replay floor captured at membership-grant
+       # intent. The later self-add projects this cursor into member metadata
+       # in the same commit as the roster mount.
+       join_cursors: %{},
        owner_uri: Map.get(args, :owner_uri),
        # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
        # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`

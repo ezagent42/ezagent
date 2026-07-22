@@ -18,6 +18,7 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
     members = ctx[:read].(:members, %{})
     monitors = (ctx[:transients] || %{})[:monitors] || %{}
     last_seen = ctx[:read].(:last_seen, %{})
+    join_cursors = ctx[:read].(:join_cursors, %{})
     prior_owner = ctx[:read].(:owner_uri, nil)
 
     {old_refs_for_member, monitors_without_member} =
@@ -32,11 +33,17 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
     ref = Process.monitor(member_pid)
     existing_meta = Map.get(members, member_uri, %{})
 
+    joined_cursor =
+      Map.get(ctx, :membership_join_cursor, Map.get(join_cursors, member_uri, 0))
+
     new_members =
       Map.put(
         members,
         member_uri,
-        Members.put_member_facets(Map.put(existing_meta, :online, true), facets)
+        existing_meta
+        |> Map.put(:online, true)
+        |> Map.put(:joined_cursor, joined_cursor)
+        |> Members.put_member_facets(facets)
       )
 
     new_monitors =
@@ -44,6 +51,7 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
       |> Map.new()
       |> Map.put(ref, member_uri)
 
+    Delivery.replay_messages_after_sequence(session_uri, member_uri, joined_cursor)
     Delivery.replay_messages_since(session_uri, member_uri, last_seen)
     new_last_seen = Map.delete(last_seen, member_uri)
 

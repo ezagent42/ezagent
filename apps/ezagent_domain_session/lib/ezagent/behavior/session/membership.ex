@@ -85,7 +85,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
         if admission_pending?(member_uri, ctx) do
           record_pending_admission(member_uri, ctx)
         else
+          {join_cursor, join_cursor_effect} = MemberCap.capture_join_cursor(member_uri, ctx)
           granted? = MemberCap.grant_at_join(member_uri, ctx)
+          cursor_ctx = Map.put(ctx, :membership_join_cursor, join_cursor)
 
           # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
           # (monitor error, replay/notify raise, etc.) must not orphan the
@@ -94,7 +96,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
           # compensation trigger; it revokes only what THIS call granted, then
           # re-propagates (let-it-crash — the join still fails loudly).
           try do
-            do_join_apply(member_uri, member_pid, ctx, facets, source_module)
+            case do_join_apply(member_uri, member_pid, cursor_ctx, facets, source_module) do
+              {:ok, result, effects} ->
+                {:ok, result, [join_cursor_effect | effects]}
+            end
           rescue
             e ->
               if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)

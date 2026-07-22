@@ -63,19 +63,27 @@ defmodule EzagentCore.InternalReadsGatewayBoundaryTest do
   # principal-facing caller must go through a chokepoint instead.
   @allowed_caller_modules [
     [:Ezagent, :ActionSet, :Session, :Delivery],
+    [:Ezagent, :ActionSet, :Session, :MemberCap],
     [:Ezagent, :ActionSet, :Session, :Reconcile]
   ]
 
   # The files the allowed caller modules live in (anti-vacuity + sync check).
   @allowed_caller_files [
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/delivery.ex",
+    "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex",
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/reconcile.ex"
   ]
 
   # The gateway's public surface — ratcheted NARROW (design §3.4: "a
   # dedicated NARROW gateway module"). Adding a function = adding laundering
   # surface; this ratchet forces the red-build review.
-  @gateway_surface %{messages_since: 2, users_in_workspace: 1, agents_in_workspace: 1}
+  @gateway_surface %{
+    messages_since: 2,
+    current_message_sequence: 1,
+    messages_after_sequence: 2,
+    users_in_workspace: 1,
+    agents_in_workspace: 1
+  }
 
   # OUTBOUND gated set (design §3.3) — raw-store read functions callable
   # only from {the read chokepoints, `InternalReads`}: the MessageStore
@@ -90,6 +98,8 @@ defmodule EzagentCore.InternalReadsGatewayBoundaryTest do
     {[:Ezagent, :MessageStore], :committed_external_visible, 2},
     {[:Ezagent, :MessageStore], :committed_external_visible_by_ids, 2},
     {[:Ezagent, :MessageStore], :in_session_since, 2},
+    {[:Ezagent, :MessageStore], :current_session_sequence, 1},
+    {[:Ezagent, :MessageStore], :in_session_after_sequence, 2},
     {[:Ezagent, :Users], :list_all, 0},
     {[:Ezagent, :Users], :list_in_workspace, 1},
     {[:Ezagent, :Entity, :Agent], :list_in_workspace, 1}

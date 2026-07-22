@@ -400,6 +400,17 @@ defmodule Ezagent.ActionSet.Session.Delivery do
     end
   end
 
+  @doc "Replay every message after the durable membership-grant position."
+  @spec replay_messages_after_sequence(URI.t(), URI.t(), non_neg_integer()) :: :ok
+  def replay_messages_after_sequence(session_uri, member_uri, sequence)
+      when is_integer(sequence) and sequence >= 0 do
+    for msg <- InternalReads.messages_after_sequence(session_uri, sequence) do
+      dispatch_receive_call(member_uri, msg, session_uri)
+    end
+
+    :ok
+  end
+
   @spec broadcast_membership_effects(URI.t(), term()) :: [term()]
   def broadcast_membership_effects(session_uri, event) do
     [
