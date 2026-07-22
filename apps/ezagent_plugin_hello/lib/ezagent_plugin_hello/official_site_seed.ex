@@ -141,20 +141,28 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
   # --- steps -----------------------------------------------------------------
 
-  # The 官网 owner = the home workspace's founder (`created_by`). A missing OR
-  # system-admin `created_by` is treated as "no valid founder" and falls back
+  # The 官网 owner = the home workspace's founder (`created_by`). The owner
+  # must LIVE in the home workspace ("seed as an ezagent MEMBER") — a founder
+  # recorded OUTSIDE it (notably `entity://system/user/admin`, written when
+  # the credential bridge auto-creates the home workspace) can never be a
+  # home-workspace member and is treated as "no valid founder", falling back
   # to `entity://<home>/user/lin_yilun` (a real ezagent-workspace user with
-  # admin privileges) — NEVER `entity://system/user/admin` (that would
-  # re-introduce the system/ezagent owner mismatch hello-A removes).
+  # admin privileges) — NEVER a `system`-workspace principal (that would
+  # re-introduce the system/ezagent owner mismatch hello-A removes). This is
+  # a workspace-shape precondition on seed input, not an authorization check
+  # (authz stays at the dispatch chokepoint).
   defp resolve_owner do
     home = EzagentPluginHello.home_workspace()
 
     case Ezagent.Workspace.Store.get_by_name(home) do
       %{created_by: %URI{} = founder} ->
-        if URI.to_string(founder) == URI.to_string(User.admin_uri()) do
-          fallback_owner(home, "founder is the system admin")
-        else
+        if Ezagent.Capability.workspace_of(founder) == Ezagent.URI.workspace(home) do
           founder
+        else
+          fallback_owner(
+            home,
+            "founder #{URI.to_string(founder)} is not a home-workspace principal"
+          )
         end
 
       _no_row_or_no_founder ->
