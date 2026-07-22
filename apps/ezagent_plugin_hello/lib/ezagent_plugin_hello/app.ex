@@ -23,6 +23,10 @@ defmodule EzagentPluginHello.App do
   config, owner-only) then `SessionCreator.install_session_socialware/1` (the
   agent transaction).
 
+  Pass `owner: <URI>` to set the session owner (hello-A: the home workspace's
+  founder for the boot 官网 seed; the dispatch caller on the world-UI path).
+  Defaults to the admin entity.
+
   Returns `{:ok, session_uri, front_desk_uri}`, resolved by role
   (`Members.role_uri/2`), NOT the retired `orch_<name>` URI convention.
 
@@ -60,11 +64,18 @@ defmodule EzagentPluginHello.App do
   create through the Template Class path, which is why it needed its own fix.
   """
   @spec create_app(String.t(), String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
-  def create_app(ws, name, _opts \\ []) when is_binary(ws) and is_binary(name) do
+  def create_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Capability.workspace_of(session_uri)
     socialware_name = "hello-#{name}"
     content = %{name: socialware_name, installs: [socialware_name]}
+
+    # hello-A — the session OWNER is the caller principal: the home workspace's
+    # founder for the boot 官网 seed (`OfficialSiteSeed`), the dispatch caller on
+    # the world-UI create path (`HelloSession.instantiate/4`) — any user gets a
+    # hello session owned by them in their own workspace. Defaults to the admin
+    # entity for legacy test/tooling callers that pass no owner.
+    owner = Keyword.get(opts, :owner, User.admin_uri())
 
     with {:ok, _} <- seed_hello_definition(ws, socialware_name),
          # SPEC §4.4 (Decision A) — the anon-homesite create path is the SECOND
@@ -75,26 +86,33 @@ defmodule EzagentPluginHello.App do
          # records. Without this a later hello publish would silently change the
          # running flagship — the surface the pin matters most for.
          {:ok, content} <- Installation.freeze_template_installs(content, workspace),
-         # SPEC §7.2 (O-1) — DERIVE the page owner from the hello def's
-         # `owner_policy` instead of hard-coding `User.admin_uri()`. The def is
-         # `:fixed` to the system admin (D-5, anon homesite), so this resolves to
-         # the same admin owner — now as DATA. The caller fallback (`:installer`)
-         # is admin here (this path is admin-authored).
+         # hello-A — DERIVE the page owner from the hello def's `owner_policy`,
+         # which is `:installer` (`hello_definition_attrs/1`), so this returns
+         # the threaded caller VERBATIM (`Definition.owner_uri/2`). (The `:fixed`
+         # policy is rejected at validation — definition.ex — so an earlier
+         # comment here claiming the def was "`:fixed` to the system admin" was
+         # stale; the owner was only ever admin because the CALLER was hard-coded
+         # to `User.admin_uri()`.)
          {:ok, owner_uri} <-
-           Installation.owner_uri_for_template(content, workspace, User.admin_uri()),
+           Installation.owner_uri_for_template(content, workspace, owner),
          {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <-
            spawn_kind(Session, %{
              uri: session_uri,
              # hello apps are operator-built; the page OWNER (the one the
-             # orchestrator routes to the builder) comes from the def's `:fixed`
-             # `owner_policy`. Without an owner the session is ownerless and every
-             # message falls to the concierge.
+             # orchestrator routes to the builder) is the threaded caller via
+             # the def's `:installer` `owner_policy`. Without an owner the
+             # session is ownerless and every message falls to the concierge.
              owner_uri: owner_uri,
              behaviors: behaviors
            }),
          :ok <- bind_workspace(session_uri, workspace),
+         # The install/materialize actor stays a TRUSTED internal authority
+         # (hello-A impl-constraint): what must become the caller principal is
+         # the session OWNER (above) and the page-drive turn author — not the
+         # internal install plumbing, which needs admin authority an arbitrary
+         # world-UI caller does not hold.
          :ok <-
            Installation.install_template_installs(
              session_uri,

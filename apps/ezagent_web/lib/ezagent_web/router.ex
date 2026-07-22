@@ -206,10 +206,11 @@ defmodule EzagentWeb.Router do
     get "/socialware/chat", Socialware.ChatFeedController, :show
 
     # Path-route hello pages: `app.ezagent.chat/hello/<name>` serves the
-    # public page for `session://<hello_workspace>/hello/<name>`. The workspace
-    # comes from application config (default "demo" in dev); the full socialware
-    # anon-access pipeline (PublicView gate, anon minting, SPA shell) runs
-    # unchanged — this is just a short URL entry.
+    # public page for `session://<hello-home-workspace>/hello/<name>`. The
+    # workspace comes from the single `:ezagent_plugin_hello, :home_workspace`
+    # config key (default "ezagent"); the full socialware anon-access pipeline
+    # (PublicView gate, anon minting, SPA shell) runs unchanged — this is just
+    # a short URL entry.
     get "/hello/:session_name", Socialware.ChatFeedController, :show_by_name
     post "/hello/delegate", HelloDelegationController, :create
     get "/hello/delegate/resume", HelloDelegationController, :resume
