@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Split Panel Prototype · CIIA Hero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg:#F0F0F3; --card:#FFFFFF;
+  --ink:#17171B; --ink-2:#56565E; --ink-3:#8A8A92; --ink-4:#B6B6BC; --line:#E8E8EC;
+  --blue:#0B5CFF; --blueink:#0048A8; --accent-hover:#0040C4;
+  --jade:#0FA06E; --jade-deep:#0A7A52; --jade-wash:#DCF1E8;
+  --blue-wash:#E7EEFF;
+  --r-sm:10px; --r-md:14px; --r-card:18px; --r-icon:14px; --r-pill:999px;
+  --font-ui:'Inter',system-ui,-apple-system,sans-serif;
+  --font-cn:'Noto Serif SC','Songti SC',serif;
+  --font-cn-ui:'Noto Sans SC','PingFang SC',sans-serif;
+  --ease-out:cubic-bezier(.16,1,.3,1);
+  --dur-fast:150ms; --dur-base:250ms; --dur-split:500ms;
+  --shadow-card:0 1px 2px rgba(15,15,15,.04),0 4px 12px rgba(15,15,15,.04);
+  --shadow-lg:0 1px 2px rgba(15,15,15,.06),0 12px 30px rgba(15,15,15,.08);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-cn-ui);font-size:14px;color:var(--ink);background:var(--bg);height:100vh;display:flex;align-items:center;justify-content:center;padding:40px 24px}
+
+/* ── Page wrapper (mimics sidebar + main layout) ── */
+.page{display:flex;gap:16px;width:100%;max-width:960px;height:560px}
+.sidebar{width:224px;flex-shrink:0;background:var(--card);border-radius:var(--r-card);padding:20px 16px;box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:28px}
+.sb-brand{display:flex;align-items:center;gap:10px}
+.sb-brand .sb-icon{width:36px;height:36px;border-radius:var(--r-icon);background:var(--blueink);display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0}
+.sb-brand .sb-title{font-family:var(--font-cn);font-size:15px;font-weight:600}
+.sb-brand .sb-sub{font-size:10px;color:var(--ink-3);font-family:var(--font-ui)}
+.sb-nav{display:flex;flex-direction:column;gap:4px;flex:1}
+.sb-nav-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:var(--r-md);font-size:13px;font-weight:500;color:var(--ink-2);cursor:pointer;border:0;background:transparent;text-align:left}
+.sb-nav-item.active{background:var(--blue-wash);color:var(--blueink);font-weight:600}
+.sb-login{margin-top:auto;padding-top:16px;border-top:1px solid var(--line);display:flex;align-items:center;gap:10px;font-size:12px;color:var(--ink-3)}
+
+/* ── Main content ── */
+.main{flex:1;background:var(--card);border-radius:var(--r-card);box-shadow:var(--shadow-card);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px;position:relative;overflow:hidden}
+
+.hero-title{font-family:var(--font-cn);font-size:28px;font-weight:600;color:var(--ink);margin-bottom:6px;text-align:center}
+.hero-sub{font-size:14px;color:var(--ink-3);margin-bottom:32px;text-align:center;font-family:var(--font-ui)}
+
+/* ═══════════════════ SPLIT PANELS ═══════════════════ */
+.split-hero{display:flex;gap:14px;width:100%;max-width:680px;height:200px}
+
+.split-panel{
+  flex:1;
+  background:var(--card);
+  border-radius:var(--r-card);
+  border:1.5px solid var(--line);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  cursor:pointer;
+  transition:flex var(--dur-split) var(--ease-out), border-color var(--dur-base) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), background var(--dur-base) var(--ease-out);
+  overflow:hidden;
+  position:relative;
+  min-width:90px;
+  user-select:none;
+}
+
+/* ── Panel: Add Product (left) ── */
+.add-panel{}
+.add-panel:hover{
+  border-color:var(--jade);
+  box-shadow:0 0 0 4px rgba(15,160,110,.10);
+  background:var(--jade-wash);
+}
+
+/* ── Panel: Search (right) ── */
+.search-panel{}
+.search-panel:hover{
+  border-color:var(--blue);
+  box-shadow:0 0 0 4px rgba(11,92,255,.10);
+  background:var(--blue-wash);
+}
+
+/* ── Flex resize on hover ── */
+.split-hero:has(.add-panel:hover) .search-panel{flex:0.35}
+.split-hero:has(.search-panel:hover) .add-panel{flex:0.35}
+
+/* ═══════════════════ PANEL CONTENT ═══════════════════ */
+
+/* Shared */
+.panel-inner{display:flex;flex-direction:column;align-items:center;gap:0;text-align:center;padding:20px;width:100%;max-width:100%}
+
+/* ── Compact view (visible by default) ── */
+.compact{display:flex;flex-direction:column;align-items:center;gap:10px;transition:opacity var(--dur-base) var(--ease-out)}
+.compact .cp-icon{width:48px;height:48px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:22px;color:#fff;flex-shrink:0}
+.add-panel .compact .cp-icon{background:var(--jade)}
+.search-panel .compact .cp-icon{background:var(--blue)}
+.compact .cp-label{font-family:var(--font-cn);font-size:15px;font-weight:600;color:var(--ink)}
+.compact .cp-hint{font-size:11px;color:var(--ink-4);font-family:var(--font-ui);opacity:0;transition:opacity var(--dur-base)}
+
+/* ── Expanded view (hidden by default, shown on panel hover) ── */
+.expanded{
+  display:flex;flex-direction:column;align-items:center;gap:12px;
+  opacity:0;transform:translateY(8px);
+  transition:opacity 0.3s 0.12s var(--ease-out), transform 0.35s 0.12s var(--ease-out);
+  pointer-events:none;
+  position:absolute;inset:0;padding:24px 20px;justify-content:center;
+}
+.split-panel:hover .expanded{opacity:1;transform:translateY(0);pointer-events:auto}
+.split-panel:hover .compact{opacity:0;pointer-events:none}
+
+.expanded .ex-icon{width:42px;height:42px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;flex-shrink:0}
+.add-panel .expanded .ex-icon{background:var(--jade)}
+.search-panel .expanded .ex-icon{background:var(--blue)}
+
+.expanded .ex-title{font-family:var(--font-cn);font-size:16px;font-weight:600;color:var(--ink)}
+.expanded .ex-desc{font-size:12px;color:var(--ink-3);line-height:1.5;max-width:260px}
+
+/* Add panel expanded: CTA button */
+.expanded .ex-action{font-family:var(--font-ui);font-size:13px;font-weight:600;padding:8px 20px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all var(--dur-fast);pointer-events:auto;margin-top:4px}
+.add-panel .expanded .ex-action{background:var(--jade);color:#fff}
+.add-panel .expanded .ex-action:hover{background:var(--jade-deep);transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,160,110,.3)}
+
+/* Search panel expanded: input area */
+.search-panel .expanded .ex-search{display:flex;align-items:center;gap:6px;width:100%;max-width:280px;margin-top:4px}
+.search-panel .expanded .ex-search input{flex:1;font-family:var(--font-cn-ui);font-size:13px;padding:7px 12px;border:1.5px solid var(--line);border-radius:var(--r-pill);background:var(--card);color:var(--ink);outline:none;transition:border-color var(--dur-fast);min-width:0}
+.search-panel .expanded .ex-search input:focus{border-color:var(--blue)}
+.search-panel .expanded .ex-search input::placeholder{color:var(--ink-4)}
+.search-panel .expanded .ex-search .ex-send{width:32px;height:32px;border-radius:50%;background:var(--blue);color:#fff;border:0;cursor:pointer;font-size:14px;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all var(--dur-fast)}
+.search-panel .expanded .ex-send:hover{background:var(--accent-hover);transform:scale(1.05)}
+
+/* ── Compact: show hover hint when the OTHER panel is expanded ── */
+.split-hero:has(.add-panel:hover) .search-panel .cp-hint,
+.split-hero:has(.search-panel:hover) .add-panel .cp-hint{opacity:1}
+
+/* ═══════════════════ MARQUEE ═══════════════════ */
+.marquee-wrap{width:100%;max-width:680px;margin-top:32px;overflow:hidden;mask-image:linear-gradient(to right,transparent 0,#000 8%,#000 92%,transparent 100%)}
+.marquee-track{display:flex;gap:8px;width:max-content}
+.marquee-track.row1{animation:scroll-left 28s linear infinite}
+.marquee-track.row2{animation:scroll-right 32s linear infinite;margin-top:8px}
+.marquee-track:hover{animation-play-state:paused}
+.marquee-track button{font-family:var(--font-cn-ui);padding:5px 14px;border-radius:var(--r-pill);font-size:12px;font-weight:500;border:0;background:var(--card);color:var(--ink-3);cursor:pointer;white-space:nowrap;box-shadow:0 1px 3px rgba(15,15,15,.06);transition:all var(--dur-fast)}
+.marquee-track button:hover{background:var(--blue);color:#fff}
+@keyframes scroll-left{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+@keyframes scroll-right{0%{transform:translateX(-50%)}100%{transform:translateX(0)}}
+
+/* ── Responsive ── */
+@media(max-width:860px){
+  .page{flex-direction:column;height:auto;max-width:100%}
+  .sidebar{width:100%;flex-direction:row;align-items:center;padding:10px 14px}
+  .sb-nav{flex-direction:row;margin-left:auto}
+  .sb-brand .sb-sub{display:none}
+  .sb-login{margin-top:0;padding-top:0;border-top:0}
+  .main{min-height:420px}
+  .split-hero{height:160px}
+}
+@media(max-width:500px){
+  .split-hero{flex-direction:column;height:auto;gap:10px}
+  .split-panel{min-height:80px}
+  .split-hero:has(.add-panel:hover) .search-panel{flex:0.3}
+  .split-hero:has(.search-panel:hover) .add-panel{flex:0.3}
+}
+</style>
+</head>
+<body>
+
+<div class="page">
+  <!-- Sidebar placeholder -->
+  <div class="sidebar">
+    <div class="sb-brand">
+      <div class="sb-icon">🏛</div>
+      <div>
+        <div class="sb-title">信息协会</div>
+        <div class="sb-sub">CIIA Showroom</div>
+      </div>
+    </div>
+    <div class="sb-nav">
+      <div class="sb-nav-item active">🏛 产品展厅</div>
+      <div class="sb-nav-item">💬 我的 Session</div>
+    </div>
+    <div class="sb-login">👤 访客 · 未登录</div>
+  </div>
+
+  <!-- Main -->
+  <div class="main">
+    <div class="hero-title">会员产品展厅 · Product Showroom</div>
+    <div class="hero-sub">描述需求发现产品 / 录入产品展示给客户</div>
+
+    <!-- ═══ SPLIT PANELS ═══ -->
+    <div class="split-hero">
+
+      <!-- LEFT: 录入产品 -->
+      <div class="split-panel add-panel" id="addPanel" onclick="handleAddProduct()">
+        <!-- Compact -->
+        <div class="compact">
+          <div class="cp-icon">＋</div>
+          <div class="cp-label">录入产品</div>
+          <div class="cp-hint">点击录入</div>
+        </div>
+        <!-- Expanded -->
+        <div class="expanded">
+          <div class="ex-icon">＋</div>
+          <div class="ex-title">会员企业 · 录入产品</div>
+          <div class="ex-desc">将您的产品展示给潜在客户<br>Submit your product to the showroom</div>
+          <button class="ex-action" onclick="event.stopPropagation();handleAddProduct()">开始录入 →</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: 搜索产品 -->
+      <div class="split-panel search-panel" id="searchPanel" onclick="focusSearch()">
+        <!-- Compact -->
+        <div class="compact">
+          <div class="cp-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div class="cp-label">搜索产品</div>
+          <div class="cp-hint">点击搜索</div>
+        </div>
+        <!-- Expanded -->
+        <div class="expanded">
+          <div class="ex-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div class="ex-title">发现产品 · Discover</div>
+          <div class="ex-desc">描述您的需求，智能匹配协会会员产品</div>
+          <div class="ex-search" onclick="event.stopPropagation()">
+            <input id="searchInput" placeholder="例如：医疗影像AI诊断…" maxlength="200">
+            <button class="ex-send" onclick="doSearch()">→</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /split-hero -->
+
+    <!-- Marquee (keep from original) -->
+    <div class="marquee-wrap">
+      <div class="marquee-track row1" id="mq1"></div>
+      <div class="marquee-track row2" id="mq2"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Marquee tags
+const TAGS1 = ['AI影像诊断','智慧园区管理','数据中台建设','安全合规治理','语音识别录入','机器视觉检测','数字孪生平台','知识图谱构建','行业研究报告','文档智能比对'];
+const TAGS2 = ['心脏超声AI','区域经济监测','大模型安全','智能质检方案','合同语义比对','医学影像分析','IoT能耗优化','NLP文档理解','企业风险画像','制造业数字化'];
+document.getElementById('mq1').innerHTML=[...TAGS1,...TAGS1].map(t=>`<button>${t}</button>`).join('');
+document.getElementById('mq2').innerHTML=[...TAGS2,...TAGS2].map(t=>`<button>${t}</button>`).join('');
+
+function handleAddProduct(){
+  alert('→ 登录检查 → 录入产品表单\n(在实际页面中触发 openAddProduct())');
+}
+function focusSearch(){
+  document.getElementById('searchInput').focus();
+}
+function doSearch(){
+  const v=document.getElementById('searchInput').value.trim();
+  if(v)alert(`搜索: "${v}"\n(在实际页面中触发 handleQuery())`);
+  else document.getElementById('searchInput').focus();
+}
+// Enter key in search
+document.getElementById('searchInput').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();doSearch();}
+});
+</script>
+</body>
+</html>
