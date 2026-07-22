@@ -1663,3 +1663,7 @@ Data-reflux is proven at code+test level (board_forward_test). But the Hello rec
 ## 2026-07-22 — extract business code out of ezagent core (Allen)
 
 ezagent currently bundles BUSINESS code (seed/manifest — the hello 官网 seed, deploy-seed manifests, demo seeds) inside the platform. **Future direction: ezagent keeps only CORE functionality; business/product code (seeds, manifests, demo content) is extracted out.** Do later. (The hello A workspace de-hardcode — user-created `ezagent-official` session instead of a platform-hardcoded `system` seed — is a step in this direction.)
+
+## 2026-07-22 — socialware market + listing (上架) mechanism (Allen)
+
+**Not implemented (verified 2026-07-22).** Today only `Ezagent.Socialware.DefinitionRegistry` exists — `seed_builtin_definitions/0`, `seed_definition_if_absent/2`, `list(workspace_uri)` — the raw substrate. Socialware TYPE definitions are published into the `system` workspace via `manifest_seed.ex:160` (`operator_admin_ctx` → `Ezagent.URI.workspace(:system)`), a temporary unified home. There is **no market** (cross-platform browse/discover/install of socialware types) and **no listing/上架 mechanism**. Keeping shared definitions in `system` (the admin/platform namespace) is the interim answer; the durable design is a proper **socialware market + a publish/list (上架) flow**. Build later. (Layers to keep distinct: socialware DEFINITION/type = the market template; socialware INSTANCE/session = a specific deployment; page CONTENT = the instance's materials.)
