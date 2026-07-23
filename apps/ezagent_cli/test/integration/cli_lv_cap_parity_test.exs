@@ -59,6 +59,11 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
   end
 
   test "minted token verifies back to its agent URI", %{agent_uri: agent_uri} do
+    # #195 (G-2) binds a PAT to the principal's authority generation, so
+    # `Token.mint/2` needs an active KindCapAuthority row for `agent_uri`.
+    # Establish its genesis authority (what spawning the Agent Kind does in
+    # production) so mint returns a real `{plain, row}` instead of an error tuple.
+    {:ok, _authority} = Ezagent.Cap.Authority.open(agent_uri, :agent)
     {plain, _row} = Token.mint(agent_uri, label: "parity-test")
 
     assert {:ok, ^agent_uri} = Authentication.authenticate(plain)
@@ -106,6 +111,9 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
 
   test "non-admin agent token does NOT resolve to admin wildcard cap",
        %{agent_uri: agent_uri} do
+    # #195 (G-2): PAT mint requires the principal's genesis authority. See the
+    # "minted token verifies back to its agent URI" test above.
+    {:ok, _authority} = Ezagent.Cap.Authority.open(agent_uri, :agent)
     {plain, _row} = Token.mint(agent_uri)
 
     assert {:ok, ^agent_uri} = Authentication.authenticate(plain)

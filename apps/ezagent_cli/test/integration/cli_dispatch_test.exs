@@ -84,8 +84,15 @@ defmodule EzagentCli.Integration.CLIDispatchTest do
                  target: target,
                  mode: :call,
                  args: %{},
+                 # #195 threads the authenticated principal as the cap HOLDER:
+                 # `Ezagent.Cap.Verifier.authorize/6` reads `ctx.authenticated_principal`
+                 # and fails closed with `:authenticated_principal_required` when it
+                 # is absent. A hand-built invocation must carry it (production
+                 # dispatch paths — CLI Exec, LV, the session-config admission gate —
+                 # all set it); `admin` holds the presented `list_cap`.
                  ctx: %{
                    caller: admin,
+                   authenticated_principal: admin,
                    caps: MapSet.new([list_cap]),
                    reply: {:caller_inbox, self()}
                  }

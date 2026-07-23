@@ -82,6 +82,15 @@ defmodule EzagentCli.Integration.SessionConfigProjectionTest do
 
     :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, Ezagent.Capability.workspace_of(agent_uri))
 
+    # #195: the `add_participant` :session_membership admission gate no longer
+    # consults the structural owner_uri/roster — it requires the caller to
+    # DURABLY hold the born-signed current-generation member cap
+    # (`cap(:session, Session, :receive, S)`). Low-level `Kind.spawn` above does
+    # not grant it; the production session-creation path
+    # (`session_creator.ex`) calls `grant_owner_at_creation`, and this is the
+    # established test-fixture pattern (see session_config/execute_test.exs).
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, principal)
+
     on_exit(fn ->
       Ezagent.Kind.terminate(session_uri)
       Ezagent.Kind.terminate(agent_uri)

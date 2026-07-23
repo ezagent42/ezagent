@@ -109,6 +109,14 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
         [workspace_grant_cap]
       )
 
+    # #195 (G-2) binds a minted PAT to the principal's authority generation, so
+    # `Token.mint/2` now requires the caller to HAVE an active KindCapAuthority
+    # row. A `Users.create`d-but-unspawned principal has none; establish its
+    # genesis authority here (mirrors the #195 commit's own test fixes and what
+    # spawning the Kind does in production) so `mint/2` returns `{plain, row}`
+    # instead of `{:error, :authority_unavailable}`.
+    {:ok, _authority} = Ezagent.Cap.Authority.open(caller_uri, :user)
+
     {plain_token, _row} = Ezagent.Entity.Token.mint(caller_uri, label: "test-cli-token")
 
     # Call CLI server-side path (what /api/cli/exec does)
