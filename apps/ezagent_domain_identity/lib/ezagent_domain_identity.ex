@@ -6,7 +6,7 @@ defmodule EzagentDomainIdentity do
   - `Ezagent.Entity.User` — User Kind
   - `Ezagent.ActionSet.Identity` — list_caps / has_cap? actions
   - `Ezagent.Identity` — facade for CapBAC checks
-  - `Ezagent.Users` — SQLite provisioning (login lookup, bcrypt)
+  - `Ezagent.Users` — Postgres provisioning (login lookup, bcrypt)
 
   Phase 6 PR 2: extracted from ezagent_core. See SPEC.
   """

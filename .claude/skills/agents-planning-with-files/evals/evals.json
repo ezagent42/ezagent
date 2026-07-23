@@ -1,0 +1,47 @@
+{
+  "skill_name": "agents-planning-with-files",
+  "evals": [
+    {
+      "id": 1,
+      "name": "solo-long-task-setup",
+      "prompt": "I'm about to refactor the auth module across ~8 files, run the test suite, then split it into three PRs. This'll take a while and I don't want to lose my place if the context gets cleared. Set me up.",
+      "expected_output": "Creates plan.md / in-progress.md / done.md at the repo root (gitignored), writes the phased plan with a RESUME HERE marker, and starts logging the live step to in-progress.md. No subagents.md — there is no fleet.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "name": "coordinate-subagents-across-worktrees",
+      "prompt": "I'm coordinating three subagents, each on its own branch in a separate worktree under .worktrees/, to build features x/y/z in parallel. How do I track them so I can recover one if it dies mid-task like happened last time?",
+      "expected_output": "Sets up a coordinator-owned subagents.md registry (agentId/task/branch/worktree/status), explains the running->stalled recovery trigger, and that each subagent keeps its own plan/in-progress/done in its worktree; recovery walks the worktree column, reading the subagent's execution ledger (.superpowers/sdd/progress.md if it runs SDD, else in-progress.md).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "name": "shared-repo-no-clobber",
+      "prompt": "Two of us plus a couple of agents are all hacking on the same repo today. Last time our note files kept clobbering each other. What's the discipline so that doesn't happen?",
+      "expected_output": "Recommends one worktree per actor as the primary answer (isolation by construction); if a shared tree is unavoidable, per-actor '## @<actor-id>' section ownership with edit-only-your-own-section and append-only done.md.",
+      "files": []
+    },
+    {
+      "id": 4,
+      "name": "recover-dead-subagent",
+      "prompt": "One of my background subagents just errored out with an API disconnect. It was halfway through something in a worktree. Can I recover what it was doing?",
+      "expected_output": "Runs the recovery runbook: read subagents.md, find the stalled row, cd to its worktree, read its execution ledger (.superpowers/sdd/progress.md if it ran SDD, else in-progress.md) + plan.md + done.md, check git status/log, then resume/harvest/abandon.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "name": "one-off-question-no-trigger",
+      "prompt": "Quick one — what's the difference between Enum.map and Enum.each in Elixir?",
+      "expected_output": "Should NOT trigger the skill — a one-off question, no multi-step session or coordination. Answer directly.",
+      "files": []
+    },
+    {
+      "id": 6,
+      "name": "below-bar-two-file-edit-no-trigger",
+      "prompt": "Rename the function `fetch_user/1` to `get_user/1` in lib/accounts/users.ex and update its one caller in lib/accounts/session.ex, then run that test file.",
+      "expected_output": "Should NOT trigger the skill — a quick ~2-file edit with no subagents, no worktrees, and no second actor. It sits well below the multi-actor / subagent-dispatch / multi-worktree headline bar; just make the edits directly. Creating planning files here would bureaucratize a one-liner.",
+      "files": []
+    }
+  ]
+}

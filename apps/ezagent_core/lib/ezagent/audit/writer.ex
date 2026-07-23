@@ -6,7 +6,7 @@ defmodule Ezagent.Audit.Writer do
   this GenServer's mailbox via `GenServer.cast`; the writer accumulates
   events in memory and flushes batches every `@flush_interval_ms` (or
   when the buffer hits `@batch_max`). This keeps the invoke hot path
-  under a microsecond — the SQLite write is amortised across many
+  under a microsecond — the Postgres write is amortised across many
   invocations.
 
   ## Backpressure

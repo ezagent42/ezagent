@@ -5,9 +5,13 @@ defmodule Ezagent.Entity.InviteCode do
 
   A code carries an **authoritative** target `workspace_uri` (+ optional `role`),
   a quota (`max_uses`), and an optional expiry. `consume/1` is the race gate: a
-  single conditional `UPDATE ... WHERE used_count < max_uses AND not revoked AND
-  not expired` (SQLite is single-writer, so the conditional update + affected-row
-  check is the concurrency guard). Registration calls `consume/1` INSIDE the same
+  single atomic conditional `UPDATE ... WHERE used_count < max_uses AND not revoked
+  AND not expired`. That atomic UPDATE is the concurrency guard: Postgres takes a
+  row lock, so concurrent consumers serialise and only ONE sees `used_count <
+  max_uses` still satisfied; the affected-row count is the accept/reject signal. Do
+  NOT weaken it to a read-then-write — the atomic UPDATE, not any single-writer
+  property of the store, is what prevents the double-spend race. Registration calls
+  `consume/1` INSIDE the same
   `Repo.transaction` as user creation, so a use is never burned without a user and
   a user is never created without consuming a use (Codex plan-review #2).
 

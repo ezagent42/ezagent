@@ -19,7 +19,7 @@ defmodule Ezagent.Kind.Snapshot do
 
   ## Sync vs async (Q2)
 
-  Per Spec 04 Q2 default: `:on_change` is **sync** (~1ms SQLite local;
+  Per Spec 04 Q2 default: `:on_change` is **sync** (~1ms local DB write;
   zero loss within process lifetime); `:periodic` is **async** via
   `Ezagent.Snapshot.Writer` (mirrors `Ezagent.Audit.Writer` pattern from
   Decision #60).

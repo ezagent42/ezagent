@@ -178,6 +178,8 @@ Ezagent 项目的**单一真相源**(single source of truth)for:
 | 163 | **终端属于创建者:PTY 的看/写/重启统一由 agent 的 MANAGE cap 携带**(Allen 2026-07-14,起因 #1294 排查)— 一个 agent 的 PTY(读输出流+回滚缓冲、写输入、重启子进程)**全部**以该 agent 的 `cap(:agent, Manage, :any, <该 agent>)` 为准 —— 也就是 `CreatorGrant.manage_cap/4` 在创建时**已经**铸给创建者的那一个。**零新 cap、零回填**。承既有惯例(`ConfigGovernance` 7 个 CR action / `ConfigEvolve` 同形,lead decision OQ-4 "the agent's MANAGE cap, no separate cap");机制上 `Kind.Runtime` 覆盖 needed-cap 的 **action** 轴但 **honour 声明的 behavior 轴**,故 `ActionSet.Pty.required_caps/0` 声明 `Manage` 即可。**动因**:Allen 2026-07-10 的决策(用户可故意创建无凭证 cc agent,自己进 PTY 打 `claude /login`)在代码里**是空的** —— 全仓库**从未**铸过 `ActionSet.Pty` cap,创建者既不能写、也不能看自己 agent 的终端,只有 admin 能。**BREAKING**:手工发放的 `Pty` cap 不再授权任何 PTY action(fail-closed)。**同批修掉一个机密性洞**:终端 READ 此前**零门禁**(4 个读出口 —— terminal 路由 state / 其 PubSub 订阅 / 会话内 `session.pty.open`(客户端可传任意 agent URI)/ `TerminalSeam`),任何登录用户可跨 workspace 围观任意 agent 终端(含 `/login` 授权码)。策略落在 `Ezagent.Domain.Pty.Access`(**被保护物旁边**,非某个调用方),4 个出口全接;`TerminalSeam` 改为**按构造自带门禁**。详见 `docs/notes/2026-07-14-pty-terminal-read-ungated.zh_cn.md` + `docs/notes/2026-07-13-agent-creator-pty-authority-gap.zh_cn.md` | impl |
 | 164 | **Cap-signing Path A ship — per-Kind ed25519 签名 authority,cap born-signed + 严格验签**(PR #1457 "[Done] feat(cap): enforce per-Kind signing authority",merged 2026-07-18,commit `596bd3a1d`;承 #162 ISSUE→STORE→VERIFY,取代其 "crypto=Phase-4 pending" 前瞻句)— **#162 的 VERIFY 从 provenance-format stand-in 升级为真密码学**;`Ezagent.Cap.verify/1` **下线**。**每个 target Kind 是它自己的签名 + 验签 authority**,用**自己的 per-Kind ed25519 key**:`Ezagent.Cap.Authority`(`apps/ezagent_core/lib/ezagent/cap/authority.ex`)持 live authority 为 `Kind.Server` 私有 top-level state,durable custody 为**独立 top-level 表** `kind_cap_authorities`(`Ezagent.Ecto.KindCapAuthority` — append-only / 按 `generation` / one-active-per-URI / `private_key` redact / 无 delete API)。**key 不在 env var(旧 `EZAGENT_SIGNING_SEED_V1` 随本 PR 退役,prod+config 0 引用)也不在 `kind_snapshots`。Genesis = 单一 admin-pinned root**(`regenesis/3` 要 admin presenter)。**Born-signed**:`Cap.issue/3` 请 `Authority.sign/2` 签不可变 grant intent。**Storage filter**:`Cap.storable_for?`/`verified_set` 只让 born-signed + receiver-bound artifact 进 store,unsigned/legacy 存储时即丢(`capability.ex:282` legacy fallback 已删,codex r4 option-B)。**Strict verify**:`Ezagent.Cap.Verifier`(唯一 framework verifier)对 cap-gated action 仅当 `Authority.verify_current(cap, presenter)` 验签通过 **且** 匹配 shape 才接受,否则 `:invalid_cap_signature`/`:missing_cap`/`:presenter_required` —— **无 soft/permissive 分支**;并列一个固定 `@non_cap_actions` allowlist(各自 in-handler predicate,结构性拆分非 fallback)。**威胁模型 = Path A(reviewed-code)**:BEAM 内已恶意执行的代码 out-of-scope(load 前经 review);防 accidental forgery / review-missed 架构违规 / external-ingress caller-spoof。**签名 ≠ 撤销**(revocation 独立线)。**Path B(隔离 signer/sidecar/HSM + issuer-URL authentication)= DEFERRED**,防 in-VM 恶意代码,给未经 review 的 3rd-party plugin 在 BEAM 内跑那天用;旧 v11 "isolated central signer / 单 CapStore / one-shot re-sign" spec(2026-07-15)**就是 Path B,已被 Path A superseded** —— 勿描述为 pending/required-now。详见 §2 "Cap authority & signing(Path A)" 条 + ARCHITECTURE.md §7.8 + `.claude/skills/ezagent-developer/references/capbac.md` §4.6 | impl |
 
+| 165 | **World UI refresh = declared surface + SliceChange projection**(PR #1497,2026-07-23)— 插件不向 World 写专用 refresh handler：它声明 surface，提供 caller-scoped `refresh_state/2` partial projection；World 的 `RefreshSurfaceRegistry` 校验并聚合声明，`WorldLive` 独占消费 `Ezagent.SliceChange`、合并 pending refresh、以 current presenter caps 构造 ctx，并发 `world:surface_state`。React 只合并 JSON-safe 局部状态。禁止 plugin-name World 分支、专用 browser refresh event、direct PubSub-to-browser。失败一律 fail-closed。详见 ARCHITECTURE.md §2.3.1 与两套 `ezagent-developer` UI contract。 | impl |
+
 实施期决策(impl)将持续从 #114 起 append →
 > **编号注**:#153 由 PR #811(`feat/54-pr-a-manager-delegated-grant`,未 merge)占用 —— 见上文 #153 entry 在该分支的版本。本 #154 在 origin/main(#152 之后)直接 append;若 #811 先 merge,表尾按既有"parallel-squash rebases tail"惯例自动顺位,无冲突。
 
@@ -893,7 +895,7 @@ Rebuild Kind 的 in-memory state from persisted snapshot(Phase 1)+ (Phase 2+) fo
 
 **Lazy-on-first-load**(OQ-8 decision):rebuild 发生在 Router dispatch 到 KindRegistry 未有的 entity URI 时,**NOT** at application boot。Router lookup 失败 → spawn Kind via `Kind.spawn/2`;`Kind.Host.init/1` calls StateRebuilder。
 
-Kind module 可选 implement `rebuild_from_snapshot/1`(REQUIRED for custom semantics — 否则 default path 使用 snapshot.state 直接)+ `rebuild_from_events/2`(OPTIONAL — Phase 2+ events-as-source-of-truth 用)。
+Kind module 可选 implement `rebuild_from_snapshot/1`(REQUIRED for custom semantics — 否则 default path 使用 snapshot.state 直接)。
 
 Generalises per-domain `BootReconciler` pattern(today only `Ezagent.ExternalMirror.BootReconciler` — stays as-is Phase 1,Phase 2+ refactors to delegate)。
 
@@ -912,6 +914,20 @@ The `@callback invoke/4` declaration is kept in `Ezagent.ActionSet` only so a st
 任何 tutorial / blog post / forensic note 引用 `Behavior.invoke/4` 作为 dispatch 入口 = 2026-05-28 之前写的 + stale。
 
 参考: ARCHITECTURE.md §6.0.6 + §6.1;Decision #148 #151
+
+### Refresh Surface
+
+World 中一个可独立重建的 renderer 状态投影。它由插件页面的
+`refresh_state/2`，或 `Ezagent.World.UiSurfaceProvider.refresh_surfaces/0`
+声明的 standalone surface 提供；声明包含 renderer `component`、当前 URI 的
+`target` 和 `state_builder`。`RefreshSurfaceRegistry` 统一校验、聚合并按
+component 查找，非法项不进入运行时。
+
+刷新不是完整页面重载：`state_builder.refresh_state(uri, ctx)` 必须返回当前
+presenter 可见、JSON-safe 的 partial state。World 把它封装为
+`world:surface_state`，React 对目标 surface 做 shallow merge。
+
+参考: ARCHITECTURE.md §2.3.1，`Ezagent.World.RefreshSurfaceRegistry`，Decision #165
 
 ### Session
 
@@ -952,6 +968,16 @@ end
 ```
 
 参考: ARCHITECTURE.md §6.0(new contract slice access);Decision #16, #150
+
+### SliceChange
+
+已提交 Kind slice 变化的通用通知。对 World UI 而言，它不是插件到浏览器的
+专用事件：`WorldLive` 是唯一的刷新消费者，按当前声明的 refresh surface 和
+目标 URI 调度投影，再通过 `world:surface_state` 交给 React。未挂载 surface、
+非法声明或 provider error 都 fail-closed，不能以直接 PubSub-to-browser
+广播绕过 caller-scoped projection。
+
+参考: ARCHITECTURE.md §2.3.1，Decision #165
 
 ### Snapshot
 

@@ -1,7 +1,7 @@
 defmodule Ezagent.ActionSet.UserTokens do
   @moduledoc """
   User-token Behavior — operator-facing bearer-token CRUD on the
-  `entity_tokens` SQLite table.
+  `entity_tokens` Postgres table.
 
   ## Why a separate Behavior
 

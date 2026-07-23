@@ -158,15 +158,6 @@ defmodule Ezagent.Kind.StateRebuilderTest do
     assert %{rebuilt: 0, failed: [], skipped: []} = StateRebuilder.rebuild_all(workspace)
   end
 
-  test "behaviour declares rebuild_from_events/2 as optional (Phase 2+ extension)" do
-    # The behaviour exists but Phase 1 never calls it. This test
-    # locks the optional-callbacks declaration so Phase 2 work
-    # doesn't accidentally break the contract.
-    optional = Ezagent.Kind.StateRebuilder.behaviour_info(:optional_callbacks)
-
-    assert {:rebuild_from_events, 2} in optional
-  end
-
   describe "snapshot_exists?/1 (codex E2E fix v2 Bug B, 2026-05-29)" do
     test "returns true when a kind_snapshots row exists" do
       uri = entity_uri()

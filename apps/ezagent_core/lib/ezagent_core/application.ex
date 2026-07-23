@@ -45,7 +45,7 @@ defmodule EzagentCore.Application do
         # deps). First consumer: ExternalMirror's AdapterInstall.
         Ezagent.Plugin.RegistrationHooks,
 
-        # ④ SQLite repo + migrations (Phase 0 baseline).
+        # ④ Postgres repo + migrations (Phase 0 baseline).
         EzagentCore.Repo,
         {Ecto.Migrator,
          repos: Application.fetch_env!(:ezagent_core, :ecto_repos),
@@ -68,11 +68,11 @@ defmodule EzagentCore.Application do
         # ⑥ Audit batch writer — must come after Repo + PubSub.
         # **Skipped in :test env** (2026-05-26): the 100ms timer-driven
         # `Repo.insert_all("invocations", _)` flush is the singleton
-        # GenServer that triggers SQLite "Database busy" + DBConnection
-        # owner-exit interleaving against `Ecto.Adapters.SQL.Sandbox`'s
-        # per-test ownership lifecycle. Test code that exercises audit
-        # writes opts in via `use Ezagent.Test.AuditCase` (calls
-        # `start_supervised!/1` and `Sandbox.allow/3` per-test).
+        # GenServer that interleaves DBConnection owner-exit against
+        # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership lifecycle. Test
+        # code that exercises audit writes opts in via
+        # `use Ezagent.Test.AuditCase` (calls `start_supervised!/1` and
+        # `Sandbox.allow/3` per-test).
         Ezagent.Audit.Writer,
 
         # ⑥·5 Notification subscription registry (SPEC v2 PR-N1,
@@ -93,7 +93,7 @@ defmodule EzagentCore.Application do
         # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
         # tests use `:on_change` strategy so this writer is dormant; the
         # 100ms timer firing in a sandbox-rolled-back state was leaving
-        # SQLite WAL locks contended for the next test's snapshot writes.
+        # the DB connection contended for the next test's snapshot writes.
         Ezagent.Snapshot.Writer,
 
         # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
@@ -159,14 +159,14 @@ defmodule EzagentCore.Application do
     :ok = register_notifications_behavior()
 
     # Phase 7 completion PR-3 (SPEC §1.7 (c)) — hydrate the TemplateTags
-    # ETS read cache from the `template_tags` SQLite table, the
+    # ETS read cache from the `template_tags` Postgres table, the
     # `Ezagent.Routing.RuleStore.load_into_registry/1` analogue. Runs
     # after the Repo + Migrator children are up (children ④); EtsOwner
     # (child ①) already created the cache table.
     :ok = Ezagent.TemplateTags.load_into_registry()
 
     # Remediation C-B (#114) — hydrate the AgentLineage ETS read cache
-    # from the durable `agent_lineage` SQLite table, the
+    # from the durable `agent_lineage` Postgres table, the
     # `Ezagent.TemplateTags.load_into_registry/0` analogue. Without this
     # the lineage `agent_uri → spawned_by` mapping is lost on every
     # restart (EtsOwner recreates the table empty), so previously-owned

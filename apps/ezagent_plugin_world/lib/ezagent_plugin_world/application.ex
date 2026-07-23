@@ -46,6 +46,23 @@ defmodule EzagentPluginWorld.Application do
   end
 
   @doc """
+  World-owned renderers use the same refresh declaration seam as plugin pages.
+  The shell only consumes this data; it does not know which conversation
+  template, socialware, or sender produced the session change.
+  """
+  @spec refresh_surfaces() :: [Ezagent.World.UiSurfaceProvider.refresh_surface()]
+  def refresh_surfaces do
+    [
+      %{
+        id: "conversation",
+        component: "conversation",
+        target: {:assign, :current_session_uri},
+        state_builder: Ezagent.World.ConversationSessionState
+      }
+    ]
+  end
+
+  @doc """
   Plugin-contributed `resource://<ws>/world-layouts/<name>` type (plugin-resource
   SPEC §4.4). The `world` layout store addresses its JSON through this `<type>`
   rather than raw `Ezagent.Home.path/1`.

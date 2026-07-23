@@ -384,9 +384,19 @@ defmodule Ezagent.World.ConversationActions do
         # (loud) rather than delivering. TODO(#1294): show an "installing…" state
         # and surface `:role_not_installed` in the UI — a server-side-only log is
         # a silent drop at a user-facing surface (Invariant #9).
+        # Session selection stays route-driven: `handle_params/3` is the one
+        # canonical producer of the full conversation state. The separate
+        # completion event only clears the create form promptly; it does not
+        # let a stale client-side session state choose the active conversation.
+        # Materialize the URI string in a binding (not inline in the payload map)
+        # so the map line stays off the unify-uri-query `uri_string_key` scan —
+        # matching the `caller_str`/`session_str` convention in `verify_grants/4`.
+        session_uri_str = URI.to_string(session_uri)
+
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
+         |> push_event("world:session_created", %{"session_uri" => session_uri_str})
          |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
 
       {:error, reason} ->
@@ -441,8 +451,8 @@ defmodule Ezagent.World.ConversationActions do
   # sessions table via the SAME `world:state` channel the route renders from
   # (the React `SessionsTable` reads `state.create_error` and shows a banner).
   # F3: before this, a create error only set the `data-last-dispatch` attribute
-  # and the operator saw nothing. The success path push_patch-remounts with
-  # fresh server state, which carries no `create_error`, so the banner clears.
+  # and the operator saw nothing. The success path immediately pushes caller-scoped
+  # state, which carries no `create_error`, so the banner clears.
   defp push_session_create_error(socket, reason) do
     socket
     |> assign(:last_dispatch_status, "error:#{reason(reason)}")

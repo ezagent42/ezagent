@@ -16,7 +16,7 @@ defmodule Ezagent.Entity.User do
   - Provisioned via `mix ezagent.user.create entity://user/<workspace>/X --password Y --caps ...`
   - Authenticated via `/login` (`EzagentWeb.SessionController` +
     `Ezagent.Users.verify_password/2`)
-  - Their caps live in `Ezagent.Users.caps_json` SQLite column AND mirror
+  - Their caps live in `Ezagent.Users.caps_json` Postgres column AND mirror
     into Identity slice via `init_slice/1`
   """
 

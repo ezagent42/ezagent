@@ -16,7 +16,7 @@ defmodule Ezagent.TemplateTags do
 
   `Ezagent.TemplateTags` follows `Ezagent.Routing.RuleStore` exactly:
 
-  - the **`template_tags` SQLite table is the source of truth** — every
+  - the **`template_tags` Postgres table is the source of truth** — every
     mutation (`put/5`, `move/5`) writes there first, and CAS
     correctness rides on the DB's atomic `UPDATE ... WHERE`;
   - an **ETS table is the runtime read cache** — `resolve/3` and
@@ -167,7 +167,7 @@ defmodule Ezagent.TemplateTags do
   @doc """
   List every tag row in a workspace.
 
-  Reads the SQLite table (the source of truth) — `list/1` is an admin /
+  Reads the Postgres table (the source of truth) — `list/1` is an admin /
   catalog read, not a hot path, and going to the DB keeps it correct
   under a test sandbox's per-test rollback. Returns `[t()]` ordered by
   `(name, tag)`.
@@ -216,8 +216,8 @@ defmodule Ezagent.TemplateTags do
     now = DateTime.utc_now()
 
     # The atomic CAS: a single UPDATE whose WHERE clause pins the
-    # expected prior hash. SQLite executes it as one statement — the
-    # row-count IS the compare-and-swap outcome.
+    # expected prior hash. Postgres runs it as one atomic statement — the
+    # affected row-count IS the compare-and-swap outcome.
     {updated, _} =
       from(r in __MODULE__,
         where:
@@ -247,7 +247,7 @@ defmodule Ezagent.TemplateTags do
   # --- boot hydration ----------------------------------------------------
 
   @doc """
-  Hydrate the ETS read cache from the `template_tags` SQLite table.
+  Hydrate the ETS read cache from the `template_tags` Postgres table.
 
   Called at boot (after `EzagentCore.Repo` is up) — the
   `Ezagent.Routing.RuleStore.load_into_registry/1` analogue. Clears the

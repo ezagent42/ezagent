@@ -1,7 +1,7 @@
 defmodule Ezagent.ActionSet.UserCredentials do
   @moduledoc """
   User-credential Behavior — operator-facing password mutation on the
-  `users` SQLite table.
+  `users` Postgres table.
 
   ## Why a separate Behavior, not on `Identity`
 
