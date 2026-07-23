@@ -79,6 +79,31 @@ return can be treated as machine-green.
 repository-wide dynamic-receiver and documentation fitness functions. Any PR
 that adds dynamic plugin dispatch should run those two checks before return.
 
+## Architecture and skill synchronization (2026-07-23)
+
+This PR is a core UI-layer architecture change, not merely a Kanban refresh
+fix. Commit `75fab2e1a` makes that boundary durable:
+
+- `ARCHITECTURE.md` defines the sole ordinary UI refresh path as
+  `SliceChange → WorldLive → RefreshSurfaceRegistry → refresh_state/2 →
+  world:surface_state → React partial merge`.
+- `GLOSSARY.md` records Decision #165 and the `Refresh Surface` / `SliceChange`
+  terms.
+- Both the versioned Claude skill (`.claude/skills/ezagent-developer/`) and the
+  local Codex skill mirror now require declaration-driven, caller-scoped UI
+  state. They prohibit plugin-name branches in World, bespoke browser refresh
+  events, and direct PubSub-to-browser shortcuts.
+
+The versioned skill documentation passed `git diff --check`. The Codex
+project-skill link was also verified: `.agents/skills` resolves to
+`.claude/skills`, so Codex discovers the same project-owned skill content.
+
+The latest `mix precommit` attempt did not complete: application boot failed
+before checks ran because `ezagent_plugin_world` hit the pre-existing
+`:holder_revoked` default-template seed failure. This documentation-only return
+does not change that boot path; the failure remains a separate blocker rather
+than evidence that the architecture documentation is invalid.
+
 ## #1472 boundary discovered during rebase
 
 Latest `origin/main` already contains the core #1472 page declaration, dynamic
