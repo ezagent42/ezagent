@@ -68,6 +68,16 @@ __pycache__/
 # Ignored so subagent-driven development can write here without touching .git.
 .superpowers/
 
+# agents-planning-with-files skill: per-session working-memory files at the
+# working-tree root (the main checkout AND each worktree). Root-anchored (/)
+# so nested tracked plan.md files — dev-together command templates,
+# docs/together/<date>/plan.md — are NOT shadowed. Subagent worktree copies
+# under .worktrees/<name>/ are already covered by the .worktrees/ rule above.
+/plan.md
+/in-progress.md
+/done.md
+/subagents.md
+
 # Local Tailwind standalone binary (build artifact, do not commit)
 tailwind-macos-arm64
 
