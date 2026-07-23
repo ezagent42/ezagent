@@ -18,7 +18,10 @@ defmodule Ezagent.World.UserDataCapsTest do
              MapSet.size(Ezagent.EntityCaps.verified_set(Ezagent.EntityCaps.load(user), user))
 
     assert row_for(user, workspace)["cap_count"] > 0
-    assert Ezagent.Users.get_by_uri(user).caps == []
+    durable_caps = Ezagent.Users.get_by_uri(user).caps
+
+    assert MapSet.new(durable_caps) == MapSet.new(Ezagent.EntityCaps.load(user))
+    assert durable_caps != []
   end
 
   test "unsigned artifacts left in serialized data do not determine the count" do
@@ -38,13 +41,18 @@ defmodule Ezagent.World.UserDataCapsTest do
     assert row_for(user, workspace)["cap_count"] == expected
   end
 
-  test "an unsigned serialized artifact preserves the user row and reports zero capabilities" do
+  test "an unsigned serialized artifact is ignored while the current self-license remains" do
     {workspace, user} = identities("failure")
     cap = unsigned_cap(user, workspace, "target")
     assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [cap])
     assert :ok = declare_workspace_member(workspace, user)
+    assert :ok = Ezagent.Entity.spawn_principal(user)
 
-    assert row_for(user, workspace)["cap_count"] == 0
+    verified = Ezagent.EntityCaps.verified_set(Ezagent.EntityCaps.load(user), user)
+
+    assert row_for(user, workspace)["cap_count"] == MapSet.size(verified)
+    assert MapSet.size(verified) == 1
+    refute cap in verified
   end
 
   test "World capability counts have no raw-store fallback" do

@@ -43,11 +43,14 @@ defmodule Ezagent.Cap.Authorize do
   """
   @spec authorize(URI.t(), Enumerable.t(), map()) :: {:ok, Capability.t()} | denial()
   def authorize(%URI{} = holder, candidate_caps, needed) when is_map(needed) do
-    case holder_caps(holder) do
-      [] ->
+    case {principal_fenced?(holder), principal_current?(holder)} do
+      {true, _current?} ->
         {:error, :holder_revoked}
 
-      _licensed ->
+      {false, false} ->
+        {:error, :holder_revoked}
+
+      {false, true} ->
         candidate_caps
         |> Enum.filter(&verified_candidate?(&1, holder))
         |> Enum.find(&Capability.matches?(&1, needed))
@@ -69,12 +72,47 @@ defmodule Ezagent.Cap.Authorize do
 
   defp verified_candidate?(_candidate, _holder), do: false
 
+  # An external presenter proves its principal generation with the current
+  # self-license in the independently loaded holder store. A genuinely
+  # autonomous Kind may present its own URI while executing inside its
+  # authority compartment (F-6 coordinator decision); for that narrow case,
+  # require the process-local generation to still equal a fresh durable read.
+  # This supports ephemeral internal principals without trusting ctx.caller,
+  # and a standalone generation bump immediately makes the live process inert.
+  defp principal_current?(holder) do
+    autonomous_current?(holder) or holder_caps(holder) != []
+  end
+
+  defp autonomous_current?(holder) do
+    with {:ok, process_generation} <- Authority.current_process_generation(holder),
+         {:ok, ^process_generation} <- Authority.current_generation(holder) do
+      true
+    else
+      _ -> false
+    end
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
   # The holder-cap source is fail-closed: an unloaded/unreadable holder is a
   # revoked holder, never a default-allow.
   defp holder_caps(holder) do
     holder |> loader().read_held_caps() |> Enum.to_list()
   rescue
     _ -> []
+  end
+
+  # The domain-backed fence read is fail-closed. Only an explicit `false`
+  # admits the holder; a missing callback, exception, or malformed return is a
+  # deny so configuration drift cannot silently disable an offboarding fence.
+  defp principal_fenced?(holder) do
+    loader().principal_fenced?(holder) != false
+  rescue
+    _ -> true
+  catch
+    _, _ -> true
   end
 
   defp loader do

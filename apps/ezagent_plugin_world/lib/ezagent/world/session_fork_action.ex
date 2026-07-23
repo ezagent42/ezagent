@@ -44,7 +44,7 @@ defmodule Ezagent.World.SessionForkAction do
 
     case Ezagent.Session.ConfigFork.fork_config(
            session_uri,
-           %{caller: caller, caps: caps},
+           %{caller: caller, authenticated_principal: caller, caps: caps},
            opts
          ) do
       {:ok, %{session_uri: %URI{} = new_session_uri}} ->

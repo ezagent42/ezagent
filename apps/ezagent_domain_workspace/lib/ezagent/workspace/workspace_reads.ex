@@ -357,9 +357,8 @@ defmodule Ezagent.Workspace.WorkspaceReads do
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
     }
 
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> Ezagent.Identity.caps_authorize?(needed)
+    caps = Ezagent.EntityCaps.load(caller)
+    Ezagent.Identity.caps_authorize?(caller, caps, needed)
   rescue
     _ -> false
   end

@@ -521,6 +521,8 @@ defmodule Ezagent.CapabilityRegistry do
       workspace_uri: cap.workspace_uri
     }
 
+    # F-5 REVIEWED EXEMPTION: GRANT-side attenuation only. This predicate decides
+    # whether authority may be delegated; it never authorizes an access action.
     if Enum.any?(held, &Capability.matches?(&1, needed)),
       do: :ok,
       else: {:error, :grant_not_delegable}
@@ -598,6 +600,8 @@ defmodule Ezagent.CapabilityRegistry do
   end
 
   defp held_instance_covers?(%Capability{} = held, %URI{} = target) do
+    # F-5 REVIEWED EXEMPTION: GRANT-side ownership/delegation classification only.
+    # Access-time consumers must use Ezagent.Cap.authorize/3 instead.
     Capability.matches?(held, %{
       kind: held.kind,
       behavior: held.behavior,

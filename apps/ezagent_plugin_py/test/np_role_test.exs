@@ -210,8 +210,13 @@ defmodule Ezagent.PluginPy.NpRoleTest do
       # smuggle a script onto a new agent. py's role-script path flows through
       # the SAME `:create_agent` cap chokepoint as every create — a capless
       # caller is rejected BEFORE the handler body, so no script is installed.
+      intruder = URI.new!("entity://#{ws_name}/user/intruder")
+      {:ok, _user} = Ezagent.Users.create(intruder, "np-role-intruder", [])
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(intruder)
+
       non_operator_ctx = %{
-        caller: URI.new!("entity://#{ws_name}/user/intruder"),
+        caller: intruder,
+        authenticated_principal: intruder,
         caps: MapSet.new()
       }
 

@@ -34,7 +34,8 @@ defmodule Ezagent.Socialware.PublicViewTest do
     {:ok, behaviors} =
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(:system))
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, %{uri: uri, behaviors: behaviors})
+    {:ok, _pid} =
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{uri: uri, behaviors: behaviors})
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.Capability.workspace_of(uri))
 

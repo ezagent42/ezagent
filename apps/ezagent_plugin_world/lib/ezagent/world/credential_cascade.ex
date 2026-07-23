@@ -54,7 +54,11 @@ defmodule Ezagent.World.CredentialCascade do
         source_uri: Map.fetch!(params, "source_uri"),
         workspace: workspace_name(Map.fetch!(params, "workspace_uri"))
       },
-      %{caller: caller_uri, caps: caller_caps}
+      %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caller_caps
+      }
     )
   end
 
@@ -65,7 +69,7 @@ defmodule Ezagent.World.CredentialCascade do
       target: Ezagent.URI.with_action(agent_uri, :credential_grant, :revoke_credential_grant),
       mode: :call,
       args: %{},
-      ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+      ctx: %{caller: caller_uri, authenticated_principal: caller_uri, caps: caller_caps, reply: :sync},
       origin: :authenticated_external
     })
   end

@@ -268,7 +268,7 @@ defmodule Ezagent.SnapshotStore do
   def delete(uri) do
     uri
     |> uri_to_str()
-    |> KindSnapshot.delete()
+    |> KindSnapshot.clear_state_preserving_marker()
   end
 
   @doc """

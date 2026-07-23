@@ -159,17 +159,43 @@ defmodule Ezagent.ActionSet.Identity do
 
     caps = Ezagent.Cap.verified_set(caps, Map.get(args, :uri))
 
-    state =
-      case recipe_binding do
-        {:active, version, keys} ->
-          %{caps: caps, recipe_binding_version: version, recipe_binding_keys: keys}
+    with {:ok, caps} <- maybe_mint_self_license(caps, args) do
+      state =
+        case recipe_binding do
+          {:active, version, keys} ->
+            %{caps: caps, recipe_binding_version: version, recipe_binding_keys: keys}
 
-        :none ->
-          %{caps: caps}
-      end
+          :none ->
+            %{caps: caps}
+        end
 
-    {:ok, state}
+      {:ok, state}
+    end
   end
+
+  defp maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri}) do
+    if Enum.any?(caps, &(Ezagent.Capability.action_of(&1) == :self_license)) do
+      {:error, :self_license_already_present}
+    else
+      with {:ok, type} <- Ezagent.URI.type(uri),
+           kind <- String.to_existing_atom(type),
+           requested <-
+             Ezagent.Capability.cap(
+               kind,
+               __MODULE__,
+               :self_license,
+               uri,
+               Ezagent.URI.workspace_of(uri)
+             ),
+           intent <- Ezagent.Cap.Grant.freeze(uri, uri, uri, requested),
+           {:ok, license} <- Ezagent.Cap.Authority.issue_self_license_current(intent),
+           licensed <- MapSet.put(caps, license) do
+        {:ok, licensed}
+      end
+    end
+  end
+
+  defp maybe_mint_self_license(caps, _args), do: {:ok, caps}
 
   defp hydrate_recipe_binding(caps, %URI{} = uri) do
     if Ezagent.URI.type?(uri, :agent) do
@@ -211,7 +237,14 @@ defmodule Ezagent.ActionSet.Identity do
 
     state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
 
-    with {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+    with :ok <- persist_user_caps_after_marker(uri, state.caps),
+         {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+      :ok =
+        Ezagent.Identity.MembershipConvergence.converge(
+          uri,
+          MapSet.to_list(reconciled.caps)
+        )
+
       if reconciled == original_state do
         {:ok, %{}}
       else
@@ -221,6 +254,18 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
+
+  # `activate/2` runs only after Kind.Server has atomically stored the initial
+  # snapshot together with `ever_created`. Keeping the user projection write
+  # here prevents a crash between `create/1` and that marker-bearing commit
+  # from leaving a self-license that a later retry cannot safely mint.
+  defp persist_user_caps_after_marker(uri, caps) do
+    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
+      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
+    else
+      :ok
+    end
+  end
 
   @doc false
   @spec reconcile_recipe_binding_state(map(), URI.t()) :: {:ok, map()} | {:error, term()}
@@ -548,7 +593,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
-        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [set_caps_effect(new_caps)] ++ membership_convergence_effects(receiver, new_caps)}
       end
     else
       {:error, _reason} ->
@@ -568,7 +614,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
-        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [set_caps_effect(new_caps)] ++ membership_convergence_effects(receiver, [cap])}
       end
     end
   end
@@ -615,7 +662,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          set_caps_effect(reconciled.caps),
          {:set, :recipe_binding_version, version},
          {:set, :recipe_binding_keys, keys}
-       ]}
+       ] ++ membership_convergence_effects(receiver, reconciled.caps)}
     else
       false -> {:error, :agent_required}
       nil -> {:error, :recipe_binding_not_found}
@@ -640,25 +687,37 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
         |> MapSet.new()
 
       new_caps = MapSet.put(deduped, cap_struct)
+      receiver = Map.get(ctx, :self_uri)
 
-      notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
+      # User authority is physically projected in `users.caps_json`, whereas
+      # non-user identities are snapshot-backed. Persist the user projection
+      # before scheduling holder-driven convergence so `add_self`'s independent
+      # durable read can observe the committed grant. The VM-internal
+      # `store_cap` path already has this ordering; absorb/grant must match it.
+      with :ok <- persist_entity_caps(receiver, new_caps) do
+        notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
-      payload =
-        %{
-          target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-          cap: cap_struct,
-          at: DateTime.utc_now()
-        }
-        |> Map.merge(event_attrs)
+        payload =
+          %{
+            target_uri: receiver |> uri_to_str(),
+            cap: cap_struct,
+            at: DateTime.utc_now()
+          }
+          |> Map.merge(event_attrs)
 
-      {:ok, %{caps: MapSet.to_list(new_caps)},
-       [
-         set_caps_effect(new_caps),
-         {:emit, :cap_granted, payload}
-       ]}
+        {:ok, %{caps: MapSet.to_list(new_caps)},
+         [
+           set_caps_effect(new_caps),
+           {:emit, :cap_granted, payload}
+         ] ++ membership_convergence_effects(receiver, [cap_struct])}
+      end
     else
       {:error, :invalid_cap_artifact}
     end
+  end
+
+  defp membership_convergence_effects(receiver, caps) do
+    Ezagent.Identity.MembershipConvergence.after_commit_effects(receiver, caps)
   end
 
   @doc "Revoke a capability from this principal — normalizes the `cap` then removes the identity-key match via `Ezagent.Capability.revoke/2`, notifies the principal, and emits `:cap_revoked`."

@@ -36,7 +36,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{ExternalFeed, Settlement}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "settle-recovery-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "settle-recovery-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -52,16 +52,17 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -84,14 +85,14 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    %{session: session, caller: @owner, pid: pid, workspace: workspace}
+    %{session: session, caller: owner(), pid: pid, workspace: workspace}
   end
 
   test "activated/2 recovers a settled-but-pending settlement on respawn", ctx do
@@ -152,7 +153,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
     # (5) Re-spawn → activated/2 runs → recovery commits the settlement.
     {:ok, pid2} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: ctx.session,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })

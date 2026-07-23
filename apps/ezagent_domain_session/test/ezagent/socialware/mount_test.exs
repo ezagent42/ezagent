@@ -167,6 +167,7 @@ defmodule Ezagent.Socialware.MountTest do
 
       assert eventually(fn -> holds_cap?(grantee, target, :get_tree) end)
       assert {:ok, %{ok: true}} = dispatch(grantee, target, :get_tree)
+
       # 只授了 :get_tree,:add_node 无 cap——strict-verify 口径 :missing_cap(照本文件 session 路同款)
       assert {:error, :missing_cap} = dispatch(grantee, target, :add_node)
     end
@@ -355,6 +356,7 @@ defmodule Ezagent.Socialware.MountTest do
       args: %{},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
         reply: {:caller_inbox, self()}
       }

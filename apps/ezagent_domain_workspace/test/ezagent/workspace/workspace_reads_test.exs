@@ -237,6 +237,32 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
     assert WorkspaceReads.sessions(nonmember_uri, workspace_uri) == [session_x]
   end
 
+  test "workspace authorization rejects a cap after its target generation is revoked", %{
+    workspace_uri: workspace_uri,
+    outsider_uri: outsider_uri
+  } do
+    {:ok, _row} = Ezagent.Users.create_read_only(outsider_uri, [])
+
+    requested =
+      Ezagent.Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :list_members,
+        workspace_uri,
+        workspace_uri
+      )
+
+    cap = Ezagent.Test.CapHelper.signed_cap!(workspace_uri, outsider_uri, requested)
+    :ok = Ezagent.EntityCaps.grant(outsider_uri, cap)
+
+    assert WorkspaceReads.authorized_workspace?(outsider_uri, workspace_uri)
+
+    revoke_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri)
+    assert {:ok, _generation} = Ezagent.Cap.revoke_all_to(workspace_uri, revoke_ctx)
+
+    refute WorkspaceReads.authorized_workspace?(outsider_uri, workspace_uri)
+  end
+
   # A narrow workspace-scoped session-send cap for `grantee` — admits the
   # workspace into the grantee's `list_workspaces_for/2` visible set
   # WITHOUT granting any agent owns/manages relationship.

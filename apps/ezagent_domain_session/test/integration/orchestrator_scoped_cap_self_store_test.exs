@@ -54,6 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     end)
 
     :ok = Ezagent.ReadyGate.put(orchestrator_uri, :not_ready)
+    buffer_size_before = Ezagent.PendingDelivery.buffer_size(orchestrator_uri)
 
     task =
       Task.async(fn ->
@@ -72,10 +73,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     # A never-ready transport does not block cap handoff: each exact Session
     # or Workspace action is already signed by its concrete target authority
     # and durably queued for the orchestrator's own absorb path.
-    assert [first_notification, second_notification] = pending_entries(orchestrator_uri)
-
-    assert_cascade_notification(first_notification, orchestrator_uri, 1)
-    assert_cascade_notification(second_notification, orchestrator_uri, 2)
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
     pending = pending_artifacts(orchestrator_uri)
 
     assert length(pending) == expected_cap_count()
@@ -134,30 +132,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
       %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(payload, [:safe])
       cap
     end)
-  end
-
-  defp pending_entries(uri) do
-    Ezagent.PendingDelivery.with_lock(uri, fn ->
-      key = URI.to_string(uri)
-
-      case :ets.lookup(Ezagent.PendingDelivery.table(), key) do
-        [{^key, entries}] -> Ezagent.PendingDelivery.unwrap_entries(entries)
-        [] -> []
-      end
-    end)
-  end
-
-  defp assert_cascade_notification(invocation, orchestrator_uri, cursor) do
-    assert %Ezagent.Invocation{
-             target: %URI{query: "action=_.cascade_notify_managers"} = target,
-             mode: :cast,
-             args: %{cursor: ^cursor, slice_key: :identity, event_at: %DateTime{}},
-             ctx: %{caller: :vm_internal, reply: :ignore, mode: :cast, caps: caps},
-             origin: :trusted_internal
-           } = invocation
-
-    assert URI.to_string(%{target | query: nil}) == URI.to_string(orchestrator_uri)
-    assert MapSet.size(caps) == 0
   end
 
   defp expected_cap_count do

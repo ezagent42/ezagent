@@ -19,22 +19,22 @@ defmodule Ezagent.Socialware.ExternalLeakTest do
   # not an identity-less token. A viewer reads as the session owner/member; the
   # boundary assertions (internal never leaks; only committed external) are
   # byte-equivalent — only the AUTH carrier changed from a token to a principal.
-  @owner Ezagent.URI.entity(:team_alpha, :user, "external-leak-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "external-leak-owner")
 
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
-    %{session: session, workspace: workspace, caller: @owner}
+    %{session: session, workspace: workspace, caller: owner()}
   end
 
   test "internal content never reaches an external route; internal route still sees it", ctx do

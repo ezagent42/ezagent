@@ -157,6 +157,7 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
              args: %{from: anon_uri, to: confirmed_uri},
              ctx: %{
                caller: confirmed_uri,
+               authenticated_principal: confirmed_uri,
                caps: MapSet.new([signed_cap]),
                reply: :ignore
              },

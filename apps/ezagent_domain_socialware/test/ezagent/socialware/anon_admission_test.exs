@@ -38,7 +38,7 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
         owner_uri: @owner,
         behaviors: behaviors
@@ -91,6 +91,19 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
     end
   end
 
+  defp wait_until(fun, retries \\ 100)
+
+  defp wait_until(fun, retries) when retries > 0 do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      wait_until(fun, retries - 1)
+    end
+  end
+
+  defp wait_until(fun, 0), do: fun.()
+
   describe "admit_anonymous_participant/2" do
     test "mints, spawns, binds, joins as anon, and can read by membership" do
       session = public_session()
@@ -104,21 +117,28 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       assert {:ok, %{messages: _}} = ChatFeed.snapshot(session, anon)
     end
 
-    test "join cap remains #154-clean with no system principal granter" do
+    test "successful join consumes its #154-clean tier-0 cap and retains an entity-granted tier-1" do
       session = public_session()
 
       assert {:ok, %{anon_uri: anon}} = AnonAdmission.admit_anonymous_participant(session)
-      %{caps: caps} = Ezagent.Users.get_by_uri(anon)
+
+      assert wait_until(fn ->
+               Enum.any?(Ezagent.EntityCaps.load(anon), &(&1.action == :receive)) and
+                 not Enum.any?(Ezagent.EntityCaps.load(anon), &(&1.action == :join))
+             end)
+
+      caps = Ezagent.EntityCaps.load(anon)
 
       cap =
         Enum.find(caps, fn cap ->
-          cap.behavior == Ezagent.ActionSet.Session and cap.action == :join
+          cap.behavior == Ezagent.ActionSet.Session and cap.action == :receive
         end)
 
-      assert cap.action == :join
+      assert cap.action == :receive
       assert cap.instance == Ezagent.URI.instance(session)
       assert match?(%URI{scheme: "entity"}, cap.granted_by)
       refute match?(%URI{scheme: "system"}, cap.granted_by)
+      refute Enum.any?(caps, &(&1.behavior == Ezagent.ActionSet.Session and &1.action == :join))
     end
 
     test "participation cap mount is best-effort after a successful join" do
@@ -129,7 +149,7 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
                  mount_participation: fn _session, _anon -> raise "mount failed" end
                )
 
-      assert member?(session, anon)
+      assert wait_until(fn -> member?(session, anon) end)
     end
 
     test "private sessions fail closed" do

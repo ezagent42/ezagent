@@ -61,6 +61,7 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
 
       # Step 1 (task): create the user row (assigns workspace_uri).
       assert {:ok, _decoded} = Users.create(user_uri, "temp-pw-not-secret", [])
+      :ok = ensure_principal(user_uri)
 
       # BEFORE add_member: not a member; wildcard cap drops → NOT visible.
       refute member?(ws_name, user_uri)
@@ -118,6 +119,8 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
                  %{user_uri: user_uri_str, password: "temp-pw-not-secret", caps: ""},
                  admin_ctx
                )
+
+      :ok = ensure_principal(user_uri)
 
       # The facade added membership after the create_user dispatch.
       assert member?(ws_name, user_uri)
@@ -177,8 +180,18 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
   end
 
   defp visible?(ws_name, %URI{} = caller_uri, caps) do
+    current_caps = Ezagent.EntityCaps.load(caller_uri)
+
     caller_uri
-    |> Workspace.list_workspaces_for(caps)
+    |> Workspace.list_workspaces_for(Enum.concat(current_caps, caps))
     |> Enum.any?(&(&1.name == ws_name))
+  end
+
+  defp ensure_principal(%URI{} = user_uri) do
+    case Ezagent.SpawnRegistry.spawn(user_uri) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> flunk("principal spawn failed: #{inspect(reason)}")
+    end
   end
 end

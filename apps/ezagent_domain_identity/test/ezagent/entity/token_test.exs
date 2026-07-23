@@ -14,6 +14,7 @@ defmodule Ezagent.Entity.TokenTest do
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_mint-#{System.unique_integer([:positive])}"
         )
+      open_authority!(uri)
 
       assert {plain, row} = Token.mint(uri, label: "test")
       assert is_binary(plain)
@@ -30,6 +31,7 @@ defmodule Ezagent.Entity.TokenTest do
     test "mint for a user URI also works" do
       uri =
         Ezagent.URI.new!("entity://team-alpha/user/token-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
 
       assert {_plain, row} = Token.mint(uri)
       assert row.entity_uri == URI.to_string(uri)
@@ -40,6 +42,7 @@ defmodule Ezagent.Entity.TokenTest do
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_multi-#{System.unique_integer([:positive])}"
         )
+      open_authority!(uri)
 
       assert {plain1, _} = Token.mint(uri, label: "first")
       assert {plain2, _} = Token.mint(uri, label: "second")
@@ -57,6 +60,7 @@ defmodule Ezagent.Entity.TokenTest do
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_verify-#{System.unique_integer([:positive])}"
         )
+      open_authority!(uri)
 
       {plain, _} = Token.mint(uri)
 
@@ -66,6 +70,7 @@ defmodule Ezagent.Entity.TokenTest do
     test "wrong token → {:error, :invalid_credentials}" do
       uri =
         Ezagent.URI.new!("entity://team-alpha/agent/cc_v2-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
 
       {_plain, _} = Token.mint(uri)
 
@@ -80,6 +85,7 @@ defmodule Ezagent.Entity.TokenTest do
     test "verify updates last_used_at" do
       uri =
         Ezagent.URI.new!("entity://team-alpha/agent/cc_lu-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
 
       {plain, row} = Token.mint(uri)
       assert row.last_used_at == nil
@@ -97,6 +103,7 @@ defmodule Ezagent.Entity.TokenTest do
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_list-#{System.unique_integer([:positive])}"
         )
+      open_authority!(uri)
 
       {_, _r1} = Token.mint(uri, label: "first")
       Process.sleep(10)
@@ -123,6 +130,7 @@ defmodule Ezagent.Entity.TokenTest do
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_revoke-#{System.unique_integer([:positive])}"
         )
+      open_authority!(uri)
 
       {plain, row} = Token.mint(uri)
 
@@ -135,6 +143,7 @@ defmodule Ezagent.Entity.TokenTest do
   describe "digest version and pepper lifecycle" do
     test "token version selects the pepper and row version is checked" do
       uri = Ezagent.URI.agent("team-alpha", "versioned-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
       {plain, row} = Token.mint(uri)
 
       row
@@ -151,11 +160,13 @@ defmodule Ezagent.Entity.TokenTest do
       on_exit(fn -> Application.put_env(:ezagent_domain_identity, Token, old) end)
 
       uri = Ezagent.URI.agent("team-alpha", "no-pepper-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
       assert {:error, {:pat_pepper_unavailable, 9}} = Token.mint(uri)
     end
 
     test "rotate_label keeps one login token row and invalidates the prior token" do
       uri = Ezagent.URI.user("team-alpha", "rotate-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
       {first, _} = Token.rotate_label(uri, "password-login")
       {second, _} = Token.rotate_label(uri, "password-login")
 
@@ -167,6 +178,7 @@ defmodule Ezagent.Entity.TokenTest do
 
     test "rotate_label preserves the active token when the new pepper is unavailable" do
       uri = Ezagent.URI.user("team-alpha", "rotate-fail-#{System.unique_integer([:positive])}")
+      open_authority!(uri)
       {active, active_row} = Token.rotate_label(uri, "interactive-login")
       old = Application.get_env(:ezagent_domain_identity, Token)
       Application.put_env(:ezagent_domain_identity, Token, current_version: 9, peppers: %{})
@@ -182,5 +194,13 @@ defmodule Ezagent.Entity.TokenTest do
       Application.put_env(:ezagent_domain_identity, Token, old)
       assert {:ok, ^uri} = Authentication.authenticate(active)
     end
+  end
+
+  defp open_authority!(uri) do
+    {:ok, type} = Ezagent.URI.type(uri)
+    kind = String.to_existing_atom(type)
+    assert kind in [:agent, :user]
+    assert {:ok, _authority} = Ezagent.Cap.Authority.open(uri, kind)
+    uri
   end
 end

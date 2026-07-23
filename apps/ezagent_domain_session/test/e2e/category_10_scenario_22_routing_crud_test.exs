@@ -38,6 +38,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Category10.Scenario22RoutingCRUDTest 
 
     %{
       caller: admin,
+      authenticated_principal: admin,
       caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin)]),
       reply: {:caller_inbox, self()}
     }

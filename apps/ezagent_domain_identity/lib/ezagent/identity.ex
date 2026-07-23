@@ -6,91 +6,27 @@ defmodule Ezagent.Identity do
   to derive `ctx.caps` from the session cookie's `current_entity_uri`
   (renamed from `current_user_uri` in PR #142 — works for any Entity).
 
-  Uses the dispatch path so cap checks fire naturally (and audit rows
-  appear for non-admin reads). Per Q-MU-5 default: every spawned User
-  gets a self-grant cap (`%Capability{kind: :user, behavior: Identity,
-  instance: own_uri}`) automatically in `init_slice`, so freshly logged-in
-  users CAN read their own caps via dispatch without bypassing auth.
+  Capability loading is dependency-inverted through `Ezagent.EntityCaps.load/1`.
+  That facade applies the principal-generation self-license gate before any
+  caller can use the returned set as authority.
   """
 
   @behaviour Ezagent.Cap.AuthorityLoader
 
-  alias Ezagent.{Cmd, KindRegistry, Router}
+  alias Ezagent.{Cmd, Router}
 
   @doc """
-  List capabilities held by `principal_uri`. Returns `MapSet.t(Capability.t())`.
+  List the current verified capabilities held by `principal_uri`.
 
-  Falls back to `MapSet.new()` if the User Kind isn't spawned yet
-  (boot-window or unprovisioned user).
+  The result is empty for an unknown principal, an unlicensed pre-G-3 fixture,
+  or a principal whose generation has been bumped.
   """
   @spec list_caps_for(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
   def list_caps_for(uri) do
-    user_uri = parse_uri(uri)
-
-    case KindRegistry.lookup(user_uri) do
-      :error ->
-        MapSet.new()
-
-      {:ok, _pid} ->
-        # wildcard-cap-fix 2026-05-26: `Behavior.Identity.post_init/2`
-        # now queues a caps_json reconciliation continuation for every
-        # user URI, so the rehydrated Kind is `:not_ready` until the
-        # continue completes. A `:call`-mode dispatch against a
-        # `:not_ready` Kind fails fast per hard-invariant #3, which
-        # would return `MapSet.new()` to the caller — masking the
-        # post_init repair entirely (the exact bug the fix is trying
-        # to cure). Wait for readiness before dispatching; this is the
-        # canonical pattern operator-CLI uses (see
-        # `mix ezagent.stress.await_ready!/1`).
-        await_ready(user_uri)
-
-        target = Ezagent.URI.with_action(user_uri, :identity, :list_caps)
-
-        case Router.dispatch(%Cmd{
-               target: target,
-               action: :list_caps,
-               args: %{},
-               ctx: %{
-                 mode: :call,
-                 caller: user_uri,
-                 caps: signed_self_cap(user_uri, target),
-                 reply: {:caller_inbox, self()}
-               },
-               origin: :trusted_internal
-             }) do
-          {:ok, %{caps: caps}} when is_list(caps) -> verified_cap_set(caps, user_uri)
-          _ -> MapSet.new()
-        end
-    end
-  end
-
-  # Bounded wait — up to ~500ms total (50 × 10ms). post_init's
-  # `handle_continue/3` does a single SQLite PK lookup + MapSet
-  # operation; the bound is generous to tolerate Sandbox / contention.
-  # On timeout, fall through to dispatch (which will :not_ready fail
-  # fast and return empty MapSet — same posture as the pre-fix code).
-  defp await_ready(user_uri, attempts \\ 50)
-
-  defp await_ready(_user_uri, 0), do: :timeout
-
-  defp await_ready(user_uri, attempts) do
-    case Ezagent.ReadyGate.status(user_uri) do
-      :ready ->
-        :ok
-
-      _ ->
-        Process.sleep(10)
-        await_ready(user_uri, attempts - 1)
-    end
-  end
-
-  defp signed_self_cap(user_uri, target) do
-    admin = Ezagent.URI.user(:system, :admin)
-
-    case Ezagent.Cap.issue_for_action({:admin, admin}, user_uri, target) do
-      {:ok, cap} -> MapSet.new([cap])
-      {:error, _reason} -> MapSet.new()
-    end
+    uri
+    |> parse_uri()
+    |> Ezagent.EntityCaps.load()
+    |> MapSet.new()
   end
 
   @doc """
@@ -272,12 +208,17 @@ defmodule Ezagent.Identity do
   spoofable (the DB row was written under the §5.2 grant gate).
   """
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
+  @impl Ezagent.Cap.AuthorityLoader
   def read_held_caps(actor_uri) do
-    actor_uri = parse_uri(actor_uri)
-
     actor_uri
-    |> read_granter_caps()
-    |> verified_cap_set(actor_uri)
+    |> parse_uri()
+    |> Ezagent.EntityCaps.load()
+    |> MapSet.new()
+  end
+
+  @impl Ezagent.Cap.AuthorityLoader
+  def principal_fenced?(actor_uri) do
+    Ezagent.Identity.Offboarding.RevocationFence.fenced?(actor_uri)
   end
 
   @doc """
@@ -298,26 +239,30 @@ defmodule Ezagent.Identity do
   caller constructs it from the target (pure field assignment, no `matches?`),
   so the instance binding (and thus the wrong-target denial) is preserved.
   """
-  @spec caps_authorize?(MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()], map()) ::
+  @spec caps_authorize?(
+          URI.t(),
+          MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()],
+          map()
+        ) ::
           boolean()
-  def caps_authorize?(caps, needed) when is_map(needed) do
+  def caps_authorize?(%URI{} = holder, caps, needed) when is_map(needed) do
     caps
     |> normalize_caps()
-    |> Enum.any?(&cap_authorizes?(&1, needed))
+    |> Enum.any?(&cap_authorizes?(holder, &1, needed))
   end
 
-  defp cap_authorizes?(%Ezagent.Capability{} = cap, needed) do
+  def caps_authorize?(_holder, _caps, _needed), do: false
+
+  defp cap_authorizes?(holder, %Ezagent.Capability{} = cap, needed) do
     Ezagent.Capability.granted_by_entity?(cap) and
-      try do
-        Ezagent.Capability.matches?(cap, needed)
-      rescue
-        _ -> false
-      catch
-        _, _ -> false
-      end
+      match?({:ok, %Ezagent.Capability{}}, Ezagent.Cap.authorize(holder, [cap], needed))
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
   end
 
-  defp cap_authorizes?(_, _), do: false
+  defp cap_authorizes?(_holder, _cap, _needed), do: false
 
   defp normalize_caps(%MapSet{} = caps), do: caps
   defp normalize_caps(caps) when is_list(caps), do: MapSet.new(caps)
@@ -326,49 +271,4 @@ defmodule Ezagent.Identity do
   @doc "Compatibility delegate; new callers use `Ezagent.EntityCaps.load/1`."
   @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
   defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load
-
-  defp verified_cap_set(caps, receiver_uri),
-    do: Ezagent.EntityCaps.verified_set(caps, receiver_uri)
-
-  # PR-OWN-2 (caps-data-ownership SPEC #306 §5.2 + r4):
-  # Read the granter's current Identity slice caps via
-  # `Ezagent.Kind.get_slice/2`. Skips dispatch (chicken-and-egg).
-  #
-  # Codex PR-OWN-2 round-2 HIGH-2 fix: REMOVED the URI-equality
-  # admin-caps fallback (spoofable). Round-1 trusted URI string
-  # equality; that lets any caller setting `granter_uri = admin_uri`
-  # mint admin grants without proving they're admin.
-  #
-  # Codex round-3 boot-order fix: when the Kind isn't live (e.g.
-  # admin facade call immediately after fresh app boot before any
-  # dispatch has lazily-spawned the admin Kind), fall back to the
-  # PERSISTED caps stored in the `users` table — NOT spoofable
-  # because the row's `caps_json` was written under the §5.2 gate
-  # (or by bootstrap before §5.2 was enforced; bootstrap admin's
-  # caps are the all-four-:any invariant shape minted at seed
-  # time and persisted with `granted_by` set to the bootstrap URI).
-  #
-  # The Kind-slice read is preferred when available (most recent
-  # in-memory state); DB fallback covers the boot-order gap.
-  # Empty MapSet for unknown URIs — dispatch CapBAC will reject.
-  defp read_granter_caps(granter_uri) do
-    case Ezagent.Kind.get_slice(granter_uri, :identity) do
-      {:ok, %{caps: caps}} when is_struct(caps, MapSet) ->
-        caps
-
-      {:ok, %{caps: caps}} when is_list(caps) ->
-        MapSet.new(caps)
-
-      _ ->
-        read_persisted_caps(granter_uri)
-    end
-  end
-
-  # Persisted-caps fallback — reads `users` table. Returns empty
-  # MapSet for non-user URIs (agents, system, etc) since this
-  # facade is User-scoped today; future Agent-grant flows would
-  # add an `Agents.get_by_uri/1` branch.
-  defp read_persisted_caps(granter_uri) do
-    granter_uri |> Ezagent.EntityCaps.UserStore.load() |> MapSet.new()
-  end
 end

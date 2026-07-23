@@ -27,21 +27,21 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
   defp sender_uri, do: Ezagent.URI.entity(:team_alpha, :agent, "orchestrator")
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "approved-att-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "approved-att-owner")
 
   setup do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    %{session: session, workspace: workspace, caller: @owner}
+    %{session: session, workspace: workspace, caller: owner()}
   end
 
   defp upload_uri(ws_name, name), do: EzURI.resource(ws_name, "uploads", name)
@@ -117,7 +117,8 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
 
     _ = commit_message_with_attachment(ctx, approved, :external_visible)
 
-    non_member = EzURI.entity(:team_alpha, :user, "non-member-#{System.unique_integer([:positive])}")
+    non_member =
+      EzURI.entity(:team_alpha, :user, "non-member-#{System.unique_integer([:positive])}")
 
     refute ExternalFeed.approved_attachment?(non_member, ctx.session, approved)
 
@@ -146,7 +147,8 @@ defmodule Ezagent.Socialware.ExternalFeedApprovedAttachmentTest do
              ExternalFeed.mint_approved_token(ctx.caller, ctx.session, not_approved, mint)
   end
 
-  test "mint_approved_token binds the token to the CALLER as grantee (PR-3 person binding)", ctx do
+  test "mint_approved_token binds the token to the CALLER as grantee (PR-3 person binding)",
+       ctx do
     ws_name = Ezagent.URI.workspace_name!(ctx.workspace)
     approved = upload_uri(ws_name, "uuid-bound.pdf")
 

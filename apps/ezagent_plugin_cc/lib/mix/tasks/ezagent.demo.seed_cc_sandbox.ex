@@ -270,6 +270,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcSandbox do
       # only on an inline authorizer never routed through `Ezagent.Identity.Grant`).
       ctx: %{
         caller: admin_uri,
+        authenticated_principal: admin_uri,
         caps: [signed_cap],
         reply: {:caller_inbox, self()}
       },

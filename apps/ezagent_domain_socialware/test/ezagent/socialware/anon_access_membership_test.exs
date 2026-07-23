@@ -30,7 +30,7 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
       )
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
         owner_uri: owner_uri,
         behaviors: Ezagent.Entity.Session.behaviors()
@@ -82,11 +82,17 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
     caller = User.admin_uri()
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
   end
 
@@ -127,7 +133,8 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
   describe "cross-session isolation — an anon-User reads ONLY its own session" do
     test "an anon-User joined to session A is DENIED reading session B" do
       session_a = spawn_session()
-      session_b = spawn_session(Ezagent.URI.entity(:team_alpha, :user, "anon-access-owner-b"))
+      session_b =
+        spawn_session(Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "access-owner-b"))
 
       {:ok, anon} = AnonUser.mint(session_a)
       :ok = spawn_anon_kind(anon)
@@ -139,7 +146,8 @@ defmodule Ezagent.Socialware.AnonAccessMembershipTest do
 
     test "the ChatFeedAuth token bound to session A fails verify for session B" do
       session_a = spawn_session()
-      session_b = spawn_session(Ezagent.URI.entity(:team_alpha, :user, "anon-access-owner-b2"))
+      session_b =
+        spawn_session(Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "access-owner-b2"))
 
       {:ok, anon} = AnonUser.mint(session_a)
 

@@ -54,6 +54,7 @@ defmodule EzagentDomainInstanceMessage.Behavior.TurnPublishPolicyTest do
     %{
       self_uri: session_uri,
       caller: @caller,
+      authenticated_principal: session_uri,
       caps: MapSet.new(),
       reply: :ignore
     }

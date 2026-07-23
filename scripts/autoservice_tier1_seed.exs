@@ -223,8 +223,11 @@ defmodule Ezagent.AutoService.Tier1Seed do
 
   @doc "Genesis-admin ctx for privileged create/ingest dispatches."
   def admin_ctx do
+    admin = Ezagent.Entity.User.admin_uri()
+
     %{
-      caller: Ezagent.Entity.User.admin_uri(),
+      caller: admin,
+      authenticated_principal: admin,
       caps: MapSet.new()
     }
   end
@@ -237,8 +240,16 @@ defmodule Ezagent.AutoService.Tier1Seed do
       if Ezagent.Identity.admin?(caller), do: {:admin, caller}, else: {:held_by, caller}
 
     case Ezagent.Cap.issue(authorization, caller, requested) do
-      {:ok, cap} -> {:ok, %{caller: caller, caps: MapSet.new([cap])}}
-      {:error, reason} -> {:error, {:workspace_cap_issue_failed, reason}}
+      {:ok, cap} ->
+        {:ok,
+         %{
+           caller: caller,
+           authenticated_principal: caller,
+           caps: MapSet.new([cap])
+         }}
+
+      {:error, reason} ->
+        {:error, {:workspace_cap_issue_failed, reason}}
     end
   end
 
@@ -315,24 +326,28 @@ defmodule Ezagent.AutoService.Tier1Seed do
   end
 
   defp ensure_workspace(ws) do
-    case Workspace.create(ws, %{}) do
-      {:ok, _} ->
-        :ok
-
-      {:error, {:already_started, _}} ->
-        :ok
-
-      {:error, :already_exists} ->
-        :ok
-
-      # Workspace.create may report an existing ws in several shapes; treat a
-      # live/persisted workspace as success.
-      other ->
-        if workspace_live_or_persisted?(ws) do
+    if workspace_live_or_persisted?(ws) do
+      :ok
+    else
+      case Workspace.create(ws, %{}) do
+        {:ok, _} ->
           :ok
-        else
-          {:error, {:workspace_create_failed, other}}
-        end
+
+        {:error, {:already_started, _}} ->
+          :ok
+
+        {:error, reason} when reason in [:already_exists, :workspace_exists] ->
+          :ok
+
+        # Another creator may win between the preflight and INSERT; accept
+        # only a now-live/persisted workspace after that race.
+        other ->
+          if workspace_live_or_persisted?(ws) do
+            :ok
+          else
+            {:error, {:workspace_create_failed, other}}
+          end
+      end
     end
   end
 
@@ -398,6 +413,7 @@ defmodule Ezagent.AutoService.Tier1Seed do
           %{
             mode: :call,
             caller: admin_ctx.caller,
+            authenticated_principal: admin_ctx.authenticated_principal,
             caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           }
@@ -765,7 +781,12 @@ defmodule Ezagent.AutoService.Tier1Seed do
         target: join_target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: member_uri, caps: MapSet.new([join_cap]), reply: :ignore},
+        ctx: %{
+          caller: member_uri,
+          authenticated_principal: member_uri,
+          caps: MapSet.new([join_cap]),
+          reply: :ignore
+        },
         origin: :trusted_internal
       })
 

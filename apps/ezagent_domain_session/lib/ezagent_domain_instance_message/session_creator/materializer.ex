@@ -444,6 +444,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
             args: %{member: member_uri},
             ctx: %{
               caller: admin_uri,
+              authenticated_principal: admin_uri,
               caps: MapSet.new([signed_cap]),
               reply: {:caller_inbox, self()}
             },
@@ -452,7 +453,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
         end
 
       case result do
-        r when r == :ok or (is_tuple(r) and tuple_size(r) == 2 and elem(r, 0) == :ok) ->
+        {:ok, %{status: status, member: ^member_uri}}
+        when status in [:granted, :already_member] ->
           # D1 join 补发(caller-side —— 本函数运行在 SessionCreator/facade 进程,
           # 非 Session Kind 内,:sync grant 无自死锁):创建期 join 的 user 成员
           # (owner / workspace-facade caller)同样走唯一补发供给点。Agent → no-op。

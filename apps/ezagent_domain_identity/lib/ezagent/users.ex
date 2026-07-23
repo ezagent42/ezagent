@@ -130,10 +130,10 @@ defmodule Ezagent.Users do
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
-    end
+    parent_uri = Keyword.get(opts, :created_by, user_workspace)
+    edge_kind = if Keyword.has_key?(opts, :created_by), do: :created_by, else: :workspace_member
+
+    insert_with_derivation(changeset, Ezagent.URI.new!(uri_str), parent_uri, edge_kind)
   end
 
   @doc """
@@ -183,9 +183,35 @@ defmodule Ezagent.Users do
       })
       |> Ecto.Changeset.unique_constraint(:uri, name: :users_uri_index)
 
-    case Repo.insert(changeset) do
-      {:ok, row} -> {:ok, decode(row)}
-      err -> err
+    insert_with_derivation(
+      changeset,
+      Ezagent.URI.new!(uri_str),
+      user_workspace,
+      :workspace_member
+    )
+  end
+
+  defp insert_with_derivation(changeset, child_uri, parent_uri, edge_kind) do
+    attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
+
+    Ecto.Multi.new()
+    |> Ecto.Multi.insert(:user, changeset)
+    |> Ecto.Multi.run(:derivation_edge, fn _repo, _changes ->
+      case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             child_uri,
+             parent_uri,
+             edge_kind,
+             attempt_id
+           ) do
+        :ok -> {:ok, :recorded}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
+    |> Repo.transaction()
+    |> case do
+      {:ok, %{user: row}} -> {:ok, decode(row)}
+      {:error, :user, changeset, _changes} -> {:error, changeset}
+      {:error, :derivation_edge, reason, _changes} -> {:error, reason}
     end
   end
 
@@ -194,46 +220,42 @@ defmodule Ezagent.Users do
   Used by the anon-User GC sweeper (issue #51) to reap an abandoned anon-User
   after it has left its session.
 
-  Tears down BOTH the provisioning `users` row AND the User KIND state (#51
-  codex P2): `Ezagent.Entity.User` is snapshot-backed (`persistence` is
-  snapshot-on-change), so an anon User that ever joined a session has a durable
-  `kind_snapshots` row. Deleting only the provisioning row would leave that
-  snapshot behind — the URI could resurrect on restart / demand-spawn with
-  stale identity state even though the `users` row was reaped. So we route the
-  Kind teardown through `Ezagent.Lifecycle.destroy/2` (THE sanctioned teardown:
-  hooks → snapshot + ever-created marker clear → terminate) BEFORE deleting the
-  provisioning row. `destroy/2` is idempotent — a never-spawned User (no
-  snapshot) is a harmless no-op.
+  Revocation precedes cleanup. The durable derivation closure is fenced in one
+  write, the user and every owned/lineage agent advance generation, and stale
+  self-licenses are removed before each fence is cleared. Structural resources
+  survive: workspaces transfer to admin; sessions and templates transfer to
+  their workspace owner (or admin when that owner is also being deleted).
+
+  Only after that durable invalidation/re-ownership boundary succeeds do we
+  tear down the User Kind and delete the provisioning row. A process cleanup
+  failure can therefore never make stale authority valid again; D-3 owns the
+  honest-terminate/reap convergence policy.
   """
-  @spec delete(URI.t() | String.t()) :: :ok | {:error, :cannot_self_destroy}
+  @spec delete(URI.t() | String.t()) :: :ok | {:error, term()}
   def delete(uri) do
     Ezagent.Lifecycle.with_entity_transition(uri, fn ->
-      # Terminate + clear the Kind snapshot/marker first (best-effort: a User
-      # that was never spawned has no Kind state — destroy is a no-op). The
-      # outer transition lock remains held through the provisioning-row delete;
-      # destroy/2 nests reentrantly under the same requester lock.
-      destroy_result =
-        try do
-          Ezagent.Lifecycle.destroy(uri)
-        rescue
-          _ -> :ok
-        end
+      principal = uri |> uri_to_str() |> Ezagent.URI.new!() |> Ezagent.URI.instance()
 
-      case destroy_result do
-        {:error, :cannot_self_destroy} = error ->
-          error
+      case Repo.get_by(__MODULE__, uri: URI.to_string(principal)) do
+        nil ->
+          :ok
 
-        _ ->
-          case Repo.get_by(__MODULE__, uri: uri_to_str(uri)) do
-            nil ->
+        row ->
+          if self_target?(principal) do
+            {:error, :cannot_self_destroy}
+          else
+            with :ok <- Ezagent.Identity.Offboarding.DeleteUser.invalidate(principal),
+                 :ok <- Ezagent.Identity.Offboarding.DeleteUser.cleanup(principal),
+                 {:ok, _deleted} <- Repo.delete(row) do
               :ok
-
-            row ->
-              _ = Repo.delete(row)
-              :ok
+            end
           end
       end
     end)
+  end
+
+  defp self_target?(principal) do
+    match?({:ok, pid} when pid == self(), Ezagent.KindRegistry.lookup(principal))
   end
 
   @doc "Set or rotate a user's password. Returns `{:ok, decoded}` or `{:error, :not_found}`."

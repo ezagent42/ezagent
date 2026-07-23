@@ -222,6 +222,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
       args: %{message: msg},
       ctx: %{
         caller: caller_uri,
+        authenticated_principal: caller_uri,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -250,6 +251,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario32_MentionOrchestratorDispatc
         },
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }

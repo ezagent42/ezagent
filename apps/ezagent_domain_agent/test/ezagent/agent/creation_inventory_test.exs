@@ -19,6 +19,8 @@ defmodule Ezagent.Agent.CreationInventoryTest do
     refute CreationInventory.member?(attempt_id, other_uri, root_uri, workspace_uri)
     assert {:ok, ^attempt_id} = CreationInventory.find_attempt(agent_uri, workspace_uri)
 
+    assert agent_uri in Ezagent.Provenance.DerivationEdges.descendants(root_uri)
+
     different_root = Ezagent.URI.new!("entity://team-alpha/user/different-#{suffix}")
 
     assert {:error, :creation_fact_conflict} =

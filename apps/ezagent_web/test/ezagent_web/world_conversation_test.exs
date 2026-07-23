@@ -96,6 +96,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = cold_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    drain_liveview_mailbox(view)
 
     msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "cold-session-inbound"})
 
@@ -190,6 +191,7 @@ defmodule EzagentWeb.WorldConversationTest do
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
+          authenticated_principal: member_uri,
           caps: MapSet.new([session_cap(member_uri, session_uri, :join)]),
           reply: :ignore
         }
@@ -279,6 +281,7 @@ defmodule EzagentWeb.WorldConversationTest do
         args: %{member: alice_uri},
         ctx: %{
           caller: alice_uri,
+          authenticated_principal: alice_uri,
           caps: MapSet.new([session_cap(alice_uri, session_uri, :join)]),
           reply: :ignore
         }
@@ -326,6 +329,7 @@ defmodule EzagentWeb.WorldConversationTest do
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
+          authenticated_principal: member_uri,
           caps: MapSet.new([session_cap(member_uri, session_uri, :join)]),
           reply: :ignore
         }
@@ -341,7 +345,12 @@ defmodule EzagentWeb.WorldConversationTest do
         target: Ezagent.URI.with_action(session_uri, :session, :attach),
         mode: :call,
         args: %{filename: "x.txt"},
-        ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+        ctx: %{
+          caller: caller_uri,
+          authenticated_principal: caller_uri,
+          caps: caps,
+          reply: :ignore
+        }
       })
     end
 
@@ -377,6 +386,7 @@ defmodule EzagentWeb.WorldConversationTest do
         args: %{member: no_attach_uri},
         ctx: %{
           caller: no_attach_uri,
+          authenticated_principal: no_attach_uri,
           caps: MapSet.new([session_cap(no_attach_uri, session_uri, :join)]),
           reply: :ignore
         }
@@ -1294,9 +1304,19 @@ defmodule EzagentWeb.WorldConversationTest do
     ]
 
     for {type, envelope} <- envelopes do
+      drain_liveview_mailbox(view)
       send(view.pid, envelope)
-      assert_push_event(view, "world:inbound", %{"type" => ^type}, 1_000)
+      assert_push_event(view, "world:inbound", %{"type" => ^type}, 5_000)
     end
+  end
+
+  defp drain_liveview_mailbox(view) do
+    # The full Web suite deliberately exercises several slow, database-backed
+    # LiveView mounts in the same VM. Keep this as an ordering barrier, but do
+    # not inherit :sys's 5s default timeout: under the full suite the process
+    # can still be handling its mount audit work for longer than that.
+    _state = :sys.get_state(view.pid, 30_000)
+    :ok
   end
 
   test "world template save persists installs and created sessions allow web anon access", %{
@@ -1589,7 +1609,12 @@ defmodule EzagentWeb.WorldConversationTest do
     assert {:ok, ^page_spec} = EzagentPluginHello.Spec.validate(page_spec)
 
     assert {:ok, _turn_id} =
-             EzagentPluginHello.TurnDriver.drive(session_uri, page_spec, "manifest page")
+             EzagentPluginHello.TurnDriver.drive(
+               session_uri,
+               page_spec,
+               "manifest page",
+               planned_agent
+             )
 
     anon = mint_and_join_anon(session_uri)
     snapshot = wait_for_page(session_uri, anon)
@@ -1744,10 +1769,12 @@ defmodule EzagentWeb.WorldConversationTest do
 
   # Poll until the post-create socialware-install transaction has joined the
   # declared `role_name` agent as a session member (rev6 / #912 async materialize).
-  # 500 × 20ms = 10s — the manifest-install path (py recipe + definitions +
-  # cascade caps + durable ownership receipts) is heavier than a plain default
-  # create, especially when the full umbrella suite is sharing the test DB.
-  defp wait_for_role_member(session_uri, role_name, attempts \\ 500)
+  # 750 × 20ms = 15s. The install runs under a supervised fire-and-forget Task;
+  # on the full umbrella run that Task competes with the DB-heavy World/Hello
+  # suites and can legitimately start after the old 3s ceiling. Keep polling the
+  # observable membership projection (the contract this E2E cares about) rather
+  # than treating scheduler delay as a failed materialization.
+  defp wait_for_role_member(session_uri, role_name, attempts \\ 750)
 
   defp wait_for_role_member(session_uri, role_name, 0) do
     flunk(
@@ -1884,7 +1911,11 @@ defmodule EzagentWeb.WorldConversationTest do
       Ezagent.Workspace.create_session(
         workspace_uri,
         %{short_name: short_name, template_name: "default"},
-        %{caller: admin, caps: MapSet.new([create_cap])}
+        %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: MapSet.new([create_cap])
+        }
       )
 
     on_exit(fn ->

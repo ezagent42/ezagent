@@ -56,19 +56,23 @@ defmodule Ezagent.EntityCapsTest do
       user_cap = issued_cap(user, :send)
       agent_cap = issued_cap(agent, :join)
 
-      assert {:ok, _user} = Ezagent.Users.create(user, nil, [user_cap])
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, licensed_caps(user, [user_cap]))
 
       assert {:ok, _snapshot} =
                SnapshotStore.write(
                  agent,
-                 %{identity: %{state: %{caps: MapSet.new([agent_cap])}}},
+                 %{identity: %{state: %{caps: MapSet.new(licensed_caps(agent, [agent_cap]))}}},
                  kind_type: :agent
                )
 
-      assert identity_keys(EntityCaps.load(user)) == identity_keys([user_cap])
-      assert identity_keys(EntityCaps.load(agent)) == identity_keys([agent_cap])
-      assert identity_keys(EntityCaps.load_persisted(user)) == identity_keys([user_cap])
-      assert identity_keys(EntityCaps.load_persisted(agent)) == identity_keys([agent_cap])
+      assert identity_keys(non_license_caps(EntityCaps.load(user))) == identity_keys([user_cap])
+      assert identity_keys(non_license_caps(EntityCaps.load(agent))) == identity_keys([agent_cap])
+
+      assert identity_keys(non_license_caps(EntityCaps.load_persisted(user))) ==
+               identity_keys([user_cap])
+
+      assert identity_keys(non_license_caps(EntityCaps.load_persisted(agent))) ==
+               identity_keys([agent_cap])
     end
 
     test "load is live-first and filters artifacts issued to another receiver" do
@@ -89,14 +93,20 @@ defmodule Ezagent.EntityCapsTest do
       assert {:ok, _snapshot} =
                SnapshotStore.write(
                  agent,
-                 %{identity: %{state: %{caps: MapSet.new([persisted_cap])}}},
+                 %{
+                   identity: %{
+                     state: %{caps: MapSet.new(licensed_caps(agent, [persisted_cap]))}
+                   }
+                 },
                  kind_type: :agent
                )
 
       assert cap_present?(EntityCaps.load(agent), live_cap)
       refute cap_present?(EntityCaps.load(agent), persisted_cap)
       refute cap_present?(EntityCaps.load(agent), wrong_receiver)
-      assert identity_keys(EntityCaps.load_persisted(agent)) == identity_keys([persisted_cap])
+
+      assert identity_keys(non_license_caps(EntityCaps.load_persisted(agent))) ==
+               identity_keys([persisted_cap])
 
       :ok = Ezagent.Kind.terminate(agent)
     end
@@ -115,7 +125,13 @@ defmodule Ezagent.EntityCapsTest do
       assert {:ok, _snapshot} =
                SnapshotStore.write(
                  agent,
-                 %{identity: %{state: %{caps: MapSet.new([bound, wrong_receiver])}}},
+                 %{
+                   identity: %{
+                     state: %{
+                       caps: MapSet.new(licensed_caps(agent, [bound, wrong_receiver]))
+                     }
+                   }
+                 },
                  kind_type: :agent
                )
 
@@ -133,7 +149,7 @@ defmodule Ezagent.EntityCapsTest do
       assert {:ok, _snapshot} =
                SnapshotStore.write(
                  agent,
-                 %{identity: %{state: %{caps: MapSet.new([stale])}}},
+                 %{identity: %{state: %{caps: MapSet.new(licensed_caps(agent, [stale]))}}},
                  kind_type: :agent
                )
 
@@ -241,7 +257,8 @@ defmodule Ezagent.EntityCapsTest do
       assert {:error, :invalid_cap_artifact} = EntityCaps.persist(user, [unsigned])
       assert :ok = EntityCaps.grant(user, forged)
       assert :ok = EntityCaps.persist(user, [forged])
-      assert EntityCaps.load_persisted(user) == [forged]
+      assert cap_present?(EntityCaps.load_persisted(user), forged)
+      assert Enum.any?(EntityCaps.load_persisted(user), &self_license?/1)
     end
 
     test "cold user persist replaces caps_json; grant and revoke round-trip durably" do
@@ -427,7 +444,13 @@ defmodule Ezagent.EntityCapsTest do
       assert {:ok, %{version: initial_version}} =
                SnapshotStore.write(
                  agent,
-                 %{identity: %{state: %{caps: MapSet.new([remove_a, remove_b])}}},
+                 %{
+                   identity: %{
+                     state: %{
+                       caps: MapSet.new(licensed_caps(agent, [remove_a, remove_b]))
+                     }
+                   }
+                 },
                  kind_type: :agent,
                  version: 0
                )
@@ -543,6 +566,38 @@ defmodule Ezagent.EntityCapsTest do
     {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
+
+  defp licensed_caps(receiver, caps) do
+    [self_license(receiver) | caps]
+  end
+
+  defp self_license(receiver) do
+    {:ok, type} = Ezagent.URI.type(receiver)
+    kind = String.to_existing_atom(type)
+    {:ok, authority} = Ezagent.Cap.Authority.open(receiver, kind)
+
+    requested =
+      Capability.cap(
+        kind,
+        Ezagent.ActionSet.Identity,
+        :self_license,
+        receiver,
+        Ezagent.URI.workspace_of(receiver)
+      )
+
+    intent = Ezagent.Cap.Grant.freeze(receiver, receiver, receiver, requested)
+
+    {:ok, license} =
+      Ezagent.Cap.Authority.with_current(authority, fn ->
+        Ezagent.Cap.Authority.issue_self_license_current(intent)
+      end)
+
+    license
+  end
+
+  defp self_license?(cap), do: Capability.action_of(cap) == :self_license
+
+  defp non_license_caps(caps), do: Enum.reject(caps, &self_license?/1)
 
   defp user_uri(suffix),
     do: URI.new!("entity://entity-caps/user/#{suffix}-#{System.unique_integer([:positive])}")

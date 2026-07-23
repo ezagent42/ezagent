@@ -552,7 +552,7 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{member: caller},
-        ctx: %{caller: caller, caps: caps, reply: :ignore},
+        ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :ignore},
         origin: :authenticated_external
       })
 
@@ -615,7 +615,7 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{layout: layout},
-        ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
         origin: :authenticated_external
       })
 
@@ -667,7 +667,7 @@ defmodule EzagentPluginWorld.WorldLive do
              target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
              mode: :call,
              args: %{provider: provider, key: key},
-             ctx: %{caller: caller, caps: caps, reply: :sync},
+             ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :sync},
              origin: :authenticated_external
            }) do
       refresh_api_keys_state(socket, agent_uri)
@@ -709,6 +709,7 @@ defmodule EzagentPluginWorld.WorldLive do
            args: %{bytes: bytes},
            ctx: %{
              caller: socket.assigns.current_entity_uri,
+             authenticated_principal: socket.assigns.current_entity_uri,
              caps: Ezagent.World.PresenterCaps.load(socket),
              reply: :ignore
            },
@@ -1128,7 +1129,9 @@ defmodule EzagentPluginWorld.WorldLive do
   defp maybe_subscribe_pty(socket, %{component: "pty_terminal", entity_uri: %URI{} = agent_uri}) do
     caps = Ezagent.World.PresenterCaps.load(socket)
 
-    if connected?(socket) and Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+    holder = socket.assigns.current_entity_uri
+
+    if connected?(socket) and Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
         Ezagent.Domain.Pty.Server.output_topic(agent_uri)

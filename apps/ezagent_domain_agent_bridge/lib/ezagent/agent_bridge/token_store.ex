@@ -4,8 +4,8 @@ defmodule Ezagent.AgentBridge.TokenStore do
 
   Promoted from `EzagentPluginCc.TokenStore`. The on-disk filename
   remains `$EZAGENT_HOME/<profile>/credentials/cc-channels.yaml` for
-  backward compatibility with already-spawned cc agents and operator
-  tooling. The YAML shape is unchanged.
+  compatibility with operator tooling. Each token is bound to the agent's
+  active authority generation; legacy or stale entries fail closed.
   """
 
   @file_name "cc-channels.yaml"
@@ -25,36 +25,33 @@ defmodule Ezagent.AgentBridge.TokenStore do
   @doc """
   Mint a token for `agent_uri` and persist it.
 
-  Idempotent: existing agent URIs keep their token until an explicit
-  rotation flow is added.
+  Idempotent within one authority generation. A stale-generation token is
+  never auto-reminted: only the reviewed recreate/reprovision seam may mint
+  under a generation greater than one.
   """
-  @spec mint(URI.t()) :: {:ok, String.t()} | {:error, term()}
-  def mint(%URI{} = agent_uri) do
+  @spec mint(URI.t(), keyword()) :: {:ok, String.t()} | {:error, term()}
+  def mint(%URI{} = agent_uri, opts \\ []) do
     agent_str = URI.to_string(agent_uri)
 
-    case load_all() do
-      {:ok, instances} when is_map(instances) ->
-        case Map.get(instances, agent_str) do
-          %{"token" => existing} when is_binary(existing) ->
-            {:ok, existing}
+    with {:ok, generation} <- current_generation(agent_uri),
+         {:ok, instances} when is_map(instances) <- load_all() do
+      case Map.get(instances, agent_str) do
+        %{"token" => existing, "bound_generation" => ^generation}
+        when is_binary(existing) ->
+          {:ok, existing}
 
-          _ ->
-            token = generate_token()
+        %{"token" => existing} when is_binary(existing) ->
+          with :ok <- credential_generation_allowed(agent_uri, generation, opts) do
+            mint_and_persist(instances, agent_str, generation)
+          end
 
-            new_instances =
-              Map.put(instances, agent_str, %{
-                "token" => token,
-                "minted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-              })
-
-            case write_all(new_instances) do
-              :ok -> {:ok, token}
-              err -> err
-            end
-        end
-
-      {:error, _} = err ->
-        err
+        _ ->
+          with :ok <- credential_generation_allowed(agent_uri, generation, opts) do
+            mint_and_persist(instances, agent_str, generation)
+          end
+      end
+    else
+      {:error, _} = err -> err
     end
   end
 
@@ -77,7 +74,9 @@ defmodule Ezagent.AgentBridge.TokenStore do
     case load_all() do
       {:ok, instances} ->
         case Map.get(instances, agent_str) do
-          %{"token" => known} when is_binary(known) -> secure_compare(presented, known)
+          %{"token" => known, "bound_generation" => generation} when is_binary(known) ->
+            generation_current?(agent_uri, generation) and secure_compare(presented, known)
+
           _ -> false
         end
 
@@ -108,7 +107,10 @@ defmodule Ezagent.AgentBridge.TokenStore do
     case load_all() do
       {:ok, instances} ->
         Enum.find_value(instances, :error, fn
-          {agent_str, %{"token" => ^token}} -> {:ok, Ezagent.URI.new!(agent_str)}
+          {agent_str, %{"token" => ^token, "bound_generation" => generation}} ->
+            agent_uri = Ezagent.URI.new!(agent_str)
+            if generation_current?(agent_uri, generation), do: {:ok, agent_uri}, else: nil
+
           _ -> nil
         end)
 
@@ -159,7 +161,8 @@ defmodule Ezagent.AgentBridge.TokenStore do
         Enum.map_join(instances, "", fn {agent_str, meta} ->
           "  #{agent_str}:\n" <>
             "    token: \"#{meta["token"]}\"\n" <>
-            "    minted_at: \"#{meta["minted_at"]}\"\n"
+            "    minted_at: \"#{meta["minted_at"]}\"\n" <>
+            "    bound_generation: #{meta["bound_generation"]}\n"
         end)
 
     case File.write(file, body) do
@@ -183,5 +186,42 @@ defmodule Ezagent.AgentBridge.TokenStore do
 
   defp generate_token do
     "tok_" <> Base.url_encode64(:crypto.strong_rand_bytes(24), padding: false)
+  end
+
+  defp mint_and_persist(instances, agent_str, generation) do
+    token = generate_token()
+
+    new_instances =
+      Map.put(instances, agent_str, %{
+        "token" => token,
+        "minted_at" => DateTime.utc_now() |> DateTime.to_iso8601(),
+        "bound_generation" => generation
+      })
+
+    case write_all(new_instances) do
+      :ok -> {:ok, token}
+      err -> err
+    end
+  end
+
+  defp current_generation(agent_uri) do
+    case Ezagent.Cap.Authority.current_generation(agent_uri) do
+      {:ok, generation} -> {:ok, generation}
+      :error -> {:error, :authority_unavailable}
+    end
+  end
+
+  defp generation_current?(agent_uri, generation) do
+    current_generation(agent_uri) == {:ok, generation}
+  end
+
+  defp credential_generation_allowed(_agent_uri, 1, _opts), do: :ok
+
+  defp credential_generation_allowed(agent_uri, generation, _opts) do
+    with {:ok, ^generation} <- Ezagent.Kind.recredential_generation(agent_uri) do
+      :ok
+    else
+      _ -> {:error, :principal_revoked}
+    end
   end
 end

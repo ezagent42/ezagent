@@ -168,6 +168,10 @@ defmodule Ezagent.PresenceTest do
   end
 
   describe "subscribe/1 — argument validation" do
+    test "worker principals share Agent presence semantics" do
+      assert :ok = Presence.subscribe(Ezagent.URI.worker("team-alpha", "worker-presence"))
+    end
+
     test "non-User/Agent scheme raises ArgumentError" do
       assert_raise ArgumentError, ~r/unsupported URI/, fn ->
         Presence.subscribe(Ezagent.URI.new!("session://system/default/main"))

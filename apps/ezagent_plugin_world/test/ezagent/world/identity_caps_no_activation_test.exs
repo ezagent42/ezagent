@@ -36,6 +36,8 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
         workspace
       )
 
+    self_license = Ezagent.Test.CapHelper.self_license_cap!(agent, :agent)
+
     cap =
       Ezagent.Test.CapHelper.with_test_authority(agent, :agent, fn authority ->
         Ezagent.Test.CapHelper.authority_signed_cap!(authority, agent, requested)
@@ -46,7 +48,7 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
     {:ok, _} =
       SnapshotStore.write(
         agent,
-        %{identity: %{caps: MapSet.new([cap])}},
+        %{identity: %{caps: MapSet.new([self_license, cap])}},
         kind_type: :agent
       )
 
@@ -57,7 +59,16 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
 
   test "entity caps render from the snapshot WITHOUT activating the cold agent", %{agent: agent} do
     admin = Ezagent.URI.user(:system, :admin)
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    admin_caps =
+      MapSet.new([
+        Ezagent.Test.CapHelper.signed_fixture_cap!(
+          agent,
+          :agent,
+          Ezagent.ActionSet.Identity,
+          :list_caps,
+          admin
+        )
+      ])
 
     state =
       IdentityData.state_for(

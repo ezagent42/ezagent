@@ -17,6 +17,12 @@ defmodule Ezagent.World.PtyReadExitsTest do
   @agent Ezagent.URI.new!("entity://team-alpha/agent/cc_gate-probe")
   @creator Ezagent.URI.new!("entity://team-alpha/user/creator")
 
+  setup do
+    previous = install_loader()
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
+
   defp route,
     do: %{
       component: "pty_terminal",
@@ -34,6 +40,7 @@ defmodule Ezagent.World.PtyReadExitsTest do
   end
 
   test "a viewer with NO cap for this agent gets NO buffer and NO liveness" do
+    license([:principal_is_live])
     state = state_with(MapSet.new())
 
     refute state["pty_authorized"]
@@ -43,15 +50,41 @@ defmodule Ezagent.World.PtyReadExitsTest do
   end
 
   test "the creator's existing manage cap opens it" do
-    cap =
-      Ezagent.CreatorGrant.manage_cap(
-        :agent,
-        @agent,
-        Ezagent.URI.new!("workspace://team-alpha"),
-        @creator
-      )
+    cap = signed_creator_cap()
+    license([cap])
 
     assert state_with(MapSet.new([cap]))["pty_authorized"]
+  end
+
+  defp signed_creator_cap do
+    {:ok, authority} = Ezagent.Cap.Authority.open(@agent, :agent)
+
+    Ezagent.CreatorGrant.manage_cap(
+      :agent,
+      @agent,
+      Ezagent.URI.new!("workspace://team-alpha"),
+      @creator
+    )
+    |> Map.put(:grantee_uri, @creator)
+    |> then(&Ezagent.Cap.Authority.sign(authority, &1))
+  end
+
+  defp install_loader do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    previous
+  end
+
+  defp license(caps) do
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(@creator) => MapSet.new(caps)
+    })
   end
 end
 
@@ -72,6 +105,19 @@ defmodule Ezagent.World.PtyConversationExitTest do
   @session Ezagent.URI.new!("session://team-alpha/default/conv-exit-probe")
   @creator Ezagent.URI.new!("entity://team-alpha/user/creator")
 
+  setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
+
   defp socket_with(caps) do
     %Phoenix.LiveView.Socket{
       assigns: %{
@@ -84,12 +130,23 @@ defmodule Ezagent.World.PtyConversationExitTest do
   end
 
   defp creator_cap do
-    Ezagent.CreatorGrant.manage_cap(
-      :agent,
-      @agent,
-      Ezagent.URI.new!("workspace://team-alpha"),
-      @creator
-    )
+    {:ok, authority} = Ezagent.Cap.Authority.open(@agent, :agent)
+
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        @agent,
+        Ezagent.URI.new!("workspace://team-alpha"),
+        @creator
+      )
+      |> Map.put(:grantee_uri, @creator)
+      |> then(&Ezagent.Cap.Authority.sign(authority, &1))
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(@creator) => MapSet.new([cap])
+    })
+
+    cap
   end
 
   test "a viewer with NO cap is refused and subscribes to NOTHING" do

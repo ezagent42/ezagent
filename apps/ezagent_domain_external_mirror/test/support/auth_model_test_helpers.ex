@@ -45,6 +45,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
   """
   @spec setup_caller(profile :: atom(), Keyword.t()) :: %{
           caller: URI.t(),
+          authenticated_principal: URI.t(),
           caps: MapSet.t(),
           reply: :ignore
         }
@@ -58,8 +59,20 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     workspace_uri = Keyword.get(opts, :workspace_uri, Ezagent.URI.workspace(:default))
     adapter_allow_module = Keyword.get(opts, :adapter_allow, MockPublishAdapter.Allow)
 
+    # F-6: even denial fixtures need a genuine independently-authenticated
+    # principal. Candidate caps remain exactly profile-controlled; the
+    # self-license in the holder's own store satisfies only the principal
+    # generation gate and cannot satisfy the requested action.
+    :ok = spawn_user(caller_uri, MapSet.new([Ezagent.Capability.admin_genesis_cap()]))
+
     caps = caps_for_profile(profile, session_uri, workspace_uri, adapter_allow_module)
-    ctx = %{caller: caller_uri, caps: caps, reply: :ignore}
+
+    ctx = %{
+      caller: caller_uri,
+      authenticated_principal: caller_uri,
+      caps: caps,
+      reply: :ignore
+    }
 
     if match?(%URI{}, session_uri) and MapSet.size(caps) > 0 do
       Ezagent.Test.CapHelper.signed_ctx!(session_uri, ctx, :session)

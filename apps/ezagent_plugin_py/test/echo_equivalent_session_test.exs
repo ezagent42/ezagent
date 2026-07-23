@@ -87,7 +87,9 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
     assert wait_alive(agent_uri, 30_000)
 
     # ---- 2. Stand up a session + join admin + the py-agent --------------
-    session_uri = URI.new!("session://#{ws_name}/default/echo-#{System.unique_integer([:positive])}")
+    session_uri =
+      URI.new!("session://#{ws_name}/default/echo-#{System.unique_integer([:positive])}")
+
     {:ok, _} = Ezagent.SpawnRegistry.spawn(session_uri)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
@@ -113,12 +115,14 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
     send_target = Ezagent.URI.with_action(session_uri, :session, :send)
 
     :ok =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: send_target,
         mode: :cast,
         args: %{message: inbound_msg},
         ctx: %{
           caller: admin_uri,
+          authenticated_principal: admin_uri,
           caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
           reply: :ignore
         }
@@ -138,12 +142,14 @@ defmodule Ezagent.PluginPy.EchoEquivalentSessionTest do
     target = Ezagent.URI.with_action(session, :session, :join)
 
     :ok =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :cast,
         args: %{member: member},
         ctx: %{
           caller: member,
+          authenticated_principal: member,
           caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, member)]),
           reply: :ignore
         }

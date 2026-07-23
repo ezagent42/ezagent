@@ -62,7 +62,11 @@ defmodule Ezagent.ProtocolApi.ReplyTransport do
       target: target,
       action: :subscribe_from,
       args: %{subscriber_pid: self(), cursor: :latest},
-      ctx: %{caller: entity_uri, caps: MapSet.new()},
+      ctx: %{
+        caller: entity_uri,
+        authenticated_principal: entity_uri,
+        caps: MapSet.new()
+      },
       origin: :trusted_internal
     }
 

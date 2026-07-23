@@ -82,7 +82,12 @@ defmodule Ezagent.Integration.CapsDenialE2ETest do
       target: chat_send_target(session_uri),
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :inline}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: :inline
+      }
     })
   end
 

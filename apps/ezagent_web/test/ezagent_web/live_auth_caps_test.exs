@@ -60,7 +60,12 @@ defmodule EzagentWeb.LiveAuthCapsTest do
                build_socket()
              )
 
-    assert Ezagent.Domain.Pty.Access.may_read?(agent_uri, socket.assigns.current_caps)
+    assert Ezagent.Domain.Pty.Access.may_read?(
+             user_uri,
+             agent_uri,
+             socket.assigns.current_caps
+           )
+
     assert_signed_cap_for(socket.assigns.current_caps, cap, user_uri)
   end
 
@@ -102,7 +107,12 @@ defmodule EzagentWeb.LiveAuthCapsTest do
                build_socket()
              )
 
-    assert Ezagent.Domain.Pty.Access.may_read?(owned_uri, socket.assigns.current_caps)
+    assert Ezagent.Domain.Pty.Access.may_read?(
+             principal_uri,
+             owned_uri,
+             socket.assigns.current_caps
+           )
+
     assert_signed_cap_for(socket.assigns.current_caps, requested_cap, principal_uri)
   end
 
@@ -113,13 +123,16 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     agent_uri = Ezagent.URI.agent("live-auth-cold-#{unique}", "agent")
     user_cap = issued_manage_cap(user_uri, workspace_uri, "user-target")
     agent_cap = issued_manage_cap(agent_uri, workspace_uri, "agent-target")
+    user_license = Ezagent.Test.CapHelper.self_license_cap!(user_uri, :user)
+    agent_license = Ezagent.Test.CapHelper.self_license_cap!(agent_uri, :agent)
 
-    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [user_cap])
+    assert {:ok, _row} =
+             Ezagent.Users.create(user_uri, "test-password", [user_license, user_cap])
 
     assert {:ok, _snapshot} =
              Ezagent.SnapshotStore.write(
                agent_uri,
-               %{identity: %{state: %{caps: MapSet.new([agent_cap])}}},
+               %{identity: %{state: %{caps: MapSet.new([agent_license, agent_cap])}}},
                kind_type: :agent
              )
 
@@ -136,6 +149,15 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     cap = issued_manage_cap(user_uri, workspace_uri, "target")
 
     assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [cap])
+
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.User, %{
+               uri: user_uri,
+               initial_caps: [cap]
+             })
+
+    on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
+    assert :ok = Ezagent.ReadyGate.await(user_uri, 5_000)
     assert_mount_has_cap(user_uri, workspace_uri, cap)
     assert :ok = Ezagent.EntityCaps.revoke(user_uri, cap)
     assert_mount_lacks_cap(user_uri, workspace_uri, cap)
@@ -153,9 +175,15 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     valid = issued_manage_cap(user_uri, workspace_uri, "valid-target")
     invalid = %{issued_manage_cap(user_uri, workspace_uri, "invalid-target") | action: :send}
     wrong_receiver = issued_manage_cap(other_uri, workspace_uri, "wrong-target")
+    self_license = Ezagent.Test.CapHelper.self_license_cap!(user_uri, :user)
 
     assert {:ok, _row} =
-             Ezagent.Users.create(user_uri, "test-password", [valid, invalid, wrong_receiver])
+             Ezagent.Users.create(user_uri, "test-password", [
+               self_license,
+               valid,
+               invalid,
+               wrong_receiver
+             ])
 
     {:cont, socket} = mount(user_uri, workspace_uri)
     assert_cap_present(socket.assigns.current_caps, valid)

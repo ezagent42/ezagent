@@ -9,6 +9,7 @@ defmodule Ezagent.ActionSet.Session.RoleResolver do
       when is_binary(role_name) do
     case RouteProvisioner.resolve_role(role_name, ctx, provision_key, behavior_module) do
       %URI{} = uri -> uri
+      :pending -> []
       nil -> resolve_b2(role_name, workspace_uri)
     end
   end

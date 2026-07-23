@@ -232,11 +232,12 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     * `:dry_run` (boolean, default `false`) — classify + report without writing.
 
   Returns `{:ok, %{scanned: n, backfilled: n, already: n, dry_run: n,
-  legacy_cleared: n}}`. A legacy JSON-column (string-keyed) row is DELETED with
-  a warning (it can neither be auto-migrated nor runtime-reloaded under the
-  P5-0b guard, so it is dead weight; clearing it lets `gate/0` reach zero with
-  no manual step — Allen 2026-06-12). Raises on the FIRST genuinely-corrupt
-  unclassifiable / ambiguous (atom-keyed) row.
+  legacy_cleared: n}}`. A legacy JSON-column (string-keyed) row has its unusable
+  state CLEARED with a warning while retaining its Lifecycle `ever_created`
+  marker (it can neither be auto-migrated nor runtime-reloaded under the P5-0b
+  guard; clearing the state lets `gate/0` reach zero without making a later
+  spawn look like a genuine first creation). Raises on the FIRST genuinely-
+  corrupt unclassifiable / ambiguous (atom-keyed) row.
   """
   @spec run(keyword()) :: {:ok, map()}
   def run(opts \\ []) when is_list(opts) do
@@ -269,7 +270,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
       session_rows()
       |> Enum.count(fn row ->
         case KindSnapshot.decode_state(row) do
-          {:ok, state} -> kind_base_missing?(state)
+          {:ok, state} -> kind_base_missing?(state) and not marker_only_clear?(row, state)
           # An undecodable row cannot be proven backfilled — count it as
           # not-go so the gate fails loud rather than green-lighting.
           _ -> true
@@ -282,7 +283,7 @@ defmodule Ezagent.Kind.KindBaseBackfill do
   # --- internals -------------------------------------------------------------
 
   defp backfill_row(row, state, dry_run?, acc) do
-    if kind_base_missing?(state) do
+    if kind_base_missing?(state) and not marker_only_clear?(row, state) do
       case backfill_state(state) do
         {:ok, new_state} ->
           if dry_run? do
@@ -301,19 +302,20 @@ defmodule Ezagent.Kind.KindBaseBackfill do
           # nil/missing `:kind_base` before it could re-commit a binary snapshot.
           # Such a row is therefore ALREADY dead weight (it can neither backfill
           # nor load). Per Allen (2026-06-12) an un-migratable legacy row may be
-          # CLEARED outright: we DELETE it so the gate can reach zero (no
-          # stranded row, no manual step), and the session re-spawns fresh if
-          # ever addressed again. No current code writes the legacy `state`
-          # column (`KindSnapshot.upsert/6` writes only `state_binary`), so this
-          # is defensive — it should never fire on any post-Phase-1 DB.
+          # CLEARED outright: remove its unusable state so the gate can reach
+          # zero (no manual step), but retain `ever_created` so a later spawn is
+          # activation, never a genuine first creation. No current code writes
+          # the legacy `state` column (`KindSnapshot.upsert/6` writes only
+          # `state_binary`), so this is defensive — it should never fire on any
+          # post-Phase-1 DB.
           Logger.warning(
             "Ezagent.Kind.KindBaseBackfill: CLEARING un-migratable legacy " <>
               "JSON-column session snapshot #{row.uri} (#{inspect(reason)}) — a " <>
-              "lossy JSON row cannot be backfilled or runtime-reloaded; deleting " <>
-              "it so the backfill gate can reach zero (Allen 2026-06-12)."
+              "lossy JSON row cannot be backfilled or runtime-reloaded; clearing " <>
+              "its state while preserving ever_created so the gate can reach zero."
           )
 
-          :ok = KindSnapshot.delete(row.uri)
+          :ok = KindSnapshot.clear_state_preserving_marker(row.uri)
           %{acc | legacy_cleared: acc.legacy_cleared + 1}
 
         {:error, reason} ->
@@ -357,6 +359,13 @@ defmodule Ezagent.Kind.KindBaseBackfill do
     KindSnapshot.list_all()
     |> Enum.filter(&(&1.kind_type == @session_kind_type))
   end
+
+  # G-3/v4-H2b: a non-delete snapshot clear intentionally leaves an empty
+  # marker-bearing row. Snapshot load reinitializes the declared slices while
+  # Lifecycle sees `ever_created` and runs activation (never create), so this is
+  # a terminal safe state for the historical backfill gate, not legacy debt.
+  defp marker_only_clear?(%KindSnapshot{ever_created: true}, state), do: state == %{}
+  defp marker_only_clear?(_row, _state), do: false
 
   defp raise_undecodable(row, reason) do
     raise "Ezagent.Kind.KindBaseBackfill: session snapshot #{row.uri} is " <>

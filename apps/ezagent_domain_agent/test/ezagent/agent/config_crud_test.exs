@@ -199,7 +199,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
     :ok = Ezagent.WorkspaceRegistry.bind(other, workspace)
     other_manager = grant_manage_cap(other, workspace)
 
-    assert {:error, :invalid_cap_signature} =
+    assert {:error, :missing_cap} =
              Config.apply_delta(agent, other_manager.uri, other_manager.caps, %{
                patch: %{"tone" => "denied"},
                turn_id: turn_id("wrong-cap")
@@ -290,6 +290,7 @@ defmodule Ezagent.Agent.ConfigCrudTest do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
     requested = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
     cap = signed_cap!(agent, manager, requested)
+    {:ok, _} = Ezagent.Users.create_read_only(manager, [self_license_cap!(manager)])
     %{uri: manager, caps: MapSet.new([cap])}
   end
 

@@ -219,7 +219,8 @@ defmodule Mix.Tasks.Ezagent.Agent.Create do
     target = Ezagent.URI.with_action(workspace_uri, :workspace, :create_agent)
 
     case Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
-      {:ok, cap} -> %{caller: admin_uri, caps: [cap]}
+      {:ok, cap} ->
+        %{caller: admin_uri, authenticated_principal: admin_uri, caps: [cap]}
       {:error, reason} -> Mix.raise("create-agent cap issuance failed: #{inspect(reason)}")
     end
   end

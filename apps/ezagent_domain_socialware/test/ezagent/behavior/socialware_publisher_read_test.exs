@@ -12,16 +12,14 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
     - `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:system` / non-URI);
     - the `:chat` sibling slice is present + readable;
-    - EITHER `owner_uri` is a `%URI{}` AND `== ctx.caller`,
-      OR `ctx.caller` is in the `:chat` slice's `members` map (keyed by URI).
-  A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
-  rejected up front.
+    - the authenticated holder has a current tier-1 member cap over the session.
+  Structural owner/roster fields do not authorize; malformed callers fail closed.
 
   Cases covered (the brief's (a)-(g)):
     (a) chat `kind: :session` cap holder who is NOT a socialware member → denied
         (the cap-exempt path never even consults caps; a non-member caller
         with the WRONG identity is denied by the live check);
-    (b) owner CAN — including the owner of a pre-existing (P0-P2) session;
+    (b) owner CAN through the same born-signed member cap as every member;
     (c) a current non-owner member CAN;
     (d) a non-member is denied;
     (e) an ex-member (post-LEAVE) is denied via the LIVE re-check;
@@ -43,12 +41,25 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.SocialwarePublisherRead, as: SPR
+  alias Ezagent.KindRegistry
   alias Ezagent.Publisher.Event
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "owner-spr")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "owner-spr")
   @member Ezagent.URI.entity(:team_alpha, :agent, "member-spr")
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "stranger-spr")
-  @self_uri Ezagent.URI.session(:team_alpha, :socialware, "spr-1")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "stranger-spr")
+  defp self_uri do
+    key = {__MODULE__, :self_uri}
+
+    Process.get(key) ||
+      tap(
+        Ezagent.URI.session(
+          :team_alpha,
+          :socialware,
+          "spr-#{Base.url_encode64(:crypto.strong_rand_bytes(12), padding: false)}"
+        ),
+        &Process.put(key, &1)
+      )
+  end
 
   # A non-empty publisher ring so `snapshot`/`history` return real data
   # when authorized (proving the reads work, not just that authz passes).
@@ -58,14 +69,14 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     [
       %Event{
         cursor: 1,
-        publisher_uri: @self_uri,
+        publisher_uri: self_uri(),
         slice_key: :surface,
         event_at: now,
         payload: %{a: 1}
       },
       %Event{
         cursor: 2,
-        publisher_uri: @self_uri,
+        publisher_uri: self_uri(),
         slice_key: :turns,
         event_at: now,
         payload: %{b: 2}
@@ -79,8 +90,9 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     state = %{ring: ring(), cursor: 2, retention: 100}
 
     %{
-      self_uri: @self_uri,
+      self_uri: self_uri(),
       caller: caller,
+      authenticated_principal: caller,
       reply: :none,
       read: fn key, default -> Map.get(state, key, default) end,
       transients: %{},
@@ -91,6 +103,43 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
 
   defp owned_chat(owner, members \\ %{}) do
     %{owner_uri: owner, members: members, last_seen: %{}}
+  end
+
+  defp owner_with_member_cap do
+    owner =
+      Ezagent.URI.entity(
+        :team_alpha,
+        :user,
+        "owner-spr-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, session_pid} =
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
+        uri: self_uri(),
+        owner_uri: owner,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    on_exit(fn ->
+      if Process.alive?(session_pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid
+        )
+      end
+    end)
+
+    on_exit(fn ->
+      case KindRegistry.lookup(owner) do
+        {:ok, pid} ->
+          DynamicSupervisor.terminate_child(EzagentDomainIdentity.Application.UserSupervisor, pid)
+
+        :error ->
+          :ok
+      end
+    end)
+
+    owner
   end
 
   describe "action set + cap exemption (the security shape)" do
@@ -112,17 +161,19 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
   end
 
-  describe "(b) owner CAN read — incl. owner of a pre-existing session (no cap, no backfill)" do
-    test "snapshot: owner_uri == caller authorizes" do
-      chat = owned_chat(@owner)
-      assert {:ok, %{cursor: 2, state: %{b: 2}}, []} = SPR.handle_snapshot(%{}, ctx(@owner, chat))
+  describe "(b) owner CAN read through the same tier-1 member cap" do
+    test "snapshot: owner member cap authorizes" do
+      owner = owner_with_member_cap()
+      chat = owned_chat(owner)
+      assert {:ok, %{cursor: 2, state: %{b: 2}}, []} = SPR.handle_snapshot(%{}, ctx(owner, chat))
     end
 
-    test "history: owner_uri == caller authorizes and returns the window" do
-      chat = owned_chat(@owner)
+    test "history: owner member cap authorizes and returns the window" do
+      owner = owner_with_member_cap()
+      chat = owned_chat(owner)
 
       assert {:ok, %{events: events}, []} =
-               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(@owner, chat))
+               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(owner, chat))
 
       assert length(events) == 2
     end
@@ -138,12 +189,12 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
   # member in the session-app `Ezagent.Session.SocialwareReadHeldCapTest`.
   describe "(c) a non-owner roster-member WITHOUT the held member-cap is denied (A2.3)" do
     test "snapshot: roster presence alone no longer authorizes — held cap required" do
-      chat = owned_chat(@owner, %{@member => %{online: true}})
+      chat = owned_chat(owner(), %{@member => %{online: true}})
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, chat))
     end
 
     test "history: roster presence alone no longer authorizes — held cap required" do
-      chat = owned_chat(@owner, %{@member => %{online: false}})
+      chat = owned_chat(owner(), %{@member => %{online: false}})
 
       assert {:error, :unauthorized} =
                SPR.handle_history(%{from: :earliest, to: :latest}, ctx(@member, chat))
@@ -152,15 +203,15 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
 
   describe "(a)/(d) a non-member (incl. a chat kind:session cap holder) is denied" do
     test "snapshot: stranger who is neither owner nor member → unauthorized" do
-      chat = owned_chat(@owner, %{@member => %{online: true}})
-      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@stranger, chat))
+      chat = owned_chat(owner(), %{@member => %{online: true}})
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(stranger(), chat))
     end
 
     test "history: stranger → unauthorized" do
-      chat = owned_chat(@owner, %{@member => %{online: true}})
+      chat = owned_chat(owner(), %{@member => %{online: true}})
 
       assert {:error, :unauthorized} =
-               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(@stranger, chat))
+               SPR.handle_history(%{from: :earliest, to: :latest}, ctx(stranger(), chat))
     end
   end
 
@@ -170,10 +221,10 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
       # here), so it is denied even while nominally present in the roster (the
       # held-cap requirement), AND after LEAVE (roster no longer contains it). The
       # LIVE re-check has no "in-projection ⇒ authorized" window either way.
-      present = owned_chat(@owner, %{@member => %{online: true}})
+      present = owned_chat(owner(), %{@member => %{online: true}})
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, present))
 
-      left = owned_chat(@owner, %{})
+      left = owned_chat(owner(), %{})
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@member, left))
     end
   end
@@ -205,12 +256,12 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
 
   describe "(g) a malformed caller is denied" do
     test "binary caller → unauthorized" do
-      chat = owned_chat(@owner)
+      chat = owned_chat(owner())
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx("entity://x", chat))
     end
 
     test "map caller → unauthorized" do
-      chat = owned_chat(@owner)
+      chat = owned_chat(owner())
       assert {:error, :unauthorized} = SPR.handle_history(%{}, ctx(%{not: "a uri"}, chat))
     end
 
@@ -226,7 +277,7 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test "non-entity %URI{} caller (session scheme) → unauthorized even if it equals owner_uri" do
-      not_a_principal = @self_uri
+      not_a_principal = self_uri()
       chat = owned_chat(not_a_principal)
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(not_a_principal, chat))
     end
@@ -246,7 +297,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test "entity %URI{} caller carrying a QUERY → unauthorized even if it equals owner_uri (codex P3-3 r2 HIGH)" do
-      with_query = %URI{scheme: "entity", host: "team-alpha", path: "/user/alice", query: "action=x"}
+      with_query = %URI{
+        scheme: "entity",
+        host: "team-alpha",
+        path: "/user/alice",
+        query: "action=x"
+      }
+
       chat = owned_chat(with_query)
       assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(with_query, chat))
     end
@@ -258,7 +315,13 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test "entity %URI{} caller carrying USERINFO → unauthorized even as owner_uri AND as member (codex P3-3 r3 HIGH)" do
-      with_userinfo = %URI{scheme: "entity", host: "team-alpha", userinfo: "evil", path: "/user/alice"}
+      with_userinfo = %URI{
+        scheme: "entity",
+        host: "team-alpha",
+        userinfo: "evil",
+        path: "/user/alice"
+      }
+
       # planted as owner_uri:
       assert {:error, :unauthorized} =
                SPR.handle_snapshot(%{}, ctx(with_userinfo, owned_chat(with_userinfo)))
@@ -280,8 +343,8 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
       state = %{ring: ring(), cursor: 2, retention: 100}
 
       ctx = %{
-        self_uri: @self_uri,
-        caller: @owner,
+        self_uri: self_uri(),
+        caller: owner(),
         reply: :none,
         read: fn key, default -> Map.get(state, key, default) end,
         transients: %{},
@@ -293,7 +356,7 @@ defmodule Ezagent.ActionSet.SocialwarePublisherReadTest do
     end
 
     test ":chat sibling present but not a map → unauthorized" do
-      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(@owner, :not_a_map))
+      assert {:error, :unauthorized} = SPR.handle_snapshot(%{}, ctx(owner(), :not_a_map))
     end
   end
 end

@@ -45,6 +45,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
     admin_ctx = %{
       caller: User.admin_uri(),
+      authenticated_principal: User.admin_uri(),
       caps: MapSet.new()
     }
 
@@ -96,7 +97,12 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
       # 无 access 的路人（非板主人、无 cap）→ 拒
       stranger = spawn_user(ws_name, "stranger")
-      stranger_ctx = %{caller: stranger, caps: MapSet.new()}
+
+      stranger_ctx = %{
+        caller: stranger,
+        authenticated_principal: stranger,
+        caps: MapSet.new()
+      }
 
       assert {:error, :no_access} =
                KanbanActions.share_link(share_socket(stranger_ctx), s(board_uri))
@@ -259,20 +265,22 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
     {:ok, create_cap} =
       Ezagent.Cap.issue({:admin, User.admin_uri()}, user_uri, requested)
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(User, %{
-        uri: user_uri,
-        initial_caps: MapSet.new([create_cap])
-      })
+    {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [create_cap])
+    :ok = Ezagent.Entity.spawn_principal(user_uri)
 
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
-    %{caller: user_uri, caps: Ezagent.Identity.list_caps_for(user_uri)}
+
+    %{
+      caller: user_uri,
+      authenticated_principal: user_uri,
+      caps: Ezagent.Identity.list_caps_for(user_uri)
+    }
   end
 
   defp spawn_user(ws_name, label) do
     user_uri = URI.new!("entity://#{ws_name}/user/#{label}-#{u()}")
     {:ok, _row} = Ezagent.Users.create_read_only(user_uri, [])
-    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: MapSet.new()})
+    :ok = Ezagent.Entity.spawn_principal(user_uri)
     # Read-plane PR-4 rework: the receive flow resolves the clicker's
     # sessions through `WorkspaceReads.sessions/2`, which requires the
     # caller to be a DECLARED workspace member (the workspace gate).
@@ -342,11 +350,41 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
-           ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+           ctx: %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: caps,
+             reply: {:caller_inbox, self()}
+           }
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> converge_member_projection(session_uri, member_uri, role_name)
+      {:ok, _} -> converge_member_projection(session_uri, member_uri, role_name)
       other -> flunk("join failed: #{inspect(other)}")
+    end
+  end
+
+  defp converge_member_projection(session_uri, member_uri, role_name) do
+    assert eventually(fn ->
+             held = Ezagent.EntityCaps.load_persisted(member_uri)
+             Ezagent.Session.MemberReceive.holds_member_cap_over?(member_uri, held, session_uri)
+           end)
+
+    target = Ezagent.URI.with_action(session_uri, :session, :add_self)
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
+           target: target,
+           mode: :call,
+           args: %{member: member_uri, facets: %{role_name: role_name}},
+           ctx: %{
+             caller: member_uri,
+             authenticated_principal: member_uri,
+             caps: MapSet.new(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{status: status}} when status in [:added, :already_member] -> :ok
+      other -> flunk("member projection failed: #{inspect(other)}")
     end
   end
 
@@ -359,7 +397,13 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
         target,
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
     )
   end
@@ -376,6 +420,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   defp dispatch_as(caller_uri, board_uri, action, args) do
     board_dispatch(board_uri, action, args, %{
       caller: caller_uri,
+      authenticated_principal: caller_uri,
       caps: MapSet.new(Ezagent.Identity.list_caps_for(caller_uri))
     })
   end

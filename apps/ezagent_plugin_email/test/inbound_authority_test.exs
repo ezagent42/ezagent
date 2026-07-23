@@ -162,7 +162,7 @@ defmodule Ezagent.Email.Inbound.AuthorityTest do
   end
 
   defp seal_without_active_authority!(session_uri) do
-    {:ok, _authority} = Ezagent.Cap.Authority.open(session_uri, :session)
+    {:ok, _pid} = Ezagent.LocalRuntime.ensure_started(session_uri)
     :ok = Ezagent.Cap.Authority.retire(session_uri)
   end
 

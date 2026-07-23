@@ -210,6 +210,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     :ok = create_read_only_user(caller_uri, [])
     {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+    wait_until(fn -> holds_member_cap?(caller_uri, session_uri) end)
     :ok = Ezagent.Kind.terminate(caller_uri)
     wait_until(fn -> Ezagent.KindRegistry.lookup(caller_uri) == :error end)
 
@@ -234,7 +235,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     assert_patch(view, "/sessions?session=#{encoded}")
     assert has_element?(view, "#world-root[data-world-component='conversation']")
-    assert holds_join_cap?(caller_uri, session_uri)
+    assert holds_member_cap?(caller_uri, session_uri)
   end
 
   test "world sessions_table opens observe-only when caller cannot join", %{conn: conn} do
@@ -284,6 +285,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     :ok = create_read_only_user(caller_uri, [])
     {:ok, _} = join_member_as_admin(session_uri, caller_uri)
+    wait_until(fn -> holds_member_cap?(caller_uri, session_uri) end)
     :ok = Ezagent.Kind.terminate(session_uri)
     :ok = Ezagent.Kind.terminate(caller_uri)
     wait_until(fn -> Ezagent.KindRegistry.lookup(session_uri) == :error end)
@@ -302,7 +304,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert has_element?(view, "#world-root[data-world-component='conversation']")
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(caller_uri)
-    assert holds_join_cap?(caller_uri, session_uri)
+    assert holds_member_cap?(caller_uri, session_uri)
   end
 
   test "world React island navigation patches without a full page reload", %{conn: conn} do
@@ -338,6 +340,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert has_element?(view, "#world-root[data-world-component='sessions_table']")
   end
 
+  # This is ten LiveView boots plus their authorization/data-load work. Under the
+  # umbrella suite the shared sandbox can make the aggregate exceed ExUnit's
+  # default 60s even though each route remains bounded and fast in isolation.
+  @tag timeout: 180_000
   test "world identities group paths stay inside the world scope", %{conn: conn} do
     agent_uri = "entity://system/agent/world_route_agent"
     encoded_agent = URI.encode_www_form(agent_uri)
@@ -636,7 +642,11 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       Ezagent.Workspace.create_session(
         workspace_uri,
         %{short_name: short_name, template_name: "default"},
-        %{caller: admin, caps: MapSet.new([create_cap])}
+        %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: MapSet.new([create_cap])
+        }
       )
 
     on_exit(fn ->
@@ -678,6 +688,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([join_cap]),
         reply: :ignore
       }
@@ -693,6 +704,12 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       _ ->
         false
     end)
+  end
+
+  defp holds_member_cap?(caller_uri, session_uri) do
+    caller_uri
+    |> Ezagent.EntityCaps.load_persisted()
+    |> then(&Ezagent.Session.MemberReceive.holds_member_cap_over?(caller_uri, &1, session_uri))
   end
 
   defp wait_until(fun, attempts \\ 50)

@@ -13,6 +13,20 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
   alias Ezagent.Test.{OnChangeTestKind, TestBehavior, TestKind}
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(admin()) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
     :ok = Ezagent.BehaviorRegistry.register(OnChangeTestKind, :noop, TestBehavior)
     :ok
@@ -22,7 +36,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     %{uri: uri, pid: pid, presenter: presenter} = start_target("forge")
     forged = unsigned_cap(uri, presenter)
 
-    assert {:error, :invalid_cap_signature} = invoke(pid, uri, presenter, [forged])
+    assert {:error, :missing_cap} = invoke(pid, uri, presenter, [forged])
     assert_unmodified(uri)
   end
 
@@ -31,7 +45,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert {:ok, signed} = issue_action_cap(uri, presenter)
     tampered = %{signed | granted_at: DateTime.add(signed.granted_at, 1, :second)}
 
-    assert {:error, :invalid_cap_signature} = invoke(pid, uri, presenter, [tampered])
+    assert {:error, :missing_cap} = invoke(pid, uri, presenter, [tampered])
     assert_unmodified(uri)
   end
 
@@ -40,7 +54,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     %{uri: uri_b, pid: pid_b} = start_target("retarget-b", presenter)
     assert {:ok, signed_for_a} = issue_action_cap(uri_a, presenter)
 
-    assert {:error, :invalid_cap_signature} =
+    assert {:error, :missing_cap} =
              invoke(pid_b, uri_b, presenter, [signed_for_a])
 
     assert_unmodified(uri_b)
@@ -96,7 +110,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
 
     assert wrong_key_cap.instance == uri_b
 
-    assert {:error, :invalid_cap_signature} =
+    assert {:error, :missing_cap} =
              invoke(pid_b, uri_b, presenter, [wrong_key_cap])
 
     assert_unmodified(uri_b)
@@ -110,10 +124,16 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
       target: Ezagent.URI.with_action(uri, :cap, :grant),
       mode: :call,
       args: %{grantee: grantee, cap: action_cap(uri)},
-      ctx: %{caller: presenter, caps: MapSet.new(), reply: :ignore},
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: MapSet.new(),
+        reply: :ignore
+      },
       origin: :authenticated_external
     }
 
+    license_holder(presenter, [action_cap(uri)])
     assert {:error, :missing_cap} = GenServer.call(pid, {:ezagent_dispatch, invocation})
     assert_unmodified(uri)
   end
@@ -159,10 +179,11 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert :ok = Authority.retire(uri)
     assert {:error, :regenesis_required} = Authority.open(uri, :test)
 
-    assert {:error, :admin_required} =
+    assert {:error, :cap_context_required} =
              Authority.regenesis(uri, :test, unique_user("not-admin"))
 
-    assert {:ok, second} = Authority.regenesis(uri, :test, admin)
+    assert {:error, :cap_context_required} = Authority.regenesis(uri, :test, admin)
+    assert {:ok, second} = Authority.regenesis(uri, :test)
     assert second.generation == first.generation + 1
     refute second.key_id == first.key_id
     refute Authority.verify(second, anchor, admin)
@@ -232,15 +253,33 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
   end
 
   defp invoke(pid, uri, presenter, caps, opts \\ []) do
+    license_holder(presenter, caps)
+
     invocation = %Invocation{
       target: Ezagent.URI.with_action(uri, :test, :noop),
       mode: :call,
       args: %{msg: Keyword.get(opts, :message, "blocked")},
-      ctx: %{caller: presenter, caps: MapSet.new(caps), reply: :ignore},
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: MapSet.new(caps),
+        reply: :ignore
+      },
       origin: Keyword.get(opts, :origin, :authenticated_external)
     }
 
     GenServer.call(pid, {:ezagent_dispatch, invocation})
+  end
+
+  defp license_holder(presenter, caps) do
+    by_holder =
+      Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(by_holder, Ezagent.URI.stable_key(presenter), MapSet.new(caps))
+    )
   end
 
   defp unsigned_cap(uri, presenter) do

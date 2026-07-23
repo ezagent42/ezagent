@@ -42,6 +42,7 @@ defmodule Ezagent.Entity.Token do
     field(:token_hash, :string)
     field(:token_digest, :binary)
     field(:digest_version, :integer)
+    field(:bound_generation, :integer)
     field(:label, :string)
     field(:expires_at, :utc_datetime_usec)
     field(:last_used_at, :utc_datetime_usec)
@@ -74,7 +75,9 @@ defmodule Ezagent.Entity.Token do
   def mint(%URI{scheme: "entity"} = uri, opts) do
     version = current_version()
 
-    with {:ok, pepper} <- pepper(version) do
+    with {:ok, generation} <- current_generation(uri),
+         :ok <- credential_generation_allowed(uri, generation, opts),
+         {:ok, pepper} <- pepper(version) do
       raw = generate_raw_secret()
       plain = "esr_pat_v#{version}_#{raw}"
       workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
@@ -85,6 +88,7 @@ defmodule Ezagent.Entity.Token do
         token_hash: nil,
         token_digest: digest(pepper, raw),
         digest_version: version,
+        bound_generation: generation,
         label: Keyword.get(opts, :label),
         expires_at: Keyword.get(opts, :expires_at),
         workspace_uri: workspace_uri
@@ -104,7 +108,8 @@ defmodule Ezagent.Entity.Token do
          %__MODULE__{} = row <- row_for_digest(digest(pepper, raw)),
          true <- row.digest_version == version,
          false <- expired?(row, DateTime.utc_now()),
-         {:ok, principal} <- enabled_principal(row.entity_uri),
+         {:ok, principal} <- enabled_principal(row),
+         false <- Ezagent.Identity.Offboarding.RevocationFence.fenced?(principal),
          :ok <- Ezagent.Entity.spawn_principal(principal) do
       bump_last_used(row, DateTime.utc_now())
       {:ok, principal}
@@ -189,19 +194,47 @@ defmodule Ezagent.Entity.Token do
     |> Repo.update!()
   end
 
-  defp enabled_principal(entity_uri) do
-    principal = Ezagent.URI.new!(entity_uri)
+  defp enabled_principal(%__MODULE__{} = row) do
+    principal = Ezagent.URI.new!(row.entity_uri)
 
-    if Ezagent.URI.type?(principal, :user) do
-      case Ezagent.Users.get_by_uri(entity_uri) do
-        %{disabled_at: %DateTime{}} -> {:error, :disabled}
-        _ -> {:ok, principal}
-      end
-    else
+    with {:ok, generation} <- current_generation(principal),
+         true <- row.bound_generation == generation,
+         :ok <- enabled_user(principal, row.entity_uri) do
       {:ok, principal}
+    else
+      _ -> {:error, :disabled}
     end
   rescue
     ArgumentError -> {:error, :invalid_credentials}
+  end
+
+  defp enabled_user(principal, entity_uri) do
+    if Ezagent.URI.type?(principal, :user) do
+      case Ezagent.Users.get_by_uri(entity_uri) do
+        %{disabled_at: %DateTime{}} -> {:error, :disabled}
+        _ -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  defp current_generation(uri) do
+    case Ezagent.Cap.Authority.current_generation(uri) do
+      {:ok, generation} -> {:ok, generation}
+      :error -> {:error, :authority_unavailable}
+    end
+  end
+
+  defp credential_generation_allowed(_uri, 1, _opts), do: :ok
+
+  defp credential_generation_allowed(uri, generation, opts) do
+    with :created <- Keyword.get(opts, :create_freshness),
+         {:ok, ^generation} <- Ezagent.Cap.Authority.current_process_generation(uri) do
+      :ok
+    else
+      _ -> {:error, :principal_revoked}
+    end
   end
 
   defp parse(token) do

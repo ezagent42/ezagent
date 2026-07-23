@@ -83,11 +83,12 @@ defmodule Ezagent.Socialware.AnonAdmission do
       |> call2(session_uri, anon_uri)
 
     case join_result do
-      :ok ->
+      {:ok, %{status: status, member: ^anon_uri}}
+      when status in [:granted, :already_member] ->
         mount_participation(session_uri, anon_uri, opts)
 
-      {:ok, _} ->
-        mount_participation(session_uri, anon_uri, opts)
+      {:ok, %{status: :pending, member: ^anon_uri}} ->
+        {:error, :admission_pending}
 
       {:error, _} = err ->
         err
@@ -112,7 +113,12 @@ defmodule Ezagent.Socialware.AnonAdmission do
         target: target,
         mode: :call,
         args: %{member: anon_uri},
-        ctx: %{caller: anon_uri, caps: MapSet.new(join_caps), reply: :ignore},
+        ctx: %{
+          caller: anon_uri,
+          authenticated_principal: anon_uri,
+          caps: MapSet.new(join_caps),
+          reply: :ignore
+        },
         origin: :authenticated_external
       })
     end

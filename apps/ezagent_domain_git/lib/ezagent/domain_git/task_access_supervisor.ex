@@ -45,6 +45,7 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   end
 
   defp spawn_or_reconcile(uri, policy) do
+    # derivation-edge: non-principal ephemeral task-access policy Kind
     case Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy}) do
       {:ok, pid} -> {:ok, pid}
       {:error, {:already_registered, _uri}} -> reconcile_duplicate(uri, policy)

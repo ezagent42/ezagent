@@ -169,7 +169,7 @@ defmodule EzagentPluginKanban.WorldData do
   defp visible?(_, _), do: false
 
   defp owns_or_holds_cap?(caller, caps, board_uri),
-    do: owns_board?(caller, board_uri) or holds_board_cap?(caps, board_uri)
+    do: owns_board?(caller, board_uri) or holds_board_cap?(caller, caps, board_uri)
 
   # own：板（kanban-manager agent）的 `data_owner`（经 creator / lineage）== caller。
   # 与核心 dispatch chokepoint（`CapabilityRegistry.authorize_cap_shape` 的
@@ -195,11 +195,20 @@ defmodule EzagentPluginKanban.WorldData do
 
   # holds：caller 持有一张 instance 精确指向该板的 cap（Task 3/4/5 发钥匙的形状，
   # 以及建板时的 creator-manage cap）。instance 经 `URI.instance/1` 归一化后结构比对。
-  defp holds_board_cap?(caps, %URI{} = board_uri) do
-    target = Ezagent.URI.instance(board_uri)
-
+  defp holds_board_cap?(%URI{} = holder, caps, %URI{} = board_uri) do
     Enum.any?(caps, fn
-      %Ezagent.Capability{instance: %URI{} = inst} -> Ezagent.URI.instance(inst) == target
+      %Ezagent.Capability{instance: %URI{}} = cap ->
+        match?(
+          {:ok, %Ezagent.Capability{}},
+          Ezagent.Cap.authorize(holder, [cap], %{
+            kind: cap.kind,
+            behavior: cap.behavior,
+            action: Ezagent.Capability.action_of(cap),
+            instance: Ezagent.URI.instance(board_uri),
+            workspace_uri: Ezagent.Capability.workspace_of(board_uri)
+          })
+        )
+
       _ -> false
     end)
   rescue
@@ -208,7 +217,7 @@ defmodule EzagentPluginKanban.WorldData do
     _, _ -> false
   end
 
-  defp holds_board_cap?(_, _), do: false
+  defp holds_board_cap?(_holder, _caps, _board_uri), do: false
 
   @doc "选中某个 kanban 的 state：`kanban_uri` + `tree` + 全量 `instances`（侧边栏切换用）。"
   @spec board_state(URI.t(), map()) :: map()
@@ -295,6 +304,7 @@ defmodule EzagentPluginKanban.WorldData do
   def dispatch_ctx(ctx) do
     %{
       caller: Map.get(ctx, :caller_uri),
+      authenticated_principal: Map.get(ctx, :caller_uri),
       caps: Map.get(ctx, :caller_caps, MapSet.new()),
       reply: {:caller_inbox, self()}
     }

@@ -256,6 +256,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       # (`Ezagent.URI.stable_key/1`). Production always supplies canonical member
       # URIs; the test must mirror that.
       agent_uri = Ezagent.URI.new!(agent_uri_str)
+      _authority = install_test_authority!(agent_uri, :agent)
 
       tmpl = %{
         "class" => "cc.agent",
@@ -378,6 +379,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
           args: %{message: inbound_msg},
           ctx: %{
             caller: admin_uri,
+            authenticated_principal: admin_uri,
             caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(send_target, admin_uri)]),
             reply: :ignore
           }
@@ -457,6 +459,7 @@ defmodule Ezagent.PluginCc.Integration.CcAgentSandboxCredentialsTest do
       args: %{member: member_uri},
       ctx: %{
         caller: member_uri,
+        authenticated_principal: member_uri,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }

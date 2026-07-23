@@ -9,9 +9,12 @@ defmodule EzagentDomainInstanceMessage.Behavior.SurfaceTest do
   end
 
   defp ctx do
+    session = session_uri()
+
     %{
-      self_uri: session_uri(),
-      caller: Ezagent.URI.entity(:team_alpha, :agent, "orchestrator"),
+      self_uri: session,
+      caller: session,
+      authenticated_principal: session,
       caps: MapSet.new(),
       reply: :ignore
     }

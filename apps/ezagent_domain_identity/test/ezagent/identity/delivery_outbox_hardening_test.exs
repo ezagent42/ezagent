@@ -41,6 +41,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       args: %{cap: cap},
       ctx: %{
         caller: Ezagent.URI.user("team-alpha", unique("caller")),
+        authenticated_principal: Ezagent.URI.user("team-alpha", unique("holder")),
         caps: MapSet.new([self()]),
         reply: :ignore,
         idempotency_key: key,
@@ -140,6 +141,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     assert Map.keys(envelope) |> Enum.sort() ==
              [
+               :authenticated_principal,
                :caller,
                :cap,
                :caps,
@@ -154,6 +156,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     assert envelope.producer == :identity_absorb
     assert envelope.target_uri == URI.to_string(target)
     assert envelope.caller == :vm_internal
+    assert envelope.authenticated_principal == target
     assert envelope.caps == []
     refute contains_pid?(envelope)
 
@@ -317,6 +320,8 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     {target, pid} = spawn_target("permanent-auth")
     cap = capability(target)
     caller = Ezagent.URI.user("team-alpha", unique("unauthorized"))
+    assert {:ok, _user} = Ezagent.Users.create(caller, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(caller)
 
     invocation = %Invocation{
       origin: :trusted_internal,
@@ -325,6 +330,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       args: %{cap: cap},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new(),
         reply: :ignore,
         cap_delivery_producer: :identity_revoke
@@ -398,6 +404,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       args: %{cap: cap},
       ctx: %{
         caller: presenter,
+        authenticated_principal: presenter,
         caps: MapSet.new(),
         reply: :ignore,
         idempotency_key: idempotency_key,

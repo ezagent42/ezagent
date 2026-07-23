@@ -166,6 +166,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
                 args: %{message: msg},
                 ctx: %{
                   caller: agent_uri,
+                  authenticated_principal: agent_uri,
                   # The authenticated agent presents only authority already
                   # issued by the target Kind and held durably. This external
                   # bridge is not a signing site and cannot mint authority from

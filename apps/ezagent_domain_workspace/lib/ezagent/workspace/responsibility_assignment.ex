@@ -121,6 +121,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignment do
   @spec supervisor_caps_for_session(URI.t(), URI.t()) :: [Capability.t()]
   def supervisor_caps_for_session(%URI{} = session_uri, %URI{} = workspace_uri) do
     [
+      cap(:session, Ezagent.ActionSet.Session, :receive, session_uri, workspace_uri),
       cap(:session, Ezagent.ActionSet.Session, :read_unfiltered, session_uri, workspace_uri),
       cap(:session, Ezagent.ActionSet.Turn, :claim, session_uri, workspace_uri),
       cap(:session, Ezagent.ActionSet.Turn, :settle, session_uri, workspace_uri),

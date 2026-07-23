@@ -24,7 +24,7 @@ defmodule Ezagent.Socialware.ExternalFeedPublicReadTest do
   alias Ezagent.Socialware.{DefinitionRegistry, ExternalFeed, Installation}
 
   @workspace "team-alpha"
-  @owner Ezagent.URI.new!("entity://team-alpha/user/pub-read-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "pub-read-owner")
 
   # A logged-in principal that is NOT the owner and never joined the session —
   # a real signed-in user (not an anon) who opens someone else's public page.
@@ -50,7 +50,11 @@ defmodule Ezagent.Socialware.ExternalFeedPublicReadTest do
       Installation.behavior_set_for_template(content, Ezagent.URI.workspace(@workspace))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: session_uri, owner_uri: @owner, behaviors: behaviors})
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
+        uri: session_uri,
+        owner_uri: owner(),
+        behaviors: behaviors
+      })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
 
@@ -59,7 +63,7 @@ defmodule Ezagent.Socialware.ExternalFeedPublicReadTest do
         session_uri,
         Ezagent.URI.workspace(@workspace),
         content,
-        @owner
+        owner()
       )
 
     {:ok, _} =
@@ -106,8 +110,8 @@ defmodule Ezagent.Socialware.ExternalFeedPublicReadTest do
 
     test "the owner reads AND is member? == true (surface shows 发送)" do
       session = session_with(true)
-      assert {:ok, _} = ExternalFeed.snapshot(session, @owner)
-      assert ExternalFeed.member?(session, @owner)
+      assert {:ok, _} = ExternalFeed.snapshot(session, owner())
+      assert ExternalFeed.member?(session, owner())
     end
   end
 
@@ -124,8 +128,8 @@ defmodule Ezagent.Socialware.ExternalFeedPublicReadTest do
 
     test "the owner still reads a private session" do
       session = session_with(false)
-      assert {:ok, _} = ExternalFeed.snapshot(session, @owner)
-      assert ExternalFeed.member?(session, @owner)
+      assert {:ok, _} = ExternalFeed.snapshot(session, owner())
+      assert ExternalFeed.member?(session, owner())
     end
   end
 end

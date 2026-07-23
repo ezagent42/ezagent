@@ -94,6 +94,7 @@ defmodule Mix.Tasks.Ezagent.Credential.Adopt do
 
     case Ezagent.Credential.Adopt.adopt(owner, ws, flavor, candidates,
            caller: admin_uri,
+           authenticated_principal: admin_uri,
            caps: caps
          ) do
       {:ok, src} ->

@@ -410,7 +410,12 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeOnSessionColdSpawnTest do
         target: target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: admin_uri, caps: admin_caps(target, admin_uri), reply: :ignore}
+        ctx: %{
+          caller: admin_uri,
+          authenticated_principal: admin_uri,
+          caps: admin_caps(target, admin_uri),
+          reply: :ignore
+        }
       })
 
     case result do

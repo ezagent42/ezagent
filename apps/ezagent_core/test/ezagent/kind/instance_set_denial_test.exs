@@ -327,6 +327,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
       args: %{},
       ctx: %{
         caller: Ezagent.Entity.User.admin_uri(),
+        authenticated_principal: Ezagent.Entity.User.admin_uri(),
         caps: MapSet.new([cap]),
         reply: :ignore
       }

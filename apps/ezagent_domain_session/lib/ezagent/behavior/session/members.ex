@@ -3,6 +3,24 @@ defmodule Ezagent.ActionSet.Session.Members do
 
   alias Ezagent.Routing.Legend
 
+  @anon_user_name_prefix "anon-"
+
+  @doc "Whether the URI resolves to a passive data actor that cannot join."
+  @spec passive_actor?(URI.t()) :: boolean()
+  def passive_actor?(%URI{} = uri) do
+    match?({:ok, true}, Ezagent.UriQuery.resolve(:passive, uri))
+  end
+
+  def passive_actor?(_), do: false
+
+  @doc "The owner value produced by a grant intent, including first-user claim."
+  @spec owner_after_intent(URI.t(), URI.t() | nil) :: URI.t() | nil
+  def owner_after_intent(%URI{} = member_uri, prior_owner) do
+    if is_nil(prior_owner) and user_uri?(member_uri) and not anon_member?(member_uri),
+      do: member_uri,
+      else: prior_owner
+  end
+
   @doc """
   Heuristic combining two INDEPENDENT facts: `monitors` (a `ref => uri` map) has
   SOME entry for `member_uri`, AND the calling process is among `current_pid`'s
@@ -38,6 +56,21 @@ defmodule Ezagent.ActionSet.Session.Members do
 
   defp maybe_put_facet(map, _key, nil), do: map
   defp maybe_put_facet(map, key, value), do: Map.put(map, key, value)
+
+  defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
+  defp user_uri?(_), do: false
+
+  @doc false
+  @spec anon_member?(term()) :: boolean()
+  def anon_member?(%URI{scheme: "entity"} = uri) do
+    user_uri?(uri) and
+      case uri |> URI.to_string() |> String.split("/") |> List.last() do
+        nil -> false
+        name -> String.starts_with?(name, @anon_user_name_prefix)
+      end
+  end
+
+  def anon_member?(_), do: false
 
   @doc "Defensively drop any recognized facet whose value fails its type check (`:role_name` binary, `:in_session_template` boolean, `:source_template_uri` a `%URI{}`) — unrecognized/absent keys pass through untouched."
   @spec sanitize_facets(map()) :: map()

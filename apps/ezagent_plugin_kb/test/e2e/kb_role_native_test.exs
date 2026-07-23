@@ -139,8 +139,11 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
 
       # A caller holding ONLY the kb.query cap (kind axis :agent — the host is
       # Entity.Agent; a :kb-kind cap would be a false-pass trap).
+      reader = URI.new!("entity://#{ws_name}/user/reader")
+      :ok = spawn_test_user(reader)
+
       query_only = %{
-        caller: URI.new!("entity://#{ws_name}/user/reader"),
+        caller: reader,
         caps: MapSet.new([Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kb, :query)])
       }
 
@@ -159,7 +162,9 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
              "a query-only caller must NOT be able to mutate the corpus (kb.query != kb.ingest)"
 
       # A caller with NEITHER cap is refused BOTH.
-      none = %{caller: URI.new!("entity://#{ws_name}/user/nobody"), caps: MapSet.new([])}
+      nobody = URI.new!("entity://#{ws_name}/user/nobody")
+      :ok = spawn_test_user(nobody)
+      none = %{caller: nobody, caps: MapSet.new([])}
 
       assert {:error, :missing_cap} =
                dispatch(agent_uri, :query, %{query: "alpha", k: 5}, none)
@@ -378,7 +383,13 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
         target,
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     Ezagent.Router.dispatch(cmd)
@@ -397,6 +408,14 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
         |> Enum.map(&Ezagent.Test.CapHelper.signed_cap!(target, caller, &1))
         |> MapSet.new()
     end
+  end
+
+  defp spawn_test_user(%URI{} = user) do
+    assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [])
+    assert :ok = Ezagent.Entity.spawn_principal(user)
+
+    on_exit(fn -> Ezagent.Kind.terminate(user) end)
+    :ok
   end
 
   defp skip_if_no_entity_spawn(body) do

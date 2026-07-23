@@ -3,6 +3,23 @@ defmodule Ezagent.Orchestrator.Tools.DefinitionSync do
 
   alias Ezagent.Socialware.DefinitionEditor
 
+  @doc false
+  @spec await_member_projection(URI.t(), URI.t(), non_neg_integer()) ::
+          :ok | {:error, :membership_projection_timeout}
+  def await_member_projection(session_uri, member_uri, attempts \\ 200)
+
+  def await_member_projection(_session_uri, _member_uri, 0),
+    do: {:error, :membership_projection_timeout}
+
+  def await_member_projection(session_uri, member_uri, attempts) do
+    if member_uri in Ezagent.Session.Participants.list_participants(session_uri) do
+      :ok
+    else
+      Process.sleep(10)
+      await_member_projection(session_uri, member_uri, attempts - 1)
+    end
+  end
+
   @spec member(URI.t(), URI.t(), URI.t(), URI.t(), map(), keyword()) :: :ok | {:error, term()}
   def member(
         %URI{} = session_uri,

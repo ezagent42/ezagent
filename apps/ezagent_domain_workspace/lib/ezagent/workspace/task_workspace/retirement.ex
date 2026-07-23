@@ -15,11 +15,16 @@ defmodule Ezagent.Workspace.TaskWorkspace.Retirement do
          {:ok, caps} <-
            Ezagent.Domain.Agent.read_caps(provenance_root, %{
              caller: provenance_root,
+             # #195 authz contract: read_caps + Agent.Retirement.retire both
+             # require the authenticated holder. This is a self-read/self-retire
+             # by the provenance root, so it is the authenticated principal.
+             authenticated_principal: provenance_root,
              caps: MapSet.new()
            }) do
       interpret(
         Ezagent.Domain.Agent.retire_spawned(agent_uri, %{
           caller: provenance_root,
+          authenticated_principal: provenance_root,
           caps: caps,
           workspace_uri: workspace_uri,
           provenance_root: provenance_root,

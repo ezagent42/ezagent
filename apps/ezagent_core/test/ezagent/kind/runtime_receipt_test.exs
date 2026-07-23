@@ -67,6 +67,7 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
   end
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
     :ok = BehaviorRegistry.register(ReceiptFixtureKind, :ping, ReceiptFixtureBehavior)
 
     suffix = System.unique_integer([:positive])
@@ -77,6 +78,19 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
     provider_uri = URI.new!("entity://receipt-prov-#{suffix}/agent/provider")
     caller_uri = URI.new!("entity://receipt-call-#{suffix}/user/caller")
     same_ws_caller_uri = URI.new!("entity://receipt-prov-#{suffix}/user/insider")
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(caller_uri) => MapSet.new([:test_holder_license]),
+      Ezagent.URI.stable_key(same_ws_caller_uri) => MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
     authority = install_test_authority!(provider_uri, ReceiptFixtureKind.type_name())
 
     {:ok,
@@ -127,7 +141,12 @@ defmodule Ezagent.Kind.RuntimeReceiptTest do
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: :ignore
+      }
     }
   end
 

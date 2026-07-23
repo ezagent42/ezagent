@@ -218,6 +218,9 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
      }}
   end
 
+  @max_resubscribe_attempts 5
+  @resubscribe_backoff_ms 200
+
   @doc """
   `activate/2` (SPEC §2.3 step 4-5) — the UNIFIED start hook. Rebuilds
   ALL transients from `state`, every start (fresh spawn + cold-load):
@@ -426,6 +429,34 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
     end
   end
 
+  # Re-subscribe calls must also run off the Worker process. Calling the
+  # Session synchronously from the Worker deadlocks the F-6 principal gate:
+  # the Session independently loads the Worker's self-license by calling the
+  # Worker Kind, which cannot answer while blocked in that same call.
+  def handle_signal({:ezagent_worker_resubscribe_result, result, attempt}, _ctx) do
+    case result do
+      {:ok, current_cursor} ->
+        {:ok, [{:set, :publisher_cursor, current_cursor}]}
+
+      {:error, :not_ready} when attempt < @max_resubscribe_attempts ->
+        Process.send_after(
+          self(),
+          {:ezagent_worker_resubscribe_retry, attempt + 1},
+          @resubscribe_backoff_ms
+        )
+
+        :ignore
+
+      {:error, reason} ->
+        Logger.warning(
+          "ExternalMirrorWorker re-subscribe failed after #{attempt} attempt(s); " <>
+            "reason=#{inspect(reason)}"
+        )
+
+        :ignore
+    end
+  end
+
   def handle_signal(_other, _ctx), do: :ignore
 
   # Run the (blocking) initial Publisher subscribe in a DETACHED Task under
@@ -522,9 +553,6 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # Session doesn't queue infinite retry messages. After the budget
   # exhausts we log + give up; the next `:publisher_alive` (e.g. a
   # later cold-spawn) re-arms the handshake.
-  @max_resubscribe_attempts 5
-  @resubscribe_backoff_ms 200
-
   # Task #49 codex round-3 NEW CHECK C — cursor-based catchup on
   # re-subscribe.
   #
@@ -566,56 +594,50 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   defp attempt_resubscribe(ctx, session_uri, self_uri, attempt) do
     persisted_cursor = ctx.read.(:publisher_cursor, :latest)
     subscribe_cap = ctx.read.(:subscribe_cap, nil)
+    worker_pid = self()
 
+    {:ok, _task_pid} =
+      Task.Supervisor.start_child(Ezagent.ExternalMirror.SubscribeTaskSup, fn ->
+        result =
+          do_resubscribe(
+            session_uri,
+            self_uri,
+            worker_pid,
+            persisted_cursor,
+            subscribe_cap
+          )
+
+        send(worker_pid, {:ezagent_worker_resubscribe_result, result, attempt})
+      end)
+
+    :ignore
+  end
+
+  defp do_resubscribe(session_uri, self_uri, worker_pid, persisted_cursor, subscribe_cap) do
     case subscribe_to_session_publisher_from(
            session_uri,
            self_uri,
            persisted_cursor,
-           subscribe_cap
+           subscribe_cap,
+           worker_pid
          ) do
-      {:ok, current_cursor} ->
-        {:ok, [{:set, :publisher_cursor, current_cursor}]}
-
       {:error, :cursor_out_of_window} ->
-        # Persisted cursor is older than the publisher's retention
-        # ring; the missed events are gone. Re-subscribe at :latest
-        # to restore the live wire. Operator-visible via the
-        # cursor-out-of-window log.
         Logger.warning(
           "ExternalMirrorWorker re-subscribe: persisted cursor " <>
             "#{inspect(persisted_cursor)} older than publisher retention; " <>
             "falling back to :latest. session=#{URI.to_string(session_uri)}"
         )
 
-        case subscribe_to_session_publisher_from(session_uri, self_uri, :latest, subscribe_cap) do
-          {:ok, current_cursor} ->
-            {:ok, [{:set, :publisher_cursor, current_cursor}]}
-
-          {:error, reason} ->
-            Logger.warning(
-              "ExternalMirrorWorker re-subscribe (fallback :latest) failed; " <>
-                "session=#{URI.to_string(session_uri)} reason=#{inspect(reason)}"
-            )
-
-            :ignore
-        end
-
-      {:error, :not_ready} when attempt < @max_resubscribe_attempts ->
-        Process.send_after(
-          self(),
-          {:ezagent_worker_resubscribe_retry, attempt + 1},
-          @resubscribe_backoff_ms
+        subscribe_to_session_publisher_from(
+          session_uri,
+          self_uri,
+          :latest,
+          subscribe_cap,
+          worker_pid
         )
 
-        :ignore
-
-      {:error, reason} ->
-        Logger.warning(
-          "ExternalMirrorWorker re-subscribe failed after #{attempt} attempt(s); " <>
-            "session=#{URI.to_string(session_uri)} reason=#{inspect(reason)}"
-        )
-
-        :ignore
+      result ->
+        result
     end
   end
 
@@ -888,29 +910,20 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # Cursor replay is synchronous so the lifecycle hook can persist the returned
   # cursor. The detached initial task passes the Worker pid explicitly.
   defp subscribe_to_session_publisher_from(
-         session_uri,
-         self_uri,
-         cursor,
-         subscribe_cap,
-         subscriber_pid \\ nil
-       )
-
-  defp subscribe_to_session_publisher_from(
          %URI{} = session_uri,
          %URI{} = self_uri,
          cursor,
          %Ezagent.Capability{} = subscribe_cap,
          sub_pid
        ) do
-    subscriber_pid = sub_pid || self()
-
     cmd =
       Ezagent.Cmd.new(
         session_uri,
         :subscribe_from,
-        %{subscriber_pid: subscriber_pid, cursor: cursor},
+        %{subscriber_pid: sub_pid, cursor: cursor},
         %{
           caller: self_uri,
+          authenticated_principal: self_uri,
           caps: [subscribe_cap],
           reply: {:caller_inbox, self()},
           # Setup can queue behind Session persistence work.
@@ -944,6 +957,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
        %{event: event},
        %{
          caller: self_uri,
+         authenticated_principal: self_uri,
          caps: [publish_cap],
          reply: :ignore,
          command_uuid: idem,

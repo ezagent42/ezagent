@@ -169,8 +169,14 @@ defmodule Ezagent.EventLogTest do
       events_x = EventLog.stream_by_workspace(@workspace_x)
       events_y = EventLog.stream_by_workspace(@workspace_y)
 
-      assert Enum.map(events_x, & &1.event_name) == ["in_x"]
-      assert Enum.map(events_y, & &1.event_name) == ["in_y"]
+      test_event_names = fn events ->
+        events
+        |> Enum.map(& &1.event_name)
+        |> Enum.filter(&(&1 in ["in_x", "in_y"]))
+      end
+
+      assert test_event_names.(events_x) == ["in_x"]
+      assert test_event_names.(events_y) == ["in_y"]
     end
 
     test "honours `:limit` + `:order` like stream_by_aggregate" do

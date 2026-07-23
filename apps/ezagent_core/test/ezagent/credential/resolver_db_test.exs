@@ -76,6 +76,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
         caller: admin_uri(),
+        authenticated_principal: admin_uri(),
         caps: admin_caps(ctx.owner_str)
       )
 
@@ -109,6 +110,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
         caller: admin_uri(),
+        authenticated_principal: admin_uri(),
         caps: admin_caps(ctx.owner_str)
       )
 
@@ -130,6 +132,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
         caller: admin_uri(),
+        authenticated_principal: admin_uri(),
         caps: admin_caps(ctx.owner_str)
       )
 
@@ -151,7 +154,29 @@ defmodule Ezagent.Credential.ResolverDbTest do
        ctx do
     source = Ezagent.URI.new!(ctx.base)
     agent = Ezagent.URI.new!(ctx.new_agent)
-    good_cap = GrantCap.read_cap_for(source)
+
+    good_cap =
+      signed_fixture_cap!(
+        source,
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :read,
+        ctx.owner_uri
+      )
+
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(ctx.owner_uri) => MapSet.new([good_cap])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
 
     assert {:ok, grant} =
              Resolver.authorize_and_mint_grant!(%{
@@ -159,6 +184,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 
@@ -182,6 +208,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [wrong_cap]
              })
 
@@ -205,6 +232,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: system_caller,
                caller: system_caller,
+               authenticated_principal: system_caller,
                caps: [good_cap]
              })
 
@@ -223,6 +251,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: Ezagent.URI.new!("entity://#{@ws}/user/someone-else"),
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 
@@ -241,6 +270,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
                source: source,
                approved_by: ctx.owner_uri,
                caller: ctx.owner_uri,
+               authenticated_principal: ctx.owner_uri,
                caps: [good_cap]
              })
 
@@ -254,6 +284,7 @@ defmodule Ezagent.Credential.ResolverDbTest do
     {:ok, _} =
       Adopt.adopt(ctx.owner_str, @ws, "cc", [ctx.base],
         caller: admin_uri(),
+        authenticated_principal: admin_uri(),
         caps: admin_caps(ctx.owner_str)
       )
 

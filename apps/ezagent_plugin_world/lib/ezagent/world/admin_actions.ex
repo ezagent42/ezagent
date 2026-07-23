@@ -187,7 +187,7 @@ defmodule Ezagent.World.AdminActions do
            adapter_id,
            target_id,
            opts,
-           caller_ctx(socket)
+           Ezagent.World.PresenterCaps.context(socket)
          ) do
       {:ok, session_uri, _result} ->
         put_external_mirror_state(socket, session_uri, "ok")
@@ -204,7 +204,12 @@ defmodule Ezagent.World.AdminActions do
   @spec unbind_external_mirror(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def unbind_external_mirror(socket, session_uri_str, adapter_id, target_id) do
-    case external_mirror_unbind_result(session_uri_str, adapter_id, target_id, caller_ctx(socket)) do
+    case external_mirror_unbind_result(
+           session_uri_str,
+           adapter_id,
+           target_id,
+           Ezagent.World.PresenterCaps.context(socket)
+         ) do
       {:ok, session_uri, _result} ->
         put_external_mirror_state(socket, session_uri, "ok")
 
@@ -285,13 +290,6 @@ defmodule Ezagent.World.AdminActions do
   end
 
   def safe_session_uri(_), do: :error
-
-  defp caller_ctx(socket) do
-    %{
-      caller: socket.assigns.current_entity_uri,
-      caps: Ezagent.World.PresenterCaps.load(socket)
-    }
-  end
 
   # Pull the optional `opts` map off the dispatch args; default to %{}.
   defp normalize_opts(%{"opts" => opts}) when is_map(opts), do: opts

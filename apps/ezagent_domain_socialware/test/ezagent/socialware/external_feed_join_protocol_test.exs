@@ -19,8 +19,6 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
   # The external read is authorized by LIVE membership (the session owner/member),
   # not an identity-less token. The lower-bound cursor join/replay protocol is
   # auth-agnostic; only the AUTH carrier changed from a token to a principal.
-  @owner Ezagent.URI.entity(:team_alpha, :user, "join-proto-owner")
-
   defp session_uri do
     Ezagent.URI.session(
       :team_alpha,
@@ -47,15 +45,26 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
 
+    owner =
+      Ezagent.URI.entity(
+        :team_alpha,
+        :user,
+        "join-proto-owner-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, _row} = Ezagent.Users.create(owner, "pw-not-secret", [])
+    {:ok, _owner_pid} = Ezagent.SpawnRegistry.spawn(owner)
+
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
-    %{session: session, workspace: workspace, caller: @owner}
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, owner)
+    %{session: session, workspace: workspace, caller: owner}
   end
 
   # Write a external-visible message, commit it via a settlement (so it appears
@@ -288,13 +297,14 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
       session_b = session_uri()
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
           uri: session_b,
-          owner_uri: @owner,
+          owner_uri: ctx.caller,
           behaviors: Ezagent.Entity.Session.socialware_behaviors()
         })
 
       :ok = Ezagent.WorkspaceRegistry.bind(session_b, ctx.workspace)
+      :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_b, ctx.caller)
 
       msg =
         Message.new(sender_uri(), %{text: "shared", attachments: []},
@@ -333,7 +343,7 @@ defmodule Ezagent.Socialware.ExternalFeedJoinProtocolTest do
       refute written.id in b_byid, "the by-id gate is bound to the session"
 
       # And B's external feed snapshot does not show it.
-      {:ok, snap_b} = ExternalFeed.snapshot(session_b, @owner)
+      {:ok, snap_b} = ExternalFeed.snapshot(session_b, ctx.caller)
       refute Enum.any?(snap_b.messages, &(&1.id == written.id))
     end
   end

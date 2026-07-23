@@ -150,7 +150,7 @@ defmodule Ezagent.Orchestrator.Tools do
          # (`terminate_worker`, gated by the SAME possibly-insufficient caps)
          # could leave an ORPHAN. Failing closed here means an unauthorized
          # caller never spawns.
-         :ok <- preflight_within_session_cap(caps, session_uri, :join),
+         :ok <- preflight_within_session_cap(caller, caps, session_uri, :join),
          {:ok, %URI{} = member_uri} <-
            spawn_member(
              source_agent_template_uri,
@@ -175,7 +175,8 @@ defmodule Ezagent.Orchestrator.Tools do
 
       case join_member(session_uri, member_uri, facets, caller, caps) do
         :ok ->
-          with :ok <-
+          with :ok <- DefinitionSync.await_member_projection(session_uri, member_uri),
+               :ok <-
                  DefinitionSync.member(session_uri, workspace_uri, caller, member_uri, facets,
                    caps: caps
                  ) do
@@ -353,10 +354,18 @@ defmodule Ezagent.Orchestrator.Tools do
            ctx: ctx(caller, caps),
            origin: :trusted_internal
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
-      {:error, reason} -> {:error, reason}
-      other -> {:error, {:unexpected_join_result, other}}
+      {:ok, %{status: status, member: ^member_uri}}
+      when status in [:granted, :already_member] ->
+        :ok
+
+      {:ok, %{status: :pending, member: ^member_uri}} ->
+        {:error, :admission_pending}
+
+      {:error, reason} ->
+        {:error, reason}
+
+      other ->
+        {:error, {:unexpected_join_result, other}}
     end
   end
 
@@ -848,6 +857,7 @@ defmodule Ezagent.Orchestrator.Tools do
   defp ctx(%URI{} = caller, caps) do
     %{
       caller: caller,
+      authenticated_principal: caller,
       caps: to_cap_set(caps),
       reply: {:caller_inbox, self()}
     }
@@ -866,7 +876,7 @@ defmodule Ezagent.Orchestrator.Tools do
   #
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.update_member_template/3`.
   @doc false
-  def preflight_within_session_cap(caps, %URI{} = session_uri, action)
+  def preflight_within_session_cap(%URI{} = holder, caps, %URI{} = session_uri, action)
       when is_atom(action) do
     needed = %{
       kind: :session,
@@ -876,7 +886,8 @@ defmodule Ezagent.Orchestrator.Tools do
       workspace_uri: Ezagent.Capability.workspace_of(session_uri)
     }
 
-    authorized? = Ezagent.Capability.Authorization.authorizes?(to_cap_set(caps), needed)
+    authorized? =
+      Ezagent.Capability.Authorization.authorizes?(holder, to_cap_set(caps), needed)
 
     if authorized?, do: :ok, else: {:error, :unauthorized}
   end

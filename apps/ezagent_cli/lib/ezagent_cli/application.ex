@@ -40,6 +40,11 @@ defmodule EzagentCli.Application do
       }
     )
 
+    EzagentCli.FacadeRegistry.register(:cap, :revoke_all_to, &cap_revoke_all_to_facade/1, %{
+      args: [target: :uri],
+      about: "Revoke every capability targeting an instance by advancing its generation"
+    })
+
     EzagentCli.SessionConfigFacade.register_all()
 
     :ok
@@ -60,6 +65,17 @@ defmodule EzagentCli.Application do
 
       err ->
         err
+    end
+  end
+
+  defp cap_revoke_all_to_facade(parsed) do
+    with {:ok, principal, caps} <- EzagentCli.Exec.authenticated_context() do
+      Ezagent.Cap.revoke_all_to(parsed.args[:target], %{
+        caller: Ezagent.URI.system(:cli, :operator),
+        authenticated_principal: principal,
+        caps: caps,
+        trace_id: nil
+      })
     end
   end
 end

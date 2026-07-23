@@ -139,6 +139,7 @@ defmodule Ezagent.Email.Inbound do
            session_uri,
            msg_id,
            decision.principal_uri,
+           decision.authenticated_principal,
            decision.caps,
            opts
          ) do
@@ -161,7 +162,15 @@ defmodule Ezagent.Email.Inbound do
     end
   end
 
-  defp dispatch_inbound(rec, session_uri, msg_id, principal_uri, caps, opts) do
+  defp dispatch_inbound(
+         rec,
+         session_uri,
+         msg_id,
+         principal_uri,
+         authenticated_principal,
+         caps,
+         opts
+       ) do
     body = %{
       text: Map.get(rec, "text") || "",
       attachments: [],
@@ -175,7 +184,12 @@ defmodule Ezagent.Email.Inbound do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: principal_uri, caps: caps, reply: :sync},
+      ctx: %{
+        caller: principal_uri,
+        authenticated_principal: authenticated_principal,
+        caps: caps,
+        reply: :sync
+      },
       origin: :authenticated_external
     }
 

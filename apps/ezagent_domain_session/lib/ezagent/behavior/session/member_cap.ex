@@ -7,78 +7,156 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   # `membership.ex` over the 1000-LOC arch gate; sibling of
   # `Ezagent.ActionSet.Session.Reconcile`). These functions run in the SAME
   # Session Kind GenServer process whether defined here or in `Membership`; the
-  # grant/revoke DISPATCH they issue is the identical cross-Kind async router
-  # call. The member-cap is the universal base tier (§7): EVERY member (user,
+  # target-authority ISSUE and durable absorb they perform are shared for every
+  # caller. The member-cap is the universal base tier (§7): EVERY member (user,
   # agent, anon) that clears the `role_name` preflight is granted
   # `cap(:session, Session, :receive, S)` into its OWN `:identity` slice.
 
   require Logger
 
+  alias Ezagent.Session.InternalReads
+
+  @doc "Capture the durable message floor for a membership grant intent."
+  @spec capture_join_cursor(URI.t(), map()) :: {non_neg_integer(), term()}
+  def capture_join_cursor(%URI{} = member_uri, ctx) do
+    cursors = ctx[:read].(:join_cursors, %{})
+
+    cursor =
+      Map.get_lazy(cursors, member_uri, fn ->
+        InternalReads.current_message_sequence(ctx[:self_uri])
+      end)
+
+    {cursor, {:set, :join_cursors, Map.put(cursors, member_uri, cursor)}}
+  end
+
   @doc """
-  Grant the universal member-cap into the joining member's OWN `:identity`
-  slice (A1.2). Returns `true` iff THIS call actually committed the grant.
+  Enqueue the universal member-cap grant into the joining member's OWN
+  `:identity` slice. Returns whether the exact cap already existed, the grant
+  was enqueued, or the enqueue failed synchronously. On either successful
+  branch, consumes the concrete tier-0 `:join` artifact: DROP is rejoinable,
+  but only after a fresh owner/invite/public-policy grant.
   """
-  # Best-effort + idempotent (§7): a skip-already-held (EXACT member-cap identity
-  # via `holds_member_cap_exact?/3` — NOT the broad `matches?/2`, so a member
-  # holding only a wildcard cap STILL gets the concrete member-cap; codex HIGH)
-  # returns `false` (this call granted nothing → compensation must NOT revoke a
-  # pre-existing cap); a `{:error}` grant is logged + telemetry'd and returns
-  # `false` (A1 is behavior-preserving — a failed member-cap grant NEVER newly
-  # fails a join; the §16-risk-#4 fail-closed shift is deferred to A2/lead).
+  # Idempotency uses the EXACT member-cap identity (NOT broad `matches?/2`, so a
+  # wildcard holder still receives the concrete member cap). An existing exact
+  # artifact is re-absorbed through the durable delivery outbox: storage dedups
+  # it, while the after-commit hook re-triggers a missing projection.
   # `granted_by` = the session OWNER (read from `ctx`, never a self-call),
   # ownerless → the #154 admin granter.
-  @spec grant_at_join(URI.t(), map()) :: boolean()
+  @spec grant_at_join(URI.t(), map()) :: :already_held | :enqueued | {:error, term()}
   def grant_at_join(%URI{} = member_uri, ctx) do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     held = member_snapshot_caps(member_uri)
 
-    if holds_member_cap_exact?(held, session_uri, workspace_uri) do
-      false
-    else
-      cap = member_cap(session_uri, workspace_uri)
-      granter = grant_granter(ctx)
-
-      # `:async` is REQUIRED here — EMPIRICALLY VERIFIED (codex MED, A1). This
-      # runs inside the Session Kind's `handle_join`, and granting a
-      # session-instance cap re-enters THIS session Kind during grant
-      # ROUTING/dispatch, so a `:sync` call self-deadlocks: flipping to `:sync`
-      # hangs the session-creation join path (`SessionCreator` →
-      # `join_session_members` → `handle_join`) into a 5s `GenServer.call`
-      # timeout. (The rule-branch AUTHORIZATION alone is not the re-entry — it
-      # clears via `rule_cap_bounded?/1` — but the router still resolves the
-      # instance owner.) The cast defers that resolution to after `handle_join`
-      # returns (session free). The cap lands eventually (idempotent + reconcile
-      # backstop), which is exactly A1's additive model.
-      #
-      # CONSEQUENCE (codex MED — DEFERRED, NOT fixed in A1): `:async` returns
-      # `:ok` once the cast is BUFFERED, so `:ok` does NOT prove the grant
-      # committed — the confirmed grant that would make test 23's
-      # compensating-revoke fully verifiable needs the grant taken OFF the
-      # `handle_join` path (an A2 grant-path rework; §16 risk-4 fail-closed
-      # shift). A1 keeps the additive best-effort cast.
-      result =
-        with :ok <- Ezagent.Identity.TargetAuthority.ensure(granter, session_uri) do
-          Ezagent.Identity.Grant.grant_cap_via_router(
-            member_uri,
-            cap,
-            grant_authorization(granter),
-            :async
-          )
+    case exact_member_cap(held, session_uri, workspace_uri) do
+      %Ezagent.Capability{} = existing ->
+        with :ok <- Ezagent.Identity.absorb_cap(member_uri, existing),
+             :ok <- consume_join_entitlement(member_uri, ctx) do
+          :already_held
+        else
+          {:error, reason} -> {:error, reason}
         end
 
-      case result do
-        :ok ->
-          true
+      nil ->
+        cap = member_cap(session_uri, workspace_uri)
+        granter = grant_granter(ctx)
 
-        :error ->
-          log_grant_failure(member_uri, session_uri, :target_authority_unavailable)
-          false
+        # Issuance runs in the Session Kind's current-target authority
+        # compartment, avoiding a self-call. Delivery uses the existing
+        # `absorb_cap` outbox, so a cold principal needs no registry PID here;
+        # the artifact drains on activation and its Identity hook self-adds.
+        result =
+          with :ok <- Ezagent.Identity.TargetAuthority.ensure(granter, session_uri),
+               {:ok, artifact} <-
+                 Ezagent.Identity.Grant.issue_cap(
+                   member_uri,
+                   cap,
+                   grant_authorization(granter)
+                 ),
+               :ok <- Ezagent.Identity.absorb_cap(member_uri, artifact),
+               :ok <- consume_join_entitlement(member_uri, ctx) do
+            :ok
+          end
 
-        {:error, reason} ->
-          log_grant_failure(member_uri, session_uri, reason)
-          false
-      end
+        case result do
+          :ok ->
+            :enqueued
+
+          :error ->
+            log_grant_failure(member_uri, session_uri, :target_authority_unavailable)
+            {:error, :target_authority_unavailable}
+
+          {:error, reason} ->
+            log_grant_failure(member_uri, session_uri, reason)
+            {:error, reason}
+        end
+    end
+  end
+
+  # M-10: a concrete tier-0 join grant is single-use. A successful join consumes
+  # it after the tier-1 absorb has been durably enqueued. DROP therefore remains
+  # fully rejoinable, but only after an owner/invite/public policy grants a NEW
+  # tier-0 artifact; stale navigation cannot replay yesterday's grant to re-mint
+  # a revoked membership cap. Async is required inside the Session Kind callback
+  # (see Identity.Grant.revoke_cap_via_router/4's self-deadlock contract).
+  defp consume_join_entitlement(%URI{} = member_uri, ctx) do
+    session_uri = ctx[:self_uri]
+
+    join_cap =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :join,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    case Ezagent.Identity.Grant.revoke_cap_via_router(
+           member_uri,
+           join_cap,
+           grant_authorization(ctx),
+           :async
+         ) do
+      :ok -> :ok
+      # A cold/offline principal cannot hold a live join artifact; its tier-1
+      # absorb is already durable in the delivery outbox. Treat the idempotent
+      # consume as complete and let a future join require a newly deliverable
+      # tier-0 grant.
+      {:error, reason} when reason in [:no_such_actor, :not_ready] -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec grant_for_reownership(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_for_reownership(%URI{} = session_uri, %URI{} = new_owner) do
+    grant_guaranteed(session_uri, new_owner)
+  end
+
+  @doc """
+  Synchronously grant the session owner the born-signed tier-1 membership cap.
+
+  This runs before the owner is mounted into the roster, outside the Session
+  Kind's join handler, so creation cannot expose an owner whose structural URI
+  bypasses membership generation checks.
+  """
+  @spec grant_owner_at_creation(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_owner_at_creation(%URI{} = session_uri, %URI{} = owner) do
+    grant_guaranteed(session_uri, owner)
+  end
+
+  defp grant_guaranteed(session_uri, principal) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    cap = member_cap(session_uri, workspace_uri)
+
+    with :ok <- Ezagent.Identity.TargetAuthority.ensure(principal, session_uri),
+         :ok <-
+           Ezagent.Identity.Grant.issue_and_absorb_cap(
+             principal,
+             cap,
+             grant_authorization(principal)
+           ) do
+      :ok
     end
   end
 
@@ -86,8 +164,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     Logger.warning(
       "Session.MemberCap.grant_at_join: member-cap grant failed for " <>
         "member=#{URI.to_string(member_uri)} on session=" <>
-        "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
-        "(best-effort in A1; reconcile_after_load/2 + the migration are the backstops)."
+        "#{URI.to_string(session_uri)}: #{inspect(reason)} (join fails closed)."
     )
 
     :telemetry.execute(
@@ -98,47 +175,10 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   end
 
   @doc """
-  De-escalating compensation revoke of the just-granted member-cap (R1.3 step 4).
-  """
-  # Needs no authz (revoke is de-escalating); best-effort — a failed compensation
-  # is logged and left to `reconcile_after_load/2` as the backstop.
-  @spec revoke_at_join(URI.t(), map()) :: :ok
-  def revoke_at_join(%URI{} = member_uri, ctx) do
-    session_uri = ctx[:self_uri]
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    cap = member_cap(session_uri, workspace_uri)
-
-    # `:async` for the same self-deadlock reason as the grant (the revoke of a
-    # session-instance cap re-enters the Session Kind). Enqueued FIFO after the
-    # grant cast, so the pair settles to "no member-cap".
-    case Ezagent.Identity.Grant.revoke_cap_via_router(
-           member_uri,
-           cap,
-           grant_authorization(ctx),
-           :async
-         ) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning(
-          "Session.MemberCap.revoke_at_join: compensation revoke FAILED for " <>
-            "member=#{URI.to_string(member_uri)} on session=" <>
-            "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
-            "(reconcile_after_load/2 evicts the orphaned projection/cap on next activate)."
-        )
-
-        :ok
-    end
-  end
-
-  @doc """
   SYNCHRONOUS, CHECKED revoke of the member-cap on LEAVE / REMOVE (A2.4, spec
   R3.1). Returns `revoke_cap_via_router`'s `:ok | {:error, reason}`.
 
-  Unlike `revoke_at_join/2` (the `:async` at-join COMPENSATION, which must not
-  self-deadlock while `handle_join` is still resolving a materializing member),
-  this runs on the LEAVE/REMOVE path where the member is ESTABLISHED + live, so a
+  This runs on the LEAVE/REMOVE path where the member is ESTABLISHED + live, so a
   `:sync` revoke from inside the Session Kind returns cleanly (EMPIRICALLY
   VERIFIED — a sync `revoke_cap_via_router` from `handle_remove_participant` on an
   established member does NOT deadlock; the at-join deadlock is
@@ -294,13 +334,12 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   # member-cap need, so a member holding only a wildcard STILL gets the concrete
   # cap granted (which A2 authorizes receive on). Mirrors the migration's
   # `holds_member_cap_exact?/2`.
-  @spec holds_member_cap_exact?([term()], URI.t(), URI.t()) :: boolean()
-  defp holds_member_cap_exact?(held, %URI{} = session_uri, %URI{} = workspace_uri) do
+  defp exact_member_cap(held, %URI{} = session_uri, %URI{} = workspace_uri) do
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, workspace_uri))
 
     held
     |> caps_to_list()
-    |> Enum.any?(fn
+    |> Enum.find(fn
       %Ezagent.Capability{} = cap -> Ezagent.Capability.identity_key(cap) == target_key
       _ -> false
     end)

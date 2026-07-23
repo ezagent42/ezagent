@@ -5,7 +5,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{ExternalFeed, Settlement}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "settle-crash-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "settle-crash-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -23,16 +23,17 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -43,15 +44,15 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
 
-    %{session: session, workspace: workspace, caller: @owner}
+    %{session: session, workspace: workspace, caller: owner()}
   end
 
   test "customer never sees chat without its page, or an uncommitted turn", ctx do
@@ -64,9 +65,7 @@ defmodule Ezagent.Socialware.SettleCrashMatrixTest do
              })
 
     msg =
-      Message.new(sender_uri(), %{text: "answer bubble", attachments: []},
-        visibility: :internal
-      )
+      Message.new(sender_uri(), %{text: "answer bubble", attachments: []}, visibility: :internal)
 
     assert {:ok, msg} = MessageStore.write(msg, ctx.session)
 

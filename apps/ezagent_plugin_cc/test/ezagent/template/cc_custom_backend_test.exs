@@ -315,6 +315,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       # 0 so `build_claude_cmd/3` resolves + probes it.
       bin_dir = Path.join(System.tmp_dir!(), "cc_cu_bin_#{System.unique_integer([:positive])}")
       File.mkdir_p!(bin_dir)
+
+      previous_home = System.get_env("EZAGENT_HOME")
+      previous_profile = System.get_env("EZAGENT_PROFILE")
+      System.put_env("EZAGENT_HOME", bin_dir)
+      System.put_env("EZAGENT_PROFILE", "cc-custom")
+
       claude = Path.join(bin_dir, "claude")
       File.write!(claude, "#!/usr/bin/env bash\nexit 0\n")
       File.chmod!(claude, 0o755)
@@ -336,6 +342,14 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       System.put_env("EZAGENT_BRIDGE_WS_URL", "ws://127.0.0.1:65535/agent_bridge/websocket")
 
       on_exit(fn ->
+        if previous_home,
+          do: System.put_env("EZAGENT_HOME", previous_home),
+          else: System.delete_env("EZAGENT_HOME")
+
+        if previous_profile,
+          do: System.put_env("EZAGENT_PROFILE", previous_profile),
+          else: System.delete_env("EZAGENT_PROFILE")
+
         if prev_path, do: System.put_env("PATH", prev_path), else: System.delete_env("PATH")
 
         if prev_ws,
@@ -354,7 +368,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
     test "deepseek profile injects its block + the cc-custom bridge topic", ctx do
       with_key()
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_cu-pty")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_cu-pty-#{System.unique_integer([:positive])}"
+        )
+
+      _authority = install_test_authority!(uri, :agent)
 
       tmpl = %{
         "class" => "cc_custom.agent",
@@ -376,7 +395,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
     test "kimi profile injects its 9-var block (MOONSHOT_API_KEY)", ctx do
       System.put_env("MOONSHOT_API_KEY", "sk-kimi-test-xyz")
       on_exit(fn -> System.delete_env("MOONSHOT_API_KEY") end)
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_cu-kimi")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_cu-kimi-#{System.unique_integer([:positive])}"
+        )
+
+      _authority = install_test_authority!(uri, :agent)
 
       tmpl = %{
         "class" => "cc_custom.agent",
@@ -405,7 +429,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
     test "default anthropic cc path UNCHANGED (no catalog var leaks)", ctx do
       with_key()
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/cc_plain-pty2")
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_plain-pty2-#{System.unique_integer([:positive])}"
+        )
+
+      _authority = install_test_authority!(uri, :agent)
 
       tmpl = %{
         "class" => "cc.agent",

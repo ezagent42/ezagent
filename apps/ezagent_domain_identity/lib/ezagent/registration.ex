@@ -302,7 +302,7 @@ defmodule Ezagent.Registration do
           apply(Ezagent.Workspace, :add_member, [
             ws_name,
             user_uri,
-            %{caller: issuer, caps: [cap]}
+            %{caller: issuer, authenticated_principal: issuer, caps: [cap]}
           ])
         end
 

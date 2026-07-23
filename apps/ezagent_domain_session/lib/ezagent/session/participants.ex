@@ -28,7 +28,11 @@ defmodule Ezagent.Session.Participants do
   alias Ezagent.Invocation
 
   @typedoc "Caller dispatch context: the acting entity + its caps."
-  @type ctx :: %{required(:caller) => URI.t(), optional(:caps) => Enumerable.t()}
+  @type ctx :: %{
+          required(:caller) => URI.t(),
+          required(:authenticated_principal) => URI.t(),
+          optional(:caps) => Enumerable.t()
+        }
 
   @typedoc "Result of a successful participant removal (membership-only or worker reap)."
   @type removal :: %{
@@ -54,7 +58,7 @@ defmodule Ezagent.Session.Participants do
   def remove_participant(
         %URI{} = session_uri,
         %URI{} = participant_uri,
-        %{caller: %URI{} = caller} = ctx
+        %{caller: %URI{} = caller, authenticated_principal: %URI{} = holder} = ctx
       ) do
     caps = ctx |> Map.get(:caps, []) |> to_cap_set()
 
@@ -63,12 +67,17 @@ defmodule Ezagent.Session.Participants do
     # holds only the participation tier. (No-op for owner/admin callers, whose
     # passed caps already authorize.)
     result =
-      with {:ok, caps} <- maybe_add_self_remove_cap(caps, session_uri, participant_uri, caller) do
+      with {:ok, caps} <- maybe_add_self_remove_cap(caps, session_uri, participant_uri, holder) do
         Invocation.dispatch(%Invocation{
           target: Ezagent.URI.with_action(session_uri, :session, :remove_participant),
           mode: :call,
           args: %{participant: participant_uri},
-          ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+          ctx: %{
+            caller: caller,
+            authenticated_principal: holder,
+            caps: caps,
+            reply: {:caller_inbox, self()}
+          },
           origin: :trusted_internal
         })
       end
@@ -96,13 +105,13 @@ defmodule Ezagent.Session.Participants do
   defp to_cap_set(caps) when is_list(caps), do: MapSet.new(caps)
   defp to_cap_set(_), do: MapSet.new()
 
-  defp maybe_add_self_remove_cap(caps, session_uri, participant_uri, caller) do
-    if caller == participant_uri do
-      requested = Membership.self_remove_participant_cap(session_uri, caller)
+  defp maybe_add_self_remove_cap(caps, session_uri, participant_uri, holder) do
+    if holder == participant_uri do
+      requested = Membership.self_remove_participant_cap(session_uri, holder)
 
       case Ezagent.Cap.issue(
              {:admin, Ezagent.Entity.User.admin_uri()},
-             caller,
+             holder,
              requested
            ) do
         {:ok, artifact} -> {:ok, MapSet.put(caps, artifact)}

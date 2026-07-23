@@ -35,7 +35,6 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, Message, RoutingRegistry}
-  alias Ezagent.Entity.User
   alias Ezagent.Routing.Resolver
   import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
@@ -94,12 +93,30 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
         args: %{member: member},
         ctx: %{
           caller: member,
+          authenticated_principal: member,
           caps: MapSet.new([signed_action_cap!(target, member)]),
           reply: :ignore
         }
       })
 
-    Process.sleep(50)
+    await_member(session, member)
+  end
+
+  defp await_member(session, member, attempts \\ 100)
+  defp await_member(_session, _member, 0), do: flunk("member projection did not converge")
+
+  defp await_member(session, member, attempts) do
+    if member in Ezagent.Entity.Session.session_member_uris(session) do
+      :ok
+    else
+      Process.sleep(10)
+      await_member(session, member, attempts - 1)
+    end
+  end
+
+  defp spawn_user(uri) do
+    {:ok, _} = Ezagent.Users.create(uri, "pw-not-secret", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
   end
 
   defp dispatch_send(session, sender, text) do
@@ -114,6 +131,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
         args: %{message: msg},
         ctx: %{
           caller: sender,
+          authenticated_principal: sender,
           caps: MapSet.new([signed_action_cap!(target, sender)]),
           reply: :ignore
         }
@@ -130,8 +148,8 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
       sender = URI.new!("entity://system/user/#{u("sender")}")
       receiver = URI.new!("entity://system/user/#{u("receiver")}")
 
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+      spawn_user(sender)
+      spawn_user(receiver)
 
       join(session, sender)
       join(session, receiver)
@@ -175,8 +193,8 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
       sender = URI.new!("entity://system/user/#{u("sender")}")
       receiver = URI.new!("entity://system/user/#{u("receiver")}")
 
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(sender)
-      {:ok, _} = Ezagent.SpawnRegistry.spawn(receiver)
+      spawn_user(sender)
+      spawn_user(receiver)
 
       join(session, sender)
       join(session, receiver)

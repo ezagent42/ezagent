@@ -66,6 +66,7 @@ defmodule Ezagent.E2E.Scenario24DestroyCascadeTest do
 
     %{
       caller: User.admin_uri(),
+      authenticated_principal: User.admin_uri(),
       caps: MapSet.new([cap]),
       reply: {:caller_inbox, self()}
     }

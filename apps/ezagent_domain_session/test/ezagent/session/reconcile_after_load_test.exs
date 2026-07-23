@@ -4,9 +4,9 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
   SEEDS/HEALS the `:members` delivery projection from the authoritative member-cap
   holder set on `activate/2`.
 
-  A1 is additive/behavior-preserving, so reconcile UNIONS (keeps every persisted
-  member, ADDS cap-only holders) — it never evicts a roster-only entry (that would
-  change delivery under the still-live ephemeral mint; eviction is an A2 concern).
+  M-8 is the strict cutover: after the migration gate proves every existing
+  roster member holds the cap, reconcile evicts roster-only entries and adds
+  cap-only holders. The projection therefore converges exactly to cap holders.
   """
 
   use EzagentCore.DataCase, async: false
@@ -32,6 +32,24 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
       )
 
     session_uri
+  end
+
+  defp worker_principal(prefix) do
+    uri = Ezagent.URI.worker("system", "#{prefix}-#{uniq()}")
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.AgentSupervisor,
+          pid
+        )
+      end
+    end)
+
+    uri
   end
 
   # Grant the member-cap directly (test process, so `:sync` is safe — the
@@ -66,7 +84,7 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
     )
   end
 
-  defp grant_cap(member, cap, granter) do
+  defp grant_cap(member, cap, _granter) do
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
         member,
@@ -102,7 +120,7 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
            "reconcile must SEED the projection from the held member-cap (cap-only drift healed)"
   end
 
-  test "reconcile_after_load UNIONS — preserves a persisted roster-only member (A1 no-eviction)" do
+  test "T4: reconcile_after_load EVICTS a persisted roster-only member after migration cutover" do
     owner = confirmed_user("owner")
     session = new_session("reconcile-union", owner)
     member = confirmed_user("member")
@@ -115,8 +133,31 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
 
     assert Map.has_key?(reconciled, member), "cap-holder ADDED"
 
-    assert Map.has_key?(reconciled, roster_only),
-           "roster-only member (no held cap) PRESERVED — A1 unions, never evicts"
+    refute Map.has_key?(reconciled, roster_only),
+           "roster-only member holds no authority and must be evicted"
+  end
+
+  test "T6/worker: a worker cap-holder missing from the roster is enumerated and added" do
+    owner = confirmed_user("worker-owner")
+    session = new_session("reconcile-worker", owner)
+    worker = worker_principal("member-worker")
+    grant_member_cap(worker, session, owner)
+
+    reconciled = Reconcile.reconcile_after_load(session, %{})
+
+    assert Map.has_key?(reconciled, worker)
+  end
+
+  test "T6/anon: an anonymous user cap-holder missing from the roster is enumerated and added" do
+    owner = confirmed_user("guest-owner")
+    session = new_session("reconcile-anon", owner)
+    assert {:ok, anon} = Ezagent.Socialware.AnonUser.mint(session)
+    assert :ok = Ezagent.Entity.spawn_principal(anon)
+    grant_member_cap(anon, session, owner)
+
+    reconciled = Reconcile.reconcile_after_load(session, %{})
+
+    assert Map.has_key?(reconciled, anon)
   end
 
   test "reconcile_after_load never crashes on ws candidates lacking the cap; returns a map [rescue/graceful]" do

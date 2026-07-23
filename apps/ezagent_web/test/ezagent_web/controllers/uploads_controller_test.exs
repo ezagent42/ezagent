@@ -99,9 +99,30 @@ defmodule EzagentWeb.UploadsControllerTest do
     :ok
   end
 
-  defp sent_text_message(sender, session) do
-    msg = Message.new(sender, %{text: "hello", attachments: []})
-    {:ok, _} = MessageStore.write(msg, session)
+  defp spawn_session_owner(session, owner) do
+    if is_nil(Ezagent.Users.get_by_uri(owner)) do
+      {:ok, _row} = Ezagent.Users.create_read_only(owner, [])
+    end
+
+    :ok = Ezagent.Entity.spawn_principal(owner)
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+        uri: session,
+        owner_uri: owner,
+        behaviors: Ezagent.Entity.Session.behaviors()
+      })
+
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, owner)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.SessionSupervisor, pid)
+      end
+
+      Ezagent.Kind.terminate(owner)
+    end)
+
     :ok
   end
 
@@ -147,8 +168,10 @@ defmodule EzagentWeb.UploadsControllerTest do
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       participant = user_uri(@workspace_name, "bob-#{uniq()}")
       {uri, content, session} = upload_and_attach(@workspace_name, uploader, filename)
-      # bob becomes a participant by sending into the same session.
-      :ok = sent_text_message(participant, session)
+      # The legacy unbound-token path now reuses SessionReads: make Bob the
+      # live session owner so the test exercises current membership authority,
+      # not the stale "has sent any message" projection.
+      :ok = spawn_session_owner(session, participant)
       token = DownloadToken.mint!(uri, ttl_seconds: 60, __test_allow_unbound__: true)
 
       conn =
@@ -368,7 +391,7 @@ defmodule EzagentWeb.UploadsControllerTest do
       uploader = user_uri(@workspace_name, "alice-#{uniq()}")
       participant = user_uri(@workspace_name, "bob-#{uniq()}")
       {uri, _content, session} = upload_and_attach(@workspace_name, uploader, filename)
-      :ok = sent_text_message(participant, session)
+      :ok = spawn_session_owner(session, participant)
 
       leaked_token = DownloadToken.mint!(uri, ttl_seconds: 60, grantee: uploader)
 

@@ -47,7 +47,7 @@ defmodule Ezagent.World.UserActions do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
     caps = Ezagent.World.PresenterCaps.load(socket)
-    caller_ctx = %{caller: caller, caps: caps}
+    caller_ctx = %{caller: caller, authenticated_principal: caller, caps: caps}
 
     with %URI{scheme: "workspace"} <- workspace_uri,
          {:ok, name} <- required_string(params, "name", :name_required),
@@ -107,7 +107,7 @@ defmodule Ezagent.World.UserActions do
              target: Ezagent.URI.with_action(user_uri, :user_credentials, :set_password),
              mode: :call,
              args: %{password: password},
-             ctx: %{caller: caller, caps: caps, reply: {:caller_inbox, self()}},
+             ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
              origin: :authenticated_external
            }) do
       {:noreply, push_user_state(socket, user_uri)}

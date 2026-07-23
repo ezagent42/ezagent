@@ -55,7 +55,12 @@ defmodule EzagentWeb.ApiV1Controller do
         target: append_action(target_uri, behavior_module, action),
         mode: mode,
         args: args,
-        ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+        ctx: %{
+          caller: caller_uri,
+          authenticated_principal: caller_uri,
+          caps: caller_caps,
+          reply: :sync
+        },
         origin: :authenticated_external
       }
 

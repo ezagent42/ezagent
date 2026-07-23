@@ -239,6 +239,13 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       victim_binding_uri = URI.to_string(victim_worker_uri)
 
       Enum.each(1..10, fn _ ->
+        # Do not kill the replacement while its post-init authority reads are
+        # still using the test's shared SQL sandbox connection. The isolation
+        # claim starts once the Worker has announced readiness; killing during
+        # init only exercises DBConnection owner teardown, not OTP sibling
+        # isolation.
+        _ = Ezagent.ReadyGate.await(victim_worker_uri, 1_000)
+
         # Find the CURRENT inner pid for the victim binding (it may have
         # restarted between kills).
         #
@@ -282,21 +289,14 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
         end
       end)
 
-      Process.sleep(50)
-
       # The OTHER two bindings' PerBindingSupervisors must still be
       # alive in the Registry (they never crashed).
-      survivors =
-        WorkerRegistry.list_all()
-        |> Enum.map(fn {_uri, pid} -> pid end)
-
       sibling_targets = ["tgt-isol-1", "tgt-isol-3"]
 
       Enum.each(sibling_targets, fn target ->
         wuri = WorkerSpawn.worker_uri_for(session_uri, "mock_publish", target)
         buri = URI.to_string(wuri)
-        assert {:ok, sup_pid} = WorkerRegistry.lookup(buri)
-        assert sup_pid in survivors
+        assert {:ok, sup_pid} = await_binding_supervisor(buri, 50)
         assert Process.alive?(sup_pid)
       end)
     end
@@ -332,30 +332,12 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       # kill in 30s, the PerBindingSupervisor exits with
       # `:shutdown`. With `:permanent`, RootSupervisor restarts it.
       Enum.each(1..5, fn _ ->
-        case WorkerRegistry.lookup(binding_uri) do
-          {:ok, sup_pid} ->
-            case Supervisor.which_children(sup_pid) do
-              [{_id, inner_pid, _, _}] when is_pid(inner_pid) ->
-                Process.exit(inner_pid, :kill)
-
-              _ ->
-                :ok
-            end
-
-          :error ->
-            :ok
-        end
-
-        Process.sleep(10)
+        assert :ok = kill_ready_inner(binding_uri, worker_uri, 100)
       end)
-
-      # Give the RootSupervisor time to restart the PerBindingSupervisor
-      # after the inner budget exhausted.
-      Process.sleep(100)
 
       # The binding is STILL registered (RootSupervisor restarted the
       # PerBindingSupervisor — possibly with a NEW pid, that's fine).
-      assert {:ok, new_sup_pid} = WorkerRegistry.lookup(binding_uri),
+      assert {:ok, new_sup_pid} = await_binding_supervisor(binding_uri, 100),
              "PerBindingSupervisor permanently gone after inner budget exhaustion. " <>
                "If this fails, the codex round-1 CRIT regression came back — " <>
                "check `restart:` field on the child_spec in WorkerSpawn.spawn/4."
@@ -705,6 +687,38 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
     end
   end
 
+  defp await_binding_supervisor(_binding_uri, 0), do: {:error, :timeout}
+
+  defp await_binding_supervisor(binding_uri, retries) do
+    case WorkerRegistry.lookup(binding_uri) do
+      {:ok, pid} when is_pid(pid) -> {:ok, pid}
+      _other -> Process.sleep(20) && await_binding_supervisor(binding_uri, retries - 1)
+    end
+  end
+
+  defp kill_ready_inner(_binding_uri, _worker_uri, 0), do: {:error, :timeout}
+
+  defp kill_ready_inner(binding_uri, worker_uri, retries) do
+    try do
+      with :ok <- Ezagent.ReadyGate.await(worker_uri, 200),
+           {:ok, sup_pid} <- WorkerRegistry.lookup(binding_uri),
+           [{_id, inner_pid, _type, _modules}] when is_pid(inner_pid) <-
+             Supervisor.which_children(sup_pid),
+           true <- Process.alive?(inner_pid) do
+        Process.exit(inner_pid, :kill)
+        :ok
+      else
+        _other ->
+          Process.sleep(10)
+          kill_ready_inner(binding_uri, worker_uri, retries - 1)
+      end
+    catch
+      :exit, _reason ->
+        Process.sleep(10)
+        kill_ready_inner(binding_uri, worker_uri, retries - 1)
+    end
+  end
+
   defp await_worker_subscribed(_session_uri, _worker_uri, 0), do: {:error, :timeout}
 
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
@@ -775,7 +789,12 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: admin_uri, caps: admin_caps(target, admin_uri), reply: :ignore}
+      ctx: %{
+        caller: admin_uri,
+        authenticated_principal: admin_uri,
+        caps: admin_caps(target, admin_uri),
+        reply: :ignore
+      }
     })
   end
 

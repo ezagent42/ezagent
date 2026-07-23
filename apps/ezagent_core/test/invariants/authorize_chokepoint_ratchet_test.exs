@@ -71,9 +71,11 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
   use ExUnit.Case, async: true
 
-  # TODO(Z-1): ratchet EVERY `# ACCESS:` entry below to [] as Phase F migrates
-  # each class onto `Ezagent.Cap.authorize/3`. `# home:` entries stay; the
-  # `# GRANT/…` exemptions are reviewed and may stay under Z-1's honest narrowing.
+  # Z-1 migration debt is permanently empty. Legitimate primitive homes and
+  # reviewed non-ACCESS consumers are classified separately per probe; they are
+  # not an allowlist for bypass debt.
+  @allowlist []
+  @scope_tuple_tags [:within_session, :within_workspace, :spawned_by]
   @probes [
     # ── raw / cached target-axis verify OUTSIDE the authorize/3 facade ──────
     %{
@@ -83,11 +85,15 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "called outside the authorize/3 chokepoint — a raw target-axis verify " <>
           "that skips the principal (holder-license) gate",
       pattern: ~r/verify_against_current/,
-      allowlist: [
+      reviewed_paths: [
         # home: the F-1 primitive, its public facade, and the chokepoint.
         "apps/ezagent_core/lib/ezagent/cap/authority.ex",
         "apps/ezagent_core/lib/ezagent/cap.ex",
-        "apps/ezagent_core/lib/ezagent/cap/authorize.ex"
+        "apps/ezagent_core/lib/ezagent/cap/authorize.ex",
+        # home: G-3's principal-axis gate. EntityCaps.load(holder) validates
+        # the holder's independently stored self-license against the current
+        # holder authority before authorize/3 considers inline candidates.
+        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
       ]
     },
     %{
@@ -97,7 +103,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "sanctioned grant-idempotency use — per plan DECISION #2 this reads the " <>
           "target's stale cached authority and is NOT a revocation basis for ACCESS",
       pattern: ~r/valid_for_target\?\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: definition + the public facade.
         "apps/ezagent_core/lib/ezagent/cap.ex",
         # GRANT/idempotency: `already_authorized?/6` checks whether the member
@@ -113,7 +119,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "called outside the dispatch runtime + the grant path — a 2nd verify " <>
           "engine outside the authorize/3 facade",
       pattern: ~r/Verifier\.authorize\(|verify_cap\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: the verifier itself + the sanctioned dispatch caller (runtime
         # step 5.5). F-1 routes verify_cap's per-cap filter through authorize/3.
         "apps/ezagent_core/lib/ezagent/cap/verifier.ex",
@@ -132,7 +138,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "outside its engine home; a new caller spreads the dormant-cap bypass " <>
           "F-2 must route through authorize/3 (plan: kind.ex:288-297)",
       pattern: ~r/default_holds_cap\?\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: the engine (definition + internal holds_cap?/2 dispatch call).
         "apps/ezagent_core/lib/ezagent/kind.ex",
         # ctx/comment: a `# default_holds_cap?(:vm_internal)` doc reference in the
@@ -146,7 +152,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "Identity.caps_authorize?/2 (bare-matches BYPASS 3 — identity) called " <>
           "outside its home; F-2 routes this onto authorize/3 (plan: identity.ex:303)",
       pattern: ~r/caps_authorize\?\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: the engine definition.
         "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
         # ACCESS: agent-config / agent-domain / workspace-read / world consumers
@@ -164,7 +170,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "BYPASS 2 — preflight) called outside its home; F-2 routes this onto " <>
           "authorize/3 (plan: authorization.ex:24-29)",
       pattern: ~r/Authorization\.authorizes\?\(|Authorization\.authorizing_cap\(/,
-      allowlist: [
+      reviewed_paths: [
         # ACCESS: pty-access + session admission + orchestrator-tool preflights
         # that gate access on a bare preflight match — F-2 migrates each.
         "apps/ezagent_domain_pty/lib/ezagent_domain_pty/access.ex",
@@ -183,7 +189,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "principal-axis cap-load path (G-3 self-license gate site). A new " <>
           "consumer must source caps from this fail-closed load, never re-derive",
       pattern: ~r/EntityCaps\.load/,
-      allowlist: [
+      reviewed_paths: [
         # home: the fail-closed cap-load path itself.
         "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
         # ctx/GRANT: identity-domain internals that load a principal's caps to
@@ -201,6 +207,10 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex",
         "apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex",
         "apps/ezagent_domain_session/lib/ezagent/behavior/session/reconcile.ex",
+        # membership projection: add_self deliberately reads the persisted
+        # holder artifact to avoid a cross-Kind activation deadlock, then runs
+        # the shared generation-aware membership predicate before writing.
+        "apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add.ex",
         "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex",
         "apps/ezagent_domain_session/lib/ezagent/session_config.ex",
         "apps/ezagent_domain_session/lib/ezagent/session/member_cap_migration.ex",
@@ -226,7 +236,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "read_held_caps/1 (the dependency-inverted holder-cap source) consumed " <>
           "outside the authorize/3 facade + its loader/definition home",
       pattern: ~r/read_held_caps\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: the loader seam behaviour, the facade, the public delegator, and
         # the concrete AuthorityLoader impl (Identity.read_held_caps/1).
         "apps/ezagent_core/lib/ezagent/cap/authority_loader.ex",
@@ -243,7 +253,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "Identity.list_caps_for/1 consumed outside its home — a cap-obtaining " <>
           "read; a new consumer must go through the fail-closed load / authorize/3",
       pattern: ~r/list_caps_for\(/,
-      allowlist: [
+      reviewed_paths: [
         # home: the definition.
         "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
         # ctx/display/idempotency: entity + session-domain + workspace read the
@@ -261,22 +271,36 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # ACCESS. Frozen (a NEW mix bypass is still caught), per advisor #3.
         "apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex"
       ]
+    },
+    %{
+      id: :low_level_recredential,
+      desc:
+        "a low-level signer/issuer used outside the generation-gated cap homes — " <>
+          "a post-bump path could re-arm a revoked principal",
+      pattern: ~r/Authority\.sign\(|Authority\.issue_current\(|Cap\.Grant\.issue\(/,
+      reviewed_paths: [
+        # homes: the target authority signer and its frozen grant intent.
+        "apps/ezagent_core/lib/ezagent/cap/authority.ex",
+        "apps/ezagent_core/lib/ezagent/cap/grant.ex"
+      ]
     }
   ]
 
   @umbrella_root Path.expand("../../../..", __DIR__)
 
-  test "RATCHET: no NEW authority-use bypass outside the authorize/3 chokepoint" do
+  test "Z-1: no authority-use bypass outside the authorize/3 chokepoint" do
     all_files = Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
 
     offenders =
       for probe <- @probes,
           path <- all_files,
-          not allowed_path?(path, probe.allowlist),
+          not reviewed_path?(path, probe.reviewed_paths),
           content = File.read!(path),
           Regex.match?(probe.pattern, content),
           do:
             "[#{probe.id}] #{probe.desc}\n      @ #{rel(path)}\n      pattern: #{inspect(probe.pattern)}"
+
+    assert @allowlist == []
 
     assert offenders == [],
            """
@@ -316,9 +340,208 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
              "(read_held_caps) — a revoked holder's inline caps could now authorize."
   end
 
-  defp allowed_path?(path, allowlist) do
-    Enum.any?(allowlist, fn allowed -> String.contains?(path, allowed) end)
+  test "Z-1/MF4: target-generation verification never reads process-local authority" do
+    authority = source("apps/ezagent_core/lib/ezagent/cap/authority.ex")
+
+    verify_against_current =
+      authority
+      |> String.split("def verify_against_current(", parts: 2)
+      |> List.last()
+      |> String.split("defp current_key_id(", parts: 2)
+      |> List.first()
+
+    refute verify_against_current =~ "Process.get"
+    refute verify_against_current =~ "current_target?"
+    assert verify_against_current =~ "current_key_id(target)"
+    assert verify_against_current =~ "AuthorityCache.public_key"
   end
+
+  test "Z-1/MF9: no production access credential constructs an unsigned scope tuple" do
+    offenders =
+      Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
+      |> Enum.reject(&String.contains?(&1, "/e2e/scenarios/"))
+      |> Enum.flat_map(&scope_tuple_cap_constructors/1)
+
+    assert @allowlist == []
+
+    assert offenders == [],
+           """
+           unsigned scope-tuple access-cap constructors (empty allowlist):
+           #{Enum.map_join(offenders, "\n", &"  - #{&1}")}
+
+           Scope tuples are grant bounds only. Production access credentials
+           must target a concrete URI and pass Cap.authorize/3.
+           """
+
+    authority = source("apps/ezagent_core/lib/ezagent/cap/authority.ex")
+    authorize = source("apps/ezagent_core/lib/ezagent/cap/authorize.ex")
+    cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
+
+    assert authority =~ "def target_uri(%Capability{instance: %URI{} = instance})"
+    assert authority =~ "{:error, :concrete_target_required}"
+    assert authorize =~ "{:error, :concrete_target_required} -> false"
+    assert cap =~ "instance: %URI{}"
+  end
+
+  test "Z-1: self-license construction remains unique and ordinary grants reject it" do
+    constructor_hits =
+      Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
+      |> Enum.flat_map(&self_license_cap_constructors/1)
+
+    assert [constructor_hit] = constructor_hits
+
+    assert String.starts_with?(
+             constructor_hit,
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:"
+           )
+
+    identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
+    cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
+    grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")
+
+    assert identity =~
+             "maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri})"
+
+    assert cap =~ "%Capability{action: :self_license}"
+    assert cap =~ "do: {:error, :reserved_action}"
+    assert grant =~ "do: {:error, :reserved_action}"
+  end
+
+  test "Z-1: every inline caller context carries an explicit authenticated holder" do
+    offenders =
+      Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
+      |> Enum.flat_map(&missing_authenticated_holders/1)
+
+    assert @allowlist == []
+
+    assert offenders == [],
+           """
+           authorization contexts missing `authenticated_principal` (empty allowlist):
+           #{Enum.map_join(offenders, "\n", &"  - #{&1}")}
+
+           Thread the authenticated holder explicitly from the external boundary.
+           Do not fall back to `ctx.caller`; only `:vm_internal` ambient contexts
+           are exempt from carrying an identity principal.
+           """
+  end
+
+  test "Z-1: the three compatibility authorization engines delegate to authorize/3" do
+    sources = [
+      source("apps/ezagent_core/lib/ezagent/kind.ex"),
+      source("apps/ezagent_core/lib/ezagent/capability/authorization.ex"),
+      source("apps/ezagent_domain_identity/lib/ezagent/identity.ex")
+    ]
+
+    offenders = Enum.reject(sources, &String.contains?(&1, "Ezagent.Cap.authorize"))
+    assert offenders == []
+  end
+
+  defp reviewed_path?(path, reviewed_paths) do
+    Enum.any?(reviewed_paths, fn reviewed -> String.contains?(path, reviewed) end)
+  end
+
+  defp missing_authenticated_holders(path) do
+    with {:ok, ast} <- Code.string_to_quoted(File.read!(path)) do
+      {_ast, offenders} =
+        Macro.prewalk(ast, [], fn
+          {:%{}, map_meta, entries} = node, acc ->
+            caller = literal_map_value(entries, :caller)
+            holder = literal_map_value(entries, :authenticated_principal)
+
+            authorization_context? =
+              literal_map_value(entries, :caps) != :missing or
+                literal_map_value(entries, :reply) != :missing or
+                literal_map_value(entries, :cap_delivery_producer) != :missing
+
+            if caller != :missing and caller != :vm_internal and authorization_context? and
+                 holder == :missing do
+              line = Keyword.get(map_meta, :line, 1)
+              {node, ["#{rel(path)}:#{line}" | acc]}
+            else
+              {node, acc}
+            end
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      Enum.reverse(offenders)
+    else
+      {:error, {_line, error, token}} ->
+        ["#{rel(path)}: parse failed: #{inspect(error)} #{inspect(token)}"]
+    end
+  end
+
+  defp scope_tuple_cap_constructors(path) do
+    with {:ok, ast} <- Code.string_to_quoted(File.read!(path)) do
+      {_ast, offenders} =
+        Macro.prewalk(ast, [], fn
+          {:%, _, [module_ast, {:%{}, meta, entries}]} = node, acc ->
+            instance = literal_map_value(entries, :instance)
+
+            if capability_module?(module_ast) and scope_tuple?(instance) do
+              {node, ["#{rel(path)}:#{Keyword.get(meta, :line, 1)}" | acc]}
+            else
+              {node, acc}
+            end
+
+          {{:., _, [module_ast, :cap]}, meta, args} = node, acc ->
+            instance = Enum.at(args, 3, :missing)
+
+            if capability_module?(module_ast) and scope_tuple?(instance) do
+              {node, ["#{rel(path)}:#{Keyword.get(meta, :line, 1)}" | acc]}
+            else
+              {node, acc}
+            end
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      Enum.reverse(offenders)
+    else
+      {:error, {_line, error, token}} ->
+        ["#{rel(path)}: parse failed: #{inspect(error)} #{inspect(token)}"]
+    end
+  end
+
+  defp self_license_cap_constructors(path) do
+    with {:ok, ast} <- Code.string_to_quoted(File.read!(path)) do
+      {_ast, offenders} =
+        Macro.prewalk(ast, [], fn
+          {{:., _, [module_ast, :cap]}, meta, args} = node, acc ->
+            if capability_module?(module_ast) and Enum.at(args, 2, :missing) == :self_license do
+              {node, ["#{rel(path)}:#{Keyword.get(meta, :line, 1)}" | acc]}
+            else
+              {node, acc}
+            end
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      Enum.reverse(offenders)
+    else
+      {:error, {_line, error, token}} ->
+        ["#{rel(path)}: parse failed: #{inspect(error)} #{inspect(token)}"]
+    end
+  end
+
+  defp capability_module?(module_ast) do
+    Macro.to_string(module_ast) in ["Capability", "Ezagent.Capability"]
+  end
+
+  defp scope_tuple?({tag, _uri_ast}) when tag in @scope_tuple_tags, do: true
+  defp scope_tuple?(_instance), do: false
+
+  defp literal_map_value(entries, key) do
+    Enum.find_value(entries, :missing, fn
+      {^key, value} -> value
+      _entry -> nil
+    end)
+  end
+
+  defp source(relative), do: File.read!(Path.join(@umbrella_root, relative))
 
   defp rel(path), do: Path.relative_to(path, @umbrella_root)
 end

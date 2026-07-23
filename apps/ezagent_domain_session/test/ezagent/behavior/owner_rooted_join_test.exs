@@ -76,7 +76,12 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
       mode: :call,
       args: %{member: joiner},
-      ctx: %{caller: joiner, caps: Ezagent.Identity.list_caps_for(joiner), reply: :ignore}
+      ctx: %{
+        caller: joiner,
+        authenticated_principal: joiner,
+        caps: Ezagent.Identity.list_caps_for(joiner),
+        reply: :ignore
+      }
     })
   end
 
@@ -110,9 +115,10 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
       # owner-authorized join), making them an existing member.
       member = confirmed_user("g2-member")
 
-      # Owner self-join provisions the owner's join cap (owner-rooted), then the
-      # owner invites the member (join dispatched under the owner's authority).
+      # Owner self-join consumes its single-use join cap. Provision a fresh
+      # owner-rooted grant for the separate invite dispatch.
       {:ok, _} = self_join(session_uri, owner)
+      :ok = Membership.provision_join_authority(session_uri, owner)
 
       {:ok, _} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -120,7 +126,12 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
           target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
           mode: :call,
           args: %{member: member},
-          ctx: %{caller: owner, caps: Ezagent.Identity.list_caps_for(owner), reply: :ignore}
+          ctx: %{
+            caller: owner,
+            authenticated_principal: owner,
+            caps: Ezagent.Identity.list_caps_for(owner),
+            reply: :ignore
+          }
         })
 
       # Now the member self-joins on a later navigation: provision_join_authority
@@ -161,6 +172,28 @@ defmodule Ezagent.ActionSet.OwnerRootedJoinTest do
 
       assert %Capability{} = join_cap
       assert join_cap.granted_by == owner, "owner self-join is owner-rooted"
+    end
+  end
+
+  describe "join-cap grant failures are loud" do
+    test "an invited grant returns the original target-authority denial" do
+      owner = confirmed_user("loud-owner")
+      joiner = confirmed_user("loud-joiner")
+      session_uri = private_session("loud-private", owner)
+
+      assert {:ok, _new_authority} =
+               Ezagent.Cap.Authority.regenesis(session_uri, Session.type_name())
+
+      assert {:error, :missing_cap} =
+               Membership.provision_invited_join_authority(session_uri, joiner, owner)
+    end
+
+    test "an already-held current join cap remains an idempotent success" do
+      owner = confirmed_user("quiet-owner")
+      session_uri = private_session("quiet-private", owner)
+
+      assert :ok = Membership.provision_invited_join_authority(session_uri, owner, owner)
+      assert :ok = Membership.provision_invited_join_authority(session_uri, owner, owner)
     end
   end
 

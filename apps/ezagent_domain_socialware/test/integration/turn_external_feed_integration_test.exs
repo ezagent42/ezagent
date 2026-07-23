@@ -5,7 +5,7 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{ExternalFeed}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "turn-feed-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "turn-feed-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -21,16 +21,17 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -53,16 +54,16 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
     :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, ExternalFeed.topic(session))
 
-    %{session: session, caller: @owner}
+    %{session: session, caller: owner()}
   end
 
   test "turn.settle commits external-visible chat and approved page together", ctx do
@@ -116,7 +117,7 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
     assert {:ok, %{status: :awaiting_human}} =
              dispatch(ctx.session, :turn, :claim, %{
                turn_id: turn_id,
-               by: Ezagent.URI.entity(:team_alpha, :user, "operator")
+               by: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "operator")
              })
 
     assert {:ok, loaded} = MessageStore.by_id(message_id)

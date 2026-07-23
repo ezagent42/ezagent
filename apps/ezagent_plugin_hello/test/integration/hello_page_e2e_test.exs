@@ -132,7 +132,12 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
            end)
 
     assert {:error, :unauthorized} =
-             Ezagent.Orchestrator.Tools.preflight_within_session_cap(caps, ctx.session, :any)
+             Ezagent.Orchestrator.Tools.preflight_within_session_cap(
+               orchestrator,
+               caps,
+               ctx.session,
+               :any
+             )
   end
 
   test "ensure_app spawns the session through the socialware install set", ctx do
@@ -190,6 +195,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
                args: %{},
                ctx: %{
                  caller: admin,
+                 authenticated_principal: admin,
                  caps: MapSet.new([cap]),
                  reply: {:caller_inbox, self()}
                }

@@ -19,7 +19,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Orchestrator.Tools
-  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
+  import Ezagent.Test.CapHelper, only: [signed_cap!: 3, signed_required_cap!: 5]
 
   setup do
     workspace_uri = URI.new!("workspace://pr48-test")
@@ -74,23 +74,27 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     session_uri = URI.new!("session://system/generic/full-preflight")
     workspace_uri = URI.new!("workspace://system")
 
+    admin = Ezagent.Entity.User.admin_uri()
+
     join_cap = %Ezagent.Capability{
       kind: :session,
       behavior: Ezagent.ActionSet.Session,
       action: :join,
       instance: {:within_session, session_uri},
       workspace_uri: workspace_uri,
-      granted_by: URI.new!("entity://system/user/admin"),
+      granted_by: admin,
       granted_at: DateTime.utc_now()
     }
 
-    assert :ok = Tools.preflight_within_session_cap([join_cap], session_uri, :join)
+    join_cap = signed_cap!(session_uri, admin, join_cap)
+
+    assert :ok = Tools.preflight_within_session_cap(admin, [join_cap], session_uri, :join)
 
     assert {:error, :unauthorized} =
-             Tools.preflight_within_session_cap([join_cap], session_uri, :leave)
+             Tools.preflight_within_session_cap(admin, [join_cap], session_uri, :leave)
 
     assert {:error, :unauthorized} =
-             Tools.preflight_within_session_cap([join_cap], session_uri, :any)
+             Tools.preflight_within_session_cap(admin, [join_cap], session_uri, :any)
   end
 
   test "the slot tools are RETIRED (§3.8 clean cutover)" do
@@ -232,6 +236,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     # NON-MEMBER receiver (the M1 bypass).
     @ctx [
       caller: URI.new!("entity://system/agent/cc_orch-m1"),
+      authenticated_principal: URI.new!("entity://system/agent/cc_orch-m1"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
       session_uri: URI.new!("session://generic/system/no-such-m1")
@@ -255,6 +260,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
   describe "codex M3 — define_prompt_template enforces {body}" do
     @ctx3 [
       caller: URI.new!("entity://system/agent/cc_orch-m3"),
+      authenticated_principal: URI.new!("entity://system/agent/cc_orch-m3"),
       caps: MapSet.new(),
       session_uri: URI.new!("session://generic/system/no-such-m3")
     ]
@@ -271,6 +277,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     # must fail closed BEFORE touching the (non-existent) member.
     @swap_ctx_unauth [
       caller: URI.new!("entity://system/agent/cc_orch-pr6"),
+      authenticated_principal: URI.new!("entity://system/agent/cc_orch-pr6"),
       caps: MapSet.new(),
       workspace_uri: URI.new!("workspace://system"),
       session_uri: URI.new!("session://system/generic/no-such-pr6")
@@ -288,21 +295,25 @@ defmodule Ezagent.Orchestrator.ToolsTest do
     test "with the session cap but no live member, resolves to :unknown_member_role" do
       session_uri = URI.new!("session://system/generic/no-such-pr6")
 
-      caps =
-        MapSet.new([
-          %Ezagent.Capability{
-            kind: :session,
-            behavior: :any,
-            action: :any,
-            instance: {:within_session, session_uri},
-            workspace_uri: URI.new!("workspace://system"),
-            granted_by: URI.new!("entity://system/user/admin"),
-            granted_at: DateTime.utc_now()
-          }
-        ])
+      admin = Ezagent.Entity.User.admin_uri()
+
+      cap =
+        %Ezagent.Capability{
+          kind: :session,
+          behavior: :any,
+          action: :any,
+          instance: {:within_session, session_uri},
+          workspace_uri: URI.new!("workspace://system"),
+          granted_by: admin,
+          granted_at: DateTime.utc_now()
+        }
+        |> then(&signed_cap!(session_uri, admin, &1))
+
+      caps = MapSet.new([cap])
 
       opts = [
-        caller: URI.new!("entity://system/agent/cc_orch-pr6"),
+        caller: admin,
+        authenticated_principal: admin,
         caps: caps,
         workspace_uri: URI.new!("workspace://system"),
         session_uri: session_uri
@@ -322,7 +333,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
       parent_uri = URI.new!("template://pr48-test/session/never-registered@deadbeefdeadbeef")
       ws = URI.new!("workspace://pr48-test")
 
-      caller = URI.new!("entity://pr48-test/agent/test_pr48-orchestrator")
+      caller = Ezagent.Entity.User.admin_uri()
 
       caps =
         MapSet.new([
@@ -340,6 +351,7 @@ defmodule Ezagent.Orchestrator.ToolsTest do
                  session_uri: URI.new!("session://pr48-test/default/pr48-test"),
                  workspace_uri: ws,
                  caller: caller,
+                 authenticated_principal: caller,
                  caps: caps,
                  parent_template_uri: parent_uri
                )

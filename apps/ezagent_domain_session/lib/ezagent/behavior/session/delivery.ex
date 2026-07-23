@@ -208,12 +208,13 @@ defmodule Ezagent.ActionSet.Session.Delivery do
     if same_workspace?(source_session_uri, target_session_uri) do
       send_target = Ezagent.URI.with_action(target_session_uri, :session, :send)
 
-      Ezagent.Router.dispatch(%Cmd{
+      Ezagent.Session.DeliveryQueue.dispatch_from_queue(%Cmd{
         target: send_target,
         action: :send,
         args: %{message: msg},
         ctx: %{
           caller: msg.sender,
+          authenticated_principal: msg.sender,
           caps: cross_session_send_caps(target_session_uri, msg.sender),
           reply: :ignore
         },
@@ -291,12 +292,13 @@ defmodule Ezagent.ActionSet.Session.Delivery do
     receive_target = Ezagent.URI.with_action(recipient_uri, receive_prefix, :receive)
 
     result =
-      Ezagent.Router.dispatch(%Cmd{
+      Ezagent.Session.DeliveryQueue.dispatch_from_queue(%Cmd{
         target: receive_target,
         action: :receive,
         args: %{message: msg},
         ctx: %{
           caller: session_uri,
+          authenticated_principal: session_uri,
           # Membership-cap unification A2.2 (spec R1.1) — delivery presents NO
           # receive cap. `:members` is a staleness-tolerant delivery ROSTER, not
           # authority; receive AUTHORIZATION is the recipient's OWN held member-cap,
@@ -304,6 +306,9 @@ defmodule Ezagent.ActionSet.Session.Delivery do
           # `member_receive_caps/1` bearer token (a stale copy authorized whoever
           # presented it — the R1.1 bug) is DELETED.
           caps: MapSet.new(),
+          # `DeliveryQueue.dispatch_from_queue/1` is the stable sender across
+          # successive per-key Task jobs, preserving mailbox order without
+          # synchronously waiting on a slow Agent receive handler.
           reply: :ignore
         },
         origin: :trusted_internal
@@ -397,6 +402,17 @@ defmodule Ezagent.ActionSet.Session.Delivery do
 
         :ok
     end
+  end
+
+  @doc "Replay every message after the durable membership-grant position."
+  @spec replay_messages_after_sequence(URI.t(), URI.t(), non_neg_integer()) :: :ok
+  def replay_messages_after_sequence(session_uri, member_uri, sequence)
+      when is_integer(sequence) and sequence >= 0 do
+    for msg <- InternalReads.messages_after_sequence(session_uri, sequence) do
+      dispatch_receive_call(member_uri, msg, session_uri)
+    end
+
+    :ok
   end
 
   @spec broadcast_membership_effects(URI.t(), term()) :: [term()]

@@ -57,6 +57,21 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
   defp uniq(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) =>
+        MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+
     # System workspace row must exist for the membership-based
     # cross-workspace bypass (mirrors promote_to_system test setup).
     case Workspace.Store.get_by_name("system") do
@@ -75,6 +90,15 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
   end
 
   defp send_invocation(%URI{} = session_uri, %URI{} = caller_uri, caps) do
+    by_holder =
+      Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(by_holder, Ezagent.URI.stable_key(caller_uri), caps)
+    )
+
     msg = Message.new(caller_uri, %{text: "hello", attachments: []})
 
     %Invocation{
@@ -82,7 +106,12 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :ignore}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: :ignore
+      }
     }
   end
 
@@ -161,17 +190,31 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
 
       # U's home URI is alpha, but membership is what drives visibility.
       u = URI.new!("entity://#{ctx.alpha_name}/user/#{uniq("u")}")
+      {:ok, _row} = Ezagent.Users.create(u, nil, [])
+      {:ok, _} = SpawnRegistry.spawn(u)
       {:ok, _} = Workspace.Store.update_members(ctx.alpha_name, [u])
       {:ok, _} = Workspace.Store.update_members(ctx.beta_name, [u])
 
+      current_caps = Ezagent.EntityCaps.load(u)
+
+      by_holder =
+        Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+      Application.put_env(
+        :ezagent_core,
+        EzagentCore.Test.CapAuthorityLoaderStub,
+        Map.put(by_holder, Ezagent.URI.stable_key(u), MapSet.new(current_caps))
+      )
+
       visible =
         u
-        |> Workspace.list_workspaces_for(MapSet.new())
+        |> Workspace.list_workspaces_for(current_caps)
         |> Enum.map(& &1.name)
         |> Enum.sort()
 
       assert ctx.alpha_name in visible and ctx.beta_name in visible,
-             "multi-workspace user must see BOTH workspaces they are a member of; got #{inspect(visible)}"
+             "multi-workspace user must see BOTH workspaces they are a member of; " <>
+               "got #{inspect(visible)} with caps #{inspect(current_caps)}"
 
       refute "system" in visible,
              "a non-system, non-admin multi-workspace user must NOT see workspace://system (INV-7); got #{inspect(visible)}"

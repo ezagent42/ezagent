@@ -77,7 +77,16 @@ defmodule Ezagent.World.SandboxNoActivationTest do
   test "sandbox fields render from the snapshot WITHOUT activating the cold agent",
        %{agent: agent, config_dir: config_dir, project_cwd: project_cwd, flavor: flavor} do
     admin = Ezagent.URI.user(:system, :admin)
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
+    admin_caps =
+      MapSet.new([
+        Ezagent.Test.CapHelper.signed_fixture_cap!(
+          agent,
+          :agent,
+          Ezagent.ActionSet.Sandbox,
+          :read,
+          admin
+        )
+      ])
 
     state = agent_state(agent, admin, admin_caps)
 
@@ -108,17 +117,16 @@ defmodule Ezagent.World.SandboxNoActivationTest do
     # proving the needed-cap carries the target instance (not `:any`); a widened
     # gate (instance omitted/`:any`) would WRONGLY render the fields.
     other_agent = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
-    granter = Ezagent.URI.entity(:team_alpha, :user, "granter")
+    granter = Ezagent.URI.user(:system, :admin)
 
-    wrong_cap = %Ezagent.Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Sandbox,
-      action: :read,
-      instance: other_agent,
-      workspace_uri: Ezagent.Capability.workspace_of(other_agent),
-      granted_by: granter,
-      granted_at: DateTime.utc_now()
-    }
+    wrong_cap =
+      Ezagent.Test.CapHelper.signed_fixture_cap!(
+        other_agent,
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :read,
+        granter
+      )
 
     state = agent_state(agent, granter, MapSet.new([wrong_cap]))
 
@@ -130,17 +138,16 @@ defmodule Ezagent.World.SandboxNoActivationTest do
 
   test "a caller capped for THIS agent's instance is authorized (positive narrow-cap)",
        %{agent: agent, config_dir: config_dir} do
-    granter = Ezagent.URI.entity(:team_alpha, :user, "granter")
+    granter = Ezagent.URI.user(:system, :admin)
 
-    right_cap = %Ezagent.Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Sandbox,
-      action: :read,
-      instance: Ezagent.URI.instance(agent),
-      workspace_uri: Ezagent.Capability.workspace_of(agent),
-      granted_by: granter,
-      granted_at: DateTime.utc_now()
-    }
+    right_cap =
+      Ezagent.Test.CapHelper.signed_fixture_cap!(
+        agent,
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :read,
+        granter
+      )
 
     state = agent_state(agent, granter, MapSet.new([right_cap]))
 

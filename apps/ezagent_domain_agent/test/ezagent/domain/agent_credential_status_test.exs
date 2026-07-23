@@ -59,8 +59,20 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
   defp user(name),
     do: Ezagent.URI.entity(:team_alpha, :user, "#{name}-#{System.unique_integer([:positive])}")
 
-  defp manage_cap(agent, workspace, granter),
-    do: CreatorGrant.manage_cap(:agent, agent, workspace, granter)
+  defp manage_cap(agent, workspace, granter) do
+    requested = CreatorGrant.manage_cap(:agent, agent, workspace, granter)
+    authority = install_test_authority!(agent, :agent)
+    cap = authority_signed_cap!(authority, granter, requested)
+    :ok = license_holder!(granter)
+    cap
+  end
+
+  defp license_holder!(holder) do
+    case Ezagent.Users.create_read_only(holder, [self_license_cap!(holder)]) do
+      {:ok, _} -> :ok
+      {:error, changeset} -> raise "failed to license test holder: #{inspect(changeset.errors)}"
+    end
+  end
 
   # Seed the agent's durable sandbox slice (config_dir) as a snapshot and prime the
   # flavor fast-path ETS — emulating an agent that WAS spawned (so flavor + config_dir
@@ -95,7 +107,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
        %{agent: agent, workspace: workspace, flavor: flavor, config_dir: config_dir} do
     :ok = seed(agent, config_dir, flavor)
     owner = user("owner")
-    ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+    ctx = %{
+      caller: owner,
+      authenticated_principal: owner,
+      caps: MapSet.new([manage_cap(agent, workspace, owner)])
+    }
 
     refute kind_live?(agent)
 
@@ -112,7 +128,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
     :ok = seed(agent, config_dir, flavor)
     write_cred(config_dir)
     owner = user("owner")
-    ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+    ctx = %{
+      caller: owner,
+      authenticated_principal: owner,
+      caps: MapSet.new([manage_cap(agent, workspace, owner)])
+    }
 
     assert {:ok, %{status: :authenticated}} = DomainAgent.read_credential_status(agent, ctx)
     refute kind_live?(agent)
@@ -125,7 +145,8 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
     :ok = seed(agent, config_dir, flavor)
     write_cred(config_dir)
     cotenant = user("cotenant")
-    ctx = %{caller: cotenant, caps: MapSet.new()}
+    :ok = license_holder!(cotenant)
+    ctx = %{caller: cotenant, authenticated_principal: cotenant, caps: MapSet.new()}
 
     # EXACTLY {:error, :unauthorized} — no status map, no config_dir, no flavor leak.
     assert DomainAgent.read_credential_status(agent, ctx) == {:error, :unauthorized}
@@ -140,7 +161,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
     other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
     granter = user("og")
-    ctx = %{caller: granter, caps: MapSet.new([manage_cap(other, workspace, granter)])}
+    ctx = %{
+      caller: granter,
+      authenticated_principal: granter,
+      caps: MapSet.new([manage_cap(other, workspace, granter)])
+    }
 
     assert {:error, :unauthorized} = DomainAgent.read_credential_status(agent, ctx)
     refute kind_live?(agent)
@@ -157,7 +182,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
     foreign_ws = Ezagent.Capability.workspace_of(foreign)
     granter = user("fg")
-    ctx = %{caller: granter, caps: MapSet.new([manage_cap(foreign, foreign_ws, granter)])}
+    ctx = %{
+      caller: granter,
+      authenticated_principal: granter,
+      caps: MapSet.new([manage_cap(foreign, foreign_ws, granter)])
+    }
 
     assert {:error, :unauthorized} = DomainAgent.read_credential_status(agent, ctx)
     refute kind_live?(agent)
@@ -262,7 +291,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
          %{agent: agent, workspace: workspace, flavor: flavor} do
       :ok = seed_cc_custom(agent, flavor, "kimi")
       owner = user("owner")
-      ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+      ctx = %{
+        caller: owner,
+        authenticated_principal: owner,
+        caps: MapSet.new([manage_cap(agent, workspace, owner)])
+      }
 
       refute kind_live?(agent)
 
@@ -281,7 +314,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
          %{agent: agent, workspace: workspace, flavor: flavor} do
       :ok = seed_cc_custom(agent, flavor, nil)
       owner = user("owner")
-      ctx = %{caller: owner, caps: MapSet.new([manage_cap(agent, workspace, owner)])}
+      ctx = %{
+        caller: owner,
+        authenticated_principal: owner,
+        caps: MapSet.new([manage_cap(agent, workspace, owner)])
+      }
 
       assert {:ok, %{status: :unknown, flavor: ^flavor}} =
                DomainAgent.read_credential_status(agent, ctx)

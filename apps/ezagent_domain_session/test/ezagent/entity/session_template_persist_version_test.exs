@@ -73,6 +73,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       args: %{},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([signed_action_cap!(target, admin)]),
         reply: {:caller_inbox, self()}
       }
@@ -101,9 +102,15 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-basic-#{uniq()}"
       content = session_content(name)
       expected_hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, expected_hash, workspace: "team-alpha")))
 
-      assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "workspace://team-alpha")
+      :ok =
+        KindSnapshot.delete(
+          URI.to_string(SessionTemplate.build_uri(name, expected_hash, workspace: "team-alpha"))
+        )
+
+      assert {:ok, %URI{} = uri} =
+               SessionTemplate.persist_version(content, "workspace://team-alpha")
+
       track(uri)
 
       # The URI is the content-addressed template://session/<ws>/<name>@<hash>.
@@ -121,7 +128,11 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-bare-ws-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
+
+      :ok =
+        KindSnapshot.delete(
+          URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha"))
+        )
 
       assert {:ok, %URI{} = uri} = SessionTemplate.persist_version(content, "team-alpha")
       track(uri)
@@ -130,6 +141,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
 
     test "missing :name in the content map → {:error, :missing_template_name}" do
       content = session_content("ignored") |> Map.delete(:name)
+
       assert {:error, :missing_template_name} =
                SessionTemplate.persist_version(content, "workspace://team-alpha")
     end
@@ -140,7 +152,11 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-idem-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
+
+      :ok =
+        KindSnapshot.delete(
+          URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha"))
+        )
 
       assert {:ok, uri1} = SessionTemplate.persist_version(content, "workspace://team-alpha")
       track(uri1)
@@ -192,6 +208,7 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
           args: %{content: content},
           ctx: %{
             caller: admin,
+            authenticated_principal: admin,
             caps: MapSet.new([signed_action_cap!(target, admin)]),
             reply: {:caller_inbox, self()}
           }
@@ -211,7 +228,11 @@ defmodule Ezagent.Entity.SessionTemplatePersistVersionTest do
       name = "pv-consistent-#{uniq()}"
       content = session_content(name)
       hash = SessionTemplate.compute_version_hash(content)
-      :ok = KindSnapshot.delete(URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha")))
+
+      :ok =
+        KindSnapshot.delete(
+          URI.to_string(SessionTemplate.build_uri(name, hash, workspace: "team-alpha"))
+        )
 
       assert {:ok, uri} = SessionTemplate.persist_version(content, "workspace://team-alpha")
       track(uri)

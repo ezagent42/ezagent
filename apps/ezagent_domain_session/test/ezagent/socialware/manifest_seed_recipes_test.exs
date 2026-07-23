@@ -34,7 +34,9 @@ defmodule Ezagent.Socialware.ManifestSeedRecipesTest do
 
     @impl Ezagent.ActionSet
     def required_caps,
-      do: %{seed_recipes_render: Ezagent.Capability.cap(:session, __MODULE__, :seed_recipes_render)}
+      do: %{
+        seed_recipes_render: Ezagent.Capability.cap(:session, __MODULE__, :seed_recipes_render)
+      }
 
     @impl Ezagent.ActionSet
     def data_owner(_), do: :any

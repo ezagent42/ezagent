@@ -634,6 +634,7 @@ defmodule Mix.Tasks.Ezagent.ExternalMirrorTest do
   defp owner_ctx(owner_uri) do
     %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps: MapSet.new(Ezagent.Identity.list_caps_for(owner_uri)),
       reply: :ignore
     }

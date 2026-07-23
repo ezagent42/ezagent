@@ -77,7 +77,8 @@ defmodule Ezagent.Session.MemberReceive do
   @spec authorize(map()) :: :ok | {:error, :unauthorized}
   def authorize(ctx) when is_map(ctx) do
     with %URI{} = session <- Map.get(ctx, :caller),
-         true <- holds_member_cap_over?(sibling_identity_caps(ctx), session) do
+         %URI{} = holder <- Map.get(ctx, :self_uri),
+         true <- holds_member_cap_over?(holder, sibling_identity_caps(ctx), session) do
       :ok
     else
       _ -> {:error, :unauthorized}
@@ -98,22 +99,33 @@ defmodule Ezagent.Session.MemberReceive do
   boundary, no copy-paste drift (R1.1: coherent "held-cap, not projection" story
   across delivery AND read).
   """
-  @spec holds_member_cap_over?([Ezagent.Capability.t()] | term(), URI.t()) :: boolean()
-  def holds_member_cap_over?(held, %URI{} = session) when is_list(held) do
+  @spec holds_member_cap_over?(URI.t(), [Ezagent.Capability.t()] | term(), URI.t()) :: boolean()
+  def holds_member_cap_over?(%URI{} = holder, held, %URI{} = session) when is_list(held) do
     session_key = instance_key(session)
+    workspace_uri = Ezagent.Capability.workspace_of(session)
 
     Enum.any?(held, fn
       %Ezagent.Capability{kind: :session} = cap ->
         Ezagent.Capability.granted_by_entity?(cap) and
           Ezagent.Capability.action_of(cap) == :receive and
-          instance_key(cap.instance) == session_key
+          instance_key(cap.instance) == session_key and
+          match?(
+            {:ok, %Ezagent.Capability{}},
+            Ezagent.Cap.authorize(holder, [cap], %{
+              kind: :session,
+              behavior: cap.behavior,
+              action: :receive,
+              instance: session,
+              workspace_uri: workspace_uri
+            })
+          )
 
       _ ->
         false
     end)
   end
 
-  def holds_member_cap_over?(_held, _session), do: false
+  def holds_member_cap_over?(_holder, _held, _session), do: false
 
   # The comparable key for a cap instance. A concrete `%URI{}` instance (the
   # member-cap's shape) normalizes to its bare-instance `%URI{}` (query/fragment

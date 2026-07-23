@@ -128,6 +128,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       args: args,
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([signed_cap]),
         reply: {:caller_inbox, self()}
       }
@@ -167,8 +168,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     session_caps =
       Ezagent.CapabilityRegistry.subjects_for_kind(Session)
       |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
-      |> Enum.map(fn subject ->
-        Capability.cap(:session, subject.behavior, subject.action, session_uri, workspace_uri)
+      |> Enum.map(& &1.behavior)
+      |> Enum.uniq()
+      |> Enum.map(fn behavior ->
+        Capability.cap(:session, behavior, :any, session_uri, workspace_uri)
       end)
 
     workspace_actions =
@@ -293,6 +296,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
         MapSet.new([join_cap])
       )
 
+    :ok = await_participant(session_uri, orchestrator_uri)
+    :ok = await_join_authority(session_uri, orchestrator_uri)
+
     epoch = Ecto.UUID.generate()
 
     working_copy =
@@ -314,6 +320,39 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
          ) do
       {:ok, _} -> :ok
       other -> other
+    end
+  end
+
+  defp await_participant(session_uri, member_uri, attempts \\ 200)
+  defp await_participant(_session_uri, _member_uri, 0), do: {:error, :projection_timeout}
+
+  defp await_participant(session_uri, member_uri, attempts) do
+    if member_uri in Ezagent.Session.Participants.list_participants(session_uri) do
+      :ok
+    else
+      Process.sleep(10)
+      await_participant(session_uri, member_uri, attempts - 1)
+    end
+  end
+
+  defp await_join_authority(session_uri, orchestrator_uri, attempts \\ 200)
+
+  defp await_join_authority(_session_uri, _orchestrator_uri, 0),
+    do: {:error, :authority_projection_timeout}
+
+  defp await_join_authority(session_uri, orchestrator_uri, attempts) do
+    case Ezagent.Orchestrator.Tools.preflight_within_session_cap(
+           orchestrator_uri,
+           Ezagent.EntityCaps.load(orchestrator_uri),
+           session_uri,
+           :join
+         ) do
+      :ok ->
+        :ok
+
+      {:error, :unauthorized} ->
+        Process.sleep(10)
+        await_join_authority(session_uri, orchestrator_uri, attempts - 1)
     end
   end
 
@@ -704,7 +743,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       resolved = ActionSet.Session.role_name_to_uri(slice.members, "operator")
       assert resolved == operator
 
-      assert has_cap?(operator, ActionSet.Session, :join, ctx.orch.session_uri)
+      refute has_cap?(operator, ActionSet.Session, :join, ctx.orch.session_uri)
+      assert has_cap?(operator, ActionSet.Session, :receive, ctx.orch.session_uri)
       assert has_cap?(operator, ActionSet.Session, :send, ctx.orch.session_uri)
       assert has_cap?(operator, ActionSet.Session, :leave, ctx.orch.session_uri)
 

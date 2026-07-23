@@ -125,6 +125,15 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
     end
   end
 
+  defp holds_member_cap?(member, session) do
+    member
+    |> Ezagent.Identity.list_caps_for()
+    |> Enum.any?(fn cap ->
+      cap.kind == :session and cap.behavior == Ezagent.ActionSet.Session and
+        Ezagent.Capability.action_of(cap) == :receive and cap.instance == session
+    end)
+  end
+
   describe "post-auth anon takeover hook" do
     test "SessionPrincipal.put claims, merges, relabels, mounts caps, and retires the cookie-bound anon" do
       session = public_session()
@@ -139,6 +148,7 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
                Ezagent.Session.ReadMarker.mark(session, anon, msg.id, :read)
 
       assert member?(session, anon)
+      assert holds_member_cap?(anon, session)
       refute member?(session, confirmed)
 
       conn =
@@ -152,6 +162,8 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
 
       refute member?(session, anon)
       assert member?(session, confirmed)
+      refute holds_member_cap?(anon, session)
+      assert holds_member_cap?(confirmed, session)
       assert AnonBinding.get(anon) == nil
       assert Ezagent.Users.get_by_uri(anon) == nil
 

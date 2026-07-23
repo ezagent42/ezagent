@@ -34,14 +34,21 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                     ])
 
   @persisted_only_allowlist MapSet.new([
-                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex", :load,
-                               1},
+                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
+                               :do_load, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity.ex",
                                :spawn_with_hydrated_caps, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
                                :initial_caps_for_spawn, 1},
                               {"apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex",
-                               :member_snapshot_caps, 1}
+                               :member_snapshot_caps, 1},
+                              # `:add_self` can be cast from the grantee's
+                              # after-commit hook while that Kind is still busy.
+                              # Persisted-only keeps projection convergence
+                              # non-blocking while signature + generation
+                              # verification remain fail-closed.
+                              {"apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add.ex",
+                               :authorize_and_add, 4}
                             ])
 
   test "raw user-cap access stays inside the physical adapter and migration allowlist" do

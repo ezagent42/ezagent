@@ -123,6 +123,7 @@ defmodule Ezagent.ActionSet.ChatLegendsTest do
       ctx = %{
         self_uri: sess,
         caller: uri("entity://team-alpha/user/mallory"),
+        authenticated_principal: uri("entity://team-alpha/user/mallory"),
         caps: MapSet.new([member_cap]),
         # The spoofed bypass flag — now IGNORED for legends.
         system_internal: true

@@ -43,6 +43,17 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       reason: "existing hello session binding predates Plan C"
     },
     %{
+      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/credential_bridge.ex",
+      function: {:ensure_source_agent, 1},
+      module: Ezagent.AgentLineage,
+      call: {:record, 2},
+      reason:
+        "credential-bridge seeds the system source-credential agent and records its " <>
+          "admin-owned lineage on fresh spawn (declared `# derivation-edge: recorded-by " <>
+          "AgentLineage.record/2`); same class as hello bind_workspace — the seed path " <>
+          "has no owner-gated lineage-record facade yet"
+    },
+    %{
       path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
       function: {:create_stateless, 2},
       module: Ezagent.WorkspaceRegistry,

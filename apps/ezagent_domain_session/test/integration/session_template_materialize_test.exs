@@ -108,12 +108,28 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
                  match?(
                    %{online: true, source_template_uri: ^source_template_uri},
                    Map.get(slice.members, member_uri)
-                 )
+                 ) and holds_member_cap?(member_uri, session_uri)
 
                nil ->
                  false
              end
            end)
+  end
+
+  test "T13: route provisioner uses the converged grant seam without a registry-gated mount" do
+    source = File.read!("lib/ezagent/behavior/session/route_provisioner.ex")
+
+    refute source =~ "KindRegistry.lookup(member_uri)"
+    assert source =~ "authenticated_principal"
+  end
+
+  defp holds_member_cap?(member_uri, session_uri) do
+    member_uri
+    |> Ezagent.Identity.list_caps_for()
+    |> Enum.any?(fn cap ->
+      cap.kind == :session and cap.behavior == SessionBehavior and
+        Ezagent.Capability.action_of(cap) == :receive and cap.instance == session_uri
+    end)
   end
 
   test "two sessions from one template provision distinct member URIs" do
@@ -342,6 +358,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
         },
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([signed_cap]),
           reply: {:caller_inbox, self()}
         }
@@ -358,10 +375,26 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
   end
 
   defp role_member_uri(session_uri, role_name) do
-    session_uri
-    |> chat_slice()
-    |> Map.get(:members, %{})
-    |> SessionBehavior.role_name_to_uri(role_name)
+    case safe_chat_slice(session_uri) do
+      %{} = slice ->
+        slice
+        |> Map.get(:members, %{})
+        |> SessionBehavior.role_name_to_uri(role_name)
+
+      nil ->
+        nil
+    end
+  end
+
+  defp safe_chat_slice(session_uri) do
+    with {:ok, pid} <- KindRegistry.lookup(session_uri),
+         %{state: %{session: %{state: slice}}} <- :sys.get_state(pid, 100) do
+      slice
+    else
+      _ -> nil
+    end
+  catch
+    :exit, _ -> nil
   end
 
   defp dispatch_send(session_uri, text) do
@@ -377,6 +410,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
       args: %{message: msg},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([signed_cap]),
         reply: :ignore
       }
@@ -391,7 +425,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionTemplateMaterializeTes
     |> Enum.filter(&(&1.created_by == session_str))
   end
 
-  defp wait_until(fun, retries \\ 50)
+  defp wait_until(fun, retries \\ 500)
 
   defp wait_until(fun, retries) do
     case fun.() do

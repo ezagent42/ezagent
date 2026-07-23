@@ -66,8 +66,14 @@ defmodule Ezagent.Entity do
   DB row when this call is the one that creates it. Safe to call when
   the Kind is already alive. Used by registration + magic-link login.
   """
-  @spec spawn_principal(URI.t()) :: :ok
-  def spawn_principal(%URI{} = uri), do: ensure_spawned(uri)
+  @spec spawn_principal(URI.t()) :: :ok | {:error, :revocation_pending}
+  def spawn_principal(%URI{} = uri) do
+    if Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri) do
+      {:error, :revocation_pending}
+    else
+      ensure_spawned(uri)
+    end
+  end
 
   # Login goes through `Ezagent.Identity.list_caps_for/1`, which returns
   # an empty MapSet if the principal's Kind isn't spawned. In production
@@ -102,6 +108,7 @@ defmodule Ezagent.Entity do
         # User Kind's supervisor/0 callback points at
         # `EzagentDomainIdentity.Application.UserSupervisor` so the
         # destination is preserved without naming it here.
+        # derivation-edge: rehydration-only Users row already owns its edge
         Ezagent.Kind.spawn(Ezagent.Entity.User, %{
           uri: uri,
           initial_caps: MapSet.new(caps_list)

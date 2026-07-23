@@ -60,6 +60,7 @@ defmodule Ezagent.PluginNative.Template do
     # No explicit `:behaviors` → nil `:kind_base` → the base Agent behavior
     # set. No external engine/sidecar. RF-5a layers the role's behaviors on
     # per-instance via the recipe.
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
       {:ok, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
       {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}

@@ -31,7 +31,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.{ExternalFeed, DeliveryOutbox, Settlement}
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "parent-rollback-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "parent-rollback-owner")
 
   defp session_uri do
     Ezagent.URI.session(
@@ -47,7 +47,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
 
   defp dispatch(session_uri, behavior, action, args, caps \\ nil) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
     caps = caps || Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target)
 
     Invocation.dispatch(%Invocation{
@@ -57,6 +57,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
       args: args,
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: caps,
         reply: {:caller_inbox, self()}
       }
@@ -80,9 +81,9 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     workspace = Ezagent.Capability.workspace_of(session)
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -93,7 +94,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
       Application.delete_env(:ezagent_core, :p2_5c_force_commit_failure_uris)
     end)
 
-    %{session: session, caller: @owner}
+    %{session: session, caller: owner()}
   end
 
   test "a forced parent-commit failure on turn.settle leaks NO committed delivery", ctx do
@@ -129,7 +130,7 @@ defmodule EzagentDomainSocialware.Integration.ParentCommitRollbackTest do
     settle_caps =
       Ezagent.Socialware.TestCapHelper.lifecycle_caps(
         ctx.session,
-        User.admin_uri(),
+        ctx.caller,
         settle_target
       )
 

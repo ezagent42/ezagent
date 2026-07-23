@@ -17,6 +17,11 @@ defmodule Ezagent.ProviderConnectionCapTest do
     assert {:ok, _user} = Ezagent.Users.create(owner, nil, [])
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner)
 
+    # #195 authz: the caller is the authenticated cap-holder and must be a
+    # current (non-revoked) principal, so create + spawn it like the owner.
+    assert {:ok, _caller_user} = Ezagent.Users.create(caller, nil, [])
+    assert {:ok, _caller_pid} = Ezagent.SpawnRegistry.spawn(caller)
+
     boundary = fn action, args, _ctx ->
       send(parent, {:boundary, action, args})
       {:error, :authorization_backend_unavailable}
@@ -191,6 +196,10 @@ defmodule Ezagent.ProviderConnectionCapTest do
     |> Cmd.new(action, args, %{
       mode: :call,
       caller: caller,
+      # #195 authz contract: the cap-holder (caller) is the authenticated
+      # principal; production dispatch sites thread it (authorize-chokepoint
+      # ratchet), so the test harness must too.
+      authenticated_principal: caller,
       caps: caps,
       reply: {:caller_inbox, self()}
     })

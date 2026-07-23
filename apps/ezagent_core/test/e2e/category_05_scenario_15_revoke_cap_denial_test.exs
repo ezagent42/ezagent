@@ -44,6 +44,24 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
 
   alias Ezagent.{Capability, Invocation, Message, Users}
 
+  setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) =>
+        MapSet.new([:test_holder_license])
+    })
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
+
   @moduletag scenario: "15-revoke-cap-non-admin-denial"
 
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
@@ -87,6 +105,7 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
              %{short_name: short_name, template_name: template_name},
              %{
                caller: creator_uri,
+               authenticated_principal: creator_uri,
                caps:
                  MapSet.new([
                    signed_action_cap!(
@@ -101,6 +120,15 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
   end
 
   defp dispatch_send(caller_uri, caps, session_uri, text) do
+    by_holder =
+      Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(by_holder, Ezagent.URI.stable_key(caller_uri), MapSet.new([:test_holder_license]))
+    )
+
     msg = Message.new(caller_uri, %{text: text, attachments: []}, mentions: [], ref_id: nil)
 
     Invocation.dispatch(%Invocation{
@@ -108,7 +136,12 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.send"),
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: caller_uri, caps: caps, reply: :inline}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: :inline
+      }
     })
   end
 

@@ -108,22 +108,17 @@ defmodule Mix.Tasks.Ezagent.Workspace.CleanupCrossPrefixMembersTest do
       # (NO restart needed). This is the round-2 invariant: pre-fix the
       # direct-Store path left the slice stale until SIGHUP/restart.
       ws_uri = Ezagent.URI.new!("workspace://#{workspace_name}")
+      admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(ws_uri)
 
       {:ok, %{members: live_members}} =
         Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
           target: Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
           mode: :call,
           args: %{},
-          # Workspace's OWN self-authority — listing its own members (#154
-          # elimination of `system://workspace-loader`).
-          ctx: %{
-            caller: ws_uri,
-            caps: [signed_action_cap!(
-              Ezagent.URI.new!("workspace://#{workspace_name}?action=workspace.list_members"),
-              ws_uri
-            )],
-            reply: {:caller_inbox, self()}
-          }
+          # The maintenance facade uses the authenticated admin principal.
+          # A Workspace Kind has no Identity slice, so it cannot present the
+          # generation-bound self-license required of an authority holder.
+          ctx: Map.put(admin_ctx, :reply, {:caller_inbox, self()})
         })
 
       _ = ws_uri

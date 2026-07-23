@@ -367,7 +367,11 @@ defmodule EzagentPluginKanban.WorldActions do
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
-    caller_ctx = %{caller: caller, caps: presenter_caps(socket)}
+    caller_ctx = %{
+      caller: caller,
+      authenticated_principal: caller,
+      caps: presenter_caps(socket)
+    }
     clean = sanitize(name)
 
     cond do
@@ -422,6 +426,7 @@ defmodule EzagentPluginKanban.WorldActions do
   defp ctx(socket) do
     %{
       caller: socket.assigns.current_entity_uri,
+      authenticated_principal: socket.assigns.current_entity_uri,
       caps: presenter_caps(socket),
       reply: {:caller_inbox, self()}
     }

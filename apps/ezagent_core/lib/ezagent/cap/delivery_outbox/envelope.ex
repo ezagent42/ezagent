@@ -4,10 +4,11 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   alias Ezagent.{Capability, Invocation}
   alias Ezagent.Cap.Delivery
 
-  @version 3
+  @version 4
   @delivery_actions [:absorb_cap, :revoke_cap]
   @keys [
     :caller,
+    :authenticated_principal,
     :cap,
     :caps,
     :op,
@@ -35,7 +36,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec encode(Invocation.t()) :: {:ok, map()} | {:error, :invalid_delivery_envelope}
   def encode(%Invocation{} = invocation) do
     with {:ok, {producer, op, cap}} <- producer_parts(invocation),
-         {:ok, caller, caps} <- allowlisted_context(invocation.ctx) do
+         {:ok, caller, holder, caps} <- allowlisted_context(invocation.ctx, invocation.target) do
       {:ok,
        %{
          version: @version,
@@ -44,6 +45,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
          op: op,
          cap: cap,
          caller: caller,
+         authenticated_principal: holder,
          presenter: caller,
          caps: caps
        }}
@@ -75,6 +77,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
 
     ctx = %{
       caller: envelope.presenter,
+      authenticated_principal: envelope.authenticated_principal,
       caps: MapSet.new(envelope.caps),
       reply: :ignore,
       cap_delivery_producer: envelope.producer,
@@ -135,6 +138,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
          args: %{cap: %Capability{} = cap},
          ctx: %{
            caller: %URI{scheme: "entity"},
+           authenticated_principal: %URI{scheme: "entity"},
            cap_delivery_producer: :identity_revoke
          }
        }) do
@@ -146,20 +150,36 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
 
   defp producer_parts(_), do: :error
 
-  defp allowlisted_context(%{caller: caller, caps: %MapSet{} = caps}) do
+  defp allowlisted_context(%{caller: :vm_internal, caps: %MapSet{} = caps}, target) do
+    validate_context(:vm_internal, Ezagent.URI.instance(target), caps)
+  end
+
+  defp allowlisted_context(
+         %{
+           caller: %URI{} = caller,
+           authenticated_principal: %URI{} = holder,
+           caps: %MapSet{} = caps
+         },
+         _target
+       ) do
+    validate_context(caller, holder, caps)
+  end
+
+  defp allowlisted_context(_, _target), do: :error
+
+  defp validate_context(caller, holder, caps) do
     caps =
       caps
       |> MapSet.to_list()
       |> Enum.sort_by(&:erlang.term_to_binary(&1, [:deterministic]))
 
-    if valid_caller?(caller) and Enum.all?(caps, &match?(%Capability{}, &1)) do
-      {:ok, caller, caps}
+    if valid_caller?(caller) and match?(%URI{}, holder) and
+         Enum.all?(caps, &match?(%Capability{}, &1)) do
+      {:ok, caller, holder, caps}
     else
       :error
     end
   end
-
-  defp allowlisted_context(_), do: :error
 
   defp valid_caller?(:vm_internal), do: true
   defp valid_caller?(%URI{scheme: "entity"}), do: true
@@ -187,6 +207,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
            op: op,
            cap: %Capability{} = cap,
            caller: caller,
+           authenticated_principal: authenticated_principal,
            presenter: presenter,
            caps: caps
          },
@@ -199,7 +220,8 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and
          payload_identity(cap) == delivery.payload_identity and caller == presenter and
-         valid_caller?(presenter) and Enum.all?(caps, &match?(%Capability{}, &1)) do
+         valid_caller?(presenter) and match?(%URI{}, authenticated_principal) and
+         Enum.all?(caps, &match?(%Capability{}, &1)) do
       :ok
     else
       {:error, :field_mismatch}

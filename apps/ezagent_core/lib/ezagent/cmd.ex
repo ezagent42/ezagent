@@ -25,6 +25,7 @@ defmodule Ezagent.Cmd do
 
       %{
         caller: URI.t() | :vm_internal,      # principal initiating the dispatch (:vm_internal = trusted in-VM code)
+        authenticated_principal: URI.t(), # holder fixed at the auth boundary
         reply: Ezagent.Invocation.reply_target(),  # where to route the result
         trace_id: String.t() | nil,          # optional — propagates across cross-Kind dispatches
         command_uuid: String.t() | nil,      # optional — caller-supplied idempotency key
@@ -52,6 +53,7 @@ defmodule Ezagent.Cmd do
   @type ctx :: %{
           required(:caller) => URI.t() | :vm_internal,
           required(:reply) => Ezagent.Invocation.reply_target(),
+          optional(:authenticated_principal) => URI.t(),
           optional(:trace_id) => String.t() | nil,
           optional(:command_uuid) => String.t() | nil,
           optional(:deadline_ms) => pos_integer() | nil,
@@ -122,8 +124,13 @@ defmodule Ezagent.Cmd do
   @doc "Build an external command and overwrite any caller supplied by the request."
   @spec authenticated_external(URI.t() | String.t(), atom(), map(), URI.t(), map()) :: t()
   def authenticated_external(target, action, args, %URI{} = presenter, ctx \\ %{}) do
+    ctx =
+      ctx
+      |> Map.put(:caller, presenter)
+      |> Map.put(:authenticated_principal, presenter)
+
     target
-    |> new(action, args, Map.put(ctx, :caller, presenter))
+    |> new(action, args, ctx)
     |> Map.put(:origin, :authenticated_external)
   end
 

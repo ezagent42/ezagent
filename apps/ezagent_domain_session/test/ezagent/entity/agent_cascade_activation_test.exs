@@ -5,6 +5,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
   alias Ezagent.Credential.{GrantCap, GrantRow, WorkspaceSharedSource}
   alias Ezagent.Entity.Agent
   alias EzagentCore.Repo
+  import Ezagent.Test.CapHelper, only: [authority_signed_cap!: 3]
 
   defmodule CaptureTemplate do
     @behaviour Ezagent.Kind.Template
@@ -51,6 +52,16 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
   @source_uri Ezagent.URI.new!("entity://team-alpha/agent/alice-source")
 
   defp uniq, do: System.unique_integer([:positive])
+
+  defp authorized_source_ctx do
+    caller = Ezagent.URI.new!("entity://team-alpha/user/cascade-owner-#{uniq()}")
+    {:ok, _} = Ezagent.Users.create(caller, "pw-not-secret", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(caller)
+    {:ok, authority} = Ezagent.Cap.Authority.open(@source_uri, :agent)
+    cap = authority_signed_cap!(authority, caller, GrantCap.read_cap_for(@source_uri))
+    on_exit(fn -> Ezagent.Kind.terminate(caller) end)
+    {caller, [cap]}
+  end
 
   test "spawn_from_template_content resolves cascade inputs before invoking the Template Class" do
     flavor = "cascade_capture_#{uniq()}"
@@ -152,12 +163,12 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     }
 
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-grant-#{uniq()}")
-    caller = @owner_uri
-    caps = [GrantCap.read_cap_for(@source_uri)]
+    {caller, caps} = authorized_source_ctx()
 
     assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: caller,
+               authenticated_principal: caller,
                caps: caps
              )
 
@@ -193,11 +204,12 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     content = %{flavor: flavor, project_cwd: "/tmp/project"}
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-default-#{uniq()}")
-    caps = [GrantCap.read_cap_for(@source_uri)]
+    {caller, caps} = authorized_source_ctx()
 
     assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
-             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
+             Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
+               caller: caller,
+               authenticated_principal: caller,
                caps: caps,
                source_template_uri: template_uri,
                explicit_source: @source_uri
@@ -226,6 +238,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: @owner_uri,
+               authenticated_principal: @owner_uri,
                caps: [],
                source_template_uri: template_uri
              )
@@ -277,6 +290,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: @owner_uri,
+               authenticated_principal: @owner_uri,
                caps: [],
                source_template_uri: template_uri
              )
@@ -336,12 +350,13 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     }
 
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-orphan-#{uniq()}")
-    caps = [GrantCap.read_cap_for(@source_uri)]
+    {caller, caps} = authorized_source_ctx()
 
     # The spawn fails at instantiate (AFTER the grant was minted).
     assert {:error, :boom_after_grant} =
-             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
+             Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
+               caller: caller,
+               authenticated_principal: caller,
                caps: caps
              )
 
@@ -390,14 +405,15 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
       }
     }
 
-    caps = [GrantCap.read_cap_for(@source_uri)]
+    {caller, caps} = authorized_source_ctx()
 
     # The LOSER's spawn: its grant mint conflicts on the unique agent_uri (the
     # winner already inserted), so resolve_cascade_content fails BEFORE
     # spawn_after_cascade — the loser must NOT delete the winner's grant.
     assert {:error, _} =
-             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
+             Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
+               caller: caller,
+               authenticated_principal: caller,
                caps: caps
              )
 
@@ -479,11 +495,12 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     content = %{flavor: flavor, project_cwd: "/tmp/project", config_dir: "/tmp/self-home"}
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-self-#{uniq()}")
-    caps = [GrantCap.read_cap_for(@source_uri)]
+    {caller, caps} = authorized_source_ctx()
 
     assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
-             Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
+             Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
+               caller: caller,
+               authenticated_principal: caller,
                caps: caps,
                source_template_uri: template_uri,
                explicit_source: @source_uri

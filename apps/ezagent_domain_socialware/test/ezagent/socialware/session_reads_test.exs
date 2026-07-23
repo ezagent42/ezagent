@@ -18,18 +18,20 @@ defmodule Ezagent.Socialware.SessionReadsTest do
   alias Ezagent.Test.CapHelper
 
   @owner Ezagent.URI.user(:system, :admin)
-  @stranger Ezagent.URI.entity(:team_alpha, :user, "sr-stranger")
+  defp stranger, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-stranger")
 
   # ----- fixtures --------------------------------------------------------
 
   defp spawn_session(owner_uri \\ @owner) do
     session_uri =
-      Ezagent.URI.new!(
-        "session://team-alpha/default/session-reads-#{System.unique_integer([:positive])}"
+      Ezagent.URI.session(
+        :team_alpha,
+        :default,
+        "session-reads-#{System.unique_integer([:positive])}"
       )
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
         owner_uri: owner_uri,
         behaviors: Ezagent.Entity.Session.behaviors()
@@ -37,6 +39,11 @@ defmodule Ezagent.Socialware.SessionReadsTest do
 
     :ok =
       Ezagent.WorkspaceRegistry.bind(session_uri, Ezagent.Capability.workspace_of(session_uri))
+
+    if Ezagent.URI.stable_key(owner_uri) == Ezagent.URI.stable_key(@owner) do
+      :ok =
+        Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
+    end
 
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
@@ -82,7 +89,12 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       target: target,
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
   end
 
@@ -117,7 +129,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       write(session, "secret")
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :conversation, %{limit: 50})
+               SessionReads.messages(stranger(), session, :conversation, %{limit: 50})
     end
 
     test "messages/4 older/pagination → {:error, :unauthorized}" do
@@ -126,7 +138,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       cursor = DateTime.utc_now()
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :conversation, %{
+               SessionReads.messages(stranger(), session, :conversation, %{
                  limit: 50,
                  older_than: cursor
                })
@@ -134,7 +146,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
 
     test "members/2 → {:error, :unauthorized}" do
       session = spawn_session()
-      assert {:error, :unauthorized} = SessionReads.members(@stranger, session)
+      assert {:error, :unauthorized} = SessionReads.members(stranger(), session)
     end
 
     test "nil / malformed caller → {:error, :unauthorized} (fail-closed)" do
@@ -193,8 +205,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       session = spawn_session()
       write(session, "history")
 
-      member =
-        Ezagent.URI.entity(:team_alpha, :user, "sr-fresh-#{System.unique_integer([:positive])}")
+      member = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-fresh")
 
       :ok = spawn_user(member, User.initial_caps_for_spawn(member))
 
@@ -226,12 +237,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
     end
 
     test "a caller holding the signed :read_unfiltered cap sees :internal rows too" do
-      internal_reader =
-        Ezagent.URI.entity(
-          :team_alpha,
-          :user,
-          "sr-internal-#{System.unique_integer([:positive])}"
-        )
+      internal_reader = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-internal")
 
       # Session OWNED by the internal reader (owner → authorized), who ALSO holds
       # the session's signed :read_unfiltered cap in its LIVE identity slice.
@@ -240,7 +246,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       unfiltered_cap =
         CapHelper.signed_cap!(session, internal_reader, read_unfiltered_cap(session))
 
-      :ok = spawn_user(internal_reader, [unfiltered_cap])
+      :ok = Ezagent.EntityCaps.grant(internal_reader, unfiltered_cap)
 
       write(session, "public", visibility: :external_visible)
       write(session, "internal", visibility: :internal)
@@ -280,8 +286,8 @@ defmodule Ezagent.Socialware.SessionReadsTest do
   describe "authorized?/2 + read_unfiltered?/2 — the LIVE-plane gate predicates" do
     test "a non-member is NOT authorized (⇒ broadcast dropped, roster suppressed)" do
       session = spawn_session()
-      :ok = spawn_user(@stranger, User.initial_caps_for_spawn(@stranger))
-      refute SessionReads.authorized?(@stranger, session)
+      :ok = spawn_user(stranger(), User.initial_caps_for_spawn(stranger()))
+      refute SessionReads.authorized?(stranger(), session)
     end
 
     test "nil / malformed caller is NOT authorized (fail-closed)" do
@@ -298,8 +304,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
     test "a member joined via the at-join grant IS authorized (live-first)" do
       session = spawn_session()
 
-      member =
-        Ezagent.URI.entity(:team_alpha, :user, "sr-live-#{System.unique_integer([:positive])}")
+      member = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-live")
 
       :ok = spawn_user(member, User.initial_caps_for_spawn(member))
 
@@ -314,13 +319,20 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       refute SessionReads.read_unfiltered?(@owner, plain)
 
       # A caller holding the signed :read_unfiltered cap → :internal delivered.
-      reader =
-        Ezagent.URI.entity(:team_alpha, :user, "sr-unf-#{System.unique_integer([:positive])}")
+      reader = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-unf")
 
       session = spawn_session(reader)
       cap = CapHelper.signed_cap!(session, reader, read_unfiltered_cap(session))
-      :ok = spawn_user(reader, [cap])
+      :ok = Ezagent.EntityCaps.grant(reader, cap)
       assert SessionReads.read_unfiltered?(reader, session)
+
+      assert {:ok, _new_authority} =
+               Ezagent.Cap.Authority.regenesis(
+                 session,
+                 :session
+               )
+
+      refute SessionReads.read_unfiltered?(reader, session)
     end
   end
 
@@ -342,7 +354,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       write(session, "secret")
 
       assert {:error, :unauthorized} =
-               SessionReads.messages(@stranger, session, :chat_feed, %{limit: 50})
+               SessionReads.messages(stranger(), session, :chat_feed, %{limit: 50})
     end
 
     test "a member gets the byte-identical chat recency window (post-migration parity)" do
@@ -350,8 +362,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       write(session, "one")
       write(session, "two")
 
-      member =
-        Ezagent.URI.entity(:team_alpha, :user, "sr-cf-#{System.unique_integer([:positive])}")
+      member = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "sr-cf")
 
       :ok = spawn_user(member, User.initial_caps_for_spawn(member))
 

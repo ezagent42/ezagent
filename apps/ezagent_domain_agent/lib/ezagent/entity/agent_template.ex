@@ -617,6 +617,7 @@ defmodule Ezagent.Entity.AgentTemplate do
 
       ctx = %{
         caller: caller_uri,
+        authenticated_principal: caller_uri,
         caps: normalize_caps_set(caps),
         reply: {:caller_inbox, self()}
       }
@@ -665,6 +666,7 @@ defmodule Ezagent.Entity.AgentTemplate do
         args: %{content: content},
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([signed_cap]),
           reply: {:caller_inbox, self()}
         },

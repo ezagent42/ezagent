@@ -294,7 +294,10 @@ defmodule Ezagent.Kind do
         Enum.any?(caps, fn held ->
           try do
             Ezagent.Capability.granted_by_entity?(held) and
-              Ezagent.Capability.matches?(held, needed_map)
+              match?(
+                {:ok, %Ezagent.Capability{}},
+                Ezagent.Cap.authorize(entity_uri, [held], needed_map)
+              )
           rescue
             _ -> false
           catch
@@ -488,9 +491,15 @@ defmodule Ezagent.Kind do
   the child is not under the resolved supervisor.
 
   **Idempotent** — an already-absent / already-terminated URI returns
-  `:ok`. Best-effort: any error in the lookup / query / terminate path
-  is swallowed and `:ok` is returned (the caller is on a failure exit
-  and a teardown step must not mask the original error).
+  `:ok`. The return is honest: `:ok` means the resolved process is confirmed
+  dead; a module-query, custom-teardown, fallback-exit, or liveness failure is
+  returned as `{:error, reason}`. Callers that deliberately do not care about
+  cleanup convergence must use `terminate!/1`.
+
+  Standard `DynamicSupervisor.terminate_child/2` already blocks until the
+  child is dead, so honesty adds no latency there. Only custom teardown and the
+  direct-exit fallback use the short `:terminate_verify_ms` grace (default
+  200ms); setting it to `0` performs one immediate liveness poll.
 
   Before process lookup, the URI is definitively marked failed and any
   `PendingDelivery` casts are dead-lettered. This prevents an authority-bearing
@@ -503,7 +512,7 @@ defmodule Ezagent.Kind do
   Ezagent-layer caller (`Ezagent.Entity.Agent.spawn_from_template_content/4`)
   owns undoing those.
   """
-  @spec terminate(URI.t()) :: :ok
+  @spec terminate(URI.t()) :: :ok | {:error, term()}
   def terminate(%URI{} = uri) do
     :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri)
 
@@ -513,41 +522,39 @@ defmodule Ezagent.Kind do
 
       case terminate_strategy(kind_module) do
         :standard ->
-          supervisor = resolve_supervisor(kind_module)
-
-          case DynamicSupervisor.terminate_child(supervisor, pid) do
+          # #195 termination refactor: `Termination.standard/2` rolls the
+          # not-found → `Process.exit` fallback inside and reports honest
+          # `{:error, …}` on a still-alive process. main's launch-context
+          # cleanup is preserved by discarding the relay once termination
+          # succeeds; force_discard is idempotent.
+          case Ezagent.Kind.Termination.standard(resolve_supervisor(kind_module), pid) do
             :ok ->
               discard_launch_context_relay(launch_context_relay)
               :ok
 
-            {:error, :not_found} ->
-              # Not under the resolved supervisor (or already gone) —
-              # bring the process down directly so the worker still
-              # terminates.
-              _ = Process.exit(pid, :shutdown)
-              :ok
+            {:error, _reason} = error ->
+              error
           end
 
         {:custom, mod, fun} when is_atom(mod) and is_atom(fun) ->
-          # PR-EM-2 codex round-1 HIGH-2 fix (2026-05-25): Kinds with
-          # custom spawn topologies (e.g. ExternalMirror's two-tier
-          # RootSupervisor → PerBindingSupervisor → Kind.Server) need
-          # symmetric teardown — the Kind.Server pid is NOT a direct
-          # child of `supervisor()`, so the standard
-          # `terminate_child(supervisor, kind_server_pid)` returns
-          # `{:error, :not_found}` and the fallback `Process.exit`
-          # path just lets the permanent inner child restart.
-          # `terminate_strategy/0` declares the domain-owned teardown.
-          _ = apply(mod, fun, [uri, pid])
-          :ok
+          Ezagent.Kind.Termination.custom(mod, fun, uri, pid)
       end
     else
-      _ -> :ok
+      :error -> :ok
+      {:error, _reason} = error -> error
     end
   rescue
-    _ -> :ok
+    error -> {:error, {:terminate_crashed, error}}
   catch
-    _, _ -> :ok
+    :exit, reason -> {:error, {:terminate_exit, reason}}
+    kind, reason -> {:error, {:terminate_caught, kind, reason}}
+  end
+
+  @doc "Best-effort teardown for don't-care callers; always returns :ok."
+  @spec terminate!(URI.t()) :: :ok
+  def terminate!(%URI{} = uri) do
+    _ = terminate(uri)
+    :ok
   end
 
   defp safe_launch_context_relay(pid) do
@@ -649,6 +656,15 @@ defmodule Ezagent.Kind do
     end
   end
 
+  @doc false
+  @spec recredential_generation(URI.t() | String.t()) ::
+          {:ok, pos_integer()} | {:error, term()}
+  def recredential_generation(uri) do
+    with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
+      GenServer.call(pid, :ezagent_recredential_generation, 5_000)
+    end
+  end
+
   @doc "Return whether `observer` monitors a live process without exposing process state."
   @spec monitored_by?(pid(), pid()) :: boolean()
   def monitored_by?(pid, observer \\ self()) when is_pid(pid) and is_pid(observer) do
@@ -661,9 +677,11 @@ defmodule Ezagent.Kind do
   defp safe_kind_module(pid) when is_pid(pid) do
     {:ok, _} = GenServer.call(pid, :ezagent_kind_module, 5_000)
   rescue
-    _ -> :error
+    error -> {:error, {:module_query_crashed, error}}
   catch
-    _, _ -> :error
+    :exit, {:timeout, _} -> {:error, :module_query_timeout}
+    :exit, reason -> {:error, {:module_query_exit, reason}}
+    kind, reason -> {:error, {:module_query_caught, kind, reason}}
   end
 
   defp resolve_supervisor(kind_module) do

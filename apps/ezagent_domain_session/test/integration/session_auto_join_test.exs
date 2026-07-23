@@ -22,6 +22,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.KindRegistry
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.Entity.User
 
   defp uniq, do: System.unique_integer([:positive])
@@ -128,23 +129,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
       # Repeated chat.join with the SAME admin pid — must NOT stack
       # monitors AND must NOT install a fresh ref (the existing one
       # is for the current pid).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
-
-      :ok =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-          origin: :trusted_internal,
-          target: target,
-          mode: :cast,
-          args: %{member: admin},
-          ctx: %{
-            caller: Ezagent.Entity.User.admin_uri(),
-            caps: MapSet.new([cap]),
-            reply: :ignore
-          }
-        })
-
-      Process.sleep(100)
+      assert {:ok, %{status: :already_member}} = rejoin(session_uri, admin)
 
       {_members_after, monitors_after, _slice} = session_members(session_uri)
 
@@ -174,26 +159,9 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
       # Dispatch chat.join 5 more times — every one should be a no-op
       # at the slice level (online + monitor alive → short-circuit).
-      target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-      cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
-
       for _ <- 1..5 do
-        :ok =
-          Ezagent.Invocation.dispatch(%Ezagent.Invocation{
-            origin: :trusted_internal,
-            target: target,
-            mode: :cast,
-            args: %{member: admin},
-            ctx: %{
-              caller: Ezagent.Entity.User.admin_uri(),
-              caps: MapSet.new([cap]),
-              reply: :ignore
-            }
-          })
+        assert {:ok, %{status: :already_member}} = rejoin(session_uri, admin)
       end
-
-      # Let the casts drain.
-      Process.sleep(150)
 
       {_members_after, monitors_after, _slice} = session_members(session_uri)
 
@@ -202,6 +170,23 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
                "#{ref_count_before}, now #{map_size(monitors_after)}) — " <>
                "Behavior.Session.invoke(:join) idempotency regression"
     end
+  end
+
+  defp rejoin(session_uri, member_uri) do
+    :ok = Membership.provision_join_authority(session_uri, member_uri)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
+      target: URI.new!("#{URI.to_string(session_uri)}?action=session.join"),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: member_uri,
+        authenticated_principal: member_uri,
+        caps: Ezagent.Identity.list_caps_for(member_uri),
+        reply: {:caller_inbox, self()}
+      }
+    })
   end
 
   # ----------------------------------------------------------------------
@@ -288,11 +273,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
     {session_uri, admin}
   end
 
-  # A dummy agent member registered in KindRegistry so `chat.join` resolves a
-  # live pid to monitor. An agent host (not `entity://user/...`) skips the
-  # user-only notify + owner-cap branches in do_join_apply.
+  # M-5: use a real Agent Kind with an Identity slice. Grant-only join no longer
+  # mounts a registry PID directly; the cap lands on the entity and its Identity
+  # after-commit hook performs the holder-authenticated add_self.
   defp register_member do
-    member_uri = URI.new!("entity://team-alpha/agent/relay-#{uniq()}")
+    member_uri = URI.new!("entity://system/agent/relay-#{uniq()}")
     {member_uri, _pid} = spawn_registered(member_uri)
     member_uri
   end
@@ -305,26 +290,37 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
   end
 
   defp spawn_registered(%URI{} = member_uri) do
-    test_pid = self()
+    assert {:ok, pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+               uri: member_uri,
+               initial_caps: MapSet.new()
+             })
 
-    pid =
-      spawn(fn ->
-        :ok = KindRegistry.put_new(member_uri)
-        send(test_pid, :registered)
+    :ok = Ezagent.WorkspaceRegistry.bind(member_uri, Ezagent.Capability.workspace_of(member_uri))
 
-        receive do
-          :stop -> :ok
-        end
-      end)
+    on_exit(fn ->
+      Ezagent.WorkspaceRegistry.unbind(member_uri)
 
-    assert_receive :registered, 1_000
-    on_exit(fn -> if Process.alive?(pid), do: send(pid, :stop) end)
+      case KindRegistry.lookup(member_uri) do
+        {:ok, live_pid} ->
+          DynamicSupervisor.terminate_child(
+            EzagentDomainInstanceMessage.AgentSupervisor,
+            live_pid
+          )
+
+        :error ->
+          :ok
+      end
+    end)
+
     {member_uri, pid}
   end
 
   defp kill_member(%URI{} = member_uri) do
     {:ok, pid} = KindRegistry.lookup(member_uri)
-    send(pid, :stop)
+
+    :ok =
+      DynamicSupervisor.terminate_child(EzagentDomainInstanceMessage.AgentSupervisor, pid)
   end
 
   defp join_cast(session_uri, member_uri, facets) do
@@ -356,6 +352,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
     %{
       caller: admin,
+      authenticated_principal: admin,
       caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, admin)]),
       reply: reply
     }

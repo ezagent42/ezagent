@@ -8,14 +8,20 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
   alias EzagentCore.Repo
 
   @workspace_uri Ezagent.URI.new!("workspace://team-alpha")
-  @owner_uri Ezagent.URI.new!("entity://team-alpha/user/alice")
 
   setup do
     register_curl_dispatch()
-    :ok
+    owner_uri = agent_uri("curl-cascade-owner") |> user_uri()
+
+    {:ok, _user} = Ezagent.Users.create(owner_uri, "curl-cascade-owner", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
+    wait_for(fn -> Ezagent.ReadyGate.status(owner_uri) == :ready end)
+
+    %{owner_uri: owner_uri}
   end
 
-  test "curl Template materializes the selected source provider key into the target api_keys slice" do
+  test "curl Template materializes the selected source provider key into the target api_keys slice",
+       %{owner_uri: owner_uri} do
     source_uri = agent_uri("curl-source")
     target_uri = agent_uri("curl-target")
 
@@ -25,7 +31,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
              GrantRow.insert(%{
                agent_uri: URI.to_string(target_uri),
                credential_source_uri: URI.to_string(source_uri),
-               approved_by: URI.to_string(@owner_uri),
+               approved_by: URI.to_string(owner_uri),
                approved_scope: URI.to_string(source_uri),
                version: 1
              })
@@ -33,7 +39,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     assert {:ok, [^target_uri], %{fresh?: true}} =
              Template.instantiate(
                Template.template_name(),
-               curl_template_data(target_uri, source_uri),
+               curl_template_data(target_uri, source_uri, owner_uri),
                @workspace_uri
              )
 
@@ -46,7 +52,9 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     Ezagent.Kind.terminate(target_uri)
   end
 
-  test "curl Template fails loud when the selected source lacks the provider key" do
+  test "curl Template fails loud when the selected source lacks the provider key", %{
+    owner_uri: owner_uri
+  } do
     source_uri = agent_uri("curl-empty-source")
     target_uri = agent_uri("curl-target-missing")
 
@@ -62,7 +70,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
              GrantRow.insert(%{
                agent_uri: URI.to_string(target_uri),
                credential_source_uri: URI.to_string(source_uri),
-               approved_by: URI.to_string(@owner_uri),
+               approved_by: URI.to_string(owner_uri),
                approved_scope: URI.to_string(source_uri),
                version: 1
              })
@@ -70,14 +78,15 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     assert {:error, {:cascade_api_key_missing, "deepseek", ^source_uri}} =
              Template.instantiate(
                Template.template_name(),
-               curl_template_data(target_uri, source_uri),
+               curl_template_data(target_uri, source_uri, owner_uri),
                @workspace_uri
              )
 
     Ezagent.Kind.terminate(source_uri)
   end
 
-  test "domain create chokepoint resolves workspace-shared curl source and materializes its key" do
+  test "domain create chokepoint resolves workspace-shared curl source and materializes its key",
+       %{owner_uri: owner_uri} do
     source_uri = agent_uri("curl-ws-shared-source")
     target_uri = agent_uri("curl-ws-shared-target")
     admin_uri = Ezagent.URI.new!("entity://team-alpha/user/admin")
@@ -105,8 +114,8 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     }
 
     assert {:ok, %{workers: [^target_uri], fresh?: true}} =
-             Agent.spawn_from_template_content(content, target_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
+             Agent.spawn_from_template_content(content, target_uri, owner_uri, @workspace_uri,
+               caller: owner_uri,
                caps: [],
                source_template_uri: template_uri
              )
@@ -124,7 +133,9 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     Ezagent.Kind.terminate(target_uri)
   end
 
-  test "domain create chokepoint prefers user curl source over workspace-shared source" do
+  test "domain create chokepoint prefers user curl source over workspace-shared source", %{
+    owner_uri: owner_uri
+  } do
     user_source_uri = agent_uri("curl-user-source")
     workspace_source_uri = agent_uri("curl-workspace-source")
     target_uri = agent_uri("curl-user-wins-target")
@@ -135,12 +146,12 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
 
     assert {:ok, _row} =
              %{
-               owner_uri: URI.to_string(@owner_uri),
+               owner_uri: URI.to_string(owner_uri),
                workspace_uri: "team-alpha",
                flavor: "curl",
                source_uri: URI.to_string(user_source_uri)
              }
-             |> UserDefaultSource.changeset(URI.to_string(@owner_uri))
+             |> UserDefaultSource.changeset(URI.to_string(owner_uri))
              |> Repo.insert()
 
     assert {:ok, _row} =
@@ -162,9 +173,15 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     }
 
     assert {:ok, %{workers: [^target_uri], fresh?: true}} =
-             Agent.spawn_from_template_content(content, target_uri, @owner_uri, @workspace_uri,
-               caller: @owner_uri,
-               caps: [GrantCap.read_cap_for(user_source_uri)],
+             Agent.spawn_from_template_content(content, target_uri, owner_uri, @workspace_uri,
+               caller: owner_uri,
+               caps: [
+                 Ezagent.Test.CapHelper.signed_cap!(
+                   user_source_uri,
+                   owner_uri,
+                   GrantCap.read_cap_for(user_source_uri)
+                 )
+               ],
                source_template_uri: Ezagent.URI.new!("template://team-alpha/agent/curl-worker")
              )
 
@@ -175,7 +192,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
 
     assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(target_uri))
     assert row.credential_source_uri == URI.to_string(user_source_uri)
-    assert row.approved_by == URI.to_string(@owner_uri)
+    assert row.approved_by == URI.to_string(owner_uri)
 
     Ezagent.Kind.terminate(user_source_uri)
     Ezagent.Kind.terminate(workspace_source_uri)
@@ -228,6 +245,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
                args: %{provider: provider, key: key},
                ctx: %{
                  caller: presenter,
+                 authenticated_principal: presenter,
                  caps: MapSet.new([cap]),
                  reply: {:caller_inbox, self()}
                }
@@ -236,7 +254,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     source_uri
   end
 
-  defp curl_template_data(target_uri, source_uri) do
+  defp curl_template_data(target_uri, source_uri, owner_uri) do
     %{
       "class" => "curl.agent",
       "agent_uri" => URI.to_string(target_uri),
@@ -244,7 +262,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
       "api_url" => "https://api.deepseek.com/chat/completions",
       "model" => "deepseek-chat",
       "cascade_resolution" => %{
-        "owner_uri" => URI.to_string(@owner_uri),
+        "owner_uri" => URI.to_string(owner_uri),
         "workspace_uri" => URI.to_string(@workspace_uri),
         "credential_source_uri" => URI.to_string(source_uri)
       }
@@ -253,6 +271,10 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
 
   defp agent_uri(suffix) do
     Ezagent.URI.agent("team-alpha", "#{suffix}-#{System.unique_integer([:positive])}")
+  end
+
+  defp user_uri(%URI{} = agent_uri) do
+    Ezagent.URI.user("team-alpha", Ezagent.URI.name!(agent_uri))
   end
 
   defp wait_for(fun, timeout_ms \\ 1_000) do

@@ -47,6 +47,7 @@ defmodule Ezagent.Workspace do
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
         # Workspace Kind declares `Ezagent.Workspace.Supervisor` via its
         # supervisor/0 callback so the destination is preserved.
+        # derivation-edge: recorded-by record_derivation_edge/2 below
         Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri))
     end
   end
@@ -62,7 +63,7 @@ defmodule Ezagent.Workspace do
   """
   @spec create(String.t(), map()) :: {:ok, pid()} | {:error, term()}
   def create(name, attrs \\ %{}) when is_binary(name) and name != "" do
-    with {:ok, _decoded} <- Store.create(name, attrs),
+    with {:ok, _decoded} <- create_workspace_record(name, attrs),
          {:ok, pid} <- spawn_workspace(name, attrs) do
       {:ok, pid}
     else
@@ -76,6 +77,41 @@ defmodule Ezagent.Workspace do
       {:exists, _decoded} -> {:error, :workspace_exists}
       {:error, _} = err -> err
     end
+  end
+
+  defp create_workspace_record(name, attrs) do
+    EzagentCore.Repo.transaction(fn ->
+      case Store.create(name, attrs) do
+        {:ok, decoded} ->
+          case record_derivation_edge(decoded.uri, Map.get(attrs, :created_by)) do
+            :ok -> decoded
+            {:error, reason} -> EzagentCore.Repo.rollback(reason)
+          end
+
+        {:exists, decoded} ->
+          EzagentCore.Repo.rollback({:exists, decoded})
+
+        {:error, reason} ->
+          EzagentCore.Repo.rollback({:error, reason})
+      end
+    end)
+    |> case do
+      {:ok, decoded} -> {:ok, decoded}
+      {:error, {:exists, decoded}} -> {:exists, decoded}
+      {:error, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp record_derivation_edge(_workspace_uri, nil), do: :ok
+
+  defp record_derivation_edge(workspace_uri, created_by) do
+    Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+      workspace_uri,
+      created_by,
+      :workspace_ownership,
+      Ezagent.Provenance.DerivationEdges.new_attempt_id()
+    )
   end
 
   # --- durable mutations --------------------------------------------
@@ -126,7 +162,7 @@ defmodule Ezagent.Workspace do
   """
   @spec add_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
   def add_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
-    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+    with {:ok, dispatch_ctx} <- caller_context(ctx) do
       do_add_member(name, member_uri, dispatch_ctx)
     end
   end
@@ -246,7 +282,7 @@ defmodule Ezagent.Workspace do
   """
   @spec remove_member(String.t(), URI.t(), map()) :: :ok | {:error, term()}
   def remove_member(name, %URI{} = member_uri, ctx) when is_map(ctx) do
-    with {:ok, dispatch_ctx} <- caller_ctx(ctx) do
+    with {:ok, dispatch_ctx} <- caller_context(ctx) do
       do_remove_member(name, member_uri, dispatch_ctx)
     end
   end
@@ -612,13 +648,24 @@ defmodule Ezagent.Workspace do
   # accidentally reaches `/3` cannot slip past step 5.5 via Runtime's
   # `default_holds_cap?(:vm_internal)` all-caps bypass. Trusted ambient callers
   # MUST use the explicit `/2` path.
-  defp caller_ctx(%{caller: %URI{} = caller, caps: caps}) when is_list(caps),
-    do: {:ok, %{caller: caller, caps: caps}}
+  @doc false
+  @spec caller_context(map()) :: {:ok, map()} | {:error, :invalid_caller_ctx}
+  def caller_context(%{
+        caller: %URI{} = caller,
+        authenticated_principal: %URI{} = holder,
+        caps: caps
+      })
+      when is_list(caps),
+      do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(%{caller: %URI{} = caller, caps: %MapSet{} = caps}),
-    do: {:ok, %{caller: caller, caps: caps}}
+  def caller_context(%{
+        caller: %URI{} = caller,
+        authenticated_principal: %URI{} = holder,
+        caps: %MapSet{} = caps
+      }),
+      do: {:ok, %{caller: caller, authenticated_principal: holder, caps: caps}}
 
-  defp caller_ctx(_other), do: {:error, :invalid_caller_ctx}
+  def caller_context(_other), do: {:error, :invalid_caller_ctx}
 
   # System-principal elimination (#154 north star, 2026-06-19) — the
   # programmatic `/2` mutations + the boot-time self-maintenance dispatches
@@ -638,7 +685,7 @@ defmodule Ezagent.Workspace do
     target = Ezagent.URI.with_action(workspace_uri, :workspace, action)
 
     case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
-      {:ok, cap} -> %{caller: admin, caps: [cap]}
+      {:ok, cap} -> %{caller: admin, authenticated_principal: admin, caps: [cap]}
       {:error, reason} -> raise "workspace self-cap issuance failed: #{inspect(reason)}"
     end
   end

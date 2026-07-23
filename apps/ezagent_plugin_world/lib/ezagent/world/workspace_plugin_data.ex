@@ -201,7 +201,11 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp invite_state(%URI{} = workspace_uri, %URI{} = caller, caps) do
-    case Ezagent.Workspace.Invites.list(workspace_uri, %{caller: caller, caps: caps}) do
+    case Ezagent.Workspace.Invites.list(workspace_uri, %{
+           caller: caller,
+           authenticated_principal: caller,
+           caps: caps
+         }) do
       {:ok, %{invites: invites}} ->
         %{"can_manage_invites" => true, "invites" => Enum.map(invites, &jsonable/1)}
 

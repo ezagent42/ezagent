@@ -150,7 +150,13 @@ defmodule Ezagent.World.MarketActions do
     workspace_uri = socket.assigns.current_workspace_uri
     caller = socket.assigns.current_entity_uri
     caps = Ezagent.World.PresenterCaps.load(socket)
-    ctx = %{caller: caller, workspace_uri: workspace_uri, caps: caps}
+    # #195 authz: the world presenter's authenticated identity is the holder.
+    ctx = %{
+      caller: caller,
+      authenticated_principal: caller,
+      workspace_uri: workspace_uri,
+      caps: caps
+    }
 
     result =
       if retracted? do

@@ -28,6 +28,7 @@ defmodule Ezagent.EntityCaps do
     Capability,
     Cmd,
     Kind,
+    KindRegistry,
     Lifecycle,
     ReadyGate,
     Router,
@@ -44,10 +45,26 @@ defmodule Ezagent.EntityCaps do
   def load(uri) do
     uri = parse_uri(uri)
 
-    case Kind.get_slice(uri, :identity) do
-      {:ok, slice} when is_map(slice) -> slice |> caps_from_slice() |> verified(uri)
-      {:error, :not_found} -> load_persisted(uri)
-      _transient_or_invalid_live_read -> []
+    if fenced?(uri), do: [], else: do_load(uri)
+  end
+
+  defp do_load(uri) do
+    case KindRegistry.lookup(uri) do
+      {:ok, pid} when pid == self() ->
+        # `Cap.authorize/3` runs inside the target Kind. When the target is also
+        # the authenticated holder, a live-first `Kind.get_slice/2` would call
+        # the current GenServer synchronously and fail closed as
+        # `:holder_revoked`. The marker-bearing snapshot / user projection is
+        # the independently stored copy of the same Identity slice and avoids
+        # that self-call without trusting the presented candidate caps.
+        load_persisted(uri)
+
+      _other ->
+        case Kind.get_slice(uri, :identity) do
+          {:ok, slice} when is_map(slice) -> slice |> caps_from_slice() |> verified(uri)
+          {:error, :not_found} -> load_persisted(uri)
+          _transient_or_invalid_live_read -> []
+        end
     end
   end
 
@@ -56,6 +73,10 @@ defmodule Ezagent.EntityCaps do
   def load_persisted(uri) do
     uri = parse_uri(uri)
 
+    if fenced?(uri), do: [], else: do_load_persisted(uri)
+  end
+
+  defp do_load_persisted(uri) do
     caps =
       if user_uri?(uri) do
         UserStore.load(uri)
@@ -65,6 +86,8 @@ defmodule Ezagent.EntityCaps do
 
     verified(caps, uri)
   end
+
+  defp fenced?(uri), do: Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri)
 
   @doc "Replace the entity's complete cap set in its selected physical store and live slice."
   @spec persist(URI.t() | String.t(), caps()) :: :ok | {:error, term()}
@@ -105,6 +128,21 @@ defmodule Ezagent.EntityCaps do
         dispatch_mutation(uri, :remove_cap, %{cap: cap})
       end
     end)
+  end
+
+  @doc false
+  @spec clear_self_license_persisted(URI.t() | String.t()) :: :ok | {:error, term()}
+  def clear_self_license_persisted(uri) do
+    uri = parse_uri(uri)
+
+    if user_uri?(uri) do
+      case UserStore.update(uri, fn caps -> {:ok, reject_self_license(caps)} end) do
+        {:error, :not_found} -> :ok
+        result -> result
+      end
+    else
+      clear_snapshot_self_license(uri)
+    end
   end
 
   @doc false
@@ -223,12 +261,102 @@ defmodule Ezagent.EntityCaps do
   defp preserve_derived_caps(uri, caps, live) do
     if live or not user_uri?(uri) do
       {:ok, %{caps: derived}} = Ezagent.ActionSet.Identity.create(%{uri: uri, initial_caps: []})
-      merged = Enum.reduce(derived, MapSet.new(caps), &replace_by_identity(&2, &1))
+
+      protected =
+        uri
+        |> raw_persisted_caps()
+        |> Enum.filter(&(Capability.action_of(&1) == :self_license))
+
+      merged =
+        derived
+        |> Enum.concat(protected)
+        |> Enum.reduce(MapSet.new(caps), &replace_by_identity(&2, &1))
+
       {:ok, MapSet.to_list(merged)}
     else
-      {:ok, caps}
+      protected =
+        uri
+        |> raw_persisted_caps()
+        |> Enum.filter(&(Capability.action_of(&1) == :self_license))
+
+      merged = Enum.reduce(protected, MapSet.new(caps), &replace_by_identity(&2, &1))
+      {:ok, MapSet.to_list(merged)}
     end
   end
+
+  defp raw_persisted_caps(uri) do
+    if user_uri?(uri), do: UserStore.load(uri), else: snapshot_caps(uri)
+  end
+
+  defp clear_snapshot_self_license(uri) do
+    case SnapshotStore.latest(uri) do
+      {:ok, %{state: state, version: version}} when is_map(state) ->
+        with {:ok, updated} <- remove_snapshot_self_license(state),
+             {:ok, _written} <-
+               SnapshotStore.write(uri, updated,
+                 kind_type: snapshot_kind_type(uri),
+                 version: version + 1
+               ) do
+          :ok
+        end
+
+      {:error, :not_found} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp remove_snapshot_self_license(state) do
+    case Map.get(state, :identity) do
+      %{state: identity_state} = container when is_map(identity_state) ->
+        updated = Map.update(identity_state, :caps, MapSet.new(), &reject_self_license/1)
+        {:ok, Map.put(state, :identity, Map.put(container, :state, updated))}
+
+      identity when is_map(identity) ->
+        updated = Map.update(identity, :caps, MapSet.new(), &reject_self_license/1)
+        {:ok, Map.put(state, :identity, updated)}
+
+      nil ->
+        {:ok, state}
+
+      _invalid ->
+        {:error, :invalid_identity_snapshot}
+    end
+  end
+
+  defp reject_self_license(%MapSet{} = caps) do
+    caps
+    |> Enum.reject(&(Capability.action_of(&1) == :self_license))
+    |> MapSet.new()
+  end
+
+  defp reject_self_license(caps) when is_list(caps) do
+    Enum.reject(caps, &(Capability.action_of(&1) == :self_license))
+  end
+
+  defp reject_self_license(_caps), do: MapSet.new()
+
+  defp snapshot_kind_type(%URI{scheme: "entity"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "agent"} -> :agent
+      {:ok, "user"} -> :user
+      _ -> :entity
+    end
+  end
+
+  defp snapshot_kind_type(%URI{scheme: "session"}), do: :session
+
+  defp snapshot_kind_type(%URI{scheme: "template"} = uri) do
+    case Ezagent.URI.type(uri) do
+      {:ok, "agent"} -> :agent_template
+      {:ok, "session"} -> :session_template
+      _ -> :template
+    end
+  end
+
+  defp snapshot_kind_type(_uri), do: :unknown
 
   defp issued_for?(
          %Capability{signature: signature, key_id: key_id, grantee_uri: %URI{} = grantee},
@@ -263,7 +391,22 @@ defmodule Ezagent.EntityCaps do
     end
   end
 
-  defp verified(caps, uri), do: caps |> verified_set(uri) |> MapSet.to_list()
+  defp verified(caps, uri) do
+    verified = caps |> verified_set(uri) |> MapSet.to_list()
+
+    if Enum.any?(verified, &current_self_license?(&1, uri)), do: verified, else: []
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
+  defp current_self_license?(%Capability{} = cap, uri) do
+    Capability.action_of(cap) == :self_license and
+      Ezagent.Cap.Authority.verify_against_current(cap, uri, uri)
+  end
+
+  defp current_self_license?(_cap, _uri), do: false
 
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_uri), do: false

@@ -42,8 +42,8 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
 
       # in mount/3, after `connected?`:
       caps = socket.assigns.current_caps
-      TerminalSeam.subscribe(agent_uri, caps)
-      socket = TerminalSeam.push_initial_buffer(socket, agent_uri, caps)
+      TerminalSeam.subscribe(holder_uri, agent_uri, caps)
+      socket = TerminalSeam.push_initial_buffer(socket, holder_uri, agent_uri, caps)
 
       # PubSub fan-out:
       def handle_info({:pty_output, _uri, chunk}, socket),
@@ -75,9 +75,9 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   Returns `{:error, :unauthorized}` and subscribes to NOTHING when the caller
   may not read this agent's terminal. Fails closed.
   """
-  @spec subscribe(URI.t(), Enumerable.t()) :: :ok | {:error, :unauthorized}
-  def subscribe(%URI{} = agent_uri, caps) do
-    if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+  @spec subscribe(URI.t(), URI.t(), Enumerable.t()) :: :ok | {:error, :unauthorized}
+  def subscribe(%URI{} = holder, %URI{} = agent_uri, caps) do
+    if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
       Phoenix.PubSub.subscribe(
         EzagentCore.PubSub,
         Server.output_topic(agent_uri)
@@ -98,10 +98,10 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   Returns the socket UNCHANGED (no buffer pushed) when `caps` do not authorize
   reading this agent's terminal. Fails closed.
   """
-  @spec push_initial_buffer(Phoenix.LiveView.Socket.t(), URI.t(), Enumerable.t()) ::
+  @spec push_initial_buffer(Phoenix.LiveView.Socket.t(), URI.t(), URI.t(), Enumerable.t()) ::
           Phoenix.LiveView.Socket.t()
-  def push_initial_buffer(socket, %URI{} = agent_uri, caps) do
-    if Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps) do
+  def push_initial_buffer(socket, %URI{} = holder, %URI{} = agent_uri, caps) do
+    if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
       do_push_initial_buffer(socket, agent_uri)
     else
       socket
@@ -142,6 +142,8 @@ defmodule EzagentDomainUi.Pty.TerminalSeam do
   @spec dispatch_input(URI.t(), binary(), map()) :: :ok | {:error, term()}
   def dispatch_input(%URI{} = agent_uri, bytes, ctx) when is_binary(bytes) do
     target = Ezagent.URI.new!(URI.to_string(agent_uri) <> "?action=pty.write")
+    holder = Map.fetch!(ctx, :caller)
+    ctx = Map.put(ctx, :authenticated_principal, holder)
 
     inv = %Ezagent.Invocation{
       target: target,

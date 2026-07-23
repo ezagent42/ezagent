@@ -84,14 +84,18 @@ defmodule Ezagent.Integration.RoutingCapTest do
 
     %{
       caller: presenter,
+      authenticated_principal: presenter,
       caps: MapSet.new([cap]),
       reply: {:caller_inbox, self()}
     }
   end
 
   defp non_admin_ctx do
+    presenter = Ezagent.URI.new!("entity://team-alpha/user/non-admin-test")
+
     %{
-      caller: Ezagent.URI.new!("entity://team-alpha/user/non-admin-test"),
+      caller: presenter,
+      authenticated_principal: presenter,
       caps: MapSet.new(),
       reply: {:caller_inbox, self()}
     }

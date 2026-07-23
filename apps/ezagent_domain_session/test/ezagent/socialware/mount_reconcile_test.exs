@@ -171,12 +171,14 @@ defmodule Ezagent.Socialware.MountReconcileTest do
   end
 
   defp dispatch(caller, target, action) do
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(target, :composition_grant_target, action),
       mode: :call,
       args: %{},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new(Ezagent.Identity.list_caps_for(caller)),
         reply: {:caller_inbox, self()}
       }

@@ -247,7 +247,8 @@ defmodule Ezagent.Credential.Resolver do
         %{
           agent_uri: %URI{} = agent_uri,
           source: %URI{} = source,
-          caller: %URI{} = caller,
+          caller: %URI{} = _caller,
+          authenticated_principal: %URI{} = holder,
           caps: caps
         } = args
       )
@@ -256,10 +257,10 @@ defmodule Ezagent.Credential.Resolver do
     # tolerated when it equals the caller — we do NOT trust a caller-supplied approver
     # identity (codex: forged-approval / audit corruption). Delegated approval (admin
     # approves for a user) is a future feature requiring an explicit delegation cap.
-    approved_by = Map.get(args, :approved_by, caller)
+    approved_by = Map.get(args, :approved_by, holder)
 
     cond do
-      system_principal_caller?(caller) ->
+      system_principal_caller?(holder) ->
         # codex H1 — never mint a credential grant under a `system://`
         # principal's caps. A system principal is an authorizer, never an
         # accountable approver entity (#154); generalized 2026-06-19 from the
@@ -267,7 +268,7 @@ defmodule Ezagent.Credential.Resolver do
         # eliminated.
         {:error, :system_principal_forbidden}
 
-      URI.to_string(approved_by) != URI.to_string(caller) ->
+      URI.to_string(approved_by) != URI.to_string(holder) ->
         {:error, :approver_must_be_caller}
 
       # Bind the grant to a SAME-TENANT agent — a grant for a source in workspace W may only
@@ -277,14 +278,14 @@ defmodule Ezagent.Credential.Resolver do
       Capability.workspace_of(agent_uri) != Capability.workspace_of(source) ->
         {:error, :agent_source_workspace_mismatch}
 
-      not source_read_authorized?(source, caps) ->
+      not source_read_authorized?(holder, source, caps) ->
         {:error, {:source_unauthorized, source}}
 
       true ->
         GrantRow.insert(%{
           agent_uri: URI.to_string(agent_uri),
           credential_source_uri: URI.to_string(source),
-          approved_by: URI.to_string(caller),
+          approved_by: URI.to_string(holder),
           approved_scope: URI.to_string(source),
           version: 1
         })
@@ -293,16 +294,17 @@ defmodule Ezagent.Credential.Resolver do
 
   @doc """
   Cap-check helper (exposed for the create chokepoint + tests): is `sandbox.read` on
-  `source` authorized by `caps`? Builds the needed-cap the SAME way the dispatch does for
+  `source` authorized for the explicit authenticated `holder` by `caps`? Builds the
+  needed-cap the SAME way the dispatch does for
   the `sandbox.read` action on an Agent Kind — `%{kind: :agent, behavior:
   Ezagent.ActionSet.Sandbox, action: :read, instance: <source>, workspace_uri: <ws>}` —
   mirroring `Ezagent.Credential.GrantCap.read_cap_for/1` (the authoritative derived-cap
   shape) rather than `cap_for_action/3` (which would force a cross-app reference to
-  `Ezagent.Entity.Agent`, a downstream app from core). Checks any held cap `matches?/2`.
-  Pure (no DB).
+  `Ezagent.Entity.Agent`, a downstream app from core). The unified authorizer verifies
+  the signature, holder binding, and both current authority generations before matching.
   """
-  @spec source_read_authorized?(URI.t(), [Capability.t()]) :: boolean()
-  def source_read_authorized?(%URI{} = source, caps) when is_list(caps) do
+  @spec source_read_authorized?(URI.t(), URI.t(), [Capability.t()]) :: boolean()
+  def source_read_authorized?(%URI{} = holder, %URI{} = source, caps) when is_list(caps) do
     needed = %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Sandbox,
@@ -311,8 +313,10 @@ defmodule Ezagent.Credential.Resolver do
       workspace_uri: Capability.workspace_of(source)
     }
 
-    Enum.any?(caps, fn cap -> Capability.matches?(cap, needed) end)
+    match?({:ok, %Capability{}}, Ezagent.Cap.authorize(holder, caps, needed))
   end
+
+  def source_read_authorized?(_, _, _), do: false
 
   # ── internals ──────────────────────────────────────────────────────────────
 

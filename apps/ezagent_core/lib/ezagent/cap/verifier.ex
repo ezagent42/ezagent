@@ -36,20 +36,21 @@ defmodule Ezagent.Cap.Verifier do
         :approve_admission,
         :deny_admission,
         :withdraw_admission,
-        :composition_consent
+        :composition_consent,
+        :add_self
       ])
   }
 
   @type result :: {:ok, Capability.t() | nil} | {:error, term()}
 
   @doc false
-  @spec authorize(module(), module(), atom(), URI.t(), map()) :: result()
-  def authorize(kind_module, behavior_module, action, %URI{} = target, ctx) do
+  @spec authorize(module(), module(), atom(), URI.t(), URI.t() | :vm_internal, map()) :: result()
+  def authorize(kind_module, behavior_module, action, %URI{} = target, holder, ctx) do
     if non_cap_action?(behavior_module, action) do
       emit(:non_cap, kind_module, behavior_module, action, target, ctx)
       {:ok, nil}
     else
-      verify_cap(kind_module, behavior_module, action, target, ctx)
+      verify_cap(kind_module, behavior_module, action, target, holder, ctx)
     end
   end
 
@@ -70,24 +71,23 @@ defmodule Ezagent.Cap.Verifier do
          behavior_module,
          action,
          target,
-         %{caller: %URI{} = presenter} = ctx
+         %URI{} = holder,
+         ctx
        ) do
     needed = required_cap(kind_module, behavior_module, action, target)
 
     candidates = candidate_caps(ctx)
 
-    verified = Enum.filter(candidates, &valid_artifact?(&1, presenter))
-
-    case Enum.find(verified, &Capability.matches?(&1, needed)) do
-      %Capability{} = cap ->
+    case Ezagent.Cap.authorize(holder, candidates, needed) do
+      {:ok, %Capability{} = cap} ->
         emit(:accepted, kind_module, behavior_module, action, target, ctx)
         {:ok, cap}
 
-      nil ->
+      {:error, denial} ->
         reason =
           cond do
             Enum.empty?(candidates) -> :missing_cap
-            Enum.empty?(verified) -> :invalid_cap_signature
+            denial == :holder_revoked -> :holder_revoked
             true -> :missing_cap
           end
 
@@ -96,9 +96,18 @@ defmodule Ezagent.Cap.Verifier do
     end
   end
 
-  defp verify_cap(kind_module, behavior_module, action, target, ctx) do
-    emit(:rejected, kind_module, behavior_module, action, target, ctx, :presenter_required)
-    {:error, :presenter_required}
+  defp verify_cap(kind_module, behavior_module, action, target, _holder, ctx) do
+    emit(
+      :rejected,
+      kind_module,
+      behavior_module,
+      action,
+      target,
+      ctx,
+      :authenticated_principal_required
+    )
+
+    {:error, :authenticated_principal_required}
   end
 
   defp candidate_caps(ctx), do: Map.get(ctx, :caps, MapSet.new()) || MapSet.new()

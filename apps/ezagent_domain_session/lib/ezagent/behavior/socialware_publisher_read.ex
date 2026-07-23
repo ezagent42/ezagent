@@ -55,26 +55,21 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
 
   ## Authorization — cap-EXEMPT + a LIVE in-handler fail-closed check
 
-  The read actions are `cap_exempt_actions` at the CapBAC layer (no
-  per-member/owner cap, no grant-at-join, no revoke-at-leave, no backfill
-  for existing P0-P2 owners, no stale-cap risk). The HANDLER is the SOLE
-  authority. It declares `reads_siblings [:session]` and authorizes a read
+  The read actions are `cap_exempt_actions` at the generic dispatch layer so
+  the handler can apply the session-specific membership predicate. The HANDLER
+  is the SOLE authority. It declares `reads_siblings [:session]` and authorizes a read
   ONLY when ALL hold (otherwise `{:error, :unauthorized}`):
 
     1. `ctx.caller` is a `%URI{}` (reject nil / `:any` / `:vm_internal` /
        non-URI caller — these are NOT identities, and cap-exempt dispatch
        does not vet the caller for us);
     2. the `:chat` sibling slice is present + readable (a map);
-    3. EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`,
-       OR `ctx.caller` is a key of the slice's `members` map (keyed by
-       `%URI{}`).
+    3. the authenticated holder durably holds the current-generation tier-1
+       member cap over this session through the unified `authorize/3` gate.
 
-  A nil/missing `owner_uri` matches NOTHING (an OWNERLESS session is NOT
-  readable by a nil/`:any` caller) — there is NO "allow if owner is nil"
-  branch. Because membership is re-read LIVE on every call, an ex-member
-  (post-LEAVE) is denied immediately with no revoke ordering to get wrong,
-  and a chat `kind: :session` cap holder who is NOT a socialware member is
-  denied (chat participation ≠ socialware read).
+  The structural owner and roster fields are projections, never authorization
+  inputs. Because the held cap is re-read LIVE on every call, an ex-member is
+  denied immediately even while a stale roster entry remains.
   """
 
   # lifecycle:state_slice_override
@@ -99,7 +94,7 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
     modes: [:call],
     description:
       "Read this socialware session's publisher trunk cursor + current state. " <>
-        "Cap-exempt; authorized by a live in-handler socialware owner/member check."
+        "Cap-exempt at dispatch; authorized by a live in-handler tier-1 member-cap check."
   )
 
   action(:history,
@@ -110,11 +105,11 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
     description:
       "Read events in the (from, to] cursor window from this socialware session's " <>
         "publisher trunk ring. Cap-exempt; authorized by a live in-handler " <>
-        "socialware owner/member check."
+        "tier-1 member-cap check."
   )
 
-  # The reads are EXEMPT from the CapBAC layer (no held cap). The handler
-  # below is the SOLE, fail-closed authority. MUST equal `actions/0` (the
+  # The reads are EXEMPT from the generic dispatch CapBAC layer. The handler
+  # below is the SOLE, fail-closed membership authority. MUST equal `actions/0` (the
   # plugin-check invariant asserts `required_caps keys ∪ cap_exempt == actions`).
   @impl Ezagent.ActionSet
   def cap_exempt_actions, do: [:snapshot, :history]
@@ -124,11 +119,10 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
   # The `action/3` macro auto-emits `cap_subjects/0` (from the `caps:`
   # declarations), so the caps-data-ownership invariant
   # (`Ezagent.Invariants.CapsDataOwnerTest`) requires a `data_owner/1`. But
-  # these actions are `cap_exempt_actions` — they NEVER gate via a held cap,
-  # and there is intentionally NO grantable owner/member cap (the whole point
-  # of P3-3: no grant-at-join, no revoke-at-leave, no backfill). The authority
-  # is the LIVE in-handler socialware owner/member check, NOT a cap a
-  # `data_owner` could be the grant authority for.
+  # these actions are `cap_exempt_actions` — they do not gate on a cap belonging
+  # to this read behavior. The authority is the LIVE in-handler tier-1 session
+  # membership check, not a snapshot/history cap whose grant authority
+  # `data_owner` could describe.
   #
   # So this declares `:no_owner` for every subject: there is no cap-grant
   # authority to formalize (`default_grants_from_data_owner/2` synthesizes
@@ -181,10 +175,9 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
   # P4 — the predicate is EXTRACTED into the shared
   # `Ezagent.Session.Membership` so that this behavior's read authz AND
   # the P4 chat_feed external read call ONE predicate (no copy-paste drift on a
-  # security boundary). This wrapper only extracts `caller` + the `:chat`
-  # sibling slice from the dispatch `ctx`; the byte-equivalent owner/member +
-  # `valid_caller_uri?` reconstruct-and-compare logic now lives in
-  # `ChatMembership.authorize/2`.
+  # security boundary). This wrapper extracts the authenticated holder, session
+  # URI, and `:chat` sibling slice from the dispatch `ctx`; the unified held-cap
+  # logic lives in `Membership.authorize/4`.
   #
   # Authorize ONLY when ALL hold (else `{:error, :unauthorized}`):
   #   - `ctx.caller` is a WELL-FORMED identity-principal `%URI{}` — a canonical
@@ -192,17 +185,16 @@ defmodule Ezagent.ActionSet.SocialwarePublisherRead do
   #     :vm_internal / non-URI AND a malformed/non-canonical/non-entity `%URI{}`,
   #     codex P3-3 HIGH);
   #   - the `:chat` sibling slice is present + readable (a map);
-  #   - EITHER the slice's `owner_uri` is a `%URI{}` AND `== ctx.caller`,
-  #     OR `ctx.caller` is a key of the slice's `members` map (URIs).
-  # A nil/missing `owner_uri` matches NOTHING; a nil/malformed caller is
-  # rejected up front. There is NO "allow if owner is nil" branch.
+  #   - the authenticated holder holds the current tier-1 member cap over S.
+  # Structural owner/roster equality never authorizes.
   defp authorize(ctx) do
     # A2.3 (R1.1) — pass `ctx.self_uri` (this session S) so the read requires the
     # caller to HOLD the member-cap over S, not merely appear in the roster.
     Ezagent.Session.Membership.authorize(
       get_chat_sibling(ctx),
       Map.get(ctx, :caller),
-      Map.get(ctx, :self_uri)
+      Map.get(ctx, :self_uri),
+      Map.get(ctx, :authenticated_principal)
     )
   end
 

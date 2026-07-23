@@ -64,7 +64,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.CreateSession do
 
     ctx =
       case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
-        {:ok, cap} -> %{caller: admin, caps: [cap]}
+        {:ok, cap} -> %{caller: admin, authenticated_principal: admin, caps: [cap]}
         {:error, reason} -> Mix.raise("create-session cap issuance failed: #{inspect(reason)}")
       end
 

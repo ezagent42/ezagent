@@ -35,7 +35,7 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
 
   test "the central verifier decision dominates an executed handler" do
     uri = unique_uri("dominance")
-    presenter = Ezagent.URI.new!("entity://team-alpha/user/dominance-presenter")
+    presenter = admin()
     target = Ezagent.URI.with_action(uri, :test, :noop)
 
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
@@ -64,7 +64,12 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
       target: target,
       mode: :call,
       args: %{msg: "dominated"},
-      ctx: %{caller: presenter, caps: MapSet.new([signed]), reply: :ignore},
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: MapSet.new([signed]),
+        reply: :ignore
+      },
       origin: :authenticated_external
     }
 
@@ -114,7 +119,8 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
                  :approve_admission,
                  :deny_admission,
                  :withdraw_admission,
-                 :composition_consent
+                 :composition_consent,
+                 :add_self
                ])
            }
 

@@ -115,7 +115,7 @@ defmodule Ezagent.Session.Config.Executor do
         target: Ezagent.URI.with_action(agent_uri, behavior, action),
         mode: :call,
         args: action_args,
-        ctx: %{caller: caller, caps: Tools.to_cap_set(caps), reply: {:caller_inbox, self()}},
+        ctx: %{caller: caller, authenticated_principal: caller, caps: Tools.to_cap_set(caps), reply: {:caller_inbox, self()}},
         origin: :authenticated_external
       })
     end

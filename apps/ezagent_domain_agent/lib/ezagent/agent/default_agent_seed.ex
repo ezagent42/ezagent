@@ -181,6 +181,7 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
              args: %{content: content},
              ctx: %{
                caller: admin,
+               authenticated_principal: admin,
                caps: MapSet.new([signed_cap]),
                reply: {:caller_inbox, self()}
              },

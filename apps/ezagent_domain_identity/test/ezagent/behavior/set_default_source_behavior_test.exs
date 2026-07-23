@@ -72,7 +72,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
-               %{caller: ctx.owner_uri, caps: owner_caps}
+               auth_ctx(ctx.owner_uri, owner_caps)
              )
 
     assert src == ctx.source
@@ -81,13 +81,15 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
 
   test "a stranger with unrelated caps is denied :missing_cap (no bypass)", ctx do
     stranger = Ezagent.URI.new!("entity://#{@ws}/user/eve")
+    assert {:ok, _user} = Users.create(stranger, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(stranger)
     stranger_caps = MapSet.new()
 
     assert {:error, :missing_cap} =
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
-               %{caller: stranger, caps: stranger_caps}
+               auth_ctx(stranger, stranger_caps)
              )
 
     # No pointer written.
@@ -125,7 +127,13 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
           workspace: @ws,
           owner_uri: victim_str
         },
-        %{mode: :call, caller: ctx.owner_uri, caps: owner_caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: ctx.owner_uri,
+          authenticated_principal: ctx.owner_uri,
+          caps: owner_caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     result = Ezagent.Router.dispatch(cmd)
@@ -164,7 +172,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: bob_source, workspace: @ws},
-               %{caller: ctx.owner_uri, caps: owner_caps}
+               auth_ctx(ctx.owner_uri, owner_caps)
              )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
@@ -184,7 +192,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: codex_source, workspace: @ws},
-               %{caller: ctx.owner_uri, caps: owner_caps}
+               auth_ctx(ctx.owner_uri, owner_caps)
              )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
@@ -205,7 +213,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: other_ws_source, workspace: @ws},
-               %{caller: ctx.owner_uri, caps: owner_caps}
+               auth_ctx(ctx.owner_uri, owner_caps)
              )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
@@ -218,7 +226,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
              UDS.set_via_dispatch(
                ctx.owner_uri,
                %{flavor: "cc", source_uri: "entity://#{@ws}/agent/ghost", workspace: @ws},
-               %{caller: ctx.owner_uri, caps: owner_caps}
+               auth_ctx(ctx.owner_uri, owner_caps)
              )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == nil
@@ -238,7 +246,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
       UDS.set_via_dispatch(
         ctx.owner_uri,
         %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
-        %{caller: ctx.owner_uri, caps: owner_caps}
+        auth_ctx(ctx.owner_uri, owner_caps)
       )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == ctx.source
@@ -247,7 +255,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
       UDS.set_via_dispatch(
         ctx.owner_uri,
         %{flavor: "cc", source_uri: src2, workspace: @ws},
-        %{caller: ctx.owner_uri, caps: owner_caps}
+        auth_ctx(ctx.owner_uri, owner_caps)
       )
 
     assert UDS.resolve(ctx.owner_str, @ws, "cc") == src2
@@ -260,7 +268,7 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
       UDS.set_via_dispatch(
         ctx.owner_uri,
         %{flavor: "cc", source_uri: ctx.source, workspace: @ws},
-        %{caller: ctx.owner_uri, caps: owner_caps}
+        auth_ctx(ctx.owner_uri, owner_caps)
       )
 
     rows = Ezagent.EventLog.stream_by_aggregate(ctx.owner_uri)
@@ -273,5 +281,9 @@ defmodule Ezagent.Credential.SetDefaultSourceBehaviorTest do
            end),
            "expected a default_credential_source_set audit event, got: " <>
              inspect(Enum.map(rows, & &1.event_name))
+  end
+
+  defp auth_ctx(%URI{} = principal, caps) do
+    %{caller: principal, authenticated_principal: principal, caps: caps}
   end
 end

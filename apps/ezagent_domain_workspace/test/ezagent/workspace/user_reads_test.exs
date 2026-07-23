@@ -42,6 +42,7 @@ defmodule Ezagent.Workspace.UserReadsTest do
 
     for uri <- [member, other, outsider] do
       {:ok, _row} = Ezagent.Users.create(uri, nil, [])
+      :ok = spawn_principal(uri)
     end
 
     {:ok, _} = Ezagent.Workspace.Store.update_members(ws_name, [member, other])
@@ -91,8 +92,7 @@ defmodule Ezagent.Workspace.UserReadsTest do
   } do
     Process.put({:fake_user_listing, :users}, [fake_user_row(member)])
 
-    operator =
-      Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+    operator = provisioned_operator()
 
     assert UserReads.users(operator, workspace_uri) == [fake_user_row(member)]
   end
@@ -107,8 +107,7 @@ defmodule Ezagent.Workspace.UserReadsTest do
   end
 
   test "reveal_metadata?/2: self and operators only", %{member: member, other: other} do
-    operator =
-      Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+    operator = provisioned_operator()
 
     assert UserReads.reveal_metadata?(member, member)
     refute UserReads.reveal_metadata?(member, other)
@@ -157,8 +156,7 @@ defmodule Ezagent.Workspace.UserReadsTest do
     row = fake_user_row(other)
     Process.put({:fake_user_listing, :by_uri}, %{URI.to_string(other) => row})
 
-    operator =
-      Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+    operator = provisioned_operator()
 
     assert UserReads.user(operator, other) == {:ok, row}
   end
@@ -191,5 +189,22 @@ defmodule Ezagent.Workspace.UserReadsTest do
 
   defmodule Defunct do
     @moduledoc false
+  end
+
+  defp provisioned_operator do
+    operator =
+      Ezagent.URI.new!("entity://system/user/op-#{System.unique_integer([:positive])}")
+
+    {:ok, _row} = Ezagent.Users.create(operator, nil, [])
+    :ok = spawn_principal(operator)
+    operator
+  end
+
+  defp spawn_principal(%URI{} = uri) do
+    case Ezagent.SpawnRegistry.spawn(uri) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
+      {:error, reason} -> flunk("principal spawn failed: #{inspect(reason)}")
+    end
   end
 end

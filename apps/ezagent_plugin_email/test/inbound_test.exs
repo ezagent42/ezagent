@@ -110,6 +110,8 @@ defmodule Ezagent.Email.InboundTest do
       [inv] = dispatched(agent)
       assert inv.mode == :call
       assert %URI{scheme: "entity"} = inv.ctx.caller
+      assert inv.ctx.authenticated_principal == Ezagent.Entity.User.admin_uri()
+      refute inv.ctx.caller == inv.ctx.authenticated_principal
       assert MapSet.size(inv.ctx.caps) == 1
       # self-echo guard stamp present
       assert inv.args.message.body._email_origin == true
@@ -269,7 +271,7 @@ defmodule Ezagent.Email.InboundTest do
 
     test "a capability authority failure retains the inbox item" do
       {su, _row_id} = verified_binding!()
-      {:ok, _authority} = Ezagent.Cap.Authority.open(su, :session)
+      {:ok, _pid} = Ezagent.LocalRuntime.ensure_started(su)
       :ok = Ezagent.Cap.Authority.retire(su)
       {agent, opts} = harness()
       r = rec(@alias)

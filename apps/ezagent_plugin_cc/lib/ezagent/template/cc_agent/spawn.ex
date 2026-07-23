@@ -198,7 +198,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
             {:ok, [agent_uri], base_meta |> Map.merge(role_meta) |> Map.merge(credential_meta)}
           else
             {:error, reason} ->
-              _ = Ezagent.Kind.terminate(agent_uri)
+              _ = Ezagent.Kind.terminate!(agent_uri)
               handle_spawn_failure(agent_uri, reason)
           end
       end
@@ -258,6 +258,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
       respawn_template_data: tmpl_with_dir
     }
 
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} ->
         {:ok, :started}

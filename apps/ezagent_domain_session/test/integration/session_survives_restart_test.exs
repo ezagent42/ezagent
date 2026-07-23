@@ -53,6 +53,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
         "entity://team-alpha/user/restart-member-#{System.unique_integer([:positive])}"
       )
 
+    {:ok, _row} = Ezagent.Users.create(member_uri, "pw-not-secret", [])
+
     {:ok, member_pid} =
       Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
@@ -97,6 +99,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -144,8 +147,8 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
       pid1 = spawn_session(session_uri)
 
       # 2. Add the member at runtime via the production chat.join path.
-      assert {:ok, %{members: members}} = join(session_uri, member_uri)
-      assert member_uri in members
+      assert {:ok, %{status: :granted, member: ^member_uri}} = join(session_uri, member_uri)
+      wait_until(fn -> Map.has_key?(list_members(session_uri), member_uri) end)
 
       # 3. The :on_change snapshot must have been written to kind_snapshots.
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end)
@@ -212,6 +215,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionSurvivesRestartTest do
                Ezagent.WorkspaceRegistry.lookup(session_uri)
 
       {:ok, _} = join(session_uri, member_uri)
+      wait_until(fn -> Map.has_key?(list_members(session_uri), member_uri) end)
       wait_until(fn -> not is_nil(KindSnapshot.get(uri_str)) end)
 
       # Drop the Kind AND the ETS binding — simulating a phx restart

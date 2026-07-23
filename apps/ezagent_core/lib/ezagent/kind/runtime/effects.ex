@@ -319,10 +319,12 @@ defmodule Ezagent.Kind.Runtime.Effects do
   defp enrich_dispatch_cmd(%Ezagent.Cmd{ctx: cmd_ctx} = cmd, ctx) do
     self_uri = Map.get(ctx, :self_uri)
     trace_id = Map.get(ctx, :trace_id)
+    authenticated_principal = Map.get(ctx, :authenticated_principal)
 
     new_ctx =
       cmd_ctx
       |> maybe_put_default(:caller, self_uri)
+      |> maybe_put_default(:authenticated_principal, authenticated_principal)
       |> maybe_put_default(:trace_id, trace_id)
 
     %{cmd | ctx: new_ctx}
@@ -506,11 +508,11 @@ defmodule Ezagent.Kind.Runtime.Effects do
               "is nil; skipping"
           )
         else
-          _ = Ezagent.Kind.terminate(self_uri)
+          _ = Ezagent.Kind.terminate!(self_uri)
         end
 
       {:terminate, %URI{} = target_uri} ->
-        _ = Ezagent.Kind.terminate(target_uri)
+        _ = Ezagent.Kind.terminate!(target_uri)
 
       {:terminate, other} ->
         Logger.warning(

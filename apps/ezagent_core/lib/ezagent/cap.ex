@@ -24,6 +24,9 @@ defmodule Ezagent.Cap do
   """
   @spec issue(authorization(), URI.t(), Capability.t()) ::
           {:ok, artifact()} | {:error, term()}
+  def issue(_authorization, %URI{}, %Capability{action: :self_license}),
+    do: {:error, :reserved_action}
+
   def issue(authorization, %URI{} = grantee_uri, %Capability{} = cap) do
     {caps, context} = authorization_context(authorization)
 
@@ -34,12 +37,14 @@ defmodule Ezagent.Cap do
 
       ctx = %{
         caller: Map.fetch!(context, :caller),
+        authenticated_principal: Map.fetch!(context, :authenticated_principal),
         caps: authority_caps,
         reply: {:caller_inbox, self()}
       }
 
       if Ezagent.Cap.Authority.current_target?(target) do
-        with {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type() do
+        with :ok <- current_target_generation(target),
+             {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type() do
           Ezagent.Cap.Grant.authorize_and_issue_current(
             kind_type,
             grant_target,
@@ -97,6 +102,7 @@ defmodule Ezagent.Cap do
 
   defp action_context(pid, instance, action) when pid == self() do
     with true <- Ezagent.Cap.Authority.current_target?(instance),
+         :ok <- current_target_generation(instance),
          {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
          {:ok, {kind_module, behavior_module}} <- self_target_subject(kind_type, action) do
       {:ok, {kind_module, behavior_module}}
@@ -113,6 +119,23 @@ defmodule Ezagent.Cap do
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
       {:ok, {kind_module, behavior_module}}
+    end
+  end
+
+  # G-6/MF5: the target process may retain generation N after an external
+  # regenesis atomically advances the durable active row to N+1. It must not
+  # use that stale private key to construct or sign any new self-target
+  # artifact. Both values are read explicitly: the process-local sealed signer
+  # and the current DB authority generation.
+  defp current_target_generation(target) do
+    with {:ok, process_generation} <-
+           Ezagent.Cap.Authority.current_process_generation(target),
+         {:ok, active_generation} <- Ezagent.Cap.Authority.current_generation(target),
+         true <- process_generation == active_generation do
+      :ok
+    else
+      false -> {:error, :stale_target_generation}
+      :error -> {:error, :authority_unavailable}
     end
   end
 
@@ -209,6 +232,44 @@ defmodule Ezagent.Cap do
   @spec authorize(URI.t(), Enumerable.t(), map()) ::
           {:ok, Capability.t()} | Ezagent.Cap.Authorize.denial()
   defdelegate authorize(holder_uri, candidate_caps, needed), to: Ezagent.Cap.Authorize
+
+  @doc """
+  Revoke every capability targeting `target` by atomically advancing its
+  authority generation.
+
+  The target Kind performs the bump in its own mailbox. The authenticated
+  holder in `ctx` must present the target's current grant/manage capability;
+  `ctx.caller` may be machinery and is never used as the holder.
+  """
+  @spec revoke_all_to(URI.t(), map()) :: {:ok, pos_integer()} | {:error, term()}
+  def revoke_all_to(%URI{} = target, %{} = ctx) do
+    target = Ezagent.URI.instance(target)
+
+    with %URI{} = holder <- Map.get(ctx, :authenticated_principal),
+         {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(target),
+         false <- pid == self() do
+      result =
+        GenServer.call(
+          pid,
+          {:ezagent_revoke_all_to, ctx},
+          Ezagent.Invocation.activate_budget_ms()
+        )
+
+      case result do
+        {:ok, generation} = ok ->
+          emit_revoke_all_audit(target, holder, generation, ctx)
+          ok
+
+        {:error, _reason} = error ->
+          error
+      end
+    else
+      nil -> {:error, :authenticated_principal_required}
+      true -> {:error, :cannot_revoke_all_from_target_process}
+      {:error, _reason} = error -> error
+      _ -> {:error, :authenticated_principal_required}
+    end
+  end
 
   @doc """
   Return born-signed, receiver-bound artifacts that may enter a cap store.
@@ -344,7 +405,7 @@ defmodule Ezagent.Cap do
   @doc false
   @spec authorization_context(authorization()) :: {MapSet.t(Capability.t()), map()}
   def authorization_context({:held_by, %URI{} = actor}) do
-    {load_held_caps(actor), %{caller: actor}}
+    {load_held_caps(actor), %{caller: actor, authenticated_principal: actor}}
   end
 
   def authorization_context({:admin, %URI{} = admin}) do
@@ -360,7 +421,7 @@ defmodule Ezagent.Cap do
         MapSet.new()
       end
 
-    {caps, %{caller: admin}}
+    {caps, %{caller: admin, authenticated_principal: admin}}
   end
 
   defp load_held_caps(actor) do
@@ -385,4 +446,36 @@ defmodule Ezagent.Cap do
   end
 
   defp authority_caps(_authorization, _target, caps), do: {:ok, caps}
+
+  defp emit_revoke_all_audit(target, holder, generation, ctx) do
+    workspace_uri =
+      case Capability.workspace_of(target) do
+        %URI{} = workspace -> workspace
+        _ -> Ezagent.URI.workspace(:system)
+      end
+
+    event_ctx = %{
+      caller: holder,
+      workspace_uri: workspace_uri,
+      trace_id: Map.get(ctx, :trace_id)
+    }
+
+    case Ezagent.EventLog.append(
+           target,
+           :cap_revoked_all,
+           %{new_generation: generation},
+           event_ctx
+         ) do
+      {:ok, _event_id} ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+        Logger.warning("Ezagent.Cap.revoke_all_to audit append failed: #{inspect(reason)}")
+    end
+  rescue
+    error ->
+      require Logger
+      Logger.warning("Ezagent.Cap.revoke_all_to audit append raised: #{Exception.message(error)}")
+  end
 end

@@ -315,6 +315,7 @@ defmodule Ezagent.ActionSet.Agent.Receive do
         },
         %{
           caller: self_uri,
+          authenticated_principal: self_uri,
           caps: MapSet.new([signed_cap]),
           reply: :ignore
         }

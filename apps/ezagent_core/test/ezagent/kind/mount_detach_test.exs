@@ -62,7 +62,12 @@ defmodule Ezagent.Kind.MountDetachTest do
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: presenter, caps: MapSet.new([cap]), reply: :ignore}
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
     })
   end
 

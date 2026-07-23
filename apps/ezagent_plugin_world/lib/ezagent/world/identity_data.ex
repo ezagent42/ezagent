@@ -219,11 +219,11 @@ defmodule Ezagent.World.IdentityData do
          %{component: "pty_terminal", entity_uri: agent_uri},
          base,
          _workspace,
-         _caller,
+         caller,
          caps
        ) do
     agent_uri_str = encode_uri(agent_uri)
-    authorized? = Ezagent.Domain.Pty.Access.may_read?(agent_uri, caps)
+    authorized? = Ezagent.Domain.Pty.Access.may_read?(caller, agent_uri, caps)
 
     base
     |> Map.put("agent_uri", agent_uri_str)
@@ -255,7 +255,7 @@ defmodule Ezagent.World.IdentityData do
          caller,
          caps
        ) do
-    case Ezagent.Domain.Agent.read_config(agent_uri, %{caller: caller, caps: caps}) do
+    case Ezagent.Domain.Agent.read_config(agent_uri, authenticated_ctx(caller, caps)) do
       {:ok, cascade} ->
         flavor = flavor_for("agent", agent_uri)
 
@@ -549,7 +549,12 @@ defmodule Ezagent.World.IdentityData do
            target: target,
            mode: :call,
            args: %{},
-           ctx: %{caller: caller_uri, caps: caller_caps, reply: :sync},
+           ctx: %{
+             caller: caller_uri,
+             authenticated_principal: caller_uri,
+             caps: caller_caps,
+             reply: :sync
+           },
            origin: :authenticated_external
          }) do
       {:ok, %{api_keys: list}} when is_list(list) -> Enum.map(list, &jsonable/1)
@@ -597,7 +602,7 @@ defmodule Ezagent.World.IdentityData do
 
     Ezagent.Identity.admin?(caller_uri) or
       (not is_nil(creator_uri) and same_uri?(caller_uri, creator_uri)) or
-      Ezagent.Identity.caps_authorize?(caps, needed)
+      Ezagent.Identity.caps_authorize?(caller_uri, caps, needed)
   end
 
   defp can_edit_api_keys?(_agent_uri, _caller, _caps), do: false
@@ -636,7 +641,7 @@ defmodule Ezagent.World.IdentityData do
   # NO self/data-owner disjunct) the dispatch enforced — fixing FP5 S5 #115
   # (codex MEDIUM-2) once, in one place. This facade keeps only the surface call.
   defp sandbox_read(%URI{} = agent_uri, caller_uri, caller_caps) do
-    Ezagent.Domain.Agent.read_sandbox(agent_uri, %{caller: caller_uri, caps: caller_caps})
+    Ezagent.Domain.Agent.read_sandbox(agent_uri, authenticated_ctx(caller_uri, caller_caps))
   end
 
   defp sandbox_read(_agent_uri, _caller_uri, _caller_caps), do: {:error, :invalid_entity}
@@ -676,7 +681,7 @@ defmodule Ezagent.World.IdentityData do
   defp put_credential_statuses(rows, _caller, _caps), do: rows
 
   defp agent_credential_status(%URI{} = agent_uri, caller, caps) do
-    case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{caller: caller, caps: caps}) do
+    case Ezagent.Domain.Agent.read_credential_status(agent_uri, authenticated_ctx(caller, caps)) do
       {:ok, status} -> encode_credential_status(status)
       _ -> nil
     end
@@ -692,6 +697,9 @@ defmodule Ezagent.World.IdentityData do
   end
 
   defp agent_credential_status(_agent_uri, _caller, _caps), do: nil
+
+  defp authenticated_ctx(caller, caps),
+    do: %{caller: caller, authenticated_principal: caller, caps: caps}
 
   # JSON-safe shape. `checked_at` (a DateTime) becomes an ISO8601 string (NOT the
   # field-map `jsonable/1` would emit for a struct); `expires_at` is epoch ms or nil.

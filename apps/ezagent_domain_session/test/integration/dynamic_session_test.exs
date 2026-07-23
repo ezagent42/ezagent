@@ -25,7 +25,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
     # Admin's URI is `entity://system/user/admin` → workspace `system`.
     # SPEC #366 (Allen 2026-05-26) — `:template_name` is now required.
     assert {:ok, session_uri, _meta} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri, template_name: "default")
+             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri,
+               template_name: "default"
+             )
 
     assert URI.to_string(session_uri) == "session://system/default/#{short}"
 
@@ -46,11 +48,16 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
   test "create_session is idempotent — re-call returns same URI" do
     short = "idemp-#{System.unique_integer([:positive])}"
     admin_uri = User.admin_uri()
+
     assert {:ok, uri1, _meta1} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri, template_name: "default")
+             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri,
+               template_name: "default"
+             )
 
     assert {:ok, uri2, _meta2} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri, template_name: "default")
+             EzagentDomainInstanceMessage.SessionCreator.create_session(short, admin_uri,
+               template_name: "default"
+             )
 
     assert uri1 == uri2
   end
@@ -60,13 +67,18 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
     # now created via this same facade by the first-login wizard).
     # An empty string still doesn't make sense as a session name.
     assert {:error, :short_name_required} =
-             EzagentDomainInstanceMessage.SessionCreator.create_session("", User.admin_uri(), template_name: "default")
+             EzagentDomainInstanceMessage.SessionCreator.create_session("", User.admin_uri(),
+               template_name: "default"
+             )
   end
 
   test "list_sessions includes dynamic sessions" do
     short = "listed-#{System.unique_integer([:positive])}"
+
     {:ok, _, _meta} =
-      EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+      EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+        template_name: "default"
+      )
 
     uris = EzagentDomainInstanceMessage.list_sessions() |> Enum.map(&URI.to_string/1)
     assert "session://system/default/#{short}" in uris
@@ -79,7 +91,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DynamicSessionTest do
     short = "ws-scoped-#{System.unique_integer([:positive])}"
 
     {:ok, _, _meta} =
-      EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(), template_name: "default")
+      EzagentDomainInstanceMessage.SessionCreator.create_session(short, User.admin_uri(),
+        template_name: "default"
+      )
 
     system_uris =
       "workspace://system"

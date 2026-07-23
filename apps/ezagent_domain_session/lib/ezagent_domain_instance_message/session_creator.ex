@@ -70,6 +70,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
     DefinitionAgents,
+    Derivation,
     Listing,
     Materializer,
     Rollback,
@@ -417,6 +418,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defdelegate join_session_members(session_uri, members), to: Materializer
 
   @doc false
+  @spec grant_session_owner_membership(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def grant_session_owner_membership(%URI{} = session_uri, %URI{} = owner_uri) do
+    Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
+  end
+
+  @doc false
   def list_caps_for_materialization(%URI{} = actor_uri),
     do: Ezagent.Identity.list_caps_for(actor_uri)
 
@@ -664,7 +671,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # idempotently; an INCOMPLETE one is rolled back fully (§4 step 9)
     # then RECREATED fresh.
     with {:ok, behaviors} <-
-           Installation.behavior_set_for_template(template_content, workspace_uri) do
+           Installation.behavior_set_for_template(template_content, workspace_uri),
+         :ok <-
+           Derivation.record(session_uri, {effective_owner, workspace_uri, session_template_uri}) do
+      # derivation-edge: recorded-by Derivation.record/2 in this with-chain
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
@@ -767,7 +777,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          template_content
        ) do
     with {:ok, behaviors} <-
-           Installation.behavior_set_for_template(template_content, workspace_uri) do
+           Installation.behavior_set_for_template(template_content, workspace_uri),
+         :ok <-
+           Derivation.record(session_uri, {effective_owner, workspace_uri, session_template_uri}) do
+      # derivation-edge: recorded-by Derivation.record/2 in this with-chain
       case Ezagent.Kind.spawn(Session, %{
              uri: session_uri,
              owner_uri: effective_owner,
@@ -852,7 +865,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
        ) do
     result =
       with :ok <- Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri),
-           :ok <- Ezagent.Identity.TargetAuthority.ensure(effective_owner, session_uri),
+           :ok <-
+             Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(
+               session_uri,
+               effective_owner
+             ),
            :ok <-
              Materializer.materialize_template_declaration(
                session_uri,
@@ -863,11 +880,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
            {:ok, _binding} <-
              Materializer.prepare_orchestrator_binding(session_uri, workspace_uri),
            :ok <- Materializer.join_session_members(session_uri, [effective_owner]),
-           # F7 PR-A — grant the owner the session-membership authority to remove
-           # a participant (the entry gate on `session.remove_participant`). On
-           # the COMMON finalize path so EVERY session's owner gets it (user
-           # removal applies to non-orchestrator sessions too). `granted_by:
-           # owner`, #154-clean. Idempotent.
+           # F7 PR-A: grant every session owner the member-scoped authority to
+           # remove participants. `granted_by: owner`, #154-clean and idempotent.
            :ok <-
              Materializer.grant_owner_remove_participant_cap(
                session_uri,
@@ -916,11 +930,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         ok
 
       {:error, reason} ->
-        # Step 9 — rollback of the freshly-created session. No
-        # orchestrator was spawned in THIS arm (the orchestrator-bearing
-        # branch delegates to `ensure_orchestrated_session/4`, which owns
-        # its own rollback), so the orchestrator URI is nil — but we
-        # still pass owner + workspace so any owner cap is revoked.
+        # Step 9: this arm spawned no orchestrator; revoke the owner caps too.
         rollback_session(session_uri, nil,
           owner_uri: effective_owner,
           workspace_uri: workspace_uri

@@ -41,6 +41,7 @@ defmodule Ezagent.RouterTest do
       cmd =
         Cmd.new(target, :noop, %{msg: "hi-router"}, %{
           caller: presenter,
+          authenticated_principal: presenter,
           reply: {:caller_inbox, self()},
           caps: MapSet.new([cap])
         })
@@ -62,6 +63,7 @@ defmodule Ezagent.RouterTest do
         Cmd.new(target, :noop, %{msg: "cast-router"}, %{
           mode: :cast,
           caller: presenter,
+          authenticated_principal: presenter,
           reply: {:caller_inbox, self()},
           caps: MapSet.new([cap])
         })
@@ -103,6 +105,7 @@ defmodule Ezagent.RouterTest do
       cmd =
         Cmd.new(target, :noop, %{msg: "x"}, %{
           caller: presenter,
+          authenticated_principal: presenter,
           reply: {:caller_inbox, self()},
           caps: MapSet.new([cap])
         })
@@ -121,6 +124,7 @@ defmodule Ezagent.RouterTest do
       cmd =
         Cmd.new(target, :fail, %{}, %{
           caller: presenter,
+          authenticated_principal: presenter,
           reply: {:caller_inbox, self()},
           caps: MapSet.new([fail_cap])
         })

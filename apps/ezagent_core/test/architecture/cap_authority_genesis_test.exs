@@ -38,8 +38,9 @@ defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
     assert {:ok, first} = Authority.open(uri, :agent)
     assert :ok = Authority.retire(uri)
     assert {:error, :regenesis_required} = Authority.open(uri, :agent)
-    assert {:error, :admin_required} = Authority.regenesis(uri, :agent, attacker)
-    assert {:ok, second} = Authority.regenesis(uri, :agent, admin)
+    assert {:error, :cap_context_required} = Authority.regenesis(uri, :agent, attacker)
+    assert {:error, :cap_context_required} = Authority.regenesis(uri, :agent, admin)
+    assert {:ok, second} = Authority.regenesis(uri, :agent)
     assert second.generation == first.generation + 1
     refute second.key_id == first.key_id
 

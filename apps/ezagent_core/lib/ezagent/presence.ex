@@ -104,9 +104,8 @@ defmodule Ezagent.Presence do
   The cap-only `Ezagent.ActionSet.Presence` marker that the dormant check
   consumed was deleted in the #154 cleanup (2026-06-20).
 
-  The URI scheme is still validated: only `entity://user/...` and
-  `entity://agent/...` URIs are supported; any other scheme raises
-  `ArgumentError`.
+  The URI scheme is still validated: only entity user, agent, and worker
+  principals are supported; any other scheme raises `ArgumentError`.
 
   Subscribers receive `{:ezagent_presence_diff, topic, %{joins,
   leaves, current}}` messages.
@@ -137,6 +136,7 @@ defmodule Ezagent.Presence do
     cond do
       Ezagent.URI.type?(uri, :user) -> Ezagent.Entity.User
       Ezagent.URI.type?(uri, :agent) -> Ezagent.Entity.Agent
+      Ezagent.URI.type?(uri, :worker) -> Ezagent.Entity.Agent
       true -> raise_unsupported_kind!(uri)
     end
   end
@@ -146,7 +146,7 @@ defmodule Ezagent.Presence do
   defp raise_unsupported_kind!(%URI{} = uri) do
     raise ArgumentError,
           "Ezagent.Presence.subscribe/1: unsupported URI " <>
-            "#{inspect(Ezagent.URI.stable_key(uri))}. Only entity user and " <>
-            "entity agent URIs are supported in V1."
+            "#{inspect(Ezagent.URI.stable_key(uri))}. Only entity user, agent, " <>
+            "and worker URIs are supported."
   end
 end

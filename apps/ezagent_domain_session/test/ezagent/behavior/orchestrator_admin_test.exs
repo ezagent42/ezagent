@@ -59,7 +59,13 @@ defmodule Ezagent.ActionSet.OrchestratorAdminTest do
 
     test "invoke/4 raises (cap-only — should never be dispatched)" do
       assert_raise RuntimeError, ~r/cap-only/, fn ->
-        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.OrchestratorAdmin, :restart, %{}, %{}, %{})
+        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+          Ezagent.ActionSet.OrchestratorAdmin,
+          :restart,
+          %{},
+          %{},
+          %{}
+        )
       end
     end
   end
@@ -69,7 +75,9 @@ defmodule Ezagent.ActionSet.OrchestratorAdminTest do
       # Behavior.Session.data_owner reads slice.chat.owner_uri via
       # Session.owner/1. Without a live session, owner/1 returns
       # {:error, _} and Chat.data_owner returns :no_owner.
-      session_uri = Ezagent.URI.new!("session://system/default/dead-test-session-#{:rand.uniform(99999)}")
+      session_uri =
+        Ezagent.URI.new!("session://system/default/dead-test-session-#{:rand.uniform(99999)}")
+
       assert OrchestratorAdmin.data_owner(session_uri) == :no_owner
     end
 
@@ -79,7 +87,9 @@ defmodule Ezagent.ActionSet.OrchestratorAdminTest do
 
     test "for any other input, returns :no_owner" do
       assert OrchestratorAdmin.data_owner(Ezagent.URI.new!("workspace://system")) == :no_owner
-      assert OrchestratorAdmin.data_owner(Ezagent.URI.new!("entity://system/user/admin")) == :no_owner
+
+      assert OrchestratorAdmin.data_owner(Ezagent.URI.new!("entity://system/user/admin")) ==
+               :no_owner
     end
   end
 end

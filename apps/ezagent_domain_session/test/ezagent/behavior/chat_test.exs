@@ -80,7 +80,9 @@ defmodule Ezagent.ActionSet.ChatTest do
                [
                  :send,
                  :join,
+                 :add_self,
                  :leave,
+                 :transfer_owner,
                  :remove_participant,
                  :assign_role,
                  :attach,
@@ -118,6 +120,8 @@ defmodule Ezagent.ActionSet.ChatTest do
                  # Membership-cap unification Part C (spec §C.2) — pending
                  # admission requests; distinct from :members, empty by default.
                  pending_members: %{},
+                 join_cursors: %{},
+                 join_facets: %{},
                  owner_uri: nil,
                  last_seen: %{},
                  last_message_id: nil,
@@ -185,6 +189,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       # F7 PR-A — :remove_participant added (isomorphic participant removal).
       assert keys ==
                [
+                 :add_self,
                  :approve_admission,
                  :assign_role,
                  :attach,
@@ -198,6 +203,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  :set_legends,
                  :set_prompt_templates,
                  :set_working_copy,
+                 :transfer_owner,
                  :withdraw_admission
                ]
     end
@@ -974,7 +980,17 @@ defmodule Ezagent.ActionSet.ChatTest do
             args: %{message: msg},
             ctx: %{
               caller: sender,
-              caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+              authenticated_principal: sender,
+              caps:
+                MapSet.new([
+                  signed_fixture_cap!(
+                    session_uri,
+                    :session,
+                    Ezagent.ActionSet.Session,
+                    :send,
+                    sender
+                  )
+                ]),
               reply: :ignore
             }
           },
@@ -1291,7 +1307,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   end
 
   describe "invoke(:join, ...)" do
-    test "Process.monitor target Kind + add to members + returns members list" do
+    test "returns granted status and leaves projection to holder self-add" do
       session_uri =
         URI.new!("session://team-alpha/default/join-#{System.unique_integer([:positive])}")
 
@@ -1305,7 +1321,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: member_uri}
 
-      assert {:ok, new_slice, %{members: [^member_uri]}} =
+      assert {:ok, new_slice, %{status: :granted, member: ^member_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
                  Ezagent.ActionSet.Session,
                  :join,
@@ -1314,16 +1330,13 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      assert Map.has_key?(new_slice.members, member_uri)
-      assert new_slice.members[member_uri].online == true
-      assert map_size(new_slice.monitors) == 1
-      [{ref, ^member_uri}] = Map.to_list(new_slice.monitors)
-      assert is_reference(ref)
+      refute Map.has_key?(new_slice.members, member_uri)
+      assert new_slice.join_facets[member_uri] == %{}
 
       GenServer.stop(member_pid)
     end
 
-    test "returns error when member URI not in KindRegistry" do
+    test "accepts an unregistered member because cap delivery is durable" do
       session_uri =
         URI.new!(
           "session://team-alpha/default/join-missing-#{System.unique_integer([:positive])}"
@@ -1335,7 +1348,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: missing_uri}
 
-      assert {:error, {:member_not_registered, ^missing_uri}} =
+      assert {:ok, new_slice, %{status: :granted, member: ^missing_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
                  Ezagent.ActionSet.Session,
                  :join,
@@ -1343,6 +1356,8 @@ defmodule Ezagent.ActionSet.ChatTest do
                  %{member: missing_uri},
                  ctx
                )
+
+      refute Map.has_key?(new_slice.members, missing_uri)
     end
 
     test "RF-6: a PASSIVE data actor is REJECTED from :join even when registered" do
@@ -1392,7 +1407,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       slice = SessionBehavior.init_slice(%{}).state
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: normal_uri}
 
-      assert {:ok, new_slice, %{members: [^normal_uri]}} =
+      assert {:ok, new_slice, %{status: :granted, member: ^normal_uri}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
                  Ezagent.ActionSet.Session,
                  :join,
@@ -1401,14 +1416,14 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      assert Map.has_key?(new_slice.members, normal_uri)
+      refute Map.has_key?(new_slice.members, normal_uri)
     end
 
-    test "notifies the joinee when member is a user URI (todo.md notification coverage)" do
-      # med-batch MED-3 — :join must emit a `:session_member_joined`
-      # notification to the joinee's inbox so a freshly-added member
-      # learns they were added to a session. Gated by user_uri?/1:
-      # only user URIs get notifications (agents have no inbox).
+    test "grant-only join does not notify before holder self-add projects membership" do
+      # M-6 — :join grants authority only. The holder's Identity convergence
+      # later dispatches :add_self, and that projection seam owns the joined
+      # notification. Emitting here would announce roster membership before a
+      # current entitlement has actually been observed.
       session_uri =
         URI.new!("session://team-alpha/default/join-notify-#{System.unique_integer([:positive])}")
 
@@ -1431,15 +1446,7 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      assert_receive {:notification, ^member_uri,
-                      %{
-                        type: :session_member_joined,
-                        body: %{text: text, session_uri: ^session_uri},
-                        source: Ezagent.ActionSet.Session
-                      }},
-                     1_000
-
-      assert is_binary(text)
+      refute_receive {:notification, ^member_uri, %{type: :session_member_joined}}, 100
 
       GenServer.stop(member_pid)
     end
@@ -1483,7 +1490,7 @@ defmodule Ezagent.ActionSet.ChatTest do
       GenServer.stop(agent_pid)
     end
 
-    test "replays missed messages on rejoin (last_seen populated)" do
+    test "grant-only rejoin preserves replay cursor until holder self-add" do
       session_uri =
         URI.new!("session://team-alpha/default/replay-#{System.unique_integer([:positive])}")
 
@@ -1525,8 +1532,9 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      # last_seen for this member is cleared
-      refute Map.has_key?(new_slice.last_seen, member_uri)
+      # M-6 — replay and cursor clearing happen only after the holder's
+      # current entitlement projects via :add_self.
+      assert new_slice.last_seen[member_uri] == base
 
       GenServer.stop(member_pid)
     end
@@ -1566,7 +1574,7 @@ defmodule Ezagent.ActionSet.ChatTest do
   end
 
   describe "invoke(:merge_member, ...)" do
-    test "joins the login user, removes anon, rewrites last_message, and repoints read markers" do
+    test "rejects a synthetic relabel when the target-backed member-cap grant cannot land" do
       session_uri =
         Ezagent.URI.new!(
           "session://team-alpha/default/merge-fresh-#{System.unique_integer([:positive])}"
@@ -1611,7 +1619,7 @@ defmodule Ezagent.ActionSet.ChatTest do
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
 
-      assert {:ok, new_slice, %{members: members}, effects} =
+      assert {:error, {:member_cap_grant_failed, _reason}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
                  Ezagent.ActionSet.Session,
                  :merge_member,
@@ -1620,40 +1628,17 @@ defmodule Ezagent.ActionSet.ChatTest do
                  ctx
                )
 
-      refute Map.has_key?(new_slice.members, anon_uri)
-      assert %{online: true} = new_slice.members[login_uri]
-      assert login_uri in members
-      refute anon_uri in members
-      refute Map.has_key?(new_slice.monitors, anon_ref)
-      refute Map.has_key?(new_slice.last_seen, anon_uri)
-      assert new_slice.owner_uri == other_uri
-      assert new_slice.last_message.sender == login_uri
-      assert new_slice.last_message.mentions == [login_uri, other_uri]
-      assert Ezagent.Session.ReadMarker.last_read(session_uri, login_uri, :read) == msg_id
-      assert Ezagent.Session.ReadMarker.last_read(session_uri, anon_uri, :read) == nil
-
-      assert Enum.any?(
-               effects,
-               &match?(
-                 {:notify, _,
-                  {:session_membership_change, ^session_uri, {:member_left, ^anon_uri}}},
-                 &1
-               )
-             )
-
-      assert Enum.any?(
-               effects,
-               &match?(
-                 {:notify, _,
-                  {:session_membership_change, ^session_uri, {:member_joined, ^login_uri}}},
-                 &1
-               )
-             )
+      # A synthetic roster entry is not authority. Without a target-backed cap
+      # grant the merge aborts before repointing or rewriting anything; the real
+      # composed-seam success path is covered by FunnelCoverageTest +
+      # AnonTakeoverTest.
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, anon_uri, :read) == msg_id
+      assert Ezagent.Session.ReadMarker.last_read(session_uri, login_uri, :read) == nil
 
       GenServer.stop(login_pid)
     end
 
-    test "dedupes when login user is already a member and is idempotent on re-run" do
+    test "does not trust an existing roster entry when its cap grant cannot be proven" do
       session_uri =
         Ezagent.URI.new!(
           "session://team-alpha/default/merge-dedup-#{System.unique_integer([:positive])}"
@@ -1683,7 +1668,7 @@ defmodule Ezagent.ActionSet.ChatTest do
 
       ctx = %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: login_uri}
 
-      assert {:ok, merged, _result, _effects} =
+      assert {:error, {:member_cap_grant_failed, _reason}} =
                EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
                  Ezagent.ActionSet.Session,
                  :merge_member,
@@ -1691,25 +1676,6 @@ defmodule Ezagent.ActionSet.ChatTest do
                  %{from: anon_uri, to: login_uri},
                  ctx
                )
-
-      assert Map.keys(merged.members) == [login_uri]
-      assert merged.members[login_uri].role_name == "confirmed"
-      assert merged.last_message.sender == login_uri
-      assert merged.last_message.mentions == [login_uri]
-
-      assert {:ok, rerun, _result, _effects} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke_with_effects(
-                 Ezagent.ActionSet.Session,
-                 :merge_member,
-                 merged,
-                 %{from: anon_uri, to: login_uri},
-                 ctx
-               )
-
-      assert Map.keys(rerun.members) == [login_uri]
-      assert rerun.members[login_uri].role_name == "confirmed"
-      assert rerun.last_message.sender == login_uri
-      assert rerun.last_message.mentions == [login_uri]
 
       GenServer.stop(login_pid)
     end
@@ -1821,7 +1787,21 @@ defmodule Ezagent.ActionSet.ChatTest do
     @impl true
     def init(uri) do
       :ok = Ezagent.KindRegistry.put_new(uri)
-      {:ok, %{}}
+      :ok = Ezagent.ReadyGate.put(uri, :ready)
+      {:ok, %{uri: uri}}
+    end
+
+    @impl true
+    def handle_call({:ezagent_get_slice, :identity}, _from, state) do
+      {:reply, {:ok, %{caps: MapSet.new()}}, state}
+    end
+
+    @impl true
+    def handle_cast(_message, state), do: {:noreply, state}
+
+    @impl true
+    def terminate(_reason, %{uri: uri}) do
+      Ezagent.ReadyGate.put(uri, :unknown)
     end
   end
 end

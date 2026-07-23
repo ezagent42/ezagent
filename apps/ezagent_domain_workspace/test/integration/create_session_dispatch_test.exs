@@ -118,7 +118,11 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
                Workspace.create_session(
                  workspace_uri,
                  %{short_name: short, template_name: "default"},
-                 %{caller: creator_uri, caps: Ezagent.Identity.list_caps_for(creator_uri)}
+                 %{
+                   caller: creator_uri,
+                   authenticated_principal: creator_uri,
+                   caps: Ezagent.Identity.list_caps_for(creator_uri)
+                 }
                )
 
       assert creator_has_manage_cap?(creator_uri, :session, session_uri, workspace_uri)
@@ -221,7 +225,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       bare_uri = URI.new!("entity://system/user/bare-c3-#{System.unique_integer([:positive])}")
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: bare_uri, initial_caps: MapSet.new()})
 
-      bare_ctx = %{caller: bare_uri, caps: MapSet.new()}
+      bare_ctx = %{caller: bare_uri, authenticated_principal: bare_uri, caps: MapSet.new()}
 
       assert {:error, :missing_cap} =
                Workspace.create_session(
@@ -269,7 +273,11 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
       # Pre-add: dispatch denies (no :create_session cap)
-      pre_ctx = %{caller: member_uri, caps: MapSet.new()}
+      pre_ctx = %{
+        caller: member_uri,
+        authenticated_principal: member_uri,
+        caps: MapSet.new()
+      }
 
       assert {:error, :missing_cap} =
                Workspace.create_session(
@@ -303,7 +311,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     test "codex round-2 MED-2 — dispatch-level :add_member also grants the cap (not just facade)",
          %{
            workspace_uri: workspace_uri,
-           ws_name: ws_name
+           ws_name: ws_name,
+           admin_ctx: admin_ctx
          } do
       # Round-1 fix only grafted the grant into the facade. Round-2 codex
       # observed: the production path is dispatch (`Invocation.dispatch`
@@ -317,10 +326,9 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       {:ok, _pid} =
         Ezagent.Kind.spawn(User, %{uri: member_uri, initial_caps: MapSet.new()})
 
-      # Dispatch :add_member under the WORKSPACE's OWN self-authority — the
-      # workspace acting on its own member set (#154 elimination of
-      # `system://workspace-loader`; same inline self-cap the `Ezagent.Workspace`
-      # facade now carries).
+      # Dispatch :add_member under the authenticated admin authority used by
+      # the trusted maintenance facade. Workspace has no Identity slice and
+      # therefore cannot itself satisfy the holder-generation gate.
       target =
         URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.add_member")
 
@@ -329,11 +337,7 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
           target: target,
           mode: :call,
           args: %{member: member_uri},
-          ctx: %{
-            caller: workspace_uri,
-            caps: [signed_action_cap!(target, workspace_uri)],
-            reply: {:caller_inbox, self()}
-          }
+          ctx: Map.put(admin_ctx, :reply, {:caller_inbox, self()})
         })
 
       assert match?(:ok, result) or match?({:ok, _}, result),

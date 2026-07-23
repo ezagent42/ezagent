@@ -263,6 +263,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       claude_session_id: claude_session_id
     }
 
+    # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
       {:ok, _pid} -> {:ok, :started}
       {:error, {:already_started, _pid}} -> {:ok, :already_started}
@@ -426,7 +427,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
 
   defp rollback_runtime(agent_uri) do
     _ = EzagentPluginCc.SdkSidecar.stop(agent_uri)
-    _ = Ezagent.Kind.terminate(agent_uri)
+    _ = Ezagent.Kind.terminate!(agent_uri)
     :ok
   end
 

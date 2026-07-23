@@ -66,10 +66,16 @@ defmodule EzagentDomainInstanceMessage.Integration.GenericSessionCreateViaWorksp
         Ezagent.URI.with_action(workspace_uri, :workspace, :create_session)
       )
 
+    {:ok, _row} = Ezagent.Users.create(creator_uri, "pw-not-secret", [create_session_cap])
+
     {:ok, _pid} =
       Ezagent.Kind.spawn(User, %{uri: creator_uri, initial_caps: MapSet.new([create_session_cap])})
 
-    creator_ctx = %{caller: creator_uri, caps: MapSet.new([create_session_cap])}
+    creator_ctx = %{
+      caller: creator_uri,
+      authenticated_principal: creator_uri,
+      caps: MapSet.new([create_session_cap])
+    }
 
     assert {:ok, %{session_uri: session_uri}} =
              Workspace.create_session(
@@ -78,11 +84,27 @@ defmodule EzagentDomainInstanceMessage.Integration.GenericSessionCreateViaWorksp
                creator_ctx
              )
 
-    assert Enum.any?(
-             apply(EzagentDomainInstanceMessage, :list_sessions, [workspace_uri, creator_uri]),
-             fn uri ->
-               URI.to_string(uri) == URI.to_string(session_uri)
-             end
-           )
+    assert eventually(fn ->
+             Enum.any?(
+               apply(EzagentDomainInstanceMessage, :list_sessions, [workspace_uri, creator_uri]),
+               fn uri -> URI.to_string(uri) == URI.to_string(session_uri) end
+             )
+           end)
+  end
+
+  defp eventually(fun, attempts \\ 100)
+
+  defp eventually(fun, attempts) do
+    cond do
+      fun.() ->
+        true
+
+      attempts == 0 ->
+        false
+
+      true ->
+        Process.sleep(10)
+        eventually(fun, attempts - 1)
+    end
   end
 end

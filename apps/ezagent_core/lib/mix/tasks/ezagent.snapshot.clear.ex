@@ -45,7 +45,7 @@ defmodule Mix.Tasks.Ezagent.Snapshot.Clear do
             Mix.shell().info("no snapshot at #{uri} (nothing to clear)")
 
           _row ->
-            :ok = Ezagent.Ecto.KindSnapshot.delete(uri)
+            :ok = Ezagent.Ecto.KindSnapshot.clear_state_preserving_marker(uri)
             Mix.shell().info("✓ cleared snapshot at #{uri}")
         end
 

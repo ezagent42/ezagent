@@ -9,7 +9,7 @@ defmodule Ezagent.ActionSet.SandboxTest do
   supervision tree).
   """
 
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.ActionSet.Sandbox
 

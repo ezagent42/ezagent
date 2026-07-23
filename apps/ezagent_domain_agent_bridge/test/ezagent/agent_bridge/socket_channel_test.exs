@@ -1,5 +1,5 @@
 defmodule Ezagent.AgentBridge.SocketChannelTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   import Phoenix.ChannelTest
 
@@ -109,6 +109,7 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
 
   test "Socket.connect/3 authenticates agent_uri against token" do
     agent_uri = uri!("entity://team-alpha/agent/cc_socket-auth-#{u()}")
+    {:ok, _authority} = Ezagent.Cap.Authority.open(agent_uri, :agent)
     {:ok, token} = TokenStore.mint(agent_uri)
 
     assert {:ok, socket} =

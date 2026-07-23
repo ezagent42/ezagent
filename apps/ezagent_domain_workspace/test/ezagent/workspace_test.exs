@@ -42,13 +42,16 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.list_members")
 
       assert {:ok, %{members: listed}} =
-               Invocation.dispatch(%Invocation{origin: :trusted_internal,
+               Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
+                   authenticated_principal: Ezagent.Entity.User.admin_uri(),
+                   caps:
+                     MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -72,13 +75,16 @@ defmodule Ezagent.WorkspaceTest do
       target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=workspace.instantiate")
 
       assert {:ok, %{children: children}} =
-               Invocation.dispatch(%Invocation{origin: :trusted_internal,
+               Invocation.dispatch(%Invocation{
+                 origin: :trusted_internal,
                  target: target,
                  mode: :call,
                  args: %{},
                  ctx: %{
                    caller: Ezagent.Entity.User.admin_uri(),
-                  caps: MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
+                   authenticated_principal: Ezagent.Entity.User.admin_uri(),
+                   caps:
+                     MapSet.new([signed_action_cap!(target, Ezagent.Entity.User.admin_uri())]),
                    reply: {:caller_inbox, self()}
                  }
                })
@@ -100,6 +106,17 @@ defmodule Ezagent.WorkspaceTest do
 
       assert "workspace://#{name1}" in uris
       assert "workspace://#{name2}" in uris
+    end
+  end
+
+  describe "create/2 derivation provenance" do
+    test "workspace ownership is committed with the durable workspace row" do
+      name = "derivation-#{System.unique_integer([:positive])}"
+      owner = Ezagent.URI.user(:system, :admin)
+      workspace_uri = Ezagent.URI.workspace(name)
+
+      assert {:ok, _pid} = Ezagent.Workspace.create(name, %{created_by: owner})
+      assert workspace_uri in Ezagent.Provenance.DerivationEdges.descendants(owner)
     end
   end
 
@@ -200,7 +217,11 @@ defmodule Ezagent.WorkspaceTest do
       member = Ezagent.URI.new!("entity://#{name}/user/carol")
       caller = Ezagent.URI.new!("entity://#{name}/user/nonadmin")
 
-      assert Ezagent.Workspace.add_member(name, member, %{caller: caller, caps: []}) !=
+      assert Ezagent.Workspace.add_member(name, member, %{
+               caller: caller,
+               authenticated_principal: caller,
+               caps: []
+             }) !=
                {:error, :invalid_caller_ctx}
     end
   end

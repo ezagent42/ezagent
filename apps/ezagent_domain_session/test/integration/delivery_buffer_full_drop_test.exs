@@ -49,6 +49,10 @@ defmodule EzagentDomainInstanceMessage.Integration.DeliveryBufferFullDropTest do
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     on_exit(fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
 
+    # Let spawn's announce-ready continuation finish before forcing the test
+    # state. Otherwise that continuation can race this test, flip back to
+    # :ready, and flush synthetic fillers into the real Kind mailbox.
+    :ok = Ezagent.ReadyGate.await(recipient_uri, 5_000)
     :ok = Ezagent.ReadyGate.put(recipient_uri, :not_ready)
 
     # Agent startup may already have queued legitimate asynchronous follow-up

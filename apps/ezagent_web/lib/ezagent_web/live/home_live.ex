@@ -148,7 +148,11 @@ defmodule EzagentWeb.HomeLive do
           Ezagent.Workspace.create_session(
             workspace_uri,
             %{short_name: short_name, template_name: "default"},
-            %{caller: creator_uri, caps: MapSet.new([create_cap])}
+            %{
+              caller: creator_uri,
+              authenticated_principal: creator_uri,
+              caps: MapSet.new([create_cap])
+            }
           )
         end
 
@@ -226,6 +230,7 @@ defmodule EzagentWeb.HomeLive do
           args: %{member: echo_uri},
           ctx: %{
             caller: caller_uri,
+            authenticated_principal: caller_uri,
             caps: MapSet.new([signed_cap]),
             reply: :ignore
           },

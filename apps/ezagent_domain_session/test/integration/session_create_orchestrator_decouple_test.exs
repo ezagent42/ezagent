@@ -211,6 +211,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
         args: %{message: msg},
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps: MapSet.new([send_cap]),
           reply: :ignore
         }
@@ -316,6 +317,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionCreateOrchestratorDeco
         },
         ctx: %{
           caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
           caps: MapSet.new([write_cap]),
           reply: {:caller_inbox, self()}
         }

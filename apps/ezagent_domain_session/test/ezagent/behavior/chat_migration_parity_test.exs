@@ -23,12 +23,13 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Message, MessageStore}
+  alias Ezagent.Message
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   # PR-2 (im/session/agent decomposition §OQ-4) — `:receive` split out of
   # SessionBehavior into two first-class Behaviors.
   alias Ezagent.ActionSet.User.Receive, as: UserReceive
   alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
+  alias EzagentDomainInstanceMessage.Test.BehaviorInvoker, as: Invoker
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   # Sandbox provided by EzagentCore.DataCase (#92).
@@ -82,7 +83,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
     %{caller: @recv_source_session, siblings: %{identity: %{caps: MapSet.new([cap])}}}
   end
 
-  defp ctx_for(chat_slice, extras \\ %{}) do
+  defp ctx_for(chat_slice, extras) do
     monitors = Map.get(chat_slice, :monitors, %{})
 
     Map.merge(
@@ -92,6 +93,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
         self_uri: nil,
         kind_module: Ezagent.Entity.Session,
         caller: nil,
+        authenticated_principal: nil,
         caps: MapSet.new()
       },
       extras
@@ -115,6 +117,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       # member edge without baking participants into definitions.
       assert Enum.sort(SessionBehavior.__action_names__()) ==
                [
+                 :add_self,
                  :approve_admission,
                  :assign_role,
                  :attach,
@@ -128,6 +131,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
                  :set_legends,
                  :set_prompt_templates,
                  :set_working_copy,
+                 :transfer_owner,
                  :withdraw_admission
                ]
     end
@@ -294,7 +298,8 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
           })
         )
 
-      assert {:ok, %{}, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, %{}, effects} =
+               Invoker.invoke_with_effects(UserReceive, :receive, slice, %{message: msg}, ctx)
 
       assert Enum.any?(effects, fn
                {:set, :last_received, %{message_id: id}} -> id == msg.id
@@ -332,7 +337,8 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
           })
         )
 
-      {:ok, _, effects} = UserReceive.handle_receive(%{message: msg}, ctx)
+      {:ok, _, _, effects} =
+        Invoker.invoke_with_effects(UserReceive, :receive, slice, %{message: msg}, ctx)
 
       ring =
         Enum.find_value(effects, fn
@@ -366,7 +372,8 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
           })
         )
 
-      assert {:ok, %{}, []} = AgentReceive.handle_receive(%{message: msg}, ctx)
+      assert {:ok, %{}, %{}, []} =
+               Invoker.invoke_with_effects(AgentReceive, :receive, slice, %{message: msg}, ctx)
     end
 
     # PR-2: the old "unsupported kind → typed error" parity test is DELETED.
@@ -379,7 +386,7 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
   end
 
   describe "handle_join/2 — member not in registry" do
-    test "returns {:error, {:member_not_registered, uri}} for unregistered member" do
+    test "returns granted intent status for an unregistered member" do
       session_uri =
         URI.new!("session://team-alpha/default/join-noreg-#{System.unique_integer([:positive])}")
 
@@ -390,8 +397,10 @@ defmodule Ezagent.ActionSet.ChatMigrationParityTest do
       slice = empty_chat_slice()
       ctx = ctx_for(slice, %{self_uri: session_uri})
 
-      assert {:error, {:member_not_registered, ^stranger}} =
+      assert {:ok, %{status: :granted, member: ^stranger}, effects} =
                SessionBehavior.handle_join(%{member: stranger}, ctx)
+
+      refute Enum.any?(effects, &match?({:set, :members, _}, &1))
     end
   end
 

@@ -41,6 +41,7 @@ defmodule Ezagent.Workspace.Invites do
       ctx: %{
         mode: :call,
         caller: Map.fetch!(ctx, :caller),
+        authenticated_principal: Map.fetch!(ctx, :authenticated_principal),
         caps: Map.fetch!(ctx, :caps),
         reply: {:caller_inbox, self()}
       }

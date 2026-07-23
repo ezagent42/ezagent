@@ -10,7 +10,12 @@ defmodule Ezagent.Session.Config.Admission do
     session_uri = Keyword.fetch!(opts, :session_uri)
     principal = Keyword.fetch!(opts, :caller)
 
-    case Ezagent.Session.Membership.authorize(session_slice(session_uri), principal, session_uri) do
+    case Ezagent.Session.Membership.authorize(
+           session_slice(session_uri),
+           principal,
+           session_uri,
+           principal
+         ) do
       :ok -> :ok
       {:error, reason} -> gate_error(:session_membership, reason)
     end
@@ -67,7 +72,11 @@ defmodule Ezagent.Session.Config.Admission do
            workspace_uri: workspace_uri
          },
          true <-
-           Ezagent.Capability.Authorization.authorizes?(Keyword.fetch!(opts, :caps), needed) do
+           Ezagent.Capability.Authorization.authorizes?(
+             Keyword.fetch!(opts, :caller),
+             Keyword.fetch!(opts, :caps),
+             needed
+           ) do
       :ok
     else
       _ -> gate_error(:operation_caps, :unauthorized)
@@ -105,6 +114,7 @@ defmodule Ezagent.Session.Config.Admission do
           args: %{},
           ctx: %{
             caller: caller,
+            authenticated_principal: caller,
             caps: operator_dispatch_caps(caller, caps),
             reply: {:caller_inbox, self()}
           },

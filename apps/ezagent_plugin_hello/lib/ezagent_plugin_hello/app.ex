@@ -15,6 +15,7 @@ defmodule EzagentPluginHello.App do
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
   alias EzagentDomainInstanceMessage.SessionCreator
+  alias EzagentDomainInstanceMessage.SessionCreator.Derivation
   alias EzagentPluginHello.Members
 
   @doc """
@@ -97,6 +98,7 @@ defmodule EzagentPluginHello.App do
            Installation.owner_uri_for_template(content, workspace, owner),
          {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
+         :ok <- Derivation.record(session_uri, {owner_uri, workspace, tmpl}),
          :ok <-
            spawn_kind(Session, %{
              uri: session_uri,
@@ -108,6 +110,14 @@ defmodule EzagentPluginHello.App do
              behaviors: behaviors
            }),
          :ok <- bind_workspace(session_uri, workspace),
+         # M-1 owner-bypass removal pairing: every session creator must grant
+         # its owner the born-signed tier-1 membership cap before exposing
+         # owner-authored content operations.
+         :ok <-
+           Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(
+             session_uri,
+             owner_uri
+           ),
          # The install/materialize actor stays a TRUSTED internal authority
          # (hello-A impl-constraint): what must become the caller principal is
          # the session OWNER (above) and the page-drive turn author — not the
@@ -229,6 +239,7 @@ defmodule EzagentPluginHello.App do
   end
 
   defp spawn_kind(kind_module, args) do
+    # derivation-edge: recorded-by create_app/3 via SessionCreator.Derivation
     case Ezagent.Kind.spawn(kind_module, args) do
       {:ok, _pid} -> :ok
       # Already-live Kind (re-instantiate of an existing app) is success.

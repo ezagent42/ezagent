@@ -1,5 +1,5 @@
 defmodule Ezagent.AgentBridge.TokenStoreTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.AgentBridge.TokenStore
 
@@ -38,6 +38,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
     profile: profile
   } do
     agent_uri = URI.new!("entity://team-alpha/agent/test_token-store")
+    open_authority!(agent_uri)
 
     assert {:ok, token} = TokenStore.mint(agent_uri)
     assert String.starts_with?(token, "tok_")
@@ -51,6 +52,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
 
   test "mint/1 is idempotent and lookup_by_token/1 returns the agent URI" do
     agent_uri = URI.new!("entity://team-alpha/agent/test_token-idempotent")
+    open_authority!(agent_uri)
 
     assert {:ok, token1} = TokenStore.mint(agent_uri)
     assert {:ok, token2} = TokenStore.mint(agent_uri)
@@ -62,9 +64,13 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
 
   test "list_all/0 returns URI keys and token metadata" do
     agent_uri = URI.new!("entity://team-alpha/agent/test_token-list")
+    open_authority!(agent_uri)
     assert {:ok, token} = TokenStore.mint(agent_uri)
 
-    assert [{found_uri, %{"token" => ^token, "minted_at" => minted_at}}] = TokenStore.list_all()
+    assert [
+             {found_uri,
+              %{"token" => ^token, "minted_at" => minted_at, "bound_generation" => 1}}
+           ] = TokenStore.list_all()
     assert URI.to_string(found_uri) == URI.to_string(agent_uri)
     assert is_binary(minted_at)
   end
@@ -72,6 +78,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
   describe "verify_token/2 — the SessionManager authz gate (no secret exposure)" do
     test "true only for the exact minted token; false otherwise (fail-closed)" do
       agent_uri = URI.new!("entity://team-alpha/agent/test_token-verify")
+      open_authority!(agent_uri)
       assert {:ok, token} = TokenStore.mint(agent_uri)
 
       assert TokenStore.verify_token(agent_uri, token)
@@ -96,6 +103,7 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
   test "unified resolver authenticates only the connection-bound bridge principal" do
     principal = URI.new!("entity://team-alpha/agent/test_unified_bridge")
     other = URI.new!("entity://team-alpha/agent/test_unified_bridge_other")
+    open_authority!(principal)
     assert {:ok, token} = TokenStore.mint(principal)
 
     assert {:ok, ^principal} =
@@ -109,5 +117,31 @@ defmodule Ezagent.AgentBridge.TokenStoreTest do
                token: token,
                principal: other
              })
+  end
+
+  test "G-2 rejects a stale-generation bearer and does not auto-remint it" do
+    principal =
+      URI.new!(
+        "entity://team-alpha/agent/test_bridge_generation-#{System.unique_integer([:positive])}"
+      )
+
+    assert {:ok, first} = Ezagent.Cap.Authority.open(principal, :agent)
+    assert {:ok, token} = TokenStore.mint(principal)
+    assert TokenStore.verify_token(principal, token)
+
+    assert [{^principal, %{"bound_generation" => generation}}] = TokenStore.list_all()
+    assert generation == first.generation
+
+    assert {:ok, bumped} = Ezagent.Cap.Authority.regenesis(principal, :agent)
+    assert bumped.generation == first.generation + 1
+
+    refute TokenStore.verify_token(principal, token)
+    assert :error = TokenStore.lookup_by_token(token)
+    assert {:error, :principal_revoked} = TokenStore.mint(principal)
+  end
+
+  defp open_authority!(agent_uri) do
+    assert {:ok, _authority} = Ezagent.Cap.Authority.open(agent_uri, :agent)
+    agent_uri
   end
 end

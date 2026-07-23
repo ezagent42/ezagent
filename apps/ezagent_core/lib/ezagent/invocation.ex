@@ -74,6 +74,7 @@ defmodule Ezagent.Invocation do
           required(:caller) => URI.t(),
           required(:caps) => MapSet.t(Ezagent.Capability.t()),
           required(:reply) => reply_target(),
+          optional(:authenticated_principal) => URI.t(),
           optional(:trace_id) => String.t(),
           optional(:deadline_ms) => pos_integer(),
           optional(:idempotency_key) => String.t()
@@ -190,6 +191,7 @@ defmodule Ezagent.Invocation do
          true <- is_nil(target.authority),
          {:ok, _pid} <- Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)),
          {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
+         false <- globally_non_cap_action?(action),
          false <- action == :grant do
       case Ezagent.Cap.issue_for_action({:admin, caller}, caller, target) do
         {:ok, cap} ->
@@ -205,6 +207,30 @@ defmodule Ezagent.Invocation do
   end
 
   defp materialize_admin_action_cap(%__MODULE__{} = inv), do: {:ok, inv}
+
+  # Admin convenience minting must not turn an explicitly cap-exempt action
+  # into a synchronous K.grant round-trip. In-handler gates such as
+  # `session.add_self` deliberately carry no presented cap; minting one here is
+  # both semantically wrong and can deadlock when the action is a post-commit
+  # convergence cast back into a busy target Kind.
+  defp globally_non_cap_action?(action) do
+    registered_handlers =
+      Ezagent.BehaviorRegistry.list_all()
+      |> Enum.flat_map(fn
+        {{_kind, ^action}, behavior} -> [behavior]
+        _entry -> []
+      end)
+      |> Enum.uniq()
+
+    exempt_handlers =
+      Ezagent.Cap.Verifier.non_cap_actions()
+      |> Enum.flat_map(fn {behavior, actions} ->
+        if MapSet.member?(actions, action), do: [behavior], else: []
+      end)
+
+    exempt_handlers != [] and
+      Enum.all?(registered_handlers, &(&1 in exempt_handlers))
+  end
 
   defp admin_operator_scope?(%URI{} = caller) do
     Process.get(@admin_operator_scope_key) == Ezagent.URI.stable_key(caller)

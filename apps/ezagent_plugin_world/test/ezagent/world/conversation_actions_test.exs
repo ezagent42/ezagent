@@ -46,7 +46,11 @@ defmodule Ezagent.World.ConversationActionsTest do
                           template_name: "default"
                         }
 
-                 assert got_ctx == %{caller: caller, caps: MapSet.new()}
+                 assert got_ctx == %{
+                          caller: caller,
+                          authenticated_principal: caller,
+                          caps: MapSet.new()
+                        }
 
                  {:ok, %{session_uri: session_uri}}
                end

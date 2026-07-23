@@ -31,12 +31,19 @@ defmodule Ezagent.Cap.Authority do
 
   @doc false
   @spec open(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
-  def open(%URI{} = uri, kind_type) when is_atom(kind_type) do
+  def open(%URI{} = uri, kind_type) when is_atom(kind_type),
+    do: open(uri, kind_type, :unknown)
+
+  @doc false
+  @spec open(URI.t(), atom(), :created | :existed | :unknown) ::
+          {:ok, t()} | {:error, term()}
+  def open(%URI{} = uri, kind_type, create_freshness)
+      when is_atom(kind_type) and create_freshness in [:created, :existed, :unknown] do
     uri_string = Ezagent.URI.stable_key(uri)
 
     case KindCapAuthority.active(uri_string) do
       %KindCapAuthority{} = row -> {:ok, from_row(row)}
-      nil -> genesis(uri, kind_type)
+      nil -> genesis(uri, kind_type, create_freshness)
     end
   end
 
@@ -50,30 +57,73 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
+  @spec current_generation(URI.t()) :: {:ok, pos_integer()} | :error
+  def current_generation(%URI{} = uri) do
+    case KindCapAuthority.active(Ezagent.URI.stable_key(Ezagent.URI.instance(uri))) do
+      %KindCapAuthority{generation: generation} when is_integer(generation) and generation > 0 ->
+        {:ok, generation}
+
+      nil ->
+        :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  @doc false
+  @spec current_process_generation(URI.t()) :: {:ok, pos_integer()} | :error
+  def current_process_generation(%URI{} = target) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{uri: uri, generation: generation} ->
+        if same_uri?(uri, Ezagent.URI.instance(target)), do: {:ok, generation}, else: :error
+
+      nil ->
+        :error
+    end
+  end
+
+  @doc false
   @spec retire(URI.t()) :: :ok
   def retire(%URI{} = uri), do: KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
 
   @doc false
-  @spec regenesis(URI.t(), atom(), URI.t()) :: {:ok, t()} | {:error, term()}
-  def regenesis(%URI{} = uri, kind_type, %URI{} = presenter) when is_atom(kind_type) do
-    if same_uri?(presenter, admin_uri()) do
-      uri_string = Ezagent.URI.stable_key(uri)
+  @spec regenesis(URI.t(), atom(), map()) :: {:ok, t()} | {:error, term()}
+  # The pre-G-1 URI-equality entry is deliberately closed. Operator bumps must
+  # carry a full authenticated context and pass the target's grant/manage cap.
+  def regenesis(%URI{}, kind_type, %URI{}) when is_atom(kind_type),
+    do: {:error, :cap_context_required}
 
-      Repo.transaction(fn ->
-        :ok = KindCapAuthority.retire_active(uri_string)
-        next_generation = next_generation(uri_string)
+  def regenesis(%URI{} = uri, kind_type, %{} = ctx) when is_atom(kind_type) do
+    holder = Map.get(ctx, :authenticated_principal)
+    caps = Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
 
-        case insert_generation(uri, kind_type, next_generation) do
-          {:ok, authority} -> authority
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-      |> case do
-        {:ok, authority} -> {:ok, authority}
-        {:error, reason} -> {:error, reason}
-      end
+    with %URI{} = holder <- holder,
+         {:ok, _manage_cap} <- Ezagent.Cap.authorize(holder, caps, manage_needed(uri, kind_type)) do
+      regenesis(uri, kind_type)
     else
-      {:error, :admin_required}
+      nil -> {:error, :authenticated_principal_required}
+      {:error, _reason} = error -> error
+      _ -> {:error, :authenticated_principal_required}
+    end
+  end
+
+  @doc false
+  @spec regenesis(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
+  def regenesis(%URI{} = uri, kind_type) when is_atom(kind_type) do
+    uri_string = Ezagent.URI.stable_key(uri)
+
+    Repo.transaction(fn ->
+      :ok = KindCapAuthority.retire_active(uri_string)
+      next_generation = next_generation(uri_string)
+
+      case insert_generation(uri, kind_type, next_generation) do
+        {:ok, authority} -> authority
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, authority} -> {:ok, authority}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -224,7 +274,23 @@ defmodule Ezagent.Cap.Authority do
   @spec issue_current(Ezagent.Cap.Grant.intent()) :: {:ok, Capability.t()} | {:error, term()}
   def issue_current(%Ezagent.Cap.Grant{} = intent) do
     case Process.get({__MODULE__, :current}) do
-      %__MODULE__{} = authority -> {:ok, Ezagent.Cap.Grant.issue(authority, intent)}
+      %__MODULE__{} = authority ->
+        case Ezagent.Cap.Grant.issue(authority, intent) do
+          %Capability{} = artifact -> {:ok, artifact}
+          {:error, _reason} = error -> error
+        end
+
+      nil ->
+        {:error, :authority_unavailable}
+    end
+  end
+
+  @doc false
+  @spec issue_self_license_current(Ezagent.Cap.Grant.intent()) ::
+          {:ok, Capability.t()} | {:error, term()}
+  def issue_self_license_current(%Ezagent.Cap.Grant{} = intent) do
+    case Process.get({__MODULE__, :current}) do
+      %__MODULE__{} = authority -> Ezagent.Cap.Grant.issue_self_license(authority, intent)
       nil -> {:error, :authority_unavailable}
     end
   end
@@ -235,6 +301,16 @@ defmodule Ezagent.Cap.Authority do
     do: {:ok, Ezagent.URI.instance(instance)}
 
   def target_uri(%Capability{}), do: {:error, :concrete_target_required}
+
+  defp manage_needed(uri, kind_type) do
+    %{
+      kind: kind_type,
+      behavior: Ezagent.Cap.Grant,
+      action: :grant,
+      instance: Ezagent.URI.instance(uri),
+      workspace_uri: Capability.workspace_of(uri)
+    }
+  end
 
   defp key_id(public_key, generation) do
     fingerprint = :crypto.hash(:sha256, public_key) |> Base.url_encode64(padding: false)
@@ -254,7 +330,7 @@ defmodule Ezagent.Cap.Authority do
 
   defp verify_signature(_public_key, %Capability{}, %URI{}), do: false
 
-  defp genesis(uri, kind_type) do
+  defp genesis(uri, kind_type, create_freshness) do
     uri_string = Ezagent.URI.stable_key(uri)
 
     Repo.transaction(fn ->
@@ -274,6 +350,14 @@ defmodule Ezagent.Cap.Authority do
           end
 
           case insert_generation(uri, kind_type, 1) do
+            {:ok, authority} -> authority
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        _historical when create_freshness == :created ->
+          next_generation = next_generation(uri_string)
+
+          case insert_generation(uri, kind_type, next_generation) do
             {:ok, authority} -> authority
             {:error, reason} -> Repo.rollback(reason)
           end

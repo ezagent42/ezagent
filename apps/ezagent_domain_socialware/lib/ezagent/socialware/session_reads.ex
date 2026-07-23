@@ -46,7 +46,7 @@ defmodule Ezagent.Socialware.SessionReads do
 
   ## Two authorization modes (spec §3.2 — live-first, both fail-closed)
 
-  Authorization delegates to the shared `Ezagent.Session.Membership.authorize/3`
+  Authorization delegates to the shared `Ezagent.Session.Membership.authorize/4`
   predicate — the SAME one the feeds (`ChatFeed` / `ExternalFeed`) and
   `SocialwarePublisherRead` use. It is **live-first**: it reads the live
   `:session` slice and the caller's live caps (`EntityCaps.load/1`), so an
@@ -55,7 +55,8 @@ defmodule Ezagent.Socialware.SessionReads do
   (not per row).
 
     * **Strict membership** (`:conversation` / `:chat_feed` views, `members/2`,
-      `authorized?/2`): owner/member only. A `public_view` session does NOT
+      `authorized?/2`): current tier-1 member-cap holders only (owners receive
+      the same cap and have no structural bypass). A `public_view` session does NOT
       open the internal conversation read — the deep-link fix depends on it.
     * **Public-aware read gate** (the external-feed plane: `:external_feed` /
       `:external_chat` views, delivery and surface reads): strict membership
@@ -75,6 +76,12 @@ defmodule Ezagent.Socialware.SessionReads do
   reads `:internal` messages; everyone else gets the `:external_visible` view.
   This logic used to live in `Ezagent.World.ConversationData`; consolidating it
   here makes it un-bypassable.
+
+  `:read_unfiltered` is strictly a POST-authorize row-policy modifier, never an
+  access gate. A non-member supervisor holding only that cap is denied before
+  `read_unfiltered?/2` can affect a query. The former option to add a separate
+  supervisor-read branch is deliberately dropped: a per-session supervisor
+  reads only by becoming a real tier-1 member.
   """
 
   import Ecto.Query
@@ -302,7 +309,7 @@ defmodule Ezagent.Socialware.SessionReads do
   # live `:session` slice + the caller's held member-cap (A2.3/R1.1) so an
   # ex-member is denied immediately and a fresh async-granted member is allowed.
   defp authorize(caller, %URI{} = session_uri) do
-    Membership.authorize(chat_slice(session_uri), caller, session_uri)
+    Membership.authorize(chat_slice(session_uri), caller, session_uri, caller)
   end
 
   # The external-feed-plane READ gate (PR-2 — the public-view open policy
@@ -487,53 +494,28 @@ defmodule Ezagent.Socialware.SessionReads do
   supplied. Public so the LIVE plane can apply the SAME row-policy: the
   `world_live` broadcast handler drops a live `:internal` message for a caller
   without this cap (the row-policy the historical read already enforces).
+
+  This predicate does NOT authorize a session read. Callers must first pass the
+  strict tier-1 membership chokepoint; only then may this function widen which
+  rows that already-authorized reader sees.
   """
   @spec read_unfiltered?(URI.t() | term(), URI.t()) :: boolean()
-  def read_unfiltered?(caller, %URI{} = session_uri) do
-    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+  def read_unfiltered?(%URI{} = caller, %URI{} = session_uri) do
+    caps = Ezagent.EntityCaps.load(caller)
 
-    caller
-    |> Ezagent.EntityCaps.load()
-    |> Enum.any?(&read_unfiltered_cap?(&1, session_uri, workspace_uri))
+    match?(
+      {:ok, %Ezagent.Capability{}},
+      Ezagent.Cap.authorize(caller, caps, %{
+        kind: :session,
+        behavior: Ezagent.ActionSet.Session,
+        action: :read_unfiltered,
+        instance: session_uri,
+        workspace_uri: Ezagent.Capability.workspace_of(session_uri)
+      })
+    )
   rescue
     _ -> false
   end
 
-  defp read_unfiltered_cap?(
-         %Ezagent.Capability{} = cap,
-         %URI{} = session_uri,
-         %URI{} = workspace_uri
-       ) do
-    cap_field?(cap.kind, :session) and
-      cap_field?(cap.behavior, Ezagent.ActionSet.Session) and
-      cap_field?(Map.get(cap, :action, :any), :read_unfiltered) and
-      cap_instance?(cap.instance, session_uri, workspace_uri) and
-      cap_workspace?(cap.workspace_uri, workspace_uri)
-  end
-
-  defp read_unfiltered_cap?(_, _, _), do: false
-
-  defp cap_field?(:any, _needed), do: true
-  defp cap_field?(same, same), do: true
-  defp cap_field?(_, _), do: false
-
-  defp cap_instance?(:any, _session_uri, _workspace_uri), do: true
-
-  defp cap_instance?({:within_session, %URI{} = held}, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?({:within_workspace, %URI{} = held}, _session_uri, %URI{} = workspace_uri),
-    do: same_uri?(held, workspace_uri)
-
-  defp cap_instance?(%URI{} = held, %URI{} = session_uri, _workspace_uri),
-    do: same_uri?(held, session_uri)
-
-  defp cap_instance?(_, _, _), do: false
-
-  defp cap_workspace?(:any, _workspace_uri), do: true
-  defp cap_workspace?(%URI{} = held, %URI{} = workspace_uri), do: same_uri?(held, workspace_uri)
-  defp cap_workspace?(_, _), do: false
-
-  defp same_uri?(%URI{} = left, %URI{} = right), do: URI.to_string(left) == URI.to_string(right)
-  defp same_uri?(_, _), do: false
+  def read_unfiltered?(_caller, _session_uri), do: false
 end

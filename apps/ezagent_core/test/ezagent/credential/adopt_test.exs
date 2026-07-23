@@ -70,6 +70,7 @@ defmodule Ezagent.Credential.AdoptTest do
     assert {:ok, src} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
                caller: admin_uri(),
+               authenticated_principal: admin_uri(),
                caps: admin_caps(ctx.owner_str)
              )
 
@@ -85,6 +86,7 @@ defmodule Ezagent.Credential.AdoptTest do
     assert {:error, {:ambiguous, ^candidates}} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
                caller: admin_uri(),
+               authenticated_principal: admin_uri(),
                caps: admin_caps(ctx.owner_str)
              )
   end
@@ -96,6 +98,7 @@ defmodule Ezagent.Credential.AdoptTest do
     assert {:error, :missing_cap} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", candidates,
                caller: eve,
+               authenticated_principal: eve,
                caps: MapSet.new()
              )
 
@@ -106,6 +109,7 @@ defmodule Ezagent.Credential.AdoptTest do
     assert {:error, :no_candidate} =
              Adopt.adopt(ctx.owner_str, @ws, "cc", [],
                caller: admin_uri(),
+               authenticated_principal: admin_uri(),
                caps: admin_caps(ctx.owner_str)
              )
   end

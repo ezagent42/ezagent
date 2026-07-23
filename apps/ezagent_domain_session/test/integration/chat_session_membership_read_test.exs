@@ -28,6 +28,9 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
   # ----- fixtures --------------------------------------------------------
 
   defp spawn_owned_session(owner_uri) do
+    {:ok, _row} = Ezagent.Users.create(owner_uri, "pw-not-secret", [])
+    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: owner_uri})
+
     session_uri =
       Ezagent.URI.new!(
         "session://team-alpha/default/membership-read-#{System.unique_integer([:positive])}"
@@ -45,6 +48,8 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
         session_uri,
         Ezagent.Capability.workspace_of(session_uri)
       )
+
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
 
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
@@ -70,7 +75,8 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
 
   # ctx for a caller that is the session's owner/member. No caps needed —
   # the reads are cap-exempt; the membership check is the authority.
-  defp member_ctx(uri), do: %{caller: uri, caps: MapSet.new()}
+  defp member_ctx(uri),
+    do: %{caller: uri, authenticated_principal: uri, caps: Ezagent.Identity.list_caps_for(uri)}
 
   # ctx for a NON-member who holds the OLD Publisher.SessionImpl read caps.
   # The membership-gated read must DENY despite the held caps.
@@ -92,7 +98,11 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
 
     old_history_cap = %{old_snapshot_cap | action: :history}
 
-    %{caller: stranger, caps: MapSet.new([old_snapshot_cap, old_history_cap])}
+    %{
+      caller: stranger,
+      authenticated_principal: stranger,
+      caps: MapSet.new([old_snapshot_cap, old_history_cap])
+    }
   end
 
   # ----- (a) a MEMBER (owner) can read -----------------------------------

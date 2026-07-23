@@ -11,6 +11,19 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   alias Ezagent.Invocation
 
   setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()) =>
+        MapSet.new([:test_holder_license])
+    })
+
     test_pid = self()
     handler_id = "target-verifier-#{System.unique_integer([:positive])}"
 
@@ -26,7 +39,11 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
       nil
     )
 
-    on_exit(fn -> :telemetry.detach(handler_id) end)
+    on_exit(fn ->
+      :telemetry.detach(handler_id)
+      Application.put_env(:ezagent_core, Ezagent.Cap, previous)
+    end)
+
     :ok
   end
 
@@ -74,12 +91,26 @@ defmodule Ezagent.Kind.RuntimePhase3dTest do
   end
 
   defp dispatch(target, message, presenter, caps) do
+    by_holder =
+      Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(by_holder, Ezagent.URI.stable_key(presenter), MapSet.new([:test_holder_license]))
+    )
+
     Invocation.dispatch(%Invocation{
       origin: :authenticated_external,
       target: target,
       mode: :call,
       args: %{message: message},
-      ctx: %{caller: presenter, caps: caps, reply: :ignore}
+      ctx: %{
+        caller: presenter,
+        authenticated_principal: presenter,
+        caps: caps,
+        reply: :ignore
+      }
     })
   end
 

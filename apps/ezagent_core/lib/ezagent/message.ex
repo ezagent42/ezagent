@@ -65,6 +65,7 @@ defmodule Ezagent.Message do
   @type t :: %__MODULE__{
           id: String.t(),
           session_uri: URI.t() | nil,
+          session_seq: non_neg_integer() | nil,
           workspace_uri: String.t() | nil,
           sender: URI.t(),
           mentions: [URI.t()],
@@ -86,6 +87,10 @@ defmodule Ezagent.Message do
     # session_uri is routing metadata (not part of identity invariant per
     # §3.5); caller supplies at MessageStore.write/2 boundary.
     field :session_uri, Ezagent.Ecto.URI
+    # Durable per-session replay position. This is allocated at the raw write
+    # chokepoint, so Session sends, Turn writes, and every other writer share
+    # one monotonic axis even when their wall-clock timestamps tie.
+    field :session_seq, :integer
     # Phase 9 PR-6 (SPEC v3 §7) — per-tenant data isolation. NOT NULL at
     # the DB layer; populated by `MessageStore.write/2` via
     # `Ezagent.Persistence.workspace_uri_for!/1` on the session's URI.

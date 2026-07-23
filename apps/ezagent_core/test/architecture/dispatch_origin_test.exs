@@ -54,6 +54,7 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
 
     assert cmd.origin == :authenticated_external
     assert cmd.ctx.caller == context.presenter
+    assert cmd.ctx.authenticated_principal == context.presenter
 
     invocation = %Invocation{
       target: context.target,
@@ -64,6 +65,19 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
     }
 
     assert {:error, :presenter_mismatch} =
+             Ezagent.Kind.Runtime.handle_dispatch(invocation, %{}, TestKind, context.uri)
+  end
+
+  test "external provenance does not infer the authenticated principal from caller", context do
+    invocation = %Invocation{
+      target: context.target,
+      mode: :call,
+      args: %{},
+      ctx: %{caller: context.presenter, caps: MapSet.new(), reply: :ignore},
+      origin: :authenticated_external
+    }
+
+    assert {:error, :unauthenticated_presenter} =
              Ezagent.Kind.Runtime.handle_dispatch(invocation, %{}, TestKind, context.uri)
   end
 

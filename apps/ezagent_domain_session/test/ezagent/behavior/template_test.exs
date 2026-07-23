@@ -29,10 +29,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
     # the two-container `%{state:, transients:}` shape (no transients —
     # the content is fully persistent). Assert on `.state`.
     test "init_slice/1 defaults content to nil (unpopulated template Kind)" do
-      assert Template.init_slice(%{uri: URI.new!("template://team-alpha/agent/x")}).state ==
+      # This is a pure shape test. Deliberately omit :uri so it does not
+      # exercise the durable create-marker reader; marker failures correctly
+      # fail closed and are covered by Lifecycle's dedicated security tests.
+      assert Template.init_slice(%{}).state ==
                %{content: nil}
 
-      assert Template.create(%{uri: URI.new!("template://team-alpha/agent/x")}) ==
+      assert Template.create(%{}) ==
                {:ok, %{content: nil}}
     end
 
@@ -59,12 +62,27 @@ defmodule Ezagent.ActionSet.TemplateTest do
       content = %{name: "orch", flavor: "cc"}
       slice = %{content: content}
 
-      assert {:ok, ^slice, %{content: ^content}} = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :read, slice, %{}, %{})
+      assert {:ok, ^slice, %{content: ^content}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :read,
+                 slice,
+                 %{},
+                 %{}
+               )
     end
 
     test "returns nil for an unpopulated slice" do
       slice = %{content: nil}
-      assert {:ok, ^slice, %{content: nil}} = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :read, slice, %{}, %{})
+
+      assert {:ok, ^slice, %{content: nil}} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :read,
+                 slice,
+                 %{},
+                 %{}
+               )
     end
   end
 
@@ -74,7 +92,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: AgentTemplate}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: nil},
+                 %{content: content},
+                 ctx
+               )
     end
 
     test "overwrites an already-populated slice in place (operator edit)" do
@@ -83,7 +107,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       new = %{name: "a", flavor: "cc", project_cwd: "/new"}
 
       assert {:ok, %{content: ^new}, %{content: ^new}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: old}, %{content: new}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: old},
+                 %{content: new},
+                 ctx
+               )
     end
   end
 
@@ -110,7 +140,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: st_uri(content)}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: nil},
+                 %{content: content},
+                 ctx
+               )
     end
 
     test "a hash-mismatched write → {:error, :hash_mismatch}" do
@@ -120,7 +156,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: wrong_uri}
 
       assert {:error, :hash_mismatch} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: nil}, %{content: content}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: nil},
+                 %{content: content},
+                 ctx
+               )
     end
 
     test "a second DIVERGENT write to a populated slice → {:error, :immutable_version}" do
@@ -133,7 +175,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       divergent_ctx = %{kind_module: SessionTemplate, self_uri: st_uri(divergent)}
 
       assert {:error, :immutable_version} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: content}, %{content: divergent}, divergent_ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: content},
+                 %{content: divergent},
+                 divergent_ctx
+               )
     end
 
     test "an idempotent retry (identical content) to a populated slice no-ops as success" do
@@ -141,16 +189,33 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: SessionTemplate, self_uri: st_uri(content)}
 
       assert {:ok, %{content: ^content}, %{content: ^content}} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :write, %{content: content}, %{content: content}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :write,
+                 %{content: content},
+                 %{content: content},
+                 ctx
+               )
     end
   end
 
   describe "invoke(:instantiate, ...) — SessionTemplate" do
     test "returns {:error, :use_generator} — SessionTemplate instantiation IS the Generator" do
-      ctx = %{kind_module: SessionTemplate, self_uri: URI.new!("template://team-alpha/session/x@h")}
+      ctx = %{
+        kind_module: SessionTemplate,
+        self_uri: URI.new!("template://team-alpha/session/x@h")
+      }
+
       slice = %{content: %{name: "x"}}
 
-      assert {:error, :use_generator} = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :instantiate, slice, %{}, ctx)
+      assert {:error, :use_generator} =
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :instantiate,
+                 slice,
+                 %{},
+                 ctx
+               )
     end
   end
 
@@ -159,7 +224,13 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: AgentTemplate, self_uri: URI.new!("template://team-alpha/agent/x")}
 
       assert {:error, :template_not_populated} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :instantiate, %{content: nil}, %{}, ctx)
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
+                 :instantiate,
+                 %{content: nil},
+                 %{},
+                 ctx
+               )
     end
   end
 
@@ -185,7 +256,8 @@ defmodule Ezagent.ActionSet.TemplateTest do
       slice = %{content: agent_template_content()}
 
       assert {:error, :cross_workspace_denied} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
                  :instantiate,
                  slice,
                  %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-bravo")},
@@ -208,7 +280,8 @@ defmodule Ezagent.ActionSet.TemplateTest do
       slice = %{content: agent_template_content()}
 
       assert {:error, :cross_workspace_denied} =
-               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, 
+               EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+                 Ezagent.ActionSet.Template,
                  :instantiate,
                  slice,
                  %{
@@ -229,7 +302,8 @@ defmodule Ezagent.ActionSet.TemplateTest do
       slice = %{content: agent_template_content()}
 
       result =
-        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, 
+        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+          Ezagent.ActionSet.Template,
           :instantiate,
           slice,
           %{instance_name: "demo", workspace_uri: URI.new!("workspace://team-alpha")},
@@ -245,7 +319,14 @@ defmodule Ezagent.ActionSet.TemplateTest do
       ctx = %{kind_module: AgentTemplate, self_uri: self_uri}
       slice = %{content: agent_template_content()}
 
-      result = EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(Ezagent.ActionSet.Template, :instantiate, slice, %{instance_name: "demo"}, ctx)
+      result =
+        EzagentDomainInstanceMessage.Test.BehaviorInvoker.invoke(
+          Ezagent.ActionSet.Template,
+          :instantiate,
+          slice,
+          %{instance_name: "demo"},
+          ctx
+        )
 
       refute match?({:error, :cross_workspace_denied}, result),
              "the happy path (no workspace_uri arg) must derive the workspace " <>

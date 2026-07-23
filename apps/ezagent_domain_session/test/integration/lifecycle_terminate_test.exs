@@ -29,6 +29,10 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
 
   # Spawn an Agent Kind, bind workspace, record lineage under `spawned_by`.
   defp spawn_worker(spawned_by) do
+    if Ezagent.URI.type?(spawned_by, :agent) and Ezagent.KindRegistry.lookup(spawned_by) == :error do
+      {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: spawned_by})
+    end
+
     worker_uri = Ezagent.URI.new!("entity://team-alpha/agent/test_worker-#{uniq()}")
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: worker_uri})
     :ok = Ezagent.WorkspaceRegistry.bind(worker_uri, @workspace_uri)
@@ -50,7 +54,12 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
       target: target,
       mode: :call,
       args: %{},
-      ctx: %{caller: caller_uri, caps: caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: caller_uri,
+        authenticated_principal: caller_uri,
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 
@@ -97,7 +106,7 @@ defmodule EzagentDomainInstanceMessage.Integration.LifecycleTerminateTest do
     worker_b = spawn_worker(orchestrator_b)
     caps_b = MapSet.new([terminate_cap(worker_b, orchestrator_b)])
 
-    assert {:error, :invalid_cap_signature} = terminate(worker_uri, orchestrator_b, caps_b),
+    assert {:error, :missing_cap} = terminate(worker_uri, orchestrator_b, caps_b),
            "an artifact from worker B's authority must fail at worker A"
 
     # The worker is still alive — the denied dispatch had no effect.

@@ -150,6 +150,30 @@ defmodule Ezagent.Ecto.KindSnapshot do
   end
 
   @doc """
+  Clear snapshot state without dropping a Lifecycle principal's durable
+  `ever_created` marker.
+
+  Marker-bearing rows retain their metadata and replace state with an empty
+  snapshot. On the next load Lifecycle therefore classifies the URI as
+  `:existed` and skips `create/1`. Snapshot-only rows have no marker and retain
+  the historical full-delete behavior.
+  """
+  @spec clear_state_preserving_marker(String.t()) :: :ok
+  def clear_state_preserving_marker(uri_str) when is_binary(uri_str) do
+    case Repo.get(__MODULE__, uri_str) do
+      %__MODULE__{ever_created: true} = row ->
+        row
+        |> Ecto.Changeset.change(state_binary: :erlang.term_to_binary(%{}), state: nil)
+        |> Repo.update!()
+
+        :ok
+
+      _row_or_nil ->
+        delete(uri_str)
+    end
+  end
+
+  @doc """
   Lifecycle Phase A (SPEC 2026-05-29 §9 OQ-1) — read the ever-created
   marker for `uri_str`.
 

@@ -143,12 +143,17 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
       # to :agent; a :kanban-kind cap would NOT match → false-pass trap).
       member_cap = Ezagent.Capability.cap(:agent, Ezagent.ActionSet.Kanban, :any)
 
-      alice = %{
-        caller: URI.new!("entity://#{ws_name}/user/alice"),
-        caps: MapSet.new([member_cap])
-      }
+      alice =
+        user_ctx(
+          URI.new!("entity://#{ws_name}/user/alice"),
+          MapSet.new([member_cap])
+        )
 
-      bob = %{caller: URI.new!("entity://#{ws_name}/user/bob"), caps: MapSet.new([member_cap])}
+      bob =
+        user_ctx(
+          URI.new!("entity://#{ws_name}/user/bob"),
+          MapSet.new([member_cap])
+        )
 
       # alice claims n2 → owner = alice.
       assert {:ok, %{}} = dispatch(agent_uri, :claim_node, %{id: "n2"}, alice)
@@ -231,7 +236,13 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
         target,
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
 
     Ezagent.Router.dispatch(cmd)
@@ -245,6 +256,17 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
       |> Enum.map(&Ezagent.Test.CapHelper.signed_cap!(target, caller, &1))
       |> MapSet.new()
     end
+  end
+
+  defp user_ctx(%URI{} = user, caps) do
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(User, %{
+               uri: user,
+               initial_caps: caps
+             })
+
+    on_exit(fn -> Ezagent.Kind.terminate(user) end)
+    %{caller: user, caps: caps}
   end
 
   defp restore_routing_tables(nil), do: Application.delete_env(:ezagent_core, :routing_tables)

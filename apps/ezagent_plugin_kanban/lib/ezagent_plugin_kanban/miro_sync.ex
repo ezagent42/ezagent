@@ -182,6 +182,7 @@ defmodule EzagentPluginKanban.MiroSync do
         args: args,
         ctx: %{
           caller: caller,
+          authenticated_principal: caller,
           caps: MapSet.new([signed_cap]),
           reply: {:caller_inbox, self()}
         },

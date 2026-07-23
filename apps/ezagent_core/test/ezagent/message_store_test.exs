@@ -44,6 +44,22 @@ defmodule Ezagent.MessageStoreTest do
   end
 
   describe "write/2" do
+    test "assigns a durable monotonic session sequence even when timestamps tie" do
+      fixed = ~U[2026-07-22 00:00:00.000000Z]
+
+      assert MessageStore.current_session_sequence(@session_a) == 0
+
+      first = insert_msg(@admin, @session_a, "first-at-tie", inserted_at: fixed)
+      second = insert_msg(@admin, @session_a, "second-at-tie", inserted_at: fixed)
+
+      assert first.session_seq == 1
+      assert second.session_seq == 2
+      assert MessageStore.current_session_sequence(@session_a) == 2
+
+      assert [^first, ^second] = MessageStore.in_session_after_sequence(@session_a, 0)
+      assert [^second] = MessageStore.in_session_after_sequence(@session_a, 1)
+    end
+
     test "persists message with caller-supplied session_uri" do
       msg = Message.new(@admin, %{text: "hi", attachments: []})
       {:ok, written} = MessageStore.write(msg, @session_a)

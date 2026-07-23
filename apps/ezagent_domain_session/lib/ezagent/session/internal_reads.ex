@@ -50,6 +50,19 @@ defmodule Ezagent.Session.InternalReads do
     MessageStore.in_session_since(session_uri, last_seen_at)
   end
 
+  @doc "The latest durable monotonic message position for a session."
+  @spec current_message_sequence(URI.t()) :: non_neg_integer()
+  def current_message_sequence(%URI{} = session_uri) do
+    MessageStore.current_session_sequence(session_uri)
+  end
+
+  @doc "Messages strictly after a durable session sequence, ascending."
+  @spec messages_after_sequence(URI.t(), non_neg_integer()) :: [Ezagent.Message.t()]
+  def messages_after_sequence(%URI{} = session_uri, sequence)
+      when is_integer(sequence) and sequence >= 0 do
+    MessageStore.in_session_after_sequence(session_uri, sequence)
+  end
+
   @doc """
   All users in `workspace_uri` (decoded rows) — the framework-internal
   workspace user enumeration used by the session member-cap reconcile

@@ -87,7 +87,9 @@ defmodule EzagentDomainInstanceMessage.Integration.AgentFlavorResolverTest do
 
     test "URI name prefix is ignored when no stored flavor exists" do
       uri =
-        Ezagent.URI.new!("entity://team-alpha/agent/test_resolver-#{System.unique_integer([:positive])}")
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/test_resolver-#{System.unique_integer([:positive])}"
+        )
 
       assert {:error, {:no_kind_module_for_agent, _}} = Ezagent.SpawnRegistry.spawn(uri)
     end

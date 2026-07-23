@@ -13,4 +13,7 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapAuthorityLoader do
       MapSet.new()
     end
   end
+
+  @impl true
+  def principal_fenced?(_actor), do: false
 end

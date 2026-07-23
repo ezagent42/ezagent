@@ -188,20 +188,26 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       action: :join,
       args: %{member: agent},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :ignore},
+      ctx: %{
+        caller: entity_uri,
+        authenticated_principal: entity_uri,
+        caps: MapSet.new(),
+        reply: :ignore
+      },
       origin: :authenticated_external
     }
 
     Logger.info("ProtocolApi: joining agent to session...")
 
     case Router.dispatch(cmd) do
-      {:ok, _} ->
+      {:ok, %{status: status, member: ^agent}}
+      when status in [:granted, :already_member] ->
         Logger.info("ProtocolApi: join OK")
         :ok
 
-      :ok ->
-        Logger.info("ProtocolApi: join OK")
-        :ok
+      {:ok, %{status: :pending, member: ^agent}} ->
+        Logger.error("ProtocolApi: join pending approval")
+        {:error, 409, "join_pending", "admission_pending"}
 
       {:error, reason} ->
         Logger.error("ProtocolApi: join failed: #{inspect(reason)}")
@@ -258,7 +264,12 @@ defmodule EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug do
       target: target,
       mode: :call,
       args: %{message: msg},
-      ctx: %{caller: entity_uri, caps: MapSet.new(), reply: :sync},
+      ctx: %{
+        caller: entity_uri,
+        authenticated_principal: entity_uri,
+        caps: MapSet.new(),
+        reply: :sync
+      },
       origin: :authenticated_external
     }
 

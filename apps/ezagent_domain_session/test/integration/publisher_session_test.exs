@@ -24,7 +24,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.{Session, User}
-  alias Ezagent.{Invocation, KindRegistry, Message}
+  alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.Publisher.Event
 
   setup do
@@ -47,7 +47,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   defp spawn_session do
     session_uri =
       Ezagent.URI.new!(
-        "session://team-alpha/default/publisher-test-#{System.unique_integer([:positive])}"
+        "session://system/default/publisher-test-#{System.unique_integer([:positive])}"
       )
 
     {:ok, _pid} =
@@ -65,6 +65,12 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       Ezagent.WorkspaceRegistry.bind(
         session_uri,
         Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    :ok =
+      Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(
+        session_uri,
+        User.admin_uri()
       )
 
     on_exit(fn ->
@@ -88,7 +94,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   defp spawn_member_user do
     member_uri =
       Ezagent.URI.new!(
-        "entity://team-alpha/user/pub-test-member-#{System.unique_integer([:positive])}"
+        "entity://system/user/pub-test-member-#{System.unique_integer([:positive])}"
       )
 
     {:ok, pid} =
@@ -121,6 +127,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -131,33 +138,45 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   # etc. now RAISE; production callers must use the 4-ary form with
   # an explicit ctx. Tests supply admin caps explicitly.
   defp admin_ctx(session_uri) do
-    raw_ctx = %{
-      caller: User.admin_uri(),
-      caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    }
+    subscribe_cap =
+      Ezagent.Test.CapHelper.signed_fixture_cap!(
+        session_uri,
+        :session,
+        Ezagent.ActionSet.Publisher.SessionImpl,
+        :subscribe_from,
+        User.admin_uri()
+      )
 
-    Ezagent.Test.CapHelper.signed_ctx!(session_uri, raw_ctx, :session)
+    %{
+      caller: User.admin_uri(),
+      authenticated_principal: User.admin_uri(),
+      caps: MapSet.new([subscribe_cap])
+    }
   end
 
   describe "Session.subscribe_from/4 with :latest (production path)" do
     test "subscriber receives the NEXT mutation's event (no backlog)" do
       session_uri = spawn_session()
 
-      # Subscribe BEFORE mutating; cursor=0 at this point.
-      assert {:ok, 0} =
+      # Owner-cap convergence is the first durable membership event.
+      wait_until_cursor(session_uri, 1)
+
+      assert {:ok, baseline} =
                Session.subscribe_from(session_uri, self(), :latest, admin_ctx(session_uri))
 
       # Mutate (chat.join adds a new member to the :chat slice).
-      assert {:ok, %{members: _}} = mutate_chat_slice(session_uri)
+      assert {:ok, %{status: :granted}} = mutate_chat_slice(session_uri)
 
       # Receive the publisher event.
-      assert_receive {:publisher_event, %Event{cursor: 1, slice_key: :session}}, 500
+      assert_receive {:publisher_event, %Event{cursor: cursor, slice_key: :session}}, 500
+      assert cursor == baseline + 1
     end
   end
 
   describe "Session.subscribe_from/4 with :earliest" do
     test "subscriber receives entire retained history in order" do
       session_uri = spawn_session()
+      wait_until_cursor(session_uri, 1)
 
       # Pre-populate with 3 mutations.
       Enum.each(1..3, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
@@ -165,31 +184,32 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       # Wait for all 3 SliceChange events to have been processed by
       # the Server's handle_info → SessionImpl.handle_kind_message
       # (eventually consistent — give it a beat).
-      wait_until_cursor(session_uri, 3)
+      wait_until_cursor(session_uri, 4)
 
       # Now subscribe :earliest from a fresh listener pid.
       parent = self()
 
       pid =
         spawn(fn ->
-          msgs = collect_events(3, [])
+          msgs = collect_events(4, [])
           send(parent, {:replayed, msgs})
         end)
 
-      assert {:ok, 3} =
+      assert {:ok, 4} =
                Session.subscribe_from(session_uri, pid, :earliest, admin_ctx(session_uri))
 
       assert_receive {:replayed, events}, 500
-      assert Enum.map(events, & &1.cursor) == [1, 2, 3]
+      assert Enum.map(events, & &1.cursor) == [1, 2, 3, 4]
     end
   end
 
   describe "Session.history/4 dispatch round-trip" do
     test "returns the (from, to] window from the live ring" do
       session_uri = spawn_session()
+      wait_until_cursor(session_uri, 1)
 
       Enum.each(1..5, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
-      wait_until_cursor(session_uri, 5)
+      wait_until_cursor(session_uri, 6)
 
       assert {:ok, events} = Session.history(session_uri, 1, 3, admin_ctx(session_uri))
       assert Enum.map(events, & &1.cursor) == [2, 3]
@@ -199,11 +219,12 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   describe "Session.snapshot/2 dispatch round-trip" do
     test "returns current cursor + the latest payload as state" do
       session_uri = spawn_session()
-
-      {:ok, _} = mutate_chat_slice(session_uri)
       wait_until_cursor(session_uri, 1)
 
-      assert {:ok, %{cursor: 1, state: state}} =
+      {:ok, _} = mutate_chat_slice(session_uri)
+      wait_until_cursor(session_uri, 2)
+
+      assert {:ok, %{cursor: 2, state: state}} =
                Session.snapshot(session_uri, admin_ctx(session_uri))
 
       # `state` is the most recent event's payload — under the PR-EM-0
@@ -239,6 +260,7 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
     test "a caller with empty caps cannot subscribe (step 5.5 denies)" do
       session_uri = spawn_session()
+      wait_until_cursor(session_uri, 1)
 
       empty_ctx = %{
         caller:
@@ -247,6 +269,8 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
           ),
         caps: MapSet.new()
       }
+
+      empty_ctx = Map.put(empty_ctx, :authenticated_principal, empty_ctx.caller)
 
       assert {:error, :missing_cap} =
                Session.subscribe_from(session_uri, self(), :latest, empty_ctx)
@@ -259,11 +283,11 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
       # Emit 3 events.
       Enum.each(1..3, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
-      wait_until_cursor(session_uri, 3)
+      wait_until_cursor(session_uri, 4)
 
       pre_restart = publisher_slice(session_uri)
-      assert pre_restart.cursor == 3
-      assert length(pre_restart.ring) == 3
+      assert pre_restart.cursor == 4
+      assert length(pre_restart.ring) == 4
 
       # Restart the Session Kind.
       {:ok, pid_before} = Ezagent.KindRegistry.lookup(session_uri)
@@ -298,14 +322,14 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
       post_restart = publisher_slice(session_uri)
 
-      assert post_restart.cursor == 3,
-             "Expected cursor=3 to survive restart; got #{post_restart.cursor}. " <>
+      assert post_restart.cursor == 4,
+             "Expected cursor=4 to survive restart; got #{post_restart.cursor}. " <>
                "If this fails, Kind.Server's handle_info path is NOT persisting " <>
                "SessionImpl's :slice_changed mutations — codex round-1 HIGH fix " <>
                "regressed."
 
-      # Ring contents survive (cursors 1,2,3 still in the ring).
-      assert Enum.map(post_restart.ring, & &1.cursor) == [1, 2, 3]
+      # Ring contents survive, including the born-owner membership event.
+      assert Enum.map(post_restart.ring, & &1.cursor) == [1, 2, 3, 4]
     end
   end
 

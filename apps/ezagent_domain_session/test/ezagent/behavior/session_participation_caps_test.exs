@@ -83,7 +83,8 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
   # per-class participation tier (§A). This is exactly what
   # `SessionContext.do_maybe_self_join` does for a self-joining member.
   defp access_point_join(session_uri, member_uri) do
-    _ = Membership.provision_join_authority(session_uri, member_uri)
+    {:ok, owner} = Ezagent.Entity.Session.owner(session_uri)
+    :ok = Membership.provision_invited_join_authority(session_uri, member_uri, owner)
 
     result =
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -93,6 +94,7 @@ defmodule Ezagent.ActionSet.SessionParticipationCapsTest do
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
+          authenticated_principal: member_uri,
           caps: Ezagent.Identity.list_caps_for(member_uri),
           reply: :ignore
         }

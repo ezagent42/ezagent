@@ -167,6 +167,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         args: %{},
         ctx: %{
           caller: presenter,
+          authenticated_principal: presenter,
           caps: MapSet.new([cap]),
           reply: :ignore
         }
@@ -252,6 +253,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
         args: %{msg: "during-post-init"},
         ctx: %{
           caller: presenter,
+          authenticated_principal: presenter,
           caps: MapSet.new([cap]),
           reply: {:caller_inbox, self()}
         }
@@ -311,6 +313,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
           args: %{msg: "pre-ready-#{n}"},
           ctx: %{
             caller: presenter,
+            authenticated_principal: presenter,
             caps: MapSet.new([cap]),
             reply: :ignore
           }

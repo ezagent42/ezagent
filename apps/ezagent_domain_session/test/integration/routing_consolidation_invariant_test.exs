@@ -57,7 +57,8 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingConsolidationInvariant
       Application.put_env(:ezagent_core, :routing_tables, [empty_table])
 
       try do
-        recipients = Resolver.resolve(build_msg(), Ezagent.URI.new!("session://team-alpha/default/test"), [])
+        recipients =
+          Resolver.resolve(build_msg(), Ezagent.URI.new!("session://team-alpha/default/test"), [])
 
         assert recipients == [],
                "no rules + no members must produce zero recipients — " <>
@@ -91,13 +92,19 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingConsolidationInvariant
         ]
 
         msg = build_msg("hi", [], "entity://system/user/admin")
-        recipients = Resolver.resolve(msg, Ezagent.URI.new!("session://team-alpha/default/test"), members)
+
+        recipients =
+          Resolver.resolve(msg, Ezagent.URI.new!("session://team-alpha/default/test"), members)
 
         # admin is sender → excluded; remaining 2 → recipients
         assert length(recipients) == 2
 
         recipient_strs = Enum.map(recipients, &URI.to_string/1) |> Enum.sort()
-        assert recipient_strs == ["entity://team-alpha/agent/test_x", "entity://team-alpha/agent/test_y"]
+
+        assert recipient_strs == [
+                 "entity://team-alpha/agent/test_x",
+                 "entity://team-alpha/agent/test_y"
+               ]
       after
         Application.put_env(:ezagent_core, :routing_tables, original_tables)
       end
@@ -120,7 +127,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RoutingConsolidationInvariant
 
         recipients = Resolver.resolve(build_msg(), current, [])
 
-        refute Enum.any?(recipients, fn r -> URI.to_string(r) == "session://system/default/main" end),
+        refute Enum.any?(recipients, fn r ->
+                 URI.to_string(r) == "session://system/default/main"
+               end),
                "Resolver must exclude current session URI to prevent dispatch loop"
       after
         Application.put_env(:ezagent_core, :routing_tables, original_tables)

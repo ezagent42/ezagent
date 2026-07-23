@@ -135,6 +135,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
           args: %{member: user_uri},
           ctx: %{
             caller: admin,
+            authenticated_principal: admin,
             caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           }
@@ -173,6 +174,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
 
       ctx = %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -244,6 +246,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionOwnerOrchestratorCapTe
           args: %{member: agent_uri},
           ctx: %{
             caller: admin,
+            authenticated_principal: admin,
             caps: MapSet.new([cap]),
             reply: {:caller_inbox, self()}
           }

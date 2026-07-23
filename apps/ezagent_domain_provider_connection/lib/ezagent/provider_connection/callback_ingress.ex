@@ -43,6 +43,10 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
       %{attempt_ref: attempt.attempt_ref, correlation_id: attempt.correlation_id},
       %{
         caller: owner,
+        # #195 authz: thread the authenticated holder explicitly from this
+        # external (OAuth callback) boundary — the owner whose connection this
+        # callback completes is the authenticated principal, not ambient caller.
+        authenticated_principal: owner,
         caps: MapSet.new([artifact]),
         mode: :call,
         reply: :ignore

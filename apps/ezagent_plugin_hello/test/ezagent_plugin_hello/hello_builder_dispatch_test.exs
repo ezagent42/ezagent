@@ -79,7 +79,12 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
                target: target,
                mode: :cast,
                args: args,
-               ctx: %{caller: denied_uri, caps: MapSet.new(), reply: :ignore}
+               ctx: %{
+                 caller: denied_uri,
+                 authenticated_principal: denied_uri,
+                 caps: MapSet.new(),
+                 reply: :ignore
+               }
              })
 
     refute_receive {:hello_rebuild_started, _, _}, 100
@@ -90,7 +95,12 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
                target: target,
                mode: :cast,
                args: args,
-               ctx: %{caller: allowed_uri, caps: MapSet.new([rebuild_cap]), reply: :ignore}
+               ctx: %{
+                 caller: allowed_uri,
+                 authenticated_principal: allowed_uri,
+                 caps: MapSet.new([rebuild_cap]),
+                 reply: :ignore
+               }
              })
 
     assert_receive {:hello_rebuild_started, ^session_uri, "refresh the hello page"}, 500
@@ -127,6 +137,7 @@ defmodule EzagentPluginHello.HelloBuilderDispatchTest do
         args: %{member: builder_uri, role_name: "builder"},
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([cap]),
           reply: :ignore
         }

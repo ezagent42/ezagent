@@ -13,7 +13,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   require Logger
 
-  alias Ezagent.ActionSet.Session.{Delivery, MemberCap, Members}
+  alias Ezagent.ActionSet.Session.{Delivery, MemberCap, Members, Reconcile}
 
   @doc """
   Add a member to the session — the `:join` handler body. Builds the
@@ -25,8 +25,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   """
   @spec do_join(URI.t(), pid(), map(), map(), module()) ::
           {:ok, map(), [term()]} | {:error, term()}
-  def do_join(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
+  def do_join(%URI{} = member_uri, _member_pid, ctx, facets, _source_module) do
     members = ctx[:read].(:members, %{})
+    join_status = if Map.has_key?(members, member_uri), do: :already_member, else: :granted
+    reserved_facets = ctx[:read].(:join_facets, %{})
+    role_claims = Map.merge(reserved_facets, members)
+
+    role_conflict =
+      Members.role_name_conflict(role_claims, member_uri, Map.get(facets, :role_name))
 
     # recipe-responsibility-split (2026-06-27, OQ-1) — `role_name` (the session
     # RESPONSIBILITY, axis B) is taken ONLY from the explicit join `facets` here;
@@ -45,19 +51,23 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # UNIQUE PER SESSION. Reject a join that would assign a role_name already
     # held by a DIFFERENT member BEFORE any monitor side effect, so a rejected
     # join leaks no monitor. A member rejoining with its OWN role_name is fine.
-    case Members.role_name_conflict(members, member_uri, Map.get(facets, :role_name)) do
-      {:error, _} = err ->
-        err
+    cond do
+      Members.passive_actor?(member_uri) ->
+        {:error, {:passive_actor_cannot_join, member_uri}}
 
-      :ok ->
+      match?({:error, _}, role_conflict) ->
+        role_conflict
+
+      true ->
         # Membership-cap unification A1.2 (spec R1.3 / R2.1 JOIN sequence —
-        # grant-first, AFTER the zero-side-effect `role_name_conflict/3`
-        # preflight, compensate on a post-grant failure). The member-cap is the
+        # issue AFTER the zero-side-effect role-name and passive-actor
+        # preflights). The member-cap is the
         # NEW universal base tier (§7): EVERY member (user, agent, anon) that
         # clears the preflight is granted `cap(:session, Session, :receive, S)`
         # into its OWN `:identity` slice, so receive/read AUTHORIZE on the held
-        # cap in A2 (never a bearer token). A1 is additive/behavior-preserving —
-        # the grant lands but delivery/receive still use the ephemeral mint.
+        # cap in A2 (never a bearer token). The intent returns after checked
+        # issuance and durable absorb; holder-authenticated self-add owns the
+        # derived roster projection.
         #
         # Placed here (in `do_join`, through the single `handle_join`
         # chokepoint) so it covers ALL member kinds uniformly — every add path
@@ -81,24 +91,28 @@ defmodule Ezagent.ActionSet.Session.Membership do
         # holds no cap ⇒ receive is DENIED (R1.1) ⇒ the owner's credential is not
         # spent, until the member's owner approves (`:approve_admission`). All
         # non-add / manage-authorized / self / materializer mounts take the
-        # existing grant+mount path unchanged.
+        # existing grant-intent path unchanged.
         if admission_pending?(member_uri, ctx) do
           record_pending_admission(member_uri, ctx)
         else
-          granted? = MemberCap.grant_at_join(member_uri, ctx)
+          {_join_cursor, join_cursor_effect} = MemberCap.capture_join_cursor(member_uri, ctx)
+          join_facets = ctx[:read].(:join_facets, %{})
+          join_facets_effect = set_effect(:join_facets, Map.put(join_facets, member_uri, facets))
+          prior_owner = ctx[:read].(:owner_uri, nil)
+          new_owner = Members.owner_after_intent(member_uri, prior_owner)
 
-          # Compensation (R1.3 step 4): a post-grant failure in `do_join_apply`
-          # (monitor error, replay/notify raise, etc.) must not orphan the
-          # just-granted member-cap. `do_join_apply` returns `{:ok, _, _}` or
-          # RAISES (it has no `{:error}` return path), so the rescue is the sole
-          # compensation trigger; it revokes only what THIS call granted, then
-          # re-propagates (let-it-crash — the join still fails loudly).
-          try do
-            do_join_apply(member_uri, member_pid, ctx, facets, source_module)
-          rescue
-            e ->
-              if granted?, do: MemberCap.revoke_at_join(member_uri, ctx)
-              reraise e, __STACKTRACE__
+          owner_effects =
+            if new_owner == prior_owner, do: [], else: [set_effect(:owner_uri, new_owner)]
+
+          case MemberCap.grant_at_join(member_uri, ctx) do
+            {:error, reason} ->
+              {:error, {:member_cap_grant_failed, reason}}
+
+            grant_status when grant_status in [:already_held, :enqueued] ->
+              # Phase A only. Cursor/facets/owner claim commit together; the
+              # holder-driven `add_self` action is the sole roster writer.
+              {:ok, %{status: join_status, member: member_uri},
+               [join_cursor_effect, join_facets_effect | owner_effects]}
           end
         end
     end
@@ -107,8 +121,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # --- Part C admission gate (spec §C.1/§C.2/§C.3, R4) ---------------------
 
   # The admission trigger predicate (spec §C.1). Fire PENDING iff:
-  #   * the member is NOT already mounted (a rejoin / re-add of an established
-  #     member is never pended — it already holds its member-cap), AND
+  #   * the member does NOT already hold the exact current member-cap (a rejoin /
+  #     re-add of an established holder is never pended), AND
   #   * `ctx.caller` is a REAL, non-system entity — a well-formed bare identity
   #     principal `entity://<ws>/<user|agent|worker>/<name>` (rejects nil /
   #     `:vm_internal` / `system://…` / malformed via `Ezagent.URI.bare_principal?/1`),
@@ -121,7 +135,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
   #     caller, whose ctx.caps carry only a narrow inline join cap, is exempt via
   #     `manages?(admin_uri, member) = true` and NEVER stalls at PENDING).
   defp admission_pending?(%URI{} = member_uri, ctx) do
-    members = ctx[:read].(:members, %{})
     caller = Map.get(ctx, :caller)
 
     # Scope to CREDENTIAL-BEARING members (agents/workers), spec §C.2. STRUCTURAL,
@@ -134,7 +147,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     # be a pure over-fire with no threat-X coverage; a human's data-read access is
     # governed by the join-cap / invite-authority layer
     # (`provision_invited_join_authority`), NOT this gate.
-    not Map.has_key?(members, member_uri) and
+    not holds_member_cap?(member_uri, ctx[:self_uri]) and
       not Ezagent.URI.type?(member_uri, :user) and
       Ezagent.URI.bare_principal?(caller) and
       not same_entity?(caller, member_uri) and
@@ -213,7 +226,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # pending member is not mounted on either axis). The pending MEMBER's managers
   # are notified (spec §C.3) so the owner can approve.
   defp record_pending_admission(%URI{} = member_uri, ctx) do
-    members = ctx[:read].(:members, %{})
     pending = ctx[:read].(:pending_members, %{})
     request_ref = new_request_ref()
 
@@ -226,13 +238,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
     new_pending = Map.put(pending, member_uri, entry)
 
     # spec §C.3 — notify the pending MEMBER's managers (NOT the session's) with a
-    # content-free approvable-request envelope. Inline (like the join-notify in
-    # `do_join_apply`): synchronous here is safe — `managers_of/1` GenServer.calls
+    # content-free approvable-request envelope. Synchronous here is safe —
+    # `managers_of/1` GenServer.calls
     # the MANAGERS' Kinds, never re-enters this Session Kind.
     notify_pending_managers(member_uri, ctx[:self_uri], request_ref)
 
-    {:ok, %{members: Map.keys(members), pending: member_uri},
-     [{:set, :pending_members, new_pending}]}
+    {:ok, %{status: :pending, member: member_uri}, [set_effect(:pending_members, new_pending)]}
   end
 
   # An opaque handle A approves/denies (spec §C.2). Random, dependency-free.
@@ -287,24 +298,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
   @doc """
   APPROVE a pending admission request (spec §C.4) — the deferred second half of
   join. The approver MUST hold manage-authority over the member
-  (`Ezagent.Identity.Authority.manages?/2`); on approval, re-enter the EXACT
-  grant+mount tail C.1 withheld by re-running `do_join/5` under the approver's
-  authority (`manages?(approver, member) = true` ⇒ the trigger does NOT re-pend,
-  so it grants the member-cap + `do_join_apply` mounts), then drop the
-  `:pending_members` entry (as an EFFECT — so a SYNCHRONOUS raise in `do_join_apply`
-  (monitor/replay/notify) aborts the whole approval and the request stays PENDING).
-
-  ⚠️ Abort-safety scope (codex 2026-07-05, #166): the abort-safety above covers
-  SYNCHRONOUS `do_join_apply` failures. The member-cap grant itself
-  (`MemberCap.grant_at_join/2`) is `:async` best-effort — its `:ok` means the grant
-  cast was BUFFERED, not committed. So a post-cast async-grant FAILURE can drop
-  `:pending_members` and mount the member into `:members` WITHOUT the member-cap. This
-  is NOT a credential-spend hole: by R1.1 (roster ⟂ authz) a roster entry that holds
-  no member-cap CANNOT receive (`MemberReceive.authorize/1` denies) ⇒ A's credential
-  is NOT spent, and `reconcile_after_load/2` ("caps win") drops the stale roster entry
-  on the next activate. It is a stale-roster edge, not a half-mount that spends. The
-  fail-closed hardening (make the at-join grant synchronous + checked across ALL join
-  paths, not just approve) is tracked as #166.
+  (`Ezagent.Identity.Authority.manages?/2`); on approval, re-enter the exact
+  grant-only intent seam by re-running `do_join/5` under the approver's authority
+  (`manages?(approver, member) = true` means the trigger does not re-pend), then
+  drop `:pending_members` atomically with the cursor/facets intent effects. A
+  checked issuance failure returns an error and leaves the request pending; the
+  holder-authenticated `add_self` action remains the sole roster writer.
 
   Cap-EXEMPT at the CapBAC layer (the approver holds no session cap on B's
   session) — authorized HERE, in-handler, by the `manages?` predicate. Returns
@@ -323,16 +322,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
         {:error, :unauthorized}
 
       true ->
-        case Ezagent.KindRegistry.lookup(member_uri) do
-          {:ok, member_pid} ->
-            with {:ok, result, join_effects} <-
-                   do_join(member_uri, member_pid, ctx, %{}, source_module) do
-              {:ok, Map.put(result, :approved, member_uri),
-               join_effects ++ [{:set, :pending_members, Map.delete(pending, member_uri)}]}
-            end
-
-          :error ->
-            {:error, {:member_not_registered, member_uri}}
+        with {:ok, result, join_effects} <-
+               do_join(member_uri, nil, ctx, %{}, source_module) do
+          {:ok, Map.put(result, :approved, member_uri),
+           join_effects ++ [{:set, :pending_members, Map.delete(pending, member_uri)}]}
         end
     end
   end
@@ -383,98 +376,17 @@ defmodule Ezagent.ActionSet.Session.Membership do
     end
   end
 
-  defp do_join_apply(%URI{} = member_uri, member_pid, ctx, facets, source_module) do
-    session_uri = ctx[:self_uri]
-    members = ctx[:read].(:members, %{})
-    # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
-    monitors = (ctx[:transients] || %{})[:monitors] || %{}
-    last_seen = ctx[:read].(:last_seen, %{})
-    prior_owner = ctx[:read].(:owner_uri, nil)
-
-    # Drop ALL stale monitor entries for this member URI and DEMONITOR
-    # each ref (Codex r1 MEDIUM-3, 2026-05-26).
-    {old_refs_for_member, monitors_without_member} =
-      Enum.split_with(monitors, fn {_ref, uri} ->
-        URI.to_string(uri) == URI.to_string(member_uri)
-      end)
-
-    for {ref, _uri} <- old_refs_for_member do
-      _ = Process.demonitor(ref, [:flush])
-    end
-
-    monitors_without_member = Map.new(monitors_without_member)
-
-    ref = Process.monitor(member_pid)
-
-    # team-routing-unification §3.1 (codex PR-5a HIGH #2) — PRESERVE any
-    # facets a faceted member already carries when it rejoins through the
-    # stale-monitor / offline path. Start from the EXISTING meta (not a fresh
-    # `%{online: true}`), force `online: true`, then overlay only the non-nil
-    # facets this join supplied. Durable management/snapshot facets therefore
-    # survive reconnect/repair instead of being silently dropped.
-    existing_meta = Map.get(members, member_uri, %{})
-
-    new_members =
-      Map.put(
-        members,
-        member_uri,
-        Members.put_member_facets(Map.put(existing_meta, :online, true), facets)
-      )
-
-    new_monitors = Map.put(monitors_without_member, ref, member_uri)
-
-    # If this member has prior last_seen, replay missed messages.
-    Delivery.replay_messages_since(session_uri, member_uri, last_seen)
-    new_last_seen = Map.delete(last_seen, member_uri)
-
-    # RFC #402 (Allen 2026-05-26) — "first user to join is owner" fallback.
-    #
-    # #51 codex P1 (security): an ANONYMOUS external viewer
-    # (`entity://<ws>/user/anon-<rand>`) MUST NEVER claim ownership. If an
-    # ownerless session (spawned without `owner_uri`, or a legacy nil) is
-    # opened via the public-view flow, the joining anon user would otherwise
-    # become owner — a privilege escalation that flatly contradicts the
-    # membership-only, read-only anon model. Anon users are excluded from the
-    # owner transition; an ownerless session simply stays
-    # ownerless (read-only viewing needs no owner).
-    claims_owner? = is_nil(prior_owner) and user_uri?(member_uri) and not anon_member?(member_uri)
-
-    new_owner_uri = if claims_owner?, do: member_uri, else: prior_owner
-
-    # Notifier/flash audit 2026-05-24 — todo.md "Notifications consumer
-    # coverage" — surface the join to the joinee's notification stream
-    # so a freshly-added member sees they were added to a session.
-    if user_uri?(member_uri) do
-      _ =
-        Ezagent.Notifications.notify(member_uri, %{
-          type: :session_member_joined,
-          body: %{
-            text: "You joined session #{URI.to_string(session_uri)}.",
-            session_uri: session_uri
-          },
-          source: source_module
-        })
-    end
-
-    {:ok, %{members: Map.keys(new_members)},
-     [
-       {:set, :members, new_members},
-       # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2) — written via
-       # `:set_transient`, never persisted.
-       {:set_transient, :monitors, new_monitors},
-       {:set, :last_seen, new_last_seen},
-       {:set, :owner_uri, new_owner_uri}
-     ] ++ Delivery.broadcast_membership_effects(session_uri, {:member_joined, member_uri})}
-  end
-
   @doc """
   Atomically relabel a session member from one URI to another.
 
-  This composes `do_join/5` directly, then rewrites the post-join effect set so
-  the anon removal, monitor cleanup, `last_seen` cleanup, `last_message` relabel,
-  and membership broadcasts commit as one Session slice mutation. It deliberately
-  contains no socialware symbols; the web/socialware orchestrator owns the
-  binding claim, message-store relabel, cap mounting, and anon retirement.
+  This composes the same three seams as ordinary membership lifecycle:
+  owner-rooted grant intent for `to`, holder-authenticated `add_self(to)` from
+  the absorb hook, and `leave(from)`. The handler never writes `to` into the
+  roster. The anon removal, monitor cleanup, `last_seen` cleanup, `last_message`
+  relabel, and membership-left broadcast commit as one Session slice mutation.
+  It deliberately contains no socialware symbols; the web/socialware
+  orchestrator owns the binding claim, message-store relabel, participation-cap
+  mounting, and anon retirement.
   """
   @spec do_merge_member(URI.t(), URI.t(), map(), module()) ::
           {:ok, map(), [term()]} | {:error, term()}
@@ -482,74 +394,59 @@ defmodule Ezagent.ActionSet.Session.Membership do
     session_uri = ctx[:self_uri]
 
     if Ezagent.URI.instance(from_uri) == Ezagent.URI.instance(to_uri) do
-      members = ctx[:read].(:members, %{})
-      {:ok, %{members: Map.keys(members)}, []}
+      {:ok, %{status: :already_member, member: to_uri}, []}
     else
-      with {:ok, member_pid} <- lookup_merge_target(to_uri),
-           {:ok, _join_result, join_effects} <-
-             do_join(to_uri, member_pid, ctx, %{}, source_module) do
-        build_merge_member_effects(session_uri, from_uri, to_uri, ctx, join_effects)
+      members = ctx[:read].(:members, %{})
+
+      facets =
+        members
+        |> Map.get(from_uri, %{})
+        |> Map.take([:role_name, :in_session_template, :source_template_uri])
+        |> Members.sanitize_facets()
+
+      with {:ok, %{status: :granted} = join_result, join_effects} <-
+             do_join(to_uri, nil, merge_intent_ctx(ctx, from_uri), facets, source_module),
+           :ok <- repoint_read_markers(session_uri, from_uri, to_uri) do
+        build_merge_member_effects(
+          session_uri,
+          from_uri,
+          to_uri,
+          ctx,
+          join_result,
+          join_effects
+        )
       end
     end
   end
 
-  defp lookup_merge_target(%URI{} = to_uri) do
-    case Ezagent.KindRegistry.lookup(to_uri) do
-      {:ok, pid} -> {:ok, pid}
-      :error -> {:error, {:member_not_registered, to_uri}}
-    end
+  # A relabel transfers `from`'s responsibility facets. Remove `from` only from
+  # the intent preflight's roster view so its own role_name does not conflict
+  # with `to`; the real ctx is retained for the composed leave effects.
+  defp merge_intent_ctx(ctx, from_uri) do
+    read = ctx[:read]
+
+    Map.put(ctx, :read, fn
+      :members, default -> read.(:members, default) |> Map.delete(from_uri)
+      key, default -> read.(key, default)
+    end)
   end
 
-  defp build_merge_member_effects(session_uri, from_uri, to_uri, ctx, join_effects) do
-    # Read-marker repoint is a cross-store (read_markers DB) write that must
-    # converge before the membership slice mutation commits. Do it FIRST and
-    # ABORT the merge on failure — before any irreversible side-effect
-    # (demonitor) and before emitting the members/last_seen effects — so a
-    # repoint error never leaves read_markers rows pointing at a to-be-retired
-    # anon (FINAL design §3 "zero surviving refs"; `feedback_let_it_crash_no_workarounds`).
-    # `repoint/3` is idempotent, so the orchestrator's re-run after an abort is safe.
-    case repoint_read_markers(session_uri, from_uri, to_uri) do
-      :ok ->
-        members_after_join =
-          effect_value(join_effects, :set, :members, ctx[:read].(:members, %{}))
+  defp build_merge_member_effects(
+         _session_uri,
+         from_uri,
+         to_uri,
+         ctx,
+         join_result,
+         join_effects
+       ) do
+    # `leave_effects/2` is the ordinary leave seam: it revokes `from`'s member
+    # cap, drops only `from` from the projection, clears its monitor/last_seen,
+    # and emits the member-left convergence signal. The queued absorb hook owns
+    # the later add of `to`; no merge effect may structurally mount `to`.
+    leave_effects = leave_effects(from_uri, ctx)
+    last_message = rewrite_last_message(ctx[:read].(:last_message, nil), from_uri, to_uri)
 
-        monitors_after_join =
-          effect_value(
-            join_effects,
-            :set_transient,
-            :monitors,
-            (ctx[:transients] || %{})[:monitors] || %{}
-          )
-
-        last_seen_after_join =
-          effect_value(join_effects, :set, :last_seen, ctx[:read].(:last_seen, %{}))
-
-        new_members = Map.delete(members_after_join, from_uri)
-
-        {from_ref, monitors_after_from} = Delivery.pop_monitor_ref(monitors_after_join, from_uri)
-        if from_ref, do: Process.demonitor(from_ref, [:flush])
-
-        new_last_seen = Map.delete(last_seen_after_join, from_uri)
-        last_message = rewrite_last_message(ctx[:read].(:last_message, nil), from_uri, to_uri)
-
-        passthrough =
-          Enum.reject(join_effects, &merge_member_owned_effect?/1)
-
-        effects =
-          [
-            set_effect(:members, new_members),
-            transient_effect(:monitors, monitors_after_from),
-            set_effect(:last_seen, new_last_seen)
-          ] ++
-            last_message_effect(last_message) ++
-            passthrough ++
-            Delivery.broadcast_membership_effects(session_uri, {:member_left, from_uri})
-
-        {:ok, %{members: Map.keys(new_members)}, effects}
-
-      {:error, _reason} = err ->
-        err
-    end
+    {:ok, join_result, join_effects ++ leave_effects ++ last_message_effect(last_message)}
   end
 
   defp repoint_read_markers(session_uri, from_uri, to_uri) do
@@ -596,25 +493,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
   defp last_message_effect(message), do: [set_effect(:last_message, message)]
 
   defp set_effect(key, value), do: {:set, key, value}
-  defp transient_effect(key, value), do: {:set_transient, key, value}
-
-  defp merge_member_owned_effect?({kind, key, _})
-       when kind == :set and key in [:members, :last_seen],
-       do: true
-
-  defp merge_member_owned_effect?({kind, key, _})
-       when kind == :set_transient and key == :monitors,
-       do: true
-
-  defp merge_member_owned_effect?(_), do: false
-
-  defp effect_value(effects, effect_kind, key, default) do
-    Enum.find_value(effects, default, fn
-      {^effect_kind, ^key, value} -> value
-      _ -> false
-    end)
-  end
-
   # Notifier/flash audit 2026-05-24 — same predicate
   # `Ezagent.Domain.Workspace.user_uri?/1` uses. Keeps the agent-target
   # silence guarantee local to Chat without crossing the
@@ -644,16 +522,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # reworks the join flow to resolve the member CLASS at the caller/dispatch layer
   # (which holds DB access) and pass it into `handle_join`, at which point this
   # name-prefix check is replaced by the `confirmed` attribute and retired.
-  @anon_user_name_prefix "anon-"
-  def anon_member?(%URI{scheme: "entity"} = uri) do
-    user_uri?(uri) and
-      case uri |> URI.to_string() |> String.split("/") |> List.last() do
-        nil -> false
-        name -> String.starts_with?(name, @anon_user_name_prefix)
-      end
-  end
-
-  def anon_member?(_), do: false
+  defdelegate anon_member?(uri), to: Members
 
   # `:attach` (LV→world parity PR-2b) is co-granted with `:send`: a confirmed
   # member who may post a message may also upload a file attachment to it. The
@@ -690,8 +559,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
   ## Policy (who may be provisioned a join cap)
 
-    * joiner is the session OWNER, or an existing MEMBER → provision; granter =
-      owner (owner-rooted — spec §8 g2).
+    * joiner is the session OWNER, or a CURRENT tier-1 CAP-HOLDER → provision;
+      granter = owner (owner-rooted — spec §8 g2). A stale roster entry does
+      not provision tier-0.
     * ownerless session + a NON-anon user joiner → provision the first-non-anon
       join so it can claim ownership (RFC #402); granter = `entity://system/user/admin`
       (the #154 named extreme-case granter, spec §8 g2 exception (ii)).
@@ -705,11 +575,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
   (the caller of this function) serves owned/private sessions only.
 
   Returns `:ok` when a join cap is provisioned (or the joiner is an agent — agents
-  carry their own caps), `{:error, :no_authority}` when policy denies provisioning.
-  Best-effort on the GRANT itself: a failed grant dispatch is logged + telemetry'd
-  and still returns `:ok` (the join then fails closed at the chokepoint → observe).
+  carry their own caps), `{:error, :no_authority}` when policy denies provisioning,
+  or the original grant error when issuance/storage fails. Grant failures are
+  logged + telemetry'd and propagated so access-point `with` chains stop before
+  dispatch instead of obscuring the cause as a later `:missing_cap` denial.
   """
-  @spec provision_join_authority(URI.t(), URI.t()) :: :ok | {:error, :no_authority}
+  @spec provision_join_authority(URI.t(), URI.t()) :: :ok | {:error, term()}
   def provision_join_authority(%URI{} = session_uri, %URI{} = joiner_uri) do
     cond do
       not user_uri?(joiner_uri) ->
@@ -759,7 +630,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   spawn-lineage `AgentLineage` notion). So: forward the join; the admission gate decides.
   """
   @spec provision_invited_join_authority(URI.t(), URI.t(), URI.t()) ::
-          :ok | {:error, :no_authority}
+          :ok | {:error, term()}
   def provision_invited_join_authority(
         %URI{} = session_uri,
         %URI{} = joiner_uri,
@@ -770,8 +641,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
       |> session_owner()
       |> owner_or_admin()
       |> then(fn granter -> grant_join_cap(session_uri, joiner_uri, granter) end)
-
-      :ok
     else
       # Non-user (agent) reuse-join: forward to the Part C admission gate at
       # `handle_join` (§C.1/R4) — see the moduledoc "Why the non-user branch
@@ -797,7 +666,6 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
       %URI{} = granter ->
         grant_join_cap(session_uri, joiner_uri, granter)
-        :ok
     end
   end
 
@@ -805,14 +673,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   # authorized join, or `:denied`.
   defp join_authority_basis(%URI{} = session_uri, %URI{} = joiner_uri, owner) do
     cond do
-      # Owner self-join, or an existing member re-joining: owner-rooted.
+      # Owner self-join, or an existing cap-holder re-joining: owner-rooted.
       match?(%URI{}, owner) and joiner_uri == owner ->
         {:authorized, owner}
 
-      already_member?(session_uri, joiner_uri) ->
-        # An existing member re-navigating; the join is owner-authorized
-        # (the member was added under the owner's authority). Granter = the
-        # owner when present, else the admin fallback (ownerless legacy).
+      holds_member_cap?(joiner_uri, session_uri) ->
+        # An existing holder re-navigating; the join is owner-authorized (the
+        # cap was granted under that authority). Granter = the owner when
+        # present, else the admin fallback (ownerless legacy).
         {:authorized, owner_or_admin(owner)}
 
       # Ownerless session + a non-anon user: the first-non-anon-join owner-claim
@@ -835,18 +703,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
     end
   end
 
-  defp already_member?(%URI{} = session_uri, %URI{} = joiner_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, %{state: %{members: members}}} when is_map(members) ->
-        Map.has_key?(members, joiner_uri)
-
-      {:ok, %{members: members}} when is_map(members) ->
-        Map.has_key?(members, joiner_uri)
-
-      _ ->
-        false
-    end
+  defp holds_member_cap?(%URI{} = member_uri, %URI{} = session_uri) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    Reconcile.member_cap_holder?(member_uri, session_uri, workspace_uri)
   end
+
+  defp holds_member_cap?(_member_uri, _session_uri), do: false
 
   defp grant_join_cap(%URI{} = session_uri, %URI{} = joiner_uri, %URI{} = granter) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
@@ -941,8 +803,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
   Extracted from `Behavior.Session` (gt_1000 LOC gate). Runs inside the Session
   Kind process (members slice readable via `ctx`).
 
-  1. **Owner-gate (§3.3, load-bearing).** Authorize when `caller == owner_uri` OR
-     `caller == participant` (self-leave) OR the bootstrap admin. Else
+  1. **Owner-gate (§3.3, load-bearing).** Authorize an owner only when
+     `caller == owner_uri` AND the owner holds the current tier-1 member cap;
+     self-leave and bootstrap-admin remain explicit branches. Else
      `{:error, :unauthorized}` before any mutation (fail-closed) — defense-in-depth
      on the dispatch chokepoint's `:remove_participant` cap.
   2. **Provenance branch (§3.2, NOT user-vs-agent).** A participant SPAWNED INTO
@@ -964,10 +827,10 @@ defmodule Ezagent.ActionSet.Session.Membership do
   def handle_remove_participant(%URI{} = participant_uri, ctx) do
     members = ctx[:read].(:members, %{})
     owner_uri = ctx[:read].(:owner_uri, nil)
-    caller = ctx[:caller]
+    holder = ctx[:authenticated_principal]
 
     cond do
-      not remove_participant_authorized?(caller, participant_uri, owner_uri) ->
+      not remove_participant_authorized?(holder, participant_uri, owner_uri, ctx) ->
         {:error, :unauthorized}
 
       not Map.has_key?(members, participant_uri) ->
@@ -978,16 +841,36 @@ defmodule Ezagent.ActionSet.Session.Membership do
     end
   end
 
-  # Owner-gate (§3.3): owner OR self-leave OR admin. Fail-closed. The admin check
-  # goes through the canonical `Ezagent.Identity.admin?/1`, not a hand-written
-  # equality against the admin principal (cap_check_only_at_chokepoint probe p13).
-  defp remove_participant_authorized?(%URI{} = caller, %URI{} = participant_uri, owner_uri) do
+  # Owner URI equality only selects the owner branch; it never authorizes by
+  # itself. The owner must pass the same current-generation tier-1 membership
+  # gate as every other session member. Self-leave and bootstrap admin retain
+  # their explicitly-scoped semantics, and both have already crossed the
+  # dispatch authorize/3 principal gate.
+  defp remove_participant_authorized?(
+         %URI{} = caller,
+         %URI{} = participant_uri,
+         owner_uri,
+         ctx
+       ) do
     caller == participant_uri or
-      (match?(%URI{}, owner_uri) and caller == owner_uri) or
+      (match?(%URI{}, owner_uri) and caller == owner_uri and
+         owner_member_authorized?(caller, ctx)) or
       Ezagent.Identity.admin?(caller)
   end
 
-  defp remove_participant_authorized?(_caller, _participant, _owner), do: false
+  defp remove_participant_authorized?(_caller, _participant, _owner, _ctx), do: false
+
+  defp owner_member_authorized?(owner, ctx) do
+    match?(
+      :ok,
+      Ezagent.Session.Membership.authorize(
+        %{},
+        owner,
+        ctx[:self_uri],
+        ctx[:authenticated_principal]
+      )
+    )
+  end
 
   defp do_remove_participant(%URI{} = participant_uri, participant_meta, ctx)
        when is_map(participant_meta) do
@@ -1196,12 +1079,12 @@ defmodule Ezagent.ActionSet.Session.Membership do
       :ok ->
         :ok
 
-      {:error, reason} ->
+      {:error, reason} = error ->
         Logger.warning(
           "Session.Membership.provision_join_authority: join-cap grant failed for " <>
             "joiner=#{URI.to_string(joiner_uri)} on session=" <>
             "#{URI.to_string(session_uri)}: #{inspect(reason)} " <>
-            "(best-effort; join fails closed → observe)."
+            "(propagating; join dispatch was not attempted)."
         )
 
         :telemetry.execute(
@@ -1210,7 +1093,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
           %{session_uri: session_uri, joiner_uri: joiner_uri, reason: reason}
         )
 
-        :ok
+        error
     end
   end
 
@@ -1241,10 +1124,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   same as `anon_user.public_view_granter/1`). Best-effort: a failed grant is
   logged + telemetry'd, never raised — a missing participation cap degrades to
   "observe", it does not break the join.
+
+  M-10: this tier-2 mount first proves `member_uri` CURRENTLY holds tier-1 via
+  the shared generation-aware membership predicate. Roster presence is never a
+  precondition and cannot re-arm a revoked member.
   """
   @spec mount_participation_caps(URI.t(), URI.t()) :: :ok
   def mount_participation_caps(%URI{} = session_uri, %URI{} = member_uri) do
-    if user_uri?(member_uri) do
+    if user_uri?(member_uri) and current_member_entitled?(session_uri, member_uri) do
       do_mount_participation_caps(session_uri, member_uri)
     else
       :ok
@@ -1303,10 +1190,13 @@ defmodule Ezagent.ActionSet.Session.Membership do
   (`:sync`),绝不许从 `handle_join` 内调(join 内 sync grant 自死锁,5s
   timeout 实证 —— docs/futures/todo.md「#161 A2 deferrals」)。
   Agent / 非 user URI → no-op(agents 的 caps 在 spawn 时 provision,甲-3)。
+
+  M-10:与 participation tier 相同，view-cap 补发只对当前 tier-1 holder
+  开放；stale `:members` projection 不构成 entitlement。
   """
   @spec grant_member_view_caps(URI.t(), URI.t()) :: :ok
   def grant_member_view_caps(%URI{} = session_uri, %URI{} = member_uri) do
-    if user_uri?(member_uri) do
+    if user_uri?(member_uri) and current_member_entitled?(session_uri, member_uri) do
       pairs = Ezagent.Socialware.Installation.declared_view_actions(session_uri)
 
       grant_session_caps(
@@ -1322,6 +1212,14 @@ defmodule Ezagent.ActionSet.Session.Membership do
   end
 
   def grant_member_view_caps(_, _), do: :ok
+
+  @doc "Whether `member_uri` currently holds the live tier-1 member cap over `session_uri`."
+  @spec current_member_entitled?(URI.t(), URI.t()) :: boolean()
+  def current_member_entitled?(%URI{} = session_uri, %URI{} = member_uri) do
+    Ezagent.Session.Membership.authorize(%{}, member_uri, session_uri, member_uri) == :ok
+  end
+
+  def current_member_entitled?(_session_uri, _member_uri), do: false
 
   # 共享 caller-side grant funnel —— participation tier 与 member view caps
   # 两路共用同一个 `grant_cap_via_router` 调用点(I12 paradigm-lock ratchet:

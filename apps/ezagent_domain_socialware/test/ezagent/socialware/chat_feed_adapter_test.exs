@@ -12,7 +12,7 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
   alias Ezagent.Entity.Session
   alias Ezagent.Socialware.ChatFeedAdapter
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "cfa-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "cfa-owner")
   @sender Ezagent.URI.entity(:team_alpha, :agent, "cfa-bot")
 
   test "declares adapter_kind :pull and the id/name/description trio" do
@@ -65,9 +65,9 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
       workspace = Ezagent.Capability.workspace_of(session)
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
           uri: session,
-          owner_uri: @owner,
+          owner_uri: owner(),
           behaviors: Ezagent.Entity.Session.behaviors()
         })
 
@@ -81,7 +81,11 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
     end
 
     test "render for an owner returns the chat_tree page + messages", %{session: session} do
-      rendered = Adapter.render(ChatFeedAdapter, session, %{caller: @owner})
+      rendered =
+        Adapter.render(ChatFeedAdapter, session, %{
+          caller: owner(),
+          authenticated_principal: owner()
+        })
 
       assert Map.has_key?(rendered, :page)
       assert rendered.page.type == "container"
@@ -90,8 +94,13 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
     end
 
     test "render for a non-member returns the empty/denied projection", %{session: session} do
-      stranger = Ezagent.URI.entity(:team_alpha, :user, "cfa-stranger")
-      rendered = Adapter.render(ChatFeedAdapter, session, %{caller: stranger})
+      stranger = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "cfa-stranger")
+
+      rendered =
+        Adapter.render(ChatFeedAdapter, session, %{
+          caller: stranger,
+          authenticated_principal: stranger
+        })
 
       assert rendered == %{
                messages: [],
@@ -102,10 +111,10 @@ defmodule Ezagent.Socialware.ChatFeedAdapterTest do
     test "render_authorized returns ok for a member and unauthorized for a non-member", %{
       session: session
     } do
-      assert {:ok, snapshot} = ChatFeedAdapter.render_authorized(session, @owner)
+      assert {:ok, snapshot} = ChatFeedAdapter.render_authorized(session, owner())
       assert Enum.any?(snapshot.messages, &(message_text(&1) == "hi there"))
 
-      stranger = Ezagent.URI.entity(:team_alpha, :user, "cfa-stranger-authorized")
+      stranger = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "cfa-stranger-authorized")
       assert {:error, :unauthorized} = ChatFeedAdapter.render_authorized(session, stranger)
     end
 

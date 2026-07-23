@@ -106,12 +106,21 @@ defmodule Ezagent.Integration.SnapshotRestartTest do
                  args: %{},
                  ctx: %{
                    caller: presenter,
+                   authenticated_principal: presenter,
                    caps: MapSet.new([parent_cap]),
                    reply: {:caller_inbox, self()}
                  }
                })
 
-      assert length(cap_list) == 1
+      assert Enum.count(
+               cap_list,
+               &(Ezagent.Capability.action_of(&1) == :self_license)
+             ) == 1
+
+      assert Enum.count(
+               cap_list,
+               &(Ezagent.Capability.action_of(&1) == :list_caps)
+             ) == 1
     end
   end
 

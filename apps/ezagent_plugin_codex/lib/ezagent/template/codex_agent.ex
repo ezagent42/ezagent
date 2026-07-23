@@ -235,17 +235,17 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
                     {:error, reason} ->
                       rollback_sidecars(agent_uri)
-                      _ = Ezagent.Kind.terminate(agent_uri)
+                      _ = Ezagent.Kind.terminate!(agent_uri)
                       handle_spawn_failure(agent_uri, reason)
                   end
 
                 {:error, reason} ->
-                  _ = Ezagent.Kind.terminate(agent_uri)
+                  _ = Ezagent.Kind.terminate!(agent_uri)
                   handle_spawn_failure(agent_uri, reason)
               end
 
             {:error, reason} ->
-              _ = Ezagent.Kind.terminate(agent_uri)
+              _ = Ezagent.Kind.terminate!(agent_uri)
               handle_spawn_failure(agent_uri, reason)
           end
       end

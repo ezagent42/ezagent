@@ -267,16 +267,16 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
 
   # ----- helpers -------------------------------------------------------------
 
-  @owner Ezagent.URI.user(:system, :admin)
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "gc-owner")
 
   defp spawn_session do
     uri =
-      Ezagent.URI.new!("session://team-alpha/default/gc-#{System.unique_integer([:positive])}")
+      Ezagent.URI.session(:team_alpha, :default, "gc-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: uri,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Session.behaviors()
       })
 
@@ -310,16 +310,38 @@ defmodule Ezagent.Socialware.AnonUserGCTest do
   # Join via the PRODUCTION dispatch path, :call so it is synchronous.
   defp join(session_uri, member_uri) do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-    caller = User.admin_uri()
+    caller = owner()
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
     {:ok, _} =
-      Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+      Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+        ctx: %{
+          caller: caller,
+          authenticated_principal: caller,
+          caps: MapSet.new([cap]),
+          reply: :ignore
+        }
       })
+
+    {:ok, session_pid} = KindRegistry.lookup(session_uri)
+    wait_until(fn -> member?(session_pid, member_uri) end)
+    :ok
+  end
+
+  defp wait_until(fun, attempts \\ 100)
+  defp wait_until(_fun, 0), do: flunk("wait_until: condition never became true")
+
+  defp wait_until(fun, attempts) do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(20)
+      wait_until(fun, attempts - 1)
+    end
   end
 
   # A synchronous round-trip drains the Session Kind's mailbox so a prior :cast

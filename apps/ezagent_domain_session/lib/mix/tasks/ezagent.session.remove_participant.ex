@@ -86,7 +86,7 @@ defmodule Mix.Tasks.Ezagent.Session.RemoveParticipant do
     target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
 
     case Ezagent.Cap.issue_for_action({:admin, admin}, caller_uri, target) do
-      {:ok, cap} -> %{caller: caller_uri, caps: [cap]}
+      {:ok, cap} -> %{caller: caller_uri, authenticated_principal: caller_uri, caps: [cap]}
       {:error, reason} -> Mix.raise("remove-participant cap issuance failed: #{inspect(reason)}")
     end
   end

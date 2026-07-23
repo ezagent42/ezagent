@@ -47,6 +47,8 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   setup do
+    owner = Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "tce-owner")
+
     session =
       Ezagent.URI.session(:team_alpha, :socialware, "tce-#{System.unique_integer([:positive])}")
 
@@ -56,8 +58,9 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
       Ezagent.URI.entity(:team_alpha, :agent, "tce-agent-#{System.unique_integer([:positive])}")
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session,
+        owner_uri: owner,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -66,14 +69,14 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: MapSet.new()})
     :ok = Ezagent.WorkspaceRegistry.bind(agent, workspace)
 
-    %{session: session, workspace: workspace, agent: agent}
+    %{session: session, workspace: workspace, agent: agent, owner: owner}
   end
 
   # ---- Task 3.1 — normal settlement rewires to the target agent ------------
 
   test "a settled config_delta evolves the TARGET AGENT when the settler holds the manage-cap",
-       %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(session, agent, workspace)
+       %{session: session, workspace: workspace, agent: agent, owner: owner} do
+    manager = spawn_manager_with_manage_cap(owner, session, agent, workspace)
 
     turn_id = run_turn_to_settle(session, manager, workspace, agent)
 
@@ -92,18 +95,15 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   test "a settler WITHOUT the agent's manage-cap does NOT evolve the agent",
-       %{session: session, workspace: workspace, agent: agent} do
+       %{session: session, workspace: workspace, agent: agent, owner: owner} do
     # A manager principal that holds ordinary session-scoped caps but NOT the
     # agent's manage-cap.
-    settler_uri =
-      Ezagent.URI.entity(:team_alpha, :user, "nomgr-#{System.unique_integer([:positive])}")
-
     settler = %{
-      uri: settler_uri,
+      uri: owner,
       # Holds the session turn-drive caps (so it CAN run the turn) but NOT the
       # agent's manage-cap — the point of this test (the agent-side apply is
       # denied for lack of the manage-cap, not for lack of turn authority).
-      caps: MapSet.new(turn_drive_caps(session, settler_uri))
+      caps: MapSet.new(turn_drive_caps(session, owner))
     }
 
     _turn_id = run_turn_to_settle(session, settler, workspace, agent)
@@ -118,8 +118,8 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # ---- Task 3.2 — recovery replays under the RECORDED manager's caps -------
 
   test "recovery replays the config apply under the recorded manager (still authorized)",
-       %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(session, agent, workspace)
+       %{session: session, workspace: workspace, agent: agent, owner: owner} do
+    manager = spawn_manager_with_manage_cap(owner, session, agent, workspace)
 
     settled_turn = settled_turn_with_delta(workspace, agent, manager.uri)
     turn_id = "#{URI.to_string(session)}#turn-recover-ok"
@@ -143,8 +143,8 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   test "recovery DENIES the config apply when the recorded manager's manage-cap was revoked",
-       %{session: session, workspace: workspace, agent: agent} do
-    manager = spawn_manager_with_manage_cap(session, agent, workspace)
+       %{session: session, workspace: workspace, agent: agent, owner: owner} do
+    manager = spawn_manager_with_manage_cap(owner, session, agent, workspace)
     # Revoke the manage-cap from the manager's identity (current authority lost).
     revoke_manage_cap(manager.uri, agent, workspace)
 
@@ -195,22 +195,26 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   # Spawn a manager User Kind whose Identity slice holds the agent's manage-cap,
   # so both the normal-path dispatch caps AND `Identity.list_caps_for/1`
   # (recovery) see it.
-  defp spawn_manager_with_manage_cap(session, agent, workspace) do
-    manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
+  defp spawn_manager_with_manage_cap(manager, session, agent, workspace) do
     manage_cap =
       :agent
       |> CreatorGrant.manage_cap(agent, workspace, manager)
       |> then(&Ezagent.Test.CapHelper.signed_cap!(agent, manager, &1))
+
     # The settler drives the session turn (open/compose/claim/settle), so it
     # holds the concrete session-scoped Turn caps — plus the agent's manage-cap
     # that authorizes the agent-side apply. (PR-甲-2: no broad default baseline.)
     caps = MapSet.new([manage_cap | turn_drive_caps(session, manager)])
-    {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: manager, initial_caps: caps})
+    :ok = Ezagent.EntityCaps.grant(manager, manage_cap)
     %{uri: manager, caps: caps}
   end
 
   defp revoke_manage_cap(manager_uri, agent, workspace) do
-    {:ok, caps} = Ezagent.Domain.Agent.read_caps(manager_uri, %{caller: manager_uri})
+    {:ok, caps} =
+      Ezagent.Domain.Agent.read_caps(manager_uri, %{
+        caller: manager_uri,
+        authenticated_principal: manager_uri
+      })
 
     cap =
       Enum.find(caps, fn cap ->
@@ -225,12 +229,14 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     authority = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
 
     {:ok, _} =
-      Invocation.dispatch(%Invocation{origin: :trusted_internal,
+      Invocation.dispatch(%Invocation{
+        origin: :trusted_internal,
         target: target,
         mode: :call,
         args: %{cap: cap},
         ctx: %{
           caller: caller,
+          authenticated_principal: caller,
           caps: MapSet.new([authority]),
           reply: {:caller_inbox, self()}
         }
@@ -272,11 +278,17 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
   end
 
   defp dispatch_as(session, behavior, action, args, settler) do
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.new!("#{URI.to_string(session)}?action=#{behavior}.#{action}"),
       mode: :call,
       args: args,
-      ctx: %{caller: settler.uri, caps: settler.caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: settler.uri,
+        authenticated_principal: settler.uri,
+        caps: settler.caps,
+        reply: {:caller_inbox, self()}
+      }
     })
   end
 

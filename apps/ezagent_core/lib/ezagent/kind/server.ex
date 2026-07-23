@@ -107,23 +107,70 @@ defmodule Ezagent.Kind.Server do
 
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
+    create_freshness = create_freshness(kind_module, uri)
+    args = Map.put(args, :create_freshness, create_freshness)
 
+    # main's before-start hook: `LaunchContextInit.prepare` may transform
+    # `args` and yields a `launch_context_relay` threaded through init and
+    # discarded on terminate. It runs BEFORE the authority open + snapshot load.
     with {:ok, args, launch_context_relay} <-
            Ezagent.Kind.LaunchContextInit.prepare(kind_module, args) do
-      init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay)
+      init_after_before_start(
+        kind_module,
+        args,
+        uri,
+        uri_str,
+        create_freshness,
+        launch_context_relay
+      )
     else
       {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
       {:error, reason} -> {:stop, {:before_start_failed, reason}}
     end
   end
 
-  defp init_after_before_start(kind_module, args, uri, uri_str, launch_context_relay) do
-    case Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args) do
+  defp init_after_before_start(
+         kind_module,
+         args,
+         uri,
+         uri_str,
+         create_freshness,
+         launch_context_relay
+       ) do
+    # #195: open the per-Kind signing authority (generation-aware, 3-arg) and
+    # run the snapshot load UNDER that authority so cap verification during load
+    # sees the current signer.
+    authority_result =
+      Ezagent.Cap.Authority.open(uri, kind_module.type_name(), create_freshness)
+
+    snapshot_result =
+      case authority_result do
+        {:ok, authority} ->
+          Ezagent.Cap.Authority.with_current(authority, fn ->
+            Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args)
+          end)
+
+        {:error, reason} ->
+          {:authority_error, reason}
+      end
+
+    # #108 — the snapshot READ is a DB access too; `Snapshot.safe_load_or_init/3`
+    # surfaces sandbox-owner-death (OwnershipError/:exit) as a clean `{:stop,…}`
+    # instead of an uncaught init crash, symmetric with the WRITE
+    # (`persist_initial_snapshot/3`). let-it-crash, no fresh-state fallback.
+    case snapshot_result do
+      {:authority_error, reason} ->
+        {:stop, {:authority_load_failed, reason}}
+
       {:error, reason} ->
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
-        with {:ok, authority} <- Ezagent.Cap.Authority.open(uri, kind_module.type_name()) do
+        with {:ok, authority} <- authority_result do
+          # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
+          # declaration order. `post_init/2` is OPTIONAL — Behaviors that
+          # don't export it (or return `:ok`) contribute nothing to the
+          # queue. The handle_continue/3 calls run AFTER :announce_ready.
           post_init_queue = collect_post_init_queue(kind_module, args, slice_state)
 
           state = %{
@@ -133,38 +180,49 @@ defmodule Ezagent.Kind.Server do
             authority: authority,
             launch_context_relay: launch_context_relay,
             post_init_queue: post_init_queue,
+            # #533 5a (§3.10.3) — the authenticated creator, threaded as a
+            # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
+            # or when no creator is supplied. PR-5c reads this to grant the
+            # manage-cap to the right principal.
             created_by: Map.get(args, :created_by),
-            create_freshness: :unknown
+            # #533 5a (§3.10.3) — freshness comes from the Lifecycle's own
+            # create-vs-activate decision (`create_freshness/2`, gated on Kind
+            # METADATA `hosts_lifecycle?/1` — NOT the slice shape, which a cold
+            # rehydrate can lack `:transients` on and mis-classify; codex review
+            # P2). Computed in `init/1` BEFORE the authority open so the
+            # create/activate concept has one definition and can't drift.
+            create_freshness: create_freshness
           }
 
           case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
             :ok ->
-              state =
-                if Ezagent.Lifecycle.hosts_lifecycle?(kind_module, slice_state) do
-                  freshness =
-                    if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
-
-                  %{state | create_freshness: freshness}
-                else
-                  state
-                end
-
               case persist_initial_snapshot(uri, kind_module, slice_state) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
                   {:ok, state, {:continue, :announce_ready}}
 
                 {:error, reason} ->
+                  # Persistence is a durability promise. Registration is already
+                  # visible, so fail and detach any pending delivery before exit.
                   :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
                   {:stop, {:persistence_failed, reason}}
               end
 
             {:error, {:already_registered, _other_pid}} ->
+              # Let-it-crash — duplicate spawn is a bug at the caller layer.
               {:stop, {:already_registered, uri_str}}
           end
         else
           {:error, reason} -> {:stop, {:authority_load_failed, reason}}
         end
+    end
+  end
+
+  defp create_freshness(kind_module, uri) do
+    if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
+      if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+    else
+      :unknown
     end
   end
 
@@ -528,6 +586,23 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, view}, state}
   end
 
+  # G-6: expose only the non-secret proof needed by bearer recredentialing.
+  # A generation-N token may rotate solely from a live Kind whose lifecycle
+  # classified this boot as a genuine create/reprovision. Cold rehydrate and
+  # an old process left behind by a standalone generation bump both fail.
+  def handle_call(
+        :ezagent_recredential_generation,
+        _from,
+        %{create_freshness: :created, authority: %{generation: generation}} = state
+      )
+      when is_integer(generation) and generation > 0 do
+    {:reply, {:ok, generation}, state}
+  end
+
+  def handle_call(:ezagent_recredential_generation, _from, state) do
+    {:reply, {:error, :principal_revoked}, state}
+  end
+
   def handle_call(:ezagent_launch_context_relay, _from, state) do
     {:reply, Map.get(state, :launch_context_relay), state}
   end
@@ -621,6 +696,20 @@ defmodule Ezagent.Kind.Server do
       end)
 
     {:reply, valid?, state}
+  end
+
+  # Unified-revocation G-1 — serialize a target-wide generation bump in the
+  # target's own mailbox. Authorization is cap-based inside `regenesis/3`; a
+  # successful reply is published only after the durable active-row flip and
+  # the private live authority swap have both completed.
+  def handle_call({:ezagent_revoke_all_to, %{} = ctx}, _from, state) do
+    case Ezagent.Cap.Authority.regenesis(state.uri, state.kind.type_name(), ctx) do
+      {:ok, authority} ->
+        {:reply, {:ok, authority.generation}, %{state | authority: authority}}
+
+      {:error, _reason} = error ->
+        {:reply, error, state}
+    end
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do

@@ -94,7 +94,10 @@ defmodule Ezagent.Agent.ConfigNoActivationTest do
 
   defp grant_manage_cap(agent, workspace) do
     manager = Ezagent.URI.entity(:team_alpha, :user, "mgr-#{System.unique_integer([:positive])}")
-    cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+    requested = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
+    authority = install_test_authority!(agent, :agent)
+    cap = authority_signed_cap!(authority, manager, requested)
+    {:ok, _} = Ezagent.Users.create_read_only(manager, [self_license_cap!(manager)])
     %{uri: manager, caps: MapSet.new([cap])}
   end
 end

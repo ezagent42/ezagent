@@ -15,7 +15,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
   alias Ezagent.Socialware.{DeliveryOutbox, ExternalFeed, SettlementRecord}
   alias EzagentCore.Repo
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "delivery-cursor-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "delivery-cursor-owner")
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "p2-5b-#{System.unique_integer([:positive])}")
@@ -27,14 +27,16 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
 
   defp dispatch(s, b, a, args) do
     target = target(s, b, a)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(s, caller, target),
         reply: {:caller_inbox, self()}
       }
@@ -60,9 +62,9 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: uri,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -72,7 +74,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
 
   # The external read is authorized by LIVE membership (the session owner), not
   # an identity-less token. The delivery-cursor projection is auth-agnostic.
-  defp test_caller(_session_uri), do: @owner
+  defp test_caller(_session_uri), do: owner()
 
   # full turn -> committed delivery; returns turn_id.
   defp run_turn(uri, page_tree) do
@@ -131,20 +133,20 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       t1 = run_turn(uri, %{type: "text", props: %{text: "p1"}})
       t2 = run_turn(uri, %{type: "text", props: %{text: "p2"}})
 
-      {:ok, all} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+      {:ok, all} = ExternalFeed.committed_deliveries_since(owner(), uri, 0)
       assert Enum.map(all, & &1.turn_id) == [t1, t2]
       assert Enum.map(all, & &1.cursor) == [1, 2]
       assert List.last(all).surface_version == 2
 
-      assert {:ok, [%{turn_id: ^t2}]} = ExternalFeed.committed_deliveries_since(@owner, uri, 1)
-      assert {:ok, []} = ExternalFeed.committed_deliveries_since(@owner, uri, 2)
+      assert {:ok, [%{turn_id: ^t2}]} = ExternalFeed.committed_deliveries_since(owner(), uri, 1)
+      assert {:ok, []} = ExternalFeed.committed_deliveries_since(owner(), uri, 2)
     end
 
     test "latest_cursor/2 is the max committed_seq (0 when none)" do
       uri = spawn_session()
-      assert ExternalFeed.latest_cursor(@owner, uri) == {:ok, 0}
+      assert ExternalFeed.latest_cursor(owner(), uri) == {:ok, 0}
       _ = run_turn(uri, %{type: "text", props: %{text: "p1"}})
-      assert ExternalFeed.latest_cursor(@owner, uri) == {:ok, 1}
+      assert ExternalFeed.latest_cursor(owner(), uri) == {:ok, 1}
     end
   end
 
@@ -180,7 +182,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
 
       assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == nil
 
-      assert {:ok, [%{turn_id: ^t1}]} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+      assert {:ok, [%{turn_id: ^t1}]} = ExternalFeed.committed_deliveries_since(owner(), uri, 0)
 
       t3 = run_turn(uri, %{type: "text", props: %{text: "p3"}})
       assert Repo.get_by(DeliveryOutbox, turn_id: t3).committed_seq == 2
@@ -191,7 +193,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       assert Repo.get_by(DeliveryOutbox, turn_id: pending_turn).committed_seq == 3
 
       assert {:ok, [%{turn_id: ^pending_turn}]} =
-               ExternalFeed.committed_deliveries_since(@owner, uri, 2)
+               ExternalFeed.committed_deliveries_since(owner(), uri, 2)
     end
   end
 
@@ -227,7 +229,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       assert row.committed_seq == 1
       assert row.surface_version == 7
 
-      {:ok, [d]} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+      {:ok, [d]} = ExternalFeed.committed_deliveries_since(owner(), uri, 0)
       assert d.surface_version == 7
     end
   end
@@ -249,7 +251,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       assert Repo.get_by(DeliveryOutbox, turn_id: t1).committed_seq == 1
 
       assert {:ok, [%{turn_id: ^t1}, %{turn_id: ^t2}]} =
-               ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+               ExternalFeed.committed_deliveries_since(owner(), uri, 0)
 
       {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p2"}}
@@ -276,7 +278,7 @@ defmodule Ezagent.Socialware.ExternalDeliveryCursorTest do
       {:ok, snapshot} = ExternalFeed.snapshot(uri, caller)
       assert snapshot.page == %{type: "text", props: %{text: "p10"}}
 
-      assert {:ok, deliveries} = ExternalFeed.committed_deliveries_since(@owner, uri, 0)
+      assert {:ok, deliveries} = ExternalFeed.committed_deliveries_since(owner(), uri, 0)
       assert List.last(deliveries).turn_id == t10
     end
   end

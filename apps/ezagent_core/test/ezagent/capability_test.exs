@@ -175,12 +175,16 @@ defmodule Ezagent.CapabilityTest do
       wrong_action = %{valid | action: :leave}
       legacy_system_grant = %{valid | granted_by: @system_uri}
 
-      assert {:ok, ^valid} =
-               Capability.Authorization.authorizing_cap([wrong_action, valid], needed)
+      assert :error =
+               Capability.Authorization.authorizing_cap(
+                 @user_uri,
+                 [wrong_action, valid],
+                 needed
+               )
 
-      assert Capability.Authorization.authorizes?(MapSet.new([valid]), needed)
-      refute Capability.Authorization.authorizes?([wrong_action], needed)
-      refute Capability.Authorization.authorizes?([legacy_system_grant], needed)
+      refute Capability.Authorization.authorizes?(@user_uri, MapSet.new([valid]), needed)
+      refute Capability.Authorization.authorizes?(@user_uri, [wrong_action], needed)
+      refute Capability.Authorization.authorizes?(@user_uri, [legacy_system_grant], needed)
     end
   end
 

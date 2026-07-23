@@ -55,6 +55,7 @@ defmodule Ezagent.Domain.Agent do
   """
   @type read_ctx :: %{
           required(:caller) => URI.t(),
+          required(:authenticated_principal) => URI.t(),
           optional(:caps) => MapSet.t() | [Ezagent.Capability.t()]
         }
 
@@ -140,8 +141,12 @@ defmodule Ezagent.Domain.Agent do
   its slice/snapshot caps must satisfy the needed cap.
   """
   @spec read_config(URI.t(), read_ctx(), keyword()) :: {:ok, map()} | {:error, term()}
-  def read_config(%URI{} = agent_uri, %{caller: _} = ctx, opts \\ []) do
-    Ezagent.Agent.Config.read_cascade(agent_uri, ctx.caller, two_route_caps(ctx), opts)
+  def read_config(
+        %URI{} = agent_uri,
+        %{authenticated_principal: %URI{} = holder} = ctx,
+        opts \\ []
+      ) do
+    Ezagent.Agent.Config.read_cascade(agent_uri, holder, two_route_caps(ctx), opts)
   end
 
   @doc """
@@ -151,9 +156,14 @@ defmodule Ezagent.Domain.Agent do
   """
   @spec read_config_key(URI.t(), String.t(), read_ctx(), keyword()) ::
           {:ok, map()} | {:error, term()}
-  def read_config_key(%URI{} = agent_uri, key, %{caller: _} = ctx, opts \\ [])
+  def read_config_key(
+        %URI{} = agent_uri,
+        key,
+        %{authenticated_principal: %URI{} = holder} = ctx,
+        opts \\ []
+      )
       when is_binary(key) do
-    Ezagent.Agent.Config.read_key(agent_uri, key, ctx.caller, two_route_caps(ctx), opts)
+    Ezagent.Agent.Config.read_key(agent_uri, key, holder, two_route_caps(ctx), opts)
   end
 
   @doc """
@@ -166,7 +176,7 @@ defmodule Ezagent.Domain.Agent do
   Delegates the read to the sanctioned storage facade `Ezagent.EntityCaps.load/1`.
   """
   @spec read_caps(URI.t(), read_ctx()) :: {:ok, [Ezagent.Capability.t()]} | {:error, term()}
-  def read_caps(%URI{} = entity_uri, %{caller: _} = ctx) do
+  def read_caps(%URI{} = entity_uri, %{authenticated_principal: %URI{}} = ctx) do
     needed = %{
       kind: entity_kind_type(entity_uri),
       behavior: Ezagent.ActionSet.Identity,
@@ -193,7 +203,7 @@ defmodule Ezagent.Domain.Agent do
   `Ezagent.ActionSet.Sandbox.read_persisted_state/1`.
   """
   @spec read_sandbox(URI.t(), read_ctx()) :: {:ok, map()} | {:error, term()}
-  def read_sandbox(%URI{} = agent_uri, %{caller: _} = ctx) do
+  def read_sandbox(%URI{} = agent_uri, %{authenticated_principal: %URI{}} = ctx) do
     needed = %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Sandbox,
@@ -332,7 +342,11 @@ defmodule Ezagent.Domain.Agent do
   """
   @spec read_credential_status(URI.t(), read_ctx(), keyword()) ::
           {:ok, Ezagent.Agent.CredentialStatus.result()} | {:error, term()}
-  def read_credential_status(%URI{} = agent_uri, %{caller: _} = ctx, opts \\ []) do
+  def read_credential_status(
+        %URI{} = agent_uri,
+        %{authenticated_principal: %URI{}} = ctx,
+        opts \\ []
+      ) do
     needed = %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Manage,
@@ -427,18 +441,20 @@ defmodule Ezagent.Domain.Agent do
   # pins this; the global p3 probe allowlists the whole session dir so it cannot).
   defp authorized?(needed, ctx) do
     inline = Map.get(ctx, :caps, [])
+    holder = Map.get(ctx, :authenticated_principal)
 
     cond do
       # route 1 — inline self-authority (#154); the caller hands the cap inline.
-      Ezagent.Identity.caps_authorize?(inline, needed) ->
+      Ezagent.Identity.caps_authorize?(holder, inline, needed) ->
         true
 
       # route 2 — slice/snapshot caps of the caller, read non-activatingly. Only
       # available when a concrete caller URI is present (an unauthenticated /
       # nil caller has no slice to read; it falls through to route 1 only).
-      match?(%URI{}, Map.get(ctx, :caller)) and
+      match?(%URI{}, holder) and
           Ezagent.Identity.caps_authorize?(
-            Ezagent.EntityCaps.load(ctx.caller),
+            holder,
+            Ezagent.EntityCaps.load(holder),
             needed
           ) ->
         true
@@ -452,17 +468,17 @@ defmodule Ezagent.Domain.Agent do
   # internally, so to honor BOTH routes for config we feed it the UNION of the
   # caller's inline caps and its slice/snapshot caps (route 2). Idempotent: the
   # owner re-checks the same predicate against the same needed cap.
-  defp two_route_caps(%{caller: caller} = ctx) do
+  defp two_route_caps(%{authenticated_principal: %URI{} = holder} = ctx) do
     inline = ctx |> Map.get(:caps, []) |> Enum.to_list()
-    slice = if match?(%URI{}, caller), do: Ezagent.EntityCaps.load(caller), else: []
+    slice = Ezagent.EntityCaps.load(holder)
     MapSet.union(MapSet.new(inline), MapSet.new(slice))
   end
 
   # caps self-read exemption (SPEC §3.1): the live `identity.list_caps` dispatch
   # let an entity read its OWN caps with no held cap. Only a concrete caller URI
   # equal to the target qualifies (a nil/unauthenticated caller never self-reads).
-  defp self_read?(%{caller: %URI{} = caller}, %URI{} = entity_uri),
-    do: same_uri?(caller, entity_uri)
+  defp self_read?(%{authenticated_principal: %URI{} = holder}, %URI{} = entity_uri),
+    do: same_uri?(holder, entity_uri)
 
   defp self_read?(_ctx, _entity_uri), do: false
 

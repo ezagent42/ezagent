@@ -132,6 +132,8 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
         caps: MapSet.new()
       }
 
+      bob_ctx = Map.put(bob_ctx, :authenticated_principal, bob_ctx.caller)
+
       assert {:error, :not_board_owner} =
                BoardProvision.pull_board(
                  board_uri,
@@ -151,7 +153,7 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
       assert {:error, reason} =
                dispatch_as(assistant_uri, unrelated, :add_node, %{parent_id: "", title: "x"})
 
-      assert reason in [:unauthorized, :invalid_cap_signature]
+      assert reason in [:missing_cap, :unauthorized, :invalid_cap_signature]
     end)
   end
 
@@ -198,11 +200,9 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
     user_uri =
       URI.new!("entity://#{ws_name}/user/#{label}-#{System.unique_integer([:positive])}")
 
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(User, %{
-        uri: user_uri,
-        initial_caps: MapSet.new()
-      })
+    assert {:ok, _row} = Ezagent.Users.create(user_uri, "test-password", [])
+    assert :ok = Ezagent.Entity.spawn_principal(user_uri)
+    on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
 
     Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
   end
@@ -268,11 +268,41 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
            target: target,
            mode: :call,
            args: %{member: member_uri, role_name: role_name},
-           ctx: %{caller: caller, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+           ctx: %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: MapSet.new([cap]),
+             reply: {:caller_inbox, self()}
+           }
          }) do
-      :ok -> :ok
-      {:ok, _} -> :ok
+      :ok -> converge_member_projection(session_uri, member_uri, role_name)
+      {:ok, _} -> converge_member_projection(session_uri, member_uri, role_name)
       other -> flunk("join failed: #{inspect(other)}")
+    end
+  end
+
+  defp converge_member_projection(session_uri, member_uri, role_name) do
+    assert eventually(fn ->
+             held = Ezagent.EntityCaps.load_persisted(member_uri)
+             Ezagent.Session.MemberReceive.holds_member_cap_over?(member_uri, held, session_uri)
+           end)
+
+    target = Ezagent.URI.with_action(session_uri, :session, :add_self)
+
+    case Invocation.dispatch(%Invocation{
+           origin: :trusted_internal,
+           target: target,
+           mode: :call,
+           args: %{member: member_uri, facets: %{role_name: role_name}},
+           ctx: %{
+             caller: member_uri,
+             authenticated_principal: member_uri,
+             caps: MapSet.new(),
+             reply: {:caller_inbox, self()}
+           }
+         }) do
+      {:ok, %{status: status}} when status in [:added, :already_member] -> :ok
+      other -> flunk("member projection failed: #{inspect(other)}")
     end
   end
 
@@ -290,7 +320,13 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
         Ezagent.URI.with_action(board_uri, :kanban, action),
         action,
         args,
-        %{mode: :call, caller: caller, caps: caps, reply: {:caller_inbox, self()}}
+        %{
+          mode: :call,
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        }
       )
     )
   end

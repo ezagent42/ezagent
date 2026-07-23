@@ -194,6 +194,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
     caps =
       orchestrator_caps(session_uri, orchestrator_uri, ws, [:agent_template, :session_template])
 
+    # derivation-edge: test-scenario in-code E2E fixture
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: orchestrator_uri, initial_caps: caps})
     :ok = Ezagent.WorkspaceRegistry.bind(orchestrator_uri, ws)
 
@@ -471,6 +472,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
         args: args,
         ctx: %{
           caller: admin,
+          authenticated_principal: admin,
           caps: MapSet.new([signed_cap]),
           reply: {:caller_inbox, self()}
         },
@@ -483,6 +485,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
     session_uri = Ezagent.URI.session("team-alpha", "generic", "g4-e2e-#{uniq()}")
 
     {:ok, _pid} =
+      # derivation-edge: test-scenario in-code E2E fixture
       Ezagent.Kind.spawn(Session, %{
         uri: session_uri,
         behaviors: Ezagent.Entity.Session.behaviors()

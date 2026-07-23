@@ -229,6 +229,12 @@ defmodule Ezagent.InvocationLazySpawnTest do
   defp signed_ctx(uri) do
     presenter = Ezagent.URI.user(:system, :admin)
     cap = signed_fixture_cap!(uri, :test, TestBehavior, :noop, presenter)
-    %{caller: presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+
+    %{
+      caller: presenter,
+      authenticated_principal: presenter,
+      caps: MapSet.new([cap]),
+      reply: {:caller_inbox, self()}
+    }
   end
 end

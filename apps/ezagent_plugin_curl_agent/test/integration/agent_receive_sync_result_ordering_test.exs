@@ -26,7 +26,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, Kind, KindRegistry, SnapshotStore}
+  alias Ezagent.{Kind, KindRegistry, SnapshotStore}
   alias Ezagent.ActionSet.Agent.Receive, as: AgentReceive
   alias EzagentPluginCurlAgent.BridgeAdapter
   alias Ezagent.AgentBridge.Payload
@@ -37,12 +37,16 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
   # `:any` (MemberReceive matches kind/action/instance/provenance only).
   defp with_member_cap(ctx) do
     caller = Map.fetch!(ctx, :caller)
+    holder = Map.fetch!(ctx, :self_uri)
 
-    cap = %Capability{
-      Capability.cap(:session, :any, :receive, caller, Capability.workspace_of(caller))
-      | granted_by: URI.new!("entity://system/user/owner"),
-        granted_at: DateTime.utc_now()
-    }
+    cap =
+      Ezagent.Test.CapHelper.signed_fixture_cap!(
+        caller,
+        :session,
+        :any,
+        :receive,
+        holder
+      )
 
     Map.put(ctx, :siblings, %{identity: %{caps: MapSet.new([cap])}})
   end
@@ -136,6 +140,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
       # mailbox" — i.e. the conversation has NOT yet gained message#1's turns.
       # This is exactly the window where message#2's adapter assembly runs.
       stale_conv = adapter_sees_conversation(uri)
+
       assert stale_conv == [],
              "precondition: a fresh curl agent starts with an empty conversation"
 

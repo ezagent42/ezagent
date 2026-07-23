@@ -37,9 +37,9 @@ defmodule Ezagent.Domain.AgentReadTest do
   defp user(name),
     do: Ezagent.URI.entity(:team_alpha, :user, "#{name}-#{System.unique_integer([:positive])}")
 
-  defp manage_cap(agent, workspace, granter) do
+  defp manage_cap(agent, workspace, granter, grantee \\ nil) do
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, granter)
-    sign_cap(agent, granter, granter, cap)
+    sign_cap(agent, granter, grantee || granter, cap)
   end
 
   defp sandbox_cap(agent, granter, grantee \\ nil) do
@@ -110,8 +110,13 @@ defmodule Ezagent.Domain.AgentReadTest do
   # Persist a User caller's caps into users.caps_json (the User SSOT; caller
   # Kind stays COLD), so route 2 can authorize it without activating the Kind.
   defp seed_caller_slice_caps(caller, caps) do
-    {:ok, _} = Ezagent.Users.create_read_only(caller, caps)
+    {:ok, _} = Ezagent.Users.create_read_only(caller, [self_license_cap!(caller) | caps])
 
+    :ok
+  end
+
+  defp license_holder!(holder) do
+    {:ok, _} = Ezagent.Users.create_read_only(holder, [self_license_cap!(holder)])
     :ok
   end
 
@@ -120,6 +125,7 @@ defmodule Ezagent.Domain.AgentReadTest do
   test "read_config / read_caps / read_sandbox / read_status all resolve a COLD agent without activating it",
        %{agent: agent, workspace: workspace} do
     manager = user("mgr")
+    :ok = license_holder!(manager)
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
     inline =
@@ -129,7 +135,7 @@ defmodule Ezagent.Domain.AgentReadTest do
         list_caps_cap(agent, manager)
       ])
 
-    ctx = %{caller: manager, caps: inline}
+    ctx = %{caller: manager, authenticated_principal: manager, caps: inline}
 
     refute kind_live?(agent)
 
@@ -160,7 +166,8 @@ defmodule Ezagent.Domain.AgentReadTest do
     manager = user("mgr")
     :ok = seed_agent_snapshot(agent, workspace, manager)
     stranger = user("stranger")
-    ctx = %{caller: stranger, caps: MapSet.new()}
+    :ok = license_holder!(stranger)
+    ctx = %{caller: stranger, authenticated_principal: stranger, caps: MapSet.new()}
 
     assert {:error, :unauthorized} = DomainAgent.read_config(agent, ctx)
     assert {:error, :unauthorized} = DomainAgent.read_caps(agent, ctx)
@@ -178,11 +185,16 @@ defmodule Ezagent.Domain.AgentReadTest do
 
     other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
     other_granter = user("og")
+    :ok = license_holder!(other_granter)
 
     wrong_caps =
       MapSet.new([manage_cap(other, workspace, other_granter), sandbox_cap(other, other_granter)])
 
-    ctx = %{caller: other_granter, caps: wrong_caps}
+    ctx = %{
+      caller: other_granter,
+      authenticated_principal: other_granter,
+      caps: wrong_caps
+    }
 
     assert {:error, :unauthorized} = DomainAgent.read_config(agent, ctx)
     assert {:error, :unauthorized} = DomainAgent.read_sandbox(agent, ctx)
@@ -195,7 +207,7 @@ defmodule Ezagent.Domain.AgentReadTest do
   test "read_caps self-read exemption: caller == entity succeeds with no list_caps cap",
        %{agent: agent} do
     # The agent reading its OWN caps, holding NOTHING.
-    ctx = %{caller: agent, caps: MapSet.new()}
+    ctx = %{caller: agent, authenticated_principal: agent, caps: MapSet.new()}
 
     assert {:ok, caps} = DomainAgent.read_caps(agent, ctx)
     assert is_list(caps)
@@ -210,8 +222,13 @@ defmodule Ezagent.Domain.AgentReadTest do
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
     worker = user("worker")
+    :ok = license_holder!(worker)
     # worker has NO slice caps — only inline self-authority (the #154 class).
-    ctx = %{caller: worker, caps: MapSet.new([sandbox_cap(agent, manager, worker)])}
+    ctx = %{
+      caller: worker,
+      authenticated_principal: worker,
+      caps: MapSet.new([sandbox_cap(agent, manager, worker)])
+    }
 
     assert {:ok, _} = DomainAgent.read_sandbox(agent, ctx)
     refute kind_live?(agent)
@@ -228,7 +245,7 @@ defmodule Ezagent.Domain.AgentReadTest do
     # the bug bare `holds_cap?` (slice-only, denies cold) would have produced —
     # EntityCaps' durable User fallback authorizes the cold caller.
     :ok = seed_caller_slice_caps(user_caller, [sandbox_cap(agent, manager, user_caller)])
-    ctx = %{caller: user_caller, caps: MapSet.new()}
+    ctx = %{caller: user_caller, authenticated_principal: user_caller, caps: MapSet.new()}
 
     refute kind_live?(user_caller), "precondition: caller Kind cold (route 2 reads its snapshot)"
 
@@ -243,7 +260,8 @@ defmodule Ezagent.Domain.AgentReadTest do
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
     nobody = user("nobody")
-    ctx = %{caller: nobody, caps: MapSet.new()}
+    :ok = license_holder!(nobody)
+    ctx = %{caller: nobody, authenticated_principal: nobody, caps: MapSet.new()}
 
     assert {:error, :unauthorized} = DomainAgent.read_sandbox(agent, ctx)
     refute kind_live?(agent)
@@ -258,11 +276,13 @@ defmodule Ezagent.Domain.AgentReadTest do
 
     # route 1 only — inline manage cap, empty slice.
     inline_only = user("inline")
+    :ok = license_holder!(inline_only)
 
     assert {:ok, _} =
              DomainAgent.read_config(agent, %{
                caller: inline_only,
-               caps: MapSet.new([manage_cap(agent, workspace, manager)])
+               authenticated_principal: inline_only,
+               caps: MapSet.new([manage_cap(agent, workspace, manager, inline_only)])
              })
 
     # route 2 only — slice manage cap, NO inline.
@@ -270,7 +290,12 @@ defmodule Ezagent.Domain.AgentReadTest do
     requested = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
     slice_cap = sign_cap(agent, manager, slice_only, requested)
     :ok = seed_caller_slice_caps(slice_only, [slice_cap])
-    assert {:ok, _} = DomainAgent.read_config(agent, %{caller: slice_only, caps: MapSet.new()})
+    assert {:ok, _} =
+             DomainAgent.read_config(agent, %{
+               caller: slice_only,
+               authenticated_principal: slice_only,
+               caps: MapSet.new()
+             })
 
     # A refactor dropping EITHER route would fail one of the two assertions
     # above (locking out one caller class) — the §3.2 invariant.
@@ -282,10 +307,12 @@ defmodule Ezagent.Domain.AgentReadTest do
   test "read_caps returns raw [%Capability{}] and read_sandbox returns the raw state map (render-parity)",
        %{agent: agent, workspace: workspace} do
     manager = user("mgr")
+    :ok = license_holder!(manager)
     :ok = seed_agent_snapshot(agent, workspace, manager)
 
     ctx = %{
       caller: manager,
+      authenticated_principal: manager,
       caps: MapSet.new([sandbox_cap(agent, manager), list_caps_cap(agent, manager)])
     }
 

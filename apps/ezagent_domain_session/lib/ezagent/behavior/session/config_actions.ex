@@ -86,6 +86,8 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   """
   @spec system_set_working_copy(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_working_copy(%URI{} = session_uri, working_copy) when is_map(working_copy) do
+    admin = Ezagent.URI.user(:system, :admin)
+
     with {:ok, caps} <- session_self_cap(session_uri, :set_working_copy) do
       case Ezagent.Router.dispatch(%Cmd{
              target: session_uri,
@@ -93,6 +95,7 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
              args: %{template_working_copy: working_copy},
              ctx: %{
                caller: session_uri,
+               authenticated_principal: admin,
                caps: caps,
                system_internal: true,
                reply: {:caller_inbox, self()}
@@ -121,6 +124,8 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
   @spec system_set_prompt_templates(URI.t(), map()) :: {:ok, map()} | {:error, term()}
   def system_set_prompt_templates(%URI{} = session_uri, prompt_templates)
       when is_map(prompt_templates) do
+    admin = Ezagent.URI.user(:system, :admin)
+
     with {:ok, caps} <- session_self_cap(session_uri, :set_prompt_templates) do
       case Ezagent.Router.dispatch(%Cmd{
              target: session_uri,
@@ -128,6 +133,7 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
              args: %{prompt_templates: prompt_templates},
              ctx: %{
                caller: session_uri,
+               authenticated_principal: admin,
                caps: caps,
                reply: {:caller_inbox, self()}
              },
@@ -140,22 +146,42 @@ defmodule Ezagent.ActionSet.Session.ConfigActions do
     end
   end
 
+  @doc false
+  @spec system_transfer_owner(URI.t(), URI.t()) :: {:ok, map()} | {:error, term()}
+  def system_transfer_owner(%URI{} = session_uri, %URI{} = new_owner) do
+    admin = Ezagent.Entity.User.admin_uri()
+
+    with {:ok, caps} <- session_self_cap(session_uri, :transfer_owner) do
+      Ezagent.Router.dispatch(%Cmd{
+        target: session_uri,
+        action: :transfer_owner,
+        args: %{owner: new_owner},
+        ctx: %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        },
+        origin: :trusted_internal
+      })
+    end
+  end
+
   @doc """
-  Build the session's OWN inline cap (as a `MapSet`) for a self-slice config
+  Build an admin-held inline cap (as a `MapSet`) for a session self-slice config
   write (`:set_working_copy` / `:set_legends` / `:set_prompt_templates`).
 
-  `granted_by` the session itself — a real entity exercising self-authority over
-  its own `:chat` slice (the workspace-loader #832 pattern; #154 replaces the
-  eliminated `system://session-internal` principal). `behavior: :any` avoids
-  pinning the Session behavior module; `kind`/`action`/`instance` keep it
-  least-privilege. Shared by `Legends.system_set_legends/2`.
+  The session remains `ctx.caller` because the handler's structural self-write
+  predicate is about the machinery actor. The distinct authenticated holder is
+  canonical admin, and the narrow cap is therefore bound to admin. Shared by
+  `Legends.system_set_legends/2`.
   """
   @spec session_self_cap(URI.t(), atom()) :: {:ok, MapSet.t()} | {:error, term()}
   def session_self_cap(%URI{} = session_uri, action) when is_atom(action) do
     target = Ezagent.URI.with_action(session_uri, :session, action)
     admin = Ezagent.URI.user(:system, :admin)
 
-    case Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
+    case Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
       {:ok, cap} -> {:ok, MapSet.new([cap])}
       {:error, _reason} = error -> error
     end

@@ -103,7 +103,12 @@ defmodule Ezagent.World.AgentDeleteAuthzLeakTest do
         target: join_target,
         mode: :cast,
         args: %{member: agent_uri},
-        ctx: %{caller: User.admin_uri(), caps: MapSet.new([join_cap]), reply: :ignore}
+        ctx: %{
+          caller: User.admin_uri(),
+          authenticated_principal: User.admin_uri(),
+          caps: MapSet.new([join_cap]),
+          reply: :ignore
+        }
       })
 
     Process.sleep(50)

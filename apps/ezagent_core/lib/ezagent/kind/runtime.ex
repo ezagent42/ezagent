@@ -176,6 +176,7 @@ defmodule Ezagent.Kind.Runtime do
              behavior_module,
              action,
              target,
+             Map.get(enriched_ctx, :authenticated_principal),
              enriched_ctx
            ),
          :ok <- workspace_isolation_check(behavior_module, target, enriched_ctx),

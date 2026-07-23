@@ -146,7 +146,7 @@ defmodule Ezagent.CapTest do
                Cap.validate_for_current_target(artifact, context.grantee)
 
       assert {:ok, regenerated_authority} =
-               Authority.regenesis(context.uri, :test, context.admin)
+               Authority.regenesis(context.uri, :test)
 
       refute regenerated_authority.key_id == artifact.key_id
 

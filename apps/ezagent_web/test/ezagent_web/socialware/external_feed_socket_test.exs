@@ -25,7 +25,13 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
     session = session_uri()
     workspace = Ezagent.Capability.workspace_of(session)
 
-    {:ok, _pid} =
+    if is_nil(Ezagent.Users.get_by_uri(@owner)) do
+      {:ok, _row} = Ezagent.Users.create_read_only(@owner, [])
+    end
+
+    :ok = Ezagent.Entity.spawn_principal(@owner)
+
+    {:ok, session_pid} =
       Ezagent.Kind.spawn(Session, %{
         uri: session,
         owner_uri: @owner,
@@ -33,6 +39,18 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
       })
 
     :ok = Ezagent.WorkspaceRegistry.bind(session, workspace)
+    :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session, @owner)
+
+    on_exit(fn ->
+      if Process.alive?(session_pid) do
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          session_pid
+        )
+      end
+
+      Ezagent.Kind.terminate(@owner)
+    end)
 
     # The viewer's caller-identity token (the auth carrier the SPA sends). The
     # live membership re-check at the channel is the real authorization.
@@ -392,7 +410,12 @@ defmodule EzagentWeb.Socialware.ExternalFeedSocketTest do
         target: target,
         mode: :call,
         args: %{member: member_uri},
-        ctx: %{caller: caller, caps: MapSet.new([cap]), reply: :ignore}
+        ctx: %{
+          caller: caller,
+          authenticated_principal: caller,
+          caps: MapSet.new([cap]),
+          reply: :ignore
+        }
       })
     end
   end

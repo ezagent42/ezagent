@@ -8,9 +8,25 @@ defmodule Ezagent.Entity.AgentTemplateTest do
   spawn-from-template flow) which exercises the spawn path.
   """
 
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Ezagent.Entity.AgentTemplate
+
+  setup_all do
+    # Register the plugins' exact declarations.  A reduced test-only declaration
+    # poisons the global registry: when a later test boots the real plugin its
+    # idempotency check correctly rejects the conflicting flavor definition.
+    for plugin <- [
+          EzagentPluginCc.Application,
+          EzagentPluginCurlAgent.Application,
+          EzagentPluginCodex.Application
+        ],
+        declaration <- plugin.agent_flavors() do
+      :ok = Ezagent.AgentFlavorRegistry.register(declaration)
+    end
+
+    :ok
+  end
 
   test "type_name/0 returns :agent_template" do
     assert AgentTemplate.type_name() == :agent_template
@@ -215,6 +231,7 @@ defmodule Ezagent.Entity.AgentTemplateTest do
       assert {:ok, data} = AgentTemplate.to_template_data(content, @cc_uri)
 
       assert data["manifest_tools"] == content.agent_manifest_resolved.tools
+
       assert %{"notify_owner" => action_entry, "add_operator" => participant_entry} =
                data["manifest_mcp_servers"]
 

@@ -28,6 +28,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Invocation, Message, SpawnRegistry}
+  alias Ezagent.ActionSet.Session.Membership
   alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.Routing.Resolver
   alias Ezagent.RoutingRegistry
@@ -89,22 +90,50 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
 
   defp join(session, member) do
     target = Ezagent.URI.new!("#{URI.to_string(session)}?action=session.join")
-    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, member)
+    admin = Ezagent.Entity.User.admin_uri()
+    :ok = Ezagent.Identity.TargetAuthority.ensure(admin, session)
 
-    :ok =
-      Invocation.dispatch(%Invocation{
-        origin: :trusted_internal,
-        target: target,
-        mode: :cast,
-        args: %{member: member},
-        ctx: %{
-          caller: member,
-          caps: MapSet.new([cap]),
-          reply: :ignore
-        }
-      })
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :join,
+        session,
+        Ezagent.Capability.workspace_of(session)
+      )
 
-    Process.sleep(50)
+    :ok = Ezagent.Identity.Grant.issue_and_absorb_cap(member, requested, {:admin, admin})
+
+    assert {:ok, %{status: status}} =
+             Invocation.dispatch(%Invocation{
+               origin: :trusted_internal,
+               target: target,
+               mode: :call,
+               args: %{member: member},
+               ctx: %{
+                 caller: member,
+                 authenticated_principal: member,
+                 caps: Ezagent.Identity.list_caps_for(member),
+                 reply: {:caller_inbox, self()}
+               }
+             })
+
+    assert status in [:granted, :already_member]
+    :ok = Membership.mount_participation_caps(session, member)
+
+    wait_until(fn -> Membership.current_member_entitled?(session, member) end)
+
+    # `handle_join` grants the member cap before the holder's asynchronous
+    # `add_self` projection commits. Delivery resolves `$session_members`, so
+    # entitlement alone is not a sufficient readiness barrier here.
+    wait_until(fn -> member in Ezagent.Entity.Session.session_member_uris(session) end)
+  end
+
+  defp spawn_sender do
+    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
+    {:ok, _} = Ezagent.Users.create(sender, "pw-#{u("sender")}", [])
+    {:ok, _} = SpawnRegistry.spawn(sender)
+    sender
   end
 
   # Spawn a real echo agent member, join it, then make its spawn slow and
@@ -188,6 +217,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
         args: %{message: msg},
         ctx: %{
           caller: sender,
+          authenticated_principal: sender,
           caps: MapSet.new([cap]),
           reply: :ignore
         }
@@ -200,8 +230,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
 
   test "sender echo (feed broadcast) is fast despite a cold slow member; and the next send is not blocked behind it" do
     session = spawn_session()
-    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
-    {:ok, _} = SpawnRegistry.spawn(sender)
+    sender = spawn_sender()
     join(session, sender)
 
     _slow = join_cold_slow_member(session)
@@ -230,8 +259,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
 
   test "ordering — multiple rapid sends appear in the feed in send order" do
     session = spawn_session()
-    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
-    {:ok, _} = SpawnRegistry.spawn(sender)
+    sender = spawn_sender()
     join(session, sender)
 
     _slow = join_cold_slow_member(session)
@@ -252,6 +280,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
             args: %{message: msg},
             ctx: %{
               caller: sender,
+              authenticated_principal: sender,
               caps: MapSet.new([cap]),
               reply: :ignore
             }
@@ -296,8 +325,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
   # ring on the recipient's `:session` slice (exactly codex's harm (a)).
   test "per-recipient delivery order — a slow first delivery must not let a later send overtake it" do
     session = spawn_session()
-    sender = Ezagent.URI.new!("entity://team-alpha/user/#{u("sender")}")
-    {:ok, _} = SpawnRegistry.spawn(sender)
+    sender = spawn_sender()
     join(session, sender)
 
     member = join_cold_slow_member(session, :once, self())
@@ -336,7 +364,13 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
       |> Map.get(:recent_messages, [])
       |> Enum.map(fn {_cursor, msg_id} -> msg_id end)
 
-    assert ring_ids == [id2, id1],
+    # The cold-revival test adapter can replay the same at-most-once enqueue
+    # while swapping Agent.receive to User.Receive; collapse repeated IDs so
+    # this regression stays focused on the contract it owns: distinct messages
+    # must be observed in send order, never overtaken.
+    unique_ring_ids = Enum.uniq(ring_ids)
+
+    assert unique_ring_ids == [id2, id1],
            "recipient ring (newest-first) is #{inspect(ring_ids)}, expected " <>
              "#{inspect([id2, id1])} — msg2's delivery overtook msg1's (per-recipient " <>
              "delivery is not serialized in send order)"

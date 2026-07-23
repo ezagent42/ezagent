@@ -15,6 +15,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @recipe_grant_task "apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex"
   @orchestrator_caps "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator/caps.ex"
   @composition_caps "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex"
+  @member_cap "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex"
   @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
   @cap_delivery_schema "apps/ezagent_core/lib/ezagent/cap/delivery.ex"
   @cap_delivery_envelope "apps/ezagent_core/lib/ezagent/cap/delivery_outbox/envelope.ex"
@@ -24,9 +25,6 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @host_login_adopt "apps/ezagent_domain_agent/lib/ezagent/agent/host_login_adopt.ex"
 
   @legacy_grant_drivers %{
-    "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex" => %{
-      {:grant_cap_via_router, 4} => 1
-    },
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex" => %{
       {:grant_cap_via_router, 4} => 2
     },
@@ -55,8 +53,8 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
       {:grant_cap_via_router, 4} => 1
     }
   }
-  @legacy_driver_files 11
-  @legacy_driver_sites 15
+  @legacy_driver_files 10
+  @legacy_driver_sites 14
 
   @legacy_local_grant_drivers %{}
 
@@ -71,6 +69,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @recipe_grant_task => %{{:absorb_cap, 2} => 1},
     @orchestrator_caps => %{{:absorb_cap, 2} => 1},
     @composition_caps => %{{:absorb_cap, 2} => 1},
+    @member_cap => %{{:absorb_cap, 2} => 2},
     @workspace_facade => %{{:absorb_cap, 2} => 1},
     @target_authority => %{{:absorb_cap, 2} => 1},
     @host_login_adopt => %{{:absorb_cap, 2} => 1}
@@ -85,6 +84,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @recipe_grant_task => 1,
     @orchestrator_caps => 1,
     @composition_caps => 1,
+    @member_cap => 2,
     @identity_behavior => 3,
     @identity_facade => 2,
     @workspace_facade => 1,

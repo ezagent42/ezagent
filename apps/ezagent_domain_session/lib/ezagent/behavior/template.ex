@@ -253,6 +253,38 @@ defmodule Ezagent.ActionSet.Template do
     end
   end
 
+  @doc false
+  @spec transfer_created_by_as_admin(URI.t(), URI.t()) :: :ok | {:error, term()}
+  def transfer_created_by_as_admin(%URI{} = template_uri, %URI{} = new_owner) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(template_uri, :template, :write)
+
+    with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(template_uri),
+         {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(template_uri, :template),
+         content when is_map(content) <-
+           slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:content),
+         {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target),
+         {:ok, _result} <-
+           Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+             target: target,
+             mode: :call,
+             args: %{content: Map.put(content, :created_by, new_owner)},
+             ctx: %{
+               caller: admin,
+               authenticated_principal: admin,
+               caps: MapSet.new([cap]),
+               reply: {:caller_inbox, self()}
+             },
+             origin: :trusted_internal
+           }) do
+      :ok
+    else
+      nil -> {:error, :template_not_populated}
+      {:error, _reason} = error -> error
+      other -> {:error, {:unexpected_template_owner_transfer_result, other}}
+    end
+  end
+
   # --- :fork -------------------------------------------------------------
 
   # Allen 2026-05-24 PR1 — fork lifted out of `SessionTemplate.fork/3` so
@@ -527,6 +559,7 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_at, DateTime.utc_now())
 
       with {:ok, new_uri} <- persist_session_template_version(content, workspace_uri),
+           :ok <- record_derivation_edge(new_uri, parent_uri, caller_uri),
            :ok <- grant_template_owner_caps(owner_uri, new_uri, SessionTemplate) do
         {:ok, %{template_uri: new_uri}, []}
       end
@@ -553,7 +586,8 @@ defmodule Ezagent.ActionSet.Template do
         |> Map.put(:created_by, caller_uri)
         |> Map.put(:created_at, DateTime.utc_now())
 
-      with {:ok, _pid} <- ensure_kind_alive(new_uri),
+      with :ok <- record_derivation_edge(new_uri, parent_uri, caller_uri),
+           {:ok, _pid} <- ensure_kind_alive(new_uri),
            {:ok, _result} <- dispatch_template_write_as_system(new_uri, content),
            :ok <- grant_template_owner_caps(owner_uri, new_uri, AgentTemplate) do
         notify_fork_owner(owner_uri, parent_uri, new_uri)
@@ -615,6 +649,23 @@ defmodule Ezagent.ActionSet.Template do
 
   defp notify_fork_owner(_, _, _), do: :ok
 
+  defp record_derivation_edge(new_uri, parent_uri, caller_uri) do
+    attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
+
+    [{parent_uri, :parent_template}, {caller_uri, :created_by}]
+    |> Enum.reduce_while(:ok, fn {parent, edge_kind}, :ok ->
+      case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             new_uri,
+             parent,
+             edge_kind,
+             attempt_id
+           ) do
+        :ok -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(_), do: false
 
@@ -673,6 +724,7 @@ defmodule Ezagent.ActionSet.Template do
     with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
       dispatch_template_write(uri, content, %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       })
@@ -692,7 +744,9 @@ defmodule Ezagent.ActionSet.Template do
   # runs. The fork itself has a distinct authority, so its owner receives a
   # fresh set of concrete, fork-signed artifacts; the parent's cap is never
   # retargeted or reused for the child.
-  defp grant_template_owner_caps(%URI{} = owner_uri, %URI{} = template_uri, kind_module) do
+  @doc false
+  @spec grant_template_owner_caps(URI.t(), URI.t(), module()) :: :ok | {:error, term()}
+  def grant_template_owner_caps(%URI{} = owner_uri, %URI{} = template_uri, kind_module) do
     with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, template_uri) do
       Ezagent.CapabilityRegistry.subjects_for_kind(kind_module)
       |> Enum.reduce_while(:ok, fn subject, :ok ->

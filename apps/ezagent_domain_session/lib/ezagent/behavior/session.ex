@@ -128,6 +128,7 @@ defmodule Ezagent.ActionSet.Session do
     Members,
     Membership,
     RoleResolver,
+    SelfAdd,
     Teardown
   }
 
@@ -154,12 +155,21 @@ defmodule Ezagent.ActionSet.Session do
 
   action(:join,
     # Allow both — admin User joins via :cast at boot (non-blocking);
-    # admin or programmatic callers may :call to read members back.
+    # admin or programmatic callers may :call to observe admission status.
     args: %{member: :uri},
-    returns: %{members: {:list, :uri}},
+    returns: %{status: :atom, member: :uri},
     caps: [:join],
     modes: [:call, :cast],
     description: "Add a member to the session and replay any missed messages"
+  )
+
+  action(:add_self,
+    args: %{member: :uri, facets: :map},
+    returns: %{status: :atom},
+    modes: [:cast],
+    description:
+      "Mount the authenticated entity into the members projection after an in-handler " <>
+        "durable tier-1 member-cap check"
   )
 
   action(:leave,
@@ -168,6 +178,14 @@ defmodule Ezagent.ActionSet.Session do
     caps: [:leave],
     modes: [:cast],
     description: "Remove a member from the session"
+  )
+
+  action(:transfer_owner,
+    args: %{owner: :uri},
+    returns: %{owner: :uri},
+    caps: [:transfer_owner],
+    modes: [:call],
+    description: "Transfer session ownership during durable user offboarding"
   )
 
   # F7 PR-A — ISOMORPHIC participant-removal (body+doc in Membership, SPEC §3).
@@ -217,7 +235,7 @@ defmodule Ezagent.ActionSet.Session do
 
   action(:merge_member,
     args: %{from: :uri, to: :uri},
-    returns: %{members: {:list, :uri}},
+    returns: %{status: :atom, member: :uri},
     caps: [:merge_member],
     modes: [:call],
     description: "Atomically relabel one session member URI to another"
@@ -275,7 +293,7 @@ defmodule Ezagent.ActionSet.Session do
   # `:cascade_notify_managers` cap-exempt precedent (in-handler live authz).
   action(:approve_admission,
     args: %{member: :uri},
-    returns: %{members: {:list, :uri}, approved: :uri},
+    returns: %{status: :atom, member: :uri, approved: :uri},
     caps: [:approve_admission],
     modes: [:call],
     description:
@@ -318,15 +336,20 @@ defmodule Ezagent.ActionSet.Session do
   )
 
   @doc """
-  Membership-cap Part C cap-exempt actions (spec §C.4/§C.5): the admission
-  approve/deny/withdraw actions are authorized IN-HANDLER (the approver/denier by
-  `Authority.manages?/2` over the member; the withdrawer by `requested_by`), NOT
-  via a caller-scoped session cap — the member's owner holds no session cap on the
-  session. Mirrors the `:receive` / `:cascade_notify_managers` cap-exempt
-  precedent. Keeps `keys(required_caps) ∪ cap_exempt_actions == actions`.
+  Membership cap-exempt actions. Admission approve/deny/withdraw and composition
+  consent have their existing in-handler authority predicates. `:add_self`
+  ignores presented caps and independently loads the authenticated holder's
+  durable tier-1 cap in `Session.SelfAdd`. Keeps
+  `keys(required_caps) ∪ cap_exempt_actions == actions`.
   """
   def cap_exempt_actions,
-    do: [:approve_admission, :deny_admission, :withdraw_admission, :composition_consent]
+    do: [
+      :approve_admission,
+      :deny_admission,
+      :withdraw_admission,
+      :composition_consent,
+      :add_self
+    ]
 
   # `create/1` — FIRST-EVER existence (SPEC 2026-05-29 §2). Builds the
   # PERSISTENT `state`. The macro-injected `init_slice/1` wraps this in
@@ -370,6 +393,13 @@ defmodule Ezagent.ActionSet.Session do
        # Persistent (survives restart, never silently lost). Legacy snapshots
        # lack this key; readers MUST default via `ctx[:read].(:pending_members, %{})`.
        pending_members: %{},
+       # M-4 — per-member durable replay floor captured at membership-grant
+       # intent. The later self-add projects this cursor into member metadata
+       # in the same commit as the roster mount.
+       join_cursors: %{},
+       # M-5 — non-authority routing facets captured with the grant intent and
+       # consumed by the holder's later add_self projection.
+       join_facets: %{},
        owner_uri: Map.get(args, :owner_uri),
        # NOTE: `:monitors` (%{ref => URI} Process.monitor refs) is GONE
        # from STATE — it is a TRANSIENT now, rebuilt by `activate/2`
@@ -636,7 +666,7 @@ defmodule Ezagent.ActionSet.Session do
                   # RF-6: inject the passive-actor predicate (parallel to
                   # `role_resolver`) so the resolver's universal final-output gate
                   # drops any PASSIVE data actor a rule resolved to (any rule type).
-                  passive?: &passive_actor?/1
+                  passive?: &Members.passive_actor?/1
                 )
 
               {recipients, Process.get(provision_key, [])}
@@ -778,6 +808,9 @@ defmodule Ezagent.ActionSet.Session do
 
   # --- :join -------------------------------------------------------------
 
+  @doc false
+  def handle_add_self(args, ctx), do: SelfAdd.handle_add_self(args, ctx, __MODULE__)
+
   def handle_join(%{member: %URI{} = member_uri} = args, ctx) do
     # team-routing-unification §3.1 — optional, NON-authority-bearing member
     # facets carried on the join: `:role_name` (a stable per-session alias the
@@ -809,62 +842,19 @@ defmodule Ezagent.ActionSet.Session do
 
     # RF-6 gate (`:join`): reject a PASSIVE data actor BEFORE lookup/monitor so it
     # never becomes a session MEMBER. Shares `passive_actor?/1` with the routing gate.
-    if passive_actor?(member_uri),
+    if Members.passive_actor?(member_uri),
       do: {:error, {:passive_actor_cannot_join, member_uri}},
       else: do_handle_join(member_uri, facets, ctx)
   end
 
   defp do_handle_join(%URI{} = member_uri, facets, ctx) do
-    case KindRegistry.lookup(member_uri) do
-      {:ok, member_pid} ->
-        # Session auto-join (Allen 2026-05-26) — idempotency: when a
-        # member rejoins we MUST NOT stack a fresh `Process.monitor` on
-        # top of the live one. Pre-fix, every rejoin leaked a monitor
-        # ref in `slice.monitors` (cleaned only on `:DOWN`, which never
-        # fired for the live member).
-        members = ctx[:read].(:members, %{})
-        # `:monitors` is a TRANSIENT now (SPEC §2.3C) — read it from
-        # `ctx.transients`, not the persistent `ctx[:read]`.
-        monitors = (ctx[:transients] || %{})[:monitors] || %{}
-
-        case Map.get(members, member_uri) do
-          %{online: true} ->
-            if Members.monitor_ref_for_current_pid?(monitors, member_uri, member_pid) do
-              # Already a live, monitored, online member with the
-              # SAME PID we're being asked to (re)join. True no-op.
-              #
-              # team-routing-unification §3.1 (codex PR-5a #3): facets are
-              # set at join, NOT mutated by an idempotent rejoin — this branch
-              # intentionally does NOT apply `facets`. Changing a live member's
-              # role_name / in_session_template is a member-RECONFIGURE concern
-              # (PR-5b's `:manage` authority), not a side effect of re-issuing
-              # `chat.join`. The stale/offline paths below DO reach do_join and
-              # preserve+overlay facets (so reconnect never loses them).
-              {:ok, %{members: Map.keys(members), already_member: true}, []}
-            else
-              # Stale ref (different/dead PID) or no ref — drop any
-              # stale entries + install a fresh monitor.
-              Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
-            end
-
-          _ ->
-            Membership.do_join(member_uri, member_pid, ctx, facets, __MODULE__)
-        end
-
-      :error ->
-        {:error, {:member_not_registered, member_uri}}
-    end
+    # M-10: roster/monitor state is projection, never entitlement and never a
+    # reason to skip the tier-0 -> tier-1 seam. Every authorized join reaches
+    # do_join/5 so it consumes its single-use join grant and either confirms or
+    # restores current tier-1. do_join preserves :already_member as an output
+    # status when the projection was already present.
+    Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
   end
-
-  # RF-6: is `uri` a PASSIVE data actor? Reads the stored `:passive` attribute via
-  # `Ezagent.UriQuery` (the SAME resolver feeding the routing-gate predicate, so
-  # all RF-6 gates agree). Fail-closed-to-PRINCIPAL: only `{:ok, true}` is passive.
-  @spec passive_actor?(URI.t()) :: boolean()
-  defp passive_actor?(%URI{} = uri) do
-    match?({:ok, true}, Ezagent.UriQuery.resolve(:passive, uri))
-  end
-
-  defp passive_actor?(_), do: false
 
   @doc """
   team-routing-unification §3.1 — resolve a member `role_name` (stable
@@ -887,6 +877,30 @@ defmodule Ezagent.ActionSet.Session do
            ) do
       {:ok, %{}, Membership.leave_effects(member_uri, ctx)}
     end
+  end
+
+  @doc false
+  def handle_transfer_owner(%{owner: %URI{} = new_owner}, ctx) do
+    prior_owner = ctx[:read].(:owner_uri, nil)
+    members = ctx[:read].(:members, %{})
+    last_seen = ctx[:read].(:last_seen, %{})
+
+    updated_members =
+      members
+      |> then(fn current ->
+        if match?(%URI{}, prior_owner), do: Map.delete(current, prior_owner), else: current
+      end)
+      |> Map.put_new(new_owner, %{online: false})
+
+    updated_last_seen =
+      if match?(%URI{}, prior_owner), do: Map.delete(last_seen, prior_owner), else: last_seen
+
+    {:ok, %{owner: new_owner},
+     [
+       {:set, :owner_uri, new_owner},
+       {:set, :members, updated_members},
+       {:set, :last_seen, updated_last_seen}
+     ]}
   end
 
   def handle_remove_participant(%{participant: %URI{} = participant_uri}, ctx) do

@@ -75,6 +75,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
       args: %{member: member_uri},
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -117,7 +118,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
         caller
       )
 
-    %{caller: caller, caps: MapSet.new([cap])}
+    %{caller: caller, authenticated_principal: caller, caps: MapSet.new([cap])}
   end
 
   test "§14.5(A) step 5 [defense-in-depth]: revoke ⇒ immediate deny, no reconcile" do
@@ -228,6 +229,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([cap]),
         reply: :ignore
       }
@@ -285,6 +287,9 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
 
     # --- step 3b: A (the member's manager) is notified of the pending request,
     # content-free (member + session + opaque ref only — no message body). --------
+    # Manager cascade notifications may arrive on the same subscription while
+    # the admission request is being assembled. Select the contract-owned
+    # envelope instead of assuming it is the first notification in the mailbox.
     assert_receive {:notification, ^a, %{type: :pending_admission} = pend_notif}, 2_000
     assert pend_notif.type == :pending_admission
     assert pend_notif.body.member == URI.to_string(agent)

@@ -104,8 +104,10 @@ defmodule Ezagent.Kind.DeferredDispatch do
   # canonical-admin commands can obtain an exact, receiver-bound artifact from
   # the target Kind's K.grant path. Non-admin presenters are unchanged because
   # Invocation's scope check is presenter-bound and canonical-admin-only.
-  defp dispatch_as_reviewed_operator(%Ezagent.Cmd{ctx: %{caller: %URI{} = caller}} = cmd) do
-    Ezagent.Invocation.with_admin_operator(caller, fn -> Ezagent.Router.dispatch(cmd) end)
+  defp dispatch_as_reviewed_operator(
+         %Ezagent.Cmd{ctx: %{authenticated_principal: %URI{} = holder}} = cmd
+       ) do
+    Ezagent.Invocation.with_admin_operator(holder, fn -> Ezagent.Router.dispatch(cmd) end)
   end
 
   defp dispatch_as_reviewed_operator(%Ezagent.Cmd{} = cmd), do: Ezagent.Router.dispatch(cmd)

@@ -11,7 +11,7 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          {:ok, caps} <- Tools.require_opt(opts, :caps),
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join) do
+         :ok <- Tools.preflight_within_session_cap(caller, caps, session_uri, :join) do
       add_participant_ref(ref, role_name, caller, caps, workspace_uri, session_uri, opts)
     end
   end
@@ -34,8 +34,8 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
          {:ok, workspace_uri} <- Tools.require_opt(opts, :workspace_uri),
          {:ok, session_uri} <- Tools.require_opt(opts, :session_uri),
          {:ok, root} <- Tools.require_opt(opts, :manifest_root),
-         :ok <- preflight_operator_cap(caps, session_uri, workspace_uri),
-         :ok <- Tools.preflight_within_session_cap(caps, session_uri, :join),
+         :ok <- preflight_operator_cap(caller, caps, session_uri, workspace_uri),
+         :ok <- Tools.preflight_within_session_cap(caller, caps, session_uri, :join),
          {:ok, body} <- Ezagent.Session.Config.ManifestImport.read(path, root),
          {:ok, manifest} <- Ezagent.AgentManifest.load(body),
          {:ok, member_uri, fresh?} <-
@@ -176,7 +176,7 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
     ArgumentError -> :error
   end
 
-  defp preflight_operator_cap(caps, session_uri, workspace_uri) do
+  defp preflight_operator_cap(holder, caps, session_uri, workspace_uri) do
     needed = %{
       kind: Ezagent.Entity.Session.type_name(),
       behavior: Ezagent.ActionSet.Manage,
@@ -185,7 +185,7 @@ defmodule Ezagent.Orchestrator.Tools.Participants do
       workspace_uri: workspace_uri
     }
 
-    if Ezagent.Capability.Authorization.authorizes?(caps, needed),
+    if Ezagent.Capability.Authorization.authorizes?(holder, caps, needed),
       do: :ok,
       else: {:error, :operator_cap_required}
   end

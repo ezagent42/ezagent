@@ -23,8 +23,7 @@ defmodule Ezagent.TestSupport.NoopAgentTemplate do
   def instantiate(_tmpl_name, %{"agent_uri" => uri_str} = tmpl, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- validate(tmpl),
-         :ok <- ensure_agent_snapshot(agent_uri) do
+    with :ok <- validate(tmpl) do
       case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
         {:ok, :started, _pid} -> {:ok, [agent_uri], meta(tmpl, true)}
         {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
@@ -54,23 +53,6 @@ defmodule Ezagent.TestSupport.NoopAgentTemplate do
   end
 
   defp check_agent_uri(_), do: {:error, :missing_agent_uri}
-
-  defp ensure_agent_snapshot(agent_uri) do
-    case Ezagent.Ecto.KindSnapshot.get(URI.to_string(agent_uri)) do
-      nil ->
-        state =
-          Ezagent.Kind.Snapshot.load_or_init(agent_uri, Ezagent.Entity.Agent, %{uri: agent_uri})
-
-        Ezagent.Kind.Snapshot.save_now(agent_uri, Ezagent.Entity.Agent, state)
-
-      _row ->
-        :ok
-    end
-  rescue
-    exception -> {:error, exception}
-  catch
-    kind, reason -> {:error, {kind, reason}}
-  end
 
   defp meta(tmpl, fresh?) do
     %{

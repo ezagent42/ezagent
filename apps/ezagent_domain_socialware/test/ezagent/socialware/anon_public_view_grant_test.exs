@@ -64,7 +64,7 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
 
     spawn_opts = %{uri: session_uri, behaviors: behaviors, owner_uri: User.admin_uri()}
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Session, spawn_opts)
+    {:ok, _pid} = Ezagent.Socialware.TestCapHelper.spawn_session(spawn_opts)
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, Capability.workspace_of(session_uri))
 
     :ok =
@@ -206,7 +206,10 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
         )
 
       {:ok, _pid} =
-        Ezagent.Kind.spawn(Session, %{uri: bare, behaviors: Session.socialware_behaviors()})
+        Ezagent.Socialware.TestCapHelper.spawn_session(%{
+          uri: bare,
+          behaviors: Session.socialware_behaviors()
+        })
 
       :ok = Ezagent.WorkspaceRegistry.bind(bare, Capability.workspace_of(bare))
       on_exit(fn -> terminate(Session, bare) end)
@@ -264,11 +267,17 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
       cap = minted_join_cap(anon)
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: anon},
-          ctx: %{caller: anon, caps: MapSet.new([cap]), reply: :ignore}
+          ctx: %{
+            caller: anon,
+            authenticated_principal: anon,
+            caps: MapSet.new([cap]),
+            reply: :ignore
+          }
         })
 
       assert match?(:ok, result) or match?({:ok, _}, result),
@@ -289,14 +298,20 @@ defmodule Ezagent.Socialware.AnonPublicViewGrantTest do
       cap_a = minted_join_cap(anon_a)
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target_b,
           mode: :call,
           args: %{member: anon_a},
-          ctx: %{caller: anon_a, caps: MapSet.new([cap_a]), reply: :ignore}
+          ctx: %{
+            caller: anon_a,
+            authenticated_principal: anon_a,
+            caps: MapSet.new([cap_a]),
+            reply: :ignore
+          }
         })
 
-      assert match?({:error, :invalid_cap_signature}, result),
+      assert match?({:error, :missing_cap}, result),
              "anon_a's session-A grant must NOT authorize joining session B, got: #{inspect(result)}"
     end
   end

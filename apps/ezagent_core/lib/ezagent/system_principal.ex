@@ -90,6 +90,7 @@ defmodule Ezagent.SystemPrincipal do
     # Post-PR-CC-2-v2 the catalog returns `[%Capability{}]` directly.
     initial_caps = parsed |> Catalog.caps_for!() |> MapSet.new()
 
+    # derivation-edge: genesis-root system principal has no parent
     case Ezagent.Kind.spawn(Ezagent.Entity.User, %{
            uri: parsed,
            initial_caps: initial_caps

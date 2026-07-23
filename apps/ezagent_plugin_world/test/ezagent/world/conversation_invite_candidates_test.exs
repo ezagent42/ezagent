@@ -112,6 +112,14 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
                in_session_template: true
              })
 
+    # `session.join` commits before its member-cap delivery/add_self effect is
+    # observed.  Wait for that projection instead of racing the async effect
+    # (and then tearing the member Kind down while add_self is still queued).
+    assert wait_until(fn ->
+             ConversationData.member_options(admin, session_uri)
+             |> Enum.any?(&(&1["uri"] == URI.to_string(member_uri)))
+           end)
+
     row =
       admin
       |> ConversationData.member_options(session_uri)
@@ -146,6 +154,7 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
       args: Map.put(facets, :member, member_uri),
       ctx: %{
         caller: admin,
+        authenticated_principal: admin,
         caps: MapSet.new([cap]),
         reply: {:caller_inbox, self()}
       }
@@ -153,20 +162,23 @@ defmodule Ezagent.World.ConversationInviteCandidatesTest do
   end
 
   defp register_member(%URI{} = member_uri) do
-    test_pid = self()
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+               uri: member_uri,
+               initial_caps: MapSet.new()
+             })
 
-    pid =
-      spawn(fn ->
-        :ok = Ezagent.KindRegistry.put_new(member_uri)
-        send(test_pid, {:registered, member_uri})
+    # Keep the synthetic agent registered through the asynchronous member-cap
+    # delivery/add_self round-trip.  Real agents are workspace-bound at create;
+    # without the bind this bare test Kind can be reaped before add_self checks
+    # KindRegistry under a busy full-suite run.
+    assert :ok =
+             Ezagent.WorkspaceRegistry.bind(
+               member_uri,
+               Ezagent.Capability.workspace_of(member_uri)
+             )
 
-        receive do
-          :stop -> :ok
-        end
-      end)
-
-    assert_receive {:registered, ^member_uri}, 1_000
-    on_exit(fn -> if Process.alive?(pid), do: send(pid, :stop) end)
+    on_exit(fn -> Ezagent.Kind.terminate(member_uri) end)
     member_uri
   end
 

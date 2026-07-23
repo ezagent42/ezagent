@@ -99,6 +99,7 @@ defmodule EzagentPluginHello.TurnDriver do
         args: args,
         ctx: %{
           caller: caller,
+          authenticated_principal: caller,
           caps: MapSet.new(signed_caps),
           reply: {:caller_inbox, self()}
         },
@@ -184,6 +185,7 @@ defmodule EzagentPluginHello.TurnDriver do
         args: %{message: msg},
         ctx: %{
           caller: actor,
+          authenticated_principal: actor,
           caps: MapSet.new([signed_cap]),
           reply: :ignore
         },

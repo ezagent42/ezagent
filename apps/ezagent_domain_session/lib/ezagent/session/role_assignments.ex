@@ -8,7 +8,11 @@ defmodule Ezagent.Session.RoleAssignments do
 
   alias Ezagent.Invocation
 
-  @type ctx :: %{required(:caller) => URI.t(), optional(:caps) => Enumerable.t()}
+  @type ctx :: %{
+          required(:caller) => URI.t(),
+          required(:authenticated_principal) => URI.t(),
+          optional(:caps) => Enumerable.t()
+        }
 
   @doc """
   Assign a session-installed human role slot to an existing user member.
@@ -22,7 +26,10 @@ defmodule Ezagent.Session.RoleAssignments do
         %URI{} = session_uri,
         %URI{} = member_uri,
         role_name,
-        %{caller: %URI{} = caller} = ctx
+        %{
+          caller: %URI{} = caller,
+          authenticated_principal: %URI{} = holder
+        } = ctx
       )
       when is_binary(role_name) do
     with :ok <- require_user_member(member_uri) do
@@ -33,6 +40,7 @@ defmodule Ezagent.Session.RoleAssignments do
           args: %{member: member_uri, role_name: role_name},
           ctx: %{
             caller: caller,
+            authenticated_principal: holder,
             caps: ctx |> Map.get(:caps, []) |> to_cap_set(),
             reply: {:caller_inbox, self()}
           },
@@ -53,7 +61,9 @@ defmodule Ezagent.Session.RoleAssignments do
   end
 
   def assign_role(_session_uri, %URI{} = member_uri, _role_name, _ctx) do
-    require_user_member(member_uri)
+    with :ok <- require_user_member(member_uri) do
+      {:error, :authenticated_principal_required}
+    end
   end
 
   defp require_user_member(uri) do

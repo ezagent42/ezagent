@@ -26,6 +26,7 @@ defmodule Ezagent.AgentManifest.Tools do
       args: args,
       ctx: %{
         caller: agent_uri,
+        authenticated_principal: agent_uri,
         caps: MapSet.new(),
         reply: {:caller_inbox, self()}
       },

@@ -13,7 +13,13 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
 
   use EzagentCore.DataCase, async: false
 
-  import Ezagent.Test.CapHelper, only: [signed_ctx!: 3, signed_invocation!: 2]
+  import Ezagent.Test.CapHelper,
+    only: [
+      signed_action_cap!: 2,
+      signed_ctx!: 3,
+      signed_invocation!: 2,
+      signed_required_cap!: 5
+    ]
 
   alias Ezagent.{CreatorGrant, Invocation}
   alias Ezagent.Entity.{Agent, User}
@@ -26,7 +32,16 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
     agent = Ezagent.URI.entity(:team_alpha, :agent, name)
     workspace = Ezagent.Capability.workspace_of(agent)
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: MapSet.new()})
+    sandbox_cap =
+      signed_required_cap!(
+        Ezagent.URI.with_action(agent, :sandbox, :update_config),
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :update_config,
+        agent
+      )
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: [sandbox_cap]})
     :ok = Ezagent.WorkspaceRegistry.bind(agent, workspace)
 
     %{agent: agent, workspace: workspace}
@@ -107,7 +122,12 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
                  target: ce_action_uri(agent, :apply_config_delta),
                  mode: :call,
                  args: %{turn_id: bad, patch: %{"tone" => "spoof"}},
-                 ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
+                 ctx: %{
+                   caller: manager.uri,
+                   authenticated_principal: manager.uri,
+                   caps: manager.caps,
+                   reply: {:caller_inbox, self()}
+                 }
                })
 
       # Nothing applied — the guard fired BEFORE any object-existence early-return.
@@ -619,7 +639,12 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
       target: cg_action_uri(agent, action),
       mode: :call,
       args: args,
-      ctx: %{caller: principal.uri, caps: principal.caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: principal.uri,
+        authenticated_principal: principal.uri,
+        caps: principal.caps,
+        reply: {:caller_inbox, self()}
+      }
     }
     |> signed_invocation!(:agent)
     |> Invocation.dispatch()
@@ -638,18 +663,32 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
 
     ctx = signed_ctx!(agent, %{caller: manager, caps: MapSet.new([cap])}, :agent)
-    %{uri: manager, caps: ctx.caps}
+    assert {:ok, _user} = Ezagent.Users.create(manager, nil, MapSet.to_list(ctx.caps))
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(manager)
+    %{uri: manager, caps: Ezagent.Identity.list_caps_for(manager)}
   end
 
   defp stranger do
-    %{uri: Ezagent.URI.entity(:team_alpha, :user, "stranger"), caps: MapSet.new()}
+    uri =
+      Ezagent.URI.entity(
+        :team_alpha,
+        :user,
+        "stranger-#{System.unique_integer([:positive])}"
+      )
+
+    assert {:ok, _user} = Ezagent.Users.create(uri, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    %{uri: uri, caps: Ezagent.Identity.list_caps_for(uri)}
   end
 
   defp seed_sandbox_cascade(agent, workspace) do
+    target = Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config")
+    admin_cap = signed_action_cap!(target, User.admin_uri())
+
     {:ok, _} =
       %Invocation{
         origin: :trusted_internal,
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
+        target: target,
         mode: :call,
         args: %{
           config_dir_path: "/tmp/agent-cg-#{System.unique_integer([:positive])}",
@@ -665,7 +704,8 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          authenticated_principal: User.admin_uri(),
+          caps: MapSet.new([admin_cap]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -676,15 +716,19 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
   end
 
   defp sandbox_user_layer_uri(agent) do
+    target = Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read")
+    admin_cap = signed_action_cap!(target, User.admin_uri())
+
     {:ok, sandbox} =
       %Invocation{
         origin: :trusted_internal,
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read"),
+        target: target,
         mode: :call,
         args: %{},
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          authenticated_principal: User.admin_uri(),
+          caps: MapSet.new([admin_cap]),
           reply: {:caller_inbox, self()}
         }
       }

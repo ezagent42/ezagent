@@ -50,7 +50,7 @@ defmodule Ezagent.Cap.AuthorityCacheTest do
   test "regenesis never invalidates the immutable memo; only the DB active row moves" do
     uri = unique_uri("immutable")
     {:ok, first} = Authority.open(uri, :test)
-    {:ok, second} = Authority.regenesis(uri, :test, admin())
+    {:ok, second} = Authority.regenesis(uri, :test)
 
     # The old key_id still maps to the old public key — the memo is immutable
     # by construction, so this is not staleness...
@@ -81,6 +81,4 @@ defmodule Ezagent.Cap.AuthorityCacheTest do
       "entity://team-alpha/agent/authority-cache-#{suffix}-#{System.unique_integer([:positive])}"
     )
   end
-
-  defp admin, do: Ezagent.URI.user(:system, :admin)
 end

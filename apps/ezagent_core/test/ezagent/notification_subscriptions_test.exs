@@ -9,9 +9,25 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   notifications-admin cap via `seed/2` helper.
   """
 
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Cap.Authority
+  alias Ezagent.Capability
   alias Ezagent.NotificationSubscriptions, as: Subs
+
+  setup do
+    previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+    )
+
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    :ok
+  end
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -62,7 +78,39 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   end
 
   defp admin_ctx_for(%URI{} = caller) do
-    %{caller: caller, caps: MapSet.new([notifications_admin_cap()])}
+    %{
+      caller: caller,
+      authenticated_principal: caller,
+      caps: MapSet.new([notifications_admin_cap()])
+    }
+  end
+
+  defp subscribe_ctx(%URI{} = caller, %URI{} = stream, extra_caps \\ []) do
+    {:ok, authority} = Authority.open(stream, :user)
+
+    cap =
+      %Capability{
+        kind: :user,
+        behavior: Ezagent.ActionSet.Notifications,
+        action: :subscribe,
+        instance: stream,
+        workspace_uri: Capability.workspace_of(stream),
+        granted_by: caller,
+        granted_at: DateTime.utc_now(),
+        grantee_uri: caller
+      }
+      |> then(&Authority.sign(authority, &1))
+
+    caps = MapSet.new([cap | extra_caps])
+    loader_caps = Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})
+
+    Application.put_env(
+      :ezagent_core,
+      EzagentCore.Test.CapAuthorityLoaderStub,
+      Map.put(loader_caps, Ezagent.URI.stable_key(caller), caps)
+    )
+
+    %{caller: caller, authenticated_principal: caller, caps: caps}
   end
 
   # Replaces all the round-3-era `Subs.system_register(entity,
@@ -71,7 +119,13 @@ defmodule Ezagent.NotificationSubscriptionsTest do
   # row" pathway under round-4.
   defp seed(entity, stream) do
     admin = Ezagent.URI.new!("entity://system/user/test-seeder")
-    :ok = Subs.register_subscription(entity, stream, admin_ctx_for(admin))
+
+    :ok =
+      Subs.register_subscription(
+        entity,
+        stream,
+        subscribe_ctx(admin, stream, [notifications_admin_cap()])
+      )
   end
 
   test "register + list + unregister flow (via cap path)" do
@@ -143,7 +197,8 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       assert {:error, :unauthorized} =
                Subs.register_subscription(entity, stream, %{
                  caps: MapSet.new(),
-                 caller: entity
+                 caller: entity,
+                 authenticated_principal: entity
                })
 
       assert Subs.list_subscriptions(entity) == []
@@ -162,10 +217,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       assert :ok =
-               Subs.register_subscription(entity, stream, %{
-                 caps: MapSet.new([notifications_admin_cap()]),
-                 caller: entity
-               })
+               Subs.register_subscription(entity, stream, subscribe_ctx(entity, stream))
 
       assert [{_, _}] = Subs.list_subscriptions(entity)
     end
@@ -347,10 +399,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
 
       # Self-subscribe with a real cap.
       assert :ok =
-               Subs.subscribe(entity, stream, %{
-                 caller: entity,
-                 caps: MapSet.new([notifications_admin_cap()])
-               })
+               Subs.subscribe(entity, stream, subscribe_ctx(entity, stream))
 
       # Intent is in the registry.
       assert [{stream_str, _}] = Subs.list_subscriptions(entity)
@@ -392,6 +441,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       assert {:error, :unauthorized} =
                Subs.subscribe(entity, stream, %{
                  caller: entity,
+                 authenticated_principal: entity,
                  caps: MapSet.new()
                })
 
@@ -403,10 +453,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       stream = Ezagent.URI.new!("entity://acme/user/bob-#{uniq()}")
 
       :ok =
-        Subs.subscribe(entity, stream, %{
-          caller: entity,
-          caps: MapSet.new([notifications_admin_cap()])
-        })
+        Subs.subscribe(entity, stream, subscribe_ctx(entity, stream))
 
       assert :ok =
                Subs.unsubscribe(entity, stream, %{
@@ -563,10 +610,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       :ok =
-        Subs.subscribe(owner, stream, %{
-          caller: owner,
-          caps: MapSet.new([notifications_admin_cap()])
-        })
+        Subs.subscribe(owner, stream, subscribe_ctx(owner, stream))
 
       try do
         assert {:error, :unauthorized} =
@@ -781,10 +825,11 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       stream = Ezagent.URI.new!("entity://acme/user/stream-#{uniq()}")
 
       assert :ok =
-               Subs.register_subscription(entity, stream, %{
-                 caller: admin,
-                 caps: MapSet.new([notifications_admin_cap()])
-               })
+               Subs.register_subscription(
+                 entity,
+                 stream,
+                 subscribe_ctx(admin, stream, [notifications_admin_cap()])
+               )
 
       assert [{_, _}] = Subs.list_subscriptions(entity)
     end

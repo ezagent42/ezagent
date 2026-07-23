@@ -6,7 +6,11 @@ defmodule Ezagent.World.CapData do
   @doc "Read and render granted capability rows for an entity detail surface."
   @spec list_entity_caps(URI.t() | term(), URI.t() | nil, MapSet.t()) :: [map()] | map()
   def list_entity_caps(%URI{} = entity_uri, caller_uri, caller_caps) do
-    case Ezagent.Domain.Agent.read_caps(entity_uri, %{caller: caller_uri, caps: caller_caps}) do
+    case Ezagent.Domain.Agent.read_caps(entity_uri, %{
+           caller: caller_uri,
+           authenticated_principal: caller_uri,
+           caps: caller_caps
+         }) do
       {:ok, caps} -> Enum.map(caps, &cap_row/1)
       {:error, reason} -> %{"error" => inspect(reason)}
     end

@@ -359,6 +359,7 @@ defmodule Ezagent.Entity.Agent do
 
     agent_uri = Ezagent.URI.agent(workspace_name, instance_name)
 
+    # derivation-edge: recorded-by SpawnObligations.record_lineage/2 on :started
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
       {:ok, :started, pid} ->
         with :ok <- Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri),

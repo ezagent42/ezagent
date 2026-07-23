@@ -75,6 +75,7 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
       args: %{member: member_uri},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([signed_action_cap!(target, caller)]),
         reply: :ignore
       }
@@ -89,7 +90,7 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
       target: URI.new!("#{URI.to_string(session_uri)}?action=session.#{action}"),
       mode: :call,
       args: %{member: member_uri},
-      ctx: %{caller: caller, caps: caps, reply: :ignore}
+      ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :ignore}
     })
   end
 
@@ -161,6 +162,70 @@ defmodule Ezagent.ActionSet.Session.AdmissionApproveTest do
 
     assert Map.has_key?(read_members(b_session), a_agent), "approve must mount into :members"
     refute Map.has_key?(read_pending(b_session), a_agent), "approve must drop the pending entry"
+  end
+
+  test "T14: approval records only a grant intent and works for an offline principal" do
+    admin = Ezagent.Entity.User.admin_uri()
+    session = new_session("adm-offline", admin)
+    member = URI.new!("entity://system/user/offline-#{uniq()}")
+    assert {:ok, _row} = Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [])
+    refute match?({:ok, _pid}, Ezagent.KindRegistry.lookup(member))
+
+    ctx = %{
+      self_uri: session,
+      caller: admin,
+      authenticated_principal: admin,
+      transients: %{monitors: %{}},
+      read: fn
+        :members, _default ->
+          %{}
+
+        :pending_members, _default ->
+          %{member => %{requested_by: admin}}
+
+        :join_cursors, _default ->
+          %{}
+
+        :join_facets, _default ->
+          %{}
+
+        :owner_uri, _default ->
+          admin
+
+        key, default ->
+          case session_state(session) do
+            state when is_map(state) -> Map.get(state, key, default)
+            _ -> default
+          end
+      end
+    }
+
+    assert {:ok, %{status: :granted, approved: ^member}, effects} =
+             Ezagent.ActionSet.Session.Membership.approve_admission(
+               member,
+               ctx,
+               Ezagent.ActionSet.Session
+             )
+
+    refute Enum.any?(effects, &match?({:set, :members, _}, &1))
+    assert Enum.any?(effects, &match?({:set, :pending_members, %{}}, &1))
+    assert :ok = Ezagent.Entity.spawn_principal(member)
+    assert wait_member_cap(member, session)
+
+    on_exit(fn ->
+      case Ezagent.KindRegistry.lookup(member) do
+        {:ok, pid} ->
+          if Process.alive?(pid) do
+            DynamicSupervisor.terminate_child(
+              EzagentDomainIdentity.Application.UserSupervisor,
+              pid
+            )
+          end
+
+        _ ->
+          :ok
+      end
+    end)
   end
 
   test "non-manager approve is rejected, zero mutation (test 31)" do

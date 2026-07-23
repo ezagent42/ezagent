@@ -55,7 +55,7 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
     :ok = KindSnapshot.delete(URI.to_string(session_uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: session_uri,
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
@@ -73,12 +73,14 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
     target = Ezagent.URI.new!("#{URI.to_string(session_uri)}?action=surface.put_version")
     caller = User.admin_uri()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: %{turn_id: turn_id, tree: %{type: "text", props: %{text: turn_id}}},
       ctx: %{
         caller: caller,
+        authenticated_principal: caller,
         caps: MapSet.new([Ezagent.Test.CapHelper.signed_action_cap!(target, caller)]),
         reply: {:caller_inbox, self()}
       }
@@ -109,6 +111,7 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
   test "the unified Session composes Publisher.SessionImpl (the trunk) in its socialware subset" do
     # P5-1b: the trunk is in the union declaration AND in the socialware subset.
     assert Ezagent.ActionSet.Publisher.SessionImpl in Ezagent.Kind.behaviors_of(Session)
+
     assert Ezagent.ActionSet.Publisher.SessionImpl in Ezagent.Entity.Session.socialware_behaviors()
 
     slice_keys = Enum.map(Ezagent.Entity.Session.socialware_behaviors(), & &1.state_slice())

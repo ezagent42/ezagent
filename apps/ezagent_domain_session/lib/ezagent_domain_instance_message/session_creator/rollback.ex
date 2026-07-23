@@ -76,7 +76,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
       )
     end)
 
-    safe(:destroy_session, fn -> Ezagent.Lifecycle.destroy(session_uri, :rollback) end)
+    safe(:destroy_session, fn -> Ezagent.Lifecycle.destroy!(session_uri, :rollback) end)
     safe(:unbind_session, fn -> Ezagent.WorkspaceRegistry.unbind(session_uri) end)
     :ok
   end
@@ -128,6 +128,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Rollback do
        ) do
     Ezagent.Domain.Agent.retire_spawned(orchestrator_uri, %{
       caller: owner_uri,
+      authenticated_principal: owner_uri,
       caps: MapSet.new(),
       workspace_uri: workspace_uri,
       provenance_root: owner_uri,

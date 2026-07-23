@@ -18,7 +18,13 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
 
   use EzagentCore.DataCase, async: false
 
-  import Ezagent.Test.CapHelper, only: [signed_ctx!: 3, signed_invocation!: 2]
+  import Ezagent.Test.CapHelper,
+    only: [
+      signed_action_cap!: 2,
+      signed_ctx!: 3,
+      signed_invocation!: 2,
+      signed_required_cap!: 5
+    ]
 
   alias Ezagent.{Invocation, CreatorGrant}
   alias Ezagent.Entity.{Agent, User}
@@ -31,7 +37,16 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
     agent = Ezagent.URI.entity(:team_alpha, :agent, name)
     workspace = Ezagent.Capability.workspace_of(agent)
 
-    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: MapSet.new()})
+    sandbox_cap =
+      signed_required_cap!(
+        Ezagent.URI.with_action(agent, :sandbox, :update_config),
+        :agent,
+        Ezagent.ActionSet.Sandbox,
+        :update_config,
+        agent
+      )
+
+    {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: [sandbox_cap]})
     # Workspace-bind so manage-cap workspace matching resolves.
     :ok = Ezagent.WorkspaceRegistry.bind(agent, workspace)
 
@@ -43,6 +58,12 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   test "apply_config_delta is DENIED without the agent's manage-cap", %{agent: agent} do
     target = action_uri(agent, :apply_config_delta)
 
+    stranger =
+      Ezagent.URI.entity(:team_alpha, :user, "stranger-#{System.unique_integer([:positive])}")
+
+    assert {:ok, _user} = Ezagent.Users.create(stranger, nil, [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(stranger)
+
     assert {:error, :missing_cap} =
              Invocation.dispatch(%Invocation{
                origin: :trusted_internal,
@@ -50,7 +71,8 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
                mode: :call,
                args: %{turn_id: "t1", patch: %{"tone" => "decisive"}},
                ctx: %{
-                 caller: Ezagent.URI.entity(:team_alpha, :user, "stranger"),
+                 caller: stranger,
+                 authenticated_principal: stranger,
                  caps: MapSet.new(),
                  reply: {:caller_inbox, self()}
                }
@@ -126,7 +148,12 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
                  template_class: nil,
                  respawn_template_data: %{"flavor" => "cc"}
                },
-               ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
+               ctx: %{
+                 caller: manager.uri,
+                 authenticated_principal: manager.uri,
+                 caps: manager.caps,
+                 reply: {:caller_inbox, self()}
+               }
              })
   end
 
@@ -464,7 +491,12 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
       target: action_uri(agent, :apply_config_delta),
       mode: :call,
       args: Map.put(fields, :turn_id, turn_id),
-      ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: manager.uri,
+        authenticated_principal: manager.uri,
+        caps: manager.caps,
+        reply: {:caller_inbox, self()}
+      }
     }
     |> signed_invocation!(:agent)
     |> Invocation.dispatch()
@@ -481,7 +513,9 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
     cap = CreatorGrant.manage_cap(:agent, agent, workspace, manager)
 
     ctx = signed_ctx!(agent, %{caller: manager, caps: MapSet.new([cap])}, :agent)
-    %{uri: manager, caps: ctx.caps}
+    assert {:ok, _user} = Ezagent.Users.create(manager, nil, MapSet.to_list(ctx.caps))
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(manager)
+    %{uri: manager, caps: Ezagent.Identity.list_caps_for(manager)}
   end
 
   # Dispatch step-1 apply carrying the delta in args (the agent has no turn
@@ -494,7 +528,12 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
       target: action_uri(agent, :apply_config_delta),
       mode: :call,
       args: %{turn_id: turn_id, patch: patch},
-      ctx: %{caller: manager.uri, caps: manager.caps, reply: {:caller_inbox, self()}}
+      ctx: %{
+        caller: manager.uri,
+        authenticated_principal: manager.uri,
+        caps: manager.caps,
+        reply: {:caller_inbox, self()}
+      }
     }
     |> signed_invocation!(:agent)
     |> Invocation.dispatch()
@@ -525,10 +564,13 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   end
 
   defp write_sandbox(agent, respawn_template_data) do
+    target = Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config")
+    admin_cap = signed_action_cap!(target, User.admin_uri())
+
     {:ok, _} =
       %Invocation{
         origin: :trusted_internal,
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.update_config"),
+        target: target,
         mode: :call,
         args: %{
           config_dir_path: "/tmp/agent-ce-#{System.unique_integer([:positive])}",
@@ -537,7 +579,8 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
         },
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          authenticated_principal: User.admin_uri(),
+          caps: MapSet.new([admin_cap]),
           reply: {:caller_inbox, self()}
         }
       }
@@ -548,15 +591,19 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
   end
 
   defp sandbox_user_layer_uri(agent) do
+    target = Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read")
+    admin_cap = signed_action_cap!(target, User.admin_uri())
+
     {:ok, sandbox} =
       %Invocation{
         origin: :trusted_internal,
-        target: Ezagent.URI.new!("#{URI.to_string(agent)}?action=sandbox.read"),
+        target: target,
         mode: :call,
         args: %{},
         ctx: %{
           caller: User.admin_uri(),
-          caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()]),
+          authenticated_principal: User.admin_uri(),
+          caps: MapSet.new([admin_cap]),
           reply: {:caller_inbox, self()}
         }
       }

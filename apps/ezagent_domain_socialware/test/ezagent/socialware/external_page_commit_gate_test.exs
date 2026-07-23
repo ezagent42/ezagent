@@ -13,7 +13,7 @@ defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
   alias Ezagent.Entity.{Session, User}
   alias Ezagent.Socialware.ExternalFeed
 
-  @owner Ezagent.URI.entity(:team_alpha, :user, "p2-5a-owner")
+  defp owner, do: Ezagent.Socialware.TestCapHelper.owner(:team_alpha, "p2-5a-owner")
 
   defp session_uri do
     Ezagent.URI.session(:team_alpha, :socialware, "p2-5a-#{System.unique_integer([:positive])}")
@@ -27,16 +27,17 @@ defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
 
   defp dispatch(session_uri, behavior, action, args) do
     target = target(session_uri, behavior, action)
-    caller = User.admin_uri()
+    caller = owner()
 
-    Invocation.dispatch(%Invocation{origin: :trusted_internal,
+    Invocation.dispatch(%Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,
       ctx: %{
         caller: caller,
-        caps:
-          Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
+        authenticated_principal: caller,
+        caps: Ezagent.Socialware.TestCapHelper.lifecycle_caps(session_uri, caller, target),
         reply: {:caller_inbox, self()}
       }
     })
@@ -60,9 +61,9 @@ defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
     :ok = KindSnapshot.delete(URI.to_string(uri))
 
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{
+      Ezagent.Socialware.TestCapHelper.spawn_session(%{
         uri: uri,
-        owner_uri: @owner,
+        owner_uri: owner(),
         behaviors: Ezagent.Entity.Session.socialware_behaviors()
       })
 
@@ -73,7 +74,7 @@ defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
   # The external read is authorized by LIVE membership (the session owner/member),
   # not an identity-less token. The page projection itself is auth-agnostic; only
   # the AUTH carrier changed from a token to a principal.
-  defp test_caller(_session_uri), do: @owner
+  defp test_caller(_session_uri), do: owner()
 
   # open -> dispatch -> deliver(page) -> compose; returns {turn_id, version}.
   # Does NOT settle (caller chooses approve-only vs full settle).

@@ -57,7 +57,12 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
         target: target,
         mode: :call,
         args: args,
-        ctx: %{caller: denied_uri, caps: MapSet.new(), reply: {:caller_inbox, self()}}
+        ctx: %{
+          caller: denied_uri,
+          authenticated_principal: denied_uri,
+          caps: MapSet.new(),
+          reply: {:caller_inbox, self()}
+        }
       })
 
     assert {:error, :missing_cap} = result_denied
@@ -75,6 +80,7 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
         args: args,
         ctx: %{
           caller: Ezagent.Entity.User.admin_uri(),
+          authenticated_principal: Ezagent.Entity.User.admin_uri(),
           caps: MapSet.new([publish_cap]),
           reply: {:caller_inbox, self()}
         }

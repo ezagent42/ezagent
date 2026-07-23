@@ -1,10 +1,23 @@
 defmodule EzagentPluginCc.McpConfigWriterTest do
-  use ExUnit.Case, async: false
+  use EzagentCore.DataCase, async: false
 
   alias EzagentPluginCc.McpConfigWriter
   alias Ezagent.AgentBridge.TokenStore
 
   setup do
+    for agent_uri <- [
+          "entity://test-ws/agent/no-worktree-paths",
+          "entity://team-alpha/agent/cc_cwdtest",
+          "entity://team-alpha/agent/cc_mkdir",
+          "entity://team-alpha/agent/cc_cfgdir",
+          "entity://team-alpha/agent/cc_nocwd",
+          "entity://team-alpha/agent/cc_orchestrator-s1",
+          "entity://team-alpha/agent/cc_plain",
+          "entity://team-alpha/agent/cc_orchestrator-s2"
+        ] do
+      _authority = install_test_authority!(Ezagent.URI.new!(agent_uri), :agent)
+    end
+
     # Isolated $EZAGENT_HOME so TokenStore writes a real but throwaway
     # cc-channels.yaml during the test.
     tmp = Path.join(System.tmp_dir!(), "esr-mcp-writer-#{System.unique_integer([:positive])}")
@@ -42,6 +55,7 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
     # NOT carry per-agent identity — that flows via claude's process env
     # (cmd_env) instead. See docs/superpowers/specs/2026-06-02-domain-agent-design.md.
     agent_uri = "entity://team-alpha/agent/test_writer-test-#{System.unique_integer([:positive])}"
+    _authority = install_test_authority!(Ezagent.URI.new!(agent_uri), :agent)
 
     {:ok, path} =
       McpConfigWriter.write!(
@@ -74,6 +88,8 @@ defmodule EzagentPluginCc.McpConfigWriterTest do
   } do
     agent_uri =
       "entity://team-alpha/agent/test_writer-idempotent-#{System.unique_integer([:positive])}"
+
+    _authority = install_test_authority!(Ezagent.URI.new!(agent_uri), :agent)
 
     # The token is no longer written into the .mcp.json env block (clobber-safe);
     # read it from the RETURN value instead (which `build_claude_cmd/3` uses for

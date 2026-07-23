@@ -57,7 +57,12 @@ defmodule Ezagent.LifecycleTest do
         presenter
       )
 
-    %{caller: presenter, caps: MapSet.new([cap]), reply: {:caller_inbox, self()}}
+    %{
+      caller: presenter,
+      authenticated_principal: presenter,
+      caps: MapSet.new([cap]),
+      reply: {:caller_inbox, self()}
+    }
   end
 
   describe "macro emission (compile-down to @behaviour Ezagent.ActionSet)" do
@@ -168,6 +173,24 @@ defmodule Ezagent.LifecycleTest do
   end
 
   describe "ever-created marker (§9 OQ-1)" do
+    test "marker-store failure is fail-closed as not fresh" do
+      previous = Application.get_env(:ezagent_core, Ezagent.Lifecycle, [])
+
+      Application.put_env(
+        :ezagent_core,
+        Ezagent.Lifecycle,
+        Keyword.put(
+          previous,
+          :marker_reader,
+          Ezagent.TestSupport.RaisingLifecycleMarkerReader
+        )
+      )
+
+      on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Lifecycle, previous) end)
+
+      refute Ezagent.Lifecycle.fresh_create?(fixture_uri())
+    end
+
     test "ever_created? is false before any persist, true after marking" do
       uri = fixture_uri()
       uri_str = URI.to_string(uri)
@@ -357,10 +380,23 @@ defmodule Ezagent.LifecycleTest do
           uri
         )
 
+      previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
+
+      Application.put_env(
+        :ezagent_core,
+        Ezagent.Cap,
+        Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
+      )
+
+      Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
+        Ezagent.URI.stable_key(uri) => MapSet.new([bump_cap])
+      })
+
       :persistent_term.put({Ezagent.TestSupport.LifecycleSignalFixture, :bump_cap}, bump_cap)
 
       on_exit(fn ->
         :persistent_term.erase({Ezagent.TestSupport.LifecycleSignalFixture, :bump_cap})
+        Application.put_env(:ezagent_core, Ezagent.Cap, previous)
       end)
 
       send(pid, {:lifecycle_signal_dispatch, target})

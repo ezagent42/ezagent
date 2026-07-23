@@ -16,36 +16,20 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
 
   alias Ezagent.{Invocation, KindRegistry}
   alias Ezagent.ActionSet.Session.Membership
-  alias Ezagent.Entity.{Session, User}
+  alias Ezagent.Entity.User
   alias Ezagent.Session.Participants
-  import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2, signed_required_cap!: 5]
+  import Ezagent.Test.CapHelper, only: [signed_required_cap!: 5]
 
   setup do
-    _ =
-      EzagentDomainInstanceMessage.SessionCreator.create_session("main", User.admin_uri(),
+    name = "remove-convergence-#{System.unique_integer([:positive])}"
+
+    {:ok, session_uri, _meta} =
+      EzagentDomainInstanceMessage.SessionCreator.create_session(name, User.admin_uri(),
         template_name: "default"
       )
 
-    :ok
-  end
-
-  defmodule NoopServer do
-    @moduledoc false
-    use GenServer
-
-    @impl true
-    def init(uri) do
-      :ok = Ezagent.KindRegistry.put_new(uri)
-      {:ok, %{}}
-    end
-
-    # The Session probes member Kinds (`:ezagent_kind_module` / `:ezagent_get_slice`)
-    # during membership ops; answer benignly so teardown doesn't log a crash.
-    @impl true
-    def handle_call(_msg, _from, state), do: {:reply, :ignore, state}
-
-    @impl true
-    def handle_cast(_msg, state), do: {:noreply, state}
+    on_exit(fn -> Ezagent.Lifecycle.destroy(session_uri, :test_cleanup) end)
+    {:ok, session_uri: session_uri}
   end
 
   # Operator ctx mirroring the CLI's `operator_ctx/2`: caller + an inline
@@ -61,26 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
         caller
       )
 
-    %{caller: caller, caps: [cap]}
-  end
-
-  defp join_member(session_uri, member_uri) do
-    target = URI.new!("#{URI.to_string(session_uri)}?action=session.join")
-
-    :ok =
-      Invocation.dispatch(%Invocation{
-        origin: :trusted_internal,
-        target: target,
-        mode: :cast,
-        args: %{member: member_uri},
-        ctx: %{
-          caller: member_uri,
-          caps: MapSet.new([signed_action_cap!(target, member_uri)]),
-          reply: :ignore
-        }
-      })
-
-    :ok
+    %{caller: caller, authenticated_principal: caller, caps: [cap]}
   end
 
   # Create + spawn a CONFIRMED real User (can hold caps) and join it as an
@@ -108,6 +73,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
         args: %{member: member_uri},
         ctx: %{
           caller: member_uri,
+          authenticated_principal: member_uri,
           caps: Ezagent.Identity.list_caps_for(member_uri),
           reply: {:caller_inbox, self()}
         }
@@ -119,19 +85,16 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
 
     _ = Membership.mount_participation_caps(session_uri, member_uri)
 
+    assert eventually(fn -> member_uri in Participants.list_participants(session_uri) end)
+
     member_uri
   end
 
-  test "remove via the shared entry: {:member_left} broadcast fires AND list_participants converges" do
-    session_uri = Session.default_uri()
+  test "remove via the shared entry: {:member_left} broadcast fires AND list_participants converges",
+       %{session_uri: session_uri} do
     {:ok, session_pid} = KindRegistry.lookup(session_uri)
 
-    member_uri =
-      URI.new!("entity://system/user/conv-#{System.unique_integer([:positive])}")
-
-    {:ok, _member_pid} = GenServer.start(NoopServer, member_uri)
-
-    join_member(session_uri, member_uri)
+    member_uri = invited_user_member(session_uri, "conv")
 
     # Confirm the member landed (live slice — the UI-rendered source).
     assert member_uri in Participants.list_participants(session_uri)
@@ -162,9 +125,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     refute Map.has_key?(slice.members, member_uri)
   end
 
-  test "removing a non-member returns {:ok, :already_removed} through real dispatch" do
-    session_uri = Session.default_uri()
-
+  test "removing a non-member returns {:ok, :already_removed} through real dispatch", %{
+    session_uri: session_uri
+  } do
     not_a_member =
       URI.new!("entity://system/user/ghost-#{System.unique_integer([:positive])}")
 
@@ -180,8 +143,9 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
              )
   end
 
-  test "self-leave through the shared entry works without the owner cap" do
-    session_uri = Session.default_uri()
+  test "self-leave through the shared entry works without the owner cap", %{
+    session_uri: session_uri
+  } do
     member_uri = invited_user_member(session_uri, "selfleave")
 
     assert member_uri in Participants.list_participants(session_uri)
@@ -201,8 +165,23 @@ defmodule EzagentDomainInstanceMessage.Integration.RemoveParticipantConvergenceT
     # provisions the JIT self-leave authority so the dispatch clears the
     # chokepoint and the handler's `caller == participant` gate passes (§3.3).
     assert {:ok, %{status: :removed}} =
-             Participants.remove_participant(session_uri, member_uri, %{caller: member_uri})
+             Participants.remove_participant(session_uri, member_uri, %{
+               caller: member_uri,
+               authenticated_principal: member_uri
+             })
 
     refute member_uri in Participants.list_participants(session_uri)
+  end
+
+  defp eventually(fun, attempts \\ 200)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end

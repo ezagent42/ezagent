@@ -59,8 +59,15 @@ defmodule Ezagent.Cap.Grant do
              Ezagent.URI.stable_key(Ezagent.URI.instance(cap.instance)) ==
                Ezagent.URI.stable_key(target_instance),
          {:ok, _authority_cap} <-
-           Ezagent.Cap.Verifier.authorize(kind, __MODULE__, :grant, target, ctx),
-         %URI{} = presenter <- Map.get(ctx, :caller),
+           Ezagent.Cap.Verifier.authorize(
+             kind,
+             __MODULE__,
+             :grant,
+             target,
+             Map.get(ctx, :authenticated_principal),
+             ctx
+           ),
+         %URI{} = presenter <- Map.get(ctx, :authenticated_principal),
          intent <- freeze(target_instance, presenter, grantee, cap),
          {:ok, issued} <- Authority.issue_current(intent) do
       {:ok, issued}
@@ -72,8 +79,38 @@ defmodule Ezagent.Cap.Grant do
   end
 
   @doc false
-  @spec issue(Authority.t(), intent()) :: Capability.t()
+  @spec issue(Authority.t(), intent()) :: Capability.t() | {:error, :reserved_action}
+  def issue(%Authority{}, %__MODULE__{cap: %Capability{action: :self_license}}),
+    do: {:error, :reserved_action}
+
   def issue(%Authority{} = authority, %__MODULE__{} = intent) do
+    issue_unchecked(authority, intent)
+  end
+
+  @doc false
+  @spec issue_self_license(Authority.t(), intent()) ::
+          {:ok, Capability.t()} | {:error, :invalid_self_license_intent}
+  def issue_self_license(
+        %Authority{uri: authority_uri} = authority,
+        %__MODULE__{
+          target: target,
+          presenter: presenter,
+          grantee: grantee,
+          cap: %Capability{action: :self_license, instance: instance}
+        } = intent
+      ) do
+    if same_uri?(authority_uri, target) and same_uri?(target, presenter) and
+         same_uri?(target, grantee) and same_uri?(target, instance) do
+      {:ok, issue_unchecked(authority, intent)}
+    else
+      {:error, :invalid_self_license_intent}
+    end
+  end
+
+  def issue_self_license(%Authority{}, %__MODULE__{}),
+    do: {:error, :invalid_self_license_intent}
+
+  defp issue_unchecked(%Authority{} = authority, %__MODULE__{} = intent) do
     artifact = %{
       intent.cap
       | granted_by: intent.presenter,
@@ -83,4 +120,7 @@ defmodule Ezagent.Cap.Grant do
 
     Authority.sign(authority, artifact)
   end
+
+  defp same_uri?(left, right),
+    do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
 end

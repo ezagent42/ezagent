@@ -16,6 +16,7 @@ defmodule Ezagent.Email.Inbound.Authority do
           binding_row_id: String.t(),
           session_uri: URI.t(),
           principal_uri: URI.t(),
+          authenticated_principal: URI.t(),
           caps: MapSet.t(Ezagent.Capability.t())
         }
 
@@ -102,13 +103,13 @@ defmodule Ezagent.Email.Inbound.Authority do
     _ -> {:reject, :binding_actor_invalid}
   end
 
-  defp issue_decision(_meta, row, session_uri, _binding_actor) do
+  defp issue_decision(_meta, row, session_uri, binding_actor) do
     workspace_name = Ezagent.URI.workspace_name!(session_uri)
     principal_uri = Ezagent.URI.entity(workspace_name, :user, "email-" <> short_id())
 
     case Ezagent.Cap.issue(
            {:admin, Ezagent.URI.user(:system, :admin)},
-           principal_uri,
+           binding_actor,
            send_cap(session_uri)
          ) do
       {:ok, cap} ->
@@ -117,6 +118,7 @@ defmodule Ezagent.Email.Inbound.Authority do
            binding_row_id: row.id,
            session_uri: session_uri,
            principal_uri: principal_uri,
+           authenticated_principal: binding_actor,
            caps: MapSet.new([cap])
          }}
 

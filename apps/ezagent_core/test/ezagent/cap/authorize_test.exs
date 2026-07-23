@@ -70,7 +70,7 @@ defmodule Ezagent.Cap.AuthorizeTest do
 
     assert {:ok, _} = Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
 
-    {:ok, _bumped} = Authority.regenesis(uri, :test, admin())
+    {:ok, _bumped} = Authority.regenesis(uri, :test)
 
     assert {:error, :no_matching_cap} =
              Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
@@ -104,7 +104,21 @@ defmodule Ezagent.Cap.AuthorizeTest do
   end
 
   defp mint_signed_cap_for(uri, grantee) do
-    {:ok, cap} = Ezagent.Cap.issue({:admin, admin()}, grantee, action_cap(uri))
+    # Issuance itself goes through authorize/3, so license the canonical admin
+    # independently for exactly the duration of this fixture mint. Restore the
+    # test's holder state afterwards so the revoked-holder case stays revoked.
+    previous =
+      Application.get_env(
+        :ezagent_core,
+        EzagentCore.Test.CapAuthorityLoaderStub,
+        MapSet.new()
+      )
+
+    license_holder(MapSet.new([:admin_self_license]))
+    result = Ezagent.Cap.issue({:admin, admin()}, grantee, action_cap(uri))
+    Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, previous)
+
+    {:ok, cap} = result
     cap
   end
 

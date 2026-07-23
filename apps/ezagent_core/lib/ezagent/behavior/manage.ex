@@ -116,16 +116,7 @@ defmodule Ezagent.ActionSet.Manage do
       Task.start(fn ->
         Process.sleep(20)
 
-        case Ezagent.Lifecycle.destroy(self_uri, :manage_delete) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "Ezagent.ActionSet.Manage: Lifecycle.destroy(#{URI.to_string(self_uri)}) " <>
-                "returned #{inspect(reason)} after manage.delete"
-            )
-        end
+        Ezagent.Lifecycle.destroy!(self_uri, :manage_delete)
       end)
 
     :ok

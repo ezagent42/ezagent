@@ -212,7 +212,8 @@ defmodule Ezagent.Socialware.AnonUser.GC do
           Ezagent.Session.Membership.authorize(
             slice,
             Ezagent.URI.new!(entity_uri),
-            Ezagent.URI.new!(session_uri)
+            Ezagent.URI.new!(session_uri),
+            Ezagent.URI.new!(entity_uri)
           )
         )
 
@@ -300,7 +301,12 @@ defmodule Ezagent.Socialware.AnonUser.GC do
         target: target,
         mode: :cast,
         args: %{member: Ezagent.URI.new!(member_uri)},
-        ctx: %{caller: admin_uri, caps: MapSet.new([leave_cap]), reply: :ignore},
+        ctx: %{
+          caller: admin_uri,
+          authenticated_principal: admin_uri,
+          caps: MapSet.new([leave_cap]),
+          reply: :ignore
+        },
         origin: :trusted_internal
       })
 
@@ -314,7 +320,7 @@ defmodule Ezagent.Socialware.AnonUser.GC do
     uri = Ezagent.URI.new!(entity_uri)
 
     case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} -> Ezagent.Kind.terminate(uri)
+      {:ok, _pid} -> Ezagent.Kind.terminate!(uri)
       :error -> :ok
     end
   rescue

@@ -90,28 +90,36 @@ defmodule Ezagent.AgentLineage do
   def table, do: @table
 
   @doc """
-  Record that `agent_uri` was spawned by `spawned_by`. Idempotent.
+  Record that `agent_uri` was spawned by `spawned_by`. Idempotent for the same
+  derivation and fail-loud when an existing append-only edge names a different
+  creator.
 
   remediation C-B (#114) — write-through: upsert the durable row (the
   source of truth) AND the ETS cache. The `agent_uri` PRIMARY KEY makes
   the upsert idempotent — re-recording the same pair overwrites in place,
   matching the prior `:ets.insert/2` overwrite semantics.
   """
-  @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok
+  @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def record(agent_uri, spawned_by) do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
 
-    row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()}
-
-    {:ok, _} =
-      Repo.insert(row,
-        on_conflict: [set: [spawned_by: s]],
-        conflict_target: [:agent_uri]
-      )
-
-    :ets.insert(@table, {a, s})
-    :ok
+    with :ok <-
+           Ezagent.Provenance.DerivationEdges.record_derivation_edge(
+             a,
+             s,
+             :spawned_by,
+             stable_attempt_id(a)
+           ),
+         row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()},
+         {:ok, _} <-
+           Repo.insert(row,
+             on_conflict: [set: [spawned_by: s]],
+             conflict_target: [:agent_uri]
+           ) do
+      :ets.insert(@table, {a, s})
+      :ok
+    end
   end
 
   @doc "Persist an exact lineage fact through the caller's Repo without updating ETS."
@@ -236,4 +244,9 @@ defmodule Ezagent.AgentLineage do
 
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)
   defp uri_to_str(s) when is_binary(s), do: s
+
+  defp stable_attempt_id(agent_uri) do
+    digest = :crypto.hash(:sha256, agent_uri) |> Base.url_encode64(padding: false)
+    "agent-lineage:" <> digest
+  end
 end

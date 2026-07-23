@@ -48,8 +48,44 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
     }
   end
 
-  defp ctx(session_uri, caller),
-    do: %{self_uri: session_uri, kind_module: Ezagent.Entity.Session, caller: caller}
+  defp ctx(session_uri, caller) do
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    {:ok, authority} =
+      Ezagent.Cap.Authority.open(Ezagent.URI.instance(session_uri), :session, :created)
+
+    {:ok, issued} =
+      Ezagent.Cap.prepare_provenance(
+        {:admin, Ezagent.Entity.User.admin_uri()},
+        caller,
+        requested
+      )
+
+    cap = Ezagent.Cap.Authority.sign(authority, issued)
+
+    case Ezagent.KindRegistry.lookup(caller) do
+      {:ok, _pid} ->
+        :ok
+
+      :error ->
+        {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: caller, initial_caps: [cap]})
+        on_exit(fn -> Ezagent.Kind.terminate(caller) end)
+    end
+
+    %{
+      self_uri: session_uri,
+      kind_module: Ezagent.Entity.Session,
+      caller: caller,
+      authenticated_principal: caller
+    }
+  end
 
   describe "USER participant removal (the §5.1 gap this PR closes)" do
     test "owner removes a user participant → membership gone, torn_down: :membership_only" do
