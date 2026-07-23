@@ -66,14 +66,15 @@ export function artifactOpenHref(url: string): string {
 export function Kanban({
   state,
   onAction = () => undefined,
-  onShare,
   onShareArtifact,
   onUploadFile,
   mode = "operate",
 }: {
   state: KanbanState
   onAction?: Act
-  // 分享看板：拿到本图 uri → 交给宿主 dispatch kanban.share_board（回推 share_link）。
+  // 过渡兼容：share 按钮已改为自 dispatch `kanban.share_board`（不再靠宿主回调）。
+  // 保留此可选 prop 只为让仍在传 `onShare` 的旧宿主（world 前端去 kanban PR 合入前）
+  // 类型合法；本组件不再消费它。world 走 manifest 后不传，此 prop 可在后续清理删除。
   onShare?: (kanbanUri: string) => void
   onShareArtifact?: (name: string, url: string) => void
   onUploadFile?: UploadFn
@@ -85,7 +86,7 @@ export function Kanban({
 }) {
   if (mode === "config") return <KanbanList state={state} onAction={onAction} />
   return state.kanban_uri ? (
-    <KanbanDetail state={state} onAction={onAction} onShare={onShare} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
+    <KanbanDetail state={state} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
   ) : (
     // 空会话 tab（零块板）：给「建第一块板」入口（showCreate），不再只有 Miro 配置。
     <KanbanList state={state} onAction={onAction} showCreate />
@@ -163,7 +164,7 @@ function KanbanList({state, onAction, showCreate = false}: {state: KanbanState; 
   )
 }
 
-function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShare?: (kanbanUri: string) => void; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
+function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
   const uri = state.kanban_uri as string
   const tree = state.tree || {nodes: {}, root_id: null}
   const statuses = state.statuses || ["claimed", "doing", "done"]
@@ -199,11 +200,9 @@ function KanbanDetail({state, onAction, onShare, onShareArtifact, onUploadFile}:
           <h2 className="truncate text-base font-semibold text-foreground">看板 · {uri.split("/").pop()}</h2>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1.5">
-          {onShare && (
-            <Button type="button" size="sm" variant="secondary" title="生成只读分享链接" onClick={() => onShare(uri)}>
-              <Send className="h-4 w-4" /> 分享
-            </Button>
-          )}
+          <Button type="button" size="sm" variant="secondary" title="生成只读分享链接" onClick={() => onAction("kanban.share_board", {kanban_uri: uri})}>
+            <Send className="h-4 w-4" /> 分享
+          </Button>
           {/* 规则8：非板主人（instances 行 owned=false）出「申请编辑」入口——
               往当前会话物化申请气泡，板主人点批准后 read→operate 升级。 */}
           {state.instances?.some((i) => i.uri === uri && !i.owned) && (
