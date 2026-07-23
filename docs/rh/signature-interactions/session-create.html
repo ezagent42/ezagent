@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signature · Session 创建</title>
+<style>
+:root {
+  --bg:#F5F3F0; --white:#FFF; --ink:#17171B; --ink-2:#56565E; --ink-3:#8A8A92; --ink-4:#B6B6BC;
+  --blue:#0B5CFF; --blueink:#0048A8; --jade:#0FA06E; --orange:#FF8A1E;
+  --r-pill:999px; --r-lg:18px; --r-sm:10px;
+  --font-ui:Inter,system-ui; --font-cn:'Noto Sans SC','PingFang SC',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-ui);background:var(--bg);height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:20px;font-size:14px;overflow:hidden}
+h2{font-family:var(--font-cn);font-weight:600;font-size:18px;color:var(--ink)}
+.controls{display:flex;gap:12px;align-items:center}
+.controls button{font-family:var(--font-ui);font-size:13px;font-weight:600;padding:8px 18px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all .15s}
+.controls button.primary{background:var(--blue);color:#fff}
+.controls button.primary:hover{transform:translateY(-1px)}
+.controls button.ghost{background:#E8E8EC;color:var(--ink)}
+.controls button.ghost:hover{background:#DCDCE0}
+
+/* ═══ STAGE ═══ */
+.stage{position:relative;width:560px;height:420px;background:var(--white);border-radius:var(--r-lg);box-shadow:0 4px 32px rgba(0,0,0,.1);overflow:hidden}
+
+/* ── INITIAL: Sheet + Cards ── */
+.init-state{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:flex-end;transition:opacity .3s}
+.init-state.dim{opacity:.06}
+/* Card area */
+.card-area{flex:1;display:flex;align-items:center;justify-content:center;gap:16px;padding:20px}
+.prod-card{width:200px;height:180px;background:var(--white);border:1px solid #E8E8EC;border-radius:var(--r-sm);padding:20px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.prod-card .pc-img{width:50px;height:50px;border-radius:50%;background:var(--blueink);display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff}
+.prod-card .pc-name{font-size:12px;font-weight:600;color:var(--ink);text-align:center}
+.prod-card .pc-co{font-size:10px;color:var(--ink-4)}
+/* CTA button */
+.cta-row{display:flex;justify-content:center;padding:10px 0 8px}
+.cta-btn{font-size:13px;font-weight:600;padding:8px 22px;border-radius:var(--r-pill);border:0;cursor:pointer;background:var(--blue);color:#fff;transition:all .15s}
+.cta-btn:hover{transform:translateY(-1px)}
+/* Sheet placeholder */
+.sheet-placeholder{height:140px;background:#F0F0F3;border-radius:var(--r-lg) var(--r-lg) 0 0;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--ink-4);margin:0 12px}
+
+/* ── CONNECTION PHASE (overlay) ── */
+.conn-phase{position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;pointer-events:none}
+.conn-avatars{display:flex;align-items:center;gap:0;transition:gap .5s ease-out}
+.conn-av{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:24px;color:#fff;transition:transform .5s cubic-bezier(.34,1.56,.64,1);flex-shrink:0}
+.conn-av.me{background:var(--blueink)}.conn-av.company{background:var(--orange)}
+/* When connected */
+.conn-avatars.connected{gap:8px}
+.conn-avatars.connected .conn-av{transform:scale(.85)}
+/* Ring pulse */
+.conn-ring{position:absolute;width:0;height:0;border-radius:50%;border:2px solid var(--blue);opacity:0;pointer-events:none;transition:all .6s ease-out}
+.conn-ring.pulse{width:80px;height:80px;opacity:1;animation:ringPulse .8s ease-out forwards}
+@keyframes ringPulse{
+  0%{width:0;height:0;opacity:1}
+  40%{width:80px;height:80px;opacity:.6}
+  100%{width:160px;height:160px;opacity:0}
+}
+
+/* ── SESSION SPACE (radial reveal) ── */
+.sess-space{position:absolute;inset:0;z-index:20;clip-path:circle(0% at 50% 55%);transition:clip-path .55s cubic-bezier(.22,1,.36,1);background:var(--white);display:flex;flex-direction:column}
+.sess-space.reveal{clip-path:circle(80% at 50% 55%)}
+/* Topbar */
+.sess-tb{display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--blueink);color:#fff;flex-shrink:0}
+.sess-tb h3{font-size:13px;font-weight:600}
+/* Body */
+.sess-body{flex:1;display:flex;overflow:hidden}
+.sess-sidebar{width:180px;border-right:1px solid #E8E8EC;padding:14px;display:flex;flex-direction:column;gap:0;overflow-y:auto;font-size:11px;flex-shrink:0;transform:translateX(-20px);opacity:0;transition:transform .4s .2s ease-out,opacity .4s .2s ease-out}
+.sess-space.reveal .sess-sidebar{transform:translateX(0);opacity:1}
+.sess-sidebar .sp-img{width:44px;height:44px;border-radius:var(--r-sm);background:#E7EEFF;display:flex;align-items:center;justify-content:center;font-size:20px;margin-bottom:10px}
+.sess-sidebar .sp-title{font-weight:600;font-size:12px;color:var(--ink);margin-bottom:3px}
+.sess-sidebar .sp-co{color:var(--ink-4);margin-bottom:8px}
+.sess-sidebar .sp-meta{color:var(--ink-4);font-size:10px;border-top:1px solid #E8E8EC;padding-top:8px;line-height:1.6}
+.sess-chat{flex:1;display:flex;flex-direction:column;background:#F5F3F0;transform:translateY(20px);opacity:0;transition:transform .4s .3s ease-out,opacity .4s .3s ease-out}
+.sess-space.reveal .sess-chat{transform:translateY(0);opacity:1}
+.sess-chat .sc-msgs{flex:1;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.sess-chat .sc-msg{max-width:84%;padding:7px 11px;font-size:12px;line-height:1.5;border-radius:10px}
+.sc-msg.system{align-self:center;background:transparent;color:var(--ink-4);font-size:11px;text-align:center}
+.sc-msg.company{align-self:flex-start;background:var(--white);color:var(--ink);border-radius:4px 10px 10px 10px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.sc-msg.user{align-self:flex-end;background:var(--blueink);color:#fff;border-radius:10px 4px 10px 10px}
+.sess-composer{display:flex;align-items:center;gap:8px;padding:8px 14px;background:var(--white);border-top:1px solid #E8E8EC;transform:translateY(10px);opacity:0;transition:transform .4s .45s ease-out,opacity .4s .45s ease-out}
+.sess-space.reveal .sess-composer{transform:translateY(0);opacity:1}
+.sess-composer input{all:unset;flex:1;font-size:12px;color:var(--ink);padding:6px 10px;background:#F5F3F0;border-radius:var(--r-pill)}
+.sess-composer input::placeholder{color:var(--ink-4);font-size:11px}
+.sess-composer .sc-send{width:28px;height:28px;border-radius:50%;border:0;background:var(--blue);color:#fff;cursor:pointer}
+
+/* Parameters */
+.params{font-size:11px;color:var(--ink-4);text-align:center;max-width:560px}
+.params span{margin:0 6px}
+.params b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<h2>Session 创建 · 组织为你连接企业</h2>
+
+<div class="controls">
+  <button class="primary" id="btnPlay">▶ 播放</button>
+  <button class="ghost" id="btnReset">↺ 重置</button>
+  <span style="font-size:11px;color:var(--ink-4)">或按 Space</span>
+</div>
+
+<div class="stage" id="stage">
+  <!-- Initial state -->
+  <div class="init-state" id="initState">
+    <div class="card-area">
+      <div class="prod-card">
+        <div class="pc-img">🏛</div>
+        <div class="pc-name">心脏超声辅助诊断系统</div>
+        <div class="pc-co">北京智影医疗科技</div>
+      </div>
+    </div>
+    <div class="cta-row">
+      <button class="cta-btn" onclick="play()">联系企业 · Contact</button>
+    </div>
+    <div class="sheet-placeholder">展厅顾问 · AI Agent 对话中</div>
+  </div>
+
+  <!-- Connection phase -->
+  <div class="conn-phase" id="connPhase">
+    <div class="conn-ring" id="connRing"></div>
+    <div class="conn-avatars" id="connAvatars">
+      <div class="conn-av me" id="avMe">您</div>
+      <div class="conn-av company" id="avCo">企</div>
+    </div>
+  </div>
+
+  <!-- Session space -->
+  <div class="sess-space" id="sessSpace">
+    <div class="sess-tb">
+      <span>💬</span><h3>信息协会 · Session</h3>
+    </div>
+    <div class="sess-body">
+      <div class="sess-sidebar">
+        <div class="sp-img">🏛</div>
+        <div class="sp-title">心脏超声辅助诊断系统</div>
+        <div class="sp-co">北京智影医疗科技有限公司</div>
+        <div class="sp-meta"><b>Session</b><br>已连接 · 2026-07-22<br>信息协会可信对接通道</div>
+      </div>
+      <div class="sess-chat">
+        <div class="sc-msgs">
+          <div class="sc-msg system">信息协会已为您连接<br><b>北京智影医疗科技</b> 的对接人</div>
+          <div class="sc-msg company">您好！感谢您关注我们的「心脏超声辅助诊断系统」。请问您想了解哪方面？</div>
+        </div>
+        <div class="sess-composer">
+          <input placeholder="输入消息…"><div class="sc-send">→</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="params">
+  总时长 <b>~1600ms</b>
+  <span>|</span> Sheet退后 <b>150ms</b>
+  <span>|</span> 头像靠近 <b>400ms</b>
+  <span>|</span> 空间展开 <b>550ms</b>
+  <span>|</span> 内容进入 <b>+200ms</b>
+</div>
+
+<script>
+const initState = document.getElementById('initState');
+const connPhase = document.getElementById('connPhase');
+const connAvatars = document.getElementById('connAvatars');
+const connRing = document.getElementById('connRing');
+const sessSpace = document.getElementById('sessSpace');
+let playing = false, timers = [];
+
+function reset(){
+  timers.forEach(clearTimeout); timers = [];
+  initState.classList.remove('dim');
+  connAvatars.classList.remove('connected');
+  connAvatars.style.gap = '120px';
+  connRing.classList.remove('pulse');
+  connRing.style.width = '0'; connRing.style.height = '0'; connRing.style.opacity = '0';
+  sessSpace.classList.remove('reveal');
+  playing = false;
+}
+
+function play(){
+  if(playing) return;
+  playing = true;
+
+  // Phase 1: Init dims, avatars start far apart
+  connAvatars.style.gap = '120px';
+
+  // Phase 2: Sheet dims (150ms)
+  timers.push(setTimeout(() => { initState.classList.add('dim'); }, 150));
+
+  // Phase 3: Avatars move together (400ms → reach at 550ms)
+  timers.push(setTimeout(() => {
+    connAvatars.classList.add('connected');
+  }, 150));
+
+  // Phase 4: Ring pulse (550ms)
+  timers.push(setTimeout(() => {
+    connRing.classList.add('pulse');
+  }, 550));
+
+  // Phase 5: Session space reveals (700ms)
+  timers.push(setTimeout(() => {
+    sessSpace.classList.add('reveal');
+  }, 700));
+
+  timers.push(setTimeout(() => { playing = false; }, 1600));
+}
+
+document.getElementById('btnPlay').addEventListener('click', play);
+document.getElementById('btnReset').addEventListener('click', reset);
+
+document.addEventListener('keydown', e => {
+  if(e.key === ' ' || e.code === 'Space'){ e.preventDefault(); reset(); setTimeout(play, 30); }
+  if(e.key === 'r' || e.key === 'R'){ e.preventDefault(); reset(); }
+});
+
+// Auto-play
+setTimeout(play, 600);
+</script>
+</body>
+</html>
