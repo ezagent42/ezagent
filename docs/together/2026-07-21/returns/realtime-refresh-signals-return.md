@@ -1,65 +1,50 @@
-# Realtime Refresh Signals Return
+# Realtime Refresh Return
 
-Date: 2026-07-21
+Date: 2026-07-23
 Branch: `codex/realtime-refresh`
-Base: `origin/main` at `fe2906431`
-Handoff: `docs/together/2026-07-21/handoffs/realtime-refresh-signals.md` (PR #1496)
+Base: `origin/main` at `ac32cfe51`
 
-## Summary
+## Delivered
 
-Implemented the World-side consumer contract for the two generic session-event
-> The custom-signal description retained below is historical. The active implementation is the SliceChange transport documented in the 2026-07-22 section.
+World now treats post-commit `Ezagent.SliceChange` as the only refresh transport.
+The generic refresh mechanism is declaration-driven:
 
-signals proposed in the handoff:
+- `UiSurfaceProvider.refresh_surfaces/0` declares a renderer component, the URI
+  source it observes, and its caller-scoped `refresh_state/2` builder.
+- `RefreshSurfaceRegistry` dynamically combines those declarations with
+  registered plugin pages. Invalid standalone declarations are fail-closed.
+- `WorldLive` subscribes by the declared URI source, deduplicates a pending
+  `{surface, uri}` refresh, and defers the state projection by 25 ms. This lets
+  low-latency events such as `chat:message` reach the browser before a persisted
+  state read can occupy the LiveView mailbox.
+- React receives a generic `world:surface_state` envelope and shallow-merges its
+  partial state. It has no refresh branch for a particular plugin or template.
+- Session creation keeps route navigation as the only source of selected-session state. It emits the generic `world:session_created` completion acknowledgement solely to clear “creating…” immediately; the subsequent `handle_params` route state selects and renders the new session. This applies uniformly to every template/socialware and prevents a stale client state from overriding the route.
+- The World conversation renderer declares itself through the same registry.
+  `ConversationSessionState.refresh_state/2` supplies its caller-authorized
+  projection. The old direct session route rebuild and the old page-only
+  `PluginPageRefresh` mechanism are removed.
 
-- `{:view_changed, %{plugin: key, entity_uri: uri}}` resolves the declared
-  plugin page, invokes its data builder's `refresh_state/2` callback with the
-  current caller-scoped context, and pushes the returned partial
-  `world:state` to React.
-- `{:caps_changed, entity_uri}` reloads `EntityCaps` only when the event is for
-  the currently signed-in entity, rebuilds the current route state, and pushes
-  the refreshed state so permission affordances update without a browser
-  reload.
-
-`WorldLive` now retains the current route needed for the capability-triggered
-rebuild. Unknown plugin keys are ignored. A registered page with a missing or
-invalid `refresh_state/2` declaration fails explicitly rather than silently
-allowing a broken real-time surface.
-
-Kanban's page data builder implements `refresh_state/2` as its plugin-owned
-partial board-state projection. The registry test makes this callback part of
-the page declaration contract.
-
-## Boundary Notes
-## 2026-07-22 SliceChange Transport
-
-This supersedes the custom signal transport described above. World now uses
-only post-commit `Ezagent.SliceChange`: the active registered plugin detail
-route subscribes to its entity URI, and its caller-scoped `refresh_state/2`
-projection is rebuilt when that entity changes. A current user's `:identity`
-slice change reloads `PresenterCaps` and rebuilds the current route.
-
-Kanban and future plugins do not broadcast `view_changed`, `caps_changed`, or
-plugin-specific refresh messages. SliceChange is content-free; data builders
-
-The target `origin/main` did not contain the handoff's historical
-`{:kanban_changed, ...}` handler; it exists on the separate Kanban migration
-line. Consequently this change introduces no Kanban-specific handler or
-producer broadcast. Kanban writes and Identity cap grants already emit
-post-commit SliceChange events; World routes them by the active plugin entity
-
-## Tests Added
-
-- `plugin_page_refresh_test.exs` covers a valid plugin-owned callback, a
-  missing callback fail-closed result, and an unknown page.
-- `plugin_page_registry_test.exs` verifies every registered page data builder
-  is loadable and exports `refresh_state/2`.
+Identity SliceChanges still reload caps only through `PresenterCaps`, then
+rebuild the active route; no mount-snapshot caps are reused.
 
 ## Verification
 
-- Touched Elixir files formatted and syntax-checked.
-- `git diff --check` PASS.
-- `POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 mix test apps/ezagent_plugin_world/test/ezagent/world/plugin_page_refresh_test.exs apps/ezagent_plugin_world/test/ezagent/world/plugin_page_registry_test.exs` PASS (`15 tests, 0 failures`).
-- `mix precommit` was started after PostgreSQL recovery but the local command
-  runner terminated it at its 64-second execution limit before completion; it
-  did not report a code, compile, or database failure before that limit.
+- `ERL_FLAGS='+S 8:8' MIX_ENV=test mix compile` — PASS.
+- `ERL_FLAGS='+S 8:8' mix test ...refresh_surface_registry_test.exs
+  ...world_slice_change_refresh_gate_test.exs ...plugin_page_registry_test.exs`
+  — PASS, 21 tests / 0 failures.
+- Touched Elixir files were formatted and `git diff --check` passed.
+
+The WSL worktree has no `pnpm` executable, so the React TypeScript check was not
+run here. This is an environment limitation, not a type-check failure.
+
+## #1472 boundary discovered during rebase
+
+Latest `origin/main` already contains the core #1472 page declaration, dynamic
+page registry, and generated static plugin-page renderer manifest. It still has
+legacy World frontend/session special cases for specific plugins/templates
+outside the refresh mechanism. Those must be migrated before a repository-wide
+"no plugin names in World" drift gate can be enabled honestly. This PR does not
+hide or allowlist those existing cases; it removes plugin/template knowledge from
+the new refresh path and records the remaining #1472 migration as separate work.

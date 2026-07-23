@@ -64,6 +64,21 @@ defmodule Ezagent.World.ConversationSessionState do
   end
 
   @doc false
+  @spec refresh_state(URI.t(), %{workspace_uri: URI.t(), caller_uri: URI.t(), caller_caps: list()}) ::
+          map()
+  def refresh_state(
+        %URI{} = session_uri,
+        %{workspace_uri: workspace_uri, caller_uri: caller_uri} = ctx
+      ) do
+    ConversationData.state_for(session_uri, %{
+      caller_uri: caller_uri,
+      caller_caps: Map.fetch!(ctx, :caller_caps),
+      workspace_uri: workspace_uri,
+      sessions: rows_for_workspace(workspace_uri, caller_uri)
+    })
+  end
+
+  @doc false
   @spec ensure_session_subscribed(Phoenix.LiveView.Socket.t(), URI.t()) ::
           Phoenix.LiveView.Socket.t()
   def ensure_session_subscribed(socket, %URI{} = session_uri) do

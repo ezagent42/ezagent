@@ -57,6 +57,15 @@ defmodule Ezagent.World.ConversationActionsTest do
              )
   end
 
+  test "session creation acknowledges completion but keeps session selection route-driven" do
+    source =
+      File.read!(Path.expand("../../../lib/ezagent/world/conversation_actions.ex", __DIR__))
+
+    assert source =~ "push_event(\"world:session_created\""
+    assert source =~ "push_patch(to: \"/sessions?session="
+    refute source =~ "ConversationSessionState.switch_session(socket, session_uri)"
+  end
+
   describe "routing receiver form parsing" do
     test "normalizes role receivers to tagged resolver receivers" do
       assert [

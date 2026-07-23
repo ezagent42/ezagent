@@ -70,7 +70,8 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:world_component, "sessions_table")
      |> assign(:current_route, nil)
-     |> assign(:page_refresh_entity_uri, nil)
+     |> assign(:surface_refresh_entity_uri, nil)
+     |> assign(:pending_surface_refreshes, MapSet.new())
      |> assign(:current_session_uri, current_session_uri)
      |> assign(:current_session_uri_str, encode_uri(current_session_uri))
      |> assign(:last_dispatch_status, "idle")
@@ -95,7 +96,7 @@ defmodule EzagentPluginWorld.WorldLive do
       |> assign(:world_state_json, Jason.encode!(state))
       |> assign(:world_component, route.component)
       |> assign(:current_route, route)
-      |> sync_page_refresh_subscription(route)
+      |> sync_surface_refresh_subscription(route)
 
     socket =
       if connected?(socket) do
@@ -270,44 +271,24 @@ defmodule EzagentPluginWorld.WorldLive do
     socket =
       socket
       |> refresh_caps_after_identity_change(entity_uri, event)
-      |> refresh_active_plugin_view(event)
+      |> schedule_active_surface_refresh(event)
       |> push_inbound_event("slice_changed", event)
 
     {:noreply, socket}
   end
 
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  def handle_info({:refresh_surface, id, %URI{} = target_uri}, socket) when is_binary(id) do
+    key = {id, URI.to_string(target_uri)}
 
-  # SliceChange is the sole refresh transport. A page observes the entity in
-  # its current detail route; the event carries no state, so its data builder
-  # always re-reads through the caller-scoped read model below.
-  defp refresh_active_plugin_view(socket, %{uri: %URI{} = changed_entity_uri} = event) do
-    with %{component: plugin, entity_uri: %URI{} = route_entity_uri} <-
-           socket.assigns[:current_route],
-         true <- same_uri?(route_entity_uri, changed_entity_uri),
-         %{key: ^plugin} = page <- Ezagent.World.PluginPageRegistry.by_key(plugin) do
-      case Ezagent.World.PluginPageRefresh.build_state_for_slice_change(
-             page,
-             event,
-             page_refresh_context(socket)
-           ) do
-        {:ok, state} ->
-          push_event(socket, "world:state", state)
+    socket =
+      update(socket, :pending_surface_refreshes, fn pending ->
+        MapSet.delete(pending, key)
+      end)
 
-        {:error, reason} ->
-          raise ArgumentError,
-                "invalid plugin refresh declaration for #{inspect(plugin)}: #{inspect(reason)}"
-
-        :not_registered ->
-          raise ArgumentError,
-                "registered plugin refresh declaration disappeared for #{inspect(plugin)}"
-      end
-    else
-      _ -> socket
-    end
+    {:noreply, refresh_active_surface(socket, id, target_uri)}
   end
 
-  defp refresh_active_plugin_view(socket, _event), do: socket
+  def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp refresh_caps_after_identity_change(socket, entity_uri, %{slice_key: :identity}) do
     if same_uri?(entity_uri, socket.assigns[:current_entity_uri]) do
@@ -319,10 +300,56 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp refresh_caps_after_identity_change(socket, _entity_uri, _event), do: socket
 
-  defp sync_page_refresh_subscription(socket, route) do
+  # SliceChange carries no content. Defer the caller-scoped projection by one
+  # mailbox turn so a fast-path event (for example an already-authorized chat
+  # message) is not queued behind a synchronous read. The key coalesces bursts
+  # and the active-surface check below drops stale navigation work.
+  defp schedule_active_surface_refresh(socket, %{uri: %URI{} = changed_uri}) do
+    with component when is_binary(component) <- socket.assigns[:world_component],
+         %{id: id} = surface <- Ezagent.World.RefreshSurfaceRegistry.by_component(component),
+         %URI{} = target_uri <- Ezagent.World.RefreshSurfaceRegistry.target_uri(surface, socket),
+         true <- same_uri?(target_uri, changed_uri) do
+      key = {id, URI.to_string(target_uri)}
+      pending = socket.assigns[:pending_surface_refreshes]
+
+      if MapSet.member?(pending, key) do
+        socket
+      else
+        Process.send_after(self(), {:refresh_surface, id, target_uri}, 25)
+        assign(socket, :pending_surface_refreshes, MapSet.put(pending, key))
+      end
+    else
+      _ -> socket
+    end
+  end
+
+  defp schedule_active_surface_refresh(socket, _event), do: socket
+
+  defp refresh_active_surface(socket, id, %URI{} = target_uri) do
+    with component when is_binary(component) <- socket.assigns[:world_component],
+         %{id: ^id} = surface <- Ezagent.World.RefreshSurfaceRegistry.by_component(component),
+         true <-
+           same_uri?(Ezagent.World.RefreshSurfaceRegistry.target_uri(surface, socket), target_uri),
+         {:ok, state} <-
+           Ezagent.World.RefreshSurfaceRegistry.build_state(
+             surface,
+             target_uri,
+             refresh_context(socket)
+           ) do
+      push_event(socket, "world:surface_state", %{surface: id, state: state})
+    else
+      {:error, reason} ->
+        raise ArgumentError, "invalid refresh surface #{inspect(id)}: #{inspect(reason)}"
+
+      _ ->
+        socket
+    end
+  end
+
+  defp sync_surface_refresh_subscription(socket, route) do
     if connected?(socket) do
-      desired_entity_uri = page_refresh_entity_uri(route)
-      subscribed_entity_uri = socket.assigns[:page_refresh_entity_uri]
+      desired_entity_uri = surface_refresh_entity_uri(socket, route)
+      subscribed_entity_uri = socket.assigns[:surface_refresh_entity_uri]
 
       if same_uri?(desired_entity_uri, subscribed_entity_uri) do
         socket
@@ -335,33 +362,33 @@ defmodule EzagentPluginWorld.WorldLive do
           :ok = Ezagent.Notifications.subscribe_slice_change(desired_entity_uri)
         end
 
-        assign(socket, :page_refresh_entity_uri, desired_entity_uri)
+        assign(socket, :surface_refresh_entity_uri, desired_entity_uri)
       end
     else
       socket
     end
   end
 
-  defp page_refresh_entity_uri(%{component: component, entity_uri: %URI{} = entity_uri}) do
-    case Ezagent.World.PluginPageRegistry.by_key(component) do
+  defp surface_refresh_entity_uri(socket, %{component: component}) do
+    case Ezagent.World.RefreshSurfaceRegistry.by_component(component) do
       nil -> nil
-      _page -> entity_uri
+      surface -> Ezagent.World.RefreshSurfaceRegistry.target_uri(surface, socket)
     end
   end
 
-  defp page_refresh_entity_uri(_route), do: nil
+  defp surface_refresh_entity_uri(_socket, _route), do: nil
 
-  defp page_refresh_context(socket) do
+  defp refresh_context(socket) do
     %{
       workspace_uri: socket.assigns.current_workspace_uri,
       caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Map.get(socket.assigns, :current_caps, MapSet.new())
+      caller_caps: Ezagent.World.PresenterCaps.load(socket)
     }
   end
 
   defp refresh_current_caps(socket) do
     caller = socket.assigns.current_entity_uri
-    caps = MapSet.new(Ezagent.EntityCaps.load(caller))
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     socket
     |> assign(:current_caps, caps)
