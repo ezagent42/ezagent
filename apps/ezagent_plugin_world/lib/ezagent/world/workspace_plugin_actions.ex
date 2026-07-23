@@ -144,12 +144,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
 
     cond do
       open_id == "" or user_uri == "" ->
-        put_feishu_bindings(
-          socket,
-          [],
-          "binding_fields_required",
-          "error:binding_fields_required"
-        )
+        put_world_state(socket, %{}, "error:binding_fields_required")
 
       true ->
         case FeishuBindingDispatch.bind(workspace, caller, caps, open_id, user_uri) do
@@ -157,12 +152,10 @@ defmodule Ezagent.World.WorkspacePluginActions do
             refresh_bindings_after_mutation(socket, "binding_saved_refresh_failed")
 
           {:error, code} ->
-            put_feishu_bindings(
-              socket,
-              [],
-              FeishuBindingDispatch.code_string(code),
-              "error:#{FeishuBindingDispatch.code_string(code)}"
-            )
+            # Mutation failed — keep existing bindings visible, report only
+            # through the toast (last_dispatch_status). Never clear the
+            # table on a failed mutation.
+            put_world_state(socket, %{}, "error:#{FeishuBindingDispatch.code_string(code)}")
         end
     end
   end
@@ -182,7 +175,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
 
     cond do
       open_id == "" ->
-        put_feishu_bindings(socket, [], "open_id_required", "error:open_id_required")
+        put_world_state(socket, %{}, "error:open_id_required")
 
       true ->
         case FeishuBindingDispatch.unbind(workspace, caller, caps, open_id) do
@@ -190,12 +183,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
             refresh_bindings_after_mutation(socket, "binding_removed_refresh_failed")
 
           {:error, code} ->
-            put_feishu_bindings(
-              socket,
-              [],
-              FeishuBindingDispatch.code_string(code),
-              "error:#{FeishuBindingDispatch.code_string(code)}"
-            )
+            put_world_state(socket, %{}, "error:#{FeishuBindingDispatch.code_string(code)}")
         end
     end
   end

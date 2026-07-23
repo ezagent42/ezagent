@@ -3,15 +3,14 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   Thin dispatch adapter: the world Feishu bindings surface → the formal
   `EzagentPluginFeishu.Behavior.UserBinding` ActionSet dispatch.
 
-  Builds the `workspace://<target>?action=user_binding.<action>` target via
-  `Ezagent.URI.with_action/3`. The `user_binding` segment is a descriptive
-  label only — `Ezagent.URI.behavior_action/1` splits it off and only the
-  action atom (`:bind` / `:unbind` / `:list_feishu_bindings`) drives
-  `BehaviorRegistry` resolution (`Ezagent.Kind.BehaviorSet.resolve_action/3`
-  reads the action alone) — so this label is intentionally NOT read from
-  `EzagentPluginFeishu.Behavior.UserBinding.state_slice/0`: `ezagent_plugin_world`
-  must not carry a compile-time dependency on `ezagent_plugin_feishu` (plugin
-  isolation, P1) and a literal here carries zero dispatch-resolution risk.
+  Builds the `workspace://<target>?action=feishu_user_bindings.<action>` target
+  via `Ezagent.URI.with_action/3`. The label `feishu_user_bindings` is the
+  Behavior's `state_slice/0` value, used here as a literal (not read at
+  compile time — `ezagent_plugin_world` has no compile-time dependency on
+  `ezagent_plugin_feishu` per P1 plugin isolation). `behavior_action/1`
+  splits on `.` and only the action atom drives `BehaviorRegistry` resolution,
+  but keeping the label consistent with the Behavior's own `state_slice`
+  makes log entries, telemetry, and handoff-to-handoff tracing unambiguous.
   This module wraps the target in a real `%Ezagent.Invocation{mode: :call,
   origin: :authenticated_external}` carrying the CALLER's own identity/caps, and
   normalizes every raw dispatch/handler reason into a small closed set of
@@ -33,6 +32,10 @@ defmodule Ezagent.World.FeishuBindingDispatch do
 
   alias Ezagent.Invocation
 
+  # `:binding_policy_failed` is reserved for a future deterministic
+  # policy-failure signal from the Behavior (B1 Phase 3).  The current
+  # `BindingPolicy.apply/2` → `handle_bind/2` → dispatch chain propagates
+  # `{:error, reason}` tuples that normalize to `:binding_operation_failed`.
   @type error_code ::
           :unauthorized
           | :cross_workspace_denied
@@ -100,7 +103,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   # -- internals ------------------------------------------------------------
 
   defp call(%URI{} = workspace_uri, action, args, %URI{} = caller_uri, caps) do
-    target = Ezagent.URI.with_action(workspace_uri, :user_binding, action)
+    target = Ezagent.URI.with_action(workspace_uri, :feishu_user_bindings, action)
 
     %Invocation{
       target: target,
@@ -136,8 +139,6 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   defp normalize_error({:invalid_args, _}), do: :invalid_args
   defp normalize_error({:unknown_action, _}), do: :invalid_args
   defp normalize_error(:not_found), do: :invalid_args
-
-  defp normalize_error({:policy_apply_failed, _}), do: :binding_policy_failed
 
   defp normalize_error(reason)
        when reason in [
