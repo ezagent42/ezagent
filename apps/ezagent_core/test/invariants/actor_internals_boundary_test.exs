@@ -32,7 +32,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
 
   # Committed ledger sizes — the ratchet asserts the live ledger never GROWS past
   # these. Later chunks LOWER them as reach-ins migrate / ports land.
-  @forward_frozen 259
+  # C1 lowered forward 259→255: EntityCaps load path off actor internals
+  # (KindRegistry self-detect → self?/1; get_slice → read/3 spawn: :never;
+  # snapshot_caps SnapshotStore → read_durable/3), −4 sites.
+  @forward_frozen 255
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3
@@ -322,6 +325,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
 
   defp format_sites([]), do: "(none)"
 
+  # Scanned sites carry `:line`; ledger entries (stale/offender reports) do not —
+  # default it so a shrink/stale failure message never itself KeyErrors.
   defp format_sites(sites),
-    do: Enum.map_join(sites, "\n", fn s -> "  #{s.target} — #{s.path}:#{s.line}" end)
+    do:
+      Enum.map_join(sites, "\n", fn s ->
+        "  #{s.target} — #{s.path}:#{Map.get(s, :line, "?")}"
+      end)
 end
