@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signature · Agent 角色交接</title>
+<style>
+:root {
+  --bg:#F5F3F0; --white:#FFF; --ink:#17171B; --ink-3:#8A8A92; --ink-4:#B6B6BC;
+  --blue:#0B5CFF; --blueink:#0048A8; --jade:#0FA06E; --orange:#FF8A1E;
+  --r-pill:999px; --r-lg:18px; --r-icon:14px;
+  --font-ui:Inter,system-ui; --font-cn:'Noto Sans SC','PingFang SC',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-ui);background:var(--bg);height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:32px;font-size:14px}
+h2{font-family:var(--font-cn);font-weight:600;font-size:18px;color:var(--ink)}
+.controls{display:flex;gap:12px;align-items:center}
+.controls button{font-family:var(--font-ui);font-size:13px;font-weight:600;padding:8px 18px;border-radius:var(--r-pill);border:0;cursor:pointer;transition:all .15s}
+.controls button.primary{background:var(--blue);color:#fff}
+.controls button.primary:hover{transform:translateY(-1px)}
+.controls button.ghost{background:#E8E8EC;color:var(--ink)}
+.controls button.ghost:hover{background:#DCDCE0}
+
+/* ═══ STAGE ═══ */
+.stage{width:520px;background:var(--white);border-radius:var(--r-lg);box-shadow:0 4px 32px rgba(0,0,0,.1);overflow:hidden}
+/* Sheet-like header */
+.sh{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #E8E8EC}
+.sh-avatar{width:36px;height:36px;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;flex-shrink:0;position:relative}
+.sh-label{font-size:13px;font-weight:600;color:var(--ink)}
+.sh-sub{font-size:11px;color:var(--ink-4)}
+/* Avatar transition layer (for handoff glow) */
+.av-stage{position:relative;width:36px;height:36px;flex-shrink:0}
+.av-stage .av-slot{position:absolute;inset:0;border-radius:var(--r-icon);display:flex;align-items:center;justify-content:center;font-size:18px;color:#fff;transition:transform .4s cubic-bezier(.34,1.56,.64,1),opacity .35s ease-out}
+.av-slot.old{z-index:2}
+.av-slot.new{z-index:1;transform:translateX(20px);opacity:0}
+/* When handoff happens */
+.av-stage.handoff .av-slot.old{transform:scale(0.6);opacity:0;transition-delay:0s}
+.av-stage.handoff .av-slot.new{transform:translateX(0);opacity:1;transition-delay:.15s}
+/* Glow dot that travels */
+.handoff-dot{position:absolute;z-index:5;width:6px;height:6px;border-radius:50%;background:var(--jade);opacity:0;top:50%;left:50%;transform:translate(-50%,-50%)}
+.handoff-dot.fly{animation:dotFly .55s ease-in-out forwards}
+@keyframes dotFly{
+  0%{opacity:0;left:50%;transform:translate(-50%,-50%) scale(0)}
+  20%{opacity:1;transform:translate(-50%,-50%) scale(1)}
+  100%{opacity:0;left:calc(50% + 36px);transform:translate(-50%,-50%) scale(0.5)}
+}
+
+/* Messages */
+.msgs{padding:16px 20px;display:flex;flex-direction:column;gap:8px;min-height:200px}
+.msg{display:flex;gap:8px;max-width:88%}
+.msg.agent{align-self:flex-start}.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg .bbl{padding:8px 12px;font-size:13px;line-height:1.5;border-radius:14px}
+.msg.agent .bbl{background:#F0F0F3;color:var(--ink);border-radius:4px 14px 14px 14px}
+.msg.user .bbl{background:var(--blueink);color:#fff;border-radius:14px 4px 14px 14px}
+.msg.agent .who{font-size:10px;color:var(--ink-4);margin-bottom:3px;font-weight:600}
+
+/* New agent name appears */
+.agent-name{display:inline-block;transition:opacity .3s}
+
+/* Parameters display */
+.params{font-size:11px;color:var(--ink-4);text-align:center;max-width:520px}
+.params span{margin:0 6px}
+.params b{color:var(--ink)}
+</style>
+</head>
+<body>
+
+<h2>Agent 角色交接 · Handoff</h2>
+
+<div class="controls">
+  <button class="primary" id="btnPlay">▶ 播放</button>
+  <button class="ghost" id="btnReset">↺ 重置</button>
+  <span style="font-size:11px;color:var(--ink-4)">或按 Space</span>
+</div>
+
+<div class="stage">
+  <div class="sh">
+    <div class="av-stage" id="avStage">
+      <div class="av-slot old" style="background:var(--blueink)" id="avOld">顾</div>
+      <div class="av-slot new" style="background:var(--jade)" id="avNew">匹</div>
+      <div class="handoff-dot" id="handoffDot"></div>
+    </div>
+    <div>
+      <div class="sh-label"><span class="agent-name" id="agentName">展厅顾问</span> · Agent</div>
+      <div class="sh-sub">ezagent</div>
+    </div>
+  </div>
+  <div class="msgs" id="msgs">
+    <div class="msg agent">
+      <div class="bbl">
+        <div class="who">展厅顾问</div>
+        好的，我理解了您的需求。医疗AI影像是协会的重点领域。
+      </div>
+    </div>
+    <div class="msg agent" id="handoffMsg" style="opacity:0;transform:translateY(8px);transition:opacity .4s,transform .4s">
+      <div class="bbl">
+        <div class="who">展厅顾问</div>
+        让我请<b>匹配助手</b>帮您检索相关的会员产品。
+      </div>
+    </div>
+    <div class="msg agent" id="newAgentMsg" style="opacity:0;transform:translateY(8px);transition:opacity .4s .2s,transform .4s .2s">
+      <div class="bbl">
+        <div class="who">匹配助手</div>
+        正在检索中……已为您匹配到 3 款相关产品。
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="params">
+  总时长 <b id="pTotal">~1200ms</b>
+  <span>|</span> 交接延迟 <b id="pDelay">400ms</b>
+  <span>|</span> Avatar过渡 <b id="pAvatar">550ms</b>
+  <span>|</span> 新消息延迟 <b id="pNewMsg">800ms</b>
+</div>
+
+<script>
+const avStage = document.getElementById('avStage');
+const handoffDot = document.getElementById('handoffDot');
+const handoffMsg = document.getElementById('handoffMsg');
+const newAgentMsg = document.getElementById('newAgentMsg');
+const agentName = document.getElementById('agentName');
+const btnPlay = document.getElementById('btnPlay');
+const btnReset = document.getElementById('btnReset');
+
+let playing = false;
+let timers = [];
+
+function reset(){
+  timers.forEach(clearTimeout); timers = [];
+  avStage.classList.remove('handoff');
+  handoffDot.classList.remove('fly');
+  handoffDot.style.animation = 'none';
+  handoffMsg.style.opacity = '0'; handoffMsg.style.transform = 'translateY(8px)';
+  newAgentMsg.style.opacity = '0'; newAgentMsg.style.transform = 'translateY(8px)';
+  agentName.textContent = '展厅顾问';
+  void handoffDot.offsetHeight; // force reflow
+  handoffDot.style.animation = '';
+  playing = false;
+}
+
+function play(){
+  if(playing) return;
+  playing = true;
+
+  // Phase 1: Show handoff message (400ms delay)
+  timers.push(setTimeout(() => {
+    handoffMsg.style.opacity = '1'; handoffMsg.style.transform = 'translateY(0)';
+  }, 400));
+
+  // Phase 2: Avatar transition + dot fly (500ms)
+  timers.push(setTimeout(() => {
+    avStage.classList.add('handoff');
+    handoffDot.classList.add('fly');
+    agentName.textContent = '匹配助手';
+  }, 500));
+
+  // Phase 3: New agent message appears (800ms)
+  timers.push(setTimeout(() => {
+    newAgentMsg.style.opacity = '1'; newAgentMsg.style.transform = 'translateY(0)';
+    playing = false;
+  }, 800));
+}
+
+btnPlay.addEventListener('click', play);
+btnReset.addEventListener('click', reset);
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  if(e.key === ' ' || e.code === 'Space'){ e.preventDefault(); reset(); setTimeout(play, 30); }
+  if(e.key === 'r' || e.key === 'R'){ e.preventDefault(); reset(); }
+});
+
+// Auto-play once on load
+setTimeout(play, 500);
+</script>
+</body>
+</html>
