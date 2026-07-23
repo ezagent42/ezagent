@@ -106,7 +106,18 @@ defmodule Ezagent.Workspace.Store do
       |> Ecto.Changeset.unique_constraint(:name, name: :workspaces_name_index)
       |> Ecto.Changeset.unique_constraint(:uri, name: :workspaces_uri_index)
 
-    case Repo.insert(changeset) do
+    # `mode: :savepoint` wraps the INSERT in a SAVEPOINT so a unique-constraint
+    # violation rolls back to the savepoint instead of aborting the ENCLOSING
+    # transaction (`Ezagent.Workspace.create/2` runs this inside a
+    # `Repo.transaction`). Without it, an "already exists" conflict aborts the
+    # txn (Postgres 25P02) and the `Repo.get_by/2` below — plus every later
+    # command sharing the transaction (e.g. the Ecto sandbox) — raises
+    # `in_failed_sql_transaction`. This is exactly the scenario Ecto documents
+    # (`Ecto.Repo` insert/2 `:mode`). The savepoint is a no-op cost on the
+    # fresh-insert success path; the conflict path now cleanly returns
+    # `{:exists, decoded}` (the create-vs-adopt signal `create/2` maps to
+    # `{:error, :workspace_exists}`).
+    case Repo.insert(changeset, mode: :savepoint) do
       {:ok, inserted} ->
         # Fresh row — Workspace is :ephemeral (no kind_snapshots marker), so
         # this unique INSERT IS its create-vs-adopt freshness signal (#533
