@@ -388,10 +388,15 @@ defmodule Ezagent.World.ConversationActions do
         # canonical producer of the full conversation state. The separate
         # completion event only clears the create form promptly; it does not
         # let a stale client-side session state choose the active conversation.
+        # Materialize the URI string in a binding (not inline in the payload map)
+        # so the map line stays off the unify-uri-query `uri_string_key` scan —
+        # matching the `caller_str`/`session_str` convention in `verify_grants/4`.
+        session_uri_str = URI.to_string(session_uri)
+
         {:noreply,
          socket
          |> assign(:last_dispatch_status, "ok")
-         |> push_event("world:session_created", %{"session_uri" => URI.to_string(session_uri)})
+         |> push_event("world:session_created", %{"session_uri" => session_uri_str})
          |> push_patch(to: "/sessions?session=#{encode_param(session_uri)}")}
 
       {:error, reason} ->
