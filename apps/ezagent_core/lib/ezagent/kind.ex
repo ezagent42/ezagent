@@ -698,12 +698,21 @@ defmodule Ezagent.Kind do
   defp read_cold(uri, slice_key, :ensure) do
     case Ezagent.SpawnRegistry.ensure_live(to_uri(uri)) do
       {:ok, _live_or_rehydrated} ->
-        _ = Ezagent.ReadyGate.await(uri)
+        # The actor MUST reach :ready before its slice is read — a rehydrated
+        # actor whose post_init has not completed holds stale/empty state. A
+        # readiness timeout is PROPAGATED, never papered over by reading a
+        # non-ready actor (`ReadyGate.await/2` → `{:error, :timeout}`,
+        # ready_gate.ex:134).
+        case Ezagent.ReadyGate.await(uri) do
+          :ok ->
+            case get_slice(uri, slice_key) do
+              {:ok, slice} -> {:ok, slice}
+              {:error, :not_found} -> {:error, :not_live}
+              {:error, reason} -> {:error, reason}
+            end
 
-        case get_slice(uri, slice_key) do
-          {:ok, slice} -> {:ok, slice}
-          {:error, :not_found} -> {:error, :not_live}
-          {:error, reason} -> {:error, reason}
+          {:error, reason} ->
+            {:error, {:not_ready, reason}}
         end
 
       {:error, reason} ->

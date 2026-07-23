@@ -198,4 +198,84 @@ defmodule Ezagent.Kind.ReadSurfaceTest do
                |> Enum.sort()
     end
   end
+
+  # ── read/3 cold / self / readiness paths (§2.2 contract 2–5) ────────────────
+
+  describe "read/3 cold + self + readiness" do
+    # A URI on the `resource` scheme (no production spawn fn — collision-free,
+    # same technique as invocation_lazy_spawn_test).
+    defp resource_uri(tag),
+      do:
+        Ezagent.URI.new!(
+          "resource://thing/team-alpha/#{tag}-#{System.unique_integer([:positive])}"
+        )
+
+    test "self-safe: called from the target's OWN process, serves the durable projection" do
+      uri = unique_uri()
+      seed_durable(uri, %{test: %{count: 5, last_msg: "self"}}, 2)
+      test = self()
+
+      pid =
+        spawn(fn ->
+          # register THIS process as the URI's Kind so `self?/1` is true
+          :ok = Ezagent.KindRegistry.put_new(uri)
+          send(test, {:read, Kind.read(uri, :test)})
+          Process.sleep(:infinity)
+        end)
+
+      assert_receive {:read, {:ok, %{count: 5, last_msg: "self"}}}, 2_000
+      Process.exit(pid, :kill)
+    end
+
+    test ":ensure rehydrates a cold-but-durable Kind, then reads the live slice" do
+      :ok =
+        Ezagent.SpawnRegistry.register("resource", fn uri ->
+          Ezagent.Kind.spawn(Ezagent.Test.OnChangeTestKind, %{uri: uri})
+        end)
+
+      uri = resource_uri("rehydrate")
+
+      {:ok, _} =
+        Ezagent.SnapshotStore.write(uri, %{test: %{count: 77, last_msg: "cold"}},
+          kind_type: :test,
+          version: 0
+        )
+
+      assert :error == Ezagent.KindRegistry.lookup(uri)
+      assert {:ok, %{count: 77, last_msg: "cold"}} = Kind.read(uri, :test)
+    end
+
+    test "propagates a readiness TIMEOUT — never reads a non-ready actor" do
+      test = self()
+
+      # A spawn fn that registers a live process which NEVER announces ready.
+      :ok =
+        Ezagent.SpawnRegistry.register("resource", fn uri ->
+          pid =
+            spawn(fn ->
+              :ok = Ezagent.KindRegistry.put_new(uri)
+              Ezagent.ReadyGate.put(uri, :not_ready)
+              send(test, :registered)
+              Process.sleep(:infinity)
+            end)
+
+          receive do
+            :registered -> :ok
+          after
+            1_000 -> :ok
+          end
+
+          {:ok, pid}
+        end)
+
+      uri = resource_uri("notready")
+
+      {:ok, _} =
+        Ezagent.SnapshotStore.write(uri, %{test: %{count: 1}}, kind_type: :test, version: 0)
+
+      # ensure_live spawns the (never-ready) actor; await times out; read/3
+      # PROPAGATES the failure instead of reading the non-ready actor's slice.
+      assert {:error, {:not_ready, :timeout}} = Kind.read(uri, :test)
+    end
+  end
 end
