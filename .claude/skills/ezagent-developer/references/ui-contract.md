@@ -1,12 +1,45 @@
 # UI / Frontend Contract
 
-The UI obeys a **3-layer architecture** so changing one atom propagates to every page and changing one page touches only that page. Style replacements (font / accent / dark palette) hit a small, well-known set of files. **Never write inline `style=""` in `.heex` files** outside the auth boundary pages (see below) — it bypasses the boundary and breaks theme-toggle infrastructure.
+The UI has a **3-layer component architecture plus a runtime refresh contract**: changing one atom propagates to every page, while committed state reaches a mounted renderer through one declared, caller-scoped path. Style replacements (font / accent / dark palette) hit a small, well-known set of files. **Never write inline `style=""` in `.heex` files** outside the auth boundary pages (see below) — it bypasses the boundary and breaks theme-toggle infrastructure.
 
-## 3-layer UI architecture
+## UI architecture: component layers plus runtime refresh
 
 - **Layer 1 — atoms** (`apps/ezagent_domain_ui/lib/ezagent_domain_ui/`): stateless `Phoenix.Component`s. Zero LV deps. Files: `primitives.ex` (low-level: button, badge, status_dot, avatar, modal, tabs, toast, tree_list, empty_state, form_field, uri_chip, uri_picker, toolbar, tooltip, icon), `components.ex` (page_header, breadcrumb, card, stat), the shell components (see **Nested shell architecture** below). **The style-replacement boundary lives here.**
-- **Layer 2 — plugin component compositions** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/` incl. `admin/`): `Phoenix.Component` modules that compose Layer 1 atoms into plugin-level pieces (e.g. `member_panel.ex`, `session_editor.ex`, `app_shell.ex`). Still no LV state — just structure + slots.
-- **Layer 3 — LV containers** (`apps/ezagent_plugin_liveview/lib/ezagent_plugin_liveview/*_live.ex`): the LiveView modules with `mount`, `handle_event`, socket assigns. Each `render/1` wraps content in `<AppShell.app_shell>` (see below).
+- **Layer 2 — plugin component compositions** (`apps/ezagent_plugin_world/lib/ezagent/world/` and renderer assets): plugin-level components and state builders compose atoms into a surface. A plugin declares what it contributes; it does not import World or own shell orchestration.
+- **Layer 3 — World shell containers** (`apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex` and React world assets): World owns routes, caller context, subscription lifecycle, and transport to the mounted renderer. A container stays plugin-agnostic: no plugin-name branch or plugin-specific refresh handler.
+
+### Runtime refresh contract (core UI architecture)
+
+Component layers describe **where markup lives**. Realtime refresh is a separate
+runtime contract describing **how mounted UI state changes**:
+
+```
+committed Kind slice
+  → Ezagent.SliceChange
+  → WorldLive subscription and refresh scheduling
+  → RefreshSurfaceRegistry lookup
+  → caller-scoped state_builder.refresh_state(uri, ctx)
+  → world:surface_state partial payload
+  → React shallow merge for that mounted surface
+```
+
+- A plugin page exposes `refresh_state/2`; standalone World surfaces declare
+  `refresh_surfaces/0` through `Ezagent.World.UiSurfaceProvider`. The callback
+  returns only JSON-safe, caller-authorized **partial** state for its renderer.
+- `RefreshSurfaceRegistry` combines validated page and standalone declarations,
+  fails closed for invalid data or provider errors, and never encodes a
+  particular plugin's business rules.
+- `WorldLive` is the sole consumer of `SliceChange` for browser refresh. It
+  selects the active declared surface, coalesces pending refreshes, rebuilds
+  state with current presenter caps, and emits `world:surface_state`.
+- React may merge that envelope into the matching mounted surface; it must not
+  infer permissions, refetch privileged state, or add plugin-specific event
+  names for ordinary refreshes.
+
+**Do not bypass this path.** A plugin must not add a bespoke World handler,
+direct PubSub-to-browser refresh, or a `WorldLive` branch keyed by its name.
+New UI state belongs in a surface declaration and `refresh_state/2`; new
+transport semantics require an explicit architecture decision.
 
 ## Nested shell architecture (refactor 2026-05-22, SPEC `docs/superpowers/specs/2026-05-22-nested-shell-refactor.md`)
 

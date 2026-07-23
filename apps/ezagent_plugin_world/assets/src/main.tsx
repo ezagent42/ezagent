@@ -243,6 +243,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
   React.useEffect(() => {
     if (!onServerEvent) return undefined
 
+    onServerEvent("world:session_created", (payload) => {
+      const next = payload as {session_uri?: string}
+      if (typeof next.session_uri !== "string" || next.session_uri.length === 0) return
+
+      setState((current) => ({...current, session_create_pending: false, create_error: null}))
+    })
     onServerEvent("world:state", (payload) => {
       const next = payload as WorldState
       const clearSessionCreatePending =
@@ -267,6 +273,14 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
       } else if ("last_dispatch_status" in next) {
         applyErrorCard(errorCardForStatus(next.last_dispatch_status, caller || {}))
       }
+    })
+
+    onServerEvent("world:surface_state", (payload) => {
+      const next = payload as {surface?: string; state?: WorldState}
+      if (!next.state || typeof next.surface !== "string") return
+
+      setState((current) => ({...current, ...next.state}))
+      if (next.state.layout) setCurrentLayout(next.state.layout)
     })
 
     onServerEvent("world:url", (payload) => {

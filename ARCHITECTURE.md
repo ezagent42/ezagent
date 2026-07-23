@@ -99,6 +99,29 @@ Phoenix 在 Ezagent 里扮演 **transport framework** 角色,不是 fullstack fr
 
 **Phoenix.Controller / View 仍然不用** — 我们的 HTTP 入口都是 Plug-level(Webhook / AdminAPI),不需要 MVC convention。
 
+### 2.3.1 World UI refresh — 声明式 surface，不是插件专用事件
+
+World 是浏览器 UI 的组合宿主：插件声明 renderer surface 和 caller-scoped
+`refresh_state/2` projection，World 只负责把已提交状态投影到当前挂载的
+surface。普通刷新只有一条链路：
+
+```
+Kind slice commit → Ezagent.SliceChange → WorldLive
+→ RefreshSurfaceRegistry → state_builder.refresh_state(uri, ctx)
+→ world:surface_state → React partial-state merge
+```
+
+`Ezagent.World.UiSurfaceProvider` 是插件向 World 声明 `pages/0` 或
+`refresh_surfaces/0` 的 duck-typed contract；`RefreshSurfaceRegistry` 在读侧
+校验并合并这些声明，非法声明或 provider failure 都 fail-closed。`WorldLive`
+用当前 presenter caps 构造 ctx、按 active surface/URI 合并待处理刷新、再发出
+通用 `world:surface_state` envelope。React 仅合并该 surface 的 JSON-safe
+partial state；它不自行推导权限或跨过 World 读取状态。
+
+新增插件 UI 不得在 World 写插件名分支、增加专用 browser event，或以直接
+PubSub 广播替代这条链路。新的 surface = 声明 + `refresh_state/2`；若需不同的
+transport semantics，必须先形成新的架构决策。
+
 ### 2.4 Adapter pattern — 硬测试(权威规则见 SKILL P12)
 
 所有外部入口(Feishu/Slack/CLI/MCP/HTTP/internal)都是 **Adapter**。Adapter 做两件事:
@@ -3223,6 +3246,7 @@ Adapter           Ezagent.Invocation        Kind GenServer     Behavior       :t
 | 152 | **Phase 4 ship — Kind.Server attach metadata + `read_graph` cleanup + audit fix**(PR #469,2026-05-28)— Phase 4 polish:`Kind.behaviors_of/1` + `persistence_of/1` 新 helpers 优先于 `__attached_behaviors__/0`(plugin authors 用 这些)。`Audit.uri_to_str(:system)` 修复返回 `"system://anonymous"`(原来某些 boot path 传 `:system` atom 直接给 audit 写入,SQL 接受不了非 string)。`read_graph` 函数清理 stale code paths。**E2E test suite (#465-#468) ship**:Category 5 + 10(CapBAC + routing)/ scenarios #24 + #25(destroy cascade + state rebuild)/ Categories 4 + 7 + 17(Feishu + PTY + admin LV)/ scenarios #30 + #5-7(plugin DX + cross-flavor agent roundtrip)— 共 165 个 passing E2E tests 覆盖 SPEC §7 全部 acceptance criteria。**E2E scenarios catalog (#452)** 同期 ship,30 个 scenarios 文档化在 `docs/scenarios/`,bilingual lockstep,作为 Phase 1-4 migration 的 acceptance gate。**Drift defense**:165 个 E2E tests 是 Phase 1-4 完成的 actual gate(per `feedback_completion_requires_invariant_test` —— invariant test 失败 = 架构目标未达,**这是** completion claim 的 gate,不是 PR-merge 或 unit-tests-pass);`docs/scenarios/README.md` §5 "Phase 1-4 migration shipped" 是 dev team 接手时的 single-source-of-truth | impl |
 | 153 | **Lifecycle API = SOLE developer surface;R/B/K = internal engine**(SPEC `docs/superpowers/specs/2026-05-29-lifecycle-hooks-design.md`,Phase A/B/C,2026-05-29)— Allen 的 core 决策:把 §6.0 的 CQRS 机制(slice / invocation / snapshot / persistence-strategy / 四个 boot hooks)全部藏在 `use Ezagent.Lifecycle` 后面。**两容器状态模型**:`state`(PERSISTENT — framework auto-snapshot)+ `transients`(NEVER persisted — 没有序列化路径;PIDs / refs / ETS / ports / subprocess / monitor refs)。一个 transient **结构上不可能**被意外持久化(无序列化路径),也**不可能**在重启时被遗忘(只能在 `activate/2` 里建,而 `activate` 每次 start 都跑 —— fresh + cold-load 同路径)。这就**by construction** 杀掉了 cold-restart bug class(#110 orchestrator MCP ETS / #113 codex bridge subprocess / #114 AgentLineage ETS — 全是"fresh works, restart doesn't")。**五个 coarse hooks**:`create/1`(首次存在,gated by `ever_created` 列 OQ-1)/ `activate/2`(每次 start,pre-`:ready`,重建所有 transients + reconcile DB-projection state)/ `handle_<action>/2`(不变的 effect 语法 + 新增 `{:set_transient, k, v}` OQ-2)/ `deactivate/2`(优雅停,`:ok`-only F5)/ `destroy/2`(永久删除)。**两个 fine hooks**:`pre_handle/3` + `post_handle/4`(横切关注:authz / audit / effect 注入)。**两个补充 hooks**:`handle_signal/2`(非-action 消息 `:DOWN` / PubSub / 自延迟 mailbox — `handle_kind_message/3` 后继,OQ-3)/ `activated/2`(post-`:ready` reachability broadcast,`on_ready/2` 改名,OQ-5)。**§10 codex binding rules**:R10-1 自延迟(`send(self(), …)`)boot work 进 `activated`/`handle_signal` **不进** `activate`(pre-`:ready`)。R10-2 `{:set}` + `{:set_transient}` 是纯 pre-commit map reductions,只 `state` snapshot,transient 变更永不触发 snapshot write。R10-3 **engine `Ezagent.ActionSet` 契约保留**(macro 的 compile target;Phase C 只删 developer-tier 旧表面 + provably-dead carve-outs,**不删** engine 契约 / callback 定义 / `Kind.Runtime` 对它的使用)。R10-4 snapshot WIPE cutover 是 verified ordered sequence(停所有 node → deploy → 删 `kind_snapshots` → 重启)。**§11 三条命名原则**(NP-1 按职责命名最窄准确范围 / NP-2 用本层词汇,`ezagent_core` 模块名不得含上层概念 `Agent`/`Session`/`Orchestrator`/`Workspace`/`Worker`/`Feishu`/`Cc`/`Codex`/`Np`/`Curl`/ NP-3 名字语义宽度 = action 集合宽度)—— 由 `Behavior.Lifecycle → Behavior.Terminable` 的命名旅程提炼(OQ-6;`Terminable` 是 Kind-generic 能力名,`Enumerable`/`Collectable` 风格)。**Phase C HARD gates**:新 task `mix ezagent.check_invariants.lifecycle`(8 个 grep gate + NP-2/NP-3 lint),developer-tier 文件再现旧表面(`use Ezagent.ActionSet` / `def init_slice` / `def state_slice` / `def post_init`/`handle_continue`/`on_ready`/`reconcile_after_load` / `invoke/4` callback / Lifecycle handler 里直调 `Invocation.dispatch`/`SnapshotStore`/`EventLog.append`)即 CI 红。engine allowlist:`behavior.ex` / `kind/runtime.ex` / `lifecycle.ex` / `mix/tasks/compile/ezagent_plugin_check.ex`。**Drift defense**:gate 本身**就是** invariant test(`feedback_completion_requires_invariant_test`);clean 时绿、故意违规时红(已验证)。docs:ARCHITECTURE §6.0.7 + GLOSSARY Behavior/Lifecycle 条目 + `ezagent-developer` skill `references/lifecycle.md` | impl |
 | 154 | **Architecture fitness functions = Phase-2 debt counters,Phase-3+ ratchet source of truth**(#25 architecture deepening Phase 2,2026-06-07)— Phase 2 不是重构,而是 executable architecture gate:`mix ezagent.arch.scan` + `apps/ezagent_core/test/architecture/` + `arch_baseline_manifest.exs`。每个 fitness function 量化一个 debt/invariant surface(oversized modules,def-counts,SpawnRegistry writers,create_session callers,duplicated `resolve_template_class`,cc/codex Template Class LOC,raw `Home.path`,`Path.expand("~")`,`spawn_fresh`,`:all_slices`,`{:set}` effects,cap-check presence,Kind.Runtime ordering/reentry,cold-restart respawn round-trip)。Tests assert **count <= cap**,so Phase 2 lands green-at-baseline and freezes current debt;Phase 3+ PRs lower a count and lower the cap to match. Any cap raise is review-blocking unless the manifest line includes `# arch-cap-bump: <reason>`. Human-readable baseline lives at `docs/notes/2026-06-07-arch-fitness-baseline.md`. **Drift defense**:new architecture debt fails CI instead of silently growing;objective refactor acceptance is "count and cap moved",not subjective cleanup prose | impl |
+| 165 | **World UI refresh is declaration-driven and SliceChange-backed**(PR #1497,2026-07-23)— UI component layering and runtime refresh are separate concerns. Plugins declare a renderer surface plus caller-scoped `refresh_state/2`; `RefreshSurfaceRegistry` validates/combines declarations; `WorldLive` alone consumes `Ezagent.SliceChange`, coalesces active-surface refreshes, and emits `world:surface_state`; React merges only that JSON-safe partial state. **No plugin name in World refresh logic, no bespoke browser refresh event, no direct PubSub-to-browser shortcut.** Invalid declaration/provider output fails closed. **Drift defense**:World-side contract tests + `PluginWorkspaceLocalityContractTest` exact dynamic-receiver baseline + the UI contract in both Codex and Claude skills. | impl |
 
 ---
 

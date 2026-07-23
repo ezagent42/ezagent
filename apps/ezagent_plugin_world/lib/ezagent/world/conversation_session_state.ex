@@ -64,15 +64,43 @@ defmodule Ezagent.World.ConversationSessionState do
   end
 
   @doc false
+  @spec refresh_state(URI.t(), %{workspace_uri: URI.t(), caller_uri: URI.t(), caller_caps: list()}) ::
+          map()
+  def refresh_state(
+        %URI{} = session_uri,
+        %{workspace_uri: workspace_uri, caller_uri: caller_uri} = ctx
+      ) do
+    ConversationData.state_for(session_uri, %{
+      caller_uri: caller_uri,
+      caller_caps: Map.fetch!(ctx, :caller_caps),
+      workspace_uri: workspace_uri,
+      sessions: rows_for_workspace(workspace_uri, caller_uri)
+    })
+  end
+
+  @doc false
   @spec ensure_session_subscribed(Phoenix.LiveView.Socket.t(), URI.t()) ::
           Phoenix.LiveView.Socket.t()
   def ensure_session_subscribed(socket, %URI{} = session_uri) do
     topic = Ezagent.ActionSet.Session.session_events_topic(session_uri)
     subscribed = Map.get(socket.assigns, :subscribed_topics, MapSet.new())
 
+    socket = ensure_slice_change_subscribed(socket, session_uri)
+
     if connected?(socket) and not MapSet.member?(subscribed, topic) do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
       assign(socket, :subscribed_topics, MapSet.put(subscribed, topic))
+    else
+      socket
+    end
+  end
+
+  defp ensure_slice_change_subscribed(socket, session_uri) do
+    subscribed = Map.get(socket.assigns, :subscribed_slice_change_uris, MapSet.new())
+
+    if connected?(socket) and not MapSet.member?(subscribed, session_uri) do
+      :ok = Ezagent.Notifications.subscribe_slice_change(session_uri)
+      assign(socket, :subscribed_slice_change_uris, MapSet.put(subscribed, session_uri))
     else
       socket
     end

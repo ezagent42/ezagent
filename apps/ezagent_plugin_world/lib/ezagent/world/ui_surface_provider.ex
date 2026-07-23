@@ -101,9 +101,22 @@ defmodule Ezagent.World.UiSurfaceProvider do
   """
   @callback session_tabs() :: [session_tab()]
 
-  @callback pages() :: [map()]
+  @typedoc """
+  A caller-scoped refresh projection for a renderer currently mounted in World.
+  `target` tells the generic shell which URI to subscribe to; `state_builder`
+  exports `refresh_state/2` and returns JSON-safe partial state.
+  """
+  @type refresh_surface :: %{
+          required(:id) => String.t(),
+          required(:component) => String.t(),
+          required(:target) => {:route, atom()} | {:assign, atom()},
+          required(:state_builder) => module()
+        }
 
-  @optional_callbacks nav_surfaces: 0, session_tabs: 0, pages: 0
+  @callback pages() :: [map()]
+  @callback refresh_surfaces() :: [refresh_surface()]
+
+  @optional_callbacks nav_surfaces: 0, session_tabs: 0, pages: 0, refresh_surfaces: 0
 
   @doc """
   Read-time shape predicate for one `nav_surfaces/0` entry.
@@ -142,6 +155,24 @@ defmodule Ezagent.World.UiSurfaceProvider do
   end
 
   def valid_session_tab?(_), do: false
+
+  @doc "Strict, fail-closed validation for a standalone refresh surface."
+  @spec valid_refresh_surface?(term()) :: boolean()
+  def valid_refresh_surface?(%{
+        id: id,
+        component: component,
+        target: target,
+        state_builder: builder
+      }) do
+    valid_key?(id) and valid_key?(component) and valid_refresh_target?(target) and
+      exports?(builder, :refresh_state, 2)
+  end
+
+  def valid_refresh_surface?(_), do: false
+
+  defp valid_refresh_target?({:route, key}) when is_atom(key), do: true
+  defp valid_refresh_target?({:assign, key}) when is_atom(key), do: true
+  defp valid_refresh_target?(_), do: false
   @doc "Strict, fail-closed validation for a plugin-owned page declaration."
   @spec validate_page(term()) :: :ok | {:error, [atom()]}
   def validate_page(page) when is_map(page) do

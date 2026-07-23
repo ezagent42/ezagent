@@ -219,6 +219,10 @@ defmodule EzagentPluginKanban.WorldData do
 
   defp holds_board_cap?(_holder, _caps, _board_uri), do: false
 
+  @doc "Generic World refresh callback for this plugin page."
+  @spec refresh_state(URI.t(), map()) :: map()
+  def refresh_state(%URI{} = uri, ctx), do: board_state(uri, ctx)
+
   @doc "选中某个 kanban 的 state：`kanban_uri` + `tree` + 全量 `instances`（侧边栏切换用）。"
   @spec board_state(URI.t(), map()) :: map()
   def board_state(%URI{} = uri, ctx) do
