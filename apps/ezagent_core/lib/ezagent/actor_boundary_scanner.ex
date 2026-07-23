@@ -116,6 +116,12 @@ defmodule Ezagent.ActorBoundaryScanner do
   @ready_gate_allowed_fn :register_external_gate
   @process_generation_fn :current_process_generation
 
+  # Banned `:sys` sidecar ops — read/write a live process's WHOLE internal state
+  # (incl. a Kind's private authority). Flagged in every receiver form: literal
+  # `:sys.op`, reflective `apply/3` / `:erlang.apply/3`, and a variable receiver
+  # bound to `:sys` (`s = :sys; s.op(pid)`).
+  @sys_banned [:get_state, :replace_state, :get_status]
+
   @doc """
   The repository root (absolute). Resolved from the working directory (the mix
   test / task cwd), NOT a compile-time `__DIR__` — this is a dev/CI source-tree
@@ -226,13 +232,21 @@ defmodule Ezagent.ActorBoundaryScanner do
   def forward_sites_in_source(source, rel) do
     case Code.string_to_quoted(source) do
       {:ok, ast} ->
-        aliases = collect_aliases(ast)
-        kind_msg_vars = kind_message_vars(ast)
+        bindings = message_bindings(ast)
+        msg_fns = kind_message_fns(ast)
+
+        ctx = %{
+          aliases: collect_aliases(ast),
+          msg_fns: msg_fns,
+          tainted: kind_message_vars(ast, bindings, msg_fns),
+          sys_vars: sys_vars(bindings)
+        }
+
         lines = String.split(source, "\n")
 
         {_, hits} =
           Macro.prewalk(ast, [], fn node, acc ->
-            {node, forward_offense(node, aliases, kind_msg_vars) ++ acc}
+            {node, forward_offense(node, ctx) ++ acc}
           end)
 
         hits
@@ -253,14 +267,31 @@ defmodule Ezagent.ActorBoundaryScanner do
   # spawn/3), so an un-gated :sys reach is an actor-state bypass. MUST precede
   # the general call clause (which would otherwise match `:sys` as the receiver
   # and drop it). Non-Kind sidecar :sys calls are allowlisted DEBT in the ledger.
-  defp forward_offense({{:., _, [:sys, fun]}, meta, _args}, _aliases, _kmv)
-       when fun in [:get_state, :replace_state, :get_status] do
+  defp forward_offense({{:., _, [:sys, fun]}, meta, _args}, _ctx)
+       when fun in @sys_banned do
     [hit(":sys.#{fun}", meta)]
   end
 
+  # Reflective `:sys` via `:erlang.apply(mod, op, args)` — mod is `:sys` or a
+  # variable bound to `:sys`. Precedes the general qualified clause (which would
+  # otherwise resolve `:erlang.apply` to a benign no-op).
+  defp forward_offense({{:., _, [:erlang, :apply]}, meta, [modarg, op, _a]}, %{sys_vars: sv})
+       when is_atom(op) and op in @sys_banned do
+    if sys_receiver?(modarg, sv), do: [hit(":sys.#{op}", meta)], else: []
+  end
+
+  # Reflective `:sys` via a variable receiver — `s = :sys; s.get_state(pid)`.
+  # Scoped to the banned ops so it never shadows a non-sys var call (which the
+  # general clause resolves to nil anyway).
+  defp forward_offense({{:., _, [{v, _, vctx}, fun]}, meta, _args}, %{sys_vars: sv})
+       when is_atom(v) and (is_atom(vctx) or is_nil(vctx)) and fun in @sys_banned do
+    if MapSet.member?(sv, v), do: [hit(":sys.#{fun}", meta)], else: []
+  end
+
   # Qualified calls.
-  defp forward_offense({{:., _, [modast, fun]}, meta, args}, aliases, kind_msg_vars)
+  defp forward_offense({{:., _, [modast, fun]}, meta, args}, ctx)
        when is_atom(fun) and is_list(args) do
+    %{aliases: aliases, tainted: tainted, msg_fns: msg_fns} = ctx
     module = resolve_ast(modast, aliases)
 
     cond do
@@ -274,7 +305,7 @@ defmodule Ezagent.ActorBoundaryScanner do
         [hit("Cap.Authority.current_process_generation", meta)]
 
       fun in [:call, :cast] and module == GenServer and
-          genserver_kind_message?(args, kind_msg_vars) ->
+          genserver_kind_message?(args, tainted, msg_fns) ->
         [hit("GenServer.#{fun}(:ezagent_*)", meta)]
 
       banned_internal_root?(module) ->
@@ -285,8 +316,15 @@ defmodule Ezagent.ActorBoundaryScanner do
     end
   end
 
+  # Reflective `:sys` via bare `apply(mod, op, args)` — mod is `:sys` or a
+  # `:sys`-bound variable.
+  defp forward_offense({:apply, meta, [modarg, op, _a]}, %{sys_vars: sv})
+       when is_atom(op) and op in @sys_banned do
+    if sys_receiver?(modarg, sv), do: [hit(":sys.#{op}", meta)], else: []
+  end
+
   # Bare/aliased reference to a banned internal root (data tables, specs, structs).
-  defp forward_offense({:__aliases__, meta, parts}, aliases, _kmv) when is_list(parts) do
+  defp forward_offense({:__aliases__, meta, parts}, %{aliases: aliases}) when is_list(parts) do
     if Enum.all?(parts, &is_atom/1) do
       module = resolve(parts, aliases)
       if banned_internal_root?(module), do: [hit(short(module), meta)], else: []
@@ -295,87 +333,149 @@ defmodule Ezagent.ActorBoundaryScanner do
     end
   end
 
-  defp forward_offense(_node, _aliases, _kmv), do: []
+  defp forward_offense(_node, _ctx), do: []
 
-  # A GenServer message is a Kind reach-in when it carries an `:ezagent_*` atom
-  # inline OR is a variable bound to such a message (indirect form).
-  defp genserver_kind_message?(args, kind_msg_vars) do
+  # The `:sys` receiver of a reflective apply — the literal atom or a var bound
+  # to it (`s = :sys`).
+  defp sys_receiver?(:sys, _sv), do: true
+
+  defp sys_receiver?({v, _, vctx}, sv) when is_atom(v) and (is_atom(vctx) or is_nil(vctx)),
+    do: MapSet.member?(sv, v)
+
+  defp sys_receiver?(_other, _sv), do: false
+
+  # A GenServer message is a Kind reach-in when an argument is:
+  #   • a DIRECT `:ezagent_*` message — inline atom or tuple (broad, unchanged:
+  #     `GenServer.call(pid, :ezagent_runtime_view)` / `{:ezagent_get_slice, k}`);
+  #   • a tainted variable, or an access-path (`payload.m`) rooted at one; or
+  #   • the direct result of a message-producing local helper.
+  # The indirect forms use PRECISE taint (Kind-message *construction*, not any
+  # `:ezagent_*` atom) so config/ETS/app-name atoms like `:ezagent_domain_pty`
+  # or `:ezagent_role_registry` never mislabel a benign call.
+  defp genserver_kind_message?(args, tainted, msg_fns) do
     args_have_ezagent_atom?(args) or
-      Enum.any?(args, fn
-        {name, _, ctx} when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
-          MapSet.member?(kind_msg_vars, name)
-
-        _ ->
-          false
+      Enum.any?(args, fn arg ->
+        var_tainted?(arg, tainted) or calls_message_fn?(arg, msg_fns)
       end)
   end
 
-  # Variable names bound to a message that contains an `:ezagent_*` atom.
-  # Variable names that (transitively) carry an `:ezagent_*` Kind message —
-  # closing the multi-hop evasions: `msg = {:ezagent_*}; fwd = msg; call(pid, fwd)`
-  # (alias chains) and `msg = build_msg()` where a local helper returns an
-  # `:ezagent_*` tuple.
-  defp kind_message_vars(ast) do
-    msg_fns = kind_message_fns(ast)
-    bindings = message_bindings(ast)
-
-    seed =
-      for {name, rhs} <- bindings, rhs_taints?(rhs, msg_fns), into: MapSet.new(), do: name
-
-    taint_fixpoint(bindings, seed)
+  # ── Kind-message taint (§C0 hardening) ──────────────────────────────────────
+  #
+  # A value is Kind-TAINTED when it carries/produces an `:ezagent_*` Kind message.
+  # `kind_message_vars/3` computes the set of tainted variable NAMES (module-wide,
+  # matching the existing binding-merge granularity) as a fixpoint over three
+  # sources, closing the constructed evasions codex flagged:
+  #
+  #   • direct/alias bindings — `msg = {:ezagent_*}`, `fwd = msg`;
+  #   • helper-return chains of ANY depth — `m = a()` where a→b→{:ezagent_*}
+  #     (via the `kind_message_fns/1` call-graph fixpoint);
+  #   • interprocedural parameter relay — a tainted argument at a local call site
+  #     taints the matching positional parameter of the callee, so a
+  #     `GenServer.call(p, m)` inside `defp relay(p, m)` is flagged.
+  #
+  # Access-path extraction (`payload.m`) is resolved at the use site by
+  # `var_root/1`: a tainted map/tuple bound to `payload` taints `payload.<field>`.
+  defp kind_message_vars(ast, bindings, msg_fns) do
+    params = fn_params(ast)
+    calls = local_calls(ast)
+    taint_fixpoint(bindings, params, calls, msg_fns, MapSet.new())
   end
 
-  # Local function names whose BODY mentions an `:ezagent_*` atom — conservatively
-  # treated as producing a Kind message (a call to one taints its result).
-  defp kind_message_fns(ast) do
-    {_, fns} =
-      Macro.prewalk(ast, MapSet.new(), fn
-        {kind, _, [head, body]} = node, acc when kind in [:def, :defp] ->
-          case fn_name(head) do
-            name when is_atom(name) ->
-              if args_have_ezagent_atom?([body]),
-                do: {node, MapSet.put(acc, name)},
-                else: {node, acc}
-
-            _ ->
-              {node, acc}
-          end
-
-        node, acc ->
-          {node, acc}
+  defp taint_fixpoint(bindings, params, calls, msg_fns, tainted) do
+    # (1) binding names whose RHS is tainted.
+    after_binds =
+      Enum.reduce(bindings, tainted, fn {name, rhs}, acc ->
+        if tainted_value?(rhs, acc, msg_fns), do: MapSet.put(acc, name), else: acc
       end)
 
-    fns
-  end
+    # (2) parameters that receive a tainted argument at any local call site.
+    next =
+      Enum.reduce(calls, after_binds, fn {name, arity, args}, acc ->
+        params
+        |> Map.get({name, arity}, [])
+        |> Enum.reduce(acc, fn plist, a1 ->
+          plist
+          |> Enum.zip(args)
+          |> Enum.reduce(a1, fn
+            {pname, arg}, a2 when is_atom(pname) and pname != nil ->
+              if tainted_value?(arg, a2, msg_fns), do: MapSet.put(a2, pname), else: a2
 
-  defp fn_name({:when, _, [inner | _]}), do: fn_name(inner)
-  defp fn_name({name, _, _}) when is_atom(name), do: name
-  defp fn_name(_), do: nil
-
-  # All `var = rhs` bindings in the file.
-  defp message_bindings(ast) do
-    {_, binds} =
-      Macro.prewalk(ast, [], fn
-        {:=, _, [{name, _, ctx}, rhs]} = node, acc
-        when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
-          {node, [{name, rhs} | acc]}
-
-        node, acc ->
-          {node, acc}
+            {_pattern_param, _arg}, a2 ->
+              a2
+          end)
+        end)
       end)
 
-    binds
+    if MapSet.equal?(next, tainted),
+      do: tainted,
+      else: taint_fixpoint(bindings, params, calls, msg_fns, next)
   end
 
-  # An RHS taints if it directly carries an `:ezagent_*` atom OR calls a
-  # kind-message-producing local helper.
-  defp rhs_taints?(rhs, msg_fns) do
-    args_have_ezagent_atom?([rhs]) or calls_message_fn?(rhs, msg_fns)
+  # A value carries/produces an `:ezagent_*` Kind message: it CONSTRUCTS an
+  # `{:ezagent_*, …}` message tuple, is a tainted variable/access-path, or calls
+  # a message-producing helper. Construction (not "any `:ezagent_*` atom") is the
+  # precise origin — `Application.get_env(:ezagent_domain_pty, …)` and
+  # `:ets.new(:ezagent_role_registry, …)` use the atom in a NON-message position
+  # and must not taint.
+  defp tainted_value?(expr, tainted, msg_fns) do
+    constructs_kind_message?(expr) or
+      var_tainted?(expr, tainted) or
+      calls_message_fn?(expr, msg_fns)
   end
 
-  defp calls_message_fn?(rhs, msg_fns) do
+  # `expr` builds a tuple tagged with an `:ezagent_*` atom (`{:ezagent_*, …}`),
+  # anywhere within it (incl. nested in a map/list). This is how Kind protocol
+  # messages are constructed; a bare `:ezagent_*` atom in a config/ETS position
+  # is deliberately NOT a construction.
+  defp constructs_kind_message?(expr) do
     {_, found?} =
-      Macro.prewalk(rhs, false, fn
+      Macro.prewalk(expr, false, fn
+        {tag, _elem} = node, acc when is_atom(tag) -> {node, acc or ezagent_atom?(tag)}
+        {:{}, _, [tag | _]} = node, acc when is_atom(tag) -> {node, acc or ezagent_atom?(tag)}
+        node, acc -> {node, acc}
+      end)
+
+    found?
+  end
+
+  defp ezagent_atom?(atom), do: String.starts_with?(Atom.to_string(atom), "ezagent_")
+
+  # A bare variable, or an access-path (`a.b`, `a.b.c`) rooted at a tainted var.
+  defp var_tainted?(expr, tainted) do
+    case var_root(expr) do
+      name when is_atom(name) -> MapSet.member?(tainted, name)
+      _ -> false
+    end
+  end
+
+  defp var_root({name, _, ctx}) when is_atom(name) and (is_atom(ctx) or is_nil(ctx)), do: name
+  defp var_root({{:., _, [inner, field]}, _, _}) when is_atom(field), do: var_root(inner)
+  defp var_root(_expr), do: nil
+
+  # Local function names that (transitively) PRODUCE a Kind message. Base: a body
+  # that CONSTRUCTS an `{:ezagent_*, …}` message tuple. Fixpoint: a body that
+  # CALLS a producer is itself a producer — this is what closes helper-chains
+  # ≥2 deep.
+  defp kind_message_fns(ast) do
+    defs = fn_bodies(ast)
+    base = for {name, body} <- defs, constructs_kind_message?(body), into: MapSet.new(), do: name
+    msg_fns_fixpoint(defs, base)
+  end
+
+  defp msg_fns_fixpoint(defs, fns) do
+    next =
+      Enum.reduce(defs, fns, fn {name, body}, acc ->
+        if MapSet.member?(acc, name) or not calls_message_fn?(body, acc),
+          do: acc,
+          else: MapSet.put(acc, name)
+      end)
+
+    if MapSet.equal?(next, fns), do: fns, else: msg_fns_fixpoint(defs, next)
+  end
+
+  defp calls_message_fn?(expr, msg_fns) do
+    {_, found?} =
+      Macro.prewalk(expr, false, fn
         {name, _, args} = node, acc when is_atom(name) and is_list(args) ->
           {node, acc or MapSet.member?(msg_fns, name)}
 
@@ -386,10 +486,122 @@ defmodule Ezagent.ActorBoundaryScanner do
     found?
   end
 
-  # Propagate taint across `x = y` alias chains until fixpoint.
-  defp taint_fixpoint(bindings, tainted) do
+  # `{name, body}` for every local def/defp clause (body = the `[do: …]` kwlist).
+  defp fn_bodies(ast) do
+    {_, out} =
+      Macro.prewalk(ast, [], fn
+        {kind, _, [head, body]} = node, acc when kind in [:def, :defp] and is_list(body) ->
+          case fn_name(head) do
+            name when is_atom(name) -> {node, [{name, body} | acc]}
+            _ -> {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    out
+  end
+
+  # `{name, arity} => [param_name_list]` for every local def/defp clause. Each
+  # position holds its bare-var name, or nil for a pattern (no single var binds).
+  defp fn_params(ast) do
+    {_, out} =
+      Macro.prewalk(ast, %{}, fn
+        {kind, _, [head, body]} = node, acc when kind in [:def, :defp] and is_list(body) ->
+          case fn_signature(head) do
+            {name, plist} ->
+              {node, Map.update(acc, {name, length(plist)}, [plist], &[plist | &1])}
+
+            nil ->
+              {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    out
+  end
+
+  defp fn_signature({:when, _, [inner | _]}), do: fn_signature(inner)
+
+  defp fn_signature({name, _, args}) when is_atom(name) and is_list(args),
+    do: {name, Enum.map(args, &param_name/1)}
+
+  defp fn_signature(_head), do: nil
+
+  defp param_name({name, _, ctx}) when is_atom(name) and (is_atom(ctx) or is_nil(ctx)), do: name
+  defp param_name(_pattern), do: nil
+
+  # `{name, arity, args}` for every bare local-style call INSIDE a function body.
+  # Over-collection is harmless — only names present in `fn_params` contribute to
+  # propagation. Heads are excluded so a formal-parameter pattern (which is not
+  # data flow) never spuriously taints a multi-clause function's parameters.
+  defp local_calls(ast) do
+    Enum.flat_map(body_asts(ast), fn body ->
+      {_, out} =
+        Macro.prewalk(body, [], fn
+          {name, _, args} = node, acc when is_atom(name) and is_list(args) ->
+            {node, [{name, length(args), args} | acc]}
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      out
+    end)
+  end
+
+  # The `[do: …]` body kwlist of every def/defp clause — the taint analysis
+  # considers assignments and calls that occur in BODIES only, never the
+  # formal-parameter patterns of a head.
+  defp body_asts(ast) do
+    {_, out} =
+      Macro.prewalk(ast, [], fn
+        {kind, _, [_head, body]} = node, acc when kind in [:def, :defp] and is_list(body) ->
+          {node, [body | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    out
+  end
+
+  defp fn_name({:when, _, [inner | _]}), do: fn_name(inner)
+  defp fn_name({name, _, _}) when is_atom(name), do: name
+  defp fn_name(_), do: nil
+
+  # Every `var = rhs` binding inside a function body (heads excluded — a `%{} = x`
+  # pattern in a head is destructuring, not data flow).
+  defp message_bindings(ast) do
+    Enum.flat_map(body_asts(ast), fn body ->
+      {_, binds} =
+        Macro.prewalk(body, [], fn
+          {:=, _, [{name, _, ctx}, rhs]} = node, acc
+          when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
+            {node, [{name, rhs} | acc]}
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      binds
+    end)
+  end
+
+  # Variable names bound to the `:sys` atom (`s = :sys`), propagated across
+  # `t = s` alias chains — the receivers of a reflective `:sys` call.
+  defp sys_vars(bindings) do
+    seed = for {name, rhs} <- bindings, rhs == :sys, into: MapSet.new(), do: name
+    alias_fixpoint(bindings, seed)
+  end
+
+  # Propagate a var-set across `x = y` alias chains until fixpoint.
+  defp alias_fixpoint(bindings, vars) do
     next =
-      Enum.reduce(bindings, tainted, fn
+      Enum.reduce(bindings, vars, fn
         {name, {v, _, ctx}}, acc when is_atom(v) and (is_atom(ctx) or is_nil(ctx)) ->
           if MapSet.member?(acc, v), do: MapSet.put(acc, name), else: acc
 
@@ -397,7 +609,7 @@ defmodule Ezagent.ActorBoundaryScanner do
           acc
       end)
 
-    if MapSet.equal?(next, tainted), do: tainted, else: taint_fixpoint(bindings, next)
+    if MapSet.equal?(next, vars), do: vars, else: alias_fixpoint(bindings, next)
   end
 
   defp banned_internal_root?(nil), do: false

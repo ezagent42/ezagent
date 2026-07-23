@@ -257,6 +257,83 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     end
   end
 
+  test "the forward scanner closes interprocedural function-argument relay (§C0-hardening a)" do
+    # msg is tainted at the caller; it reaches GenServer.call ONLY through the
+    # parameter `m` of a local relay helper — pure interprocedural param flow.
+    relay = """
+    defmodule W do
+      def go(pid) do
+        msg = {:ezagent_get_slice, :surface}
+        relay(pid, msg)
+      end
+
+      defp relay(p, m), do: GenServer.call(p, m)
+    end
+    """
+
+    assert Scanner.forward_sites_in_source(relay, "apps/x/lib/w.ex") != [],
+           "an :ezagent_* message relayed through a function parameter must be flagged"
+  end
+
+  test "the forward scanner closes map/tuple-field access-path taint (§C0-hardening b)" do
+    # The :ezagent_* atom is buried in a map field; the call passes payload.m,
+    # never a bare var nor an inline atom.
+    access_path = """
+    defmodule W do
+      def go(pid) do
+        payload = %{m: {:ezagent_get_slice, :surface}}
+        GenServer.call(pid, payload.m)
+      end
+    end
+    """
+
+    assert Scanner.forward_sites_in_source(access_path, "apps/x/lib/w.ex") != [],
+           "an :ezagent_* message extracted from a tainted map field must be flagged"
+  end
+
+  test "the forward scanner closes helper-chains >=2 deep (§C0-hardening c)" do
+    # m = a(); a returns b(); b returns {:ezagent_*}. The producer is two hops
+    # away — the 1-deep msg_fn heuristic misses it without a call-graph fixpoint.
+    deep_chain = """
+    defmodule W do
+      def go(pid) do
+        m = a()
+        GenServer.call(pid, m)
+      end
+
+      defp a, do: b()
+      defp b, do: {:ezagent_runtime_view}
+    end
+    """
+
+    assert Scanner.forward_sites_in_source(deep_chain, "apps/x/lib/w.ex") != [],
+           "an :ezagent_* message from a >=2-deep helper chain must be flagged"
+  end
+
+  test "the forward scanner flags reflective :sys forms (apply/3 + :erlang.apply + var receiver)" do
+    bare_apply = "defmodule W do\n  def go(pid), do: apply(:sys, :get_state, [pid])\nend"
+
+    erlang_apply =
+      "defmodule W do\n  def go(pid), do: :erlang.apply(:sys, :replace_state, [pid, fn s -> s end])\nend"
+
+    var_receiver =
+      "defmodule W do\n  def go(pid) do\n    s = :sys\n    s.get_status(pid)\n  end\nend"
+
+    for src <- [bare_apply, erlang_apply, var_receiver] do
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
+             "a reflective :sys reach into a live process must be flagged:\n#{src}"
+    end
+  end
+
+  test "the forward scanner already flags the apply/2 capture form :sys reach" do
+    # &:sys.get_state/1 embeds the banned :sys.<op> node, so the existing dotted
+    # clause catches it even when handed to apply/2 (green before AND after).
+    capture_apply2 = "defmodule W do\n  def go(pid), do: apply(&:sys.get_state/1, [pid])\nend"
+
+    assert Scanner.forward_sites_in_source(capture_apply2, "apps/x/lib/w.ex") != [],
+           "a &:sys.<op>/1 capture is a :sys reach and must be flagged"
+  end
+
   test "the reverse scanner flags call / atom / struct shapes; no self-ref/stdlib false positives" do
     call_shape =
       "defmodule Ezagent.Kind.F do\n  def go, do: Ezagent.Cap.DeliveryOutbox.replay?(:x)\nend"
