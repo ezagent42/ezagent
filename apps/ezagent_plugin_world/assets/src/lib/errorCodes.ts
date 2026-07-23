@@ -77,6 +77,36 @@ export const ERROR_CODES: ErrorCode[] = [
     impact: "Agent 暂时无法回复消息",
     fixOwner: "workspace_founder",
   },
+  {
+    code: "binding_unavailable",
+    category: "lifecycle",
+    what: "Feishu 绑定服务尚未就绪",
+    impact: "暂时无法执行绑定操作，请稍后再试",
+  },
+  {
+    code: "binding_operation_failed",
+    category: "unknown",
+    what: "Feishu 绑定操作失败",
+    impact: "无法完成请求的绑定操作",
+  },
+  {
+    code: "binding_policy_failed",
+    category: "unknown",
+    what: "绑定策略执行失败",
+    impact: "绑定已回滚，数据未变更",
+  },
+  {
+    code: "binding_saved_refresh_failed",
+    category: "resource",
+    what: "绑定保存成功但列表刷新失败",
+    impact: "绑定已保存，当前表格未同步最新数据",
+  },
+  {
+    code: "binding_removed_refresh_failed",
+    category: "resource",
+    what: "绑定已移除但列表刷新失败",
+    impact: "绑定已移除，当前表格未同步最新数据",
+  },
 ]
 
 // 未知错误兜底

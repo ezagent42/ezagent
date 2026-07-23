@@ -41,7 +41,7 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
   end
 
   defp cap_for(%URI{} = workspace_uri, action, %URI{} = grantee) do
-    target = Ezagent.URI.with_action(workspace_uri, :user_binding, action)
+    target = Ezagent.URI.with_action(workspace_uri, :feishu_user_bindings, action)
     CapHelper.signed_action_cap!(target, grantee)
   end
 
