@@ -1,6 +1,6 @@
 defmodule Ezagent.Routing.RuleStore do
   @moduledoc """
-  SQLite-persisted routing rules (per P3-D10).
+  Postgres-persisted routing rules (per P3-D10).
 
   Admin-created rules survive BEAM restart. Boot-time bootstrap
   inserts system-default rules idempotently (chat plugin's
@@ -22,10 +22,10 @@ defmodule Ezagent.Routing.RuleStore do
   - `add(table_name_atom, matcher_tuple, receivers_list, created_by_uri)`
   - `list(table_name_atom) :: [rule_map()]`
   - `delete(id)`
-  - `load_into_registry(table_name_atom)` — on boot, reads SQLite rules
+  - `load_into_registry(table_name_atom)` — on boot, reads persisted rules
     and puts them into the live `RoutingRegistry` ETS table
 
-  Resolver reads the **ETS table** (not SQLite directly) — RuleStore
+  Resolver reads the **ETS table** (not Postgres directly) — RuleStore
   is the persistence layer that hydrates ETS at boot.
   """
 

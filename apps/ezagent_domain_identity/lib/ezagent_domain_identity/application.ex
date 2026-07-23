@@ -6,7 +6,7 @@ defmodule EzagentDomainIdentity.Application do
   - `Ezagent.Entity.User` Kind (per-user spawn fn registered here, full
     `entity://` fn registered by chat plugin which boots later)
   - `Ezagent.ActionSet.Identity` registration on User + Agent
-  - `Ezagent.Users` SQLite provisioning (Phase 4-completion Spec 05)
+  - `Ezagent.Users` Postgres provisioning (Phase 4-completion Spec 05)
 
   Does NOT own (the session/im domain owns those):
   - `:receive` registration on User/Agent — `Ezagent.ActionSet.User.Receive`
@@ -206,7 +206,7 @@ defmodule EzagentDomainIdentity.Application do
       # Mimic the pre-PR-M static child via direct DynamicSupervisor
       # call. NOT through SpawnRegistry — SpawnRegistry.spawn triggers
       # extra DB lookups (KindSnapshot.get) for entity URIs that
-      # interact poorly with the test SQLite Sandbox boot-time setup.
+      # interact poorly with the test Ecto SQL Sandbox boot-time setup.
       # This is the minimal-diff preservation of the pre-PR-M timing
       # + side-effects.
       admin_uri = User.admin_uri()

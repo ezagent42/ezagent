@@ -8,7 +8,7 @@ defmodule Ezagent.Audit do
      future Feishu admin, CLI tail). This is the §5.7.6-legitimate
      broadcast (audience is undefined observers).
   2. `GenServer.cast(Ezagent.Audit.Writer, {:write, row})` — for the
-     async SQLite write.
+     async Postgres write.
 
   The handler itself only does these two non-blocking ops, never
   touches the DB directly. That's enforced by invariant #6 (grep
@@ -79,7 +79,7 @@ defmodule Ezagent.Audit do
     # legitimate broadcast — audience is undefined observers).
     Phoenix.PubSub.broadcast(EzagentCore.PubSub, @audit_stream_topic, {:audit_event, audit_event})
 
-    # Path 2: async write to SQLite via the batch writer.
+    # Path 2: async write to Postgres via the batch writer.
     GenServer.cast(Ezagent.Audit.Writer, {:write, build_row(event, measurements, metadata)})
   end
 
@@ -88,7 +88,7 @@ defmodule Ezagent.Audit do
 
   # ---------------------------------------------------------------------
   # The PubSub message keeps the raw event shape for view rendering;
-  # the SQLite row uses the column shape required by the migrations.
+  # the Postgres row uses the column shape required by the migrations.
 
   defp build_row([:ezagent, :invoke, :stop], %{duration_us: us}, meta) do
     caller = uri_to_str(Map.get(meta, :caller))
@@ -143,7 +143,7 @@ defmodule Ezagent.Audit do
       result: nil,
       duration_us: us,
       authz: authz,
-      # JSON-encode for ecto_sqlite3 schemaless insert_all (see Ezagent.DLQ).
+      # JSON-encode for the schemaless insert_all (string table name → no type casting; see Ezagent.DLQ).
       exception: Jason.encode!(%{reason: inspect(reason)}),
       workspace_uri: derive_workspace(caller, target),
       inserted_at: DateTime.utc_now()

@@ -26,9 +26,8 @@ defmodule Ezagent.ExternalMirror.BindingRow do
   ## opts_json
 
   Caller-supplied binding-time metadata (adapter-specific). Stored
-  JSON-encoded because SQLite's `:map` type isn't first-class — the
-  schema field is `:string`, and the `:bind` / `:unbind` paths
-  encode/decode via `Jason`. Empty default `"{}"`.
+  JSON-encoded in a `:string` (text) field — the `:bind` / `:unbind`
+  paths encode/decode via `Jason`. Empty default `"{}"`.
   """
 
   use Ecto.Schema

@@ -227,7 +227,7 @@ defmodule Ezagent.Entity.Agent do
   # on next BEAM. Under `:on_change`, step 2 writes synchronously; the
   # caps are durable before `mix` returns.
   #
-  # Trade-off: one extra ~1ms SQLite write per dispatch that mutates
+  # Trade-off: one extra ~1ms DB write per dispatch that mutates
   # Agent's slice. Identity mutations are operator-initiated cap
   # grants (rare), and Chat slice mutations were already the dominant
   # write volume on the same DB.

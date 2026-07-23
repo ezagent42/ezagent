@@ -1,6 +1,6 @@
 defmodule Ezagent.Ecto.URI do
   @moduledoc """
-  Custom Ecto type for `%URI{}` ↔ string round-trip in SQLite columns.
+  Custom Ecto type for `%URI{}` ↔ string round-trip in database columns.
 
   In-memory representation: `%URI{}` struct (per ARCHITECTURE §3.5 — Message
   identity fields are URI structs, type-rich). Storage: TEXT column (the
@@ -10,13 +10,13 @@ defmodule Ezagent.Ecto.URI do
 
   - `Ezagent.Message.sender` / `mentions` / `ref` use this type via
     `field :sender, Ezagent.Ecto.URI`
-  - `body` map's nested URI values are NOT auto-converted (body is `:map`
-    column — JSON-encoded by ecto_sqlite3); callers handle URI ↔ string in
+  - `body` map's nested URI values are NOT auto-converted (body is a `:map`
+    column — JSON-encoded by Ecto); callers handle URI ↔ string in
     application code for body internals if needed
 
   ## Phase 5+ extension
 
-  Same type used wherever a typed URI field hits SQLite. Phase 3+ adds
+  Same type used wherever a typed URI field hits the database. Phase 3+ adds
   RoutingRegistry tables that store URIs — they use this type.
   """
 

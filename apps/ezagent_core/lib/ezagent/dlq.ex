@@ -44,14 +44,14 @@ defmodule Ezagent.DLQ do
   @doc """
   Append a row to the DLQ. `payload` is the original invocation (or
   whatever context lets a human debug what was dropped) — JSON-encoded
-  by ecto_sqlite3 via the `:map` column type.
+  into a text column at write time (see below).
   """
   @spec put(atom(), term()) :: :ok
   def put(reason, payload) when reason in @reasons do
-    # ecto_sqlite3 with `Repo.insert_all/2` against a string table name
-    # doesn't auto-encode `:map` columns — JSON-encode manually so SQLite
-    # gets a TEXT value. Schemaful inserts (Phase 2+ with Ecto.Schema)
-    # would handle this automatically.
+    # `Repo.insert_all/2` against a string (schemaless) table name skips
+    # Ecto type casting, so a `:map` value is NOT auto-encoded — JSON-encode
+    # manually so the DB gets a text value. Schemaful inserts (Phase 2+ with
+    # Ecto.Schema) would handle this automatically.
     row = %{
       reason: Atom.to_string(reason),
       payload: Jason.encode!(payload_to_map(payload)),

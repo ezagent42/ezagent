@@ -47,7 +47,7 @@ config :ezagent_core, EzagentCore.Repo,
   # integration-level concurrency. Bumped to 20 and KEPT at 20.
   #
   # #52 Mode-C NOTE: the design proposed trimming the pool 20→~10 "(measure)"
-  # to cut connect-time write-lock contention. MEASURED: the reduction
+  # to cut connect-time contention. MEASURED: the reduction
   # REGRESSES heavier suites — the `ezagent_domain_session` suite
   # (many concurrent globally-supervised Kinds, each `start_owner_stable!`
   # checking out one connection) STARVES at pool_size 15 (`DBConnection`
@@ -56,7 +56,8 @@ config :ezagent_core, EzagentCore.Repo,
   # stays at 20. The real Mode-C levers are (a) removing the Mode-B
   # boot-writer (gating `system://routing/default`'s boot-spawn out of
   # `:test`, which deletes the unsynchronized boot-time `kind_snapshots`
-  # writer) and (b) the raised `busy_timeout` below — NOT a smaller pool.
+  # writer) and (b) the extended connection queue timeout below
+  # (`queue_target` / `queue_interval`) — NOT a smaller pool.
   #
   # 20→40 (CapBAC transient-identity-read fix, belt-and-suspenders): the
   #   fire-and-forget delivery/materialization Tasks (#1339 drains them in

@@ -77,7 +77,7 @@ defmodule Ezagent.Message do
           hops: non_neg_integer()
         }
 
-  # `id` is the primary key (plain UUID hex); ecto_sqlite3 stores it as TEXT.
+  # `id` is the primary key (plain UUID hex), stored in a text column.
   # Disable Ecto's default :id primary key (which would auto-generate integer
   # ids — we want our UUID string to be the PK).
   @primary_key false
@@ -97,9 +97,8 @@ defmodule Ezagent.Message do
     # Stored as canonical `workspace://<name>` string.
     field :workspace_uri, :string
     field :sender, Ezagent.Ecto.URI
-    # mentions stored as JSON array of strings (each URI dumped via
-    # Ezagent.Ecto.URI.dump → string). ecto_sqlite3 JSON-encodes arrays
-    # transparently.
+    # mentions is a native Postgres array column (`{:array, Ezagent.Ecto.URI}`);
+    # each element is a URI dumped to string via `Ezagent.Ecto.URI.dump`.
     field :mentions, {:array, Ezagent.Ecto.URI}, default: []
     # team-routing-unification §3.6 (PR-6) — VIRTUAL (NOT persisted): the
     # session-scoped legend NAMEs an inbound message triggered (e.g. CJK
@@ -116,7 +115,7 @@ defmodule Ezagent.Message do
     # `MessageStore.write/2` round-trip. Default `[]` (behaviour-preserving;
     # a message with no legend trigger behaves exactly as before).
     field :legend_triggers, {:array, :string}, virtual: true, default: []
-    # body is a JSON-encoded map per ecto_sqlite3's :map column handling.
+    # body is a `:map` field backed by a native jsonb column (Postgres handles the JSON).
     field :body, :map
     # ref_id is a plain string referencing another message id (no URI type,
     # per SPEC v2 §5.13 — message ids are not URIs).
