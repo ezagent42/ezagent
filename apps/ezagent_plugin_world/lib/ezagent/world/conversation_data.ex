@@ -17,12 +17,10 @@ defmodule Ezagent.World.ConversationData do
 
   @message_limit 50
 
-  # world's OWN built-in React islands, keyed by SessionView id → the render mode
-  # the React side draws with. These ship inside world itself (conversation + the
-  # domain_ui-backed pty terminal), so world names them directly. Plugin-owned
-  # native surfaces are NOT listed here — they are derived from each plugin's
-  # `PluginPageRegistry` page declaration (see `render_mode/2`), so world never
-  # hard-codes a plugin's identity.
+  # world's OWN built-in React islands (SessionView id → render mode) that ship
+  # inside world itself. Plugin-owned native surfaces are NOT listed here — they
+  # are derived from each plugin's `PluginPageRegistry` page (see `render_mode/2`),
+  # so world never hard-codes a plugin's identity.
   @world_native_react_ids %{conversation: "chat", pty: "pty"}
 
   @doc """
@@ -183,15 +181,8 @@ defmodule Ezagent.World.ConversationData do
     session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
   end
 
-  # Classify a registered view into a world React render mode. world's own
-  # built-in islands (`:conversation`, `:pty`) map directly. A view a plugin
-  # declares as a `PluginPageRegistry` page is a plugin-owned native React
-  # surface (the registry requires a `renderer` source/export), so it mounts the
-  # plugin's rich renderer under that page's `key` — checked BEFORE the external
-  # fallthrough, so a plugin page that ALSO declares an external target still
-  # renders native. `:page`/`:hello_page` and any other view declaring an
-  # external render target draw through the external surface (iframe); everything
-  # else is an honest "unsupported" placeholder.
+  # world's own built-in islands (`:conversation`/`:pty`) map directly; everything
+  # else → `plugin_or_surface_mode/2` (plugin-native / external / unsupported).
   defp render_mode(id, mod) do
     if Map.has_key?(@world_native_react_ids, id) do
       Map.fetch!(@world_native_react_ids, id)
@@ -200,10 +191,8 @@ defmodule Ezagent.World.ConversationData do
     end
   end
 
-  # Plugin-owned native surface wins over the external/unsupported fallthrough:
-  # if a plugin page declares this SessionView id, world mounts that page's
-  # native renderer (mode = the page `key`). Otherwise a declared external
-  # render target draws through the iframe surface; the rest is "unsupported".
+  # Plugin page (via PluginPageRegistry) → native renderer (mode = page `key`),
+  # checked BEFORE external fallthrough; else declared-external → iframe; rest unsupported.
   defp plugin_or_surface_mode(id, mod) do
     case PluginPageRegistry.by_session_view(Atom.to_string(id)) do
       %{key: key} ->
