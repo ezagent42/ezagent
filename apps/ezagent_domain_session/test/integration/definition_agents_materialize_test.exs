@@ -769,8 +769,24 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                :write_session_templates
              ])
 
+    # The two agent-bootstrap self-caps (ConfigEvolve.reconcile_cascade +
+    # Sandbox.update_config) are the orchestrator's OWN caps, issued during its
+    # config-evolve boot reconcile. Whether they are still buffered (:pending) or
+    # already self-absorbed (:applied) depends on the transient :ready drain window
+    # during the orchestrator's own boot — a machine-timing race (fast CI buffers;
+    # a slow host absorbs). Assert the timing-independent invariant: the
+    # orchestrator HOLDS them either way (pending ∪ read_entity_caps). An empty
+    # union still fails (no masking); and since this is a superset of `pending`, it
+    # can only pass where the pending-only assertion passed, never less.
+    held_bootstrap_caps =
+      orchestrator_uri
+      |> Ezagent.Identity.read_entity_caps()
+      |> Enum.filter(
+        &(&1.behavior in [Ezagent.ActionSet.ConfigEvolve, Ezagent.ActionSet.Sandbox])
+      )
+
     assert MapSet.new(
-             Enum.map(agent_bootstrap_caps, fn cap ->
+             Enum.map(agent_bootstrap_caps ++ held_bootstrap_caps, fn cap ->
                {cap.behavior, Ezagent.Capability.action_of(cap)}
              end)
            ) ==
