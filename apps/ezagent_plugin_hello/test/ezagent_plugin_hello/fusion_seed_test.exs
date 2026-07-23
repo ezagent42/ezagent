@@ -21,8 +21,17 @@ defmodule EzagentPluginHello.FusionSeedTest do
     session_uri = Ezagent.URI.session(workspace, :hello, "fusion")
     assert :error = Ezagent.KindRegistry.lookup(session_uri)
 
+    # Mirror the production `OfficialSiteSeed`: the seed runs AS a SAME-workspace
+    # founder, not the default system admin. #195's cross-workspace isolation
+    # correctly denies the internal `_.add_self` cast when owner-ws (system) ≠
+    # session-ws — so the owner must live in the target workspace. Pre-create the
+    # owner user row (the member cap-grant/absorb flow lands caps on a real user,
+    # as `HelloWorkspaceIsolationTest` does).
+    owner = Ezagent.URI.entity(workspace, :user, "founder")
+    {:ok, _} = Ezagent.Users.create(owner, nil, [], email_verified: false)
+
     assert {:ok, %{session_uri: ^session_uri, turn_id: turn_id}} =
-             FusionSeed.run(workspace: workspace)
+             FusionSeed.run(workspace: workspace, owner: owner)
 
     assert is_binary(turn_id) and turn_id != ""
 
@@ -35,7 +44,8 @@ defmodule EzagentPluginHello.FusionSeedTest do
     assert snapshot.page == expected_body
     assert snapshot.shell_css == expected_css
 
-    assert {:ok, %{session_uri: ^session_uri}} = FusionSeed.run(workspace: workspace)
+    assert {:ok, %{session_uri: ^session_uri}} =
+             FusionSeed.run(workspace: workspace, owner: owner)
   end
 
   test "fails explicitly when the full website body is missing" do

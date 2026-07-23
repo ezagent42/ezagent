@@ -8,6 +8,25 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
   alias Ezagent.Workspace.TaskWorkspace.{AgentStart, PreStart, Provision, Provisioner}
 
   setup do
+    # #195 currency: dispatch AS the cold task-worker agent grantee requires it
+    # to be a CURRENT principal. Swap in a loader that reports agent grantees as
+    # current via held caps (NOT a live Kind — the grantee is spawned fresh by
+    # AgentStart, so a durable identity snapshot would collide) while delegating
+    # every other principal to the real loader.
+    cap_config = Application.fetch_env!(:ezagent_core, Ezagent.Cap)
+
+    Application.put_env(
+      :ezagent_core,
+      Ezagent.Cap,
+      Keyword.put(
+        cap_config,
+        :authority_loader,
+        EzagentDomainWorkspace.TestSupport.SignedE2EAuthorityLoader
+      )
+    )
+
+    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, cap_config) end)
+
     previous_home = System.get_env("EZAGENT_HOME")
     previous_provisioner = WorkspaceProvisionRegistry.implementation()
     previous_pre_start = GenServer.call(CorePreStart, :implementation)
@@ -315,7 +334,14 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
       target: Ezagent.URI.with_action(context.task_access_uri, :git_task_access, action),
       mode: :call,
       args: %{task_uri: context.task_uri, generation: context.policy.generation},
-      ctx: %{caller: context.grantee, caps: caps, reply: {:caller_inbox, self()}},
+      # #195: the holder is fixed at the auth boundary — the grantee is the
+      # authenticated presenter, so dispatch ctx must carry it explicitly.
+      ctx: %{
+        caller: context.grantee,
+        authenticated_principal: context.grantee,
+        caps: caps,
+        reply: {:caller_inbox, self()}
+      },
       origin: :trusted_internal
     })
   end
