@@ -2067,12 +2067,15 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
        ),
        do: 86
 
+  # +5 from #1497 (plugin view refresh) and +5 more from #1541 (uri_query bind-first
+  # insertion above line 405) — both shifts are pure line moves of pre-existing
+  # dynamic-receiver sites, verified content-identical (no new ownership access added).
   defp migrate_pr1497_line(
          "apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex",
          line
        )
        when line >= 405,
-       do: line + 5
+       do: line + 10
 
   defp migrate_pr1497_line(
          "apps/ezagent_plugin_world/lib/ezagent_plugin_world/application.ex",

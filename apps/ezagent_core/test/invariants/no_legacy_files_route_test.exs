@@ -36,6 +36,11 @@ defmodule EzagentCore.Invariants.NoLegacyFilesRouteTest do
   defp lib_sources do
     Path.join([apps_root(), "**", "lib", "**", "*.{ex,heex}"])
     |> Path.wildcard()
+    # Exclude transient per-test fixtures under any `tmp/` dir (e.g. the
+    # GitAdapterBoundaryTest planted-repo fixtures): a sibling test can delete
+    # them mid-stream, raising File.Error here. Production lib sources are never
+    # under `tmp/`.
+    |> Enum.reject(&String.contains?(&1, "/tmp/"))
     |> Enum.sort()
   end
 
