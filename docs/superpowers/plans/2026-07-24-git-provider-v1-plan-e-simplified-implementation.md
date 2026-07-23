@@ -331,12 +331,13 @@ mint 请求必须包含 exact repository 与 profile permission map：
 - `authenticated_principal_uri`；
 - `status`，初始 `"accepted"`；
 - `state_version`，初始 `1`；
-- idempotency key/input digest；
-- non-secret intent payload；
+- input digest；
+- typed non-secret intent fields（source task URI/revision、requested head ref）；
 - `last_error_code`、timestamps。
 
-唯一键由 `(binding_id, generation, external_task_id, input_digest)` 构成。同一输入并发
-claim 返回同一 run；同 task 不同 digest 返回 closed conflict，不静默覆盖。
+唯一键由 `(binding_id, generation, external_task_id)` 构成，`input_digest` 作为命中
+已有行后的比较字段。同一输入并发 claim 返回同一 run；同 task 不同 digest 命中
+同一唯一键后返回 closed conflict，不创建第二行、不静默覆盖。
 
 状态 CAS 的 SQL 语义必须等价于：
 
@@ -368,7 +369,8 @@ adapter、Req 或 Kanban。
 
 **步骤：**
 
-1. 先写 migration/schema test，证明约束、URI round-trip 和 secret fields absence。
+1. 先写 migration/schema test，证明唯一约束、typed intent、URI round-trip 和
+   secret/arbitrary payload fields absence。
 2. 写真实 PostgreSQL concurrency tests：
    20 个并发相同 claim 只产生 1 run；20 个同 version CAS 只有 1 个成功。
 3. 写 authority tests：
