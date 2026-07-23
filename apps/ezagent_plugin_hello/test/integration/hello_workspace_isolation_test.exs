@@ -84,6 +84,13 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
 
     member = Ezagent.URI.entity("ezagent", :user, "member-#{System.unique_integer([:positive])}")
 
+    # #195: the member must be a CURRENT principal (durable held caps) or the
+    # dispatch is denied `:holder_revoked` at the principal gate BEFORE the
+    # workspace-isolation check the test targets. Establish currency the
+    # non-spawning durable way — a real user row carrying its own self-license
+    # (`Users.create_read_only`) so `EntityCaps.load(member) ≠ []`.
+    {:ok, _} = Ezagent.Users.create_read_only(member, [self_license_cap!(member)])
+
     # The member HOLDS the caps (issued under admin authority — modeling a
     # granted member), so authz passes and the denial that fires is the
     # WORKSPACE BOUNDARY, not a missing cap.
@@ -117,7 +124,12 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
         target: send_target,
         mode: :cast,
         args: %{message: msg},
-        ctx: %{caller: member, caps: MapSet.new([send_cap]), reply: :ignore},
+        ctx: %{
+          caller: member,
+          authenticated_principal: member,
+          caps: MapSet.new([send_cap]),
+          reply: :ignore
+        },
         origin: :authenticated_external
       })
 
@@ -132,7 +144,12 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
                target: join_target,
                mode: :call,
                args: %{member: member},
-               ctx: %{caller: member, caps: MapSet.new([join_cap]), reply: :ignore},
+               ctx: %{
+                 caller: member,
+                 authenticated_principal: member,
+                 caps: MapSet.new([join_cap]),
+                 reply: :ignore
+               },
                origin: :authenticated_external
              })
   end
@@ -174,6 +191,13 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
       capture_log(fn ->
         _ = Delivery.dispatch_receive_call(front_desk_uri, msg, session_uri)
         drain_mailbox(front_desk_pid)
+        # The `{always} -> front-desk` relay dispatches to the member in a
+        # supervised Task (`Router` → `EzagentPluginHello.TaskSupervisor`) that
+        # does a Repo-touching `Cap.issue`. Await it INSIDE the sandbox so its
+        # DB work (and its log) finishes within the test — otherwise the Task
+        # outlives the DataCase owner and races teardown (a pre-existing
+        # `DBConnection.OwnershipError`, unrelated to the cap-fixture fix).
+        await_relay_tasks()
       end)
 
     refute log =~ "cross_workspace_denied",
@@ -188,27 +212,32 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
   defp ensure_workspace(name, created_by \\ nil) do
     attrs = if created_by, do: %{created_by: created_by}, else: %{}
 
-    case Workspace.create(name, attrs) do
-      {:ok, _pid} ->
-        # The owner must be a real MEMBER (pre-spawns their user Kind so the
-        # cap-grant/absorb flow has a live actor). Only on a FRESH create —
-        # an already-existing workspace may be a stale process whose store row
-        # was rolled back by a sibling test's sandbox.
-        if created_by do
-          case Workspace.add_member(name, created_by) do
-            :ok -> :ok
-            {:error, _} -> :ok
-          end
-        end
-
-        :ok
-
-      {:error, :workspace_exists} ->
-        :ok
-
-      {:error, {:already_started, _pid}} ->
-        :ok
+    # #195: `Workspace.create` on an ALREADY-EXISTING workspace poisons the
+    # sandbox transaction — its `create_workspace_record` `Repo.transaction`
+    # wrapper (added in #195) does not recover the unique-constraint INSERT
+    # violation inside the sandbox's outer transaction, so the recovery
+    # `Repo.get_by` aborts. "system" is boot-seeded (and siblings re-provision
+    # the home workspace), so pre-check existence and skip the re-create. This
+    # is test SETUP; the cross-workspace denial the test proves is unaffected.
+    unless Ezagent.Workspace.Store.get_by_name(name) do
+      case Workspace.create(name, attrs) do
+        {:ok, _pid} -> :ok
+        {:error, :workspace_exists} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+      end
     end
+
+    # The owner must be a real MEMBER (pre-spawns their user Kind so the
+    # cap-grant/absorb flow has a live actor). `add_member` performs no
+    # workspace re-INSERT, so it is safe on an already-existing workspace.
+    if created_by do
+      case Workspace.add_member(name, created_by) do
+        :ok -> :ok
+        {:error, _} -> :ok
+      end
+    end
+
+    :ok
   end
 
   # Three synchronous barriers (see HelloGreeterRelayReproTest): FIFO ordering
@@ -216,6 +245,23 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
   # returns — no sleeps, no flake.
   defp drain_mailbox(pid) do
     Enum.each(1..3, fn _ -> _ = :sys.get_state(pid) end)
+  end
+
+  # Wait for the relay's fire-and-forget supervised Tasks (member dispatch) to
+  # drain so their Repo work completes before the sandbox owner is reclaimed.
+  # Monitor each live child to completion — no sleeps.
+  defp await_relay_tasks(timeout \\ 2_000) do
+    EzagentPluginHello.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.each(fn pid ->
+      ref = Process.monitor(pid)
+
+      receive do
+        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
+      after
+        timeout -> Process.demonitor(ref, [:flush])
+      end
+    end)
   end
 
   defp terminate(%URI{} = uri) do

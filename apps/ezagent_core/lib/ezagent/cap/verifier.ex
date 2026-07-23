@@ -84,6 +84,16 @@ defmodule Ezagent.Cap.Verifier do
         {:ok, cap}
 
       {:error, denial} ->
+        # TAXONOMY COLLAPSE (accepted-for-now fuzziness): a presented cap that
+        # is unsigned / tampered / retargeted / wrong-key is silently DROPPED by
+        # `Ezagent.Cap.Authorize`'s boolean `verified_candidate?` filter, so its
+        # denial arrives here as `:no_matching_cap` and collapses into
+        # `:missing_cap` below (the `true ->` arm) — indistinguishable from "no
+        # grant was presented at all". #195 no longer emits a precise
+        # `:invalid_cap_signature`. This drops the "forgery/tamper vs. missing
+        # grant" distinction; it is deliberate for now. Revisit (thread the
+        # specific verification failure through the filter) if an audit needs
+        # the precise reason. COMMENT ONLY — do not change the behavior here.
         reason =
           cond do
             Enum.empty?(candidates) -> :missing_cap

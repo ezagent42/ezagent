@@ -75,6 +75,12 @@ defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
       origin: :trusted_internal,
       ctx: %{
         caller: grantee_uri,
+        # #195 fixes the holder at the auth boundary: dispatch ctx must carry an
+        # `authenticated_principal`, or the verifier fails closed with
+        # `:authenticated_principal_required` before any cap check. The grantee
+        # is the authenticated presenter for the valid path; negative tests that
+        # dispatch as a different caller override this to MATCH that caller.
+        authenticated_principal: grantee_uri,
         caps: MapSet.new([artifact]),
         reply: {:caller_inbox, self()}
       }

@@ -102,6 +102,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
 
     assert fixture.invocation.ctx == %{
              caller: grantee_uri,
+             authenticated_principal: grantee_uri,
              caps: MapSet.new([fixture.artifact]),
              reply: {:caller_inbox, self()}
            }

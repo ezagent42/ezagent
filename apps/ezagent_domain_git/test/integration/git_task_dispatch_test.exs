@@ -93,8 +93,16 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     valid = workspace_invocation(fixture, :provision_workspace, task_uri, policy.generation)
 
     attacker = Ezagent.URI.agent(Ezagent.URI.workspace_name!(fixture.workspace_uri), "attacker")
-    wrong_receiver = %{valid | ctx: %{valid.ctx | caller: attacker}}
-    assert {:error, :invalid_cap_signature} = Ezagent.Invocation.dispatch(wrong_receiver)
+    # Dispatch AS the attacker: the authenticated principal must match the
+    # caller, or the test would accidentally authorize the grantee's own cap.
+    # The attacker clears the principal gate (a current agent) but the grantee-
+    # bound cap fails the target gate for a different holder → `:missing_cap`.
+    wrong_receiver = %{
+      valid
+      | ctx: %{valid.ctx | caller: attacker, authenticated_principal: attacker}
+    }
+
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(wrong_receiver)
     refute_receive {:workspace_effect, _, _}
 
     wrong_workspace_cap =
@@ -120,7 +128,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
       | ctx: %{valid.ctx | caps: MapSet.new([wrong_instance_cap])}
     }
 
-    assert {:error, :invalid_cap_signature} =
+    assert {:error, :missing_cap} =
              Ezagent.Invocation.dispatch(wrong_instance_invocation)
 
     refute_receive {:workspace_effect, _, _}
@@ -146,7 +154,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     unsigned = %{artifact | signature: nil, key_id: nil, grantee_uri: nil}
 
     unsigned_invocation = %{valid | ctx: %{valid.ctx | caps: MapSet.new([unsigned])}}
-    assert {:error, :invalid_cap_signature} = Ezagent.Invocation.dispatch(unsigned_invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(unsigned_invocation)
 
     refute_receive {:workspace_effect, _, _}
   end
@@ -193,14 +201,22 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
   test "receiver-bound cap replay by another caller leaves both providers unchanged" do
     {fixture, policy} = started_fixture(:resolve_repository, :"task11-sync-a")
     workspace = Ezagent.URI.workspace_name!(fixture.workspace_uri)
+    replay_attacker = Ezagent.URI.agent(workspace, "replay-attacker")
 
+    # The replay attacker is itself a current principal, so the denial proves
+    # receiver-binding: the grantee-bound cap fails the target gate for a
+    # different holder and is dropped → `:missing_cap` (never authorized).
     invocation = %{
       fixture.invocation
       | args: %{repository: policy.repository},
-        ctx: %{fixture.invocation.ctx | caller: Ezagent.URI.agent(workspace, "replay-attacker")}
+        ctx: %{
+          fixture.invocation.ctx
+          | caller: replay_attacker,
+            authenticated_principal: replay_attacker
+        }
     }
 
-    assert {:error, :invalid_cap_signature} = Ezagent.Invocation.dispatch(invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     refute_received {:task11_adapter_call, _, _, _}
     refute_received {:task11_provider_mutation, _, _}
   end
@@ -216,7 +232,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
         ctx: %{fixture.invocation.ctx | caps: MapSet.new([invalid_cap])}
     }
 
-    assert {:error, :invalid_cap_signature} = Ezagent.Invocation.dispatch(invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     refute_received {:task11_adapter_call, _, _, _}
     refute_received {:task11_provider_mutation, _, _}
   end
@@ -232,7 +248,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
         ctx: %{fixture.invocation.ctx | caps: MapSet.new([raw_cap])}
     }
 
-    assert {:error, :invalid_cap_signature} = Ezagent.Invocation.dispatch(invocation)
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     refute_received {:task11_adapter_call, _, _, _}
     refute_received {:task11_provider_mutation, _, _}
   end
