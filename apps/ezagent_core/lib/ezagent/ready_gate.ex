@@ -125,7 +125,7 @@ defmodule Ezagent.ReadyGate do
 
   Default `500ms` matches the empirical bound used by
   `Ezagent.Identity.await_ready/2` (50 × 10ms). post_init handlers
-  do a single SQLite PK lookup + slice mutation, so 500ms is generous
+  do a single DB PK lookup + slice mutation, so 500ms is generous
   even under contention.
 
   Test environments can override (`await(uri, 5_000)`) when the

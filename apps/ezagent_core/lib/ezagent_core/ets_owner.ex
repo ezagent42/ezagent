@@ -24,7 +24,7 @@ defmodule EzagentCore.EtsOwner do
   restart recreates them empty. State stored in these tables is
   ephemeral by design (ReadyGate / PendingDelivery / Idempotency
   are all "what's in flight right now"; reset on restart is
-  acceptable). Persistent state lives in SQLite via `Ezagent.Kind.Snapshot`.
+  acceptable). Persistent state lives in Postgres via `Ezagent.Kind.Snapshot`.
   """
 
   use GenServer
@@ -84,7 +84,7 @@ defmodule EzagentCore.EtsOwner do
     {Ezagent.UriQuery, :set},
     # Phase 7 completion PR-3 (SPEC §1.7 (c)): TemplateTags read cache.
     # `Ezagent.TemplateTags` persists `(workspace, name, tag) → hash`
-    # rows in SQLite (the CAS source of truth) and mirrors them into
+    # rows in Postgres (the CAS source of truth) and mirrors them into
     # this ETS table for O(1) `resolve/3`/`list/1` reads — the
     # `Ezagent.Routing.RuleStore` pattern.
     {Ezagent.TemplateTags, :set},

@@ -3,9 +3,9 @@ defmodule EzagentCore.Invariants.DatabaseAgnosticGuardTest do
   Static guard for database portability.
 
   This test intentionally does NOT flag the current Ecto adapter choice
-  (`Ecto.Adapters.SQLite3`, `ecto_sqlite3`, config, or lockfile entries).
-  Those are deployment/configuration facts, not proof that product runtime
-  logic is strongly coupled to SQLite.
+  (now `Ecto.Adapters.Postgres` / `postgrex`; previously `ecto_sqlite3`).
+  The adapter, its config, and lockfile entries are deployment facts, not
+  proof that product runtime logic is strongly coupled to one database.
 
   The guard only tracks side paths that bypass Ecto's portability layer:
 

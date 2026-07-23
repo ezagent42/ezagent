@@ -893,7 +893,7 @@ Rebuild Kind 的 in-memory state from persisted snapshot(Phase 1)+ (Phase 2+) fo
 
 **Lazy-on-first-load**(OQ-8 decision):rebuild 发生在 Router dispatch 到 KindRegistry 未有的 entity URI 时,**NOT** at application boot。Router lookup 失败 → spawn Kind via `Kind.spawn/2`;`Kind.Host.init/1` calls StateRebuilder。
 
-Kind module 可选 implement `rebuild_from_snapshot/1`(REQUIRED for custom semantics — 否则 default path 使用 snapshot.state 直接)+ `rebuild_from_events/2`(OPTIONAL — Phase 2+ events-as-source-of-truth 用)。
+Kind module 可选 implement `rebuild_from_snapshot/1`(REQUIRED for custom semantics — 否则 default path 使用 snapshot.state 直接)。
 
 Generalises per-domain `BootReconciler` pattern(today only `Ezagent.ExternalMirror.BootReconciler` — stays as-is Phase 1,Phase 2+ refactors to delegate)。
 

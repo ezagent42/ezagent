@@ -56,7 +56,7 @@ defmodule Ezagent.Socialware.ConfigObject do
     # partial unique index (`socialware_config_objects_unique_source_turn`)
     # rejects a CONCURRENT
     # duplicate dispatch at the DB; surface it as a changeset error (not a raw
-    # SQLite raise) so the handler can treat the collision as "already
+    # DB constraint raise) so the handler can treat the collision as "already
     # applied".
     #
     # The explicit short name avoids PostgreSQL identifier truncation while

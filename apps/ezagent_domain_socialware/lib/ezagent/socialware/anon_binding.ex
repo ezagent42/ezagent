@@ -113,8 +113,10 @@ defmodule Ezagent.Socialware.AnonBinding do
   attempted session, so a concurrent first-touch of the same entity against a
   different session leaves the stored row untouched (the conditional update is a
   no-op); a post-write re-read then returns `{:error, {:session_mismatch, _}}` rather
-  than a spurious success. (SQLite serializes writes, so the two racers' inserts
-  order deterministically — the loser hits the conditional conflict path.)
+  than a spurious success. (Under concurrency Postgres serialises the two racers on
+  the row / unique index; the loser's conditional update matches no row and is a
+  no-op, so it falls to the mismatch path — the atomic write boundary, not any
+  single-writer property of the store, is what orders them.)
   """
   @spec touch(URI.t(), URI.t(), DateTime.t()) :: {:ok, t()} | {:error, term()}
   def touch(%URI{} = entity_uri, %URI{scheme: "session"} = session_uri, %DateTime{} = now) do

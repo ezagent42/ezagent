@@ -24,7 +24,7 @@ defmodule Ezagent.Entity.Workspace do
 
   ## Phase 4c follow-up
 
-  - SQLite `workspaces` table + Ecto schema
+  - Postgres `workspaces` table + Ecto schema
   - `Ezagent.Workspace.Loader` queries DB on app start, dispatches
     `:instantiate` per Workspace, walks children + spawns via
     plugin-registered spawn functions
@@ -54,7 +54,7 @@ defmodule Ezagent.Entity.Workspace do
 
   # Stays `:ephemeral` even after Phase 4c persistence ships — the
   # Kind itself is rehydrated by `Ezagent.Workspace.Loader` from the
-  # `workspaces` SQLite table (managed via `Ezagent.Workspace.Store`),
+  # `workspaces` Postgres table (managed via `Ezagent.Workspace.Store`),
   # not by per-Kind snapshot. Per Phase 4 D6/D7: config persistence
   # vs runtime-state snapshot are different things.
   @impl Ezagent.Kind

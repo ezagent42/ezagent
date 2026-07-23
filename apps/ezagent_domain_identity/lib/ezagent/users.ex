@@ -1,6 +1,6 @@
 defmodule Ezagent.Users do
   @moduledoc """
-  Facade for the `users` SQLite table — provisioning + login lookup
+  Facade for the `users` Postgres table — provisioning + login lookup
   (Phase 4-completion Spec 05 Part A).
 
   Distinct from User-Kind snapshot:

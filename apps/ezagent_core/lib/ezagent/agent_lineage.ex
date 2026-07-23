@@ -33,7 +33,7 @@ defmodule Ezagent.AgentLineage do
   The `:ezagent_agent_lineage` set table (owned by `EzagentCore.EtsOwner`,
   keys are agent URI strings, values are spawned_by URI strings) is the
   fast runtime READ cache. Behind it sits the durable `agent_lineage`
-  SQLite table — the SOURCE OF TRUTH — so lineage survives a restart.
+  Postgres table — the SOURCE OF TRUTH — so lineage survives a restart.
 
   This is the `Ezagent.TemplateTags` / `Ezagent.Routing.RuleStore`
   pattern: `record/2` write-through (upsert) to the DB AND the cache;
@@ -211,7 +211,7 @@ defmodule Ezagent.AgentLineage do
   end
 
   @doc """
-  Hydrate the ETS read cache from the durable `agent_lineage` SQLite
+  Hydrate the ETS read cache from the durable `agent_lineage` Postgres
   table (remediation C-B #114).
 
   Called at boot from `EzagentCore.Application` AFTER the Repo + Migrator

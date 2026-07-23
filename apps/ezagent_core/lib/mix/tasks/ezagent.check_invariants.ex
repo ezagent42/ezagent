@@ -204,7 +204,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   end
 
   # Invariant #6: audit handler async-only
-  # `apps/ezagent_core/lib/ezagent/audit.ex` must not write SQLite directly —
+  # `apps/ezagent_core/lib/ezagent/audit.ex` must not write to the DB directly —
   # it should only `:telemetry`-emit, `PubSub.broadcast`, and
   # `GenServer.cast` to `Ezagent.Audit.Writer`. The SQL write lives in
   # `audit/writer.ex` per Decision #60.

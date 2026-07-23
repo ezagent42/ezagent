@@ -34,7 +34,7 @@ defmodule Ezagent.Routing.Matcher do
 
   ## Why string URIs in matcher tuples (not %URI{})
 
-  Matchers persist to SQLite via Jason; URI struct doesn't round-trip
+  Matchers persist to Postgres via Jason; URI struct doesn't round-trip
   through JSON cleanly (Jason serializes %URI{} as string via the
   `defimpl Jason.Encoder, for: URI` from `Ezagent.Message`, but
   deserializes to plain string). Storing as string in the matcher

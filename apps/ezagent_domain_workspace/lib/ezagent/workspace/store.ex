@@ -1,6 +1,6 @@
 defmodule Ezagent.Workspace.Store do
   @moduledoc """
-  SQLite-persisted Workspace records (Phase 4c).
+  Postgres-persisted Workspace records (Phase 4c).
 
   ## Schema
 
@@ -31,10 +31,11 @@ defmodule Ezagent.Workspace.Store do
 
   ## Why JSON-text columns
 
-  SQLite has no native JSON column. Storing as text + Jason round-trip
-  keeps the schema simple and gives us flexible inner shapes (session
-  template structure evolves; we don't need a migration per change).
-  Read path always decodes via `decode_*` helpers before handing back.
+  These columns hold Jason-encoded JSON in plain `text` fields rather than a
+  structured / `jsonb` column. Text + Jason round-trip keeps the schema simple
+  and gives us flexible inner shapes (session template structure evolves; we
+  don't need a migration per change). Read path always decodes via `decode_*`
+  helpers before handing back.
 
   ## API
 

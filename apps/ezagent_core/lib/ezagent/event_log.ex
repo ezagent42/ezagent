@@ -50,7 +50,7 @@ defmodule Ezagent.EventLog do
 
   Stream functions order rows by `(inserted_at ASC, id ASC)`. The `id`
   tie-breaker resolves multiple events written in the same microsecond
-  (the SQLite-rounded `:utc_datetime_usec` resolution is the practical
+  (the `:utc_datetime_usec` microsecond resolution is the practical
   floor here). Descending mode flips both axes: `(inserted_at DESC,
   id DESC)`.
 

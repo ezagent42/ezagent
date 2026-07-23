@@ -17,7 +17,7 @@ defmodule Ezagent.StressMetrics do
   * **Persistence writes** — counts `[:ezagent, :persistence, :written]`
     events (snapshot-write rate, plan §2.4).
   * **Repo query timing** — attaches to `[:ezagent_core, :repo, :query]`
-    and accumulates `queue_time` + `query_time` (SQLite contention,
+    and accumulates `queue_time` + `query_time` (DB contention,
     plan §2.3 / H1).
   * **System sampler** — a process that every `sample_ms` records
     `:erlang.system_info(:process_count)`, `:erlang.memory/0`, the

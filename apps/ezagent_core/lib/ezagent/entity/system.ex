@@ -17,7 +17,7 @@ defmodule Ezagent.Entity.System do
   satisfies by default.
 
   Persistence `:ephemeral` — the Behavior's slice is a trivial
-  counter; rules themselves live in SQLite via `Ezagent.Routing.RuleStore`.
+  counter; rules themselves live in Postgres via `Ezagent.Routing.RuleStore`.
   """
 
   @behaviour Ezagent.Kind

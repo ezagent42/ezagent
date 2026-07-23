@@ -18,25 +18,10 @@ defmodule Ezagent.Kind.StateRebuilder do
   - `rebuild_from_snapshot/1` (REQUIRED) — accepts the
     `Ezagent.SnapshotStore.latest/1` read shape (`%{state, version}`)
     and returns `{:ok, kind_state}` or `{:error, reason}`.
-  - `rebuild_from_events/2` (OPTIONAL) — accepts a list of event
-    rows + the base state from the snapshot fold (or a fresh-init
-    base) and returns `{:ok, kind_state}` or `{:error, reason}`.
-    Phase 1 NEVER calls this (we just snapshot-restore + return);
-    Phase 2+ wires the event-log fold in.
 
   Most Kinds don't need a custom implementation — the default
   `rebuild/1` path uses the snapshot's state map directly and
   doesn't require the Kind to implement this behaviour at all.
-
-  ## `rebuild_from_events/2` is a Phase 2+ extension point
-
-  In Phase 1 only the snapshot arm is used. Once the first Kind opts
-  into events-as-source-of-truth (Phase 2+ per SPEC §6.1), this
-  module gains the `EventLog.stream_by_aggregate/2` plumbing and
-  calls `rebuild_from_events/2` after the snapshot fold. Keeping the
-  callback in the behaviour now means Phase 2 doesn't need a
-  behaviour migration — Kinds that implement it ahead of time are
-  forward-compatible.
 
   ## Lazy-on-first-load (NOT eager boot rebuild)
 
@@ -104,12 +89,6 @@ defmodule Ezagent.Kind.StateRebuilder do
         }
 
   @typedoc """
-  Event row passed to `rebuild_from_events/2`. Phase 2+ defines the
-  full shape; Phase 1 stub keeps it permissive.
-  """
-  @type event :: map()
-
-  @typedoc """
   Return shape of `rebuild/1` — the state plus a tag identifying how
   it was built.
 
@@ -135,15 +114,8 @@ defmodule Ezagent.Kind.StateRebuilder do
   @callback rebuild_from_snapshot(snapshot :: snapshot()) ::
               {:ok, kind_state :: map()} | {:error, term()}
 
-  @callback rebuild_from_events(events :: [event()], base_state :: map()) ::
-              {:ok, kind_state :: map()} | {:error, term()}
-
-  @optional_callbacks rebuild_from_events: 2
-
   @doc """
   Rebuild a Kind's in-memory state for `uri`.
-
-  Phase 1 path:
 
   1. `SnapshotStore.latest(uri)` → if hit, return the snapshot's
      state with `{:from, :snapshot}`.
@@ -151,21 +123,11 @@ defmodule Ezagent.Kind.StateRebuilder do
      whether to fresh-init (the standard case) or treat as
      dispatch failure.
 
-  Phase 2+ extension: between (1) and (2), stream events since the
-  snapshot's `updated_at` via `EventLog.stream_by_aggregate/2` and
-  fold them in via the Kind's `rebuild_from_events/2`. The snapshot's
-  state becomes the fold's base. If the Kind doesn't implement
-  `rebuild_from_events/2`, the snapshot's state is returned as-is.
-
   ## Return
 
-  - `{:ok, state, %{from: :snapshot}}` — snapshot hit (Phase 1
-    happy path).
-  - `{:ok, state, %{from: :events}}` — snapshot miss but events
-    were folded (Phase 2+ only).
-  - `{:error, :not_found}` — neither snapshot nor events — caller
-    fresh-inits.
-  - `{:error, reason}` — decode / version / fold failure.
+  - `{:ok, state, %{from: :snapshot}}` — snapshot hit.
+  - `{:error, :not_found}` — no snapshot — caller fresh-inits.
+  - `{:error, reason}` — decode / version failure.
   """
   @spec rebuild(URI.t() | String.t()) ::
           {:ok, map(), %{from: rebuild_source()}} | {:error, term()}
@@ -175,11 +137,9 @@ defmodule Ezagent.Kind.StateRebuilder do
         {:ok, snapshot.state, %{from: :snapshot}}
 
       {:error, :not_found} ->
-        # Phase 1: no event-log fold yet. Return :not_found so the
-        # caller can decide between fresh-init (the normal case)
-        # vs. dispatch-time error (an unbound URI that has no fresh
-        # constructor — rare). Phase 2+ inserts the event-log fold
-        # here.
+        # No snapshot row. Return :not_found so the caller can decide
+        # between fresh-init (the normal case) vs. dispatch-time error
+        # (an unbound URI that has no fresh constructor — rare).
         {:error, :not_found}
 
       {:error, reason} ->

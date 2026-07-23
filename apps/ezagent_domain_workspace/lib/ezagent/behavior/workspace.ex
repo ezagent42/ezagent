@@ -81,7 +81,7 @@ defmodule Ezagent.ActionSet.Workspace do
   two-container `%{state, transients}` developer API). The Workspace Kind
   is `persistence :ephemeral` (`Ezagent.Entity.Workspace`) — the
   `kind_snapshots` BLOB is NEVER the source of truth. The `workspaces`
-  SQLite table (via `Ezagent.Workspace.Store`) is the SoT; the
+  Postgres table (via `Ezagent.Workspace.Store`) is the SoT; the
   `Ezagent.Workspace.Loader` reads it at boot and seeds the spawn args.
   This is the legacy `:external` persistence strategy in
   `references/slice-and-snapshot.md` ("Kind's `init_slice/1` reads from a

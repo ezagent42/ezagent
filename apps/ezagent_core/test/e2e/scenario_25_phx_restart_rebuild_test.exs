@@ -371,18 +371,4 @@ defmodule Ezagent.E2E.Scenario25PhxRestartRebuildTest do
       assert %{rebuilt: 0, failed: [], skipped: []} = StateRebuilder.rebuild_all(workspace)
     end
   end
-
-  # --------------------------------------------------------------------------
-  # Section F — rebuild_from_events callback shape (Phase 2+ forward-compat)
-  # --------------------------------------------------------------------------
-  describe "Phase 2+ extension point: rebuild_from_events is declared optional" do
-    test "behaviour info exposes rebuild_from_events/2 as @optional_callbacks" do
-      # SPEC §5.3 + the StateRebuilder moduledoc promise: Kinds opting
-      # into events-as-source-of-truth (Phase 2+) implement this callback.
-      # Phase 1 never calls it. Lock the optional declaration so any
-      # accidental contract bump fails this test before reaching prod.
-      optional = Ezagent.Kind.StateRebuilder.behaviour_info(:optional_callbacks)
-      assert {:rebuild_from_events, 2} in optional
-    end
-  end
 end
