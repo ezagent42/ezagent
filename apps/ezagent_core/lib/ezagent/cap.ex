@@ -413,6 +413,8 @@ defmodule Ezagent.Cap do
 
     caps =
       if Ezagent.URI.stable_key(admin) == Ezagent.URI.stable_key(canonical_admin) do
+        ensure_canonical_admin_current(canonical_admin)
+
         case Ezagent.Cap.Authority.anchor(canonical_admin) do
           {:ok, anchor} -> MapSet.new([anchor])
           {:error, _} -> MapSet.new()
@@ -422,6 +424,39 @@ defmodule Ezagent.Cap do
       end
 
     {caps, %{caller: admin, authenticated_principal: admin}}
+  end
+
+  # #195 canonical-admin bootstrap on fresh boot. The canonical admin holds NO
+  # persisted capability (its `users.caps_json` is deliberately born empty and
+  # its `:self_license` is explicitly kept out of that durable store —
+  # `EntityCaps.clear_self_license_persisted/1`). Its currency as a principal
+  # is proven ONLY by the live `:identity`-slice self-license the `:identity`
+  # Behavior mints when the admin Kind is running (or the durable per-Kind
+  # authority compartment while executing in-process).
+  #
+  # On a fresh boot the admin Kind spawns LAZILY. A boot seed that dispatches AS
+  # the admin — the default SessionTemplate seed, the cc/role-agent template
+  # seeds, ConfigEvolve reconcile, the world plugin — runs before anything has
+  # referenced admin, so `read_held_caps(admin)` is empty and `autonomous_current?`
+  # is false (the seed runs outside the admin Kind's own authority compartment).
+  # The `authorize/3` principal gate then misjudges the admin as revoked and the
+  # seed fails, hard-crashing dev/prod boot on the SessionTemplate invariant.
+  #
+  # Bootstrapping the admin principal at THIS act-as-admin chokepoint (the single
+  # path every admin-issued cap flows through — `issue/3`, and `issue_for_action/3`
+  # via it) borns its per-Kind signing authority + self-license and keeps the
+  # singleton live, so the downstream principal gate reads a non-empty held-cap
+  # set. This is a boot-ordering fix — NOT an authorization-gate change: the gate
+  # is untouched, so a non-admin with an empty load and a fenced admin stay denied.
+  # Idempotent and best-effort: an already-live admin is a no-op, and a spawn that
+  # cannot proceed leaves the fail-closed gate to deny exactly as before.
+  defp ensure_canonical_admin_current(%URI{} = canonical_admin) do
+    _ = Ezagent.LocalRuntime.ensure_started(canonical_admin)
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
   end
 
   defp load_held_caps(actor) do
