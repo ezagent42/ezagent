@@ -15,6 +15,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   use EzagentCore.DataCase, async: false
 
   import Ecto.Query
+  import Ezagent.Test.CapHelper, only: [ensure_workspace_kind!: 1]
 
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session, as: SessionBehavior
@@ -249,6 +250,21 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
   @workspace_uri URI.new!("workspace://system")
   @owner_uri URI.new!("entity://system/user/admin")
+
+  setup context do
+    if context[:terminate_system_workspace_before_fixture] do
+      terminate(@workspace_uri)
+    end
+
+    created? = KindRegistry.lookup(@workspace_uri) == :error
+    ensure_workspace_kind!(@workspace_uri)
+
+    if created? do
+      on_exit(fn -> terminate(@workspace_uri) end)
+    end
+
+    :ok
+  end
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -489,7 +505,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     })
   end
 
-  test "materializes a declared agent as a member with its role_name + recipe caps" do
+  @tag terminate_system_workspace_before_fixture: true
+  test "materializes after its ambient system workspace was terminated" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)

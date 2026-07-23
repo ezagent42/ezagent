@@ -1,0 +1,242 @@
+defmodule Ezagent.Workspace.TaskWorkspace.ReconcilerBootTest do
+  use EzagentCore.DataCase, async: false
+
+  alias Ezagent.Workspace.TaskWorkspace.ReconcilerBoot
+  alias Ezagent.Workspace.TaskWorkspace.{Provision, Store}
+  alias Ezagent.Agent.CreationInventory
+  alias EzagentCore.Repo
+
+  setup do
+    # ReconcilerBoot scans the global durable queue. Umbrella tests in earlier
+    # apps may legitimately leave committed recovery fixtures behind, so make
+    # this test's sandbox view explicit instead of assuming an empty database.
+    Repo.delete_all(Provision)
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :task_workspace_git_runner,
+      EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner
+    )
+
+    Application.put_env(
+      :ezagent_domain_workspace,
+      :task_workspace_retirement,
+      EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceRetirement
+    )
+
+    Application.put_env(:ezagent_domain_workspace, :provisioner_test_verify_absent_result, :ok)
+
+    on_exit(fn ->
+      for key <- [
+            :provisioner_test_owner,
+            :task_workspace_git_runner,
+            :task_workspace_retirement,
+            :task_workspace_retirement_hook,
+            :provisioner_test_verify_absent_result
+          ],
+          do: Application.delete_env(:ezagent_domain_workspace, key)
+    end)
+
+    :ok
+  end
+
+  test "boot recovery is a temporary bounded one-shot child" do
+    assert %{restart: :temporary} = ReconcilerBoot.child_spec([])
+    assert {:ok, pid} = ReconcilerBoot.start_link(limit: 1)
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :normal}
+  end
+
+  test "production application declares the one-shot recovery child" do
+    source =
+      File.read!(Path.expand("../../../../lib/ezagent_domain_workspace/application.ex", __DIR__))
+
+    assert source =~ "Ezagent.Workspace.TaskWorkspace.ReconcilerBoot"
+  end
+
+  test "one-shot boot waits once for an active orphan lease and recovers it" do
+    {:ok, row} = Store.create_planned(attrs())
+    {:ok, _claimed} = Store.claim_provision(row.id, now: at(0), lease_seconds: 30)
+    Process.put(:recovery_times, [at(0), at(31)])
+
+    result =
+      ReconcilerBoot.run(
+        limit: 1,
+        now_fun: fn ->
+          [now | rest] = Process.get(:recovery_times)
+          Process.put(:recovery_times, rest)
+          now
+        end,
+        wait_fun: fn milliseconds ->
+          send(self(), {:waited_once, milliseconds})
+          :ok
+        end
+      )
+
+    assert_receive {:waited_once, milliseconds}
+    assert milliseconds == 30_001
+    assert result.second.cleaned == 1
+    assert Repo.get!(Provision, row.id).status == :cleaned
+  end
+
+  test "one-shot boot defers to an active start lease in the bounded window" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    {:ok, starting} =
+      row
+      |> Provision.transition_changeset(%{
+        status: :starting,
+        state_version: 1,
+        start_token_consumed_at: at(0),
+        start_claim_token: "boot-start-claim",
+        start_lease_until: at(30),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-active-attempt",
+        provenance_root_uri: root_uri()
+      })
+      |> Repo.update()
+
+    Process.put(:recovery_times, [at(0), at(31)])
+
+    result =
+      ReconcilerBoot.run(
+        limit: 1,
+        now_fun: fn ->
+          [now | rest] = Process.get(:recovery_times)
+          Process.put(:recovery_times, rest)
+          now
+        end,
+        wait_fun: fn milliseconds ->
+          send(self(), {:waited_for_start, milliseconds})
+          :ok
+        end
+      )
+
+    assert_receive {:waited_for_start, 30_001}
+    assert result.second.cleaned == 1
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+  end
+
+  test "supervised boot process recovers expired starting after restart" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    {:ok, starting} =
+      row
+      |> Provision.transition_changeset(%{
+        status: :starting,
+        state_version: 1,
+        start_token_consumed_at: at(0),
+        start_claim_token: "restart-start-claim",
+        start_lease_until: at(1),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-restart-attempt",
+        provenance_root_uri: root_uri()
+      })
+      |> Repo.update()
+
+    record_receipt(starting)
+
+    parent = self()
+
+    Application.put_env(:ezagent_domain_workspace, :task_workspace_retirement_hook, fn ->
+      send(parent, {:boot_retiring, self()})
+
+      receive do
+        :continue -> :ok
+      end
+    end)
+
+    {:ok, supervisor} =
+      Supervisor.start_link(
+        [{ReconcilerBoot, limit: 1, now_fun: fn -> at(2) end}],
+        strategy: :one_for_one
+      )
+
+    assert_receive {:boot_retiring, boot_pid}
+    assert Process.alive?(boot_pid)
+    send(boot_pid, :continue)
+    ref = Process.monitor(boot_pid)
+    assert_receive {:DOWN, ^ref, :process, ^boot_pid, :normal}
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+    Supervisor.stop(supervisor)
+  end
+
+  test "supervised boot process waits for active starting then runs its second pass" do
+    {:ok, row} = Store.create_planned(attrs())
+
+    {:ok, starting} =
+      row
+      |> Provision.transition_changeset(%{
+        status: :starting,
+        state_version: 1,
+        start_token_consumed_at: at(0),
+        start_claim_token: "active-start-claim",
+        start_lease_until: at(30),
+        agent_uri: agent_uri(),
+        creation_attempt_id: "boot-wait-attempt",
+        provenance_root_uri: root_uri()
+      })
+      |> Repo.update()
+
+    record_receipt(starting)
+
+    {:ok, clock} = Agent.start_link(fn -> [at(0), at(31)] end)
+    parent = self()
+
+    now_fun = fn -> Agent.get_and_update(clock, fn [now | rest] -> {now, rest} end) end
+
+    wait_fun = fn milliseconds ->
+      send(parent, {:supervised_boot_waiting, self(), milliseconds})
+
+      receive do
+        :continue -> :ok
+      end
+    end
+
+    {:ok, supervisor} =
+      Supervisor.start_link(
+        [{ReconcilerBoot, limit: 1, now_fun: now_fun, wait_fun: wait_fun}],
+        strategy: :one_for_one
+      )
+
+    assert_receive {:supervised_boot_waiting, boot_pid, 30_001}
+    send(boot_pid, :continue)
+    ref = Process.monitor(boot_pid)
+    assert_receive {:DOWN, ^ref, :process, ^boot_pid, :normal}
+    assert Repo.get!(Provision, starting.id).status == :cleaned
+    Supervisor.stop(supervisor)
+  end
+
+  defp attrs do
+    %{
+      provision_id: "boot-orphan",
+      workspace_uri: "workspace://boot-recovery-team",
+      task_uri: "resource://boot-recovery-team/kanban-task/task-one",
+      generation: 1,
+      task_access_uri: "entity://boot-recovery-team/worker/gta_#{String.duplicate("a", 64)}",
+      repository_uri: "resource://boot-recovery-team/git-repository/repository-one",
+      checkout_fingerprint: "fingerprint-one",
+      base_ref: "main",
+      allowed_head_ref: "task/one",
+      visibility: :public
+    }
+  end
+
+  defp at(seconds), do: DateTime.add(~U[2026-07-17 00:00:00.000000Z], seconds, :second)
+
+  defp agent_uri, do: "entity://boot-recovery-team/agent/worker"
+  defp root_uri, do: "entity://boot-recovery-team/user/owner"
+
+  defp record_receipt(row) do
+    assert {:ok, _} =
+             CreationInventory.record_exact(
+               Repo,
+               row.creation_attempt_id,
+               Ezagent.URI.new!(row.agent_uri),
+               Ezagent.URI.new!(row.provenance_root_uri),
+               Ezagent.URI.new!(row.workspace_uri)
+             )
+  end
+end

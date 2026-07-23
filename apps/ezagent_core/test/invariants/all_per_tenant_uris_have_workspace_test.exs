@@ -204,7 +204,7 @@ defmodule Ezagent.Invariants.AllPerTenantURIsHaveWorkspaceTest do
           dir
           |> File.ls!()
           |> Enum.reject(fn name ->
-            name in ["_build", "deps", "node_modules", ".elixir_ls"] or
+            name in ["_build", "deps", "node_modules", ".elixir_ls", "tmp"] or
               String.starts_with?(name, ".")
           end)
           |> Enum.flat_map(fn child -> walk_source_files(Path.join(dir, child)) end)

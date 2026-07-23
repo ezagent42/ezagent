@@ -19,6 +19,20 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
                            "apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex"
                          ])
 
+  # External-provider signing key material — e.g. a GitHub App's RS256 private
+  # key, used ONLY to mint that provider's own API tokens (the App JWT and
+  # installation tokens). This is NOT Ezagent capability-signing key material:
+  # the per-Kind Ed25519 authority key (#1457) never appears in plugin code.
+  # These files are exempt from the blunt `private_key` substring guard ONLY;
+  # the framework cap-signing tokens (Cap.Signing / Authority.sign /
+  # Authority.verify) below still hard-fail for them, so no plugin can reach
+  # Ezagent's own signing path.
+  @allowed_external_private_key MapSet.new([
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/config.ex",
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_app_jwt.ex",
+                                  "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_credential_backend.ex"
+                                ])
+
   test "the central verifier decision dominates an executed handler" do
     uri = unique_uri("dominance")
     presenter = admin()
@@ -159,17 +173,24 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
       domain_or_plugin
       |> Enum.filter(fn file ->
         source = File.read!(file)
+        rel = relative(file)
 
-        Enum.any?(
-          [
-            "Ezagent.Cap.Signing",
-            "Cap.Signing",
-            "Authority.sign(",
-            "Authority.verify(",
-            "private_key"
-          ],
-          &String.contains?(source, &1)
-        )
+        framework_signing? =
+          Enum.any?(
+            [
+              "Ezagent.Cap.Signing",
+              "Cap.Signing",
+              "Authority.sign(",
+              "Authority.verify("
+            ],
+            &String.contains?(source, &1)
+          )
+
+        external_private_key? =
+          String.contains?(source, "private_key") and
+            not MapSet.member?(@allowed_external_private_key, rel)
+
+        framework_signing? or external_private_key?
       end)
       |> Enum.map(&relative/1)
 
@@ -186,12 +207,42 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
              Enum.join(introspection_offenders, "\n")
   end
 
-  test "post-verifier issuance and target verification have singular call sites" do
+  test "post-verifier issuance and target verification have exact reviewed call sites" do
     issue_callers = source_callers("Authority.issue_current(")
     assert issue_callers == ["apps/ezagent_core/lib/ezagent/cap/grant.ex"]
 
     verify_callers = source_callers("Authority.verify_current(")
-    assert verify_callers == ["apps/ezagent_core/lib/ezagent/cap/verifier.ex"]
+
+    assert verify_callers == [
+             "apps/ezagent_core/lib/ezagent/cap.ex",
+             "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+           ]
+
+    durable_verify_callers = source_callers("Authority.verify_durable_current(")
+
+    assert durable_verify_callers == [
+             "apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex"
+           ]
+
+    public_authority_callers = source_callers("KindCapAuthority.active_public(")
+
+    assert public_authority_callers == [
+             "apps/ezagent_core/lib/ezagent/cap/authority.ex"
+           ]
+
+    cap_source = File.read!(absolute("apps/ezagent_core/lib/ezagent/cap.ex"))
+    assert cap_source =~ "def validate_for_current_target("
+    assert cap_source =~ "Authority.verify_current(artifact, receiver)"
+
+    cold_validator =
+      File.read!(absolute("apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex"))
+
+    assert cold_validator =~ "Authority.verify_durable_current(target, artifact, receiver)"
+    refute cold_validator =~ "LocalRuntime"
+    refute cold_validator =~ "SpawnRegistry"
+    refute cold_validator =~ "Kind.spawn"
+    refute cold_validator =~ "Invocation.dispatch"
+    refute cold_validator =~ "Cap.issue"
 
     signing_sites =
       product_sources()
@@ -206,6 +257,8 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
     |> Enum.filter(&(File.read!(&1) =~ needle))
     |> Enum.map(&relative/1)
   end
+
+  defp absolute(relative), do: Path.join(@root, relative)
 
   defp privileged_introspection?(file) do
     with {:ok, ast} <- file |> File.read!() |> Code.string_to_quoted() do

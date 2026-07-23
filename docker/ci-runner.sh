@@ -1,14 +1,22 @@
 #!/usr/bin/env bash
 # ezagent local-ubuntu-CI runner — runs INSIDE the docker/Dockerfile.ci container.
 #
-# Two modes (first arg, default "gate"):
-#   gate    Run the EXACT CI gate once (`mix ci.local`): the same chain CI runs
-#           (deps.get -> pnpm install -> ecto.create/migrate -> precommit ->
-#           check_invariants). Use to pre-verify a branch is CI-green from linux.
-#   repro   Hunt the ubuntu-only timing flake: loop the full-umbrella `mix test`
-#           across a seed sweep until a flake fires (or the budget runs out).
-#           This is the whole point — macOS cannot reproduce these races.
-#   shell   Drop into bash (debug the container).
+# Modes (first arg, default "gate"):
+#   gate       The LIGHTWEIGHT deterministic backend gate — BYTE-IDENTICAL to the
+#              `.github/workflows/ci.yml` `gate` job step chain: deps.get ->
+#              compile --warnings-as-errors --force -> world.e2e.fixtures --check ->
+#              format --check-formatted -> ecto.create/migrate -> check_invariants ->
+#              socialware.check -> arch/invariant ExUnit subset (5 paths) ->
+#              reflow-rehearsal (2 paths). NOT the full suite, so it is fast + stable.
+#              This is what the dockerized ci.yml `gate` job runs on every PR.
+#   full-suite Run the EXACT end-to-end `mix ci.local` (deps.get -> pnpm install ->
+#              ecto.create/migrate -> precommit [compile + format + FULL test suite] ->
+#              check_invariants -> socialware.check). The honest gate: `finalize_ci_local`
+#              halt(1) on any recorded failure. Mirrors the ci.yml `full-suite` job.
+#   repro      Hunt the ubuntu-only timing flake: loop the full-umbrella `mix test`
+#              across a seed sweep until a flake fires (or the budget runs out).
+#              This is the whole point — macOS cannot reproduce these races.
+#   shell      Drop into bash (debug the container).
 #
 # Core-constraint (the flake engine) is set on the CONTAINER via `--cpuset-cpus`
 # in docker-compose.ci.yml (affinity → BEAM sees N cores → starts N schedulers;
@@ -63,15 +71,48 @@ prepare_db() {
   mix ecto.migrate --quiet
 }
 
+# Run one gate step; abort the whole mode (non-zero exit → failed CI job) on the
+# FIRST failure, mirroring how the native ci.yml gate fails on the first red step.
+# (The script header uses `set -uo pipefail`, NOT `-e`, so make failure explicit.)
+step() {
+  echo; echo "==> $*"
+  "$@"; local rc=$?
+  if [ "$rc" -ne 0 ]; then echo "!! gate step FAILED (rc=$rc): $*" >&2; exit "$rc"; fi
+}
+
 case "$MODE" in
   shell)
     exec bash ;;
 
   gate)
     env_banner; wait_for_pg || exit 1
+    # LIGHTWEIGHT deterministic gate — BYTE-IDENTICAL to the ci.yml `gate` job's step
+    # chain (keep in sync). Deps/assets are pre-warmed in the base image; the project
+    # itself is force-recompiled here (the base compiles DEPS only). Each `step` aborts
+    # the mode on first failure, so a red step fails the dockerized gate job.
+    step mix deps.get
+    step mix compile --warnings-as-errors --force
+    step mix world.e2e.fixtures --check
+    step mix format --check-formatted
+    step mix ecto.create --quiet
+    step mix ecto.migrate --quiet
+    step mix ezagent.check_invariants
+    step mix ezagent.socialware.check
+    # Arch/invariant ExUnit subset (5 paths). SINGLE SOURCE: `mix gate.arch` reads
+    # `@arch_invariant_test_paths` in `mix.exs`, the SAME list `mix ci.fast` (the
+    # local fast gate) runs — so this CI step and the dev alias can never drift.
+    step mix gate.arch
+    step mix test --include reflow_rehearsal \
+      apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs \
+      apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+    echo; echo "==> gate GREEN (all deterministic steps passed)"
+    exit 0 ;;
+
+  full-suite)
+    env_banner; wait_for_pg || exit 1
     # `mix ci.local` does deps.get + pnpm install + ecto.create/migrate + precommit +
-    # check_invariants itself — the exact CI chain. (deps/assets are pre-warmed in the
-    # image, so this is fast on re-runs.)
+    # check_invariants itself — the exact CI chain. Honest gate: finalize_ci_local
+    # halt(1) on any recorded failure. (deps/assets are pre-warmed in the image.)
     exec mix ci.local ;;
 
   repro)
@@ -122,5 +163,5 @@ case "$MODE" in
     [ "$hits" -gt 0 ] && exit 0 || exit 3 ;;
 
   *)
-    echo "unknown mode: $MODE (use: gate | repro | shell)" >&2; exit 64 ;;
+    echo "unknown mode: $MODE (use: gate | full-suite | repro | shell)" >&2; exit 64 ;;
 esac

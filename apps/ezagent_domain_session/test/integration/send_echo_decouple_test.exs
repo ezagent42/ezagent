@@ -155,7 +155,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
     [{"entity", original_entity_fn}] = :ets.lookup(SpawnRegistry.table(), "entity")
     once_guard = :atomics.new(1, [])
 
-    slow_fn = fn %URI{} = uri ->
+    slow_fn = fn %URI{} = uri, opts ->
       if URI.to_string(uri) == URI.to_string(member) do
         case mode do
           :every ->
@@ -169,7 +169,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
         end
       end
 
-      original_entity_fn.(uri)
+      original_entity_fn.(uri, opts)
     end
 
     :ok = SpawnRegistry.register("entity", slow_fn)

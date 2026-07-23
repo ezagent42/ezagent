@@ -559,26 +559,46 @@ defmodule Ezagent.World.ConversationActions do
   # `instances` list. Zero boards → just the empty `instances` + `active_view`
   # (frontend renders its own empty/config state). fail-safe: any error falls back
   # to a plain active_view switch so the tab never wedges.
-  defp view_switch_updates(socket, %URI{} = session_uri, "kanban_board") do
-    ctx = Ezagent.World.KanbanActions.read_ctx(socket)
-    boards = Ezagent.World.KanbanData.session_boards(session_uri, ctx)
-    base = %{"active_view" => "kanban_board", "instances" => boards}
+  defp view_switch_updates(socket, %URI{} = session_uri, view) do
+    case Ezagent.World.PluginPageRegistry.by_session_view(view) do
+      %{session_view: %{state_builder: builder}} ->
+        case session_view_state(builder, session_uri, session_view_ctx(socket)) do
+          {:ok, state} -> Map.put(state, "active_view", view)
+          :error -> builtin_view_switch_updates(session_uri, view)
+        end
 
-    with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
-         {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do
-      base
-      |> Map.merge(Ezagent.World.KanbanData.board_state(board_uri, ctx))
-      |> Map.merge(%{"active_view" => "kanban_board", "instances" => boards})
-    else
-      _ -> base
+      nil ->
+        builtin_view_switch_updates(session_uri, view)
     end
-  rescue
-    _ -> %{"active_view" => "kanban_board"}
-  catch
-    _, _ -> %{"active_view" => "kanban_board"}
   end
 
-  defp view_switch_updates(_socket, _session_uri, view), do: %{"active_view" => view}
+  defp session_view_state(builder, session_uri, ctx) do
+    case apply(builder, :session_state_for, [session_uri, ctx]) do
+      state when is_map(state) -> {:ok, state}
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+
+  defp session_view_ctx(socket) do
+    %{
+      caller_uri: socket.assigns.current_entity_uri,
+      caller_caps: Ezagent.World.PresenterCaps.load(socket),
+      workspace_uri: socket.assigns.current_workspace_uri
+    }
+  end
+
+  defp builtin_view_switch_updates(%URI{} = session_uri, "external_mirror") do
+    %{
+      "active_view" => "external_mirror",
+      "bindings" => Ezagent.World.AdminData.external_mirror_bindings_for(session_uri)
+    }
+  end
+
+  defp builtin_view_switch_updates(_session_uri, view), do: %{"active_view" => view}
 
   @doc """
   Switch the conversation panel to the PTY view for a member agent.

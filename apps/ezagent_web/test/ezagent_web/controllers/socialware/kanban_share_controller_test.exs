@@ -21,7 +21,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
   alias Ezagent.Socialware.MountRow
-  alias Ezagent.World.KanbanActions
+  alias EzagentPluginKanban.WorldActions, as: KanbanActions
   alias EzagentPluginHello.PublishedBoardRef
   alias EzagentWeb.Socialware.KanbanPublishedReadAdapter
   alias EzagentPluginKanban.Application, as: KanbanApp
@@ -214,16 +214,31 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
   defp s(%URI{} = uri), do: URI.to_string(uri)
 
   defp share_socket(%{caller: %URI{} = caller, caps: caps}) do
-    %Phoenix.LiveView.Socket{endpoint: @endpoint}
-    |> Phoenix.Component.assign(:current_entity_uri, caller)
-    |> Phoenix.Component.assign(:current_caps, caps)
-    |> Phoenix.Component.assign(:current_workspace_uri, workspace_of(caller))
+    socket =
+      %Phoenix.LiveView.Socket{endpoint: @endpoint}
+      |> Phoenix.Component.assign(:current_entity_uri, caller)
+      |> Phoenix.Component.assign(:current_caps, caps)
+      |> Phoenix.Component.assign(:current_workspace_uri, workspace_of(caller))
+
+    # Mirror how world_live / KanbanPublishedReadAdapter inject the presenter's
+    # caps before reaching `WorldActions.share_link/2` (#1476): the plugin reads
+    # the `:presenter_caps` assign, never `Ezagent.World.PresenterCaps` directly.
+    Phoenix.Component.assign(
+      socket,
+      :presenter_caps,
+      Ezagent.World.PresenterCaps.load(socket)
+    )
   end
 
   # entity://<ws>/user/... → workspace://<ws>（read_ctx 需要 current_workspace_uri）。
   defp workspace_of(%URI{host: ws}), do: URI.new!("workspace://#{ws}")
 
   defp sign_in(conn, ws, %URI{} = entity_uri) do
+    case Ezagent.Users.get_by_uri(entity_uri) do
+      nil -> {:ok, _user} = Ezagent.Users.create(URI.to_string(entity_uri), nil, [])
+      _user -> :ok
+    end
+
     Plug.Test.init_test_session(conn, %{
       "current_entity_uri" => URI.to_string(entity_uri),
       "current_workspace_uri" => "workspace://" <> ws

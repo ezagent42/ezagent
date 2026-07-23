@@ -4,6 +4,8 @@ defmodule Ezagent.Agent.CreationInventoryEntry do
   use Ecto.Schema
   import Ecto.Changeset
 
+  @type t :: %__MODULE__{}
+
   schema "agent_creation_inventory" do
     field(:creation_attempt_id, :string)
     field(:agent_uri, :string)
@@ -20,5 +22,6 @@ defmodule Ezagent.Agent.CreationInventoryEntry do
     |> unique_constraint([:creation_attempt_id, :agent_uri],
       name: :agent_creation_inventory_attempt_agent_index
     )
+    |> unique_constraint(:agent_uri, name: :agent_creation_inventory_agent_winner_index)
   end
 end

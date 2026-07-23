@@ -173,6 +173,17 @@ defmodule Ezagent.World.ConversationActionsTest do
 
       assert bad_socket.assigns.last_dispatch_status == "error:bad_view"
     end
+
+    test "loads bindings when switching to the external mirror view", %{session: session} do
+      :ok = Ezagent.UI.SessionViewRegistry.register(EzagentDomainUi.ExternalMirror.View)
+      socket = build_socket(current_entity_uri: Ezagent.URI.user("acme", "admin"))
+
+      assert {:noreply, switched_socket} =
+               ConversationActions.switch_view(socket, session, "external_mirror")
+
+      assert switched_socket.assigns.world_state["active_view"] == "external_mirror"
+      assert switched_socket.assigns.world_state["bindings"] == []
+    end
   end
 
   # Minimal LiveView socket stub: enough assigns for switch_view + push_world_state

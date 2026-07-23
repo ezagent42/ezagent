@@ -23,7 +23,7 @@ defmodule Ezagent.SpawnRegistry do
 
   ## Idempotency
 
-  `spawn/1` is safe to re-call for a URI that's already alive — it
+  `spawn/1,2` is safe to re-call for a URI that's already alive — it
   looks up `KindRegistry` first and returns `{:ok, pid}` for the
   existing process. This matters because Loader runs at app start
   and plugins may also spawn their own canonical Kinds (admin User,
@@ -32,15 +32,15 @@ defmodule Ezagent.SpawnRegistry do
   `spawn/1` collapses "this call started it" and "it already existed"
   into one `{:ok, pid}`. A caller that needs the distinction — e.g.
   `update_agent_template`'s rollback-safe swap, which must NOT adopt a
-  worker another process created — uses `spawn_detailed/1`, which
+  worker another process created — uses `spawn_detailed/1,2`, which
   preserves the atomic `DynamicSupervisor` outcome
   (`{:ok, :started, pid}` vs `{:ok, :already_started, pid}`).
 
   ## ETS layout
 
   `:ezagent_spawn_registry` set table owned by `EzagentCore.EtsOwner`. Keys
-  are scheme strings (e.g. `"entity"`), values are 1-arity functions
-  taking a `%URI{}`.
+  are scheme strings (e.g. `"entity"`), values are one-arity functions
+  taking a `%URI{}` or two-arity functions taking the URI and runtime options.
   """
 
   @table :ezagent_spawn_registry
@@ -60,8 +60,13 @@ defmodule Ezagent.SpawnRegistry do
   cannot write directly to `:ezagent_scheme_registry` ETS in normal
   code, so any new scheme has a registered spawn fn to back it.
   """
-  @spec register(String.t(), (URI.t() -> {:ok, pid()} | {:error, term()})) :: :ok
-  def register(scheme, spawn_fn) when is_binary(scheme) and is_function(spawn_fn, 1) do
+  @type spawn_fun ::
+          (URI.t() -> {:ok, pid()} | {:error, term()})
+          | (URI.t(), keyword() -> {:ok, pid()} | {:error, term()})
+
+  @spec register(String.t(), spawn_fun()) :: :ok
+  def register(scheme, spawn_fn)
+      when is_binary(scheme) and (is_function(spawn_fn, 1) or is_function(spawn_fn, 2)) do
     :ets.insert(@table, {scheme, spawn_fn})
     :ok = Ezagent.URI.SchemeRegistry.register(scheme)
     :ok
@@ -69,6 +74,10 @@ defmodule Ezagent.SpawnRegistry do
 
   @doc """
   Spawn (or look up an existing) Kind at the given URI.
+
+  The option-bearing form accepts only `:launch_context`. Unknown options fail
+  closed. A legacy arity-one registration is used only with empty options;
+  supplying launch context to it returns `{:error, :launch_context_unsupported}`.
 
   Returns `{:ok, pid}` either way. `{:error, :no_spawn_fn}` if no
   plugin registered the URI's scheme.
@@ -92,9 +101,9 @@ defmodule Ezagent.SpawnRegistry do
   distinguishes cases 2 and 3 atomically; `spawn_detailed/1` preserves
   that distinction instead of collapsing it.
   """
-  @spec spawn(URI.t()) :: {:ok, pid()} | {:error, term()}
-  def spawn(%URI{scheme: scheme} = uri) when is_binary(scheme) do
-    case spawn_detailed(uri) do
+  @spec spawn(URI.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def spawn(%URI{scheme: scheme} = uri, opts \\ []) when is_binary(scheme) and is_list(opts) do
+    case spawn_detailed(uri, opts) do
       {:ok, _started_or_adopted, pid} -> {:ok, pid}
       {:error, _} = err -> err
     end
@@ -147,6 +156,9 @@ defmodule Ezagent.SpawnRegistry do
   Spawn (or look up an existing) Kind at the given URI, PRESERVING the
   atomic "this call won the start" signal.
 
+  `spawn_detailed/2` validates the frozen `:launch_context` option surface;
+  unsupported options are returned as an error before lookup or invocation.
+
   This is the structural fix for codex round-6 HIGH-1: the freshness
   of a worker MUST come from the atomic spawn result, never from a
   pre-probe of `KindRegistry` (a pre-probe is a TOCTOU window — a
@@ -170,15 +182,17 @@ defmodule Ezagent.SpawnRegistry do
   resolves it atomically: exactly one concurrent caller gets
   `{:ok, :started, _}`, every other gets `{:ok, :already_started, _}`.
   """
-  @spec spawn_detailed(URI.t()) ::
+  @spec spawn_detailed(URI.t(), keyword()) ::
           {:ok, :started | :already_started, pid()} | {:error, term()}
-  def spawn_detailed(%URI{scheme: scheme} = uri) when is_binary(scheme) do
-    with :ok <- Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:spawn, uri}) do
-      do_spawn_detailed(uri, scheme)
+  def spawn_detailed(%URI{scheme: scheme} = uri, opts \\ [])
+      when is_binary(scheme) and is_list(opts) do
+    with {:ok, opts} <- Keyword.validate(opts, [:launch_context]),
+         :ok <- Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:spawn, uri}) do
+      do_spawn_detailed(uri, scheme, opts)
     end
   end
 
-  defp do_spawn_detailed(%URI{} = uri, scheme) do
+  defp do_spawn_detailed(%URI{} = uri, scheme, opts) do
     case Ezagent.KindRegistry.lookup(uri) do
       {:ok, pid} ->
         {:ok, :already_started, pid}
@@ -186,7 +200,7 @@ defmodule Ezagent.SpawnRegistry do
       :error ->
         case :ets.lookup(@table, scheme) do
           [{^scheme, fun}] ->
-            case fun.(uri) do
+            case invoke_spawn_fun(fun, uri, opts) do
               {:ok, pid} -> {:ok, :started, pid}
               {:error, {:already_started, pid}} -> {:ok, :already_started, pid}
               {:error, _} = err -> err
@@ -198,6 +212,12 @@ defmodule Ezagent.SpawnRegistry do
         end
     end
   end
+
+  defp invoke_spawn_fun(fun, uri, opts) when is_function(fun, 2), do: fun.(uri, opts)
+  defp invoke_spawn_fun(fun, uri, []) when is_function(fun, 1), do: fun.(uri)
+
+  defp invoke_spawn_fun(fun, _uri, [_ | _]) when is_function(fun, 1),
+    do: {:error, :launch_context_unsupported}
 
   @doc "List registered URI schemes (for debugging / mix tasks)."
   @spec registered_schemes() :: [String.t()]

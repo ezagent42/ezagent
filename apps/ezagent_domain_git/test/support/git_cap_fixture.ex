@@ -1,0 +1,92 @@
+defmodule Ezagent.DomainGit.TestSupport.GitCapFixture do
+  @moduledoc false
+
+  alias Ezagent.{Cap, Capability, Invocation}
+
+  @workspace_name "git-fixture"
+  @task_access_id "task-7"
+  @actions [
+    :resolve_repository,
+    :create_change_request,
+    :read_change_request,
+    :list_checks,
+    :list_reviews
+  ]
+
+  def coordinates(options \\ []) when is_list(options) do
+    options =
+      Keyword.validate!(options,
+        workspace_name: @workspace_name,
+        task_access_id: @task_access_id,
+        grantee_uri: nil
+      )
+
+    workspace_name = Keyword.fetch!(options, :workspace_name)
+    task_access_id = Keyword.fetch!(options, :task_access_id)
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+    task_access_uri = Ezagent.URI.worker(workspace_name, "gta_#{digest(task_access_id)}")
+
+    grantee_uri =
+      Keyword.get(options, :grantee_uri) ||
+        Ezagent.URI.entity(workspace_name, "agent", "task-worker")
+
+    if Ezagent.URI.entity_workspace_uri(grantee_uri) != workspace_uri do
+      raise ArgumentError, "grantee_uri must belong to the fixture workspace"
+    end
+
+    %{
+      governance_uri: Ezagent.URI.user(:system, :admin),
+      grantee_uri: grantee_uri,
+      task_access_uri: task_access_uri,
+      workspace_uri: workspace_uri
+    }
+  end
+
+  def bind_policy(coordinates, %Ezagent.Entity.GitTaskAccess{} = policy) do
+    %{coordinates | task_access_uri: Ezagent.Entity.GitTaskAccess.uri_from_args(policy)}
+  end
+
+  def exact_task_cap(coordinates, action) when action in @actions and is_map(coordinates) do
+    %{
+      governance_uri: admin_uri,
+      grantee_uri: grantee_uri,
+      task_access_uri: task_access_uri,
+      workspace_uri: workspace_uri
+    } = coordinates
+
+    authorization = {:admin, admin_uri}
+
+    capability =
+      Capability.cap(
+        :git_task_access,
+        Ezagent.ActionSet.GitTaskAccess,
+        action,
+        Ezagent.URI.instance(task_access_uri),
+        workspace_uri
+      )
+
+    {:ok, artifact} = Cap.issue(authorization, grantee_uri, capability)
+    true = Cap.storable_for?(artifact, grantee_uri)
+
+    invocation = %Invocation{
+      target: Ezagent.URI.with_action(task_access_uri, :git_task_access, action),
+      mode: :call,
+      args: %{},
+      origin: :trusted_internal,
+      ctx: %{
+        caller: grantee_uri,
+        caps: MapSet.new([artifact]),
+        reply: {:caller_inbox, self()}
+      }
+    }
+
+    Map.merge(coordinates, %{
+      artifact: artifact,
+      invocation: invocation
+    })
+  end
+
+  defp digest(value) do
+    :sha256 |> :crypto.hash(value) |> Base.encode16(case: :lower)
+  end
+end

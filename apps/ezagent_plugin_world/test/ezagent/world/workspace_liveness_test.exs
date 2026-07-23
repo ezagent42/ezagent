@@ -147,6 +147,11 @@ defmodule Ezagent.World.WorkspaceLivenessTest do
     row = Enum.find(detail["socialwares"], &(&1["name"] == definition_name))
     second_row = Enum.find(detail["socialwares"], &(&1["name"] == second_definition_name))
 
+    assert detail["agent_flavors"] ==
+             Ezagent.AgentFlavorRegistry.list_all()
+             |> Enum.map(fn {flavor, _declaration} -> flavor end)
+             |> Enum.sort()
+
     assert row["title"] == "Template catalog fixture"
     assert second_row["title"] == "Extra template catalog fixture"
 

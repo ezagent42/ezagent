@@ -63,6 +63,17 @@ defmodule Ezagent.World.WorkspacePluginData do
     Map.put(base, "kb_agents", kb_agent_rows(workspace_uri))
   end
 
+  defp component_state(%{component: "market"}, base, workspace_uri, _caller, _caps) do
+    # PR-5 §15 — the market browse surface. HARD RULE: the card list comes from
+    # `socialware_rows/1` (the `DefinitionRegistry.list/1`-scoped single source),
+    # never a raw ConfigStore scan, so a private foreign def can never leak onto
+    # the page. Retracted defs are already filtered by `list/1`.
+    base
+    |> Map.put("socialwares", socialware_rows(workspace_uri))
+    |> Map.put("market_notice", nil)
+    |> Map.put("market_error", nil)
+  end
+
   defp component_state(%{component: "plugins"} = route, base, _workspace_uri, _caller, _caps) do
     base
     |> Map.put("plugins", list_plugins())
@@ -172,7 +183,8 @@ defmodule Ezagent.World.WorkspacePluginData do
           "members" => Enum.map(ws.members || [], &encode_uri/1),
           "session_templates" => template_rows(ws.session_templates || %{}, ws.name, caller),
           "routing_rules" => Enum.map(ws.routing_rules || [], &jsonable/1),
-          "socialwares" => socialware_rows(ws.uri)
+          "socialwares" => socialware_rows(ws.uri),
+          "agent_flavors" => agent_flavors()
         }
         |> Map.merge(invite_state(ws.uri, caller, caps))
     end
@@ -181,6 +193,12 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp workspace_detail(_, _caller, _caps), do: %{"not_found" => true}
+
+  defp agent_flavors do
+    Ezagent.AgentFlavorRegistry.list_all()
+    |> Enum.map(fn {flavor, _declaration} -> flavor end)
+    |> Enum.sort()
+  end
 
   defp invite_state(%URI{} = workspace_uri, %URI{} = caller, caps) do
     case Ezagent.Workspace.Invites.list(workspace_uri, %{

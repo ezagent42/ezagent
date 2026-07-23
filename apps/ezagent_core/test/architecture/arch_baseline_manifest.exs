@@ -84,7 +84,18 @@
   #   extracting them, and latest main measured modules above 1000 the manifest had
   #   not yet recorded. Record the live baseline rather than attributing unrelated
   #   module growth to this feature; the exact count is gate-measured.
-  oversized_modules_gt_1000: 5,
+  # arch-cap-bump: rebasing Plan C's audited atomic launch boundary onto the
+  #   cap-signing/G5 main baseline leaves seven pre-existing oversized modules.
+  # arch-cap-bump: +1 #1455/#1513 — pty/server.ex cmd_env secret-redaction
+  #   security fix. The +36-line redaction chokepoint (format_status/2 GenServer
+  #   callback + redact_cmd_env/1 + scrub_state/1) scrubs vendor API keys
+  #   (ANTHROPIC_AUTH_TOKEN, EZAGENT_AGENT_TOKEN, …) from OTP crash reports so
+  #   they never reach logs. It pushed ezagent_domain_pty/server.ex from exactly
+  #   1000 → 1036 LOC, crossing the >1000 threshold. Intentional, security-
+  #   justified growth (not bloat); burn-down = extract the redaction helpers
+  #   into a sibling module. 7→8 (on the #1445 seven-module baseline: the
+  #   redaction adds server.ex as the eighth oversized module).
+  oversized_modules_gt_1000: 8,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
@@ -229,8 +240,11 @@
   #   `&Ezagent.Workspace.create_session/3` function CAPTURE — which grep never
   #   matched either — is not a call site). The cap sat 1 above grep-current (5);
   #   AST measures the true call-site count (5) so the loose ratchet is tightened.
-  create_session_call_sites: 5,
-  create_session_modules: 5,
+  # PR-5 (market surface): market_actions.ex reuses the owner-gated
+  # `ConversationActions.create_session/6` facade for install — one new call site
+  # in one new module (a sanctioned facade reuse, not a raw spawn / bypass).
+  create_session_call_sites: 6,
+  create_session_modules: 6,
   duplicated_resolve_template_class: 1,
   # FF-1 (cleanup-1): groups of ≥2 lib files sharing a byte-identical
   # (whitespace-normalized, ≥120-char) function. Functions are extracted per
@@ -309,6 +323,16 @@
   #   extraction, so the cap ratchets to the real value. 46→42. NOTE: when
   #   dealscout (#1264) lands, its Demo.Crawler copy switches to
   #   ShippedManifest in S2 — re-measure then.
+  # ratchet 43→42 #1476 — the #1472 cap-bump duplicate DISSOLVED. It was the
+  #   read-side ctx builder duplicated across `ezagent_plugin_kanban/world_actions.ex`
+  #   (`read_ctx/1`) and `ezagent_plugin_world/conversation_actions.ex`
+  #   (`session_view_ctx/1`), both bodies calling
+  #   `caller_caps: Ezagent.World.PresenterCaps.load(socket)`. #1476 removed the
+  #   plugin→UI-host coupling by having world INJECT the presenter caps into a
+  #   `:presenter_caps` socket assign; kanban's `read_ctx/1` now reads
+  #   `caller_caps: presenter_caps(socket)` while world's `session_view_ctx/1`
+  #   still calls `PresenterCaps.load(socket)` — so the two bodies DIVERGE and the
+  #   duplicate group is gone. Back to main's pre-extraction value.
   cross_file_duplicate_fn_groups: 42,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
@@ -362,7 +386,9 @@
   #   provider logic itself lives in the sibling `Ezagent.PluginCc.Provider` +
   #   thin `CcDeepseekAgent`/`CcHeadlessDeepseekAgent` shims (separate files, not
   #   counted here). Measured 1766→1786.
-  cc_codex_template_class_combined_loc: 1786,
+  # arch-cap-bump: custom-backend templates now forward the Plan C launch receipt
+  #   option through their shared CC instantiate boundary.
+  cc_codex_template_class_combined_loc: 1787,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

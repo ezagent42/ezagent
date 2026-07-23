@@ -24,12 +24,7 @@ defmodule Ezagent.UriQuery.Scan do
 
   @affected_schemes ~w(entity session template resource workspace system)
   @per_tenant_schemes ~w(entity session template resource)
-  # External transport / protocol URL schemes legitimately in use (NOT ezagent
-  # addressing). This is the SINGLE authoritative allowlist — adding a new
-  # external URL scheme must be a deliberate edit here (forcing the author to
-  # declare "this is an external URL, not an ezagent URI"). The deleted
-  # `feishu://` scheme is intentionally EXCLUDED: feishu is reached via its
-  # `https://` API, not a `feishu://` URI (T1 project C).
+  # External transport/protocol URLs; additions must be explicitly classified.
   @external_url_allowlist ~w(postgresql unix http https ws test cc-bridge)
   @agent_flavor_prefixes ~w(cc_ codex_ curl_ echo_ np_)
   @known_categories [
@@ -54,9 +49,7 @@ defmodule Ezagent.UriQuery.Scan do
   @default_excluded_paths [
     "apps/ezagent_core/lib/ezagent/uri.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan.ex",
-    # The scan's own data/anchor modules: they embed literal `resource://` and
-    # `Home.path` text in moduledocs + anchor/baseline tables, which would
-    # otherwise self-trip the raw-URI and home-path categories.
+    # Scan data/anchor modules embed literals that would otherwise self-trip.
     "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_exceptions.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_baseline.ex",
     "apps/ezagent_core/lib/mix/tasks/ezagent.uri_query.scan.ex"
@@ -115,9 +108,7 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.flat_map(&Path.wildcard(Path.join(root, &1)))
     |> Enum.reject(&String.contains?(&1, "/_build/"))
     |> Enum.reject(&String.contains?(&1, "/deps/"))
-    # E2E scenario modules live under `lib/.../e2e/scenarios/` only so the running
-    # node loads them; they are TEST FIXTURES that legitimately build raw setup
-    # URIs (same latitude as `test/`). Exclude them from the production URI scan.
+    # Runtime-loaded E2E scenarios are test fixtures with raw setup URIs.
     |> Enum.reject(&String.contains?(&1, "/e2e/scenarios/"))
     |> Enum.uniq()
     |> Enum.sort()
@@ -168,21 +159,14 @@ defmodule Ezagent.UriQuery.Scan do
     |> Enum.reject(&is_nil/1)
   end
 
-  # ----------------------------------------------------------------------------
-  # home_path_in_runtime_code (Resource-unification P0.5)
-  #
   # Flags every `Ezagent.Home.path/1` / `Home.profile_dir/0` / `Home.home/0` call
   # in runtime app code, MINUS the line-anchored baseline (burn-down) and MINUS
   # the exact `Module.function/arity` exceptions. Anchor subtraction is by
   # enclosing-function identity (codex MEDIUM), never `{path, line}` alone.
-  # ----------------------------------------------------------------------------
-
   defp home_path_findings(ast, path, snippets, baseline, exceptions) do
     rel_path = normalize_path(path)
     fun_index = function_anchor_index(ast)
-    # Burn-down baseline tolerates AT MOST the recorded number of Home calls per
-    # anchored line (codex MEDIUM): a second call added on a baselined line is a
-    # NEW caller and must fire. Track remaining budget per line.
+    # A baseline tolerates only its recorded call count; extra calls still fire.
     baseline_budget = baseline_budget_for(baseline, rel_path)
 
     {findings, _budget} =
@@ -491,7 +475,7 @@ defmodule Ezagent.UriQuery.Scan do
         _other -> []
       end)
 
-    if :host in keys or :path in keys do
+    if (:host in keys or :path in keys) and not external_url_pattern?(pairs) do
       violation(
         :positional_uri_read,
         path,
@@ -503,6 +487,13 @@ defmodule Ezagent.UriQuery.Scan do
   end
 
   defp positional_uri_read_finding(_node, _path, _snippets), do: nil
+
+  defp external_url_pattern?(pairs) do
+    Enum.any?(pairs, fn
+      {:scheme, scheme} when scheme in ["http", "https"] -> true
+      _pair -> false
+    end)
+  end
 
   defp flavor_prefix_dependency_finding(
          {{:., meta, [{:__aliases__, _, [:String]}, :split]}, _, args},
@@ -601,7 +592,22 @@ defmodule Ezagent.UriQuery.Scan do
          path,
          snippets
        ) do
-    if string_split_on?(args, "/") do
+    if string_split_on?(args, "/") and tenant_bearing_split?(args) do
+      violation(
+        :tenant_derivation,
+        path,
+        line(meta),
+        "workspace/session/worker derivation from URI segments must be centralized in Ezagent.URI or Ezagent.UriQuery",
+        snippet(snippets, meta)
+      )
+    end
+  end
+
+  defp tenant_derivation_finding({kind, meta, [head, [do: body]]}, path, snippets)
+       when kind in [:def, :defp] do
+    uri_values = uri_pattern_values(head)
+
+    if direct_slash_split_of?(body, uri_values) do
       violation(
         :tenant_derivation,
         path,
@@ -623,6 +629,112 @@ defmodule Ezagent.UriQuery.Scan do
   end
 
   defp tenant_derivation_finding(_node, _path, _snippets), do: nil
+
+  # A slash split is reorder-sensitive only when it is interpreting an opaque
+  # ezagent address. Provider refs and relative filesystem paths are independent
+  # protocol values; treating every `String.split(value, "/")` as tenant
+  # derivation made the gate reject unrelated validation code.
+  defp tenant_bearing_split?([expression | _rest]) do
+    expression
+    |> Macro.to_string()
+    |> String.match?(~r/(?:uri|session|workspace|worker)/i)
+  end
+
+  defp tenant_bearing_split?(_args), do: false
+
+  defp uri_pattern_values(head) do
+    {_head, values} =
+      Macro.prewalk(head, MapSet.new(), fn
+        {:=, _, [{:%, _, [{:__aliases__, _, [:URI]}, _]}, {name, _, context}]} = node, acc
+        when is_atom(name) and is_atom(context) ->
+          {node, MapSet.put(acc, name)}
+
+        {:%, _, [{:__aliases__, _, [:URI]}, {:%{}, _, pairs}]} = node, acc ->
+          bound =
+            Enum.flat_map(pairs, fn
+              {_key, {name, _, context}} when is_atom(name) and is_atom(context) ->
+                [name]
+
+              {_key, {:<>, _, [_prefix, {name, _, context}]}}
+              when is_atom(name) and is_atom(context) ->
+                [name]
+
+              _pair ->
+                []
+            end)
+
+          {node, Enum.reduce(bound, acc, &MapSet.put(&2, &1))}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    values
+  end
+
+  defp direct_slash_split_of?(body, uri_values) do
+    {_body, {_values, found?}} =
+      Macro.prewalk(body, {uri_values, false}, fn
+        {:=, _,
+         [
+           {:%{}, _, [{:path, {name, _, context}}]},
+           {receiver, _, receiver_context}
+         ]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {:=, _,
+         [
+           {name, _, context},
+           {{:., _, [{:__aliases__, _, [:Map]}, fetch]}, _,
+            [
+              {receiver, _, receiver_context},
+              :path
+            ]}
+         ]} = node,
+        {values, found?}
+        when fetch in [:fetch, :fetch!] and is_atom(name) and is_atom(context) and
+               is_atom(receiver) and is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {:=, _,
+         [
+           {:ok, {name, _, context}},
+           {{:., _, [{:__aliases__, _, [:Map]}, :fetch]}, _,
+            [
+              {receiver, _, receiver_context},
+              :path
+            ]}
+         ]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {:=, _, [{name, _, context}, {{:., _, [{receiver, _, receiver_context}, :path]}, _, []}]} =
+            node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) and is_atom(receiver) and
+               is_atom(receiver_context) ->
+          next = if MapSet.member?(values, receiver), do: MapSet.put(values, name), else: values
+          {node, {next, found?}}
+
+        {{:., _, [{:__aliases__, _, [:String]}, :split]}, _, [{name, _, context}, "/" | _]} = node,
+        {values, found?}
+        when is_atom(name) and is_atom(context) ->
+          {node, {values, found? or MapSet.member?(values, name)}}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
 
   defp orchestrator_derivation_finding({name, meta, _args}, path, snippets)
        when name in [:derive_orchestrator_uri, :derive_orchestrator_instance_name] do

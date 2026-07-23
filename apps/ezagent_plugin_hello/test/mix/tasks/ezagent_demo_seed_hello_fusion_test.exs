@@ -19,7 +19,10 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedHelloFusionTest do
   test "prints the stable Fusion session and public URL" do
     output = capture_io(fn -> Mix.Task.run("ezagent.demo.seed_hello_fusion") end)
 
-    assert output =~ "session://system/hello/fusion"
+    # hello-A: the Fusion demo lives in the single-source hello HOME workspace
+    # (default "ezagent"), not the retired `system` pin.
+    home = EzagentPluginHello.home_workspace()
+    assert output =~ "session://#{home}/hello/fusion"
     assert output =~ "/hello/fusion"
   end
 end

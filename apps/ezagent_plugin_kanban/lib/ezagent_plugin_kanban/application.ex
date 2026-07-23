@@ -170,4 +170,46 @@ defmodule EzagentPluginKanban.Application do
   # 把它渲染成 Plugins 页可点入口。
   @impl Ezagent.Plugin
   def config_surface, do: %{kind: :route, path: "/plugins/kanban", label: "看板"}
+
+  @doc """
+  The kanban plugin's world-page SELF-declaration (#1472).
+
+  Optional, duck-typed plugin extension point (NOT a formal `Ezagent.Plugin`
+  callback): world's `Ezagent.World.PluginPageRegistry.load/0` discovers it via
+  `function_exported?(mod, :pages, 0)` across every registered plugin, then
+  validates each returned declaration fail-closed through
+  `Ezagent.World.UiSurfaceProvider.validate_page/1` before mounting it. This is
+  the de-hardcoding #1472 performs — the `/plugins/kanban` board page is
+  contributed BY this plugin instead of being baked into the world host.
+
+  Returns the single board page declaration: the index + detail routes, the nav
+  entry, `WorldData` as both data/state builder, the `kanban` renderer family
+  rendered by `assets/src/world_page.tsx` (`KanbanWorldPage`), and the board's
+  `kanban.*` actions dispatched through `WorldActions`.
+  """
+  @spec pages() :: [map()]
+  def pages do
+    [
+      %{
+        key: "kanban",
+        route: {"/plugins/kanban", :index},
+        detail_route: {"/plugins/kanban/:id", :detail},
+        nav: %{label: "看板", path: "/plugins/kanban"},
+        data_builder: EzagentPluginKanban.WorldData,
+        renderer_families: [{"kanban", "看板"}],
+        session_view: %{
+          id: "kanban_board",
+          state_builder: EzagentPluginKanban.WorldData
+        },
+        actions:
+          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board),
+        actions_module: EzagentPluginKanban.WorldActions,
+        renderer: %{
+          source: "assets/src/world_page.tsx",
+          export: "KanbanWorldPage",
+          full_bleed: true
+        }
+      }
+    ]
+  end
 end

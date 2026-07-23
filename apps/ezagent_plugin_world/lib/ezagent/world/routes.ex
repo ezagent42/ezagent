@@ -41,6 +41,12 @@ defmodule Ezagent.World.Routes do
       path == "/overview" ->
         %{component: "overview", title: "Overview", path: path}
 
+      # `/market` — the socialware market browse/install surface (PR-5 §15).
+      # Cards are visibility-scoped by `DefinitionRegistry.list/1`; publish /
+      # retract go through the existing #165 + governance admin gates.
+      path == "/market" ->
+        %{group: :workspace_plugins, component: "market", title: "Market", path: path}
+
       path == "/identities" ->
         %{
           component: "identities",

@@ -315,7 +315,18 @@ defmodule EzagentWeb.Socialware.ChatFeedControllerTest do
 
   describe "GET /hello/:session_name — path-route hello pages" do
     setup do
-      Application.put_env(:ezagent_web, :hello_workspace, "team-alpha")
+      # The serve side reads the SINGLE hello home-workspace key
+      # (`:ezagent_plugin_hello, :home_workspace`) — the same key the boot seed
+      # and the credential bridge read.
+      previous = Application.get_env(:ezagent_plugin_hello, :home_workspace)
+      Application.put_env(:ezagent_plugin_hello, :home_workspace, "team-alpha")
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:ezagent_plugin_hello, :home_workspace, previous),
+          else: Application.delete_env(:ezagent_plugin_hello, :home_workspace)
+      end)
+
       :ok
     end
 

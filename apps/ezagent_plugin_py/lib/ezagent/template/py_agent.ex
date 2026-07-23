@@ -110,6 +110,21 @@ defmodule Ezagent.Template.PyAgent do
   # to `<dir>/agent.py`, spawns the PyAgent Kind, then starts the subprocess.
   @impl Ezagent.Kind.Template
   def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri) do
+    instantiate_with_opts(agent_uri_str, tmpl, [])
+  end
+
+  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
+
+  @impl Ezagent.Kind.Template
+  def instantiate(_tmpl_name, %{"agent_uri" => agent_uri_str} = tmpl, _workspace_uri,
+        launch_context: launch_context
+      ) do
+    instantiate_with_opts(agent_uri_str, tmpl, launch_context: launch_context)
+  end
+
+  def instantiate(_tmpl_name, _tmpl, _workspace_uri, _opts), do: {:error, :invalid_launch_options}
+
+  defp instantiate_with_opts(agent_uri_str, tmpl, opts) do
     agent_uri = Ezagent.URI.new!(agent_uri_str)
 
     with {:ok, config_dir} <- fetch_config_dir(tmpl),
@@ -169,7 +184,7 @@ defmodule Ezagent.Template.PyAgent do
       # cleared (network back, uv installed), the retry recovers the member
       # and clears the `:last_error` marker.
       # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args) do
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
         {:ok, _pid} ->
           {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
 
@@ -189,8 +204,6 @@ defmodule Ezagent.Template.PyAgent do
       end
     end
   end
-
-  def instantiate(_tmpl_name, tmpl, _workspace_uri), do: {:error, {:invalid_template, tmpl}}
 
   # Adopt-path zombie guard (PR #1259 item 1b). `Domain.Python.alive?/1` is a
   # cheap Registry lookup; when the subprocess is dead, dispatch the agent's

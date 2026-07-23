@@ -1,5 +1,5 @@
 import React from "react"
-import {ArrowRight, Bot, Cable, Circle, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
+import {ArrowRight, Bot, Circle, Loader2, MessageSquare, Plus, UserRound, X} from "lucide-react"
 
 import {Button, Input, Select} from "./ui/primitives"
 
@@ -13,9 +13,11 @@ export type SocialwareRow = {
   name: string
   title?: string | null
   description?: string | null
+  version?: string | null
   config_id?: string | null
   content_hash?: string | null
   scope?: string | null
+  public?: boolean | null
   workspace_uri?: string | null
   roles?: SocialwareRole[]
 }
@@ -358,14 +360,6 @@ export function SessionsTable({state, onJoin, onCreate}: SessionsTableProps) {
                   <ArrowRight aria-hidden="true" />
                   打开
                 </Button>
-                <a
-                  className="inline-flex min-h-9 items-center justify-center gap-2 rounded-full border border-border bg-card px-3 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                  href={`/admin/sessions/${encodeURIComponent(selectedSession.uri)}/external_mirror`}
-                  title="绑定飞书群到此会话"
-                >
-                  <Cable className="h-4 w-4" aria-hidden="true" />
-                  外部镜像
-                </a>
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">暂无可用操作。</p>

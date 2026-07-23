@@ -8,15 +8,16 @@ import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
 import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
-import {Kanban, type KanbanState} from "./components/Kanban"
 import {Overview} from "./components/Overview"
+import {MarketSurface, type MarketState} from "./components/Market"
 import {SessionsTable, type SessionsState} from "./components/SessionsTable"
 import {WorldHello} from "./components/WorldHello"
-import {ManageFrame, WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
+import {WorkspacePluginSurface, type WorkspacePluginState} from "./components/WorkspacePlugin"
 import {ErrorMessageCard} from "./components/ErrorMessageCard"
 import {errorCardForStatus, type RenderedError} from "./lib/errorRenderer"
 import {isPrimaryNavActive, pageTitleForComponent, primaryNavItems, sectionRoot as worldSectionRoot} from "../js/world_ia.js"
 import slotManifest from "./slots.manifest.json"
+import {pluginPageFullBleedFamilies, pluginPageRenderers} from "./generated/plugin-page-renderers"
 import "./styles.css"
 
 // Typed-slot manifest — a generated, checked-in projection of
@@ -36,7 +37,7 @@ const SLOTS = (slotManifest as SlotManifest).slots
 const ERROR_TOAST_AUTO_DISMISS_MS = 5000
 // 退出动画时长:到点后先播动画,播完才真正移除 toast 内容。
 const ERROR_TOAST_EXIT_MS = 180
-const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "kanban", "pty", "sessions", "workspace_plugins"])
+const FULL_BLEED_FAMILIES = new Set(["admin", "conversation", "pty", "sessions", "workspace_plugins", ...pluginPageFullBleedFamilies])
 const FULL_BLEED_TYPES = new Set(["agents_table"])
 
 function rendererFamily(type: string): string {
@@ -109,7 +110,6 @@ type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
   component?: string
   current_session_uri?: string | null
   inbound_events?: Array<Record<string, unknown>>
-  kanban_uri?: string | null
   layout?: WorldLayout
   path?: string
   sessions?: Array<{
@@ -1035,30 +1035,6 @@ type RenderContext = {
   onServerEvent?: (event: string, callback: (payload: unknown) => void) => void
 }
 
-// 插件页面组件注册表——服务端 `Ezagent.World.PluginPageRegistry` 的前端对应面：
-// renderer family key（= 页面 key）→ React 渲染器。import 保持显式（Vite 静态
-// 打包），加页面 = import 组件 + 加一行 map 条目。key 查不到时走 switch default
-// 的 fail-closed throw（与原 `case "kanban"` 缺省行为一致，无兜底渲染）。
-const PLUGIN_PAGE_RENDERERS: Record<
-  string,
-  (component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) => React.ReactElement
-> = {
-  // Kanban index = connector config; a URI detail route = that board's live
-  // operating surface. Session tabs keep using the same rich Kanban component,
-  // while Hello receipts can deep-link to one concrete live board.
-  // 两条路都经 onWorkspacePluginAction → world:dispatch → PluginPageRegistry 白名单，
-  // 白名单原样不动（改 mode 只影响本页渲染，不动 tab 的操作准入）。
-  kanban: (component, context) => (
-    <ManageFrame key={component.id} active="plugins" title="Kanban">
-      <Kanban
-        mode={context.state.kanban_uri ? "operate" : "config"}
-        state={{...context.state, component: component.type} as KanbanState}
-        onAction={context.onWorkspacePluginAction}
-      />
-    </ManageFrame>
-  ),
-}
-
 function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>[number], context: RenderContext) {
   // Registry-backed dispatch: the slot's type resolves to a renderer family via
   // the checked-in manifest, and the family selects the React renderer. An
@@ -1122,6 +1098,15 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     case "overview":
       return <Overview key={component.id} state={context.state} />
 
+    case "market":
+      return (
+        <MarketSurface
+          key={component.id}
+          state={context.state as MarketState}
+          onAction={context.onWorkspacePluginAction}
+        />
+      )
+
     case "admin":
       return <AdminSurface key={component.id} state={{...context.state, component: component.type} as AdminState} onAction={context.onAdminAction} />
 
@@ -1155,8 +1140,10 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
     default: {
       // 插件页面：family key 命中 PLUGIN_PAGE_RENDERERS 时渲染注册组件；
       // 未注册 family 保持原 fail-closed throw（无兜底渲染）。
-      const renderPluginPage = PLUGIN_PAGE_RENDERERS[rendererFamily(component.type)]
-      if (renderPluginPage) return renderPluginPage(component, context)
+      const PluginPage = pluginPageRenderers[rendererFamily(component.type)]
+      if (PluginPage) {
+        return <PluginPage key={component.id} component={component} state={context.state} onAction={context.onWorkspacePluginAction} />
+      }
 
       throw new Error(
         `world: no renderer for family ${JSON.stringify(SLOTS[component.type]?.renderer_family)} ` +

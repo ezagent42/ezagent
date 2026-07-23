@@ -81,23 +81,105 @@ defmodule Ezagent.CapabilityRegistry do
   @spec register(kind :: module(), action :: atom(), behavior :: module()) :: :ok
   def register(kind, action, behavior)
       when is_atom(kind) and is_atom(action) and is_atom(behavior) do
+    case register_owned(kind, action, behavior) do
+      receipt when receipt in [:acquired, :existing_identical] ->
+        :ok
+
+      {:error, {:capability_subject_conflict, ^kind, ^action, existing, ^behavior}} ->
+        raise RuntimeError,
+              "Capability subject conflict: #{inspect(kind)} :#{action} is already " <>
+                "registered to #{inspect(existing)}; cannot re-register to #{inspect(behavior)}"
+
+      {:error, reason} ->
+        raise RuntimeError, inspect(reason)
+    end
+  end
+
+  @doc """
+  Atomically register a subject and report whether this call acquired it.
+
+  The receipt lets application boot rollback only declarations inserted by that
+  boot attempt. Mutation of the two registry tables is serialized under one
+  registry lock; this does not claim atomicity with any other registry.
+  """
+  @spec register_owned(module(), atom(), module()) ::
+          :acquired | :existing_identical | {:error, term()}
+  def register_owned(kind, action, behavior)
+      when is_atom(kind) and is_atom(action) and is_atom(behavior) do
+    :global.trans({__MODULE__, :mutation}, fn ->
+      register_owned_locked(kind, action, behavior)
+    end)
+  end
+
+  defp register_owned_locked(kind, action, behavior) do
     description = lookup_description!(behavior, action)
     dispatchable? = behavior_dispatchable?(behavior)
 
-    check_conflict!(kind, action, behavior)
+    subject_before = lookup_subject_raw(kind, action)
+    behavior_before = lookup_behavior_raw(kind, action)
 
-    :ets.insert(
-      Subjects.table(),
-      {{kind, behavior, action}, %{description: description, dispatchable?: dispatchable?}}
-    )
+    with :ok <- compatible_subject(subject_before, kind, action, behavior),
+         :ok <- compatible_behavior(behavior_before, kind, action, behavior, dispatchable?) do
+      receipt =
+        if match?({:ok, _}, subject_before) or match?({:ok, _}, behavior_before) do
+          :existing_identical
+        else
+          :acquired
+        end
 
-    if dispatchable? do
-      # Single legitimate use of the raw BehaviorRegistry.register/3 —
-      # all other production code must route through here.
-      :ok = BehaviorRegistry.register(kind, action, behavior)
+      try do
+        :ets.insert(
+          Subjects.table(),
+          {{kind, behavior, action}, %{description: description, dispatchable?: dispatchable?}}
+        )
+
+        if dispatchable? do
+          :ok = BehaviorRegistry.register(kind, action, behavior)
+        end
+
+        receipt
+      catch
+        class, reason ->
+          restore_pair(kind, action, subject_before, behavior_before)
+          :erlang.raise(class, reason, __STACKTRACE__)
+      end
+    end
+  end
+
+  defp compatible_subject(:error, _kind, _action, _behavior), do: :ok
+  defp compatible_subject({:ok, %{behavior: behavior}}, _kind, _action, behavior), do: :ok
+
+  defp compatible_subject({:ok, %{behavior: existing}}, kind, action, behavior),
+    do: {:error, {:capability_subject_conflict, kind, action, existing, behavior}}
+
+  defp compatible_behavior(:error, _kind, _action, _behavior, _dispatchable?), do: :ok
+
+  defp compatible_behavior({:ok, behavior}, _kind, _action, behavior, true), do: :ok
+
+  defp compatible_behavior({:ok, existing}, kind, action, behavior, _dispatchable?),
+    do: {:error, {:behavior_registry_conflict, kind, action, existing, behavior}}
+
+  defp restore_pair(kind, action, subject_before, behavior_before) do
+    :ets.match_delete(Subjects.table(), {{kind, :_, action}, :_})
+
+    case subject_before do
+      {:ok, %{behavior: old_behavior, description: description, dispatchable?: dispatchable?}} ->
+        :ets.insert(
+          Subjects.table(),
+          {{kind, old_behavior, action},
+           %{description: description, dispatchable?: dispatchable?}}
+        )
+
+      :error ->
+        :ok
     end
 
-    :ok
+    :ok = BehaviorRegistry.unregister(kind, action)
+
+    case behavior_before do
+      {:ok, old_behavior} -> BehaviorRegistry.register(kind, action, old_behavior)
+      :error -> :ok
+    end
   end
 
   @doc """
@@ -118,27 +200,21 @@ defmodule Ezagent.CapabilityRegistry do
   @spec unregister(kind :: module(), action :: atom(), behavior :: module()) :: :ok
   def unregister(kind, action, behavior)
       when is_atom(kind) and is_atom(action) and is_atom(behavior) do
-    # Remove the cap-subject row ONLY if it still points at THIS behavior
-    # (a swap may have re-registered a v2 behavior under the same
-    # {kind, action}; the unload of v1 must not clobber v2).
-    case :ets.lookup(Subjects.table(), {kind, behavior, action}) do
-      [{{^kind, ^behavior, ^action}, _}] ->
-        :ets.delete(Subjects.table(), {kind, behavior, action})
+    :global.trans({__MODULE__, :mutation}, fn ->
+      case {lookup_subject_raw(kind, action), lookup_behavior_raw(kind, action)} do
+        {{:ok, %{behavior: ^behavior, dispatchable?: true}}, {:ok, ^behavior}} ->
+          :ets.delete(Subjects.table(), {kind, behavior, action})
+          :ok = BehaviorRegistry.unregister(kind, action)
 
-      _ ->
-        :ok
-    end
+        {{:ok, %{behavior: ^behavior, dispatchable?: false}}, :error} ->
+          :ets.delete(Subjects.table(), {kind, behavior, action})
 
-    # Remove the dispatch row ONLY if it still points at THIS behavior.
-    case BehaviorRegistry.lookup(kind, action) do
-      {:ok, ^behavior} ->
-        :ok = BehaviorRegistry.unregister(kind, action)
+        _ ->
+          :ok
+      end
 
-      _ ->
-        :ok
-    end
-
-    :ok
+      :ok
+    end)
   end
 
   @doc """
@@ -195,18 +271,11 @@ defmodule Ezagent.CapabilityRegistry do
   """
   @spec lookup_subject(module(), atom()) :: {:ok, subject()} | :error
   def lookup_subject(kind, action) when is_atom(kind) and is_atom(action) do
-    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
-      [{{^kind, behavior, ^action}, %{description: d, dispatchable?: disp?}}] ->
-        {:ok,
-         %{
-           kind: kind,
-           behavior: behavior,
-           action: action,
-           description: d,
-           dispatchable?: disp?
-         }}
+    case lookup_subject_raw(kind, action) do
+      {:ok, subject} ->
+        {:ok, subject}
 
-      [] ->
+      :error ->
         # #533 §3.4 — universal behaviors (e.g. Ezagent.ActionSet.Manage)
         # are grantable on EVERY Kind by construction. On a per-Kind miss,
         # synthesize the subject for the universal behavior handling this
@@ -225,6 +294,30 @@ defmodule Ezagent.CapabilityRegistry do
                dispatchable?: behavior_dispatchable?(behavior)
              }}
         end
+    end
+  end
+
+  defp lookup_subject_raw(kind, action) do
+    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
+      [{{^kind, behavior, ^action}, %{description: d, dispatchable?: disp?}}] ->
+        {:ok,
+         %{
+           kind: kind,
+           behavior: behavior,
+           action: action,
+           description: d,
+           dispatchable?: disp?
+         }}
+
+      [] ->
+        :error
+    end
+  end
+
+  defp lookup_behavior_raw(kind, action) do
+    case :ets.lookup(BehaviorRegistry.table(), {kind, action}) do
+      [{{^kind, ^action}, behavior}] -> {:ok, behavior}
+      [] -> :error
     end
   end
 
@@ -312,24 +405,6 @@ defmodule Ezagent.CapabilityRegistry do
       behavior.dispatchable?()
     else
       true
-    end
-  end
-
-  defp check_conflict!(kind, action, new_behavior) do
-    case :ets.match_object(Subjects.table(), {{kind, :_, action}, :_}) do
-      [] ->
-        :ok
-
-      [{{^kind, ^new_behavior, ^action}, _}] ->
-        :ok
-
-      [{{^kind, other_behavior, ^action}, _}] ->
-        raise RuntimeError,
-              "Capability subject conflict: #{inspect(kind)} :#{action} " <>
-                "is already registered to #{inspect(other_behavior)}; " <>
-                "cannot re-register to #{inspect(new_behavior)}. " <>
-                "Same {kind, action} mapped to two different behaviors " <>
-                "is a caller bug — find the dup and decide which is correct."
     end
   end
 

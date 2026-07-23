@@ -122,7 +122,16 @@ defmodule Ezagent.Kind.Runtime do
         handle_grant(invocation, state, kind_module, self_uri)
 
       _other ->
-        do_handle_dispatch(invocation, state, kind_module, self_uri)
+        # Install the in-process runtime view (kind_module + slice_state) for the
+        # duration of this dispatch, so a SELF-target `Ezagent.Cap.issue_for_action`
+        # minted from a handler (e.g. the `:in_process_sync` flavor's `:sync_result`
+        # re-dispatch) can resolve the target action against THIS instance's OWN
+        # effective behavior set — without a deadlocking self `GenServer.call`. The
+        # grant path (`{:cap, :grant}`) does not go through `action_context/3`, so
+        # it is intentionally left outside the view. Nesting-safe (try/after).
+        Ezagent.Cap.RuntimeView.with_current(kind_module, state, fn ->
+          do_handle_dispatch(invocation, state, kind_module, self_uri)
+        end)
     end
   end
 

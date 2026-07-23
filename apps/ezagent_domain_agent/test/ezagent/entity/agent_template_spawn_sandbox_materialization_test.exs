@@ -3,6 +3,10 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
   alias Ezagent.Entity.Agent.TemplateSpawn
   alias Ezagent.Agent.TemplateOverlayTestBehavior
+  alias Ezagent.Kind.Template.PreStart
+  alias Ezagent.TestSupport.TemplatePreStartProbe
+  alias EzagentDomainAgent.TestSupport.FreshPreStartTemplateClass
+  alias EzagentDomainAgent.TestSupport.PreStartTemplateClass
 
   defmodule PreinitializedSandboxTemplate do
     @behaviour Ezagent.Kind.Template
@@ -319,6 +323,337 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
              )
 
     assert wait_until_deregistered(agent_uri)
+  end
+
+  describe "trusted pre-start option" do
+    setup do
+      unique = System.unique_integer([:positive])
+      flavor = "pre-start-#{unique}"
+      Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_owner, self())
+      :ok = PreStart.replace_for_test(TemplatePreStartProbe)
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: PreStartTemplateClass
+        })
+
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:ok, %{cwd: "/safe/task", claim: "claim-one", launch_context: make_ref()}}
+      )
+
+      on_exit(fn ->
+        :ok = PreStart.replace_for_test(nil)
+        Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
+        Application.delete_env(:ezagent_core, :template_pre_start_prepare_result)
+        Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
+        Application.delete_env(:ezagent_domain_agent, :pre_start_test_owner)
+        Application.delete_env(:ezagent_domain_agent, :pre_start_test_mode)
+      end)
+
+      %{
+        content: %{flavor: flavor, project_cwd: "/authored/cwd"},
+        instance_uri: Ezagent.URI.agent("pre-start-#{unique}", "worker"),
+        owner_uri: Ezagent.URI.user("pre-start-#{unique}", "owner"),
+        workspace_uri: Ezagent.URI.workspace("pre-start-#{unique}")
+      }
+    end
+
+    test "preparation failure prevents instantiate", fixture do
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:error, :workspace_not_ready}
+      )
+
+      assert {:error, :workspace_not_ready} = spawn_with_reference(fixture)
+      refute_receive {:instantiate_called, _}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "missing implementation fails closed before instantiate", fixture do
+      :ok = PreStart.replace_for_test(nil)
+
+      assert {:error, :template_pre_start_not_registered} = spawn_with_reference(fixture)
+      refute_receive {:instantiate_called, _}
+    end
+
+    test "prepared launch context requires instantiate/4 before template effects", fixture do
+      prepare_success()
+      flavor = "missing-launch-context-#{System.unique_integer([:positive])}"
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: EzagentDomainAgent.TestSupport.MissingLaunchContextTemplateClass
+        })
+
+      assert {:error, :template_launch_context_not_supported} =
+               spawn_with_reference(%{fixture | content: %{fixture.content | flavor: flavor}})
+
+      refute_receive :missing_arity_effect
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:error, :template_launch_context_not_supported}}
+    end
+
+    test "adopted pre-start rejects before overwriting flavor metadata",
+         fixture do
+      prepare_success()
+      :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
+
+      assert {:error, :sidecar_start_not_fresh} = spawn_with_reference(fixture)
+      assert_receive {:flavor_during_instantiate, {:ok, "preexisting-flavor"}}
+      assert_receive {:instantiate_called, data}
+      assert data["cwd"] == "/safe/task"
+      refute Map.has_key?(fixture.content, :pre_start_ref)
+      refute Map.has_key?(data, "pre_start_ref")
+      assert {:ok, "preexisting-flavor"} = Ezagent.AgentFlavorAttributes.get(fixture.instance_uri)
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:ok, %{workers: [_worker], fresh?: false}}}
+    end
+
+    test "instantiate error completes exactly once", fixture do
+      prepare_success()
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, :error)
+
+      assert {:error, :instantiate_failed} = spawn_with_reference(fixture)
+      assert_receive {:pre_start_complete, "claim-one", {:error, :instantiate_failed}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "claimed fresh without an actor-init receipt fails before completion starts it",
+         fixture do
+      Application.put_env(
+        :ezagent_core,
+        :template_pre_start_prepare_result,
+        {:ok,
+         %{
+           cwd: "/safe/task",
+           claim: "claim-one",
+           creation_attempt_id: Ecto.UUID.generate(),
+           launch_context: make_ref()
+         }}
+      )
+
+      Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, :claimed_fresh)
+
+      assert {:error, :ownership_receipt_missing} = spawn_with_reference(fixture)
+      assert :error = Ezagent.KindRegistry.lookup(fixture.instance_uri)
+      assert_receive {:pre_start_complete, "claim-one", {:error, :ownership_receipt_missing}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "instantiate raise and exit both complete exactly once before propagating", fixture do
+      for {mode, expected_kind} <- [raise: :error, exit: :exit] do
+        prepare_success()
+        Application.put_env(:ezagent_domain_agent, :pre_start_test_mode, mode)
+        test_pid = self()
+
+        Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+          send(test_pid, {:completion_failure_attempted, mode})
+
+          case mode do
+            :raise -> raise "completion raised"
+            :exit -> exit(:completion_exited)
+          end
+        end)
+
+        {caught_kind, caught_reason, caught_stacktrace} =
+          try do
+            spawn_with_reference(fixture)
+            :not_raised
+          catch
+            kind, reason -> {kind, reason, __STACKTRACE__}
+          end
+
+        assert caught_kind == expected_kind
+
+        case mode do
+          :raise -> assert %RuntimeError{message: "instantiate raised"} = caught_reason
+          :exit -> assert caught_reason == :instantiate_exited
+        end
+
+        assert Enum.any?(caught_stacktrace, fn
+                 {PreStartTemplateClass, :instantiate_with_opts, 1, _location} -> true
+                 _frame -> false
+               end)
+
+        assert_receive {:pre_start_complete, "claim-one", {:error, {^expected_kind, _reason}}}
+        assert_receive {:completion_failure_attempted, ^mode}
+        refute_receive {:completion_failure_attempted, ^mode}
+        refute_receive {:pre_start_complete, _, _}
+      end
+    end
+
+    test "no reference preserves the existing path without consulting the gate", fixture do
+      assert {:ok, %{fresh?: false}} =
+               TemplateSpawn.spawn_from_template_content(
+                 fixture.content,
+                 fixture.instance_uri,
+                 fixture.owner_uri,
+                 fixture.workspace_uri,
+                 []
+               )
+
+      assert_receive {:instantiate_called, %{"cwd" => "/authored/cwd"}}
+      refute_receive {:pre_start_prepare, _}
+      refute_receive {:pre_start_complete, _, _}
+    end
+  end
+
+  describe "trusted pre-start fresh lifecycle" do
+    setup do
+      unique = System.unique_integer([:positive])
+      flavor = "fresh-pre-start-#{unique}"
+      worker = Ezagent.URI.agent("fresh-pre-start-#{unique}", "worker")
+      spawned_by = Ezagent.URI.user("fresh-pre-start-#{unique}", "owner")
+      workspace = Ezagent.URI.workspace("fresh-pre-start-#{unique}")
+
+      Application.put_env(:ezagent_core, :template_pre_start_test_owner, self())
+      Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
+      Application.put_env(:ezagent_domain_agent, :fresh_pre_start_owner, self())
+      :ok = PreStart.replace_for_test(TemplatePreStartProbe)
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: FreshPreStartTemplateClass
+        })
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(worker)
+        :ok = PreStart.replace_for_test(nil)
+        Application.delete_env(:ezagent_core, :template_pre_start_test_owner)
+        Application.delete_env(:ezagent_core, :template_pre_start_prepare_result)
+        Application.delete_env(:ezagent_core, :template_pre_start_complete_result)
+        Application.delete_env(:ezagent_domain_agent, :fresh_pre_start_owner)
+      end)
+
+      %{
+        content: %{flavor: flavor, project_cwd: "/authored/cwd"},
+        instance_uri: worker,
+        owner_uri: spawned_by,
+        workspace_uri: workspace
+      }
+    end
+
+    test "completion observes every helper-owned fresh-spawn obligation", fixture do
+      prepare_legacy_success()
+      worker = fixture.instance_uri
+      spawned_by = fixture.owner_uri
+      workspace = fixture.workspace_uri
+
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+        assert {:ok, _attempt} =
+                 Ezagent.Agent.CreationInventory.find_attempt(worker, workspace)
+
+        assert {:ok, ^spawned_by} = Ezagent.AgentLineage.lookup(worker)
+        assert {:ok, ^workspace} = Ezagent.WorkspaceRegistry.lookup(worker)
+        assert {:ok, _flavor} = Ezagent.AgentFlavorAttributes.get(worker)
+        :ok
+      end)
+
+      assert {:ok, %{workers: [^worker], fresh?: true}} = spawn_with_reference(fixture)
+      assert_receive {:instantiate_called, ^worker}
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:ok, %{workers: [^worker], fresh?: true}}}
+
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "successful-spawn completion error is returned without rolling back", fixture do
+      prepare_legacy_success()
+      worker = fixture.instance_uri
+      owner = fixture.owner_uri
+      workspace = fixture.workspace_uri
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, {:error, :rejected})
+
+      assert {:error, :rejected} = spawn_with_reference(fixture)
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(worker)
+      assert {:ok, ^owner} = Ezagent.AgentLineage.lookup(worker)
+      assert {:ok, ^workspace} = Ezagent.WorkspaceRegistry.lookup(worker)
+      assert_receive {:pre_start_complete, "claim-one", {:ok, %{workers: [^worker]}}}
+      refute_receive {:pre_start_complete, _, _}
+    end
+
+    test "post-spawn failure completes once after the existing rollback", fixture do
+      prepare_legacy_success()
+      worker = fixture.instance_uri
+
+      Application.put_env(:ezagent_core, :template_pre_start_complete_result, fn ->
+        assert :error = Ezagent.KindRegistry.lookup(worker)
+        assert :error = Ezagent.AgentLineage.lookup(worker)
+        assert :error = Ezagent.WorkspaceRegistry.lookup(worker)
+
+        assert {:ok, attempt_id} =
+                 Ezagent.Agent.CreationInventory.find_attempt(worker, fixture.workspace_uri)
+
+        assert {:ok, _receipt} =
+                 Ezagent.Agent.CreationInventory.exact(
+                   attempt_id,
+                   worker,
+                   fixture.owner_uri,
+                   fixture.workspace_uri
+                 )
+
+        assert :none = Ezagent.AgentFlavorAttributes.get(worker)
+        :ok
+      end)
+
+      assert {:error,
+              {:behavior_overlay_mount_failed, ^worker, String, {:not_a_behavior, String}}} =
+               TemplateSpawn.spawn_from_template_content(
+                 fixture.content,
+                 worker,
+                 fixture.owner_uri,
+                 fixture.workspace_uri,
+                 pre_start_ref: %{opaque: :reference},
+                 behavior_overlay: [String]
+               )
+
+      assert_receive {:pre_start_complete, "claim-one",
+                      {:error,
+                       {:behavior_overlay_mount_failed, ^worker, String,
+                        {:not_a_behavior, String}}}}
+
+      refute_receive {:pre_start_complete, _, _}
+    end
+  end
+
+  defp spawn_with_reference(fixture) do
+    TemplateSpawn.spawn_from_template_content(
+      fixture.content,
+      fixture.instance_uri,
+      fixture.owner_uri,
+      fixture.workspace_uri,
+      pre_start_ref: %{opaque: :reference}
+    )
+  end
+
+  defp prepare_success do
+    Application.put_env(
+      :ezagent_core,
+      :template_pre_start_prepare_result,
+      {:ok, %{cwd: "/safe/task", claim: "claim-one", launch_context: make_ref()}}
+    )
+  end
+
+  defp prepare_legacy_success do
+    Application.put_env(
+      :ezagent_core,
+      :template_pre_start_prepare_result,
+      {:ok, %{cwd: "/safe/task", claim: "claim-one"}}
+    )
   end
 
   defp wait_until_deregistered(uri, attempts \\ 50)

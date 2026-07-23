@@ -560,14 +560,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp agent_recipe(%URI{} = agent_uri) do
-    case Ezagent.Agent.RecipeAttributes.fetch(agent_uri) do
-      {:ok, recipe} -> {:ok, recipe}
-      :none -> Ezagent.UriQuery.resolve(:recipe, agent_uri)
-    end
-  rescue
-    _ -> :none
-  end
+  defp agent_recipe(%URI{} = agent_uri),
+    do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
 
   defp reuse_caps(%URI{} = session_uri, %URI{} = operator) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)

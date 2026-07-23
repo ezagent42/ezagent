@@ -39,6 +39,9 @@
     "layout_editor": [
       "layout_editor"
     ],
+    "market": [
+      "market"
+    ],
     "overview": [
       "overview"
     ],
@@ -66,7 +69,7 @@
   "slots": {
     "kanban": {
       "category": "layout_slot",
-      "data_source": "Ezagent.World.KanbanData",
+      "data_source": "EzagentPluginKanban.WorldData",
       "renderer_family": "kanban",
       "title": "看板"
     },
@@ -243,6 +246,12 @@
       "data_source": "Ezagent.World.AdminData",
       "renderer_family": "admin",
       "title": "Capabilities"
+    },
+    "market": {
+      "category": "layout_slot",
+      "data_source": "Ezagent.World.WorkspacePluginData",
+      "renderer_family": "market",
+      "title": "Market"
     },
     "plugins": {
       "category": "layout_slot",

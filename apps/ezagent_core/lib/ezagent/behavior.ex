@@ -673,7 +673,7 @@ defmodule Ezagent.ActionSet do
 
   | Key | Required | Default | Meaning |
   |---|---|---|---|
-  | `args` | YES | — | Map of arg-name → type spec, consumed by `InterfaceValidator` |
+  | `args` | YES | — | Map of arg-name → type spec, or explicit `{:closed_map, schema}`; consumed by `InterfaceValidator` |
   | `returns` | YES | — | Return type spec — see InterfaceValidator |
   | `caps` | no | `[name]` | Per-action cap list; see §4.3 grammar |
   | `modes` | no | `[:call]` | `:call`, `:cast`, `:call_stream` |

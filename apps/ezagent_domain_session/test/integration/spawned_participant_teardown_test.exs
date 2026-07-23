@@ -86,12 +86,27 @@ defmodule EzagentDomainInstanceMessage.Integration.SpawnedParticipantTeardownTes
   end
 
   defp record_creation(agent_uri, spawned_by_uri) do
-    Ezagent.Agent.CreationInventory.record(
-      Ezagent.Agent.CreationInventory.new_attempt_id(),
-      agent_uri,
-      spawned_by_uri,
-      @workspace_uri
-    )
+    case Ezagent.Agent.CreationInventory.record(
+           Ezagent.Agent.CreationInventory.new_attempt_id(),
+           agent_uri,
+           spawned_by_uri,
+           @workspace_uri
+         ) do
+      :ok ->
+        :ok
+
+      # main's `Ezagent.Entity.Agent.OwnershipObligations.establish/4` now records
+      # the same (agent_uri, spawned_by) creation-inventory row at spawn time
+      # (winner index). A conflict here means the intended provenance is already
+      # durably recorded by that spawn-time path — treat it as success.
+      {:error, %Ecto.Changeset{errors: errors}} ->
+        if Keyword.has_key?(errors, :agent_uri),
+          do: :ok,
+          else: {:error, {:creation_inventory, errors}}
+
+      other ->
+        other
+    end
   end
 
   # Join `worker` into `session` carrying the `:source_template_uri` spawn facet

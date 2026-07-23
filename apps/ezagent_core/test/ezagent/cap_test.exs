@@ -12,10 +12,12 @@ defmodule Ezagent.CapTest do
       Ezagent.URI.new!("entity://team-alpha/agent/cap-unit-#{System.unique_integer([:positive])}")
 
     assert {:ok, pid} = Ezagent.Kind.Server.start_link({TestKind, %{uri: uri}})
-    assert :ok = await_ready(uri)
+    state = :sys.get_state(pid)
+    assert Ezagent.ReadyGate.status(uri) == :ready
 
     {:ok,
-     authority: :sys.get_state(pid).authority,
+     authority: state.authority,
+     pid: pid,
      uri: uri,
      admin: Ezagent.URI.user(:system, :admin),
      grantee: Ezagent.URI.new!("entity://team-alpha/user/cap-unit-grantee")}
@@ -67,6 +69,91 @@ defmodule Ezagent.CapTest do
   end
 
   describe "receiver storage boundary" do
+    test "validation checks signature and receiver without authorizing an action", context do
+      {:ok, artifact} =
+        Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
+
+      assert :ok =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(artifact, context.grantee)
+               end)
+
+      other = Ezagent.URI.new!("entity://team-alpha/user/cap-unit-other")
+
+      assert {:error, :wrong_grantee} =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(artifact, other)
+               end)
+
+      tampered = %{artifact | action: :raise}
+
+      assert {:error, :invalid_cap_signature} =
+               Authority.with_current(context.authority, fn ->
+                 Cap.validate_for_current_target(tampered, context.grantee)
+               end)
+    end
+
+    test "validates against durable active public authority while the target is cold",
+         context do
+      assert {:ok, artifact} =
+               Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
+
+      pid = context.pid
+      monitor = Process.monitor(pid)
+      :ok = GenServer.stop(context.pid)
+      assert_receive {:DOWN, ^monitor, :process, ^pid, :normal}
+      registry_barrier()
+      assert :error = Ezagent.KindRegistry.lookup(context.uri)
+
+      generations_before =
+        context.uri
+        |> Ezagent.URI.stable_key()
+        |> Ezagent.Ecto.KindCapAuthority.list()
+
+      assert :ok = Cap.validate_for_current_target(artifact, context.grantee)
+      assert :error = Ezagent.KindRegistry.lookup(context.uri)
+
+      assert Ezagent.Ecto.KindCapAuthority.list(Ezagent.URI.stable_key(context.uri)) ==
+               generations_before
+
+      wrong_target =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cap-unit-wrong-target-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:ok, _authority} = Authority.open(wrong_target, :test)
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(
+                 %{artifact | instance: wrong_target},
+                 context.grantee
+               )
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(
+                 %{artifact | key_id: "kind-g1:wrong-key"},
+                 context.grantee
+               )
+
+      other = Ezagent.URI.new!("entity://team-alpha/user/cap-unit-other-cold")
+
+      assert {:error, :wrong_grantee} =
+               Cap.validate_for_current_target(artifact, other)
+
+      assert :ok = Authority.retire(context.uri)
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(artifact, context.grantee)
+
+      assert {:ok, regenerated_authority} =
+               Authority.regenesis(context.uri, :test)
+
+      refute regenerated_authority.key_id == artifact.key_id
+
+      assert {:error, :invalid_cap_signature} =
+               Cap.validate_for_current_target(artifact, context.grantee)
+    end
+
     test "retains only structurally born-signed artifacts for the named receiver", context do
       assert {:ok, signed} =
                Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
@@ -118,20 +205,12 @@ defmodule Ezagent.CapTest do
     )
   end
 
-  defp await_ready(uri), do: await_ready(uri, System.monotonic_time(:millisecond) + 1_000)
-
-  defp await_ready(uri, deadline) do
-    case Ezagent.ReadyGate.status(uri) do
-      :ready ->
-        :ok
-
-      _ ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          {:error, :timeout}
-        else
-          Process.sleep(5)
-          await_ready(uri, deadline)
-        end
+  defp registry_barrier do
+    for {_id, partition, :worker, [Registry.Partition]} <-
+          Supervisor.which_children(Ezagent.KindRegistry) do
+      _state = :sys.get_state(partition)
     end
+
+    :ok
   end
 end

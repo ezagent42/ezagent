@@ -143,9 +143,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # sanctioned anchors down by +46 (254→300 call site, 293→339 `@spec`,
     # 295→341 `def spawn_fresh/4`). SAME spawn-fresh ownership boundary; A1 added
     # no new spawn_fresh caller, it only pushed the frozen surface lower.
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 300},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 339},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 341},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 310},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 349},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 351},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

@@ -7,6 +7,7 @@ type DataRow = Record<string, unknown>
 
 export type WorkspacePluginState = {
   bindings?: DataRow[]
+  agent_flavors?: string[]
   auto_derive_notice?: string | null
   caps_count?: number
   caps_path?: string | null
@@ -65,6 +66,10 @@ const actionLinkClass =
 const fieldLabelClass = "grid gap-1 text-xs font-medium text-muted-foreground"
 const selectClass =
   "h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground outline-none transition focus:border-ring focus:ring-2 focus:ring-ring/30"
+
+function RequiredMarker() {
+  return <span className="text-destructive" aria-hidden="true" data-required-marker="true">*</span>
+}
 
 export function WorkspacePluginSurface({
   state,
@@ -598,12 +603,14 @@ function TemplateBuilder({
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className={fieldLabelClass} htmlFor="world-session-template-name">
-            Name
+            <span>Name <RequiredMarker /></span>
             <Input
               id="world-session-template-name"
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="support-team"
+              required
+              aria-required="true"
             />
           </label>
           <label className={fieldLabelClass} htmlFor="world-session-template-description">
@@ -706,6 +713,7 @@ function TemplateBuilder({
                         role={role}
                         slotKey={roleDomId(socialware, role)}
                         dataKey={`${socialware.name}:${role.role_name}`}
+                        flavors={state.agent_flavors || []}
                         choice={roleChoices[roleChoiceKey(socialware, role)]}
                         onChange={(choice) =>
                           setRoleChoices((current) => ({...current, [roleChoiceKey(socialware, role)]: choice}))
@@ -781,16 +789,18 @@ function roleDomId(socialware: SocialwareRow, role: SocialwareRole) {
   return roleChoiceKey(socialware, role).replace(/[^a-zA-Z0-9_-]+/g, "-")
 }
 
-function TemplateAgentRoleSlot({
+export function TemplateAgentRoleSlot({
   role,
   slotKey,
   dataKey,
+  flavors,
   choice,
   onChange,
 }: {
   role: SocialwareRole
   slotKey: string
   dataKey: string
+  flavors: string[]
   choice?: RoleSlotChoice
   onChange: (choice: RoleSlotChoice) => void
 }) {
@@ -827,22 +837,31 @@ function TemplateAgentRoleSlot({
       </label>
       {current.mode === "fresh" ? (
         <label className={fieldLabelClass} htmlFor={`template-role-flavor-${slotKey}`}>
-          Flavor
-          <Input
+          <span>Flavor <RequiredMarker /></span>
+          <select
             id={`template-role-flavor-${slotKey}`}
+            className={selectClass}
             value={current.flavor || ""}
             onChange={(event) => onChange({...current, flavor: event.target.value})}
-            placeholder={role.flavor || "default"}
-          />
+            required
+            aria-required="true"
+          >
+            <option value="" disabled>Select a flavor</option>
+            {flavors.map((flavor) => (
+              <option key={flavor} value={flavor}>{flavor}</option>
+            ))}
+          </select>
         </label>
       ) : (
         <label className={fieldLabelClass} htmlFor={`template-role-agent-${slotKey}`}>
-          Agent
+          <span>Agent <RequiredMarker /></span>
           <select
             id={`template-role-agent-${slotKey}`}
             className={selectClass}
             value={current.agent_uri || options[0]?.uri || ""}
             onChange={(event) => onChange({...current, mode: "reuse", agent_uri: event.target.value})}
+            required
+            aria-required="true"
           >
             {options.map((agent) => (
               <option key={agent.uri} value={agent.uri}>

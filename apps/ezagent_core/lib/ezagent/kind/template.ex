@@ -88,6 +88,11 @@ defmodule Ezagent.Kind.Template do
               | {:ok, [URI.t()], instantiate_meta()}
               | {:error, term()}
 
+  @callback instantiate(template_name(), template_data(), URI.t(), keyword()) ::
+              {:ok, [URI.t()]}
+              | {:ok, [URI.t()], instantiate_meta()}
+              | {:error, term()}
+
   @doc """
   Declares whether this Template Class can be instantiated directly from the
   generic "New session" picker — i.e. whether `instantiate/3` succeeds given
@@ -294,6 +299,7 @@ defmodule Ezagent.Kind.Template do
   @callback config_dir_namespace() :: String.t()
 
   @optional_callbacks [
+    instantiate: 4,
     validate: 1,
     compile: 2,
     template_data_extra: 1,
@@ -364,9 +370,35 @@ defmodule Ezagent.Kind.Template do
           | {:error, term()}
   def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri)
       when is_atom(class_module) and is_map(tmpl_data) do
-    with {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
-         :ok <- maybe_store_agent_flavor(class_module, data) do
-      case class_module.instantiate(tmpl_name, data, workspace_uri) do
+    provision_and_instantiate(class_module, tmpl_name, tmpl_data, workspace_uri, [])
+  end
+
+  @doc false
+  @spec provision_and_instantiate(
+          module(),
+          template_name(),
+          template_data(),
+          URI.t(),
+          keyword()
+        ) ::
+          {:ok, [URI.t()]}
+          | {:ok, [URI.t()], instantiate_meta()}
+          | {:error, term()}
+  def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri, opts)
+      when is_atom(class_module) and is_map(tmpl_data) and is_list(opts) do
+    with :ok <- validate_instantiate_callback(class_module, opts),
+         {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
+         :ok <- maybe_store_agent_flavor(class_module, data, opts) do
+      result =
+        case opts do
+          [] ->
+            class_module.instantiate(tmpl_name, data, workspace_uri)
+
+          [launch_context: _context] ->
+            class_module.instantiate(tmpl_name, data, workspace_uri, opts)
+        end
+
+      case result do
         {:ok, _workers} = ok ->
           ok
 
@@ -374,11 +406,25 @@ defmodule Ezagent.Kind.Template do
           ok
 
         {:error, _reason} = error ->
-          delete_agent_flavor(data)
+          maybe_delete_agent_flavor(data, opts)
           error
       end
     end
   end
+
+  defp validate_instantiate_callback(_class_module, []), do: :ok
+
+  defp validate_instantiate_callback(class_module, launch_context: _context) do
+    with {:module, ^class_module} <- Code.ensure_loaded(class_module),
+         true <- function_exported?(class_module, :instantiate, 4) do
+      :ok
+    else
+      _reason -> {:error, :template_launch_context_not_supported}
+    end
+  end
+
+  defp validate_instantiate_callback(_class_module, _opts),
+    do: {:error, :invalid_launch_options}
 
   # Allocate the TARGET only when the template carries a config_dir REFERENCE
   # (the flavor wants a config home). The realized target rides in as
@@ -404,24 +450,29 @@ defmodule Ezagent.Kind.Template do
     end
   end
 
-  defp maybe_store_agent_flavor(class_module, tmpl_data) do
+  defp maybe_store_agent_flavor(_class_module, _tmpl_data, launch_context: _context), do: :ok
+
+  defp maybe_store_agent_flavor(class_module, tmpl_data, []) do
     case Map.get(tmpl_data, "agent_uri") do
       s when is_binary(s) and s != "" ->
         s
         |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.FlavorHook.store(class_module)
+        |> Ezagent.Kind.Template.AttributeHook.store(class_module)
 
       _ ->
         :ok
     end
   end
 
+  defp maybe_delete_agent_flavor(_tmpl_data, launch_context: _context), do: :ok
+  defp maybe_delete_agent_flavor(tmpl_data, []), do: delete_agent_flavor(tmpl_data)
+
   defp delete_agent_flavor(tmpl_data) do
     case Map.get(tmpl_data, "agent_uri") do
       s when is_binary(s) and s != "" ->
         s
         |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.FlavorHook.delete()
+        |> Ezagent.Kind.Template.AttributeHook.delete()
 
       _ ->
         :ok

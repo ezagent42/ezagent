@@ -30,27 +30,62 @@ defmodule EzagentDomainWorkspace.Application do
 
   @impl true
   def start(_type, _args) do
-    :ok = register_workspace_behavior()
+    children =
+      [
+        Ezagent.Workspace.TaskWorkspace.LaunchAuthority,
+        {Registry, keys: :unique, name: Ezagent.Workspace.TaskWorkspace.CacheLockRegistry},
+        {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
+        {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
+      ] ++
+        recovery_children() ++
+        Application.get_env(:ezagent_domain_workspace, :later_boot_children, [])
 
-    children = [
-      {DynamicSupervisor, name: Ezagent.Workspace.Supervisor, strategy: :one_for_one},
-      {Task.Supervisor, name: Ezagent.Workspace.CapGrantSupervisor}
-    ]
+    result = Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
 
     if test_env?() and Code.ensure_loaded?(EzagentCore.DataCase) and
          function_exported?(EzagentCore.DataCase, :register_async_drain_supervisor, 1) do
-      EzagentCore.DataCase.register_async_drain_supervisor(
-        Ezagent.Workspace.CapGrantSupervisor
-      )
+      EzagentCore.DataCase.register_async_drain_supervisor(Ezagent.Workspace.CapGrantSupervisor)
     end
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__)
+    :ok = register_task_workspace_infrastructure()
+    :ok = register_workspace_behavior()
+
+    result
   end
 
   defp test_env? do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp recovery_children do
+    if test_env?(),
+      do: [],
+      else: [{Ezagent.Workspace.TaskWorkspace.ReconcilerBoot, []}]
+  end
+
+  defp register_task_workspace_infrastructure do
+    :ok =
+      Ezagent.Agent.LaunchAuthority.register(Ezagent.Workspace.TaskWorkspace.LaunchAuthority)
+
+    :ok =
+      Ezagent.Kind.Template.PreStart.register(Ezagent.Workspace.TaskWorkspace.PreStart)
+
+    :ok =
+      Ezagent.Resource.FsResolver.Registry.register_all(resource_types())
+
+    :ok =
+      Ezagent.DomainGit.WorkspaceProvisionRegistry.register(
+        Ezagent.Workspace.TaskWorkspace.Provisioner
+      )
+
+    :ok
+  end
+
+  @doc false
+  def resource_types do
+    [Ezagent.Workspace.TaskWorkspace.Paths.resource_type()]
   end
 
   defp register_workspace_behavior do

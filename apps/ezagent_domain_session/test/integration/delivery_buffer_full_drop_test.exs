@@ -21,6 +21,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DeliveryBufferFullDropTest do
 
   defp u(prefix), do: "#{prefix}-#{System.unique_integer([:positive])}"
 
+  defp fill_to_capacity(uri, i \\ 1) do
+    case Ezagent.PendingDelivery.buffer(uri, {:filler, i}) do
+      :ok -> fill_to_capacity(uri, i + 1)
+      {:error, :buffer_full} -> :ok
+    end
+  end
+
   test "receive fan-out into a full buffer → not marked delivered + delivery_dropped trace row" do
     ws = u("bufdrop")
     workspace_uri = Ezagent.URI.new!("workspace://#{ws}")
@@ -48,20 +55,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DeliveryBufferFullDropTest do
     :ok = Ezagent.ReadyGate.await(recipient_uri, 5_000)
     :ok = Ezagent.ReadyGate.put(recipient_uri, :not_ready)
 
-    # Spawn-time capability settlement can itself enqueue one or more casts
-    # after the Kind is marked not-ready. Saturate until the buffer reports its
-    # actual boundary instead of assuming this test is the only producer.
-    assert :full =
-             Enum.reduce_while(
-               1..(Ezagent.PendingDelivery.max_per_uri() + 10),
-               :not_full,
-               fn i, _acc ->
-                 case Ezagent.PendingDelivery.buffer(recipient_uri, {:filler, i}) do
-                   :ok -> {:cont, :not_full}
-                   {:error, :buffer_full} -> {:halt, :full}
-                 end
-               end
-             )
+    # Agent startup may already have queued legitimate asynchronous follow-up
+    # work while the Kind is held at :not_ready. Fill the remaining capacity
+    # instead of assuming this shared delivery boundary starts empty.
+    :ok = fill_to_capacity(recipient_uri)
+
+    assert Ezagent.PendingDelivery.buffer_size(recipient_uri) ==
+             Ezagent.PendingDelivery.max_per_uri()
 
     on_exit(fn ->
       _ = Ezagent.PendingDelivery.flush(recipient_uri)

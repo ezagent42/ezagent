@@ -108,7 +108,7 @@ defmodule Ezagent.World.RoutesTest do
     assert route.entity_uri == nil
   end
 
-  test "knowledge base declared plugin route resolves to the dedicated kb surface" do
+  test "knowledge base declared plugin route resolves to the knowledge base surface" do
     route = Routes.route_for(%{}, "https://example.com/plugins/kb")
 
     assert route.component == "kb"

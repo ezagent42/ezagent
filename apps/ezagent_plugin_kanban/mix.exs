@@ -43,12 +43,13 @@ defmodule EzagentPluginKanban.MixProject do
       {:ezagent_core, in_umbrella: true},
       # Miro REST client JSON encode/decode（飞书也用，:httpc + Jason 不引重依赖）。
       {:jason, "~> 1.2"},
-      # kanban-as-role (K2/K3) integration tests: the role × native create path
-      # lives in the workspace/agent/session domains. plugin → domain is the
-      # allowed dependency arrow (mirrors ezagent_plugin_cc). The plugin's lib/
-      # never references the domains (it only declares the recipe + behaviors; the
-      # framework wires them at boot).
-      {:ezagent_domain_workspace, in_umbrella: true, only: :test},
+      # kanban-as-role (K2/K3): the role × native create path lives in the
+      # workspace domain. plugin → domain is the allowed dependency arrow
+      # (mirrors ezagent_plugin_cc). PROD dep (not test-only) because lib/
+      # `world_actions.ex` `create_kanban` calls `Ezagent.Workspace.create_agent/3`
+      # on the "new board = create a kanban-manager agent" world-page path — a
+      # genuine plugin→domain prod reference (#1476), not merely a test seam.
+      {:ezagent_domain_workspace, in_umbrella: true},
       # role-as-data (SPEC §4): domain_agent is now a PROD dep, not test-only —
       # `roles/0` is seeded at boot via `Ezagent.Plugin.RoleSeedHook`, whose impl
       # `Ezagent.Agent.RoleSeedHook` is registered by domain_agent's `start/2`.
@@ -73,7 +74,8 @@ defmodule EzagentPluginKanban.MixProject do
       # into (and brings Phoenix.Component for the internal render). PROD dep so
       # the registry ETS table is init'd before this plugin registers (mirrors
       # hello + the world-views ordering note in hello's `Application.start/2`).
-      {:ezagent_domain_ui, in_umbrella: true}
+      {:ezagent_domain_ui, in_umbrella: true},
+      {:phoenix_live_view, ">= 0.0.0"}
     ]
   end
 end

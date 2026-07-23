@@ -110,6 +110,36 @@ defmodule Ezagent.Kind.Server do
     create_freshness = create_freshness(kind_module, uri)
     args = Map.put(args, :create_freshness, create_freshness)
 
+    # main's before-start hook: `LaunchContextInit.prepare` may transform
+    # `args` and yields a `launch_context_relay` threaded through init and
+    # discarded on terminate. It runs BEFORE the authority open + snapshot load.
+    with {:ok, args, launch_context_relay} <-
+           Ezagent.Kind.LaunchContextInit.prepare(kind_module, args) do
+      init_after_before_start(
+        kind_module,
+        args,
+        uri,
+        uri_str,
+        create_freshness,
+        launch_context_relay
+      )
+    else
+      {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
+      {:error, reason} -> {:stop, {:before_start_failed, reason}}
+    end
+  end
+
+  defp init_after_before_start(
+         kind_module,
+         args,
+         uri,
+         uri_str,
+         create_freshness,
+         launch_context_relay
+       ) do
+    # #195: open the per-Kind signing authority (generation-aware, 3-arg) and
+    # run the snapshot load UNDER that authority so cap verification during load
+    # sees the current signer.
     authority_result =
       Ezagent.Cap.Authority.open(uri, kind_module.type_name(), create_freshness)
 
@@ -148,29 +178,24 @@ defmodule Ezagent.Kind.Server do
             uri: uri,
             state: slice_state,
             authority: authority,
+            launch_context_relay: launch_context_relay,
             post_init_queue: post_init_queue,
             # #533 5a (§3.10.3) — the authenticated creator, threaded as a
             # create-arg exactly like Session's `owner_uri`. `nil` on rehydrate
             # or when no creator is supplied. PR-5c reads this to grant the
             # manage-cap to the right principal.
             created_by: Map.get(args, :created_by),
-            # Set in the put_new branch below from the Lifecycle create-vs-activate
-            # signal (read BEFORE persist sets the marker).
+            # #533 5a (§3.10.3) — freshness comes from the Lifecycle's own
+            # create-vs-activate decision (`create_freshness/2`, gated on Kind
+            # METADATA `hosts_lifecycle?/1` — NOT the slice shape, which a cold
+            # rehydrate can lack `:transients` on and mis-classify; codex review
+            # P2). Computed in `init/1` BEFORE the authority open so the
+            # create/activate concept has one definition and can't drift.
             create_freshness: create_freshness
           }
 
           case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
             :ok ->
-              # #533 5a (§3.10.3) — capture freshness from the Lifecycle's own
-              # create-vs-activate decision BEFORE persist_initial_snapshot sets
-              # the `ever_created` marker. We go through `Lifecycle.fresh_create?/1`
-              # (the single Lifecycle-owned signal), NOT a snapshot/save return,
-              # so the create/activate concept has one definition and can't drift.
-              # Gate on `Lifecycle.hosts_lifecycle?/1` (Kind METADATA) — NOT the
-              # slice shape: on cold restart the rehydrated slice can lack
-              # `:transients`, which would mis-classify a rehydrated Lifecycle Kind
-              # as :unknown instead of :existed (codex review P2). Non-Lifecycle
-              # Kinds have no create/activate distinction → :unknown.
               case persist_initial_snapshot(uri, kind_module, slice_state) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
@@ -201,31 +226,6 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  # Allen 2026-05-25 — CLI persistence fix.
-  #
-  # `Kind.Server.init/1` historically only wrote a snapshot when a
-  # dispatch mutated the slice (`commit_and_notify/3`), the periodic
-  # timer fired, or `terminate/2` ran (`:on_terminate` strategy). All
-  # three assume a long-lived BEAM.
-  #
-  # `mix ezagent.agent.create` (and any other `mix` task that spawns
-  # Kinds) runs in a short-lived BEAM that exits seconds after
-  # `Ezagent.Kind.spawn/2` returns — well before the periodic timer
-  # fires and before the supervisor can drain `terminate/2` reliably.
-  # Result: the freshly-init'd Kind exists in memory only, never lands
-  # in `kind_snapshots`, and is invisible to any subsequent BEAM that
-  # tries to look it up. The CLI demo
-  # `mix ezagent.agent.create entity://agent/system/cc_linyilun-default`
-  # silently lost the Agent on mix exit.
-  #
-  # Fix: synchronously write the initial slice once the Kind is in
-  # `KindRegistry`, regardless of strategy. We deliberately use
-  # `save_now/3` (not `commit/4`) because `commit/4` policy-gates and
-  # would return `:not_durable` for `:on_terminate` / `:periodic` —
-  # exactly the strategies we need to fix. For `:ephemeral` /
-  # `:external` we skip: those strategies are documented "no DB
-  # touch."
-  #
   # Issue #342 r1 (Allen 2026-05-25 — let-it-crash). Previously this
   # function discarded the result of `save_now/3` because save_now
   # itself silently returned `:ok` on DB error. With save_now now
@@ -568,6 +568,19 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, kind_module}, state}
   end
 
+  def handle_call(
+        {:ezagent_validate_cap_artifact, artifact, receiver},
+        _from,
+        state
+      ) do
+    result =
+      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+        Ezagent.Cap.validate_for_current_target(artifact, receiver)
+      end)
+
+    {:reply, result, state}
+  end
+
   def handle_call(:ezagent_runtime_view, _from, state) do
     view = Map.take(state, [:kind, :uri, :state])
     {:reply, {:ok, view}, state}
@@ -588,6 +601,10 @@ defmodule Ezagent.Kind.Server do
 
   def handle_call(:ezagent_recredential_generation, _from, state) do
     {:reply, {:error, :principal_revoked}, state}
+  end
+
+  def handle_call(:ezagent_launch_context_relay, _from, state) do
+    {:reply, Map.get(state, :launch_context_relay), state}
   end
 
   # PR-OWN-2 (caps-data-ownership SPEC #306 §7) — read a single

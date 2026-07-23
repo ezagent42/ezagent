@@ -1647,3 +1647,43 @@ merged into `domain-agent-handoff` or left with a concrete blocker/decision.
 ## Kanban read-only share — verify reflux live in a real deploy env (from #1425, 2026-07-15)
 
 Data-reflux is proven at code+test level (board_forward_test). But the Hello receipt UI is a delegation-time SNAPSHOT (not live); the live surface is the World Kanban receiver tab, which the disposable stack could not stand up to record. **Verify live reflux on a full deployed world stack + decide the Hello-receipt-snapshot UX (auto-refresh vs link to live board).** Detail: docs/notes/2026-07-15-kanban-reflux-deploy-verify.md
+
+---
+
+## 2026-07-22 — #1445 GitHub App auth follow-ups (security review SOUND; Allen: defer + record)
+
+**Threat-model note (Allen 2026-07-22):** the should-fix items defend against **in-VM (in-BEAM) malicious code** reading the token — currently OUT OF SCOPE (code admitted into the BEAM is trusted; tokens ~1h-lived). Defer; revisit later.
+
+- **[should-fix] Scope the installation token to the single repo.** `apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_installation.ex:111-116` mints with an empty body → GitHub returns an installation-WIDE full-permissions token, cached per-account (`account_of/1`, :152). Scope via `repository_ids` + minimal `permissions`; cache key per-repo. Shrinks blast-radius on leak.
+- **[should-fix] Encrypt the installation token at rest / drop `:public` ETS.** `github_installation.ex:164` stores the repo-write token CLEARTEXT in a `:public` ETS table (any process can `:ets.lookup`). Inversion: the lower-priv OAuth token IS AES-GCM encrypted (`github_credential_backend.ex:110`); the higher-priv token is not. Encrypt-at-rest or serialize through the owner process (table need not be `:public`).
+- **[nit] `token_encryption_key` fail-loud on unset-in-prod.** `github_credential_backend.ex:78-83` returns nil (ephemeral per-boot key) when UNSET → stored OAuth connections lost on reboot. Malformed fails loud; unset degrades silently. Match the PEM fail-loud path.
+- **[nit] webhook plug oversized body → 413/400 not 500.** `github_webhook_plug.ex:28` `read_body` raises on `{:more, ...}` → 500 (fails closed, no bypass; plug not yet router-wired).
+- **[follow-up] plugin-check over-matches `DomainGit.AdapterRegistry.register` (`ezagent_plugin_github/.../application.ex:78`).** Regex over-matches the DomainGit registry (after_boot is legit). Fatal for the github app-dir `mix test`/`compile` (exit 1), non-fatal from umbrella root (CI passes) → plugin app not testable in isolation. Same class as the #1476 `lib/mix/tasks/` exemption.
+
+## 2026-07-22 — extract business code out of ezagent core (Allen)
+
+ezagent currently bundles BUSINESS code (seed/manifest — the hello 官网 seed, deploy-seed manifests, demo seeds) inside the platform. **Future direction: ezagent keeps only CORE functionality; business/product code (seeds, manifests, demo content) is extracted out.** Do later. (The hello A workspace de-hardcode — user-created `ezagent-official` session instead of a platform-hardcoded `system` seed — is a step in this direction.)
+
+## 2026-07-22 — socialware market: BACKEND largely exists, PRODUCT SURFACE is the gap (Allen)
+
+**Correction (2026-07-22).** An earlier note here claimed "no market / no 上架 mechanism" — that was WRONG (over-stated the gap). Re-audited: `Ezagent.Socialware.DefinitionRegistry` **+ its live-wired callers already ARE the market's functional backend**:
+- **Catalog store** — ConfigStore-backed, cross-workspace.
+- **Visibility scoping** — own / system / **public** (`Definition.visibility_policy.scope: :public`; `visible_to_workspace?/4` = own ∨ system ∨ public; ranked own→system→public).
+- **Browse/list** — `list/1` → `World.WorkspacePluginData.socialware_rows/1` builds catalog-card rows (name/title/description/version/config_id/content_hash/scope) → surfaced in the world sessions/plugin panel.
+- **Install** — `resolve_installable_revision/3` (scope-gated, content-hash-pinned "catalog card" install) via `World.SocialwareInstall.prepare_create_template` (a foreign PUBLIC card installs THAT exact revision; a PRIVATE foreign def can't be installed by supplying its `config_id`).
+- **Uninstall** — `World.ConversationActions.uninstall_socialware`.
+- **Publish/write** — `Socialware.DefinitionEditor.write_definition`.
+- **下架/上架 (retract/restore)** — `ConfigGovernance.Socialware.set_retracted` + `DefinitionRegistry.retracted?/2` (retracted def is non-installable even by exact `config_id`).
+
+**What's actually MISSING = the market as a discoverable PRODUCT, not the backend:**
+1. ~~**No standalone market/discover surface**~~ — **SHIPPED (PR-5, `feat/socialware-market-surface`)**: the world `/market` route renders a dedicated browse surface (cards from `socialware_rows/1` — the `list/1`-scoped single source), with revision-pinned install (`market.install`) per card. Search/categories/featured/screenshots remain open (item 3).
+2. ~~**No first-class public-publish (上架) FLOW**~~ — **SHIPPED (PR-5)**: `market.publish` （上架） on own-workspace cards routes through `DefinitionEditor.save_authored_definition/4` so the #165 admin gate fires on the caller's real actor+caps (beta authz = admin-only); `market.retract` （下架） / `market.restore` (re-list) route through the GATED `ConfigGovernance.Socialware.retract/2` / `restore/2`. A review/moderation queue for public listings remains open.
+3. **No discovery metadata** — search index, categories/tags, ratings/usage counts, author attribution.
+
+**Do later:** the discovery/metadata layer (item 3) + a moderation/review queue for public listings, ON TOP of the existing DefinitionRegistry backend — don't rebuild the backend. Keeping shared definitions in `system` stays the interim home until moderation exists. (Layers stay distinct: DEFINITION/type = the catalog listing; INSTANCE/session = a specific install; page CONTENT = that install's materials.)
+
+## 2026-07-22 EOD — from the hello-A / PR-5 landings
+
+- **socialware market product surface — ✅ DONE** (PR-5 / #1525, merged `b36809e6b`): browse/install page + first-class 上架/下架 on the existing DefinitionRegistry backend, #165 admin-gated. (Supersedes the earlier "market product surface" todo.)
+- **Sandbox-ownership E2E fix (BLOCKS full-suite/deploy).** `EzagentPluginKb.E2E.AutoserviceTier1SeedTest` fails **deterministically** (2/2): the seed's spawned `manifest-installer` GenServer can't persist in the `:manual`-sandbox test (`DBConnection.OwnershipError` in `Kind.Server.persist_handle_info_mutation` → "kept in-memory only" → the tier-1 fact isn't persisted → assertion fails). Same class as the `world/ConversationActionsTest` + `kind_provenance` flakes. Root cause is test-harness sandbox inheritance: async processes the test spawns need `Ecto.Adapters.SQL.Sandbox.allow(Repo, test_pid, spawned_pid)` or `{:shared, self()}` mode. **Verified pre-existing** (the persist fn predates #1445 and all of today's work). It's the sole thing keeping main's full-suite red → keeps the deploy dispatch (`needs: [full-suite]`) from firing. Sharding (#1522) already isolates it into the `e2e` shard for cheap re-run. Fix the sandbox inheritance, don't weaken the tests.
+- **PresenterCaps session-staleness (auth should-fix, pre-existing).** `World.PresenterCaps.load/1` merges a mount-time bootstrap cap snapshot with live caps by identity key; a **bootstrap-only admin artifact survives a mid-session demotion**, so a demoted admin keeps publish/admin rights until re-login. Surfaced by the PR-5 §15.3 security review, but it is **NOT a PR-5 regression** — it is identical for EVERY world admin action (`admin.*`, user actions, and now market publish). Defends against a demoted-but-still-connected admin. Fix: re-derive caps from the live Identity slice per action (or invalidate the bootstrap snapshot on a cap-generation bump), not from the mount snapshot.

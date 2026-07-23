@@ -13,11 +13,11 @@ defmodule Ezagent.TestSupport.TemplateFlavorHookProbe do
     :ok
   end
 
-  def store_flavor_attrs(agent_uri, class_module) do
+  def store_attributes(agent_uri, class_module) do
     send_event({:store_flavor_attrs, agent_uri, class_module})
   end
 
-  def delete_flavor_attrs(agent_uri) do
+  def delete_attributes(agent_uri) do
     send_event({:delete_flavor_attrs, agent_uri})
   end
 

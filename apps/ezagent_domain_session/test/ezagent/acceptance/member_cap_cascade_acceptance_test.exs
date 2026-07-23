@@ -291,6 +291,7 @@ defmodule Ezagent.Acceptance.MemberCapCascadeAcceptanceTest do
     # the admission request is being assembled. Select the contract-owned
     # envelope instead of assuming it is the first notification in the mailbox.
     assert_receive {:notification, ^a, %{type: :pending_admission} = pend_notif}, 2_000
+    assert pend_notif.type == :pending_admission
     assert pend_notif.body.member == URI.to_string(agent)
     assert pend_notif.body.session == URI.to_string(b_session)
     assert is_binary(pend_notif.body.request_ref)

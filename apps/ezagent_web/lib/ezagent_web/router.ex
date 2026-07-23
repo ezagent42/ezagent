@@ -38,6 +38,7 @@ defmodule EzagentWeb.Router do
       live_session :world_root_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
         live "/", WorldLive
         live "/sessions", WorldLive
+        live "/market", WorldLive
         live "/identities", WorldLive
         live "/identities/users", WorldLive
         live "/identities/users/new", WorldLive
@@ -90,6 +91,7 @@ defmodule EzagentWeb.Router do
 
     live_session :world_require_entity, on_mount: {EzagentWeb.LiveAuth, :require_entity} do
       live "/sessions", WorldLive
+      live "/market", WorldLive
       live "/identities", WorldLive
       live "/identities/users", WorldLive
       live "/identities/users/new", WorldLive
@@ -204,10 +206,11 @@ defmodule EzagentWeb.Router do
     get "/socialware/chat", Socialware.ChatFeedController, :show
 
     # Path-route hello pages: `app.ezagent.chat/hello/<name>` serves the
-    # public page for `session://<hello_workspace>/hello/<name>`. The workspace
-    # comes from application config (default "demo" in dev); the full socialware
-    # anon-access pipeline (PublicView gate, anon minting, SPA shell) runs
-    # unchanged — this is just a short URL entry.
+    # public page for `session://<hello-home-workspace>/hello/<name>`. The
+    # workspace comes from the single `:ezagent_plugin_hello, :home_workspace`
+    # config key (default "ezagent"); the full socialware anon-access pipeline
+    # (PublicView gate, anon minting, SPA shell) runs unchanged — this is just
+    # a short URL entry.
     get "/hello/:session_name", Socialware.ChatFeedController, :show_by_name
     post "/hello/delegate", HelloDelegationController, :create
     get "/hello/delegate/resume", HelloDelegationController, :resume
@@ -299,6 +302,11 @@ defmodule EzagentWeb.Router do
 
   # LLM Protocol API: OpenAI-compatible inbound endpoint.
   forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug
+
+  # D2 GitHub OAuth callback receiver. GitHub redirects the user's browser
+  # to this endpoint after authorization. The Plug dispatches the `code` and
+  # `state` parameters to CallbackIngress.consume/3 for processing.
+  forward "/github/callback", EzagentPluginGithub.GitHubCallbackPlug
 
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.

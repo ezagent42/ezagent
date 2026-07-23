@@ -670,7 +670,18 @@ defmodule Ezagent.ActionSet.Workspace do
   defp create_session_via_class(class_name, class_module, short_name, workspace_uri, caller) do
     tmpl = %{"class" => class_name, "session_name" => short_name}
 
-    case class_module.instantiate(class_name, tmpl, workspace_uri) do
+    # hello-A — a Template Class that exports `instantiate/4` receives the
+    # dispatch CALLER (`caller: caller`) so the created session's owner is the
+    # caller principal ("the caller becomes the session owner"), not a
+    # hard-coded admin. Classes exporting only `instantiate/3` are unchanged.
+    result =
+      if function_exported?(class_module, :instantiate, 4) do
+        class_module.instantiate(class_name, tmpl, workspace_uri, caller: caller)
+      else
+        class_module.instantiate(class_name, tmpl, workspace_uri)
+      end
+
+    case result do
       {:ok, [%URI{} = session_uri | _]} ->
         finish_class_session(session_uri, workspace_uri, caller)
 
