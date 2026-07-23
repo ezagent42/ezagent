@@ -1,12 +1,16 @@
 # Git Provider V1 Plan E 简化执行修正案
 
-**状态：** 待 lead 书面确认；确认前不得编写新 implementation handoff、实施生产代码或操作 canary
+**状态：** lead 已于 2026-07-24 书面确认；允许编写 implementation plan/handoff，
+仍不得由本设计 session 实施生产代码或在 E9 前操作 canary
 
 **日期：** 2026-07-24
 
 **设计分支：** `integration/git-provider-v1-plan-e`
 
-**设计基线：** `7e3ee6560ab4cf641870ca9496e74b5c3033ccf2`
+**原始设计基线：** `7e3ee6560ab4cf641870ca9496e74b5c3033ccf2`
+
+**当前集成基线：** `6685ec567de195ffed66b1d4311df2920b173da8`
+（已合入 `origin/main` @ `53da027438cd701dc6825289e1dc9513dbeea027`）
 
 **受管控主工作区：** `/home/huangjiajia/ezagent`，固定 `main`，本任务只读
 
@@ -420,10 +424,10 @@ fresh-read confirmed PR fact。不得直接调用 adapter、手动插 DB、替�
 
 ## 10. 基线与派工门禁
 
-当前 integration HEAD 是 `7e3ee6560...`，当前受管控 main HEAD 是
-`62f606b8f...`。`7e3ee6560...` 是 main 的 ancestor；其后当前只有一个与本范围
-无关的 PostgreSQL 注释/死代码清理提交，但任何新 worker 仍不得使用旧 integration
-SHA。
+原始 integration 基线是 `7e3ee6560...`。设计确认后，lead 已只读 fetch
+`origin/main`，并在独立 integration worktree 合入
+`origin/main` @ `53da027438cd701dc6825289e1dc9513dbeea027`；merge commit 为
+`6685ec567de195ffed66b1d4311df2920b173da8`。受管控 main worktree 未切换、未修改。
 
 书面设计确认后，lead 必须：
 
