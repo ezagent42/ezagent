@@ -105,7 +105,7 @@ Row shape:
 ```markdown
 | agentId | task | branch | worktree | status | started | updated |
 |---|---|---|---|---|---|---|
-| agent-7fa3 | feature-x handler | feat/feature-x | /Users/you/esr-ng/.worktrees/impl-x | running | 14:02 | 14:31 |
+| agent-7fa3 | feature-x handler | feat/feature-x | /Users/you/esr-ng/.worktrees/impl-x | running | 2026-07-23 14:02 | 2026-07-23 14:31 |
 ```
 
 - **`worktree` is the recovery link** — the absolute path where that subagent's
@@ -113,6 +113,14 @@ Row shape:
 - One writer (the coordinator). Subagents never write this file; they write their
   own local files in their own worktree. That split is what removes all
   cross-worktree write contention.
+
+**Layering with subagent-driven-development.** `subagents.md` is the
+*coordination / fleet* layer; it does not replace SDD. SDD's
+`.superpowers/sdd/progress.md` is the *within-worktree execution* ledger for a
+subagent that runs SDD. The two compose — the registry finds the worktree, the
+execution ledger (SDD's `progress.md`, or this skill's `in-progress.md` for a
+non-SDD subagent) says how far it got. See SKILL.md → "Relationship to
+subagent-driven-development".
 
 ### Status lifecycle — who flips, and when
 
@@ -128,6 +136,15 @@ The `stalled` transition is the reason the file exists. A `stalled` row is a
 durable note that in-flight work sits at a known worktree, waiting to be
 recovered — even if the coordinator itself gets `/clear`'d before it acts.
 
+**Spawn seed — the one allowed write into a subagent's worktree.** When you flip
+a row to `running`, seed that subagent's execution ledger *once*: create/point
+its `.superpowers/sdd/progress.md` (if it runs SDD) or `in-progress.md`, and
+instruct the subagent to keep it current. This is what guarantees recovery an
+execution frontier to read (without it, a `stalled` row could point at an empty
+worktree). It is a **one-time** write at spawn and the *only* time the
+coordinator writes into a subagent's worktree; after it, the ownership split
+holds — the subagent owns its local files, the coordinator owns `subagents.md`.
+
 ## Recovery runbook
 
 Run this when a subagent dies mid-task, or on coordinator session catchup when
@@ -139,8 +156,9 @@ Run this when a subagent dies mid-task, or on coordinator session catchup when
    row). If the path is gone, the worktree was removed — mark the row
    `abandoned` and move on.
 3. **Read the local state, in this order:**
-   - `in-progress.md` — the exact step the agent was on when it died. This is the
-     highest-value file; it is the live frontier.
+   - The subagent's **execution ledger** — `.superpowers/sdd/progress.md` if it
+     runs SDD, else `in-progress.md` — the exact step / task frontier it was on
+     when it died. This is the highest-value file; it is the live frontier.
    - `plan.md` — the agent's plan and its `RESUME HERE` marker.
    - `done.md` — what it had already finished (don't redo these).
 4. **Read the git state** to separate committed from uncommitted work:
@@ -194,7 +212,9 @@ worktree and the registry knew exactly where to look.
 - **Committing the planning files.** They are working memory. Committing them
   creates merge conflicts across branches and leaks scratch into history. Keep
   them gitignored.
-- **Coordinator writing into a subagent's worktree files** (or vice versa). That
+- **Coordinator writing into a subagent's worktree files** (or vice versa),
+  *beyond the one-time execution-ledger seed at spawn.* That single seed write is
+  the sole sanctioned exception (see "Spawn seed" above); any write after it
   reintroduces the cross-worktree write contention the ownership split removes.
   Coordinator owns `subagents.md`; each subagent owns its own local three.
 - **Rewriting `done.md`.** It is append-only. Rewriting it destroys other actors'

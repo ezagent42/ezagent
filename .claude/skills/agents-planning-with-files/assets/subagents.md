@@ -10,10 +10,11 @@ Status lifecycle (coordinator flips):
   running -> stalled  ==  the RECOVERY TRIGGER (agent errored / went silent)
 
 Recovery: for each non-`done` row, cd to its worktree, read that worktree's
-in-progress.md + plan.md + done.md, check `git -C <worktree> status`, then
+execution ledger (`.superpowers/sdd/progress.md` if it runs SDD, else
+in-progress.md) + plan.md + done.md, check `git -C <worktree> status`, then
 resume / harvest / abandon. Full runbook: references/coordination.md.
 -->
 
 | agentId | task | branch | worktree (abs path) | status | started | updated |
 |---|---|---|---|---|---|---|
-| <agent-id> | <one-line task> | <branch> | <abs worktree path> | running | <HH:MM> | <HH:MM> |
+| <agent-id> | <one-line task> | <branch> | <abs worktree path> | running | <YYYY-MM-DD HH:MM> | <YYYY-MM-DD HH:MM> |

@@ -2,8 +2,10 @@
 
 <!--
 Working memory, gitignored. The plan + the resume point.
-Multi-actor shared tree: give each actor a `## @<actor-id>` section and edit
-only your own. Single actor: delete the @-sections and just list phases.
+This template is single-actor (the common first case) — just fill in the
+sections below. Multi-actor shared tree: give each actor its own
+`## @<actor-id>` section (move Goal / Phases / RESUME HERE under your heading)
+and edit only your own.
 -->
 
 ## Goal
