@@ -33,7 +33,7 @@ For every task:
 4. Check **`references/anti-patterns.md`** — if the task description matches one, push back BEFORE writing code.
 5. Use **`references/how-to-recipes.md`** for common contributor tasks (add plugin, Kind, Behavior, Template Class, routing rule, invariant test, ExternalMirror adapter).
 6. When debugging, jump to **`references/debug-recipes.md`** — symptom-first.
-7. For UI/frontend work, load **`references/ui-contract.md`** — 3-layer architecture + nested shell + DO/DON'T lists.
+7. For UI/frontend work, load **`references/ui-contract.md`** — component layers, World/SliceChange runtime refresh, nested shell, and DO/DON'T lists.
 8. **Before ANY code that grants / revokes / checks / declares a capability, read `references/capbac.md`.** CapBAC is the most pitfall-prone area in the repo (granter≠caller, `ctx.caps` is the authorizer, the `Ezagent.Identity.Grant` chokepoint + tag decision tree, `rule_cap_bounded?`, the system-principal Catalog, Decision #154). The §9 pitfalls list is the set of mistakes that have actually shipped. **Cap-signing status (do NOT re-hallucinate):** cap-signing **Path A is DONE + merged** (PR #1457, 2026-07-18) — caps are **born-signed and strictly crypto-verified** with per-Kind ed25519 keys (`Ezagent.Cap.Authority` + `Ezagent.Cap.Verifier`). There is **no permissive verify, no dual-read, no `require_signature:false`, no pending "cap-signing strict"**, and `Ezagent.Cap.verify/1` is retired. **Path B** (isolated external signer, for in-VM-malicious defense) is **deferred**. See `references/capbac.md` §4.6 + GLOSSARY Decision #164 + ARCHITECTURE §7.8.
 9. Cross-reference **`references/pointer-index.md`** for the durable record (Decision Log, forensic notes, SPEC, current-state snapshot).
 10. **Adding a new agent type, or a render/feed/transport capability? Run the §"Extending agents without violating the architecture" pre-flight checklist below** (depth in `references/extending-agents.md`) — it catches the two violations that pass tests but break the architecture.
@@ -52,7 +52,7 @@ ezagent-developer/
     ├── anti-patterns.md              ← what the skill refuses
     ├── how-to-recipes.md             ← contributor recipes (add plugin / Kind / Behavior / …)
     ├── debug-recipes.md              ← symptom-first debug
-    ├── ui-contract.md                ← 3-layer UI + nested shell + DO/DON'T
+    ├── ui-contract.md                ← component layers + World refresh contract + nested shell + DO/DON'T
     ├── slice-and-snapshot.md         ← Behavior slice + Kind snapshot model + recurring bug class (ENGINE-internal now)
     ├── lifecycle.md                  ← post-2026-05-29 Lifecycle API: the SOLE developer surface (use Ezagent.Lifecycle + two-container state + hooks + §11 naming)
     ├── new-contract.md               ← the INTERNAL engine (R/B/K) the Lifecycle macro compiles down to (use Ezagent.ActionSet + action/3 + effects)
