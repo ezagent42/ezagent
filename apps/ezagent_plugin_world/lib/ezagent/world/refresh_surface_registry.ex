@@ -17,9 +17,11 @@ defmodule Ezagent.World.RefreshSurfaceRegistry do
         }
 
   @spec all() :: [surface()]
+  @doc "Lists every declared UI surface that can be refreshed after a slice change."
   def all, do: page_surfaces() ++ declared_surfaces()
 
   @spec by_component(String.t() | term()) :: surface() | nil
+  @doc "Finds the refresh surface rendered by the given client component name."
   def by_component(component) when is_binary(component) do
     Enum.find(all(), &(&1.component == component))
   end
@@ -27,6 +29,7 @@ defmodule Ezagent.World.RefreshSurfaceRegistry do
   def by_component(_), do: nil
 
   @spec target_uri(surface(), Phoenix.LiveView.Socket.t()) :: URI.t() | nil
+  @doc "Returns the entity URI targeted by a surface in the current LiveView socket."
   def target_uri(%{target: {:route, key}}, socket) do
     case socket.assigns[:current_route] do
       %{^key => %URI{} = uri} -> uri
@@ -42,6 +45,7 @@ defmodule Ezagent.World.RefreshSurfaceRegistry do
   end
 
   @spec build_state(surface(), URI.t(), map()) :: {:ok, map()} | {:error, term()}
+  @doc "Builds validated refresh state for a surface, converting provider failures to errors."
   def build_state(%{state_builder: builder}, %URI{} = uri, ctx) when is_map(ctx) do
     case builder.refresh_state(uri, ctx) do
       state when is_map(state) -> {:ok, state}

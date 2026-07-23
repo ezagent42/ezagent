@@ -1971,5 +1971,141 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
      "info/1", "9b82259f2c7580fab424fdc98553a7ebb199833fe3cea60de5e85f0af7743e7c"}
   ]
 
-  def sites, do: @sites
+  @pr1497_new_sites [
+    {"apps/ezagent_plugin_world/lib/ezagent/world/conversation_session_state.ex", 99,
+     {:ensure_slice_change_subscribed, 2}, :remote, "assigns/0",
+     "9873c6f76b3e92fbe6c8a280f1c40453bf8c503230cff06ecd4c3a0c8e458920"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 26, {:when, 2},
+     :remote, "component/0", "43992ef3bbbb240e1145993658b6884fded2c5f1e365fd8c1237cf416b62d8ae"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 34,
+     {:target_uri, 2}, :remote, "assigns/0",
+     "c18428cf111bb3348d26dcef2a7f86ae643c9e18031429dc47024f6dfdb94518"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 41,
+     {:target_uri, 2}, :remote, "assigns/0",
+     "ced826b39ce46d311ddfa8f2b1526b0afda52fab8f462477518b616bc1920b48"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 50, {:when, 2},
+     :remote, "refresh_state/2",
+     "31ca6639f90267d20850ecffe286284120aaeccee463900d22902c91fa5cb0a1"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 62,
+     {:page_surfaces, 0}, :remote, "key/0",
+     "2ac9579202d855f24cc1de88445ee4e1b2892b0e967fc9a578c2d4a2528deb5d"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 63,
+     {:page_surfaces, 0}, :remote, "key/0",
+     "8f918e5dea69487dcd491e62d2d3cbbc74e68475c22b2496726ea86c2850c36e"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 65,
+     {:page_surfaces, 0}, :remote, "data_builder/0",
+     "e7f39d6600bd4fe84d29201d4d7279a1981b268f1fc5af6963310bae243d6357"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 66,
+     {:page_surfaces, 0}, :remote, "provider/0",
+     "d879d2e18942e91e70487dcfe5892819cd39005c8299a78351c78cc22c110430"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 73,
+     {:declared_surfaces, 0}, :remote, "slug/0",
+     "d4e3b8be6def9427bb71e5ff5270417a002d39af7ec2bdbcc981371880ffd853"},
+    {"apps/ezagent_plugin_world/lib/ezagent/world/refresh_surface_registry.ex", 77,
+     {:declared_surfaces, 0}, :remote, "refresh_surfaces/0",
+     "d4331da71fa4e0f600c425669f3c35ba779b441aaea7d39589f16d846ecb53be"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 294,
+     {:refresh_caps_after_identity_change, 3}, :remote, "assigns/0",
+     "9b0f08bae4e597ac4f2daf67088465272cfcf6f4e49507a76ff045136038c0fa"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 308,
+     {:schedule_active_surface_refresh, 2}, :remote, "assigns/0",
+     "e3a74b51495ea0dc57ba1533bbf675533054b17de01de362ce64e3188bee8bdb"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 313,
+     {:schedule_active_surface_refresh, 2}, :remote, "assigns/0",
+     "63b3ee674dd2c9ba5ec8702b5da554a8676d2e9ad98e2b43a661faaa7610711e"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 329,
+     {:refresh_active_surface, 3}, :remote, "assigns/0",
+     "e3a74b51495ea0dc57ba1533bbf675533054b17de01de362ce64e3188bee8bdb"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 352,
+     {:sync_surface_refresh_subscription, 2}, :remote, "assigns/0",
+     "980d384d3aa23baa0687ae50bd90b561fcf28a19c9c586fd744fec768fb1d250"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 383,
+     {:refresh_context, 1}, :remote, "current_workspace_uri/0",
+     "5f26915dca83c0e96337c308434549d85e6ccd695f748916f1f71f4a16584e9d"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 384,
+     {:refresh_context, 1}, :remote, "current_entity_uri/0",
+     "cc402d3b3423202123d1babdb2c4133ed4658fb49158877e4f63fd9d5373353c"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 390,
+     {:refresh_current_caps, 1}, :remote, "current_entity_uri/0",
+     "6483356cbde631f3737ff0c8724c784a3fa6a934cc2b3a53c233eee3c28aa9e6"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 400,
+     {:refresh_current_caps, 1}, :remote, "current_workspace_uri/0",
+     "b6c55142af3d30ed95ca6db5ad5b14879655824dbf3b1a9329176494c4db6b60"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 402,
+     {:refresh_current_caps, 1}, :remote, "assigns/0",
+     "32c764866b875f61fcdd673577cb9654e38a1abad9b85b2a6f4129142430dc84"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 409,
+     {:refresh_current_route, 1}, :remote, "assigns/0",
+     "fab0a33718000153eb2b317f864ae37fc124e99462b852e20f8a2b34d1c7d00c"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 411,
+     {:refresh_current_route, 1}, :remote, "current_workspace_uri/0",
+     "7837112fecb57a3f0a67a48cbc3a1c802479a6c5efd2b6986ddb985aecc247a7"},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 412,
+     {:refresh_current_route, 1}, :remote, "current_entity_uri/0",
+     "fddb236494dfb8322ed6c97cd41a96c9a8ef0f613b0dbc0ed08b02959fdf8241"}
+  ]
+
+  @doc "Returns the audited dynamic receiver sites used by plugin production code."
+  def sites do
+    Enum.map(@sites, &migrate_pr1497_site/1) ++ @pr1497_new_sites
+  end
+
+  defp migrate_pr1497_site({path, line, function, kind, call, fingerprint}) do
+    {path, migrate_pr1497_line(path, line), function, kind, call, fingerprint}
+  end
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/world_data.ex",
+         line
+       )
+       when line >= 401,
+       do: line + 4
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent/world/conversation_session_state.ex",
+         71
+       ),
+       do: 86
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex",
+         line
+       )
+       when line >= 405,
+       do: line + 5
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/application.ex",
+         62
+       ),
+       do: 79
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent/world/plugin_page_registry.ex",
+         line
+       ),
+       do: line + 3
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 270,
+       do: line + 155
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 125,
+       do: line + 5
+
+  defp migrate_pr1497_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 82,
+       do: line + 3
+
+  defp migrate_pr1497_line(_path, line), do: line
 end
