@@ -275,6 +275,66 @@ defmodule Ezagent.Kind.SliceAccess do
     :exit, reason -> {:unknown, {:exit, reason}}
   end
 
+  @doc """
+  Read + CLASSIFY an arbitrary Behavior slice — the GENERALIZATION of
+  `read_identity_caps/1` (SPEC 2026-07-23 §2.2, the actor-extraction public read
+  surface). Same 3-way classification, bounded retry, and `:not_found` durable
+  disambiguation; the ONLY difference is the success mapping — a live slice read
+  returns `{:ok, value}` for ANY slice, where the caps-specific reader returns
+  `{:caps, MapSet.t()}`.
+
+  Returns:
+
+  - `{:ok, value}` — the slice was read from a live Kind (`value` may be `nil`
+    for a live Kind that has not populated this slice).
+  - `:absent` — a genuine non-existence: `:not_found` with NO durable snapshot
+    (the instance never existed / never persisted). The caller denies cleanly.
+  - `{:transient, reason}` — a KNOWN instance's slice was transiently unreadable
+    (alive but call timed out / exited; or briefly un-registered while its
+    durable snapshot survives). The caller MUST fail LOUD (raise), never deny.
+
+  Preserves the fail-LOUD-not-deny contract as a PUBLIC primitive so the cap
+  layer can stop reaching into private slice/snapshot state. Does NOT spawn.
+  """
+  @spec read_classified(URI.t() | String.t(), atom()) ::
+          {:ok, term()} | :absent | {:transient, term()}
+  def read_classified(uri, slice_key) when is_atom(slice_key),
+    do: do_read_classified(uri, slice_key, 0)
+
+  defp do_read_classified(uri, slice_key, attempt) do
+    case classify_slice_read(uri, slice_key) do
+      {:transient, _reason} = transient ->
+        if attempt + 1 < identity_read_max_attempts() do
+          Process.sleep(identity_read_backoff_ms() * Bitwise.bsl(1, attempt))
+          do_read_classified(uri, slice_key, attempt + 1)
+        else
+          transient
+        end
+
+      settled ->
+        settled
+    end
+  end
+
+  # One slice read, mapped to a classification — mirrors `classify_identity_read/1`
+  # but success is the generalized `{:ok, value}`, and the `:not_found`
+  # durable-disambiguation (`classify_not_found/1`) is REUSED verbatim.
+  defp classify_slice_read(uri, slice_key) do
+    case do_get_slice(uri, slice_key, identity_read_timeout_ms()) do
+      {:ok, value} ->
+        {:ok, value}
+
+      {:error, {:get_slice_exit, reason}} ->
+        {:transient, {:get_slice_exit, reason}}
+
+      {:error, :not_found} ->
+        classify_not_found(uri)
+
+      {:error, reason} ->
+        {:transient, reason}
+    end
+  end
+
   defp identity_read_timeout_ms,
     do: Application.get_env(:ezagent_core, :identity_read_timeout_ms, 1_000)
 
