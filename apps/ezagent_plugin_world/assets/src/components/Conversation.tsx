@@ -3,7 +3,7 @@ import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loa
 
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
-import {Kanban, type KanbanState} from "../../../../ezagent_plugin_kanban/assets/src/Kanban"
+import {pluginPageRenderers} from "../generated/plugin-page-renderers"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {ExternalMirror} from "./Admin"
 
@@ -343,12 +343,11 @@ export function Conversation({
   const [publishOpen, setPublishOpen] = React.useState(false)
   const [publishName, setPublishName] = React.useState("")
   const [published, setPublished] = React.useState(false)
-  // Kanban 分享链接：点分享 → dispatch kanban.share_board → 后端回推 world:state.share_link
-  // → 弹 modal 展示链接 + 自动复制到剪贴板（下方 useEffect 消费）。shareRequestedRef 保证
-  // 只有用户点了分享才弹（避免挂载时 state 里已有旧 share_link 就自弹）。
+  // 通用分享链接展示：任何插件 dispatch 其分享动作后，后端把结果回推进 world:state.share_link
+  // → 这里弹 modal 展示链接 + 自动复制到剪贴板（下方 useEffect 消费）。world 不认具体插件——
+  // 只要 state 出现「新的」share_link 就弹一次（挂载时已有的旧链接不弹，见下方 prevShareLinkRef）。
   const [shareLink, setShareLink] = React.useState<string | null>(null)
   const [shareCopied, setShareCopied] = React.useState(false)
-  const shareRequestedRef = React.useRef(false)
   const [ruleMatcherType, setRuleMatcherType] = React.useState("always")
   const [ruleMatcherArg, setRuleMatcherArg] = React.useState("")
   const [ruleReceivers, setRuleReceivers] = React.useState("")
@@ -606,14 +605,6 @@ export function Conversation({
     window.setTimeout(() => setPublished(false), 3000)
   }
 
-  // 分享看板：dispatch kanban.share_board（复用 onKanbanAction=world:dispatch），后端回推
-  // share_link；标记 shareRequestedRef 让下方 effect 只在本次用户动作后弹链接。
-  const handleShareKanban = (kanbanUri: string) => {
-    if (!kanbanUri) return
-    shareRequestedRef.current = true
-    onKanbanAction("kanban.share_board", {kanban_uri: kanbanUri})
-  }
-
   const copyShareLink = (link: string) => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
       navigator.clipboard
@@ -626,13 +617,20 @@ export function Conversation({
     }
   }
 
-  const kanbanShareLink = (state as unknown as KanbanState).share_link
+  const stateShareLink = (state as {share_link?: string | null}).share_link ?? null
+  const prevShareLinkRef = React.useRef<string | null | undefined>(undefined)
   React.useEffect(() => {
-    if (!kanbanShareLink || !shareRequestedRef.current) return
-    shareRequestedRef.current = false
-    setShareLink(kanbanShareLink)
-    copyShareLink(kanbanShareLink)
-  }, [kanbanShareLink])
+    // 首次运行只记基线（挂载时 state 里已有的旧链接不弹）；此后 state.share_link
+    // 变成一个「新的」非空值（= 某插件分享动作成功后端回推）才弹一次。
+    if (prevShareLinkRef.current === undefined) {
+      prevShareLinkRef.current = stateShareLink
+      return
+    }
+    if (!stateShareLink || stateShareLink === prevShareLinkRef.current) return
+    prevShareLinkRef.current = stateShareLink
+    setShareLink(stateShareLink)
+    copyShareLink(stateShareLink)
+  }, [stateShareLink])
 
   const toggleMembers = () => {
     if (membersOpen) setInviteOpen(false)
@@ -914,13 +912,18 @@ export function Conversation({
                 onAction={onKanbanAction}
               />
             </div>
-          ) : activeMode === "kanban" ? (
-            // 权限门控的 session tab 里渲染富 Kanban 操作面（复用插件页同一组件）。
-            // board 数据来自 world:state 合并的看板字段（后端 session.view.switch 切到
-            // kanban_board 时经 KanbanData.session_boards 载入 + 自动选中首块板）；
-            // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction）。
-            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent="kanban">
-              <Kanban state={state as unknown as KanbanState} onAction={onKanbanAction} onShare={handleShareKanban} />
+          ) : pluginPageRenderers[activeMode] ? (
+            // 权限门控的 session tab 里渲染插件自带的富操作面。world 不认具体插件——
+            // 按 activeMode（= 插件页 key）查 #1476 build 期生成的 renderer manifest
+            // （各插件经 UiSurfaceProvider 声明），泛化挂载。board/插件数据来自 world:state；
+            // onAction 走现成 world:dispatch（onKanbanAction = onWorkspacePluginAction，通用）；
+            // 插件自己的动作（含 share）都经这条 dispatch，world 不再直接 import 任何插件组件。
+            <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa]" data-world-subcomponent={activeMode}>
+              {React.createElement(pluginPageRenderers[activeMode], {
+                component: {id: activeId, type: activeMode},
+                state: state as unknown as Record<string, unknown>,
+                onAction: onKanbanAction,
+              })}
             </div>
           ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
@@ -1501,7 +1504,7 @@ export function Conversation({
 
     <Modal
       open={shareLink !== null}
-      title="看板分享链接"
+      title="分享链接"
       footer={
         <>
           <Button variant="ghost" onClick={() => setShareLink(null)}>
@@ -1515,7 +1518,7 @@ export function Conversation({
       }
     >
       <p className="mb-2 text-sm text-muted-foreground">
-        任何拿到此链接的人都能<strong>只读</strong>查看这块看板（链接 7 天内有效）。已自动复制到剪贴板。
+        任何拿到此链接的人都能<strong>只读</strong>查看分享的内容（链接 7 天内有效）。已自动复制到剪贴板。
       </p>
       <div className="flex items-center gap-2">
         <input
@@ -1523,7 +1526,7 @@ export function Conversation({
           value={shareLink || ""}
           onFocus={(e) => e.target.select()}
           className="w-full rounded-[var(--radius)] border border-border bg-muted px-3 py-2 text-sm text-foreground outline-none"
-          data-world-kanban-share-link
+          data-world-share-link
         />
       </div>
     </Modal>
