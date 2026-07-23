@@ -59,8 +59,8 @@ to the two-layer typed-slot gate ([[reference_ezagent_static_gate_topology]],
   front-desk relay + curl-llm delegation + `requires: ["orchestrator"]`).
   After #1243 lands: delete/archive the old website sessions → re-run hello
   `ensure_app`/instantiate from the new Definition → verify greeter +
-  curl-llm reply E2E on the deployed channel. Owner: zhaomato (官网 full-loop
-  track). MUST appear in the 2026-07-09 together plan.
+  curl-llm reply E2E on the deployed channel. Owner: zyli (官网 full-loop
+  track)（承接自 zhaomato，2026-07-16 退出）. MUST appear in the 2026-07-09 together plan.
 
 ## 2026-07-05 — #161 A2 deferrals (membership-cap receive/read/removal cutover)
 

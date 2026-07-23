@@ -76,7 +76,7 @@ Step 2 一并做的 harvest —— 哪些 legacy 素材吸进飞轮、挂哪：
 
 ## §5 → Step 3 handoff 预告
 
-缺口按承接方归类（仿 `homesite-handoff.md` 的 W=zyli world / H=zhaomato 前端；gallery 可能需新承接方）：
+缺口按承接方归类（仿 `homesite-handoff.md` 的 W=zyli world / H=zyli 前端；gallery 可能需新承接方）：
 
 - **P0 gallery**（①）：**最大项，且已有设计 spec**（`2026-07-03-socialware-manifest-design.md` + `2026-07-04-registry-and-distribution-plan.md`）—— handoff 时**先对齐这两份 spec 的落地状态**，不重新设计。承接方待定（可能 world + domain_socialware + 新 discovery 面）。
 - **P1 分享链接**（②）：小切口，H4（前端按钮）+ W4（world 出链接），join 底座已在。

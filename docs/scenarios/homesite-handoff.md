@@ -11,7 +11,7 @@
 5. 分享该 session（官网或 world 都能发起）→ 别人进【同一个】session 群聊（成员、留历史）
 6. 进 world → 一键复制官网 session 配置、创建【新】session → 自己当 owner（租户、无历史）
 
-## zhaomato — 官网 & hello 前端
+## zyli — 官网 & hello 前端（承接自 zhaomato，2026-07-16 退出）
 
 | # | 任务 | 依赖 |
 |---|---|---|
