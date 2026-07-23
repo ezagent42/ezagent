@@ -7,6 +7,7 @@ type DataRow = Record<string, unknown>
 
 export type WorkspacePluginState = {
   bindings?: DataRow[]
+  bindings_error?: string | null
   agent_flavors?: string[]
   auto_derive_notice?: string | null
   caps_count?: number
@@ -1259,6 +1260,7 @@ function FeishuBindings({
   const [openId, setOpenId] = React.useState("")
   const [userUri, setUserUri] = React.useState("")
   const rows = state.bindings || []
+  const bindingsError = state.bindings_error || null
 
   return (
     <section className={surfaceClass} data-world-component="feishu_bindings">
@@ -1291,6 +1293,13 @@ function FeishuBindings({
           Bind
         </Button>
       </form>
+      {bindingsError && (
+        <p className="text-sm font-medium text-destructive" data-world-feishu-bindings-error>
+          {bindingsError === "unauthorized"
+            ? "You don't have permission to view Feishu bindings in this workspace."
+            : `Bindings unavailable: ${String(bindingsError)}`}
+        </p>
+      )}
       <section className={subsectionClass} data-world-component="feishu-bindings-table">
         <Header eyebrow="Table" title="Bindings" compact />
         <div className={tableWrapClass}>
@@ -1325,7 +1334,7 @@ function FeishuBindings({
               ))}
             </tbody>
           </table>
-          {rows.length === 0 && <EmptyState label="No rows." />}
+          {rows.length === 0 && !bindingsError && <EmptyState label="No rows." />}
         </div>
       </section>
     </section>
