@@ -141,50 +141,126 @@ cards:
       - {text: "35-commit 的 cap/授权 re-architecture(统一 generation 撤销 + authorize/3): 最终对抗性审查 + 合并前冲突消解中, **尚未合入 main**", done: false}
       - {text: "G/M 阶段即 epoch 撤销模型(cap 绑 generation、撤销=bump) + #166 成员身份=cap 唯一真相 的落地实现; 安全前置 = cap-signing strict born-signed(dual-read 期可绕过)", done: false}
   # ---------- 进行中 (per-teammate 当前在飞) ----------
+  # ---- gaga (Git Provider / agent 泛化主体) ----
   - owner: "gaga"
-    title: "Git Provider V1 端到端 + 授权收口 + Feishu-seed"
-    goal: "provider→托管 agent 真实接单→PR 闭环 + cap 收口 + canary 渠道 seed"
+    title: "Git Provider V1 端到端接单 + PR 闭环"
+    goal: "provider→托管 agent 真实接单→PR 闭环 e2e"
     status: "wip"
-    who: "gaga 轨道 · #1501 / #1445(已合) / AgentRuntime SPEC / Feishu-seed"
+    who: "gaga 轨道 · #1445 域脊已合 · e2e 待补"
+    pr: {num: 1445, state: "merged"}
+    acceptance:
+      - {text: "provider→托管 agent 真实接单→PR 闭环 e2e(#1445 域脊已合, e2e 待补)", done: false}
+  - owner: "gaga"
+    title: "#1501 held+pending caps 授权收口"
+    goal: "held + pending caps 合并进 effective view(grant 幂等)"
+    status: "wip"
+    who: "gaga 轨道 · #1501"
     pr: {num: 1501, state: "open"}
     acceptance:
-      - {text: "Git Provider V1 端到端接单 + PR 闭环(#1445 域脊已合; provider→托管 agent 真实接单→PR 闭环 e2e 待补)", done: false}
-      - {text: "#1501 held + pending caps 合并进 effective view(grant 幂等)", done: false}
-      - {text: "AgentRuntime 控制面 in-repo 边界 SPEC + `agent_runtime_boundary` gate(team.md 标结构线未落地, 须补)", done: false}
-      - {text: "Feishu 绑定 → 加入 canary 初始化 seed(部署/seed 任务, 非 PR; 喂 canary→beta→stable 部署链③)", done: false}
-  - owner: "zyli"
-    title: "World 插件视图刷新 + self-service 收口 + hello live-E2E"
-    goal: "插件视图/caps 实时刷新 + 自助开通缺口收口 + 官网 hello 真回复实测"
+      - {text: "#1501 held + pending caps 合并进 effective view, grant 幂等", done: false}
+  - owner: "gaga"
+    title: "AgentRuntime 控制面边界 SPEC + gate"
+    goal: "AgentRuntime in-repo 边界 SPEC + agent_runtime_boundary gate"
     status: "wip"
-    who: "zyli 轨道 · #1497 / #1447 / #1327 / hello live-E2E"
+    who: "gaga 轨道 · 结构线未落地 · 无 PR"
+    acceptance:
+      - {text: "AgentRuntime 控制面 in-repo 边界 SPEC + `agent_runtime_boundary` gate(team.md 标结构线未落地, 须补)", done: false}
+  - owner: "gaga"
+    title: "Feishu 绑定 → canary 初始化 seed"
+    goal: "Feishu 绑定加入 canary init seed(部署任务)"
+    status: "wip"
+    who: "gaga 轨道 · 部署/seed 任务 · 非 PR"
+    flag: "部署任务 · 喂部署链③"
+    acceptance:
+      - {text: "Feishu 绑定 → 加入 canary 初始化 seed(部署/seed 任务, 非 PR; 喂 canary→beta→stable 部署链③)", done: false}
+  # ---- zyli (插件 UI 分层 / Kanban) ----
+  - owner: "zyli"
+    title: "#1497 world 插件视图 + caps 实时刷新"
+    goal: "view_changed / caps_changed 通用信号驱动实时刷新"
+    status: "wip"
+    who: "zyli 轨道 · #1497"
     pr: {num: 1497, state: "open"}
     acceptance:
       - {text: "#1497 world 插件视图 + caps 实时刷新(view_changed / caps_changed 通用信号)", done: false}
-      - {text: "#1447 workspace self-service gaps 顺序收口", done: false}
-      - {text: "#1327 socialware 卸载浏览器证据", done: false}
-      - {text: "官网 hello live E2E transcript(greeter + curl-llm 真回复) —— 今日 #1524 去硬编码 + #1507 greeter 修解卡后可跑", done: false}
-  - owner: "ruihua"
-    title: "企业自助开通产品化 + 错误机制 SOP + 创业教具共议"
-    goal: "自助开 workspace 旅程 + G5 错误 SOP + 创业教具方案"
+  - owner: "zyli"
+    title: "#1447 workspace self-service gaps 收口"
+    goal: "自助开通缺口顺序收口"
     status: "wip"
-    who: "瑞华 (ruihua) 轨道 · #1436 / G5 SOP / 创业教具"
+    who: "zyli 轨道 · #1447"
+    pr: {num: 1447, state: "open"}
+    acceptance:
+      - {text: "#1447 workspace self-service gaps 顺序收口", done: false}
+  - owner: "zyli"
+    title: "#1327 socialware 卸载浏览器证据"
+    goal: "socialware 卸载的浏览器端证据"
+    status: "wip"
+    who: "zyli 轨道 · #1327"
+    pr: {num: 1327, state: "open"}
+    acceptance:
+      - {text: "#1327 socialware 卸载浏览器证据", done: false}
+  - owner: "zyli"
+    title: "官网 hello live-E2E transcript(接手)"
+    goal: "greeter + curl-llm 真回复实测转录"
+    status: "wip"
+    who: "zyli 轨道 · hello live-E2E(接自退出前端同学)"
+    acceptance:
+      - {text: "官网 hello live E2E transcript(greeter + curl-llm 真回复) —— 今日 #1524 去硬编码 + #1507 greeter 修解卡后可跑", done: false}
+  # ---- ruihua (机构 demo 设计 / 自助开通产品化) ----
+  # 注: 创业教具是「计划」列的独立卡(与 升悦/瑞华 共议), 不在此重复。
+  - owner: "ruihua"
+    title: "#1436 企业自助开通 workspace 产品化"
+    goal: "自助开 workspace 用户旅程 + 验收标准"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · #1436"
     pr: {num: 1436, state: "open"}
     acceptance:
       - {text: "#1436 企业自助开通 workspace 产品化(用户旅程 + 验收标准)", done: false}
-      - {text: "创业教具方案(跟 Allen, 讨论对象 升悦 + 瑞华) —— 见「计划」列", done: false}
-      - {text: "G5 通用可配置错误机制 SOP(错误码注册 + 文案规范 + 链路测试)", done: false}
-      - {text: "机构 demo seed 导入(承接今日 CIIA 展厅 #1499)", done: false}
-  - owner: "jjkysy"
-    title: "挂载-撤销 infra + 协作白板二轮 + dealscout"
-    goal: "宿主退场清理 + 冷建 deadline + kanban 二轮 + dealscout 改版"
+  - owner: "ruihua"
+    title: "G5 通用可配置错误机制 SOP"
+    goal: "错误码注册 + 文案规范 + 链路测试"
     status: "wip"
-    who: "jjkysy 轨道 · #1470 / #1474 / #1301 / core-gap #1355·#1360"
+    who: "瑞华 (ruihua) 轨道 · G5 SOP"
+    acceptance:
+      - {text: "G5 通用可配置错误机制 SOP(错误码注册 + 文案规范 + 链路测试)", done: false}
+  - owner: "ruihua"
+    title: "机构 demo seed 导入(承接 CIIA #1499)"
+    goal: "机构真实数据作为展厅 seed 导入"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · 承接 #1499"
+    acceptance:
+      - {text: "机构 demo seed 导入(承接今日 CIIA 展厅 #1499)", done: false}
+  # ---- jjkysy (升悦) ----
+  - owner: "jjkysy"
+    title: "#1470 挂载撤销即时修 + 冷建 provisioning deadline"
+    goal: "unmount_all_for_target + 冷建 deadline + kanban/hello 迁 UiSurfaceProvider"
+    status: "wip"
+    who: "jjkysy 轨道 · #1470"
     pr: {num: 1470, state: "open"}
-    deps: ["epoch-rebase HOLD: 待 #195 合"]
+    deps: ["epoch-rebase 那步 HOLD: 待 #195 合"]
     acceptance:
       - {text: "#1470 挂载撤销即时修(unmount_all_for_target + 冷建 provisioning deadline) + kanban/hello 迁 UiSurfaceProvider; ⏸ epoch-rebase 那步 HOLD 至 #195 合", done: false}
+  - owner: "jjkysy"
+    title: "#1474 kanban 协作改版二轮"
+    goal: "人本位分享 / tab 恒显 / 分享二期"
+    status: "wip"
+    who: "jjkysy 轨道 · #1474"
+    pr: {num: 1474, state: "open"}
+    acceptance:
       - {text: "#1474 kanban 协作改版二轮(人本位分享 / tab 恒显 / 分享二期)", done: false}
+  - owner: "jjkysy"
+    title: "dealscout #1301 完整改版"
+    goal: "真组合 socialware / 真页面真数据 / 四旅程"
+    status: "wip"
+    who: "jjkysy 轨道 · #1301"
+    pr: {num: 1301, state: "open"}
+    acceptance:
       - {text: "dealscout #1301 完整改版(真组合 socialware / 真页面真数据 / 四旅程)", done: false}
+  - owner: "jjkysy"
+    title: "socialware core-gap 跟进(#1355 / #1360)"
+    goal: "组合关系→窄 cap / 跨 session 数据共享"
+    status: "wip"
+    who: "jjkysy 轨道 · #1355 · #1360(Allen 已拍板)"
+    acceptance:
       - {text: "socialware core-gap 跟进(#1355 组合关系→窄 cap / #1360 跨 session 数据共享; Allen 已拍板)", done: false}
   - owner: "allen"
     title: "hello 官网部署迁移(hello-A PR-4)"
