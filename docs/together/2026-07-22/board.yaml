@@ -26,10 +26,11 @@ efficiency_source: "07-22 周期合入 PR = git log origin/main 2026-07-22(含�
 
 deploy:
   - {env: "canary", state: "跟随 main; 今日两大交付(#1524/#1525)已在 main HEAD。hello 官网部署迁移(hello-A PR-4)描述就绪、待发布协调执行。"}
-  - {env: "beta", state: "⏳ 待 cutover(canary→beta→stable)。"}
-  - {env: "stable", state: "⏳ 待 cutover。发布 dispatch(needs: full-suite)当前被 full-suite 上唯一确定性 E2E 失败挡住 —— 见风险/已知问题。"}
+  - {env: "beta", state: "⏳ 待 cutover。hello-A #1524(已合)解阻 #185 beta/stable 晋级前置。"}
+  - {env: "stable", state: "⏳ 待 cutover。canary→beta→stable 卡三项 ①AutoserviceTier1SeedTest 修(full-suite / 发布闸唯一确定性阻塞) ②#195 合入 ③gaga Feishu-canary-seed + hello-A PR-4 部署迁移。"}
 
 risks:
+  - "🔗 依赖链(枢纽 = #195): cap-signing strict(born-signed) → #195 统一 generation 撤销 + authorize/3(其 G/M 阶段即 epoch 撤销模型 + #166 成员身份=cap 唯一真相 的实现) → jjkysy #1470 的 epoch-rebase HOLD 至 #195 合。canary→beta→stable 部署卡三项齐: ①AutoserviceTier1SeedTest 修 ②#195 合入 ③gaga Feishu-canary-seed + hello-A PR-4 部署迁移。hello-A #1524(已合)已解阻 #185 晋级前置。**#195 是枢纽 —— #1470 与 canary 部署都等它。**"
   - "🔴 已知问题(发布唯一阻塞): main full-suite 仅红在一个确定性 E2E —— `EzagentPluginKb.E2E.AutoserviceTier1SeedTest`(测试 harness 的 sandbox-ownership: 异步 spawn 的进程未继承 SQL-Sandbox 所有权 → `DBConnection.OwnershipError`)。**pre-existing、非今日任何工作引入**。它是发布闸(`needs: full-suite`)当前唯一阻塞项, 已记入 `docs/futures/todo.md`; 分片(#1522)已把它隔离进 e2e 单腿便于低成本复跑。"
   - "🟡 PresenterCaps 会话陈旧(评审 should-fix): mount 期的 admin cap 快照在会话中途被降权后仍存活 → 被降权的 admin 直到重新登录前仍保留 publish/admin 权限。pre-existing、对所有 world admin 动作全局存在, 非 PR-5 回归; 已记入 todo。"
 
@@ -134,15 +135,63 @@ cards:
     status: "review"
     who: "Allen 轨道 · #1503 · 最终评审中"
     pr: {num: 1503, state: "open"}
+    deps: ["前置: cap-signing strict (born-signed)"]
+    flag: "★ 枢纽 PR: #1470 epoch-rebase 与 canary 部署都等它合"
     acceptance:
       - {text: "35-commit 的 cap/授权 re-architecture(统一 generation 撤销 + authorize/3): 最终对抗性审查 + 合并前冲突消解中, **尚未合入 main**", done: false}
-  # ---------- 进行中 (下一步 / 协调门) ----------
+      - {text: "G/M 阶段即 epoch 撤销模型(cap 绑 generation、撤销=bump) + #166 成员身份=cap 唯一真相 的落地实现; 安全前置 = cap-signing strict born-signed(dual-read 期可绕过)", done: false}
+  # ---------- 进行中 (per-teammate 当前在飞) ----------
+  - owner: "gaga"
+    title: "Git Provider V1 端到端 + 授权收口 + Feishu-seed"
+    goal: "provider→托管 agent 真实接单→PR 闭环 + cap 收口 + canary 渠道 seed"
+    status: "wip"
+    who: "gaga 轨道 · #1501 / #1445(已合) / AgentRuntime SPEC / Feishu-seed"
+    pr: {num: 1501, state: "open"}
+    acceptance:
+      - {text: "Git Provider V1 端到端接单 + PR 闭环(#1445 域脊已合; provider→托管 agent 真实接单→PR 闭环 e2e 待补)", done: false}
+      - {text: "#1501 held + pending caps 合并进 effective view(grant 幂等)", done: false}
+      - {text: "AgentRuntime 控制面 in-repo 边界 SPEC + `agent_runtime_boundary` gate(team.md 标结构线未落地, 须补)", done: false}
+      - {text: "Feishu 绑定 → 加入 canary 初始化 seed(部署/seed 任务, 非 PR; 喂 canary→beta→stable 部署链③)", done: false}
+  - owner: "zyli"
+    title: "World 插件视图刷新 + self-service 收口 + hello live-E2E"
+    goal: "插件视图/caps 实时刷新 + 自助开通缺口收口 + 官网 hello 真回复实测"
+    status: "wip"
+    who: "zyli 轨道 · #1497 / #1447 / #1327 / hello live-E2E"
+    pr: {num: 1497, state: "open"}
+    acceptance:
+      - {text: "#1497 world 插件视图 + caps 实时刷新(view_changed / caps_changed 通用信号)", done: false}
+      - {text: "#1447 workspace self-service gaps 顺序收口", done: false}
+      - {text: "#1327 socialware 卸载浏览器证据", done: false}
+      - {text: "官网 hello live E2E transcript(greeter + curl-llm 真回复) —— 今日 #1524 去硬编码 + #1507 greeter 修解卡后可跑", done: false}
+  - owner: "ruihua"
+    title: "企业自助开通产品化 + 错误机制 SOP + 创业教具共议"
+    goal: "自助开 workspace 旅程 + G5 错误 SOP + 创业教具方案"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · #1436 / G5 SOP / 创业教具"
+    pr: {num: 1436, state: "open"}
+    acceptance:
+      - {text: "#1436 企业自助开通 workspace 产品化(用户旅程 + 验收标准)", done: false}
+      - {text: "创业教具方案(跟 Allen, 讨论对象 升悦 + 瑞华) —— 见「计划」列", done: false}
+      - {text: "G5 通用可配置错误机制 SOP(错误码注册 + 文案规范 + 链路测试)", done: false}
+      - {text: "机构 demo seed 导入(承接今日 CIIA 展厅 #1499)", done: false}
+  - owner: "jjkysy"
+    title: "挂载-撤销 infra + 协作白板二轮 + dealscout"
+    goal: "宿主退场清理 + 冷建 deadline + kanban 二轮 + dealscout 改版"
+    status: "wip"
+    who: "jjkysy 轨道 · #1470 / #1474 / #1301 / core-gap #1355·#1360"
+    pr: {num: 1470, state: "open"}
+    deps: ["epoch-rebase HOLD: 待 #195 合"]
+    acceptance:
+      - {text: "#1470 挂载撤销即时修(unmount_all_for_target + 冷建 provisioning deadline) + kanban/hello 迁 UiSurfaceProvider; ⏸ epoch-rebase 那步 HOLD 至 #195 合", done: false}
+      - {text: "#1474 kanban 协作改版二轮(人本位分享 / tab 恒显 / 分享二期)", done: false}
+      - {text: "dealscout #1301 完整改版(真组合 socialware / 真页面真数据 / 四旅程)", done: false}
+      - {text: "socialware core-gap 跟进(#1355 组合关系→窄 cap / #1360 跨 session 数据共享; Allen 已拍板)", done: false}
   - owner: "allen"
     title: "hello 官网部署迁移(hello-A PR-4)"
     goal: "把去硬编码后的官网迁移落到部署环境(canary→beta→stable)"
     status: "wip"
     who: "Allen 轨道 · 描述就绪, 待发布协调执行"
-    flag: "待协调执行"
+    flag: "待协调执行 · 部署链③"
     acceptance:
       - {text: "5 步部署迁移(canary→beta→stable)描述就绪、待协调执行; 前置: 每节点须先有真实非管理员创始人用户 + add_member, 否则官网静默不 provision", done: false}
   - owner: "allen"
@@ -150,8 +199,17 @@ cards:
     goal: "修 sandbox-ownership 让 AutoserviceTier1SeedTest 转绿"
     status: "wip"
     who: "Allen 轨道 · docs/futures/todo.md"
+    flag: "部署链① · 发布闸唯一确定性阻塞"
     acceptance:
       - {text: "修测试 harness 的 sandbox 继承(异步 spawn 进程 `Sandbox.allow` / `{:shared, self()}`), 让唯一确定性 E2E `AutoserviceTier1SeedTest` 转绿 → 发布 dispatch(needs: full-suite)得以触发", done: false}
+  - owner: "allen"
+    title: "更新 dev-together skill: 依赖结构化 + 强制读 team.md"
+    goal: "board/plan 系统化记录并呈现任务间依赖 + 每轮先读 roster"
+    status: "wip"
+    who: "Allen 轨道 · dev-together skill 维护(本轮流程债)"
+    flag: "本轮跳过 team.md + 依赖未系统呈现"
+    acceptance:
+      - {text: "任务间依赖结构化记录: board.yaml `deps:` 字段 / team.md 依赖表; plan/board 步骤读取并呈现依赖视图; 强制先读 team.md(本轮跳过了 team.md, 依赖也未系统呈现, 靠人工补)", done: false}
   # ---------- 计划 / 即将 (next) ----------
   - owner: "allen"
     title: "★ 创业教具(教学套件)方案"
@@ -160,13 +218,6 @@ cards:
     who: "Allen 轨道 · 与 升悦 / 瑞华(ruihua)共议"
     acceptance:
       - {text: "创业教具(entrepreneurship teaching kit)方案由 Allen 起草, 与 升悦(Shengyue)、瑞华(Ruihua, 今日交付 CIIA demo #1499 的设计者)共议后成型; 方案细节待定, 此处占位", done: false}
-  - owner: "ruihua"
-    title: "机构 demo seed 导入 + 自助开通产品化"
-    goal: "把机构真实数据作为展厅 seed 导入 + 企业自助开 workspace 旅程"
-    status: "planned"
-    who: "瑞华 (ruihua) 轨道 · 承接 #1499"
-    acceptance:
-      - {text: "CIIA 会员名录等真实数据作为 MARKET/展厅 seed 导入; 企业自助开 workspace 旅程产品化(#1436/#1419/#1388)", done: false}
 
 review:
   # ---------- 今日复盘 (07-22) ----------
