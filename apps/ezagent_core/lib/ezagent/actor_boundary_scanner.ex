@@ -247,6 +247,18 @@ defmodule Ezagent.ActorBoundaryScanner do
   end
 
   # Qualified calls.
+  # `:sys.get_state/replace_state/get_status` — reads/writes a live process's
+  # WHOLE internal state, incl. a Kind's private authority (kind/server.ex:12).
+  # Kind pids are handed out by the public §2.2 surface (list_instances/0,
+  # spawn/3), so an un-gated :sys reach is an actor-state bypass. MUST precede
+  # the general call clause (which would otherwise match `:sys` as the receiver
+  # and drop it). Non-Kind sidecar :sys calls are allowlisted DEBT in the ledger.
+  defp forward_offense({{:., _, [:sys, fun]}, meta, _args}, _aliases, _kmv)
+       when fun in [:get_state, :replace_state, :get_status] do
+    [hit(":sys.#{fun}", meta)]
+  end
+
+  # Qualified calls.
   defp forward_offense({{:., _, [modast, fun]}, meta, args}, aliases, kind_msg_vars)
        when is_atom(fun) and is_list(args) do
     module = resolve_ast(modast, aliases)
@@ -299,18 +311,93 @@ defmodule Ezagent.ActorBoundaryScanner do
   end
 
   # Variable names bound to a message that contains an `:ezagent_*` atom.
+  # Variable names that (transitively) carry an `:ezagent_*` Kind message —
+  # closing the multi-hop evasions: `msg = {:ezagent_*}; fwd = msg; call(pid, fwd)`
+  # (alias chains) and `msg = build_msg()` where a local helper returns an
+  # `:ezagent_*` tuple.
   defp kind_message_vars(ast) do
-    {_, vars} =
+    msg_fns = kind_message_fns(ast)
+    bindings = message_bindings(ast)
+
+    seed =
+      for {name, rhs} <- bindings, rhs_taints?(rhs, msg_fns), into: MapSet.new(), do: name
+
+    taint_fixpoint(bindings, seed)
+  end
+
+  # Local function names whose BODY mentions an `:ezagent_*` atom — conservatively
+  # treated as producing a Kind message (a call to one taints its result).
+  defp kind_message_fns(ast) do
+    {_, fns} =
       Macro.prewalk(ast, MapSet.new(), fn
-        {:=, _, [{name, _, ctx}, rhs]} = node, acc
-        when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
-          if args_have_ezagent_atom?([rhs]), do: {node, MapSet.put(acc, name)}, else: {node, acc}
+        {kind, _, [head, body]} = node, acc when kind in [:def, :defp] ->
+          case fn_name(head) do
+            name when is_atom(name) ->
+              if args_have_ezagent_atom?([body]),
+                do: {node, MapSet.put(acc, name)},
+                else: {node, acc}
+
+            _ ->
+              {node, acc}
+          end
 
         node, acc ->
           {node, acc}
       end)
 
-    vars
+    fns
+  end
+
+  defp fn_name({:when, _, [inner | _]}), do: fn_name(inner)
+  defp fn_name({name, _, _}) when is_atom(name), do: name
+  defp fn_name(_), do: nil
+
+  # All `var = rhs` bindings in the file.
+  defp message_bindings(ast) do
+    {_, binds} =
+      Macro.prewalk(ast, [], fn
+        {:=, _, [{name, _, ctx}, rhs]} = node, acc
+        when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
+          {node, [{name, rhs} | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    binds
+  end
+
+  # An RHS taints if it directly carries an `:ezagent_*` atom OR calls a
+  # kind-message-producing local helper.
+  defp rhs_taints?(rhs, msg_fns) do
+    args_have_ezagent_atom?([rhs]) or calls_message_fn?(rhs, msg_fns)
+  end
+
+  defp calls_message_fn?(rhs, msg_fns) do
+    {_, found?} =
+      Macro.prewalk(rhs, false, fn
+        {name, _, args} = node, acc when is_atom(name) and is_list(args) ->
+          {node, acc or MapSet.member?(msg_fns, name)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
+
+  # Propagate taint across `x = y` alias chains until fixpoint.
+  defp taint_fixpoint(bindings, tainted) do
+    next =
+      Enum.reduce(bindings, tainted, fn
+        {name, {v, _, ctx}}, acc when is_atom(v) and (is_atom(ctx) or is_nil(ctx)) ->
+          if MapSet.member?(acc, v), do: MapSet.put(acc, name), else: acc
+
+        {_name, _rhs}, acc ->
+          acc
+      end)
+
+    if MapSet.equal?(next, tainted), do: tainted, else: taint_fixpoint(bindings, next)
   end
 
   defp banned_internal_root?(nil), do: false

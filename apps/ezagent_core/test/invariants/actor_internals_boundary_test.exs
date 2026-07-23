@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
 
   # Committed ledger sizes — the ratchet asserts the live ledger never GROWS past
   # these. Later chunks LOWER them as reach-ins migrate / ports land.
-  @forward_frozen 252
+  @forward_frozen 259
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3
@@ -176,20 +176,82 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     end
   end
 
-  test "the forward scanner has no false positives (read surface, register_external_gate, non-Kind :sys, stdlib)" do
+  test "the forward scanner has no false positives (read surface, register_external_gate, stdlib)" do
     benign = """
     defmodule Fine do
       def wire, do: Ezagent.ReadyGate.register_external_gate(SomeGate)
       def read(u), do: Ezagent.Kind.read(u, :s)
       def alive(u), do: Ezagent.Kind.alive?(u)
       def dispatch(inv), do: Ezagent.Invocation.dispatch(inv)
-      def sidecar(p), do: :sys.get_state(p)
       def other(p), do: GenServer.call(p, {:run_tool, :x})
       def std, do: Enum.map([1], & &1)
     end
     """
 
     assert Scanner.forward_sites_in_source(benign, "apps/x/lib/fine.ex") == []
+  end
+
+  test "the forward scanner flags :sys.get_state / replace_state / get_status (actor-state bypass)" do
+    for src <- [
+          "defmodule W do\n  def go(pid), do: :sys.get_state(pid)\nend",
+          "defmodule W do\n  def go(pid), do: :sys.replace_state(pid, fn s -> s end)\nend",
+          "defmodule W do\n  def go(pid), do: :sys.get_status(pid)\nend"
+        ] do
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
+             "a :sys reach into a live process must be flagged:\n#{src}"
+    end
+
+    # The Kind pids come from the C0 public surface — the concrete bypass:
+    probe =
+      "defmodule W do\n  def go do\n    [{_, %{pid: pid}} | _] = Ezagent.Kind.list_instances()\n    :sys.get_state(pid)\n  end\nend"
+
+    assert Scanner.forward_sites_in_source(probe, "apps/x/lib/w.ex") != []
+  end
+
+  test "the current PTY/Python sidecar :sys sites are ledgered debt (not new offenders)" do
+    sys_sites = Enum.filter(Scanner.forward_ratchet(), &String.starts_with?(&1.target, ":sys"))
+    assert length(sys_sites) == 7
+
+    assert Enum.all?(
+             sys_sites,
+             &(&1.path =~ "ezagent_domain_pty" or &1.path =~ "ezagent_domain_python")
+           )
+
+    # they are NOT flagged as new debt (they are in the frozen ledger)
+    assert Enum.all?(
+             Scanner.forward_new_offenders(),
+             &(not String.starts_with?(&1.target, ":sys"))
+           )
+  end
+
+  test "the forward scanner closes multi-hop message-aliasing evasions" do
+    # two-hop alias: msg = {:ezagent_*}; fwd = msg; GenServer.call(pid, fwd)
+    two_hop = """
+    defmodule W do
+      def go(pid) do
+        msg = {:ezagent_runtime_view}
+        fwd = msg
+        GenServer.call(pid, fwd)
+      end
+    end
+    """
+
+    # helper-returned message: msg = build(); GenServer.call(pid, msg)
+    helper = """
+    defmodule W do
+      def go(pid) do
+        msg = build_msg()
+        GenServer.call(pid, msg)
+      end
+
+      defp build_msg, do: {:ezagent_get_slice, :surface}
+    end
+    """
+
+    for src <- [two_hop, helper] do
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
+             "an aliased/helper-produced :ezagent_* GenServer message must be flagged:\n#{src}"
+    end
   end
 
   test "the reverse scanner flags call / atom / struct shapes; no self-ref/stdlib false positives" do
