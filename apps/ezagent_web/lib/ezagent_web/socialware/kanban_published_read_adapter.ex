@@ -63,7 +63,9 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
     # bare/stale %Capability{} is rejected). Plain `load/1` would (correctly)
     # drop it — after actor-extraction C1, `load/1` re-derives caps FRESH and no
     # longer merges a mount snapshot.
-    ephemeral = %Ezagent.World.PresenterCaps.EphemeralCaps{caps: Map.get(ctx, :caps, MapSet.new())}
+    ephemeral = %Ezagent.World.PresenterCaps.EphemeralCaps{
+      caps: Map.get(ctx, :caps, MapSet.new())
+    }
 
     socket =
       %Phoenix.LiveView.Socket{endpoint: endpoint}
