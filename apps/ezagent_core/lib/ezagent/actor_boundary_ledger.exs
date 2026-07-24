@@ -587,18 +587,6 @@
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "51b3fc35ed6232b9d66febd5c9807c1599fb8ea1b15901ab6c6af4951677743e",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "8cecb884167fcb6fe269d6e9b38267929519ce94d307fb6080e878e5e54bee70",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
       target: "Ezagent.SnapshotStore",
       sha: "3e6fcf45ef18fa1de19b71991bb9a5ff12d24cd9c707d4aa7b0585cf71dc0491",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
@@ -618,20 +606,8 @@
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
       target: "Ezagent.SnapshotStore",
-      sha: "6802115044ba88a03b103310309c568d890d0c27b5a0b27a8a23ee67d0289b1c",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-      target: "Ezagent.SnapshotStore",
       sha: "a690bdf90814f0fbb3346866350976c2fb48489ff13b7e4991c00fe6060b4244",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-      target: "Kind.get_slice",
-      sha: "b1c74ccfac7c4487ee715279f7fc0d42b704debe94764af0aa314bd407360d69",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",

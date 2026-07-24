@@ -56,10 +56,20 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
          board_uri
        )
        when is_atom(endpoint) do
+    # `ctx.caps` is a request-time JIT capability (`Ezagent.Cap.issue/3`, via
+    # EzagentPluginHello.KanbanDelegation) that is NEVER written to the caller's
+    # durable Identity slice. It is carried through PresenterCaps' explicit
+    # EPHEMERAL narrow path, tagged so ONLY this JIT-cap opt-in is admitted (a
+    # bare/stale %Capability{} is rejected). Plain `load/1` would (correctly)
+    # drop it — after actor-extraction C1, `load/1` re-derives caps FRESH and no
+    # longer merges a mount snapshot.
+    ephemeral = %Ezagent.World.PresenterCaps.EphemeralCaps{
+      caps: Map.get(ctx, :caps, MapSet.new())
+    }
+
     socket =
       %Phoenix.LiveView.Socket{endpoint: endpoint}
       |> assign(:current_entity_uri, caller)
-      |> assign(:current_caps, Map.get(ctx, :caps, MapSet.new()))
       |> assign(:current_workspace_uri, workspace_uri)
 
     # This web path reaches `WorldActions.share_link/2` WITHOUT going through
@@ -67,7 +77,12 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
     # the ezagent_web transport edge, which legitimately deps on world) injects
     # the presenter's caps itself — the plugin consumes `:presenter_caps` and
     # never compile-deps on `Ezagent.World.PresenterCaps` (#1476).
-    socket = assign(socket, :presenter_caps, Ezagent.World.PresenterCaps.load(socket))
+    socket =
+      assign(
+        socket,
+        :presenter_caps,
+        Ezagent.World.PresenterCaps.load_with_ephemeral(socket, ephemeral)
+      )
 
     case WorldActions.share_link(socket, URI.to_string(board_uri)) do
       {:ok, receive_ref} -> {:ok, receive_ref}

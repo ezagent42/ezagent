@@ -148,17 +148,10 @@ function MarketCard({
             上架
           </Button>
         )}
-        {own && isPublic && (
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            data-world-market-retract={socialware.name}
-            onClick={() => onAction?.("market.retract", {name: socialware.name})}
-          >
-            下架
-          </Button>
-        )}
+        {/* 下架 (retract) / restore are SERVICE-ONLY: the socialware manage cap
+            is not user-holdable (string subject, service-ctx only), so no World
+            user could ever authorize it — shipping the button would always fail.
+            Retract/restore run on the service path (Socialware.retract/2). */}
       </div>
     </div>
   )
