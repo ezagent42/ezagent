@@ -94,10 +94,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   "safe-degraded" abort was not actually side-effect-free.
 
   Round 7 gates the post-spawn obligations on `fresh?: true` — a worker
-  THIS call created. A `fresh?: false` result is returned with the
-  worker URI and ZERO side effects: the pre-existing worker's lineage +
-  workspace binding are left exactly as they were. The swap's
-  `:candidate_uri_already_live` abort is now genuinely side-effect-free.
+  THIS call created. A `fresh?: false` result is rejected as
+  `:agent_uri_already_live` with ZERO side effects: the pre-existing worker's
+  lineage + workspace binding are left exactly as they were.
 
   ## codex round-10 HIGH-2 — a post-spawn failure undoes the fresh spawn
 
@@ -125,7 +124,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           {:ok,
            %{
              :workers => [URI.t()],
-             :fresh? => boolean(),
+             :fresh? => true,
              optional(:role_degraded) => boolean(),
              optional(:role_degraded_reason) => term()
            }}
@@ -175,8 +174,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   This wraps the existing `spawn_from_template_content/5` path: each executor
   candidate is rendered into transient AgentTemplate content, then delegated to
-  the normal spawn/rollback machinery. `fresh?: false` is a success because the
-  worker is already live at the target URI.
+  the normal spawn/rollback machinery. An already-live target URI is rejected
+  as `:agent_uri_already_live`.
   """
   @spec spawn_from_manifest(
           Ezagent.AgentManifest.t(),
@@ -233,7 +232,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           {:ok,
            %{
              :workers => [URI.t()],
-             :fresh? => boolean(),
+             :fresh? => true,
              optional(:role_degraded) => boolean(),
              optional(:role_degraded_reason) => term()
            }}
@@ -246,6 +245,28 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         opts
       )
       when is_map(template_content_map) and is_list(opts) do
+    Ezagent.Lifecycle.with_entity_transition(instance_uri, fn ->
+      do_spawn_from_template_content(
+        template_content_map,
+        instance_uri,
+        spawned_by_uri,
+        workspace_uri,
+        opts
+      )
+    end)
+  end
+
+  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
+    {:error, :invalid_spawn_from_template_content_args}
+  end
+
+  defp do_spawn_from_template_content(
+         template_content_map,
+         instance_uri,
+         spawned_by_uri,
+         workspace_uri,
+         opts
+       ) do
     {pre_start_ref, opts} = Keyword.pop(opts, :pre_start_ref)
     behavior_overlay = Keyword.get(opts, :behavior_overlay, [])
 
@@ -284,10 +305,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
            ) do
       {:ok, result}
     end
-  end
-
-  def spawn_from_template_content(_content, _instance, _spawned_by, _workspace, _opts) do
-    {:error, :invalid_spawn_from_template_content_args}
   end
 
   defp try_manifest_flavors(
@@ -375,15 +392,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     with {:ok, data} <-
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri) do
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
-        {:ok, workers, false, _instantiate_meta, %{claim: _claim} = pre_start_completion} ->
-          result =
-            finalize_pre_start(
-              pre_start_completion,
-              {:ok, %{workers: workers, fresh?: false}}
-            )
-
-          revoke_cascade_grant_best_effort(instance_uri)
-          result
+        {:ok, _workers, false, _instantiate_meta, pre_start_completion} ->
+          finalize_pre_start(pre_start_completion, {:error, :agent_uri_already_live})
 
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
           run_after_prepare(pre_start_completion, fn ->
@@ -474,10 +484,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     # re-parent a worker this call did NOT create. `update_agent_template`
     # then correctly refuses the adoption (`require_fresh_candidate/1` →
     # `:candidate_uri_already_live`), but the damage would already be
-    # done. So a `fresh?: false` result returns the worker URI with
-    # ZERO side effects — the pre-existing worker's lineage + workspace
-    # binding are left exactly as they were, making the swap's abort
-    # genuinely side-effect-free.
+    # done. `spawn_after_cascade/8` rejects a `fresh?: false` result as
+    # `:agent_uri_already_live` before this function runs; the defensive branch
+    # below preserves that zero-side-effect result if the call graph changes.
     # codex round-10 HIGH-2 — the post-spawn obligations are now a
     # CHECKED step that self-cleans on failure. Pre-round-10 this was
     # `:ok = record_lineage(...)` / `:ok = bind_workspace(...)` — if
@@ -553,13 +562,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           {:error, reason}
       end
     else
-      # `fresh?: false` — adopted a pre-existing worker. Still
-      # update_config so its slice reflects the (already-existing)
-      # config_dir, but don't roll back on failure (we didn't create
-      # the worker).
-      _ = record_sandbox_state(workers, instantiate_meta, template_class)
-      :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
-      {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
+      {:error, :agent_uri_already_live}
     end
   end
 
@@ -820,16 +823,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp delete_agent_flavor_unless_pre_start(_instance_uri, _pre_start), do: :ok
 
   defp finalize_pre_start(nil, result), do: result
-
-  defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: false}}) do
-    case Ezagent.Kind.Template.PreStart.complete(
-           claim,
-           {:ok, %{workers: workers, fresh?: false}}
-         ) do
-      :ok -> {:error, :sidecar_start_not_fresh}
-      {:error, _reason} = error -> error
-    end
-  end
 
   defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: fresh?}} = result) do
     case Ezagent.Kind.Template.PreStart.complete(
