@@ -38,7 +38,7 @@ defmodule Ezagent.Entity.Agent.SpawnObligations do
       Ezagent.AgentLineage.record_with_status(agent_uri, granted_by)
     else
       case record_lineage(agent_uri, granted_by) do
-        :ok -> {:ok, :exists}
+        :ok -> {:ok, %{lineage: :exists, derivation_edge: :exists}}
         {:error, _reason} = error -> error
       end
     end

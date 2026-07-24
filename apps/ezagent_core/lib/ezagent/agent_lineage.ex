@@ -94,10 +94,9 @@ defmodule Ezagent.AgentLineage do
   derivation and fail-loud when an existing append-only edge names a different
   creator.
 
-  remediation C-B (#114) — write-through: upsert the durable row (the
-  source of truth) AND the ETS cache. The `agent_uri` PRIMARY KEY makes
-  the upsert idempotent — re-recording the same pair overwrites in place,
-  matching the prior `:ets.insert/2` overwrite semantics.
+  remediation C-B (#114) — write-through: record the durable row (the source
+  of truth) and then publish the ETS cache. The `agent_uri` primary key makes
+  exact replays idempotent, while a different parent is rejected.
   """
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def record(agent_uri, spawned_by) do
