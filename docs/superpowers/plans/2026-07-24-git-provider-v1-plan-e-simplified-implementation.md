@@ -1,5 +1,10 @@
 # Git Provider V1 Plan E 简化实施计划
 
+> **2026-07-24 permission-neutral pivot：** E1 继续；E2 已拆为当前 E2-A
+> permission-neutral intent/CAS 与后续 E2-B thin authorization ingress。冲突处以
+> `2026-07-24-git-provider-v1-plan-e-permission-neutral-implementation.md` 为准。
+> E2-B 前不得派 E3。
+
 > **For agentic workers:** 每个切片必须先加载并遵循 `executing-plans`、
 > `test-driven-development`、`ezagent-developer`、`project-discussion-esr-ng`、
 > `elixir-phoenix-helper`、`dev-together` 与 `verification-before-completion`。

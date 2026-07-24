@@ -1,5 +1,11 @@
 # Handoff：Plan E E2 — durable workflow intent 与 PostgreSQL CAS
 
+> **2026-07-24 supersession：** 本 handoff 的 authorization、public ActionSet 和
+> release ingress 要求已由
+> `2026-07-24-plan-e-e2a-permission-neutral-correction-handoff.md` 取代。当前只实施
+> E2-A；E2-B 等 Allen/main authorization resume gate。其余 typed intent、
+> idempotency、digest conflict、PostgreSQL CAS 和安全边界继续有效。
+
 > **日期：** 2026-07-24 · **From：** Plan E lead · **To：** 独立 implementation worker
 > **Tracking：** Git Provider V1 Plan E / E2 · **Base：**
 > `integration/git-provider-v1-plan-e` @

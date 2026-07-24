@@ -1,5 +1,10 @@
 # Git Provider V1 Plan E 简化执行修正案
 
+> **2026-07-24 permission-neutral pivot：** Allen/main 负责 authorization
+> convergence。E2 当前只交付 permission-neutral E2-A，public authorization ingress
+> 延期为 E2-B。冲突处以
+> `2026-07-24-git-provider-v1-plan-e-permission-neutral-pivot.md` 为准。
+
 **状态：** lead 已于 2026-07-24 书面确认；允许编写 implementation plan/handoff，
 仍不得由本设计 session 实施生产代码或在 E9 前操作 canary
 
