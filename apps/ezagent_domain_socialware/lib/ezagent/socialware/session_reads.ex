@@ -252,10 +252,10 @@ defmodule Ezagent.Socialware.SessionReads do
   The authorized `:surface` slice (page/shell state) of `session_uri`.
 
   Authorizes `caller` (public-aware read gate § moduledoc) BEFORE reading.
-  COLD-SAFE: tries the live slice first; on `:not_found` falls back to the
-  durable snapshot via `Ezagent.Kind.StateRebuilder.rebuild/1` +
-  `Ezagent.Kind.normalize_slice_view/1`, so a committed page still renders
-  after a BEAM restart / reaped session. Returns `{:ok, surface_map}`
+  COLD-SAFE: reads via the authoritative `Ezagent.Kind.read/3` (§2.2 actor read
+  surface), which serves the live slice when the session is up and
+  lazy-rehydrates from the durable snapshot when it is cold, so a committed page
+  still renders after a BEAM restart / reaped session. Returns `{:ok, surface_map}`
   (`%{}` when the session has no surface) or `{:error, :unauthorized}`.
   """
   @spec external_surface(URI.t() | term(), URI.t()) ::
@@ -463,26 +463,28 @@ defmodule Ezagent.Socialware.SessionReads do
 
   # ----- SURFACE plane read (moved out of ExternalFeed verbatim) --------------
 
-  # COLD-SAFE surface read. `get_slice/2` needs a live session process (it does
-  # NOT lazy-spawn); after a BEAM restart / reaped session the committed page
-  # must still render from the durable snapshot. Try the live slice first; on
-  # `:not_found` fall back to the snapshot via StateRebuilder.rebuild/1 + the
-  # public normalize_slice_view/1 (the snapshot stores the two-container
-  # Lifecycle slice; normalize flattens it exactly as get_slice/2 does).
-  # Returns `%{}` if neither path yields a slice.
+  # COLD-SAFE surface read via the authoritative §2.2 actor read surface.
+  # `Ezagent.Kind.read/3` serves the live `:surface` slice when the session is up
+  # and lazy-rehydrates it from the durable snapshot (through the framework's own
+  # spawn + ready path) when the session is cold — so a committed page renders
+  # after a BEAM restart / reaped session WITHOUT this domain module reaching into
+  # the framework's rehydration internals (seed (c), C2). On the narrow windows
+  # `read/3` surfaces an error rather than rehydrating (e.g. a mid-restart
+  # `:noproc` on a still-registered dying process), fall back to `read_durable/3`
+  # — the §2.2-sanctioned form of the old hand-rolled durable rehydrate — so a
+  # committed page still renders. Returns `%{}` only when there is no durable
+  # surface at all.
   defp surface_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
-      {:ok, surface} when is_map(surface) ->
-        surface
+    case Ezagent.Kind.read(session_uri, :surface) do
+      {:ok, surface} when is_map(surface) -> surface
+      _ -> durable_surface_slice(session_uri)
+    end
+  end
 
-      _ ->
-        case Ezagent.Kind.StateRebuilder.rebuild(URI.to_string(session_uri)) do
-          {:ok, state, _from} ->
-            Ezagent.Kind.normalize_slice_view(Map.get(state, :surface, %{}))
-
-          _ ->
-            %{}
-        end
+  defp durable_surface_slice(%URI{} = session_uri) do
+    case Ezagent.Kind.read_durable(session_uri, :surface) do
+      {:ok, surface, _meta} when is_map(surface) -> surface
+      _ -> %{}
     end
   end
 

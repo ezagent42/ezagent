@@ -113,8 +113,12 @@ defmodule EzagentWeb.SessionController do
   end
 
   defp identity_exists?(uri, "agent") do
+    # Durable existence via the §2.2 actor read surface (C2). `read_durable/3`
+    # answers "a durable row exists" regardless of the probe slice key (never
+    # spawns — no cookie-driven agent spawn); `{:ok, _, _}` ⟺ the old
+    # `match?({:ok, _}, SnapshotStore.latest/1)`.
     match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)) or
-      match?({:ok, _snapshot}, Ezagent.SnapshotStore.latest(uri))
+      match?({:ok, _, _}, Ezagent.Kind.read_durable(uri, :identity))
   end
 
   # POST /login — email + password (task #87 primary login). Resolves the
