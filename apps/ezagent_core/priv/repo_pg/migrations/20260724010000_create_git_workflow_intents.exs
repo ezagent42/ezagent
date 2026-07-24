@@ -26,6 +26,7 @@ defmodule EzagentCore.Repo.Migrations.CreateGitWorkflowIntents do
       add :binding_id, :string, null: false
       add :binding_generation, :integer, null: false
       add :external_task_id, :string, null: false
+      add :workspace_uri, :string, null: false
       add :status, :string, null: false, default: "accepted"
       add :state_version, :integer, null: false, default: 1
       add :input_digest, :string, null: false
@@ -40,5 +41,7 @@ defmodule EzagentCore.Repo.Migrations.CreateGitWorkflowIntents do
     create unique_index(:git_workflow_runs, [:binding_id, :binding_generation, :external_task_id])
     create index(:git_workflow_runs, [:binding_id])
     create index(:git_workflow_runs, [:status])
+    create index(:git_workflow_runs, [:workspace_uri])
+    create index(:git_workflow_bindings, [:workspace_uri])
   end
 end

@@ -64,6 +64,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
 
   @server_fields [
     :id,
+    :workspace_uri,
     :status,
     :state_version,
     :input_digest,
@@ -80,6 +81,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
           binding_id: String.t(),
           binding_generation: pos_integer(),
           external_task_id: String.t(),
+          workspace_uri: URI.t(),
           status: String.t(),
           state_version: pos_integer(),
           input_digest: String.t(),
@@ -165,6 +167,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
     source_task_uri = Map.fetch!(attrs, :source_task_uri)
     source_revision = Map.fetch!(attrs, :source_revision)
     requested_head_ref = Map.fetch!(attrs, :requested_head_ref)
+    workspace_uri = Map.fetch!(attrs, :workspace_uri)
     last_error_code = Map.fetch!(attrs, :last_error_code)
 
     checks = [
@@ -172,6 +175,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
       {:binding_id, is_binary(binding_id) and byte_size(binding_id) > 0},
       {:binding_generation, is_integer(binding_generation) and binding_generation > 0},
       {:external_task_id, is_binary(external_task_id) and byte_size(external_task_id) > 0},
+      {:workspace_uri, is_struct(workspace_uri, URI)},
       {:status, valid_status?(status)},
       {:state_version, is_integer(state_version) and state_version > 0},
       {:input_digest, is_binary(input_digest) and byte_size(input_digest) > 0},

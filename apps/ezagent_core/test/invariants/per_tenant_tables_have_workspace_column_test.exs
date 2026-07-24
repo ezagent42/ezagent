@@ -160,7 +160,11 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   # N/A. `invocations` is the canonical example — the audit log is
   # written via `Ezagent.Audit.Writer` using a string table name to
   # avoid coupling the audit hot path to a schema module.
-  @per_tenant_schemaless_tables ["invocations"]
+  @per_tenant_schemaless_tables [
+    "invocations",
+    "git_workflow_bindings",
+    "git_workflow_runs"
+  ]
 
   # Tables that exist but intentionally lack `workspace_uri`. Documented
   # in `apps/ezagent_core/priv/repo/migrations/20260601000000_phase9_pr6_workspace_uri_columns.exs`

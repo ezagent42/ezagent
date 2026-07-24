@@ -205,6 +205,7 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       binding_id: "bnd1",
       binding_generation: 1,
       external_task_id: "ext1",
+      workspace_uri: Ezagent.URI.workspace("test-ws"),
       status: "accepted",
       state_version: 1,
       input_digest: "sha256:abcdef",

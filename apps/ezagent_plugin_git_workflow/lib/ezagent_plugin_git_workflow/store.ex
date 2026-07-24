@@ -119,11 +119,14 @@ defmodule EzagentPluginGitWorkflow.Store do
              source_revision,
              requested_head_ref
            ) do
+      %TaskBinding{workspace_uri: workspace_uri} = binding
+
       run_attrs = %{
         id: run_id,
         binding_id: binding_id,
         binding_generation: binding_generation,
         external_task_id: external_task_id,
+        workspace_uri: workspace_uri,
         status: WorkflowRun.initial_status(),
         state_version: 1,
         input_digest: digest,
@@ -270,12 +273,14 @@ defmodule EzagentPluginGitWorkflow.Store do
     binding_generation = Map.fetch!(run_attrs, :binding_generation)
     external_task_id = Map.fetch!(run_attrs, :external_task_id)
     status = Map.fetch!(run_attrs, :status)
+    workspace_uri_raw = Map.fetch!(run_attrs, :workspace_uri)
     state_version = Map.fetch!(run_attrs, :state_version)
     input_digest = Map.fetch!(run_attrs, :input_digest)
     source_task_uri_raw = Map.fetch!(run_attrs, :source_task_uri)
     source_revision = Map.fetch!(run_attrs, :source_revision)
     requested_head_ref = Map.fetch!(run_attrs, :requested_head_ref)
     last_error_code = Map.fetch!(run_attrs, :last_error_code)
+    workspace_uri_str = to_string(workspace_uri_raw)
     source_task_uri_str = to_string(source_task_uri_raw)
 
     now = DateTime.utc_now()
@@ -287,21 +292,22 @@ defmodule EzagentPluginGitWorkflow.Store do
     # unique index depending on timing. Raw SQL catches both.
     columns = ~w(
       id binding_id binding_generation external_task_id
-      status state_version input_digest source_task_uri
-      source_revision requested_head_ref last_error_code
-      inserted_at updated_at
+      workspace_uri status state_version input_digest
+      source_task_uri source_revision requested_head_ref
+      last_error_code inserted_at updated_at
     )
 
     result =
       Repo.query!(
         "INSERT INTO git_workflow_runs (" <> Enum.join(columns, ", ") <> ")
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
          ON CONFLICT DO NOTHING",
         [
           id,
           binding_id,
           binding_generation,
           external_task_id,
+          workspace_uri_str,
           status,
           state_version,
           input_digest,
@@ -323,6 +329,7 @@ defmodule EzagentPluginGitWorkflow.Store do
           binding_id: binding_id,
           binding_generation: binding_generation,
           external_task_id: external_task_id,
+          workspace_uri: workspace_uri_raw,
           status: status,
           state_version: state_version,
           input_digest: input_digest,
@@ -510,6 +517,7 @@ defmodule EzagentPluginGitWorkflow.Store do
       binding_id: row["binding_id"],
       binding_generation: row["binding_generation"],
       external_task_id: row["external_task_id"],
+      workspace_uri: parse_uri!(row["workspace_uri"]),
       status: row["status"],
       state_version: row["state_version"],
       input_digest: row["input_digest"],
@@ -522,7 +530,7 @@ defmodule EzagentPluginGitWorkflow.Store do
     })
   end
 
-  defp parse_uri!(str) when is_binary(str), do: URI.parse(str)
+  defp parse_uri!(str) when is_binary(str), do: Ezagent.URI.new!(str)
   defp parse_uri!(nil), do: nil
 
   defp parse_visibility("public"), do: :public
