@@ -61,12 +61,6 @@
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/cap/authorize.ex",
-      target: "Cap.Authority.current_process_generation",
-      sha: "4159b8d32d9d114b756f0ee2b545d7c03bd9e76a0812c604c70edfd0af4353d5",
-      note: "process-generation seed (a) → deleted at C4"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex",
       target: "Ezagent.KindRegistry",
       sha: "af1d73b8895ee8e0412eb7071a036050a858705f6b80c3c8b27d2097426d4c9b",

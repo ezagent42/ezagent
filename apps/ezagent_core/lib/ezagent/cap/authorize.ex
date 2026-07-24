@@ -72,28 +72,23 @@ defmodule Ezagent.Cap.Authorize do
 
   defp verified_candidate?(_candidate, _holder), do: false
 
-  # An external presenter proves its principal generation with the current
-  # self-license in the independently loaded holder store. A genuinely
-  # autonomous Kind may present its own URI while executing inside its
-  # authority compartment (F-6 coordinator decision); for that narrow case,
-  # require the process-local generation to still equal a fresh durable read.
-  # This supports ephemeral internal principals without trusting ctx.caller,
-  # and a standalone generation bump immediately makes the live process inert.
+  # A principal is current iff its independently-loaded holder store (the
+  # dependency-inverted `read_held_caps/1` loader) yields a non-empty verified
+  # cap set. The G-3 self-license gate INSIDE that loader makes a gen-bumped
+  # principal load EMPTY, so a standalone generation bump immediately makes the
+  # principal inert.
+  #
+  # The former `autonomous_current?/1` process-generation branch (spec §5 C4)
+  # is removed: it read AMBIENT actor-process state (`current_process_generation`
+  # via `Process.get`), coupling the authz plane to the actor runtime. Every
+  # principal that could pass ONLY via that branch already holds a DURABLE
+  # current-generation self-license before `ReadyGate` reports ready — the
+  # creation-time mint (`create_freshness: :created`) is persisted fail-closed
+  # on the pre-ready boot path (snapshot-backed via the initial-snapshot commit;
+  # user-backed via `activate/2`'s marker-gated projection persist), so the
+  # branch is dead code (proven empty by the §5-C4 precondition-1 enumerator).
   defp principal_current?(holder) do
-    autonomous_current?(holder) or holder_caps(holder) != []
-  end
-
-  defp autonomous_current?(holder) do
-    with {:ok, process_generation} <- Authority.current_process_generation(holder),
-         {:ok, ^process_generation} <- Authority.current_generation(holder) do
-      true
-    else
-      _ -> false
-    end
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
+    holder_caps(holder) != []
   end
 
   # The holder-cap source is fail-closed: an unloaded/unreadable holder is a
