@@ -847,9 +847,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp read_members(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, chat_slice} ->
-        Map.get(Map.get(chat_slice, :state, chat_slice), :members, %{})
+        Map.get(chat_slice, :members, %{})
 
       {:error, _reason} ->
         %{}

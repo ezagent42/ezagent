@@ -47,7 +47,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # authz-decision branch (`cap/authorize.ex`) is deleted — `principal_current?`
   # collapses to `holder_caps != []`; the two generation-FENCE consumers
   # (`cap.ex`, `entity/token.ex`) survive on the fixed allowlist, −1 site.
-  @forward_frozen 207
+  # C6 lowered forward 207→185: session-domain get_slice/get_raw_slice sites
+  # migrate onto read/3 (live-only probes → spawn: :never; raw-slice manual
+  # two-container unwraps deleted — read/3 normalizes), −22 sites.
+  @forward_frozen 185
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3

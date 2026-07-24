@@ -141,7 +141,7 @@ defmodule Ezagent.Session.Config.Admission do
   end
 
   defp session_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) -> slice
       _ -> nil
     end

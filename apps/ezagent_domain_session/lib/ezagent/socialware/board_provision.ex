@@ -211,7 +211,7 @@ defmodule Ezagent.Socialware.BoardProvision do
          %{caller: %URI{} = caller}
        ) do
     members =
-      case Ezagent.Kind.get_slice(from_session_uri, :session) do
+      case Ezagent.Kind.read(from_session_uri, :session, spawn: :never) do
         {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
         _ -> %{}
       end
@@ -303,7 +303,7 @@ defmodule Ezagent.Socialware.BoardProvision do
   # `:members` map,key = 成员 URI,meta 带 `:role_name`),`role_name == assistant_role` 即目标。
   defp resolve_assistant(session_uri, assistant_role) do
     members =
-      case Ezagent.Kind.get_slice(session_uri, :session) do
+      case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
         {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
         _ -> %{}
       end
