@@ -3,18 +3,81 @@ defmodule Ezagent.Entity.ProfileTest do
 
   alias Ezagent.Entity.Profile
 
-  test "ensure_agent_display_name/2 allocates a workspace-unique agent name" do
+  describe "ensure_agent_display_name/2" do
+    test "allocates a workspace-unique agent name and keeps same-URI retries idempotent" do
+      agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
+      agent_two = Ezagent.URI.new!("entity://team-alpha/agent/two")
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(agent_one, "builder")
+
+      assert {:ok, %Profile{display_name: "builder-2"}} =
+               Profile.ensure_agent_display_name(agent_two, "builder")
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(agent_one, "ignored-on-retry")
+    end
+
+    test "no-email Users can share names without consuming an Agent name" do
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.upsert(%{
+                 entity_uri: "entity://team-alpha/user/no-email-one",
+                 display_name: "builder"
+               })
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.upsert(%{
+                 entity_uri: "entity://team-alpha/user/no-email-two",
+                 display_name: "builder"
+               })
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(
+                 Ezagent.URI.new!("entity://team-alpha/agent/one"),
+                 "builder"
+               )
+    end
+
+    test "rejects a canonical non-Agent URI before reading or writing a profile" do
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/not-an-agent")
+
+      assert {:error, :not_agent_uri} =
+               Profile.ensure_agent_display_name(user_uri, "builder")
+
+      assert Profile.get(user_uri) == nil
+    end
+
+    test "bounds generated suffixes to the database display-name limit" do
+      first = Ezagent.URI.new!("entity://team-alpha/agent/max-name-one")
+      second = Ezagent.URI.new!("entity://team-alpha/agent/max-name-two")
+      max_length_name = String.duplicate("a", 255)
+
+      assert {:ok, %Profile{display_name: ^max_length_name}} =
+               Profile.ensure_agent_display_name(first, max_length_name)
+
+      assert {:ok, %Profile{display_name: suffixed}} =
+               Profile.ensure_agent_display_name(second, max_length_name)
+
+      assert String.length(suffixed) == 255
+      assert String.ends_with?(suffixed, "-2")
+    end
+
+    test "returns a changeset error for a name longer than the database column" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/overlong")
+
+      assert {:error, changeset} =
+               Profile.ensure_agent_display_name(agent_uri, String.duplicate("a", 256))
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert Profile.get(agent_uri) == nil
+    end
+  end
+
+  test "an Agent profile does not prevent a User with the same display name" do
     agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
-    agent_two = Ezagent.URI.new!("entity://team-alpha/agent/two")
 
     assert {:ok, %Profile{display_name: "builder"}} =
              Profile.ensure_agent_display_name(agent_one, "builder")
-
-    assert {:ok, %Profile{display_name: "builder-2"}} =
-             Profile.ensure_agent_display_name(agent_two, "builder")
-
-    assert {:ok, %Profile{display_name: "builder"}} =
-             Profile.ensure_agent_display_name(agent_one, "ignored-on-retry")
 
     assert {:ok, %Profile{display_name: "builder"}} =
              Profile.upsert(%{

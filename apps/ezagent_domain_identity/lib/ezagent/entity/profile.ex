@@ -17,6 +17,8 @@ defmodule Ezagent.Entity.Profile do
   import Ecto.Query
   alias EzagentCore.Repo
 
+  @max_display_name_length 255
+
   @primary_key {:entity_uri, :string, autogenerate: false}
   schema "entity_profiles" do
     field(:display_name, :string)
@@ -40,6 +42,7 @@ defmodule Ezagent.Entity.Profile do
     existing
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
+    |> validate_length(:display_name, max: @max_display_name_length)
     |> unique_constraint(:email, name: :entity_profiles_email_lower_index)
     |> unique_constraint(:display_name,
       name: :entity_profiles_agent_workspace_display_name_index
@@ -49,15 +52,19 @@ defmodule Ezagent.Entity.Profile do
 
   @doc "Ensure an Agent has a workspace-unique display name."
   @spec ensure_agent_display_name(URI.t(), String.t()) ::
-          {:ok, t()} | {:error, Ecto.Changeset.t()}
+          {:ok, t()} | {:error, Ecto.Changeset.t() | :not_agent_uri}
   def ensure_agent_display_name(%URI{} = uri, base_name) when is_binary(base_name) do
-    case get(uri) do
-      %__MODULE__{} = profile ->
-        {:ok, profile}
+    if agent_uri?(uri) do
+      case get(uri) do
+        %__MODULE__{} = profile ->
+          {:ok, profile}
 
-      nil ->
-        workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
-        insert_agent_display_name(uri, workspace_uri, base_name, 1)
+        nil ->
+          workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
+          insert_agent_display_name(uri, workspace_uri, String.trim(base_name), 1)
+      end
+    else
+      {:error, :not_agent_uri}
     end
   end
 
@@ -75,8 +82,26 @@ defmodule Ezagent.Entity.Profile do
   def by_email(_), do: nil
 
   defp insert_agent_display_name(uri, workspace_uri, base_name, suffix) do
-    display_name = if suffix == 1, do: base_name, else: "#{base_name}-#{suffix}"
+    case display_name_candidate(base_name, suffix) do
+      {:ok, display_name} ->
+        do_insert_agent_display_name(uri, workspace_uri, base_name, display_name, suffix)
 
+      :error ->
+        changeset =
+          %__MODULE__{}
+          |> agent_profile_changeset(%{
+            entity_uri: to_str(uri),
+            display_name: String.duplicate("x", @max_display_name_length + 1),
+            email: nil,
+            workspace_uri: workspace_uri
+          })
+          |> add_error(:display_name, "could not allocate a bounded numeric suffix")
+
+        {:error, changeset}
+    end
+  end
+
+  defp do_insert_agent_display_name(uri, workspace_uri, base_name, display_name, suffix) do
     %__MODULE__{}
     |> agent_profile_changeset(%{
       entity_uri: to_str(uri),
@@ -114,6 +139,7 @@ defmodule Ezagent.Entity.Profile do
     profile
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
+    |> validate_length(:display_name, max: @max_display_name_length)
     |> unique_constraint(:entity_uri, name: :entity_profiles_pkey)
     |> unique_constraint(:display_name,
       name: :entity_profiles_agent_workspace_display_name_index
@@ -129,6 +155,27 @@ defmodule Ezagent.Entity.Profile do
         false
     end)
   end
+
+  defp display_name_candidate(base_name, 1), do: {:ok, base_name}
+
+  defp display_name_candidate(base_name, suffix) when suffix > 1 do
+    suffix_text = "-#{suffix}"
+    available_base_length = @max_display_name_length - String.length(suffix_text)
+
+    if available_base_length >= 0 do
+      candidate =
+        base_name
+        |> String.slice(0, available_base_length)
+        |> Kernel.<>(suffix_text)
+
+      {:ok, candidate}
+    else
+      :error
+    end
+  end
+
+  defp agent_uri?(%URI{} = uri),
+    do: Ezagent.URI.bare_principal?(uri) and Ezagent.URI.type?(uri, :agent)
 
   # entity_uri stored as string; email lower-cased + trimmed so the
   # uniqueness invariant means what callers expect.
