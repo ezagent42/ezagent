@@ -13,6 +13,7 @@ defmodule EzagentPluginGitWorkflow.MixProject do
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       compilers: Mix.compilers(),
+      # plugin-wire-exempt: E2-A is intentionally dormant until the fail-closed E2-B authorization ingress is integrated
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
