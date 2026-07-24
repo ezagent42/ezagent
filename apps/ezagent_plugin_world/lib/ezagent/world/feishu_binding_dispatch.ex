@@ -58,6 +58,28 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   end
 
   @doc """
+  List bindings for the initial page load — the sanctioned entry point that
+  `WorkspacePluginData.component_state` calls before any user interaction.
+
+  The initial `state_for` call runs OUTSIDE the `with_admin_operator` wrapper
+  that `world_live.ex` applies to `world:dispatch` events, so the canonical
+  admin would see `bindings_error: "unauthorized"` with no caps. This function
+  reuses the same `Invocation.with_admin_operator/2` seam (Decision 6) for the
+  initial read: canonical admin auto-mints the precise action cap; every other
+  caller goes through their real caps with zero privilege escalation.
+  """
+  @spec list_for_initial_state(URI.t(), URI.t(), Enumerable.t()) :: {:ok, [map()]} | {:error, error_code()}
+  def list_for_initial_state(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri, caps) do
+    if canonical_admin?(caller_uri) do
+      Invocation.with_admin_operator(caller_uri, fn ->
+        list(workspace_uri, caller_uri, MapSet.new())
+      end)
+    else
+      list(workspace_uri, caller_uri, caps)
+    end
+  end
+
+  @doc """
   Bind `open_id` to `user_uri` within `workspace_uri`, via the formal `:bind`
   action. `user_uri` is a plain string (as typed into the bind form or read
   from world state) — the Behavior's `args: %{user_uri: :uri}` schema is
@@ -151,6 +173,11 @@ defmodule Ezagent.World.FeishuBindingDispatch do
        do: :binding_unavailable
 
   defp normalize_error(_other), do: :binding_operation_failed
+
+  defp canonical_admin?(%URI{} = caller) do
+    Ezagent.URI.stable_key(caller) ==
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
+  end
 
   defp parse_uri(str) do
     {:ok, Ezagent.URI.new!(str)}

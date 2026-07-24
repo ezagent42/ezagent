@@ -393,6 +393,38 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
              "mutation error must not change the read-side bindings_error"
     end
 
+    test "deterministic BindingPolicy failure — admin bind to a non-spawnable URI rolls back and World does not report ok",
+         %{conn: conn} do
+      # Use the system workspace and the canonical admin (whose world:dispatch
+      # goes through with_admin_operator, auto-minting the :bind cap).
+      # The bound "user" is a template:// URI with a class that does
+      # not exist → BindingPolicy.ensure_user_kind/1 → ensure_started/1 →
+      # Template Kind spawn FAILS → BindingPolicy.apply/2 returns
+      # {:error, ...} → handler triggers rollback.
+      ws_system = URI.new!("workspace://system")
+      CapHelper.ensure_workspace_kind!(ws_system)
+
+      {:ok, view, _html} = live(admin_conn(conn, ws_system), "/plugins/feishu/bindings")
+
+      open_id = "ou_wfb_det_policy_#{uniq()}"
+      non_spawnable =
+        Ezagent.URI.new!("template://system/no_such_class/det_policy_#{uniq()}")
+
+      html =
+        dispatch(view, "feishu.bind", %{
+          "open_id" => open_id,
+          "user_uri" => URI.to_string(non_spawnable)
+        })
+
+      # The dispatching admin gets auto-minted caps and the storage bind
+      # succeeds, but BindingPolicy fails AFTER the upsert → rollback.
+      # The World must not report "ok".
+      refute html =~ ~s(data-last-dispatch="ok")
+
+      # Rollback: the durable row was deleted.
+      assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
+    end
+
     test "mutation error preserves the existing bindings list — a caller with list cap but no bind cap still sees their table after a failed bind",
          %{conn: conn} do
       ws = new_ws!()
@@ -435,13 +467,14 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     } do
       ws = new_ws!()
 
-      # Admin mounts the page — initial state_for runs OUTSIDE
-      # with_admin_operator, so the admin sees bindings_error (no explicit
-      # caps). The admin-operator seam applies during world:dispatch events.
+      # Admin mounts the page — FeishuBindingDispatch.list_for_initial_state/3
+      # wraps the initial read in Invocation.with_admin_operator/2, so the
+      # admin auto-mints the list cap and sees bindings immediately (no
+      # bindings_error on initial load).
       {:ok, view, _html} = live(admin_conn(conn, ws), "/plugins/feishu/bindings")
 
       state_initial = world_state(view)
-      assert is_binary(state_initial["bindings_error"])
+      assert state_initial["bindings_error"] in [nil, false]
 
       # Bind through world:dispatch → admin-operator auto-mints the caps.
       open_id = "ou_wfb_admin_#{uniq()}"
