@@ -43,9 +43,10 @@
   reported `1 test, 0 failures`; the TemplateSpawn command also exited zero.
 - Isolated manual World check: created and verified a non-admin founder, logged
   in, created `pr-1570-visual-agent`, and confirmed its human-readable name in
-  `/identities/agents` rather than a UUID-only label. Authentication and
-  directory captures were delivered with the return but intentionally remain
-  outside Git.
+  `/identities/agents` rather than a UUID-only label. Evidence is versioned
+  with this return:
+  [authenticated non-admin founder](evidence/pr1570-authenticated-founder.png)
+  and [Agent-directory display name](evidence/pr1570-agent-directory-display-name.png).
 - `git diff --check` and final independent code review: passed; review found no Critical or Important issue.
 
 **Manual-test scope:** the browser-created Agent exercises the existing
