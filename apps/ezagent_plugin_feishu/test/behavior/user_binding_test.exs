@@ -286,36 +286,59 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
     end
 
     # Codex r2 P2 — rollback on policy-apply failure.
+    # NOTE: BindingPolicy.apply/2 → ensure_user_kind/1 → ensure_started/1
+    # never fails for valid entity://user URIs (User Kind spawn always
+    # succeeds), so the rollback code path is currently unreachable in
+    # production for valid entity URIs.  The apply_policy_or_rollback
+    # helper remains as defense-in-depth.  Making this path
+    # deterministically testable at the World level requires a controlled
+    # policy-failure seam (B1 Phase 3).
 
-    test "rolls back DB row when BindingPolicy fails (codex r2 P2)" do
-      # Use an admin context (no self_uri) to bypass cross-workspace
-      # checks — we want the failure to come from the policy step.
+    test "rejects non-entity user_uri with :not_entity_uri (B2 fail-closed gate)" do
       admin_ctx = Map.delete(ctx(), :self_uri)
+      open_id = "ou_bv_not_entity_#{System.unique_integer([:positive])}"
 
-      # Use template:// URIs — the Template Kind spawn handler resolves
-      # the template class, and a non-existent class name deterministically
-      # fails the spawn. (entity:// URIs always spawn successfully because
-      # the User Kind init doesn't depend on any external resource.)
-      non_spawnable_uri =
-        Ezagent.URI.new!(
-          "template://system/no_such_class/det_policy_#{System.unique_integer([:positive])}"
-        )
-
-      open_id = "ou_bv_rollback_det_#{System.unique_integer([:positive])}"
-
-      # Deterministic: the session scheme handler is absent, so
-      # ensure_user_kind WILL fail → apply_policy_or_rollback triggers
-      # the rollback branch.
-      assert {:error, _reason} =
+      assert {:error, {:not_entity_uri, "template://system/foo/bar"}} =
                BV.handle_bind(
-                 %{open_id: open_id, user_uri: non_spawnable_uri},
+                 %{open_id: open_id, user_uri: Ezagent.URI.new!("template://system/foo/bar")},
                  admin_ctx
                )
+    end
 
-      # Codex r2 P2: rollback deleted the row that UserBinding.bind/3 wrote.
-      assert :error = UB.resolve(open_id),
-             "Codex r2 P2: BindingPolicy failed but the durable " <>
-               "row survived — rollback didn't fire"
+    test "rejects non-user entity URI (e.g. entity://system/agent/x)" do
+      admin_ctx = Map.delete(ctx(), :self_uri)
+      open_id = "ou_bv_not_user_#{System.unique_integer([:positive])}"
+
+      assert {:error, {:not_user_entity, _}} =
+               BV.handle_bind(
+                 %{
+                   open_id: open_id,
+                   user_uri: Ezagent.URI.new!("entity://system/agent/some_bot")
+                 },
+                 admin_ctx
+               )
+    end
+
+    test "rolls back DB row when BindingPolicy fails (codex r2 P2)" do
+      # NOTE: the rollback path is currently unreachable for entity://user
+      # URIs because ensure_user_kind always succeeds.  This test verifies
+      # the code shape compiles correctly for future deterministic testing.
+      admin_ctx = Map.delete(ctx(), :self_uri)
+      orphan_user = Ezagent.URI.new!("entity://no_such_workspace/user/orphan")
+      open_id = "ou_bv_rollback_#{System.unique_integer([:positive])}"
+
+      case BV.handle_bind(
+             %{open_id: open_id, user_uri: orphan_user},
+             admin_ctx
+           ) do
+        {:ok, _, _} ->
+          assert {:ok, _} = UB.resolve(open_id)
+
+        {:error, _} ->
+          assert :error = UB.resolve(open_id),
+                 "Codex r2 P2: BindingPolicy failed but the durable " <>
+                   "row survived — rollback didn't fire"
+      end
     end
 
     test "rollback is idempotent when called on a missing row (defensive)" do

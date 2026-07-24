@@ -246,6 +246,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     bound_by = Map.get(ctx, :caller) || default_admin_uri()
     user_uri_str = uri_to_str(user_uri)
 
+    # B2 review R3: the ActionSet MUST fail-closed on non-entity URIs
+    # BEFORE any side-effect.  The old World-UI `valid_entity_uri?/4`
+    # check was the only gate and it was removed in B2; this is the
+    # authoritative single chokepoint — a template://, session://, or
+    # any other non-entity URI is rejected here regardless of caller
+    # caps or admin context.
+    #
     # Codex r1 P1.2: enforce workspace scope on the NEW user URI BEFORE
     # any side-effect. The table is global (no workspace column) so
     # we structurally derive the user's workspace from their URI and
@@ -266,7 +273,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     # mid-policy must not destroy the operator's existing setup).
     prior_row = snapshot_existing_binding(open_id)
 
-    with :ok <- ensure_same_workspace(user_uri_str, ctx),
+    with :ok <- ensure_entity_user_uri(user_uri_str),
+         :ok <- ensure_same_workspace(user_uri_str, ctx),
          :ok <- ensure_no_cross_workspace_hijack(open_id, ctx),
          {:ok, _row} <- storage_mod().bind(open_id, user_uri_str, bound_by),
          :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
@@ -353,6 +361,24 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)
   defp uri_to_str(s) when is_binary(s), do: s
+
+  # B2 review R3: fail-closed gate — only `entity://<ws>/user/<name>` URIs
+  # are valid Feishu binding targets. The old World-UI `valid_entity_uri?`
+  # check was removed; this is the authoritative single chokepoint.
+  defp ensure_entity_user_uri(str) when is_binary(str) do
+    case Ezagent.URI.new!(str) do
+      %URI{scheme: "entity"} = uri ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "user"} -> :ok
+          _ -> {:error, {:not_user_entity, str}}
+        end
+
+      _ ->
+        {:error, {:not_entity_uri, str}}
+    end
+  rescue
+    _ -> {:error, {:not_entity_uri, str}}
+  end
 
   # Fallback `bound_by` attribution. Only reachable in test
   # scenarios that bypass the dispatch caller-resolution path
