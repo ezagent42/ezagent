@@ -12,7 +12,7 @@ defmodule EzagentPluginGitWorkflow.MixProject do
       lockfile: "../../mix.lock",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
-      compilers: Mix.compilers() ++ [:ezagent_plugin_check],
+      compilers: Mix.compilers(),
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -27,7 +27,6 @@ defmodule EzagentPluginGitWorkflow.MixProject do
   def application do
     [
       mod: {EzagentPluginGitWorkflow.Application, []},
-      env: [ezagent_plugin: EzagentPluginGitWorkflow.Application],
       extra_applications: [:logger]
     ]
   end

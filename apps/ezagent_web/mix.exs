@@ -132,9 +132,6 @@ defmodule EzagentWeb.MixProject do
       # registers the `kb` recipe + resource_types/0 registers the kb-store /
       # kb-source FsResolver types; Behavior.Kb loads per-instance via RF-1).
       {:ezagent_plugin_kb, in_umbrella: true},
-      # Plan E E2 — git workflow plugin. Registers GitWorkflow ActionSet for
-      # binding management, task claim, and run read operations.
-      {:ezagent_plugin_git_workflow, in_umbrella: true},
       {:jason, "~> 1.2"},
       {:bandit, "~> 1.5"}
     ]
