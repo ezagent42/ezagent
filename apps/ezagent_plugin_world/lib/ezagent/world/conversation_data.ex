@@ -13,14 +13,15 @@ defmodule Ezagent.World.ConversationData do
 
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ErrorCards
+  alias Ezagent.World.PluginPageRegistry
 
   @message_limit 50
 
-  # world-native React renderers keyed by SessionView id → the render mode the
-  # React side draws with. Any other view classifies by its declared target
-  # (external json-render surface) or falls through to "unsupported" (honest
-  # placeholder, never silently hidden).
-  @native_react_ids %{conversation: "chat", pty: "pty", kanban_board: "kanban"}
+  # world's OWN built-in React islands (SessionView id → render mode) that ship
+  # inside world itself. Plugin-owned native surfaces are NOT listed here — they
+  # are derived from each plugin's `PluginPageRegistry` page (see `render_mode/2`),
+  # so world never hard-codes a plugin's identity.
+  @world_native_react_ids %{conversation: "chat", pty: "pty"}
 
   @doc """
   Build the React `conversation` island state for a session.
@@ -180,19 +181,29 @@ defmodule Ezagent.World.ConversationData do
     session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
   end
 
-  # Classify a registered view into a world React render mode. `:conversation`,
-  # `:pty` and `:kanban_board` have world-native React renderers (the native
-  # mapping is checked FIRST, so `:kanban_board` mounts the rich interactive
-  # board even though it also declares an external render target); `:page`/
-  # `:hello_page` and any other view declaring an external render target draw
-  # through the external surface (iframe); everything else is an honest
-  # "unsupported" placeholder.
+  # world's own built-in islands (`:conversation`/`:pty`) map directly; everything
+  # else → `plugin_or_surface_mode/2` (plugin-native / external / unsupported).
   defp render_mode(id, mod) do
-    cond do
-      Map.has_key?(@native_react_ids, id) -> Map.fetch!(@native_react_ids, id)
-      id in [:page, :hello_page] -> "external"
-      external_render_view?(mod) -> "external"
-      true -> "unsupported"
+    if Map.has_key?(@world_native_react_ids, id) do
+      Map.fetch!(@world_native_react_ids, id)
+    else
+      plugin_or_surface_mode(id, mod)
+    end
+  end
+
+  # Plugin page (via PluginPageRegistry) → native renderer (mode = page `key`),
+  # checked BEFORE external fallthrough; else declared-external → iframe; rest unsupported.
+  defp plugin_or_surface_mode(id, mod) do
+    case PluginPageRegistry.by_session_view(Atom.to_string(id)) do
+      %{key: key} ->
+        key
+
+      _ ->
+        cond do
+          id in [:page, :hello_page] -> "external"
+          external_render_view?(mod) -> "external"
+          true -> "unsupported"
+        end
     end
   end
 
