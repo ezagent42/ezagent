@@ -485,13 +485,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
       :ok ->
         :ok
 
-      {:error, _} = err ->
+      {:error, reason} = err ->
         rollback_binding(open_id, prior_row, err)
-        err
+        {:error, {:binding_policy_failed, reason}}
 
       other ->
         rollback_binding(open_id, prior_row, {:error, other})
-        {:error, {:policy_apply_failed, other}}
+        {:error, {:binding_policy_failed, {:unexpected_policy_result, other}}}
     end
   end
 

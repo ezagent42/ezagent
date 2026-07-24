@@ -32,10 +32,6 @@ defmodule Ezagent.World.FeishuBindingDispatch do
 
   alias Ezagent.Invocation
 
-  # `:binding_policy_failed` is reserved for a future deterministic
-  # policy-failure signal from the Behavior (B1 Phase 3).  The current
-  # `BindingPolicy.apply/2` → `handle_bind/2` → dispatch chain propagates
-  # `{:error, reason}` tuples that normalize to `:binding_operation_failed`.
   @type error_code ::
           :unauthorized
           | :cross_workspace_denied
@@ -164,6 +160,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
 
   defp normalize_error({:not_entity_uri, _}), do: :invalid_args
   defp normalize_error({:not_user_entity, _}), do: :invalid_args
+  defp normalize_error({:binding_policy_failed, _}), do: :binding_policy_failed
   defp normalize_error({:bad_args, _, _}), do: :invalid_args
   defp normalize_error({:bad_args, _}), do: :invalid_args
   defp normalize_error({:invalid_args, _}), do: :invalid_args

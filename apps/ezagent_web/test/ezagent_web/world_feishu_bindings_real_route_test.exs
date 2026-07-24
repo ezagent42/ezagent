@@ -7,7 +7,7 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
   Every test mounts the REAL route (`live(conn, "/plugins/feishu/bindings")`)
   and drives the REAL `world:dispatch` hook on `#world-root` — no handler
-  function is called directly and no storage/policy call is mocked. This is
+  function is called directly and no World adapter result is mocked. This is
   the route-level complement to:
   - `apps/ezagent_plugin_feishu/test/behavior/user_binding_test.exs` — the
     Behavior's OWN exhaustive workspace/anti-hijack/policy/rollback coverage
@@ -18,7 +18,8 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
   This file proves the WORLD LAYER's contract: workspace-scoped reads, no
   raw-storage fallback, mutation truth (never reports "ok" on a real
-  failure), redacted+stable error codes, and repeated-failure visibility.
+  failure), durable rollback on a controlled policy failure, redacted+stable
+  error codes, and repeated-failure visibility.
   """
   use EzagentWeb.ConnCase
 
@@ -29,6 +30,7 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
   alias Ezagent.Test.CapHelper
   alias Ezagent.Workspace
   alias Ezagent.World.FeishuBindingDispatch
+  alias EzagentPluginFeishu.TestSupport.FailingPolicy
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -374,23 +376,37 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     end
   end
 
-  describe "policy failure is never reported ok" do
-    test "any dispatch error (cap denial, cross-workspace, etc.) is never reported ok", %{
+  describe "policy failure is rolled back and never reported ok" do
+    test "authorized World bind reaches the controlled policy failure and rolls back durably", %{
       conn: conn
     } do
-      # Dispatch errors not reporting "ok" is proven by every no-cap and
-      # cross-workspace denial test in this file: `error:unauthorized` and
-      # `error:cross_workspace_denied` are stable error codes, never "ok".
-      # The specific Behavior-level rollback-on-policy-failure is covered
-      # by `apps/ezagent_plugin_feishu/test/behavior/user_binding_test.exs`
-      # and its deterministic hardening is B1 Phase 3.
       ws = new_ws!()
-      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/nocap-#{uniq()}")
-      create_read_only_user!(caller, [])
+      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/policy-operator-#{uniq()}")
+
+      create_read_only_user!(caller, [
+        cap_for(ws, :bind, caller),
+        cap_for(ws, :list_feishu_bindings, caller)
+      ])
 
       {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
+      assert world_state(view)["bindings_error"] in [nil, false]
 
-      open_id = "ou_wfb_dispatch_err_#{uniq()}"
+      previous_policy = Application.get_env(:ezagent_plugin_feishu, :binding_policy_mod)
+      Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
+
+      on_exit(fn ->
+        if previous_policy do
+          Application.put_env(
+            :ezagent_plugin_feishu,
+            :binding_policy_mod,
+            previous_policy
+          )
+        else
+          Application.delete_env(:ezagent_plugin_feishu, :binding_policy_mod)
+        end
+      end)
+
+      open_id = "ou_wfb_policy_fail_#{uniq()}"
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
 
       html =
@@ -399,16 +415,13 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
           "user_uri" => URI.to_string(user_uri)
         })
 
-      assert html =~ ~s(data-last-dispatch="error:unauthorized")
+      assert html =~ ~s(data-last-dispatch="error:binding_policy_failed")
+      refute html =~ ~s(data-last-dispatch="ok")
+      assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
 
-      # Mutation failure must not clear the existing bindings table or
-      # change the read-side bindings_error. The initial mount already set
-      # bindings=[], bindings_error="unauthorized" — verify the mutation
-      # error didn't overwrite it with a mutation-specific code.
       state = world_state(view)
-
-      assert state["bindings_error"] == "unauthorized",
-             "mutation error must not change the read-side bindings_error"
+      assert state["bindings"] == []
+      assert state["bindings_error"] in [nil, false]
     end
 
     test "non-entity user_uri is rejected by the Behavior fail-closed gate and World does not report ok",
@@ -429,35 +442,6 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       refute html =~ ~s(data-last-dispatch="ok")
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
-    end
-
-    test "dispatch error never reported ok — any cap/workspace/args denial returns honest error status",
-         %{conn: conn} do
-      # Proves the WORLD-LAYER contract: ANY dispatch error → honest
-      # error status, never "ok".  The specific BindingPolicy-failure
-      # proof requires a controlled failure seam (B1 Phase 3 / B2-auth
-      # deferred) — the deterministic rollback-through-policy path
-      # is currently unreachable for valid entity://user URIs.
-      ws = new_ws!()
-      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/nocap-#{uniq()}")
-      create_read_only_user!(caller, [])
-
-      {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
-
-      open_id = "ou_wfb_dispatch_err_#{uniq()}"
-      user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
-
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
-
-      assert html =~ ~s(data-last-dispatch="error:unauthorized")
-      refute html =~ ~s(data-last-dispatch="ok")
-
-      state = world_state(view)
-      assert state["bindings_error"] == "unauthorized"
     end
 
     test "mutation error preserves the existing bindings list — a caller with list cap but no bind cap still sees their table after a failed bind",
