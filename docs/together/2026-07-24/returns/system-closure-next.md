@@ -77,7 +77,20 @@ FAIL missing_cap_check_mutating_actions: count=1 cap=0
 **Open decisions for the lead:**
 1. How to land Slice B under authorized authorship (re-author the commit, cherry-pick under the lead's own login, or review-and-apply directly) — this return doesn't attempt that, since only the lead/owner can produce an authorized commit here.
 2. Merge order/timing: recommend Slice B lands first (or atomically with Slice A) so `main` is never left with the one known-red contract-test case from §4.
-3. What happens to Draft PR #1498 itself — its current branch (`docs/system-closure-method-productization`, still intact, untouched) contains both slices combined and will keep tripping the owner-gate as long as it's the PR head. Recommend retargeting #1498 at `system-closure/runner-and-docs` and opening a separate lead-authored PR for `system-closure/dev-together-skill-updates`, but the actual GitHub PR/branch operations were left undone here (push/PR-retarget is a lead `push`/`close`-style action, and this session did not push anything to `origin`).
+3. ~~What happens to Draft PR #1498 itself~~ — resolved, see §7: PR #1498's branch now carries only Slice A (+ this return doc); Slice B is pushed as a plain (no-PR) branch for the owner to pick up.
 4. The pre-existing `arch.scan` red on `main` (§5) — FYI only, not blocking, not touched.
 
 Nothing under `apps/**`, no CapBAC/EntityCaps/capability-action code, no edits to `protect-dev-together-skill.yml` or its `OWNERS` list anywhere in this branch or either slice.
+
+## 7. Addendum — PR #1498 updated, Slice B pushed (same session, follow-up)
+
+Coordinator confirmed the mechanism (asked explicitly, chose): append a non-destructive revert commit rather than squash/force-replace the 12-commit history, and push Slice B as a plain branch (no PR) rather than leave it local-only.
+
+- **`main` advanced mid-session** (86fd926b3 → 967a1b16c, 6 commits: #1546-adjacent C2 actor extraction #1550, kimi-dispatch skill #1559, dev-phase security-posture docs #1558, GitHub App creds wiring #1556, `no_hardcoded_seed_principal` gate #1560, and #1555 which — the one overlap — touched `.claude/skills/dev-together/commands/review.md`). Re-checked: only `commands/review.md` intersected our path set; re-rebased all three branches onto the new tip; the two independent review.md insertions (ours: `method_deltas` X/Y schema; #1555's: 归属看实质) auto-merged cleanly, both confirmed present post-rebase.
+- **Two more pre-existing, out-of-scope, main-level findings from the re-run** (neither caused by this zero-`.ex`-diff branch, neither touched):
+  - `arch.scan`'s 2 counters from §5 persist unchanged after C2 (#1550) landed.
+  - `mix ezagent.uri_query.scan` now shows **7 violations** on current `main` (clean on the pre-move base) — all in `ezagent_domain_git`/`ezagent_domain_workspace`/`ezagent_plugin_codex`/`ezagent_plugin_github`, none in any file this branch touches. Flagging alongside §5 for the lead; out of scope for #1498 either way.
+- **Pushed**, with the coordinator's explicit go-ahead:
+  - `docs/system-closure-method-productization` → `origin` via `--force-with-lease` (lease pinned to the known prior remote tip `1890c4603`, matched before pushing). PR #1498 now shows **11 changed files, 0 deletions, 2530 additions** — exactly Slice A + this return doc, confirmed via `gh pr view 1498 --json files`. No `.claude/skills/dev-together/**` file appears in the PR diff any more.
+  - `system-closure/dev-together-skill-updates` → `origin` as a **new plain branch, no PR opened**. This never triggers `protect-dev-together-skill.yml` (its `on:` is `pull_request`/`push-to-main` only), so there's no confusing red check sitting on it — the owner opens their own PR from it under their own login when ready: `https://github.com/ezagent42/ezagent/compare/main...system-closure/dev-together-skill-updates`.
+- **Not done, still needs the owner:** actually authoring/landing Slice B under `allenwoods`/`jjkysy`. Nothing in this session's GitHub identity (`gagameow`, confirmed via `gh auth status`) can make that gate pass — by design, not a gap.
