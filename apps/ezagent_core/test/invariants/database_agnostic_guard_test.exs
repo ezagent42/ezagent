@@ -30,6 +30,11 @@ defmodule EzagentCore.Invariants.DatabaseAgnosticGuardTest do
 
   @excluded_path_parts [
     "/test/",
+    # Transient per-test fixtures under any `tmp/` dir (e.g. GitAdapterBoundaryTest's
+    # planted-repo fixtures) — a sibling test can delete them mid-stream, raising
+    # File.Error here. Production sources never live under `tmp/`. (Same class as the
+    # #1542 no_legacy_files_route fix.)
+    "/tmp/",
     "/priv/repo/migrations/",
     "/lib/ezagent/home/migration.ex",
     "/lib/ezagent/persistence/database_diagnostics.ex",

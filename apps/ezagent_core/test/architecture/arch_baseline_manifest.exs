@@ -95,7 +95,20 @@
   #   justified growth (not bloat); burn-down = extract the redaction helpers
   #   into a sibling module. 7→8 (on the #1445 seven-module baseline: the
   #   redaction adds server.ex as the eighth oversized module).
-  oversized_modules_gt_1000: 8,
+  # arch-cap-bump: +1 actor-extraction C0 (spec 2026-07-23 §2.2) — the public
+  #   actor read surface (read/3, read_classified/2, read_durable/3 +
+  #   read_durable_many/3, resolve_action_subject/2, alive?/1, self?/1,
+  #   list_instances/0) MUST live on `Ezagent.Kind` per §2.2, and kind.ex sat at
+  #   exactly 995 LOC (zero headroom), so the additive surface pushed it 995 →
+  #   ~1203, crossing >1000 as the ninth oversized module. This is ACCEPTED
+  #   documented debt, NOT an automatic disappearance: the LOC counter scans
+  #   `apps/*/lib/**/*.ex` globally, so C5 relocating kind.ex into `ezagent_actor`
+  #   (still under `apps/*/lib`) does NOT drop the count, and C7's small
+  #   `get_slice` delegate removal does not get kind.ex back under 1000. The real
+  #   burn-down is a module split (extract the §2.2 read surface into a sibling
+  #   `Ezagent.Kind.Read` once callers have migrated), tracked for a later chunk.
+  #   8→9.
+  oversized_modules_gt_1000: 9,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the

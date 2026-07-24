@@ -17,16 +17,15 @@ defmodule Ezagent.World.MarketSurfaceTest do
   #      into the #165 `authorize_public_scope_write` gate. Fail-before names the
   #      real bypasses: a system/service `actor_uri` (grants on
   #      `home_is_system?` caps-independently), hardcoded admin caps, or a raw
-  #      `write_definition` that skips the action's cap load;
-  #   4. 下架 gate — `market.retract` goes through the GATED
-  #      `ConfigGovernance.Socialware.retract/2` (never the ungated
-  #      `DefinitionRegistry.set_retracted/4`): the card stops being offered,
-  #      `resolve_installable_revision/3` by `config_id` returns
-  #      `:socialware_revision_retracted`, and a non-admin attempt is DENIED.
+  #      `write_definition` that skips the action's cap load.
+  #
+  # 下架 (retract) / restore are NO LONGER World actions — the socialware manage
+  # cap is not user-holdable (string subject, service-ctx only), so no World user
+  # could authorize them via `PresenterCaps.load/1`. The retract gate + mechanism
+  # are covered on the SERVICE path by `Ezagent.Socialware.RetractTest` (session).
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Entity.User
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
   alias Ezagent.World.{MarketActions, WorkspacePluginData}
@@ -51,6 +50,7 @@ defmodule Ezagent.World.MarketSurfaceTest do
   defp workspace_caps(workspace_uri, presenter) do
     Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, presenter).caps
   end
+
 
   defp socket(workspace_uri, caller, caps) do
     %Phoenix.LiveView.Socket{
@@ -262,70 +262,5 @@ defmodule Ezagent.World.MarketSurfaceTest do
     assert name in listed_names(
              market_state(ws_b, Ezagent.URI.user("mkt-pub-b-#{suffix}", "v"), nil)
            )
-  end
-
-  test "下架 via the GATED retract: card non-offered + revision retracted; non-admin DENIED" do
-    suffix = uniq()
-    ws_a = Ezagent.URI.workspace("mkt-ret-a-#{suffix}")
-    ws_b = Ezagent.URI.workspace("mkt-ret-b-#{suffix}")
-    operator = Ezagent.URI.user("mkt-ret-a-#{suffix}", "operator")
-    admin = User.admin_uri()
-    name = "mkt-ret-#{suffix}"
-
-    r_pub = seed_definition!(ws_a, name, :public)
-
-    {:ok, _} = Ezagent.Workspace.create("mkt-ret-a-#{suffix}", %{})
-
-    # Manage authority over the def is seeded into each caller's live Identity
-    # slice (the socialware manage cap's structured subject is not grantable via
-    # the grant chokepoint — `manage_cap/3` is the governance ctx's cap shape).
-    # This lets the retract attempt REACH the admin gate: a manage-less caller
-    # is denied earlier on :unauthorized and proves nothing about the admin half.
-    operator_caps =
-      MapSet.put(workspace_caps(ws_a, operator), Governance.manage_cap(name, ws_a, operator))
-
-    admin_caps = MapSet.new([Governance.manage_cap(name, ws_a, admin)])
-
-    :ok = spawn_user(operator, caps: operator_caps)
-    :ok = spawn_user(admin, caps: admin_caps)
-
-    # NON-ADMIN retract via the market action → DENIED by the governance admin
-    # gate, loud; the card stays offered.
-    {:noreply, denied} =
-      MarketActions.handle_dispatch(socket(ws_a, operator, operator_caps), "market.retract", %{
-        "name" => name
-      })
-
-    assert denied.assigns.last_dispatch_status == "error:market_retract_failed"
-
-    assert denied.assigns.world_state["market_error"] =~ "public_socialware_requires_admin",
-           "expected the governance admin gate, got #{inspect(denied.assigns.world_state)}"
-
-    viewer_b = Ezagent.URI.user("mkt-ret-b-#{suffix}", "viewer")
-    assert name in listed_names(market_state(ws_b, viewer_b, nil))
-
-    # ADMIN retract via the SAME action — the caller's manage cap rides the
-    # mounted-snapshot half of PresenterCaps.load/1 (the same half LiveAuth
-    # populates at mount; the LIVE half `EntityCaps.load/1` verifies signatures
-    # and would drop this hand-built fixture cap). The DENY/ALLOW pair above and
-    # here differ ONLY in the actor URI + caps the action threads, which is what
-    # proves the gate fires on the real caller.
-    {:noreply, retracted} =
-      MarketActions.handle_dispatch(
-        socket(ws_a, admin, admin_caps),
-        "market.retract",
-        %{"name" => name}
-      )
-
-    assert retracted.assigns.last_dispatch_status == "ok",
-           "admin retract failed with #{inspect(retracted.assigns.world_state)}"
-
-    # the card is no longer offered to another workspace …
-    refute name in listed_names(market_state(ws_b, viewer_b, nil))
-    refute name in Enum.map(retracted.assigns.world_state["socialwares"], & &1["name"])
-
-    # … and the exact revision is non-installable even by config_id.
-    assert {:error, {:socialware_revision_retracted, ^name}} =
-             DefinitionRegistry.resolve_installable_revision(ws_b, r_pub.id)
   end
 end
