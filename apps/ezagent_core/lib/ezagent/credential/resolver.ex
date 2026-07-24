@@ -390,12 +390,15 @@ defmodule Ezagent.Credential.Resolver do
   # snapshot (the PR-0 `source_exists?` convention) — revoked/deleted sources read as
   # unavailable, driving the fail-loud branch. PR-2 layers the grant-revocation check on
   # top at materialize time; at CREATE existence is the availability signal.
+  # Via the §2.2 actor read surface (C2): `read_durable/3` never spawns and
+  # answers durable existence regardless of the probe slice key (`{:ok, _, _}`
+  # ⟺ the old `match?({:ok, _}, SnapshotStore.latest/1)`).
   defp default_source_available?(%URI{} = source) do
-    match?({:ok, _}, Ezagent.SnapshotStore.latest(URI.to_string(source)))
+    match?({:ok, _, _}, Ezagent.Kind.read_durable(source, :identity))
   end
 
   defp default_source_available?(source) when is_binary(source) do
-    match?({:ok, _}, Ezagent.SnapshotStore.latest(source))
+    match?({:ok, _, _}, Ezagent.Kind.read_durable(source, :identity))
   end
 
   # System-principal elimination (#154 north star, 2026-06-19) — was

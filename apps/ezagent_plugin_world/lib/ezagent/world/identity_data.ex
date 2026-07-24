@@ -491,7 +491,7 @@ defmodule Ezagent.World.IdentityData do
   # forbids plugins consulting the local registry directly).
   defp agent_exists?(%URI{} = agent_uri) do
     Ezagent.LocalRuntime.kind_alive?(agent_uri) or
-      Ezagent.Kind.StateRebuilder.snapshot_exists?(agent_uri)
+      match?({:ok, _, _}, Ezagent.Kind.read_durable(agent_uri, :sandbox))
   rescue
     _ -> true
   end
@@ -664,14 +664,23 @@ defmodule Ezagent.World.IdentityData do
 
   # ── #160 credential-status view ──────────────────────────────────────
   #
-  # Enrich agent rows with a normalized `credential_status` (nil for user rows and
-  # for agents the caller may not manage). Read via the cap-gated, NON-ACTIVATING
-  # `Ezagent.Domain.Agent.read_credential_status/2` — the SAME owner+ws-admin gate
-  # as `read_config`, so a co-tenant learns nothing (#160 leak stays closed).
+  # Enrich agent rows with a normalized `credential_status` (nil for user rows /
+  # agents the caller may not manage). §6.3 list plane: ONE durable batch for the
+  # whole directory via `Ezagent.Domain.Agent.read_credential_statuses/2` (a single
+  # `read_durable_many/3` for the curl slice), never N per-agent reads; the per-
+  # agent owner+ws-admin gate stays inside that cap-gated call (#160 leak closed).
   defp put_credential_statuses(rows, caller, caps) when is_list(rows) do
+    statuses =
+      for(
+        %{"kind" => "agent", "uri" => u} <- rows,
+        {:ok, %URI{} = uri} <- [Ezagent.URI.parse(u)],
+        do: uri
+      )
+      |> Ezagent.Domain.Agent.read_credential_statuses(authenticated_ctx(caller, caps))
+
     Enum.map(rows, fn
       %{"kind" => "agent", "uri" => uri_str} = row ->
-        Map.put(row, "credential_status", agent_credential_status(uri_str, caller, caps))
+        Map.put(row, "credential_status", encode_credential_status(Map.get(statuses, uri_str)))
 
       row ->
         row
@@ -688,15 +697,6 @@ defmodule Ezagent.World.IdentityData do
   rescue
     _ -> nil
   end
-
-  defp agent_credential_status(uri_str, caller, caps) when is_binary(uri_str) do
-    case Ezagent.URI.parse(uri_str) do
-      {:ok, %URI{} = uri} -> agent_credential_status(uri, caller, caps)
-      _ -> nil
-    end
-  end
-
-  defp agent_credential_status(_agent_uri, _caller, _caps), do: nil
 
   defp authenticated_ctx(caller, caps),
     do: %{caller: caller, authenticated_principal: caller, caps: caps}

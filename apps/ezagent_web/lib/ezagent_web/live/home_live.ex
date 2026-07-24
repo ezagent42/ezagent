@@ -270,8 +270,11 @@ defmodule EzagentWeb.HomeLive do
           match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri))
 
       {:ok, "agent"} ->
+        # Durable existence via the §2.2 actor read surface (C2). `read_durable/3`
+        # answers "a durable row exists" regardless of the probe slice key (never
+        # spawns); `{:ok, _, _}` ⟺ the old `match?({:ok, _}, SnapshotStore.latest/1)`.
         match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri)) or
-          match?({:ok, _snapshot}, Ezagent.SnapshotStore.latest(entity_uri))
+          match?({:ok, _, _}, Ezagent.Kind.read_durable(entity_uri, :identity))
 
       _ ->
         false

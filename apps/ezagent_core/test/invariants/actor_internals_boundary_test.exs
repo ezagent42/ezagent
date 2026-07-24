@@ -35,7 +35,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C1 lowered forward 259→255: EntityCaps load path off actor internals
   # (KindRegistry self-detect → self?/1; get_slice → read/3 spawn: :never;
   # snapshot_caps SnapshotStore → read_durable/3), −4 sites.
-  @forward_frozen 255
+  # C2 lowered forward 255→244: cold/durable reads onto Kind.read/3 +
+  # read_durable/3 (session_reads/identity_data/web/uri_query/agent-credential), −11 sites.
+  # (recipe_resolver stays: legacy dual-key needs full durable state, deferred.)
+  @forward_frozen 244
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3

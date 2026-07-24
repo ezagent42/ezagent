@@ -29,28 +29,8 @@ defmodule Ezagent.AgentFlavorResolver do
   @spec flavor_from_durable_snapshot(URI.t()) :: Ezagent.UriQuery.result()
   def flavor_from_durable_snapshot(%URI{} = uri) do
     case Ezagent.SnapshotStore.latest(uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        # 1) A slice with a persisted `:flavor` field — curl stores it in its
-        #    own `:curl_agent` slice.
-        case flavor_from_persisted_flavor_field(state) do
-          {:ok, _} = ok ->
-            ok
-
-          :none ->
-            # 2) A `:sandbox` slice carrying a `template_class` /
-            #    `respawn_template_data` — py (and any subprocess flavor that
-            #    seeds the sandbox) persists its identity THERE, not as a
-            #    `:flavor` field. Without this, a cold-loaded py agent resolves
-            #    `:none` and its `:in_process_sync` chat reply is mis-routed
-            #    down the `:subprocess_ws` async branch and silently DROPPED
-            #    (the "@mention py agent → no reply" bug). Deadlock-safe: same
-            #    durable state, `resolve_flavor_from_sandbox/1` is a pure map
-            #    read + registry lookup (no `Kind.get_slice/2` self-call).
-            flavor_from_sandbox_slice(state)
-        end
-
-      _ ->
-        :none
+      {:ok, %{state: state}} when is_map(state) -> flavor_from_state(state)
+      _ -> :none
     end
   rescue
     error in [DBConnection.ConnectionError, DBConnection.OwnershipError] ->
@@ -63,6 +43,29 @@ defmodule Ezagent.AgentFlavorResolver do
 
       :none
   end
+
+  @doc """
+  Resolve the durable flavor from an already-decoded state map (the PURE core of
+  `flavor_from_durable_snapshot/1`). Lets the §6.3 list plane (the agent-directory
+  credential-status read) resolve flavor from PRE-FETCHED slices assembled into a
+  partial state — one `read_durable_many/3` per slice type — instead of a per-agent
+  durable read. Two ordered sources, flavor-blind:
+
+  1. A slice carrying a persisted `:flavor` field — curl stores it in its own
+     `:curl_agent` slice.
+  2. Else a `:sandbox` slice carrying a `template_class` / `respawn_template_data` —
+     py (and any subprocess flavor that seeds the sandbox) persists its identity
+     THERE, not as a `:flavor` field.
+  """
+  @spec flavor_from_state(map()) :: Ezagent.UriQuery.result()
+  def flavor_from_state(state) when is_map(state) do
+    case flavor_from_persisted_flavor_field(state) do
+      {:ok, _} = ok -> ok
+      :none -> flavor_from_sandbox_slice(state)
+    end
+  end
+
+  def flavor_from_state(_), do: :none
 
   # A slice carrying a persisted `:flavor` field (curl → its `:curl_agent` slice).
   # cc/codex carry no durable `:flavor` field, so they never match here and

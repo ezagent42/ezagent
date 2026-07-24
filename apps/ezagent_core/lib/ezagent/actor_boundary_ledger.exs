@@ -103,24 +103,6 @@
       note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/credential/grant_row.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "660138bda4d9e2cc6bf3fc26e37381b64cda68410abaaf0e99897bde683fcf40",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/credential/resolver.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "5dc803f181280ecc9e152f58c96fd3321d30b12e917834ac3fa209652c4f24b5",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/credential/resolver.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "c41049af5ab11d8ccb6a17f258f83941e2a40cd126a90770bdc1bc027f660b32",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/home/migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "026ce287ebfdcc17f536dd06103801920163dd26734301d1361190b03bc3ce59",
@@ -325,18 +307,6 @@
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
     },
     %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/credential_status.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/credential_status.ex",
-      target: "Kind.get_slice",
-      sha: "e9a9b1c24e375aaf5ae12d5eb55cf82cf01112736d6b7952ed4419149fe0523f",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_domain_agent/lib/ezagent/agent/host_login_adopt.ex",
       target: "Ezagent.SnapshotStore",
       sha: "fda2877d535ddbe515247717083d10138bf3d09e482420d3349cbd51758aebfd",
@@ -376,12 +346,6 @@
       path: "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_resolver.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "fd7485ad8e9530f470e2acf2cb8984420a7602a618e94124379f80a6690c0b06",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_resolver.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
@@ -467,6 +431,13 @@
       target: "Ezagent.SnapshotStore",
       sha: "6f0efa841ae7b75d169ef72711f15f2f98cf8bba6c084cbf3474d9953304ed81",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
+    },
+    %{
+      path: "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_resolver.ex",
+      target: "Ezagent.SnapshotStore",
+      sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
+      note:
+        "durable/snapshot reach-in — full-state legacy dual-key (:sandbox|\"sandbox\" top-level); read_durable single-atom-key can't preserve it (like agent_flavor_resolver), deferred"
     },
     %{
       path: "apps/ezagent_domain_agent/lib/ezagent/behavior/curl_agent.ex",
@@ -1163,13 +1134,6 @@
     %{
       path:
         "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "6f0efa841ae7b75d169ef72711f15f2f98cf8bba6c084cbf3474d9953304ed81",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
       target: "Kind.get_slice",
       sha: "b8e8b9a424c6314f332daf49182a536ed7bc12377ab15fa6870432b0eba05ee5",
       note: "get_slice reach-in → read/3 (ratchet→C7)"
@@ -1190,18 +1154,6 @@
       path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user/gc.ex",
       target: "Kind.get_slice",
       sha: "80a32dcd1ec3311b17996b522c75435856c0acaa5a45804e2c08c711e82293aa",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex",
-      target: "Ezagent.Kind.StateRebuilder",
-      sha: "4cc795a3cc098952d00760b488379979b685f84f3d7dc01d1caf9123dca1f844",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex",
-      target: "Kind.get_slice",
-      sha: "da83c746a701ae5d8e9714c7dfcfe9cd37638980363bceca981d62bd52492ee2",
       note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
@@ -1513,12 +1465,6 @@
       note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
-      path: "apps/ezagent_plugin_world/lib/ezagent/world/identity_data.ex",
-      target: "Ezagent.Kind.StateRebuilder",
-      sha: "b6a10a6442e37ab7e513e89f10ae8e43716a9eb2755e2e3207a11bbc3e45b102",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
       path: "apps/ezagent_web/lib/ezagent_web/controllers/session_controller.ex",
       target: "Ezagent.KindRegistry",
       sha: "9d21c4c1fba4090bd0f00e8e443e460c2c17ba65975142681964d16b1cfae976",
@@ -1531,12 +1477,6 @@
       note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
     },
     %{
-      path: "apps/ezagent_web/lib/ezagent_web/controllers/session_controller.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "383e09a1ce91b0b903eaa9840c71b70170650e3be31894120f16608d9d477208",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
       path: "apps/ezagent_web/lib/ezagent_web/live/home_live.ex",
       target: "Ezagent.KindRegistry",
       sha: "7934c105f5132fd6aff426577900e8254e8c9083946627d582500b3563dc275c",
@@ -1547,12 +1487,6 @@
       target: "Ezagent.KindRegistry",
       sha: "de287787ac43a818c02d7e954756822769dec411bb65dc15a83590fc689f5c6f",
       note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_web/lib/ezagent_web/live/home_live.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "53c1c84a2828c7820604bf1e21fe719859c7455d3f66f89c04e843a1caabb23d",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
       path: "apps/ezagent_web/lib/ezagent_web/socialware/anon_takeover.ex",
