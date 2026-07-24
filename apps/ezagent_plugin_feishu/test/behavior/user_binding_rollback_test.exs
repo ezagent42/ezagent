@@ -29,6 +29,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
       reply: :sync,
       read: fn key, default -> Map.get(slice, key, default) end
     }
+
     Map.merge(base, overrides)
   end
 
@@ -47,7 +48,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
 
-      assert {:error, :policy_failure_synthetic} =
+      assert {:error, {:binding_policy_failed, :policy_failure_synthetic}} =
                BV.handle_bind(%{open_id: open_id, user_uri: @user_a}, ctx())
 
       assert :error = UB.resolve(open_id)
@@ -64,7 +65,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
 
-      assert {:error, :policy_failure_synthetic} =
+      assert {:error, {:binding_policy_failed, :policy_failure_synthetic}} =
                BV.handle_bind(%{open_id: open_id, user_uri: @user_b}, ctx())
 
       row_restored = EzagentCore.Repo.get!(EzagentPluginFeishu.UserBinding, open_id)
