@@ -17,12 +17,12 @@ progress:
 
 # efficiency: 本周期(07-23→07-24)合入 PR 计数(git 可复算, 无需网络)
 efficiency:
-  - {value: "13", label: "07-23→24 周期核心合入 PR(git 去重 · ~1min 可复算)"}
+  - {value: "16", label: "07-23→24 窗口合入 PR(git 去重 (#NNNN) · ~1min 可复算)"}
   - {value: "1", label: "#195 统一撤销枢纽塌进 main(#1503) · 解阻 #1470 + canary 部署"}
   - {value: "3", label: "actor 抽取迁移已启(Spec + C0 + C1 合 · C2/C0-硬化评审中)"}
   - {value: "15", label: "PR 清理 · 关掉 已在main / stale / superseded(留 #1376/#1301 + 活跃)"}
   - {value: "1", delta: "↓", label: "发布闸阻塞 · 沿用 pre-existing E2E(sandbox-ownership, 见风险)"}
-efficiency_source: "本周期合入 PR = git log origin/main 07-23..07-24, 去重 (#NNNN) 计数、~1min 可复算; 含 07-22 board 跨零点收尾。两大结构面(#195 塌进 main / actor-framework 抽取启动)均经对抗性评审。"
+efficiency_source: "本窗口合入 PR = `git log origin/main --since=2026-07-23 --until=2026-07-25` 去重 (#NNNN) 计数(=16)、~1min 可复算; 含 07-22 board 跨零点收尾(#1528/#1529/#1530)。#195 统一撤销经 merge-commit 塌进 main(#1503, 不以 (#NNNN) 结尾故不计入此数)。两大结构面(#195 塌进 main / actor-framework 抽取启动)均经对抗性评审。"
 
 deploy:
   - {env: "canary", state: "跟随 main; 本周期 #195(#1503) + actor C0/C1(#1546/#1548) 已在 main HEAD。#195 塌进 main 后, canary 部署链上的 epoch-rebase 前置已解阻。"}
