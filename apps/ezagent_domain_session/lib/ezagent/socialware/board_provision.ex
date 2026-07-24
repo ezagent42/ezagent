@@ -217,7 +217,7 @@ defmodule Ezagent.Socialware.BoardProvision do
        cap 仍在 holder store、不删除)。**这一步必须在 destroy 之前**(板得活着才能
        ensure_started + bump)。取代旧的 `Mount.unmount_all_for_target/1` 逐行手动撤
        钥匙(#1470,已作废):光 destroy agent 不让 cap 失效(authority 行留着、
-       `verify_against_current` 仍可能过 = 泄漏),故必须显式 `revoke_all_to`;
+       旧 cap 验签仍可能过 = 泄漏),故必须显式 `revoke_all_to`;
     3. 退休 agent:dispatch `manage.delete` 到板(cap 校验落 dispatch chokepoint ——
        caller 须持 Manage cap;经 `Ezagent.Lifecycle.destroy` 走 destroy hooks +
        清快照 + terminate)。为什么不是 `Ezagent.Domain.Agent.retire_spawned/2`:
@@ -262,6 +262,7 @@ defmodule Ezagent.Socialware.BoardProvision do
            args: %{},
            ctx: %{
              caller: caller,
+             authenticated_principal: caller,
              caps: Map.get(caller_ctx, :caps, MapSet.new()),
              reply: {:caller_inbox, self()}
            },

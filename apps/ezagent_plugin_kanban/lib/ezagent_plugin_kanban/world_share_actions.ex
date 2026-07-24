@@ -278,6 +278,7 @@ defmodule EzagentPluginKanban.WorldShareActions do
         args: %{message: msg},
         ctx: %{
           caller: caller,
+          authenticated_principal: caller,
           caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
           reply: {:caller_inbox, self()}
         },
