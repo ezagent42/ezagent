@@ -156,6 +156,33 @@ defmodule Ezagent.World.UiSurfaceProvider do
 
   def valid_session_tab?(_), do: false
 
+  @doc """
+  Read-time shape predicate for one `unfurl` renderer entry a plugin declares in
+  its `pages/0` `:unfurl` field (the world-generic "link unfurl bubble" seam,
+  mirroring the `plugin-page-renderers` manifest).
+
+  `true` iff the entry is `%{id, pattern, renderer: %{source, export}}` where
+  `id` is a lowercase-underscore key, `pattern` is a NON-EMPTY binary (a regex
+  source string compiled on the JS side), and `renderer.source` / `renderer.export`
+  satisfy the same import constraints as a page renderer's `source` (under
+  `assets/src/`, no `..`, `.ts`/`.tsx` extension) with `export` a non-empty
+  binary. NOTE: an unfurl renderer has NO `full_bleed` field (it is a chat
+  bubble, not a full-bleed page), so this deliberately does not reuse
+  `validate_renderer/2`. World filters every contributed entry through this
+  (fail-closed) so a malformed entry keeps the whole page declaration out.
+  """
+  @spec valid_unfurl_renderer?(term()) :: boolean()
+  def valid_unfurl_renderer?(%{
+        id: id,
+        pattern: pattern,
+        renderer: %{source: source, export: export}
+      }) do
+    valid_key?(id) and is_binary(pattern) and pattern != "" and
+      valid_renderer_source?(source) and is_binary(export) and export != ""
+  end
+
+  def valid_unfurl_renderer?(_), do: false
+
   @doc "Strict, fail-closed validation for a standalone refresh surface."
   @spec valid_refresh_surface?(term()) :: boolean()
   def valid_refresh_surface?(%{
@@ -194,6 +221,7 @@ defmodule Ezagent.World.UiSurfaceProvider do
       )
       |> validate_session_view(Map.get(page, :session_view))
       |> validate_renderer(Map.get(page, :renderer))
+      |> validate_unfurl(Map.get(page, :unfurl))
       |> Enum.reverse()
 
     if errors == [], do: :ok, else: {:error, errors}
@@ -262,11 +290,7 @@ defmodule Ezagent.World.UiSurfaceProvider do
 
   defp validate_renderer(errors, %{source: source, export: export, full_bleed: full_bleed}) do
     errors
-    |> invalid_unless(
-      :renderer_import,
-      is_binary(source) and String.starts_with?(source, "assets/src/") and
-        not String.contains?(source, "..") and Path.extname(source) in [".ts", ".tsx"]
-    )
+    |> invalid_unless(:renderer_import, valid_renderer_source?(source))
     |> invalid_unless(
       :renderer_export,
       is_binary(export) and Regex.match?(~r/^[A-Z][A-Za-z0-9_]*$/, export)
@@ -275,4 +299,21 @@ defmodule Ezagent.World.UiSurfaceProvider do
   end
 
   defp validate_renderer(errors, _), do: [:renderer | errors]
+
+  defp valid_renderer_source?(source) do
+    is_binary(source) and String.starts_with?(source, "assets/src/") and
+      not String.contains?(source, "..") and Path.extname(source) in [".ts", ".tsx"]
+  end
+
+  # Optional `:unfurl` field — absent ⇒ legal (缺省合法). When present it must be
+  # a NON-EMPTY list whose every entry passes `valid_unfurl_renderer?/1`; an empty
+  # list or a non-list is rejected (照 `valid_actions?` 风格 — a page that declares
+  # unfurl must declare at least one valid renderer).
+  defp validate_unfurl(errors, nil), do: errors
+
+  defp validate_unfurl(errors, list) when is_list(list) and list != [] do
+    if Enum.all?(list, &valid_unfurl_renderer?/1), do: errors, else: [:unfurl | errors]
+  end
+
+  defp validate_unfurl(errors, _), do: [:unfurl | errors]
 end
