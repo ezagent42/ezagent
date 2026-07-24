@@ -109,7 +109,12 @@ defmodule Ezagent.AgentLineage do
 
   @doc false
   @spec record_with_status(URI.t() | String.t(), URI.t() | String.t()) ::
-          {:ok, :inserted | :exists} | {:error, term()}
+          {:ok,
+           %{
+             lineage: :inserted | :exists,
+             derivation_edge: :inserted | :exists
+           }}
+          | {:error, term()}
   def record_with_status(agent_uri, spawned_by) do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
@@ -122,25 +127,36 @@ defmodule Ezagent.AgentLineage do
                :spawned_by,
                stable_attempt_id(a)
              ),
-           row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()},
-           {:ok, _} <-
-             Repo.insert(row,
-               on_conflict: [set: [spawned_by: s]],
-               conflict_target: [:agent_uri]
-             ) do
-        edge_status
+           {:ok, lineage_status} <- record_exact(Repo, a, s) do
+        %{lineage: lineage_status, derivation_edge: edge_status}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
     |> case do
-      {:ok, edge_status} ->
+      {:ok, statuses} ->
         :ets.insert(@table, {a, s})
-        {:ok, edge_status}
+        {:ok, statuses}
 
       {:error, reason} ->
         {:error, reason}
     end
+  end
+
+  @doc false
+  @spec rollback_lineage_fact(URI.t() | String.t(), URI.t() | String.t()) :: :ok
+  def rollback_lineage_fact(agent_uri, spawned_by) do
+    a = uri_to_str(agent_uri)
+    s = uri_to_str(spawned_by)
+
+    Repo.delete_all(from(row in __MODULE__, where: row.agent_uri == ^a and row.spawned_by == ^s))
+
+    case :ets.lookup(@table, a) do
+      [{^a, ^s}] -> :ets.delete(@table, a)
+      _ -> :ok
+    end
+
+    :ok
   end
 
   @doc false

@@ -364,6 +364,68 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
 
       refute agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
+
+    test "profile failure preserves an exact pre-existing lineage fact" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-existing-lineage-#{unique}"
+      flavor = "display-profile-existing-lineage-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = Ezagent.AgentLineage.forget(agent_uri)
+        _ = Ezagent.AgentLineage.rollback_spawned_by_edge(agent_uri, owner_uri)
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
+      assert {:ok, ^owner_uri} = Ezagent.AgentLineage.lookup(agent_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+
+      assert {:error, {:agent_display_profile_failed, %Ecto.Changeset{}}} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: String.duplicate("x", 256),
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-failure-existing-lineage-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert {:ok, ^owner_uri} = Ezagent.AgentLineage.lookup(agent_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    end
   end
 
   test "spawn skips sandbox.update_config dispatch when sandbox was initialized by Kind spawn args" do

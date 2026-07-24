@@ -29,11 +29,17 @@ defmodule Ezagent.Entity.Agent.OwnershipObligations do
              worker,
              spawned_by
            ) do
-        {:ok, edge_status} ->
+        {:ok, statuses} ->
           receipts =
-            if edge_status == :inserted,
-              do: [{:spawned_by_edge, worker, spawned_by} | receipts],
-              else: receipts
+            receipts
+            |> maybe_add_receipt(
+              statuses.lineage,
+              {:lineage_fact, worker, spawned_by}
+            )
+            |> maybe_add_receipt(
+              statuses.derivation_edge,
+              {:spawned_by_edge, worker, spawned_by}
+            )
 
           case Ezagent.Entity.Agent.SpawnObligations.bind_workspace(worker, workspace) do
             :ok ->
@@ -54,6 +60,9 @@ defmodule Ezagent.Entity.Agent.OwnershipObligations do
   rescue
     error -> {:error, {:post_spawn_obligation_failed, :exception, error}, []}
   end
+
+  defp maybe_add_receipt(receipts, :inserted, receipt), do: [receipt | receipts]
+  defp maybe_add_receipt(receipts, :exists, _receipt), do: receipts
 
   defp record_inventory(workers, spawned_by, workspace, lineage_receipts) do
     Enum.reduce_while(workers, {:ok, lineage_receipts}, fn worker, {:ok, receipts} ->

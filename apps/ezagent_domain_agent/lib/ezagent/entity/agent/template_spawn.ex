@@ -1043,6 +1043,11 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
         Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
           Ezagent.AgentLineage.rollback_spawned_by_edge(worker_uri, root_uri)
         end)
+
+      {:lineage_fact, worker_uri, root_uri} ->
+        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+          Ezagent.AgentLineage.rollback_lineage_fact(worker_uri, root_uri)
+        end)
     end)
   end
 
@@ -1053,13 +1058,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
         Ezagent.WorkspaceRegistry.unbind(worker_uri)
       end)
-
-      if Code.ensure_loaded?(Ezagent.AgentLineage) and
-           function_exported?(Ezagent.AgentLineage, :forget, 1) do
-        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-          Ezagent.AgentLineage.forget(worker_uri)
-        end)
-      end
     end)
 
     :ok
