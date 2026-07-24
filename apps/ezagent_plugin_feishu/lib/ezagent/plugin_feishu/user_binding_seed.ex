@@ -9,18 +9,19 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
   ## A-layer (permission-neutral plan)
 
   1. Read the explicit file path. Missing file (`:enoent`) → `{:ok, :absent}`.
-  2. Strict decode + validate via `Parser.parse_and_validate/1` — any
-     invalid content fails loud with ZERO mutation.
+  2. For a present file, require the seed to be explicitly enabled.
   3. Validate the configured executor function port once, then thread it
      through the remaining pipeline.
-  4. Full-file preflight: classify every row `:absent` / `:same` /
+  4. Strict decode + validate via `Parser.parse_and_validate/1` — any
+     invalid content fails loud with ZERO mutation.
+  5. Full-file preflight: classify every row `:absent` / `:same` /
      `:conflict` via the port's list operation — BEFORE any mutation.
      Any `:conflict` fails the whole file.
-  5. For `:absent` rows only, request the port to bind, in file order.
+  6. For `:absent` rows only, request the port to bind, in file order.
      `:same` rows are never dispatched.
-  6. Runtime failure on row N fails the call, but earlier rows' success is
+  7. Runtime failure on row N fails the call, but earlier rows' success is
      preserved (not compensated). Restart converges via same/absent.
-  7. Returns structured, redacted summary/error.
+  8. Returns structured, redacted summary/error.
 
   ## Executor injection
 
