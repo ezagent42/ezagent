@@ -33,7 +33,8 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
 
   # The three named modules that producer files must never call directly.
   # Storage: match actual CALLS (not mere mentions in moduledoc prose).
-  # No exceptions — every producer file goes through executor/dispatch.
+  # No exceptions — every producer file goes through the executor function
+  # port or dispatch.
   @forbidden_raw_storage ~r/\bUserBinding\.(bind|unbind|resolve|list_all|open_ids_for)\b/
   # Policy (direct apply):
   @forbidden_raw_policy ~r/\bBindingPolicy\.apply\b/
@@ -117,7 +118,7 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
     end
   end
 
-  test "producer files go through executor (injected, avoiding hardcoded dispatch)" do
+  test "producer files go through function port or dispatch" do
     for file <- @producer_files do
       path = Path.join(repo_root(), file)
 
@@ -129,12 +130,12 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
         content = File.read!(path)
 
         has_executor_or_dispatch =
-          String.contains?(content, "executor_mod") or
+          String.contains?(content, "executor_port") or
             String.contains?(content, "Invocation.dispatch") or
             String.contains?(content, "DispatchAdapter")
 
         assert has_executor_or_dispatch,
-               "#{file} lacks executor/dispatch — every mutation goes through executor_mod()"
+               "#{file} lacks function-port/dispatch wiring"
       end
     end
   end

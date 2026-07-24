@@ -13,11 +13,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
   setup do
     FakeExecutor.start()
     Application.put_env(:ezagent_plugin_feishu, :seed_enabled, true)
-    Application.put_env(:ezagent_plugin_feishu, :seed_executor, FakeExecutor)
+    Application.put_env(:ezagent_plugin_feishu, :seed_executor_port, FakeExecutor.port())
 
     on_exit(fn ->
       Application.delete_env(:ezagent_plugin_feishu, :seed_enabled)
-      Application.delete_env(:ezagent_plugin_feishu, :seed_executor)
+      Application.delete_env(:ezagent_plugin_feishu, :seed_executor_port)
       FakeExecutor.stop()
     end)
   end
@@ -63,7 +63,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
       # classifies this row as :same.
       FakeExecutor.stop()
       FakeExecutor.start(existing: [%{open_id: open_id, user_uri: uri_str}])
-      Application.put_env(:ezagent_plugin_feishu, :seed_executor, FakeExecutor)
+      Application.put_env(:ezagent_plugin_feishu, :seed_executor_port, FakeExecutor.port())
 
       yaml = """
       bindings:
@@ -87,8 +87,12 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
 
       # Pre-populate with a DIFFERENT user_uri — conflict trigger.
       FakeExecutor.stop()
-      FakeExecutor.start(existing: [%{open_id: open_id, user_uri: "entity://team-alpha/user/bob"}])
-      Application.put_env(:ezagent_plugin_feishu, :seed_executor, FakeExecutor)
+
+      FakeExecutor.start(
+        existing: [%{open_id: open_id, user_uri: "entity://team-alpha/user/bob"}]
+      )
+
+      Application.put_env(:ezagent_plugin_feishu, :seed_executor_port, FakeExecutor.port())
 
       yaml = """
       bindings:
@@ -108,7 +112,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
 
   describe "gate: executor not configured → fail loud" do
     test "seed_enabled but no executor → :seed_executor_not_configured" do
-      Application.delete_env(:ezagent_plugin_feishu, :seed_executor)
+      Application.delete_env(:ezagent_plugin_feishu, :seed_executor_port)
 
       open_id = "ou_fake_nil_exec_#{System.unique_integer([:positive])}"
 
@@ -137,6 +141,53 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
       path = write_tmp_file!(yaml)
 
       assert {:error, :seed_not_enabled} = UserBindingSeed.run(path)
+    end
+  end
+
+  describe "function-port validation" do
+    test "malformed port fails closed with a stable error and zero operation calls" do
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :seed_executor_port,
+        %{list_current: FakeExecutor.port().list_current, bind: :not_a_function}
+      )
+
+      path =
+        write_tmp_file!("""
+        bindings:
+          - open_id: "ou_fake_bad_port_#{System.unique_integer([:positive])}"
+            user_uri: "entity://team-alpha/user/alice"
+        """)
+
+      assert {:error, {:invalid_seed_executor_port, [:bind]}} = UserBindingSeed.run(path)
+      assert FakeExecutor.list_current_count() == 0
+      assert FakeExecutor.bind_count() == 0
+    end
+
+    test "missing seed is inert before malformed-port validation" do
+      Application.put_env(:ezagent_plugin_feishu, :seed_executor_port, :malformed)
+
+      path = "/nonexistent/#{System.unique_integer([:positive])}/bindings.yaml"
+
+      assert {:ok, :absent} = UserBindingSeed.run(path)
+      assert FakeExecutor.list_current_count() == 0
+      assert FakeExecutor.bind_count() == 0
+    end
+
+    test "disabled seed fails closed before malformed-port validation with zero calls" do
+      Application.delete_env(:ezagent_plugin_feishu, :seed_enabled)
+      Application.put_env(:ezagent_plugin_feishu, :seed_executor_port, :malformed)
+
+      path =
+        write_tmp_file!("""
+        bindings:
+          - open_id: "ou_fake_disabled_port_#{System.unique_integer([:positive])}"
+            user_uri: "entity://team-alpha/user/alice"
+        """)
+
+      assert {:error, :seed_not_enabled} = UserBindingSeed.run(path)
+      assert FakeExecutor.list_current_count() == 0
+      assert FakeExecutor.bind_count() == 0
     end
   end
 end

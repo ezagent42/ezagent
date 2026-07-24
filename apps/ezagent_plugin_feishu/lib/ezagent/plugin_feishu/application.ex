@@ -193,6 +193,10 @@ defmodule EzagentPluginFeishu.Application do
                 "executor/boot authorization is not configured. The deferred B-layer " <>
                 "auth integration must be configured before enabling this seed."
 
+      {:error, {:invalid_seed_executor_port, fields}} ->
+        raise "Feishu plugin: initial user binding seed executor port is invalid for " <>
+                "#{inspect(fields)}. Configure arity-1 `list_current` and arity-3 `bind` functions."
+
       {:error, reason} ->
         raise "Feishu plugin: initial user binding seed failed: " <>
                 "#{EzagentPluginFeishu.Redact.describe(reason)}"
