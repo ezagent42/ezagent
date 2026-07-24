@@ -131,12 +131,12 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
                     :source_task_uri, :source_revision, :requested_head_ref])
       |> then(fn m ->
         %{
-          binding_id: m.binding_id,
-          binding_generation: m.binding_generation,
-          external_task_id: m.external_task_id,
-          source_task_uri: to_string(m.source_task_uri),
-          source_revision: m.source_revision,
-          requested_head_ref: m.requested_head_ref
+          binding_id: Map.fetch!(m, :binding_id),
+          binding_generation: Map.fetch!(m, :binding_generation),
+          external_task_id: Map.fetch!(m, :external_task_id),
+          source_task_uri: to_string(Map.fetch!(m, :source_task_uri)),
+          source_revision: Map.fetch!(m, :source_revision),
+          requested_head_ref: Map.fetch!(m, :requested_head_ref)
         }
       end)
       |> :erlang.term_to_binary([:deterministic])
@@ -155,21 +155,33 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   end
 
   defp validate_values(attrs) do
+    id = Map.fetch!(attrs, :id)
+    binding_id = Map.fetch!(attrs, :binding_id)
+    binding_generation = Map.fetch!(attrs, :binding_generation)
+    external_task_id = Map.fetch!(attrs, :external_task_id)
+    status = Map.fetch!(attrs, :status)
+    state_version = Map.fetch!(attrs, :state_version)
+    input_digest = Map.fetch!(attrs, :input_digest)
+    source_task_uri = Map.fetch!(attrs, :source_task_uri)
+    source_revision = Map.fetch!(attrs, :source_revision)
+    requested_head_ref = Map.fetch!(attrs, :requested_head_ref)
+    last_error_code = Map.fetch!(attrs, :last_error_code)
+
     checks = [
-      {:id, is_binary(attrs.id) and byte_size(attrs.id) > 0},
-      {:binding_id, is_binary(attrs.binding_id) and byte_size(attrs.binding_id) > 0},
-      {:binding_generation, is_integer(attrs.binding_generation) and attrs.binding_generation > 0},
-      {:external_task_id, is_binary(attrs.external_task_id) and byte_size(attrs.external_task_id) > 0},
-      {:status, valid_status?(attrs.status)},
-      {:state_version, is_integer(attrs.state_version) and attrs.state_version > 0},
-      {:input_digest, is_binary(attrs.input_digest) and byte_size(attrs.input_digest) > 0},
-      {:source_task_uri, is_struct(attrs.source_task_uri, URI)},
-      {:source_revision, is_nil(attrs.source_revision) or
-                         (is_binary(attrs.source_revision) and byte_size(attrs.source_revision) > 0)},
-      {:requested_head_ref, is_nil(attrs.requested_head_ref) or
-                            (is_binary(attrs.requested_head_ref) and byte_size(attrs.requested_head_ref) > 0)},
-      {:last_error_code, is_nil(attrs.last_error_code) or
-                         (is_binary(attrs.last_error_code) and byte_size(attrs.last_error_code) > 0)}
+      {:id, is_binary(id) and byte_size(id) > 0},
+      {:binding_id, is_binary(binding_id) and byte_size(binding_id) > 0},
+      {:binding_generation, is_integer(binding_generation) and binding_generation > 0},
+      {:external_task_id, is_binary(external_task_id) and byte_size(external_task_id) > 0},
+      {:status, valid_status?(status)},
+      {:state_version, is_integer(state_version) and state_version > 0},
+      {:input_digest, is_binary(input_digest) and byte_size(input_digest) > 0},
+      {:source_task_uri, is_struct(source_task_uri, URI)},
+      {:source_revision, is_nil(source_revision) or
+                         (is_binary(source_revision) and byte_size(source_revision) > 0)},
+      {:requested_head_ref, is_nil(requested_head_ref) or
+                            (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)},
+      {:last_error_code, is_nil(last_error_code) or
+                         (is_binary(last_error_code) and byte_size(last_error_code) > 0)}
     ]
 
     case Enum.find(checks, fn {_f, ok?} -> not ok? end) do
