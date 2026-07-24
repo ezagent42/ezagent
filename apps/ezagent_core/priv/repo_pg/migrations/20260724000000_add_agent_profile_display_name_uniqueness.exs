@@ -14,6 +14,8 @@ defmodule EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness do
   end
 
   def down do
+    # The deterministic data repair in `up/0` is deliberately retained: the
+    # original duplicate names are ambiguous and cannot be reconstructed.
     drop_if_exists(index(:entity_profiles, [:workspace_uri, :display_name], name: @index_name))
   end
 

@@ -14,8 +14,9 @@
 - Enforce unique Agent display names within a workspace, including deterministic
   suffix allocation and concurrent requests. The database and application both
   distinguish canonical Agent URIs from User profiles.
-- Add one PostgreSQL migration with an Agent-only display-name index, while
-  duplicate no-email User names remain valid.
+- Add one PostgreSQL migration which first deterministically repairs legacy
+  duplicate Agent names (`Builder`, `Builder-2`, …) and then creates the
+  Agent-only display-name index. Duplicate no-email User names remain valid.
 - Make profile-write failures and post-write failures roll back active products
   created by that spawn attempt: profile, worker, active lineage cache,
   workspace binding, config, flavor, grant, and creation inventory. The
@@ -42,7 +43,7 @@
 | 1 | Newly spawned named Agents persist a display name and the World directory shows it instead of a UUID. | met | `apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs`; `apps/ezagent_plugin_world/test/ezagent/world/agent_display_name_test.exs` |
 | 2 | Agent names are unique without affecting Users, including concurrent creation and Unicode bounds. | met | `apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs`; `profile_concurrency_test.exs`; PostgreSQL single-migration regression |
 | 3 | Failed fresh spawns clean up active products while preserving pre-existing facts and append-only provenance audit history. | met | TemplateSpawn post-profile-failure and pre-existing-profile/lineage regressions; final focused run: TemplateSpawn 21/21 |
-| 4 | Required full gate and browser manual test are green. | deferred | The CI-parity `mix gate.arch` is green after remediation. The earlier `mix precommit` passed, but a post-remediation full rerun hit an unrelated Core AST-scan timeout; the isolated authenticated browser smoke test passed. The specific two-session Hello duplicate-role scenario remains untested. |
+| 4 | Required full gate and browser manual test are green. | blocked locally | `mix gate.arch` is green after remediation (Core 676/676, Identity 4/4, External Mirror 39/39, Session 7/7). `mix ci.local` is blocked before tests by the repository pnpm supply-chain policy: `es5-ext@0.10.64` needs explicit build-script approval. The isolated authenticated browser smoke test passed; the specific two-session Hello duplicate-role scenario remains untested. |
 
 **Method friction:** the initial full-gate attempts were interrupted by environment boot instability. A later isolated run completed `mix precommit`; only the dedicated two-session Hello duplicate-role manual scenario remains open.
 
@@ -52,18 +53,21 @@
 - Full Agent TemplateSpawn focused suite: 21 passed.
 - Core derivation/lineage and single-migration focused suites: passed.
 - World UUID display-name regression: passed.
-- `mix precommit`: passed (exit code 0) after the migration collapse. The
-  separate architecture gate is listed below because this alias does not prove
-  all architecture/invariant suites.
+- The isolated migration test seeds two legacy Agents with the same
+  `(workspace_uri, display_name)`, migrates successfully, verifies the stable
+  `Builder` / `Builder-2` repair, and verifies the Agent-only unique index.
 - Review remediation: `TemplateSpawn` was split into focused rollback and
   behavior-overlay helpers (main module now 1000 LOC); undocumented
   `record_lineage_with_status/2` is marked internal; and the provenance-delete
   API was removed. A clean re-run of `mix gate.arch` passed: Core 676/676,
   Identity 4/4, External Mirror 39/39, and Session 7/7.
-- The post-remediation `mix precommit` rerun exposed one timeout in the existing
-  `EntityCapsMutationBoundaryTest` production-AST scan. The same file passes
-  in isolation (7/7), and the CI-parity architecture gate passed cleanly; this
-  timeout is recorded rather than represented as a green full precommit run.
+- A first architecture-gate attempt timed out in an existing production-AST
+  scan while this machine was resource-contended. Its isolated rerun passed
+  (9/9 in 26.5s), followed by a clean complete `mix gate.arch` run.
+- `mix ci.local` was retried under the installed Node v22.23.1 toolchain. It
+  reaches `pnpm install`, then stops before tests because the checked-in pnpm
+  supply-chain policy has not approved `es5-ext@0.10.64`'s build script. No
+  dependency policy or lockfile was changed for this PR.
 - Fresh focused re-run completed successfully: the World regression explicitly
   reported `1 test, 0 failures`; the TemplateSpawn command also exited zero.
 - Isolated manual World check: created and verified a non-admin founder, logged
@@ -88,17 +92,19 @@ Hello two-session duplicate-role scenario is still deferred.
    SessionTemplate seed failed with `{:workspace://system, :holder_revoked}`.
    No Hello-session screenshot can be honestly produced until that unrelated
    boot invariant is repaired.
-2. Before deployment, rehearse the Agent-only unique-index migration against a
-   real canary/beta/stable snapshot (or establish and record that no existing
-   workspace contains duplicate Agent display names). The migration intentionally
-   does not silently deduplicate existing data, so a duplicate would otherwise
-   fail the deployment migration.
+2. The data-normalizing migration intentionally keeps its repaired names when
+   rolled back; `down/0` removes the unique-index enforcement but does not
+   reconstruct ambiguous historical duplicate names. This is covered by the
+   migration round-trip test and should be stated in deployment notes.
+3. Run the full suite in the CI image or a local environment where the existing
+   pnpm build-script approval policy is available. The local `ci.local` run
+   cannot reach any test without that pre-existing project configuration.
 
 ## Merge request
 
 Draft PR [#1570](https://github.com/ezagent42/ezagent/pull/1570) is open against `main`.
 
-- Rebase base: `b9b548c874556a2d58be7f161dca217c4a611035` (`origin/main` at return time).
+- Rebase base: `2cf16f2a4` (`origin/main` at return time).
 - The branch is rebased onto that base.
 - Two pre-existing local SDD report edits remain intentionally unstaged and are
   excluded from this return and PR.
