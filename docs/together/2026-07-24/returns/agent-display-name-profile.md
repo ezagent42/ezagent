@@ -2,7 +2,7 @@
 > **Branch:** `fix/agent-display-name-profile`
 > **PR:** [#1570 — fix(world): persist agent display names](https://github.com/ezagent42/ezagent/pull/1570) (draft)
 > **Dev:** Codex
-> **returned_at:** 2026-07-24 21:00 +0800
+> **returned_at:** 2026-07-24 22:35 +0800
 > **deadline:** 2026-07-24 23:59 +0800
 > **deadline_status:** deferred
 
@@ -42,7 +42,7 @@
 | 1 | Newly spawned named Agents persist a display name and the World directory shows it instead of a UUID. | met | `apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs`; `apps/ezagent_plugin_world/test/ezagent/world/agent_display_name_test.exs` |
 | 2 | Agent names are unique without affecting Users, including concurrent creation and Unicode bounds. | met | `apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs`; `profile_concurrency_test.exs`; PostgreSQL single-migration regression |
 | 3 | Failed fresh spawns clean up active products while preserving pre-existing facts and append-only provenance audit history. | met | TemplateSpawn post-profile-failure and pre-existing-profile/lineage regressions; final focused run: TemplateSpawn 21/21 |
-| 4 | Required full gate and browser manual test are green. | deferred | `mix precommit` completed successfully. Isolated authenticated browser smoke test passed: a non-admin founder logged in and the Agent directory rendered `pr-1570-visual-agent` as the title with its entity URI secondary. The specific two-session Hello duplicate-role scenario remains untested. |
+| 4 | Required full gate and browser manual test are green. | deferred | The CI-parity `mix gate.arch` is green after remediation. The earlier `mix precommit` passed, but a post-remediation full rerun hit an unrelated Core AST-scan timeout; the isolated authenticated browser smoke test passed. The specific two-session Hello duplicate-role scenario remains untested. |
 
 **Method friction:** the initial full-gate attempts were interrupted by environment boot instability. A later isolated run completed `mix precommit`; only the dedicated two-session Hello duplicate-role manual scenario remains open.
 
@@ -60,6 +60,10 @@
   `record_lineage_with_status/2` is marked internal; and the provenance-delete
   API was removed. A clean re-run of `mix gate.arch` passed: Core 676/676,
   Identity 4/4, External Mirror 39/39, and Session 7/7.
+- The post-remediation `mix precommit` rerun exposed one timeout in the existing
+  `EntityCapsMutationBoundaryTest` production-AST scan. The same file passes
+  in isolation (7/7), and the CI-parity architecture gate passed cleanly; this
+  timeout is recorded rather than represented as a green full precommit run.
 - Fresh focused re-run completed successfully: the World regression explicitly
   reported `1 test, 0 failures`; the TemplateSpawn command also exited zero.
 - Isolated manual World check: created and verified a non-admin founder, logged
