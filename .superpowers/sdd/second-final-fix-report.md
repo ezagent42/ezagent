@@ -146,3 +146,10 @@ file passed `19/19`.
 - Per the explicit task instruction, the known-blocking uncapped full
   `mix precommit` was not run. Focused suites, formatting, and diff checks
   were used instead.
+
+## Review
+
+An independent read-only review of the implementation found no Critical or
+Important issues and assessed it ready to merge. Its two non-blocking
+terminology notes (`upsert` and blanket `forget`) were corrected to describe
+the exact-fact and receipt-scoped behavior.

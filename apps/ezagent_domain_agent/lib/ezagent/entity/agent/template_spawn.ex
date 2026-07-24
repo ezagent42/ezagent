@@ -997,9 +997,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
   # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`
   # established for the workers IT freshly created, when a post-spawn
-  # step fails: terminate the Kind process, forget the lineage row,
-  # unbind the workspace. Best-effort + idempotent — a worker for which
-  # the obligation never ran (binding/lineage absent) just no-ops.
+  # step fails: terminate the Kind process, roll back receipt-owned lineage
+  # facts, and unbind the workspace. Best-effort + idempotent — a worker for
+  # which the obligation never ran (binding/lineage absent) just no-ops.
   # `Ezagent.Kind.terminate/1` is the tier-clean Kind-process teardown;
   # `AgentLineage`/`WorkspaceRegistry` are Ezagent-domain registries this
   # Ezagent-layer helper legitimately owns (it is the layer that recorded

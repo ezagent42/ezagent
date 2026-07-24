@@ -36,7 +36,7 @@ defmodule Ezagent.AgentLineage do
   Postgres table — the SOURCE OF TRUTH — so lineage survives a restart.
 
   This is the `Ezagent.TemplateTags` / `Ezagent.Routing.RuleStore`
-  pattern: `record/2` write-through (upsert) to the DB AND the cache;
+  pattern: `record/2` writes an exact lineage fact through to the DB and cache;
   `forget/1` deletes from both; `rehydrate/0` re-populates the empty ETS
   cache from the table at boot (the `EtsOwner` recreates the table empty
   on every start). `lookup/1` / `spawned_in_lineage?/3` keep the
