@@ -49,8 +49,6 @@
     "layout.manage",
     "market.install",
     "market.publish",
-    "market.restore",
-    "market.retract",
     "profile.display_name.cancel",
     "profile.display_name.edit",
     "profile.display_name.save",

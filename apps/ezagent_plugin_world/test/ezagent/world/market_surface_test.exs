@@ -17,16 +17,15 @@ defmodule Ezagent.World.MarketSurfaceTest do
   #      into the #165 `authorize_public_scope_write` gate. Fail-before names the
   #      real bypasses: a system/service `actor_uri` (grants on
   #      `home_is_system?` caps-independently), hardcoded admin caps, or a raw
-  #      `write_definition` that skips the action's cap load;
-  #   4. 下架 gate — `market.retract` goes through the GATED
-  #      `ConfigGovernance.Socialware.retract/2` (never the ungated
-  #      `DefinitionRegistry.set_retracted/4`): the card stops being offered,
-  #      `resolve_installable_revision/3` by `config_id` returns
-  #      `:socialware_revision_retracted`, and a non-admin attempt is DENIED.
+  #      `write_definition` that skips the action's cap load.
+  #
+  # 下架 (retract) / restore are NO LONGER World actions — the socialware manage
+  # cap is not user-holdable (string subject, service-ctx only), so no World user
+  # could authorize them via `PresenterCaps.load/1`. The retract gate + mechanism
+  # are covered on the SERVICE path by `Ezagent.Socialware.RetractTest` (session).
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.ConfigGovernance.Socialware, as: Governance
   alias Ezagent.Entity.User
   alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation}
   alias Ezagent.World.{MarketActions, WorkspacePluginData}
@@ -263,48 +262,5 @@ defmodule Ezagent.World.MarketSurfaceTest do
     assert name in listed_names(
              market_state(ws_b, Ezagent.URI.user("mkt-pub-b-#{suffix}", "v"), nil)
            )
-  end
-
-  test "world market.retract threads the caller's REAL caps: a non-admin is DENIED, card stays offered" do
-    suffix = uniq()
-    ws_a = Ezagent.URI.workspace("mkt-ret-a-#{suffix}")
-    ws_b = Ezagent.URI.workspace("mkt-ret-b-#{suffix}")
-    operator = Ezagent.URI.user("mkt-ret-a-#{suffix}", "operator")
-    name = "mkt-ret-#{suffix}"
-
-    seed_definition!(ws_a, name, :public)
-    {:ok, _} = Ezagent.Workspace.create("mkt-ret-a-#{suffix}", %{})
-
-    # Post actor-extraction C1 the world action re-derives the caller's caps FRESH
-    # (`PresenterCaps.load/1` → `EntityCaps.load/1`, verified-only; no mount
-    # snapshot). A socialware manage cap is NOT a user-holdable verified artifact —
-    # its subject is a string, not an openable authority, so production builds it
-    # only into a directly-constructed service ctx (`Socialware.operator_admin_ctx/2`,
-    # `manifest_yaml.ex`), NEVER into a user's held/verified set. So a non-admin
-    # operator holding real signed workspace authority is genuinely denied at
-    # `authorize_manage` (`:unauthorized`) — a real, non-vacuous world-action
-    # denial — and the card stays offered.
-    #
-    # This test's world_live-specific value is that `market.retract` threads the
-    # caller's REAL caps (the pre-C1 version leaned on the now-removed
-    # mount-snapshot merge). The retract MECHANISM (card non-offered + revision
-    # retracted under an authorized ctx) is covered by `Ezagent.Socialware.RetractTest`
-    # (session, which authorizes via a directly-built ctx), and the public-scope
-    # admin gate by `SaveSessionTemplatePublicScopeGateTest`.
-    operator_caps = workspace_caps(ws_a, operator)
-    :ok = spawn_user(operator, caps: operator_caps)
-
-    {:noreply, denied} =
-      MarketActions.handle_dispatch(socket(ws_a, operator, operator_caps), "market.retract", %{
-        "name" => name
-      })
-
-    assert denied.assigns.last_dispatch_status == "error:market_retract_failed"
-
-    assert denied.assigns.world_state["market_error"] =~ "unauthorized",
-           "expected a loud governance denial, got #{inspect(denied.assigns.world_state)}"
-
-    viewer_b = Ezagent.URI.user("mkt-ret-b-#{suffix}", "viewer")
-    assert name in listed_names(market_state(ws_b, viewer_b, nil))
   end
 end
