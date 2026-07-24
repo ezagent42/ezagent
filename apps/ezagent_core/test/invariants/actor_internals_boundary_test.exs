@@ -43,7 +43,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # self?/1; list_all → list_instances/0; lookup-for-pid → list_instances/0;
   # cap.action_context + tools/cc_seed template reads off raw runtime_view →
   # resolve_action_subject/2 + read/3), −36 sites across 23 files.
-  @forward_frozen 208
+  # C4 lowered forward 208→207: the `autonomous_current?/1` process-generation
+  # authz-decision branch (`cap/authorize.ex`) is deleted — `principal_current?`
+  # collapses to `holder_caps != []`; the two generation-FENCE consumers
+  # (`cap.ex`, `entity/token.ex`) survive on the fixed allowlist, −1 site.
+  @forward_frozen 207
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3

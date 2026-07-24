@@ -437,10 +437,13 @@ defmodule Ezagent.Cap do
   # On a fresh boot the admin Kind spawns LAZILY. A boot seed that dispatches AS
   # the admin — the default SessionTemplate seed, the cc/role-agent template
   # seeds, ConfigEvolve reconcile, the world plugin — runs before anything has
-  # referenced admin, so `read_held_caps(admin)` is empty and `autonomous_current?`
-  # is false (the seed runs outside the admin Kind's own authority compartment).
-  # The `authorize/3` principal gate then misjudges the admin as revoked and the
-  # seed fails, hard-crashing dev/prod boot on the SessionTemplate invariant.
+  # referenced admin, so `read_held_caps(admin)` is empty. (Pre-C4 the removed
+  # `autonomous_current?` branch was ALSO false here — the seed runs OUTSIDE the
+  # admin Kind's own authority compartment, so ambient process-generation state
+  # never rescued it; post-C4 `principal_current?` is just `holder_caps != []`,
+  # which is likewise empty.) The `authorize/3` principal gate then misjudges the
+  # admin as revoked and the seed fails, hard-crashing dev/prod boot on the
+  # SessionTemplate invariant.
   #
   # Bootstrapping the admin principal at THIS act-as-admin chokepoint (the single
   # path every admin-issued cap flows through — `issue/3`, and `issue_for_action/3`
