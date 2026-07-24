@@ -12,7 +12,7 @@ defmodule EzagentPluginGitWorkflow.MixProject do
       lockfile: "../../mix.lock",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
-      compilers: Mix.compilers(),
+      compilers: Mix.compilers() ++ [:ezagent_plugin_check],
       # plugin-wire-exempt: E2-A is intentionally dormant until the fail-closed E2-B authorization ingress is integrated
       start_permanent: Mix.env() == :prod,
       deps: deps()
@@ -28,6 +28,7 @@ defmodule EzagentPluginGitWorkflow.MixProject do
   def application do
     [
       mod: {EzagentPluginGitWorkflow.Application, []},
+      env: [ezagent_plugin: EzagentPluginGitWorkflow.Application],
       extra_applications: [:logger]
     ]
   end

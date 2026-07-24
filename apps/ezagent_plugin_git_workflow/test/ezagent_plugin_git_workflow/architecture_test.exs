@@ -13,7 +13,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
              "lib/ezagent/behavior/ must not exist"
     end
 
-    test "lib modules do not define ActionSet or use Plugin" do
+    test "no ActionSet in any lib module" do
       lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
 
       for file <- lib_files do
@@ -22,7 +22,39 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
         refute content =~ ~r/\bdefmodule\s+Ezagent\.ActionSet\b/, "#{base}: no ActionSet"
         refute content =~ ~r/\buse\s+Ezagent\.ActionSet\b/, "#{base}: no use ActionSet"
-        refute content =~ ~r/\buse\s+Ezagent\.Plugin\b/, "#{base}: no Plugin"
+      end
+    end
+
+    test "Application module uses Ezagent.Plugin exactly once for dormant contract" do
+      app_file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/application.ex")
+      content = File.read!(app_file)
+
+      # Must use Ezagent.Plugin for the :ezagent_plugin_check compiler gate
+      assert content =~ ~r/\buse\s+Ezagent\.Plugin\b/,
+             "application.ex: must use Ezagent.Plugin for compiler contract"
+
+      # Only the Application module may use it
+      other_files =
+        Path.join(@lib_dir, "**/*.ex")
+        |> Path.wildcard()
+        |> Enum.reject(&String.contains?(&1, "application.ex"))
+
+      for file <- other_files do
+        content = File.read!(file)
+        base = Path.basename(file)
+        refute content =~ ~r/\buse\s+Ezagent\.Plugin\b/,
+               "#{base}: only application.ex may use Ezagent.Plugin"
+      end
+    end
+
+    test "Application module never calls Ezagent.Plugin.boot/1" do
+      lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
+
+      for file <- lib_files do
+        content = File.read!(file)
+        base = Path.basename(file)
+        refute content =~ ~r/Ezagent\.Plugin\.boot\b/,
+               "#{base}: must not call Plugin.boot"
       end
     end
 
