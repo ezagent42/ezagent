@@ -321,26 +321,26 @@ defmodule Ezagent.ActionSet.Sandbox do
   # `handle_destroy`), read via `ctx.transients` like every other transient.
   defp destroyed?(ctx), do: (ctx[:transients] || %{})[:destroyed] == true
 
-  # ---- non-activating snapshot read (FP5 S5 #115 — MEDIUM-2) ----------------
+  # ---- sandbox state read via the §2.2 read surface (FP5 S5 #115 — MEDIUM-2) ----
 
   @doc """
-  Read an agent's durable sandbox `state` (the `:read` action's payload —
-  `config_dir_path` / `template_class` / `respawn_template_data` / `pty_phase`)
-  WITHOUT activating the agent.
+  Read an agent's sandbox `state` (the `:read` action's payload —
+  `config_dir_path` / `template_class` / `respawn_template_data` / `pty_phase`).
 
   This is the NON-DISPATCHING read surface for the agent-detail / extension
   panels (`Ezagent.World.IdentityData`), the sandbox sibling of
-  `Ezagent.Identity.read_entity_caps/1`. It reads the LIVE `:sandbox` slice via
-  `Ezagent.Kind.get_slice/2` (a registry lookup — `:not_found` for a cold
-  agent, NEVER spawns), then falls back to the persisted
-  `Ezagent.SnapshotStore.latest/1` snapshot (cold path), normalizing the
-  two-container slice via `Ezagent.Kind.normalize_slice_view/1`. Returns `nil`
-  when neither is present so the detail page degrades to "—".
+  `Ezagent.Identity.read_entity_caps/1`. It reads through the authoritative
+  §2.2 actor read surface (`Ezagent.Kind.read/3`, default `spawn: :ensure`):
+  the normalized live `:sandbox` slice when the agent is up, lazy-rehydrated
+  from the durable snapshot through the framework's own spawn path when the
+  agent is cold-but-created (C6 — replaces the hand-rolled durable-snapshot
+  fallback). Returns `nil` when the read
+  fails (never created / not ready) so the detail page degrades to "—".
 
   This OWNER module holds the read (the `:sandbox` slice is NOT a sensitive
   slice — `SensitiveSliceReadTest` covers only `:identity`/`:api_keys`), so no
   allowlist entry is needed and no new cross-app dependency is introduced
-  (`Kind` + `SnapshotStore` both live in core, alongside this Behavior).
+  (`Kind` lives in core, alongside this Behavior).
 
   Authorization is NOT performed here — this is a pure read, mirroring
   `read_entity_caps/1`. The CALLER (the world facade) preserves the
@@ -350,22 +350,9 @@ defmodule Ezagent.ActionSet.Sandbox do
   """
   @spec read_persisted_state(URI.t() | String.t()) :: map() | nil
   def read_persisted_state(agent_uri) do
-    case Ezagent.Kind.get_slice(agent_uri, :sandbox) do
+    case Ezagent.Kind.read(agent_uri, :sandbox) do
       {:ok, slice} when is_map(slice) -> slice
-      _ -> read_persisted_state_from_snapshot(agent_uri)
-    end
-  end
-
-  defp read_persisted_state_from_snapshot(agent_uri) do
-    case Ezagent.SnapshotStore.latest(agent_uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        case Map.get(state, :sandbox) do
-          slice when is_map(slice) -> Ezagent.Kind.normalize_slice_view(slice)
-          _ -> nil
-        end
-
-      _ ->
-        nil
+      _ -> nil
     end
   end
 

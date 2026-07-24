@@ -916,10 +916,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   end
 
   defp sandbox_state_matches?(%URI{} = worker_uri, config_dir, template_class, respawn_data) do
-    case Ezagent.Kind.get_slice(worker_uri, :sandbox) do
-      {:ok, slice} when is_map(slice) ->
-        state = Ezagent.Kind.normalize_slice_view(slice)
-
+    case Ezagent.Kind.read(worker_uri, :sandbox, spawn: :never) do
+      {:ok, state} when is_map(state) ->
         Map.get(state, :config_dir_path) == config_dir and
           Map.get(state, :template_class) == template_class and
           Map.get(state, :respawn_template_data) == respawn_data

@@ -53,7 +53,14 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C6 lowered forward 185→171: plugin get_slice sites → read/3 spawn: :never;
   # curl_agent's hand-rolled SnapshotStore cold fallback DELETED (read/3
   # default spawn rehydrates), −14 sites (13 get_slice + 1 SnapshotStore).
-  @forward_frozen 171
+  # C6 lowered forward 171→158: domain/web/core get_slice sites → read/3
+  # (socialware, identity, git, external_mirror, agent, ui, web probes →
+  # spawn: :never; core sandbox.ex read_persisted_state drops its hand-rolled
+  # SnapshotStore fallback → read/3 default spawn), −13 sites (11 get_slice
+  # + 2 SnapshotStore). Residual: lifecycle_case.ex get_raw_slice ×2 stays
+  # ledgered — raw %{state, transients} introspection has no §2.2 public
+  # replacement.
+  @forward_frozen 158
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3

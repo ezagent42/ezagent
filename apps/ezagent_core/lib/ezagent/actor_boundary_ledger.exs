@@ -7,18 +7,6 @@
   # §4.4 reach-in census — migrates onto the §2.2 read surface (C1-C5; get_slice ratchet->C7).
   forward_ratchet: [
     %{
-      path: "apps/ezagent_core/lib/ezagent/behavior/sandbox.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/behavior/sandbox.ex",
-      target: "Kind.get_slice",
-      sha: "6995f24042e321a84fc7d362d44fa51206ad1f983f1e1c1f2d69aba069ee2b84",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/cap.ex",
       target: "Ezagent.Kind.BehaviorSet",
       sha: "e0959391bfa73b1dc9f151b35a92c5fd2094bdd1da8f8bbcda2ba8f040b56c9d",
@@ -403,22 +391,10 @@
       note: "durable/snapshot reach-in — full-state legacy dual-key (:sandbox|\"sandbox\" top-level); read_durable single-atom-key can't preserve it (like agent_flavor_resolver), deferred"
     },
     %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/behavior/curl_agent.ex",
-      target: "Kind.get_slice",
-      sha: "0f8d5de18c5fc3f6559c6dea1df2cb7e2ab34dadc56f782a2e9e23ed7c114cf7",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "007498fd3e0fb1d62958eed18b328851e8f250ea5085d4d11f11d04933cf9b82",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn.ex",
-      target: "Kind.get_slice",
-      sha: "74790cbde6881354183b1561071e45076051a9b3be41a123af27c15712498828",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_domain_agent/lib/ezagent/home/skill_reconcile.ex",
@@ -439,12 +415,6 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/per_binding_supervisor.ex",
       target: "Ezagent.Kind.Server",
       sha: "53d7545a958c5b711c728308372f39ee33b738fd84c080b29bffec48eb82f45a",
@@ -461,18 +431,6 @@
       target: "Ezagent.KindRegistry",
       sha: "d7be9688fdeb689151879e0f458c60d95248422758e069b61202be0a47703140",
       note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_git/lib/ezagent/entity/git_task_access.ex",
-      target: "Kind.get_slice",
-      sha: "a48f1cb3c99de0a4acc94b3fa05c39eeb259d4af679a5b6b6088a7109b27e97c",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/behavior/api_keys.ex",
-      target: "Kind.get_slice",
-      sha: "0f8d5de18c5fc3f6559c6dea1df2cb7e2ab34dadc56f782a2e9e23ed7c114cf7",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/behavior/user_default_credential_source.ex",
@@ -563,12 +521,6 @@
       target: "Ezagent.Kind.Snapshot",
       sha: "4247f9f0eb2d5e552782e7de1ec801400c2a7d4a75e7d68d8b65bc8ba03e9f8c",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/membership_convergence.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/offboarding/reaper.ex",
@@ -859,24 +811,6 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user/gc.ex",
-      target: "Kind.get_slice",
-      sha: "80a32dcd1ec3311b17996b522c75435856c0acaa5a45804e2c08c711e82293aa",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex",
       target: "Ezagent.KindRegistry",
       sha: "8b568d2d67cae73c759aa6c9486dbf2fb1a542f0c817dc0fd5d105d80d07d9c2",
@@ -899,12 +833,6 @@
       target: "Kind.runtime_view",
       sha: "910bc99333697e505fd0c7b0309bdf995434e0646578f128ecd79204afb213a3",
       note: "runtime_view retires (§2.3) → resolve_action_subject/2 or read/3 (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/pty/terminal_view.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex",
@@ -1025,12 +953,6 @@
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "fece7ad67f512dca90895a843b51543445a6081ced6d3d8cdb8bae770e661e91",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_web/lib/ezagent_web/socialware/anon_takeover.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     }
   ],
   # §4.2 fixed process-generation consumers that SURVIVE C4 (cap.ex, entity/token.ex).
