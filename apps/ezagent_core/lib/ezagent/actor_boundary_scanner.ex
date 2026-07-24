@@ -122,6 +122,46 @@ defmodule Ezagent.ActorBoundaryScanner do
   # bound to `:sys` (`s = :sys; s.op(pid)`).
   @sys_banned [:get_state, :replace_state, :get_status]
 
+  # Kind/actor PROTOCOL message verbs — the `:ezagent_*` atoms actually sent to
+  # (and matched by) actor GenServers, enumerated from the `handle_call/cast/info`
+  # clauses in the actor framework ∪ every `GenServer.call/cast`/`send` target
+  # repo-wide. This is the taint-INDIRECTION allowlist: an assigned/relayed var
+  # whose value carries one of these is a Kind message and taints (restoring the
+  # broad indirect detection origin/main had — bare atoms, runtime-assembled
+  # tuples). It deliberately EXCLUDES the many other `ezagent_`-prefixed atoms
+  # that are OTP app names / ETS-table / Registry / config keys
+  # (`:ezagent_domain_pty`, `:ezagent_role_registry`, `:ezagent_rate_limiter`, …)
+  # — those are never Kind messages and must not taint. The DIRECT
+  # `GenServer.call(pid, :ezagent_*)` arg check stays broad (see
+  # `genserver_kind_message?/3`), so a direct send of any `:ezagent_*` message is
+  # still flagged even if a new verb is not yet listed here.
+  @kind_message_verbs MapSet.new([
+                        :ezagent_detach,
+                        :ezagent_dispatch,
+                        :ezagent_em_reconcile,
+                        :ezagent_external_ready_gate,
+                        :ezagent_get_slice,
+                        :ezagent_kind_module,
+                        :ezagent_launch_context_relay,
+                        :ezagent_lifecycle_destroy,
+                        :ezagent_mount,
+                        :ezagent_post_init,
+                        :ezagent_presence_diff,
+                        :ezagent_recover_settlements,
+                        :ezagent_recredential_generation,
+                        :ezagent_reply,
+                        :ezagent_resolve_action_subject,
+                        :ezagent_revoke_all_to,
+                        :ezagent_run_deferred,
+                        :ezagent_runtime_view,
+                        :ezagent_validate_cap_artifact,
+                        :ezagent_verify_cap_artifact,
+                        :ezagent_worker_initial_subscribe,
+                        :ezagent_worker_resubscribe_result,
+                        :ezagent_worker_resubscribe_retry,
+                        :ezagent_worker_subscribe_result
+                      ])
+
   @doc """
   The repository root (absolute). Resolved from the working directory (the mix
   test / task cwd), NOT a compile-time `__DIR__` — this is a dev/CI source-tree
@@ -233,12 +273,13 @@ defmodule Ezagent.ActorBoundaryScanner do
     case Code.string_to_quoted(source) do
       {:ok, ast} ->
         bindings = message_bindings(ast)
+        destructures = destructure_bindings(ast)
         msg_fns = kind_message_fns(ast)
 
         ctx = %{
           aliases: collect_aliases(ast),
           msg_fns: msg_fns,
-          tainted: kind_message_vars(ast, bindings, msg_fns),
+          tainted: kind_message_vars(ast, bindings, destructures, msg_fns),
           sys_vars: sys_vars(bindings)
         }
 
@@ -345,13 +386,17 @@ defmodule Ezagent.ActorBoundaryScanner do
   defp sys_receiver?(_other, _sv), do: false
 
   # A GenServer message is a Kind reach-in when an argument is:
-  #   • a DIRECT `:ezagent_*` message — inline atom or tuple (broad, unchanged:
-  #     `GenServer.call(pid, :ezagent_runtime_view)` / `{:ezagent_get_slice, k}`);
-  #   • a tainted variable, or an access-path (`payload.m`) rooted at one; or
+  #   • a DIRECT `:ezagent_*` message — inline atom or tuple (broad, unchanged
+  #     from origin/main: `GenServer.call(pid, :ezagent_runtime_view)` /
+  #     `{:ezagent_get_slice, k}`; a direct send of any `:ezagent_*` message is
+  #     flagged even if its verb is not in `@kind_message_verbs`);
+  #   • a tainted variable, or an access-path (`payload.m` / `payload[:m]` /
+  #     `Map.fetch!(payload, :m)` / `elem(payload, i)`) rooted at one; or
   #   • the direct result of a message-producing local helper.
-  # The indirect forms use PRECISE taint (Kind-message *construction*, not any
-  # `:ezagent_*` atom) so config/ETS/app-name atoms like `:ezagent_domain_pty`
-  # or `:ezagent_role_registry` never mislabel a benign call.
+  # The INDIRECT forms restrict the taint ORIGIN to the `@kind_message_verbs`
+  # protocol allowlist so config/ETS/app-name atoms (`:ezagent_domain_pty`,
+  # `:ezagent_role_registry`) never mislabel a benign call — WITHOUT weakening
+  # detection of real assigned/relayed message values.
   defp genserver_kind_message?(args, tainted, msg_fns) do
     args_have_ezagent_atom?(args) or
       Enum.any?(args, fn arg ->
@@ -373,24 +418,31 @@ defmodule Ezagent.ActorBoundaryScanner do
   #     taints the matching positional parameter of the callee, so a
   #     `GenServer.call(p, m)` inside `defp relay(p, m)` is flagged.
   #
-  # Access-path extraction (`payload.m`) is resolved at the use site by
-  # `var_root/1`: a tainted map/tuple bound to `payload` taints `payload.<field>`.
-  defp kind_message_vars(ast, bindings, msg_fns) do
+  # Access-path extraction (`payload.m`, `payload[:m]`, `Map.fetch!(payload, :m)`,
+  # `elem(payload, i)`) is resolved at the use site by `var_root/1`; simple
+  # destructuring (`{:box, msg} = payload`) is handled by `destructures`.
+  defp kind_message_vars(ast, bindings, destructures, msg_fns) do
     params = fn_params(ast)
     calls = local_calls(ast)
-    taint_fixpoint(bindings, params, calls, msg_fns, MapSet.new())
+    taint_fixpoint(bindings, destructures, params, calls, msg_fns, MapSet.new())
   end
 
-  defp taint_fixpoint(bindings, params, calls, msg_fns, tainted) do
+  defp taint_fixpoint(bindings, destructures, params, calls, msg_fns, tainted) do
     # (1) binding names whose RHS is tainted.
     after_binds =
       Enum.reduce(bindings, tainted, fn {name, rhs}, acc ->
         if tainted_value?(rhs, acc, msg_fns), do: MapSet.put(acc, name), else: acc
       end)
 
+    # (1b) simple destructuring — a tainted RHS taints every var in the pattern.
+    after_destructure =
+      Enum.reduce(destructures, after_binds, fn {pvars, rhs}, acc ->
+        if tainted_value?(rhs, acc, msg_fns), do: Enum.into(pvars, acc), else: acc
+      end)
+
     # (2) parameters that receive a tainted argument at any local call site.
     next =
-      Enum.reduce(calls, after_binds, fn {name, arity, args}, acc ->
+      Enum.reduce(calls, after_destructure, fn {name, arity, args}, acc ->
         params
         |> Map.get({name, arity}, [])
         |> Enum.reduce(acc, fn plist, a1 ->
@@ -408,39 +460,39 @@ defmodule Ezagent.ActorBoundaryScanner do
 
     if MapSet.equal?(next, tainted),
       do: tainted,
-      else: taint_fixpoint(bindings, params, calls, msg_fns, next)
+      else: taint_fixpoint(bindings, destructures, params, calls, msg_fns, next)
   end
 
-  # A value carries/produces an `:ezagent_*` Kind message: it CONSTRUCTS an
-  # `{:ezagent_*, …}` message tuple, is a tainted variable/access-path, or calls
-  # a message-producing helper. Construction (not "any `:ezagent_*` atom") is the
-  # precise origin — `Application.get_env(:ezagent_domain_pty, …)` and
-  # `:ets.new(:ezagent_role_registry, …)` use the atom in a NON-message position
-  # and must not taint.
+  # A value carries/produces a Kind message: it mentions a `@kind_message_verbs`
+  # protocol atom anywhere (bare atom, `{:ezagent_*, …}` tuple, or a runtime-
+  # assembled tuple like `List.to_tuple([:ezagent_get_slice, k])` — this is the
+  # broad indirect origin origin/main had), is a tainted variable/access-path, or
+  # calls a message-producing helper. Restricting the ORIGIN to the protocol-verb
+  # allowlist (not "any `:ezagent_*` atom") is what excludes the config/ETS/
+  # app-name false positives (`:ezagent_domain_pty`, `:ezagent_role_registry`),
+  # WITHOUT weakening detection of real message values.
   defp tainted_value?(expr, tainted, msg_fns) do
-    constructs_kind_message?(expr) or
+    carries_kind_message?(expr) or
       var_tainted?(expr, tainted) or
       calls_message_fn?(expr, msg_fns)
   end
 
-  # `expr` builds a tuple tagged with an `:ezagent_*` atom (`{:ezagent_*, …}`),
-  # anywhere within it (incl. nested in a map/list). This is how Kind protocol
-  # messages are constructed; a bare `:ezagent_*` atom in a config/ETS position
-  # is deliberately NOT a construction.
-  defp constructs_kind_message?(expr) do
+  # `expr` mentions a Kind-protocol message verb (`@kind_message_verbs`) anywhere
+  # within it — bare atom or nested inside a tuple/list/map. App/ETS/config atoms
+  # that merely share the `ezagent_` prefix are excluded by the allowlist.
+  defp carries_kind_message?(expr) do
     {_, found?} =
       Macro.prewalk(expr, false, fn
-        {tag, _elem} = node, acc when is_atom(tag) -> {node, acc or ezagent_atom?(tag)}
-        {:{}, _, [tag | _]} = node, acc when is_atom(tag) -> {node, acc or ezagent_atom?(tag)}
+        atom, acc when is_atom(atom) -> {atom, acc or MapSet.member?(@kind_message_verbs, atom)}
         node, acc -> {node, acc}
       end)
 
     found?
   end
 
-  defp ezagent_atom?(atom), do: String.starts_with?(Atom.to_string(atom), "ezagent_")
-
-  # A bare variable, or an access-path (`a.b`, `a.b.c`) rooted at a tainted var.
+  # A bare variable, or an access-path rooted at a tainted var: dot (`a.b.c`),
+  # index (`a[:k]`), `Map.fetch!/fetch/get(a, k)`, or `elem(a, i)`. Closes the
+  # common field-extraction evasions; exotic extractors are tracked follow-up.
   defp var_tainted?(expr, tainted) do
     case var_root(expr) do
       name when is_atom(name) -> MapSet.member?(tainted, name)
@@ -449,16 +501,22 @@ defmodule Ezagent.ActorBoundaryScanner do
   end
 
   defp var_root({name, _, ctx}) when is_atom(name) and (is_atom(ctx) or is_nil(ctx)), do: name
+  defp var_root({{:., _, [Access, :get]}, _, [inner | _]}), do: var_root(inner)
+
+  defp var_root({{:., _, [{:__aliases__, _, [:Map]}, f]}, _, [inner | _]})
+       when f in [:fetch!, :fetch, :get],
+       do: var_root(inner)
+
+  defp var_root({:elem, _, [inner | _]}), do: var_root(inner)
   defp var_root({{:., _, [inner, field]}, _, _}) when is_atom(field), do: var_root(inner)
   defp var_root(_expr), do: nil
 
   # Local function names that (transitively) PRODUCE a Kind message. Base: a body
-  # that CONSTRUCTS an `{:ezagent_*, …}` message tuple. Fixpoint: a body that
-  # CALLS a producer is itself a producer — this is what closes helper-chains
-  # ≥2 deep.
+  # that mentions a protocol message verb. Fixpoint: a body that CALLS a producer
+  # is itself a producer — this is what closes helper-chains ≥2 deep.
   defp kind_message_fns(ast) do
     defs = fn_bodies(ast)
-    base = for {name, body} <- defs, constructs_kind_message?(body), into: MapSet.new(), do: name
+    base = for {name, body} <- defs, carries_kind_message?(body), into: MapSet.new(), do: name
     msg_fns_fixpoint(defs, base)
   end
 
@@ -589,6 +647,46 @@ defmodule Ezagent.ActorBoundaryScanner do
 
       binds
     end)
+  end
+
+  # `{pattern_vars, rhs}` for every DESTRUCTURING `pattern = rhs` in a body — a
+  # non-bare-var LHS (`{:box, msg} = payload`, `%{m: msg} = payload`). A tainted
+  # RHS taints every var the pattern binds. (Bare-var `=` is `message_bindings`.)
+  defp destructure_bindings(ast) do
+    Enum.flat_map(body_asts(ast), fn body ->
+      {_, binds} =
+        Macro.prewalk(body, [], fn
+          {:=, _, [{name, _, ctx}, _rhs]} = node, acc
+          when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) ->
+            {node, acc}
+
+          {:=, _, [lhs, rhs]} = node, acc ->
+            case pattern_vars(lhs) do
+              [] -> {node, acc}
+              pvars -> {node, [{pvars, rhs} | acc]}
+            end
+
+          node, acc ->
+            {node, acc}
+        end)
+
+      binds
+    end)
+  end
+
+  # The bound variable names in a match pattern (`_` and pattern operators skipped).
+  defp pattern_vars(pattern) do
+    {_, vars} =
+      Macro.prewalk(pattern, [], fn
+        {name, _, ctx} = node, acc
+        when is_atom(name) and (is_atom(ctx) or is_nil(ctx)) and name != :_ ->
+          {node, [name | acc]}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    vars
   end
 
   # Variable names bound to the `:sys` atom (`s = :sys`), propagated across

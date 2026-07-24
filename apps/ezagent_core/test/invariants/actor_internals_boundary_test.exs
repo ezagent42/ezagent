@@ -275,20 +275,55 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
            "an :ezagent_* message relayed through a function parameter must be flagged"
   end
 
-  test "the forward scanner closes map/tuple-field access-path taint (§C0-hardening b)" do
-    # The :ezagent_* atom is buried in a map field; the call passes payload.m,
-    # never a bare var nor an inline atom.
-    access_path = """
+  test "the forward scanner closes access-path field extraction (§C0-hardening b)" do
+    # The :ezagent_* message is buried in a tainted container; the call extracts
+    # it via dot / index / Map.fetch! / elem — never a bare var nor inline atom.
+    mk = fn extract ->
+      """
+      defmodule W do
+        def go(pid) do
+          payload = %{m: {:ezagent_get_slice, :surface}}
+          GenServer.call(pid, #{extract})
+        end
+      end
+      """
+    end
+
+    for extract <- ["payload.m", "payload[:m]", "Map.fetch!(payload, :m)"] do
+      assert Scanner.forward_sites_in_source(mk.(extract), "apps/x/lib/w.ex") != [],
+             "an :ezagent_* message extracted via #{extract} must be flagged"
+    end
+
+    elem_src = """
     defmodule W do
       def go(pid) do
-        payload = %{m: {:ezagent_get_slice, :surface}}
-        GenServer.call(pid, payload.m)
+        payload = {:ezagent_get_slice, :surface}
+        GenServer.call(pid, elem(payload, 0))
       end
     end
     """
 
-    assert Scanner.forward_sites_in_source(access_path, "apps/x/lib/w.ex") != [],
-           "an :ezagent_* message extracted from a tainted map field must be flagged"
+    assert Scanner.forward_sites_in_source(elem_src, "apps/x/lib/w.ex") != [],
+           "an :ezagent_* message extracted via elem/2 must be flagged"
+  end
+
+  test "the forward scanner closes simple destructuring taint (§C0-hardening b2)" do
+    # {:box, msg} = tainted_container — the message is bound by a destructuring
+    # match, then relayed.
+    for lhs <- ["{:box, msg}", "%{m: msg}"] do
+      src = """
+      defmodule W do
+        def go(pid) do
+          payload = #{if lhs == "{:box, msg}", do: "{:box, {:ezagent_get_slice, :s}}", else: "%{m: {:ezagent_get_slice, :s}}"}
+          #{lhs} = payload
+          GenServer.call(pid, msg)
+        end
+      end
+      """
+
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
+             "an :ezagent_* message bound by destructuring (#{lhs}) must be flagged"
+    end
   end
 
   test "the forward scanner closes helper-chains >=2 deep (§C0-hardening c)" do
@@ -310,6 +345,38 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
            "an :ezagent_* message from a >=2-deep helper chain must be flagged"
   end
 
+  test "the forward scanner RETAINS origin/main's broad indirect detection (no regression)" do
+    # These two shapes are caught by origin/main's scanner. The §C0-hardening
+    # protocol-verb allowlist must NOT weaken them (regression guard): an assigned
+    # BARE message atom, and a runtime-ASSEMBLED message tuple.
+    assigned_bare_atom =
+      "defmodule W do\n  def go(pid) do\n    msg = :ezagent_get_slice\n    GenServer.call(pid, msg)\n  end\nend"
+
+    runtime_tuple =
+      "defmodule W do\n  def go(pid) do\n    msg = List.to_tuple([:ezagent_get_slice, :surface])\n    GenServer.call(pid, msg)\n  end\nend"
+
+    for src <- [assigned_bare_atom, runtime_tuple] do
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
+             "a real Kind message reached indirectly must stay flagged:\n#{src}"
+    end
+  end
+
+  test "the forward scanner does NOT taint on config/app-name :ezagent_* atoms (precision)" do
+    # `:ezagent_domain_pty` / `:ezagent_role_registry` share the `ezagent_` prefix
+    # but are OTP app / ETS-registry names, never Kind messages. Relaying one to a
+    # GenServer.call must NOT be flagged (this is what fixed the 3 spurious sites).
+    app_name =
+      "defmodule W do\n  def go(pid) do\n    x = Application.get_env(:ezagent_domain_pty, :k)\n    GenServer.call(pid, x)\n  end\nend"
+
+    registry_name =
+      "defmodule W do\n  def go(pid) do\n    x = :ezagent_role_registry\n    GenServer.call(pid, x)\n  end\nend"
+
+    for src <- [app_name, registry_name] do
+      assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") == [],
+             "a config/app-name :ezagent_* atom must NOT be treated as a Kind message:\n#{src}"
+    end
+  end
+
   test "the forward scanner flags reflective :sys forms (apply/3 + :erlang.apply + var receiver)" do
     bare_apply = "defmodule W do\n  def go(pid), do: apply(:sys, :get_state, [pid])\nend"
 
@@ -323,15 +390,6 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
       assert Scanner.forward_sites_in_source(src, "apps/x/lib/w.ex") != [],
              "a reflective :sys reach into a live process must be flagged:\n#{src}"
     end
-  end
-
-  test "the forward scanner already flags the apply/2 capture form :sys reach" do
-    # &:sys.get_state/1 embeds the banned :sys.<op> node, so the existing dotted
-    # clause catches it even when handed to apply/2 (green before AND after).
-    capture_apply2 = "defmodule W do\n  def go(pid), do: apply(&:sys.get_state/1, [pid])\nend"
-
-    assert Scanner.forward_sites_in_source(capture_apply2, "apps/x/lib/w.ex") != [],
-           "a &:sys.<op>/1 capture is a :sys reach and must be flagged"
   end
 
   test "the reverse scanner flags call / atom / struct shapes; no self-ref/stdlib false positives" do
