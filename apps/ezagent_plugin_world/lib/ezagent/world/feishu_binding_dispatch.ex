@@ -68,7 +68,8 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   initial read: canonical admin auto-mints the precise action cap; every other
   caller goes through their real caps with zero privilege escalation.
   """
-  @spec list_for_initial_state(URI.t(), URI.t(), Enumerable.t()) :: {:ok, [map()]} | {:error, error_code()}
+  @spec list_for_initial_state(URI.t(), URI.t(), Enumerable.t()) ::
+          {:ok, [map()]} | {:error, error_code()}
   def list_for_initial_state(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri, caps) do
     if canonical_admin?(caller_uri) do
       Invocation.with_admin_operator(caller_uri, fn ->
@@ -156,6 +157,8 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   defp normalize_error({:cross_workspace_user, _}), do: :cross_workspace_denied
   defp normalize_error({:cross_workspace_rebind, _}), do: :cross_workspace_denied
 
+  defp normalize_error({:not_entity_uri, _}), do: :invalid_args
+  defp normalize_error({:not_user_entity, _}), do: :invalid_args
   defp normalize_error({:bad_args, _, _}), do: :invalid_args
   defp normalize_error({:bad_args, _}), do: :invalid_args
   defp normalize_error({:invalid_args, _}), do: :invalid_args

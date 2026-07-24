@@ -300,6 +300,25 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       refute html =~ ~s(data-last-dispatch="ok")
       assert html =~ ~s(data-last-dispatch="error:binding_saved_refresh_failed")
     end
+
+    test "a caller with unbind but WITHOUT list cap gets binding_removed_refresh_failed (partial success)",
+         %{conn: conn} do
+      ws = new_ws!()
+      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/unbind-only-#{uniq()}")
+      create_read_only_user!(caller, [cap_for(ws, :unbind, caller)])
+
+      open_id = "ou_wfb_unbind_only_#{uniq()}"
+      user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
+      seed_binding!(ws, open_id, user_uri)
+
+      {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
+
+      html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+
+      assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
+      refute html =~ ~s(data-last-dispatch="ok")
+      assert html =~ ~s(data-last-dispatch="error:binding_removed_refresh_failed")
+    end
   end
 
   describe "cross-workspace hijack is denied through the real route" do
@@ -393,36 +412,56 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
              "mutation error must not change the read-side bindings_error"
     end
 
-    test "deterministic BindingPolicy failure — admin bind to a non-spawnable URI rolls back and World does not report ok",
+    test "non-entity user_uri is rejected by the Behavior fail-closed gate and World does not report ok",
          %{conn: conn} do
-      # Use the system workspace and the canonical admin (whose world:dispatch
-      # goes through with_admin_operator, auto-minting the :bind cap).
-      # The bound "user" is a template:// URI with a class that does
-      # not exist → BindingPolicy.ensure_user_kind/1 → ensure_started/1 →
-      # Template Kind spawn FAILS → BindingPolicy.apply/2 returns
-      # {:error, ...} → handler triggers rollback.
-      ws_system = URI.new!("workspace://system")
-      CapHelper.ensure_workspace_kind!(ws_system)
+      # The Behavior's `ensure_entity_user_uri/1` rejects non-entity:// URIs
+      # BEFORE any side-effect — the B2 fail-closed chokepoint.
+      ws = new_ws!()
+      {:ok, view, _html} = live(admin_conn(conn, ws), "/plugins/feishu/bindings")
 
-      {:ok, view, _html} = live(admin_conn(conn, ws_system), "/plugins/feishu/bindings")
-
-      open_id = "ou_wfb_det_policy_#{uniq()}"
-      non_spawnable =
-        Ezagent.URI.new!("template://system/no_such_class/det_policy_#{uniq()}")
+      open_id = "ou_wfb_not_entity_#{uniq()}"
+      non_entity = Ezagent.URI.new!("template://system/foo/bar")
 
       html =
         dispatch(view, "feishu.bind", %{
           "open_id" => open_id,
-          "user_uri" => URI.to_string(non_spawnable)
+          "user_uri" => URI.to_string(non_entity)
         })
 
-      # The dispatching admin gets auto-minted caps and the storage bind
-      # succeeds, but BindingPolicy fails AFTER the upsert → rollback.
-      # The World must not report "ok".
+      refute html =~ ~s(data-last-dispatch="ok")
+      assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
+    end
+
+    test "BindingPolicy failure never reported ok — dispatch errors surface as stable codes, never 'ok'",
+         %{conn: conn} do
+      # Every dispatch error path in this file (unauthorized,
+      # cross_workspace_denied, invalid_args, not_entity_uri) proves
+      # "dispatch error → World doesn't report ok".  The Behavior's
+      # apply_policy_or_rollback helper is currently unreachable for
+      # valid entity://user URIs (User Kind spawn always succeeds);
+      # deterministic rollback-through-policy requires a controlled
+      # failure seam (B1 Phase 3).  This test pins the WORLD-LAYER
+      # half of the contract: ANY dispatch error → honest status.
+      ws = new_ws!()
+      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/nocap-#{uniq()}")
+      create_read_only_user!(caller, [])
+
+      {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
+
+      open_id = "ou_wfb_dispatch_err_#{uniq()}"
+      user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
+
+      html =
+        dispatch(view, "feishu.bind", %{
+          "open_id" => open_id,
+          "user_uri" => URI.to_string(user_uri)
+        })
+
+      assert html =~ ~s(data-last-dispatch="error:unauthorized")
       refute html =~ ~s(data-last-dispatch="ok")
 
-      # Rollback: the durable row was deleted.
-      assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
+      state = world_state(view)
+      assert state["bindings_error"] == "unauthorized"
     end
 
     test "mutation error preserves the existing bindings list — a caller with list cap but no bind cap still sees their table after a failed bind",
