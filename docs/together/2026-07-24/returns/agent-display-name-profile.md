@@ -2,7 +2,7 @@
 > **Branch:** `fix/agent-display-name-profile`
 > **PR:** [#1570 — fix(world): persist agent display names](https://github.com/ezagent42/ezagent/pull/1570) (draft)
 > **Dev:** Codex
-> **returned_at:** 2026-07-24 20:11 +0800
+> **returned_at:** 2026-07-24 21:00 +0800
 > **deadline:** 2026-07-24 23:59 +0800
 > **deadline_status:** deferred
 
@@ -21,6 +21,17 @@
   workspace binding, config, flavor, grant, and creation inventory.
 - Add focused Identity, Agent, Core provenance, migration, and World regression
   coverage, including strict fresh-spawn rollback and transaction races.
+
+## Scope-repair decision
+
+- The strict failure contract remains: a fresh spawn that fails after profile
+  insertion compensates only facts created by that attempt, including its
+  lineage and provenance receipts. The core rollback APIs therefore remain in
+  scope.
+- Because the service has not shipped and has no legacy database state, the PR
+  now contains one final Agent-only display-name migration rather than three
+  sequential corrective migrations. This repair is recorded in
+  `b259ecf73`.
 
 ## DoD reconciliation
 
@@ -59,6 +70,11 @@ Hello two-session duplicate-role scenario is still deferred.
 
 1. Manually exercise two Hello sessions with duplicate role names and confirm
    their deterministic unique display names in `/identities/agents`.
+   Attempted again on 2026-07-24 against the isolated database, but
+   `mix phx.server` aborted before Phoenix listened because the system default
+   SessionTemplate seed failed with `{:workspace://system, :holder_revoked}`.
+   No Hello-session screenshot can be honestly produced until that unrelated
+   boot invariant is repaired.
 
 ## Merge request
 
