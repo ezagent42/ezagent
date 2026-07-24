@@ -509,28 +509,40 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       # itself fails — otherwise the agent terminates but the dir
       # leaks because `Sandbox.invoke(:destroy, ...)` would never run
       # (the agent never even came up).
-      with :ok <-
-             Ezagent.Entity.Agent.OwnershipObligations.establish(
-               workers,
-               spawned_by_uri,
-               workspace_uri,
-               Map.get(instantiate_meta, :creation_attempt_id)
-             ),
-           :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-           :ok <- mount_behavior_overlay(workers, behavior_overlay),
-           :ok <- persist_display_name(instance_uri, template_content_map) do
-        :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
-        {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
-      else
-        {:error, reason} ->
-          undo_fresh_workers(workers)
-          cleanup_partial_config_dirs(workers, template_class)
-          Ezagent.AgentFlavorAttributes.delete(instance_uri)
-          # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
-          # BEFORE instantiate; a post-spawn failure must not leave an orphaned
-          # GrantRow (unique by agent_uri → would poison retries + leave a stale
-          # authorization/audit row for an agent that never came up).
-          revoke_cascade_grant_best_effort(instance_uri)
+      case Ezagent.Entity.Agent.OwnershipObligations.establish(
+             workers,
+             spawned_by_uri,
+             workspace_uri,
+             Map.get(instantiate_meta, :creation_attempt_id)
+           ) do
+        {:ok, ownership_receipts} ->
+          with :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
+               :ok <- mount_behavior_overlay(workers, behavior_overlay),
+               :ok <- persist_display_name(instance_uri, template_content_map) do
+            :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
+            {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
+          else
+            {:error, reason} ->
+              rollback_fresh_spawn(
+                workers,
+                ownership_receipts,
+                template_class,
+                instance_uri,
+                Map.get(instantiate_meta, :pre_start_claim?, false)
+              )
+
+              {:error, reason}
+          end
+
+        {:error, reason, ownership_receipts} ->
+          rollback_fresh_spawn(
+            workers,
+            ownership_receipts,
+            template_class,
+            instance_uri,
+            Map.get(instantiate_meta, :pre_start_claim?, false)
+          )
+
           {:error, reason}
       end
     else
@@ -579,15 +591,25 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
             :ok
 
           trimmed_name ->
-            case Ezagent.Entity.Profile.ensure_agent_display_name(agent_uri, trimmed_name) do
-              {:ok, _profile} -> :ok
-              {:error, reason} -> {:error, {:agent_display_profile_failed, reason}}
-            end
+            ensure_display_profile(agent_uri, trimmed_name)
         end
 
       _ ->
         :ok
     end
+  end
+
+  defp ensure_display_profile(%URI{} = agent_uri, display_name) do
+    case Ezagent.Entity.Profile.ensure_agent_display_name(agent_uri, display_name) do
+      {:ok, _profile} -> :ok
+      {:error, reason} -> {:error, {:agent_display_profile_failed, reason}}
+    end
+  rescue
+    exception ->
+      {:error, {:agent_display_profile_failed, {:exception, exception}}}
+  catch
+    kind, reason ->
+      {:error, {:agent_display_profile_failed, {kind, reason}}}
   end
 
   # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
@@ -675,7 +697,11 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                launch_context
              ) do
           {:ok, workers, fresh?, meta} ->
-            meta = Map.put(meta, :creation_attempt_id, completion.creation_attempt_id)
+            meta =
+              meta
+              |> Map.put(:creation_attempt_id, completion.creation_attempt_id)
+              |> Map.put(:pre_start_claim?, true)
+
             {:ok, workers, fresh?, meta, completion}
 
           {:error, reason} ->
@@ -978,6 +1004,48 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # `AgentLineage`/`WorkspaceRegistry` are Ezagent-domain registries this
   # Ezagent-layer helper legitimately owns (it is the layer that recorded
   # them — unlike the plugin Template Class, which must not touch them).
+  defp rollback_fresh_spawn(
+         workers,
+         ownership_receipts,
+         template_class,
+         instance_uri,
+         preserve_creation_receipts?
+       ) do
+    undo_fresh_workers(workers)
+    rollback_creation_inventory(ownership_receipts, preserve_creation_receipts?)
+    cleanup_partial_config_dirs(workers, template_class)
+    Ezagent.AgentFlavorAttributes.delete(instance_uri)
+    # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
+    # BEFORE instantiate; a post-spawn failure must not leave an orphaned
+    # GrantRow (unique by agent_uri → would poison retries + leave a stale
+    # authorization/audit row for an agent that never came up).
+    revoke_cascade_grant_best_effort(instance_uri)
+    :ok
+  end
+
+  defp rollback_creation_inventory(receipts, preserve_creation_receipts?) do
+    Enum.each(receipts, fn
+      {:creation_inventory, _attempt_id, _worker_uri, _root_uri, _workspace_uri}
+      when preserve_creation_receipts? ->
+        :ok
+
+      {:creation_inventory, attempt_id, worker_uri, root_uri, workspace_uri} ->
+        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+          Ezagent.Agent.CreationInventory.rollback_record(
+            attempt_id,
+            worker_uri,
+            root_uri,
+            workspace_uri
+          )
+        end)
+
+      {:spawned_by_edge, worker_uri, root_uri} ->
+        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+          Ezagent.AgentLineage.rollback_spawned_by_edge(worker_uri, root_uri)
+        end)
+    end)
+  end
+
   defp undo_fresh_workers(workers) do
     Enum.each(workers, fn worker_uri ->
       _ = Ezagent.Kind.terminate!(worker_uri)

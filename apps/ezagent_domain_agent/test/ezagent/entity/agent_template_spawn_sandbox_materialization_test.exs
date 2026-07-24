@@ -8,6 +8,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   alias Ezagent.TestSupport.TemplatePreStartProbe
   alias EzagentDomainAgent.TestSupport.FreshPreStartTemplateClass
   alias EzagentDomainAgent.TestSupport.PreStartTemplateClass
+  alias EzagentDomainAgent.TestSupport.ProfileFailureTemplate
 
   defmodule PreinitializedSandboxTemplate do
     @behaviour Ezagent.Kind.Template
@@ -297,6 +298,71 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert %Profile{display_name: "front-desk-2"} = Profile.get(second_uri)
       assert Profile.get(adopted_uri) == nil
       assert Profile.get(blank_uri) == nil
+    end
+
+    test "overlong profile failure rolls back every fresh-spawn artifact" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-failure-#{unique}"
+      flavor = "display-profile-failure-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert {:error, {:agent_display_profile_failed, %Ecto.Changeset{} = changeset}} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: String.duplicate("x", 256),
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-failure-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert :error = Ezagent.AgentLineage.lookup(agent_uri)
+      assert :error = Ezagent.WorkspaceRegistry.lookup(agent_uri)
+      assert Profile.get(agent_uri) == nil
+      refute File.exists?(config_dir)
+      assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+
+      assert {:error, :creation_attempt_not_found} =
+               Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
+
+      refute agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
   end
 

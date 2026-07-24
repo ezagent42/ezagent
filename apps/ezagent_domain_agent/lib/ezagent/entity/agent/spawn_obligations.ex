@@ -31,4 +31,16 @@ defmodule Ezagent.Entity.Agent.SpawnObligations do
       :ok
     end
   end
+
+  def record_lineage_with_status(agent_uri, granted_by) do
+    if Code.ensure_loaded?(Ezagent.AgentLineage) and
+         function_exported?(Ezagent.AgentLineage, :record_with_status, 2) do
+      Ezagent.AgentLineage.record_with_status(agent_uri, granted_by)
+    else
+      case record_lineage(agent_uri, granted_by) do
+        :ok -> {:ok, :exists}
+        {:error, _reason} = error -> error
+      end
+    end
+  end
 end

@@ -101,25 +101,60 @@ defmodule Ezagent.AgentLineage do
   """
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def record(agent_uri, spawned_by) do
+    case record_with_status(agent_uri, spawned_by) do
+      {:ok, _status} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec record_with_status(URI.t() | String.t(), URI.t() | String.t()) ::
+          {:ok, :inserted | :exists} | {:error, term()}
+  def record_with_status(agent_uri, spawned_by) do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
 
-    with :ok <-
-           Ezagent.Provenance.DerivationEdges.record_derivation_edge(
-             a,
-             s,
-             :spawned_by,
-             stable_attempt_id(a)
-           ),
-         row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()},
-         {:ok, _} <-
-           Repo.insert(row,
-             on_conflict: [set: [spawned_by: s]],
-             conflict_target: [:agent_uri]
-           ) do
-      :ets.insert(@table, {a, s})
-      :ok
+    Repo.transaction(fn ->
+      with {:ok, edge_status} <-
+             Ezagent.Provenance.DerivationEdges.record_derivation_edge_with_status(
+               a,
+               s,
+               :spawned_by,
+               stable_attempt_id(a)
+             ),
+           row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()},
+           {:ok, _} <-
+             Repo.insert(row,
+               on_conflict: [set: [spawned_by: s]],
+               conflict_target: [:agent_uri]
+             ) do
+        edge_status
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, edge_status} ->
+        :ets.insert(@table, {a, s})
+        {:ok, edge_status}
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  @doc false
+  @spec rollback_spawned_by_edge(URI.t() | String.t(), URI.t() | String.t()) ::
+          :ok | {:error, term()}
+  def rollback_spawned_by_edge(agent_uri, spawned_by) do
+    a = uri_to_str(agent_uri)
+
+    Ezagent.Provenance.DerivationEdges.rollback_derivation_edge(
+      a,
+      uri_to_str(spawned_by),
+      :spawned_by,
+      stable_attempt_id(a)
+    )
   end
 
   @doc "Persist an exact lineage fact through the caller's Repo without updating ETS."

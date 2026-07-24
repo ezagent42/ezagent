@@ -38,6 +38,22 @@ defmodule Ezagent.Provenance.DerivationEdges do
   def record_derivation_edge(child_uri, parent_uri, edge_kind, attempt_id)
       when (is_atom(edge_kind) or is_binary(edge_kind)) and is_binary(attempt_id) and
              attempt_id != "" do
+    case record_derivation_edge_with_status(child_uri, parent_uri, edge_kind, attempt_id) do
+      {:ok, _status} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec record_derivation_edge_with_status(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          edge_kind(),
+          String.t()
+        ) :: {:ok, :inserted | :exists} | {:error, term()}
+  def record_derivation_edge_with_status(child_uri, parent_uri, edge_kind, attempt_id)
+      when (is_atom(edge_kind) or is_binary(edge_kind)) and is_binary(attempt_id) and
+             attempt_id != "" do
     attrs = %{
       child_uri: uri_string(child_uri),
       parent_uri: uri_string(parent_uri),
@@ -47,7 +63,9 @@ defmodule Ezagent.Provenance.DerivationEdges do
 
     case existing(attrs.child_uri, attrs.edge_kind) do
       %__MODULE__{} = edge ->
-        if exact_fact?(edge, attrs), do: :ok, else: {:error, :derivation_edge_conflict}
+        if exact_fact?(edge, attrs),
+          do: {:ok, :exists},
+          else: {:error, :derivation_edge_conflict}
 
       nil ->
         insert_fact(attrs)
@@ -76,6 +94,28 @@ defmodule Ezagent.Provenance.DerivationEdges do
     |> MapSet.to_list()
     |> Enum.sort()
     |> Enum.map(&Ezagent.URI.new!/1)
+  end
+
+  @doc false
+  @spec rollback_derivation_edge(
+          URI.t() | String.t(),
+          URI.t() | String.t(),
+          edge_kind(),
+          String.t()
+        ) :: :ok
+  def rollback_derivation_edge(child_uri, parent_uri, edge_kind, attempt_id)
+      when (is_atom(edge_kind) or is_binary(edge_kind)) and is_binary(attempt_id) and
+             attempt_id != "" do
+    Repo.delete_all(
+      from(edge in __MODULE__,
+        where: edge.child_uri == ^uri_string(child_uri),
+        where: edge.parent_uri == ^uri_string(parent_uri),
+        where: edge.edge_kind == ^to_string(edge_kind),
+        where: edge.attempt_id == ^attempt_id
+      )
+    )
+
+    :ok
   end
 
   defp ownership_closure([], _seen, descendants), do: descendants
@@ -180,11 +220,11 @@ defmodule Ezagent.Provenance.DerivationEdges do
     |> Repo.insert()
     |> case do
       {:ok, _edge} ->
-        :ok
+        {:ok, :inserted}
 
       {:error, %Ecto.Changeset{errors: [child_uri: {_message, _meta}]}} ->
         case existing(attrs.child_uri, attrs.edge_kind) do
-          %__MODULE__{} = edge when edge.parent_uri == attrs.parent_uri -> :ok
+          %__MODULE__{} = edge when edge.parent_uri == attrs.parent_uri -> {:ok, :exists}
           _ -> {:error, :derivation_edge_conflict}
         end
 
