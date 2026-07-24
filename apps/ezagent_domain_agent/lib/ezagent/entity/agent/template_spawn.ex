@@ -516,16 +516,23 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              Map.get(instantiate_meta, :creation_attempt_id)
            ) do
         {:ok, ownership_receipts} ->
-          with :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-               :ok <- mount_behavior_overlay(workers, behavior_overlay),
-               :ok <- persist_display_name(instance_uri, template_content_map) do
-            :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
-            {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
-          else
-            {:error, reason} ->
+          case establish_fresh_spawn_obligations(
+                 workers,
+                 instantiate_meta,
+                 template_class,
+                 behavior_overlay,
+                 instance_uri,
+                 template_content_map,
+                 ownership_receipts
+               ) do
+            {:ok, _receipts} ->
+              :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
+              {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
+
+            {:error, reason, receipts} ->
               rollback_fresh_spawn(
                 workers,
-                ownership_receipts,
+                receipts,
                 template_class,
                 instance_uri,
                 Map.get(instantiate_meta, :pre_start_claim?, false)
@@ -570,6 +577,36 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp mount_behavior_overlay(_workers, overlay),
     do: {:error, {:invalid_behavior_overlay, overlay}}
 
+  defp establish_fresh_spawn_obligations(
+         workers,
+         instantiate_meta,
+         template_class,
+         behavior_overlay,
+         instance_uri,
+         template_content_map,
+         ownership_receipts
+       ) do
+    with :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
+         :ok <- mount_behavior_overlay(workers, behavior_overlay),
+         {:ok, profile_status} <- persist_display_name(instance_uri, template_content_map) do
+      receipts = add_display_profile_receipt(ownership_receipts, instance_uri, profile_status)
+
+      case test_hook_after_display_profile(instance_uri, profile_status) do
+        :ok -> {:ok, receipts}
+        {:error, reason} -> {:error, reason, receipts}
+      end
+    else
+      {:error, reason} -> {:error, reason, ownership_receipts}
+    end
+  end
+
+  defp add_display_profile_receipt(receipts, instance_uri, :inserted),
+    do: receipts ++ [{:agent_display_profile, :inserted, instance_uri}]
+
+  defp add_display_profile_receipt(receipts, _instance_uri, status)
+       when status in [:exists, :skipped],
+       do: receipts
+
   defp mount_behaviors(worker_uri, behaviors) do
     Enum.reduce_while(behaviors, :ok, fn behavior, :ok ->
       case Ezagent.Kind.mount(worker_uri, behavior, %{}) do
@@ -588,20 +625,20 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       name when is_binary(name) ->
         case String.trim(name) do
           "" ->
-            :ok
+            {:ok, :skipped}
 
           trimmed_name ->
             ensure_display_profile(agent_uri, trimmed_name)
         end
 
       _ ->
-        :ok
+        {:ok, :skipped}
     end
   end
 
   defp ensure_display_profile(%URI{} = agent_uri, display_name) do
-    case Ezagent.Entity.Profile.ensure_agent_display_name(agent_uri, display_name) do
-      {:ok, _profile} -> :ok
+    case Ezagent.Entity.Profile.ensure_agent_display_name_with_receipt(agent_uri, display_name) do
+      {:ok, _profile, status} -> {:ok, status}
       {:error, reason} -> {:error, {:agent_display_profile_failed, reason}}
     end
   rescue
@@ -610,6 +647,16 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   catch
     kind, reason ->
       {:error, {:agent_display_profile_failed, {kind, reason}}}
+  end
+
+  if Mix.env() == :test do
+    defp test_hook_after_display_profile(agent_uri, status) when status in [:inserted, :exists] do
+      Ezagent.Agent.TestTemplateSpawn.hook(:after_display_profile, agent_uri, status)
+    end
+
+    defp test_hook_after_display_profile(_agent_uri, :skipped), do: :ok
+  else
+    defp test_hook_after_display_profile(_agent_uri, _status), do: :ok
   end
 
   # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
@@ -1006,13 +1053,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   # them — unlike the plugin Template Class, which must not touch them).
   defp rollback_fresh_spawn(
          workers,
-         ownership_receipts,
+         receipts,
          template_class,
          instance_uri,
          preserve_creation_receipts?
        ) do
     undo_fresh_workers(workers)
-    rollback_creation_inventory(ownership_receipts, preserve_creation_receipts?)
+    rollback_fresh_spawn_receipts(receipts, preserve_creation_receipts?)
     cleanup_partial_config_dirs(workers, template_class)
     Ezagent.AgentFlavorAttributes.delete(instance_uri)
     # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
@@ -1023,8 +1070,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     :ok
   end
 
-  defp rollback_creation_inventory(receipts, preserve_creation_receipts?) do
+  defp rollback_fresh_spawn_receipts(receipts, preserve_creation_receipts?) do
     Enum.each(receipts, fn
+      {:agent_display_profile, :inserted, agent_uri} ->
+        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
+          Ezagent.Entity.Profile.rollback_agent_display_name(agent_uri, :inserted)
+        end)
+
       {:creation_inventory, _attempt_id, _worker_uri, _root_uri, _workspace_uri}
       when preserve_creation_receipts? ->
         :ok

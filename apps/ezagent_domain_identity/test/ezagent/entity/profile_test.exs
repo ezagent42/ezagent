@@ -104,6 +104,37 @@ defmodule Ezagent.Entity.ProfileTest do
     end
   end
 
+  describe "ensure_agent_display_name_with_receipt/2" do
+    test "distinguishes this call's insert from a same-URI no-op" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/receipt")
+
+      assert {:ok, %Profile{display_name: "builder"}, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(agent_uri, "builder")
+
+      assert {:ok, %Profile{display_name: "builder"}, :exists} =
+               Profile.ensure_agent_display_name_with_receipt(agent_uri, "ignored-on-retry")
+    end
+
+    test "receipt-aware rollback is exact and idempotent" do
+      inserted_uri = Ezagent.URI.new!("entity://team-alpha/agent/rollback-inserted")
+      other_uri = Ezagent.URI.new!("entity://team-alpha/agent/rollback-other")
+
+      assert {:ok, %Profile{}, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(inserted_uri, "inserted")
+
+      assert {:ok, %Profile{} = other_profile, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(other_uri, "other")
+
+      assert :ok = Profile.rollback_agent_display_name(inserted_uri, :inserted)
+      assert :ok = Profile.rollback_agent_display_name(inserted_uri, :inserted)
+      assert Profile.get(inserted_uri) == nil
+      assert Profile.get(other_uri) == other_profile
+
+      assert :ok = Profile.rollback_agent_display_name(other_uri, :exists)
+      assert Profile.get(other_uri) == other_profile
+    end
+  end
+
   test "an Agent profile does not prevent a User with the same display name" do
     agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
 

@@ -32,6 +32,7 @@ defmodule Ezagent.Entity.Profile do
   end
 
   @type t :: %__MODULE__{}
+  @type insertion_status :: :inserted | :exists
 
   @doc "Insert-or-update a profile keyed by `entity_uri`."
   @spec upsert(map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -54,15 +55,43 @@ defmodule Ezagent.Entity.Profile do
   @spec ensure_agent_display_name(URI.t(), String.t()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t() | :not_agent_uri}
   def ensure_agent_display_name(%URI{} = uri, base_name) when is_binary(base_name) do
+    case ensure_agent_display_name_with_receipt(uri, base_name) do
+      {:ok, profile, _status} -> {:ok, profile}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Ensure an Agent display name and report whether this call inserted its row.
+
+  `:inserted` is an ownership receipt for compensating a later failed
+  operation. `:exists` means the same canonical Agent URI already had a
+  profile, including when a concurrent insert won the primary-key race.
+  """
+  @spec ensure_agent_display_name_with_receipt(URI.t(), String.t()) ::
+          {:ok, t(), insertion_status()} | {:error, Ecto.Changeset.t() | :not_agent_uri}
+  def ensure_agent_display_name_with_receipt(%URI{} = uri, base_name)
+      when is_binary(base_name) do
     if agent_uri?(uri) do
       case get(uri) do
         %__MODULE__{} = profile ->
-          {:ok, profile}
+          {:ok, profile, :exists}
 
         nil ->
           workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
           insert_agent_display_name(uri, workspace_uri, String.trim(base_name), 1)
       end
+    else
+      {:error, :not_agent_uri}
+    end
+  end
+
+  @doc false
+  @spec rollback_agent_display_name(URI.t(), insertion_status()) ::
+          :ok | {:error, :not_agent_uri | {:unexpected_profile_delete_count, non_neg_integer()}}
+  def rollback_agent_display_name(%URI{} = uri, status) when status in [:inserted, :exists] do
+    if agent_uri?(uri) do
+      rollback_agent_display_name_status(uri, status)
     else
       {:error, :not_agent_uri}
     end
@@ -80,6 +109,17 @@ defmodule Ezagent.Entity.Profile do
   end
 
   def by_email(_), do: nil
+
+  defp rollback_agent_display_name_status(_uri, :exists), do: :ok
+
+  defp rollback_agent_display_name_status(uri, :inserted) do
+    query = from(profile in __MODULE__, where: profile.entity_uri == ^to_str(uri))
+
+    case Repo.delete_all(query) do
+      {count, _rows} when count in [0, 1] -> :ok
+      {count, _rows} -> {:error, {:unexpected_profile_delete_count, count}}
+    end
+  end
 
   defp insert_agent_display_name(uri, workspace_uri, base_name, suffix) do
     case display_name_candidate(base_name, suffix) do
@@ -112,13 +152,13 @@ defmodule Ezagent.Entity.Profile do
     |> Repo.insert()
     |> case do
       {:ok, profile} ->
-        {:ok, profile}
+        {:ok, profile, :inserted}
 
       {:error, changeset} ->
         cond do
           unique_constraint?(changeset, :entity_uri, "entity_profiles_pkey") ->
             case get(uri) do
-              %__MODULE__{} = profile -> {:ok, profile}
+              %__MODULE__{} = profile -> {:ok, profile, :exists}
               nil -> {:error, changeset}
             end
 

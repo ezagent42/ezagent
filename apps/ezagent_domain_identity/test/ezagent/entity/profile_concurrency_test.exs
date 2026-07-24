@@ -34,17 +34,18 @@ defmodule Ezagent.Entity.ProfileConcurrencyTest do
 
     results =
       concurrently([
-        fn -> Profile.ensure_agent_display_name(agent_uri, "builder") end,
-        fn -> Profile.ensure_agent_display_name(agent_uri, "builder") end
+        fn -> Profile.ensure_agent_display_name_with_receipt(agent_uri, "builder") end,
+        fn -> Profile.ensure_agent_display_name_with_receipt(agent_uri, "builder") end
       ])
 
     assert [
-             {:ok, %Profile{entity_uri: first_uri, display_name: "builder"}},
-             {:ok, %Profile{entity_uri: second_uri, display_name: "builder"}}
+             {:ok, %Profile{entity_uri: first_uri, display_name: "builder"}, first_status},
+             {:ok, %Profile{entity_uri: second_uri, display_name: "builder"}, second_status}
            ] = results
 
     assert first_uri == URI.to_string(agent_uri)
     assert second_uri == first_uri
+    assert MapSet.new([first_status, second_status]) == MapSet.new([:inserted, :exists])
     assert workspace_profile_count(workspace) == 1
   end
 
