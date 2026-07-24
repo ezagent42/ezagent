@@ -262,5 +262,22 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       {:ok, _} = Store.register_binding(binding)
       assert {:error, {:binding_exists, "bnd_dup2"}} = Store.register_binding(binding)
     end
+
+    test "persisted binding URIs use canonical stable_key format" do
+      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_stable"})
+      {:ok, _} = Store.register_binding(binding)
+
+      [[ws, task, cred, repo]] =
+        Repo.query!(
+          "SELECT workspace_uri, task_receiver_uri, credential_owner_uri, repository_uri
+           FROM git_workflow_bindings WHERE id = $1",
+          ["bnd_stable"]
+        ).rows
+
+      assert ws == Ezagent.URI.stable_key(binding.workspace_uri)
+      assert task == Ezagent.URI.stable_key(binding.task_receiver_uri)
+      assert cred == Ezagent.URI.stable_key(binding.credential_owner_uri)
+      assert repo == Ezagent.URI.stable_key(binding.repository_uri)
+    end
   end
 end
