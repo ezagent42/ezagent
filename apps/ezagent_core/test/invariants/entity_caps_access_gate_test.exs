@@ -24,9 +24,11 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :migrate_users, 1}
                            ])
 
+  # `entity_caps.ex :snapshot_caps/1` is NO LONGER a raw-snapshot reader after
+  # actor-extraction C1: it projects the durable `:identity` slice through the
+  # public `Ezagent.Kind.read_durable/3` read surface (no `SnapshotStore.latest`
+  # + `Map.get(:identity)` reach-in), so it drops off this allowlist.
   @snapshot_identity_caps_allowlist MapSet.new([
-                                      {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-                                       :snapshot_caps, 1},
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
                                       {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
