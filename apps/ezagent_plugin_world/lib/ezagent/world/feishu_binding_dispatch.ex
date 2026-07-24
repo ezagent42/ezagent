@@ -37,6 +37,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
           | :cross_workspace_denied
           | :invalid_args
           | :binding_policy_failed
+          | :binding_rollback_failed
           | :binding_unavailable
           | :binding_operation_failed
 
@@ -161,6 +162,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   defp normalize_error({:not_entity_uri, _}), do: :invalid_args
   defp normalize_error({:not_user_entity, _}), do: :invalid_args
   defp normalize_error({:binding_policy_failed, _}), do: :binding_policy_failed
+  defp normalize_error({:binding_rollback_failed, _}), do: :binding_rollback_failed
   defp normalize_error({:bad_args, _, _}), do: :invalid_args
   defp normalize_error({:bad_args, _}), do: :invalid_args
   defp normalize_error({:invalid_args, _}), do: :invalid_args
