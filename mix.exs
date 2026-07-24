@@ -53,6 +53,7 @@ defmodule EzagentCore.Umbrella.MixProject do
           ezagent_plugin_hello: :permanent,
           ezagent_plugin_protocol_api: :permanent,
           ezagent_plugin_kb: :permanent,
+          ezagent_plugin_git_workflow: :permanent,
           ezagent_web: :permanent,
           ezagent_cli: :load
         ],
