@@ -14,6 +14,7 @@ defmodule Ezagent.World.PresenterCapsFreshTest do
 
   alias Ezagent.{Capability, EntityCaps}
   alias Ezagent.World.PresenterCaps
+  alias Ezagent.World.PresenterCaps.EphemeralCaps
 
   test "load re-derives fresh caps per action and drops the stale mount-snapshot artifact" do
     # A presenter whose FRESH held-cap set is whatever the durable/live Identity
@@ -64,8 +65,11 @@ defmodule Ezagent.World.PresenterCapsFreshTest do
     # Plain load correctly drops the un-persisted JIT cap (no mount snapshot).
     refute has_cap?(PresenterCaps.load(socket), jit)
 
-    # The explicit ephemeral path unions it over the fresh set (the carve-out).
-    assert has_cap?(PresenterCaps.load_with_ephemeral(socket, MapSet.new([jit])), jit)
+    # The explicit, TAGGED ephemeral path unions it over the fresh set (carve-out).
+    assert has_cap?(
+             PresenterCaps.load_with_ephemeral(socket, %EphemeralCaps{caps: MapSet.new([jit])}),
+             jit
+           )
   end
 
   defp has_cap?(caps, cap),

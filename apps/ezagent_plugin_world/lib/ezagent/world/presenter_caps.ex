@@ -14,12 +14,30 @@ defmodule Ezagent.World.PresenterCaps do
   (a JIT-issued capability that is never written to the principal's durable
   Identity slice — e.g. `EzagentWeb.Socialware.KanbanPublishedReadAdapter`, whose
   cap comes from `Ezagent.Cap.issue/3`, not a durable grant) uses the explicit
-  narrow `load_with_ephemeral/2` path: those caps are minted at mount and are not
-  revocable mid-socket, so they are unioned over the fresh set on purpose. No
-  other path may resurrect a mount snapshot.
+  narrow `load_with_ephemeral/2` path. That path admits ONLY caps carried in the
+  `#{inspect(__MODULE__)}.EphemeralCaps` TAG — an arbitrary or stale
+  `%Ezagent.Capability{}` cannot be smuggled onto a presenter's cap set, so there
+  is no reservoir for a future stale-cap injection. No other path may resurrect a
+  mount snapshot.
   """
 
   alias Ezagent.Capability
+
+  defmodule EphemeralCaps do
+    @moduledoc """
+    Tagged container for request-time JIT capabilities minted per request (via
+    `Ezagent.Cap.issue/3`) and NEVER persisted to the principal's durable Identity
+    slice — e.g. the kanban published-read share path.
+
+    `Ezagent.World.PresenterCaps.load_with_ephemeral/2` admits ONLY caps carried
+    in this wrapper: a caller must EXPLICITLY opt into the ephemeral union by
+    constructing the tag, so a bare enumerable or an arbitrary/stale
+    `%Ezagent.Capability{}` is rejected rather than silently trusted.
+    """
+    @enforce_keys [:caps]
+    defstruct [:caps]
+    @type t :: %__MODULE__{caps: Enumerable.t()}
+  end
 
   @doc """
   Load the presenter's current caps FRESH from the Identity store (§2.2). Never
@@ -35,19 +53,19 @@ defmodule Ezagent.World.PresenterCaps do
   end
 
   @doc """
-  Fresh presenter caps UNIONED with an explicit set of EPHEMERAL caps (§C1
-  carve-out). The narrow path for callers that hold a request-time JIT capability
-  which is never persisted to the principal's durable Identity slice and is not
-  revocable mid-socket; unioning it over the fresh set is deliberate, not a mount
-  snapshot. All other callers use `load/1`.
+  Fresh presenter caps UNIONED with an explicit, TAGGED set of ephemeral caps
+  (§C1 carve-out). Admits ONLY an `EphemeralCaps` wrapper — a bare enumerable or
+  an arbitrary `%Capability{}` is REJECTED (function-clause) so no path other
+  than an explicit JIT-cap opt-in can add caps the fresh load would not surface.
+  Fresh (durable) caps win over ephemeral caps of the same identity.
   """
-  @spec load_with_ephemeral(Phoenix.LiveView.Socket.t() | map(), Enumerable.t()) ::
+  @spec load_with_ephemeral(Phoenix.LiveView.Socket.t() | map(), EphemeralCaps.t()) ::
           MapSet.t(Capability.t())
-  def load_with_ephemeral(%{assigns: assigns}, ephemeral) when is_map(assigns),
+  def load_with_ephemeral(%{assigns: assigns}, %EphemeralCaps{} = ephemeral) when is_map(assigns),
     do: load_with_ephemeral(assigns, ephemeral)
 
-  def load_with_ephemeral(assigns, ephemeral) when is_map(assigns) do
-    merge(ephemeral, fresh_caps(assigns))
+  def load_with_ephemeral(assigns, %EphemeralCaps{caps: caps}) when is_map(assigns) do
+    merge(caps, fresh_caps(assigns))
   end
 
   defp fresh_caps(assigns) do
@@ -69,10 +87,11 @@ defmodule Ezagent.World.PresenterCaps do
     }
   end
 
-  @doc false
-  @spec merge(Enumerable.t(), Enumerable.t()) :: MapSet.t(Capability.t())
-  def merge(mounted, current) do
-    mounted
+  # Set-union keyed by capability identity; `current` (fresh/durable) entries win
+  # over same-identity `ephemeral` entries. Private — the only public ephemeral
+  # entry is `load_with_ephemeral/2`, which is tag-gated.
+  defp merge(ephemeral, current) do
+    ephemeral
     |> Enum.concat(current)
     |> Enum.reduce(%{}, fn
       %Capability{} = cap, acc -> Map.put(acc, Capability.identity_key(cap), cap)
