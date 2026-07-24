@@ -716,8 +716,13 @@ defmodule Ezagent.ActionSet.Sandbox do
   end
 
   defp terminate_supervised(%URI{} = self_uri, supervisor) do
-    case Ezagent.KindRegistry.lookup(self_uri) do
-      {:ok, pid} ->
+    # Live pid via the public operator plane (§2.2 `Kind.list_instances/0`) — the
+    # actor-internal-free replacement for the `KindRegistry.lookup/1` pid
+    # resolution the supervised terminate needs.
+    uri_str = URI.to_string(self_uri)
+
+    case Enum.find(Ezagent.Kind.list_instances(), fn {u, _meta} -> u == uri_str end) do
+      {_u, %{pid: pid}} ->
         case DynamicSupervisor.terminate_child(supervisor, pid) do
           :ok ->
             :ok
@@ -727,7 +732,7 @@ defmodule Ezagent.ActionSet.Sandbox do
             :ok
         end
 
-      :error ->
+      nil ->
         :ok
     end
   rescue

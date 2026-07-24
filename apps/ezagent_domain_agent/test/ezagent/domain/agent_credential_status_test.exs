@@ -107,6 +107,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
        %{agent: agent, workspace: workspace, flavor: flavor, config_dir: config_dir} do
     :ok = seed(agent, config_dir, flavor)
     owner = user("owner")
+
     ctx = %{
       caller: owner,
       authenticated_principal: owner,
@@ -128,6 +129,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
     :ok = seed(agent, config_dir, flavor)
     write_cred(config_dir)
     owner = user("owner")
+
     ctx = %{
       caller: owner,
       authenticated_principal: owner,
@@ -161,6 +163,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
     other = Ezagent.URI.entity(:team_alpha, :agent, "other-#{System.unique_integer([:positive])}")
     granter = user("og")
+
     ctx = %{
       caller: granter,
       authenticated_principal: granter,
@@ -182,6 +185,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
     foreign_ws = Ezagent.Capability.workspace_of(foreign)
     granter = user("fg")
+
     ctx = %{
       caller: granter,
       authenticated_principal: granter,
@@ -291,6 +295,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
          %{agent: agent, workspace: workspace, flavor: flavor} do
       :ok = seed_cc_custom(agent, flavor, "kimi")
       owner = user("owner")
+
       ctx = %{
         caller: owner,
         authenticated_principal: owner,
@@ -314,6 +319,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
          %{agent: agent, workspace: workspace, flavor: flavor} do
       :ok = seed_cc_custom(agent, flavor, nil)
       owner = user("owner")
+
       ctx = %{
         caller: owner,
         authenticated_principal: owner,
@@ -324,6 +330,256 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
                DomainAgent.read_credential_status(agent, ctx)
 
       refute kind_live?(agent)
+    end
+  end
+
+  # ── §6.3 directory batch: O(slice-types) queries, CONSTANT across N ──
+  #
+  # `read_credential_statuses/3` renders a whole agent directory. It must read every
+  # durable slice it classifies from — `:sandbox` (config-dir / backend-profile /
+  # flavor), `:api_keys` (credential slice), `:curl_agent` (curl's durable flavor) —
+  # in ONE `read_durable_many/3` PER SLICE TYPE, i.e. O(slice-types) queries TOTAL,
+  # never O(agents). This gate counts EVERY `kind_snapshots` query (not only the
+  # batched shape, so a scalar N+1 cannot hide) under REAL caps with a mix of a
+  # file-credentialled and a slice-credentialled agent, and proves the count is
+  # CONSTANT as the directory grows.
+
+  # A slice-credentialled (curl-like) fake flavor — creds in the `:api_keys` slice,
+  # durable flavor in the `:curl_agent` slice.
+  defmodule SliceTC do
+    @behaviour Ezagent.Agent.CredentialSliceAdapter
+    def credential_slice, do: :api_keys
+    def materialize_credential_slice(_uri, _data), do: :ok
+  end
+
+  # Mint a Manage cap WITHOUT re-licensing the holder (the shared `manage_cap/3`
+  # licenses on every call, which would raise on the 2nd agent for one owner).
+  defp manage_cap_no_license(agent, workspace, granter) do
+    requested = CreatorGrant.manage_cap(:agent, agent, workspace, granter)
+    authority = install_test_authority!(agent, :agent)
+    authority_signed_cap!(authority, granter, requested)
+  end
+
+  defp seed_file_agent(owner, flavor) do
+    agent =
+      Ezagent.URI.entity(:team_alpha, :agent, "cold-file-#{System.unique_integer([:positive])}")
+
+    config_dir = Path.join(System.tmp_dir!(), "credstat-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(config_dir)
+    on_exit(fn -> File.rm_rf(config_dir) end)
+    # durable :sandbox (config_dir + flavor via respawn), no cred file on disk → :missing
+    :ok = seed(agent, config_dir, flavor)
+    {agent, manage_cap_no_license(agent, Ezagent.Capability.workspace_of(agent), owner), :missing}
+  end
+
+  defp seed_slice_agent(owner, slice_flavor) do
+    agent =
+      Ezagent.URI.entity(:team_alpha, :agent, "cold-slice-#{System.unique_integer([:positive])}")
+
+    {:ok, _} =
+      SnapshotStore.write(
+        agent,
+        %{
+          curl_agent: %{flavor: slice_flavor},
+          api_keys: %{keys: %{"openai" => "sk-x"}},
+          identity: %{caps: MapSet.new()}
+        },
+        kind_type: :agent
+      )
+
+    {agent, manage_cap_no_license(agent, Ezagent.Capability.workspace_of(agent), owner),
+     :authenticated}
+  end
+
+  # An AUTHORIZED agent whose durable state resolves NO flavor (no `:sandbox`
+  # template/respawn, no `:curl_agent` `:flavor`) → `:unknown`. Exercises codex #1:
+  # a prefetched nil flavor must NOT fall back to a per-agent durable read.
+  defp seed_unresolved_flavor_agent(owner) do
+    agent =
+      Ezagent.URI.entity(:team_alpha, :agent, "cold-unres-#{System.unique_integer([:positive])}")
+
+    {:ok, _} =
+      SnapshotStore.write(agent, %{api_keys: %{keys: %{}}, identity: %{caps: MapSet.new()}},
+        kind_type: :agent
+      )
+
+    {agent, manage_cap_no_license(agent, Ezagent.Capability.workspace_of(agent), owner), :unknown}
+  end
+
+  # A DENIED agent (the caller holds NO Manage cap for it) with a real snapshot —
+  # filter-first must EXCLUDE it (absent from the result) AND never batch-read its
+  # slices. Exercises codex #2: a denied row must not cost a caller-caps reload.
+  defp seed_denied_agent do
+    agent =
+      Ezagent.URI.entity(:team_alpha, :agent, "cold-denied-#{System.unique_integer([:positive])}")
+
+    {:ok, _} =
+      SnapshotStore.write(
+        agent,
+        %{
+          sandbox: %{config_dir_path: "/x", template_class: nil, respawn_template_data: nil},
+          api_keys: %{keys: %{"secret" => "leak"}},
+          identity: %{caps: MapSet.new()}
+        },
+        kind_type: :agent
+      )
+
+    agent
+  end
+
+  # Count EVERY authorization + batch Repo query — kind_snapshots AND `users` AND
+  # the authority table. A per-denied caller-caps reload hides in `users`/authority
+  # queries, INVISIBLE to a kind_snapshots-only counter (codex round-4 #2).
+  defp count_authz_and_batch_queries(fun) do
+    test_pid = self()
+    handler = "q-count-#{System.unique_integer([:positive])}"
+
+    :telemetry.attach(
+      handler,
+      [:ezagent_core, :repo, :query],
+      fn _e, _m, meta, _c ->
+        # Only the SYNCHRONOUS read path's own queries (this test process) — excludes
+        # unrelated async/background queries that would make the count non-deterministic.
+        if self() == test_pid do
+          sql = to_string(meta[:query] || "")
+
+          if sql =~ "kind_snapshots" or sql =~ ~s("users") or sql =~ "kind_cap_authorities",
+            do: send(test_pid, :q)
+        end
+      end,
+      nil
+    )
+
+    result = fun.()
+    :telemetry.detach(handler)
+    {drain_q(0), result}
+  end
+
+  defp drain_q(n) do
+    receive do
+      :q -> drain_q(n + 1)
+    after
+      150 -> n
+    end
+  end
+
+  # The caller holds its Manage caps IN THE STORE (`users.caps_json`) alongside a
+  # current self-license — so the batch authorizes from the FRESH store
+  # (`EntityCaps.load/1`), NEVER from the caller-supplied inline caps.
+  defp owner_with_store_caps(owner, manage_caps) do
+    {:ok, _} = Ezagent.Users.create_read_only(owner, [self_license_cap!(owner) | manage_caps])
+    :ok
+  end
+
+  describe "directory batch (§6.3)" do
+    setup do
+      slice_flavor = "credstat-curl-#{System.unique_integer([:positive])}"
+
+      :ok =
+        AgentFlavorRegistry.register(%{
+          flavor: slice_flavor,
+          kind: SliceTC,
+          template_class: SliceTC
+        })
+
+      %{slice_flavor: slice_flavor}
+    end
+
+    test "query count CONSTANT as the DENIED set grows — no per-denied caller reload (finding-2)",
+         %{flavor: file_flavor, slice_flavor: slice_flavor} do
+      owner = user("dir-owner")
+
+      # AUTHORIZED set (→ the caller's cap count → EntityCaps.load cost) is held FIXED
+      # at 3 (file → :missing, slice → :authenticated, unresolved-flavor → :unknown,
+      # which also exercises finding-1: a prefetched nil flavor never falls back to a
+      # per-agent read); only the DENIED set grows. Constant-as-denied-grows IS "no
+      # per-denied reload" — and it sidesteps the EntityCaps.load-scales-with-cap-count
+      # trap that a growing AUTHORIZED set would introduce.
+      authorized =
+        [
+          seed_file_agent(owner, file_flavor),
+          seed_slice_agent(owner, slice_flavor),
+          seed_unresolved_flavor_agent(owner)
+        ]
+
+      :ok = owner_with_store_caps(owner, Enum.map(authorized, fn {_u, c, _s} -> c end))
+
+      run = fn n_denied ->
+        denied = for _ <- 1..n_denied, do: seed_denied_agent()
+        uris = Enum.map(authorized, fn {u, _c, _s} -> u end) ++ denied
+        # Inline caps are IRRELEVANT to the batch now (it reads the fresh store).
+        ctx = %{caller: owner, authenticated_principal: owner, caps: MapSet.new()}
+
+        {queries, statuses} =
+          count_authz_and_batch_queries(fn ->
+            DomainAgent.read_credential_statuses(uris, ctx)
+          end)
+
+        for {uri, _c, want} <- authorized do
+          assert %{status: ^want} = Map.fetch!(statuses, URI.to_string(uri))
+        end
+
+        for d <- denied, do: refute(Map.has_key?(statuses, URI.to_string(d)))
+        for {uri, _c, _s} <- authorized, do: refute(kind_live?(uri))
+        queries
+      end
+
+      # Warm one-time authority-verification caches first (ETS), so the two measured
+      # runs differ ONLY in the denied count, not in cold-vs-warm authority loads.
+      _warmup = run.(2)
+      q_2denied = run.(2)
+      q_5denied = run.(5)
+
+      assert q_2denied == q_5denied,
+             "total authz+batch query count (kind_snapshots + users + authority) must be " <>
+               "CONSTANT as the denied set grows (2 denied → #{q_2denied}, 5 denied → " <>
+               "#{q_5denied}) — a per-denied caller-caps reload regressed finding-2"
+    end
+
+    test "authorizes against the FRESH store, NEVER the stale inline caps (over-auth / TOCTOU)",
+         %{flavor: file_flavor} do
+      owner = user("dir-owner")
+      {x_uri, x_cap, _} = seed_file_agent(owner, file_flavor)
+      # Y's cap is a REVOKED-from-store cap that lingers in the mount snapshot: the
+      # caller holds it ONLY inline, NOT in the store (single-cap revoke removes it
+      # from the store without a generation bump — authority.ex:110).
+      {y_uri, y_cap, _} = seed_file_agent(owner, file_flavor)
+
+      # Store: X only. Inline (ctx.caps): X AND the stale Y.
+      :ok = owner_with_store_caps(owner, [x_cap])
+      ctx = %{caller: owner, authenticated_principal: owner, caps: MapSet.new([x_cap, y_cap])}
+
+      statuses = DomainAgent.read_credential_statuses([x_uri, y_uri], ctx)
+
+      # X (in the fresh store) is shown; Y (inline-only / revoked) is DENIED — the
+      # batch must NOT resurrect revoked authority from the stale inline set.
+      # (FAILS on an inline-caps filter, which would still authorize Y.)
+      assert Map.has_key?(statuses, URI.to_string(x_uri))
+      refute Map.has_key?(statuses, URI.to_string(y_uri))
+    end
+
+    test "batch presence ⟺ scalar read_credential_status/3 decision (differential parity)",
+         %{flavor: file_flavor, slice_flavor: slice_flavor} do
+      owner = user("dir-owner")
+      {x_uri, x_cap, _} = seed_file_agent(owner, file_flavor)
+      {y_uri, _y_cap, _} = seed_slice_agent(owner, slice_flavor)
+      {z_uri, z_cap, _} = seed_file_agent(owner, file_flavor)
+
+      # Store holds caps for X and Z, NOT Y.
+      :ok = owner_with_store_caps(owner, [x_cap, z_cap])
+      ctx = %{caller: owner, authenticated_principal: owner, caps: MapSet.new()}
+
+      statuses = DomainAgent.read_credential_statuses([x_uri, y_uri, z_uri], ctx)
+
+      # Pins the reconstructed predicate against the REAL scalar gate (guards any
+      # check the batch predicate might miss — Match internals, verified_set, admin
+      # all-caps): batch presence must EQUAL the scalar authorization, agent-by-agent.
+      for uri <- [x_uri, y_uri, z_uri] do
+        scalar_ok? = match?({:ok, _}, DomainAgent.read_credential_status(uri, ctx))
+
+        assert Map.has_key?(statuses, URI.to_string(uri)) == scalar_ok?,
+               "batch/scalar authorization disagree for #{URI.to_string(uri)}"
+      end
     end
   end
 end

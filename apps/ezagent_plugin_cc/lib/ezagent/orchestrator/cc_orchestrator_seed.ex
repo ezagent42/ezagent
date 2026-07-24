@@ -169,12 +169,15 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
   def seed_status do
     uri = template_uri_struct()
 
-    case Ezagent.KindRegistry.lookup(uri) do
-      :error ->
+    # Live-only read of the orchestrator template's `:template` slice
+    # (§2.2 `Kind.read/3`, `spawn: :never`) — the public replacement for the
+    # `KindRegistry.lookup` + raw `runtime_view` reach-in. Not-live → :missing.
+    case Ezagent.Kind.read(uri, :template, spawn: :never) do
+      {:error, _not_live} ->
         {:missing, %{template_uri: template_uri()}}
 
-      {:ok, pid} ->
-        case read_template_slice(pid) do
+      {:ok, slice} ->
+        case template_slice_content(slice) do
           %{flavor: f} = content when is_binary(f) and f != "" ->
             {:ok, %{template_uri: template_uri(), template_content: content}}
 
@@ -186,40 +189,19 @@ defmodule Ezagent.Orchestrator.CcOrchestratorSeed do
     # Reading the slice can race with a restart; treat any error as
     # :missing so the UI shows a degraded-but-actionable badge.
     _ -> {:missing, %{template_uri: template_uri()}}
+  catch
+    :exit, _ -> {:missing, %{template_uri: template_uri()}}
   end
 
   defp template_uri_struct, do: Ezagent.URI.template(:system, :agent, "cc-orchestrator")
 
-  # The `:template` slice content is the orchestrator's seeded config.
-  # The framework runtime view returns the public Kind.Server state map;
-  # slice data lives under its `:state` key.
-  #
-  # Lifecycle migration (SPEC 2026-05-29): `Ezagent.ActionSet.Template`
-  # now `use Ezagent.Lifecycle`, so the `:template` slice is the
-  # two-container `%{state: %{content: ...}, transients: %{}}` shape (the
-  # framework persists only `:state`; `:content` is fully persistent).
-  # Match the two-container form FIRST, then fall back to the legacy flat
-  # `%{content: ...}` (a pre-migration snapshot / non-Lifecycle Behavior).
-  defp read_template_slice(pid) do
-    case Ezagent.Kind.runtime_view(pid) do
-      {:ok, %{state: %{template: %{state: %{content: content}}}}} when is_map(content) ->
-        content
-
-      {:ok, %{state: %{template: %{state: %{content: nil}}}}} ->
-        %{}
-
-      {:ok, %{state: %{template: %{content: content}}}} when is_map(content) ->
-        content
-
-      {:ok, %{state: %{template: %{content: nil}}}} ->
-        %{}
-
-      _ ->
-        %{}
-    end
-  catch
-    :exit, _ -> %{}
-  end
+  # The `:template` slice content. `read/3` returns just the `:template` slice,
+  # so match the two-container Lifecycle shape (`%{state: %{content: ...}}`)
+  # FIRST, then the legacy flat form (`%{content: ...}`); a nil/absent content
+  # (or any other shape) yields `%{}` (→ :partial badge).
+  defp template_slice_content(%{state: %{content: content}}) when is_map(content), do: content
+  defp template_slice_content(%{content: content}) when is_map(content), do: content
+  defp template_slice_content(_slice), do: %{}
 
   # --- internals ---------------------------------------------------------
 

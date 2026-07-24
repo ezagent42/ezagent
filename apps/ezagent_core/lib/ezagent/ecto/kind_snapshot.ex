@@ -48,6 +48,18 @@ defmodule Ezagent.Ecto.KindSnapshot do
   def get(uri_str) when is_binary(uri_str), do: Repo.get(__MODULE__, uri_str)
 
   @doc """
+  Fetch snapshot rows for many URIs in ONE query (batch PK-in lookup).
+
+  Returns the matched rows (a URI with no row is simply absent from the
+  result) — the batch primitive behind `Ezagent.Kind.read_durable_many/3`, so
+  rendering N durable rows costs one store query, never N per-URI reads.
+  """
+  @spec get_many([String.t()]) :: [%__MODULE__{}]
+  def get_many(uri_strs) when is_list(uri_strs) do
+    from(s in __MODULE__, where: s.uri in ^uri_strs) |> Repo.all()
+  end
+
+  @doc """
   List all snapshot rows (for `/admin/snapshots` LV + `mix ezagent.snapshot.list`).
   Ordered by `updated_at` desc so most-recently-active Kinds appear first.
 

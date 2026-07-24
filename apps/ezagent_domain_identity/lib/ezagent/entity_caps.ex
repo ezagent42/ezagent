@@ -28,7 +28,6 @@ defmodule Ezagent.EntityCaps do
     Capability,
     Cmd,
     Kind,
-    KindRegistry,
     Lifecycle,
     ReadyGate,
     Router,
@@ -49,22 +48,35 @@ defmodule Ezagent.EntityCaps do
   end
 
   defp do_load(uri) do
-    case KindRegistry.lookup(uri) do
-      {:ok, pid} when pid == self() ->
-        # `Cap.authorize/3` runs inside the target Kind. When the target is also
-        # the authenticated holder, a live-first `Kind.get_slice/2` would call
-        # the current GenServer synchronously and fail closed as
-        # `:holder_revoked`. The marker-bearing snapshot / user projection is
-        # the independently stored copy of the same Identity slice and avoids
-        # that self-call without trusting the presented candidate caps.
-        load_persisted(uri)
-
-      _other ->
-        case Kind.get_slice(uri, :identity) do
-          {:ok, slice} when is_map(slice) -> slice |> caps_from_slice() |> verified(uri)
-          {:error, :not_found} -> load_persisted(uri)
-          _transient_or_invalid_live_read -> []
-        end
+    if Kind.self?(uri) do
+      # `Cap.authorize/3` runs inside the target Kind. When the target is also
+      # the authenticated holder, a live-first slice read would call the current
+      # GenServer synchronously and fail closed as `:holder_revoked`. The
+      # marker-bearing snapshot / user projection is the independently stored
+      # copy of the same Identity slice and avoids that self-call without
+      # trusting the presented candidate caps. (`Kind.read/3` §2.2 point 4 names
+      # exactly this `EntityCaps` self case; it serves the durable projection —
+      # but EntityCaps needs `verified/2` filtering, so it routes through
+      # `load_persisted/1`, whose `read_durable/3` never calls the live process.)
+      load_persisted(uri)
+    else
+      # SINGLE-SHOT public read (§2.2 `Kind.read/3`, `spawn: :never`) — the
+      # actor-internal-free replacement for the `KindRegistry.lookup` +
+      # `Kind.get_slice` reach-in that PRESERVES this loader's fail-CLOSED
+      # contract:
+      #   * `{:ok, slice}`        — live holder → verified live caps.
+      #   * `{:error, :not_live}` — genuinely cold-but-created → durable caps.
+      #   * any other `{:error, _}` (e.g. `{:get_slice_exit, _}` — a live holder
+      #     that transiently exited the read) → `[]`, never the stale durable set.
+      # `read_classified/2` is NOT used here: its bounded retry re-reads after a
+      # transiently-failing live pid deregisters, collapsing the fail-closed case
+      # into the cold-but-durable case (they become one `{:transient, ...}`).
+      case Kind.read(uri, :identity, spawn: :never) do
+        {:ok, slice} when is_map(slice) -> slice |> caps_from_slice() |> verified(uri)
+        {:ok, _non_map} -> []
+        {:error, :not_live} -> load_persisted(uri)
+        {:error, _transient} -> []
+      end
     end
   end
 
@@ -232,15 +244,12 @@ defmodule Ezagent.EntityCaps do
   end
 
   defp snapshot_caps(uri) do
-    case SnapshotStore.latest(uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        state
-        |> Map.get(:identity, %{})
-        |> Kind.normalize_slice_view()
-        |> caps_from_slice()
-
-      _ ->
-        []
+    # The sanctioned durable projection of the `:identity` slice (§2.2
+    # `Kind.read_durable/3`): snapshot decode + `normalize_slice_view/1`, never
+    # the live process. Replaces the `SnapshotStore.latest` reach-in.
+    case Kind.read_durable(uri, :identity) do
+      {:ok, identity, _meta} when is_map(identity) -> caps_from_slice(identity)
+      _ -> []
     end
   end
 

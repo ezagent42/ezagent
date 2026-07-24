@@ -586,6 +586,28 @@ defmodule Ezagent.Kind.Server do
     {:reply, {:ok, view}, state}
   end
 
+  # SPEC 2026-07-23 §2.2 — the action-subject resolution op. Runs the
+  # behavior-set resolution INSIDE the actor and returns ONLY the two module
+  # atoms `{kind_module, behavior_module}` — never the slice map. The
+  # purpose-specific replacement for `Ezagent.Cap.action_context/3`'s raw
+  # `:ezagent_runtime_view` reach-through (§2.3): the slice state never leaves
+  # the process, so publishing this op does not make arbitrary state reach-in
+  # gate-legal. Additive (C0) — existing `:ezagent_runtime_view` unchanged.
+  def handle_call(
+        {:ezagent_resolve_action_subject, action},
+        _from,
+        %{kind: kind_module, state: slice_state} = state
+      )
+      when is_atom(action) do
+    result =
+      case Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
+        {:ok, behavior_module} -> {:ok, {kind_module, behavior_module}}
+        {:error, _reason} = error -> error
+      end
+
+    {:reply, result, state}
+  end
+
   # G-6: expose only the non-secret proof needed by bearer recredentialing.
   # A generation-N token may rotate solely from a live Kind whose lifecycle
   # classified this boot as a genuine create/reprovision. Cold rehydrate and

@@ -62,7 +62,8 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         check_invariant_10(),
         check_membership_cap_presence(),
         check_comms_participation_profile_gate(),
-        check_web_external_mirror_ioc_gate()
+        check_web_external_mirror_ioc_gate(),
+        check_invariant_13()
       ]
       |> Enum.reject(&match?(:ok, &1))
 
@@ -76,6 +77,40 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
       end)
 
       Mix.raise("ezagent.check_invariants: #{length(failures)} invariant(s) violated")
+    end
+  end
+
+  # Invariant #13: actor-internals boundary (SPEC 2026-07-23 §4). Delegates to
+  # the SHARED `Ezagent.ActorBoundaryScanner` (SSOT, §4.5) — the identical scan +
+  # ledger the ExUnit gate enforces, giving ci.local parity with PR-gate parity.
+  # RED on: a new FORWARD reach-in into actor internals, a new REVERSE upward
+  # reference in the mover set, a stale ledger entry (the ratchet may only
+  # shrink), or a vanished fixed process-generation consumer.
+  defp check_invariant_13 do
+    scanner = Ezagent.ActorBoundaryScanner
+
+    problems =
+      [
+        {"forward new reach-in (route through the §2.2 read surface)",
+         scanner.forward_new_offenders()},
+        {"forward stale ledger entry (migrated — remove it)", scanner.forward_stale()},
+        {"forward fixed process-generation consumer vanished", scanner.forward_fixed_missing()},
+        {"reverse new upward reference (re-shape into a §3.4 port)",
+         scanner.reverse_new_offenders()},
+        {"reverse stale ledger entry (ported — remove it)", scanner.reverse_stale()}
+      ]
+      |> Enum.reject(fn {_label, sites} -> sites == [] end)
+
+    if problems == [] do
+      :ok
+    else
+      output =
+        Enum.map_join(problems, "\n", fn {label, sites} ->
+          "  #{label} (#{length(sites)}):\n" <>
+            Enum.map_join(sites, "\n", fn s -> "    #{s.target} — #{s.path}:#{s.line}" end)
+        end)
+
+      {:error, 13, "actor-internals boundary (SPEC 2026-07-23 §4):\n" <> output}
     end
   end
 

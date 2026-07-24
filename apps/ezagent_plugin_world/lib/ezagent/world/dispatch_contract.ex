@@ -16,7 +16,18 @@ defmodule Ezagent.World.DispatchContract do
       ~w(admin.registration.save admin.smtp.save admin.smtp.test admin.smtp.update_recipient external_mirror.bind external_mirror.unbind),
     workspace_plugin:
       ~w(profile.display_name.edit profile.display_name.save profile.display_name.cancel feishu.bind feishu.unbind workspace.member.remove workspace.invite.mint workspace.invite.revoke workspace.template.save kb.query kb.ingest auto_derive.default_source.set auto_derive.credential_grant.revoke),
-    market: ~w(market.install market.publish market.retract market.restore),
+    # market.retract / market.restore are SERVICE-ONLY (removed from the World
+    # surface): the governance retract/restore gate requires the synthetic
+    # `socialware:<name>` manage capability, whose subject is a string (not an
+    # openable authority) — it is constructed ONLY in a directly-built service ctx
+    # (`Ezagent.ConfigGovernance.Socialware.operator_admin_ctx/2`, manifest_yaml),
+    # never stored on a human principal. So no World user (admin included) can
+    # authorize retract/restore via `PresenterCaps.load/1` verified caps; the
+    # actions always failed `:unauthorized` and only ever "worked" via the now-
+    # removed mount-snapshot cap injection. Retract/restore stay available on the
+    # service path (`Socialware.retract/2`/`restore/2`, gate proven by session
+    # `Ezagent.Socialware.RetractTest`).
+    market: ~w(market.install market.publish),
     conversation:
       ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   }

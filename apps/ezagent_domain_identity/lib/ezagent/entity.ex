@@ -87,12 +87,10 @@ defmodule Ezagent.Entity do
   # demand-spawn path would silently produce an empty MapSet for any
   # user provisioned after boot.
   defp ensure_spawned(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} ->
-        :ok
-
-      :error ->
-        spawn_with_hydrated_caps(uri)
+    if Ezagent.Kind.alive?(uri) do
+      :ok
+    else
+      spawn_with_hydrated_caps(uri)
     end
   end
 

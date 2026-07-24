@@ -67,11 +67,14 @@ defmodule Ezagent.Agent.CredentialStatus do
   @spec classify(URI.t(), String.t() | nil, String.t() | nil, keyword()) :: result()
   def classify(%URI{} = agent_uri, flavor, config_dir, opts \\ []) do
     base = %{flavor: flavor, detail: nil, expires_at: nil, checked_at: DateTime.utc_now()}
+    # `:credential_slice` (§6.3) — a slice PRE-FETCHED by a directory's ONE
+    # `read_durable_many/3` batch; popped so it never leaks to the flavor probe.
+    {credential_slice, probe_opts} = Keyword.pop(opts, :credential_slice, :not_prefetched)
 
     probed =
       case flavor && Ezagent.AgentFlavorRegistry.lookup(flavor) do
         {:ok, %{template_class: tc}} when is_atom(tc) and tc != nil ->
-          classify_with_template_class(tc, agent_uri, config_dir, opts)
+          classify_with_template_class(tc, agent_uri, config_dir, probe_opts, credential_slice)
 
         _ ->
           # Unknown / unregistered flavor — cannot classify.
@@ -83,13 +86,13 @@ defmodule Ezagent.Agent.CredentialStatus do
 
   # ── flavor routing ────────────────────────────────────────────────
 
-  defp classify_with_template_class(tc, agent_uri, config_dir, opts) do
+  defp classify_with_template_class(tc, agent_uri, config_dir, opts, credential_slice) do
     cond do
       CredentialAdapter.credentialled?(tc) ->
         file_status(tc, config_dir, opts)
 
       CredentialSliceAdapter.credentialled?(tc) ->
-        slice_status(tc, agent_uri)
+        slice_status(tc, agent_uri, credential_slice)
 
       true ->
         # Credential-less flavor (py/echo/np) — no disk/slice read at all.
@@ -121,10 +124,18 @@ defmodule Ezagent.Agent.CredentialStatus do
   # durable snapshot for a cold agent — both non-activating. Never returns/masks a
   # plaintext key; only the key COUNT matters. curl is the sole slice-credentialled
   # flavor (per `CredentialAdapterContractTest`), so keying on `:keys` is exact.
-  defp slice_status(tc, agent_uri) do
-    slice_key = tc.credential_slice()
+  # `credential_slice` is `:not_prefetched` (single-agent callers → read the slice
+  # here, non-activating) OR a `{:ok, slice} | :error` already resolved by the
+  # DIRECTORY's ONE `read_durable_many/3` batch (§6.3 — render N rows with one
+  # durable query, never N per-agent reads).
+  defp slice_status(tc, agent_uri, credential_slice) do
+    resolved =
+      case credential_slice do
+        :not_prefetched -> read_credential_slice(agent_uri, tc.credential_slice())
+        prefetched -> prefetched
+      end
 
-    case read_credential_slice(agent_uri, slice_key) do
+    case resolved do
       {:ok, slice} when is_map(slice) ->
         keys = Map.get(slice, :keys) || Map.get(slice, "keys") || %{}
 
@@ -141,22 +152,21 @@ defmodule Ezagent.Agent.CredentialStatus do
     _ -> %{status: :unknown}
   end
 
-  # Live slice (non-activating: `get_slice` returns `:not_found` for a cold Kind,
-  # never spawns) → else the durable snapshot (also non-activating).
+  # Live slice (non-activating: `read/3` with `spawn: :never` returns the live
+  # slice or `{:error, :not_live}` for a cold Kind — never spawns, and is
+  # self-safe) → else the durable snapshot projection (also non-activating).
+  # §2.2 actor read surface (C2).
   defp read_credential_slice(agent_uri, slice_key) do
-    case Ezagent.Kind.get_slice(agent_uri, slice_key) do
+    case Ezagent.Kind.read(agent_uri, slice_key, spawn: :never) do
       {:ok, slice} when is_map(slice) -> {:ok, slice}
       _ -> snapshot_slice(agent_uri, slice_key)
     end
   end
 
   defp snapshot_slice(agent_uri, slice_key) do
-    case Ezagent.SnapshotStore.latest(agent_uri) do
-      {:ok, %{state: %{^slice_key => slice}}} when is_map(slice) ->
-        {:ok, Ezagent.Kind.normalize_slice_view(slice)}
-
-      _ ->
-        :error
+    case Ezagent.Kind.read_durable(agent_uri, slice_key) do
+      {:ok, slice, _meta} when is_map(slice) -> {:ok, slice}
+      _ -> :error
     end
   rescue
     _ -> :error

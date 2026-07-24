@@ -64,15 +64,13 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   end
 
   defp await_unregistered(uri, attempts) when attempts > 0 do
-    case Ezagent.KindRegistry.lookup(uri) do
-      :error ->
-        :ok
-
-      {:ok, _pid} ->
-        receive do
-        after
-          1 -> await_unregistered(uri, attempts - 1)
-        end
+    if Ezagent.Kind.alive?(uri) do
+      receive do
+      after
+        1 -> await_unregistered(uri, attempts - 1)
+      end
+    else
+      :ok
     end
   end
 

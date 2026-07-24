@@ -15,7 +15,7 @@ defmodule Ezagent.Workspace.Provisioning do
   runtime — no compile-time cycle (plain remote calls, not aliases/macros).
   """
 
-  alias Ezagent.{Cmd, KindRegistry, Router}
+  alias Ezagent.{Cmd, Router}
   alias Ezagent.Workspace
   alias Ezagent.Workspace.Store
 
@@ -138,26 +138,24 @@ defmodule Ezagent.Workspace.Provisioning do
   defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
     name = Ezagent.URI.name!(workspace_uri)
 
-    case KindRegistry.lookup(workspace_uri) do
-      {:ok, _pid} ->
-        :ok
+    if Ezagent.Kind.alive?(workspace_uri) do
+      :ok
+    else
+      case Store.get_by_name(name) do
+        nil ->
+          {:error, :workspace_not_found}
 
-      :error ->
-        case Store.get_by_name(name) do
-          nil ->
-            {:error, :workspace_not_found}
-
-          %{members: members, session_templates: templates, routing_rules: rules} ->
-            case Workspace.spawn_workspace(name, %{
-                   members: members,
-                   session_templates: templates,
-                   routing_rules: rules
-                 }) do
-              {:ok, _pid} -> :ok
-              {:error, {:already_started, _pid}} -> :ok
-              {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
-            end
-        end
+        %{members: members, session_templates: templates, routing_rules: rules} ->
+          case Workspace.spawn_workspace(name, %{
+                 members: members,
+                 session_templates: templates,
+                 routing_rules: rules
+               }) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
+          end
+      end
     end
   end
 

@@ -15,13 +15,20 @@ defmodule Ezagent.World.MarketActions do
       resolve;
     * publish (上架) routes through `DefinitionEditor.save_authored_definition/4`
       so the EXISTING #165 `authorize_public_scope_write` admin gate fires on
-      the caller's REAL actor URI + REAL caps (`PresenterCaps.load/1`);
-    * retract (下架) / restore (re-list) route through the GATED
-      `Ezagent.ConfigGovernance.Socialware.retract/2` / `restore/2` — never the
-      ungated `DefinitionRegistry.set_retracted/4` primitive.
+      the caller's REAL actor URI + REAL caps (`PresenterCaps.load/1`).
 
-  A denied publish/retract surfaces the gate's `{:error, ...}` LOUD in the UI
+  A denied publish surfaces the gate's `{:error, ...}` LOUD in the UI
   (`market_error` + an error dispatch status), never a silent no-op.
+
+  Retract (下架) / restore (re-list) are NOT World actions. They route through
+  `Ezagent.ConfigGovernance.Socialware.retract/2` / `restore/2`, whose gate
+  requires the synthetic `socialware:<name>` manage capability — a string-subject
+  cap with no openable authority, constructed ONLY in a directly-built service
+  ctx (`operator_admin_ctx/2`, manifest_yaml), never stored on a human principal.
+  No World presenter can hold it via `PresenterCaps.load/1` verified caps, so the
+  actions could never be legitimately authorized from the UI (they only "worked"
+  via the removed mount-snapshot cap injection). They are SERVICE-ONLY; the
+  admin-gate proof lives in session `Ezagent.Socialware.RetractTest`.
   """
 
   import Phoenix.Component, only: [assign: 3]
@@ -68,14 +75,6 @@ defmodule Ezagent.World.MarketActions do
 
   def handle_dispatch(socket, "market.publish", %{"name" => name}) when is_binary(name) do
     publish(socket, name)
-  end
-
-  def handle_dispatch(socket, "market.retract", %{"name" => name}) when is_binary(name) do
-    set_retracted(socket, name, true)
-  end
-
-  def handle_dispatch(socket, "market.restore", %{"name" => name}) when is_binary(name) do
-    set_retracted(socket, name, false)
   end
 
   def handle_dispatch(socket, _action, _args) do
@@ -140,44 +139,6 @@ defmodule Ezagent.World.MarketActions do
 
       :error ->
         {:error, {:unknown_socialware_definition, name}}
-    end
-  end
-
-  # 下架 / re-list — the GATED governance path (manage + admin authz inside
-  # `ConfigGovernance.Socialware`), threading the caller's REAL caps. NEVER the
-  # ungated `DefinitionRegistry.set_retracted/4` primitive (spec §15.2/§15.3).
-  defp set_retracted(socket, name, retracted?) do
-    workspace_uri = socket.assigns.current_workspace_uri
-    caller = socket.assigns.current_entity_uri
-    caps = Ezagent.World.PresenterCaps.load(socket)
-    # #195 authz: the world presenter's authenticated identity is the holder.
-    ctx = %{
-      caller: caller,
-      authenticated_principal: caller,
-      workspace_uri: workspace_uri,
-      caps: caps
-    }
-
-    result =
-      if retracted? do
-        Ezagent.ConfigGovernance.Socialware.retract(name, ctx)
-      else
-        Ezagent.ConfigGovernance.Socialware.restore(name, ctx)
-      end
-
-    action = if retracted?, do: "retract", else: "restore"
-
-    case result do
-      {:ok, _} ->
-        refresh_market(socket, "#{action}ed:#{name}", nil, "ok")
-
-      {:error, reason} ->
-        refresh_market(
-          socket,
-          nil,
-          "#{action}_failed:#{reason(reason)}",
-          "error:market_#{action}_failed"
-        )
     end
   end
 

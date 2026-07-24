@@ -95,7 +95,20 @@
   #   justified growth (not bloat); burn-down = extract the redaction helpers
   #   into a sibling module. 7→8 (on the #1445 seven-module baseline: the
   #   redaction adds server.ex as the eighth oversized module).
-  oversized_modules_gt_1000: 8,
+  # arch-cap-bump: +1 actor-extraction C0 (spec 2026-07-23 §2.2) — the public
+  #   actor read surface (read/3, read_classified/2, read_durable/3 +
+  #   read_durable_many/3, resolve_action_subject/2, alive?/1, self?/1,
+  #   list_instances/0) MUST live on `Ezagent.Kind` per §2.2, and kind.ex sat at
+  #   exactly 995 LOC (zero headroom), so the additive surface pushed it 995 →
+  #   ~1203, crossing >1000 as the ninth oversized module. This is ACCEPTED
+  #   documented debt, NOT an automatic disappearance: the LOC counter scans
+  #   `apps/*/lib/**/*.ex` globally, so C5 relocating kind.ex into `ezagent_actor`
+  #   (still under `apps/*/lib`) does NOT drop the count, and C7's small
+  #   `get_slice` delegate removal does not get kind.ex back under 1000. The real
+  #   burn-down is a module split (extract the §2.2 read surface into a sibling
+  #   `Ezagent.Kind.Read` once callers have migrated), tracked for a later chunk.
+  #   8→9.
+  oversized_modules_gt_1000: 9,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
@@ -496,6 +509,28 @@
   #   the existing dotted `Ezagent.Agent.Recipe*` cluster); any NEW glued module
   #   that is not sanctioned trips this.
   concatenated_namespace_modules: 0,
+  # no_hardcoded_seed_principal (2026-07-24, Allen) — socialware & seed
+  # provisioning must create a user/workspace (or grant ownership) with an
+  # EXISTING env-provided user identity, NEVER a principal baked into source. The
+  # AST gate flags a `Users.create` / `Workspace.create` / `create_user` /
+  # `create_workspace` / `founder_join` / `grant_owner` call whose args carry a
+  # hardcoded principal (a literal `entity://`/`user://`/email, an `admin_uri()`
+  # accessor, or an inline `Ezagent.URI.user(:system, :admin)` construction); the
+  # env/runtime-resolved good pattern (`%{created_by: founder_uri}` /
+  # `Ezagent.URI.user(workspace, slug)` — VAR args) is NOT flagged.
+  #
+  # GRANDFATHERED at 1 (gate-first, mirrors socialware_priv_manifest_files): the
+  # sole current hit is `EzagentPluginHello.CredentialBridge.ensure_workspace/1`
+  # (`Workspace.create(home, %{created_by: User.admin_uri()})`), the DeepSeek
+  # deploy-key credential bridge that #1557 DELETES ("remove deploy-key injection
+  # / delete CredentialBridge"). It is left ledgered — not `# arch-allow:`ed — so
+  # a NEW hardcoded-principal create trips the gate (count 2 > cap 1), and the
+  # cap ratchets 1→0 when #1557 lands. The genesis system-workspace bootstrap
+  # (im application.ex, `Workspace.create("system", %{created_by: admin})`) is
+  # the load-bearing boot invariant and is `# arch-allow:`ed at its call site
+  # (excluded from this count), matching the genesis-admin exception.
+  # migrate under #1557
+  no_hardcoded_seed_principal: 1,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

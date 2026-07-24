@@ -36,6 +36,15 @@ Ezagent(Session Router)— Elixir/OTP message router runtime,multi-channel → m
 
 完整集 + CI gate + 触发的 Decision Log 编号都在 SKILL。
 
+## 安全姿态(开发期 · Allen 2026-07-24)
+
+当前功能快速迭代期,**功能完善 >> 安全需求**。代码大多 in-VM 执行(尚未全量引入外部插件),不需要复杂防御机制。
+
+- **唯一确定必要的安全机制 = caps-based access control**(业务必须:靠"持有哪些 caps"区分使用者)。其当前主要目的是**防漂移**:没有签名/密钥时,开发者(人或 Agent)能构造假 admin caps 绕过 authz,让功能"可用但业务逻辑错";签名后必须想清"谁用、如何授权"→ 业务逻辑才对。这类加固**保留**。
+- 实施功能时**不要内联引入 caps 正确性以外的安全代码**。其它安全关切拆到**统一/中央机制**解决,不在功能 PR 里逐个做(不同方向的加固/workaround 会相互冲突)。
+- 非"防漂移 / caps 正确性"动机的安全机制,加之前**先与人类开发者确认必要性**;若必要,问是否应统一实现。若某安全机制**挡住当前功能,考虑下线它,而非强行 workaround**。
+- **对抗性评审据此校准**:判"是否正确实现业务逻辑 + 是否正确用 caps",而非"攻击安全"。撤销-TOCTOU 等源自已推迟的 revocation-completeness 缺口的理论边界**不作 merge 阻塞**——归统一安全轨(见 memory `feedback_security_posture_dev_phase`)。
+
 ## Behavior contract(2026-05-28 重写)
 
 写任何 Behavior / Kind 代码前必读:`.claude/skills/ezagent-developer/references/new-contract.md`(Router / Behavior / Kind self-built architecture,SPEC PR #445)。

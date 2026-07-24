@@ -646,6 +646,214 @@ defmodule Ezagent.Kind do
   @spec normalize_slice_view(term()) :: term()
   defdelegate normalize_slice_view(slice), to: Ezagent.Kind.SliceAccess
 
+  # ================================================================
+  # SPEC 2026-07-23 §2.2 — actor-extraction PUBLIC READ SURFACE (C0)
+  # ================================================================
+  # Eight ADDITIVE entry points. Everything outside the future `ezagent_actor`
+  # app must touch actor state ONLY through this surface; the boundary gate
+  # (`test/invariants/actor_internals_boundary_test.exs`) enforces it. Each
+  # wrapper COMPOSES existing internals with ZERO behavior change — existing
+  # reach-in callers are NOT migrated here (later chunks C1–C6 do that).
+
+  @doc """
+  The authoritative read (§2.2). Returns a slice's consumer-facing value,
+  spawning from durable state if the Kind is cold-but-created.
+
+  1. Live process → the normalized live slice (exactly `get_slice/2`).
+  2. Cold but durably created → lazy-spawn via the framework's own rehydration
+     path (`SpawnRegistry.ensure_live/1`, which refuses never-created URIs),
+     await `ReadyGate`, then read live.
+  3. Never durably created → `{:error, :not_created}`.
+  4. Self-safe: when the caller IS the target's own process, a `GenServer.call`
+     to self would deadlock, so the durable projection is served instead
+     (correct for `{:snapshot, :on_change}` Kinds; the persisted view for others,
+     same as today's `load_persisted` escape).
+  5. `opts[:spawn]` — `:ensure` (default) lazy-spawns cold Kinds; `:never`
+     returns `{:error, :not_live}` for probe-style callers that want only LIVE
+     state (use `read_durable/3` for durable state without spawning).
+  """
+  @spec read(URI.t() | String.t(), atom(), keyword()) ::
+          {:ok, term()} | {:error, :not_created | :not_live | term()}
+  def read(uri, slice_key, opts \\ []) when is_atom(slice_key) and is_list(opts) do
+    spawn_mode = Keyword.get(opts, :spawn, :ensure)
+
+    cond do
+      self?(uri) ->
+        case read_durable(uri, slice_key) do
+          {:ok, value, _meta} -> {:ok, value}
+          {:error, reason} -> {:error, reason}
+        end
+
+      true ->
+        case get_slice(uri, slice_key) do
+          {:ok, slice} -> {:ok, slice}
+          {:error, :not_found} -> read_cold(uri, slice_key, spawn_mode)
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp read_cold(_uri, _slice_key, :never), do: {:error, :not_live}
+
+  defp read_cold(uri, slice_key, :ensure) do
+    case Ezagent.SpawnRegistry.ensure_live(to_uri(uri)) do
+      {:ok, _live_or_rehydrated} ->
+        # The actor MUST reach :ready before its slice is read — a rehydrated
+        # actor whose post_init has not completed holds stale/empty state. A
+        # readiness timeout is PROPAGATED, never papered over by reading a
+        # non-ready actor (`ReadyGate.await/2` → `{:error, :timeout}`,
+        # ready_gate.ex:134).
+        case Ezagent.ReadyGate.await(uri) do
+          :ok ->
+            case get_slice(uri, slice_key) do
+              {:ok, slice} -> {:ok, slice}
+              {:error, :not_found} -> {:error, :not_live}
+              {:error, reason} -> {:error, reason}
+            end
+
+          {:error, reason} ->
+            {:error, {:not_ready, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  The authz-grade read (§2.2) — 3-way classification with bounded retry and
+  `:not_found` durable-existence disambiguation. The generalization of
+  `SliceAccess.read_identity_caps/1`; preserves the fail-LOUD-not-deny contract
+  as a public primitive so the cap layer stops needing private slice/snapshot
+  access. Does NOT spawn. Delegates to `Ezagent.Kind.SliceAccess`.
+  """
+  @spec read_classified(URI.t() | String.t(), atom()) ::
+          {:ok, term()} | :absent | {:transient, term()}
+  defdelegate read_classified(uri, slice_key), to: Ezagent.Kind.SliceAccess
+
+  @doc """
+  The durable projection for a single URI (§2.2). NEVER consults the live
+  process — the answer is the snapshot row (decode + `normalize_slice_view/1`),
+  deterministic and agreeing with `read_durable_many/3` by construction (same
+  row, same decode). `{:ok, value, meta}` carries the row's `version` +
+  `updated_at` so staleness is reasoned about explicitly at the call site.
+  `{:error, :not_created}` when there is no durable row (including a live Kind
+  whose policy has produced none yet — transients are absent by definition).
+  """
+  @spec read_durable(URI.t() | String.t(), atom(), keyword()) ::
+          {:ok, term(), %{version: integer(), updated_at: DateTime.t()}}
+          | {:error, :not_created | term()}
+  def read_durable(uri, slice_key, opts \\ []) when is_atom(slice_key) and is_list(opts) do
+    case Ezagent.Ecto.KindSnapshot.get(uri_to_string(uri)) do
+      nil -> {:error, :not_created}
+      row -> project_durable_row(row, slice_key)
+    end
+  end
+
+  @doc """
+  The batch durable projection — the list plane (§2.2). ONE store query over the
+  snapshot rows (never per-URI spawns / GenServer calls / live overlay), a single
+  consistent durable view. Per-URI results carry the same `meta` as `read_durable/3`;
+  a URI with no durable row maps to `{:error, :not_created}`. Rendering N rows
+  costs one query.
+  """
+  @spec read_durable_many([URI.t() | String.t()], atom(), keyword()) ::
+          %{
+            optional(URI.t() | String.t()) =>
+              {:ok, term(), %{version: integer(), updated_at: DateTime.t()}}
+              | {:error, :not_created | term()}
+          }
+  def read_durable_many(uris, slice_key, opts \\ [])
+      when is_list(uris) and is_atom(slice_key) and is_list(opts) do
+    rows_by_uri =
+      uris
+      |> Enum.map(&uri_to_string/1)
+      |> Ezagent.Ecto.KindSnapshot.get_many()
+      |> Map.new(&{&1.uri, &1})
+
+    Map.new(uris, fn uri ->
+      result =
+        case Map.get(rows_by_uri, uri_to_string(uri)) do
+          nil -> {:error, :not_created}
+          row -> project_durable_row(row, slice_key)
+        end
+
+      {uri, result}
+    end)
+  end
+
+  # Shared projection so single + batch durable reads agree by construction.
+  defp project_durable_row(row, slice_key) do
+    case Ezagent.Ecto.KindSnapshot.decode_state(row) do
+      {:ok, state} ->
+        value = normalize_slice_view(Map.get(state, slice_key))
+        {:ok, value, %{version: row.version || 0, updated_at: row.updated_at}}
+
+      :error ->
+        {:error, :not_created}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  @doc """
+  Resolve which `{kind_module, behavior_module}` handles `action` on the live
+  target (§2.2). Runs the behavior-set resolution INSIDE the actor and returns
+  ONLY the two module atoms — never the slice map. The purpose-specific
+  replacement for the raw `runtime_view` reach-through. Does NOT spawn;
+  `{:error, :not_live}` when cold.
+  """
+  @spec resolve_action_subject(URI.t() | String.t() | pid(), atom()) ::
+          {:ok, {module(), module()}} | {:error, :not_live | term()}
+  def resolve_action_subject(pid, action) when is_pid(pid) and is_atom(action),
+    do: GenServer.call(pid, {:ezagent_resolve_action_subject, action}, 5_000)
+
+  def resolve_action_subject(uri, action) when is_atom(action) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} -> resolve_action_subject(pid, action)
+      :error -> {:error, :not_live}
+    end
+  end
+
+  @doc """
+  Is the Kind for `uri` alive on this (its owner) runtime? (§2.2 — today
+  `LocalRuntime.kind_alive?/1`, owner-gated.)
+  """
+  @spec alive?(URI.t()) :: boolean()
+  def alive?(%URI{} = uri), do: Ezagent.LocalRuntime.kind_alive?(uri)
+
+  @doc """
+  Am I (the calling process) the target URI's own Kind process? (§2.2) — the
+  self-detection the `EntityCaps` self-read case needs to avoid a self-call
+  deadlock. `false` when no live process is registered for `uri`.
+  """
+  @spec self?(URI.t() | String.t()) :: boolean()
+  def self?(uri) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} -> pid == self()
+      :error -> false
+    end
+  end
+
+  @doc """
+  List every live Kind instance as `{uri_string, meta}` (§2.2 — the operator
+  plane; the sole sanctioned `KindRegistry.list_all/0` wrapper). `meta` carries
+  the registered `pid`.
+  """
+  @spec list_instances() :: [{String.t(), %{pid: pid()}}]
+  def list_instances do
+    Enum.map(Ezagent.KindRegistry.list_all(), fn {uri_str, pid} ->
+      {uri_str, %{pid: pid}}
+    end)
+  end
+
+  defp to_uri(%URI{} = uri), do: uri
+  defp to_uri(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
+
+  defp uri_to_string(%URI{} = uri), do: URI.to_string(uri)
+  defp uri_to_string(uri) when is_binary(uri), do: uri
+
   @doc "Return the live Kind metadata and slice map without private framework authority state."
   @spec runtime_view(pid() | URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
   def runtime_view(pid) when is_pid(pid), do: GenServer.call(pid, :ezagent_runtime_view, 5_000)
