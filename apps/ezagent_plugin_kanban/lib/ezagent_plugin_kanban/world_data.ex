@@ -102,7 +102,9 @@ defmodule EzagentPluginKanban.WorldData do
   @spec session_state_for(URI.t(), map()) :: map()
   def session_state_for(%URI{} = session_uri, ctx) do
     boards = session_boards(session_uri, ctx)
-    base = %{"instances" => boards}
+    # session_uri 透传给前端 renderer：kanban 附件上传走通用 /world/uploads 端点需带
+    # session（renderer 内 uploadForKanban 从 state.session_uri 读，不再依赖宿主注入）。
+    base = %{"instances" => boards, "session_uri" => URI.to_string(session_uri)}
 
     with [%{"uri" => uri} | _] when is_binary(uri) <- boards,
          {:ok, %URI{} = board_uri} <- Ezagent.URI.parse(uri) do

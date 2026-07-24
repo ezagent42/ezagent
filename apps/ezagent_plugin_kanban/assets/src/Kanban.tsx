@@ -46,6 +46,9 @@ export type KanbanState = {
   // 登录者身份 URI（session tab 的 conversation state 自带；插件配置面没有也无妨——
   // 配置面不出节点操作 UI）。协作模型规则 3/4 的「自己认领的节点」判定用它。
   caller_uri?: string | null
+  // 当前会话 URI（WorldData.session_state_for 透传）——renderer 内附件上传直连
+  // 通用 /world/uploads 端点要带 session 参数；插件配置面没有（不出附件入口）。
+  session_uri?: string | null
 }
 
 type Act = (action: string, args: Record<string, unknown>) => void
@@ -53,7 +56,36 @@ type Act = (action: string, args: Record<string, unknown>) => void
 const inputCls =
   "rounded-md border border-border bg-background px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
 
-type UploadFn = (file: File) => Promise<{grant: string; name: string} | null>
+// 附件上限：与 world chat 附件同一约束（Conversation 的 MAX_FILE_BYTES 同值）。
+const MAX_FILE_BYTES = 10 * 1024 * 1024
+
+// ㉗④ kanban 节点「附件」产物：直连平台通用 uploads 通道（与 chat 附件同一
+// cap-authed 端点 /world/uploads）——renderer 自包含，不再依赖宿主注入 onUploadFile
+// （#1531/#1569 后 world 前端是纯通用宿主）。session 取 state.session_uri
+// （WorldData.session_state_for 透传）。失败/超限回 null（面板就地提示）。
+async function uploadForKanban(
+  sessionUri: string | null | undefined,
+  file: File,
+): Promise<{grant: string; name: string} | null> {
+  if (!sessionUri || file.size > MAX_FILE_BYTES) return null
+  const csrf = document.querySelector("meta[name='csrf-token']")?.getAttribute("content") || ""
+  const form = new FormData()
+  form.append("session", sessionUri)
+  form.append("file", file)
+  try {
+    const res = await fetch("/world/uploads", {
+      method: "POST",
+      headers: {"x-csrf-token": csrf},
+      body: form,
+      credentials: "same-origin",
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as {name?: string; grant?: string}
+    return data.grant ? {grant: data.grant, name: data.name || file.name} : null
+  } catch {
+    return null
+  }
+}
 
 // ㊳ 渲染兜底：绝对 URL（任意 scheme）与站内路径（"/" 开头，如 uploads 下载 href）
 // 原样返回；无 scheme 的裸域名补 https://——绝不拼站点 base（存量旧数据在存储侧
@@ -67,7 +99,6 @@ export function Kanban({
   state,
   onAction = () => undefined,
   onShareArtifact,
-  onUploadFile,
   mode = "operate",
 }: {
   state: KanbanState
@@ -77,7 +108,6 @@ export function Kanban({
   // 类型合法；本组件不再消费它。world 走 manifest 后不传，此 prop 可在后续清理删除。
   onShare?: (kanbanUri: string) => void
   onShareArtifact?: (name: string, url: string) => void
-  onUploadFile?: UploadFn
   // "operate"（默认，会话 tab 用）：有 kanban_uri 就渲富操作面 KanbanDetail。
   // "config"（插件页 /plugins/kanban 用）：只渲配置面 KanbanList（Miro 凭证；GitHub
   // 走独立 gh 插件，看板不登记 token），不出操作 UI——建树/认领/编辑都在会话 tab 里做。
@@ -86,7 +116,7 @@ export function Kanban({
 }) {
   if (mode === "config") return <KanbanList state={state} onAction={onAction} />
   return state.kanban_uri ? (
-    <KanbanDetail state={state} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
+    <KanbanDetail state={state} onAction={onAction} onShareArtifact={onShareArtifact} />
   ) : (
     // 空会话 tab（零块板）：给「建第一块板」入口（showCreate），不再只有 Miro 配置。
     <KanbanList state={state} onAction={onAction} showCreate />
@@ -164,7 +194,7 @@ function KanbanList({state, onAction, showCreate = false}: {state: KanbanState; 
   )
 }
 
-function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: KanbanState; onAction: Act; onShareArtifact?: (name: string, url: string) => void; onUploadFile?: UploadFn}) {
+function KanbanDetail({state, onAction, onShareArtifact}: {state: KanbanState; onAction: Act; onShareArtifact?: (name: string, url: string) => void}) {
   const uri = state.kanban_uri as string
   const tree = state.tree || {nodes: {}, root_id: null}
   const statuses = state.statuses || ["claimed", "doing", "done"]
@@ -173,6 +203,17 @@ function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: 
   const [rootTitle, setRootTitle] = useState("")
   const [newName, setNewName] = useState("")
   const [selectedId, setSelectedId] = useState<string | null>(tree.root_id)
+  // 分享两选项 chooser（Option A 先选后弹）：点「分享」先出本地小浮层——
+  // 「复制链接」走 kanban.share_board（后端回推 world:state.share_link，world 通用
+  // modal 自动弹复制，本 renderer 不再自渲链接 modal，避免双弹）；「分享到会话」走
+  // kanban.share_to_session（不推 share_link，本地 toast 确认）。
+  const [shareOpen, setShareOpen] = useState(false)
+  const [sharedToast, setSharedToast] = useState(false)
+  useEffect(() => {
+    if (!sharedToast) return
+    const t = window.setTimeout(() => setSharedToast(false), 3000)
+    return () => window.clearTimeout(t)
+  }, [sharedToast])
 
   // 切 board / 树变化后，选中节点若已不存在则回退到根
   useEffect(() => {
@@ -200,7 +241,7 @@ function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: 
           <h2 className="truncate text-base font-semibold text-foreground">看板 · {uri.split("/").pop()}</h2>
         </div>
         <div className="flex flex-shrink-0 items-center gap-1.5">
-          <Button type="button" size="sm" variant="secondary" title="生成只读分享链接" onClick={() => onAction("kanban.share_board", {kanban_uri: uri})}>
+          <Button type="button" size="sm" variant="secondary" title="分享看板（复制链接 / 分享到会话）" data-world-kanban-share onClick={() => setShareOpen((v) => !v)}>
             <Send className="h-4 w-4" /> 分享
           </Button>
           {/* 规则8：非板主人（instances 行 owned=false）出「申请编辑」入口——
@@ -235,6 +276,51 @@ function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: 
           </Button>
         </div>
       </div>
+      {/* 分享 chooser：fixed 小浮层（renderer 在 full-bleed 家族），点空白处关闭 */}
+      {shareOpen && (
+        <div className="fixed inset-0 z-50" onClick={() => setShareOpen(false)}>
+          <div
+            className="absolute right-5 top-16 flex w-64 flex-col gap-1 rounded-md border border-border bg-card p-2 shadow-lg"
+            data-world-kanban-share-chooser
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="rounded px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+              data-world-kanban-share-copy
+              onClick={() => {
+                onAction("kanban.share_board", {kanban_uri: uri})
+                setShareOpen(false)
+              }}
+            >
+              复制链接
+              <span className="block text-xs text-muted-foreground">生成只读接收链接，弹窗里复制后发给任何人</span>
+            </button>
+            <button
+              type="button"
+              className="rounded px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted"
+              data-world-kanban-share-session
+              onClick={() => {
+                onAction("kanban.share_to_session", {kanban_uri: uri})
+                setShareOpen(false)
+                setSharedToast(true)
+              }}
+            >
+              分享到会话
+              <span className="block text-xs text-muted-foreground">把看板分享气泡发进当前会话</span>
+            </button>
+          </div>
+        </div>
+      )}
+      {sharedToast && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-md bg-foreground px-3 py-1.5 text-sm text-background shadow-lg"
+          data-world-kanban-share-toast
+          role="status"
+        >
+          已分享到会话
+        </div>
+      )}
       {state.miro_board_url && (
         <a className="inline-flex items-center gap-1 text-sm text-primary hover:underline" href={state.miro_board_url} target="_blank" rel="noreferrer">
           <ExternalLink className="h-3.5 w-3.5" /> 打开 Miro 看板
@@ -318,7 +404,7 @@ function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: 
           <div className="flex flex-shrink-0 flex-col rounded-md border border-border p-2">
             <div className="mb-1.5 text-xs font-semibold text-muted-foreground">节点属性</div>
             {sel ? (
-              <NodePanel node={sel} args={nodeArgs} stages={allowedStages} statuses={statuses} callerUri={state.caller_uri} dropEntries={dropHistoryFor(tree, selectedId)} onAction={onAction} onShareArtifact={onShareArtifact} onUploadFile={onUploadFile} />
+              <NodePanel node={sel} args={nodeArgs} stages={allowedStages} statuses={statuses} callerUri={state.caller_uri} sessionUri={state.session_uri} dropEntries={dropHistoryFor(tree, selectedId)} onAction={onAction} onShareArtifact={onShareArtifact} />
             ) : (
               <p className="text-xs text-muted-foreground">点画布里的节点查看/编辑属性。</p>
             )}
@@ -358,17 +444,18 @@ function KanbanDetail({state, onAction, onShareArtifact, onUploadFile}: {state: 
 // * 规则 4：编辑控件只对认领人自己显示（版主由后端兜底放行；state 暂无 board owner
 //   字段，前端只按 node owner 判——版主看他人节点为只读展示）。
 // * 规则 5：删除 = 删整棵子树；子树含他人认领节点后端拒 forbidden_mixed_ownership。
-function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], onAction, onShareArtifact, onUploadFile}: {
+function NodePanel({node, args, stages, statuses, callerUri, sessionUri, dropEntries = [], onAction, onShareArtifact}: {
   node: Node
   args: Record<string, unknown>
   stages: string[]
   statuses: string[]
   callerUri?: string | null
+  // 当前会话 URI（附件上传 /world/uploads 要带 session；无会话上下文不出附件入口）
+  sessionUri?: string | null
   // ㉕ 本节点适用的 drop 记录（自己或祖先被 drop 的理由+历史，KanbanDetail 算好传入）
   dropEntries?: DropEntry[]
   onAction: Act
   onShareArtifact?: (name: string, url: string) => void
-  onUploadFile?: UploadFn
 }) {
   const owner = node.owner ? node.owner.split("/").pop() : null
   const selectCls = "rounded border border-border bg-background px-1 py-0.5 text-xs text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
@@ -410,11 +497,12 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
       fileRef.current?.click()
     }
   }
-  // 附件 = 平台 uploads 通道（与 chat 附件同一端点）：拿 grant → attach_upload 挂节点
+  // 附件 = 平台 uploads 通道（与 chat 附件同一端点）：renderer 内直连 /world/uploads
+  // 拿 grant → attach_upload 挂节点（不再依赖宿主注入 onUploadFile）。
   const handleFile = async (file: File | undefined) => {
-    if (!file || !onUploadFile) return
+    if (!file) return
     setUploadErr(null)
-    const r = await onUploadFile(file)
+    const r = await uploadForKanban(sessionUri, file)
     if (r) onAction("kanban.attach_upload", {...args, grant: r.grant, name: r.name})
     else setUploadErr("上传失败，请重试")
   }
@@ -613,7 +701,7 @@ function NodePanel({node, args, stages, statuses, callerUri, dropEntries = [], o
               <option value="link">链接</option>
               <option value="content">内容</option>
               <option value="excalidraw">画图</option>
-              {onUploadFile && <option value="file">附件</option>}
+              {sessionUri && <option value="file">附件</option>}
             </select>
             <Button type="button" size="sm" variant="secondary" onClick={addArtifact}>
               <Plus className="h-3.5 w-3.5" /> 添加

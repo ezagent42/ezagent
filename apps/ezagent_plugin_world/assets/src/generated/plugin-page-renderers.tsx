@@ -2,6 +2,8 @@
 import type {ComponentType} from "react"
 import type {UnfurlRendererEntry} from "../components/unfurl"
 import {KanbanWorldPage as Renderer0} from "../../../../ezagent_plugin_kanban/assets/src/world_page"
+import {KanbanShareBubble as Unfurl0} from "../../../../ezagent_plugin_kanban/assets/src/unfurl_bubbles"
+import {KanbanRequestEditBubble as Unfurl1} from "../../../../ezagent_plugin_kanban/assets/src/unfurl_bubbles"
 
 export type PluginPageRendererProps = {
   component: {id: string; type: string}
@@ -15,4 +17,7 @@ export const pluginPageRenderers: Record<string, ComponentType<PluginPageRendere
 
 export const pluginPageFullBleedFamilies = new Set<string>(["kanban"])
 
-export const pluginUnfurlRenderers: UnfurlRendererEntry[] = []
+export const pluginUnfurlRenderers: UnfurlRendererEntry[] = [
+  {id: "kanban_share", pattern: new RegExp("(?:https?://[^\\s\"'）)]*)?/socialware/kanban/receive\\?token=[A-Za-z0-9._~%-]+"), component: Unfurl0},
+  {id: "kanban_request_edit", pattern: new RegExp("(?:https?://[^\\s\"'）)]*)?/plugins/kanban/request-edit\\?[A-Za-z0-9._~%=&-]+"), component: Unfurl1}
+]

@@ -208,7 +208,30 @@ defmodule EzagentPluginKanban.Application do
           source: "assets/src/world_page.tsx",
           export: "KanbanWorldPage",
           full_bleed: true
-        }
+        },
+        # world 通用链接 unfurl（#1569）：chat 消息命中 pattern（正则 source，JS 侧
+        # `new RegExp/1` 编译）时渲成本插件的气泡组件（`unfurl_bubbles.tsx`），
+        # 点击动作走 world:dispatch。两条：
+        #   * kanban_share —— `KanbanActions.build_share_link` 生成的
+        #     `/socialware/kanban/receive?token=...` 接收链接（㉙「分享到会话」物化
+        #     的消息与手工粘贴走同一条渲染路）→「加入我的看板」气泡。
+        #   * kanban_request_edit —— 规则8 `kanban.request_edit` 物化的
+        #     `/plugins/kanban/request-edit?board=..&grantee=..` 伪链接 →
+        #     「批准编辑」气泡（授权在后端，按钮只是入口）。
+        unfurl: [
+          %{
+            id: "kanban_share",
+            pattern:
+              "(?:https?://[^\\s\"'）)]*)?/socialware/kanban/receive\\?token=[A-Za-z0-9._~%-]+",
+            renderer: %{source: "assets/src/unfurl_bubbles.tsx", export: "KanbanShareBubble"}
+          },
+          %{
+            id: "kanban_request_edit",
+            pattern:
+              "(?:https?://[^\\s\"'）)]*)?/plugins/kanban/request-edit\\?[A-Za-z0-9._~%=&-]+",
+            renderer: %{source: "assets/src/unfurl_bubbles.tsx", export: "KanbanRequestEditBubble"}
+          }
+        ]
       }
     ]
   end
