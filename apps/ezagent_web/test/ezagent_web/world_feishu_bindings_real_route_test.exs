@@ -68,9 +68,8 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     CapHelper.signed_action_cap!(target, grantee)
   end
 
-  # Seed a binding directly through the formal dispatch adapter (canonical
-  # admin auto-mint), bypassing the LiveView route — used to set up fixture
-  # rows a test then reads/leaks-checks/unbinds through the REAL route.
+  # Seed a binding through the admin-operator seam — test-only fixture,
+  # not a production authorization path (DEFERRED B2-auth).
   defp seed_binding!(%URI{} = workspace_uri, open_id, %URI{} = user_uri) do
     admin = User.admin_uri()
 
@@ -432,16 +431,13 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
-    test "BindingPolicy failure never reported ok — dispatch errors surface as stable codes, never 'ok'",
+    test "dispatch error never reported ok — any cap/workspace/args denial returns honest error status",
          %{conn: conn} do
-      # Every dispatch error path in this file (unauthorized,
-      # cross_workspace_denied, invalid_args, not_entity_uri) proves
-      # "dispatch error → World doesn't report ok".  The Behavior's
-      # apply_policy_or_rollback helper is currently unreachable for
-      # valid entity://user URIs (User Kind spawn always succeeds);
-      # deterministic rollback-through-policy requires a controlled
-      # failure seam (B1 Phase 3).  This test pins the WORLD-LAYER
-      # half of the contract: ANY dispatch error → honest status.
+      # Proves the WORLD-LAYER contract: ANY dispatch error → honest
+      # error status, never "ok".  The specific BindingPolicy-failure
+      # proof requires a controlled failure seam (B1 Phase 3 / B2-auth
+      # deferred) — the deterministic rollback-through-policy path
+      # is currently unreachable for valid entity://user URIs.
       ws = new_ws!()
       caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/nocap-#{uniq()}")
       create_read_only_user!(caller, [])
@@ -500,6 +496,10 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     end
   end
 
+  # DEFERRED B2-auth: the admin-operator seam (`with_admin_operator`) tested
+  # here is the existing sanctioned convenience, not a permanent authorization
+  # scheme.  A later B2-auth slice will replace it with real operator-cap
+  # acquisition and signed-cap minting.
   describe "canonical admin convenience" do
     test "canonical admin completes bind→visible→unbind through the admin-operator seam", %{
       conn: conn

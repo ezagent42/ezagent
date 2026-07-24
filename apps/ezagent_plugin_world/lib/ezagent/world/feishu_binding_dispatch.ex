@@ -70,6 +70,11 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   """
   @spec list_for_initial_state(URI.t(), URI.t(), Enumerable.t()) ::
           {:ok, [map()]} | {:error, error_code()}
+  # DEFERRED B2-auth: the `with_admin_operator` convenience and the
+  # `canonical_admin?/1` predicate below are NOT a permanent authorization
+  # scheme — they are the existing sanctioned seam (`world_live.ex` already
+  # wraps every `world:dispatch` handler in it).  A later thin B2-auth
+  # slice will replace this with real operator-cap acquisition.
   def list_for_initial_state(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri, caps) do
     if canonical_admin?(caller_uri) do
       Invocation.with_admin_operator(caller_uri, fn ->
