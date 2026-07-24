@@ -1,17 +1,12 @@
 defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
   @moduledoc """
-  Handoff B1 — Phase 0 boot dispatch feasibility gate.
+  Deferred future B-layer boot-dispatch acceptance evidence.
 
-  Proves, with a REAL dispatch (not a unit-level handler call), that a
-  boot-time seed importer running at the same point in the timeline as
-  `EzagentPluginFeishu.Application.after_boot/0` (i.e. immediately AFTER
-  `Ezagent.Workspace.Loader.load_all/0`) can bind a Feishu open_id through
-  the canonical `EzagentPluginFeishu.Behavior.UserBinding` `:bind` action
-  using ONLY the existing canonical-admin operator/action-cap seam
-  (`Ezagent.Invocation.with_admin_operator/2` +
-  `Ezagent.Invocation.materialize_admin_action_cap/1` internals) — no raw
-  storage call, no direct handler invocation, no empty-caps special case,
-  and no new system principal.
+  This module records the acceptance requirements for a future runtime
+  operator/boot-authorization integration. It is intentionally skipped while
+  main authorization semantics are unsettled and is NOT current
+  permission-neutral B1 green evidence. The current B1 contract instead
+  requires configured seeds without that integration to fail closed.
 
   Mission checklist (handoff §4 Phase 0):
   1. UserBinding actions are registered              — asserted directly.
@@ -34,6 +29,8 @@ defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
   """
 
   use EzagentCore.DataCase, async: false
+
+  @moduletag :skip
 
   alias Ezagent.{Invocation, KindRegistry}
   alias EzagentPluginFeishu.Behavior.UserBinding, as: UserBindingBehavior

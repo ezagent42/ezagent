@@ -24,6 +24,21 @@ defmodule EzagentPluginFeishu.Integration.BootSeedWiringTest do
     Path.join([plugins_dir, "feishu", "initial_user_bindings.yaml"])
   end
 
+  defp write_real_seed_file!(content) do
+    path = seed_file_path()
+    previous = File.read(path)
+
+    File.mkdir_p!(Path.dirname(path))
+    File.write!(path, content)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, body} -> File.write!(path, body)
+        {:error, :enoent} -> File.rm(path)
+      end
+    end)
+  end
+
   describe "path resolution" do
     test "FsResolver returns a real path" do
       path = seed_file_path()
@@ -36,6 +51,22 @@ defmodule EzagentPluginFeishu.Integration.BootSeedWiringTest do
     test "UserBindingSeed.run/1 on a nonexistent path returns {:ok, :absent}" do
       nonexistent = "/tmp/nonexistent-feishu-seed-#{System.unique_integer([:positive])}.yaml"
       assert {:ok, :absent} = UserBindingSeed.run(nonexistent)
+    end
+  end
+
+  describe "Application.after_boot/0 configured seed without boot authorization" do
+    test "raises an explicit fail-closed executor/authorization error" do
+      write_real_seed_file!("""
+      bindings:
+        - open_id: "ou_boot_auth_deferred"
+          user_uri: "entity://team-alpha/user/alice"
+      """)
+
+      Application.delete_env(:ezagent_plugin_feishu, :seed_executor)
+
+      assert_raise RuntimeError, ~r/seed executor\/boot authorization is not configured/, fn ->
+        EzagentPluginFeishu.Application.after_boot()
+      end
     end
   end
 

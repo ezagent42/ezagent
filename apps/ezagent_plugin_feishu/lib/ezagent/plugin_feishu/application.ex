@@ -188,6 +188,11 @@ defmodule EzagentPluginFeishu.Application do
                 "but seed is not enabled. Set `config :ezagent_plugin_feishu, :seed_enabled, true` " <>
                 "after auth integration (deferred)."
 
+      {:error, :seed_executor_not_configured} ->
+        raise "Feishu plugin: initial user binding seed file is present, but seed " <>
+                "executor/boot authorization is not configured. The deferred B-layer " <>
+                "auth integration must be configured before enabling this seed."
+
       {:error, reason} ->
         raise "Feishu plugin: initial user binding seed failed: " <>
                 "#{EzagentPluginFeishu.Redact.describe(reason)}"

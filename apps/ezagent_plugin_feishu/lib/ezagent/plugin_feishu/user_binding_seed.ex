@@ -30,9 +30,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
 
   ## B-layer (deferred)
 
-  `DispatchAdapter` uses `Invocation.with_admin_operator/2` to auto-mint
-  signed action caps. The canonical-admin / boot-auth / CapBAC integration
-  is deferred until a later thin slice.
+  `DispatchAdapter` is not integrated with a runtime operator or boot
+  authorization source yet. It deliberately fails closed on every call.
+  A later thin integration must supply its operator identity and action
+  authorization from runtime dispatch/configuration; this A-layer neither
+  assumes nor creates that authority.
 
   ## Known limitation: same-workspace race window
 
