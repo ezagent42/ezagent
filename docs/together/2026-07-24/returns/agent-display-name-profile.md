@@ -1,6 +1,6 @@
 > **Task:** agent-display-name-profile
 > **Branch:** `fix/agent-display-name-profile`
-> **PR:** pending creation
+> **PR:** [#1570 — fix(world): persist agent display names](https://github.com/ezagent42/ezagent/pull/1570) (draft)
 > **Dev:** Codex
 > **returned_at:** 2026-07-24 20:11 +0800
 > **deadline:** 2026-07-24 23:59 +0800
@@ -50,7 +50,7 @@
 
 ## Merge request
 
-Push `fix/agent-display-name-profile` and open a draft PR against `main`.
+Draft PR [#1570](https://github.com/ezagent42/ezagent/pull/1570) is open against `main`.
 
 - Rebase base: `b9b548c874556a2d58be7f161dca217c4a611035` (`origin/main` at return time).
 - The branch is rebased onto that base.
