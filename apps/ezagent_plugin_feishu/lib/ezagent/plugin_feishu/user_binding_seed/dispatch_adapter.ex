@@ -55,17 +55,12 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
     Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=feishu_user_bindings.#{action_name}")
   end
 
-  # B-layer (DEFERRED): this module uses admin_uri() + with_admin_operator
-  # to auto-mint signed action caps for formal dispatch. It is gated behind
-  # `config :ezagent_plugin_feishu, :seed_auth_integrated` (default false).
-  # Until boot-auth integration is complete, every call fails explicitly.
+  # B-layer (DEFERRED): canonical-admin auto-elevation via admin_uri() +
+  # with_admin_operator. This module is only reachable when explicitly
+  # configured as `:seed_executor` — the importer's nil-executor guard
+  # ensures production without auth fails with `:seed_executor_not_configured`.
+  # Runtime operator/auth adapter integration is a separate B-layer slice.
   defp dispatch(%URI{} = target, args) do
-    unless auth_integrated?() do
-      raise "DispatchAdapter: canonical-admin auth integration is DEFERRED. " <>
-              "The seed executor cannot auto-mint action caps until boot-auth " <>
-              "integration lands. Tests set `:seed_auth_integrated` to true."
-    end
-
     admin = Ezagent.Entity.User.admin_uri()
 
     Invocation.with_admin_operator(admin, fn ->
@@ -82,10 +77,6 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
         }
       })
     end)
-  end
-
-  defp auth_integrated? do
-    Application.get_env(:ezagent_plugin_feishu, :seed_auth_integrated, false)
   end
 
   @doc """
