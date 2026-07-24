@@ -280,6 +280,13 @@ cards:
     who: "Allen 轨道 · C2/C0-硬化评审通过后接续"
     acceptance:
       - {text: "C2(#1550)+ C0 硬化(#1549)评审通过合入后, 继续推进 actor-framework 剩余 chunk C3–C7 的物理隔离迁移", done: false}
+  - owner: "allen"
+    title: "#1552 签名-token 分享收敛（clarify_first 设计提案）"
+    goal: "把 read-plane DownloadToken 从 uploads-only 泛化到任意 target URI, 消掉 kanban 平行的 Phoenix.Token 分享实现"
+    status: "planned"
+    who: "Allen 轨道 · #1552 · jjkysy 提案, 授权 chokepoint owner 写 DoD"
+    acceptance:
+      - {text: "写 DoD 回答 5 设计问题(target scheme / mint 授权口径接 M-1 / kanban.share_board 归宿 / share-link 的 person-binding 语义 / 是否纳入 message-share); 初步立场=target-URI 参数化 + 两种绑定模式(uploads 收件人绑定 / share-link 发起人授权 bearer), 先只除 kanban 重复轮子 → 确认后 jjkysy 实现", done: false}
 
 review:
   # ---------- 本周期复盘 (07-23→07-24) ----------
