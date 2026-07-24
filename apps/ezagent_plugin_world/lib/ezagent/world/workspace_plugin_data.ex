@@ -119,7 +119,7 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp component_state(%{component: "feishu_bindings"}, base, workspace_uri, caller_uri, caps) do
-    case FeishuBindingDispatch.list(workspace_uri, caller_uri, caps) do
+    case FeishuBindingDispatch.list_for_initial_state(workspace_uri, caller_uri, caps) do
       {:ok, bindings} ->
         base
         |> Map.put("bindings", bindings)

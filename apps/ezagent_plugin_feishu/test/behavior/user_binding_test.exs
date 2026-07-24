@@ -292,31 +292,30 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingTest do
       # checks — we want the failure to come from the policy step.
       admin_ctx = Map.delete(ctx(), :self_uri)
 
-      # SpawnRegistry only knows the well-known schemes. An entity://
-      # user in a workspace whose Workspace Kind isn't running will
-      # cause `ensure_user_kind` to fail at the dispatch grant_cap
-      # step (no Identity slice to grant against).
-      orphan_user = Ezagent.URI.new!("entity://no_such_workspace/user/orphan")
-      open_id = "ou_bv_rollback_#{System.unique_integer([:positive])}"
+      # Use template:// URIs — the Template Kind spawn handler resolves
+      # the template class, and a non-existent class name deterministically
+      # fails the spawn. (entity:// URIs always spawn successfully because
+      # the User Kind init doesn't depend on any external resource.)
+      non_spawnable_uri =
+        Ezagent.URI.new!(
+          "template://system/no_such_class/det_policy_#{System.unique_integer([:positive])}"
+        )
 
-      # The action MAY succeed if SpawnRegistry handles unknown
-      # workspaces (e.g. spawns the user Kind anyway). If it FAILS,
-      # the row must NOT exist after.
-      case BV.handle_bind(
-             %{open_id: open_id, user_uri: orphan_user},
-             admin_ctx
-           ) do
-        {:ok, _, _} ->
-          # SpawnRegistry handled it — no rollback to verify.
-          assert {:ok, _} = UB.resolve(open_id)
+      open_id = "ou_bv_rollback_det_#{System.unique_integer([:positive])}"
 
-        {:error, _} ->
-          # Policy failed AFTER bind — the row MUST have been rolled
-          # back. This is the codex r2 P2 invariant.
-          assert :error = UB.resolve(open_id),
-                 "Codex r2 P2: BindingPolicy failed but the durable " <>
-                   "row survived — rollback didn't fire"
-      end
+      # Deterministic: the session scheme handler is absent, so
+      # ensure_user_kind WILL fail → apply_policy_or_rollback triggers
+      # the rollback branch.
+      assert {:error, _reason} =
+               BV.handle_bind(
+                 %{open_id: open_id, user_uri: non_spawnable_uri},
+                 admin_ctx
+               )
+
+      # Codex r2 P2: rollback deleted the row that UserBinding.bind/3 wrote.
+      assert :error = UB.resolve(open_id),
+             "Codex r2 P2: BindingPolicy failed but the durable " <>
+               "row survived — rollback didn't fire"
     end
 
     test "rollback is idempotent when called on a missing row (defensive)" do
