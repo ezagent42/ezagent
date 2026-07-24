@@ -501,7 +501,8 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
       hardcoded_deploy_domain_hosts: hardcoded_deploy_domain_hosts(),
       socialware_priv_manifest_files: socialware_priv_manifest_files(),
       socialware_self_publish_unsanctioned: socialware_self_publish_unsanctioned(),
-      concatenated_namespace_modules: concatenated_namespace_modules()
+      concatenated_namespace_modules: concatenated_namespace_modules(),
+      no_hardcoded_seed_principal: no_hardcoded_seed_principal()
     ]
   end
 
@@ -610,6 +611,159 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
         Regex.match?(@hardcoded_deploy_domain_regex, line)
     end)
   end
+
+  # no_hardcoded_seed_principal (2026-07-24, Allen) — socialware & seed
+  # provisioning must create a user/workspace (or grant ownership) using an
+  # EXISTING env-provided user identity, NEVER a principal baked into source.
+  #
+  # AST-based (mirror `resource_kind_as_genserver` / `socialware_self_publish`):
+  # flags a call to a user/workspace-CREATE or owner-GRANT chokepoint whose
+  # arguments carry a HARDCODED principal identity. The chokepoints are the two
+  # provisioning creators (`Users.create` / `Workspace.create`) plus the named
+  # `create_user` / `create_workspace` / `founder_join` / `grant_owner` verbs.
+  # A "hardcoded principal" node (searched anywhere inside the call's args, so a
+  # nested `%{created_by: …}` owner is covered) is one of:
+  #
+  #   * a string literal that is a principal URI (`entity://…` / `user://…`) or
+  #     an email address,
+  #   * `_.admin_uri()` / bare `admin_uri()` — the genesis-admin accessor, and
+  #   * `_.URI.user(a, b)` where a AND b are compile-time literals (an inline
+  #     `Ezagent.URI.user(:system, :admin)` construction).
+  #
+  # It deliberately does NOT flag the env/runtime-resolved good pattern
+  # (`Workspace.create(ws, %{created_by: founder_uri})` or
+  # `Users.create(Ezagent.URI.user(workspace, slug), …)` — the args are VARS,
+  # not literals). The genesis bootstrap (`admin_uri = User.admin_uri()` then
+  # `Users.create(admin_uri, …)`) passes a bare var, so it is NOT flagged — the
+  # identity domain's boot provisioning is the bootstrap, not a socialware seed,
+  # and forward protection still holds (a NEW inline hardcoded-principal create
+  # trips the gate). `# arch-allow:` on the call line — or the line directly
+  # above it, the format-canonical spot — suppresses one site.
+  @seed_principal_grant_fns MapSet.new([
+                              :create_user,
+                              :create_workspace,
+                              :founder_join,
+                              :grant_owner
+                            ])
+
+  # entity/user principal URIs; email addresses. Workspace URIs are resources,
+  # not principals, so they are intentionally excluded.
+  @principal_uri_re ~r{^(entity|user)://}
+  @principal_email_re ~r/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+  defp no_hardcoded_seed_principal do
+    lib_files()
+    |> Enum.map(fn file ->
+      case Code.string_to_quoted(read!(file)) do
+        {:ok, ast} ->
+          count_hardcoded_seed_principal(ast, module_alias_map(ast), arch_allowed_lines(file))
+
+        {:error, _} ->
+          0
+      end
+    end)
+    |> Enum.sum()
+  end
+
+  @doc """
+  Testable entry for the `no_hardcoded_seed_principal` predicate: count the
+  hardcoded-principal provisioning calls in a SOURCE STRING (positive/negative
+  fixtures) so the gate test proves it flags a `Workspace.create(ws,
+  %{created_by: User.admin_uri()})` / literal-URI create while a runtime-resolved
+  `%{created_by: founder_uri}` (or `Ezagent.URI.user(workspace, slug)`) create is
+  NOT flagged — without writing fixture files into the scanned lib tree.
+  `# arch-allow:` on the offending line suppresses it, same as the real scan.
+  """
+  @spec count_hardcoded_seed_principal_in_source(String.t()) :: non_neg_integer()
+  def count_hardcoded_seed_principal_in_source(source) when is_binary(source) do
+    case Code.string_to_quoted(source) do
+      {:ok, ast} ->
+        count_hardcoded_seed_principal(
+          ast,
+          module_alias_map(ast),
+          allowed_lines_in_source(source)
+        )
+
+      {:error, _} ->
+        0
+    end
+  end
+
+  defp count_hardcoded_seed_principal(ast, amap, allowed_lines) do
+    {_ast, count} =
+      Macro.prewalk(ast, 0, fn node, acc ->
+        if seed_principal_violation?(node, amap, allowed_lines),
+          do: {node, acc + 1},
+          else: {node, acc}
+      end)
+
+    count
+  end
+
+  # A parenthesized remote call to a create/grant chokepoint whose args carry a
+  # hardcoded principal identity, and whose site is not `# arch-allow:`ed.
+  defp seed_principal_violation?(
+         {{:., _dot_meta, [receiver, fun]}, meta, args},
+         amap,
+         allowed_lines
+       )
+       when is_atom(fun) and is_list(args) do
+    not Keyword.get(meta, :no_parens, false) and
+      not seed_principal_arch_allowed?(allowed_lines, Keyword.get(meta, :line, 0)) and
+      provisioning_grant_call?(resolved_last_segment(receiver, amap), fun) and
+      Enum.any?(args, &contains_hardcoded_principal?(&1, amap))
+  end
+
+  defp seed_principal_violation?(_node, _amap, _allowed_lines), do: false
+
+  # A create/grant call is suppressed by a `# arch-allow:` on its own line OR on
+  # the line directly above it. The line-above tolerance is required because
+  # `mix format` canonicalizes a trailing `Foo.create(...) do # arch-allow: …`
+  # comment onto the standalone line ABOVE the `case`, so pinning it to the exact
+  # call line alone would silently un-suppress a sanctioned site after a format.
+  defp seed_principal_arch_allowed?(allowed_lines, line) do
+    MapSet.member?(allowed_lines, line) or MapSet.member?(allowed_lines, line - 1)
+  end
+
+  # `Users.create` / `Workspace.create` are the user/workspace creators; the
+  # named verbs match on any receiver (they are specific enough to be the grant
+  # chokepoint wherever they live).
+  defp provisioning_grant_call?(:Users, :create), do: true
+  defp provisioning_grant_call?(:Workspace, :create), do: true
+  defp provisioning_grant_call?(_segment, fun), do: MapSet.member?(@seed_principal_grant_fns, fun)
+
+  # True when the argument subtree contains ANY hardcoded-principal node (so a
+  # nested `%{created_by: User.admin_uri()}` owner is caught).
+  defp contains_hardcoded_principal?(arg, amap) do
+    {_node, found?} =
+      Macro.prewalk(arg, false, fn node, found? ->
+        {node, found? or hardcoded_principal_node?(node, amap)}
+      end)
+
+    found?
+  end
+
+  # (a) principal URI / email string literal.
+  defp hardcoded_principal_node?(bin, _amap) when is_binary(bin) do
+    Regex.match?(@principal_uri_re, bin) or Regex.match?(@principal_email_re, bin)
+  end
+
+  # (b) `_.admin_uri()` (zero-arg remote call — the genesis-admin accessor).
+  defp hardcoded_principal_node?({{:., _, [_receiver, :admin_uri]}, _, []}, _amap), do: true
+
+  # (b') bare `admin_uri()` local CALL (args `[]`, not a bare var whose args are
+  # `nil`) — a var *named* `admin_uri` is a binding reference, not a literal.
+  defp hardcoded_principal_node?({:admin_uri, _, []}, _amap), do: true
+
+  # (c) `_.URI.user(a, b)` with a AND b compile-time literals (atom or string).
+  defp hardcoded_principal_node?({{:., _, [receiver, :user]}, _, [a, b]}, amap) do
+    resolved_last_segment(receiver, amap) == :URI and literal_identity?(a) and
+      literal_identity?(b)
+  end
+
+  defp hardcoded_principal_node?(_node, _amap), do: false
+
+  defp literal_identity?(node), do: is_atom(node) or is_binary(node)
 
   # Socialware deploy-seed gate (2026-07-07, SPEC §5). Two shapes:
   #
