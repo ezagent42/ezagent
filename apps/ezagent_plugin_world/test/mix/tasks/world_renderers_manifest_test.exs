@@ -13,6 +13,7 @@ defmodule Mix.Tasks.World.Renderers.ManifestTest do
 
     assert source =~ "pluginPageRenderers"
     assert source =~ "pluginPageFullBleedFamilies"
+    assert source =~ "pluginUnfurlRenderers"
   end
 
   test "checked-in renderer manifest matches declarations" do
