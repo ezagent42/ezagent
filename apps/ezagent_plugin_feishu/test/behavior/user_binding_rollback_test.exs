@@ -86,7 +86,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       log_output =
         capture_log(fn ->
-          assert {:error, {:binding_rollback_failed, :synthetic_unbind_failure}} =
+          assert {:error, :binding_rollback_failed} =
                    BV.handle_bind(%{open_id: secret, user_uri: @user_a}, ctx())
         end)
 
