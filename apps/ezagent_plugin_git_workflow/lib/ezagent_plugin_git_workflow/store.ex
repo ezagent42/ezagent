@@ -42,11 +42,16 @@ defmodule EzagentPluginGitWorkflow.Store do
   @spec disable_binding(String.t()) :: {:ok, TaskBinding.t()} | {:error, term()}
   def disable_binding(binding_id) when is_binary(binding_id) do
     case read_binding_row(binding_id) do
-      nil -> {:error, :not_found}
+      nil ->
+        {:error, :not_found}
+
       _row ->
         now = DateTime.utc_now()
-        Repo.query!("UPDATE git_workflow_bindings SET enabled = $1, updated_at = $2 WHERE id = $3",
-          [false, now, binding_id])
+
+        Repo.query!(
+          "UPDATE git_workflow_bindings SET enabled = $1, updated_at = $2 WHERE id = $3",
+          [false, now, binding_id]
+        )
 
         case read_binding_row(binding_id) do
           nil -> {:error, :not_found}
@@ -88,7 +93,12 @@ defmodule EzagentPluginGitWorkflow.Store do
     with {:ok, binding} <- check_binding_active(intent.binding_id),
          :ok <- validate_binding_generation(intent, binding),
          :ok <- validate_source_workspace(intent, binding),
-         run_id = WorkflowRun.generate_id(intent.binding_id, intent.binding_generation, intent.external_task_id),
+         run_id =
+           WorkflowRun.generate_id(
+             intent.binding_id,
+             intent.binding_generation,
+             intent.external_task_id
+           ),
          digest = compute_accept_digest(intent) do
       run_attrs = %{
         id: run_id,
@@ -129,24 +139,31 @@ defmodule EzagentPluginGitWorkflow.Store do
           {:ok, WorkflowRun.t()} | {:error, term()}
   def transition(run_id, expected_version, expected_status, next_status)
       when is_binary(run_id) and is_integer(expected_version) and
-           is_binary(expected_status) and is_binary(next_status) do
-    # Reject invalid statuses at the gate
+             is_binary(expected_status) and is_binary(next_status) do
+    # Reject invalid statuses at the gate.
+    # Terminal states are blocked INSIDE the CAS WHERE clause (no pre-read
+    # TOCTOU): `AND status NOT IN ('completed','failed','cancelled')` makes
+    # the UPDATE a no-op when the row is terminal — even if expected_status
+    # accidentally names a terminal state.
     with :ok <- check_valid_status(expected_status),
-         :ok <- check_valid_status(next_status),
-         :ok <- check_not_terminal(run_id) do
+         :ok <- check_valid_status(next_status) do
       next_version = expected_version + 1
       now = DateTime.utc_now()
 
       result =
         Repo.query!(
           "UPDATE git_workflow_runs SET status = $1, state_version = $2, updated_at = $3
-           WHERE id = $4 AND state_version = $5 AND status = $6",
+           WHERE id = $4 AND state_version = $5 AND status = $6
+             AND status NOT IN ('completed', 'failed', 'cancelled')",
           [next_status, next_version, now, run_id, expected_version, expected_status]
         )
 
       case result.num_rows do
-        1 -> {:ok, fetch_run!(run_id)}
-        0 -> classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status)
+        1 ->
+          {:ok, fetch_run!(run_id)}
+
+        0 ->
+          classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status)
       end
     end
   end
@@ -166,7 +183,9 @@ defmodule EzagentPluginGitWorkflow.Store do
 
   defp check_binding_active(binding_id) do
     case read_binding_row(binding_id) do
-      nil -> {:error, :binding_not_found}
+      nil ->
+        {:error, :binding_not_found}
+
       row ->
         if row["enabled"],
           do: {:ok, row_to_binding(row)},
@@ -174,7 +193,10 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
-  defp validate_binding_generation(%AcceptIntent{binding_generation: gen}, %TaskBinding{generation: gen}), do: :ok
+  defp validate_binding_generation(%AcceptIntent{binding_generation: gen}, %TaskBinding{
+         generation: gen
+       }), do: :ok
+
   defp validate_binding_generation(_intent, _binding), do: {:error, :binding_generation_mismatch}
 
   defp compute_accept_digest(%AcceptIntent{} = intent) do
@@ -199,7 +221,9 @@ defmodule EzagentPluginGitWorkflow.Store do
 
   defp validate_requested_head_ref(%AcceptIntent{requested_head_ref: nil}, _binding), do: :ok
 
-  defp validate_requested_head_ref(%AcceptIntent{requested_head_ref: ref}, %TaskBinding{allowed_head_namespace: ns}) do
+  defp validate_requested_head_ref(%AcceptIntent{requested_head_ref: ref}, %TaskBinding{
+         allowed_head_namespace: ns
+       }) do
     if String.starts_with?(ref, ns),
       do: :ok,
       else: {:error, :head_ref_not_allowed}
@@ -277,7 +301,12 @@ defmodule EzagentPluginGitWorkflow.Store do
 
       {:ok, run}
     else
-      existing = fetch_run_by_key!(run_attrs.binding_id, run_attrs.binding_generation, run_attrs.external_task_id)
+      existing =
+        fetch_run_by_key!(
+          run_attrs.binding_id,
+          run_attrs.binding_generation,
+          run_attrs.external_task_id
+        )
 
       if existing.input_digest == digest,
         do: {:ok, existing},
@@ -295,16 +324,6 @@ defmodule EzagentPluginGitWorkflow.Store do
       else: {:error, {:invalid_status, status}}
   end
 
-  defp check_not_terminal(run_id) do
-    case read_run_row(run_id) do
-      nil -> {:error, :not_found}
-      row ->
-        if WorkflowRun.terminal?(row["status"]),
-          do: {:error, :workflow_terminal},
-          else: :ok
-    end
-  end
-
   defp classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status) do
     case read_run_row(run_id) do
       nil ->
@@ -314,13 +333,15 @@ defmodule EzagentPluginGitWorkflow.Store do
         run = row_to_run(row)
 
         cond do
-          # Terminal — reject any further transitions
-          WorkflowRun.terminal?(run.status) ->
-            {:error, :workflow_terminal}
-
-          # Exact retry: already at target
+          # Exact retry: already at target state+version (first, before terminal check)
           run.status == next_status and run.state_version == next_version ->
             {:ok, run}
+
+          # Terminal — reject any new transition. Exact retry of a terminal
+          # state was already handled above; this is a DIFFERENT transition
+          # attempt on a terminal run.
+          WorkflowRun.terminal?(run.status) ->
+            {:error, :workflow_terminal}
 
           # Status is right but version differs — stale
           run.status == next_status ->
@@ -384,13 +405,9 @@ defmodule EzagentPluginGitWorkflow.Store do
   # Row ↔ Struct (atom-safe — no String.to_atom/1)
   # ---------------------------------------------------------------------------
 
-  @known_adapters %{
-    "Elixir.GitHubTestAdapter" => GitHubTestAdapter,
-    # Production adapters registered here; unknown → fail closed
-  }
-
   defp binding_to_row(%TaskBinding{} = b) do
     now = DateTime.utc_now()
+
     %{
       id: b.id,
       generation: b.generation,
@@ -412,7 +429,7 @@ defmodule EzagentPluginGitWorkflow.Store do
   end
 
   defp row_to_binding(row) when is_map(row) do
-    adapter = parse_adapter!(row["provider_adapter"])
+    adapter = String.to_existing_atom(row["provider_adapter"])
 
     struct!(TaskBinding, %{
       id: row["id"],
@@ -457,24 +474,8 @@ defmodule EzagentPluginGitWorkflow.Store do
 
   defp parse_visibility("public"), do: :public
   defp parse_visibility("private"), do: :private
+
   defp parse_visibility(other) when is_binary(other) do
-    # Use String.to_existing_atom for visibility — :public and :private are
-    # already defined at compile time; corrupt values fail closed.
     String.to_existing_atom(other)
-  end
-
-  defp parse_adapter!(name) when is_binary(name) do
-    case Map.fetch(@known_adapters, name) do
-      {:ok, mod} ->
-        mod
-
-      :error ->
-        try do
-          module = String.to_existing_atom(name)
-          if Code.ensure_loaded?(module), do: module, else: raise("not loaded")
-        rescue
-          _ -> reraise ArgumentError, "unknown/corrupt provider_adapter: #{name}", __STACKTRACE__
-        end
-    end
   end
 end
