@@ -267,13 +267,14 @@ defmodule EzagentWeb.HomeLive do
     case Ezagent.URI.type(entity_uri) do
       {:ok, "user"} ->
         Ezagent.Users.get_by_uri(entity_uri) != nil or
-          match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri))
+          Ezagent.Kind.alive?(entity_uri)
 
       {:ok, "agent"} ->
-        # Durable existence via the §2.2 actor read surface (C2). `read_durable/3`
-        # answers "a durable row exists" regardless of the probe slice key (never
-        # spawns); `{:ok, _, _}` ⟺ the old `match?({:ok, _}, SnapshotStore.latest/1)`.
-        match?({:ok, _pid}, Ezagent.KindRegistry.lookup(entity_uri)) or
+        # Liveness via §2.2 `alive?/1` (C3, was KindRegistry.lookup) OR durable
+        # existence via `read_durable/3` (C2, was SnapshotStore.latest): the
+        # latter answers "a durable row exists" regardless of the probe slice key
+        # (never spawns); `{:ok, _, _}` ⟺ the old `match?({:ok, _}, SnapshotStore.latest/1)`.
+        Ezagent.Kind.alive?(entity_uri) or
           match?({:ok, _, _}, Ezagent.Kind.read_durable(entity_uri, :identity))
 
       _ ->

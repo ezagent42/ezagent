@@ -3,12 +3,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
 
   alias Ezagent.Entity.Session
   alias Ezagent.Identity
-  alias Ezagent.KindRegistry
 
   @spec list_sessions :: [URI.t()]
   def list_sessions do
-    KindRegistry.list_all()
-    |> Enum.flat_map(fn {uri_str, _pid} ->
+    Ezagent.Kind.list_instances()
+    |> Enum.flat_map(fn {uri_str, _meta} ->
       case Ezagent.URI.parse(uri_str) do
         {:ok, %URI{} = uri} -> if Ezagent.URI.scheme?(uri, :session), do: [uri], else: []
         {:error, _reason} -> []
@@ -183,9 +182,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Listing do
   defp member_uris(session_uri, {:live, row}) do
     case Session.session_member_uris(session_uri) do
       [] ->
-        case KindRegistry.lookup(session_uri) do
-          :error -> cold_member_uris(row)
-          {:ok, _pid} -> []
+        if Ezagent.Kind.alive?(session_uri) do
+          []
+        else
+          cold_member_uris(row)
         end
 
       members ->

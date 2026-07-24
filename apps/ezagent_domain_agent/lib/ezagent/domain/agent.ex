@@ -80,12 +80,10 @@ defmodule Ezagent.Domain.Agent do
   def lifecycle_status(%URI{} = agent_uri) do
     flavor = resolve_flavor!(agent_uri)
 
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} ->
-        delegate_alive_status(flavor, agent_uri)
-
-      :error ->
-        %{phase: :not_found, flavor: flavor, detail: nil}
+    if Ezagent.Kind.alive?(agent_uri) do
+      delegate_alive_status(flavor, agent_uri)
+    else
+      %{phase: :not_found, flavor: flavor, detail: nil}
     end
   end
 

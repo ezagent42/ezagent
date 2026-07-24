@@ -52,7 +52,7 @@ defmodule Ezagent.Identity.OperatorReads do
           {:ok, [{String.t(), pid()}]} | {:error, :unauthorized}
   def registry_all(caller) do
     with :ok <- authorize(caller) do
-      {:ok, Ezagent.KindRegistry.list_all()}
+      {:ok, Enum.map(Ezagent.Kind.list_instances(), fn {uri, %{pid: pid}} -> {uri, pid} end)}
     end
   end
 

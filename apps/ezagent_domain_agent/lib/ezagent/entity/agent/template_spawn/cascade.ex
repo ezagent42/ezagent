@@ -308,10 +308,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
   # Kind inside whose dispatch this cascade resolution is running. A
   # cross-process slice read of such a URI would be a self-`GenServer.call`.
   defp self_kind?(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(URI.to_string(uri)) do
-      {:ok, pid} when is_pid(pid) -> pid == self()
-      _ -> false
-    end
+    Ezagent.Kind.self?(uri)
   end
 
   defp default_layer_dir_for(%{source: %URI{} = uri}) do

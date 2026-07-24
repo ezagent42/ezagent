@@ -242,9 +242,10 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
   end
 
   defp refuse_if_exists(%URI{} = uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      :error -> :ok
-      {:ok, _pid} -> {:error, {:already_exists, URI.to_string(uri)}}
+    if Ezagent.Kind.alive?(uri) do
+      {:error, {:already_exists, URI.to_string(uri)}}
+    else
+      :ok
     end
   end
 

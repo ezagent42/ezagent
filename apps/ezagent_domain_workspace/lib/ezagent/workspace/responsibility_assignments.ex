@@ -6,7 +6,7 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   architecture width gate while still exposing defdelegated public API.
   """
 
-  alias Ezagent.{Cmd, KindRegistry, Router, Workspace.Store}
+  alias Ezagent.{Cmd, Router, Workspace.Store}
   alias Ezagent.Workspace.ResponsibilityAssignment
 
   @doc "Cap-gated assignment entry used by `Ezagent.Workspace.assign_role/5`."
@@ -91,26 +91,24 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
   defp ensure_workspace_live(%URI{scheme: "workspace"} = workspace_uri) do
     name = Ezagent.URI.name!(workspace_uri)
 
-    case KindRegistry.lookup(workspace_uri) do
-      {:ok, _pid} ->
-        :ok
+    if Ezagent.Kind.alive?(workspace_uri) do
+      :ok
+    else
+      case Store.get_by_name(name) do
+        nil ->
+          {:error, :workspace_not_found}
 
-      :error ->
-        case Store.get_by_name(name) do
-          nil ->
-            {:error, :workspace_not_found}
-
-          %{members: members, session_templates: templates, routing_rules: rules} ->
-            case Ezagent.Workspace.spawn_workspace(name, %{
-                   members: members,
-                   session_templates: templates,
-                   routing_rules: rules
-                 }) do
-              {:ok, _pid} -> :ok
-              {:error, {:already_started, _pid}} -> :ok
-              {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
-            end
-        end
+        %{members: members, session_templates: templates, routing_rules: rules} ->
+          case Ezagent.Workspace.spawn_workspace(name, %{
+                 members: members,
+                 session_templates: templates,
+                 routing_rules: rules
+               }) do
+            {:ok, _pid} -> :ok
+            {:error, {:already_started, _pid}} -> :ok
+            {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
+          end
+      end
     end
   end
 
