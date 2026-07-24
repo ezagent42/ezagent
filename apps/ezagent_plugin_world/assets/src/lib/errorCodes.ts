@@ -96,6 +96,13 @@ export const ERROR_CODES: ErrorCode[] = [
     impact: "绑定已回滚，数据未变更",
   },
   {
+    code: "binding_rollback_failed",
+    category: "resource",
+    what: "绑定策略和回滚均执行失败",
+    impact: "绑定数据可能已变更，请刷新并核对当前绑定后再重试",
+    fixOwner: "workspace_founder",
+  },
+  {
     code: "binding_saved_refresh_failed",
     category: "resource",
     what: "绑定保存成功但列表刷新失败",

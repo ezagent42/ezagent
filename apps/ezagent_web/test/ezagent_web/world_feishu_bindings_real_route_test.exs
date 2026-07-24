@@ -30,7 +30,7 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
   alias Ezagent.Test.CapHelper
   alias Ezagent.Workspace
   alias Ezagent.World.FeishuBindingDispatch
-  alias EzagentPluginFeishu.TestSupport.FailingPolicy
+  alias EzagentPluginFeishu.TestSupport.{FailingPolicy, FailingUnbindStorage}
 
   defp uniq, do: System.unique_integer([:positive])
 
@@ -90,21 +90,14 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
   end
 
   defp world_state(view) do
-    html = render(view)
-    [_, json] = Regex.run(~r/data-world-state="([^"]*)"/, html)
+    [json] =
+      view
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("#world-root")
+      |> LazyHTML.attribute("data-world-state")
 
-    json
-    |> html_unescape()
-    |> Jason.decode!()
-  end
-
-  defp html_unescape(s) do
-    s
-    |> String.replace("&quot;", "\"")
-    |> String.replace("&#39;", "'")
-    |> String.replace("&amp;", "&")
-    |> String.replace("&lt;", "<")
-    |> String.replace("&gt;", ">")
+    Jason.decode!(json)
   end
 
   defp dispatch(view, action, args) do
@@ -409,19 +402,67 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_policy_fail_#{uniq()}"
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
 
-      assert html =~ ~s(data-last-dispatch="error:binding_policy_failed")
-      refute html =~ ~s(data-last-dispatch="ok")
+      assert has_element?(
+               view,
+               ~s(#world-root[data-last-dispatch="error:binding_policy_failed"])
+             )
+
+      refute has_element?(view, ~s(#world-root[data-last-dispatch="ok"]))
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
 
       state = world_state(view)
       assert state["bindings"] == []
       assert state["bindings_error"] in [nil, false]
+    end
+
+    test "rollback failure reports an honest distinct code and the new binding may remain", %{
+      conn: conn
+    } do
+      ws = new_ws!()
+      caller = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/rollback-operator-#{uniq()}")
+
+      create_read_only_user!(caller, [
+        cap_for(ws, :bind, caller),
+        cap_for(ws, :list_feishu_bindings, caller)
+      ])
+
+      {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
+
+      previous_policy = Application.get_env(:ezagent_plugin_feishu, :binding_policy_mod)
+      previous_storage = Application.get_env(:ezagent_plugin_feishu, :user_binding_storage_mod)
+      Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
+
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :user_binding_storage_mod,
+        FailingUnbindStorage
+      )
+
+      on_exit(fn ->
+        restore_feishu_env(:binding_policy_mod, previous_policy)
+        restore_feishu_env(:user_binding_storage_mod, previous_storage)
+      end)
+
+      open_id = "ou_wfb_rollback_fail_#{uniq()}"
+      user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/target-#{uniq()}")
+
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
+
+      assert has_element?(
+               view,
+               ~s(#world-root[data-last-dispatch="error:binding_rollback_failed"])
+             )
+
+      refute has_element?(view, ~s(#world-root[data-last-dispatch="ok"]))
+      assert {:ok, ^user_uri} = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
     test "non-entity user_uri is rejected by the Behavior fail-closed gate and World does not report ok",
@@ -479,6 +520,9 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       assert Enum.any?(state_after["bindings"] || [], &(&1["open_id"] == open_id_existing))
     end
   end
+
+  defp restore_feishu_env(key, nil), do: Application.delete_env(:ezagent_plugin_feishu, key)
+  defp restore_feishu_env(key, value), do: Application.put_env(:ezagent_plugin_feishu, key, value)
 
   # DEFERRED B2-auth: the admin-operator seam (`with_admin_operator`) tested
   # here is the existing sanctioned convenience, not a permanent authorization

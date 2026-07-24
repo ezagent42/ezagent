@@ -16,9 +16,19 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
   alias Ezagent.Test.CapHelper
   alias Ezagent.Workspace
   alias Ezagent.World.FeishuBindingDispatch, as: Dispatch
+  alias EzagentPluginFeishu.TestSupport.{FailingPolicy, FailingUnbindStorage}
 
   setup do
     {:ok, _apps} = Application.ensure_all_started(:ezagent_plugin_feishu)
+
+    previous_policy = Application.get_env(:ezagent_plugin_feishu, :binding_policy_mod)
+    previous_storage = Application.get_env(:ezagent_plugin_feishu, :user_binding_storage_mod)
+
+    on_exit(fn ->
+      restore_env(:binding_policy_mod, previous_policy)
+      restore_env(:user_binding_storage_mod, previous_storage)
+    end)
+
     :ok
   end
 
@@ -44,6 +54,9 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
     target = Ezagent.URI.with_action(workspace_uri, :feishu_user_bindings, action)
     CapHelper.signed_action_cap!(target, grantee)
   end
+
+  defp restore_env(key, nil), do: Application.delete_env(:ezagent_plugin_feishu, key)
+  defp restore_env(key, value), do: Application.put_env(:ezagent_plugin_feishu, key, value)
 
   describe "list/3" do
     test "returns only the target workspace's bindings, JSON-safe" do
@@ -144,6 +157,33 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
+    test "policy plus rollback failure becomes the distinct closed public code" do
+      ws = new_ws!()
+      caller = read_only_caller!(ws, [])
+      bind_cap = cap_for(ws, :bind, caller)
+      open_id = "ou_fbd_rollback_fail_#{uniq()}"
+      user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/rollback-fail-#{uniq()}")
+
+      Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
+
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :user_binding_storage_mod,
+        FailingUnbindStorage
+      )
+
+      assert {:error, :binding_rollback_failed} =
+               Dispatch.bind(
+                 ws,
+                 caller,
+                 MapSet.new([bind_cap]),
+                 open_id,
+                 URI.to_string(user_uri)
+               )
+
+      assert {:ok, ^user_uri} = EzagentPluginFeishu.UserBinding.resolve(open_id)
+    end
+
     test "every error is a bare atom from the closed set — never a tuple or inspect-shaped string" do
       ws = new_ws!()
       caller = read_only_caller!(ws, [])
@@ -162,6 +202,7 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
                :cross_workspace_denied,
                :invalid_args,
                :binding_policy_failed,
+               :binding_rollback_failed,
                :binding_unavailable,
                :binding_operation_failed
              ]

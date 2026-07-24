@@ -477,21 +477,27 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # existing setup. Restore is "rebind to the prior user_uri" (idempotent
   # on the open_id primary key).
   #
-  # Rollback failure is logged but the ORIGINAL policy error
-  # propagates — operator needs to see the first failure, not the
-  # rollback's.
+  # Rollback failure is distinct from an ordinary policy failure. Callers
+  # must not be told the mutation was restored when the compensating write
+  # failed and the new binding may still be durable.
   defp apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
     case BindingPolicy.apply(user_uri_str, bound_by) do
       :ok ->
         :ok
 
       {:error, reason} = err ->
-        rollback_binding(open_id, prior_row, err)
-        {:error, {:binding_policy_failed, reason}}
+        policy_failure_result(open_id, prior_row, reason, err)
 
       other ->
-        rollback_binding(open_id, prior_row, {:error, other})
-        {:error, {:binding_policy_failed, {:unexpected_policy_result, other}}}
+        reason = {:unexpected_policy_result, other}
+        policy_failure_result(open_id, prior_row, reason, {:error, reason})
+    end
+  end
+
+  defp policy_failure_result(open_id, prior_row, policy_reason, original_err) do
+    case rollback_binding(open_id, prior_row, original_err) do
+      :ok -> {:error, {:binding_policy_failed, policy_reason}}
+      {:error, rollback_reason} -> {:error, {:binding_rollback_failed, rollback_reason}}
     end
   end
 
@@ -513,6 +519,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
       {:error, rollback_reason} ->
         log_rollback_failure(open_id, :delete, rollback_reason, original_err)
+        {:error, rollback_reason}
+
+      other ->
+        log_rollback_failure(open_id, :delete, other, original_err)
+        {:error, other}
     end
   end
 
@@ -535,6 +546,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
       {:error, rollback_reason} ->
         log_rollback_failure(open_id, :restore, rollback_reason, original_err)
+        {:error, rollback_reason}
+
+      other ->
+        log_rollback_failure(open_id, :restore, other, original_err)
+        {:error, other}
     end
   end
 
@@ -556,6 +572,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   end
 
   defp error_class({:error, reason}) when is_atom(reason), do: Atom.to_string(reason)
+  defp error_class(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp error_class(_other), do: "unexpected"
 
   # Pull the target Workspace URI out of dispatch ctx. `self_uri` is

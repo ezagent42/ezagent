@@ -45,6 +45,13 @@ describe("matchReason", () => {
     expect(matched.fixOwner).toBe("workspace_founder")
   })
 
+  it("does not claim data was unchanged when binding rollback fails", () => {
+    const matched = matchReason("binding_rollback_failed")
+    expect(matched.code).toBe("binding_rollback_failed")
+    expect(matched.impact).toContain("可能")
+    expect(matched.impact).not.toContain("数据未变更")
+  })
+
   it("returns unknown fields for unrecognized reason", () => {
     const matched = matchReason("totally_unknown_reason")
     expect(matched.code).toBe(UNKNOWN_ERROR.code)
