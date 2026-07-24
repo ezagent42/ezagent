@@ -1,19 +1,27 @@
 # EzAgentActor — call/authz interface convergence — DESIGN SPEC
 
 - **Date**: 2026-07-24
-- **Status**: DRAFT v2 — codex adversarial R1 = NEEDS-WORK (direction judged GOOD); all six
-  verified findings folded in this revision: (1) §1.5's guarantee DOWNGRADED to the honest
-  "enumerated, reviewed-code drift guarantee" — "unconcealable in reviewed code", aligned with
-  the cap-signing spec's own enforceability limit; (2) the pid-returning surface census
-  COMPLETED (`Kind.spawn/3`, `LocalRuntime.ensure_started[/_detailed]` added) and — owner
-  decision — CLOSED: sanctioned actor APIs stop returning pids, enforced by a NEW
-  no-pid-return gate; the handler-`self()` boundary stated honestly, not papered over;
-  (3) verifier-dominance telemetry repositioned as DIAGNOSTIC, not enforcement; (4) the
-  public `:vm_internal` option REMOVED and ephemeral authority made provenance-enforced
-  through a fixed policy adapter; (5) fresh authority resolution placed behind the
-  extracted authorization port, not a raw upward call; (6) V1–V6 phase dependencies
-  repaired (V2→port contract + #195 seam; V4 ownership split across C5; V5 pid closure
-  both sides; V6→C7).
+- **Status**: DRAFT v3 — codex R1 = NEEDS-WORK (direction GOOD) → v2 folded all six R1
+  findings; codex R2 confirmed 4/6 CLOSED (reframe, verifier-dominance-as-diagnostic,
+  ephemeral-authority provenance, V2 AuthzPort/#195 + V4/V6 deps, the 4 named pid
+  surfaces) and found two remaining pid-USE-side holes, both closed in this revision:
+  (R2-1) the v2 "verb-totality" claim was FALSE — `Kind.Server`'s catch-all
+  `handle_info` forwards ANY message shape to Behavior `handle_signal/2` under the open
+  authority compartment with the full mutating effect pipeline (`{:pty_phase,…}`
+  durably mutates with no `:ezagent_*` verb), so the use-side gate is now the
+  **all-shapes receiver ban** (ANY `send`/`call`/`cast` to a Kind-provenance pid,
+  any message, outside the framework), with the verb matchers demoted to backstop and
+  the handler-`self()` claim restated honestly (§1.4); (R2-2) the pid-INPUT census
+  completed — `Kind.runtime_view/1` (pid form) and `Kind.monitored_by?/2` (+ its
+  `members.ex:45` consumer) added and closed, and the no-pid gate extended to
+  parameter types + `is_pid` guards. Earlier v2 content: (1) §1.5 guarantee =
+  "enumerated, reviewed-code drift guarantee" — "unconcealable in reviewed code",
+  aligned with the cap-signing spec's enforceability limit; (2) pid-returning surfaces
+  closed via the no-pid gate (owner decision); (3) verifier-dominance telemetry =
+  DIAGNOSTIC; (4) no public `:vm_internal`; ephemeral authority provenance-enforced
+  via a fixed policy adapter; (5) fresh authority resolution behind the AuthzPort
+  seam; (6) V1–V6 dependencies repaired (V2→port contract + #195 seam; V4 ownership
+  split across C5; V5 pid closure both sides; V6→C7).
 - **Kind of document**: a CONVERGENCE plan. NOT a rewrite, NOT an implementation plan.
 - **Read off**: `origin/main` @ `e7a153a92` (v1 read at `36547a052`; every cited anchor
   re-verified at `e7a153a92` — the C3 landing between the two moved no cited line)
@@ -145,18 +153,22 @@ hardening round already happened:
 **How to AST-harden it for THIS spec's rules** (the convergence adds new banned shapes;
 same scanner, new matchers):
 
-- Complete the **pid-USE matcher set** (§1.4): bare `send/2` / `Kernel.send` /
-  `Process.send/3` carrying a Kind-protocol verb (call/cast forms are covered; the
-  send form must be explicit), plus the verb-list totality self-test that keeps the
-  taint discriminator in sync with `Kind.Server`'s actual protocol.
-- Add the **no-pid-return gate** over the framework's sanctioned surface (§1.4): a
-  `pid()`-reaching return/parameter type on any public Kind-actor function — directly
-  or through known aliases like `DynamicSupervisor.on_start_child()` — is RED, backed
-  by a runtime deep-walk assertion in the framework's own suite. (Enumeration-shape
-  bans — supervisor introspection of framework supervisors, `Process.whereis` on
-  framework names, direct `Registry.*` with the registry atom — remain in the
-  optional D1 package, §1.4: with no sanctioned door yielding a pid and every use
-  RED, they matter only against code willing to fish.)
+- The **all-shapes receiver ban** (§1.4): receiver-provenance taint — any
+  `send/2` / `Kernel.send` / `Process.send/3` / `GenServer.call` / `GenServer.cast`
+  whose RECEIVER traces to a Kind-pid source REDs regardless of message shape
+  (`Kind.Server`'s catch-all `handle_signal` fan-out accepts arbitrary shapes, so a
+  verb-only matcher is not total). The existing protocol-verb + `:sys` matchers
+  remain as the backstop for receivers taint cannot see, with the verb-list sync
+  self-test keeping that backstop's discriminator honest.
+- Add the **no-pid gate** over the framework's sanctioned surface (§1.4): a
+  `pid()`-reaching return OR parameter type (or `when is_pid` guard) on any public
+  Kind-actor function — directly or through known aliases like
+  `DynamicSupervisor.on_start_child()` — is RED, backed by a runtime deep-walk
+  assertion in the framework's own suite. (Enumeration-shape bans — supervisor
+  introspection of framework supervisors, `Process.whereis` on framework names,
+  direct `Registry.*` with the registry atom — remain in the optional D1 package,
+  §1.4: with no sanctioned door yielding a pid and every use RED, they matter only
+  against code willing to fish.)
 - Ban **envelope forgery shapes** (new in this spec, §2.4/§4-V1): construction of
   `%Ezagent.Cmd{}` / `%Ezagent.Invocation{}` literals and calls to
   `Invocation.dispatch/Router.dispatch` outside {`ezagent_actor`, the enumerated ingress
@@ -248,43 +260,95 @@ surfaces (census completed at codex R1 — the v1 draft named only two of them):
   tasks / an operator-gated op.
 - `Kind.resolve_action_subject/2` — the pid overload (`kind.ex:809`) goes `@doc false`
   internal; the public form takes a URI.
+- **Pid-INPUT ops (census completed at codex R2 — the no-pid gate covers parameters,
+  not just returns):**
+  - `Kind.runtime_view/1` accepts a pid receiver (`kind.ex:857-859` —
+    `runtime_view(pid) when is_pid(pid)` → `GenServer.call(pid,
+    :ezagent_runtime_view)`). Already scheduled to retire ENTIRELY to actor-internal
+    by the extraction (§2.3 — its consumers migrate to `resolve_action_subject/2` /
+    `read/3` at C3-tail/C7); until that retirement completes, its pid form is a
+    census entry under the no-pid gate, closed by the retirement itself.
+  - `Kind.monitored_by?/2` takes TWO pids (`kind.ex:877-884` —
+    `Process.info(pid, :monitored_by)`), with a live domain consumer: session
+    members' rejoin pre-check (`apps/ezagent_domain_session/lib/ezagent/behavior/
+    session/members.ex:45`, `self_monitors?/1` — note the pid it passes is
+    re-materialized from session-tracked state, exactly the laundering pattern the
+    static taint cannot follow). Close: replace with a URI-keyed public form (or
+    internalize into the framework's membership machinery) and migrate the
+    members.ex consumer; the pid form goes `@doc false` internal.
 
-**The NEW no-pid-return arch gate — makes obtain-side enforceable, not
-conventional.** A gate over the framework's SANCTIONED surface (the §1.3 public
+**The NEW no-pid arch gate — makes obtain-side enforceable, not conventional, in
+BOTH directions.** A gate over the framework's SANCTIONED surface (the §1.3 public
 table, a derived module/function list) asserting **no public Kind-actor function
-returns or accepts a pid**: (i) every public-surface function carries a `@spec`, and
-the gate REDs any return type that reaches `pid()` — directly or through known
-aliases (`DynamicSupervisor.on_start_child()`, `GenServer.on_start()`); (ii) a
+returns OR accepts a pid**: (i) every public-surface function carries a `@spec`, and
+the gate REDs any return OR parameter type that reaches `pid()` — directly or
+through known aliases (`DynamicSupervisor.on_start_child()`, `GenServer.on_start()`)
+— plus any `when is_pid(...)` guard on a public-surface head (catching pid-typed
+params whose specs lie, the `runtime_view/1` / `monitored_by?/2` shape); (ii) a
 runtime type assertion (an `ActorCase` helper that deep-walks sanctioned-API return
 values in the framework's own suite and REDs on any `is_pid` leaf — catching returns
 whose specs lie or are missing); (iii) the standard gate-has-teeth self-test (a
 fixture offender is caught). Same family and CI path as the boundary scanner. With
-this gate, a future convenience op that hands back a pid is a RED shape in the diff
-that introduces it — which is the entire point.
+this gate, a future convenience op that hands a pid across the boundary — either
+direction — is a RED shape in the diff that introduces it, which is the entire point.
 
-**Use-side: any USE of a Kind pid is already a RED shape.** A Kind actor's entire
-useful protocol IS the `:ezagent_*` verb set — every `handle_call/cast/info` clause
-of the single shared `Kind.Server` matches a Kind-protocol message (that is how the
-`@kind_message_verbs` allowlist was built, `scanner.ex:125-137`). A message to a Kind
-pid that carries no protocol verb does nothing useful (no matching clause — the call
-crashes). So any USEFUL interaction with an obtained pid — however obtained,
-including a smuggled handler-`self()` — must ultimately write a Kind-protocol shape
-at the call site: `GenServer.call/cast(pid, :ezagent_* …)` or a `:sys.*` escape.
-**Both are ALREADY the gate's RED shapes** (`scanner.ex:119-163`), direct or
-taint-relayed, regardless of pid provenance. V5 completes the matcher set: bare-`send`
-coverage (`send/2`, `Kernel.send`, `Process.send/3` carrying a protocol verb — the
-verb list was censused from call/cast/send targets; the send-form matcher must be
-explicit, not assumed) and a **verb-list totality self-test** keeping
-`@kind_message_verbs` in sync with `Kind.Server`'s actual handle clauses (the DIRECT
-`GenServer.call(pid, :ezagent_*)` check is already broad — any `:ezagent_*` atom REDs
-even when unlisted — so the sync test protects the INDIRECT/taint path).
+**Use-side: the COMPLETE `Kind.Server` mailbox-authority model — and why a
+verb-shape ban alone is NOT total (codex R2, verified).** The v2 draft argued "a
+Kind actor's entire useful protocol is the `:ezagent_*` verb set, so any useful
+message is a RED verb shape." **That claim is FALSE.** The server's mailbox
+authority has TWO tiers:
 
-**The irreducible residual — handler-`self()`, stated honestly.** A Behavior handler
-executes INSIDE the target's own actor process and holds its own pid by construction;
-no design closes this — the handler IS the actor. A handler smuggling its pid out
-(slice / ETS / message) for another module to call later is not prevented by either
-half; it is caught at the eventual USE site by the verb-shape ban, wherever that site
-lands. A named residual of §1.5's guarantee class, not a closed hole.
+1. **Matched protocol clauses** — every `handle_call`/`handle_cast` head matches an
+   `:ezagent_*` message (`server.ex:636-779`; there is NO catch-all call/cast
+   clause, so a non-protocol `call`/`cast` is a no-clause crash — a kill-the-Kind
+   DoS, not a mutation), and the named `handle_info` clauses likewise.
+2. **The catch-all `handle_info`** (`server.ex:993-1005`): ANY unmatched mailbox
+   message — ANY shape, no verb required — is forwarded to EVERY Behavior in the
+   instance's materialized set via `forward_to_behavior`, **inside the open
+   authority compartment** (`Cap.Authority.with_current`, `server.ex:1001`), where
+   `Lifecycle.__run_signal__/4` hands it to `handle_signal/2` (`lifecycle.ex:541`)
+   and runs the FULL mutating effect pipeline (State → Saga → Dispatches → Notifies
+   → Events → Terminations — `apply_signal_effects`, same buckets as the action
+   path), then persists the mutation (`persist_handle_info_mutation`,
+   `server.ex:1030`). Live example: `send(kind_pid, {:pty_phase, uri, :dead, meta})`
+   durably mutates the Sandbox slice (`behavior/sandbox.ex:517` —
+   `{:set, :pty_phase, phase}` is snapshot-persisted state) — **no `:ezagent_*` atom
+   anywhere**, invisible to every verb matcher.
+
+**Consequence — the use-side gate is receiver-based, not shape-based:** V5 bans
+**ALL `send/2` / `Kernel.send` / `Process.send/3` / `GenServer.call` /
+`GenServer.cast` to a Kind pid, ANY message shape, outside the framework.**
+Mechanics: **receiver-provenance taint** — a pid-typed value whose origin traces to
+a framework source (a sanctioned-API pid return during the migration window, a
+`KindRegistry`/enumeration escape, a relayed handler-`self()`) taints as a
+Kind-receiver, and any send/call/cast whose RECEIVER is Kind-tainted REDs regardless
+of the message. The existing verb-shape + `:sys` bans (`scanner.ex:119-163`) REMAIN
+as the backstop for receivers taint cannot see. This ban is feasible precisely
+because the legitimate arbitrary-shape ingress does not need the pid: `{:pty_phase,…}`
+reaches the Kind via a **PubSub subscription the Kind itself takes out**
+(`sandbox.ex:509-515` — "the subscription delivering the message is the transient";
+the sidecar broadcasts to a topic and never holds the Kind pid), and monitor `:DOWN`
+/ `send_after` ticks are runtime-generated — so business
+code has no legitimate raw-send to a Kind pid at all, and a sidecar needing a new
+signal channel uses PubSub or a sanctioned `EzAgentActor.signal(uri, msg)` wrapper
+(URI-addressed, framework-delivered), never a pid. A cheap runtime diagnostic
+completes it: telemetry on catch-all messages that NO in-set behavior claims
+(all-`:ignore` fan-out) — unexpected-signal shapes become observable, V6-class
+observability, not enforcement. The verb-list sync self-test survives with a
+narrower, honest job: keeping the taint DISCRIMINATOR in sync for the
+protocol-shape backstop, no longer carrying a (false) totality claim.
+
+**The irreducible residual — handler-`self()`, restated honestly (R2).** A Behavior
+handler executes INSIDE the target's own actor process and holds its own pid by
+construction; no design closes this — the handler IS the actor. The v2 claim
+"smuggled pids are caught at the eventual useful USE site" was only true under a
+verb-total protocol, which `handle_signal` breaks; it is restored ONLY by the
+all-shapes receiver ban above, and only to this extent: a smuggled pid whose flow
+the receiver-taint can follow (bindings, returns, params — the same fixpoint
+machinery as message taint) REDs at its send site whatever the message; a pid
+**laundered through data** (stashed in a slice/ETS/message and re-materialized where
+static provenance is gone) is NOT catchable statically and lands in §1.5's
+deliberate-evasion residual — named, not claimed closed.
 
 **Known costs (obtain-side migration, V5):** callers pattern-matching pids out of the
 four ops (mechanical — nearly all use the pid as a truthy "it started" witness);
@@ -317,15 +381,16 @@ stated at exactly the strength the layers deliver:
 > shortcut, the review-missed convenience path; i.e. the entire drift class that
 > actually occurs (extraction §4.4 census: 255 real sites at C0-freeze, all of this class) —
 > is caught mechanically: as a compile error (layer B, upward), or a RED CI shape at
-> the point of OBTAINING a pid (layer C's no-pid-return gate — no sanctioned door
-> yields one) or at the point of USING one (layer A's protocol-verb ban — a Kind
-> actor answers only its `:ezagent_*` protocol, and every shape that speaks it
-> outside the framework is RED, regardless of pid provenance). What remains is
-> **deliberately-constructed evasion** (runtime-assembled `apply/3` with
-> runtime-assembled messages, handler-`self()` smuggling ahead of its eventual RED
-> use-site, forged telemetry), which no static or structural mechanism in one
-> unsandboxed BEAM can catch — that is Path B's cryptographic boundary, explicitly
-> out of scope here.
+> the point of OBTAINING a pid (layer C's no-pid gate — no sanctioned door yields or
+> accepts one) or at the point of USING one (the all-shapes receiver ban — ANY
+> `send`/`call`/`cast` to a Kind-provenance pid is RED whatever the message, because
+> `Kind.Server`'s catch-all `handle_signal` fan-out accepts arbitrary shapes, §1.4;
+> the protocol-verb bans remain as the backstop for receivers taint cannot see).
+> What remains is **deliberately-constructed evasion** (runtime-assembled `apply/3`
+> with runtime-assembled receivers and messages, a pid laundered through data so its
+> provenance is statically invisible, forged telemetry), which no static or
+> structural mechanism in one unsandboxed BEAM can catch — that is Path B's
+> cryptographic boundary, explicitly out of scope here.
 
 This is EXACTLY the enforceability posture the cap-signing spec already commits to for
 the write plane, and this spec aligns with it rather than out-promising it: "**Under
@@ -341,9 +406,10 @@ alone cannot make pids secret in one BEAM (platform fact) and never covers the
 handler's own pid. Together they close each other's ACCIDENTAL-use gaps: **A** catches
 what occurs and what is casually added; **B** makes the boundary physical, the
 internal set derivable, and upward leakage a compile error; **C** closes both pid
-seams — no sanctioned door yields a pid (no-pid-return gate), and possession of one
-buys nothing expressible in ordinary code, because the only useful things to SAY to
-it are RED shapes. The signing analogy therefore lands one notch weaker than Allen's
+seams — no sanctioned door yields or accepts a pid (the no-pid gate), and possession
+of one buys nothing expressible in ordinary code, because ANY message to a
+Kind-provenance receiver is a RED shape (the all-shapes receiver ban — not merely
+protocol verbs, §1.4). The signing analogy therefore lands one notch weaker than Allen's
 ideal, and honestly so: admin-signing makes forgery impossible without the key; this
 mechanism makes drift **unconcealable in reviewed code** — every bypass expressible
 in ordinary Elixir is either impossible to write against the public surface or RED in
@@ -483,20 +549,25 @@ Owned by the extraction (this spec does not respin them; it inherits their gates
 
 ### 2.4 NEW bypasses this spec names (found in this investigation; not in either parent spec)
 
-1. **The sanctioned surface hands out pids** — four ops (census completed at codex
-   R1): `Kind.spawn/3` returns `{:ok, pid}` / idempotent `{:error,
-   {:already_started, pid}}` (`kind.ex:379-383`); `LocalRuntime.ensure_started/2` +
-   `ensure_started_detailed/2` return pid forms (`local_runtime.ex:62`, `:72-73`);
-   `list_instances/0` meta carries `%{pid: pid}` (`kind.ex:845-851`);
-   `resolve_action_subject/2` accepts a pid receiver (`kind.ex:809`). Close (V5,
-   owner-decided — cheap and wanted): the pid never leaves the framework —
-   URI-keyed returns (`:ok | {:ok, :started | :already_started} | {:error, _}`;
-   spawn still calls `DynamicSupervisor.start_child/2` internally and already awaits
-   ready, so no caller needs the pid to sequence on), pid-free `list_instances` meta,
-   URI-only `resolve_action_subject`; operator tooling that genuinely needs process
-   identity becomes an `ezagent_actor`-internal mix task / operator-gated op. Gate:
-   the **no-pid-return gate** (§1.4) — a pid in any sanctioned actor-API return is a
-   RED shape, enforced, not conventional.
+1. **The sanctioned surface hands out AND accepts pids** — six ops (returns census
+   completed at codex R1; inputs census completed at codex R2): `Kind.spawn/3`
+   returns `{:ok, pid}` / idempotent `{:error, {:already_started, pid}}`
+   (`kind.ex:379-383`); `LocalRuntime.ensure_started/2` + `ensure_started_detailed/2`
+   return pid forms (`local_runtime.ex:62`, `:72-73`); `list_instances/0` meta
+   carries `%{pid: pid}` (`kind.ex:845-851`); `resolve_action_subject/2` accepts a
+   pid receiver (`kind.ex:809`); `runtime_view/1` accepts a pid receiver
+   (`kind.ex:857-859` — retires entirely to actor-internal per extraction §2.3);
+   `monitored_by?/2` takes two pids (`kind.ex:877-884`; live domain consumer
+   `session/members.ex:45`). Close (V5, owner-decided — cheap and wanted): the pid
+   never crosses the boundary in either direction — URI-keyed returns
+   (`:ok | {:ok, :started | :already_started} | {:error, _}`; spawn still calls
+   `DynamicSupervisor.start_child/2` internally and already awaits ready, so no
+   caller needs the pid to sequence on), pid-free `list_instances` meta, URI-only
+   `resolve_action_subject`, `runtime_view` retirement, URI-keyed
+   `monitored_by?` replacement (+ members.ex migration); operator tooling that
+   genuinely needs process identity becomes an `ezagent_actor`-internal mix task /
+   operator-gated op. Gate: the **no-pid gate** (§1.4) — a pid in any sanctioned
+   actor-API return or parameter is a RED shape, enforced, not conventional.
 2. **Envelope construction is open** — any module can `Cmd.new/4` (which stamps
    `origin: :trusted_internal`, `cmd.ex:106-124`) or build a raw `%Invocation{}` and
    call `dispatch/1` directly. The chokepoint is unavoidable once you're IN the
@@ -631,7 +702,7 @@ and states which side owns what; V6 closes only after C7.
 | **V2 — caps-resolution convergence** | §3 | ONE adapter-owned authorization op behind the authz port (snapshot loaded once; principal-fence + holder gate + target-verify together); no caps/ephemeral params; ephemeral-policy adapter registry replaces the public `%EphemeralCaps{}` wrapper; TOCTOU + differential tests | `:caps`-write + `%Capability{}`-across-public-surface shape bans; TOCTOU test (store-removed inline cap DENIED); fixed ephemeral-adapter allowlist | V1; **the AuthzPort/authority-loader port contract** — land with C5's port-introduction pre-flight (ports are introduced while files still live in core, extraction §5-C5) or introduce that port first; **coordinate w/ #195 owner** (authz seam) | M–L |
 | **V3 — read-plane convergence** | §2.1 | every principal-facing read behind a chokepoint conforming to the identity-in/fresh-caps contract; `Kind.read*` plumbing restricted to {chokepoints, framework tier, in-dispatch handlers}; remaining raw stores under the read-plane §3.3 ban | read-plumbing-callers module allowlist (shrink-only) + raw-store ban extension; enumerator run = worklist | C0–C3 (surface + migrations); benefits from C6 | **L (breadth)** |
 | **V4 — cap-exemption structural split + ratchet** | §2.2 | two declaration classes at the ActionSet/Behavior macro layer; `@non_cap_actions` families absorbed one PR at a time; verifier map count → 0. **Ownership across C5, stated:** the declaration-class MECHANICS live in the macro layer (`behavior.ex` — a §3.2 MOVER file), so they land in / move with `ezagent_actor`; the non-cap PREDICATES + the verifier's exemption enumeration are spine POLICY (`Cap.Verifier` stays in core). NOT independent of C5: the macro half either lands before C5 and moves with `behavior.ex`, or after C5 in the actor app — never split mid-move | shrink-only count on the verifier map; class-split structural assertions; cap-signing §10-property-2 flag bans | **C5 (macro-layer ownership)**; predicates/ratchet halves may proceed family-by-family before it; **coordinate w/ #195** | **L** |
-| **V5 — pid closure, both sides** | §1.4, §2.4-1, §2.4-4 | **Obtain-side**: `Kind.spawn/3` + `LocalRuntime.ensure_started[/_detailed]` stop returning pids (URI-keyed returns; `DynamicSupervisor.start_child/2` stays internal); `list_instances/0` meta drops `:pid`; `resolve_action_subject/2` URI-only; caller migration (mechanical — pids used as truthy witnesses); the NEW **no-pid-return gate** (spec-level + runtime deep-walk + has-teeth self-test). **Use-side**: send-form matchers (`send/2`, `Kernel.send`, `Process.send/3` w/ protocol verbs); verb-list totality self-test vs `Kind.Server`'s handle clauses; handler-`self()` residual documented in the gate's own doc. (Enumeration-shape bans stay in the OPTIONAL D1 package, §1.4) | no-pid-return gate green at zero-allowlist; pid-USE shapes at zero-allowlist; verb-sync test green | C3 (landed) for the consumer baseline; C5 (scanner + verb census move with the framework; return-type changes may land either side of the move, never split across it) | M |
+| **V5 — pid closure, both sides** | §1.4, §2.4-1, §2.4-4 | **Obtain/input-side**: `Kind.spawn/3` + `LocalRuntime.ensure_started[/_detailed]` stop returning pids (URI-keyed returns; `DynamicSupervisor.start_child/2` stays internal); `list_instances/0` meta drops `:pid`; `resolve_action_subject/2` URI-only; `runtime_view/1` retires to actor-internal (extraction §2.3); `monitored_by?/2` → URI-keyed replacement + `members.ex:45` consumer migration; caller migration (mechanical — pids used as truthy witnesses); the NEW **no-pid gate** (return + parameter types + `is_pid` guards; runtime deep-walk; has-teeth self-test). **Use-side (receiver-based, per the R2 mailbox-authority model)**: the **all-shapes receiver ban** — receiver-provenance taint REDs ANY `send`/`call`/`cast` to a Kind-provenance pid regardless of message shape (the catch-all `handle_signal` fan-out accepts arbitrary shapes — `{:pty_phase,…}` mutates durably with no verb); protocol-verb + `:sys` matchers retained as the backstop, verb-list sync self-test kept for the backstop's discriminator; sanctioned signal ingress documented (PubSub subscription / `EzAgentActor.signal(uri, msg)` — never a pid); optional unexpected-signal telemetry diagnostic. Handler-`self()` + laundered-pid residuals documented in the gate's own doc | no-pid gate green at zero-allowlist; all-shapes receiver ban + backstop shapes at zero-allowlist; verb-sync test green | C3 (landed) for the consumer baseline; C5 (scanner + verb census move with the framework; return-type changes may land either side of the move, never split across it) | M |
 | **V6 — runtime dominance diagnostic + closure** | §1.5 | verifier-dominance telemetry check (uniquely-correlated ordering assertion — DIAGNOSTIC observability for accidental in-pipeline drift, not enforcement, §1.5); convergence acceptance run | the diagnostic assertion + all prior gates at zero-allowlist | V1–V5 **and C7** (acceptance cannot claim one-door while `get_slice`/`get_raw_slice` are still on the public surface — they leave it at C7) | S–M |
 
 **The biggest-cost items, flagged as required:** (1) **V3 read-plane convergence** — a
@@ -668,11 +739,15 @@ travels in the same commit as its migration; reverting a phase = reverting its P
    into the structural non-cap class, each with a named predicate); cap-gated-AND-exempt
    unrepresentable.
 5. **Pid closed on both sides:** no sanctioned `ezagent_actor` API accepts or returns
-   a pid — the no-pid-return gate (spec-level + runtime deep-walk + has-teeth
-   self-test) is green at zero-allowlist; the pid-USE matcher set (call/cast/send +
-   `:sys`, direct and taint-relayed) is green with the verb-list totality self-test;
-   the handler-`self()` residual is documented in the gate's own doc (named residual,
-   not claimed closed).
+   a pid — the no-pid gate (return + parameter types + `is_pid` guards, runtime
+   deep-walk, has-teeth self-test) is green at zero-allowlist, including the R2
+   input census (`runtime_view/1` retired; `monitored_by?/2` URI-keyed with the
+   `members.ex:45` consumer migrated); the **all-shapes receiver ban** is green at
+   zero-allowlist (ANY message to a Kind-provenance receiver REDs — verified by a
+   fixture that sends a NON-verb mutating signal shape, the `{:pty_phase,…}` class,
+   and is caught), with the protocol-verb + `:sys` backstop and its verb-sync test
+   green; the handler-`self()` and laundered-pid residuals are documented in the
+   gate's own doc (named residuals, not claimed closed).
 6. **Runtime dominance observed (diagnostic):** the uniquely-correlated telemetry
    assertion holds across the full suite — every pipeline-executed handler paired
    with its own step-5.5 decision (observability for accidental in-pipeline drift;
@@ -715,6 +790,25 @@ travels in the same commit as its migration; reverting a phase = reverting its P
   `LocalRuntime.ensure_started/2` `apps/ezagent_core/lib/ezagent/local_runtime.ex:62`,
   `ensure_started_detailed/2` `local_runtime.ex:72-73`; plus the two `kind.ex` leaks
   above
+- Pid-INPUT surfaces (R2 census, §1.4): `Kind.runtime_view/1` pid form
+  `kind.ex:857-859` (retires per extraction §2.3); `Kind.monitored_by?/2`
+  `kind.ex:877-884` (`Process.info(pid, :monitored_by)`); domain consumer
+  `apps/ezagent_domain_session/lib/ezagent/behavior/session/members.ex:45`
+  (`self_monitors?/1` inside the rejoin pre-check `monitor_ref_for_current_pid?/3`,
+  `members.ex:34-46`)
+- Mailbox-authority model (§1.4 use-side — why verb-shape bans are not total):
+  catch-all `handle_info` forwards ANY unmatched shape to every in-set Behavior
+  `kind/server.ex:993-1005` (fan-out under the OPEN authority compartment —
+  `Cap.Authority.with_current` at `server.ex:1001`; mutation persisted via
+  `persist_handle_info_mutation`, `server.ex:1030`); `Lifecycle.__run_signal__/4` →
+  `module.handle_signal(message, ctx)` `lifecycle.ex:534-541` (call at `:541`) →
+  FULL effect pipeline `apply_signal_effects` (same buckets as the action path,
+  comment `lifecycle.ex:545-560`); live no-verb durable mutation:
+  `behavior/sandbox.ex:517` (`handle_signal({:pty_phase, …})` →
+  `{:set, :pty_phase, phase}`, snapshot-persisted); legit ingress is
+  subscription-based, never pid-based: `sandbox.ex:509-515` ("the subscription
+  delivering the message is the transient"); no catch-all `handle_call`/`handle_cast`
+  exists (`server.ex:636-779` — all heads match `:ezagent_*`)
 - Boundary gate SSOT: `apps/ezagent_core/lib/ezagent/actor_boundary_scanner.ex`
   (banned roots `:88-108`; kind-message verbs `:125-163`; taint fixpoint `:407-463`;
   reflective `:sys` `:316-378`); ledger frozen counts
