@@ -10,7 +10,7 @@ north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业�
 progress:
   - {label: "#195 统一撤销 + authorize/3 塌进 main", pct: 100, value: "★ 07-22 的枢纽 PR 本周期塌进 main(#1503)—— 一次性解阻 #1470 epoch-rebase HOLD 与 canary 部署链; 收尾三处 fallout(fresh-boot bootstrap / uri_query.scan / full-suite txn 幂等)当日全部修绿。"}
   - {label: "main gate 恢复绿", pct: 100, value: "定位并修 line-anchored plugin-locality baseline 漂移(行插入把 grandfathered 动态-receiver 站点挤离锚点)+ 一个 tmp-dir race flake(#1542)。治本 = 重生成 baseline ground-truth, 非逐条补锚。"}
-  - {label: "actor-framework 抽取（C0–C7 物理隔离迁移）", pct: 30, value: "把 actor 状态管理下沉到 core 之下的新 umbrella app `ezagent_actor`、cap 脊经 injected ports 留在 core。Spec 定稿(#1545)+ C0 边界门/读面(#1546)+ C1(#1548)已合; C2 冷读(#1550)/ C0 硬化(#1549)评审中; C3–C7 待迁。"}
+  - {label: "actor-framework 抽取（C0–C7 物理隔离迁移）", pct: 30, value: "把 actor 状态管理下沉到 core 之下的新 umbrella app `ezagent_actor`、cap 脊经 injected ports 留在 core。Spec 定稿(#1545)+ C0 边界门/读面(#1546)+ C1(#1548)+ C0 硬化(#1549)已合; C2 冷读(#1550)评审中; C3–C7 待迁。"}
   - {label: "cap held+pending 收敛幂等（Gaga #1501）", pct: 50, value: "对抗性评审发现核心 convergence view 丢 pending absorb + 幂等/fail-closed 缺口 → 打回 rework。评审拦住了不完整合并。"}
   - {label: "planning-with-files skill", pct: 100, value: "新增 agents-planning-with-files skill(#1539)—— 以文件为载体的规划工作流。"}
   - {label: "mfu-demo v0.13", pct: 90, value: "内网 demo v0.13(#1543): 可玩原型 + GDD + 3 篇分析文档; 评审中。"}
@@ -129,11 +129,11 @@ cards:
   - owner: "allen"
     title: "actor-framework C0 硬化 — 边界门加固"
     goal: "C0 boundary gate 补 interprocedural taint + reflective :sys"
-    status: "review"
-    who: "Allen 轨道 · #1549 · 评审中"
-    pr: {num: 1549, state: "open"}
+    status: "done"
+    who: "Allen 轨道 · #1549 · 已合"
+    pr: {num: 1549, state: "merged"}
     acceptance:
-      - {text: "硬化 C0 边界 gate: 补跨过程 taint 追踪 + 反射式 `:sys` 访问路径, 堵住 gate 可绕过面", done: false}
+      - {text: "硬化 C0 边界 gate: 补跨过程 taint 追踪 + 反射式 `:sys` 访问路径, 堵住 gate 可绕过面; 对抗性复审证实净强化(old≡new)、allowlist 15/15 完整", done: true}
   - owner: "allen"
     title: "mfu-demo v0.13"
     goal: "内网 demo v0.13: 可玩原型 + GDD + 3 篇分析文档"
