@@ -304,26 +304,20 @@ defmodule Ezagent.PluginCurlAgent.Template do
     end
   end
 
+  # Read the credential source's `:api_keys` slice via the §2.2 public read
+  # surface. Default `spawn: :ensure` — a cold-but-created source Kind is
+  # rehydrated from durable state by `Kind.read/3` itself, replacing the old
+  # hand-rolled SnapshotStore fallback.
   defp source_api_keys_slice(%URI{} = source) do
-    case Ezagent.Kind.get_slice(source, :api_keys) do
+    case Ezagent.Kind.read(source, :api_keys) do
       {:ok, slice} when is_map(slice) ->
         {:ok, slice}
 
-      _ ->
-        source_snapshot_api_keys_slice(source)
-    end
-  end
-
-  defp source_snapshot_api_keys_slice(%URI{} = source) do
-    case Ezagent.SnapshotStore.latest(source) do
-      {:ok, %{state: state}} when is_map(state) ->
-        case Map.get(state, :api_keys) do
-          slice when is_map(slice) -> {:ok, Ezagent.Kind.normalize_slice_view(slice)}
-          _ -> {:error, {:cascade_api_keys_slice_missing, source}}
-        end
-
       {:error, reason} ->
-        {:error, {:cascade_source_snapshot_missing, source, reason}}
+        {:error, {:cascade_source_api_keys_unreadable, source, reason}}
+
+      _other ->
+        {:error, {:cascade_api_keys_slice_missing, source}}
     end
   end
 

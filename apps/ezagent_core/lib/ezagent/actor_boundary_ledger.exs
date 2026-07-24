@@ -961,12 +961,6 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/orchestrator/codex_orchestrator_seed.ex",
-      target: "Kind.get_slice",
-      sha: "53aed956c9f03afe4a603c31692360324ca2239b27e76d6d640a4dae3a3e27ea",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/bridge_adapter.ex",
       target: "Ezagent.SnapshotStore",
       sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
@@ -1021,94 +1015,16 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "1dcafae04f769e252ee25608cd20f0ed67069f71009ca5065af04c47680ca765",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex",
-      target: "Kind.get_slice",
-      sha: "c515e957b52bff5ece795f35149dfd18fde0d42fc46ce8a01bd187c767288246",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/credential_bridge.ex",
       target: "Ezagent.SnapshotStore",
       sha: "89c27fb8c26f5ad0a792cef83abed1d6b9ef58d21cf6cf72a3a9bb3ed915ccd4",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex",
-      target: "Kind.get_slice",
-      sha: "da83c746a701ae5d8e9714c7dfcfe9cd37638980363bceca981d62bd52492ee2",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex",
-      target: "Kind.get_slice",
-      sha: "da83c746a701ae5d8e9714c7dfcfe9cd37638980363bceca981d62bd52492ee2",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex",
-      target: "Kind.get_slice",
-      sha: "da83c746a701ae5d8e9714c7dfcfe9cd37638980363bceca981d62bd52492ee2",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/members.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
       path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/migrate.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "fece7ad67f512dca90895a843b51543445a6081ced6d3d8cdb8bae770e661e91",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/page_view.ex",
-      target: "Kind.get_slice",
-      sha: "7c469abaa097757c3873bf0fbafbe80f89c384fd23eb742331c4e8c181c4fbe2",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/page_view.ex",
-      target: "Kind.get_slice",
-      sha: "da83c746a701ae5d8e9714c7dfcfe9cd37638980363bceca981d62bd52492ee2",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_kanban/lib/ezagent/behavior/kanban_render.ex",
-      target: "Kind.get_slice",
-      sha: "06bac6c1d48916feb9728201d767ea7ec398e21382e8ae6ede9be49886dea24e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_world/lib/ezagent/world/conversation_actions.ex",
-      target: "Kind.get_slice",
-      sha: "f3a5a708bfc75f1aae0ad08de2f266288a1644d8879786ffade337aa110e1080",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_plugin_world/lib/ezagent/world/conversation_data.ex",
-      target: "Kind.get_slice",
-      sha: "ed51052605487aefb84cb9732d12d2a48dff963db2897d1fb6f9edbb1b51542e",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
     },
     %{
       path: "apps/ezagent_web/lib/ezagent_web/socialware/anon_takeover.ex",

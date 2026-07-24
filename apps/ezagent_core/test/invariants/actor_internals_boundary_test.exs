@@ -50,7 +50,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C6 lowered forward 207→185: session-domain get_slice/get_raw_slice sites
   # migrate onto read/3 (live-only probes → spawn: :never; raw-slice manual
   # two-container unwraps deleted — read/3 normalizes), −22 sites.
-  @forward_frozen 185
+  # C6 lowered forward 185→171: plugin get_slice sites → read/3 spawn: :never;
+  # curl_agent's hand-rolled SnapshotStore cold fallback DELETED (read/3
+  # default spawn rehydrates), −14 sites (13 get_slice + 1 SnapshotStore).
+  @forward_frozen 171
   @forward_fixed_frozen 2
   @reverse_frozen 123
   @reverse_fixed_frozen 3

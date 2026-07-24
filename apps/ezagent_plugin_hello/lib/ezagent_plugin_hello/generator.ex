@@ -462,7 +462,7 @@ defmodule EzagentPluginHello.Generator do
   end
 
   defp current_body_tree(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
       {:ok, %{versions: versions, approved: approved}} when is_map(versions) ->
         case Map.get(versions, approved) do
           %{tree: tree} -> tree
@@ -656,7 +656,7 @@ defmodule EzagentPluginHello.Generator do
   # The session's current per-page theme CSS (nil if none yet) — the seed that lets
   # a re-theme PRESERVE the existing design while covering new elements.
   defp current_theme(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
       {:ok, %{shell_css: css}} when is_binary(css) and css != "" -> css
       _ -> nil
     end
