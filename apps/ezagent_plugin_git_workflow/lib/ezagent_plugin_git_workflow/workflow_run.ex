@@ -3,18 +3,55 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   Durable workflow intent run — server-generated identity and digest.
 
   Server-owned fields (caller MUST NOT supply):
-    - id        — deterministic hash of unique key
+    - id        — full sha256 digest of unique key
     - status    — always "accepted" on creation
     - state_version — always 1 on creation
     - input_digest  — content hash of intent fields
 
-  Caller-supplied fields:
+  Caller supplies via AcceptIntent:
     - binding_id, binding_generation, external_task_id (unique key)
     - source_task_uri, source_revision, requested_head_ref (intent)
 
-  No secret, provider-private, lifecycle-result, or authenticated_principal
-  fields. Authorization is deferred to E2-B.
+  Closed status set (E2-A):
+    accepted → workspace_ready → worker_ready → authority_ready
+    → pr_open → checks_passed → awaiting_external_merge
+    → merged_confirmed → projected → completed
+
+  Control states: blocked | failed | cancelled
+
+  Terminal states (reject further transitions):
+    completed, failed, cancelled
   """
+
+  # ── status vocabulary ────────────────────────────────────────
+
+  @success_path ~w(
+    accepted workspace_ready worker_ready authority_ready
+    pr_open checks_passed awaiting_external_merge
+    merged_confirmed projected completed
+  )
+
+  @control_states ~w(blocked failed cancelled)
+
+  @all_statuses @success_path ++ @control_states
+
+  @terminal_statuses ~w(completed failed cancelled)
+
+  @doc "All valid workflow statuses."
+  def statuses, do: @all_statuses
+
+  @doc "Valid status?"
+  @spec valid_status?(String.t()) :: boolean()
+  def valid_status?(s), do: s in @all_statuses
+
+  @doc "Terminal status?"
+  @spec terminal?(String.t()) :: boolean()
+  def terminal?(s), do: s in @terminal_statuses
+
+  @doc "Initial status on accept."
+  def initial_status, do: "accepted"
+
+  # ── fields ────────────────────────────────────────────────────
 
   @caller_fields [
     :binding_id,
@@ -54,11 +91,13 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
           updated_at: DateTime.t() | nil
         }
 
+  # ── construction ──────────────────────────────────────────────
+
   @doc "The fields a caller is allowed to supply."
   def caller_fields, do: @caller_fields
 
   @doc """
-  Builds a validated WorkflowRun struct from a complete field map.
+  Build a validated WorkflowRun struct from a complete field map.
   Used internally by Store after server-generating id/digest/status/version.
   """
   @spec new(map()) :: {:ok, t()} | {:error, term()}
@@ -73,20 +112,17 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   def new(_), do: {:error, :invalid_attributes}
 
   @doc """
-  Generate a deterministic run id from the unique key.
+  Generate a full collision-resistant run id from the unique key.
+  Uses sha256 — no truncation.
   """
   @spec generate_id(String.t(), pos_integer(), String.t()) :: String.t()
   def generate_id(binding_id, binding_generation, external_task_id) do
     content = "#{binding_id}:#{binding_generation}:#{external_task_id}"
 
-    :crypto.hash(:sha256, content)
-    |> Base.encode16(case: :lower)
-    |> then(&"run_#{String.slice(&1, 0, 16)}")
+    "run_" <> (:crypto.hash(:sha256, content) |> Base.encode16(case: :lower))
   end
 
-  @doc """
-  Compute input_digest from the intent fields.
-  """
+  @doc "Compute input_digest from intent fields."
   @spec compute_digest(map()) :: String.t()
   def compute_digest(fields) when is_map(fields) do
     content =
@@ -108,6 +144,8 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
     "sha256:" <> (:crypto.hash(:sha256, content) |> Base.encode16(case: :lower))
   end
 
+  # ── private validation ────────────────────────────────────────
+
   defp validate_known_fields(attrs) do
     extra = Map.keys(attrs) -- @all_fields
 
@@ -122,7 +160,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
       {:binding_id, is_binary(attrs.binding_id) and byte_size(attrs.binding_id) > 0},
       {:binding_generation, is_integer(attrs.binding_generation) and attrs.binding_generation > 0},
       {:external_task_id, is_binary(attrs.external_task_id) and byte_size(attrs.external_task_id) > 0},
-      {:status, attrs.status in ["accepted"]},
+      {:status, valid_status?(attrs.status)},
       {:state_version, is_integer(attrs.state_version) and attrs.state_version > 0},
       {:input_digest, is_binary(attrs.input_digest) and byte_size(attrs.input_digest) > 0},
       {:source_task_uri, is_struct(attrs.source_task_uri, URI)},
@@ -134,7 +172,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
                          (is_binary(attrs.last_error_code) and byte_size(attrs.last_error_code) > 0)}
     ]
 
-    case Enum.find(checks, fn {_field, valid?} -> not valid? end) do
+    case Enum.find(checks, fn {_f, ok?} -> not ok? end) do
       nil -> :ok
       {field, _} -> {:error, {:invalid_field, field}}
     end
