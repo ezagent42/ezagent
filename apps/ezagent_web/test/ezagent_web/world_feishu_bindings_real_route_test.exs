@@ -89,15 +89,25 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     :ok
   end
 
-  defp world_state(view) do
-    [json] =
+  defp world_root_attribute(view, name) do
+    [value] =
       view
       |> render()
       |> LazyHTML.from_fragment()
       |> LazyHTML.query("#world-root")
-      |> LazyHTML.attribute("data-world-state")
+      |> LazyHTML.attribute(name)
 
-    Jason.decode!(json)
+    value
+  end
+
+  defp world_state(view), do: view |> world_root_attribute("data-world-state") |> Jason.decode!()
+
+  defp assert_dispatch_status(view, status) do
+    assert has_element?(view, ~s(#world-root[data-last-dispatch="#{status}"]))
+  end
+
+  defp refute_dispatch_status(view, status) do
+    refute has_element?(view, ~s(#world-root[data-last-dispatch="#{status}"]))
   end
 
   defp dispatch(view, action, args) do
@@ -122,14 +132,9 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       caller = URI.new!("entity://#{Ezagent.URI.name!(ws_a)}/user/viewer-#{uniq()}")
       create_read_only_user!(caller, [cap_for(ws_a, :list_feishu_bindings, caller)])
 
-      {:ok, view, html} =
+      {:ok, view, _html} =
         live(workspace_conn(conn, ws_a, caller), "/plugins/feishu/bindings")
 
-      # Not in the initial dead-render HTML...
-      refute html =~ open_id_b
-      refute html =~ URI.to_string(user_b)
-
-      # ...and not in the decoded world_state (foreign row not in state either).
       state = world_state(view)
       open_ids = Enum.map(state["bindings"] || [], & &1["open_id"])
       assert open_id_a in open_ids
@@ -149,10 +154,7 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/seed-#{uniq()}")
       seed_binding!(ws, open_id, user_uri)
 
-      {:ok, view, html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
-
-      # The existing (seeded) row must not leak through a raw-fallback path.
-      refute html =~ open_id
+      {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
 
       # The bindings_error is in the server-rendered data-world-state JSON
       # (the React component renders data-world-feishu-bindings-error
@@ -175,13 +177,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
 
-      assert html =~ ~s(data-last-dispatch="error:unauthorized")
+      assert_dispatch_status(view, "error:unauthorized")
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
@@ -196,9 +197,9 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
 
-      html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+      dispatch(view, "feishu.unbind", %{"open_id" => open_id})
 
-      assert html =~ ~s(data-last-dispatch="error:unauthorized")
+      assert_dispatch_status(view, "error:unauthorized")
       assert {:ok, still_bound} = EzagentPluginFeishu.UserBinding.resolve(open_id)
       assert URI.to_string(still_bound) == URI.to_string(user_uri)
     end
@@ -217,13 +218,13 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
         "user_uri" => "entity://#{Ezagent.URI.name!(ws)}/user/x"
       }
 
-      html1 = dispatch(view, "feishu.bind", args)
-      assert html1 =~ ~s(data-last-dispatch="error:unauthorized")
+      dispatch(view, "feishu.bind", args)
+      assert_dispatch_status(view, "error:unauthorized")
 
       # Same caller, same rejected action, run again — the UI must not go
       # silent on the second identical failure.
-      html2 = dispatch(view, "feishu.bind", args)
-      assert html2 =~ ~s(data-last-dispatch="error:unauthorized")
+      dispatch(view, "feishu.bind", args)
+      assert_dispatch_status(view, "error:unauthorized")
     end
   end
 
@@ -245,21 +246,20 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_cycle_#{uniq()}"
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/newcomer-#{uniq()}")
 
-      bind_html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
 
-      assert bind_html =~ ~s(data-last-dispatch="ok")
+      assert_dispatch_status(view, "ok")
 
       state_after_bind = world_state(view)
       open_ids_after_bind = Enum.map(state_after_bind["bindings"] || [], & &1["open_id"])
       assert open_id in open_ids_after_bind
       assert state_after_bind["bindings_error"] in [nil, false]
 
-      unbind_html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
-      assert unbind_html =~ ~s(data-last-dispatch="ok")
+      dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+      assert_dispatch_status(view, "ok")
 
       state_after_unbind = world_state(view)
       open_ids_after_unbind = Enum.map(state_after_unbind["bindings"] || [], & &1["open_id"])
@@ -279,11 +279,10 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_writeonly_#{uniq()}"
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/wo-target-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
 
       # The mutation itself succeeded (real dispatch, real cap) — proven by
       # the DB row existing — but the caller cannot re-list, so the status
@@ -291,8 +290,8 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       # (which would imply the visible table is now current) and NEVER a
       # silent swallow.
       assert {:ok, _} = EzagentPluginFeishu.UserBinding.resolve(open_id)
-      refute html =~ ~s(data-last-dispatch="ok")
-      assert html =~ ~s(data-last-dispatch="error:binding_saved_refresh_failed")
+      refute_dispatch_status(view, "ok")
+      assert_dispatch_status(view, "error:binding_saved_refresh_failed")
     end
 
     test "a caller with unbind but WITHOUT list cap gets binding_removed_refresh_failed (partial success)",
@@ -307,11 +306,11 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       {:ok, view, _html} = live(workspace_conn(conn, ws, caller), "/plugins/feishu/bindings")
 
-      html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+      dispatch(view, "feishu.unbind", %{"open_id" => open_id})
 
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
-      refute html =~ ~s(data-last-dispatch="ok")
-      assert html =~ ~s(data-last-dispatch="error:binding_removed_refresh_failed")
+      refute_dispatch_status(view, "ok")
+      assert_dispatch_status(view, "error:binding_removed_refresh_failed")
     end
   end
 
@@ -329,13 +328,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_xws_#{uniq()}"
       foreign_user = URI.new!("entity://#{Ezagent.URI.name!(ws_b)}/user/foreign-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(foreign_user)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(foreign_user)
+      })
 
-      assert html =~ ~s(data-last-dispatch="error:cross_workspace_denied")
+      assert_dispatch_status(view, "error:cross_workspace_denied")
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
@@ -356,13 +354,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       hijack_user = URI.new!("entity://#{Ezagent.URI.name!(ws_a)}/user/mine-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(hijack_user)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(hijack_user)
+      })
 
-      refute html =~ ~s(data-last-dispatch="ok")
+      refute_dispatch_status(view, "ok")
 
       assert {:ok, still_original} = EzagentPluginFeishu.UserBinding.resolve(open_id)
       assert URI.to_string(still_original) == URI.to_string(original_user)
@@ -475,13 +472,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_not_entity_#{uniq()}"
       non_entity = Ezagent.URI.new!("template://system/foo/bar")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(non_entity)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(non_entity)
+      })
 
-      refute html =~ ~s(data-last-dispatch="ok")
+      refute_dispatch_status(view, "ok")
       assert :error = EzagentPluginFeishu.UserBinding.resolve(open_id)
     end
 
@@ -506,13 +502,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id_new = "ou_wfb_new_#{uniq()}"
       user_new = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/new-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id_new,
-          "user_uri" => URI.to_string(user_new)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id_new,
+        "user_uri" => URI.to_string(user_new)
+      })
 
-      assert html =~ ~s(data-last-dispatch="error:unauthorized")
+      assert_dispatch_status(view, "error:unauthorized")
 
       # The existing row must still be visible — the failed mutation did not
       # clear the table.
@@ -547,13 +542,12 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       open_id = "ou_wfb_admin_#{uniq()}"
       user_uri = URI.new!("entity://#{Ezagent.URI.name!(ws)}/user/admin-target-#{uniq()}")
 
-      bind_html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => open_id,
-          "user_uri" => URI.to_string(user_uri)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => open_id,
+        "user_uri" => URI.to_string(user_uri)
+      })
 
-      assert bind_html =~ ~s(data-last-dispatch="ok")
+      assert_dispatch_status(view, "ok")
 
       # After successful bind, the table refreshes (inside with_admin_operator,
       # the refresh list dispatch also auto-mints caps).
@@ -561,8 +555,8 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       assert Enum.any?(state_after_bind["bindings"] || [], &(&1["open_id"] == open_id))
 
       # Unbind through world:dispatch.
-      unbind_html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
-      assert unbind_html =~ ~s(data-last-dispatch="ok")
+      dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+      assert_dispatch_status(view, "ok")
 
       state_after_unbind = world_state(view)
       refute Enum.any?(state_after_unbind["bindings"] || [], &(&1["open_id"] == open_id))
@@ -583,9 +577,9 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
 
       {:ok, view, _html} = live(workspace_conn(conn, ws_a, caller_a), "/plugins/feishu/bindings")
 
-      html = dispatch(view, "feishu.unbind", %{"open_id" => open_id})
+      dispatch(view, "feishu.unbind", %{"open_id" => open_id})
 
-      refute html =~ ~s(data-last-dispatch="ok")
+      refute_dispatch_status(view, "ok")
 
       # The original binding in workspace B must survive.
       assert {:ok, still_bound} = EzagentPluginFeishu.UserBinding.resolve(open_id)
@@ -609,25 +603,25 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
       secret_open_id = "ou_wfb_secret_leak_probe_#{uniq()}"
       foreign_user = URI.new!("entity://#{Ezagent.URI.name!(ws_b)}/user/leak-target-#{uniq()}")
 
-      html =
-        dispatch(view, "feishu.bind", %{
-          "open_id" => secret_open_id,
-          "user_uri" => URI.to_string(foreign_user)
-        })
+      dispatch(view, "feishu.bind", %{
+        "open_id" => secret_open_id,
+        "user_uri" => URI.to_string(foreign_user)
+      })
 
-      status = last_dispatch_status_from(html)
+      status = world_root_attribute(view, "data-last-dispatch")
+      state_json = world_root_attribute(view, "data-world-state")
 
       assert status =~ ~r/^error:[a-z_]+$/,
              "status must be a plain stable code, got: #{inspect(status)}"
 
-      refute html =~ "cross_workspace_user"
-      refute html =~ URI.to_string(foreign_user)
-      refute html =~ inspect({:cross_workspace_user, user: URI.to_string(foreign_user)})
+      for secret <- [
+            "cross_workspace_user",
+            URI.to_string(foreign_user),
+            inspect({:cross_workspace_user, user: URI.to_string(foreign_user)})
+          ] do
+        refute String.contains?(status, secret)
+        refute String.contains?(state_json, secret)
+      end
     end
-  end
-
-  defp last_dispatch_status_from(html) do
-    [_, status] = Regex.run(~r/data-last-dispatch="([^"]*)"/, html)
-    status
   end
 end

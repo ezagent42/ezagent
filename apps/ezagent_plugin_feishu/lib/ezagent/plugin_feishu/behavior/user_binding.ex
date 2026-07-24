@@ -497,7 +497,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   defp policy_failure_result(open_id, prior_row, policy_reason, original_err) do
     case rollback_binding(open_id, prior_row, original_err) do
       :ok -> {:error, {:binding_policy_failed, policy_reason}}
-      {:error, rollback_reason} -> {:error, {:binding_rollback_failed, rollback_reason}}
+      {:error, _rollback_reason} -> {:error, :binding_rollback_failed}
     end
   end
 
