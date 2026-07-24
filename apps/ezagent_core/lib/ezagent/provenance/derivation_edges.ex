@@ -217,7 +217,7 @@ defmodule Ezagent.Provenance.DerivationEdges do
     |> Ecto.Changeset.unique_constraint([:child_uri, :edge_kind],
       name: :derivation_edges_child_uri_edge_kind_index
     )
-    |> Repo.insert()
+    |> Repo.insert(mode: :savepoint)
     |> case do
       {:ok, _edge} ->
         {:ok, :inserted}
