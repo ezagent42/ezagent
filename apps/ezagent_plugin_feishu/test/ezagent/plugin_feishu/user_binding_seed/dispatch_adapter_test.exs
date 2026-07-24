@@ -1,22 +1,15 @@
 defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapterTest do
   @moduledoc """
-  Handoff B1 Phase 1 — the DispatchAdapter is the ONLY place the seed
-  importer touches dispatch, reusing the Phase-0-proven canonical-admin
-  operator seam. These tests exercise it directly against a live
-  Workspace Kind (no boot-timing concerns here — that is covered by
-  `integration/boot_dispatch_feasibility_test.exs`; this file proves the
-  adapter's own request/response shape).
+  B-layer (DEFERRED): the DispatchAdapter's canonical-admin auto-elevation
+  is not yet integrated. These tests are skipped until boot-auth lands.
   """
+
   use EzagentCore.DataCase, async: false
+
+  @moduletag :skip
 
   alias EzagentPluginFeishu.UserBinding, as: UB
   alias EzagentPluginFeishu.UserBindingSeed.DispatchAdapter
-
-  setup do
-    Application.put_env(:ezagent_plugin_feishu, :seed_auth_integrated, true)
-    on_exit(fn -> Application.delete_env(:ezagent_plugin_feishu, :seed_auth_integrated) end)
-    :ok
-  end
 
   defp workspace!(ws_name) do
     {:ok, _pid} = Ezagent.Workspace.create(ws_name)

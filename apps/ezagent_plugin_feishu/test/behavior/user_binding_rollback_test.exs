@@ -15,25 +15,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
   alias EzagentPluginFeishu.Behavior.UserBinding, as: BV
   alias EzagentPluginFeishu.UserBinding, as: UB
+  alias EzagentPluginFeishu.TestSupport.{FailingPolicy, FailingUnbindStorage}
 
   @admin_uri Ezagent.URI.new!("entity://system/user/admin")
   @user_a Ezagent.URI.new!("entity://team-alpha/user/alice")
   @user_b Ezagent.URI.new!("entity://team-alpha/user/bob")
-
-  # Fake policy: always returns error, triggering rollback.
-  defmodule FailingPolicy do
-    def do_apply(_user_uri, _admin_uri), do: {:error, :policy_failure_synthetic}
-  end
-
-  # Fake storage: delegates bind/resolve/list_all to real UserBinding,
-  # but unbind always fails, triggering log_rollback_failure.
-  defmodule FailingUnbindStorage do
-    defdelegate bind(oid, uuri, by), to: EzagentPluginFeishu.UserBinding
-    defdelegate bind(oid, uuri, by, at), to: EzagentPluginFeishu.UserBinding
-    def unbind(_oid), do: {:error, :synthetic_unbind_failure}
-    defdelegate resolve(oid), to: EzagentPluginFeishu.UserBinding
-    defdelegate list_all, to: EzagentPluginFeishu.UserBinding
-  end
 
   defp ctx(slice \\ %{bind_count: 0}, overrides \\ %{}) do
     base = %{
