@@ -1,43 +1,32 @@
 defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
   @moduledoc """
-  The ONLY place the Feishu user-binding seed importer touches dispatch
-  (handoff B1 Phase 1). Wraps the Phase-0-proven canonical-admin operator
-  seam — `Ezagent.Invocation.with_admin_operator/2` +
-  `Ezagent.Invocation.dispatch/1` — for the two `UserBinding` actions the
-  importer needs:
+  Reserved production executor seam for the Feishu user-binding importer.
 
-  - `list_current/1` — a formal dispatch READ (`:list_feishu_bindings`),
-    used for preflight classification. Reads flow through dispatch too —
-    not just writes — so this module never needs to call the raw storage
-    module (`EzagentPluginFeishu.UserBinding`) directly.
-  - `bind/3` — a formal dispatch WRITE (`:bind`), used only for rows the
-    preflight classified `:absent`.
+  The permission-neutral B1 A-layer calls an injected executor with
+  `list_current/1` and `bind/3`. This B-layer adapter is deliberately not
+  connected to a runtime operator or boot-authorization source yet, so both
+  operations fail closed. It performs no dispatch, raw storage access, direct
+  handler call, capability construction, or principal provisioning.
 
-  `ctx.caps` starts EMPTY on every call here; the framework mints the
-  concrete target-signed action cap via `materialize_admin_action_cap/1`
-  (see the Phase 0 proof in `integration/boot_dispatch_feasibility_test.exs`).
-  No raw storage, no direct handler call, no forged caps, no new system
-  principal.
+  A later thin integration may implement this seam only after it has a real
+  runtime source for operator identity and authorization.
   """
 
   @doc """
-  List the Feishu bindings currently visible for `workspace_uri`, via a
-  real dispatch to `:list_feishu_bindings` (workspace-scoped by the
-  Behavior's own handler — see moduledoc of `UserBindingSeed` for why
-  this is necessarily per-workspace).
+  Reserved read operation for the deferred production executor. Raises until
+  boot authorization integration is configured.
   """
-  @spec list_current(URI.t()) :: {:ok, [map()]} | {:error, term()}
+  @spec list_current(URI.t()) :: no_return()
   def list_current(%URI{scheme: "workspace"} = workspace_uri) do
     dispatch(action_target(workspace_uri, "list_feishu_bindings"), %{})
   end
 
   @doc """
-  Bind `open_id` to `user_uri` under `workspace_uri`, via a real dispatch
-  to `:bind`. Callers MUST only invoke this for preflight-classified
-  `:absent` rows — this module has no opinion on that; it is the
-  orchestrator's (`UserBindingSeed`) job.
+  Reserved bind operation for the deferred production executor. Raises until
+  boot authorization integration is configured. The importer only requests it
+  for preflight-classified `:absent` rows.
   """
-  @spec bind(URI.t(), String.t(), URI.t()) :: {:ok, map()} | {:error, term()}
+  @spec bind(URI.t(), String.t(), URI.t()) :: no_return()
   def bind(%URI{scheme: "workspace"} = workspace_uri, open_id, %URI{} = user_uri)
       when is_binary(open_id) do
     target = action_target(workspace_uri, "bind")
@@ -48,15 +37,14 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
     Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=feishu_user_bindings.#{action_name}")
   end
 
-  # B-layer (DEFERRED): canonical-admin auth + signed action-cap minting
-  # via admin_uri() + with_admin_operator is NOT yet integrated.
-  # This module is a placeholder — when configured as :seed_executor,
-  # every call raises explicitly until boot-auth integration lands.
+  # B-layer (DEFERRED): no runtime operator or boot authorization integration
+  # exists. This placeholder must fail closed rather than dispatching, writing
+  # raw storage, or inventing authorization.
   defp dispatch(_target, _args) do
     raise """
-    DispatchAdapter: canonical-admin auth integration is NOT yet implemented.
-    The B-layer operator/auth adapter is deferred. Until it lands, use the
-    permission-neutral FakeExecutor for tests, and do not configure
+    DispatchAdapter: seed executor/boot authorization is not configured.
+    The B-layer runtime operator/auth integration is deferred. Until it lands,
+    use the permission-neutral FakeExecutor only in tests and do not configure
     DispatchAdapter as :seed_executor in production.
     """
   end

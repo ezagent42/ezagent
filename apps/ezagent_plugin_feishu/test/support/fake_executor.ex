@@ -12,7 +12,8 @@ defmodule EzagentPluginFeishu.UserBindingSeed.FakeExecutor do
   The importer's `executor_mod/0` returns the `FakeExecutor` atom, whose
   `list_current/1` and `bind/3` match the exact arities the importer
   calls — proving the A-layer (plan) works without the deferred B-layer
-  (DispatchAdapter → with_admin_operator → CapBAC).
+  runtime execution integration. It is test-only and is never a production
+  authorization path.
   """
 
   use Agent
