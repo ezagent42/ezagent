@@ -12,8 +12,12 @@
 
 - Work only in `/home/lenovo/workspace/ezagent/.worktrees/fix-agent-display-name-profile`.
 - Do not backfill pre-release data, change Agent URIs, or derive names from Session membership.
-- Agent uniqueness applies only to `email IS NULL` profiles in one `workspace_uri`; users remain unaffected.
+- Agent uniqueness applies only to bare canonical
+  `entity://<workspace>/agent/<name>` profiles in one `workspace_uri`; nullable
+  email is not an entity-type discriminator and Users remain unaffected.
 - Same-URI retries preserve the original profile; duplicate requested Agent names become `name-2`, `name-3`, and so on.
+- Display names and generated suffix candidates must remain within the
+  database's 255-character limit.
 - Use `apply_patch`; read Mix help before unfamiliar tasks; run `mix precommit` before completion.
 
 ---
@@ -22,16 +26,21 @@
 
 **Files:**
 - Create: `apps/ezagent_core/priv/repo_pg/migrations/20260724000000_add_agent_profile_display_name_uniqueness.exs`
+- Create: `apps/ezagent_core/priv/repo_pg/migrations/20260724001000_scope_agent_profile_display_name_uniqueness.exs`
 - Modify: `apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:36-49`
 - Create: `apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs`
+- Create: `apps/ezagent_domain_identity/test/ezagent/entity/profile_concurrency_test.exs`
 
 **Interfaces:**
-- Produces `Profile.ensure_agent_display_name(%URI{}, String.t()) :: {:ok, Profile.t()} | {:error, Ecto.Changeset.t()}`.
-- Produces index `entity_profiles_agent_workspace_display_name_index` over `(workspace_uri, display_name)` where `email IS NULL`.
+- Produces `Profile.ensure_agent_display_name(%URI{}, String.t()) :: {:ok, Profile.t()} | {:error, Ecto.Changeset.t() | :not_agent_uri}`.
+- Produces index `entity_profiles_agent_workspace_display_name_index` over
+  `(workspace_uri, display_name)` for strict bare Agent entity URIs.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `profile_test.exs` with `EzagentCore.DataCase`. Test two Agent URIs in one workspace, a repeat for one URI, and a user with the same display name:
+Create `profile_test.exs` with `EzagentCore.DataCase`. Test two Agent URIs in
+one workspace, a repeat for one URI, multiple no-email Users with the same
+display name, rejection of a non-Agent URI, and boundary-length names:
 
 ```elixir
 assert {:ok, %Profile{display_name: "builder"}} =
@@ -52,22 +61,38 @@ Expected: FAIL because the public API and unique index do not exist.
 
 - [ ] **Step 3: Add the migration**
 
-Implement `change/0` as follows:
+Keep the already-committed initial migration immutable. Add a forward `up/0`
+migration that drops the named partial index and recreates it with the strict
+Agent URI predicate:
 
 ```elixir
-def change do
-  create unique_index(:entity_profiles, [:workspace_uri, :display_name],
-           where: "email IS NULL",
-           name: :entity_profiles_agent_workspace_display_name_index
-         )
-end
+create unique_index(:entity_profiles, [:workspace_uri, :display_name],
+  where: "entity_uri ~ '^entity://[^/:?#]+/agent/[^/?#]+$'",
+  name: :entity_profiles_agent_workspace_display_name_index
+)
+```
+
+The `down/0` path recreates the prior `email IS NULL` index:
+
+```elixir
+create unique_index(:entity_profiles, [:workspace_uri, :display_name],
+  where: "email IS NULL",
+  name: :entity_profiles_agent_workspace_display_name_index
+)
 ```
 
 Read `mix help ecto.migrate`, then run the documented migration command before rerunning tests.
 
 - [ ] **Step 4: Implement the minimal profile API**
 
-Add `ensure_agent_display_name/2` in `Ezagent.Entity.Profile`. It must first return `get(uri)` when that URI already has a profile. Otherwise derive `workspace_uri` using the existing persistence helper and try inserts in this order: base name, `base-2`, then incrementing suffixes. Use a private `agent_profile_changeset/2` with both `unique_constraint(:entity_uri)` and:
+Add `ensure_agent_display_name/2` in `Ezagent.Entity.Profile`. It must first
+reject any URI that is not both `Ezagent.URI.bare_principal?/1` and type
+`:agent`, then return `get(uri)` when that URI already has a profile. Otherwise
+derive `workspace_uri` using the existing persistence helper and try inserts in
+this order: base name, `base-2`, then incrementing suffixes. Validate the
+255-character column bound before `Repo.insert/1` and truncate the base to
+reserve suffix space. Use a private `agent_profile_changeset/2` with both
+`unique_constraint(:entity_uri)` and:
 
 ```elixir
 unique_constraint(:display_name,
@@ -76,6 +101,11 @@ unique_constraint(:display_name,
 ```
 
 On an entity-URI conflict, fetch and return the winning profile; on the named index conflict, try the next suffix; propagate every other changeset error. Add the named constraint to `upsert/1` too, so direct invalid Agent updates return a normal changeset error.
+
+Add a separate non-async concurrency test file. Each worker must start an
+independent `Ecto.Adapters.SQL.Sandbox` owner with `sandbox: false`, synchronize
+on a barrier, call the real Profile API, and stop its owner. Cover different
+Agent URIs sharing one base and two simultaneous calls for the same Agent URI.
 
 - [ ] **Step 5: Run green and commit**
 
@@ -124,7 +154,15 @@ case Ezagent.Entity.Profile.ensure_agent_display_name(agent_uri, String.trim(nam
 end
 ```
 
-Keep the existing `else` cleanup path unchanged so a failed profile write rolls back the fresh worker. Do not call the helper in the `fresh?: false` adoption branch.
+Normalize exceptions, exits, and throws from the Profile API into the same
+tagged error inside the fresh obligation so the cleanup branch always runs. In
+addition to terminating the worker, roll back only the lineage and ownership
+facts inserted by this call, remove workspace/config/grant/profile residue, and
+preserve creation receipts owned by a pre-start claim. Do not call the helper
+in the `fresh?: false` adoption branch.
+
+Add a deterministic 256-character-name regression that asserts every artifact
+above is absent after the returned error.
 
 - [ ] **Step 4: Run green and commit**
 
@@ -155,6 +193,10 @@ assert row["name"] == Ezagent.URI.name!(agent_uri)
 assert row["display_name"] == "dispatcher"
 refute row["display_name"] == row["name"]
 ```
+
+Also assert the sandbox `respawn_template_data["flavor"]` equals the flavor
+dynamically registered by the test. The fixture must resolve that stored flavor
+instead of embedding a literal.
 
 - [ ] **Step 2: Run red**
 
@@ -191,7 +233,9 @@ Run: `mix help test`, `mix help precommit`, and `mix help ecto.migrate`.
 Run:
 
 ```bash
-mix test apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs apps/ezagent_plugin_world/test/ezagent/world/agent_display_name_test.exs
+mix test apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs apps/ezagent_domain_identity/test/ezagent/entity/profile_concurrency_test.exs
+mix test --no-start apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs
+mix test --no-start apps/ezagent_plugin_world/test/ezagent/world/agent_display_name_test.exs
 ```
 
 Expected: PASS with zero failures.
