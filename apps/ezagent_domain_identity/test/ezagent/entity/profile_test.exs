@@ -3,6 +3,43 @@ defmodule Ezagent.Entity.ProfileTest do
 
   alias Ezagent.Entity.Profile
 
+  test "ensure_agent_display_name/2 allocates a workspace-unique agent name" do
+    agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
+    agent_two = Ezagent.URI.new!("entity://team-alpha/agent/two")
+
+    assert {:ok, %Profile{display_name: "builder"}} =
+             Profile.ensure_agent_display_name(agent_one, "builder")
+
+    assert {:ok, %Profile{display_name: "builder-2"}} =
+             Profile.ensure_agent_display_name(agent_two, "builder")
+
+    assert {:ok, %Profile{display_name: "builder"}} =
+             Profile.ensure_agent_display_name(agent_one, "ignored-on-retry")
+
+    assert {:ok, %Profile{display_name: "builder"}} =
+             Profile.upsert(%{
+               entity_uri: "entity://team-alpha/user/builder",
+               display_name: "builder",
+               email: "builder@example.com"
+             })
+  end
+
+  test "upsert/1 returns a changeset error for a duplicate Agent display name" do
+    {:ok, _} =
+      Profile.ensure_agent_display_name(
+        Ezagent.URI.new!("entity://team-alpha/agent/one"),
+        "builder"
+      )
+
+    assert {:error, changeset} =
+             Profile.upsert(%{
+               entity_uri: "entity://team-alpha/agent/two",
+               display_name: "builder"
+             })
+
+    assert "has already been taken" in errors_on(changeset).display_name
+  end
+
   test "upsert/1 inserts then updates the same entity_uri" do
     {:ok, p1} = Profile.upsert(%{entity_uri: "entity://team-alpha/user/x", display_name: "X"})
     assert p1.display_name == "X"

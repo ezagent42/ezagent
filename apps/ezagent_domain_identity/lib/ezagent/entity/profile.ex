@@ -41,7 +41,24 @@ defmodule Ezagent.Entity.Profile do
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
     |> unique_constraint(:email, name: :entity_profiles_email_lower_index)
+    |> unique_constraint(:display_name,
+      name: :entity_profiles_agent_workspace_display_name_index
+    )
     |> Repo.insert_or_update()
+  end
+
+  @doc "Ensure an Agent has a workspace-unique display name."
+  @spec ensure_agent_display_name(URI.t(), String.t()) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def ensure_agent_display_name(%URI{} = uri, base_name) when is_binary(base_name) do
+    case get(uri) do
+      %__MODULE__{} = profile ->
+        {:ok, profile}
+
+      nil ->
+        workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
+        insert_agent_display_name(uri, workspace_uri, base_name, 1)
+    end
   end
 
   @doc "Fetch a profile by entity URI. Returns `nil` if absent."
@@ -56,6 +73,62 @@ defmodule Ezagent.Entity.Profile do
   end
 
   def by_email(_), do: nil
+
+  defp insert_agent_display_name(uri, workspace_uri, base_name, suffix) do
+    display_name = if suffix == 1, do: base_name, else: "#{base_name}-#{suffix}"
+
+    %__MODULE__{}
+    |> agent_profile_changeset(%{
+      entity_uri: to_str(uri),
+      display_name: display_name,
+      email: nil,
+      workspace_uri: workspace_uri
+    })
+    |> Repo.insert()
+    |> case do
+      {:ok, profile} ->
+        {:ok, profile}
+
+      {:error, changeset} ->
+        cond do
+          unique_constraint?(changeset, :entity_uri, "entity_profiles_pkey") ->
+            case get(uri) do
+              %__MODULE__{} = profile -> {:ok, profile}
+              nil -> {:error, changeset}
+            end
+
+          unique_constraint?(
+            changeset,
+            :display_name,
+            "entity_profiles_agent_workspace_display_name_index"
+          ) ->
+            insert_agent_display_name(uri, workspace_uri, base_name, suffix + 1)
+
+          true ->
+            {:error, changeset}
+        end
+    end
+  end
+
+  defp agent_profile_changeset(profile, attrs) do
+    profile
+    |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
+    |> validate_required([:entity_uri, :display_name, :workspace_uri])
+    |> unique_constraint(:entity_uri, name: :entity_profiles_pkey)
+    |> unique_constraint(:display_name,
+      name: :entity_profiles_agent_workspace_display_name_index
+    )
+  end
+
+  defp unique_constraint?(changeset, field, name) do
+    Enum.any?(changeset.errors, fn
+      {^field, {_message, details}} ->
+        details[:constraint] == :unique and details[:constraint_name] == name
+
+      _ ->
+        false
+    end)
+  end
 
   # entity_uri stored as string; email lower-cased + trimmed so the
   # uniqueness invariant means what callers expect.
