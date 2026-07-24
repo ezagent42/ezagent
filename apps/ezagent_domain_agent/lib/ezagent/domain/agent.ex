@@ -379,23 +379,20 @@ defmodule Ezagent.Domain.Agent do
     # SECURITY (codex round-4): authorize against the caller's CURRENT caps, loaded
     # fresh ONCE — the scalar path's OWN `EntityCaps.load/1` (generation-verified via
     # `verified/2`, and reflecting single-cap store REMOVALS), with the scalar's own
-    # per-cap predicate (`granted_by_entity?` + `matches?`) hoisted OUT of the loop.
+    # predicate applied by the chokepoint owner `Ezagent.Identity.caps_match?/2`
+    # (SPEC §8.9 — the `matches?` call lives at the owner, NOT hand-rolled here).
     # NEVER the caller-supplied inline caps (the stale mount-time snapshot — a revoked
     # cap removed from the store WITHOUT a generation bump lingers there, so authorizing
     # against it resurrects revoked authority: over-auth / TOCTOU). NEVER per-candidate
     # `Cap.authorize` (its `principal_current?` reloads the holder store → O(agents×caps)).
-    # ONE load + pure in-memory matching → CONSTANT in the denied count. Filter FIRST so
-    # a denied agent's slices are never batch-read.
+    # ONE load of the caller's current, already-verified caps + pure in-memory matching
+    # via the owner → CONSTANT in the denied count. Filter FIRST so a denied agent's
+    # slices are never batch-read.
     current_caps = Ezagent.EntityCaps.load(holder)
 
     authorized =
       Enum.filter(agent_uris, fn uri ->
-        needed = credential_needed(uri)
-
-        Enum.any?(
-          current_caps,
-          &(Ezagent.Capability.granted_by_entity?(&1) and Ezagent.Capability.matches?(&1, needed))
-        )
+        Ezagent.Identity.caps_match?(current_caps, credential_needed(uri))
       end)
 
     sandbox = Ezagent.Kind.read_durable_many(authorized, :sandbox)
