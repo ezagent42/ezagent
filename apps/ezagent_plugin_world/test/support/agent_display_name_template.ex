@@ -16,11 +16,12 @@ defmodule Ezagent.World.AgentDisplayNameTemplate do
   def instantiate(_name, data, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
     config_dir = Map.fetch!(data, "allocated_config_dir")
+    {:ok, flavor} = Ezagent.AgentFlavorAttributes.get(agent_uri)
 
     respawn_template_data =
       data
       |> Map.put("agent_config_dir", config_dir)
-      |> Map.put("flavor", "world-profile-display-name")
+      |> Map.put("flavor", flavor)
 
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
            uri: agent_uri,
