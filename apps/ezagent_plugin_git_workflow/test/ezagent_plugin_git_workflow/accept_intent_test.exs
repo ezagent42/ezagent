@@ -19,6 +19,7 @@ defmodule EzagentPluginGitWorkflow.AcceptIntentTest do
 
     test "nil source_revision and requested_head_ref are ok" do
       attrs = %{@valid | source_revision: nil, requested_head_ref: nil}
+
       assert {:ok, %AcceptIntent{source_revision: nil, requested_head_ref: nil}} =
                AcceptIntent.new(attrs)
     end
@@ -93,8 +94,14 @@ defmodule EzagentPluginGitWorkflow.AcceptIntentTest do
     test "rejects non-canonical source_task_uri" do
       bad_uri = URI.parse("resource://test-ws/kanban-task/task1")
       refute Ezagent.URI.canonical?(bad_uri)
+
       assert {:error, {:invalid_field, :source_task_uri}} =
                AcceptIntent.new(%{@valid | source_task_uri: bad_uri})
+    end
+
+    test "rejects caller-injected workspace_uri (server-derived field)" do
+      assert {:error, {:unknown_fields, [:workspace_uri]}} =
+               AcceptIntent.new(Map.put(@valid, :workspace_uri, Ezagent.URI.workspace("test-ws")))
     end
   end
 end

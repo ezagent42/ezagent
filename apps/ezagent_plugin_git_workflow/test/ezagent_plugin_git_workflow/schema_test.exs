@@ -140,12 +140,10 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "WorkflowRun struct keys have no auth or secret fields" do
-      keys = [
-        :id, :binding_id, :binding_generation, :external_task_id,
-        :workspace_uri, :status, :state_version, :input_digest,
-        :source_task_uri, :source_revision, :requested_head_ref,
-        :last_error_code, :inserted_at, :updated_at
-      ]
+      keys =
+        WorkflowRun.__struct__()
+        |> Map.keys()
+        |> Enum.reject(&(&1 in [:__struct__, :inserted_at, :updated_at]))
 
       forbidden =
         ~w(authenticated_principal token credential secret password provider_response worker_pid workspace_cwd)a
