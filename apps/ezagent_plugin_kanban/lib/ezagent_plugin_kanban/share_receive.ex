@@ -14,8 +14,8 @@ defmodule EzagentPluginKanban.ShareReceive do
        链接分享是 `:read`,默认放行(含跨 workspace);D4 若翻案只改这一处;
     3. `Ezagent.Socialware.Mount.mount_for_person/5` 给**点击者本人**挂
        `access: :read` 只读钥匙(`[:get_tree, :export_markmap]`),落 person-scope
-       挂载行(无 session 轴;⑲ 删板撤钥匙链路经 `unmount_all_for_target` 连
-       person 行一起扫,不悬空)。
+       挂载行(无 session 轴;⑲ 删板撤钥匙走 cap-epoch `Ezagent.Cap.revoke_all_to/2`
+       —— 指向板的所有 cap 含 person 行一次性验签失效,挂载表行随后 bookkeeping 删)。
 
   授权只在**分享时**查(发起人有 access 才签得出 token),token 即凭证,接收侧
   只管挂;granter 仍 = 板主人(`Mount` 内部用板主人权铸,#154 mint chokepoint

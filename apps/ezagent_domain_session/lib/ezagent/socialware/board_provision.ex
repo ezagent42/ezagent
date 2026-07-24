@@ -207,33 +207,50 @@ defmodule Ezagent.Socialware.BoardProvision do
   删板(⑲)—— 板 = 数据宿主 agent,**只有板主人(建板人 = `data_owner`)能删**;
   建板人对板的生命周期权 = 建板时 create-entry 授予的 `Manage :any` cap(#533 §3.3)。
 
-  步骤(语义命令,**不直调 terminate**):
+  步骤(语义命令,**不直调 terminate**;顺序关键 —— revoke 在 destroy **之前**,
+  因 `revoke_all_to` 内部 `LocalRuntime.ensure_started` 要板还活着):
     1. 授权:`caller_ctx.caller` 必须 == 这块板的 `data_owner`(同 `pull_board` 的
-       `assert_board_owner` 守卫),否则 `{:error, :not_board_owner}`;
-    2. 退休 agent:dispatch `manage.delete` 到板(cap 校验落 dispatch chokepoint ——
+       `assert_board_owner` 守卫),否则 `{:error, :not_board_owner}`。`assert_board_owner`
+       保证 caller == data_owner(持板的 manage cap),故 caller 即合法 holder;
+    2. **撤钥匙(cap-epoch)**:`Ezagent.Cap.revoke_all_to/2` 在板自己 mailbox 里
+       bump authority generation → 指向本板的**所有** cap 一次性 inert(验签失效,但
+       cap 仍在 holder store、不删除)。**这一步必须在 destroy 之前**(板得活着才能
+       ensure_started + bump)。取代旧的 `Mount.unmount_all_for_target/1` 逐行手动撤
+       钥匙(#1470,已作废):光 destroy agent 不让 cap 失效(authority 行留着、
+       `verify_against_current` 仍可能过 = 泄漏),故必须显式 `revoke_all_to`;
+    3. 退休 agent:dispatch `manage.delete` 到板(cap 校验落 dispatch chokepoint ——
        caller 须持 Manage cap;经 `Ezagent.Lifecycle.destroy` 走 destroy hooks +
        清快照 + terminate)。为什么不是 `Ezagent.Domain.Agent.retire_spawned/2`:
        retire 的 provenance 闸要求 `CreationInventory` 建档,而 direct-spawn 的
        数据宿主(`Workspace.create_agent`,非 template spawn)不建档,`manage.delete`
        是同一「语义命令退休」家族里对 direct-spawn 宿主成立的那条路;
-    3. 清挂载:`Mount.unmount_all_for_target/1` 逐行撤钥匙 + 删挂载行(跨 session、
-       跨 grantee,best-effort per row)。
+    4. 清挂载表:`MountRow.delete_all_for_target/1` 删指向本板的全部挂载行(跨
+       session、跨 grantee,含 person 行)—— 纯 bookkeeping(cap 已在步骤 2 一次性
+       失效),best-effort。
 
-  返回 `{:ok, %{deleted: true, unmounted: n, failed: m}}` 或
-  `{:error, :not_board_owner | term()}`。
+  返回 `{:ok, %{deleted: true}}` 或 `{:error, :not_board_owner | term()}`。
   """
   @spec delete_board(URI.t(), module(), map()) ::
-          {:ok, %{deleted: true, unmounted: non_neg_integer(), failed: non_neg_integer()}}
-          | {:error, term()}
-  def delete_board(%URI{} = board_uri, behavior, caller_ctx)
+          {:ok, %{deleted: true}} | {:error, term()}
+  def delete_board(%URI{} = board_uri, behavior, %{caller: %URI{} = caller} = caller_ctx)
       when is_atom(behavior) and is_map(caller_ctx) do
     with :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
-         {:ok, _} <- dispatch_manage_delete(board_uri, caller_ctx),
-         {:ok, %{unmounted: unmounted, failed: failed}} <-
-           Mount.unmount_all_for_target(board_uri) do
-      {:ok, %{deleted: true, unmounted: unmounted, failed: failed}}
+         {:ok, _generation} <-
+           Ezagent.Cap.revoke_all_to(board_uri, %{
+             caller: caller,
+             authenticated_principal: caller,
+             caps: Map.get(caller_ctx, :caps, MapSet.new()),
+             trace_id: nil
+           }),
+         {:ok, _} <- dispatch_manage_delete(board_uri, caller_ctx) do
+      _ = Ezagent.Socialware.MountRow.delete_all_for_target(board_uri)
+      {:ok, %{deleted: true}}
     end
   end
+
+  def delete_board(%URI{}, behavior, caller_ctx)
+      when is_atom(behavior) and is_map(caller_ctx),
+      do: {:error, :not_board_owner}
 
   # 语义删除命令:`?action=manage.delete` dispatch 进板自己的 Kind 进程(授权 =
   # caller 持对这块板实例的 Manage cap,在 dispatch chokepoint 校验;handler 在

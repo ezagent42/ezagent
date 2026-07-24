@@ -48,6 +48,8 @@ defmodule Ezagent.Socialware.MountRow do
 
   import Ecto.Query
 
+  require Logger
+
   alias EzagentCore.Repo
 
   @primary_key {:id, :string, autogenerate: false}
@@ -202,6 +204,48 @@ defmodule Ezagent.Socialware.MountRow do
       {0, _} -> {:ok, :not_found}
       {n, _} when n >= 1 -> {:ok, :deleted}
     end
+  end
+
+  @doc """
+  删掉指向 `target_uri`(数据宿主)的**全部**挂载行(跨 session、跨 grantee,含
+  session 行与 person 行)—— 纯 bookkeeping,**不撤钥匙**(cap 失效由删宿主前的
+  `Ezagent.Cap.revoke_all_to/2`(cap-epoch generation bump)一次性完成;本函数只
+  收尾删挂载表行)。
+
+  逐行删:session 行(`session_uri` 非 NULL)走 `delete_by_natural_key/4`,
+  person 行(`session_uri` 为 NULL)走 `delete_person_by_natural_key/3`。best-effort:
+  单行删除抛异常只记 `:warning` 不牵连其余行。返回成功删除的行数。
+  """
+  @spec delete_all_for_target(URI.t() | String.t()) :: non_neg_integer()
+  def delete_all_for_target(target_uri) do
+    target_uri
+    |> list_for_target()
+    |> Enum.reduce(0, fn %__MODULE__{} = row, deleted ->
+      try do
+        case delete_row(row) do
+          {:ok, :deleted} -> deleted + 1
+          {:ok, :not_found} -> deleted
+        end
+      rescue
+        error ->
+          Logger.warning(
+            "MountRow.delete_all_for_target/1: delete FAILED for target=" <>
+              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
+              "#{inspect(error.__struct__)} — skipping (other rows unaffected)."
+          )
+
+          deleted
+      end
+    end)
+  end
+
+  # person 行无 session 轴(`session_uri` 为 NULL)→ 走 person 自然键删;其余走 session 键删。
+  defp delete_row(%__MODULE__{scope: "person"} = row) do
+    delete_person_by_natural_key(row.target_uri, row.grantee_uri, row.behavior)
+  end
+
+  defp delete_row(%__MODULE__{} = row) do
+    delete_by_natural_key(row.session_uri, row.target_uri, row.grantee_uri, row.behavior)
   end
 
   @doc """
