@@ -21,7 +21,7 @@
 ### Task 1: Add a database-backed unique Agent profile API
 
 **Files:**
-- Create: `apps/ezagent_core/priv/repo/migrations/20260724000000_add_agent_profile_display_name_uniqueness.exs`
+- Create: `apps/ezagent_core/priv/repo_pg/migrations/20260724000000_add_agent_profile_display_name_uniqueness.exs`
 - Modify: `apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex:36-49`
 - Create: `apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs`
 
@@ -84,7 +84,7 @@ Run: `mix test apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs
 Expected: PASS; suffix allocation, same-URI idempotence, and user-name independence are proven.
 
 ```bash
-git add apps/ezagent_core/priv/repo/migrations/20260724000000_add_agent_profile_display_name_uniqueness.exs apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs
+git add apps/ezagent_core/priv/repo_pg/migrations/20260724000000_add_agent_profile_display_name_uniqueness.exs apps/ezagent_domain_identity/lib/ezagent/entity/profile.ex apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs
 git commit -m "feat(identity): persist unique agent display names"
 ```
 
