@@ -8,6 +8,40 @@ defmodule Ezagent.AgentLineageConcurrencyTest do
   alias Ezagent.Provenance.DerivationEdges
   alias EzagentCore.Repo
 
+  test "direct derivation records succeed on an independent non-transaction connection" do
+    unique = System.unique_integer([:positive])
+    child = Ezagent.URI.agent("lineage-direct", "agent-#{unique}")
+    parent = Ezagent.URI.user("lineage-direct", "owner-#{unique}")
+    owner = Sandbox.start_owner!(Repo, shared: false, sandbox: false)
+
+    try do
+      refute Repo.in_transaction?()
+
+      assert :ok =
+               DerivationEdges.record_derivation_edge(
+                 child,
+                 parent,
+                 :spawned_by,
+                 DerivationEdges.new_attempt_id()
+               )
+
+      assert %DerivationEdges{} =
+               Repo.get_by(DerivationEdges,
+                 child_uri: URI.to_string(child),
+                 edge_kind: "spawned_by"
+               )
+    after
+      Repo.delete_all(
+        from(edge in DerivationEdges,
+          where: edge.child_uri == ^URI.to_string(child),
+          where: edge.edge_kind == "spawned_by"
+        )
+      )
+
+      Sandbox.stop_owner(owner)
+    end
+  end
+
   test "concurrent exact records recover from the derivation-edge unique race" do
     unique = System.unique_integer([:positive])
     agent = Ezagent.URI.agent("lineage-race", "agent-#{unique}")

@@ -212,12 +212,14 @@ defmodule Ezagent.Provenance.DerivationEdges do
   end
 
   defp insert_fact(attrs) do
+    insert_opts = if Repo.in_transaction?(), do: [mode: :savepoint], else: []
+
     %__MODULE__{}
     |> Ecto.Changeset.change(attrs)
     |> Ecto.Changeset.unique_constraint([:child_uri, :edge_kind],
       name: :derivation_edges_child_uri_edge_kind_index
     )
-    |> Repo.insert(mode: :savepoint)
+    |> Repo.insert(insert_opts)
     |> case do
       {:ok, _edge} ->
         {:ok, :inserted}
