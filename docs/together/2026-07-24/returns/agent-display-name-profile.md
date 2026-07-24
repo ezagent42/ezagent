@@ -16,18 +16,20 @@
   distinguish canonical Agent URIs from User profiles.
 - Add one PostgreSQL migration with an Agent-only display-name index, while
   duplicate no-email User names remain valid.
-- Make profile-write failures and post-write failures roll back only facts
-  created by that spawn attempt: profile, worker, lineage/derivation receipts,
-  workspace binding, config, flavor, grant, and creation inventory.
+- Make profile-write failures and post-write failures roll back active products
+  created by that spawn attempt: profile, worker, active lineage cache,
+  workspace binding, config, flavor, grant, and creation inventory. The
+  derivation/provenance edge is deliberately retained as append-only audit
+  history of the failed attempt.
 - Add focused Identity, Agent, Core provenance, migration, and World regression
   coverage, including strict fresh-spawn rollback and transaction races.
 
 ## Scope-repair decision
 
-- The strict failure contract remains: a fresh spawn that fails after profile
-  insertion compensates only facts created by that attempt, including its
-  lineage and provenance receipts. The core rollback APIs therefore remain in
-  scope.
+- Provenance remains append-only: a fresh spawn that fails after profile
+  insertion compensates its active products, but does not erase its
+  `:spawned_by` derivation edge. Failed attempts are audit facts. The temporary
+  Core delete APIs were removed rather than relaxing that invariant.
 - Because the service has not shipped and has no legacy database state, the PR
   now contains one final Agent-only display-name migration rather than three
   sequential corrective migrations. This repair is recorded in
@@ -39,7 +41,7 @@
 |---|---|---|---|
 | 1 | Newly spawned named Agents persist a display name and the World directory shows it instead of a UUID. | met | `apps/ezagent_domain_agent/test/ezagent/entity/agent_template_spawn_sandbox_materialization_test.exs`; `apps/ezagent_plugin_world/test/ezagent/world/agent_display_name_test.exs` |
 | 2 | Agent names are unique without affecting Users, including concurrent creation and Unicode bounds. | met | `apps/ezagent_domain_identity/test/ezagent/entity/profile_test.exs`; `profile_concurrency_test.exs`; PostgreSQL single-migration regression |
-| 3 | Failed fresh spawns leave no facts created by that attempt while preserving pre-existing facts. | met | TemplateSpawn post-profile-failure and pre-existing-profile/lineage regressions; final focused run: TemplateSpawn 21/21 |
+| 3 | Failed fresh spawns clean up active products while preserving pre-existing facts and append-only provenance audit history. | met | TemplateSpawn post-profile-failure and pre-existing-profile/lineage regressions; final focused run: TemplateSpawn 21/21 |
 | 4 | Required full gate and browser manual test are green. | deferred | `mix precommit` completed successfully. Isolated authenticated browser smoke test passed: a non-admin founder logged in and the Agent directory rendered `pr-1570-visual-agent` as the title with its entity URI secondary. The specific two-session Hello duplicate-role scenario remains untested. |
 
 **Method friction:** the initial full-gate attempts were interrupted by environment boot instability. A later isolated run completed `mix precommit`; only the dedicated two-session Hello duplicate-role manual scenario remains open.
@@ -50,7 +52,14 @@
 - Full Agent TemplateSpawn focused suite: 21 passed.
 - Core derivation/lineage and single-migration focused suites: passed.
 - World UUID display-name regression: passed.
-- `mix precommit`: passed (exit code 0) after the migration collapse.
+- `mix precommit`: passed (exit code 0) after the migration collapse. The
+  separate architecture gate is listed below because this alias does not prove
+  all architecture/invariant suites.
+- Review remediation: `TemplateSpawn` was split into focused rollback and
+  behavior-overlay helpers (main module now 1000 LOC); undocumented
+  `record_lineage_with_status/2` is marked internal; and the provenance-delete
+  API was removed. A clean re-run of `mix gate.arch` passed: Core 676/676,
+  Identity 4/4, External Mirror 39/39, and Session 7/7.
 - Fresh focused re-run completed successfully: the World regression explicitly
   reported `1 test, 0 failures`; the TemplateSpawn command also exited zero.
 - Isolated manual World check: created and verified a non-admin founder, logged
@@ -75,6 +84,11 @@ Hello two-session duplicate-role scenario is still deferred.
    SessionTemplate seed failed with `{:workspace://system, :holder_revoked}`.
    No Hello-session screenshot can be honestly produced until that unrelated
    boot invariant is repaired.
+2. Before deployment, rehearse the Agent-only unique-index migration against a
+   real canary/beta/stable snapshot (or establish and record that no existing
+   workspace contains duplicate Agent display names). The migration intentionally
+   does not silently deduplicate existing data, so a duplicate would otherwise
+   fail the deployment migration.
 
 ## Merge request
 

@@ -96,28 +96,6 @@ defmodule Ezagent.Provenance.DerivationEdges do
     |> Enum.map(&Ezagent.URI.new!/1)
   end
 
-  @doc false
-  @spec rollback_derivation_edge(
-          URI.t() | String.t(),
-          URI.t() | String.t(),
-          edge_kind(),
-          String.t()
-        ) :: :ok
-  def rollback_derivation_edge(child_uri, parent_uri, edge_kind, attempt_id)
-      when (is_atom(edge_kind) or is_binary(edge_kind)) and is_binary(attempt_id) and
-             attempt_id != "" do
-    Repo.delete_all(
-      from(edge in __MODULE__,
-        where: edge.child_uri == ^uri_string(child_uri),
-        where: edge.parent_uri == ^uri_string(parent_uri),
-        where: edge.edge_kind == ^to_string(edge_kind),
-        where: edge.attempt_id == ^attempt_id
-      )
-    )
-
-    :ok
-  end
-
   defp ownership_closure([], _seen, descendants), do: descendants
 
   defp ownership_closure(frontier, seen, descendants) do

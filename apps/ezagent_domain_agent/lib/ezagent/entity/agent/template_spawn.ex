@@ -530,7 +530,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
               {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
 
             {:error, reason, receipts} ->
-              rollback_fresh_spawn(
+              Ezagent.Entity.Agent.TemplateSpawn.Rollback.fresh_spawn(
                 workers,
                 receipts,
                 template_class,
@@ -542,7 +542,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           end
 
         {:error, reason, ownership_receipts} ->
-          rollback_fresh_spawn(
+          Ezagent.Entity.Agent.TemplateSpawn.Rollback.fresh_spawn(
             workers,
             ownership_receipts,
             template_class,
@@ -563,20 +563,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
-  defp mount_behavior_overlay(_workers, []), do: :ok
-
-  defp mount_behavior_overlay(workers, behaviors) when is_list(workers) and is_list(behaviors) do
-    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
-      case mount_behaviors(worker_uri, behaviors) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-  end
-
-  defp mount_behavior_overlay(_workers, overlay),
-    do: {:error, {:invalid_behavior_overlay, overlay}}
-
   defp establish_fresh_spawn_obligations(
          workers,
          instantiate_meta,
@@ -587,7 +573,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          ownership_receipts
        ) do
     with :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-         :ok <- mount_behavior_overlay(workers, behavior_overlay),
+         :ok <-
+           Ezagent.Entity.Agent.TemplateSpawn.BehaviorOverlay.mount(workers, behavior_overlay),
          {:ok, profile_status} <- persist_display_name(instance_uri, template_content_map) do
       receipts = add_display_profile_receipt(ownership_receipts, instance_uri, profile_status)
 
@@ -606,18 +593,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp add_display_profile_receipt(receipts, _instance_uri, status)
        when status in [:exists, :skipped],
        do: receipts
-
-  defp mount_behaviors(worker_uri, behaviors) do
-    Enum.reduce_while(behaviors, :ok, fn behavior, :ok ->
-      case Ezagent.Kind.mount(worker_uri, behavior, %{}) do
-        :ok ->
-          {:cont, :ok}
-
-        {:error, reason} ->
-          {:halt, {:error, {:behavior_overlay_mount_failed, worker_uri, behavior, reason}}}
-      end
-    end)
-  end
 
   defp persist_display_name(%URI{} = agent_uri, template_content_map)
        when is_map(template_content_map) do
@@ -1021,97 +996,5 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       _ ->
         false
     end
-  end
-
-  # PR3 2026-05-24 — additional rollback (beyond `undo_fresh_workers/1`)
-  defp cleanup_partial_config_dirs(workers, template_class) do
-    cond do
-      not is_atom(template_class) ->
-        :ok
-
-      not function_exported?(template_class, :destroy_config_dir, 2) ->
-        :ok
-
-      true ->
-        namespace = Ezagent.Kind.Template.namespace_of(template_class)
-
-        Enum.each(workers, fn worker_uri ->
-          dir = Ezagent.Sandbox.ConfigDir.path(worker_uri, namespace)
-          _ = template_class.destroy_config_dir(worker_uri, dir)
-        end)
-    end
-  end
-
-  # codex round-10 HIGH-2 — undo everything `spawn_from_template_content/4`
-  # established for the workers IT freshly created, when a post-spawn
-  # step fails: terminate the Kind process, roll back receipt-owned lineage
-  # facts, and unbind the workspace. Best-effort + idempotent — a worker for
-  # which the obligation never ran (binding/lineage absent) just no-ops.
-  # `Ezagent.Kind.terminate/1` is the tier-clean Kind-process teardown;
-  # `AgentLineage`/`WorkspaceRegistry` are Ezagent-domain registries this
-  # Ezagent-layer helper legitimately owns (it is the layer that recorded
-  # them — unlike the plugin Template Class, which must not touch them).
-  defp rollback_fresh_spawn(
-         workers,
-         receipts,
-         template_class,
-         instance_uri,
-         preserve_creation_receipts?
-       ) do
-    undo_fresh_workers(workers)
-    rollback_fresh_spawn_receipts(receipts, preserve_creation_receipts?)
-    cleanup_partial_config_dirs(workers, template_class)
-    Ezagent.AgentFlavorAttributes.delete(instance_uri)
-    # codex r5 HIGH — the #17 grant was minted in `resolve_cascade_content`
-    # BEFORE instantiate; a post-spawn failure must not leave an orphaned
-    # GrantRow (unique by agent_uri → would poison retries + leave a stale
-    # authorization/audit row for an agent that never came up).
-    revoke_cascade_grant_best_effort(instance_uri)
-    :ok
-  end
-
-  defp rollback_fresh_spawn_receipts(receipts, preserve_creation_receipts?) do
-    Enum.each(receipts, fn
-      {:agent_display_profile, :inserted, agent_uri} ->
-        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-          Ezagent.Entity.Profile.rollback_agent_display_name(agent_uri, :inserted)
-        end)
-
-      {:creation_inventory, _attempt_id, _worker_uri, _root_uri, _workspace_uri}
-      when preserve_creation_receipts? ->
-        :ok
-
-      {:creation_inventory, attempt_id, worker_uri, root_uri, workspace_uri} ->
-        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-          Ezagent.Agent.CreationInventory.rollback_record(
-            attempt_id,
-            worker_uri,
-            root_uri,
-            workspace_uri
-          )
-        end)
-
-      {:spawned_by_edge, worker_uri, root_uri} ->
-        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-          Ezagent.AgentLineage.rollback_spawned_by_edge(worker_uri, root_uri)
-        end)
-
-      {:lineage_fact, worker_uri, root_uri} ->
-        Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-          Ezagent.AgentLineage.rollback_lineage_fact(worker_uri, root_uri)
-        end)
-    end)
-  end
-
-  defp undo_fresh_workers(workers) do
-    Enum.each(workers, fn worker_uri ->
-      _ = Ezagent.Kind.terminate!(worker_uri)
-
-      Ezagent.Entity.Agent.SpawnObligations.safe(fn ->
-        Ezagent.WorkspaceRegistry.unbind(worker_uri)
-      end)
-    end)
-
-    :ok
   end
 end

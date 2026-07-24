@@ -362,7 +362,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert {:error, :creation_attempt_not_found} =
                Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
 
-      refute agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
 
     test "failure after profile insertion rolls back every fresh-spawn artifact" do
@@ -430,7 +430,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert {:error, :creation_attempt_not_found} =
                Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
 
-      refute agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
 
     test "failure after finding a pre-existing same-URI profile preserves it" do
@@ -501,7 +501,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert {:error, :creation_attempt_not_found} =
                Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
 
-      refute agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
 
     test "profile failure preserves an exact pre-existing lineage fact" do
@@ -539,7 +539,6 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
         _ = Ezagent.Kind.terminate(agent_uri)
         _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
         _ = Ezagent.AgentLineage.forget(agent_uri)
-        _ = Ezagent.AgentLineage.rollback_spawned_by_edge(agent_uri, owner_uri)
         _ = File.rm_rf(config_dir)
         :ok
       end)

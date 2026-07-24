@@ -158,20 +158,6 @@ defmodule Ezagent.AgentLineage do
     :ok
   end
 
-  @doc false
-  @spec rollback_spawned_by_edge(URI.t() | String.t(), URI.t() | String.t()) ::
-          :ok | {:error, term()}
-  def rollback_spawned_by_edge(agent_uri, spawned_by) do
-    a = uri_to_str(agent_uri)
-
-    Ezagent.Provenance.DerivationEdges.rollback_derivation_edge(
-      a,
-      uri_to_str(spawned_by),
-      :spawned_by,
-      stable_attempt_id(a)
-    )
-  end
-
   @doc "Persist an exact lineage fact through the caller's Repo without updating ETS."
   @spec record_exact(module(), URI.t() | String.t(), URI.t() | String.t()) ::
           {:ok, :inserted | :exists} | {:error, :lineage_conflict}
