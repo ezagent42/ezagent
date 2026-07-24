@@ -33,8 +33,12 @@ defmodule EzagentPluginGitWorkflow.Store do
       )
 
     case result do
-      {1, _} -> {:ok, binding}
-      {0, _} -> {:error, {:binding_exists, Map.fetch!(binding, :id)}}
+      {1, _} ->
+        {:ok, binding}
+
+      {0, _} ->
+        %TaskBinding{id: id} = binding
+        {:error, {:binding_exists, id}}
     end
   end
 
@@ -173,7 +177,9 @@ defmodule EzagentPluginGitWorkflow.Store do
           [next_status, next_version, now, run_id, expected_version, expected_status]
         )
 
-      case Map.fetch!(result, :num_rows) do
+      %Postgrex.Result{num_rows: num_rows} = result
+
+      case num_rows do
         1 ->
           {:ok, fetch_run!(run_id)}
 
@@ -211,8 +217,14 @@ defmodule EzagentPluginGitWorkflow.Store do
   defp validate_binding_generation(gen, %TaskBinding{generation: gen}), do: :ok
   defp validate_binding_generation(_gen, _binding), do: {:error, :binding_generation_mismatch}
 
-  defp compute_accept_digest(binding_id, binding_generation, external_task_id, source_task_uri,
-         source_revision, requested_head_ref) do
+  defp compute_accept_digest(
+         binding_id,
+         binding_generation,
+         external_task_id,
+         source_task_uri,
+         source_revision,
+         requested_head_ref
+       ) do
     WorkflowRun.compute_digest(%{
       binding_id: binding_id,
       binding_generation: binding_generation,
@@ -223,9 +235,13 @@ defmodule EzagentPluginGitWorkflow.Store do
     })
   end
 
-  defp validate_source_workspace(source_task_uri, %TaskBinding{} = binding, requested_head_ref) do
+  defp validate_source_workspace(
+         source_task_uri,
+         %TaskBinding{workspace_uri: workspace_uri} = binding,
+         requested_head_ref
+       ) do
     source_ws = Ezagent.URI.workspace_name(source_task_uri)
-    binding_ws = Ezagent.URI.workspace_name(Map.fetch!(binding, :workspace_uri))
+    binding_ws = Ezagent.URI.workspace_name(workspace_uri)
 
     case {source_ws, binding_ws} do
       {{:ok, ws}, {:ok, ws}} ->
@@ -298,7 +314,9 @@ defmodule EzagentPluginGitWorkflow.Store do
         ]
       )
 
-    if Map.fetch!(result, :num_rows) == 1 do
+    %Postgrex.Result{num_rows: num_rows} = result
+
+    if num_rows == 1 do
       {:ok, run} =
         WorkflowRun.new(%{
           id: id,
@@ -323,7 +341,9 @@ defmodule EzagentPluginGitWorkflow.Store do
           external_task_id
         )
 
-      if Map.fetch!(existing, :input_digest) == digest,
+      %WorkflowRun{input_digest: existing_digest} = existing
+
+      if existing_digest == digest,
         do: {:ok, existing},
         else: {:error, :digest_conflict}
     end
@@ -346,28 +366,29 @@ defmodule EzagentPluginGitWorkflow.Store do
 
       row ->
         run = row_to_run(row)
+        %WorkflowRun{status: current_status, state_version: current_version} = run
 
         cond do
           # Exact retry: already at target state+version (first, before terminal check)
-          Map.fetch!(run, :status) == next_status and Map.fetch!(run, :state_version) == next_version ->
+          current_status == next_status and current_version == next_version ->
             {:ok, run}
 
           # Terminal — reject any new transition. Exact retry of a terminal
           # state was already handled above; this is a DIFFERENT transition
           # attempt on a terminal run.
-          WorkflowRun.terminal?(Map.fetch!(run, :status)) ->
+          WorkflowRun.terminal?(current_status) ->
             {:error, :workflow_terminal}
 
           # Status is right but version differs — stale
-          Map.fetch!(run, :status) == next_status ->
+          current_status == next_status ->
             {:error, :stale_state_version}
 
           # Version advanced, status differs
-          Map.fetch!(run, :state_version) != expected_version and Map.fetch!(run, :status) != expected_status ->
+          current_version != expected_version and current_status != expected_status ->
             {:error, :stale_state_version}
 
           # Status mismatch
-          Map.fetch!(run, :status) != expected_status ->
+          current_status != expected_status ->
             {:error, :workflow_state_conflict}
 
           true ->
@@ -397,20 +418,22 @@ defmodule EzagentPluginGitWorkflow.Store do
   end
 
   defp read_binding_row(binding_id) do
-    result = Repo.query!("SELECT * FROM git_workflow_bindings WHERE id = $1", [binding_id])
+    %Postgrex.Result{rows: rows, columns: columns} =
+      Repo.query!("SELECT * FROM git_workflow_bindings WHERE id = $1", [binding_id])
 
-    case Map.fetch!(result, :rows) do
+    case rows do
       [] -> nil
-      [row | _] -> Enum.zip(Map.fetch!(result, :columns), row) |> Map.new()
+      [row | _] -> Enum.zip(columns, row) |> Map.new()
     end
   end
 
   defp read_run_row(run_id) do
-    result = Repo.query!("SELECT * FROM git_workflow_runs WHERE id = $1", [run_id])
+    %Postgrex.Result{rows: rows, columns: columns} =
+      Repo.query!("SELECT * FROM git_workflow_runs WHERE id = $1", [run_id])
 
-    case Map.fetch!(result, :rows) do
+    case rows do
       [] -> nil
-      [row | _] -> Enum.zip(Map.fetch!(result, :columns), row) |> Map.new()
+      [row | _] -> Enum.zip(columns, row) |> Map.new()
     end
   end
 
@@ -420,24 +443,39 @@ defmodule EzagentPluginGitWorkflow.Store do
   # Row ↔ Struct (atom-safe — no String.to_atom/1)
   # ---------------------------------------------------------------------------
 
-  defp binding_to_row(%TaskBinding{} = b) do
+  defp binding_to_row(%TaskBinding{
+         id: id,
+         generation: generation,
+         workspace_uri: workspace_uri,
+         task_receiver_uri: task_receiver_uri,
+         credential_owner_uri: credential_owner_uri,
+         repository_uri: repository_uri,
+         provider_adapter: provider_adapter,
+         provider_host: provider_host,
+         external_id: external_id,
+         owner_path: owner_path,
+         base_ref: base_ref,
+         visibility: visibility,
+         allowed_head_namespace: allowed_head_namespace,
+         enabled: enabled
+       }) do
     now = DateTime.utc_now()
 
     %{
-      id: Map.fetch!(b, :id),
-      generation: Map.fetch!(b, :generation),
-      workspace_uri: URI.to_string(Map.fetch!(b, :workspace_uri)),
-      task_receiver_uri: URI.to_string(Map.fetch!(b, :task_receiver_uri)),
-      credential_owner_uri: URI.to_string(Map.fetch!(b, :credential_owner_uri)),
-      repository_uri: URI.to_string(Map.fetch!(b, :repository_uri)),
-      provider_adapter: Atom.to_string(Map.fetch!(b, :provider_adapter)),
-      provider_host: Map.fetch!(b, :provider_host),
-      external_id: Map.fetch!(b, :external_id),
-      owner_path: Map.fetch!(b, :owner_path),
-      base_ref: Map.fetch!(b, :base_ref),
-      visibility: Atom.to_string(Map.fetch!(b, :visibility)),
-      allowed_head_namespace: Map.fetch!(b, :allowed_head_namespace),
-      enabled: Map.fetch!(b, :enabled),
+      id: id,
+      generation: generation,
+      workspace_uri: URI.to_string(workspace_uri),
+      task_receiver_uri: URI.to_string(task_receiver_uri),
+      credential_owner_uri: URI.to_string(credential_owner_uri),
+      repository_uri: URI.to_string(repository_uri),
+      provider_adapter: Atom.to_string(provider_adapter),
+      provider_host: provider_host,
+      external_id: external_id,
+      owner_path: owner_path,
+      base_ref: base_ref,
+      visibility: Atom.to_string(visibility),
+      allowed_head_namespace: allowed_head_namespace,
+      enabled: enabled,
       inserted_at: now,
       updated_at: now
     }
