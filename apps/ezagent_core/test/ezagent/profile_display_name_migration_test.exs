@@ -10,7 +10,7 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
      EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness}
   ]
 
-  test "duplicate no-email users migrate while agent display names remain workspace-unique" do
+  test "migration deduplicates legacy Agent names while preserving duplicate Users" do
     database = "profile_display_name_migration_#{System.unique_integer([:positive])}"
     admin_options = connection_options("postgres")
     {:ok, admin} = Postgrex.start_link(admin_options)
@@ -56,6 +56,7 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
     migrate(@migrations)
 
     assert scalar!("SELECT count(*) FROM entity_profiles WHERE display_name = 'Shared'") == 2
+    assert_agent_display_names!(["Builder", "Builder-2"])
     assert_agent_scoped_predicate!()
 
     error =
@@ -101,6 +102,7 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
     insert_profile!("entity://migration/user/first", "Shared")
     insert_profile!("entity://migration/user/second", "Shared")
     insert_profile!("entity://migration/agent/first", "Builder")
+    insert_profile!("entity://migration/agent/second", "Builder")
   end
 
   defp insert_profile!(entity_uri, display_name) do
@@ -127,6 +129,16 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
   end
 
   defp scalar!(sql), do: query!(sql).rows |> hd() |> hd()
+
+  defp assert_agent_display_names!(expected_names) do
+    assert query!("""
+           SELECT display_name
+             FROM entity_profiles
+            WHERE entity_uri ~ '^entity://[^/:?#]+/agent/[^/?#]+$'
+            ORDER BY entity_uri
+           """).rows
+           |> List.flatten() == expected_names
+  end
 
   defp assert_agent_scoped_predicate! do
     predicate =
