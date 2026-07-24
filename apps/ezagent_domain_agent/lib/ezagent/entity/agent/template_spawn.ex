@@ -517,7 +517,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                Map.get(instantiate_meta, :creation_attempt_id)
              ),
            :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
-           :ok <- mount_behavior_overlay(workers, behavior_overlay) do
+           :ok <- mount_behavior_overlay(workers, behavior_overlay),
+           :ok <- persist_display_name(instance_uri, template_content_map) do
         :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
         {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
       else
@@ -567,6 +568,26 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           {:halt, {:error, {:behavior_overlay_mount_failed, worker_uri, behavior, reason}}}
       end
     end)
+  end
+
+  defp persist_display_name(%URI{} = agent_uri, template_content_map)
+       when is_map(template_content_map) do
+    case Map.get(template_content_map, :name) || Map.get(template_content_map, "name") do
+      name when is_binary(name) ->
+        case String.trim(name) do
+          "" ->
+            :ok
+
+          trimmed_name ->
+            case Ezagent.Entity.Profile.ensure_agent_display_name(agent_uri, trimmed_name) do
+              {:ok, _profile} -> :ok
+              {:error, reason} -> {:error, {:agent_display_profile_failed, reason}}
+            end
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an

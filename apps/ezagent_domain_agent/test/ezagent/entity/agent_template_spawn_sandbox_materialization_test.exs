@@ -2,6 +2,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.Agent.TemplateSpawn
+  alias Ezagent.Entity.Profile
   alias Ezagent.Agent.TemplateOverlayTestBehavior
   alias Ezagent.Kind.Template.PreStart
   alias Ezagent.TestSupport.TemplatePreStartProbe
@@ -168,6 +169,81 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert sandbox.config_dir_path != nil
     assert is_map(sandbox.respawn_template_data) and map_size(sandbox.respawn_template_data) > 0
+  end
+
+  test "fresh template spawns persist workspace-unique display profiles without mutating adopted profiles" do
+    unique = System.unique_integer([:positive])
+    workspace_name = "display-profile-#{unique}"
+    flavor = "display-profile-#{unique}"
+    first_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+    second_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+    owner_uri = Ezagent.URI.user(workspace_name, "owner")
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: FallbackSandboxTemplate
+      })
+
+    case Ezagent.Resource.FsResolver.register_type("cc-agents", %{
+           backend_component: "cc-agents",
+           authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+         }) do
+      :ok ->
+        on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type("cc-agents") end)
+
+      {:error, {:already_registered, "cc-agents"}} ->
+        :ok
+    end
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(first_uri)
+      _ = Ezagent.Kind.terminate(second_uri)
+      :ok
+    end)
+
+    first_content = %{
+      name: "front-desk",
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "display-profile-first-#{unique}")
+    }
+
+    second_content = %{
+      name: "front-desk",
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "display-profile-second-#{unique}")
+    }
+
+    assert {:ok, %{workers: [^first_uri], fresh?: true}} =
+             TemplateSpawn.spawn_from_template_content(
+               first_content,
+               first_uri,
+               owner_uri,
+               workspace_uri
+             )
+
+    assert {:ok, %{workers: [^second_uri], fresh?: true}} =
+             TemplateSpawn.spawn_from_template_content(
+               second_content,
+               second_uri,
+               owner_uri,
+               workspace_uri
+             )
+
+    assert {:ok, %{workers: [^first_uri], fresh?: false}} =
+             TemplateSpawn.spawn_from_template_content(
+               first_content,
+               first_uri,
+               owner_uri,
+               workspace_uri
+             )
+
+    assert %Profile{display_name: "front-desk"} = Profile.get(first_uri)
+    assert %Profile{display_name: "front-desk-2"} = Profile.get(second_uri)
   end
 
   test "spawn skips sandbox.update_config dispatch when sandbox was initialized by Kind spawn args" do
