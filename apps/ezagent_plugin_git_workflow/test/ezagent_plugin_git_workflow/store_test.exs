@@ -14,9 +14,9 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     generation: 1,
     workspace_uri: Ezagent.URI.workspace("test-ws"),
     task_receiver_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-recv"),
-    credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "admin"),
+    credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "credential-owner"),
     repository_uri: Ezagent.URI.resource("test-ws", "git-repository", "my-repo"),
-    provider_adapter: GitHubTestAdapter,
+    provider_adapter: :github,
     provider_host: "github.com",
     external_id: "owner/repo",
     owner_path: "owner",
@@ -104,24 +104,31 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert {:error, :binding_generation_mismatch} = Store.accept(intent)
 
       [[count]] =
-        Repo.query!("SELECT COUNT(*) FROM git_workflow_runs WHERE binding_id=$1",
-          ["bnd_store_test"]).rows
+        Repo.query!(
+          "SELECT COUNT(*) FROM git_workflow_runs WHERE binding_id=$1",
+          ["bnd_store_test"]
+        ).rows
+
       assert count == 0
     end
 
     test "source workspace mismatch returns error" do
-      intent = build_intent(%{
-        external_task_id: "task-ws-mismatch",
-        source_task_uri: Ezagent.URI.resource("other-ws", "kanban-task", "task-src")
-      })
+      intent =
+        build_intent(%{
+          external_task_id: "task-ws-mismatch",
+          source_task_uri: Ezagent.URI.resource("other-ws", "kanban-task", "task-src")
+        })
+
       assert {:error, :source_workspace_mismatch} = Store.accept(intent)
     end
 
     test "requested_head_ref outside allowed namespace returns error" do
-      intent = build_intent(%{
-        external_task_id: "task-bad-head",
-        requested_head_ref: "hotfix/critical"
-      })
+      intent =
+        build_intent(%{
+          external_task_id: "task-bad-head",
+          requested_head_ref: "hotfix/critical"
+        })
+
       assert {:error, :head_ref_not_allowed} = Store.accept(intent)
     end
   end
@@ -146,6 +153,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
     test "stale state_version returns error", %{run: run} do
       {:ok, _} = Store.transition(run.id, 1, "accepted", "workspace_ready")
+
       assert {:error, :stale_state_version} =
                Store.transition(run.id, 1, "accepted", "worker_ready")
     end
@@ -163,20 +171,34 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     test "rejects unknown status at gate" do
       intent = build_intent()
       {:ok, run} = Store.accept(intent)
+
       assert {:error, {:invalid_status, "invalid_status"}} =
                Store.transition(run.id, 1, "accepted", "invalid_status")
     end
 
-    test "terminal runs reject further transitions" do
+    test "terminal runs: exact retry returns same run, different transition rejected" do
       intent = build_intent()
       {:ok, run} = Store.accept(intent)
 
-      # Transition to completed (terminal)
-      {:ok, _} = Store.transition(run.id, 1, "accepted", "completed")
+      # First: accepted → completed (terminal). CAS succeeds.
+      {:ok, r1} = Store.transition(run.id, 1, "accepted", "completed")
+      assert r1.status == "completed"
+      assert r1.state_version == 2
 
-      # Try to transition from completed → anything
+      # Exact retry with same params: returns same completed run (idempotent).
+      {:ok, r2} = Store.transition(run.id, 1, "accepted", "completed")
+      assert r2.id == r1.id
+      assert r2.status == "completed"
+      assert r2.state_version == 2
+
+      # Different transition attempt on terminal run: rejected.
       assert {:error, :workflow_terminal} =
                Store.transition(run.id, 2, "completed", "projected")
+
+      # State didn't change.
+      {:ok, final} = Store.read_run(run.id)
+      assert final.state_version == 2
+      assert final.status == "completed"
     end
   end
 

@@ -12,7 +12,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
 
   @binding_id "bnd_conc_real"
 
-  defp build_intent(overrides \\ %{}) do
+  defp build_intent(overrides) do
     defaults = %{
       binding_id: @binding_id,
       binding_generation: 1,
@@ -29,18 +29,30 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
   setup do
     # Insert binding through the sandbox (test process connection)
     now = DateTime.utc_now()
-    Repo.insert_all("git_workflow_bindings", [%{
-      id: @binding_id, generation: 1,
-      workspace_uri: "workspace://test-ws",
-      task_receiver_uri: "resource://test-ws/kanban-task/task-recv",
-      credential_owner_uri: "entity://test-ws/user/admin",
-      repository_uri: "resource://test-ws/git-repository/my-repo",
-      provider_adapter: "Elixir.GitHubTestAdapter",
-      provider_host: "github.com", external_id: "owner/repo",
-      owner_path: "owner", base_ref: "main", visibility: "public",
-      allowed_head_namespace: "feature/", enabled: true,
-      inserted_at: now, updated_at: now
-    }], on_conflict: :nothing, conflict_target: [:id])
+
+    Repo.insert_all(
+      "git_workflow_bindings",
+      [
+        %{
+          id: @binding_id,
+          generation: 1,
+          workspace_uri: "workspace://test-ws",
+          task_receiver_uri: "resource://test-ws/kanban-task/task-recv",
+          credential_owner_uri: "entity://test-ws/user/credential-owner",
+          repository_uri: "resource://test-ws/git-repository/my-repo",
+          provider_adapter: "github",
+          provider_host: "github.com",
+          external_id: "owner/repo",
+          owner_path: "owner",
+          base_ref: "main",
+          visibility: "public",
+          allowed_head_namespace: "feature/",
+          enabled: true,
+          inserted_at: now,
+          updated_at: now
+        }
+      ], on_conflict: :nothing, conflict_target: [:id])
+
     :ok
   end
 
@@ -67,18 +79,29 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
   # Each unboxed connection needs its own binding visible.
   defp ensure_binding_unboxed do
     now = DateTime.utc_now()
-    Repo.insert_all("git_workflow_bindings", [%{
-      id: @binding_id, generation: 1,
-      workspace_uri: "workspace://test-ws",
-      task_receiver_uri: "resource://test-ws/kanban-task/task-recv",
-      credential_owner_uri: "entity://test-ws/user/admin",
-      repository_uri: "resource://test-ws/git-repository/my-repo",
-      provider_adapter: "Elixir.GitHubTestAdapter",
-      provider_host: "github.com", external_id: "owner/repo",
-      owner_path: "owner", base_ref: "main", visibility: "public",
-      allowed_head_namespace: "feature/", enabled: true,
-      inserted_at: now, updated_at: now
-    }], on_conflict: :nothing, conflict_target: [:id])
+
+    Repo.insert_all(
+      "git_workflow_bindings",
+      [
+        %{
+          id: @binding_id,
+          generation: 1,
+          workspace_uri: "workspace://test-ws",
+          task_receiver_uri: "resource://test-ws/kanban-task/task-recv",
+          credential_owner_uri: "entity://test-ws/user/credential-owner",
+          repository_uri: "resource://test-ws/git-repository/my-repo",
+          provider_adapter: "github",
+          provider_host: "github.com",
+          external_id: "owner/repo",
+          owner_path: "owner",
+          base_ref: "main",
+          visibility: "public",
+          allowed_head_namespace: "feature/",
+          enabled: true,
+          inserted_at: now,
+          updated_at: now
+        }
+      ], on_conflict: :nothing, conflict_target: [:id])
   end
 
   defp run_unboxed_with_binding(fun) do
@@ -139,6 +162,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
             "SELECT COUNT(*) FROM git_workflow_runs WHERE binding_id=$1 AND external_task_id=$2",
             [@binding_id, task_key]
           ).rows
+
         assert count == 1
       end)
     end
@@ -158,10 +182,11 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
           Task.async(fn ->
             await_barrier(barrier)
 
-            intent = build_intent(%{
-              external_task_id: task_key,
-              source_revision: "rev-#{i}"
-            })
+            intent =
+              build_intent(%{
+                external_task_id: task_key,
+                source_revision: "rev-#{i}"
+              })
 
             result = run_unboxed_with_binding(fn -> Store.accept(intent) end)
             send(parent, {ref, i, result})
@@ -203,9 +228,12 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
         for {next_s, i} <- Enum.with_index(next_states, 1) do
           Task.async(fn ->
             await_barrier(barrier)
-            result = run_unboxed_with_binding(fn ->
-              Store.transition(run.id, 1, "accepted", next_s)
-            end)
+
+            result =
+              run_unboxed_with_binding(fn ->
+                Store.transition(run.id, 1, "accepted", next_s)
+              end)
+
             send(parent, {ref, i, result})
           end)
         end

@@ -12,9 +12,9 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     generation: 1,
     workspace_uri: Ezagent.URI.workspace("test-ws"),
     task_receiver_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task1"),
-    credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "admin"),
+    credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "credential-owner"),
     repository_uri: Ezagent.URI.resource("test-ws", "git-repository", "my-repo"),
-    provider_adapter: GitHubTestAdapter,
+    provider_adapter: :github,
     provider_host: "github.com",
     external_id: "owner/repo",
     owner_path: "owner",
@@ -35,7 +35,8 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "rejects missing fields" do
-      assert {:error, {:missing_field, :id}} = TaskBinding.new(Map.delete(@valid_binding_attrs, :id))
+      assert {:error, {:missing_field, :id}} =
+               TaskBinding.new(Map.delete(@valid_binding_attrs, :id))
     end
 
     test "rejects invalid visibility" do
@@ -105,17 +106,29 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
 
   describe "schema no-secret audit" do
     test "TaskBinding struct keys have no secret fields" do
-      keys = Map.keys(%{
-        __struct__: TaskBinding,
-        id: "", generation: 1,
-        workspace_uri: nil, task_receiver_uri: nil, credential_owner_uri: nil,
-        repository_uri: nil, provider_adapter: nil, provider_host: "",
-        external_id: "", owner_path: "", base_ref: "", visibility: nil,
-        allowed_head_namespace: "", enabled: true,
-        inserted_at: nil, updated_at: nil
-      }) -- [:__struct__, :inserted_at, :updated_at]
+      keys =
+        Map.keys(%{
+          __struct__: TaskBinding,
+          id: "",
+          generation: 1,
+          workspace_uri: nil,
+          task_receiver_uri: nil,
+          credential_owner_uri: nil,
+          repository_uri: nil,
+          provider_adapter: nil,
+          provider_host: "",
+          external_id: "",
+          owner_path: "",
+          base_ref: "",
+          visibility: nil,
+          allowed_head_namespace: "",
+          enabled: true,
+          inserted_at: nil,
+          updated_at: nil
+        }) -- [:__struct__, :inserted_at, :updated_at]
 
       forbidden = ~w(token credential secret password oauth installation_id private_key)a
+
       for key <- keys do
         key_str = Atom.to_string(key)
         # credential_owner_uri is approved
@@ -127,18 +140,30 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "WorkflowRun struct keys have no auth or secret fields" do
-      keys = Map.keys(%{
-        __struct__: WorkflowRun,
-        id: "", binding_id: "", binding_generation: 1,
-        external_task_id: "", status: "", state_version: 1,
-        input_digest: "", source_task_uri: nil, source_revision: nil,
-        requested_head_ref: nil, last_error_code: nil,
-        inserted_at: nil, updated_at: nil
-      }) -- [:__struct__, :inserted_at, :updated_at]
+      keys =
+        Map.keys(%{
+          __struct__: WorkflowRun,
+          id: "",
+          binding_id: "",
+          binding_generation: 1,
+          external_task_id: "",
+          status: "",
+          state_version: 1,
+          input_digest: "",
+          source_task_uri: nil,
+          source_revision: nil,
+          requested_head_ref: nil,
+          last_error_code: nil,
+          inserted_at: nil,
+          updated_at: nil
+        }) -- [:__struct__, :inserted_at, :updated_at]
 
-      forbidden = ~w(authenticated_principal token credential secret password provider_response worker_pid workspace_cwd)a
+      forbidden =
+        ~w(authenticated_principal token credential secret password provider_response worker_pid workspace_cwd)a
+
       for key <- keys do
         key_str = Atom.to_string(key)
+
         refute Enum.any?(forbidden, &String.contains?(key_str, Atom.to_string(&1))),
                "WorkflowRun key #{key} looks like a forbidden field"
       end
