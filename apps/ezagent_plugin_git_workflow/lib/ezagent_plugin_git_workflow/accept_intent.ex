@@ -93,9 +93,13 @@ defmodule EzagentPluginGitWorkflow.AcceptIntent do
       {:binding_id, is_binary(binding_id) and byte_size(binding_id) > 0},
       {:binding_generation, is_integer(binding_generation) and binding_generation > 0},
       {:external_task_id, is_binary(external_task_id) and byte_size(external_task_id) > 0},
-      {:source_task_uri, is_struct(source_task_uri, URI)},
-      {:source_revision, is_nil(source_revision) or (is_binary(source_revision) and byte_size(source_revision) > 0)},
-      {:requested_head_ref, is_nil(requested_head_ref) or (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)}
+      {:source_task_uri,
+       is_struct(source_task_uri, URI) and Ezagent.URI.canonical?(source_task_uri)},
+      {:source_revision,
+       is_nil(source_revision) or (is_binary(source_revision) and byte_size(source_revision) > 0)},
+      {:requested_head_ref,
+       is_nil(requested_head_ref) or
+         (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)}
     ]
 
     case Enum.find(checks, fn {_f, ok?} -> not ok? end) do

@@ -131,6 +131,38 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
       assert {:error, :head_ref_not_allowed} = Store.accept(intent)
     end
+
+    test "run.workspace_uri equals binding.workspace_uri" do
+      intent = build_intent(%{external_task_id: "task-ws-proof"})
+      {:ok, run} = Store.accept(intent)
+      {:ok, binding} = Store.read_binding("bnd_store_test")
+
+      assert run.workspace_uri == binding.workspace_uri
+      assert Ezagent.URI.canonical?(run.workspace_uri)
+    end
+
+    test "persisted workspace_uri matches binding workspace" do
+      intent = build_intent(%{external_task_id: "task-ws-db"})
+      {:ok, run} = Store.accept(intent)
+
+      [[db_ws]] =
+        Repo.query!(
+          "SELECT workspace_uri FROM git_workflow_runs WHERE id = $1",
+          [run.id]
+        ).rows
+
+      {:ok, binding} = Store.read_binding("bnd_store_test")
+      assert db_ws == URI.to_string(binding.workspace_uri)
+    end
+
+    test "exact retry returns same canonical workspace_uri" do
+      intent = build_intent(%{external_task_id: "task-ws-retry"})
+      {:ok, r1} = Store.accept(intent)
+      {:ok, r2} = Store.accept(intent)
+
+      assert r1.workspace_uri == r2.workspace_uri
+      assert Ezagent.URI.canonical?(r1.workspace_uri)
+    end
   end
 
   describe "transition/4 CAS" do

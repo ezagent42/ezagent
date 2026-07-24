@@ -2,15 +2,18 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   @moduledoc """
   Durable workflow intent run — server-generated identity and digest.
 
-  Server-owned fields (caller MUST NOT supply):
-    - id        — full sha256 digest of unique key
-    - status    — always "accepted" on creation
+  Server-owned / server-derived fields (caller MUST NOT supply):
+    - id            — full sha256 digest of unique key
+    - workspace_uri — derived from validated TaskBinding.workspace_uri
+    - status        — always "accepted" on creation
     - state_version — always 1 on creation
     - input_digest  — content hash of intent fields
 
   Caller supplies via AcceptIntent:
     - binding_id, binding_generation, external_task_id (unique key)
     - source_task_uri, source_revision, requested_head_ref (intent)
+
+  All URI fields are canonical Ezagent URIs (Ezagent.URI.canonical?/1).
 
   Closed status set (E2-A):
     accepted → workspace_ready → worker_ready → authority_ready
@@ -129,8 +132,14 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   def compute_digest(fields) when is_map(fields) do
     content =
       fields
-      |> Map.take([:binding_id, :binding_generation, :external_task_id,
-                    :source_task_uri, :source_revision, :requested_head_ref])
+      |> Map.take([
+        :binding_id,
+        :binding_generation,
+        :external_task_id,
+        :source_task_uri,
+        :source_revision,
+        :requested_head_ref
+      ])
       |> then(fn m ->
         %{
           binding_id: Map.fetch!(m, :binding_id),
@@ -175,17 +184,21 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
       {:binding_id, is_binary(binding_id) and byte_size(binding_id) > 0},
       {:binding_generation, is_integer(binding_generation) and binding_generation > 0},
       {:external_task_id, is_binary(external_task_id) and byte_size(external_task_id) > 0},
-      {:workspace_uri, is_struct(workspace_uri, URI)},
+      {:workspace_uri, is_struct(workspace_uri, URI) and Ezagent.URI.canonical?(workspace_uri)},
       {:status, valid_status?(status)},
       {:state_version, is_integer(state_version) and state_version > 0},
       {:input_digest, is_binary(input_digest) and byte_size(input_digest) > 0},
-      {:source_task_uri, is_struct(source_task_uri, URI)},
-      {:source_revision, is_nil(source_revision) or
-                         (is_binary(source_revision) and byte_size(source_revision) > 0)},
-      {:requested_head_ref, is_nil(requested_head_ref) or
-                            (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)},
-      {:last_error_code, is_nil(last_error_code) or
-                         (is_binary(last_error_code) and byte_size(last_error_code) > 0)}
+      {:source_task_uri,
+       is_struct(source_task_uri, URI) and Ezagent.URI.canonical?(source_task_uri)},
+      {:source_revision,
+       is_nil(source_revision) or
+         (is_binary(source_revision) and byte_size(source_revision) > 0)},
+      {:requested_head_ref,
+       is_nil(requested_head_ref) or
+         (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)},
+      {:last_error_code,
+       is_nil(last_error_code) or
+         (is_binary(last_error_code) and byte_size(last_error_code) > 0)}
     ]
 
     case Enum.find(checks, fn {_f, ok?} -> not ok? end) do

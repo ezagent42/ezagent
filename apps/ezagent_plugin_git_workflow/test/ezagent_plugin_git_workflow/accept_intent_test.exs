@@ -7,7 +7,7 @@ defmodule EzagentPluginGitWorkflow.AcceptIntentTest do
     binding_id: "bnd-1",
     binding_generation: 1,
     external_task_id: "task-ext-1",
-    source_task_uri: URI.parse("resource://test-ws/kanban-task/task1"),
+    source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task1"),
     source_revision: "abc123",
     requested_head_ref: "feature/test"
   }
@@ -88,6 +88,13 @@ defmodule EzagentPluginGitWorkflow.AcceptIntentTest do
     test "rejects non-URI source_task_uri" do
       assert {:error, {:invalid_field, :source_task_uri}} =
                AcceptIntent.new(%{@valid | source_task_uri: "not-a-uri"})
+    end
+
+    test "rejects non-canonical source_task_uri" do
+      bad_uri = URI.parse("resource://test-ws/kanban-task/task1")
+      refute Ezagent.URI.canonical?(bad_uri)
+      assert {:error, {:invalid_field, :source_task_uri}} =
+               AcceptIntent.new(%{@valid | source_task_uri: bad_uri})
     end
   end
 end

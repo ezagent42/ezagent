@@ -140,23 +140,12 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "WorkflowRun struct keys have no auth or secret fields" do
-      keys =
-        Map.keys(%{
-          __struct__: WorkflowRun,
-          id: "",
-          binding_id: "",
-          binding_generation: 1,
-          external_task_id: "",
-          status: "",
-          state_version: 1,
-          input_digest: "",
-          source_task_uri: nil,
-          source_revision: nil,
-          requested_head_ref: nil,
-          last_error_code: nil,
-          inserted_at: nil,
-          updated_at: nil
-        }) -- [:__struct__, :inserted_at, :updated_at]
+      keys = [
+        :id, :binding_id, :binding_generation, :external_task_id,
+        :workspace_uri, :status, :state_version, :input_digest,
+        :source_task_uri, :source_revision, :requested_head_ref,
+        :last_error_code, :inserted_at, :updated_at
+      ]
 
       forbidden =
         ~w(authenticated_principal token credential secret password provider_response worker_pid workspace_cwd)a
@@ -193,7 +182,7 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       binding_id: "bnd-1",
       binding_generation: 1,
       external_task_id: "task-1",
-      source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
+      source_task_uri: Ezagent.URI.resource("ws", "kanban-task", "t1"),
       source_revision: "abc",
       requested_head_ref: "feature/x"
     }
@@ -209,7 +198,7 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       status: "accepted",
       state_version: 1,
       input_digest: "sha256:abcdef",
-      source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
+      source_task_uri: Ezagent.URI.resource("ws", "kanban-task", "t1"),
       source_revision: "abc",
       requested_head_ref: "feature/x",
       last_error_code: nil

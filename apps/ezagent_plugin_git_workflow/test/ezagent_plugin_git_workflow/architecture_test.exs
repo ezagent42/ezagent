@@ -171,8 +171,9 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       keys =
         %{__struct__: EzagentPluginGitWorkflow.WorkflowRun,
           id: "", binding_id: "", binding_generation: 1, external_task_id: "",
-          status: "", state_version: 1, input_digest: "", source_task_uri: nil,
-          source_revision: nil, requested_head_ref: nil, last_error_code: nil}
+          workspace_uri: nil, status: "", state_version: 1, input_digest: "",
+          source_task_uri: nil, source_revision: nil, requested_head_ref: nil,
+          last_error_code: nil}
         |> Map.keys()
         |> Enum.reject(&(&1 in [:__struct__]))
 
