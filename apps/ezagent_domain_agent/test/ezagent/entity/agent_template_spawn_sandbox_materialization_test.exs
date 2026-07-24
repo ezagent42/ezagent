@@ -171,79 +171,133 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     assert is_map(sandbox.respawn_template_data) and map_size(sandbox.respawn_template_data) > 0
   end
 
-  test "fresh template spawns persist workspace-unique display profiles without mutating adopted profiles" do
-    unique = System.unique_integer([:positive])
-    workspace_name = "display-profile-#{unique}"
-    flavor = "display-profile-#{unique}"
-    first_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
-    second_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
-    owner_uri = Ezagent.URI.user(workspace_name, "owner")
-    workspace_uri = Ezagent.URI.workspace(workspace_name)
-
-    :ok =
-      Ezagent.AgentFlavorRegistry.register(%{
-        flavor: flavor,
-        kind: Ezagent.Entity.Agent,
-        template_class: FallbackSandboxTemplate
-      })
-
-    case Ezagent.Resource.FsResolver.register_type("cc-agents", %{
-           backend_component: "cc-agents",
-           authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
-         }) do
-      :ok ->
-        on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type("cc-agents") end)
-
-      {:error, {:already_registered, "cc-agents"}} ->
-        :ok
+  describe "fresh template spawn display profiles" do
+    setup do
+      # The Session domain owns the production `entity://` resolver that
+      # dispatches Agent entities to their host Kind. This child app otherwise
+      # only starts Identity's User-only resolver.
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+      :ok
     end
 
-    on_exit(fn ->
-      _ = Ezagent.Kind.terminate(first_uri)
-      _ = Ezagent.Kind.terminate(second_uri)
-      :ok
-    end)
+    test "persists unique names only for fresh workers" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-#{unique}"
+      flavor = "display-profile-#{unique}"
+      first_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      second_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      adopted_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      blank_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
 
-    first_content = %{
-      name: "front-desk",
-      flavor: flavor,
-      project_cwd: System.tmp_dir!(),
-      config_dir: Path.join(System.tmp_dir!(), "display-profile-first-#{unique}")
-    }
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: PreinitializedSandboxTemplate
+        })
 
-    second_content = %{
-      name: "front-desk",
-      flavor: flavor,
-      project_cwd: System.tmp_dir!(),
-      config_dir: Path.join(System.tmp_dir!(), "display-profile-second-#{unique}")
-    }
+      case Ezagent.Resource.FsResolver.register_type("cc-agents", %{
+             backend_component: "cc-agents",
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type("cc-agents") end)
 
-    assert {:ok, %{workers: [^first_uri], fresh?: true}} =
-             TemplateSpawn.spawn_from_template_content(
-               first_content,
-               first_uri,
-               owner_uri,
-               workspace_uri
-             )
+        {:error, {:already_registered, "cc-agents"}} ->
+          :ok
+      end
 
-    assert {:ok, %{workers: [^second_uri], fresh?: true}} =
-             TemplateSpawn.spawn_from_template_content(
-               second_content,
-               second_uri,
-               owner_uri,
-               workspace_uri
-             )
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(first_uri)
+        _ = Ezagent.Kind.terminate(second_uri)
+        _ = Ezagent.Kind.terminate(adopted_uri)
+        _ = Ezagent.Kind.terminate(blank_uri)
+        :ok
+      end)
 
-    assert {:ok, %{workers: [^first_uri], fresh?: false}} =
-             TemplateSpawn.spawn_from_template_content(
-               first_content,
-               first_uri,
-               owner_uri,
-               workspace_uri
-             )
+      first_content = %{
+        "name" => "  front-desk  ",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-first-#{unique}")
+      }
 
-    assert %Profile{display_name: "front-desk"} = Profile.get(first_uri)
-    assert %Profile{display_name: "front-desk-2"} = Profile.get(second_uri)
+      second_content = %{
+        name: "front-desk",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-second-#{unique}")
+      }
+
+      adopted_content = %{
+        name: "adopted-without-profile",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-adopted-#{unique}")
+      }
+
+      blank_content = %{
+        name: "   ",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-blank-#{unique}")
+      }
+
+      assert {:ok, %{workers: [^first_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 first_content,
+                 first_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, %{workers: [^second_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 second_content,
+                 second_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, %{workers: [^first_uri], fresh?: false}} =
+               TemplateSpawn.spawn_from_template_content(
+                 first_content,
+                 first_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+                 uri: adopted_uri,
+                 behaviors: Ezagent.Entity.Agent.base_behaviors()
+               })
+
+      assert Profile.get(adopted_uri) == nil
+
+      assert {:ok, %{workers: [^adopted_uri], fresh?: false}} =
+               TemplateSpawn.spawn_from_template_content(
+                 adopted_content,
+                 adopted_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, %{workers: [^blank_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 blank_content,
+                 blank_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert %Profile{display_name: "front-desk"} = Profile.get(first_uri)
+      assert %Profile{display_name: "front-desk-2"} = Profile.get(second_uri)
+      assert Profile.get(adopted_uri) == nil
+      assert Profile.get(blank_uri) == nil
+    end
   end
 
   test "spawn skips sandbox.update_config dispatch when sandbox was initialized by Kind spawn args" do
