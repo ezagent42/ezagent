@@ -190,15 +190,13 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   defp sort_cards(cards), do: Enum.sort_by(cards, &{&1["order"] || 0, &1["id"]})
 
-  # board 的 `:kanban` slice 里的 tree（真相源）。dormant board 先经核心 owner-gated
-  # chokepoint `LocalRuntime.ensure_started/1` 起活（kanban_data.ensure_spawned 同款,
-  # HIGH-3 liveness），再 live-only read（§2.2 `Kind.read/3`, `spawn: :never`）；
-  # 任何失败退 nil → 空列投影（fail-safe）。
+  # board 的 `:kanban` slice 里的 tree（真相源）。走 actor-framework 公共 durable 读面
+  # `Kind.read_durable/3`（§2.2 冷读面，直读 KindSnapshot 快照、不唤醒 dormant board——
+  # 渲染是只读投影，无需起活；替代原先 `ensure_started` + 内部 `get_slice` 裸读）。
+  # 返回 `{:ok, slice, meta}`；无快照/无 tree 退 nil → 空列投影（fail-safe）。
   defp board_slice_tree(_session_uri, %URI{} = board_uri) do
-    _ = Ezagent.LocalRuntime.ensure_started(board_uri)
-
-    case Ezagent.Kind.read(board_uri, :kanban, spawn: :never) do
-      {:ok, %{} = slice} -> Map.get(slice, :tree) || Map.get(slice, "tree")
+    case Ezagent.Kind.read_durable(board_uri, :kanban) do
+      {:ok, %{} = slice, _meta} -> Map.get(slice, :tree) || Map.get(slice, "tree")
       _ -> nil
     end
   rescue

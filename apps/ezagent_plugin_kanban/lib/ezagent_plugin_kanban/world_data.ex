@@ -495,6 +495,17 @@ defmodule EzagentPluginKanban.WorldData do
 
   defp uri_name(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
 
+  # 详情路径从本插件 `pages/0` 声明的 `detail_route` 模板推导（单一声明源，去掉硬编码
+  # `/plugins/kanban/` 前缀）：替换模板里的 `:id` 段为编码后的 board URI。声明缺失时
+  # fail-safe 退回字面模板（渲染路径不应因声明漂移而崩）。
   defp detail_path(%URI{} = uri),
-    do: "/plugins/kanban/" <> URI.encode_www_form(URI.to_string(uri))
+    do: String.replace(detail_route_template(), ":id", URI.encode_www_form(URI.to_string(uri)))
+
+  defp detail_route_template do
+    EzagentPluginKanban.Application.pages()
+    |> Enum.find_value("/plugins/kanban/:id", fn
+      %{detail_route: {template, _action}} when is_binary(template) -> template
+      _ -> nil
+    end)
+  end
 end
