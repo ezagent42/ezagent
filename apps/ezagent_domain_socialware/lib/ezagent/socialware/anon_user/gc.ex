@@ -294,7 +294,7 @@ defmodule Ezagent.Socialware.AnonUser.GC do
     target = Ezagent.URI.new!(session_uri <> "?action=session.leave")
     admin_uri = Ezagent.Entity.User.admin_uri()
 
-    with {:ok, _pid} <- Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)),
+    with true <- Ezagent.Kind.alive?(Ezagent.URI.instance(target)),
          {:ok, leave_cap} <-
            Ezagent.Cap.issue_for_action({:admin, admin_uri}, admin_uri, target) do
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
@@ -311,6 +311,9 @@ defmodule Ezagent.Socialware.AnonUser.GC do
       })
 
       :ok
+    else
+      false -> :error
+      {:error, _reason} = error -> error
     end
   end
 
@@ -319,9 +322,10 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   defp best_effort_terminate(entity_uri) when is_binary(entity_uri) do
     uri = Ezagent.URI.new!(entity_uri)
 
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, _pid} -> Ezagent.Kind.terminate!(uri)
-      :error -> :ok
+    if Ezagent.Kind.alive?(uri) do
+      Ezagent.Kind.terminate!(uri)
+    else
+      :ok
     end
   rescue
     _ -> :ok

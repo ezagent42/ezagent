@@ -305,31 +305,34 @@ defmodule Ezagent.Orchestrator.Tools do
   # PUBLIC (PR-3S): also called by `Tools.MemberTemplate.preflight_new_template/4`.
   @doc false
   def read_source_template_content(%URI{} = template_uri) do
-    case Ezagent.KindRegistry.lookup(template_uri) do
-      :error ->
-        {:error, {:source_template_not_alive, template_uri}}
-
-      {:ok, pid} ->
-        case safe_get_template_content(pid) do
+    # Live-only durable-free read of the source template's `:template` slice
+    # (§2.2 `Kind.read/3`, `spawn: :never`) — the public replacement for the
+    # `KindRegistry.lookup` + raw `runtime_view` reach-in. A cold/not-live
+    # source stays `:source_template_not_alive` (no lazy-spawn); a live-but-
+    # empty slice stays `:source_template_not_populated`.
+    case Ezagent.Kind.read(template_uri, :template, spawn: :never) do
+      {:ok, slice} ->
+        case template_content_from_slice(slice) do
           %{} = content when map_size(content) > 0 -> {:ok, content}
           _ -> {:error, {:source_template_not_populated, template_uri}}
         end
-    end
-  end
 
-  defp safe_get_template_content(pid) do
-    case Ezagent.Kind.runtime_view(pid) do
-      {:ok, %{state: %{template: %{state: %{content: content}}}}} when is_map(content) ->
-        content
-
-      {:ok, %{state: %{template: %{content: content}}}} when is_map(content) ->
-        content
-
-      _ ->
-        %{}
+      {:error, _not_live} ->
+        {:error, {:source_template_not_alive, template_uri}}
     end
   catch
-    :exit, _ -> %{}
+    :exit, _ -> {:error, {:source_template_not_populated, template_uri}}
+  end
+
+  # The `:template` slice content — matches both the two-container Lifecycle
+  # shape (`%{state: %{content: ...}}`) and the legacy flat form
+  # (`%{content: ...}`), whichever `read/3` returns.
+  defp template_content_from_slice(slice) do
+    case slice do
+      %{state: %{content: content}} when is_map(content) -> content
+      %{content: content} when is_map(content) -> content
+      _ -> %{}
+    end
   end
 
   # Faceted `chat.join` dispatch on the session — carries the PR-7 member

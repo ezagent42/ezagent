@@ -7,18 +7,18 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
   """
 
   @sites [
-    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 459,
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 441,
      {:write_template_slice, 2}, :remote, "project_cwd/0",
      "ce0c3bab7b5600bd242a4c317334999b4f4a77c5aa85f11d8abc2334772a42b2"},
-    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 460,
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 442,
      {:write_template_slice, 2}, :remote, "config_dir/0",
      "240e458076637b620dba625a0379b1ac08c1a161305e3405bc5274049fab8c7e"},
-    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 461,
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 443,
      {:write_template_slice, 2}, :remote, "settings_path/0",
      "510df84a885340d23eef973d734e13fcabfc3bd3b04aada23adf7eb6e5123724"},
-    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 631, {:when, 2},
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 613, {:when, 2},
      :remote, "host/0", "40339c2c7c069d6d09d01574e49cd11b02b755514e23466f35ed504aaf1cc53a"},
-    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 631, {:when, 2},
+    {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex", 613, {:when, 2},
      :remote, "scheme/0", "40339c2c7c069d6d09d01574e49cd11b02b755514e23466f35ed504aaf1cc53a"},
     {"apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_channel.ex", 80, {:join, 3}, :remote,
      "agent_uri/0", "426ac3a2ce882a358591cf38d9d837236f8b0ffa0f427eb5acf1886d8cee488a"},

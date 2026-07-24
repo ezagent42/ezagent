@@ -114,12 +114,12 @@ defmodule Ezagent.Cap do
   end
 
   defp action_context(pid, _instance, action) do
-    with {:ok, %{kind: kind_module, state: slice_state}} <-
-           GenServer.call(pid, :ezagent_runtime_view),
-         {:ok, behavior_module} <-
-           Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
-      {:ok, {kind_module, behavior_module}}
-    end
+    # §2.2 purpose-specific action-subject resolution — the public replacement
+    # for the raw `:ezagent_runtime_view` reach-through + out-of-actor
+    # `BehaviorSet.resolve_action`. The resolution now runs INSIDE the actor and
+    # returns ONLY `{kind_module, behavior_module}` (never the slice map),
+    # byte-identical success/`{:error, {:unknown_action, _}}` shapes.
+    Ezagent.Kind.resolve_action_subject(pid, action)
   end
 
   # G-6/MF5: the target process may retain generation N after an external

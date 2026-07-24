@@ -255,7 +255,7 @@ defmodule Ezagent.Users do
   end
 
   defp self_target?(principal) do
-    match?({:ok, pid} when pid == self(), Ezagent.KindRegistry.lookup(principal))
+    Ezagent.Kind.self?(principal)
   end
 
   @doc "Set or rotate a user's password. Returns `{:ok, decoded}` or `{:error, :not_found}`."
