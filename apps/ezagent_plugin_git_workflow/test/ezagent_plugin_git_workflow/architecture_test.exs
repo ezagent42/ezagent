@@ -129,7 +129,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
     test "accept/1 only takes AcceptIntent struct (not map)" do
       content = File.read!(Path.join(@lib_dir, "ezagent_plugin_git_workflow/store.ex"))
-      assert content =~ ~r/def accept\(%AcceptIntent\{\}/
+      assert content =~ ~r/def accept\(%AcceptIntent\{/
     end
 
     test "no String.to_atom/1 (atom safety)" do

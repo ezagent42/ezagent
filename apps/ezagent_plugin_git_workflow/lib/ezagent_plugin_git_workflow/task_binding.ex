@@ -79,21 +79,36 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
   end
 
   defp validate_values(attrs) do
+    id = Map.fetch!(attrs, :id)
+    generation = Map.fetch!(attrs, :generation)
+    workspace_uri = Map.fetch!(attrs, :workspace_uri)
+    task_receiver_uri = Map.fetch!(attrs, :task_receiver_uri)
+    credential_owner_uri = Map.fetch!(attrs, :credential_owner_uri)
+    repository_uri = Map.fetch!(attrs, :repository_uri)
+    provider_adapter = Map.fetch!(attrs, :provider_adapter)
+    provider_host = Map.fetch!(attrs, :provider_host)
+    external_id = Map.fetch!(attrs, :external_id)
+    owner_path = Map.fetch!(attrs, :owner_path)
+    base_ref = Map.fetch!(attrs, :base_ref)
+    visibility = Map.fetch!(attrs, :visibility)
+    allowed_head_namespace = Map.fetch!(attrs, :allowed_head_namespace)
+    enabled = Map.fetch!(attrs, :enabled)
+
     checks = [
-      {:id, is_binary(attrs.id) and byte_size(attrs.id) > 0},
-      {:generation, is_integer(attrs.generation) and attrs.generation > 0},
-      {:workspace_uri, is_struct(attrs.workspace_uri, URI)},
-      {:task_receiver_uri, is_struct(attrs.task_receiver_uri, URI)},
-      {:credential_owner_uri, is_struct(attrs.credential_owner_uri, URI)},
-      {:repository_uri, is_struct(attrs.repository_uri, URI)},
-      {:provider_adapter, is_atom(attrs.provider_adapter) and not is_nil(attrs.provider_adapter)},
-      {:provider_host, is_binary(attrs.provider_host) and byte_size(attrs.provider_host) > 0},
-      {:external_id, is_binary(attrs.external_id) and byte_size(attrs.external_id) > 0},
-      {:owner_path, is_binary(attrs.owner_path) and byte_size(attrs.owner_path) > 0},
-      {:base_ref, is_binary(attrs.base_ref) and byte_size(attrs.base_ref) > 0},
-      {:visibility, attrs.visibility in [:public, :private]},
-      {:allowed_head_namespace, is_binary(attrs.allowed_head_namespace)},
-      {:enabled, is_boolean(attrs.enabled)}
+      {:id, is_binary(id) and byte_size(id) > 0},
+      {:generation, is_integer(generation) and generation > 0},
+      {:workspace_uri, is_struct(workspace_uri, URI)},
+      {:task_receiver_uri, is_struct(task_receiver_uri, URI)},
+      {:credential_owner_uri, is_struct(credential_owner_uri, URI)},
+      {:repository_uri, is_struct(repository_uri, URI)},
+      {:provider_adapter, is_atom(provider_adapter) and not is_nil(provider_adapter)},
+      {:provider_host, is_binary(provider_host) and byte_size(provider_host) > 0},
+      {:external_id, is_binary(external_id) and byte_size(external_id) > 0},
+      {:owner_path, is_binary(owner_path) and byte_size(owner_path) > 0},
+      {:base_ref, is_binary(base_ref) and byte_size(base_ref) > 0},
+      {:visibility, visibility in [:public, :private]},
+      {:allowed_head_namespace, is_binary(allowed_head_namespace)},
+      {:enabled, is_boolean(enabled)}
     ]
 
     case Enum.find(checks, fn {_field, valid?} -> not valid? end) do
@@ -104,13 +119,13 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
 
   defp validate_repository_ref(attrs) do
     repo_attrs = %{
-      repository_uri: attrs.repository_uri,
-      provider_adapter: attrs.provider_adapter,
-      provider_host: attrs.provider_host,
-      external_id: attrs.external_id,
-      owner_path: attrs.owner_path,
-      base_ref: attrs.base_ref,
-      visibility: attrs.visibility
+      repository_uri: Map.fetch!(attrs, :repository_uri),
+      provider_adapter: Map.fetch!(attrs, :provider_adapter),
+      provider_host: Map.fetch!(attrs, :provider_host),
+      external_id: Map.fetch!(attrs, :external_id),
+      owner_path: Map.fetch!(attrs, :owner_path),
+      base_ref: Map.fetch!(attrs, :base_ref),
+      visibility: Map.fetch!(attrs, :visibility)
     }
 
     case RepositoryRef.new(repo_attrs) do

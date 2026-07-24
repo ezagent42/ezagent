@@ -82,13 +82,20 @@ defmodule EzagentPluginGitWorkflow.AcceptIntent do
   end
 
   defp validate_values(attrs) do
+    binding_id = Map.fetch!(attrs, :binding_id)
+    binding_generation = Map.fetch!(attrs, :binding_generation)
+    external_task_id = Map.fetch!(attrs, :external_task_id)
+    source_task_uri = Map.fetch!(attrs, :source_task_uri)
+    source_revision = Map.fetch!(attrs, :source_revision)
+    requested_head_ref = Map.fetch!(attrs, :requested_head_ref)
+
     checks = [
-      {:binding_id, is_binary(attrs.binding_id) and byte_size(attrs.binding_id) > 0},
-      {:binding_generation, is_integer(attrs.binding_generation) and attrs.binding_generation > 0},
-      {:external_task_id, is_binary(attrs.external_task_id) and byte_size(attrs.external_task_id) > 0},
-      {:source_task_uri, is_struct(attrs.source_task_uri, URI)},
-      {:source_revision, is_nil(attrs.source_revision) or (is_binary(attrs.source_revision) and byte_size(attrs.source_revision) > 0)},
-      {:requested_head_ref, is_nil(attrs.requested_head_ref) or (is_binary(attrs.requested_head_ref) and byte_size(attrs.requested_head_ref) > 0)}
+      {:binding_id, is_binary(binding_id) and byte_size(binding_id) > 0},
+      {:binding_generation, is_integer(binding_generation) and binding_generation > 0},
+      {:external_task_id, is_binary(external_task_id) and byte_size(external_task_id) > 0},
+      {:source_task_uri, is_struct(source_task_uri, URI)},
+      {:source_revision, is_nil(source_revision) or (is_binary(source_revision) and byte_size(source_revision) > 0)},
+      {:requested_head_ref, is_nil(requested_head_ref) or (is_binary(requested_head_ref) and byte_size(requested_head_ref) > 0)}
     ]
 
     case Enum.find(checks, fn {_f, ok?} -> not ok? end) do
