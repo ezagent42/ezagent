@@ -5,12 +5,12 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   Each callback accepts `Ezagent.DomainGit` value types, calls the GitHub REST
   API via `GitHubClient`, and maps provider responses back to Domain Git structs.
 
-  Repository operations authenticate with a GitHub App **installation access
-  token** resolved per-repo via `EzagentPluginGithub.GitHubInstallation` — not
-  with the connecting user's token. The user token establishes identity at
-  connection time; the installation token grants the App's permissions on the
-  target repository. Every callback resolves the installation token first and
-  fails closed (mapping to a stable read/write error) if it cannot be obtained.
+  Repository operations authenticate with a GitHub App **operation-scoped
+  installation access token** — minted fresh per callback via
+  `EzagentPluginGithub.GitHubInstallation` for exactly that callback's closed
+  permission profile (statically selected here, never from `ctx`, action args,
+  prompt, or card) and discarded when the callback returns; there is no shared
+  cache. Every callback fails closed if the token cannot be minted or scoped.
   """
   @behaviour Ezagent.DomainGit.Adapter
 
@@ -31,7 +31,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def resolve_repository(_ctx, %RepositoryRef{} = repo) do
-    with {:ok, token} <- installation_token(repo),
+    with {:ok, token} <- installation_token(repo, :metadata_read),
          {:ok, data} <- GitHubClient.get("/repos/#{repo.external_id}", token, request_opts()) do
       build_repository_ref(repo, data)
     else
@@ -46,7 +46,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         file_changes,
         %CreateChangeRequest{} = create_req
       ) do
-    case installation_token(repo) do
+    case installation_token(repo, :change_request_write) do
       {:ok, token} ->
         base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
 
@@ -196,7 +196,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def read_change_request(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
-    with {:ok, token} <- installation_token(repo),
+    with {:ok, token} <- installation_token(repo, :change_request_read),
          {:ok, data} <-
            GitHubClient.get(
              "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}",
@@ -211,7 +211,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def list_checks(_ctx, %RepositoryRef{} = repo, %CommitSha{} = sha) do
-    with {:ok, token} <- installation_token(repo),
+    with {:ok, token} <- installation_token(repo, :checks_read),
          {:ok, %{"check_runs" => check_runs}} <-
            GitHubClient.get(
              "/repos/#{repo.external_id}/commits/#{sha.value}/check-runs",
@@ -227,7 +227,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def list_reviews(_ctx, %RepositoryRef{} = repo, %ChangeRequestId{} = cr_id) do
-    case installation_token(repo) do
+    case installation_token(repo, :change_request_read) do
       {:ok, token} ->
         path = "/repos/#{repo.external_id}/pulls/#{cr_id.external_id}/reviews"
 
@@ -362,11 +362,14 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   # ── Token resolution ───────────────────────────────────────────────────
 
-  # Resolves the GitHub App installation access token for the repo's account.
-  # Returns `{:ok, token}` or a `GitHubClient` error atom (mapped by the caller
-  # to a stable read/write error). The token is never logged.
-  defp installation_token(%RepositoryRef{external_id: external_id}) do
-    GitHubInstallation.token_for_repo(external_id)
+  # Mints an operation-scoped GitHub App installation access token for `repo`
+  # and the caller's closed `profile`, statically selected by this module (never
+  # from ctx/action args/prompt/card — see moduledoc). Returns `{:ok, token}` or
+  # a `GitHubClient`/`:installation_scope_mismatch` error atom (mapped by the
+  # caller to a stable read/write error). The token is minted fresh for this
+  # call — never cached — and is never logged.
+  defp installation_token(%RepositoryRef{} = repo, profile) do
+    GitHubInstallation.token_for_operation(repo, profile, request_opts())
   end
 
   # ── Request opts (test injection point) ─────────────────────────────────
