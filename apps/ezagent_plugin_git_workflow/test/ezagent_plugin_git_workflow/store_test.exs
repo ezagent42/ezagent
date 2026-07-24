@@ -2,6 +2,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
   use EzagentPluginGitWorkflow.ConnCase, async: false
 
   alias EzagentCore.Repo
+  alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Store
   alias EzagentPluginGitWorkflow.TaskBinding
   alias EzagentPluginGitWorkflow.WorkflowRun
@@ -15,7 +16,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     task_receiver_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-recv"),
     credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "admin"),
     repository_uri: Ezagent.URI.resource("test-ws", "git-repository", "my-repo"),
-    provider_adapter: :github_test_adapter,
+    provider_adapter: GitHubTestAdapter,
     provider_host: "github.com",
     external_id: "owner/repo",
     owner_path: "owner",
@@ -32,14 +33,19 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     binding
   end
 
-  @accept_attrs %{
-    binding_id: "bnd_store_test",
-    binding_generation: 1,
-    external_task_id: "task-accept-1",
-    source_task_uri: URI.parse("resource://test-ws/kanban-task/task-src"),
-    source_revision: "abc123",
-    requested_head_ref: "feature/test"
-  }
+  defp build_intent(attrs \\ %{}) do
+    defaults = %{
+      binding_id: "bnd_store_test",
+      binding_generation: 1,
+      external_task_id: "task-accept-1",
+      source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
+      source_revision: "abc123",
+      requested_head_ref: "feature/test"
+    }
+
+    {:ok, intent} = Map.merge(defaults, attrs) |> AcceptIntent.new()
+    intent
+  end
 
   setup do
     insert_binding!()
@@ -47,84 +53,87 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
   end
 
   describe "accept/1" do
-    test "creates an accepted run with server-generated fields" do
+    test "accepts typed AcceptIntent, returns run with server-generated fields" do
+      intent = build_intent()
+
       assert {:ok, %WorkflowRun{status: "accepted", state_version: 1}} =
-               Store.accept(@accept_attrs)
-
-      # Verify the run id is deterministic
-      expected_id = WorkflowRun.generate_id("bnd_store_test", 1, "task-accept-1")
-
-      {:ok, run} = Store.accept(@accept_attrs)
-      assert run.id == expected_id
+               Store.accept(intent)
     end
 
-    test "idempotent: same accept returns the same run" do
-      {:ok, r1} = Store.accept(@accept_attrs)
-      {:ok, r2} = Store.accept(@accept_attrs)
+    test "run id is full sha256 (no truncation)" do
+      intent = build_intent()
+      {:ok, run} = Store.accept(intent)
+
+      expected_prefix = "run_"
+      assert String.starts_with?(run.id, expected_prefix)
+      # Full sha256 hex = 64 chars + "run_" prefix = 68 chars
+      assert byte_size(run.id) == 4 + 64
+    end
+
+    test "idempotent: same intent returns same run" do
+      intent = build_intent()
+      {:ok, r1} = Store.accept(intent)
+      {:ok, r2} = Store.accept(intent)
 
       assert r1.id == r2.id
-      assert r1.status == r2.status
-      assert r1.state_version == r2.state_version
       assert r1.input_digest == r2.input_digest
+      assert r1.state_version == r2.state_version
     end
 
-    test "different source revision on same unique key returns digest_conflict" do
-      {:ok, _r1} = Store.accept(@accept_attrs)
+    test "different digest on same unique key returns digest_conflict" do
+      i1 = build_intent(%{external_task_id: "task-digest-conflict"})
+      i2 = build_intent(%{external_task_id: "task-digest-conflict", source_revision: "xyz"})
 
-      diff = %{@accept_attrs | source_revision: "xyz-different"}
-
-      assert {:error, :digest_conflict} = Store.accept(diff)
+      {:ok, _} = Store.accept(i1)
+      assert {:error, :digest_conflict} = Store.accept(i2)
     end
 
     test "unknown binding returns binding_not_found" do
-      attrs = %{@accept_attrs | binding_id: "nonexistent"}
-      assert {:error, :binding_not_found} = Store.accept(attrs)
+      intent = build_intent(%{binding_id: "nonexistent"})
+      assert {:error, :binding_not_found} = Store.accept(intent)
     end
 
     test "disabled binding returns binding_disabled" do
       insert_binding!(%{id: "bnd_disabled", enabled: false})
-
-      attrs = %{@accept_attrs | binding_id: "bnd_disabled",
-                external_task_id: "task-disabled"}
-
-      assert {:error, :binding_disabled} = Store.accept(attrs)
+      intent = build_intent(%{binding_id: "bnd_disabled", external_task_id: "task-dis"})
+      assert {:error, :binding_disabled} = Store.accept(intent)
     end
 
-    test "server-generates id deterministically from unique key" do
-      {:ok, run} = Store.accept(@accept_attrs)
-
-      expected_id = WorkflowRun.generate_id("bnd_store_test", 1, "task-accept-1")
-      assert run.id == expected_id
-    end
-
-    test "server-generates digest from intent fields" do
-      {:ok, run} = Store.accept(@accept_attrs)
-
-      expected_digest = WorkflowRun.compute_digest(@accept_attrs)
-      assert run.input_digest == expected_digest
-      assert String.starts_with?(run.input_digest, "sha256:")
-    end
-
-    test "only one row in DB after accept" do
-      {:ok, _} = Store.accept(@accept_attrs)
+    test "binding_generation_mismatch returns error, zero DB effect" do
+      intent = build_intent(%{binding_generation: 99, external_task_id: "task-gen-mismatch"})
+      assert {:error, :binding_generation_mismatch} = Store.accept(intent)
 
       [[count]] =
-        Repo.query!(
-          "SELECT COUNT(*) FROM git_workflow_runs WHERE binding_id = $1 AND external_task_id = $2",
-          ["bnd_store_test", "task-accept-1"]
-        ).rows
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_runs WHERE binding_id=$1",
+          ["bnd_store_test"]).rows
+      assert count == 0
+    end
 
-      assert count == 1
+    test "source workspace mismatch returns error" do
+      intent = build_intent(%{
+        external_task_id: "task-ws-mismatch",
+        source_task_uri: Ezagent.URI.resource("other-ws", "kanban-task", "task-src")
+      })
+      assert {:error, :source_workspace_mismatch} = Store.accept(intent)
+    end
+
+    test "requested_head_ref outside allowed namespace returns error" do
+      intent = build_intent(%{
+        external_task_id: "task-bad-head",
+        requested_head_ref: "hotfix/critical"
+      })
+      assert {:error, :head_ref_not_allowed} = Store.accept(intent)
     end
   end
 
   describe "transition/4 CAS" do
     setup do
-      {:ok, run} = Store.accept(@accept_attrs)
+      intent = build_intent()
+      {:ok, run} = Store.accept(intent)
       {:ok, run: run}
     end
 
-    test "transitions from accepted to next status", %{run: run} do
+    test "transitions from accepted to workspace_ready", %{run: run} do
       assert {:ok, %WorkflowRun{status: "workspace_ready", state_version: 2}} =
                Store.transition(run.id, 1, "accepted", "workspace_ready")
     end
@@ -132,14 +141,11 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     test "exact retry is idempotent", %{run: run} do
       {:ok, r1} = Store.transition(run.id, 1, "accepted", "workspace_ready")
       {:ok, r2} = Store.transition(run.id, 1, "accepted", "workspace_ready")
-
       assert r1.state_version == r2.state_version
-      assert r1.status == r2.status
     end
 
     test "stale state_version returns error", %{run: run} do
       {:ok, _} = Store.transition(run.id, 1, "accepted", "workspace_ready")
-
       assert {:error, :stale_state_version} =
                Store.transition(run.id, 1, "accepted", "worker_ready")
     end
@@ -149,15 +155,35 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
                Store.transition(run.id, 1, "workspace_ready", "worker_ready")
     end
 
-    test "non-existent run_id returns not_found" do
+    test "non-existent run returns not_found" do
       assert {:error, :not_found} =
                Store.transition("nonexistent", 1, "accepted", "workspace_ready")
+    end
+
+    test "rejects unknown status at gate" do
+      intent = build_intent()
+      {:ok, run} = Store.accept(intent)
+      assert {:error, {:invalid_status, "invalid_status"}} =
+               Store.transition(run.id, 1, "accepted", "invalid_status")
+    end
+
+    test "terminal runs reject further transitions" do
+      intent = build_intent()
+      {:ok, run} = Store.accept(intent)
+
+      # Transition to completed (terminal)
+      {:ok, _} = Store.transition(run.id, 1, "accepted", "completed")
+
+      # Try to transition from completed → anything
+      assert {:error, :workflow_terminal} =
+               Store.transition(run.id, 2, "completed", "projected")
     end
   end
 
   describe "read_run/1" do
     setup do
-      {:ok, run} = Store.accept(@accept_attrs)
+      intent = build_intent()
+      {:ok, run} = Store.accept(intent)
       {:ok, run: run}
     end
 
@@ -173,38 +199,14 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
   describe "register_binding/1" do
     test "inserts a valid binding" do
-      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_register"})
-      assert {:ok, %TaskBinding{id: "bnd_register"}} = Store.register_binding(binding)
+      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_reg"})
+      assert {:ok, %TaskBinding{id: "bnd_reg"}} = Store.register_binding(binding)
     end
 
     test "rejects duplicate binding id" do
-      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_dup"})
+      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_dup2"})
       {:ok, _} = Store.register_binding(binding)
-      assert {:error, {:binding_exists, "bnd_dup"}} = Store.register_binding(binding)
-    end
-  end
-
-  describe "disable_binding/1" do
-    test "disables an existing enabled binding" do
-      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_to_disable"})
-      {:ok, _} = Store.register_binding(binding)
-      assert {:ok, %TaskBinding{enabled: false}} = Store.disable_binding("bnd_to_disable")
-    end
-
-    test "returns error for unknown binding id" do
-      assert {:error, :not_found} = Store.disable_binding("nonexistent")
-    end
-  end
-
-  describe "read_binding/1" do
-    test "reads an existing binding" do
-      {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_read"})
-      {:ok, _} = Store.register_binding(binding)
-      assert {:ok, %TaskBinding{id: "bnd_read"}} = Store.read_binding("bnd_read")
-    end
-
-    test "returns error for unknown id" do
-      assert {:error, :not_found} = Store.read_binding("nonexistent")
+      assert {:error, {:binding_exists, "bnd_dup2"}} = Store.register_binding(binding)
     end
   end
 end

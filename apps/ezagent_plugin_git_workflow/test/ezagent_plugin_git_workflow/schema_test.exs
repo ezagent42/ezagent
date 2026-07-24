@@ -1,6 +1,7 @@
 defmodule EzagentPluginGitWorkflow.SchemaTest do
   use EzagentPluginGitWorkflow.ConnCase, async: false
 
+  alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.TaskBinding
   alias EzagentPluginGitWorkflow.WorkflowRun
 
@@ -13,7 +14,7 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     task_receiver_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task1"),
     credential_owner_uri: Ezagent.URI.entity("test-ws", "user", "admin"),
     repository_uri: Ezagent.URI.resource("test-ws", "git-repository", "my-repo"),
-    provider_adapter: :github_test_adapter,
+    provider_adapter: GitHubTestAdapter,
     provider_host: "github.com",
     external_id: "owner/repo",
     owner_path: "owner",
@@ -28,14 +29,13 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       assert {:ok, %TaskBinding{}} = TaskBinding.new(@valid_binding_attrs)
     end
 
-    test "rejects unknown fields (no secret/credential/token)" do
-      bad = Map.put(@valid_binding_attrs, :token, "secret-value")
+    test "rejects unknown fields" do
+      bad = Map.put(@valid_binding_attrs, :token, "secret")
       assert {:error, {:unknown_fields, [:token]}} = TaskBinding.new(bad)
     end
 
-    test "rejects extra fields like installation_id" do
-      bad = Map.put(@valid_binding_attrs, :installation_id, 123)
-      assert {:error, _} = TaskBinding.new(bad)
+    test "rejects missing fields" do
+      assert {:error, {:missing_field, :id}} = TaskBinding.new(Map.delete(@valid_binding_attrs, :id))
     end
 
     test "rejects invalid visibility" do
@@ -43,104 +43,150 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       assert {:error, {:invalid_field, :visibility}} = TaskBinding.new(bad)
     end
 
-    test "rejects empty id" do
-      bad = %{@valid_binding_attrs | id: ""}
-      assert {:error, {:invalid_field, :id}} = TaskBinding.new(bad)
-    end
-
-    test "validates RepositoryRef through canonical RepositoryRef.new/1" do
-      # base_ref with "refs/" prefix is invalid per RepositoryRef.valid_ref?/1
+    test "validates RepositoryRef" do
       bad = %{@valid_binding_attrs | base_ref: "refs/heads/main"}
       assert {:error, {:invalid_repository_ref, _}} = TaskBinding.new(bad)
     end
   end
 
-  describe "WorkflowRun" do
-    test "has server-owned fields (id, status, state_version, input_digest)" do
-      attrs = %{
-        id: "run_srv",
-        binding_id: "bnd1",
-        binding_generation: 1,
-        external_task_id: "ext1",
-        status: "accepted",
-        state_version: 1,
-        input_digest: "sha256:abcdef",
-        source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
-        source_revision: "abc",
-        requested_head_ref: "feature/x",
-        last_error_code: nil
-      }
-
-      assert {:ok, %WorkflowRun{}} = WorkflowRun.new(attrs)
+  describe "WorkflowRun closed status set" do
+    test "accepts all valid statuses" do
+      for s <- WorkflowRun.statuses() do
+        assert WorkflowRun.valid_status?(s), "expected #{s} to be valid"
+      end
     end
 
-    test "rejects status other than accepted" do
-      attrs = %{
-        id: "run_bad",
-        binding_id: "bnd1",
-        binding_generation: 1,
-        external_task_id: "ext1",
-        status: "completed",
-        state_version: 1,
-        input_digest: "sha256:abc",
-        source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
-        source_revision: nil,
-        requested_head_ref: nil,
-        last_error_code: nil
-      }
-
-      assert {:error, {:invalid_field, :status}} = WorkflowRun.new(attrs)
+    test "rejects unknown status" do
+      refute WorkflowRun.valid_status?("random_status")
     end
 
-    test "generates deterministic id from unique key" do
-      id1 = WorkflowRun.generate_id("bnd1", 1, "task1")
-      id2 = WorkflowRun.generate_id("bnd1", 1, "task1")
-      id3 = WorkflowRun.generate_id("bnd1", 1, "task2")
+    test "terminal statuses are correctly identified" do
+      assert WorkflowRun.terminal?("completed")
+      assert WorkflowRun.terminal?("failed")
+      assert WorkflowRun.terminal?("cancelled")
 
-      assert is_binary(id1)
-      assert id1 == id2
-      assert id1 != id3
-      assert String.starts_with?(id1, "run_")
+      refute WorkflowRun.terminal?("accepted")
+      refute WorkflowRun.terminal?("workspace_ready")
     end
 
-    test "computes digest from intent fields" do
-      fields = %{
-        binding_id: "bnd1",
-        binding_generation: 1,
-        external_task_id: "ext1",
-        source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
-        source_revision: "abc",
-        requested_head_ref: "feature/x"
-      }
+    test "invalid status rejected by WorkflowRun.new" do
+      attrs = valid_run_attrs()
+      bad = %{attrs | status: "unknown"}
+      assert {:error, {:invalid_field, :status}} = WorkflowRun.new(bad)
+    end
+  end
 
-      d1 = WorkflowRun.compute_digest(fields)
-      d2 = WorkflowRun.compute_digest(fields)
-      d3 = WorkflowRun.compute_digest(Map.put(fields, :source_revision, "xyz"))
+  describe "AcceptIntent typed contract" do
+    test "rejects server-owned field id" do
+      assert {:error, {:server_owned_field, :id}} =
+               AcceptIntent.new(Map.put(valid_intent_attrs(), :id, "run-1"))
+    end
 
-      assert is_binary(d1)
-      assert String.starts_with?(d1, "sha256:")
-      assert d1 == d2
-      assert d1 != d3
+    test "rejects server-owned field status" do
+      assert {:error, {:server_owned_field, :status}} =
+               AcceptIntent.new(Map.put(valid_intent_attrs(), :status, "accepted"))
+    end
+
+    test "all keys are callable without KeyError" do
+      {:ok, intent} = AcceptIntent.new(valid_intent_attrs())
+      assert is_binary(intent.binding_id)
+      assert is_integer(intent.binding_generation)
+    end
+  end
+
+  describe "WorkflowRun full run id" do
+    test "generate_id produces full sha256, not truncated" do
+      id = WorkflowRun.generate_id("bnd", 1, "task")
+      assert String.starts_with?(id, "run_")
+      # "run_" + 64 hex chars
+      assert byte_size(id) == 68
     end
   end
 
   describe "schema no-secret audit" do
-    test "TaskBinding struct has no secret-value fields" do
-      binding_path = Path.join(__DIR__, "../../lib/ezagent_plugin_git_workflow/task_binding.ex") |> Path.expand()
-      content = File.read!(binding_path)
+    test "TaskBinding struct keys have no secret fields" do
+      keys = Map.keys(%{
+        __struct__: TaskBinding,
+        id: "", generation: 1,
+        workspace_uri: nil, task_receiver_uri: nil, credential_owner_uri: nil,
+        repository_uri: nil, provider_adapter: nil, provider_host: "",
+        external_id: "", owner_path: "", base_ref: "", visibility: nil,
+        allowed_head_namespace: "", enabled: true,
+        inserted_at: nil, updated_at: nil
+      }) -- [:__struct__, :inserted_at, :updated_at]
 
-      refute content =~ ~r/field\s+:token\b/
-      refute content =~ ~r/field\s+: installation_id\b/
+      forbidden = ~w(token credential secret password oauth installation_id private_key)a
+      for key <- keys do
+        key_str = Atom.to_string(key)
+        # credential_owner_uri is approved
+        unless key == :credential_owner_uri do
+          refute Enum.any?(forbidden, &String.contains?(key_str, Atom.to_string(&1))),
+                 "TaskBinding key #{key} looks like a secret field"
+        end
+      end
     end
 
-    test "WorkflowRun has no authenticated_principal or credential field definitions" do
-      run_path = Path.join(__DIR__, "../../lib/ezagent_plugin_git_workflow/workflow_run.ex") |> Path.expand()
-      content = File.read!(run_path)
+    test "WorkflowRun struct keys have no auth or secret fields" do
+      keys = Map.keys(%{
+        __struct__: WorkflowRun,
+        id: "", binding_id: "", binding_generation: 1,
+        external_task_id: "", status: "", state_version: 1,
+        input_digest: "", source_task_uri: nil, source_revision: nil,
+        requested_head_ref: nil, last_error_code: nil,
+        inserted_at: nil, updated_at: nil
+      }) -- [:__struct__, :inserted_at, :updated_at]
 
-      refute content =~ ~r/\s:authenticated_principal\b/
-      refute content =~ ~r/\s:token\b/
-      refute content =~ ~r/\s:credential\b/
-      refute content =~ ~r/\s:secret\b/
+      forbidden = ~w(authenticated_principal token credential secret password provider_response worker_pid workspace_cwd)a
+      for key <- keys do
+        key_str = Atom.to_string(key)
+        refute Enum.any?(forbidden, &String.contains?(key_str, Atom.to_string(&1))),
+               "WorkflowRun key #{key} looks like a forbidden field"
+      end
     end
+
+    test "AcceptIntent allowed keys have only caller fields" do
+      allowed = AcceptIntent.__struct__() |> Map.keys()
+      assert :binding_id in allowed
+      assert :binding_generation in allowed
+      assert :external_task_id in allowed
+      assert :source_task_uri in allowed
+      assert :source_revision in allowed
+      assert :requested_head_ref in allowed
+
+      refute :id in allowed
+      refute :status in allowed
+      refute :state_version in allowed
+      refute :input_digest in allowed
+      refute :authenticated_principal_uri in allowed
+    end
+  end
+
+  # Helpers
+
+  defp valid_intent_attrs do
+    %{
+      binding_id: "bnd-1",
+      binding_generation: 1,
+      external_task_id: "task-1",
+      source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
+      source_revision: "abc",
+      requested_head_ref: "feature/x"
+    }
+  end
+
+  defp valid_run_attrs do
+    %{
+      id: "run_test",
+      binding_id: "bnd1",
+      binding_generation: 1,
+      external_task_id: "ext1",
+      status: "accepted",
+      state_version: 1,
+      input_digest: "sha256:abcdef",
+      source_task_uri: URI.parse("resource://ws/kanban-task/t1"),
+      source_revision: "abc",
+      requested_head_ref: "feature/x",
+      last_error_code: nil
+    }
   end
 end

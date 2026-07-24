@@ -51,7 +51,8 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
   @doc "Builds a validated TaskBinding struct, including RepositoryRef validation."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
-    with :ok <- validate_known_fields(attrs),
+    with :ok <- validate_required(attrs),
+         :ok <- validate_known_fields(attrs),
          :ok <- validate_values(attrs),
          :ok <- validate_repository_ref(attrs) do
       struct = struct!(__MODULE__, Map.take(attrs, @fields))
@@ -60,6 +61,14 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
   end
 
   def new(_), do: {:error, :invalid_attributes}
+
+  defp validate_required(attrs) do
+    missing = Enum.filter(@fields, fn f -> not Map.has_key?(attrs, f) end)
+
+    if missing == [],
+      do: :ok,
+      else: {:error, {:missing_field, hd(missing)}}
+  end
 
   defp validate_known_fields(attrs) do
     extra = Map.keys(attrs) -- @fields
