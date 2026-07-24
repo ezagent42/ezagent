@@ -100,10 +100,11 @@ done_prev:
       - {text: "C1: PresenterCaps 改 fresh(读实时权威)+ EntityCaps 脱离 actor 内部状态", done: true}
       - {text: "顺带修 07-22 记录的降权 admin 会话陈旧(被降权 admin 保留 publish/admin 权限直到重登)", done: true, evidence: "#1548 merged 07-24"}
   - owner: "allen"
-    title: "PR 清理 — 关掉已在 main / stale / superseded"
-    goal: "清掉已塌进 main / 陈旧 / 被取代的 PR, 收敛 in-flight 集"
+    title: "【统筹角色·非交付】PR 清理 — 关掉已在 main / stale / superseded"
+    goal: "清掉已塌进 main / 陈旧 / 被取代的 PR, 收敛 in-flight 集(协调职责, 已计入 efficiency, 非产品交付)"
     status: "done"
-    who: "Allen 轨道 · 15 关闭(留 #1376/#1301 + 活跃)"
+    who: "Allen 轨道(统筹) · 15 关闭(留 #1376/#1301 + 活跃)"
+    flag: "统筹角色工作(review/gate/merge/清理/看板/救火)不占交付列, 仅记于 efficiency —— 见 review.md 归属规则"
     acceptance:
       - {text: "关掉 15 个 已在 main / stale / superseded 的 PR; 确证关闭样本: #1490 #1473 #1472 #1447 #1424 #1423 #1419 #1515 #1509 #1327 …", done: true}
       - {text: "保留 jjkysy #1376(通用挂载 infra, 被 entity-caps 取代但契约留用)/ #1301(dealscout)+ 所有活跃 in-flight PR", done: true}
@@ -115,6 +116,16 @@ done_prev:
     pr: {num: 1539, state: "merged"}
     acceptance:
       - {text: "新增 `agents-planning-with-files` skill —— 以文件为载体的规划工作流", done: true, evidence: "#1539 merged"}
+  - owner: "zyli"
+    title: "#1497 world 插件视图 + caps 刷新"
+    goal: "refresh plugin views and caps(zyli 自号本周期合入 main)"
+    status: "done"
+    who: "zyli 轨道 · #1497 · zyli-developer 自号 07-23 合入"
+    pr: {num: 1497, state: "merged"}
+    flag: "补记(之前漏): #1497 本周期塌进 main, 是 zyli 的交付, 之前只作为统筹 #1541 修的「scan 漂移来源」出现、无 done 卡"
+    acceptance:
+      - {text: "world 插件视图 + caps 刷新 —— zyli 自号(zyli-developer)07-23 合入 main", done: true, evidence: "#1497 merged 07-23 (gh --author zyli-developer)"}
+      - {text: "统筹跟进: #1497 引入的 uri_query.scan 行漂移由统筹 #1541 收口、gate.arch 由 #1542 复绿 —— 那是统筹的收尾, 不改变 #1497 本身是 zyli 交付这一事实", done: true}
 
 cards:
   # ---------- 待评审 / 验收 (评审中, 尚未合入) ----------
@@ -134,14 +145,16 @@ cards:
     pr: {num: 1549, state: "merged"}
     acceptance:
       - {text: "硬化 C0 边界 gate: 补跨过程 taint 追踪 + 反射式 `:sys` 访问路径, 堵住 gate 可绕过面; 对抗性复审证实净强化(old≡new)、allowlist 15/15 完整", done: true}
-  - owner: "allen"
-    title: "mfu-demo v0.13"
-    goal: "内网 demo v0.13: 可玩原型 + GDD + 3 篇分析文档"
+  - owner: "ruihua"
+    title: "MFU v0.13 分析 + GDD（3 篇分析文档 + 策划案）"
+    goal: "MFU v0.13: gap-analysis / happy-paths / flywheel-audit 三篇分析 + GDD 策划案(瑞华实质产出)"
     status: "review"
-    who: "Allen 轨道 · #1543 · 评审中(含 ruihua 3 篇分析)"
+    who: "瑞华 (ruihua) 轨道 · 实质产出 · 装于统筹 PR #1543(统筹打包可玩原型 + 内网 serve + 开 PR)"
     pr: {num: 1543, state: "open"}
+    flag: "归属修正: 三篇分析 + GDD 是瑞华的产出(她的轨道=机构 demo 设计/分析), 之前误记在「Allen 轨道」下"
     acceptance:
-      - {text: "MFU v0.13 内网 demo: 可玩原型 + GDD + 3 篇分析文档(含瑞华的分析输入)", done: false}
+      - {text: "MFU v0.13 瑞华三篇分析(gap-analysis 23 条差距 / happy-paths 五方理想流 / flywheel-audit 飞轮四段审计, Bartle+Progression+游戏→真实三层交叉)+ GDD 策划案 —— 瑞华实质产出", done: false, evidence: "#1543 PR body: 'ruihua's 3 v0.13 analysis docs (this PR's new content)'"}
+      - {text: "统筹角色: 把可玩原型打包成内网 demo(100.64.0.27:8899 serve)+ 开 #1543 评审 —— 这是打包/评审, 非分析产出本身", done: true}
   # ---------- 进行中 (per-teammate 当前在飞) ----------
   # ---- gaga (Git Provider / agent 泛化主体 / cap 收敛) ----
   - owner: "gaga"
@@ -296,15 +309,16 @@ review:
     - "main gate 恢复绿的根因是 line-anchored baseline 漂移(行插入把 grandfathered 动态-receiver 站点挤离锚点)+ 一个 tmp-dir race flake(#1542): 治本 = 从扫描器 ground-truth 重生成 baseline, 非逐条补锚。"
     - "转发的队友 PR 先经对抗性评审再由协调轨道合入: Gaga #1501 held+pending 被对抗性评审发现 effective view 丢 pending absorb + 幂等/fail-closed 缺口 → 打回 rework —— 评审拦住了不完整合并。"
     - "PR 清理: 关掉 15 个 已在 main / stale / superseded 的 PR, 把 in-flight 集收敛到真正在飞的; 显式保留 jjkysy #1376/#1301 + 所有活跃 PR。"
+    - "★【归属修正 → skill 规则】本周期 board 初版把「完成」列全记成「Allen 轨道」, 犯两类错: (1) 遗漏 —— zyli 自号 #1497 本周期合入 main, 却只作为统筹 #1541 修的「scan 漂移来源」出现、无 done 卡; (2) 吸收 —— 瑞华的 MFU 三篇分析 + GDD(她的轨道产出)装在统筹账号的 #1543 里、被记成 Allen 轨道交付。根因: 协调者(cc)以 lead 账号 `allenwoods` 提交+合并, 用 git author 判归属会把所有人的活吸进统筹轨道; 且 review.md 第 63 行已有的「两源对账(returns + `gh --author`)」规则本周期没执行。已修 review.md: 加「归属看实质不看提交账号」规则(具名 dev 的实质产出即便装在统筹 PR 里也归其轨道; 统筹角色工作 review/gate/merge/清理/看板/救火不占交付列, 仅记 efficiency), 并回填本 board。"
   incidents:
     - "🔴 main full-suite 仅红在一个确定性 E2E(`AutoserviceTier1SeedTest`)—— 测试 harness sandbox-ownership, pre-existing、非本周期工作引入; 是发布闸(`needs: full-suite`)唯一确定性阻塞项, 已入 `docs/futures/todo.md`。"
     - "🟢 已修: 07-22 记录的 PresenterCaps 会话陈旧(被降权 admin 保留 publish/admin 权限直到重登)—— 已由 actor C1(#1548, PresenterCaps→fresh)修。"
   delivery:
-    - {owner: "Allen 轨道", delivered: "#195 塌进 main #1503 + 收尾 #1540/#1541/#1544 / main gate 恢复绿 #1542 / actor 抽取 Spec+C0+C1 #1545/#1546/#1548 / PR 清理 15 / planning-with-files #1539 / mfu-demo v0.13 #1543", acceptance_result: "#195 枢纽塌进 main + 全绿收尾; actor 物理隔离迁移启动(Spec+C0+C1 合); main 恢复绿", carryover: "actor C2/C0-硬化 评审→合 · C3–C7 迁移 · 解 full-suite E2E 阻塞打开发布闸 · hello-A PR-4 部署迁移"}
+    - {owner: "Allen 轨道(统筹+结构)", delivered: "【结构/安全交付】#195 塌进 main #1503 + 收尾 #1540/#1541/#1544 / main gate 恢复绿 #1542 / actor 抽取 Spec+C0+C1 #1545/#1546/#1548 / planning-with-files #1539。【统筹角色·非交付】review/gate/merge 队友 PR · PR 清理 15 · 看板 · main-red 救火", acceptance_result: "#195 枢纽塌进 main + 全绿收尾; actor 物理隔离迁移启动(Spec+C0+C1 合); main 恢复绿。mfu-demo #1543 的分析实质是瑞华的、已移交其轨道(统筹只打包+开 PR)", carryover: "actor C2/C0-硬化 评审→合 · C3–C7 迁移 · 解 full-suite E2E 阻塞打开发布闸 · hello-A PR-4 部署迁移"}
     - {owner: "gaga", delivered: "#1501 held+pending 收敛(评审打回 rework) · #1547 Feishu→UserBinding B2 · #1498 system-closure(draft)", acceptance_result: "#1501 打回补 pending absorb + 幂等 + fail-closed", carryover: "#1501 rework 重评审 · B2 落地"}
     - {owner: "jjkysy", delivered: "#1470 挂载退场清理(#195 合→epoch-rebase 解阻) · #1531 world 甩掉 kanban · #1496 实时刷新两信号交接 zyli · #1301 dealscout · #1474 二轮(draft) · #1376 保留", acceptance_result: "多线在飞; #1470 的 #195 依赖已解", carryover: "#1301/#1474 推 mergeable · #1531 收口"}
-    - {owner: "瑞华 (ruihua)", delivered: "#1534 CIIA 真实数据 seed · #1533 Signature Interaction 原型 · #1436 自助开通产品化(均 draft) · mfu-demo 3 篇分析输入(#1543)", acceptance_result: "三草案在飞 + mfu 分析并入 #1543", carryover: "三草案定稿"}
-    - {owner: "zyli", delivered: "承接 #1496 实时刷新两通用信号(view_changed / caps_changed)", acceptance_result: "接手 handoff", carryover: "落前端 + 开 PR"}
+    - {owner: "瑞华 (ruihua)", delivered: "★ MFU v0.13 三篇分析(gap-analysis / happy-paths / flywheel-audit)+ GDD 策划案 —— 实质产出, 装于统筹 #1543(评审中) · #1534 CIIA 真实数据 seed · #1533 Signature Interaction 原型 · #1436 自助开通产品化(均 draft)", acceptance_result: "MFU 分析+GDD 是本周期瑞华的实质交付(归属修正: 之前误记在 Allen 轨道下); 三草案在飞", carryover: "MFU 分析定稿并入 demo · 三草案定稿"}
+    - {owner: "zyli", delivered: "★ #1497 world 插件视图 + caps 刷新 —— zyli 自号本周期合入 main(补记, 之前漏) · 承接 #1496 实时刷新两通用信号(view_changed / caps_changed)", acceptance_result: "#1497 已塌进 main(引入的 scan 漂移由统筹 #1541/#1542 收口); #1496 handoff 接手中", carryover: "落前端两信号 + 开 PR"}
   next_day:
     - "actor-framework C2(#1550)+ C0 硬化(#1549)评审通过合入 → 接续推进 C3–C7 剩余 chunk 物理隔离迁移。"
     - "Gaga #1501 held+pending rework: 补 pending absorb + 幂等 + fail-closed 后重评审。"
