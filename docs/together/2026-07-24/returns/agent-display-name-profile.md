@@ -22,6 +22,9 @@
   workspace binding, config, flavor, grant, and creation inventory. The
   derivation/provenance edge is deliberately retained as append-only audit
   history of the failed attempt.
+- Serialize the complete same-Agent-URI creation chain with the existing
+  lifecycle transition lock. A queued duplicate request returns
+  `:agent_uri_already_live` without changing the winning Agent's state.
 - Add focused Identity, Agent, Core provenance, migration, and World regression
   coverage, including strict fresh-spawn rollback and transaction races.
 
@@ -31,6 +34,10 @@
   insertion compensates its active products, but does not erase its
   `:spawned_by` derivation edge. Failed attempts are audit facts. The temporary
   Core delete APIs were removed rather than relaxing that invariant.
+- Same-URI spawn is serialized from credential resolution through either final
+  success or compensation. The adopted-worker path is now read-only and
+  returns `:agent_uri_already_live`; it does not revoke a winner's grant or
+  overwrite its sandbox/flavor state.
 - Because the service has not shipped and has no legacy database state, the PR
   now contains one final Agent-only display-name migration rather than three
   sequential corrective migrations. This repair is recorded in
@@ -64,6 +71,13 @@
 - A first architecture-gate attempt timed out in an existing production-AST
   scan while this machine was resource-contended. Its isolated rerun passed
   (9/9 in 26.5s), followed by a clean complete `mix gate.arch` run.
+- Same-URI regression coverage seeds a live Agent with profile, credential
+  grant, lineage, workspace binding, flavor and sandbox state, then verifies a
+  duplicate spawn returns `:agent_uri_already_live` without changing any of
+  those values. The focused test command is currently blocked before its test
+  module runs by the pre-existing `ezagent_plugin_world` boot
+  `:holder_revoked`/`plugin.ex:428` failure; `MIX_ENV=test mix compile` and
+  `MIX_ENV=test mix precommit` completed successfully after this change.
 - `mix ci.local` was retried under the installed Node v22.23.1 toolchain. It
   reaches `pnpm install`, then stops before tests because the checked-in pnpm
   supply-chain policy has not approved `es5-ext@0.10.64`'s build script. No
