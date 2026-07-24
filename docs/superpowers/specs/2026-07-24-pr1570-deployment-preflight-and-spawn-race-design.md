@@ -6,20 +6,17 @@ Make the Agent display-name uniqueness migration safe to promote and prove that
 a failed fresh spawn cannot tear down a concurrently adopted spawn for the same
 Agent URI.
 
-## Deployment preflight
+## Legacy migration safety
 
-The Agent-only partial unique index remains the enforcement mechanism. The
-migration will not mutate or silently deduplicate historical data.
+The Agent-only partial unique index remains the enforcement mechanism. Before
+creating it, the migration deterministically repairs duplicate legacy Agent
+display names within a workspace: the URI-sorted first row retains its name;
+later rows receive the first available `-2`, `-3`, and so on suffix while
+remaining within the existing 255-character column limit.
 
-Add a read-only Mix task that queries `entity_profiles` for Agent rows grouped
-by `(workspace_uri, display_name)` with a count greater than one. It prints each
-conflict deterministically and exits non-zero when any conflict exists. It exits
-zero, with an explicit no-conflicts message, otherwise. Operators run it against
-the exact canary, beta, or stable database snapshot before applying the
-migration.
-
-This preserves auditability: an unexpected duplicate is a deployment decision
-and data-repair task, not an implicit application-side rename.
+The migration test creates a legacy schema with duplicate Agent rows and proves
+that migration completes, User duplicate names stay untouched, and the partial
+index then enforces future Agent uniqueness.
 
 ## Same-URI spawn race
 
@@ -39,6 +36,5 @@ its active products. Provenance stays append-only in every outcome.
 
 ## Non-goals
 
-- No automatic data deduplication or historical-name rewrite.
 - No relaxation of the append-only derivation-edge invariant.
 - No change to User-profile uniqueness semantics.
