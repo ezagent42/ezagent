@@ -24,10 +24,9 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
 
   The executor is `Application.get_env(:ezagent_plugin_feishu,
   :seed_executor)` (default nil → fail loud). Tests inject the
-  named-module `FakeExecutor` to record planned operations, or
-  `DispatchAdapter` (with `:seed_auth_integrated true`) for integration
-  tests. Production requires an explicitly configured executor; no
-  default executor exists.
+  named-module `FakeExecutor` to record planned operations.
+  `DispatchAdapter` is a B-layer placeholder (raises on any call).
+  No default executor exists in production.
 
   ## B-layer (deferred)
 

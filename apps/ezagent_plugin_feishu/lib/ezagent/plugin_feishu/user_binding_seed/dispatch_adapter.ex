@@ -20,8 +20,6 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
   principal.
   """
 
-  alias Ezagent.Invocation
-
   @doc """
   List the Feishu bindings currently visible for `workspace_uri`, via a
   real dispatch to `:list_feishu_bindings` (workspace-scoped by the
@@ -30,12 +28,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
   """
   @spec list_current(URI.t()) :: {:ok, [map()]} | {:error, term()}
   def list_current(%URI{scheme: "workspace"} = workspace_uri) do
-    target = action_target(workspace_uri, "list_feishu_bindings")
-
-    case dispatch(target, %{}) do
-      {:ok, %{bindings: bindings}} -> {:ok, bindings}
-      {:error, _} = err -> err
-    end
+    dispatch(action_target(workspace_uri, "list_feishu_bindings"), %{})
   end
 
   @doc """
@@ -55,28 +48,17 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
     Ezagent.URI.new!("#{URI.to_string(workspace_uri)}?action=feishu_user_bindings.#{action_name}")
   end
 
-  # B-layer (DEFERRED): canonical-admin auto-elevation via admin_uri() +
-  # with_admin_operator. This module is only reachable when explicitly
-  # configured as `:seed_executor` — the importer's nil-executor guard
-  # ensures production without auth fails with `:seed_executor_not_configured`.
-  # Runtime operator/auth adapter integration is a separate B-layer slice.
-  defp dispatch(%URI{} = target, args) do
-    admin = Ezagent.Entity.User.admin_uri()
-
-    Invocation.with_admin_operator(admin, fn ->
-      Invocation.dispatch(%Invocation{
-        origin: :trusted_internal,
-        target: target,
-        mode: :call,
-        args: args,
-        ctx: %{
-          caller: admin,
-          authenticated_principal: admin,
-          caps: MapSet.new(),
-          reply: {:caller_inbox, self()}
-        }
-      })
-    end)
+  # B-layer (DEFERRED): canonical-admin auth + signed action-cap minting
+  # via admin_uri() + with_admin_operator is NOT yet integrated.
+  # This module is a placeholder — when configured as :seed_executor,
+  # every call raises explicitly until boot-auth integration lands.
+  defp dispatch(_target, _args) do
+    raise """
+    DispatchAdapter: canonical-admin auth integration is NOT yet implemented.
+    The B-layer operator/auth adapter is deferred. Until it lands, use the
+    permission-neutral FakeExecutor for tests, and do not configure
+    DispatchAdapter as :seed_executor in production.
+    """
   end
 
   @doc """
