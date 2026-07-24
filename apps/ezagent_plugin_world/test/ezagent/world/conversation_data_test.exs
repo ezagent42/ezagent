@@ -308,11 +308,15 @@ defmodule Ezagent.World.ConversationDataTest do
     end
   end
 
-  # Task 1 — the kanban operating tab must classify as the world-native "kanban"
-  # render mode (not the read-only "external" json-render surface), so the SPA can
-  # mount a rich interactive board (Task 2). The classification is by view id
-  # (`:kanban_board`, mirroring `EzagentPluginKanban.BoardView.id/0`): even though
-  # the view also declares `external_render? => true`, the native mapping wins.
+  # Task 1 — the kanban operating tab must classify as a plugin-owned native
+  # render mode ("kanban", the kanban page `key`), not the read-only "external"
+  # json-render surface, so the SPA can mount a rich interactive board (Task 2).
+  # world no longer hard-codes `:kanban_board`; the classification is derived from
+  # the real kanban `PluginPageRegistry` page (which declares session_view id
+  # "kanban_board" + a React renderer). Even though the view ALSO declares
+  # `external_render? => true`, the plugin-native page wins over the external
+  # fallthrough. The fake view below supplies the enumerable/visible SessionView;
+  # the loaded kanban plugin supplies the registry declaration that makes it native.
   describe "session_views/2 kanban render mode" do
     defmodule KanbanBoardView do
       # Mirrors the classification-relevant traits of
