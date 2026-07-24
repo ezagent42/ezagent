@@ -65,21 +65,6 @@ the proposed build slices + the DoD**; only after that lands (via the normal
 - The design **rests on an unverified assumption** about the codebase.
 - It's a **scope / MVP-line** decision, or **the scope / feasibility / DoD is not
   yet knowable** (the task carries real unknowns).
-- Correctness crosses a **cross-Task state machine**, recovery/compensation, a
-  destructive terminal operation, multiple durable stores, or a proof/publish
-  transaction boundary.
-
-### Stop Rule — stop local patching after the second cross-Task regression
-
-When the same Closure exposes a second cross-Task regression, stop production
-edits. Before continuing, write and review:
-
-`failure -> Plan invariant -> one root cause -> one integrated repair surface`
-
-The repair is serialized. Parallel agents may perform read-only review only
-after the implementation is frozen. Frame the repair with **X problem — fundamental problem**
-and **Y problem — engineering problem**, then require both level corrections and
-a recurrence-prevention proof.
 
 **Fast path:** no trigger fires → mechanical work inside an approved design,
 following established patterns → just build it (`plan` → build → CI gate → merge).

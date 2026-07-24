@@ -52,22 +52,6 @@ people:
   - {id: "jjkysy", name: "jjkysy", track: "协作白板抽取", color: "#65a30d"}
   - {id: "allen", name: "Allen", track: "部署 + 统筹", color: "#2563eb"}
 
-# Plan-level correctness is recorded once here; Tasks/cards are implementation
-# slices and reference the applicable closure by stable id.
-system_closures:
-  - id: "closure-a"
-    x_problem: "Task-local completion cannot prove the cross-task invariant."
-    plan_invariant: "One durable owner exists for every external result."
-    related_cards: ["provider-result-ownership"]
-    durable_proof: "operation journal + exact cleanup state"
-    integration_evidence: "focused + provider-full + frozen read-only review"
-    resource_envelope:
-      runner: "scripts/guarded_mix.sh"
-      memory_high: "4G"
-      memory_max: "5G"
-      memory_swap_max: "0"
-      lock: "/tmp/ezagent-mix.lock"
-
 # ===== TODAY (07-16) plan — status ∈ planned|wip|review|blocked. NO `done` here. =====
 #
 # Per-card time-boxing (every card carries two dates):
@@ -83,9 +67,7 @@ system_closures:
 #   started/est_done = 07-27 / 07-28 / 07-29). See SKILL.md “Per-card
 #   time-boxing & delay-driven decomposition” for the full A→B1/B2/B3 rule.
 cards:
-  - id: "provider-result-ownership"
-    closures: ["closure-a"]
-    owner: "gaga"
+  - owner: "gaga"
     title: "Git provider provisioning（Plan A）"
     goal: "凭证隔离 + Git provider 打通"
     status: "wip"
@@ -259,15 +241,7 @@ done_prev:
 # ===== YESTERDAY (07-15) review — bottom 昨日复盘 =====
 review:
   method_deltas:
-    - finding: "Task-local green missed a cross-task terminal race."
-      x_problem: "Task was treated as the correctness closure."
-      y_problem: "Proof and publication were reviewed in separate files."
-      x_level_correction: "Plan Closure is the correctness unit."
-      y_level_correction: "Add frozen Closure review and a Stop Rule."
-      recurrence_prevention_proof: "dev-together local contract + reviewed return evidence"
-      owner: "lead"
-      destination: "skill-change"
-    # Historical boards may retain string entries; the renderer supports both.
+    - "canary 修复确立「dispatch 成功 ≠ 部署成功」的检查纪律。"
     - "kanban 委派回流在代码+测试层验证到位，产品级收口结转今日。"
   incidents:
     - "canary 因缺 EZAGENT_SIGNING_SEED_V1 冻结 1.3 天 → 补共享 seed 重部恢复。"

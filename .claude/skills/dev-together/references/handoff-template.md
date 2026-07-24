@@ -34,35 +34,6 @@ each section is in the `dev-together` SKILL.md §4.
 <The approach; note "codex-adversarially-reviewed YYYY-MM-DD" if it was.
 Then Phase 0 / 1 / … as PR-sized units.>
 
-## X/Y problem framing
-### X problem — fundamental problem
-<Incorrect abstraction, system model, responsibility boundary, invariant, or completion rule.>
-### Y problem — engineering problem
-<Concrete code, test, fixture, tool, workflow, runtime, or operational defect.>
-### X-level correction
-<Model, invariant, boundary, or completion-rule correction.>
-### Y-level correction
-<Concrete engineering correction.>
-
-## Plan-level system closure
-| Closure | X problem | Plan invariant | Related Tasks | Durable proof | Integration evidence |
-|---|---|---|---|---|---|
-| | | | | | |
-
-## Execution resource envelope
-- Guarded runner: `scripts/guarded_mix.sh`
-- MemoryHigh: `4G`
-- MemoryMax: `5G`
-- MemorySwapMax: `0`
-- Timeout: <seconds and reason>
-- Partition: <unique value>
-- Serialization: `/tmp/ezagent-mix.lock`
-
-## Recurrence-prevention proof
-<Machine gate or mandatory workflow proof, with owner and evidence.>
-
-Mechanical/non-Mix tasks may mark a section not applicable only with a reason.
-
 ## 5. Definition of Done — a closed checklist (four properties; see handoff-standard)
 <Goal-derived (for migrations: enumerated from the source, parity == ∅) ·
 verifiable + carries its proof · at the user-facing layer · a closed set. The dev

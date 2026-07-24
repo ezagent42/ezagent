@@ -48,25 +48,6 @@ are unchanged.
    in `board2html.py`; do not author `<style>`/layout by hand. A missing or
    hand-authored `board.html` means `review` is incomplete.
 
-   New `review.method_deltas` entries are structured X/Y records (historical
-   string entries remain readable):
-
-   ```yaml
-   review:
-     method_deltas:
-       - finding: "Task-local green missed a cross-task terminal race."
-         x_problem: "Task was treated as the correctness closure."
-         y_problem: "Proof and publication were reviewed in separate files."
-         x_level_correction: "Plan Closure is the correctness unit."
-         y_level_correction: "Add frozen Closure review and a Stop Rule."
-         recurrence_prevention_proof: "dev-together local contract + reviewed return evidence"
-         owner: "lead"
-         destination: "skill-change"
-   ```
-
-   “Be careful”, “add tests”, or “review harder” is incomplete without an owner
-   and a docs/runner/CI/skill/process-debt destination.
-
    **Continuity is welded into the card:** the same `acceptance:` list `plan`
    wrote (`done: false`) is what `review` ticks (`done: true` + evidence), and any
    card not moved to `done` is tomorrow's carryover — no separate 验收结果 doc to

@@ -31,9 +31,7 @@ require "SKILL.md" "Reconcile the whole ledger" "stack ledger rule"
 require "SKILL.md" "Close PR state" "PR ledger rule"
 require "SKILL.md" "\\.superpowers/sdd/" "Superpowers v6.0.3 SDD scratch rule"
 
-# `--no-index` asks whether the ignore contract covers a fresh scratch path even
-# when an historical artifact below `.superpowers/sdd/` is already tracked.
-if ! git check-ignore --no-index -q .superpowers/sdd/.dev-together-ignore-probe; then
+if ! git check-ignore -q .superpowers/sdd; then
   printf 'dev-together validation failed: .superpowers/sdd is not git-ignored\n' >&2
   exit 1
 fi

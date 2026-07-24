@@ -280,32 +280,6 @@ stop returning **unfinished** or **finished-but-divergent**:
   (branch-protected). The lead's `close` becomes a confirmation, not the first real
   inspection.
 
-## Plan-level system closure
-
-A Task is an implementation slice; the applicable **Plan-level closure** is the
-correctness unit. Use this whenever correctness spans Tasks, durable stores,
-authorization, recovery/compensation, destructive operations, or external
-effects.
-
-- Record the **X problem — fundamental problem** (the wrong model, invariant,
-  boundary, or completion rule) separately from the **Y problem — engineering
-  problem** (the concrete code, test, fixture, tool, workflow, or runtime defect).
-- Shared-state implementation and repair are serialized. After the frozen implementation
-  checkpoint, independent reviewers may perform parallel read-only review; the
-  lead combines findings into one integrated repair batch.
-- Reopen a Closure only for an invariant or acceptance failure, not style churn.
-- Applicable Mix/BEAM commands use `scripts/guarded_mix.sh` and the Plan's
-  declared resource envelope.
-- Every correction names an X-level correction, a Y-level correction, and a
-  recurrence-prevention proof with an owner and durable destination.
-
-The source-incident analysis is preserved in
-[`docs/notes/2026-07-21-git-provider-system-closure-retrospective.md`](../../../docs/notes/2026-07-21-git-provider-system-closure-retrospective.md)
-and its [Chinese peer](../../../docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md).
-The operating contract is
-[`docs/runbook/guarded-mix-execution.md`](../../../docs/runbook/guarded-mix-execution.md)
-and its [Chinese peer](../../../docs/runbook/guarded-mix-execution.zh_cn.md).
-
 ## Why these rules (adapt, don't obey blindly)
 Per-task branches + lead-merges keep parallel devs from colliding and give one
 accountable integration point (`push`+`close`). Adversarial review before build
