@@ -1,13 +1,26 @@
 # EzAgentActor — call/authz interface convergence — DESIGN SPEC
 
 - **Date**: 2026-07-24
-- **Status**: DRAFT v1 — for coordinator + Allen review, then codex adversarial pass
+- **Status**: DRAFT v2 — codex adversarial R1 = NEEDS-WORK (direction judged GOOD); all six
+  verified findings folded in this revision: (1) §1.5's guarantee DOWNGRADED to the honest
+  "enumerated, reviewed-code drift guarantee" — "unconcealable in reviewed code", aligned with
+  the cap-signing spec's own enforceability limit; (2) the pid-returning surface census
+  COMPLETED (`Kind.spawn/3`, `LocalRuntime.ensure_started[/_detailed]` added) and — owner
+  decision — CLOSED: sanctioned actor APIs stop returning pids, enforced by a NEW
+  no-pid-return gate; the handler-`self()` boundary stated honestly, not papered over;
+  (3) verifier-dominance telemetry repositioned as DIAGNOSTIC, not enforcement; (4) the
+  public `:vm_internal` option REMOVED and ephemeral authority made provenance-enforced
+  through a fixed policy adapter; (5) fresh authority resolution placed behind the
+  extracted authorization port, not a raw upward call; (6) V1–V6 phase dependencies
+  repaired (V2→port contract + #195 seam; V4 ownership split across C5; V5 pid closure
+  both sides; V6→C7).
 - **Kind of document**: a CONVERGENCE plan. NOT a rewrite, NOT an implementation plan.
-- **Read off**: `origin/main` @ `36547a052` (every file:line cited below verified at this SHA)
+- **Read off**: `origin/main` @ `e7a153a92` (v1 read at `36547a052`; every cited anchor
+  re-verified at `e7a153a92` — the C3 landing between the two moved no cited line)
 - **Decision owner**: Allen (framing set 2026-07-24)
 - **Builds on**: `docs/superpowers/specs/2026-07-23-actor-framework-umbrella-extraction.md`
-  (the C0–C7 extraction — public surface + reach-in removal; C0/C1/C2 already landed:
-  #1546, #1549, #1548, #1550, #1562) and
+  (the C0–C7 extraction — public surface + reach-in removal; C0/C1/C2/C3 already landed:
+  #1546, #1549, #1548, #1550, #1562, #1561) and
   `docs/superpowers/specs/2026-07-19-read-plane-authz-chokepoint-design.md`
   (read-plane chokepoints + anti-bypass gate — landed as PR-1..5: #1464/#1467/#1471/#1466/#1494).
 
@@ -42,8 +55,9 @@ merged, and load-bearing.
 So this spec is a **convergence**: tighten the existing chokepoint into THE single
 enforced path, enumerate every current bypass, and give each bypass a close-plan plus
 the gate that drives it to zero. It is sequenced AFTER the actor-framework extraction
-C0–C7, which defines the public surface (`extraction spec §2.2/§2.3`) and removes the
-244-site reach-in ledger this spec inherits as its starting census.
+C0–C7, which defines the public surface (`extraction spec §2.2/§2.3`) and burns down
+the reach-in ledger this spec inherits as its starting census (255 sites at C0-freeze;
+208 remaining at the current read-off after C1–C3).
 
 §1 — the enforcement/drift-detection mechanism — is the central design question and is
 resolved first, because everything else in the plan is only as strong as it.
@@ -125,19 +139,24 @@ hardening round already happened:
   shapes — calls, bare module atoms, struct patterns (extraction spec §4.2).
 - Ratchet integrity: SITE-level `{path, target, content_sha}` fingerprints, **multiset**
   enforcement (a byte-identical copy of an allowlisted line still REDs), shrink-only
-  frozen counts (`actor_internals_boundary_test.exs:41-44` — `@forward_frozen 244`,
+  frozen counts (`actor_internals_boundary_test.exs:46-49` — `@forward_frozen 208` post-C3,
   `@reverse_frozen 123` at this SHA).
 
 **How to AST-harden it for THIS spec's rules** (the convergence adds new banned shapes;
 same scanner, new matchers):
 
-- Ban **supervisor/process enumeration of framework processes**:
-  `Supervisor.which_children/count_children/DynamicSupervisor.which_children` where the
-  argument resolves to `Ezagent.KindSupervisor` (or any Kind-declared supervisor — the
-  set is enumerable from `supervisor/0` callbacks), `Process.whereis` of framework-named
-  atoms, and `Registry.lookup/select/dispatch` whose first argument is
-  `Ezagent.KindRegistry` (the module-root ban already catches the alias/atom; the
-  explicit shape closes the "call stdlib Registry directly with the atom" form).
+- Complete the **pid-USE matcher set** (§1.4): bare `send/2` / `Kernel.send` /
+  `Process.send/3` carrying a Kind-protocol verb (call/cast forms are covered; the
+  send form must be explicit), plus the verb-list totality self-test that keeps the
+  taint discriminator in sync with `Kind.Server`'s actual protocol.
+- Add the **no-pid-return gate** over the framework's sanctioned surface (§1.4): a
+  `pid()`-reaching return/parameter type on any public Kind-actor function — directly
+  or through known aliases like `DynamicSupervisor.on_start_child()` — is RED, backed
+  by a runtime deep-walk assertion in the framework's own suite. (Enumeration-shape
+  bans — supervisor introspection of framework supervisors, `Process.whereis` on
+  framework names, direct `Registry.*` with the registry atom — remain in the
+  optional D1 package, §1.4: with no sanctioned door yielding a pid and every use
+  RED, they matter only against code willing to fish.)
 - Ban **envelope forgery shapes** (new in this spec, §2.4/§4-V1): construction of
   `%Ezagent.Cmd{}` / `%Ezagent.Invocation{}` literals and calls to
   `Invocation.dispatch/Router.dispatch` outside {`ezagent_actor`, the enumerated ingress
@@ -193,97 +212,165 @@ extraction §2.2/§2.4, with this spec's deltas marked ★):
 | Lifecycle: `Kind.spawn/terminate/mount/detach`, `Lifecycle.destroy/with_entity_transition` | ★ `Invocation.with_admin_operator/2` (operator adapters only, enumerated) |
 | Authoring plane: `use Ezagent.Kind`, `Ezagent.ActionSet` contract, `BehaviorRegistry.register`, `SpawnRegistry.register/2`, `ReadyGate.register_external_gate/1`, `SliceChange` subscribe | everything else in `apps/ezagent_actor/lib` |
 
-### 1.4 Layer C — runtime pid-encapsulation (the strongest backstop)
+### 1.4 Layer C — runtime pid discipline: no pid leaves the framework (obtain-side) + pid-USE closure (use-side)
+
+**Scope decision (owner, 2026-07-24, final): the guarantee target is "unconcealable
+in reviewed code"** — not "structurally unconcealable against unreviewed in-BEAM
+code" (that is Path B). Within that target, the owner decided layer C carries BOTH
+structural halves (the obtain-side elimination is cheap and wanted):
+
+> **A caller neither OBTAINS nor USES a Kind pid without a reviewed RED shape.**
 
 **Assessment of today, as asked:** yes — `Ezagent.KindRegistry` is a publicly-named
 stdlib Registry that any code can `lookup`. The wrapper
 (`apps/ezagent_core/lib/ezagent/kind_registry.ex:59-75`) exposes `lookup/1` and
 `list_all/0` to the whole umbrella; the backing `{Registry, keys: :unique, name:
 Ezagent.KindRegistry}` child is supervised in core
-(`apps/ezagent_core/lib/ezagent_core/application.ex:33`); the extraction census found
-~20 production lookup sites outside core (extraction §4.4), and C3 is precisely the
-migration of those consumers onto `alive?/self?/read/list_instances`.
+(`apps/ezagent_core/lib/ezagent_core/application.ex:33`). C3 (#1561, landed) has
+migrated the ~20 business-tier lookup consumers onto `alive?/self?/read/list_instances`
+(ledger 244→208), and C5 moves the module inside `ezagent_actor`.
 
-**What making it private requires** (in dependency order):
+**Obtain-side: the pid never leaves the framework.** The pid-bearing sanctioned
+surfaces (census completed at codex R1 — the v1 draft named only two of them):
 
-1. **C3 complete** — zero business-tier `lookup/list_all` callers (the extraction
-   already owns this chunk).
-2. **C5 complete** — the module and its Registry child live inside `ezagent_actor`
-   (extraction §3.2), so the forward gate's ban on the root stops being a ratchet with
-   allowlisted debt and flips to a hard zero.
-3. **Close the pid leaks in the PUBLIC surface** (new findings, this spec):
-   - `Kind.list_instances/0` returns `{uri, %{pid: pid}}` — **the sanctioned surface
-     itself hands out pids today** (`kind.ex:845-851`). The meta must drop the pid
-     (operator tooling that genuinely needs process identity moves inside
-     `ezagent_actor` as mix tasks / an operator-gated op).
-   - `Kind.resolve_action_subject/2` accepts a pid receiver (`kind.ex:809`) — the pid
-     overload goes `@doc false` internal; the public form takes a URI.
-4. **Gate the enumeration side-channels** (layer A hardening, §1.2): supervisor
-   introspection of `Ezagent.KindSupervisor` + per-Kind supervisors, `Process.whereis`
-   on framework names, direct `Registry.*` with the registry atom.
-5. **The stdlib constraint accepted honestly:** Registry cannot be unnamed (fact 1.1-3),
-   and the atom is writable from anywhere. Privacy is therefore "no sanctioned API
-   returns or accepts a pid, and every unsanctioned way of obtaining one is a RED
-   gate shape," not "the pid is secret."
+- `Kind.spawn/3` returns `DynamicSupervisor.on_start_child()` — `{:ok, pid}` and the
+  idempotent `{:error, {:already_started, pid}}` (`kind.ex:379-383`). Becomes
+  `:ok | {:ok, :started | :already_started} | {:error, term()}` (or `{:ok, uri}`):
+  spawn still calls `DynamicSupervisor.start_child/2` INTERNALLY — nothing about the
+  supervision mechanics changes — it just stops leaking the pid; it already awaits
+  ready internally, so no caller needs the pid to sequence on. Idempotency callers
+  matching `{:error, {:already_started, pid}}` migrate to the `:already_started` atom.
+- `Ezagent.LocalRuntime.ensure_started/2` + `ensure_started_detailed/2`
+  (`local_runtime.ex:62`, `:72-73`) — same change (the started/already-started
+  distinction survives; the pid does not).
+- `Kind.list_instances/0` meta drops the `:pid` field (`kind.ex:845-851`); operator
+  tooling that genuinely needs process identity moves inside `ezagent_actor` as mix
+  tasks / an operator-gated op.
+- `Kind.resolve_action_subject/2` — the pid overload (`kind.ex:809`) goes `@doc false`
+  internal; the public form takes a URI.
 
-**What breaks (cost, flagged):** operator/debug tooling that lists processes (moves
-behind an operator op or into `ezagent_actor` mix tasks); tests that grab pids to
-monitor/kill Kind processes (C5's `Ezagent.ActorCase` grows sanctioned test helpers —
-extraction §6.6); agent transport-readiness / workspace-provisioning consumers that
-poll the registry across incarnation transitions (C3 already plans an explicit
-`await_incarnation/2` public op if the need survives review — extraction §5-C3). This
-is the biggest-cost phase of the convergence (§4-V5) and it is deliberately LAST.
+**The NEW no-pid-return arch gate — makes obtain-side enforceable, not
+conventional.** A gate over the framework's SANCTIONED surface (the §1.3 public
+table, a derived module/function list) asserting **no public Kind-actor function
+returns or accepts a pid**: (i) every public-surface function carries a `@spec`, and
+the gate REDs any return type that reaches `pid()` — directly or through known
+aliases (`DynamicSupervisor.on_start_child()`, `GenServer.on_start()`); (ii) a
+runtime type assertion (an `ActorCase` helper that deep-walks sanctioned-API return
+values in the framework's own suite and REDs on any `is_pid` leaf — catching returns
+whose specs lie or are missing); (iii) the standard gate-has-teeth self-test (a
+fixture offender is caught). Same family and CI path as the boundary scanner. With
+this gate, a future convenience op that hands back a pid is a RED shape in the diff
+that introduces it — which is the entire point.
 
-**Why this is the strongest layer:** after it, business code cannot *obtain* the object
-a dynamic bypass needs. `apply(GenServer, :call, [pid, msg])` evades any static scan —
-but only if you have `pid`. "You can't message a pid you can't name" — where "can't
-name" means: no public API yields it, and every known way to fish for it
-(registry atom, supervisor children, `Process.list`, `:sys`) is a banned shape that is
-loud in a diff. The evasion that remains is deliberate multi-step circumvention, which
-is exactly what review + the codex adversarial pass exist to catch.
+**Use-side: any USE of a Kind pid is already a RED shape.** A Kind actor's entire
+useful protocol IS the `:ezagent_*` verb set — every `handle_call/cast/info` clause
+of the single shared `Kind.Server` matches a Kind-protocol message (that is how the
+`@kind_message_verbs` allowlist was built, `scanner.ex:125-137`). A message to a Kind
+pid that carries no protocol verb does nothing useful (no matching clause — the call
+crashes). So any USEFUL interaction with an obtained pid — however obtained,
+including a smuggled handler-`self()` — must ultimately write a Kind-protocol shape
+at the call site: `GenServer.call/cast(pid, :ezagent_* …)` or a `:sys.*` escape.
+**Both are ALREADY the gate's RED shapes** (`scanner.ex:119-163`), direct or
+taint-relayed, regardless of pid provenance. V5 completes the matcher set: bare-`send`
+coverage (`send/2`, `Kernel.send`, `Process.send/3` carrying a protocol verb — the
+verb list was censused from call/cast/send targets; the send-form matcher must be
+explicit, not assumed) and a **verb-list totality self-test** keeping
+`@kind_message_verbs` in sync with `Kind.Server`'s actual handle clauses (the DIRECT
+`GenServer.call(pid, :ezagent_*)` check is already broad — any `:ezagent_*` atom REDs
+even when unlisted — so the sync test protects the INDIRECT/taint path).
 
-### 1.5 The honest conclusion (the mechanism = the three layers TOGETHER)
+**The irreducible residual — handler-`self()`, stated honestly.** A Behavior handler
+executes INSIDE the target's own actor process and holds its own pid by construction;
+no design closes this — the handler IS the actor. A handler smuggling its pid out
+(slice / ETS / message) for another module to call later is not prevented by either
+half; it is caught at the eventual USE site by the verb-shape ban, wherever that site
+lands. A named residual of §1.5's guarantee class, not a closed hole.
 
-**This design gives structural unforgeability, not cryptographic unforgeability.** The
-precise claim:
+**Known costs (obtain-side migration, V5):** callers pattern-matching pids out of the
+four ops (mechanical — nearly all use the pid as a truthy "it started" witness);
+pid-grabbing tests (`Ezagent.ActorCase` grows sanctioned helpers — extraction §6.6);
+operator/debug tooling relocation. **OPTIONAL / DEFERRED — D1 (Path B tier):**
+enumeration-shape bans (supervisor introspection of `Ezagent.KindSupervisor` +
+per-Kind supervisors, `Process.whereis` on framework names, direct `Registry.*` with
+the registry atom) — obtain-side side-channels that matter only against code willing
+to fish; documented, not scoped into the V-phases. Even with everything above,
+honestly: Registry cannot be unnamed (fact 1.1-3), atoms are global, `Process.list/0`
+exists, and handler-`self()` remains — layer C narrows structurally; it never seals.
+Sealing is Path B's cryptographic boundary, not a BEAM-structural property.
 
-> After convergence, any code path that reaches an actor, a cap decision, or actor
-> persistence WITHOUT going through `EzAgentActor` must either (a) edit
-> `apps/ezagent_actor` itself — visible as a framework-app diff, owned and reviewed as
-> such, with the reverse gate + standalone compile constraining what it can quietly
-> import; or (b) contain a statically-banned shape — RED in CI before merge; or
-> (c) be a deliberately-constructed metaprogramming evasion of (b) — undetectable
-> statically *in principle*, mitigated by review + the per-phase adversarial pass, and
-> pointless under the settled Path A threat model, which already scopes out in-VM
-> malicious code.
+### 1.5 The honest conclusion (the mechanism = the three layers TOGETHER; the guarantee = a reviewed-code drift guarantee)
 
-No single layer delivers this. Layer A alone is a heuristic with a known evasion tail;
-layer B alone cannot make modules private downward (language fact); layer C alone
-cannot make pids secret in one BEAM (platform fact). Together they close each other's
-specific gaps: **A** catches what occurs and what is casually added; **B** makes the
-boundary physical, the internal set derivable, and upward leakage a compile error;
-**C** removes the bearer object so the dynamic evasions of A have nothing to aim at.
-The signing analogy lands as: *the "private key" is write-access to
-`apps/ezagent_actor` plus the willingness to put a RED-flagged shape in a reviewed
-diff* — a forgery is not impossible, it is **unconcealable**. That is the correct and
-achievable strength for a dev-time drift problem (read-plane spec §0: this class of
-problem is an EVOLVABILITY problem, and the enemy is the casual bypass that rots into
-legacy — not a malicious insider).
+**What this design gives is an ENUMERATED, REVIEWED-CODE DRIFT GUARANTEE — not
+cryptographic unforgeability.** The v1 draft of this spec over-claimed ("bypass
+requires editing `ezagent_actor` or a RED shape"); codex R1 falsified that claim
+concretely: `Kind.spawn/3` and `LocalRuntime.ensure_started[/_detailed]` handed a pid
+to any caller through the SANCTIONED surface, handler code always holds `self()`
+(§1.4), and dynamic `apply/3` is statically undecidable (§1.2). The owner's final
+scope: the guarantee target is **"unconcealable in reviewed code"** — and layer C
+closes BOTH structural halves toward it (§1.4): no sanctioned actor API returns or
+accepts a pid (obtain-side, enforced by the no-pid-return gate), and every useful
+message to a Kind pid is a RED shape (use-side, the protocol-verb ban). The claim,
+stated at exactly the strength the layers deliver:
 
-One runtime addition completes the picture: the **verifier-dominance runtime
-invariant** from the cap-signing gate plan (§10 property 1 — "no handler-run event
-without a matching authz event," telemetry-asserted). Static reachability says every
-door leads through the chokepoint; the runtime invariant observes that in fact every
-executed handler was preceded by a step-5.5 decision for the same `(instance, action)`.
-It is the cheap runtime completeness check for the whole write plane and lands in
-§4-V6.
+> After convergence, a violation of "everything goes through `EzAgentActor`" that is
+> written in ORDINARY, reviewed code — the accidental reach-in, the copy-pasted
+> shortcut, the review-missed convenience path; i.e. the entire drift class that
+> actually occurs (extraction §4.4 census: 255 real sites at C0-freeze, all of this class) —
+> is caught mechanically: as a compile error (layer B, upward), or a RED CI shape at
+> the point of OBTAINING a pid (layer C's no-pid-return gate — no sanctioned door
+> yields one) or at the point of USING one (layer A's protocol-verb ban — a Kind
+> actor answers only its `:ezagent_*` protocol, and every shape that speaks it
+> outside the framework is RED, regardless of pid provenance). What remains is
+> **deliberately-constructed evasion** (runtime-assembled `apply/3` with
+> runtime-assembled messages, handler-`self()` smuggling ahead of its eventual RED
+> use-site, forged telemetry), which no static or structural mechanism in one
+> unsandboxed BEAM can catch — that is Path B's cryptographic boundary, explicitly
+> out of scope here.
+
+This is EXACTLY the enforceability posture the cap-signing spec already commits to for
+the write plane, and this spec aligns with it rather than out-promising it: "**Under
+Path A, even the STATIC gates are review aids** — they catch accidental and
+review-missed violations (threats ① and ②), not a determined actor running unreviewed
+code in-BEAM" (`2026-07-16-cap-signing-per-kind-authority-design.md:156`, §10
+preamble), and its "**Honest enforceability limit (v5 / Path A)**" paragraph (`:179`)
+is the model for this section.
+
+No single layer delivers even this. Layer A alone is a heuristic with a known evasion
+tail; layer B alone cannot make modules private downward (language fact); layer C
+alone cannot make pids secret in one BEAM (platform fact) and never covers the
+handler's own pid. Together they close each other's ACCIDENTAL-use gaps: **A** catches
+what occurs and what is casually added; **B** makes the boundary physical, the
+internal set derivable, and upward leakage a compile error; **C** closes both pid
+seams — no sanctioned door yields a pid (no-pid-return gate), and possession of one
+buys nothing expressible in ordinary code, because the only useful things to SAY to
+it are RED shapes. The signing analogy therefore lands one notch weaker than Allen's
+ideal, and honestly so: admin-signing makes forgery impossible without the key; this
+mechanism makes drift **unconcealable in reviewed code** — every bypass expressible
+in ordinary Elixir is either impossible to write against the public surface or RED in
+the diff that introduces it. For the actual X — a dev-time EVOLVABILITY problem where
+the enemy is the casual bypass that rots into legacy (read-plane spec §0), under a
+threat model that already scopes out in-VM malice — that is the correct target
+strength, and anything stronger is Path B work (D1 documents the first step of that
+road without scoping it in).
+
+One runtime addition rounds out the picture — with its role stated precisely: the
+**verifier-dominance telemetry check** from the cap-signing gate plan (§10 property 1
+— "no handler-run event without a matching authz event"). It is a **diagnostic**, not
+enforcement and not bypass-detection: both events are emitted by the framework's own
+pipeline, so a bypass that never enters the pipeline emits neither and is invisible
+to it, and in-VM code could emit forged events. What it IS good for: a
+uniquely-correlated ordering assertion (`(instance, action, dispatch-id)`-keyed)
+that observably proves the wiring — every pipeline-executed handler was preceded by
+its own step-5.5 decision — and catches ACCIDENTAL drift inside the pipeline (a new
+dispatch route that skips the verifier, a reordering regression). It lands in §4-V6
+as observability, priced accordingly.
 
 ---
 
 ## 2. The bypass census — every current way around the chokepoint, each with a close-plan + its gate
 
-The extraction spec's ledger IS the base census: **244 frozen forward reach-in sites**
-(`actor_internals_boundary_test.exs:41`; C1 took 261→255, C2 took 255→244), broken down
+The extraction spec’s ledger IS the base census: **208 frozen forward reach-in sites**
+(`actor_internals_boundary_test.exs:46` holds the post-C3 frozen 208; C1 took 261→255, C2 255→244, C3 244→208), broken down
 in extraction §4.4 (53 `get_slice` files across 16 apps; 18 `SnapshotStore` files; ~20
 `KindRegistry` sites; the presenter-caps snapshot family). C3–C7 own driving that
 ledger to `[]`. This section enumerates the bypass CLASSES that remain **even at
@@ -385,7 +472,7 @@ adopting an exemption class."
 
 Owned by the extraction (this spec does not respin them; it inherits their gates):
 
-| Bypass class | Census (extraction §4.4, @`62f606b8f`, ledger-frozen 244 @`36547a052`) | Close plan | Gate |
+| Bypass class | Census (extraction §4.4, @`62f606b8f`, ledger-frozen 208 @`e7a153a92`) | Close plan | Gate |
 |---|---|---|---|
 | `Kind.get_slice`/`SliceAccess` reach-ins | 53 lib files / 16 apps | C6 per-domain batches → `read/3`; C7 deletes the public symbol | forward scanner root+call bans, SITE-multiset ratchet |
 | `SnapshotStore` direct reads | 18 non-framework lib files | C2 (done: 8 callers, ledger 255→244) + C6 tail → `read_durable*` | same |
@@ -396,10 +483,20 @@ Owned by the extraction (this spec does not respin them; it inherits their gates
 
 ### 2.4 NEW bypasses this spec names (found in this investigation; not in either parent spec)
 
-1. **`list_instances/0` leaks pids on the sanctioned surface** (`kind.ex:845-851`,
-   `meta = %{pid: pid}`). Close: drop the pid from meta at V5; operator tooling that
-   needs process identity becomes an `ezagent_actor`-internal mix task. Gate: the
-   public-surface spec test asserts the return type carries no pid.
+1. **The sanctioned surface hands out pids** — four ops (census completed at codex
+   R1): `Kind.spawn/3` returns `{:ok, pid}` / idempotent `{:error,
+   {:already_started, pid}}` (`kind.ex:379-383`); `LocalRuntime.ensure_started/2` +
+   `ensure_started_detailed/2` return pid forms (`local_runtime.ex:62`, `:72-73`);
+   `list_instances/0` meta carries `%{pid: pid}` (`kind.ex:845-851`);
+   `resolve_action_subject/2` accepts a pid receiver (`kind.ex:809`). Close (V5,
+   owner-decided — cheap and wanted): the pid never leaves the framework —
+   URI-keyed returns (`:ok | {:ok, :started | :already_started} | {:error, _}`;
+   spawn still calls `DynamicSupervisor.start_child/2` internally and already awaits
+   ready, so no caller needs the pid to sequence on), pid-free `list_instances` meta,
+   URI-only `resolve_action_subject`; operator tooling that genuinely needs process
+   identity becomes an `ezagent_actor`-internal mix task / operator-gated op. Gate:
+   the **no-pid-return gate** (§1.4) — a pid in any sanctioned actor-API return is a
+   RED shape, enforced, not conventional.
 2. **Envelope construction is open** — any module can `Cmd.new/4` (which stamps
    `origin: :trusted_internal`, `cmd.ex:106-124`) or build a raw `%Invocation{}` and
    call `dispatch/1` directly. The chokepoint is unavoidable once you're IN the
@@ -417,19 +514,26 @@ Owned by the extraction (this spec does not respin them; it inherits their gates
    ordinary verification), but its caller set is unenumerated. Close (V1): enumerate
    callers (CLI/World/Session-Config adapters per its own doc) into a fixed allowlist;
    gate RED on new callers.
-4. **`resolve_action_subject/2` pid overload** (`kind.ex:809`) — public API accepting a
-   raw pid receiver. Close (V5): URI-only public form.
+4. **`resolve_action_subject/2` pid overload** (`kind.ex:809`) — folded into item 1's
+   V5 closure (URI-only public form; the pid overload goes `@doc false` internal).
 
 ---
 
 ## 3. The caps-resolution contract — identity in, caps resolved fresh at the chokepoint
 
 **The hard rule (Allen's sketch, corrected as specified):** the fourth parameter of
-`EzAgentActor.call/4` is the caller's **IDENTITY** — an authenticated principal `%URI{}`
-(or `:vm_internal` for the enumerated trusted facades) — **NEVER a caps list.** Caps
-are resolved FRESH at the chokepoint, at decision time, from the durable/live cap store
-(`EntityCaps.load/1`). A caller-passed cap list is the stale/forged-cap vector, and this
-repo has already paid for it twice:
+`EzAgentActor.call/4` is the caller's **IDENTITY** — an authenticated principal
+`%URI{}`, and ONLY that — **NEVER a caps list, and NO public `:vm_internal` option.**
+Framework/trusted-internal dispatches do not enter through the public primitive at
+all: they use framework-tier internal constructors (the enumerated facades — identity
+persistence's `EntityCaps.dispatch_mutation`-class paths), so `:vm_internal` never
+appears in a business-tier call signature and cannot be reached for by convenience.
+Caps are resolved FRESH at the chokepoint, at decision time, from the durable/live cap
+store — **through the extracted authorization port** (post-C5 the chokepoint lives in
+`ezagent_actor`, which cannot and must not call the identity domain directly; the
+AuthzPort / `authority_loader` DI seam, extraction §3.4, already carries exactly this
+inversion, with the core adapter resolving via `EntityCaps.load/1`). A caller-passed
+cap list is the stale/forged-cap vector, and this repo has already paid for it twice:
 
 - **The mount-snapshot staleness bug** (pre-C1): `PresenterCaps` merged a mount-time
   `assigns.current_caps` snapshot into every later authz context — a demoted admin kept
@@ -459,21 +563,32 @@ requires `:caps` (`invocation.ex:73-81`), the verifier's candidates are literall
 `ctx.caps` (`verifier.ex:123`), and business/web tiers populate it (via
 `PresenterCaps.load` since C1 — fresh, but still hand-carried by every adapter).
 
-**The convergence (V2):**
+**The convergence (V2) — ONE adapter-owned authorization op:**
 
-1. `EzAgentActor.call/4` has **no caps parameter**. The chokepoint resolves the
-   candidate set itself: `EntityCaps.load(caller_identity)` at step 5.5 (or immediately
-   before delivery for `:cast`), unioned with chokepoint-minted artifacts.
+1. `EzAgentActor.call/4` has **no caps parameter and no ephemeral parameter**. The
+   chokepoint performs a SINGLE authorization operation behind the authz port: load
+   the caller's authority snapshot ONCE (port → core adapter → `EntityCaps.load/1`),
+   and within that one op run #195's principal-fence, the current-holder gate, and the
+   per-candidate target-verify together (`Cap.Authorize.authorize/3` already composes
+   exactly these three — `cap/authorize.ex:46-63`; V2 changes where the CANDIDATES
+   come from, not the decision logic).
 2. `ctx.caps` becomes an **internal envelope field** written only inside
-   `ezagent_actor`. The three enumerated exceptions, all already chokepoint-side or
-   explicitly tagged, are preserved as such:
+   `ezagent_actor`. The three enumerated exceptions are all chokepoint-side or
+   provenance-enforced — never a caller-supplied value crossing the public API:
    (a) **admin materialization** — minted inside `dispatch/1` after the origin check
    (`invocation.ex:181-209`), target-signed, verified like any cap;
-   (b) **JIT ephemeral caps** — request-time caps that are never durably granted; the
-   C1 carve-out already forces the tagged `PresenterCaps.EphemeralCaps` wrapper
-   (`presenter_caps.ex:26-41`) so a bare/stale `%Capability{}` cannot be smuggled; V2
-   lifts this to an explicit `EzAgentActor.call` option (`ephemeral:
-   %EphemeralCaps{…}`) — tag-only, never a bare list;
+   (b) **JIT ephemeral authority — provenance-enforced through a FIXED policy
+   adapter, not a caller wrapper.** The current shape is not good enough to keep:
+   `PresenterCaps.load_with_ephemeral/2` (`presenter_caps.ex:26-73`) accepts an
+   `%EphemeralCaps{}` that ANY caller can construct around ANY `%Capability{}` — the
+   tag proves intent, not provenance, so it reintroduces exactly the
+   store-removed-inline-cap class V2 eliminates (a stale artifact wrapped in the tag
+   rides in). V2 shape: a small FIXED registry of ephemeral-policy adapters (module
+   allowlist — today's sole member: the kanban published-read adapter), each of which
+   MINTS its authority inside the chokepoint's call path (via `Cap.issue/3`-class
+   issuance at decision time) keyed by the request; the chokepoint unions ONLY
+   adapter-minted-this-decision authority, and no public parameter can carry a
+   capability value at all. The `%EphemeralCaps{}` public wrapper is deleted;
    (c) **grant-flow artifacts** — the `{:cap, :grant}` path (`runtime.ex:120-122`),
    already special-cased inside the actor.
 3. **Behavioral consequence, stated honestly:** for the dispatch plane, a
@@ -486,13 +601,17 @@ requires `:caps` (`invocation.ex:73-81`), the verifier's candidates are literall
    deferred class shrinks but does not close — delete-resurrection etc. remain
    separate).
 4. **Freshness contract:** point-in-time at decision (read-plane §3.2's window
-   contract applies verbatim); one `EntityCaps.load` per dispatch (the same cost class
-   the C2 batch path already accepted; per-URI actors make per-dispatch load O(1) in
-   candidates, and batch planes hoist it exactly as `read_credential_statuses/3` does).
+   contract applies verbatim); one port-mediated authority load per dispatch (the same
+   cost class the C2 batch path already accepted; per-URI actors make per-dispatch
+   load O(1) in candidates, and batch planes hoist it exactly as
+   `read_credential_statuses/3` does).
 
 **Gate:** scanner rule — a `:caps` key written into a Cmd/Invocation ctx outside
-{`ezagent_actor`, the EphemeralCaps-tag adapters} is RED; census-seeded, shrink-only
-(the census is small: post-C1, `PresenterCaps.context/1` consumers + CLI dispatch).
+`ezagent_actor` is RED, and any `%Capability{}`-typed value crossing the public
+`EzAgentActor` surface is RED; the ephemeral-policy adapter registry is a fixed module
+allowlist (a new adapter = a reviewed registry diff, never a new call-site wrapper).
+Census-seeded, shrink-only (the census is small: post-C1, `PresenterCaps.context/1`
+consumers + CLI dispatch + the kanban published-read adapter).
 
 ---
 
@@ -500,27 +619,32 @@ requires `:caps` (`invocation.ex:73-81`), the verifier's candidates are literall
 
 **Hard precondition: the extraction C0–C7.** This spec's phases consume the extraction's
 public surface (C0, landed), its consumer migrations (C1–C3, C6), the spine deletion
-(C4), the physical move (C5), and the flip (C7). Status at `36547a052`: C0 (#1546) +
-gate hardening (#1549), C1 (#1548), C2 (#1550 + #1562) are MERGED; C3–C7 pending.
-Phases V1/V2 below can begin before C5 (they touch the dispatch front door, not the
-file layout); V5 hard-requires C3+C5.
+(C4), the physical move (C5), and the flip (C7). Status at `e7a153a92`: C0 (#1546) +
+gate hardening (#1549), C1 (#1548), C2 (#1550 + #1562), **C3 (#1561, ledger 244→208)**
+are MERGED; C4–C7 pending. Phase V1 below can begin before C5 (it touches the dispatch
+front door, not the file layout); V2 needs the port contract; V4 straddles the move
+and states which side owns what; V6 closes only after C7.
 
 | Phase | Closable bypass (§2 ref) | What lands | Enforcing gate | Depends on | Cost |
 |---|---|---|---|---|---|
-| **V1 — name the primitive; close the envelope front door** | §2.4-2, §2.4-3 | `EzAgentActor.call/4` as the business-tier entry (a thin, semantics-preserving façade over `Cmd.authenticated_external/trusted_internal` + `Router.dispatch`); ingress-adapter set enumerated; `with_admin_operator` callers enumerated; optional Boundary-style compile tracer (§1.3) | envelope-construction shape ban, census-seeded shrink-only; adapter fixed allowlist | C0 only | M |
-| **V2 — caps-resolution convergence** | §3 | no caps param; chokepoint-side `EntityCaps.load`; `EphemeralCaps` option; TOCTOU + differential tests | `:caps`-write shape ban; TOCTOU test (store-removed inline cap DENIED) | V1; **coordinate w/ #195 owner** (spine seam) | M–L |
-| **V3 — read-plane convergence** | §2.1 | every principal-facing read behind a chokepoint conforming to the identity-in/fresh-caps contract; `Kind.read*` plumbing restricted to {chokepoints, framework tier, in-dispatch handlers}; remaining raw stores under the read-plane §3.3 ban | read-plumbing-callers module allowlist (shrink-only) + raw-store ban extension; enumerator run = worklist | C0–C2 (surface + first migrations); benefits from C6 | **L (breadth)** |
-| **V4 — cap-exemption structural split + ratchet** | §2.2 | two declaration classes at the Behavior macro layer; `@non_cap_actions` families absorbed one PR at a time; verifier map count → 0 | shrink-only count on the verifier map; class-split structural assertions; cap-signing §10-property-2 flag bans | independent of C5; **macro-layer refactor — coordinate w/ #195** | **L** |
-| **V5 — pid-encapsulation** | §1.4, §2.4-1, §2.4-4 | `list_instances` drops pid; `resolve_action_subject` URI-only; enumeration-shape bans live (supervisor introspection, `Process.whereis`, direct `Registry.*` w/ the atom); ops tooling relocated; `ActorCase` pid-free test helpers | §1.2 hardened shapes at zero-allowlist; public-surface type tests (no pid in any return) | **C3 + C5 complete** | **XL (flagged: ops tooling, tests, incarnation-wait consumers)** |
-| **V6 — runtime dominance + closure** | §1.5 | verifier-dominance telemetry invariant (no handler-run without matching step-5.5 decision); convergence acceptance run | the runtime invariant itself + all prior gates at zero-allowlist | V1–V5 | S–M |
+| **V1 — name the primitive; close the envelope front door** | §2.4-2, §2.4-3 | `EzAgentActor.call/4` as the business-tier entry (a thin, semantics-preserving façade over `Cmd.authenticated_external` + `Router.dispatch`; NO public `:vm_internal` — framework facades use internal constructors, §3); ingress-adapter set enumerated; `with_admin_operator` callers enumerated; optional Boundary-style compile tracer (§1.3) | envelope-construction shape ban, census-seeded shrink-only; adapter fixed allowlist | C0 only | M |
+| **V2 — caps-resolution convergence** | §3 | ONE adapter-owned authorization op behind the authz port (snapshot loaded once; principal-fence + holder gate + target-verify together); no caps/ephemeral params; ephemeral-policy adapter registry replaces the public `%EphemeralCaps{}` wrapper; TOCTOU + differential tests | `:caps`-write + `%Capability{}`-across-public-surface shape bans; TOCTOU test (store-removed inline cap DENIED); fixed ephemeral-adapter allowlist | V1; **the AuthzPort/authority-loader port contract** — land with C5's port-introduction pre-flight (ports are introduced while files still live in core, extraction §5-C5) or introduce that port first; **coordinate w/ #195 owner** (authz seam) | M–L |
+| **V3 — read-plane convergence** | §2.1 | every principal-facing read behind a chokepoint conforming to the identity-in/fresh-caps contract; `Kind.read*` plumbing restricted to {chokepoints, framework tier, in-dispatch handlers}; remaining raw stores under the read-plane §3.3 ban | read-plumbing-callers module allowlist (shrink-only) + raw-store ban extension; enumerator run = worklist | C0–C3 (surface + migrations); benefits from C6 | **L (breadth)** |
+| **V4 — cap-exemption structural split + ratchet** | §2.2 | two declaration classes at the ActionSet/Behavior macro layer; `@non_cap_actions` families absorbed one PR at a time; verifier map count → 0. **Ownership across C5, stated:** the declaration-class MECHANICS live in the macro layer (`behavior.ex` — a §3.2 MOVER file), so they land in / move with `ezagent_actor`; the non-cap PREDICATES + the verifier's exemption enumeration are spine POLICY (`Cap.Verifier` stays in core). NOT independent of C5: the macro half either lands before C5 and moves with `behavior.ex`, or after C5 in the actor app — never split mid-move | shrink-only count on the verifier map; class-split structural assertions; cap-signing §10-property-2 flag bans | **C5 (macro-layer ownership)**; predicates/ratchet halves may proceed family-by-family before it; **coordinate w/ #195** | **L** |
+| **V5 — pid closure, both sides** | §1.4, §2.4-1, §2.4-4 | **Obtain-side**: `Kind.spawn/3` + `LocalRuntime.ensure_started[/_detailed]` stop returning pids (URI-keyed returns; `DynamicSupervisor.start_child/2` stays internal); `list_instances/0` meta drops `:pid`; `resolve_action_subject/2` URI-only; caller migration (mechanical — pids used as truthy witnesses); the NEW **no-pid-return gate** (spec-level + runtime deep-walk + has-teeth self-test). **Use-side**: send-form matchers (`send/2`, `Kernel.send`, `Process.send/3` w/ protocol verbs); verb-list totality self-test vs `Kind.Server`'s handle clauses; handler-`self()` residual documented in the gate's own doc. (Enumeration-shape bans stay in the OPTIONAL D1 package, §1.4) | no-pid-return gate green at zero-allowlist; pid-USE shapes at zero-allowlist; verb-sync test green | C3 (landed) for the consumer baseline; C5 (scanner + verb census move with the framework; return-type changes may land either side of the move, never split across it) | M |
+| **V6 — runtime dominance diagnostic + closure** | §1.5 | verifier-dominance telemetry check (uniquely-correlated ordering assertion — DIAGNOSTIC observability for accidental in-pipeline drift, not enforcement, §1.5); convergence acceptance run | the diagnostic assertion + all prior gates at zero-allowlist | V1–V5 **and C7** (acceptance cannot claim one-door while `get_slice`/`get_raw_slice` are still on the public surface — they leave it at C7) | S–M |
 
-**The three biggest-cost items, flagged as required:** (1) **V5 pid-encapsulation of
-KindRegistry** — not the registry itself (C5 moves it) but the long tail of ops
-tooling, pid-grabbing tests, and the transport-readiness/incarnation consumers; (2)
-**V3 read-plane convergence** — a breadth census across every principal-facing reader,
-even with the message plane already done; (3) **V4 cap-exemption ratchet** — a macro-layer
-refactor adjacent to live #195 spine work, which is why its interim (enumerate-and-lock)
-is already in force and the split can proceed family-by-family without a flag-day.
+**The biggest-cost items, flagged as required:** (1) **V3 read-plane convergence** — a
+breadth census across every principal-facing reader, even with the message plane
+already done; (2) **V4 cap-exemption ratchet** — a macro-layer refactor straddling the
+C5 move and adjacent to live #195 spine work, which is why its interim
+(enumerate-and-lock) is already in force and the split can proceed family-by-family
+without a flag-day; (3) **V2** — an authz-seam change requiring #195-owner
+coordination and the port contract. (V5 shrank from the v1 draft's XL to M when the
+owner scoped the guarantee to reviewed-code-unconcealable: the pid-return elimination
+is retained — it is cheap, mechanical, and gate-enforced — while the expensive
+remainder of full physical encapsulation, the enumeration-ban package, moved to the
+optional D1 deferral.)
 
 **Rollback discipline** (inherited from the extraction): every phase's gate allowlist
 travels in the same commit as its migration; reverting a phase = reverting its PR.
@@ -531,8 +655,11 @@ travels in the same commit as its migration; reverting a phase = reverting its P
 
 1. **One door, write plane:** `EzAgentActor.call/4` is the only business-tier dispatch
    entry — envelope-construction census at `[]`; ingress adapters enumerated and fixed.
-2. **Identity-in, caps-fresh:** no public caps parameter anywhere on the call/read
-   surface; `:caps`-write census at `[]` outside the chokepoint + tagged adapters; the
+2. **Identity-in, caps-fresh, no public `:vm_internal`:** the public call surface
+   takes an authenticated principal URI only — no caps parameter, no ephemeral
+   parameter, no `:vm_internal` option; fresh resolution runs behind the authz port;
+   `:caps`-write census at `[]` outside the chokepoint; ephemeral authority only via
+   the fixed policy-adapter registry (no public `%Capability{}` carrier exists); the
    TOCTOU test proves a store-removed inline cap no longer authorizes a dispatch.
 3. **One discipline, read plane:** `Kind.read*` plumbing callable only from
    {chokepoints, framework tier, in-dispatch handlers} — allowlist at `[]`; every read
@@ -540,17 +667,24 @@ travels in the same commit as its migration; reverting a phase = reverting its P
 4. **Exemptions governed:** verifier `@non_cap_actions` map deleted (members absorbed
    into the structural non-cap class, each with a named predicate); cap-gated-AND-exempt
    unrepresentable.
-5. **No pid on the surface:** no public `ezagent_actor` API accepts or returns a pid;
-   enumeration-shape bans at zero-allowlist.
-6. **Runtime dominance observed:** the telemetry invariant holds across the full suite
-   — every handler execution paired with a step-5.5 decision.
+5. **Pid closed on both sides:** no sanctioned `ezagent_actor` API accepts or returns
+   a pid — the no-pid-return gate (spec-level + runtime deep-walk + has-teeth
+   self-test) is green at zero-allowlist; the pid-USE matcher set (call/cast/send +
+   `:sys`, direct and taint-relayed) is green with the verb-list totality self-test;
+   the handler-`self()` residual is documented in the gate's own doc (named residual,
+   not claimed closed).
+6. **Runtime dominance observed (diagnostic):** the uniquely-correlated telemetry
+   assertion holds across the full suite — every pipeline-executed handler paired
+   with its own step-5.5 decision (observability for accidental in-pipeline drift;
+   not claimed as bypass detection).
 7. **Zero regression:** full umbrella green on every phase against the pre-phase
-   baseline (the standing rule); the extraction's acceptance (its §7) already green
-   before V5/V6 close.
+   baseline (the standing rule); the extraction's acceptance (its §7, including C7's
+   removal of `get_slice`/`get_raw_slice` from the public surface) green before V6
+   closes.
 
 ---
 
-## Appendix A — evidence index (all `origin/main` @ `36547a052`)
+## Appendix A — evidence index (all `origin/main` @ `e7a153a92`)
 
 - Dispatch chokepoint pipeline: `apps/ezagent_core/lib/ezagent/invocation.ex:148-172`
   (origin gate → admin materialization → owner gate → outbox/idempotency → lazy-spawn);
@@ -575,14 +709,26 @@ travels in the same commit as its migration; reverting a phase = reverting its P
   `read_durable/3` at `:746`, `read_durable_many/3` at `:766`); pid leak in
   `list_instances/0` `kind.ex:845-851`; pid overload `resolve_action_subject`
   `kind.ex:809`
+- Pid-returning surfaces closed at V5 (§1.4 obtain-side): `Kind.spawn/3` returns
+  `DynamicSupervisor.on_start_child()` `kind.ex:379-383` (idempotent
+  `{:already_started, pid}` callers noted in its own doc, `kind.ex:365-369`);
+  `LocalRuntime.ensure_started/2` `apps/ezagent_core/lib/ezagent/local_runtime.ex:62`,
+  `ensure_started_detailed/2` `local_runtime.ex:72-73`; plus the two `kind.ex` leaks
+  above
 - Boundary gate SSOT: `apps/ezagent_core/lib/ezagent/actor_boundary_scanner.ex`
-  (banned roots `:88-108`; kind-message verbs `:138-163`; taint fixpoint `:407-463`;
+  (banned roots `:88-108`; kind-message verbs `:125-163`; taint fixpoint `:407-463`;
   reflective `:sys` `:316-378`); ledger frozen counts
-  `apps/ezagent_core/test/invariants/actor_internals_boundary_test.exs:41-44`
-  (`@forward_frozen 244`, `@reverse_frozen 123`); tracked evasion tail
+  `apps/ezagent_core/test/invariants/actor_internals_boundary_test.exs:46-49`
+  (`@forward_frozen 208` post-C3, `@reverse_frozen 123`); tracked evasion tail
   `docs/futures/todo.md` (2026-07-24 hardening section)
+- Honest-enforceability alignment (§1.5): cap-signing spec
+  `2026-07-16-cap-signing-per-kind-authority-design.md:156` (§10 preamble — "Under
+  Path A, even the STATIC gates are review aids") and `:179` ("Honest enforceability
+  limit (v5 / Path A)")
 - C1 fresh-caps fix: `apps/ezagent_plugin_world/lib/ezagent/world/presenter_caps.ex:1-80`
-  (fresh `EntityCaps.load`; tagged `EphemeralCaps` carve-out)
+  (fresh `EntityCaps.load`); the caller-constructible `%EphemeralCaps{}` wrapper +
+  `load_with_ephemeral/2` this spec RETIRES at V2 (§3 exception b):
+  `presenter_caps.ex:26-73`
 - C2 over-auth/TOCTOU semantics: PR #1550 commit body (`32a3335f3`) + #1562
   (`36547a052`, `Identity.caps_match?/2` at the chokepoint owner)
 - EntityCaps loader: `apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex:42-105`
