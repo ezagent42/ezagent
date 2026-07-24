@@ -4,14 +4,17 @@ defmodule EzagentPluginFeishu.UserBindingSeed.FakeExecutor do
   permission-avoidance pivot).
 
   This is a NAMED module (via `start/1` → `Agent.start(..., name:
-  __MODULE__)`), so it can be injected as:
+  __MODULE__)`). Tests inject only its function port:
 
       FakeExecutor.start(existing: [...])
-      Application.put_env(:ezagent_plugin_feishu, :seed_executor, FakeExecutor)
+      Application.put_env(
+        :ezagent_plugin_feishu,
+        :seed_executor_port,
+        FakeExecutor.port()
+      )
 
-  The importer's `executor_mod/0` returns the `FakeExecutor` atom, whose
-  `list_current/1` and `bind/3` match the exact arities the importer
-  calls — proving the A-layer (plan) works without the deferred B-layer
+  The importer receives the two functions without a dynamic module
+  receiver, proving the A-layer (plan) works without the deferred B-layer
   runtime execution integration. It is test-only and is never a production
   authorization path.
   """
@@ -38,10 +41,14 @@ defmodule EzagentPluginFeishu.UserBindingSeed.FakeExecutor do
   @doc "Stop the named Agent."
   def stop, do: Agent.stop(__MODULE__)
 
-  # --- Executor contract (called by importer) ---
+  @doc "Construct the test-only seed executor function port."
+  def port do
+    %{list_current: &list_current/1, bind: &bind/3}
+  end
 
-  @doc "Record a list_current call; return configured existing bindings."
-  def list_current(_workspace_uri) do
+  # --- Function port callbacks (called by importer) ---
+
+  defp list_current(_workspace_uri) do
     Agent.update(__MODULE__, fn s ->
       %{s | list_currents: [cursor() | s.list_currents]}
     end)
@@ -49,8 +56,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed.FakeExecutor do
     {:ok, Agent.get(__MODULE__, & &1.existing)}
   end
 
-  @doc "Record a bind call; return configured result or default ok."
-  def bind(_workspace_uri, open_id, user_uri) when is_binary(open_id) do
+  defp bind(_workspace_uri, open_id, user_uri) when is_binary(open_id) do
     Agent.update(__MODULE__, fn s ->
       %{s | binds: [{:bind, open_id, user_uri} | s.binds]}
     end)

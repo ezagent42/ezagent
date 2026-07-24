@@ -11,21 +11,25 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
   1. Read the explicit file path. Missing file (`:enoent`) → `{:ok, :absent}`.
   2. Strict decode + validate via `Parser.parse_and_validate/1` — any
      invalid content fails loud with ZERO mutation.
-  3. Full-file preflight: classify every row `:absent` / `:same` /
-     `:conflict` via the executor's list operation — BEFORE any mutation.
+  3. Validate the configured executor function port once, then thread it
+     through the remaining pipeline.
+  4. Full-file preflight: classify every row `:absent` / `:same` /
+     `:conflict` via the port's list operation — BEFORE any mutation.
      Any `:conflict` fails the whole file.
-  4. For `:absent` rows only, request the executor to bind, in file order.
+  5. For `:absent` rows only, request the port to bind, in file order.
      `:same` rows are never dispatched.
-  5. Runtime failure on row N fails the call, but earlier rows' success is
+  6. Runtime failure on row N fails the call, but earlier rows' success is
      preserved (not compensated). Restart converges via same/absent.
-  6. Returns structured, redacted summary/error.
+  7. Returns structured, redacted summary/error.
 
   ## Executor injection
 
-  The executor is `Application.get_env(:ezagent_plugin_feishu,
-  :seed_executor)` (default nil → fail loud). Tests inject the
-  named-module `FakeExecutor` to record planned operations.
-  `DispatchAdapter` is a B-layer placeholder (raises on any call).
+  The executor port is `Application.get_env(:ezagent_plugin_feishu,
+  :seed_executor_port)` (default nil → fail loud). It must be a map with
+  `list_current` arity 1 and `bind` arity 3 functions. Tests inject the
+  test-only port constructed by `FakeExecutor` to record planned operations.
+  `DispatchAdapter.port/0` is a B-layer placeholder whose captured operations
+  raise on any call.
   No default executor exists in production.
 
   ## B-layer (deferred)
@@ -53,6 +57,10 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
   alias EzagentPluginFeishu.UserBindingSeed.Parser
 
   @type summary :: %{bound: [pos_integer()], same: [pos_integer()], total: non_neg_integer()}
+  @typep executor_port :: %{
+           list_current: (URI.t() -> {:ok, [map()]} | {:error, term()}),
+           bind: (URI.t(), String.t(), URI.t() -> {:ok, term()} | {:error, term()})
+         }
 
   @doc """
   Run the seed importer for the file at `path`.
@@ -76,13 +84,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
           not seed_enabled?() ->
             {:error, :seed_not_enabled}
 
-          is_nil(executor_mod()) ->
-            {:error, :seed_executor_not_configured}
-
           true ->
-            with {:ok, rows} <- Parser.parse_and_validate(body),
-                 {:ok, classified} <- preflight(rows) do
-              dispatch_absent(classified)
+            with {:ok, port} <- executor_port(),
+                 {:ok, rows} <- Parser.parse_and_validate(body),
+                 {:ok, classified} <- preflight(rows, port) do
+              dispatch_absent(classified, port)
             end
         end
     end
@@ -92,21 +98,43 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
     Application.get_env(:ezagent_plugin_feishu, :seed_enabled, false)
   end
 
-  # The module that provides list_current/1 + bind/3.
-  # Returns nil when not configured → importer fails loud.
-  # Tests inject a real module (DispatchAdapter or FakeExecutor).
-  defp executor_mod do
-    Application.get_env(:ezagent_plugin_feishu, :seed_executor)
+  @spec executor_port() ::
+          {:ok, executor_port()}
+          | {:error, :seed_executor_not_configured | {:invalid_seed_executor_port, [atom()]}}
+  defp executor_port do
+    :ezagent_plugin_feishu
+    |> Application.get_env(:seed_executor_port)
+    |> validate_executor_port()
+  end
+
+  defp validate_executor_port(nil), do: {:error, :seed_executor_not_configured}
+
+  defp validate_executor_port(port) do
+    list_current = if is_map(port), do: Map.get(port, :list_current)
+    bind = if is_map(port), do: Map.get(port, :bind)
+
+    invalid_fields =
+      [
+        {:list_current, is_function(list_current, 1)},
+        {:bind, is_function(bind, 3)}
+      ]
+      |> Enum.reject(fn {_field, valid?} -> valid? end)
+      |> Enum.map(fn {field, _valid?} -> field end)
+
+    case invalid_fields do
+      [] -> {:ok, %{list_current: list_current, bind: bind}}
+      fields -> {:error, {:invalid_seed_executor_port, fields}}
+    end
   end
 
   # --- preflight (read-only, via executor) -----------------------------
 
-  defp preflight(rows) do
+  defp preflight(rows, port) do
     rows
     |> Enum.group_by(fn r -> Ezagent.URI.entity_workspace_uri(Map.fetch!(r, :user_uri)) end)
     |> Enum.sort_by(fn {_ws, ws_rows} -> ws_rows |> hd() |> Map.fetch!(:row) end)
     |> Enum.reduce_while({:ok, []}, fn {workspace_uri, workspace_rows}, {:ok, acc} ->
-      case classify_rows_for_workspace(workspace_uri, workspace_rows, acc) do
+      case classify_rows_for_workspace(workspace_uri, workspace_rows, acc, port) do
         {:ok, acc2} -> {:cont, {:ok, acc2}}
         {:error, _} = err -> {:halt, err}
       end
@@ -120,10 +148,13 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
     end
   end
 
-  defp classify_rows_for_workspace(workspace_uri, workspace_rows, acc) do
-    exec = executor_mod()
-
-    case exec.list_current(workspace_uri) do
+  defp classify_rows_for_workspace(
+         workspace_uri,
+         workspace_rows,
+         acc,
+         %{list_current: list_current}
+       ) do
+    case list_current.(workspace_uri) do
       {:ok, current} ->
         current_by_open_id =
           Map.new(current, fn b -> {Map.fetch!(b, :open_id), b} end)
@@ -169,13 +200,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
 
   # --- dispatch (write, absent rows only) ------------------------------
 
-  defp dispatch_absent(classified) do
+  defp dispatch_absent(classified, %{bind: bind}) do
     same_rows =
       classified
       |> Enum.filter(fn {tag, _row} -> tag == :same end)
       |> Enum.map(fn {_tag, row} -> Map.fetch!(row, :row) end)
-
-    exec = executor_mod()
 
     classified
     |> Enum.filter(fn {tag, _row} -> tag == :absent end)
@@ -184,7 +213,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
       workspace_uri = Ezagent.URI.entity_workspace_uri(user_uri)
       open_id = Map.fetch!(row, :open_id)
 
-      case exec.bind(workspace_uri, open_id, user_uri) do
+      case bind.(workspace_uri, open_id, user_uri) do
         {:ok, _result} ->
           {:cont, {:ok, [Map.fetch!(row, :row) | bound_acc]}}
 

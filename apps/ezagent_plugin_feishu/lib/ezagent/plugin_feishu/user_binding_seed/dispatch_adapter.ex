@@ -2,15 +2,25 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
   @moduledoc """
   Reserved production executor seam for the Feishu user-binding importer.
 
-  The permission-neutral B1 A-layer calls an injected executor with
-  `list_current/1` and `bind/3`. This B-layer adapter is deliberately not
-  connected to a runtime operator or boot-authorization source yet, so both
-  operations fail closed. It performs no dispatch, raw storage access, direct
-  handler call, capability construction, or principal provisioning.
+  The permission-neutral B1 A-layer calls an injected function port with
+  `list_current` arity 1 and `bind` arity 3 functions. This B-layer adapter is
+  deliberately not connected to a runtime operator or boot-authorization
+  source yet, so both operations fail closed. It performs no dispatch, raw
+  storage access, direct handler call, capability construction, or principal
+  provisioning.
 
   A later thin integration may implement this seam only after it has a real
   runtime source for operator identity and authorization.
   """
+
+  @doc "Construct the reserved production seed executor function port."
+  @spec port() :: %{
+          list_current: (URI.t() -> no_return()),
+          bind: (URI.t(), String.t(), URI.t() -> no_return())
+        }
+  def port do
+    %{list_current: &list_current/1, bind: &bind/3}
+  end
 
   @doc """
   Reserved read operation for the deferred production executor. Raises until
@@ -45,7 +55,7 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
     DispatchAdapter: seed executor/boot authorization is not configured.
     The B-layer runtime operator/auth integration is deferred. Until it lands,
     use the permission-neutral FakeExecutor only in tests and do not configure
-    DispatchAdapter as :seed_executor in production.
+    DispatchAdapter.port/0 as :seed_executor_port in production.
     """
   end
 
