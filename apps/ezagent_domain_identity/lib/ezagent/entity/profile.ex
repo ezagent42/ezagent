@@ -17,6 +17,8 @@ defmodule Ezagent.Entity.Profile do
   import Ecto.Query
   alias EzagentCore.Repo
 
+  @max_display_name_length 255
+
   @primary_key {:entity_uri, :string, autogenerate: false}
   schema "entity_profiles" do
     field(:display_name, :string)
@@ -30,6 +32,7 @@ defmodule Ezagent.Entity.Profile do
   end
 
   @type t :: %__MODULE__{}
+  @type insertion_status :: :inserted | :exists
 
   @doc "Insert-or-update a profile keyed by `entity_uri`."
   @spec upsert(map()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -40,8 +43,58 @@ defmodule Ezagent.Entity.Profile do
     existing
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
+    |> validate_length(:display_name, max: @max_display_name_length, count: :codepoints)
     |> unique_constraint(:email, name: :entity_profiles_email_lower_index)
+    |> unique_constraint(:display_name,
+      name: :entity_profiles_agent_workspace_display_name_index
+    )
     |> Repo.insert_or_update()
+  end
+
+  @doc "Ensure an Agent has a workspace-unique display name."
+  @spec ensure_agent_display_name(URI.t(), String.t()) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t() | :not_agent_uri}
+  def ensure_agent_display_name(%URI{} = uri, base_name) when is_binary(base_name) do
+    case ensure_agent_display_name_with_receipt(uri, base_name) do
+      {:ok, profile, _status} -> {:ok, profile}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc """
+  Ensure an Agent display name and report whether this call inserted its row.
+
+  `:inserted` is an ownership receipt for compensating a later failed
+  operation. `:exists` means the same canonical Agent URI already had a
+  profile, including when a concurrent insert won the primary-key race.
+  """
+  @spec ensure_agent_display_name_with_receipt(URI.t(), String.t()) ::
+          {:ok, t(), insertion_status()} | {:error, Ecto.Changeset.t() | :not_agent_uri}
+  def ensure_agent_display_name_with_receipt(%URI{} = uri, base_name)
+      when is_binary(base_name) do
+    if agent_uri?(uri) do
+      case get(uri) do
+        %__MODULE__{} = profile ->
+          {:ok, profile, :exists}
+
+        nil ->
+          workspace_uri = Ezagent.Persistence.workspace_uri_for!(uri)
+          insert_agent_display_name(uri, workspace_uri, String.trim(base_name), 1)
+      end
+    else
+      {:error, :not_agent_uri}
+    end
+  end
+
+  @doc false
+  @spec rollback_agent_display_name(URI.t(), insertion_status()) ::
+          :ok | {:error, :not_agent_uri | {:unexpected_profile_delete_count, non_neg_integer()}}
+  def rollback_agent_display_name(%URI{} = uri, status) when status in [:inserted, :exists] do
+    if agent_uri?(uri) do
+      rollback_agent_display_name_status(uri, status)
+    else
+      {:error, :not_agent_uri}
+    end
   end
 
   @doc "Fetch a profile by entity URI. Returns `nil` if absent."
@@ -56,6 +109,117 @@ defmodule Ezagent.Entity.Profile do
   end
 
   def by_email(_), do: nil
+
+  defp rollback_agent_display_name_status(_uri, :exists), do: :ok
+
+  defp rollback_agent_display_name_status(uri, :inserted) do
+    query = from(profile in __MODULE__, where: profile.entity_uri == ^to_str(uri))
+
+    case Repo.delete_all(query) do
+      {count, _rows} when count in [0, 1] -> :ok
+      {count, _rows} -> {:error, {:unexpected_profile_delete_count, count}}
+    end
+  end
+
+  defp insert_agent_display_name(uri, workspace_uri, base_name, suffix) do
+    case display_name_candidate(base_name, suffix) do
+      {:ok, display_name} ->
+        do_insert_agent_display_name(uri, workspace_uri, base_name, display_name, suffix)
+
+      :error ->
+        changeset =
+          %__MODULE__{}
+          |> agent_profile_changeset(%{
+            entity_uri: to_str(uri),
+            display_name: String.duplicate("x", @max_display_name_length + 1),
+            email: nil,
+            workspace_uri: workspace_uri
+          })
+          |> add_error(:display_name, "could not allocate a bounded numeric suffix")
+
+        {:error, changeset}
+    end
+  end
+
+  defp do_insert_agent_display_name(uri, workspace_uri, base_name, display_name, suffix) do
+    %__MODULE__{}
+    |> agent_profile_changeset(%{
+      entity_uri: to_str(uri),
+      display_name: display_name,
+      email: nil,
+      workspace_uri: workspace_uri
+    })
+    |> Repo.insert()
+    |> case do
+      {:ok, profile} ->
+        {:ok, profile, :inserted}
+
+      {:error, changeset} ->
+        cond do
+          unique_constraint?(changeset, :entity_uri, "entity_profiles_pkey") ->
+            case get(uri) do
+              %__MODULE__{} = profile -> {:ok, profile, :exists}
+              nil -> {:error, changeset}
+            end
+
+          unique_constraint?(
+            changeset,
+            :display_name,
+            "entity_profiles_agent_workspace_display_name_index"
+          ) ->
+            insert_agent_display_name(uri, workspace_uri, base_name, suffix + 1)
+
+          true ->
+            {:error, changeset}
+        end
+    end
+  end
+
+  defp agent_profile_changeset(profile, attrs) do
+    profile
+    |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
+    |> validate_required([:entity_uri, :display_name, :workspace_uri])
+    |> validate_length(:display_name, max: @max_display_name_length, count: :codepoints)
+    |> unique_constraint(:entity_uri, name: :entity_profiles_pkey)
+    |> unique_constraint(:display_name,
+      name: :entity_profiles_agent_workspace_display_name_index
+    )
+  end
+
+  defp unique_constraint?(changeset, field, name) do
+    Enum.any?(changeset.errors, fn
+      {^field, {_message, details}} ->
+        details[:constraint] == :unique and details[:constraint_name] == name
+
+      _ ->
+        false
+    end)
+  end
+
+  defp display_name_candidate(base_name, 1), do: {:ok, base_name}
+
+  defp display_name_candidate(base_name, suffix) when suffix > 1 do
+    suffix_text = "-#{suffix}"
+    available_base_length = @max_display_name_length - codepoint_length(suffix_text)
+
+    if available_base_length >= 0 do
+      candidate =
+        base_name
+        |> String.codepoints()
+        |> Enum.take(available_base_length)
+        |> Enum.join()
+        |> Kernel.<>(suffix_text)
+
+      {:ok, candidate}
+    else
+      :error
+    end
+  end
+
+  defp codepoint_length(string), do: string |> String.codepoints() |> length()
+
+  defp agent_uri?(%URI{} = uri),
+    do: Ezagent.URI.bare_principal?(uri) and Ezagent.URI.type?(uri, :agent)
 
   # entity_uri stored as string; email lower-cased + trimmed so the
   # uniqueness invariant means what callers expect.
