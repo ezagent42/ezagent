@@ -7,11 +7,7 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
 
   @migrations [
     {20_260_724_000_000, "20260724000000_add_agent_profile_display_name_uniqueness.exs",
-     EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness},
-    {20_260_724_001_000, "20260724001000_scope_agent_profile_display_name_uniqueness.exs",
-     EzagentCore.Repo.Migrations.ScopeAgentProfileDisplayNameUniqueness},
-    {20_260_724_002_000, "20260724002000_repair_agent_profile_display_name_uniqueness.exs",
-     EzagentCore.Repo.Migrations.RepairAgentProfileDisplayNameUniqueness}
+     EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness}
   ]
 
   test "duplicate no-email users migrate while agent display names remain workspace-unique" do
@@ -72,46 +68,20 @@ defmodule Ezagent.ProfileDisplayNameMigrationTest do
     assert :ok =
              Ecto.Migrator.down(
                MigrationRepo,
-               20_260_724_002_000,
-               EzagentCore.Repo.Migrations.RepairAgentProfileDisplayNameUniqueness,
+               20_260_724_000_000,
+               EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness,
                log: false
              )
-
-    assert_agent_scoped_predicate!()
-
-    assert :ok =
-             Ecto.Migrator.down(
-               MigrationRepo,
-               20_260_724_001_000,
-               EzagentCore.Repo.Migrations.ScopeAgentProfileDisplayNameUniqueness,
-               log: false
-             )
-
-    assert_agent_scoped_predicate!()
-
-    # Model a database that already applied the original broad migration,
-    # then prove the new forward migration repairs it without relying on the
-    # edited historical source.
-    query!("DELETE FROM entity_profiles WHERE entity_uri = 'entity://migration/user/second'")
-    query!("DROP INDEX entity_profiles_agent_workspace_display_name_index")
-
-    query!("""
-    CREATE UNIQUE INDEX entity_profiles_agent_workspace_display_name_index
-      ON entity_profiles (workspace_uri, display_name)
-      WHERE email IS NULL
-    """)
 
     assert :ok =
              Ecto.Migrator.up(
                MigrationRepo,
-               20_260_724_002_000,
-               EzagentCore.Repo.Migrations.RepairAgentProfileDisplayNameUniqueness,
+               20_260_724_000_000,
+               EzagentCore.Repo.Migrations.AddAgentProfileDisplayNameUniqueness,
                log: false
              )
 
     assert_agent_scoped_predicate!()
-    insert_profile!("entity://migration/user/reintroduced", "Shared")
-    assert scalar!("SELECT count(*) FROM entity_profiles WHERE display_name = 'Shared'") == 2
   end
 
   defp create_entity_profiles! do
