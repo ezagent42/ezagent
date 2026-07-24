@@ -42,7 +42,7 @@ defmodule Ezagent.Entity.Profile do
     existing
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
-    |> validate_length(:display_name, max: @max_display_name_length)
+    |> validate_length(:display_name, max: @max_display_name_length, count: :codepoints)
     |> unique_constraint(:email, name: :entity_profiles_email_lower_index)
     |> unique_constraint(:display_name,
       name: :entity_profiles_agent_workspace_display_name_index
@@ -139,7 +139,7 @@ defmodule Ezagent.Entity.Profile do
     profile
     |> cast(attrs, [:entity_uri, :display_name, :email, :workspace_uri])
     |> validate_required([:entity_uri, :display_name, :workspace_uri])
-    |> validate_length(:display_name, max: @max_display_name_length)
+    |> validate_length(:display_name, max: @max_display_name_length, count: :codepoints)
     |> unique_constraint(:entity_uri, name: :entity_profiles_pkey)
     |> unique_constraint(:display_name,
       name: :entity_profiles_agent_workspace_display_name_index
@@ -160,12 +160,14 @@ defmodule Ezagent.Entity.Profile do
 
   defp display_name_candidate(base_name, suffix) when suffix > 1 do
     suffix_text = "-#{suffix}"
-    available_base_length = @max_display_name_length - String.length(suffix_text)
+    available_base_length = @max_display_name_length - codepoint_length(suffix_text)
 
     if available_base_length >= 0 do
       candidate =
         base_name
-        |> String.slice(0, available_base_length)
+        |> String.codepoints()
+        |> Enum.take(available_base_length)
+        |> Enum.join()
         |> Kernel.<>(suffix_text)
 
       {:ok, candidate}
@@ -173,6 +175,8 @@ defmodule Ezagent.Entity.Profile do
       :error
     end
   end
+
+  defp codepoint_length(string), do: string |> String.codepoints() |> length()
 
   defp agent_uri?(%URI{} = uri),
     do: Ezagent.URI.bare_principal?(uri) and Ezagent.URI.type?(uri, :agent)

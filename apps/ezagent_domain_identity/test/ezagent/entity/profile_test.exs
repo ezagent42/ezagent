@@ -71,6 +71,37 @@ defmodule Ezagent.Entity.ProfileTest do
       assert "should be at most 255 character(s)" in errors_on(changeset).display_name
       assert Profile.get(agent_uri) == nil
     end
+
+    test "counts decomposed Unicode codepoints like the database column" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/overlong-unicode")
+      overlong_name = String.duplicate("e\u0301", 128)
+
+      assert length(String.codepoints(overlong_name)) == 256
+      assert String.length(overlong_name) == 128
+
+      assert {:error, changeset} =
+               Profile.ensure_agent_display_name(agent_uri, overlong_name)
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert Profile.get(agent_uri) == nil
+    end
+
+    test "truncates a decomposed Unicode base by codepoint before adding a suffix" do
+      first = Ezagent.URI.new!("entity://team-alpha/agent/unicode-name-one")
+      second = Ezagent.URI.new!("entity://team-alpha/agent/unicode-name-two")
+      base_name = String.duplicate("e\u0301", 127)
+
+      assert length(String.codepoints(base_name)) == 254
+
+      assert {:ok, %Profile{display_name: ^base_name}} =
+               Profile.ensure_agent_display_name(first, base_name)
+
+      assert {:ok, %Profile{display_name: suffixed}} =
+               Profile.ensure_agent_display_name(second, base_name)
+
+      assert length(String.codepoints(suffixed)) == 255
+      assert String.ends_with?(suffixed, "-2")
+    end
   end
 
   test "an Agent profile does not prevent a User with the same display name" do
