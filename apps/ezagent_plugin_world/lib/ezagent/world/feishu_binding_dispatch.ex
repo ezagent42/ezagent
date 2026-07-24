@@ -183,9 +183,6 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   defp normalize_error(_other), do: :binding_operation_failed
 
   defp canonical_admin?(%URI{} = caller) do
-    # arch-allow: genesis admin identity comparison — the admin URI is the
-    # canonical system principal; comparing against it does not provision
-    # a new user, workspace, or grant.
     Ezagent.URI.stable_key(caller) ==
       Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
   end
