@@ -1,0 +1,305 @@
+# dev-together board.yaml — EOD accounting for 2026-07-24 (07-23→07-24 周期).
+# 完成 = 本周期塌进 main 的交付; 待评审/进行中 = 仍在飞; 计划 = 下一步/即将。
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# status ∈ planned(计划) | wip(进行中) | review(待评审/验收) | done(完成)
+
+date: "2026-07-24"
+prev_date: ""
+north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "#195 统一撤销 + authorize/3 塌进 main", pct: 100, value: "★ 07-22 的枢纽 PR 本周期塌进 main(#1503)—— 一次性解阻 #1470 epoch-rebase HOLD 与 canary 部署链; 收尾三处 fallout(fresh-boot bootstrap / uri_query.scan / full-suite txn 幂等)当日全部修绿。"}
+  - {label: "main gate 恢复绿", pct: 100, value: "定位并修 line-anchored plugin-locality baseline 漂移(行插入把 grandfathered 动态-receiver 站点挤离锚点)+ 一个 tmp-dir race flake(#1542)。治本 = 重生成 baseline ground-truth, 非逐条补锚。"}
+  - {label: "actor-framework 抽取（C0–C7 物理隔离迁移）", pct: 30, value: "把 actor 状态管理下沉到 core 之下的新 umbrella app `ezagent_actor`、cap 脊经 injected ports 留在 core。Spec 定稿(#1545)+ C0 边界门/读面(#1546)+ C1(#1548)+ C0 硬化(#1549)已合; C2 冷读(#1550)评审中; C3–C7 待迁。"}
+  - {label: "cap held+pending 收敛幂等（Gaga #1501）", pct: 50, value: "对抗性评审发现核心 convergence view 丢 pending absorb + 幂等/fail-closed 缺口 → 打回 rework。评审拦住了不完整合并。"}
+  - {label: "planning-with-files skill", pct: 100, value: "新增 agents-planning-with-files skill(#1539)—— 以文件为载体的规划工作流。"}
+  - {label: "mfu-demo v0.13", pct: 90, value: "内网 demo v0.13(#1543): 可玩原型 + GDD + 3 篇分析文档; 评审中。"}
+
+# efficiency: 本周期(07-23→07-24)合入 PR 计数(git 可复算, 无需网络)
+efficiency:
+  - {value: "16", label: "07-23→24 窗口合入 PR(git 去重 (#NNNN) · ~1min 可复算)"}
+  - {value: "1", label: "#195 统一撤销枢纽塌进 main(#1503) · 解阻 #1470 + canary 部署"}
+  - {value: "3", label: "actor 抽取迁移已启(Spec + C0 + C1 合 · C2/C0-硬化评审中)"}
+  - {value: "15", label: "PR 清理 · 关掉 已在main / stale / superseded(留 #1376/#1301 + 活跃)"}
+  - {value: "1", delta: "↓", label: "发布闸阻塞 · 沿用 pre-existing E2E(sandbox-ownership, 见风险)"}
+efficiency_source: "本窗口合入 PR = `git log origin/main --since=2026-07-23 --until=2026-07-25` 去重 (#NNNN) 计数(=16)、~1min 可复算; 含 07-22 board 跨零点收尾(#1528/#1529/#1530)。#195 统一撤销经 merge-commit 塌进 main(#1503, 不以 (#NNNN) 结尾故不计入此数)。两大结构面(#195 塌进 main / actor-framework 抽取启动)均经对抗性评审。"
+
+deploy:
+  - {env: "canary", state: "跟随 main; 本周期 #195(#1503) + actor C0/C1(#1546/#1548) 已在 main HEAD。#195 塌进 main 后, canary 部署链上的 epoch-rebase 前置已解阻。"}
+  - {env: "beta", state: "⏳ 待 cutover。canary→beta→stable 仍卡发布闸唯一确定性阻塞(见风险)。"}
+  - {env: "stable", state: "⏳ 待 cutover。发布 dispatch(needs: full-suite)卡在 pre-existing E2E `AutoserviceTier1SeedTest`(sandbox-ownership)—— 修它即打开发布闸。"}
+
+risks:
+  - "🔗 依赖链(枢纽 = #195, 本周期已解): #195 统一 generation 撤销 + authorize/3 于 07-23 塌进 main(#1503)—— jjkysy #1470 的 epoch-rebase HOLD 解除、canary 部署链前置解阻。剩余部署卡点收敛到一项: full-suite 唯一确定性 E2E 阻塞。"
+  - "🔴 已知问题(发布唯一阻塞): main full-suite 仅红在一个确定性 E2E —— `EzagentPluginKb.E2E.AutoserviceTier1SeedTest`(测试 harness sandbox-ownership: 异步 spawn 的进程未继承 SQL-Sandbox 所有权 → `DBConnection.OwnershipError`)。**pre-existing、非本周期任何工作引入**; 是发布闸(`needs: full-suite`)当前唯一确定性阻塞项, 已记入 `docs/futures/todo.md`。"
+  - "🟢 已修: 07-22 记录的 PresenterCaps 会话陈旧(mount 期 admin cap 快照在会话中途被降权后仍存活 → 被降权 admin 保留 publish/admin 权限)—— 已由 actor C1(#1548, PresenterCaps→fresh)修。"
+  - "🟡 Gaga #1501 held+pending 收敛: 对抗性评审发现 effective view 丢 pending absorb + 幂等/fail-closed 缺口 → 已打回 rework, 补齐后重评审。"
+
+people:
+  - {id: "gaga", name: "gaga", track: "Git Provider / agent 泛化主体 / cap 收敛", color: "#7c3aed"}
+  - {id: "zyli", name: "zyli", track: "插件 UI 分层 / 实时刷新 / Kanban", color: "#0891b2"}
+  - {id: "ruihua", name: "瑞华 (ruihua)", track: "机构 demo 设计 / 自助开通产品化", color: "#db2777"}
+  - {id: "jjkysy", name: "jjkysy", track: "挂载-撤销 infra / 协作白板 / world 去硬编码", color: "#65a30d"}
+  - {id: "allen", name: "Allen 轨道", track: "结构迁移 + 安全 + CI + 部署 + 统筹", color: "#2563eb"}
+
+done_prev:
+  # ---------- 完成 (本周期 07-23→07-24 塌进 main 的交付) ----------
+  - owner: "allen"
+    title: "★ #195 统一 generation 撤销 + authorize/3 塌进 main"
+    goal: "07-22 的枢纽 cap/授权 re-architecture 本周期合入 main"
+    status: "done"
+    who: "Allen 轨道 · #1503 · 7e3ee6560"
+    pr: {num: 1503, state: "merged"}
+    flag: "枢纽 PR: 解阻 #1470 epoch-rebase HOLD + canary 部署链"
+    acceptance:
+      - {text: "统一 generation 撤销(cap 绑 generation、撤销 = bump)+ authorize/3 + #166 成员身份 = cap 唯一真相 的落地实现, 本周期塌进 main", done: true, evidence: "#1503 merged 07-23"}
+      - {text: "合并前 test-conflict 消解(S7 assertion + I3 timing-independent), 解阻 #1470 epoch-rebase HOLD 与 canary 部署链前置", done: true}
+    review_note: "07-22 board 上标为「待评审 · 枢纽 PR」的 #1503, 本周期完成最终对抗性评审 + 合并前冲突消解后塌进 main。"
+  - owner: "allen"
+    title: "#195 收尾 — fresh-boot / uri_query / full-suite fallout"
+    goal: "#195 塌进 main 后的三处收尾, 当日全部修绿"
+    status: "done"
+    who: "Allen 轨道 · #1540 / #1541 / #1544"
+    pr: {num: 1544, state: "merged"}
+    acceptance:
+      - {text: "CapBAC 全新 fresh-boot bootstrap 修 —— canonical-admin 在冷启动时正确 bootstrap(#1540)", done: true}
+      - {text: "uri_query.scan 违规修 —— 清掉 #1497 引入的 scan 违规(#1541)", done: true}
+      - {text: "full-suite #195 fallout: workspace-create 事务幂等(savepoint 防 txn poisoning)+ 4 个 CLI cap fixtures 串起 #195 前置(#1544)", done: true, evidence: "#1544 merged 07-23"}
+  - owner: "allen"
+    title: "main gate 恢复绿"
+    goal: "定位并修行锚 baseline 漂移 + tmp-dir race flake"
+    status: "done"
+    who: "Allen 轨道 · #1542 · b076e15d3"
+    pr: {num: 1542, state: "merged"}
+    acceptance:
+      - {text: "根因: 行插入把 grandfathered 动态-receiver 站点挤离其 line-anchored plugin-locality baseline 锚点 → gate.arch 红; 治本 = 从扫描器 ground-truth 重生成 baseline(非逐条补锚)", done: true}
+      - {text: "同 PR 修一个 tmp-dir race flake(tmp/ scan)", done: true, evidence: "gate.arch 恢复绿"}
+  - owner: "allen"
+    title: "actor-framework 抽取 — Spec 定稿"
+    goal: "actor 状态管理下沉到新 umbrella app `ezagent_actor` 的迁移规范"
+    status: "done"
+    who: "Allen 轨道 · #1545 · e53b484ba"
+    pr: {num: 1545, state: "merged"}
+    acceptance:
+      - {text: "把 actor 状态管理抽到 core 之下的新 umbrella app `ezagent_actor`、cap 脊经 injected ports 留在 core 的迁移 Spec(FINAL v3)定稿 + 合入; 经对抗性评审", done: true, evidence: "#1545 merged"}
+  - owner: "allen"
+    title: "actor-framework C0 — 边界门 + 读面"
+    goal: "抽取 chunk 0: boundary gate + read surface"
+    status: "done"
+    who: "Allen 轨道 · #1546 · 21cc15575"
+    pr: {num: 1546, state: "merged"}
+    acceptance:
+      - {text: "C0: `ezagent_actor` 边界 gate(强制物理隔离、非口头约定)+ 权威读面落地", done: true, evidence: "#1546 merged"}
+  - owner: "allen"
+    title: "actor-framework C1 — PresenterCaps→fresh + EntityCaps 脱离 actor 内部"
+    goal: "抽取 chunk 1 + 顺带修降权 admin 会话陈旧"
+    status: "done"
+    who: "Allen 轨道 · #1548 · a6f256394"
+    pr: {num: 1548, state: "merged"}
+    acceptance:
+      - {text: "C1: PresenterCaps 改 fresh(读实时权威)+ EntityCaps 脱离 actor 内部状态", done: true}
+      - {text: "顺带修 07-22 记录的降权 admin 会话陈旧(被降权 admin 保留 publish/admin 权限直到重登)", done: true, evidence: "#1548 merged 07-24"}
+  - owner: "allen"
+    title: "PR 清理 — 关掉已在 main / stale / superseded"
+    goal: "清掉已塌进 main / 陈旧 / 被取代的 PR, 收敛 in-flight 集"
+    status: "done"
+    who: "Allen 轨道 · 15 关闭(留 #1376/#1301 + 活跃)"
+    acceptance:
+      - {text: "关掉 15 个 已在 main / stale / superseded 的 PR; 确证关闭样本: #1490 #1473 #1472 #1447 #1424 #1423 #1419 #1515 #1509 #1327 …", done: true}
+      - {text: "保留 jjkysy #1376(通用挂载 infra, 被 entity-caps 取代但契约留用)/ #1301(dealscout)+ 所有活跃 in-flight PR", done: true}
+  - owner: "allen"
+    title: "planning-with-files skill"
+    goal: "以文件为载体的规划工作流 skill"
+    status: "done"
+    who: "Allen 轨道 · #1539 · d9c9a90e7"
+    pr: {num: 1539, state: "merged"}
+    acceptance:
+      - {text: "新增 `agents-planning-with-files` skill —— 以文件为载体的规划工作流", done: true, evidence: "#1539 merged"}
+
+cards:
+  # ---------- 待评审 / 验收 (评审中, 尚未合入) ----------
+  - owner: "allen"
+    title: "actor-framework C2 — 冷读 → 权威读面"
+    goal: "抽取 chunk 2: cold reads → authoritative read surface"
+    status: "review"
+    who: "Allen 轨道 · #1550 · 评审中"
+    pr: {num: 1550, state: "open"}
+    acceptance:
+      - {text: "C2: 把 cold reads 收敛到权威读面(消除绕过 actor 边界的直读)", done: false}
+  - owner: "allen"
+    title: "actor-framework C0 硬化 — 边界门加固"
+    goal: "C0 boundary gate 补 interprocedural taint + reflective :sys"
+    status: "done"
+    who: "Allen 轨道 · #1549 · 已合"
+    pr: {num: 1549, state: "merged"}
+    acceptance:
+      - {text: "硬化 C0 边界 gate: 补跨过程 taint 追踪 + 反射式 `:sys` 访问路径, 堵住 gate 可绕过面; 对抗性复审证实净强化(old≡new)、allowlist 15/15 完整", done: true}
+  - owner: "allen"
+    title: "mfu-demo v0.13"
+    goal: "内网 demo v0.13: 可玩原型 + GDD + 3 篇分析文档"
+    status: "review"
+    who: "Allen 轨道 · #1543 · 评审中(含 ruihua 3 篇分析)"
+    pr: {num: 1543, state: "open"}
+    acceptance:
+      - {text: "MFU v0.13 内网 demo: 可玩原型 + GDD + 3 篇分析文档(含瑞华的分析输入)", done: false}
+  # ---------- 进行中 (per-teammate 当前在飞) ----------
+  # ---- gaga (Git Provider / agent 泛化主体 / cap 收敛) ----
+  - owner: "gaga"
+    title: "#1501 held+pending caps 收敛幂等"
+    goal: "held + pending caps 合并进 effective view(grant 幂等、fail-closed)"
+    status: "wip"
+    who: "gaga 轨道 · #1501 · rework 中"
+    pr: {num: 1501, state: "open"}
+    flag: "对抗性评审打回: effective view 丢 pending absorb + 幂等/fail-closed 缺口"
+    acceptance:
+      - {text: "held + pending caps 合并进 effective view, grant 幂等; 对抗性评审发现丢 pending absorb + 幂等/fail-closed 缺口 → 打回 rework, 补齐后重评审", done: false}
+  - owner: "gaga"
+    title: "#1547 Feishu 绑定 → UserBinding 正式 dispatch(B2)"
+    goal: "Feishu 绑定迁到正式 UserBinding dispatch 通路"
+    status: "wip"
+    who: "gaga 轨道 · #1547"
+    pr: {num: 1547, state: "open"}
+    acceptance:
+      - {text: "把 Feishu 绑定迁移到正式的 `UserBinding` dispatch(B2)", done: false}
+  - owner: "gaga"
+    title: "#1498 system-closure 方法产品化 + 受控 Mix 执行"
+    goal: "把 system-closure 方法与受保护的 Mix 执行产品化"
+    status: "wip"
+    who: "gaga 轨道 · #1498 · draft"
+    pr: {num: 1498, state: "draft"}
+    acceptance:
+      - {text: "产品化 system-closure 方法 + guarded Mix execution", done: false}
+  # ---- zyli (插件 UI 分层 / 实时刷新 / Kanban) ----
+  - owner: "zyli"
+    title: "实时刷新两通用信号接手(view_changed / caps_changed)"
+    goal: "承接 #1496 剥离出的两个通用刷新信号, 落到前端"
+    status: "wip"
+    who: "zyli 轨道 · 承 #1496 handoff · 待落 PR"
+    deps: ["承接自 jjkysy #1496"]
+    acceptance:
+      - {text: "承接 view_changed / caps_changed 两通用信号(自 #1496 从 kanban PR 剥离), 落前端实时刷新; 待开 PR", done: false}
+  # ---- 瑞华 (ruihua) (机构 demo 设计 / 自助开通产品化) ----
+  - owner: "ruihua"
+    title: "#1534 CIIA 机构真实数据 seed 导入"
+    goal: "把机构真实数据作为展厅 seed 导入(承接 CIIA #1499)"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · #1534 · draft"
+    pr: {num: 1534, state: "draft"}
+    acceptance:
+      - {text: "机构真实数据作为展厅 seed 导入(承接已合的 CIIA 展厅 #1499)", done: false}
+  - owner: "ruihua"
+    title: "#1533 Signature Interaction 原型"
+    goal: "Agent 角色交接 + Session 创建的签名式交互原型"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · #1533 · draft"
+    pr: {num: 1533, state: "draft"}
+    acceptance:
+      - {text: "Signature Interaction 原型 —— Agent 角色交接 + Session 创建的动效/交互设计", done: false}
+  - owner: "ruihua"
+    title: "#1436 企业自助开通 workspace 产品化"
+    goal: "自助开 workspace 用户旅程 + 验收标准"
+    status: "wip"
+    who: "瑞华 (ruihua) 轨道 · #1436 · draft"
+    pr: {num: 1436, state: "draft"}
+    acceptance:
+      - {text: "企业自助开通 workspace 产品化(用户旅程 + 验收标准)", done: false}
+  # ---- jjkysy (挂载-撤销 infra / 协作白板 / world 去硬编码) ----
+  - owner: "jjkysy"
+    title: "#1470 挂载宿主退场清理 + 冷建 provisioning deadline"
+    goal: "unmount_all_for_target + 冷建 deadline 给足"
+    status: "wip"
+    who: "jjkysy 轨道 · #1470"
+    pr: {num: 1470, state: "open"}
+    flag: "#195 已合 → epoch-rebase 那步 HOLD 已解除"
+    acceptance:
+      - {text: "挂载宿主退场清理(`unmount_all_for_target`)+ 冷建 provisioning deadline 给足; 原 epoch-rebase 那步 HOLD 至 #195 合 —— #195 本周期已塌进 main, HOLD 解除", done: false}
+  - owner: "jjkysy"
+    title: "#1531 world 甩掉 kanban（纯 world 去硬编码）"
+    goal: "后端分类器 + 前端 manifest 渲染, world 读面彻底去硬编码"
+    status: "wip"
+    who: "jjkysy 轨道 · #1531"
+    pr: {num: 1531, state: "open"}
+    acceptance:
+      - {text: "world 甩掉 kanban 硬编码 —— 后端分类器 + 前端 manifest 渲染去硬编码(纯 world 改动)", done: false}
+  - owner: "jjkysy"
+    title: "#1496 实时刷新两通用信号(剥离 → 交接 zyli)"
+    goal: "从 kanban #1474 剥离 view_changed/caps_changed, 交接 zyli"
+    status: "wip"
+    who: "jjkysy 轨道 · #1496 · 交接 zyli"
+    pr: {num: 1496, state: "open"}
+    acceptance:
+      - {text: "从 kanban PR #1474 剥离出 view_changed / caps_changed 两个通用刷新信号的 handoff, 交给 zyli 落前端", done: false}
+  - owner: "jjkysy"
+    title: "#1474 kanban 协作改版二轮"
+    goal: "人本位分享 / tab 恒显 / 分享二期"
+    status: "wip"
+    who: "jjkysy 轨道 · #1474 · draft"
+    pr: {num: 1474, state: "draft"}
+    acceptance:
+      - {text: "kanban 协作改版二轮(人本位分享 / tab 恒显 / 分享二期; 权宜全部溶解对齐读面正路)", done: false}
+  - owner: "jjkysy"
+    title: "#1301 dealscout 完整改版"
+    goal: "真组合 socialware / 真页面真数据 / 四旅程"
+    status: "wip"
+    who: "jjkysy 轨道 · #1301 · 推 mergeable"
+    pr: {num: 1301, state: "open"}
+    acceptance:
+      - {text: "dealscout 完整改版(真实组合 socialware / 真页面真数据 / 四旅程划分, 五段完整)", done: false}
+  - owner: "jjkysy"
+    title: "#1376 通用挂载 infra（被 entity-caps 取代 · 保留）"
+    goal: "挂载表 + Mount API + reconcile(契约留用)"
+    status: "wip"
+    who: "jjkysy 轨道 · #1376 · draft(保留)"
+    pr: {num: 1376, state: "draft"}
+    acceptance:
+      - {text: "通用挂载 infra(挂载表 + Mount API + reconcile)—— 被 entity-caps 去中心化模型取代、转 draft, API/测试/kanban 契约留用; 本周期 PR 清理中显式保留", done: false}
+  # ---- allen (结构迁移 + 部署 + 统筹) ----
+  - owner: "allen"
+    title: "★ 解 full-suite 唯一 E2E 阻塞 → 打开发布闸"
+    goal: "修 sandbox-ownership 让 AutoserviceTier1SeedTest 转绿"
+    status: "wip"
+    who: "Allen 轨道 · docs/futures/todo.md · 结转"
+    carryover: true
+    flag: "发布闸唯一确定性阻塞"
+    acceptance:
+      - {text: "修测试 harness 的 sandbox 继承(异步 spawn 进程 `Sandbox.allow` / `{:shared, self()}`), 让唯一确定性 E2E `AutoserviceTier1SeedTest` 转绿 → 发布 dispatch(needs: full-suite)得以触发", done: false}
+  - owner: "allen"
+    title: "hello 官网部署迁移(hello-A PR-4)"
+    goal: "把去硬编码后的官网迁移落到部署环境(canary→beta→stable)"
+    status: "wip"
+    who: "Allen 轨道 · 描述就绪, 待协调执行 · 结转"
+    carryover: true
+    flag: "待协调执行 · 部署链"
+    acceptance:
+      - {text: "5 步部署迁移(canary→beta→stable)描述就绪、待协调执行; 前置: 每节点须先有真实非管理员创始人用户 + add_member, 否则官网静默不 provision", done: false}
+  # ---------- 计划 / 即将 (next) ----------
+  - owner: "allen"
+    title: "actor-framework C3–C7 剩余 chunk 迁移"
+    goal: "C2/C0 硬化合入后, 继续推进 C3–C7 物理隔离迁移"
+    status: "planned"
+    who: "Allen 轨道 · C2/C0-硬化评审通过后接续"
+    acceptance:
+      - {text: "C2(#1550)+ C0 硬化(#1549)评审通过合入后, 继续推进 actor-framework 剩余 chunk C3–C7 的物理隔离迁移", done: false}
+
+review:
+  # ---------- 本周期复盘 (07-23→07-24) ----------
+  method_deltas:
+    - "★ #195 枢纽塌进 main(#1503): 07-22 board 上的「待评审 · 枢纽 PR」本周期完成最终对抗性评审 + 合并前冲突消解后合入 —— 一次性解阻 jjkysy #1470 的 epoch-rebase HOLD 与 canary 部署链前置; 三处 fallout(fresh-boot bootstrap #1540 / uri_query.scan #1541 / full-suite txn 幂等 #1544)当日全部修绿。"
+    - "actor-framework 物理隔离抽取启动: 用 injected ports 让 cap 脊留在 core、actor 状态管理下沉到新 umbrella app `ezagent_actor`; 边界用 gate 强制(C0)而非口头约定, C0 硬化(#1549)进一步补跨过程 taint + 反射式 `:sys` 堵绕过面 —— 结构性隔离优于约定。"
+    - "main gate 恢复绿的根因是 line-anchored baseline 漂移(行插入把 grandfathered 动态-receiver 站点挤离锚点)+ 一个 tmp-dir race flake(#1542): 治本 = 从扫描器 ground-truth 重生成 baseline, 非逐条补锚。"
+    - "转发的队友 PR 先经对抗性评审再由协调轨道合入: Gaga #1501 held+pending 被对抗性评审发现 effective view 丢 pending absorb + 幂等/fail-closed 缺口 → 打回 rework —— 评审拦住了不完整合并。"
+    - "PR 清理: 关掉 15 个 已在 main / stale / superseded 的 PR, 把 in-flight 集收敛到真正在飞的; 显式保留 jjkysy #1376/#1301 + 所有活跃 PR。"
+  incidents:
+    - "🔴 main full-suite 仅红在一个确定性 E2E(`AutoserviceTier1SeedTest`)—— 测试 harness sandbox-ownership, pre-existing、非本周期工作引入; 是发布闸(`needs: full-suite`)唯一确定性阻塞项, 已入 `docs/futures/todo.md`。"
+    - "🟢 已修: 07-22 记录的 PresenterCaps 会话陈旧(被降权 admin 保留 publish/admin 权限直到重登)—— 已由 actor C1(#1548, PresenterCaps→fresh)修。"
+  delivery:
+    - {owner: "Allen 轨道", delivered: "#195 塌进 main #1503 + 收尾 #1540/#1541/#1544 / main gate 恢复绿 #1542 / actor 抽取 Spec+C0+C1 #1545/#1546/#1548 / PR 清理 15 / planning-with-files #1539 / mfu-demo v0.13 #1543", acceptance_result: "#195 枢纽塌进 main + 全绿收尾; actor 物理隔离迁移启动(Spec+C0+C1 合); main 恢复绿", carryover: "actor C2/C0-硬化 评审→合 · C3–C7 迁移 · 解 full-suite E2E 阻塞打开发布闸 · hello-A PR-4 部署迁移"}
+    - {owner: "gaga", delivered: "#1501 held+pending 收敛(评审打回 rework) · #1547 Feishu→UserBinding B2 · #1498 system-closure(draft)", acceptance_result: "#1501 打回补 pending absorb + 幂等 + fail-closed", carryover: "#1501 rework 重评审 · B2 落地"}
+    - {owner: "jjkysy", delivered: "#1470 挂载退场清理(#195 合→epoch-rebase 解阻) · #1531 world 甩掉 kanban · #1496 实时刷新两信号交接 zyli · #1301 dealscout · #1474 二轮(draft) · #1376 保留", acceptance_result: "多线在飞; #1470 的 #195 依赖已解", carryover: "#1301/#1474 推 mergeable · #1531 收口"}
+    - {owner: "瑞华 (ruihua)", delivered: "#1534 CIIA 真实数据 seed · #1533 Signature Interaction 原型 · #1436 自助开通产品化(均 draft) · mfu-demo 3 篇分析输入(#1543)", acceptance_result: "三草案在飞 + mfu 分析并入 #1543", carryover: "三草案定稿"}
+    - {owner: "zyli", delivered: "承接 #1496 实时刷新两通用信号(view_changed / caps_changed)", acceptance_result: "接手 handoff", carryover: "落前端 + 开 PR"}
+  next_day:
+    - "actor-framework C2(#1550)+ C0 硬化(#1549)评审通过合入 → 接续推进 C3–C7 剩余 chunk 物理隔离迁移。"
+    - "Gaga #1501 held+pending rework: 补 pending absorb + 幂等 + fail-closed 后重评审。"
+    - "解 full-suite 唯一确定性 E2E 阻塞(sandbox-ownership)→ 打开发布闸 → hello 官网部署迁移(hello-A PR-4, canary→beta→stable)。"
+    - "ruihua 三草案(CIIA seed #1534 / Signature #1533 / 自助开通 #1436)定稿; jjkysy #1301/#1474 推 mergeable; zyli 承接的实时刷新两信号落前端开 PR。"
