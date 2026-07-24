@@ -59,7 +59,13 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   """
   @spec apply(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def apply(user_uri, _admin_uri) do
-    ensure_user_kind(user_uri)
+    # Configurable failure seam for deterministic rollback testing.
+    # The real production path is `ensure_user_kind/1` only.
+    if Application.get_env(:ezagent_plugin_feishu, :binding_policy_force_failure) do
+      {:error, :policy_failure_synthetic}
+    else
+      ensure_user_kind(user_uri)
+    end
   end
 
   # Bound user might not be live yet (admin types

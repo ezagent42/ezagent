@@ -29,9 +29,9 @@ defmodule EzagentPluginFeishu.UserBinding do
 
   @primary_key {:open_id, :string, autogenerate: false}
   schema "feishu_user_bindings" do
-    field :user_uri, :string
-    field :bound_by, :string
-    field :bound_at, :utc_datetime_usec
+    field(:user_uri, :string)
+    field(:bound_by, :string)
+    field(:bound_at, :utc_datetime_usec)
   end
 
   @type t :: %__MODULE__{
@@ -42,20 +42,31 @@ defmodule EzagentPluginFeishu.UserBinding do
         }
 
   @doc """
-  Bind `open_id` to `user_uri`, recording who did it.
+  Bind `open_id` to `user_uri`, recording who did it and when.
 
   Upserts: rebinding replaces the prior user_uri. Idempotent if
   same (open_id, user_uri) pair.
+
+  An explicit `bound_at` (4-arity) is used by the rollback path so a
+  rebind-rollback restores the original timestamp precisely.
   """
   @spec bind(String.t(), URI.t() | String.t(), URI.t() | String.t()) ::
           {:ok, t()} | {:error, term()}
   def bind(open_id, user_uri, bound_by)
       when is_binary(open_id) and open_id != "" do
+    bind(open_id, user_uri, bound_by, DateTime.utc_now())
+  end
+
+  @doc false
+  @spec bind(String.t(), URI.t() | String.t(), URI.t() | String.t(), DateTime.t()) ::
+          {:ok, t()} | {:error, term()}
+  def bind(open_id, user_uri, bound_by, %DateTime{} = bound_at)
+      when is_binary(open_id) and open_id != "" do
     row = %__MODULE__{
       open_id: open_id,
       user_uri: to_str(user_uri),
       bound_by: to_str(bound_by),
-      bound_at: DateTime.utc_now()
+      bound_at: bound_at
     }
 
     Repo.insert(row,
@@ -101,16 +112,17 @@ defmodule EzagentPluginFeishu.UserBinding do
     uri_str = to_str(user_uri)
 
     Repo.all(
-      from b in __MODULE__,
-        where: b.user_uri == ^uri_str,
-        select: b.open_id
+      from(b in __MODULE__,
+        where: field(b, :user_uri) == ^uri_str,
+        select: field(b, :open_id)
+      )
     )
   end
 
   @doc "List every binding (admin LV / debug)."
   @spec list_all() :: [t()]
   def list_all do
-    Repo.all(from b in __MODULE__, order_by: b.bound_at)
+    Repo.all(from(b in __MODULE__, order_by: field(b, :bound_at)))
   end
 
   defp to_str(%URI{} = u), do: URI.to_string(u)

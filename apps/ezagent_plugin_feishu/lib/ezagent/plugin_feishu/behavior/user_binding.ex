@@ -72,12 +72,12 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   `mix ezagent workspace list_feishu_bindings --workspace <name>`
 
   The legacy `mix ezagent.feishu.bind` / `unbind` / `list` tasks are
-  retained pending operator migration (PR-CC-2-v2 ending-state
-  carve-out — Allen's "no defer" applies to ARCHITECTURE not UX:
-  legacy tasks are now thin wrappers that delegate to dispatch via
-  the auto-derived path; the operator-facing command line is
-  preserved for muscle memory while the internals go through
-  CapBAC + audit). See `@deprecated` annotations on those tasks.
+  now thin wrappers that delegate to formal synchronous dispatch
+  (handoff B1 Phase 4, 2026-07-24) — no raw storage, no raw handler,
+  no raw policy. They are retained with a deprecation notice for
+  operator muscle memory; the canonical authenticated path is
+  `mix ezagent workspace <action> --workspace <name> ...`. See the
+  task moduledocs for the exact replacement command per action.
 
   ## Phase B migration (2026-05-29) — Lifecycle API
 
@@ -328,14 +328,12 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
     bindings =
       UserBinding.list_all()
-      |> Enum.filter(fn b -> workspace_match?(b.user_uri, target_workspace) end)
-      |> Enum.map(fn b ->
-        %{
-          open_id: b.open_id,
-          user_uri: b.user_uri,
-          bound_by: b.bound_by,
-          bound_at: b.bound_at
-        }
+      |> Enum.filter(fn
+        %{user_uri: u} -> workspace_match?(u, target_workspace)
+        _ -> false
+      end)
+      |> Enum.map(fn %{open_id: o, user_uri: u, bound_by: by, bound_at: at} ->
+        %{open_id: o, user_uri: u, bound_by: by, bound_at: at}
       end)
 
     # Read-only: no effects. Slice unchanged.
@@ -487,15 +485,18 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   defp rollback_binding(
          open_id,
-         %EzagentPluginFeishu.UserBinding{user_uri: prior_user, bound_by: prior_by},
+         %EzagentPluginFeishu.UserBinding{
+           user_uri: prior_user,
+           bound_by: prior_by,
+           bound_at: prior_bound_at
+         },
          original_err
        ) do
-    # Codex r3 P2: restore the prior binding instead of deleting.
-    # `UserBinding.bind/3` is upsert-on-`open_id`, so re-running it
-    # with the prior values brings the row back to its pre-rebind
-    # state. `bound_at` will be refreshed by the upsert; the
-    # `bound_by` attribution survives so audit trail is preserved.
-    case UserBinding.bind(open_id, prior_user, prior_by) do
+    # Codex r3 P2 restored + Handoff B1 Phase 3: restore the prior
+    # binding including the ORIGINAL bound_at timestamp. `UserBinding.bind/4`
+    # accepts an explicit bound_at, so the rollback restores every
+    # provenance field — user_uri, bound_by, AND bound_at — precisely.
+    case UserBinding.bind(open_id, prior_user, prior_by, prior_bound_at) do
       {:ok, _row} ->
         :ok
 
@@ -507,13 +508,22 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   defp log_rollback_failure(open_id, mode, rollback_reason, original_err) do
     require Logger
 
+    alias EzagentPluginFeishu.Redact
+
+    # Only log the error class atoms, never raw error terms that could
+    # carry the open_id or user_uri from the failed operation.
+    rollback_class = error_class(rollback_reason)
+    original_class = error_class(original_err)
+
     Logger.error(
       "EzagentPluginFeishu.Behavior.UserBinding.:bind: BindingPolicy failed + " <>
-        "rollback (#{mode}) failed: open_id=#{open_id} " <>
-        "rollback_reason=#{inspect(rollback_reason)} " <>
-        "original_err=#{inspect(original_err)}"
+        "rollback (#{mode}) failed: open_id=#{Redact.fingerprint(open_id)} " <>
+        "rollback_error=#{rollback_class} original_error=#{original_class}"
     )
   end
+
+  defp error_class({:error, reason}) when is_atom(reason), do: Atom.to_string(reason)
+  defp error_class(_other), do: "unexpected"
 
   # Pull the target Workspace URI out of dispatch ctx. `self_uri` is
   # injected by Kind.Runtime step 5 — for `workspace://X?action=...`

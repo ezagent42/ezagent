@@ -1,39 +1,42 @@
 defmodule Mix.Tasks.Ezagent.Feishu.List do
-  @shortdoc "List all Feishu open_id → local user bindings"
   @moduledoc """
-  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
-  > Read-only listing of `feishu_user_bindings` rows. Doesn't bypass
-  > a write-path dispatch (it doesn't write), but the LV `feishu_bindings_live.ex`
-  > path can grow workspace-filter or cap-gated listing tomorrow and
-  > this task would silently diverge. The `mix ezagent feishu list`
-  > equivalent does NOT exist yet. Tracked in
-  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix ezagent auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
-  > `(:feishu, :list)`, then deprecate this task using the PR #302
-  > stub pattern.
-
-      mix ezagent.feishu.list
+  > **Handoff B1 permission-avoidance pivot (2026-07-24).**
+  > This task now only validates arguments, prints the deprecation notice
+  > and canonical replacement command, and exits. No dispatch, no auth,
+  > no mutation — no listing.
+  >
+  >     mix ezagent.feishu.list --workspace <name>
+  >
+  > `--workspace` is REQUIRED.
+  >
+  > **Canonical replacement (authenticated, audit-trailed):**
+  >
+  >     mix ezagent workspace list_feishu_bindings --workspace <name>
   """
+
   use Mix.Task
 
-  alias EzagentPluginFeishu.UserBinding
+  @shortdoc "DEPRECATED — see `mix ezagent workspace list_feishu_bindings`"
 
   @impl Mix.Task
-  def run(_argv) do
-    Mix.Task.run("app.start")
+  def run(argv) do
+    {opts, _positional, _} = OptionParser.parse(argv, switches: [workspace: :string])
 
-    case UserBinding.list_all() do
-      [] ->
-        Mix.shell().info("(no bindings)")
+    workspace_name = opts[:workspace]
 
-      rows ->
-        Mix.shell().info("Feishu user bindings:")
+    if is_nil(workspace_name) or workspace_name == "" do
+      Mix.raise("""
+      --workspace is required. The legacy list task performs NO operation.
+      Use the canonical authenticated form:
 
-        Enum.each(rows, fn r ->
-          Mix.shell().info(
-            "  #{r.open_id} → #{r.user_uri}   bound_by=#{r.bound_by} at=#{DateTime.to_iso8601(r.bound_at)}"
-          )
-        end)
+          mix ezagent workspace list_feishu_bindings --workspace <name>
+      """)
     end
+
+    IO.puts("""
+    ⚠  mix ezagent.feishu.list is DEPRECATED and performs NO operation.
+       Canonical form: mix ezagent workspace list_feishu_bindings \\
+         --workspace #{workspace_name}
+    """)
   end
 end
