@@ -2,7 +2,7 @@ defmodule EzagentCore.Repo.Migrations.CreateGitWorkflowIntents do
   use Ecto.Migration
 
   def change do
-    create table(:git_workflow_bindings) do
+    create table(:git_workflow_bindings, primary_key: false) do
       add :id, :string, null: false, primary_key: true
       add :generation, :integer, null: false, default: 1
       add :workspace_uri, :string, null: false
@@ -21,12 +21,11 @@ defmodule EzagentCore.Repo.Migrations.CreateGitWorkflowIntents do
       timestamps(type: :utc_datetime_usec)
     end
 
-    create table(:git_workflow_runs) do
+    create table(:git_workflow_runs, primary_key: false) do
       add :id, :string, null: false, primary_key: true
       add :binding_id, :string, null: false
       add :binding_generation, :integer, null: false
       add :external_task_id, :string, null: false
-      add :authenticated_principal_uri, :string, null: false
       add :status, :string, null: false, default: "accepted"
       add :state_version, :integer, null: false, default: 1
       add :input_digest, :string, null: false

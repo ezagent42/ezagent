@@ -1,10 +1,15 @@
 defmodule EzagentPluginGitWorkflow.Store do
   @moduledoc """
-  PostgreSQL-backed store for workflow bindings and runs.
+  PostgreSQL-backed store for workflow bindings and runs — E2-A only.
 
-  All idempotency and concurrency decisions are driven by database results:
-  unique constraints, single-statement CAS, and fresh-read reconciliation.
-  No GenServer, Agent, ETS, or application lock.
+  No authorization. No authenticated_principal. No CapBAC. All caller
+  authorization is deferred to E2-B. This module receives an
+  already-validated internal command and handles only persistence,
+  idempotency, and CAS concurrency.
+
+  All concurrency decisions are driven by database results: unique
+  constraints, single-statement conditional UPDATE, and fresh-read
+  reconciliation. No GenServer, Agent, ETS, or application lock.
   """
 
   alias EzagentCore.Repo
@@ -21,9 +26,7 @@ defmodule EzagentPluginGitWorkflow.Store do
     row = binding_to_row(binding)
 
     result =
-      Repo.insert_all(
-        "git_workflow_bindings",
-        [row],
+      Repo.insert_all("git_workflow_bindings", [row],
         on_conflict: :nothing,
         conflict_target: [:id]
       )
@@ -34,17 +37,15 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
-  @doc "Disables a binding by id. Returns not_found if unknown."
+  @doc "Disables a binding by id."
   @spec disable_binding(String.t()) :: {:ok, TaskBinding.t()} | {:error, term()}
   def disable_binding(binding_id) when is_binary(binding_id) do
     case read_binding_row(binding_id) do
       nil -> {:error, :not_found}
       _row ->
         now = DateTime.utc_now()
-        Repo.query!(
-          "UPDATE git_workflow_bindings SET enabled = $1, updated_at = $2 WHERE id = $3",
-          [false, now, binding_id]
-        )
+        Repo.query!("UPDATE git_workflow_bindings SET enabled = $1, updated_at = $2 WHERE id = $3",
+          [false, now, binding_id])
 
         case read_binding_row(binding_id) do
           nil -> {:error, :not_found}
@@ -63,43 +64,62 @@ defmodule EzagentPluginGitWorkflow.Store do
   end
 
   # ---------------------------------------------------------------------------
-  # Run operations
+  # Accept (server-generated intent creation)
   # ---------------------------------------------------------------------------
 
   @doc """
-  Claim a workflow run with insert-or-load semantics.
+  Accept a validated internal command and persist an accepted run.
 
-  Returns {:ok, run} with a persisted accepted run, or an error.
+  Server-generated: run id (deterministic), input_digest, status="accepted",
+  state_version=1. Caller must NOT supply these.
 
-  Idempotency: same (binding_id, binding_generation, external_task_id) returns
-  the existing run. Different input_digest on the same unique key returns
-  {:error, :digest_conflict}.
+  Takes a map of caller-supplied fields:
+    - binding_id, binding_generation, external_task_id
+    - source_task_uri, source_revision, requested_head_ref
+
+  Returns {:ok, WorkflowRun.t()} on success.
+
+  Idempotency: duplicate unique-key returns the existing run if digest matches.
+  Different digest on same unique-key returns {:error, :digest_conflict}.
   """
-  @spec claim(WorkflowRun.t()) :: {:ok, WorkflowRun.t()} | {:error, term()}
-  def claim(%WorkflowRun{} = run) do
-    if is_nil(run.authenticated_principal_uri) do
-      {:error, :authenticated_principal_required}
-    else
-      with {:ok, _binding} <- check_binding_active(run.binding_id) do
-        case check_unique_claim(run) do
-          :ok -> insert_run(run)
-          {:ok, existing} -> {:ok, existing}
-          {:error, _} = error -> error
-        end
-      end
+  @spec accept(map()) :: {:ok, WorkflowRun.t()} | {:error, term()}
+  def accept(attrs) when is_map(attrs) do
+    with {:ok, _binding} <- check_binding_active(attrs[:binding_id] || attrs["binding_id"]) do
+      caller = normalize_accept_attrs(attrs)
+      run_id = WorkflowRun.generate_id(caller.binding_id, caller.binding_generation, caller.external_task_id)
+      digest = WorkflowRun.compute_digest(caller)
+
+      run_attrs = %{
+        id: run_id,
+        binding_id: caller.binding_id,
+        binding_generation: caller.binding_generation,
+        external_task_id: caller.external_task_id,
+        status: "accepted",
+        state_version: 1,
+        input_digest: digest,
+        source_task_uri: caller.source_task_uri,
+        source_revision: caller.source_revision,
+        requested_head_ref: caller.requested_head_ref,
+        last_error_code: nil
+      }
+
+      insert_or_load(run_attrs, digest)
     end
   end
 
-  @doc """
-  Atomically transition a run's status using single-statement CAS.
+  # ---------------------------------------------------------------------------
+  # CAS transition
+  # ---------------------------------------------------------------------------
 
-  The update only succeeds when `run_id` matches AND `state_version` equals
-  `expected_version` AND `status` equals `expected_status`. On zero rows
-  updated, fresh-reads the run and distinguishes:
-    - exact retry (already at next state/version) → returns current run
-    - stale version                         → :stale_state_version
-    - status conflict                       → :workflow_state_conflict
-    - terminal conflict                     → :workflow_terminal
+  @doc """
+  Atomically transition a run's status using single-statement PostgreSQL CAS.
+
+  UPDATE succeeds only when id, state_version, and status all match.
+  On zero rows updated, fresh-reads and distinguishes:
+    - exact retry (already at target state+version)
+    - stale_state_version
+    - workflow_state_conflict
+    - not_found
   """
   @spec transition(String.t(), pos_integer(), String.t(), String.t()) ::
           {:ok, WorkflowRun.t()} | {:error, term()}
@@ -117,40 +137,8 @@ defmodule EzagentPluginGitWorkflow.Store do
       )
 
     case result.num_rows do
-      1 ->
-        {:ok, fetch_run!(run_id)}
-
-      0 ->
-        case read_run_row(run_id) do
-          nil ->
-            {:error, :not_found}
-
-          row ->
-            run = row_to_run(row)
-            current_status = run.status
-            current_version = run.state_version
-
-            cond do
-              # Exact retry: already at the target state+version
-              current_status == next_status and current_version == next_version ->
-                {:ok, run}
-
-              # Already at next status but different version
-              current_status == next_status ->
-                {:error, :stale_state_version}
-
-              # Version advanced and status differs
-              current_version != expected_version and current_status != expected_status ->
-                {:error, :stale_state_version}
-
-              # Status mismatch
-              current_status != expected_status ->
-                {:error, :workflow_state_conflict}
-
-              true ->
-                {:error, :workflow_state_conflict}
-            end
-        end
+      1 -> {:ok, fetch_run!(run_id)}
+      0 -> classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status)
     end
   end
 
@@ -164,70 +152,114 @@ defmodule EzagentPluginGitWorkflow.Store do
   end
 
   # ---------------------------------------------------------------------------
-  # Private helpers
+  # Private: accept helpers
   # ---------------------------------------------------------------------------
+
+  defp normalize_accept_attrs(attrs) do
+    %{
+      binding_id: attrs[:binding_id] || attrs["binding_id"],
+      binding_generation: attrs[:binding_generation] || attrs["binding_generation"],
+      external_task_id: attrs[:external_task_id] || attrs["external_task_id"],
+      source_task_uri: attrs[:source_task_uri] || attrs["source_task_uri"],
+      source_revision: attrs[:source_revision] || attrs["source_revision"],
+      requested_head_ref: attrs[:requested_head_ref] || attrs["requested_head_ref"]
+    }
+  end
+
+  defp check_binding_active(nil), do: {:error, :binding_not_found}
 
   defp check_binding_active(binding_id) do
     case read_binding_row(binding_id) do
       nil -> {:error, :binding_not_found}
       row ->
-        if row["enabled"] do
-          {:ok, row_to_binding(row)}
-        else
-          {:error, :binding_disabled}
-        end
+        if row["enabled"],
+          do: {:ok, row_to_binding(row)},
+          else: {:error, :binding_disabled}
     end
   end
 
-  defp check_unique_claim(%WorkflowRun{} = run) do
-    result =
-      Repo.query!(
-        "SELECT * FROM git_workflow_runs
-         WHERE binding_id = $1 AND binding_generation = $2 AND external_task_id = $3",
-        [run.binding_id, run.binding_generation, run.external_task_id]
-      )
+  # insert-or-load with digest comparison.
+  # Uses INSERT … ON CONFLICT DO NOTHING + fresh-read to avoid SELECT→INSERT race.
+  defp insert_or_load(run_attrs, digest) do
+    now = DateTime.utc_now()
 
-    case result.rows do
-      [] ->
-        :ok
-
-      [row | _] ->
-        cols = result.columns
-        existing_run = row_to_run(Enum.zip(cols, row) |> Map.new())
-        if existing_run.input_digest == run.input_digest,
-          do: {:ok, existing_run},
-          else: {:error, :digest_conflict}
-    end
-  end
-
-  defp insert_run(%WorkflowRun{} = run) do
-    row = run_to_row(run)
+    insert_row = %{
+      id: run_attrs.id,
+      binding_id: run_attrs.binding_id,
+      binding_generation: run_attrs.binding_generation,
+      external_task_id: run_attrs.external_task_id,
+      status: run_attrs.status,
+      state_version: run_attrs.state_version,
+      input_digest: run_attrs.input_digest,
+      source_task_uri: to_string(run_attrs.source_task_uri),
+      source_revision: run_attrs.source_revision,
+      requested_head_ref: run_attrs.requested_head_ref,
+      last_error_code: run_attrs.last_error_code,
+      inserted_at: now,
+      updated_at: now
+    }
 
     result =
-      Repo.insert_all(
-        "git_workflow_runs",
-        [row],
+      Repo.insert_all("git_workflow_runs", [insert_row],
         on_conflict: :nothing,
         conflict_target: [:binding_id, :binding_generation, :external_task_id]
       )
 
     case result do
       {1, _} ->
-        {:ok, run}
+        {:ok, build_run_from_insert(insert_row, run_attrs.source_task_uri)}
 
       {0, _} ->
-        run = fetch_run_by_key!(run.binding_id, run.binding_generation, run.external_task_id)
-        {:ok, run}
+        # Conflict — someone else inserted. Fresh-read and compare digest.
+        existing = fetch_run_by_key!(run_attrs.binding_id, run_attrs.binding_generation, run_attrs.external_task_id)
+
+        if existing.input_digest == digest,
+          do: {:ok, existing},
+          else: {:error, :digest_conflict}
     end
   end
 
-  defp fetch_run!(run_id) do
-    result =
-      Repo.query!(
-        "SELECT * FROM git_workflow_runs WHERE id = $1",
-        [run_id]
-      )
+  # ---------------------------------------------------------------------------
+  # Private: CAS helpers
+  # ---------------------------------------------------------------------------
 
+  defp classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status) do
+    case read_run_row(run_id) do
+      nil ->
+        {:error, :not_found}
+
+      row ->
+        run = row_to_run(row)
+
+        cond do
+          # Exact retry: already at target
+          run.status == next_status and run.state_version == next_version ->
+            {:ok, run}
+
+          # Status is right but version differs — stale
+          run.status == next_status ->
+            {:error, :stale_state_version}
+
+          # Version advanced, status differs
+          run.state_version != expected_version and run.status != expected_status ->
+            {:error, :stale_state_version}
+
+          # Status mismatch
+          run.status != expected_status ->
+            {:error, :workflow_state_conflict}
+
+          true ->
+            {:error, :workflow_state_conflict}
+        end
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Private: DB row accessors
+  # ---------------------------------------------------------------------------
+
+  defp fetch_run!(run_id) do
+    result = Repo.query!("SELECT * FROM git_workflow_runs WHERE id = $1", [run_id])
     row_to_run(zip_row(result))
   end
 
@@ -242,8 +274,48 @@ defmodule EzagentPluginGitWorkflow.Store do
     row_to_run(zip_row(result))
   end
 
+  defp read_binding_row(binding_id) do
+    result = Repo.query!("SELECT * FROM git_workflow_bindings WHERE id = $1", [binding_id])
+
+    case result.rows do
+      [] -> nil
+      [row | _] -> Enum.zip(result.columns, row) |> Map.new()
+    end
+  end
+
+  defp read_run_row(run_id) do
+    result = Repo.query!("SELECT * FROM git_workflow_runs WHERE id = $1", [run_id])
+
+    case result.rows do
+      [] -> nil
+      [row | _] -> Enum.zip(result.columns, row) |> Map.new()
+    end
+  end
+
+  defp zip_row(%{columns: cols, rows: [row | _]}), do: Enum.zip(cols, row) |> Map.new()
+
+  # Build a WorkflowRun from an atom-keyed insert map (used after successful INSERT).
+  defp build_run_from_insert(insert_row, source_task_uri) do
+    {:ok, run} =
+      WorkflowRun.new(%{
+        id: insert_row.id,
+        binding_id: insert_row.binding_id,
+        binding_generation: insert_row.binding_generation,
+        external_task_id: insert_row.external_task_id,
+        status: insert_row.status,
+        state_version: insert_row.state_version,
+        input_digest: insert_row.input_digest,
+        source_task_uri: source_task_uri,
+        source_revision: insert_row.source_revision,
+        requested_head_ref: insert_row.requested_head_ref,
+        last_error_code: insert_row.last_error_code
+      })
+
+    run
+  end
+
   # ---------------------------------------------------------------------------
-  # Row ↔ Struct conversions
+  # Row ↔ Struct
   # ---------------------------------------------------------------------------
 
   defp binding_to_row(%TaskBinding{} = b) do
@@ -255,7 +327,7 @@ defmodule EzagentPluginGitWorkflow.Store do
       task_receiver_uri: URI.to_string(b.task_receiver_uri),
       credential_owner_uri: URI.to_string(b.credential_owner_uri),
       repository_uri: URI.to_string(b.repository_uri),
-      provider_adapter: b.provider_adapter,
+      provider_adapter: Atom.to_string(b.provider_adapter),
       provider_host: b.provider_host,
       external_id: b.external_id,
       owner_path: b.owner_path,
@@ -268,19 +340,6 @@ defmodule EzagentPluginGitWorkflow.Store do
     }
   end
 
-  defp read_binding_row(binding_id) do
-    result =
-      Repo.query!(
-        "SELECT * FROM git_workflow_bindings WHERE id = $1",
-        [binding_id]
-      )
-
-    case result.rows do
-      [] -> nil
-      [row | _] -> Enum.zip(result.columns, row) |> Map.new()
-    end
-  end
-
   defp row_to_binding(row) when is_map(row) do
     struct!(TaskBinding, %{
       id: row["id"],
@@ -289,7 +348,7 @@ defmodule EzagentPluginGitWorkflow.Store do
       task_receiver_uri: parse_uri!(row["task_receiver_uri"]),
       credential_owner_uri: parse_uri!(row["credential_owner_uri"]),
       repository_uri: parse_uri!(row["repository_uri"]),
-      provider_adapter: row["provider_adapter"],
+      provider_adapter: parse_provider_adapter(row["provider_adapter"]),
       provider_host: row["provider_host"],
       external_id: row["external_id"],
       owner_path: row["owner_path"],
@@ -302,48 +361,12 @@ defmodule EzagentPluginGitWorkflow.Store do
     })
   end
 
-  defp run_to_row(%WorkflowRun{} = r) do
-    now = DateTime.utc_now()
-    %{
-      id: r.id,
-      binding_id: r.binding_id,
-      binding_generation: r.binding_generation,
-      external_task_id: r.external_task_id,
-      authenticated_principal_uri: URI.to_string(r.authenticated_principal_uri),
-      status: r.status,
-      state_version: r.state_version,
-      input_digest: r.input_digest,
-      source_task_uri: URI.to_string(r.source_task_uri),
-      source_revision: r.source_revision,
-      requested_head_ref: r.requested_head_ref,
-      last_error_code: r.last_error_code,
-      inserted_at: now,
-      updated_at: now
-    }
-  end
-
-  defp read_run_row(run_id) do
-    result =
-      Repo.query!(
-        "SELECT * FROM git_workflow_runs WHERE id = $1",
-        [run_id]
-      )
-
-    case result.rows do
-      [] -> nil
-      [row | _] -> Enum.zip(result.columns, row) |> Map.new()
-    end
-  end
-
-  defp zip_row(%{columns: cols, rows: [row | _]}), do: Enum.zip(cols, row) |> Map.new()
-
   defp row_to_run(row) when is_map(row) do
     struct!(WorkflowRun, %{
       id: row["id"],
       binding_id: row["binding_id"],
       binding_generation: row["binding_generation"],
       external_task_id: row["external_task_id"],
-      authenticated_principal_uri: parse_uri!(row["authenticated_principal_uri"]),
       status: row["status"],
       state_version: row["state_version"],
       input_digest: row["input_digest"],
@@ -362,4 +385,10 @@ defmodule EzagentPluginGitWorkflow.Store do
   defp parse_visibility("public"), do: :public
   defp parse_visibility("private"), do: :private
   defp parse_visibility(other) when is_binary(other), do: String.to_existing_atom(other)
+
+  defp parse_provider_adapter(str) when is_binary(str) do
+    String.to_existing_atom(str)
+  rescue
+    ArgumentError -> String.to_atom(str)
+  end
 end

@@ -2,9 +2,12 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
   @moduledoc """
   Governed binding between a workspace task receiver and a Git repository.
 
-  Stores only provider-neutral coordinates. No credential, token, installation
-  id, OAuth value, or private key fields.
+  Validates provider-neutral repository coordinates through
+  `Ezagent.DomainGit.RepositoryRef.new/1`. No credential, token,
+  installation id, OAuth value, or private key fields.
   """
+
+  alias Ezagent.DomainGit.RepositoryRef
 
   @fields [
     :id,
@@ -33,7 +36,7 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
           task_receiver_uri: URI.t(),
           credential_owner_uri: URI.t(),
           repository_uri: URI.t(),
-          provider_adapter: String.t(),
+          provider_adapter: atom(),
           provider_host: String.t(),
           external_id: String.t(),
           owner_path: String.t(),
@@ -45,11 +48,12 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
           updated_at: DateTime.t() | nil
         }
 
-  @doc "Builds a validated TaskBinding struct."
+  @doc "Builds a validated TaskBinding struct, including RepositoryRef validation."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
     with :ok <- validate_known_fields(attrs),
-         :ok <- validate_values(attrs) do
+         :ok <- validate_values(attrs),
+         :ok <- validate_repository_ref(attrs) do
       struct = struct!(__MODULE__, Map.take(attrs, @fields))
       {:ok, struct}
     end
@@ -73,7 +77,7 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
       {:task_receiver_uri, is_struct(attrs.task_receiver_uri, URI)},
       {:credential_owner_uri, is_struct(attrs.credential_owner_uri, URI)},
       {:repository_uri, is_struct(attrs.repository_uri, URI)},
-      {:provider_adapter, is_binary(attrs.provider_adapter) and byte_size(attrs.provider_adapter) > 0},
+      {:provider_adapter, is_atom(attrs.provider_adapter) and not is_nil(attrs.provider_adapter)},
       {:provider_host, is_binary(attrs.provider_host) and byte_size(attrs.provider_host) > 0},
       {:external_id, is_binary(attrs.external_id) and byte_size(attrs.external_id) > 0},
       {:owner_path, is_binary(attrs.owner_path) and byte_size(attrs.owner_path) > 0},
@@ -86,6 +90,23 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
     case Enum.find(checks, fn {_field, valid?} -> not valid? end) do
       nil -> :ok
       {field, _} -> {:error, {:invalid_field, field}}
+    end
+  end
+
+  defp validate_repository_ref(attrs) do
+    repo_attrs = %{
+      repository_uri: attrs.repository_uri,
+      provider_adapter: attrs.provider_adapter,
+      provider_host: attrs.provider_host,
+      external_id: attrs.external_id,
+      owner_path: attrs.owner_path,
+      base_ref: attrs.base_ref,
+      visibility: attrs.visibility
+    }
+
+    case RepositoryRef.new(repo_attrs) do
+      {:ok, _ref} -> :ok
+      {:error, reason} -> {:error, {:invalid_repository_ref, reason}}
     end
   end
 end
