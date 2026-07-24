@@ -10,17 +10,16 @@ defmodule Ezagent.Workspace.Listing do
   tasks, invariant tests) are unchanged.
   """
 
-  alias Ezagent.KindRegistry
   alias Ezagent.Workspace.Store
 
   @doc """
-  List all live Workspace URIs (those registered in KindRegistry under
-  the `workspace://` scheme).
+  List all live Workspace URIs (those registered under the `workspace://`
+  scheme), via the public `Ezagent.Kind.list_instances/0` operator plane.
   """
   @spec list_workspaces() :: [URI.t()]
   def list_workspaces do
-    KindRegistry.list_all()
-    |> Enum.map(fn {uri_str, _pid} -> Ezagent.URI.new!(uri_str) end)
+    Ezagent.Kind.list_instances()
+    |> Enum.map(fn {uri_str, _meta} -> Ezagent.URI.new!(uri_str) end)
     |> Enum.filter(&Ezagent.URI.scheme?(&1, :workspace))
     |> Enum.sort_by(&URI.to_string/1)
   end

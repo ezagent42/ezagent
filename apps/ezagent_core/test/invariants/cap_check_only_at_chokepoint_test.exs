@@ -65,7 +65,17 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # authorization: a PROJECTION-BYPASS read (render is not a dispatch —
         # SPEC §3.2.1 "保留投影旁路读, 只把授权维度升级"), NOT a cap-gate on the
         # dispatch chokepoint. Contained to the SessionView contract file.
-        "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex"
+        "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex",
+        # C2 §6.3 — `Domain.Agent.read_credential_statuses/3` renders the agent
+        # DIRECTORY's credential-status column: it matches the caller's FRESH held
+        # caps (`EntityCaps.load/1`) against each agent's Manage need to decide what
+        # to RENDER (it returns a status map; nothing dispatches). Same PROJECTION-
+        # BYPASS read class as `SessionView` (SPEC §3.2.1), NOT a dispatch cap-gate —
+        # the list plane loads the holder's caps ONCE and matches in-memory instead of
+        # N per-agent `Cap.authorize` chokepoint calls (each of which reloads the
+        # store). A differential test pins its decision == the scalar chokepoint's,
+        # agent-by-agent, so the auditability the chokepoint protects is preserved.
+        "apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex"
       ]
     },
     %{

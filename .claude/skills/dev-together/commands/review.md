@@ -70,6 +70,10 @@ as a process gap. Do not infer a clean plan from successful merges after the
 fact.
 
 > **对账并核两源。** 台账对账必须**同时**扫 `returns/` 与当日 GitHub 合并（`gh pr list --repo … --state merged --author …`）——有人走直接 PR review→merge、不进 `returns/`，只看台账会漏记其贡献（2026-07-09 zhaomato #1277 / ruihua #1204 即如此，一度被误记为"无 return→结转"）。
+>
+> **归属看实质，不看提交账号（统筹≠交付）。** 协调者（cc）以 lead 账号（`allenwoods`）提交+合并，所以 **git author 不能用来判定归属**——它会把所有人的活都吸进"统筹轨道"。判定信号是**该 PR 是否承载了某位具名 dev 的实质产出**（`returns/`、handoff 台账、或 PR body 里点名，如 "ruihua's 3 analysis docs"）：
+> - 具名 dev 的实质产出即便**装在**协调者账号的 PR 里合并，`done` 卡的 owner 仍归**该 dev 的轨道**，附一行 "统筹 packaged/reviewed/merged"——绝不让统筹账号吞掉它（2026-07-24：ruihua 的 3 篇 MFU 分析装在 `allenwoods` 的 #1543 里被记成 "Allen 轨道"；zyli 自号 #1497 只作为统筹 #1541 修的"漂移来源"出现、无 done 卡——两者都错）。
+> - **统筹角色工作（review/gate/merge 别人的 PR、PR 清理、看板 PR、main-red/fallout 救火）不是交付卡**——它进 `efficiency`/统筹小结，不占 `done` 交付列；否则统筹重的周期会视觉上把 dev 的功能交付挤没、显得"全是 lead 轨道"。
 
 **Output:** `docs/together/<date>/review.md` **and** its team-facing
 `docs/together/<date>/review.html` render — `review.md` is the input to the next

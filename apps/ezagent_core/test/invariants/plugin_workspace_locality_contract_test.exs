@@ -71,16 +71,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
 
   @allowlist [
     %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/cc_orchestrator_seed.ex",
-      line: 172,
-      key: :kind_registry_lookup,
-      line_substring: "case Ezagent.KindRegistry.lookup(uri) do",
-      reason:
-        "read-only seed_status probe needs the registered pid to read the template slice; " <>
-          "LocalRuntime has no owner-gated read-with-pid API yet (ensure_started would spawn, " <>
-          "kind_alive? drops the pid). Same class as world workspace_plugin_data status reads."
-    },
-    %{
       path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
       line: 428,
       key: :genserver_to_pid,

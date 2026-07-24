@@ -187,6 +187,20 @@ if config_env() == :prod do
   # Check `Plug.SSL` for all available options in `force_ssl`.
 
   config :ezagent_core, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+
+  # GitHub App (ezagent-git) credentials for the git-provider plugin. Non-secret
+  # IDs come from the deploy env_file (secrets-<env>/ezagent.env); the three real
+  # secrets (client_secret / webhook_secret / private_key PEM) are injected as env
+  # vars by the prod entrypoint from the read-only /secrets mount — see
+  # ezagent-deploy docker/entrypoint.prod.sh. Every key is LAZY: EzagentPluginGithub
+  # .Config.fetch_env!/1 reads the env var only when github code actually runs, so a
+  # missing var never blocks boot — it raises a clear error at first github use.
+  config :ezagent_plugin_github,
+    app_id: {:system, "GITHUB_APP_ID"},
+    client_id: {:system, "GITHUB_APP_CLIENT_ID"},
+    client_secret: {:system, "GITHUB_APP_CLIENT_SECRET"},
+    private_key: {:system, "GITHUB_APP_PRIVATE_KEY"},
+    webhook_secret: {:system, "GITHUB_APP_WEBHOOK_SECRET"}
 end
 
 # --- Public URL (all envs) -------------------------------------------------

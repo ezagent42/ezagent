@@ -401,6 +401,11 @@ defmodule EzagentDomainInstanceMessage.Application do
     persisted =
       case Ezagent.Workspace.Store.get_by_name("system") do
         nil ->
+          # System-workspace seed (test-env boot, via maybe_seed_main_session_for_tests):
+          # the "system" workspace is definitionally owned by the genesis admin
+          # (entity://system/user/admin), NOT a socialware seed provisioning a real
+          # user's workspace with an env-provided founder.
+          # arch-allow: genesis system-workspace seed (no_hardcoded_seed_principal)
           case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
             {:ok, _pid} -> :ok
             {:error, :workspace_exists} -> :ok

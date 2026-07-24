@@ -201,9 +201,12 @@ defmodule Ezagent.Credential.GrantRow do
   end
 
   # Durable existence: a source agent exists iff it has a persisted snapshot row.
-  # Independent of whether the source Kind is currently running.
+  # Independent of whether the source Kind is currently running. Via the §2.2
+  # actor read surface (C2): `read_durable/3` never spawns and answers durable
+  # existence regardless of the probe slice key (`{:ok, _, _}` ⟺ the old
+  # `match?({:ok, _}, SnapshotStore.latest/1)`).
   defp source_exists?(source_uri) do
-    match?({:ok, _}, Ezagent.SnapshotStore.latest(source_uri))
+    match?({:ok, _, _}, Ezagent.Kind.read_durable(source_uri, :identity))
   end
 
   defp put_workspace_uri(%{agent_uri: agent_uri} = attrs) do

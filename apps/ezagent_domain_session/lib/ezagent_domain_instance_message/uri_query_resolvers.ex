@@ -316,19 +316,16 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
     end
   end
 
+  # Durable slice projection via the §2.2 actor read surface (C2). `read_durable/3`
+  # never spawns and is the sanctioned form of the old direct `SnapshotStore.latest`
+  # decode + `normalize_slice_view/1` — `{:error, :not_created}` mirrors the old
+  # `{:error, :not_found}` (no durable row) branch.
   defp snapshot_slice(%URI{} = uri, slice_key) do
-    case Ezagent.SnapshotStore.latest(uri) do
-      {:ok, %{state: state}} when is_map(state) ->
-        case Map.get(state, slice_key) do
-          slice when is_map(slice) -> {:ok, Ezagent.Kind.normalize_slice_view(slice)}
-          _ -> :none
-        end
-
-      {:error, :not_found} ->
-        :none
-
-      {:error, reason} ->
-        {:error, reason}
+    case Ezagent.Kind.read_durable(uri, slice_key) do
+      {:ok, slice, _meta} when is_map(slice) -> {:ok, slice}
+      {:ok, _non_map, _meta} -> :none
+      {:error, :not_created} -> :none
+      {:error, reason} -> {:error, reason}
     end
   end
 

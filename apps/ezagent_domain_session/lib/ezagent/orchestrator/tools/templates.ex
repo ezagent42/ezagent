@@ -127,7 +127,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
 
   defp check_parent_alive(%URI{} = parent_uri) do
     cond do
-      match?({:ok, _pid}, Ezagent.KindRegistry.lookup(parent_uri)) ->
+      Ezagent.Kind.alive?(parent_uri) ->
         :ok
 
       durable_snapshot_exists?(parent_uri) ->
@@ -214,8 +214,8 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
         authorization =
           if Ezagent.URI.stable_key(owner_uri) ==
                Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri()),
-            do: {:admin, owner_uri},
-            else: {:held_by, owner_uri}
+             do: {:admin, owner_uri},
+             else: {:held_by, owner_uri}
 
         with :ok <-
                Ezagent.Identity.Grant.grant_cap(

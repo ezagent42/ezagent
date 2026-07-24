@@ -26,7 +26,11 @@ defmodule Ezagent.Agent.CredentialStatusTest do
     def auth_failure_signals, do: []
 
     def credential_status(config_dir, opts) do
-      %{status: Keyword.get(opts, :fake, :authenticated), detail: "d-#{config_dir}", expires_at: 999}
+      %{
+        status: Keyword.get(opts, :fake, :authenticated),
+        detail: "d-#{config_dir}",
+        expires_at: 999
+      }
     end
   end
 
@@ -43,11 +47,19 @@ defmodule Ezagent.Agent.CredentialStatusTest do
 
   defp register(template_class) do
     flavor = "credstat-#{System.unique_integer([:positive])}"
-    :ok = AgentFlavorRegistry.register(%{flavor: flavor, kind: FakeKind, template_class: template_class})
+
+    :ok =
+      AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: FakeKind,
+        template_class: template_class
+      })
+
     flavor
   end
 
-  defp agent_uri, do: Ezagent.URI.entity(:team_alpha, :agent, "cs-#{System.unique_integer([:positive])}")
+  defp agent_uri,
+    do: Ezagent.URI.entity(:team_alpha, :agent, "cs-#{System.unique_integer([:positive])}")
 
   defp cold?(uri), do: Ezagent.KindRegistry.lookup(URI.to_string(uri)) == :error
 
@@ -89,7 +101,10 @@ defmodule Ezagent.Agent.CredentialStatusTest do
         )
 
       assert cold?(uri)
-      assert %{status: :authenticated, flavor: ^flavor} = CredentialStatus.classify(uri, flavor, nil)
+
+      assert %{status: :authenticated, flavor: ^flavor} =
+               CredentialStatus.classify(uri, flavor, nil)
+
       assert cold?(uri), "classify must not activate the agent"
     end
 
@@ -119,6 +134,34 @@ defmodule Ezagent.Agent.CredentialStatusTest do
       assert %{status: :n_a, detail: nil, expires_at: nil} =
                CredentialStatus.classify(agent_uri(), flavor, nil)
     end
+  end
+
+  # §6.3 list plane — the agent directory pre-fetches every agent's credential
+  # slice in ONE `read_durable_many/3` batch and threads it in, so N rows never
+  # cost N per-agent snapshot reads.
+  describe "directory batch (prefetched credential slice)" do
+    test "classify uses a PRE-FETCHED slice — no per-agent read at all" do
+      flavor = register(SliceTC)
+      uri = agent_uri()
+      # NO snapshot written: a per-agent read would yield :unknown. The status is
+      # driven ENTIRELY by the prefetched slice (from the directory's batch).
+      assert cold?(uri)
+
+      assert %{status: :authenticated} =
+               CredentialStatus.classify(uri, flavor, nil,
+                 credential_slice: {:ok, %{keys: %{"openai" => "sk-x"}}}
+               )
+
+      assert %{status: :missing} =
+               CredentialStatus.classify(uri, flavor, nil, credential_slice: {:ok, %{keys: %{}}})
+
+      assert %{status: :unknown} =
+               CredentialStatus.classify(uri, flavor, nil, credential_slice: :error)
+    end
+
+    # The FULL O(slice-types)-queries assertion (real caps, mixed flavors, constant
+    # across N) lives in `Ezagent.Domain.AgentCredentialStatusTest` where the cap
+    # machinery + cold-agent seeding already exist.
   end
 
   describe "unclassifiable" do

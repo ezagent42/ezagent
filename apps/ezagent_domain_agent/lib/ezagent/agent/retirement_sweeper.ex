@@ -100,31 +100,29 @@ defmodule Ezagent.Agent.RetirementSweeper do
     target = Ezagent.URI.new!(agent_uri)
     caller = Ezagent.URI.new!(caller_uri)
 
-    case Ezagent.KindRegistry.lookup(target) do
-      {:ok, _pid} ->
-        action_target = Ezagent.URI.with_action(target, :sandbox, :destroy)
-        admin = Ezagent.Entity.User.admin_uri()
+    if Ezagent.Kind.alive?(target) do
+      action_target = Ezagent.URI.with_action(target, :sandbox, :destroy)
+      admin = Ezagent.Entity.User.admin_uri()
 
-        with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, caller, action_target) do
-          Invocation.dispatch(%Invocation{
-            target: action_target,
-            mode: :call,
-            args: %{},
-            ctx: %{
-              caller: caller,
-              authenticated_principal: caller,
-              caps: MapSet.new([cap]),
-              reply: {:caller_inbox, self()}
-            },
-            origin: :trusted_internal
-          })
-          |> normalize_termination_result()
-        else
-          {:error, reason} -> {:error, {:termination_retry_failed, reason}}
-        end
-
-      :error ->
-        :ok
+      with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, caller, action_target) do
+        Invocation.dispatch(%Invocation{
+          target: action_target,
+          mode: :call,
+          args: %{},
+          ctx: %{
+            caller: caller,
+            authenticated_principal: caller,
+            caps: MapSet.new([cap]),
+            reply: {:caller_inbox, self()}
+          },
+          origin: :trusted_internal
+        })
+        |> normalize_termination_result()
+      else
+        {:error, reason} -> {:error, {:termination_retry_failed, reason}}
+      end
+    else
+      :ok
     end
   end
 

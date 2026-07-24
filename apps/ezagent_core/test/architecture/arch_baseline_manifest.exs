@@ -509,6 +509,28 @@
   #   the existing dotted `Ezagent.Agent.Recipe*` cluster); any NEW glued module
   #   that is not sanctioned trips this.
   concatenated_namespace_modules: 0,
+  # no_hardcoded_seed_principal (2026-07-24, Allen) — socialware & seed
+  # provisioning must create a user/workspace (or grant ownership) with an
+  # EXISTING env-provided user identity, NEVER a principal baked into source. The
+  # AST gate flags a `Users.create` / `Workspace.create` / `create_user` /
+  # `create_workspace` / `founder_join` / `grant_owner` call whose args carry a
+  # hardcoded principal (a literal `entity://`/`user://`/email, an `admin_uri()`
+  # accessor, or an inline `Ezagent.URI.user(:system, :admin)` construction); the
+  # env/runtime-resolved good pattern (`%{created_by: founder_uri}` /
+  # `Ezagent.URI.user(workspace, slug)` — VAR args) is NOT flagged.
+  #
+  # GRANDFATHERED at 1 (gate-first, mirrors socialware_priv_manifest_files): the
+  # sole current hit is `EzagentPluginHello.CredentialBridge.ensure_workspace/1`
+  # (`Workspace.create(home, %{created_by: User.admin_uri()})`), the DeepSeek
+  # deploy-key credential bridge that #1557 DELETES ("remove deploy-key injection
+  # / delete CredentialBridge"). It is left ledgered — not `# arch-allow:`ed — so
+  # a NEW hardcoded-principal create trips the gate (count 2 > cap 1), and the
+  # cap ratchets 1→0 when #1557 lands. The genesis system-workspace bootstrap
+  # (im application.ex, `Workspace.create("system", %{created_by: admin})`) is
+  # the load-bearing boot invariant and is `# arch-allow:`ed at its call site
+  # (excluded from this count), matching the genesis-admin exception.
+  # migrate under #1557
+  no_hardcoded_seed_principal: 1,
   # Documentation-coverage gate (2026-06-13, Allen) — RATCHET-DOWN counters.
   # Backed by `Mix.Tasks.Ezagent.Doc.Scan`; enforced by
   # test/architecture/doc_coverage_test.exs. Calibrated GREEN at the CURRENT

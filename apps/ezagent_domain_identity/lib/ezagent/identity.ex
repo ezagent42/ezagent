@@ -253,6 +253,36 @@ defmodule Ezagent.Identity do
 
   def caps_authorize?(_holder, _caps, _needed), do: false
 
+  @doc """
+  Match an ALREADY-LOADED, already-verified cap set (from
+  `Ezagent.EntityCaps.load/1`) against a runtime `needed`-cap map, PURELY in
+  memory — NO per-cap store reload.
+
+  Same shape predicate as `caps_authorize?/3` (`granted_by_entity?/1` AND
+  `Ezagent.Capability.matches?/2`), but it TRUSTS that the caps were already
+  generation/signature-verified by `EntityCaps.load/1` (its `verified/2` gate),
+  so it does NOT re-run `Ezagent.Cap.authorize/3` per cap. This is the sanctioned
+  home for the cap-shape check used by BATCH/LIST read facades (e.g.
+  `Ezagent.Domain.Agent.read_credential_statuses/3`, SPEC §6.3) that load the
+  holder's current caps ONCE and must stay O(1) in store loads across the whole
+  candidate set — keeping the `matches?` call at the chokepoint owner, not
+  hand-rolled in the facade (SPEC §8.9). For a single authorization that must
+  re-verify per cap, use `caps_authorize?/3`.
+  """
+  @spec caps_match?(
+          MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()],
+          map()
+        ) :: boolean()
+  def caps_match?(caps, needed) when is_map(needed) do
+    caps
+    |> normalize_caps()
+    |> Enum.any?(
+      &(Ezagent.Capability.granted_by_entity?(&1) and Ezagent.Capability.matches?(&1, needed))
+    )
+  end
+
+  def caps_match?(_caps, _needed), do: false
+
   defp cap_authorizes?(holder, %Ezagent.Capability{} = cap, needed) do
     Ezagent.Capability.granted_by_entity?(cap) and
       match?({:ok, %Ezagent.Capability{}}, Ezagent.Cap.authorize(holder, [cap], needed))

@@ -434,4 +434,90 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       end
     end
   end
+
+  # ----- C2 seed (c) — cold surface renders via the §2.2 read surface ---------
+
+  describe "C2 seed (c) — the surface renders via the §2.2 read surface, not StateRebuilder" do
+    # `surface_slice/1` is now `Kind.read/3` (live or lazy-rehydrate) with a
+    # `Kind.read_durable/3` fallback — the §2.2-sanctioned replacement for the old
+    # hand-rolled `StateRebuilder.rebuild/1` durable rehydrate. The behavioral crux
+    # is that the committed surface is served from the DURABLE row regardless of
+    # process liveness; `read_durable/3` is process-INDEPENDENT (never a GenServer
+    # call), so it is the deterministic, race-free way to pin that — including AFTER
+    # the process dies. (external_surface's own membership authz is live-only C7
+    # debt, out of C2 scope, so this test targets the migrated surface read.)
+    test "the committed surface is durable and read_durable serves it before AND after the process dies" do
+      session = spawn_socialware_session()
+      msg = write(session, "delivered", :external_visible)
+      _turn = commit(session, [msg.id], 1)
+
+      # The LIVE surface — the committed page the migrated read must reproduce.
+      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+
+      # LIVE: the live chokepoint returns the committed surface (post-migration
+      # parity — surface_slice's read/3 live path == the pre-migration get_slice).
+      assert {:ok, ^live_surface} = SessionReads.external_surface(owner(), session)
+
+      # LIVE: the durable projection == the live slice (single/live agree by
+      # construction) — so surface_slice's read_durable fallback renders the same page.
+      assert {:ok, ^live_surface, _meta} = Ezagent.Kind.read_durable(session, :surface)
+
+      # COLD: kill the process (a BEAM-restart / reap surrogate). The durable row
+      # survives; `read_durable/3` still serves the committed surface — the exact
+      # fallback surface_slice takes when read/3 cannot serve a cold session,
+      # WITHOUT reaching into the framework's StateRebuilder internals.
+      {:ok, pid} = KindRegistry.lookup(session)
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          pid
+        )
+
+      assert {:ok, ^live_surface, _meta} = Ezagent.Kind.read_durable(session, :surface)
+    end
+
+    test "the REAL C2 caller (external_surface → surface_slice) renders a COLD session's page" do
+      # A PUBLIC session so the read gate is open (web_anon_access) even cold — this
+      # lets us drive the ACTUAL migrated caller (external_surface → surface_slice →
+      # Kind.read/3) in a cold state, not just the read primitive.
+      session = session_with_public_view(true)
+      msg = write(session, "delivered", :external_visible)
+      _turn = commit(session, [msg.id], 1)
+
+      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+
+      # Take the session COLD and WAIT for its process to fully die (a BEAM-restart
+      # / reap surrogate) — no racy "stays de-registered" assumption.
+      {:ok, pid} = KindRegistry.lookup(session)
+      ref = Process.monitor(pid)
+
+      :ok =
+        DynamicSupervisor.terminate_child(
+          EzagentDomainInstanceMessage.SessionSupervisor,
+          pid
+        )
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}, 2_000
+
+      # The migrated caller renders the committed page from the cold session:
+      # surface_slice's `Kind.read/3` lazy-rehydrates from the durable snapshot (and
+      # its `read_durable/3` fallback covers any mid-restart :noproc window) — WITHOUT
+      # reaching into the framework's StateRebuilder internals.
+      assert {:ok, ^live_surface} = SessionReads.external_surface(nil, session)
+    end
+
+    test "session_reads.ex holds no StateRebuilder reach-in (acceptance 3(c))" do
+      src =
+        File.read!(
+          Path.join(
+            Ezagent.ActorBoundaryScanner.repo_root(),
+            "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex"
+          )
+        )
+
+      refute src =~ "StateRebuilder",
+             "acceptance 3(c): session_reads.ex must not reference the framework StateRebuilder"
+    end
+  end
 end

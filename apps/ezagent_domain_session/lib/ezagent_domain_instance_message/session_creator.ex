@@ -64,7 +64,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   call-graph gate) + the restored runtime assertion in the decouple test.
   """
 
-  alias Ezagent.KindRegistry
   alias Ezagent.Socialware.{DefinitionEditor, Installation}
   alias Ezagent.Entity.{Session, User}
 
@@ -841,17 +840,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   end
 
   defp do_await_terminated(%URI{} = session_uri, deadline) do
-    case KindRegistry.lookup(session_uri) do
-      :error ->
-        :ok
-
-      {:ok, _pid} ->
-        if System.monotonic_time(:millisecond) >= deadline do
-          :timeout
-        else
-          Process.sleep(20)
-          do_await_terminated(session_uri, deadline)
-        end
+    if Ezagent.Kind.alive?(session_uri) do
+      if System.monotonic_time(:millisecond) >= deadline do
+        :timeout
+      else
+        Process.sleep(20)
+        do_await_terminated(session_uri, deadline)
+      end
+    else
+      :ok
     end
   end
 

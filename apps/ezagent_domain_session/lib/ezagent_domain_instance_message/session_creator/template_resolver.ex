@@ -3,7 +3,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
   alias Ezagent.Entity.Session
   alias Ezagent.Entity.SessionTemplate
-  alias Ezagent.KindRegistry
   alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
 
@@ -197,11 +196,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
     # it) ranks below any snapshotted version and is chosen only when no
     # snapshotted candidate exists.
     live_uris =
-      KindRegistry.list_all()
-      |> Enum.filter(fn {uri_str, _pid} ->
+      Ezagent.Kind.list_instances()
+      |> Enum.filter(fn {uri_str, _meta} ->
         is_binary(uri_str) and String.starts_with?(uri_str, prefix)
       end)
-      |> Enum.map(fn {uri_str, _pid} -> uri_str end)
+      |> Enum.map(fn {uri_str, _meta} -> uri_str end)
 
     candidates = Enum.uniq(Map.keys(birth_by_uri) ++ live_uris)
 

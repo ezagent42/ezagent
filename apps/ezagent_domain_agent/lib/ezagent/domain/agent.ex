@@ -80,12 +80,10 @@ defmodule Ezagent.Domain.Agent do
   def lifecycle_status(%URI{} = agent_uri) do
     flavor = resolve_flavor!(agent_uri)
 
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, _pid} ->
-        delegate_alive_status(flavor, agent_uri)
-
-      :error ->
-        %{phase: :not_found, flavor: flavor, detail: nil}
+    if Ezagent.Kind.alive?(agent_uri) do
+      delegate_alive_status(flavor, agent_uri)
+    else
+      %{phase: :not_found, flavor: flavor, detail: nil}
     end
   end
 
@@ -347,30 +345,147 @@ defmodule Ezagent.Domain.Agent do
         %{authenticated_principal: %URI{}} = ctx,
         opts \\ []
       ) do
-    needed = %{
+    if authorized?(credential_needed(agent_uri), ctx) do
+      {:ok, classify_credential_status(agent_uri, opts)}
+    else
+      {:error, :unauthorized}
+    end
+  end
+
+  @doc """
+  Batch credential-status read for a directory of KNOWN agent URIs (§6.3 list
+  plane). O(slice-TYPES) durable queries for the WHOLE directory — a single
+  `Kind.read_durable_many/3` per slice the classifier reads (`:sandbox` for
+  config-dir / backend-profile / flavor, `:api_keys` for the credential slice,
+  `:curl_agent` for curl's durable `:flavor`) — NEVER O(agents). The agent-URI set
+  is FILTERED by the per-agent cap gate FIRST (which reads the CALLER's caps, never
+  a target's snapshot), so no snapshot is read for an agent the caller may not
+  manage. Directory semantics are DURABLE (§6.3): config-dir / backend-profile /
+  flavor are spawn-stable, so the durable projection ≈ the live slice. Returns
+  `%{uri_string => CredentialStatus.result()}`.
+  """
+  @spec read_credential_statuses([URI.t()], read_ctx(), keyword()) ::
+          %{optional(String.t()) => Ezagent.Agent.CredentialStatus.result()}
+  def read_credential_statuses(agent_uris, ctx, opts \\ [])
+
+  def read_credential_statuses(
+        agent_uris,
+        %{authenticated_principal: %URI{} = holder},
+        opts
+      )
+      when is_list(agent_uris) do
+    # SECURITY (codex round-4): authorize against the caller's CURRENT caps, loaded
+    # fresh ONCE — the scalar path's OWN `EntityCaps.load/1` (generation-verified via
+    # `verified/2`, and reflecting single-cap store REMOVALS), with the scalar's own
+    # predicate applied by the chokepoint owner `Ezagent.Identity.caps_match?/2`
+    # (SPEC §8.9 — the `matches?` call lives at the owner, NOT hand-rolled here).
+    # NEVER the caller-supplied inline caps (the stale mount-time snapshot — a revoked
+    # cap removed from the store WITHOUT a generation bump lingers there, so authorizing
+    # against it resurrects revoked authority: over-auth / TOCTOU). NEVER per-candidate
+    # `Cap.authorize` (its `principal_current?` reloads the holder store → O(agents×caps)).
+    # ONE load of the caller's current, already-verified caps + pure in-memory matching
+    # via the owner → CONSTANT in the denied count. Filter FIRST so a denied agent's
+    # slices are never batch-read.
+    current_caps = Ezagent.EntityCaps.load(holder)
+
+    authorized =
+      Enum.filter(agent_uris, fn uri ->
+        Ezagent.Identity.caps_match?(current_caps, credential_needed(uri))
+      end)
+
+    sandbox = Ezagent.Kind.read_durable_many(authorized, :sandbox)
+    api_keys = Ezagent.Kind.read_durable_many(authorized, :api_keys)
+    curl = Ezagent.Kind.read_durable_many(authorized, :curl_agent)
+
+    for agent_uri <- authorized, into: %{} do
+      opts = prefetched_opts(opts, agent_uri, sandbox, api_keys, curl)
+      {URI.to_string(agent_uri), classify_credential_status(agent_uri, opts)}
+    end
+  end
+
+  # An unauthenticated / principal-less caller manages no agents → no statuses
+  # (mirrors the old per-agent read's rescue-to-nil for a nil principal).
+  def read_credential_statuses(agent_uris, _ctx, _opts) when is_list(agent_uris), do: %{}
+
+  defp credential_needed(%URI{} = agent_uri) do
+    %{
       kind: :agent,
       behavior: Ezagent.ActionSet.Manage,
       action: :read_cascade,
       instance: Ezagent.URI.instance(agent_uri),
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
     }
+  end
 
-    if authorized?(needed, ctx) do
-      config_dir = trusted_config_dir(agent_uri)
-      flavor = safe_flavor(agent_uri)
-      opts = maybe_put_backend_profile(opts, agent_uri)
-      {:ok, Ezagent.Agent.CredentialStatus.classify(agent_uri, flavor, config_dir, opts)}
-    else
-      {:error, :unauthorized}
+  # The post-authorization classification, shared by the scalar read and the batch
+  # directory read. With prefetched opts (`:sandbox_state` / `:flavor` /
+  # `:credential_slice` supplied by the directory batch) it does ZERO durable reads;
+  # without them the scalar caller reads per-agent (live-first, non-activating).
+  defp classify_credential_status(%URI{} = agent_uri, opts) do
+    config_dir = trusted_config_dir(agent_uri, opts)
+    flavor = prefetched_or_resolved_flavor(agent_uri, opts)
+    opts = maybe_put_backend_profile(opts, agent_uri)
+    probe_opts = Keyword.drop(opts, [:sandbox_state, :flavor])
+    Ezagent.Agent.CredentialStatus.classify(agent_uri, flavor, config_dir, probe_opts)
+  end
+
+  # Flavor is either PREFETCHED by the directory batch (a `{:prefetched, value}`
+  # sentinel — TRUSTED even when `value` is nil, so an unresolved-flavor agent NEVER
+  # falls back to a per-agent `UriQuery`/snapshot read: codex #1) or resolved
+  # per-agent by the scalar (detail-view) path, which supplies no `:flavor` opt.
+  defp prefetched_or_resolved_flavor(agent_uri, opts) do
+    case Keyword.get(opts, :flavor) do
+      {:prefetched, value} -> value
+      nil -> safe_flavor(agent_uri)
+      explicit -> explicit
+    end
+  end
+
+  # Assemble the per-agent prefetched opts from the directory's batched slices: the
+  # `:sandbox` state (config-dir + backend-profile), the `:api_keys` credential
+  # slice, and the durable `:flavor` computed from `:sandbox` + `:curl_agent` via
+  # `AgentFlavorResolver.flavor_from_state/1` — so `classify_credential_status/2`
+  # reads NOTHING per agent.
+  defp prefetched_opts(opts, agent_uri, sandbox, api_keys, curl) do
+    sandbox_state = durable_slice(sandbox, agent_uri)
+
+    partial_state =
+      [{:sandbox, sandbox_state}, {:curl_agent, durable_slice(curl, agent_uri)}]
+      |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+      |> Map.new()
+
+    flavor =
+      case Ezagent.AgentFlavorResolver.flavor_from_state(partial_state) do
+        {:ok, f} -> f
+        :none -> nil
+      end
+
+    opts
+    |> Keyword.put(:sandbox_state, sandbox_state)
+    |> Keyword.put(:flavor, {:prefetched, flavor})
+    |> Keyword.put(:credential_slice, credential_slice(api_keys, agent_uri))
+  end
+
+  defp durable_slice(batch, agent_uri) do
+    case Map.get(batch, agent_uri) do
+      {:ok, slice, _meta} when is_map(slice) -> slice
+      _ -> nil
+    end
+  end
+
+  defp credential_slice(batch, agent_uri) do
+    case Map.get(batch, agent_uri) do
+      {:ok, slice, _meta} -> {:ok, slice}
+      _ -> :error
     end
   end
 
   # Trusted internal read of the persisted `:sandbox` slice's `config_dir_path`
   # (the credential home for file flavors) — reached ONLY after authorization,
-  # so it does NOT re-run the `:sandbox/:read` gate. Non-activating (durable slice
-  # → snapshot). `nil` for a slice/direct-spawn agent with no config dir.
-  defp trusted_config_dir(%URI{} = agent_uri) do
-    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+  # so it does NOT re-run the `:sandbox/:read` gate. Non-activating. `nil` for a
+  # slice/direct-spawn agent with no config dir.
+  defp trusted_config_dir(%URI{} = agent_uri, opts) do
+    case sandbox_state(agent_uri, opts) do
       state when is_map(state) ->
         case Map.get(state, :config_dir_path) || Map.get(state, "config_dir_path") do
           p when is_binary(p) and p != "" -> p
@@ -382,6 +497,16 @@ defmodule Ezagent.Domain.Agent do
     end
   rescue
     _ -> nil
+  end
+
+  # The persisted `:sandbox` state. The directory batch supplies it via
+  # `opts[:sandbox_state]` (ONE `read_durable_many(:sandbox)` for all agents); the
+  # scalar caller reads it per-agent (live-first, non-activating).
+  defp sandbox_state(%URI{} = agent_uri, opts) do
+    case Keyword.get(opts, :sandbox_state, :not_prefetched) do
+      :not_prefetched -> Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri)
+      prefetched -> prefetched
+    end
   end
 
   # Flavor resolution that never raises (the badge must degrade, not crash);
@@ -399,7 +524,7 @@ defmodule Ezagent.Domain.Agent do
   # supplied `:backend_profile` wins (`put_new`); plain-cc/legacy agents have
   # no persisted profile → opts pass through unchanged.
   defp maybe_put_backend_profile(opts, %URI{} = agent_uri) do
-    case trusted_backend_profile(agent_uri) do
+    case trusted_backend_profile(agent_uri, opts) do
       profile when is_binary(profile) and profile != "" ->
         Keyword.put_new(opts, :backend_profile, profile)
 
@@ -410,10 +535,11 @@ defmodule Ezagent.Domain.Agent do
 
   # Trusted internal read of the persisted `:sandbox` slice's
   # `respawn_template_data["provider"]` — same non-activating mechanism and
-  # authority posture as `trusted_config_dir/1` (reached ONLY after
-  # authorization). `nil` when absent/empty (plain-cc, legacy, slice-less).
-  defp trusted_backend_profile(%URI{} = agent_uri) do
-    case Ezagent.ActionSet.Sandbox.read_persisted_state(agent_uri) do
+  # authority posture as `trusted_config_dir/2` (reached ONLY after authorization),
+  # and the SAME prefetched `:sandbox` state in the directory batch. `nil` when
+  # absent/empty (plain-cc, legacy, slice-less).
+  defp trusted_backend_profile(%URI{} = agent_uri, opts) do
+    case sandbox_state(agent_uri, opts) do
       state when is_map(state) ->
         case Map.get(state, :respawn_template_data) || Map.get(state, "respawn_template_data") do
           respawn_data when is_map(respawn_data) ->
