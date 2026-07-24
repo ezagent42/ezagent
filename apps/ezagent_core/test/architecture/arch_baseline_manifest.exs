@@ -624,7 +624,11 @@
   #   sibling undocumented `session_creator`/`materializer` internals already in
   #   the baseline. 402→404 (headroom that fit on the pre-rebase base was consumed
   #   by #1361 landing first; reconciled additively on rebase onto main).
-  undocumented_public_defs: 404,
+  #   404→406 (handoff B1 Phase 1-5, 2026-07-24): new public defs across
+  #   Redact.fingerprint/1, UserBindingSeed.run/1, UserBindingSeed.Parser.parse_and_validate/1,
+  #   DispatchAdapter.list_current/1 + bind/3, and legacy mix task run/1 entries;
+  #   some are @impl Mix.Task (excluded by the scanner), net increase = 2.
+  undocumented_public_defs: 406,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

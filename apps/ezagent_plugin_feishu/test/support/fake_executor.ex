@@ -1,0 +1,92 @@
+defmodule EzagentPluginFeishu.UserBindingSeed.FakeExecutor do
+  @moduledoc """
+  Test-only fake executor for plan-validation tests (handoff B1
+  permission-avoidance pivot).
+
+  This is a NAMED module (via `start/1` → `Agent.start(..., name:
+  __MODULE__)`), so it can be injected as:
+
+      FakeExecutor.start(existing: [...])
+      Application.put_env(:ezagent_plugin_feishu, :seed_executor, FakeExecutor)
+
+  The importer's `executor_mod/0` returns the `FakeExecutor` atom, whose
+  `list_current/1` and `bind/3` match the exact arities the importer
+  calls — proving the A-layer (plan) works without the deferred B-layer
+  (DispatchAdapter → with_admin_operator → CapBAC).
+  """
+
+  use Agent
+
+  # --- lifecycle ---
+
+  @doc "Start the named Agent with optional keyword options."
+  def start(opts \\ []) do
+    Agent.start(
+      fn ->
+        %{
+          binds: [],
+          list_currents: [],
+          existing: Keyword.get(opts, :existing, []),
+          results: Keyword.get(opts, :results, %{})
+        }
+      end,
+      name: __MODULE__
+    )
+  end
+
+  @doc "Stop the named Agent."
+  def stop, do: Agent.stop(__MODULE__)
+
+  # --- Executor contract (called by importer) ---
+
+  @doc "Record a list_current call; return configured existing bindings."
+  def list_current(_workspace_uri) do
+    Agent.update(__MODULE__, fn s ->
+      %{s | list_currents: [cursor() | s.list_currents]}
+    end)
+
+    {:ok, Agent.get(__MODULE__, & &1.existing)}
+  end
+
+  @doc "Record a bind call; return configured result or default ok."
+  def bind(_workspace_uri, open_id, user_uri) when is_binary(open_id) do
+    Agent.update(__MODULE__, fn s ->
+      %{s | binds: [{:bind, open_id, user_uri} | s.binds]}
+    end)
+
+    results = Agent.get(__MODULE__, & &1.results)
+    uri_str = URI.to_string(user_uri)
+
+    case Map.get(results, open_id) do
+      {:ok, result} -> {:ok, Map.put(result, :open_id, open_id)}
+      {:error, reason} -> {:error, reason}
+      nil -> {:ok, %{open_id: open_id, user_uri: uri_str}}
+    end
+  end
+
+  # --- Assertion helpers ---
+
+  @doc "How many list_current calls were recorded."
+  def list_current_count do
+    Agent.get(__MODULE__, &length(&1.list_currents))
+  end
+
+  @doc "Return the list of recorded bind calls in order."
+  def binds do
+    Agent.get(__MODULE__, &Enum.reverse(&1.binds))
+  end
+
+  @doc "How many bind calls were recorded."
+  def bind_count do
+    Agent.get(__MODULE__, &length(&1.binds))
+  end
+
+  @doc "Reset the recorded state."
+  def reset do
+    Agent.update(__MODULE__, fn _ ->
+      %{binds: [], list_currents: [], existing: [], results: %{}}
+    end)
+  end
+
+  defp cursor, do: :list_current
+end

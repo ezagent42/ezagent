@@ -1,39 +1,58 @@
 defmodule Mix.Tasks.Ezagent.Feishu.Unbind do
-  @shortdoc "Remove a Feishu open_id binding"
   @moduledoc """
-  > **CLI/GUI parity audit 2026-05-24 — Category C (deferred).**
-  > Bypasses dispatch: calls `UserBinding.unbind/1` directly. The
-  > `mix ezagent feishu unbind` equivalent does NOT exist yet. Tracked in
-  > `docs/futures/todo.md` § "CLI ↔ GUI parity (audit findings #137
-  > still partial)". TODO: add the matching Behavior action + cap subject (NOT a bare FacadeRegistry op — codex PR #304 round-2 HIGH: that path bypasses Invocation.dispatch + caps + audit). mix ezagent auto-derives the CLI from interface/0. See the deferred-table guidance in docs/futures/todo.md HIGH-2
-  > `(:feishu, :unbind)`, then deprecate this task using the PR #302
-  > stub pattern.
-
-  Phase 6 PR 15.
-
-      mix ezagent.feishu.unbind ou_6b11faf8e9...
-
-  Drops the row from `feishu_user_bindings`. Does NOT revoke the cap
-  the bound user received — the cap stays attached because the user
-  may have other Feishu open_ids bound to them. Use
-  `mix ezagent.user.token`-style explicit cap revocation if you want that.
+  > **Handoff B1 permission-avoidance pivot (2026-07-24).**
+  > This task now only validates arguments, prints the deprecation notice
+  > and canonical replacement command, and exits. No dispatch, no auth,
+  > no mutation.
+  >
+  >     mix ezagent.feishu.unbind ou_xxx --workspace <name>
+  >
+  > `--workspace` is REQUIRED.
+  >
+  > **Canonical replacement (authenticated, audit-trailed):**
+  >
+  >     mix ezagent workspace unbind --workspace <name> --open-id <oid>
   """
+
   use Mix.Task
 
-  alias EzagentPluginFeishu.UserBinding
+  @shortdoc "DEPRECATED — see `mix ezagent workspace unbind`"
 
   @impl Mix.Task
-  def run([open_id | _]) when is_binary(open_id) and open_id != "" do
-    Mix.Task.run("app.start")
+  def run(argv) do
+    {opts, positional, _} = OptionParser.parse(argv, switches: [workspace: :string])
 
-    case UserBinding.unbind(open_id) do
-      :ok ->
-        Mix.shell().info("✓ unbound #{open_id}")
+    workspace_name = opts[:workspace]
 
-      {:error, :not_found} ->
-        Mix.raise("no binding for #{open_id}")
+    if is_nil(workspace_name) or workspace_name == "" do
+      Mix.raise("""
+      --workspace is required. The legacy unbind task performs NO mutation.
+      Use the canonical authenticated form:
+
+          mix ezagent workspace unbind --workspace <name> --open-id <oid>
+      """)
     end
-  end
 
-  def run(_), do: Mix.raise("usage: mix ezagent.feishu.unbind <open_id>")
+    open_id =
+      case positional do
+        [oid | _] when is_binary(oid) and oid != "" ->
+          oid
+
+        _ ->
+          Mix.raise("""
+          usage: mix ezagent.feishu.unbind <open_id> --workspace <name>
+
+          This task is DEPRECATED and performs NO mutation.
+          Prefer the canonical authenticated form:
+
+              mix ezagent workspace unbind --workspace <name> --open-id <oid>
+          """)
+      end
+
+    IO.puts("""
+    ⚠  mix ezagent.feishu.unbind is DEPRECATED and performs NO mutation.
+       Canonical form: mix ezagent workspace unbind --workspace #{workspace_name} \\
+         --open-id #{open_id}
+    """)
+  end
 end
