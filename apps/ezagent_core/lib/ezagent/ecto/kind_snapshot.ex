@@ -19,7 +19,11 @@ defmodule Ezagent.Ecto.KindSnapshot do
   use Ecto.Schema
   import Ecto.Query
 
-  alias EzagentCore.Repo
+  # C5 §3.4 repo injection — the Ecto Repo is a config injection (Oban-style),
+  # never a literal spine reference, so the actor framework can run against an
+  # isolated store. Core config wires `:ezagent_actor, :repo` to
+  # `EzagentCore.Repo`.
+  defp repo, do: Application.fetch_env!(:ezagent_actor, :repo)
 
   @primary_key {:uri, :string, autogenerate: false}
   schema "kind_snapshots" do
@@ -45,7 +49,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   Fetch a single snapshot row by URI. Returns the Ecto schema struct or nil.
   """
   @spec get(String.t()) :: %__MODULE__{} | nil
-  def get(uri_str) when is_binary(uri_str), do: Repo.get(__MODULE__, uri_str)
+  def get(uri_str) when is_binary(uri_str), do: repo().get(__MODULE__, uri_str)
 
   @doc """
   Fetch snapshot rows for many URIs in ONE query (batch PK-in lookup).
@@ -56,7 +60,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   """
   @spec get_many([String.t()]) :: [%__MODULE__{}]
   def get_many(uri_strs) when is_list(uri_strs) do
-    from(s in __MODULE__, where: s.uri in ^uri_strs) |> Repo.all()
+    from(s in __MODULE__, where: s.uri in ^uri_strs) |> repo().all()
   end
 
   @doc """
@@ -72,7 +76,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   @spec list_all() :: [%__MODULE__{}]
   def list_all do
     from(s in __MODULE__, order_by: [desc: s.updated_at])
-    |> Repo.all()
+    |> repo().all()
   end
 
   @doc """
@@ -86,7 +90,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
     __MODULE__
     |> Ezagent.Persistence.scope_by_workspace(workspace_uri)
     |> order_by([s], desc: s.updated_at)
-    |> Repo.all()
+    |> repo().all()
   end
 
   @doc """
@@ -151,13 +155,13 @@ defmodule Ezagent.Ecto.KindSnapshot do
 
     %__MODULE__{}
     |> Ecto.Changeset.change(insert_attrs)
-    |> Repo.insert(on_conflict: [set: conflict_set], conflict_target: [:uri])
+    |> repo().insert(on_conflict: [set: conflict_set], conflict_target: [:uri])
   end
 
   @doc "Delete the snapshot for `uri_str`. Returns `:ok` even if nothing existed."
   @spec delete(String.t()) :: :ok
   def delete(uri_str) when is_binary(uri_str) do
-    from(s in __MODULE__, where: s.uri == ^uri_str) |> Repo.delete_all()
+    from(s in __MODULE__, where: s.uri == ^uri_str) |> repo().delete_all()
     :ok
   end
 
@@ -172,11 +176,11 @@ defmodule Ezagent.Ecto.KindSnapshot do
   """
   @spec clear_state_preserving_marker(String.t()) :: :ok
   def clear_state_preserving_marker(uri_str) when is_binary(uri_str) do
-    case Repo.get(__MODULE__, uri_str) do
+    case repo().get(__MODULE__, uri_str) do
       %__MODULE__{ever_created: true} = row ->
         row
         |> Ecto.Changeset.change(state_binary: :erlang.term_to_binary(%{}), state: nil)
-        |> Repo.update!()
+        |> repo().update!()
 
         :ok
 
@@ -202,7 +206,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   """
   @spec ever_created?(String.t()) :: boolean()
   def ever_created?(uri_str) when is_binary(uri_str) do
-    case Repo.get(__MODULE__, uri_str) do
+    case repo().get(__MODULE__, uri_str) do
       %__MODULE__{ever_created: true} -> true
       _ -> false
     end
@@ -220,14 +224,14 @@ defmodule Ezagent.Ecto.KindSnapshot do
   """
   @spec mark_ever_created(String.t()) :: {:ok, %__MODULE__{}} | {:error, term()}
   def mark_ever_created(uri_str) when is_binary(uri_str) do
-    case Repo.get(__MODULE__, uri_str) do
+    case repo().get(__MODULE__, uri_str) do
       nil ->
         {:error, :no_row}
 
       row ->
         row
         |> Ecto.Changeset.change(%{ever_created: true, updated_at: DateTime.utc_now()})
-        |> Repo.update()
+        |> repo().update()
     end
   end
 

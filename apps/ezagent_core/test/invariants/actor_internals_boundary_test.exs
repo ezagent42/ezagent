@@ -62,7 +62,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # replacement.
   @forward_frozen 158
   @forward_fixed_frozen 2
-  @reverse_frozen 123
+  # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
+  # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
+  # `:ezagent_actor, :repo` injection, −13 sites.
+  @reverse_frozen 110
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

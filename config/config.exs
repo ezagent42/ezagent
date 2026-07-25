@@ -13,6 +13,15 @@ import Config
 config :ezagent_core,
   ecto_repos: [EzagentCore.Repo]
 
+# ── C5 §3.4 actor-framework port wiring ────────────────────────────────────
+# The actor framework (files still live in core until the physical move
+# chunk) reaches the staying-core spine ONLY through these config-resolved
+# injections/adapters — the same inversion as the `authority_loader` config,
+# `ReadyGate.register_external_gate`, and `SpawnRegistry.register/2`. The
+# `:ezagent_actor` OTP app does not exist yet; config keys do not require it.
+config :ezagent_actor,
+  repo: EzagentCore.Repo
+
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,
   bridge_resolver: Ezagent.AgentBridge.TokenStore

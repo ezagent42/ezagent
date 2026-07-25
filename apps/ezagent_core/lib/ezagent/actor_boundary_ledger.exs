@@ -1009,126 +1009,6 @@
       note: "§3.4 upward ref: Ezagent.Persistence.TransientRetry"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "50adb16d3b8b81cbbeef45c9fa374e0c58e24421a2defc2fccf52f31ce3cb678",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "6d32a5ec9a30a8f1182d81e26755d73e5cfbe994664dcbd6aa980a1e015082ce",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "6d32a5ec9a30a8f1182d81e26755d73e5cfbe994664dcbd6aa980a1e015082ce",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "886778badc0804e642b2df2bfd2327cec40888ea18b3699576892b75440e679d",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "8ec2e674be3a8ca700e7bad50de78146c0d3cf0ac9aee24369b751241fe1b16d",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "a169150ca734b25cd66f489dfa32fed5f7521f3ecd0d2b95669a3baad15b8031",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "b4f36f3859463903f6437eff1a232c6a180940ceee1c5c4a728e0091647a8341",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "b4f36f3859463903f6437eff1a232c6a180940ceee1c5c4a728e0091647a8341",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "b4f36f3859463903f6437eff1a232c6a180940ceee1c5c4a728e0091647a8341",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "cd5499927faafded831d06f33c1ba32a54444ce8d0eb31f8433db0bf7c0159cf",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "dba1d4d67eeb3d0e564c26b0d33a550df4fef5ce57e98e6ea30ee11c97f9a665",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "EzagentCore.Repo",
-      sha: "e889ae08c82471e5db5028b06f1303d64c961d2099f010fa2c7bf047edf963ea",
-      note: "§3.4 upward ref: EzagentCore.Repo"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap",
-      sha: "bcd4738a093f45dce7f480afdb7ee63cf389601eff3c8225709695ca43219c87",
-      note: "§3.4 upward ref: Ezagent.Cap"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "57e953c716afb89cc14c9c4e5c2945cdf042f00aa3f816b4a27ded21acd4e706",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "bb97846709e86453e96d6b6b82864e6e05581fe5bbadc6fc797ec2ba92ae6edb",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "c05cb6ea136a6f84dd0d5c27e41b0628f2fe86bc529bf50921f2fd4fb26d6dc6",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "d754b39f6bc8633947fda3bd923c47392dd3637979b4dee95a1a12419bfffece",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.Verifier",
-      sha: "a213c0832a21d37b52c493faf877529fa5a7e1e7ca086a83555a81530d29ed98",
-      note: "§3.4 upward ref: Ezagent.Cap.Verifier"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.Capability",
       sha: "61f9ccae304668476f5eac77dd5709c0086321eb09c7127b8d60157c7ba4f26d",
@@ -1136,26 +1016,14 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DLQ",
-      sha: "d40dc8d3fb306e34f0eb75a391cc98dce557567c5be16fab8d301faf41b62ce1",
-      note: "§3.4 upward ref: Ezagent.DLQ"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DLQ",
-      sha: "ddb075df7a5b51b90d7e3c7290a7acdc4651bfe0a0e6af5b5925508f6ffa8f6b",
-      note: "§3.4 upward ref: Ezagent.DLQ"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.DispatchOrigin",
-      sha: "7cbebf161234c98750f0aa73f1db17c00e99d137c66a48191386442a0313f601",
+      sha: "fec578c34f032360fdb1da41b1b074754e9b39d0ce41b63dbc91e9ce4d1abd18",
       note: "§3.4 upward ref: Ezagent.DispatchOrigin"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.DispatchOrigin",
-      sha: "fec578c34f032360fdb1da41b1b074754e9b39d0ce41b63dbc91e9ce4d1abd18",
+      sha: "7cbebf161234c98750f0aa73f1db17c00e99d137c66a48191386442a0313f601",
       note: "§3.4 upward ref: Ezagent.DispatchOrigin"
     },
     %{
@@ -1166,21 +1034,69 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "EzagentCore.PubSub",
-      sha: "776de3e60633c1e07826026cd1ccad6123821011d0d115fcc08c0f0f44033ece",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "bb97846709e86453e96d6b6b82864e6e05581fe5bbadc6fc797ec2ba92ae6edb",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind.ex",
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "57e953c716afb89cc14c9c4e5c2945cdf042f00aa3f816b4a27ded21acd4e706",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "c05cb6ea136a6f84dd0d5c27e41b0628f2fe86bc529bf50921f2fd4fb26d6dc6",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.Cap",
-      sha: "eece826f7cdbe5930c32d4d6ecb5c3371fab3c2d741fb71624bf3fc3c2fc7e12",
+      sha: "bcd4738a093f45dce7f480afdb7ee63cf389601eff3c8225709695ca43219c87",
       note: "§3.4 upward ref: Ezagent.Cap"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind.ex",
-      target: "Ezagent.Capability",
-      sha: "0afd636fb7291f6f7cf00fad2cc20e09030ec552e0d0826bf503d3c41e7cc680",
-      note: "§3.4 upward ref: Ezagent.Capability"
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.Verifier",
+      sha: "a213c0832a21d37b52c493faf877529fa5a7e1e7ca086a83555a81530d29ed98",
+      note: "§3.4 upward ref: Ezagent.Cap.Verifier"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "d754b39f6bc8633947fda3bd923c47392dd3637979b4dee95a1a12419bfffece",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.DLQ",
+      sha: "ddb075df7a5b51b90d7e3c7290a7acdc4651bfe0a0e6af5b5925508f6ffa8f6b",
+      note: "§3.4 upward ref: Ezagent.DLQ"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "Ezagent.DLQ",
+      sha: "d40dc8d3fb306e34f0eb75a391cc98dce557567c5be16fab8d301faf41b62ce1",
+      note: "§3.4 upward ref: Ezagent.DLQ"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
+      target: "EzagentCore.PubSub",
+      sha: "776de3e60633c1e07826026cd1ccad6123821011d0d115fcc08c0f0f44033ece",
+      note: "§3.4 upward ref: EzagentCore.PubSub"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
@@ -1197,19 +1113,7 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
-      sha: "29344b81df36b4051143fd8f9079ddbd0f015fc0dd398c0f7d2d0521033efba7",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind.ex",
-      target: "Ezagent.Capability",
       sha: "8718dfe861e385b762aaeb5546bbe6ac6361a68aab84e6818515c9f60350a93c",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind.ex",
-      target: "Ezagent.Capability",
-      sha: "a6664f105e75532523d42d6b11968aa7eaed29a4853a042389f2cdb1c2f51a4d",
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
@@ -1221,14 +1125,32 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
+      sha: "d4cb55893f65d609f3bf2a72a0a41c6525bc5439d6e421439f92cb24ad05ed15",
+      note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind.ex",
+      target: "Ezagent.Capability",
       sha: "c6f3efa58350d6896b02932eabbea9a209af0b5d324c37276bf02f6ae1b7b996",
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
-      sha: "d4cb55893f65d609f3bf2a72a0a41c6525bc5439d6e421439f92cb24ad05ed15",
+      sha: "a6664f105e75532523d42d6b11968aa7eaed29a4853a042389f2cdb1c2f51a4d",
       note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind.ex",
+      target: "Ezagent.Capability",
+      sha: "0afd636fb7291f6f7cf00fad2cc20e09030ec552e0d0826bf503d3c41e7cc680",
+      note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind.ex",
+      target: "Ezagent.Cap",
+      sha: "eece826f7cdbe5930c32d4d6ecb5c3371fab3c2d741fb71624bf3fc3c2fc7e12",
+      note: "§3.4 upward ref: Ezagent.Cap"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
@@ -1237,46 +1159,34 @@
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.ApiKeys",
-      sha: "3046d845a834fd11933fca5cf440603bfcbd99b4432e528642eb04a54020e606",
-      note: "§3.4 upward ref: Ezagent.ActionSet.ApiKeys"
+      path: "apps/ezagent_core/lib/ezagent/kind.ex",
+      target: "Ezagent.Capability",
+      sha: "29344b81df36b4051143fd8f9079ddbd0f015fc0dd398c0f7d2d0521033efba7",
+      note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.CcHeadlessAgent",
-      sha: "a0ddbfad87653cde1fc181e1c4469f7a4cef175427cbfbc550bf5448a3c6b74f",
-      note: "§3.4 upward ref: Ezagent.ActionSet.CcHeadlessAgent"
+      target: "Ezagent.ActionSet.Session",
+      sha: "1e60eab48739d33a20dc5f8b88d56735999c39538de9f5b9c69d072795b8b53c",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
+      target: "Ezagent.ActionSet.Turn",
+      sha: "81f519b27b69f0745ba2088de64c9f2f3e9225e5f40c400f6b5310fdb9a60509",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Turn"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
+      target: "Ezagent.ActionSet.Surface",
+      sha: "8b07654223afd6811c76ba6aefa9085eea8ed3f866a00e56765fe6bd3a1469f3",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Surface"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
       target: "Ezagent.ActionSet.ConfigEvolve",
       sha: "503ac384a93c971cd29a163c492404dc55dd1d4c2ab8838ff03e8f2be88042f3",
       note: "§3.4 upward ref: Ezagent.ActionSet.ConfigEvolve"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.ConfigEvolve",
-      sha: "cfb140b459824d0d7d420b06c0c4769ccc9302aed95206e12e2245c5839076b3",
-      note: "§3.4 upward ref: Ezagent.ActionSet.ConfigEvolve"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.CurlAgent",
-      sha: "5a83e8d6f378b03ed139e113fcff0f9848424d754c672a8972605489a1b08711",
-      note: "§3.4 upward ref: Ezagent.ActionSet.CurlAgent"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.ExternalMirror",
-      sha: "3b2017dfe4961fc46d2be046706a75efdf678100a4aa2a724fdc136d9419d4e6",
-      note: "§3.4 upward ref: Ezagent.ActionSet.ExternalMirror"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.ExternalMirror",
-      sha: "6f92dbe6ffc7999a0a16c8ca620e8caa04b3184385aa97436cd184b85eaad31c",
-      note: "§3.4 upward ref: Ezagent.ActionSet.ExternalMirror"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
@@ -1298,27 +1208,21 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.Session",
-      sha: "00b7b0167f819f7c6f709e89196fb898d589ccaee9e54f8bc58ee61d2a18e3c8",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
+      target: "Ezagent.ActionSet.ApiKeys",
+      sha: "3046d845a834fd11933fca5cf440603bfcbd99b4432e528642eb04a54020e606",
+      note: "§3.4 upward ref: Ezagent.ActionSet.ApiKeys"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.Session",
-      sha: "1e60eab48739d33a20dc5f8b88d56735999c39538de9f5b9c69d072795b8b53c",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
+      target: "Ezagent.ActionSet.CcHeadlessAgent",
+      sha: "a0ddbfad87653cde1fc181e1c4469f7a4cef175427cbfbc550bf5448a3c6b74f",
+      note: "§3.4 upward ref: Ezagent.ActionSet.CcHeadlessAgent"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.Surface",
-      sha: "8b07654223afd6811c76ba6aefa9085eea8ed3f866a00e56765fe6bd3a1469f3",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Surface"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
-      target: "Ezagent.ActionSet.Turn",
-      sha: "81f519b27b69f0745ba2088de64c9f2f3e9225e5f40c400f6b5310fdb9a60509",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Turn"
+      target: "Ezagent.ActionSet.ExternalMirror",
+      sha: "3b2017dfe4961fc46d2be046706a75efdf678100a4aa2a724fdc136d9419d4e6",
+      note: "§3.4 upward ref: Ezagent.ActionSet.ExternalMirror"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
@@ -1327,16 +1231,34 @@
       note: "§3.4 upward ref: Ezagent.ActionSet.Turn"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
+      target: "Ezagent.ActionSet.ConfigEvolve",
+      sha: "cfb140b459824d0d7d420b06c0c4769ccc9302aed95206e12e2245c5839076b3",
+      note: "§3.4 upward ref: Ezagent.ActionSet.ConfigEvolve"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
       target: "Ezagent.ActionSet.ExternalMirror",
-      sha: "fb0ed3daa874ef0e291392ea0cc06075041f63f93b1dbe219022495db60891ef",
+      sha: "6f92dbe6ffc7999a0a16c8ca620e8caa04b3184385aa97436cd184b85eaad31c",
       note: "§3.4 upward ref: Ezagent.ActionSet.ExternalMirror"
     },
     %{
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
+      target: "Ezagent.ActionSet.Session",
+      sha: "00b7b0167f819f7c6f709e89196fb898d589ccaee9e54f8bc58ee61d2a18e3c8",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/behavior_set.ex",
+      target: "Ezagent.ActionSet.CurlAgent",
+      sha: "5a83e8d6f378b03ed139e113fcff0f9848424d754c672a8972605489a1b08711",
+      note: "§3.4 upward ref: Ezagent.ActionSet.CurlAgent"
+    },
+    %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
-      target: "Ezagent.ActionSet.Publisher.SessionImpl",
-      sha: "75f24e859221df9667c3b318e48ece30eaec195c5dcdc87d75ae88923a82e5c5",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Publisher.SessionImpl"
+      target: "Ezagent.ActionSet.Session",
+      sha: "7c837a7f8b6cbfdff002e9e1fd189b69b567e4734fd9b98ffdbb0c8c357d5cf3",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
@@ -1346,9 +1268,9 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
-      target: "Ezagent.ActionSet.Session",
-      sha: "7c837a7f8b6cbfdff002e9e1fd189b69b567e4734fd9b98ffdbb0c8c357d5cf3",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Session"
+      target: "Ezagent.ActionSet.ExternalMirror",
+      sha: "fb0ed3daa874ef0e291392ea0cc06075041f63f93b1dbe219022495db60891ef",
+      note: "§3.4 upward ref: Ezagent.ActionSet.ExternalMirror"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
@@ -1358,9 +1280,9 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
-      target: "Ezagent.ActionSet.SupervisorApproval",
-      sha: "829f8478f18c9909d6ecdb4db5c28ddad1346fde08ae4c2da8cabfd06df3eeaf",
-      note: "§3.4 upward ref: Ezagent.ActionSet.SupervisorApproval"
+      target: "Ezagent.ActionSet.Turn",
+      sha: "692acd4c74d0c8d7f59555b7a548ef29416723db08699ada4951dec3a5bb1bbc",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Turn"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
@@ -1370,9 +1292,15 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
-      target: "Ezagent.ActionSet.Turn",
-      sha: "692acd4c74d0c8d7f59555b7a548ef29416723db08699ada4951dec3a5bb1bbc",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Turn"
+      target: "Ezagent.ActionSet.SupervisorApproval",
+      sha: "829f8478f18c9909d6ecdb4db5c28ddad1346fde08ae4c2da8cabfd06df3eeaf",
+      note: "§3.4 upward ref: Ezagent.ActionSet.SupervisorApproval"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
+      target: "Ezagent.ActionSet.Publisher.SessionImpl",
+      sha: "75f24e859221df9667c3b318e48ece30eaec195c5dcdc87d75ae88923a82e5c5",
+      note: "§3.4 upward ref: Ezagent.ActionSet.Publisher.SessionImpl"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
@@ -1382,27 +1310,27 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "6e8ed9feb600c477e340e029f4d33048f0e2634438a2a658e7b40cb0221d5e00",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
       target: "Ezagent.DLQ",
       sha: "451b250ee0e1b6faca45e7730526173721e5ebe6ce6661b8c10e54195c85bc82",
       note: "§3.4 upward ref: Ezagent.DLQ"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.Cap.Grant",
-      sha: "82526fee5ea7129bd3b6883e662addb11fedde17030f457c6f50e21b26f58f25",
-      note: "§3.4 upward ref: Ezagent.Cap.Grant"
+      path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "6e8ed9feb600c477e340e029f4d33048f0e2634438a2a658e7b40cb0221d5e00",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Cap.RuntimeView",
       sha: "956a8f2555bb067f7c56df258fa3924fcd1fd75d3d4c78349a04231fb8f2122d",
       note: "§3.4 upward ref: Ezagent.Cap.RuntimeView"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
+      target: "Ezagent.DispatchOrigin",
+      sha: "27fb882d715f63685a8914019b2484cd5382cb916099701658cb8a1089aed944",
+      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
@@ -1413,13 +1341,19 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Capability",
-      sha: "20c0d41c46ec3b4e7856349c47450dd0a709d316cd6bb67629092eb9ede08889",
+      sha: "c49e09f66ce3d89382f94a51fafdbdefb2421dc0b2f021937854f796186c20da",
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
+      target: "Ezagent.Cap.Grant",
+      sha: "82526fee5ea7129bd3b6883e662addb11fedde17030f457c6f50e21b26f58f25",
+      note: "§3.4 upward ref: Ezagent.Cap.Grant"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Capability",
-      sha: "3a2b871ba325494db758563e48b656cd9f466da992c4fc984d36e0e9def13cf4",
+      sha: "20c0d41c46ec3b4e7856349c47450dd0a709d316cd6bb67629092eb9ede08889",
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
@@ -1431,26 +1365,8 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Capability",
-      sha: "c49e09f66ce3d89382f94a51fafdbdefb2421dc0b2f021937854f796186c20da",
+      sha: "3a2b871ba325494db758563e48b656cd9f466da992c4fc984d36e0e9def13cf4",
       note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.DispatchOrigin",
-      sha: "27fb882d715f63685a8914019b2484cd5382cb916099701658cb8a1089aed944",
-      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "Ezagent.Capability",
-      sha: "0445a4dce0a8c357560208232f9be8af846f917673329ed53fddd4a050a882f3",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "Ezagent.EventLog",
-      sha: "9cf76b8133853c0a05610f104f627b474cb55f6155a31ec3a9ef745ea6523ddc",
-      note: "§3.4 upward ref: Ezagent.EventLog"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
@@ -1465,9 +1381,27 @@
       note: "§3.4 upward ref: EzagentCore.PubSub"
     },
     %{
+      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
+      target: "Ezagent.EventLog",
+      sha: "9cf76b8133853c0a05610f104f627b474cb55f6155a31ec3a9ef745ea6523ddc",
+      note: "§3.4 upward ref: Ezagent.EventLog"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
+      target: "Ezagent.Capability",
+      sha: "0445a4dce0a8c357560208232f9be8af846f917673329ed53fddd4a050a882f3",
+      note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
       target: "Ezagent.Capability",
       sha: "029277439afe24f003819ddaf2a3fed12f03ded53bf1a29e1d8ebdfbe331a85e",
+      note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
+      target: "Ezagent.Capability",
+      sha: "a31eedbfaf2d81c68c6005a13d1f5261feb0195b5a0a0c51fa61c2ddd8da0eb3",
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
@@ -1489,48 +1423,6 @@
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "a31eedbfaf2d81c68c6005a13d1f5261feb0195b5a0a0c51fa61c2ddd8da0eb3",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap",
-      sha: "3e3381ebb5733b50e665b75aa67c66fe95a89281fd23c28359ebc36850d2b61b",
-      note: "§3.4 upward ref: Ezagent.Cap"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "72d86bb597e01a796e98bf851d5dbbd8430f4bf3d25bf1171cb688981e60d906",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "7a2c911f4229e39cc280374ea57e4dba26a1126ef3dca37ae1473f8672f86ccb",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
       target: "Ezagent.Cap.Authority",
       sha: "7d7963b538d688edbb9de89fc3d2dd657f8db606fba0d35dbf98a350a8299f8a",
@@ -1539,31 +1431,7 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
       target: "Ezagent.Cap.Authority",
-      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
-      note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.Authority",
-      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
       note: "§3.4 upward ref: Ezagent.Cap.Authority"
     },
     %{
@@ -1580,15 +1448,39 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "3a32602e1373817c511d7b94dad2fbd74ab2ed5154352b97ecbd38a9b0f10d52",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+      target: "Ezagent.Cap.Authority",
+      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "bde4c77e310658701f364ab5fac86ad3aed8c6c2092f0c436b33808c5d7e503b",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+      target: "Ezagent.Cap.Authority",
+      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap",
+      sha: "3e3381ebb5733b50e665b75aa67c66fe95a89281fd23c28359ebc36850d2b61b",
+      note: "§3.4 upward ref: Ezagent.Cap"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "72d86bb597e01a796e98bf851d5dbbd8430f4bf3d25bf1171cb688981e60d906",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Capability",
+      sha: "165b89045e9ef4144d363784a263098085adc9714573502365d9aef7c3e69c8c",
+      note: "§3.4 upward ref: Ezagent.Capability"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
@@ -1598,21 +1490,57 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Capability",
-      sha: "165b89045e9ef4144d363784a263098085adc9714573502365d9aef7c3e69c8c",
-      note: "§3.4 upward ref: Ezagent.Capability"
+      target: "Ezagent.Cap.Authority",
+      sha: "7a2c911f4229e39cc280374ea57e4dba26a1126ef3dca37ae1473f8672f86ccb",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
-      target: "Ezagent.Cap",
-      sha: "e6d1c812c7a66bab8771c5ce28d55720d0f735e3fa8bd598db4bba068036056f",
-      note: "§3.4 upward ref: Ezagent.Cap"
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "bde4c77e310658701f364ab5fac86ad3aed8c6c2092f0c436b33808c5d7e503b",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.DeliveryOutbox",
+      sha: "3a32602e1373817c511d7b94dad2fbd74ab2ed5154352b97ecbd38a9b0f10d52",
+      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
+      target: "Ezagent.Cap.Authority",
+      sha: "4d0921bbcc056f8f8fdf1d5422272b06af92c7d5349a321499c3324cdbc90d22",
+      note: "§3.4 upward ref: Ezagent.Cap.Authority"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
       target: "Ezagent.Persistence",
       sha: "8379b08f78bf9ec2c8e591153dc1d3a757ade679489a8173591db71a95c07a2b",
       note: "§3.4 upward ref: Ezagent.Persistence"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
+      target: "Ezagent.Cap",
+      sha: "e6d1c812c7a66bab8771c5ce28d55720d0f735e3fa8bd598db4bba068036056f",
+      note: "§3.4 upward ref: Ezagent.Cap"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/lifecycle.ex",
@@ -1640,12 +1568,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.EventLog",
-      sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
-      note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
       target: "Ezagent.SagaRunner",
       sha: "0a8513217e50c41de6b02d48eb23119a95ea2de66bcf5320796e5a39fab04638",
       note: "§3.4 upward ref: Ezagent.SagaRunner"
@@ -1658,26 +1580,32 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/router.ex",
+      target: "Ezagent.SagaRunner.Saga",
+      sha: "61e1a3069d5b050338ce08ec1356b4da5eeac3cbdc8a4ddfa97bb564c57ff358",
+      note: "§3.4 upward ref: Ezagent.SagaRunner.Saga"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/router.ex",
       target: "Ezagent.SagaRunner",
       sha: "e8e4e8139b748ac05d4fed8c7e4c178435a8c6f187930457892839d6c68ce750",
       note: "§3.4 upward ref: Ezagent.SagaRunner"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.SagaRunner.Saga",
-      sha: "61e1a3069d5b050338ce08ec1356b4da5eeac3cbdc8a4ddfa97bb564c57ff358",
-      note: "§3.4 upward ref: Ezagent.SagaRunner.Saga"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
-      target: "EzagentCore.PubSub",
-      sha: "29e2b5eae263d8be77742c3fadd54023974740dc463f44d4b1b70312f3ebd9f7",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
+      target: "Ezagent.EventLog",
+      sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
+      note: "§3.4 upward ref: Ezagent.EventLog"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
       target: "EzagentCore.PubSub",
       sha: "d41966bea829bcb6f50930e0d61d07ac5923b3006b2141bd888a1b329874e758",
+      note: "§3.4 upward ref: EzagentCore.PubSub"
+    },
+    %{
+      path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
+      target: "EzagentCore.PubSub",
+      sha: "29e2b5eae263d8be77742c3fadd54023974740dc463f44d4b1b70312f3ebd9f7",
       note: "§3.4 upward ref: EzagentCore.PubSub"
     },
     %{
@@ -1691,12 +1619,6 @@
       target: "Ezagent.Persistence",
       sha: "8379b08f78bf9ec2c8e591153dc1d3a757ade679489a8173591db71a95c07a2b",
       note: "§3.4 upward ref: Ezagent.Persistence"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
-      target: "EzagentCore.Repo",
-      sha: "e7cda8f1f5fdb465c397cd93d5cca4b1e8318dd9ef1e5f86e0fd207818983858",
-      note: "§3.4 upward ref: EzagentCore.Repo"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/spawn_registry.ex",

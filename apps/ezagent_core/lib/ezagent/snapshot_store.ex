@@ -276,8 +276,13 @@ defmodule Ezagent.SnapshotStore do
   """
   @spec count() :: non_neg_integer()
   def count do
-    EzagentCore.Repo.aggregate(KindSnapshot, :count, :uri)
+    repo().aggregate(KindSnapshot, :count, :uri)
   end
+
+  # C5 §3.4 repo injection — the Ecto Repo is a config injection (Oban-style),
+  # never a literal spine reference. Core config wires `:ezagent_actor, :repo`
+  # to `EzagentCore.Repo`.
+  defp repo, do: Application.fetch_env!(:ezagent_actor, :repo)
 
   # ---------------------------------------------------------------------
   # Internals
