@@ -161,7 +161,7 @@ defmodule Ezagent.ActorBoundaryScanner do
     root = repo_root()
 
     root
-    |> Path.join([@actor_lib, "**", "*.ex"])
+    |> then(&Path.join([&1, @actor_lib, "**", "*.ex"]))
     |> Path.wildcard()
     |> Enum.flat_map(fn abs ->
       rel = Path.relative_to(abs, root)
@@ -741,7 +741,7 @@ defmodule Ezagent.ActorBoundaryScanner do
     root = repo_root()
 
     root
-    |> Path.join([@actor_lib, "**", "*.ex"])
+    |> then(&Path.join([&1, @actor_lib, "**", "*.ex"]))
     |> Path.wildcard()
     |> Enum.reduce(MapSet.new(), fn path, acc ->
       case Code.string_to_quoted(File.read!(path)) do
