@@ -21,13 +21,21 @@ defmodule Ezagent.UniversalBehaviors do
   behavior's actions should not collide with a common per-Kind action name
   (`:delete` / `:reconfigure` are reserved for `Manage`). Enforced by
   `lifecycle_persistence_access_test` / the manage-coverage invariant.
-  """
 
-  @universal [Ezagent.ActionSet.Manage]
+  ## C5 §3.4 — registration data, not a hard-coded module
+
+  The list itself is core POLICY (`Ezagent.ActionSet.Manage` stays in
+  `ezagent_core`), so this framework module cannot name it: the concrete
+  modules are injected as registration data by the core boot wiring
+  (`Ezagent.Kind.Adapters.wire!/0`, key `:universal_behaviors`) — the same
+  inversion as the `BehaviorSet` slice-owner tables. Module ATOMS only;
+  the framework calls `actions/0` on them at runtime. Standalone (no core
+  boot) the set is empty.
+  """
 
   @doc "All behaviors that apply to every Kind by construction."
   @spec all() :: [module()]
-  def all, do: @universal
+  def all, do: Application.get_env(:ezagent_actor, :universal_behaviors, [])
 
   @doc """
   The universal behavior that handles `action`, or `nil` if no universal
@@ -36,6 +44,6 @@ defmodule Ezagent.UniversalBehaviors do
   """
   @spec behavior_for_action(atom()) :: module() | nil
   def behavior_for_action(action) when is_atom(action) do
-    Enum.find(@universal, fn behavior -> action in behavior.actions() end)
+    Enum.find(all(), fn behavior -> action in behavior.actions() end)
   end
 end

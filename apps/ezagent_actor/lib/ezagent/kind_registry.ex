@@ -3,7 +3,7 @@ defmodule Ezagent.KindRegistry do
   KindRegistry — URI → pid index for Kind instances.
 
   Thin wrapper over stdlib `Registry` (started in
-  `EzagentCore.Application` children as `{Registry, keys: :unique, name:
+  `EzagentActor.Application` children as `{Registry, keys: :unique, name:
   Ezagent.KindRegistry}`). Borrowed pattern from the old esr
   `Ezagent.Entity.Registry` shape (SPEC §当前 esr 状态对照 borrow #1) but
   with `put_new` as the **only** registration path so the

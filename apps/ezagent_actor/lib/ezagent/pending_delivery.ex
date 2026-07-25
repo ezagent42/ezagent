@@ -9,7 +9,7 @@ defmodule Ezagent.PendingDelivery do
   `Ezagent.Kind.Server.handle_continue(:announce_ready, ...)` after the
   Kind transitions to `:ready`.
 
-  Owned by `EzagentCore.EtsOwner` shared lifecycle.
+  Owned by `EzagentActor.EtsOwner` shared lifecycle.
 
   ## Phase 1 scope
 

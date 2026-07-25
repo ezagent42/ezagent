@@ -10,7 +10,7 @@ defmodule Ezagent.KindSupervisor do
   or domain-app ownership boundaries) via the `supervisor/0` callback;
   those that don't fall back to this default.
 
-  Started as a child in `EzagentCore.Application` so it is always
+  Started as a child in `EzagentActor.Application` so it is always
   available before any plugin or domain app tries to spawn.
 
   See `Ezagent.Kind.spawn/2` moduledoc + invariant tests

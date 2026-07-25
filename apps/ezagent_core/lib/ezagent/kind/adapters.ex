@@ -79,7 +79,13 @@ defmodule Ezagent.Kind.Adapters do
         Ezagent.ActionSet.SupervisorApproval,
         Ezagent.ActionSet.Publisher.SessionImpl
       ]
-    }
+    },
+    # §3.4 / #533 §3.4 — the universal-behavior SET is core policy
+    # (`Ezagent.ActionSet.Manage` stays in core); the moved
+    # `Ezagent.UniversalBehaviors` reads it from app env instead of
+    # hard-coding the module (same registration-data inversion as the
+    # tables above; retires the last reverse-ratchet entry).
+    universal_behaviors: [Ezagent.ActionSet.Manage]
   ]
 
   @doc false

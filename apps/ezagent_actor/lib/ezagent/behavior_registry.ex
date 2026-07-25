@@ -7,7 +7,7 @@ defmodule Ezagent.BehaviorRegistry do
   Registry) because the key shape is a tuple and we don't need
   process monitoring.
 
-  Owned by `EzagentCore.EtsOwner`. A flavor plugin's boot wires its
+  Owned by `EzagentActor.EtsOwner`. A flavor plugin's boot wires its
   Behaviors here — e.g. the py plugin registers
   `{Ezagent.Entity.Agent, :py_sync_result} → Ezagent.ActionSet.PyAgent`.
 

@@ -7,7 +7,7 @@ defmodule Ezagent.Idempotency.Sweeper do
 
   This GenServer carries state (the prune timer) and benefits from
   independent restart semantics — its supervisor child position is
-  separate from `EzagentCore.EtsOwner` so a Sweeper crash doesn't take
+  separate from `EzagentActor.EtsOwner` so a Sweeper crash doesn't take
   the ETS tables with it.
 
   ## High-water configuration

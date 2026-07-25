@@ -26,20 +26,20 @@ defmodule Ezagent.SliceChange.Cursors do
   Single `:set` ETS table `:ezagent_slice_change_cursors` keyed by URI
   string. `next/1` uses `:ets.update_counter/4` with a defaulted entry,
   giving lock-free atomic increment under concurrent emitters. The
-  table is owned by `EzagentCore.EtsOwner` (same lifecycle as every
+  table is owned by `EzagentActor.EtsOwner` (same lifecycle as every
   other reliability primitive table).
 
   Reset-on-restart is intentional: cursors are transport-level. Per
   `feedback_let_it_crash_no_workarounds`, post-restart subscribers
   re-sync via cap-gated `Kind.get_slice/2`; the cursor wraps back to
   1 and that's fine — subscribers that need "did I miss any?"
-  semantics across restarts wire `EzagentCore.EtsOwner` start as the
+  semantics across restarts wire `EzagentActor.EtsOwner` start as the
   observable epoch boundary.
   """
 
   @table :ezagent_slice_change_cursors
 
-  @doc "ETS table name owned by EzagentCore.EtsOwner."
+  @doc "ETS table name owned by EzagentActor.EtsOwner."
   @spec table() :: atom()
   def table, do: @table
 

@@ -219,7 +219,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     injected =
       Scanner.reverse_sites_in_source(
         "defmodule Ezagent.Kind.Server do\n  def m(%Ezagent.Capability{} = gate_teeth_probe), do: gate_teeth_probe\nend",
-        "apps/ezagent_core/lib/ezagent/kind/server.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/server.ex",
         MapSet.new([Ezagent.Kind.Server])
       )
 
@@ -519,7 +519,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
       File.read!(
         Path.join(
           Scanner.repo_root(),
-          "apps/ezagent_core/lib/ezagent/behavior/legacy_callbacks.ex"
+          "apps/ezagent_actor/lib/ezagent/behavior/legacy_callbacks.ex"
         )
       )
 

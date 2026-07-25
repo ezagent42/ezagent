@@ -20,7 +20,11 @@ defmodule EzagentCore.Application do
         EzagentCore.EtsReadiness,
 
         # ① ETS tables — must be ready before any process that reads/writes them
-        # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
+        # (plugin Kind instances). The FRAMEWORK tables (ReadyGate /
+        # PendingDelivery / Idempotency / BehaviorRegistry / SpawnRegistry /
+        # SliceChange.Cursors / URI.SchemeRegistry) moved to
+        # `EzagentActor.EtsOwner` in the C5 physical move; OTP starts
+        # `ezagent_actor` before core (core declares the dep).
         # See DECISIONS impl-time §ETS+Application children.
         EzagentCore.EtsOwner,
 
@@ -35,12 +39,9 @@ defmodule EzagentCore.Application do
         # domain when an authoritative preparation implementation is present.
         Ezagent.Kind.Template.PreStart,
 
-        # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
-        {Registry, keys: :unique, name: Ezagent.KindRegistry},
-
-        # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
-        # take the ETS owner with it.
-        Ezagent.Idempotency.Sweeper,
+        # ②–③ (the `Ezagent.KindRegistry` stdlib Registry child and
+        # `Ezagent.Idempotency.Sweeper`) moved to `EzagentActor.Application`
+        # with the framework (C5 §3.2).
 
         # ③·5 Plugin RegistrationHooks (SPEC
         # docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
@@ -92,28 +93,16 @@ defmodule EzagentCore.Application do
         # re-subscriptions (PR-N2) depend on both being up.
         Ezagent.NotificationSubscriptions,
 
-        # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
-        # `:periodic` strategy; `:on_change` / `:on_terminate` go through
-        # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
-        # **Skipped in :test env** for the same Sandbox-ownership reason
-        # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
-        # tests use `:on_change` strategy so this writer is dormant; the
-        # 100ms timer firing in a sandbox-rolled-back state was leaving
-        # the DB connection contended for the next test's snapshot writes.
-        Ezagent.Snapshot.Writer,
+        # ⑦ (the snapshot async writer, `Ezagent.Snapshot.Writer`) and ⑨
+        # (the default `Ezagent.KindSupervisor`) moved to
+        # `EzagentActor.Application` with the framework (C5 §3.2); the
+        # writer keeps its skipped-in-:test semantics there.
 
         # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
         # singletons (System Kind sentinels + future cross-domain
         # controllers). Workspace.Supervisor moved out to
         # ezagent_domain_workspace as part of the three-layer split.
-        {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one},
-
-        # ⑨ Default Kind supervisor — V1 structural prevention (Allen
-        # 2026-05-21). `Ezagent.Kind.spawn/2` routes here when a Kind
-        # module doesn't declare its own `supervisor/0` callback. Always
-        # available so spawn calls from any plugin or domain app at boot
-        # have a destination.
-        Ezagent.KindSupervisor
+        {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one}
       ]
       |> Enum.reject(&skip_in_test_env?/1)
 
@@ -205,10 +194,11 @@ defmodule EzagentCore.Application do
     _ -> false
   end
 
-  # 2026-05-26 C-snapshot fix — `Ezagent.Audit.Writer` and
-  # `Ezagent.Snapshot.Writer` are global singleton GenServers that
-  # batch-flush to `Repo` on a 100ms timer. Against
-  # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model their
+  # 2026-05-26 C-snapshot fix — `Ezagent.Audit.Writer` (and, until the C5
+  # physical move, `Ezagent.Snapshot.Writer` — now owned and skipped by
+  # `EzagentActor.Application`) is a global singleton GenServer that
+  # batch-flushes to `Repo` on a 100ms timer. Against
+  # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model its
   # async flush stamps over connections owned by tests that have
   # already exited, causing `Database busy` to bleed into subsequent
   # tests (seen as operator UI baseline flakes and the 4 `SnapshotTest`
@@ -222,7 +212,6 @@ defmodule EzagentCore.Application do
   # writers, test env children list MUST NOT.
   @writers_skipped_in_test [
     Ezagent.Audit.Writer,
-    Ezagent.Snapshot.Writer,
     Ezagent.Cap.DeliveryOutbox.Sweeper
   ]
 

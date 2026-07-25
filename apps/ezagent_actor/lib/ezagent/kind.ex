@@ -27,7 +27,7 @@ defmodule Ezagent.Kind do
     implementation expects `args[:uri]` to be set by the caller.
   - `supervisor/0`: declare which `DynamicSupervisor` should host this
     Kind's processes. Defaults to `Ezagent.KindSupervisor` (a generic
-    catch-all started by `EzagentCore.Application`). Per-Kind
+    catch-all started by `EzagentActor.Application`). Per-Kind
     supervisors are encouraged when the Kind wants its own restart
     policy or domain-app ownership boundary.
   - `snapshot_version/0`: integer rev for snapshot schema migration.

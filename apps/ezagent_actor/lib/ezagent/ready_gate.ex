@@ -11,7 +11,7 @@ defmodule Ezagent.ReadyGate do
   - `:not_ready` + `:call` → fail-fast (hard invariant #3)
   - `:ready` → proceed to GenServer.call/cast
 
-  Owned by `EzagentCore.EtsOwner` (single shared GenServer per
+  Owned by `EzagentActor.EtsOwner` (single shared GenServer per
   DECISIONS implementation-decision §ETS table owner — Option B).
   """
 
@@ -20,7 +20,7 @@ defmodule Ezagent.ReadyGate do
 
   @type status :: :unknown | :not_ready | :ready | :failed
 
-  @doc "ETS table name — for `EzagentCore.EtsOwner` to create at boot."
+  @doc "ETS table name — for `EzagentActor.EtsOwner` to create at boot."
   def table, do: @table
 
   @doc """

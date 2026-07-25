@@ -181,24 +181,6 @@
       note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent_core/application.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "6e412b60d595660e520ecfbae90f5d1ab88c2d22245cfdf8d769fc570a02150f",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent_core/application.ex",
-      target: "Ezagent.Snapshot.Writer",
-      sha: "9d9538fb4bc3a8539516f1b9efb26dfb405189feaa0d377b8701f9a485ccc70e",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent_core/application.ex",
-      target: "Ezagent.Snapshot.Writer",
-      sha: "9d9538fb4bc3a8539516f1b9efb26dfb405189feaa0d377b8701f9a485ccc70e",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent_core/data_case.ex",
       target: "Ezagent.KindRegistry",
       sha: "ab6166200b89607028191d2d23972219a140776dde0c173ce5dc4178fd1472ed",
@@ -209,48 +191,6 @@
       target: "GenServer.call(:ezagent_*)",
       sha: "4d02b65ffd4b179062a42b652e97d7adfb7e3134eb55dbd5e3f89866aff3fbde",
       note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent_core/ets_owner.ex",
-      target: "Ezagent.Idempotency",
-      sha: "4d91a26364e314d611d10533e83bef3477c048be339a9deb890ea349497a2524",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent_core/ets_owner.ex",
-      target: "Ezagent.PendingDelivery",
-      sha: "ba7548bede71ad4d54b03fa1b270e4cf7c6c25ce09c17a7a5620214f84e38c97",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "2d52d412a1d04fc2e3bd2202e3877bde1889c64ef38c5c8a70914f9b19e0c80d",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "929454485e266b8cbcd818ffde8fc22379b77f8ab47d2cf581fdbdbbdcd1c708",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.dump.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "1567ebd2fdeb22340fea9aadf7bea91cf7f54d91d2e18439b8c772074fbac2b5",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.dump.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "2d52d412a1d04fc2e3bd2202e3877bde1889c64ef38c5c8a70914f9b19e0c80d",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.list.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "b160b52495fdfcfb980d34d635c906e3a173366011ed95479257ae9dbee1b586",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
       path: "apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex",
@@ -970,31 +910,27 @@
       note: "permanent process-generation consumer (survives C4) — §4.2 fixed allowlist"
     }
   ],
-  # §3.4 port worklist — mover-set upward refs (retired at C5).
-  reverse_ratchet: [
-    %{
-      path: "apps/ezagent_core/lib/ezagent/universal_behaviors.ex",
-      target: "Ezagent.ActionSet.Manage",
-      sha: "2ee7ed9d5a02e5e83826a797cd43e32dec0bf02d3288f7757a827dfd974c1f9f",
-      note: "§3.4 upward ref: Ezagent.ActionSet.Manage"
-    }
-  ],
+  # §3.4 port worklist — mover-set upward refs. EMPTY after C5 chunk-3: the
+  # last entry (`UniversalBehaviors` → `Ezagent.ActionSet.Manage`) was retired
+  # by inverting the universal-behavior set to registration data
+  # (`Ezagent.Kind.Adapters.wire!/0`, key `:universal_behaviors`).
+  reverse_ratchet: [],
   # The one reasoned reverse carve-out — LegacyCallbacks quoted Ezagent.Capability.cap/3.
   reverse_fixed: [
     %{
-      path: "apps/ezagent_core/lib/ezagent/behavior/legacy_callbacks.ex",
+      path: "apps/ezagent_actor/lib/ezagent/behavior/legacy_callbacks.ex",
       target: "Ezagent.Capability",
       sha: "224e94edccb1c0ad7e362793b64f9044e86f5d0eb698ef63d983e7c54ea3d9af",
       note: "quoted Ezagent.Capability.cap/3 injected into using modules (§3.4 non-port)"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/behavior/legacy_callbacks.ex",
+      path: "apps/ezagent_actor/lib/ezagent/behavior/legacy_callbacks.ex",
       target: "Ezagent.Capability",
       sha: "997bc4988d15b2c1350a19988141c4ffa0a228db21bbad0954703538a2d9a199",
       note: "quoted Ezagent.Capability.cap/3 injected into using modules (§3.4 non-port)"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/behavior/legacy_callbacks.ex",
+      path: "apps/ezagent_actor/lib/ezagent/behavior/legacy_callbacks.ex",
       target: "Ezagent.Capability",
       sha: "d2b551cf65ab2543dd9e41df932ecdffba88686d2e8f53f285783fc4132b8cf5",
       note: "quoted Ezagent.Capability.cap/3 injected into using modules (§3.4 non-port)"

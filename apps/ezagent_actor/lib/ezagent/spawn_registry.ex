@@ -38,7 +38,7 @@ defmodule Ezagent.SpawnRegistry do
 
   ## ETS layout
 
-  `:ezagent_spawn_registry` set table owned by `EzagentCore.EtsOwner`. Keys
+  `:ezagent_spawn_registry` set table owned by `EzagentActor.EtsOwner`. Keys
   are scheme strings (e.g. `"entity"`), values are one-arity functions
   taking a `%URI{}` or two-arity functions taking the URI and runtime options.
   """

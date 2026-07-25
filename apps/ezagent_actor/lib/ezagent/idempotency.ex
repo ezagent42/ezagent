@@ -10,7 +10,7 @@ defmodule Ezagent.Idempotency do
   Bounded at `@max_entries` (default 10_000) with LRU eviction by
   `Ezagent.Idempotency.Sweeper` GenServer running periodic prune.
 
-  Owned by `EzagentCore.EtsOwner`. Sweeper is its own child of the
+  Owned by `EzagentActor.EtsOwner`. Sweeper is its own child of the
   application supervisor (it carries state — the prune cursor — so
   benefits from supervisor restart semantics independent of the ETS
   owner).
