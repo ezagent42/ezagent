@@ -61,17 +61,17 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
   # sibling-injection engine + the cap engine). They mention/implement the API;
   # they are not Behavior CONSUMERS, so they are excluded from the consumer scan.
   @mechanism_definition_files [
-    "apps/ezagent_core/lib/ezagent/behavior.ex",
-    "apps/ezagent_core/lib/ezagent/behavior/introspection.ex",
-    "apps/ezagent_core/lib/ezagent/lifecycle.ex",
-    "apps/ezagent_core/lib/ezagent/kind.ex",
+    "apps/ezagent_actor/lib/ezagent/behavior.ex",
+    "apps/ezagent_actor/lib/ezagent/behavior/introspection.ex",
+    "apps/ezagent_actor/lib/ezagent/lifecycle.ex",
+    "apps/ezagent_actor/lib/ezagent/kind.ex",
     # The generic `get_slice/2`/`get_raw_slice/2` resolver definitions were
     # extracted from kind.ex into this sibling (oversized-module burn-down,
     # 2026-06-23). It DEFINES the read mechanism (dynamic-key resolver), it is
     # not a Behavior CONSUMER — same exclusion class as kind.ex itself.
-    "apps/ezagent_core/lib/ezagent/kind/slice_access.ex",
-    "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-    "apps/ezagent_core/lib/ezagent/kind/runtime/context.ex"
+    "apps/ezagent_actor/lib/ezagent/kind/slice_access.ex",
+    "apps/ezagent_actor/lib/ezagent/kind/runtime.ex",
+    "apps/ezagent_actor/lib/ezagent/kind/runtime/context.ex"
   ]
 
   # Sanctioned reads of a sensitive slice by NON-owner code, keyed by

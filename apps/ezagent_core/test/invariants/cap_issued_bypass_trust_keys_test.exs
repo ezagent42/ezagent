@@ -14,7 +14,7 @@ defmodule Ezagent.Invariants.CapIssuedBypassTrustKeysTest do
   end
 
   test "Runtime has no boolean grant bypass" do
-    runtime = source("apps/ezagent_core/lib/ezagent/kind/runtime.ex")
+    runtime = source("apps/ezagent_actor/lib/ezagent/kind/runtime.ex")
 
     # C5 §3.4 AuthzPort — the step-5.5 verifier call goes through the
     # config-resolved port (`authz().authorize_dispatch(`); the literal

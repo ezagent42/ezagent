@@ -13,7 +13,7 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   defp umbrella_root, do: Path.expand("../../../..", __DIR__)
 
   defp runtime_path,
-    do: Path.join(umbrella_root(), "apps/ezagent_core/lib/ezagent/kind/runtime.ex")
+    do: Path.join(umbrella_root(), "apps/ezagent_actor/lib/ezagent/kind/runtime.ex")
 
   defp verifier_path,
     do: Path.join(umbrella_root(), "apps/ezagent_core/lib/ezagent/cap/verifier.ex")

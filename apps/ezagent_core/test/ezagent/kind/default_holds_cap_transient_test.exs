@@ -58,7 +58,9 @@ defmodule Ezagent.Kind.DefaultHoldsCapTransientTest do
 
     assert_raise Kind.IdentityReadError, fn -> Kind.default_holds_cap?(uri, @needed) end
 
-    runtime = File.read!(Path.expand("../../../lib/ezagent/kind/runtime.ex", __DIR__))
+    runtime =
+      File.read!(Path.expand("../../../ezagent_actor/lib/ezagent/kind/runtime.ex", __DIR__))
+
     verifier = File.read!(Path.expand("../../../lib/ezagent/cap/verifier.ex", __DIR__))
     refute runtime =~ "default_holds_cap?"
     refute verifier =~ "default_holds_cap?"

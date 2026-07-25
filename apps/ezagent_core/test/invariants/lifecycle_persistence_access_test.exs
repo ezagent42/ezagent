@@ -58,16 +58,16 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.upsert\s*\(/,
       allowlist: [
         # The Lifecycle/RBK persistence module — the canonical write path.
-        "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex",
         # The framework-internal snapshot store (versioned write + reads).
-        "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
+        "apps/ezagent_actor/lib/ezagent/snapshot_store.ex",
         # P5-0 migration (TEST/sandbox only): rewrites the :kind_base slice of
         # EXISTING session rows in place. It intentionally uses a direct
         # `KindSnapshot.upsert/5` rather than `Snapshot.save_now/3` because it
-        # lives in ezagent_core, which has NO dependency on the domain-owned
+        # lives in ezagent_actor, which has NO dependency on the domain-owned
         # session Kind modules `save_now/3` would need to resolve. Framework-
         # internal one-shot migration, not a domain/Behavior write path.
-        "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/kind_base_backfill.ex",
         # chat→session one-shot MIGRATION (TEST/sandbox only): rewrites the
         # top-level `:chat`→`:session` slice key on EXISTING session rows in
         # place. Same direct-`upsert` rationale as kind_base_backfill (core, no
@@ -99,11 +99,11 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       regex: ~r/\bsave_now\s*\(/,
       allowlist: [
         # Defines save_now + calls it from commit/4 (the :on_change policy gate).
-        "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex",
         # Kind.Server: initial persist + terminate + periodic.
-        "apps/ezagent_core/lib/ezagent/kind/server.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/server.ex",
         # The async snapshot Writer flush path.
-        "apps/ezagent_core/lib/ezagent/snapshot/writer.ex"
+        "apps/ezagent_actor/lib/ezagent/snapshot/writer.ex"
       ],
       guidance:
         "Persistence is policy-gated by `Kind.Snapshot.commit/4` and driven " <>
@@ -114,10 +114,10 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.ever_created\?\s*\(/,
       allowlist: [
         # Defines ever_created? + mark.
-        "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
+        "apps/ezagent_actor/lib/ezagent/ecto/kind_snapshot.ex",
         # The ONE Lifecycle owner of the create/activate decision (wraps it
         # in marker_lookup + exposes `fresh_create?/1`).
-        "apps/ezagent_core/lib/ezagent/lifecycle.ex"
+        "apps/ezagent_actor/lib/ezagent/lifecycle.ex"
       ],
       guidance:
         "The create-vs-activate signal is `Ezagent.Lifecycle.fresh_create?/1` " <>
@@ -128,9 +128,9 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.mark_ever_created\s*\(/,
       allowlist: [
         # Defines the marker write.
-        "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
+        "apps/ezagent_actor/lib/ezagent/ecto/kind_snapshot.ex",
         # The Lifecycle owner of the create marker.
-        "apps/ezagent_core/lib/ezagent/lifecycle.ex"
+        "apps/ezagent_actor/lib/ezagent/lifecycle.ex"
       ],
       guidance:
         "The ever-created marker is written atomically by the initial persist " <>
@@ -142,21 +142,21 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
       regex: ~r/(?<![\.\w])(?:KindSnapshot|Ezagent\.Ecto\.KindSnapshot)\.delete\s*\(/,
       allowlist: [
         # Defines the row delete.
-        "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
+        "apps/ezagent_actor/lib/ezagent/ecto/kind_snapshot.ex",
         # `Lifecycle.destroy/2` — THE Kind teardown primitive (hooks →
         # snapshot+marker clear → terminate). All domain destroy goes here.
-        "apps/ezagent_core/lib/ezagent/lifecycle.ex",
+        "apps/ezagent_actor/lib/ezagent/lifecycle.ex",
         # Framework snapshot store wraps the row delete.
-        "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
+        "apps/ezagent_actor/lib/ezagent/snapshot_store.ex",
         # Operator escape hatches (NOT domain lifecycle): bulk ops clear +
         # admin single-row maintenance. Explicitly low-level ops tools.
-        "apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex",
+        "apps/ezagent_actor/lib/mix/tasks/ezagent.snapshot.clear.ex",
         # P5-0 one-shot MIGRATION task (NOT a lifecycle handler): the
         # `:kind_base` backfill CLEARS an un-migratable legacy JSON-column
         # session row (Allen 2026-06-12) so the go/no-go gate can reach zero. It
         # already writes directly via the upsert-rule allowlist above; the
         # delete is the same row-level migration authority, not a domain teardown.
-        "apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex"
+        "apps/ezagent_actor/lib/ezagent/kind/kind_base_backfill.ex"
       ],
       guidance:
         "Destroy a Kind via `Ezagent.Lifecycle.destroy/2` (runs developer " <>

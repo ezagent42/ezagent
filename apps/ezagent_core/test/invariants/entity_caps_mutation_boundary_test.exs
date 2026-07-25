@@ -7,7 +7,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
 
   @facade "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
-  @cascade_hook "apps/ezagent_core/lib/ezagent/kind/cascade_hook.ex"
+  @cascade_hook "apps/ezagent_actor/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
   @identity_grant "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex"

@@ -25,7 +25,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @entity_caps "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
-  @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
+  @snapshot "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex"
   @authority_adapter "apps/ezagent_core/lib/ezagent/kind/adapters/authority_adapter.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
@@ -200,7 +200,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert cli_loader =~ "Ezagent.Identity.read_held_caps"
     refute cli_loader =~ "Ezagent.Kind.get_slice"
 
-    runtime = source("apps/ezagent_core/lib/ezagent/kind/runtime.ex")
+    runtime = source("apps/ezagent_actor/lib/ezagent/kind/runtime.ex")
     refute runtime =~ "Ezagent.Cap.verified_set"
     # C5 §3.4 AuthzPort — the runtime's step-5.5 authorization goes through
     # the config-resolved port; the literal verifier call lives in the

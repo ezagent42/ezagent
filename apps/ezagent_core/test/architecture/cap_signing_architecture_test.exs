@@ -87,7 +87,7 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
   end
 
   test "runtime has one handler route and its verifier precedes invocation" do
-    source = File.read!(path("apps/ezagent_core/lib/ezagent/kind/runtime.ex"))
+    source = File.read!(path("apps/ezagent_actor/lib/ezagent/kind/runtime.ex"))
 
     assert occurrences(source, "invoke_behavior(") == 2,
            "invoke_behavior must have exactly one call site plus its definition"
@@ -105,7 +105,7 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
 
     assert adapter =~ "Ezagent.Cap.Verifier.authorize("
 
-    server = File.read!(path("apps/ezagent_core/lib/ezagent/kind/server.ex"))
+    server = File.read!(path("apps/ezagent_actor/lib/ezagent/kind/server.ex"))
     assert occurrences(server, "Ezagent.Kind.Runtime.handle_dispatch(") == 2
   end
 

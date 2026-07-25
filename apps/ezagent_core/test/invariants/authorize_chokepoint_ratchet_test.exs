@@ -123,7 +123,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # home: the verifier itself + the sanctioned dispatch caller (runtime
         # step 5.5). F-1 routes verify_cap's per-cap filter through authorize/3.
         "apps/ezagent_core/lib/ezagent/cap/verifier.ex",
-        "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/runtime.ex",
         # home: the §3.4 AuthzPort adapter — the config-resolved delegation the
         # runtime's step-5.5 call now goes through (C5; the literal verifier
         # call moved here from runtime.ex).
@@ -146,14 +146,14 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # home: the engine (definition + internal holds_cap?/2 dispatch call).
         # C5 §3.4 — the engine RELOCATED from kind.ex to the core spine
         # `Ezagent.Cap.HoldsCap`; kind.ex keeps only the port delegates.
-        "apps/ezagent_core/lib/ezagent/kind.ex",
+        "apps/ezagent_actor/lib/ezagent/kind.ex",
         "apps/ezagent_core/lib/ezagent/cap/holds_cap.ex",
         # home: the §3.4 AuthzPort adapter — the config-resolved delegation
         # the Kind delegates reach the engine through.
         "apps/ezagent_core/lib/ezagent/kind/adapters/authz_adapter.ex",
         # home: the §3.4 AuthzPort behaviour — the @callback declaration, not
         # a call site.
-        "apps/ezagent_core/lib/ezagent/kind/ports/authz_port.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/ports/authz_port.ex",
         # ctx/comment: a `# default_holds_cap?(:vm_internal)` doc reference in the
         # trusted-ambient-caller note, not a call.
         "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
