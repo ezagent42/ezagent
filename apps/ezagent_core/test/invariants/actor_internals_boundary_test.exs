@@ -75,7 +75,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C5 chunk-1 lowered reverse 101→98: DeadLetterPort (§3.4 NEW) — invocation
   # buffer_full/stale_incarnation + ready_transition drain DLQ writes → the
   # config-resolved `:ezagent_actor, :dead_letter` adapter, −3 sites.
-  @reverse_frozen 98
+  # C5 chunk-1 lowered reverse 98→93: SagaPort (§3.4 NEW) — router
+  # dispatch_saga + effects :saga effect → the config-resolved
+  # `:ezagent_actor, :saga` adapter (the ensure_loaded probe + is_struct
+  # check MOVE into the core adapter), −5 sites.
+  @reverse_frozen 93
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

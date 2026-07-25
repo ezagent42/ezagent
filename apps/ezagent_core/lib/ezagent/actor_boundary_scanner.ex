@@ -72,6 +72,7 @@ defmodule Ezagent.ActorBoundaryScanner do
     ezagent/kind/mount_detach.ex
     ezagent/kind/ports/dead_letter_port.ex
     ezagent/kind/ports/persistence_port.ex
+    ezagent/kind/ports/saga_port.ex
     ezagent/kind/ready_transition.ex
     ezagent/kind/runtime.ex
     ezagent/kind/runtime/context.ex

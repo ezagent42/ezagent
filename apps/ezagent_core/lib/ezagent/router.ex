@@ -102,42 +102,33 @@ defmodule Ezagent.Router do
   end
 
   @doc """
-  Run a saga via `Ezagent.SagaRunner.execute/2`.
+  Run a saga via the configured SagaPort (`:ezagent_actor, :saga`).
 
   Returns `{:error, :saga_runner_not_loaded}` (a clean, documented
   signal — never a `FunctionClause` crash) when the runner cannot run
-  the given input: either the `Ezagent.SagaRunner` module is not loaded,
-  OR the supplied `saga` is not a `%Ezagent.SagaRunner.Saga{}` struct
-  the runner knows how to execute. Both are "the runner is not in a
-  position to run this" from the caller's perspective.
+  the given input: either no SagaPort is configured (the port's
+  `:not_configured` default), the saga runner module is not loaded,
+  OR the supplied `saga` is not a saga representation the runner knows
+  how to execute. The actor side never names the Saga type — the
+  loaded-probe and representation check live in the core-side adapter
+  (§3.4). All three are "the runner is not in a position to run this"
+  from the caller's perspective.
 
-  When the runner is loaded and `saga` is a valid `%Saga{}`, this is a
-  passthrough to `SagaRunner.execute/2`.
+  When the runner is loaded and `saga` is valid, this is a passthrough
+  to the port's `execute/2`.
   """
   @spec dispatch_saga(term(), map()) ::
           {:ok, map()}
           | {:error, atom(), term(), [atom()]}
           | {:error, :saga_runner_not_loaded}
   def dispatch_saga(saga, ctx) when is_map(ctx) do
-    runner_ready? =
-      Code.ensure_loaded?(Ezagent.SagaRunner) and
-        function_exported?(Ezagent.SagaRunner, :execute, 2)
-
-    cond do
-      not runner_ready? ->
-        Logger.debug("Ezagent.Router.dispatch_saga/2 called but Ezagent.SagaRunner not loaded")
+    case Application.get_env(:ezagent_actor, :saga, :not_configured) do
+      :not_configured ->
+        Logger.debug("Ezagent.Router.dispatch_saga/2 called but no SagaPort is configured")
         {:error, :saga_runner_not_loaded}
 
-      not is_struct(saga, Ezagent.SagaRunner.Saga) ->
-        Logger.debug(
-          "Ezagent.Router.dispatch_saga/2 called with a non-%Saga{} input " <>
-            "(#{inspect(saga)}); the runner cannot execute it"
-        )
-
-        {:error, :saga_runner_not_loaded}
-
-      true ->
-        Ezagent.SagaRunner.execute(saga, ctx)
+      adapter ->
+        adapter.execute(saga, ctx)
     end
   end
 

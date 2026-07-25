@@ -236,12 +236,13 @@ defmodule Ezagent.Kind.Runtime.Effects do
 
   # `:saga` effect — `apply_effects/2` packages the saga as either
   # `nil` (no saga in this handler return) or `{:saga, %Saga{}}`.
-  # We delegate to `Ezagent.SagaRunner.execute/2`; its return
+  # We delegate to the configured SagaPort (`:ezagent_actor, :saga`; the
+  # core adapter wraps the saga runner spine, §3.4); its return
   # `{:ok, _}` is success; `{:error, _}` halts subsequent effects.
   defp execute_saga(nil, _ctx), do: :ok
 
   defp execute_saga({:saga, saga}, ctx) do
-    case Ezagent.SagaRunner.execute(saga, ctx) do
+    case saga_port().execute(saga, ctx) do
       {:ok, _saga_result} ->
         :ok
 
@@ -378,6 +379,13 @@ defmodule Ezagent.Kind.Runtime.Effects do
   # never a literal spine reference. Core config wires `:ezagent_actor,
   # :pubsub` to `EzagentCore.PubSub`.
   defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
+
+  # C5 §3.4 SagaPort — saga execution goes through the config-resolved port;
+  # the actor side never names the saga runner's types. The `:not_configured`
+  # default raises into `execute_saga/2`'s rescue, preserving today's
+  # missing-runner contract. Core config wires `:ezagent_actor, :saga` to
+  # `Ezagent.Kind.Adapters.SagaAdapter`.
+  defp saga_port, do: Application.get_env(:ezagent_actor, :saga, :not_configured)
 
   @doc """
   Emit a single Reputation `:receipt` fact into the EventLog.

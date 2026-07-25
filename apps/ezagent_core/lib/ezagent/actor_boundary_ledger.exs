@@ -1334,12 +1334,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "Ezagent.SagaRunner",
-      sha: "ef074cdb5c47b2fdd3fe5fa85309c3063fc909960dd2403969bdd6b16e4e5ed3",
-      note: "§3.4 upward ref: Ezagent.SagaRunner"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
       target: "Ezagent.EventLog",
       sha: "9cf76b8133853c0a05610f104f627b474cb55f6155a31ec3a9ef745ea6523ddc",
       note: "§3.4 upward ref: Ezagent.EventLog"
@@ -1517,30 +1511,6 @@
       target: "Ezagent.EventLog",
       sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
       note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.SagaRunner",
-      sha: "0a8513217e50c41de6b02d48eb23119a95ea2de66bcf5320796e5a39fab04638",
-      note: "§3.4 upward ref: Ezagent.SagaRunner"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.SagaRunner",
-      sha: "9ddf549bb0a16536d97b1a3446b05e12fd848e1d1fb8b88cbe22f464ed721b5d",
-      note: "§3.4 upward ref: Ezagent.SagaRunner"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.SagaRunner.Saga",
-      sha: "61e1a3069d5b050338ce08ec1356b4da5eeac3cbdc8a4ddfa97bb564c57ff358",
-      note: "§3.4 upward ref: Ezagent.SagaRunner.Saga"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.SagaRunner",
-      sha: "e8e4e8139b748ac05d4fed8c7e4c178435a8c6f187930457892839d6c68ce750",
-      note: "§3.4 upward ref: Ezagent.SagaRunner"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/router.ex",
