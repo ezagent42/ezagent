@@ -24,7 +24,8 @@ config :ezagent_actor,
   pubsub: EzagentCore.PubSub,
   persistence: Ezagent.Kind.Adapters.PersistenceAdapter,
   dead_letter: Ezagent.Kind.Adapters.DeadLetterAdapter,
-  saga: Ezagent.Kind.Adapters.SagaAdapter
+  saga: Ezagent.Kind.Adapters.SagaAdapter,
+  event_log: Ezagent.Kind.Adapters.EventLogAdapter
 
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,

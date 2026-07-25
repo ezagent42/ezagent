@@ -33,18 +33,13 @@ defmodule Ezagent.Router do
   with the new effect grammar) inside `Kind.Host.handle_call/cast`,
   bypassing the legacy `invoke/4` shim for new-style Behaviors.
 
-  ## Audit + Saga stubs (Subagent B / D outputs)
+  ## Audit + Saga (C5 §3.4 ports)
 
-  This Phase 1 build stubs calls to:
-
-  - `Ezagent.EventLog.append/4` — Subagent B is implementing in
-    parallel; this module compiles standalone by referencing the
-    fully-qualified call via `Code.ensure_loaded?/1` runtime check
-  - `Ezagent.SagaRunner.execute/2` — Subagent D, same approach
-
-  Both calls are wrapped in `safe_call/3` so a not-yet-loaded
-  module surfaces as a `Logger.debug` and the dispatch continues.
-  Once Subagents B/D integrate, the stubs are no-ops in practice.
+  Audit appends and saga execution go through the config-resolved §3.4
+  ports (`:ezagent_actor, :event_log` / `:saga`); the core adapters wrap
+  the event-log / saga-runner spine, and the audit adapter derives the
+  workspace scope from the dispatch target. Audit is best-effort — a
+  port failure surfaces as a `Logger.debug` and the dispatch continues.
   """
 
   require Logger
@@ -80,16 +75,15 @@ defmodule Ezagent.Router do
     trace_id = cmd.ctx[:trace_id] || generate_trace_id()
     started_at = System.monotonic_time(:microsecond)
 
-    # Audit start — best-effort (Subagent B's module may not be loaded yet).
-    safe_call(Ezagent.EventLog, :append, [
-      %{
-        type: :router_dispatch_start,
-        target: cmd.target,
-        action: cmd.action,
-        trace_id: trace_id,
-        at: DateTime.utc_now()
-      }
-    ])
+    # Audit start — best-effort via the EventLogPort (§3.4): the core
+    # adapter derives the workspace scope from the target; audit never
+    # fails dispatch.
+    safe_event_log_append(
+      cmd.target,
+      :router_dispatch_start,
+      %{action: cmd.action, trace_id: trace_id, at: DateTime.utc_now()},
+      %{trace_id: trace_id, caller: Map.get(cmd.ctx, :caller)}
+    )
 
     result =
       cmd
@@ -236,17 +230,18 @@ defmodule Ezagent.Router do
         _ -> nil
       end
 
-    safe_call(Ezagent.EventLog, :append, [
+    safe_event_log_append(
+      cmd.target,
+      type,
       %{
-        type: type,
-        target: cmd.target,
         action: cmd.action,
         trace_id: trace_id,
         elapsed_us: elapsed_us,
         reason: reason,
         at: DateTime.utc_now()
-      }
-    ])
+      },
+      %{trace_id: trace_id, caller: Map.get(cmd.ctx, :caller)}
+    )
   end
 
   defp normalize_result(:ok), do: :ok
@@ -262,25 +257,38 @@ defmodule Ezagent.Router do
   end
 
   # ---------------------------------------------------------------
-  # safe_call — Subagent B/D stub helper
+  # EventLogPort audit — best-effort (§3.4)
   # ---------------------------------------------------------------
 
-  defp safe_call(mod, fun, args) do
-    if Code.ensure_loaded?(mod) and function_exported?(mod, fun, length(args)) do
-      try do
-        apply(mod, fun, args)
-      rescue
-        e ->
-          Logger.debug(
-            "Ezagent.Router stub call #{inspect(mod)}.#{fun}/#{length(args)} raised: #{Exception.message(e)}"
-          )
+  # Audit is observational: any port failure (an underivable workspace
+  # for the target, a DB outage, a raise) is logged at debug and NEVER
+  # fails the dispatch.
+  defp safe_event_log_append(target, event, payload, ctx) do
+    case event_log().append(target, event, payload, ctx) do
+      {:ok, _event_id} ->
+        :ok
 
-          :ok
-      end
-    else
-      # Module / fun not loaded — Phase 1 Subagent B (EventLog) or
-      # D (SagaRunner) hasn't integrated yet. Silently skip.
-      :ok
+      {:error, reason} ->
+        Logger.debug(
+          "Ezagent.Router audit append skipped: event=#{inspect(event)} " <>
+            "reason=#{inspect(reason)}"
+        )
+
+        :ok
     end
+  rescue
+    e ->
+      Logger.debug("Ezagent.Router audit append raised: #{Exception.message(e)}")
+      :ok
+  catch
+    kind, caught ->
+      Logger.debug("Ezagent.Router audit append threw: #{inspect({kind, caught})}")
+      :ok
   end
+
+  # C5 §3.4 EventLogPort — audit appends go through the config-resolved
+  # port; the core adapter derives `workspace_uri` from the event target.
+  # Core config wires `:ezagent_actor, :event_log` to
+  # `Ezagent.Kind.Adapters.EventLogAdapter`.
+  defp event_log, do: Application.fetch_env!(:ezagent_actor, :event_log)
 end

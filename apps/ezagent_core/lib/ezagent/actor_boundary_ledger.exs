@@ -1333,18 +1333,6 @@
       note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "Ezagent.EventLog",
-      sha: "9cf76b8133853c0a05610f104f627b474cb55f6155a31ec3a9ef745ea6523ddc",
-      note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "Ezagent.Capability",
-      sha: "0445a4dce0a8c357560208232f9be8af846f917673329ed53fddd4a050a882f3",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
       target: "Ezagent.Capability",
       sha: "029277439afe24f003819ddaf2a3fed12f03ded53bf1a29e1d8ebdfbe331a85e",
@@ -1505,18 +1493,6 @@
       target: "Ezagent.WorkspaceOwnerGate",
       sha: "d450dc485faa7a980118039faf68174e26b24fdac87e5c9565a3dd8b1105b59e",
       note: "§3.4 upward ref: Ezagent.WorkspaceOwnerGate"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.EventLog",
-      sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
-      note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/router.ex",
-      target: "Ezagent.EventLog",
-      sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
-      note: "§3.4 upward ref: Ezagent.EventLog"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/spawn_registry.ex",

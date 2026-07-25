@@ -79,7 +79,12 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # dispatch_saga + effects :saga effect → the config-resolved
   # `:ezagent_actor, :saga` adapter (the ensure_loaded probe + is_struct
   # check MOVE into the core adapter), −5 sites.
-  @reverse_frozen 93
+  # C5 chunk-1 lowered reverse 93→89: EventLogPort (§3.4 NEW, respec'd) —
+  # effects :emit append + Router's 2 dead map-form audit sites onto the
+  # single 4-arg contract (adapter derives workspace_uri from the target),
+  # −3 sites; the respec also orphaned effects' private Capability-based
+  # workspace-derivation helper (deleted with it), −1 site.
+  @reverse_frozen 89
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

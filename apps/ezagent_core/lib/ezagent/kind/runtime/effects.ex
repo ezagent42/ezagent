@@ -387,6 +387,12 @@ defmodule Ezagent.Kind.Runtime.Effects do
   # `Ezagent.Kind.Adapters.SagaAdapter`.
   defp saga_port, do: Application.get_env(:ezagent_actor, :saga, :not_configured)
 
+  # C5 §3.4 EventLogPort — `:emit` audit appends go through the
+  # config-resolved port; the core adapter derives `workspace_uri` from the
+  # event target (the actor side never supplies it). Core config wires
+  # `:ezagent_actor, :event_log` to `Ezagent.Kind.Adapters.EventLogAdapter`.
+  defp event_log, do: Application.fetch_env!(:ezagent_actor, :event_log)
+
   @doc """
   Emit a single Reputation `:receipt` fact into the EventLog.
 
@@ -406,13 +412,14 @@ defmodule Ezagent.Kind.Runtime.Effects do
     execute_events([{:emit, :receipt, payload}], Map.put(ctx, :self_uri, aggregate_uri))
   end
 
-  # `:emit` effects → `Ezagent.EventLog.append/4`. Each event
+  # `:emit` effects → the EventLogPort (`:ezagent_actor, :event_log`; the
+  # core adapter wraps `Ezagent.EventLog.append/4`). Each event
   # becomes a row in the audit log. Audit failures NEVER halt the
   # dispatch (audit is observational) but ARE logged.
   #
   # The aggregate URI for the events is `ctx[:self_uri]` (the Kind
-  # whose handler ran). `workspace_uri` is derived via
-  # `Ezagent.Capability.workspace_of/1` on `self_uri`.
+  # whose handler ran). `workspace_uri` is derived ADAPTER-SIDE from
+  # the event target (§3.4 — the actor side never supplies it).
   defp execute_events([], _ctx), do: :ok
 
   defp execute_events(events, ctx) do
@@ -430,19 +437,19 @@ defmodule Ezagent.Kind.Runtime.Effects do
 
       :ok
     else
-      workspace_uri = derive_workspace_uri(self_uri)
       caller = normalize_caller_for_audit(Map.get(ctx, :caller))
       trace_id = Map.get(ctx, :trace_id)
 
+      # §3.4 — the actor side NEVER supplies :workspace_uri; the port's
+      # core adapter derives the workspace scope from the event's target.
       event_ctx = %{
         caller: caller,
-        workspace_uri: workspace_uri,
         trace_id: trace_id
       }
 
       Enum.each(events, fn {:emit, event_name, payload} ->
         try do
-          case Ezagent.EventLog.append(self_uri, event_name, payload, event_ctx) do
+          case event_log().append(self_uri, event_name, payload, event_ctx) do
             {:ok, _event_id} ->
               :ok
 
@@ -483,26 +490,6 @@ defmodule Ezagent.Kind.Runtime.Effects do
   defp normalize_caller_for_audit(%URI{} = u), do: u
   defp normalize_caller_for_audit(s) when is_binary(s), do: s
   defp normalize_caller_for_audit(_), do: nil
-
-  # Best-effort workspace derivation — `Capability.workspace_of/1`
-  # returns `:any` for cross-cutting schemes. EventLog requires a
-  # binary / URI; fall back to a `workspace://system` placeholder
-  # when the URI doesn't have a real workspace (rare; mostly
-  # `system://` principals + cross-cutting templates).
-  defp derive_workspace_uri(%URI{} = self_uri) do
-    case Ezagent.Capability.workspace_of(self_uri) do
-      :any -> system_workspace_uri_string()
-      %URI{} = ws -> ws
-      bin when is_binary(bin) -> bin
-      _ -> system_workspace_uri_string()
-    end
-  rescue
-    _ -> system_workspace_uri_string()
-  end
-
-  defp derive_workspace_uri(_), do: system_workspace_uri_string()
-
-  defp system_workspace_uri_string, do: :system |> Ezagent.URI.workspace() |> URI.to_string()
 
   # `:terminate` effects → `Ezagent.Kind.terminate/1`. Each entry
   # is `{:terminate, :self | URI.t()}`. `:self` resolves to
