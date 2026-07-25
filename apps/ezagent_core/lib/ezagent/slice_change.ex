@@ -164,7 +164,7 @@ defmodule Ezagent.SliceChange do
           broadcast_event = build_broadcast_event(self_uri, producer_event)
 
           Phoenix.PubSub.broadcast(
-            EzagentCore.PubSub,
+            pubsub(),
             topic(self_uri),
             {:slice_changed, broadcast_event}
           )
@@ -289,12 +289,17 @@ defmodule Ezagent.SliceChange do
   """
   @spec subscribe_unverified(URI.t() | String.t()) :: :ok
   def subscribe_unverified(uri) do
-    Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic(uri))
+    Phoenix.PubSub.subscribe(pubsub(), topic(uri))
   end
 
   @doc "Inverse of `subscribe_unverified/1`."
   @spec unsubscribe_unverified(URI.t() | String.t()) :: :ok
   def unsubscribe_unverified(uri) do
-    Phoenix.PubSub.unsubscribe(EzagentCore.PubSub, topic(uri))
+    Phoenix.PubSub.unsubscribe(pubsub(), topic(uri))
   end
+
+  # C5 §3.4 pubsub injection — the PubSub server name is a config injection,
+  # never a literal spine reference. Core config wires `:ezagent_actor,
+  # :pubsub` to `EzagentCore.PubSub`.
+  defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
 end

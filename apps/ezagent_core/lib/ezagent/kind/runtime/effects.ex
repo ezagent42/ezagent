@@ -360,7 +360,7 @@ defmodule Ezagent.Kind.Runtime.Effects do
   defp execute_notifies([]), do: :ok
 
   defp execute_notifies([{:notify, topic, payload} | rest]) do
-    case Phoenix.PubSub.broadcast(EzagentCore.PubSub, topic, payload) do
+    case Phoenix.PubSub.broadcast(pubsub(), topic, payload) do
       :ok ->
         :ok
 
@@ -373,6 +373,11 @@ defmodule Ezagent.Kind.Runtime.Effects do
 
     execute_notifies(rest)
   end
+
+  # C5 §3.4 pubsub injection — the PubSub server name is a config injection,
+  # never a literal spine reference. Core config wires `:ezagent_actor,
+  # :pubsub` to `EzagentCore.PubSub`.
+  defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
 
   @doc """
   Emit a single Reputation `:receipt` fact into the EventLog.

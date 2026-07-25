@@ -20,7 +20,8 @@ config :ezagent_core,
 # `ReadyGate.register_external_gate`, and `SpawnRegistry.register/2`. The
 # `:ezagent_actor` OTP app does not exist yet; config keys do not require it.
 config :ezagent_actor,
-  repo: EzagentCore.Repo
+  repo: EzagentCore.Repo,
+  pubsub: EzagentCore.PubSub
 
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,

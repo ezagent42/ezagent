@@ -65,7 +65,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
   # `:ezagent_actor, :repo` injection, −13 sites.
-  @reverse_frozen 110
+  # C5 chunk-1 lowered reverse 110→105: pubsub injection (§3.4) — effects /
+  # invocation / slice_change `EzagentCore.PubSub` refs → the config-resolved
+  # `:ezagent_actor, :pubsub` injection, −5 sites.
+  @reverse_frozen 105
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

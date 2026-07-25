@@ -708,7 +708,7 @@ defmodule Ezagent.Invocation do
   end
 
   def reply(%{reply: {:phoenix_pubsub, topic}}, result) when is_binary(topic) do
-    Phoenix.PubSub.broadcast(EzagentCore.PubSub, topic, {:ezagent_reply, result})
+    Phoenix.PubSub.broadcast(pubsub(), topic, {:ezagent_reply, result})
     :ok
   end
 
@@ -719,4 +719,9 @@ defmodule Ezagent.Invocation do
     raise ArgumentError,
           "reply target #{inspect(kind)} not yet implemented in Phase 1 — arrives with its adapter"
   end
+
+  # C5 §3.4 pubsub injection — the PubSub server name is a config injection,
+  # never a literal spine reference. Core config wires `:ezagent_actor,
+  # :pubsub` to `EzagentCore.PubSub`.
+  defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
 end

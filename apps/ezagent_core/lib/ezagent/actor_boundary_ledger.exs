@@ -1093,12 +1093,6 @@
       note: "§3.4 upward ref: Ezagent.DLQ"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "EzagentCore.PubSub",
-      sha: "776de3e60633c1e07826026cd1ccad6123821011d0d115fcc08c0f0f44033ece",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
       sha: "0fc0bc52a685b237af5b414ef472da9f907fdbc63d3c4fb7a31c9fb4a6a88735",
@@ -1376,12 +1370,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
-      target: "EzagentCore.PubSub",
-      sha: "e66b3e8eb91a6a9af8cda61834d91b7f1b4cc73343dd79e5ea372021387c3cf0",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex",
       target: "Ezagent.EventLog",
       sha: "9cf76b8133853c0a05610f104f627b474cb55f6155a31ec3a9ef745ea6523ddc",
       note: "§3.4 upward ref: Ezagent.EventLog"
@@ -1595,24 +1583,6 @@
       target: "Ezagent.EventLog",
       sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
       note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
-      target: "EzagentCore.PubSub",
-      sha: "d41966bea829bcb6f50930e0d61d07ac5923b3006b2141bd888a1b329874e758",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
-      target: "EzagentCore.PubSub",
-      sha: "29e2b5eae263d8be77742c3fadd54023974740dc463f44d4b1b70312f3ebd9f7",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/slice_change.ex",
-      target: "EzagentCore.PubSub",
-      sha: "ee01b478fd8d592558b8c854d343d9d37735612387160eea340686e529ee8da2",
-      note: "§3.4 upward ref: EzagentCore.PubSub"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
