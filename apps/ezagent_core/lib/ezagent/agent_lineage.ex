@@ -36,7 +36,7 @@ defmodule Ezagent.AgentLineage do
   Postgres table — the SOURCE OF TRUTH — so lineage survives a restart.
 
   This is the `Ezagent.TemplateTags` / `Ezagent.Routing.RuleStore`
-  pattern: `record/2` write-through (upsert) to the DB AND the cache;
+  pattern: `record/2` writes an exact lineage fact through to the DB and cache;
   `forget/1` deletes from both; `rehydrate/0` re-populates the empty ETS
   cache from the table at boot (the `EtsOwner` recreates the table empty
   on every start). `lookup/1` / `spawned_in_lineage?/3` keep the
@@ -94,32 +94,68 @@ defmodule Ezagent.AgentLineage do
   derivation and fail-loud when an existing append-only edge names a different
   creator.
 
-  remediation C-B (#114) — write-through: upsert the durable row (the
-  source of truth) AND the ETS cache. The `agent_uri` PRIMARY KEY makes
-  the upsert idempotent — re-recording the same pair overwrites in place,
-  matching the prior `:ets.insert/2` overwrite semantics.
+  remediation C-B (#114) — write-through: record the durable row (the source
+  of truth) and then publish the ETS cache. The `agent_uri` primary key makes
+  exact replays idempotent, while a different parent is rejected.
   """
   @spec record(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def record(agent_uri, spawned_by) do
+    case record_with_status(agent_uri, spawned_by) do
+      {:ok, _status} -> :ok
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @doc false
+  @spec record_with_status(URI.t() | String.t(), URI.t() | String.t()) ::
+          {:ok,
+           %{
+             lineage: :inserted | :exists,
+             derivation_edge: :inserted | :exists
+           }}
+          | {:error, term()}
+  def record_with_status(agent_uri, spawned_by) do
     a = uri_to_str(agent_uri)
     s = uri_to_str(spawned_by)
 
-    with :ok <-
-           Ezagent.Provenance.DerivationEdges.record_derivation_edge(
-             a,
-             s,
-             :spawned_by,
-             stable_attempt_id(a)
-           ),
-         row = %__MODULE__{agent_uri: a, spawned_by: s, inserted_at: DateTime.utc_now()},
-         {:ok, _} <-
-           Repo.insert(row,
-             on_conflict: [set: [spawned_by: s]],
-             conflict_target: [:agent_uri]
-           ) do
-      :ets.insert(@table, {a, s})
-      :ok
+    Repo.transaction(fn ->
+      with {:ok, edge_status} <-
+             Ezagent.Provenance.DerivationEdges.record_derivation_edge_with_status(
+               a,
+               s,
+               :spawned_by,
+               stable_attempt_id(a)
+             ),
+           {:ok, lineage_status} <- record_exact(Repo, a, s) do
+        %{lineage: lineage_status, derivation_edge: edge_status}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> case do
+      {:ok, statuses} ->
+        :ets.insert(@table, {a, s})
+        {:ok, statuses}
+
+      {:error, reason} ->
+        {:error, reason}
     end
+  end
+
+  @doc false
+  @spec rollback_lineage_fact(URI.t() | String.t(), URI.t() | String.t()) :: :ok
+  def rollback_lineage_fact(agent_uri, spawned_by) do
+    a = uri_to_str(agent_uri)
+    s = uri_to_str(spawned_by)
+
+    Repo.delete_all(from(row in __MODULE__, where: row.agent_uri == ^a and row.spawned_by == ^s))
+
+    case :ets.lookup(@table, a) do
+      [{^a, ^s}] -> :ets.delete(@table, a)
+      _ -> :ok
+    end
+
+    :ok
   end
 
   @doc "Persist an exact lineage fact through the caller's Repo without updating ETS."

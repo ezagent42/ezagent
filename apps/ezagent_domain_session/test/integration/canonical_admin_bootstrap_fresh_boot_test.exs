@@ -12,9 +12,10 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
   The admin Kind spawns LAZILY. On a fresh boot a seed that dispatches AS the
   admin — the default SessionTemplate seed, the cc / role-agent template seeds,
   ConfigEvolve reconcile, the world plugin — runs before anything has referenced
-  admin. `Ezagent.Identity.read_held_caps(admin)` is then empty and the admin is
-  not executing inside its own authority compartment (`autonomous_current?` is
-  false), so the `Ezagent.Cap.authorize/3` principal gate misjudged the admin as
+  admin. `Ezagent.Identity.read_held_caps(admin)` is then empty (and, pre-C4, the
+  admin was not executing inside its own authority compartment, so the removed
+  `autonomous_current?` process-generation branch did not rescue it either), so
+  the `Ezagent.Cap.authorize/3` principal gate misjudged the admin as
   `:holder_revoked` and the seed failed — hard-crashing dev/prod boot on the
   `default` SessionTemplate invariant.
 

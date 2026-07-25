@@ -4,6 +4,7 @@ import {Bug, CheckCircle2, ChevronUp, Copy, ExternalLink, LayoutGrid, Link2, Loa
 import {Button, Input, Modal, Select} from "./ui/primitives"
 import {JsonRenderBubble} from "./JsonRenderBubble"
 import {pluginPageRenderers} from "../generated/plugin-page-renderers"
+import {matchUnfurl} from "./unfurl"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {ExternalMirror} from "./Admin"
 
@@ -959,6 +960,9 @@ export function Conversation({
                 messages.map((message) => {
                   const mine = message.sender === callerUri
                   const kind = message.sender_kind || "other"
+                  // world 通用 unfurl：消息文本命中已注册插件的链接模式时，渲成插件
+                  // 气泡代替裸文本（空注册表恒 null → 行为与无 unfurl 完全一致）。
+                  const unfurl = message.text ? matchUnfurl(message.text) : null
                   return (
                     <div
                       key={message.id}
@@ -978,7 +982,14 @@ export function Conversation({
                           </span>
                         )}
                       </div>
-                      {message.text && <p className={bubbleTextClass(mine, kind)}>{message.text}</p>}
+                      {message.text &&
+                        (unfurl
+                          ? React.createElement(unfurl.entry.component, {
+                              url: unfurl.url,
+                              rest: unfurl.rest,
+                              ctx: {sessionUri, mine, dispatch: onKanbanAction},
+                            })
+                          : <p className={bubbleTextClass(mine, kind)}>{message.text}</p>)}
                       {message.error_card && (
                         // Async agent-reply error (G5 source 2): the per-viewer
                         // card renders IN ADDITION to the text (adversarial

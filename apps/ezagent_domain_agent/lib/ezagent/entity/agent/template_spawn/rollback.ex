@@ -1,0 +1,75 @@
+defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
+  @moduledoc false
+
+  alias Ezagent.Entity.Agent.SpawnObligations
+
+  @doc false
+  def fresh_spawn(workers, receipts, template_class, instance_uri, preserve_creation_receipts?) do
+    undo_workers(workers)
+    rollback_receipts(receipts, preserve_creation_receipts?)
+    cleanup_config_dirs(workers, template_class)
+    Ezagent.AgentFlavorAttributes.delete(instance_uri)
+    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(instance_uri))
+    :ok
+  end
+
+  defp rollback_receipts(receipts, preserve_creation_receipts?) do
+    Enum.each(receipts, fn
+      {:agent_display_profile, :inserted, agent_uri} ->
+        SpawnObligations.safe(fn ->
+          Ezagent.Entity.Profile.rollback_agent_display_name(agent_uri, :inserted)
+        end)
+
+      {:creation_inventory, _attempt_id, _worker_uri, _root_uri, _workspace_uri}
+      when preserve_creation_receipts? ->
+        :ok
+
+      {:creation_inventory, attempt_id, worker_uri, root_uri, workspace_uri} ->
+        SpawnObligations.safe(fn ->
+          Ezagent.Agent.CreationInventory.rollback_record(
+            attempt_id,
+            worker_uri,
+            root_uri,
+            workspace_uri
+          )
+        end)
+
+      {:spawned_by_edge, _worker_uri, _root_uri} ->
+        # Provenance is append-only audit history, including failed attempts.
+        :ok
+
+      {:lineage_fact, worker_uri, root_uri} ->
+        SpawnObligations.safe(fn ->
+          Ezagent.AgentLineage.rollback_lineage_fact(worker_uri, root_uri)
+        end)
+    end)
+  end
+
+  defp undo_workers(workers) do
+    Enum.each(workers, fn worker_uri ->
+      _ = Ezagent.Kind.terminate!(worker_uri)
+
+      SpawnObligations.safe(fn ->
+        Ezagent.WorkspaceRegistry.unbind(worker_uri)
+      end)
+    end)
+  end
+
+  defp cleanup_config_dirs(workers, template_class) do
+    cond do
+      not is_atom(template_class) ->
+        :ok
+
+      not function_exported?(template_class, :destroy_config_dir, 2) ->
+        :ok
+
+      true ->
+        namespace = Ezagent.Kind.Template.namespace_of(template_class)
+
+        Enum.each(workers, fn worker_uri ->
+          dir = Ezagent.Sandbox.ConfigDir.path(worker_uri, namespace)
+          _ = template_class.destroy_config_dir(worker_uri, dir)
+        end)
+    end
+  end
+end

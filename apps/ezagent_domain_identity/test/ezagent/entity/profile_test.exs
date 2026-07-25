@@ -3,6 +3,168 @@ defmodule Ezagent.Entity.ProfileTest do
 
   alias Ezagent.Entity.Profile
 
+  describe "ensure_agent_display_name/2" do
+    test "allocates a workspace-unique agent name and keeps same-URI retries idempotent" do
+      agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
+      agent_two = Ezagent.URI.new!("entity://team-alpha/agent/two")
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(agent_one, "builder")
+
+      assert {:ok, %Profile{display_name: "builder-2"}} =
+               Profile.ensure_agent_display_name(agent_two, "builder")
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(agent_one, "ignored-on-retry")
+    end
+
+    test "no-email Users can share names without consuming an Agent name" do
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.upsert(%{
+                 entity_uri: "entity://team-alpha/user/no-email-one",
+                 display_name: "builder"
+               })
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.upsert(%{
+                 entity_uri: "entity://team-alpha/user/no-email-two",
+                 display_name: "builder"
+               })
+
+      assert {:ok, %Profile{display_name: "builder"}} =
+               Profile.ensure_agent_display_name(
+                 Ezagent.URI.new!("entity://team-alpha/agent/one"),
+                 "builder"
+               )
+    end
+
+    test "rejects a canonical non-Agent URI before reading or writing a profile" do
+      user_uri = Ezagent.URI.new!("entity://team-alpha/user/not-an-agent")
+
+      assert {:error, :not_agent_uri} =
+               Profile.ensure_agent_display_name(user_uri, "builder")
+
+      assert Profile.get(user_uri) == nil
+    end
+
+    test "bounds generated suffixes to the database display-name limit" do
+      first = Ezagent.URI.new!("entity://team-alpha/agent/max-name-one")
+      second = Ezagent.URI.new!("entity://team-alpha/agent/max-name-two")
+      max_length_name = String.duplicate("a", 255)
+
+      assert {:ok, %Profile{display_name: ^max_length_name}} =
+               Profile.ensure_agent_display_name(first, max_length_name)
+
+      assert {:ok, %Profile{display_name: suffixed}} =
+               Profile.ensure_agent_display_name(second, max_length_name)
+
+      assert String.length(suffixed) == 255
+      assert String.ends_with?(suffixed, "-2")
+    end
+
+    test "returns a changeset error for a name longer than the database column" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/overlong")
+
+      assert {:error, changeset} =
+               Profile.ensure_agent_display_name(agent_uri, String.duplicate("a", 256))
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert Profile.get(agent_uri) == nil
+    end
+
+    test "counts decomposed Unicode codepoints like the database column" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/overlong-unicode")
+      overlong_name = String.duplicate("e\u0301", 128)
+
+      assert length(String.codepoints(overlong_name)) == 256
+      assert String.length(overlong_name) == 128
+
+      assert {:error, changeset} =
+               Profile.ensure_agent_display_name(agent_uri, overlong_name)
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert Profile.get(agent_uri) == nil
+    end
+
+    test "truncates a decomposed Unicode base by codepoint before adding a suffix" do
+      first = Ezagent.URI.new!("entity://team-alpha/agent/unicode-name-one")
+      second = Ezagent.URI.new!("entity://team-alpha/agent/unicode-name-two")
+      base_name = String.duplicate("e\u0301", 127)
+
+      assert length(String.codepoints(base_name)) == 254
+
+      assert {:ok, %Profile{display_name: ^base_name}} =
+               Profile.ensure_agent_display_name(first, base_name)
+
+      assert {:ok, %Profile{display_name: suffixed}} =
+               Profile.ensure_agent_display_name(second, base_name)
+
+      assert length(String.codepoints(suffixed)) == 255
+      assert String.ends_with?(suffixed, "-2")
+    end
+  end
+
+  describe "ensure_agent_display_name_with_receipt/2" do
+    test "distinguishes this call's insert from a same-URI no-op" do
+      agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/receipt")
+
+      assert {:ok, %Profile{display_name: "builder"}, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(agent_uri, "builder")
+
+      assert {:ok, %Profile{display_name: "builder"}, :exists} =
+               Profile.ensure_agent_display_name_with_receipt(agent_uri, "ignored-on-retry")
+    end
+
+    test "receipt-aware rollback is exact and idempotent" do
+      inserted_uri = Ezagent.URI.new!("entity://team-alpha/agent/rollback-inserted")
+      other_uri = Ezagent.URI.new!("entity://team-alpha/agent/rollback-other")
+
+      assert {:ok, %Profile{}, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(inserted_uri, "inserted")
+
+      assert {:ok, %Profile{} = other_profile, :inserted} =
+               Profile.ensure_agent_display_name_with_receipt(other_uri, "other")
+
+      assert :ok = Profile.rollback_agent_display_name(inserted_uri, :inserted)
+      assert :ok = Profile.rollback_agent_display_name(inserted_uri, :inserted)
+      assert Profile.get(inserted_uri) == nil
+      assert Profile.get(other_uri) == other_profile
+
+      assert :ok = Profile.rollback_agent_display_name(other_uri, :exists)
+      assert Profile.get(other_uri) == other_profile
+    end
+  end
+
+  test "an Agent profile does not prevent a User with the same display name" do
+    agent_one = Ezagent.URI.new!("entity://team-alpha/agent/one")
+
+    assert {:ok, %Profile{display_name: "builder"}} =
+             Profile.ensure_agent_display_name(agent_one, "builder")
+
+    assert {:ok, %Profile{display_name: "builder"}} =
+             Profile.upsert(%{
+               entity_uri: "entity://team-alpha/user/builder",
+               display_name: "builder",
+               email: "builder@example.com"
+             })
+  end
+
+  test "upsert/1 returns a changeset error for a duplicate Agent display name" do
+    {:ok, _} =
+      Profile.ensure_agent_display_name(
+        Ezagent.URI.new!("entity://team-alpha/agent/one"),
+        "builder"
+      )
+
+    assert {:error, changeset} =
+             Profile.upsert(%{
+               entity_uri: "entity://team-alpha/agent/two",
+               display_name: "builder"
+             })
+
+    assert "has already been taken" in errors_on(changeset).display_name
+  end
+
   test "upsert/1 inserts then updates the same entity_uri" do
     {:ok, p1} = Profile.upsert(%{entity_uri: "entity://team-alpha/user/x", display_name: "X"})
     assert p1.display_name == "X"

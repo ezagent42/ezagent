@@ -38,5 +38,14 @@ defmodule Ezagent.Persistence.TransientRetry do
   end
 
   defp transient?(%DBConnection.ConnectionError{}), do: true
+
+  # Test-only in practice: `OwnershipError` only exists under
+  # `Ecto.Adapters.SQL.Sandbox` (`Mix.env() == :test`), raised when a shared-mode
+  # owner has already exited and the pool reverted to `:manual` before this
+  # attempt. Dead branch in prod. Retrying gives a since-re-established owner (the
+  # next `async: false` test's setup, or a delayed shared-mode recovery) a chance
+  # to land instead of turning a harness timing race into a hard failure.
+  defp transient?(%DBConnection.OwnershipError{}), do: true
+
   defp transient?(_), do: false
 end

@@ -60,6 +60,55 @@ defmodule Ezagent.World.UiSurfaceProviderTest do
     end
   end
 
+  describe "valid_unfurl_renderer?/1" do
+    test "accepts %{id, pattern, renderer: %{source, export}} of the right shape" do
+      assert UiSurfaceProvider.valid_unfurl_renderer?(%{
+               id: "share",
+               pattern: "/socialware/demo/receive\\?token=",
+               renderer: %{source: "assets/src/unfurl.tsx", export: "ShareBubble"}
+             })
+    end
+
+    test "rejects a bad key, an empty pattern, an out-of-tree source, an empty export, a non-map" do
+      base = %{
+        id: "share",
+        pattern: "x",
+        renderer: %{source: "assets/src/unfurl.tsx", export: "ShareBubble"}
+      }
+
+      refute UiSurfaceProvider.valid_unfurl_renderer?(%{base | id: "Bad Id"})
+      refute UiSurfaceProvider.valid_unfurl_renderer?(%{base | pattern: ""})
+      refute UiSurfaceProvider.valid_unfurl_renderer?(put_in(base, [:renderer, :source], "../x.tsx"))
+      refute UiSurfaceProvider.valid_unfurl_renderer?(put_in(base, [:renderer, :export], ""))
+      refute UiSurfaceProvider.valid_unfurl_renderer?(:not_a_map)
+    end
+  end
+
+  describe "validate_page/1 with :unfurl" do
+    test "accepts a page declaring valid unfurl renderers" do
+      page =
+        Map.put(valid_page(), :unfurl, [
+          %{
+            id: "share",
+            pattern: "/socialware/demo/receive\\?token=",
+            renderer: %{source: "assets/src/unfurl.tsx", export: "ShareBubble"}
+          }
+        ])
+
+      assert :ok = UiSurfaceProvider.validate_page(page)
+    end
+
+    test "rejects an empty unfurl list and a malformed entry" do
+      empty = Map.put(valid_page(), :unfurl, [])
+      assert {:error, errors} = UiSurfaceProvider.validate_page(empty)
+      assert :unfurl in errors
+
+      malformed = Map.put(valid_page(), :unfurl, [%{id: "share"}])
+      assert {:error, errors} = UiSurfaceProvider.validate_page(malformed)
+      assert :unfurl in errors
+    end
+  end
+
   describe "validate_page/1" do
     test "accepts a complete plugin-owned page declaration" do
       assert :ok = UiSurfaceProvider.validate_page(valid_page())
