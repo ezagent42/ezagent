@@ -28,13 +28,24 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     or bare. A LITERAL sensitive `key` is flagged; a NON-LITERAL `key`
     (`k = :api_keys; Kind.get_slice(uri, k)`) is flagged FAIL-CLOSED as
     `:__dynamic__` and must be allowlisted, since `get_slice/2` accepts any atom.
+  - `Kind.read(uri, key)` / `Kind.read(uri, key, opts)` (C7 4c) — the §2.2 read
+    surface is ALSO an un-cap-checked slice read, so the retirement of
+    `get_slice/2`/`get_raw_slice/2` from the public `Kind` façade must not blind
+    this gate. The slice KEY is the SECOND positional arg (a piped
+    `uri |> Kind.read(:key)` is a 1-arg call node whose single arg IS the key);
+    the same literal/dynamic fail-closed rules apply. Receiver-scoped to
+    `Ezagent.Kind` / `Kind` (the two forms used in the tree): a bare `read(...)`
+    is NOT matched — without import tracking it is unattributable and collides
+    with local `read/1,2` helpers (e.g. `pending_delivery.ex`), and no lib file
+    `import`s `Ezagent.Kind`.
   - Owner exemption is by the file's `defmodule` (exact owner MODULE), not the
     filename — a non-owner file named `identity.ex` cannot bypass.
 
   ## Scope (stated honestly)
 
   Covers the `reads_siblings`/`reads_sibling_slices` declarations + the
-  `get_slice/2` read surface for the slices in `@sensitive_slices`. The cap/slice
+  `get_slice/2`/`get_raw_slice/2` raw accessors + the §2.2 `Kind.read/2,3`
+  surface for the slices in `@sensitive_slices`. The cap/slice
   ENGINE files (`@mechanism_definition_files`, incl. `kind.ex` which defines
   `get_slice` + `default_holds_cap?`) are excluded — they implement the
   mechanism, they are not Behavior consumers. Adding a new sensitive slice means
@@ -283,6 +294,63 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
 
       assert [] = scan_source(src, "apps/x/lib/benign.ex")
     end
+
+    test "C7 4c: flags a Kind.read/2 on a sensitive slice (qualified, both spellings)" do
+      full = """
+      defmodule Some.Behavior.ReadFull do
+        def peek(uri), do: Ezagent.Kind.read(uri, :api_keys)
+      end
+      """
+
+      aliased = """
+      defmodule Some.Behavior.ReadAliased do
+        alias Ezagent.Kind
+        def peek(uri), do: Kind.read(uri, :identity)
+      end
+      """
+
+      assert [%{key: :api_keys, via: :read}] = scan_source(full, "apps/x/lib/rf.ex")
+      assert [%{key: :identity, via: :read}] = scan_source(aliased, "apps/x/lib/ra.ex")
+    end
+
+    test "C7 4c: flags a Kind.read/3 (opts form) — the key is the SECOND positional arg" do
+      src = """
+      defmodule Some.Behavior.ReadOpts do
+        def peek(uri), do: Ezagent.Kind.read(uri, :api_keys, spawn: :never)
+      end
+      """
+
+      assert [%{key: :api_keys, via: :read}] = scan_source(src, "apps/x/lib/ro.ex")
+    end
+
+    test "C7 4c: catches a PIPED Kind.read and a dynamic read key (fail-closed)" do
+      piped = """
+      defmodule Some.Behavior.ReadPiped do
+        def peek(uri), do: uri |> Ezagent.Kind.read(:identity)
+      end
+      """
+
+      dynamic = """
+      defmodule Some.Behavior.ReadDyn do
+        def peek(uri, k), do: Ezagent.Kind.read(uri, k, spawn: :never)
+      end
+      """
+
+      assert [%{key: :identity, via: :read}] = scan_source(piped, "apps/x/lib/rp.ex")
+      assert [%{key: :__dynamic__, via: :read}] = scan_source(dynamic, "apps/x/lib/rd.ex")
+    end
+
+    test "C7 4c: a Kind.read on a NON-sensitive slice and a non-Kind read/2 stay clean" do
+      benign = """
+      defmodule Some.Behavior.ReadBenign do
+        def peek(uri), do: Ezagent.Kind.read(uri, :surface)
+        def other(uri), do: Some.SessionReads.read(uri, :api_keys)
+        def local(buf), do: read(buf)
+      end
+      """
+
+      assert [] = scan_source(benign, "apps/x/lib/rb.ex")
+    end
   end
 
   describe "owner_self_read?/1 (owner exemption is by MODULE, not filename)" do
@@ -406,6 +474,21 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     get_slice_read(List.last(args), file, module)
   end
 
+  # C7 4c — the §2.2 `Kind.read/2,3` surface. With `get_slice/get_raw_slice`
+  # retired from the public `Kind` façade, production sensitive-slice reads flow
+  # through `Kind.read` — an equally un-cap-checked slice read, so the gate must
+  # follow the symbol retirement. The KEY is the SECOND positional arg (a piped
+  # `uri |> Kind.read(:key)` is a 1-arg node whose single arg IS the key).
+  # Receiver-scoped to the two spellings used in the tree (`Ezagent.Kind` /
+  # aliased `Kind`); a bare `read(...)` is unattributable without import
+  # tracking and collides with local `read/1,2` helpers, so it is out of scope
+  # (no lib file `import`s `Ezagent.Kind` — verified at C7).
+  defp node_reads({{:., _, [{:__aliases__, _, parts}, :read]}, _, args}, file, module)
+       when parts in [[:Ezagent, :Kind], [:Kind]] and is_list(args) and args != [] do
+    key = if length(args) == 1, do: List.first(args), else: Enum.at(args, 1)
+    read_surface_read(key, file, module)
+  end
+
   defp node_reads(_node, _file, _module), do: []
 
   # Normalize a def head to `{name, ctx}`, unwrapping a `:when` guard wrapper.
@@ -436,6 +519,20 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
 
   defp get_slice_read(_non_literal, file, module) do
     [%{file: file, module: module, key: @dynamic_key, via: :get_slice}]
+  end
+
+  # Same classification as `get_slice_read/3` for the `Kind.read/2,3` surface —
+  # a literal sensitive key is flagged, a non-literal key fails CLOSED as
+  # `:__dynamic__` (`read/3` accepts any atom, so the runtime key COULD be
+  # sensitive).
+  defp read_surface_read(key, file, module) when is_atom(key) do
+    if key in @sensitive_keys,
+      do: [%{file: file, module: module, key: key, via: :read}],
+      else: []
+  end
+
+  defp read_surface_read(_non_literal, file, module) do
+    [%{file: file, module: module, key: @dynamic_key, via: :read}]
   end
 
   defp scan_tree do
@@ -477,7 +574,7 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     decision B (no runtime cap on in-process sibling reads) this gate is the
     defense-in-depth: a NON-owner read of one must be added to @allowlist with a
     justification, after review. A `#{inspect(@dynamic_key)}` key means a
-    non-literal `get_slice/2`/sibling-read arg (fail-closed — the runtime key
+    non-literal `get_slice/2`/`Kind.read/2,3`/sibling-read arg (fail-closed — the runtime key
     could be sensitive). If you added a new sensitive slice, add it to
     @sensitive_slices too.
     """
