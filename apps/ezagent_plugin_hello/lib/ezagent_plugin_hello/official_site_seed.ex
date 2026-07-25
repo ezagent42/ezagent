@@ -19,12 +19,15 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
           | {:error, term()}
 
   @spec site_uri() :: URI.t()
+  @doc "Returns the canonical URI of the official Hello site session."
   def site_uri, do: Ezagent.URI.session(EzagentPluginHello.home_workspace(), :hello, @name)
 
   @spec boot_enabled?() :: boolean()
+  @doc "Whether deployment boot should provision the official Hello site."
   def boot_enabled?, do: Application.get_env(:ezagent_plugin_hello, :site_seed_boot, false)
 
   @spec ensure() :: outcome()
+  @doc "Ensures the official Hello site exists, without creating a founder user."
   def ensure do
     with {:ok, owner} <- resolve_founder() do
       case current_page() do
@@ -39,7 +42,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
     with email when is_binary(email) and email != "" <- founder_email(),
          %Profile{entity_uri: entity_uri} <- Profile.by_email(email),
-         {:ok, %URI{} = founder} <- URI.new(entity_uri),
+         {:ok, %URI{} = founder} <- Ezagent.URI.parse(entity_uri),
          true <- Ezagent.Capability.workspace_of(founder) == Ezagent.URI.workspace(home) do
       {:ok, founder}
     else

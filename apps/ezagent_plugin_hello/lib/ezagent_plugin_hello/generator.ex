@@ -483,6 +483,7 @@ defmodule EzagentPluginHello.Generator do
           {:ok, content} -> {:ok, %{content: content}}
           {:error, _} = err -> err
         end
+
       :error ->
         {:error, :no_llm_agent}
     end
@@ -769,7 +770,14 @@ defmodule EzagentPluginHello.Generator do
 
   defp legacy_builder_uri(%URI{} = session_uri) do
     ws = Ezagent.URI.workspace_name!(session_uri)
-    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
+
+    name =
+      session_uri
+      |> Map.get(:path, "")
+      |> to_string()
+      |> String.split("/", trim: true)
+      |> List.last()
+
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
   end
 

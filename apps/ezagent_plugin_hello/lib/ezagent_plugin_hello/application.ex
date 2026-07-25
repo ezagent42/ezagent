@@ -285,13 +285,16 @@ defmodule EzagentPluginHello.Application do
     Process.sleep(5_000)
     report = EzagentPluginHello.Migrate.migrate_all()
 
+    migrated = Map.get(report, :migrated, [])
+    skipped = Map.get(report, :skipped, [])
+    failed = Map.get(report, :failed, [])
+
     Logger.info(
-      "hello orchestrator migration done — migrated=#{length(report.migrated)} " <>
-        "skipped=#{length(report.skipped)} failed=#{length(report.failed)}"
+      "hello orchestrator migration done — migrated=#{length(migrated)} " <>
+        "skipped=#{length(skipped)} failed=#{length(failed)}"
     )
 
-    if report.failed != [],
-      do: Logger.warning("hello migration failures: #{inspect(report.failed)}")
+    if failed != [], do: Logger.warning("hello migration failures: #{inspect(failed)}")
   end
 
   # `HELLO_DEMO_SEED=1` → at boot, instantiate a `public_view` hello app and land
