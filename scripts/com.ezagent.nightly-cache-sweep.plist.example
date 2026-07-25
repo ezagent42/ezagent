@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ezagent nightly cache sweep (scripts/nightly-cache-sweep.sh).
+     INSTALL: copy the script to a stable, repo-independent path and render
+     __SWEEP_BIN__ to that path, drop this into ~/Library/LaunchAgents/, then
+     `launchctl load` it. A stable copy (not a repo/worktree path) keeps the cron
+     working across worktree removal + branch churn. See
+     docs/guide/nightly-cache-sweep.md for the copy/render/load one-liners.
+     Runs REAL mode nightly at 03:30 (before the 04:00 deploy backup, so the two
+     never contend for docker). Login zsh (`-lc`) so brew/uv/pnpm/npm/yarn are on PATH. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.ezagent.nightly-cache-sweep</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string><string>-lc</string>
+    <string>__SWEEP_BIN__</string>
+  </array>
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/tmp/ezagent-nightly-sweep.out</string>
+  <key>StandardErrorPath</key><string>/tmp/ezagent-nightly-sweep.err</string>
+</dict></plist>
