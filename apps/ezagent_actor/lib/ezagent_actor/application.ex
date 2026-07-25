@@ -34,7 +34,34 @@ defmodule EzagentActor.Application do
       ]
       |> Enum.reject(&skip_in_test_env?/1)
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: EzagentActor.Supervisor)
+    result = Supervisor.start_link(children, strategy: :one_for_one, name: EzagentActor.Supervisor)
+
+    # PR #145 (SPEC v2 §5.6 §5.11) — seed the runtime URI scheme allowlist
+    # BEFORE any code path that calls `Ezagent.URI.new!/1` or
+    # `Ezagent.SpawnRegistry.register/2` (which co-registers schemes).
+    # C5 §3.2 ATOMIC move: registry module + ETS table + this seed travel
+    # together. Ordering is STRUCTURAL — `ezagent_core` depends on
+    # `ezagent_actor`, so OTP starts this app (and this seed) before any
+    # core boot code can call `URI.new!/1` (e.g. the
+    # `system://routing/default` sentinel spawn).
+    :ok = seed_uri_schemes()
+
+    result
+  end
+
+  # PR #145 — seed the 6 SPEC §5.6 schemes into SchemeRegistry. Idempotent
+  # (`:ets.insert/2` overwrites the same key), safe on supervisor restart.
+  # Idempotent `SchemeRegistry.init/0` covers the rare case where EtsOwner
+  # has not yet finished initializing on a hot path — in normal boot,
+  # EtsOwner is child ① in the supervision tree so the table is ready.
+  defp seed_uri_schemes do
+    :ok = Ezagent.URI.SchemeRegistry.init()
+
+    Enum.each(~w(entity workspace session template resource system), fn s ->
+      :ok = Ezagent.URI.SchemeRegistry.register(s)
+    end)
+
+    :ok
   end
 
   # See the `EzagentCore.Application` note on the writer skip — the 100ms

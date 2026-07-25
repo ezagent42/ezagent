@@ -70,12 +70,12 @@ defmodule EzagentCore.EtsOwner do
     # backing kind_module. The chat plugin's `entity://` SpawnRegistry
     # fn looks up kind_module from snapshot first, AgentTemplate
     # second — no per-flavor lookup table needed.
-    # PR #145 (SPEC v2 §5.6 §5.11): runtime ETS allowlist of URI schemes
-    # accepted by `Ezagent.URI.new!/1`. Seeded at boot with the 6 core
-    # schemes; plugins extend it ONLY via `Ezagent.SpawnRegistry.register/2`
-    # (which co-registers). Eliminates the hardcoded `@known_schemes`
-    # drift bug.
-    {Ezagent.URI.SchemeRegistry, :set},
+    # PR #145 (SPEC v2 §5.6 §5.11): the runtime ETS allowlist of URI
+    # schemes (`{Ezagent.URI.SchemeRegistry, :set}`) moved to
+    # `EzagentActor.EtsOwner` in the C5 atomic scheme-registry commit —
+    # module, table, and the 6-scheme boot seed travel together (§3.2);
+    # OTP starts `ezagent_actor` before core, so the seed precedes any
+    # core `Ezagent.URI.new!/1`.
     # Plugin authoring contract PR-1 (SPEC
     # docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md):
     # - PluginRegistry §4 — runtime catalog of installed plugins;

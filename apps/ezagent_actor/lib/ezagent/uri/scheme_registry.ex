@@ -7,12 +7,12 @@ defmodule Ezagent.URI.SchemeRegistry do
   reality across PRs #141-#144 (deleted `user`, `agent`, `feishu`,
   `routing-admin`, `pty-input`); the lockdown ensures it never drifts
   again — schemes can only be added through `Ezagent.SpawnRegistry.register/2`
-  (the audited path) or the boot-time seed in `EzagentCore.Application`.
+  (the audited path) or the boot-time seed in `EzagentActor.Application`.
 
   ## Boot order
 
-  The ETS table is created by `EzagentCore.EtsOwner` (lives in `@tables`
-  alongside the other reliability primitives). `EzagentCore.Application`
+  The ETS table is created by `EzagentActor.EtsOwner` (lives in `@tables`
+  alongside the other reliability primitives). `EzagentActor.Application`
   calls `init/0` (idempotent) + seeds the 6 SPEC §5.6 schemes
   (entity/workspace/session/template/resource/system) before any code
   that would call `Ezagent.URI.new!/1`.
@@ -27,13 +27,13 @@ defmodule Ezagent.URI.SchemeRegistry do
 
   @table :ezagent_scheme_registry
 
-  @doc "Return the ETS table name (used by `EzagentCore.EtsOwner`)."
+  @doc "Return the ETS table name (used by `EzagentActor.EtsOwner`)."
   @spec table() :: atom()
   def table, do: @table
 
   @doc """
   Idempotently ensure the ETS table exists. Safe to call at boot in
-  `EzagentCore.Application.start/2` — if `EtsOwner` already created
+  `EzagentActor.Application.start/2` — if `EtsOwner` already created
   the table this is a no-op.
   """
   @spec init() :: :ok
@@ -49,7 +49,7 @@ defmodule Ezagent.URI.SchemeRegistry do
   Register a scheme as allowed. Plugins MUST go through
   `Ezagent.SpawnRegistry.register/2` (which co-registers); direct
   callers of this function should only be boot-time seed code in
-  `EzagentCore.Application`.
+  `EzagentActor.Application`.
   """
   @spec register(String.t()) :: :ok
   def register(scheme) when is_binary(scheme) do

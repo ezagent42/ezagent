@@ -35,9 +35,14 @@ defmodule EzagentActor.EtsOwner do
     # `Ezagent.SliceChange.emit/1`'s broadcast envelope (see the core
     # EtsOwner's historical note; the owning module moved with the
     # framework).
-    {Ezagent.SliceChange.Cursors, :set}
-    # `{Ezagent.URI.SchemeRegistry, :set}` moves here in the ATOMIC
-    # scheme-registry commit (module + table + seed travel together).
+    {Ezagent.SliceChange.Cursors, :set},
+    # PR #145 (SPEC v2 §5.6 §5.11): runtime ETS allowlist of URI schemes
+    # accepted by `Ezagent.URI.new!/1`. Seeded by
+    # `EzagentActor.Application.start/2` with the 6 core schemes; plugins
+    # extend it ONLY via `Ezagent.SpawnRegistry.register/2` (which
+    # co-registers). Moved here in the C5 ATOMIC scheme-registry commit —
+    # module, table, and seed travel together (§3.2).
+    {Ezagent.URI.SchemeRegistry, :set}
   ]
 
   def start_link(_opts) do

@@ -111,11 +111,12 @@ defmodule EzagentCore.Application do
     # Attach telemetry handlers after the writer is up. Idempotent on restart.
     :ok = Ezagent.Audit.attach()
 
-    # PR #145 (SPEC v2 §5.6 §5.11) — seed the runtime URI scheme allowlist
-    # BEFORE any code path that calls `Ezagent.URI.new!/1` or
-    # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
-    # EtsOwner already created the table; this populates the 6 core schemes.
-    :ok = seed_uri_schemes()
+    # PR #145 (SPEC v2 §5.6 §5.11) / C5 §3.2 — the runtime URI scheme
+    # allowlist seed moved to `EzagentActor.Application.start/2` in the
+    # ATOMIC scheme-registry commit (module + ETS table + seed travel
+    # together). OTP starts `ezagent_actor` before this app (core declares
+    # the dep), so the 6 core schemes are seeded before any code path here
+    # calls `Ezagent.URI.new!/1` or `Ezagent.SpawnRegistry.register/2`.
 
     # Resource-unification P3 (SPEC §10 OI-3) — the `system://<type>[/<name>]`
     # resolution seam for node-global artifacts (global app creds, plugin config,
@@ -217,21 +218,6 @@ defmodule EzagentCore.Application do
 
   defp skip_in_test_env?(child),
     do: is_test?() and child in @writers_skipped_in_test
-
-  # PR #145 — seed the 6 SPEC §5.6 schemes into SchemeRegistry. Idempotent
-  # (`:ets.insert/2` overwrites the same key), safe on supervisor restart.
-  # Idempotent `SchemeRegistry.init/0` covers the rare case where EtsOwner
-  # has not yet finished initializing on a hot path — in normal boot,
-  # EtsOwner is child ① in the supervision tree so the table is ready.
-  defp seed_uri_schemes do
-    :ok = Ezagent.URI.SchemeRegistry.init()
-
-    Enum.each(~w(entity workspace session template resource system), fn s ->
-      :ok = Ezagent.URI.SchemeRegistry.register(s)
-    end)
-
-    :ok
-  end
 
   # PR #146 — register Routing Behavior on the System Kind, spawn the
   # canonical global-rules sentinel `system://routing/default`, and
