@@ -127,7 +127,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       # to the persistent `.state` view (T3) which would hide them — use
       # `get_raw_slice/2` to inspect the `transients` container.
       {:ok, %{transients: transients}} =
-        Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+        Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
 
       # After activate/2 completes, subscription_state is :active and
       # binding_state + the adapter/binding modules are bound.
@@ -724,7 +724,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
     with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
          {:ok, %{transients: %{subscribers: subscribers}}} <-
-           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+           Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher),
          true <- Map.has_key?(subscribers, worker_pid) do
       :ok
     else

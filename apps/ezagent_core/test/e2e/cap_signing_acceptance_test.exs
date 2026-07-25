@@ -208,7 +208,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert {:ok, normalized_slice} = Ezagent.Kind.get_slice(uri, :test)
     refute contains_binary?(normalized_slice, private_key)
 
-    assert {:ok, raw_slice} = Ezagent.Kind.get_raw_slice(uri, :test)
+    assert {:ok, raw_slice} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :test)
     refute contains_binary?(raw_slice, private_key)
 
     assert {:ok, runtime_view} = Ezagent.Kind.runtime_view(uri)

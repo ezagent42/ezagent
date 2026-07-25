@@ -58,7 +58,7 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
     refute Map.has_key?(runtime_view, :authority)
     refute contains_binary?(runtime_view, private_key)
 
-    assert {:ok, slice} = Ezagent.Kind.get_raw_slice(context.uri, :test)
+    assert {:ok, slice} = Ezagent.Kind.SliceAccess.get_raw_slice(context.uri, :test)
     refute contains_binary?(slice, private_key)
   end
 

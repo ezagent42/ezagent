@@ -90,7 +90,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuLifecycleColdLoadTest do
 
     # T3: RAW read — assert on both containers.
     {:ok, %{state: state_before, transients: transients_before}} =
-      Kind.get_raw_slice(uri, slice_key)
+      Ezagent.Kind.SliceAccess.get_raw_slice(uri, slice_key)
 
     assert state_before == expected_state
     assert transients_before == %{}
@@ -113,7 +113,7 @@ defmodule EzagentPluginFeishu.Behavior.FeishuLifecycleColdLoadTest do
     wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
     {:ok, %{state: state_after, transients: transients_after}} =
-      Kind.get_raw_slice(uri, slice_key)
+      Ezagent.Kind.SliceAccess.get_raw_slice(uri, slice_key)
 
     # State rehydrated correctly; create/1 did NOT re-run; no transients.
     assert state_after == state_before

@@ -144,7 +144,7 @@ defmodule Ezagent.LifecycleFollowupTest do
 
       # The transient hits counter advanced (slice key pinned to :transient_only)...
       # Raw read — T3's get_slice/2 normalizes to flat .state, hiding transients.
-      {:ok, %{transients: tr}} = Ezagent.Kind.get_raw_slice(u, :transient_only)
+      {:ok, %{transients: tr}} = Ezagent.Kind.SliceAccess.get_raw_slice(u, :transient_only)
       assert tr.hits == 1
 
       # ...but NO SliceChange broadcast fired (transients are not durable;
@@ -349,7 +349,7 @@ defmodule Ezagent.LifecycleFollowupTest do
       # post_handle rewrote the result.
       assert result.post == true
 
-      {:ok, %{state: state}} = Ezagent.Kind.get_raw_slice(u, :lifecycle_intercept_fixture)
+      {:ok, %{state: state}} = Ezagent.Kind.SliceAccess.get_raw_slice(u, :lifecycle_intercept_fixture)
       # handler's {:set, :seen, 6} landed (proves pre_handle arg rewrite)...
       assert state.seen == 6
       # ...AND post_handle's injected {:set, :post_marker, :ran} landed.
@@ -375,7 +375,7 @@ defmodule Ezagent.LifecycleFollowupTest do
       assert result == %{denied: true}
 
       # The handler never ran, so it never set :seen to :should_not_happen.
-      {:ok, %{state: state}} = Ezagent.Kind.get_raw_slice(u, :lifecycle_intercept_fixture)
+      {:ok, %{state: state}} = Ezagent.Kind.SliceAccess.get_raw_slice(u, :lifecycle_intercept_fixture)
       refute state.seen == :should_not_happen
     end
   end

@@ -191,7 +191,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       {:ok, publisher_slice_mid} = Ezagent.Kind.get_slice(session_uri, :publisher)
 
       {:ok, %{transients: publisher_transients_mid}} =
-        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
+        Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
 
       assert publisher_slice_mid.cursor > cursor_at_window_start,
              "test pre-condition broken — the slice change in the empty-fanout window " <>
@@ -328,7 +328,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # `subscribers` is a TRANSIENT (remediation 2026-05-30) — read it from
       # the `transients` container via `get_raw_slice/2`.
       {:ok, %{transients: publisher_transients_after}} =
-        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
+        Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
 
       assert map_size(publisher_transients_after.subscribers) >= 1,
              "Out-of-window fallback did not re-subscribe the worker at :latest. " <>
@@ -475,7 +475,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
     with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
          {:ok, %{transients: %{subscribers: subscribers}}} <-
-           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+           Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher),
          true <- Map.has_key?(subscribers, worker_pid) do
       :ok
     else
@@ -534,9 +534,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
 
   defp replay_diagnostic(session_uri, worker_uri, expected_count) do
     publisher_slice = Ezagent.Kind.get_slice(session_uri, :publisher)
-    publisher_raw = Ezagent.Kind.get_raw_slice(session_uri, :publisher)
+    publisher_raw = Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
     worker_slice = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
-    worker_raw = Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+    worker_raw = Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
     worker_lookup = Ezagent.KindRegistry.lookup(worker_uri)
 
     subscriber_pids =

@@ -106,7 +106,7 @@ defmodule Ezagent.Kind.MountDetachTest do
     assert_received {:detach_probe, :activated}
 
     assert {:ok, %{state: %{poked: false}, transients: %{}}} =
-             Kind.get_raw_slice(uri, :detach_probe)
+             Ezagent.Kind.SliceAccess.get_raw_slice(uri, :detach_probe)
   end
 
   test "RF-2: mount is idempotent (mounting a present behavior → :ok, no re-create)" do
@@ -173,7 +173,7 @@ defmodule Ezagent.Kind.MountDetachTest do
 
     # Slice cleared + behavior no longer in the effective set.
     refute DetachProbe in Kind.BehaviorSet.effective_set(SupersetSessionKind, live_slice(uri))
-    assert {:ok, nil} = Kind.get_raw_slice(uri, :detach_probe)
+    assert {:ok, nil} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :detach_probe)
 
     # Action no longer dispatches.
     assert {:error, {:unknown_action, :detach_poke}} =

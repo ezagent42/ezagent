@@ -6,8 +6,9 @@ defmodule Ezagent.Kind.SliceAccess do
 
   Extracted verbatim from `Ezagent.Kind` for the oversized-module arch gate
   (`oversized_modules_gt_1000` burn-down, 2026-06-23). `Ezagent.Kind` keeps
-  `get_slice/2`, `get_raw_slice/2`, and `normalize_slice_view/1` as `defdelegate`s
-  to this module, so the public API and every call site are unchanged.
+  `get_slice/2` and `normalize_slice_view/1` as `defdelegate`s to this module;
+  `get_raw_slice/2` left the public surface in C7 4a — the raw two-container
+  view is framework-internal now.
 
   These are NOT hot-path APIs — a `Behavior.invoke/4` reads its own slice via the
   `slice` argument. This module is for cross-process lookups during default-grant

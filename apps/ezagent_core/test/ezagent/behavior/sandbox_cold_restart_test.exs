@@ -108,7 +108,7 @@ defmodule Ezagent.ActionSet.SandboxColdRestartTest do
           # consumers. This test reads the RAW two-container slice so it can
           # match on the explicit `%{state: %{...}}` shape.
           wait_until(fn ->
-            case Ezagent.Kind.get_raw_slice(live_uri, :sandbox) do
+            case Ezagent.Kind.SliceAccess.get_raw_slice(live_uri, :sandbox) do
               {:ok, %{state: %{pty_phase: :running}}} -> true
               _ -> false
             end
@@ -162,13 +162,13 @@ defmodule Ezagent.ActionSet.SandboxColdRestartTest do
 
     wait_until(fn ->
       # T3: RAW read — match on the explicit two-container shape (see note above).
-      case Ezagent.Kind.get_raw_slice(self_uri, :sandbox) do
+      case Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :sandbox) do
         {:ok, %{state: %{pty_phase: :dead}}} -> true
         _ -> false
       end
     end)
 
-    {:ok, %{state: %{pty_phase: final_phase}}} = Ezagent.Kind.get_raw_slice(self_uri, :sandbox)
+    {:ok, %{state: %{pty_phase: final_phase}}} = Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :sandbox)
     assert final_phase == :dead
   end
 end

@@ -100,7 +100,7 @@ defmodule Ezagent.ActionSet.TerminableColdLoadTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       assert {:ok, %{state: %{terminations: 0}, transients: %{}}} =
-               Ezagent.Kind.get_raw_slice(uri, :lifecycle)
+               Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle)
 
       assert KindSnapshot.ever_created?(uri_str),
              "fresh spawn must set the ever-created marker (create-once gate, SPEC §9 OQ-1)"
@@ -126,7 +126,7 @@ defmodule Ezagent.ActionSet.TerminableColdLoadTest do
       #    to rebuild — this is a no-transient Behavior). The two-container
       #    cold-load path works for a state-only Lifecycle module.
       assert {:ok, %{state: %{terminations: 0}, transients: %{}}} =
-               Ezagent.Kind.get_raw_slice(uri, :lifecycle)
+               Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle)
 
       # 4. The ever-created marker is DURABLE across the restart — so a
       #    future cold-load keeps skipping create/1. This is the no-recreate

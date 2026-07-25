@@ -60,7 +60,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # + 2 SnapshotStore). Residual: lifecycle_case.ex get_raw_slice ×2 stays
   # ledgered — raw %{state, transients} introspection has no §2.2 public
   # replacement.
-  @forward_frozen 158
+  # C7 chunk-4a lowered forward 158→157: `Kind.get_raw_slice/2` retired from the
+  # public surface; lifecycle_case's two raw reach-ins collapse into ONE private
+  # `raw_slice!/2` helper calling `Ezagent.Kind.SliceAccess.get_raw_slice/2`
+  # directly (−1 site).
+  @forward_frozen 157
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved

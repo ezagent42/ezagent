@@ -523,15 +523,13 @@ defmodule Ezagent.Kind do
     do: detach(Ezagent.URI.new!(uri_str), behavior)
 
   # Slice cross-process reads + T3 normalization extracted to
-  # `Ezagent.Kind.SliceAccess` (oversized-module arch gate, 2026-06-23). Kept as
-  # delegates so the public API + every call site are unchanged.
+  # `Ezagent.Kind.SliceAccess` (oversized-module arch gate, 2026-06-23).
+  # `get_raw_slice/2` retired from the public surface in C7 4a — the raw view is
+  # framework-internal now; the ONE remaining consumer (LifecycleCase's
+  # transients gate) calls `SliceAccess` directly.
   @doc "Read a Kind instance's slice (T3-normalized) by URI (delegates to `Ezagent.Kind.SliceAccess`)."
   @spec get_slice(URI.t() | String.t(), atom()) :: {:ok, term()} | {:error, term()}
   defdelegate get_slice(uri, slice_key), to: Ezagent.Kind.SliceAccess
-
-  @doc "Read a Kind instance's raw (un-normalized) slice by URI (delegates to `Ezagent.Kind.SliceAccess`)."
-  @spec get_raw_slice(URI.t() | String.t(), atom()) :: {:ok, term()} | {:error, term()}
-  defdelegate get_raw_slice(uri, slice_key), to: Ezagent.Kind.SliceAccess
 
   @doc "Normalize a two-container slice view to its state map (delegates to `Ezagent.Kind.SliceAccess`)."
   @spec normalize_slice_view(term()) :: term()

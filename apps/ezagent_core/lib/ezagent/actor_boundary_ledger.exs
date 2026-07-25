@@ -98,15 +98,10 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/lifecycle_case.ex",
-      target: "Kind.get_raw_slice",
-      sha: "d218c14a8c38590288c95fee15908fc244a7cf46497ceb003c7a368d39cefb85",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/lifecycle_case.ex",
-      target: "Kind.get_raw_slice",
-      sha: "d218c14a8c38590288c95fee15908fc244a7cf46497ceb003c7a368d39cefb85",
-      note: "get_slice reach-in → read/3 (ratchet→C7)"
+      target: "Ezagent.Kind.SliceAccess",
+      sha: "cbd2ecea9e740857e564f2a312b7e97b3e04600233da72ed5420fed2ff3d0647",
+      note:
+        "C7 4a: Kind.get_raw_slice retired — the transients gate's ONE raw read goes direct to SliceAccess via the private raw_slice!/2 helper"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/lifecycle_case.ex",
