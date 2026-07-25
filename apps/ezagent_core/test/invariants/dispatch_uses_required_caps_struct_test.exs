@@ -18,11 +18,23 @@ defmodule EzagentCore.Invariants.DispatchUsesRequiredCapsStructTest do
   defp verifier_path,
     do: Path.join(umbrella_root(), "apps/ezagent_core/lib/ezagent/cap/verifier.ex")
 
+  defp authz_adapter_path,
+    do:
+      Path.join(
+        umbrella_root(),
+        "apps/ezagent_core/lib/ezagent/kind/adapters/authz_adapter.ex"
+      )
+
   test "Runtime delegates authorization to the central verifier" do
     source = File.read!(runtime_path())
 
-    assert source =~ "Ezagent.Cap.Verifier.authorize("
+    # C5 §3.4 AuthzPort — step 5.5 goes through the config-resolved port…
+    assert source =~ "authz().authorize_dispatch("
     refute source =~ "Ezagent.Kind.holds_cap?"
+
+    # …and the core adapter is the single delegation point that reaches the
+    # central verifier.
+    assert File.read!(authz_adapter_path()) =~ "Ezagent.Cap.Verifier.authorize("
   end
 
   test "central verifier binds action intent and delegates to authorize/3" do

@@ -26,6 +26,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
   @snapshot "apps/ezagent_core/lib/ezagent/kind/snapshot.ex"
+  @authority_adapter "apps/ezagent_core/lib/ezagent/kind/adapters/authority_adapter.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
   @provider_connection "apps/ezagent_domain_provider_connection/lib/ezagent/behavior/provider_connection.ex"
@@ -35,7 +36,10 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @entity_caps => 1,
     @recipe_cap_binding => 1,
     @outbound_grant => 1,
-    @snapshot => 1
+    # C5 §3.4 AuthorityPort — snapshot's `verified_set` call moved behind the
+    # config-resolved port; the core ADAPTER is the reviewed storage-boundary
+    # home now (the literal `Cap.verified_set` call lives here).
+    @authority_adapter => 1
   }
   @storage_home_count 7
 
@@ -97,7 +101,12 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert definition_source(@snapshot, :verify_snapshot_caps, 2) =~
              "put_verified_snapshot_caps"
 
+    # C5 §3.4 AuthorityPort — the snapshot load path calls the port; the
+    # literal `Cap.verified_set` delegation lives in the core adapter.
     assert definition_source(@snapshot, :put_verified_snapshot_caps, 4) =~
+             "authority().verified_set"
+
+    assert definition_source(@authority_adapter, :verified_set, 2) =~
              "Ezagent.Cap.verified_set"
 
     assert definition_source(@cap, :verified_set, 2) =~ "storable_for?(cap, receiver_uri)"
@@ -193,7 +202,13 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
     runtime = source("apps/ezagent_core/lib/ezagent/kind/runtime.ex")
     refute runtime =~ "Ezagent.Cap.verified_set"
-    assert runtime =~ "Ezagent.Cap.Verifier.authorize"
+    # C5 §3.4 AuthzPort — the runtime's step-5.5 authorization goes through
+    # the config-resolved port; the literal verifier call lives in the
+    # core adapter.
+    assert runtime =~ "authz().authorize_dispatch"
+
+    assert source("apps/ezagent_core/lib/ezagent/kind/adapters/authz_adapter.ex") =~
+             "Ezagent.Cap.Verifier.authorize"
   end
 
   test "no matches consumption function also performs verification" do
