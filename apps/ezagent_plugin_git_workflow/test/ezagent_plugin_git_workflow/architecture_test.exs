@@ -91,7 +91,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
   describe "claim path rejects forbidden modules" do
     test "no Kind/Cap/Agent/sidecar/Req in lib modules" do
-      sources = ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex)
+      sources = ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex)
       forbidden = ~w(
         Kind.spawn Cap.issue Cap.store Ezagent.ActionSet.GitTaskAccess
         EzagentPluginGithub EzagentPluginKanban WorkspaceProvision Agent.Sidecar
@@ -242,7 +242,8 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
   describe "no CapBAC / authorization" do
     test "no reference to Ezagent.Cap in lib modules" do
-      for source <- ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex) do
+      for source <-
+            ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex) do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do

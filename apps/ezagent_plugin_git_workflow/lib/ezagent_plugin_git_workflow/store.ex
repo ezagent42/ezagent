@@ -14,6 +14,7 @@ defmodule EzagentPluginGitWorkflow.Store do
 
   alias EzagentCore.Repo
   alias EzagentPluginGitWorkflow.AcceptIntent
+  alias EzagentPluginGitWorkflow.DeterministicRef
   alias EzagentPluginGitWorkflow.TaskBinding
   alias EzagentPluginGitWorkflow.WorkflowRun
 
@@ -101,15 +102,11 @@ defmodule EzagentPluginGitWorkflow.Store do
         source_revision: source_revision,
         requested_head_ref: requested_head_ref
       }) do
+    run_id = WorkflowRun.generate_id(binding_id, binding_generation, external_task_id)
+
     with {:ok, binding} <- check_binding_active(binding_id),
          :ok <- validate_binding_generation(binding_generation, binding),
-         :ok <- validate_source_workspace(source_task_uri, binding, requested_head_ref),
-         run_id =
-           WorkflowRun.generate_id(
-             binding_id,
-             binding_generation,
-             external_task_id
-           ),
+         :ok <- validate_source_workspace(source_task_uri, binding, requested_head_ref, run_id),
          digest =
            compute_accept_digest(
              binding_id,
@@ -241,14 +238,15 @@ defmodule EzagentPluginGitWorkflow.Store do
   defp validate_source_workspace(
          source_task_uri,
          %TaskBinding{workspace_uri: workspace_uri} = binding,
-         requested_head_ref
+         requested_head_ref,
+         run_id
        ) do
     source_ws = Ezagent.URI.workspace_name(source_task_uri)
     binding_ws = Ezagent.URI.workspace_name(workspace_uri)
 
     case {source_ws, binding_ws} do
       {{:ok, ws}, {:ok, ws}} ->
-        validate_requested_head_ref(requested_head_ref, binding)
+        validate_requested_head_ref(requested_head_ref, binding, run_id)
 
       {{:ok, _}, {:ok, _}} ->
         {:error, :source_workspace_mismatch}
@@ -258,10 +256,14 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
-  defp validate_requested_head_ref(nil, _binding), do: :ok
+  defp validate_requested_head_ref(nil, _binding, _run_id), do: :ok
 
-  defp validate_requested_head_ref(ref, %TaskBinding{allowed_head_namespace: ns}) do
-    if String.starts_with?(ref, ns),
+  defp validate_requested_head_ref(
+         ref,
+         %TaskBinding{allowed_head_namespace: ns},
+         run_id
+       ) do
+    if ref == DeterministicRef.derive(ns, run_id),
       do: :ok,
       else: {:error, :head_ref_not_allowed}
   end

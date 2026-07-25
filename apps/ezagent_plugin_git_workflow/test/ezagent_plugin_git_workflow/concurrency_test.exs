@@ -19,7 +19,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       external_task_id: "task-default",
       source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
       source_revision: "abc123",
-      requested_head_ref: "feature/conc"
+      requested_head_ref: nil
     }
 
     {:ok, intent} = Map.merge(defaults, overrides) |> AcceptIntent.new()

@@ -132,6 +132,36 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert {:error, :head_ref_not_allowed} = Store.accept(intent)
     end
 
+    test "requested_head_ref inside namespace but not the deterministic value returns error" do
+      # Regression for the pre-P1 gap: the old check only verified
+      # String.starts_with?/2 against the namespace, so any suffix under
+      # "feature/" was accepted. It must now match derive/2 exactly.
+      intent =
+        build_intent(%{
+          external_task_id: "task-non-deterministic-head",
+          requested_head_ref: "feature/whatever-i-want"
+        })
+
+      assert {:error, :head_ref_not_allowed} = Store.accept(intent)
+    end
+
+    test "requested_head_ref matching the deterministic value is accepted" do
+      external_task_id = "task-deterministic-head"
+
+      run_id =
+        EzagentPluginGitWorkflow.WorkflowRun.generate_id("bnd_store_test", 1, external_task_id)
+
+      expected_ref = EzagentPluginGitWorkflow.DeterministicRef.derive("feature/", run_id)
+
+      intent =
+        build_intent(%{
+          external_task_id: external_task_id,
+          requested_head_ref: expected_ref
+        })
+
+      assert {:ok, %WorkflowRun{requested_head_ref: ^expected_ref}} = Store.accept(intent)
+    end
+
     test "run.workspace_uri equals binding.workspace_uri" do
       intent = build_intent(%{external_task_id: "task-ws-proof"})
       {:ok, run} = Store.accept(intent)
