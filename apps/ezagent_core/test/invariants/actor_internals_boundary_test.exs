@@ -111,7 +111,15 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # at runtime.ex — plain `cap` binding, adapter validates) →
   # authorize_dispatch/authorize_and_issue_grant, −3 sites;
   # `CapabilityRegistry.data_owner_of` (behavior/introspection), −1 site.
-  @reverse_frozen 43
+  # C5 chunk-2 lowered reverse 43→24: AuthorityPort (§3.4) — server
+  # open/with_current/retire/regenesis (+ the generation field read →
+  # `generation/1`, authority now OPAQUE) + the artifact handlers
+  # (validate/verify; the `:ezagent_verify_cap_artifact` struct match
+  # demoted to a plain binding — adapter validates), runtime's
+  # `with_runtime_view` (KEPT AS-IS, full state), snapshot's
+  # `verified_set`, lifecycle's destroy-path `retire` → the
+  # config-resolved `:ezagent_actor, :authority` adapter, −19 sites.
+  @reverse_frozen 24
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

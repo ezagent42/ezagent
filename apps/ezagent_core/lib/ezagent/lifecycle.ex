@@ -773,7 +773,7 @@ defmodule Ezagent.Lifecycle do
       # active row here as well. Idempotency makes this the single post-
       # termination guarantee for both paths: a later genuine create must
       # append a strictly newer generation instead of reopening the old key.
-      :ok = Ezagent.Cap.Authority.retire(uri)
+      :ok = authority().retire(uri)
 
       # Clear durable state only after teardown is CONFIRMED. A failed custom
       # teardown or module query leaves the snapshot intact for the reaper.
@@ -833,4 +833,11 @@ defmodule Ezagent.Lifecycle do
         :ok
     end
   end
+
+  # C5 §3.4 AuthorityPort — authority retirement on the destroy path goes
+  # through the config-resolved port, never the literal
+  # `Ezagent.Cap.Authority` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.AuthorityAdapter`.
+  defp authority, do: Application.fetch_env!(:ezagent_actor, :authority)
 end

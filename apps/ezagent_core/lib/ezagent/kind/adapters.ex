@@ -33,7 +33,8 @@ defmodule Ezagent.Kind.Adapters do
     capability: Ezagent.Kind.Adapters.CapabilityAdapter,
     outbox: Ezagent.Kind.Adapters.OutboxAdapter,
     dispatch_policy: Ezagent.Kind.Adapters.DispatchPolicyAdapter,
-    authz: Ezagent.Kind.Adapters.AuthzAdapter
+    authz: Ezagent.Kind.Adapters.AuthzAdapter,
+    authority: Ezagent.Kind.Adapters.AuthorityAdapter
   ]
 
   @doc false

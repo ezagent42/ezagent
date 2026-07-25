@@ -129,7 +129,11 @@ defmodule Ezagent.Kind.Runtime do
         # effective behavior set — without a deadlocking self `GenServer.call`. The
         # grant path (`{:cap, :grant}`) does not go through `action_context/3`, so
         # it is intentionally left outside the view. Nesting-safe (try/after).
-        Ezagent.Cap.RuntimeView.with_current(kind_module, state, fn ->
+        #
+        # C5 §3.4 AuthorityPort `with_runtime_view/3` — KEPT AS-IS (full
+        # `state` passed — the self-issue hatch; a later chunk narrows or
+        # deletes it — faithful port, do NOT narrow here).
+        authority().with_runtime_view(kind_module, state, fn ->
           do_handle_dispatch(invocation, state, kind_module, self_uri)
         end)
     end
@@ -760,4 +764,10 @@ defmodule Ezagent.Kind.Runtime do
   # core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.AuthzAdapter`.
   defp authz, do: Application.fetch_env!(:ezagent_actor, :authz)
+
+  # C5 §3.4 AuthorityPort — the in-process runtime view install goes through
+  # the config-resolved port, never the literal `Ezagent.Cap.RuntimeView`
+  # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.AuthorityAdapter`.
+  defp authority, do: Application.fetch_env!(:ezagent_actor, :authority)
 end

@@ -575,6 +575,12 @@ defmodule Ezagent.Kind.Snapshot do
   # `Ezagent.Kind.Adapters.PersistenceAdapter`.
   defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
 
+  # C5 §3.4 AuthorityPort — persisted-cap verification goes through the
+  # config-resolved port, never the literal `Ezagent.Cap` spine. Wired at
+  # core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.AuthorityAdapter`.
+  defp authority, do: Application.fetch_env!(:ezagent_actor, :authority)
+
   @doc """
   Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — return the
   PERSISTABLE view of a Kind's `slice_state` map: every Lifecycle
@@ -670,7 +676,7 @@ defmodule Ezagent.Kind.Snapshot do
   defp verify_snapshot_caps(state, _receiver_uri), do: state
 
   defp put_verified_snapshot_caps(state, location, caps, receiver_uri) do
-    verified = Ezagent.Cap.verified_set(caps, receiver_uri)
+    verified = authority().verified_set(caps, receiver_uri)
 
     verified_slice =
       case location do

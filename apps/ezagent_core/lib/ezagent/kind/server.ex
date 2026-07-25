@@ -16,7 +16,7 @@ defmodule Ezagent.Kind.Server do
     kind: module(),                # the Kind module (e.g. Ezagent.Entity.Agent)
     uri:  URI.t(),                 # this instance's URI
     state: %{atom() => map()},     # per-Behavior slices, keyed by behavior.state_slice()
-    authority: Ezagent.Cap.Authority.t(), # framework-private; never snapshotted
+    authority: term(),                 # OPAQUE AuthorityPort token (§3.4); framework-private; never snapshotted
     post_init_queue: [{module(), term()}] # PR-EM-CORE: pending post-init continuations
                                           # populated by init/1, drained by chained
                                           # handle_continue/2 after :announce_ready
@@ -141,12 +141,12 @@ defmodule Ezagent.Kind.Server do
     # run the snapshot load UNDER that authority so cap verification during load
     # sees the current signer.
     authority_result =
-      Ezagent.Cap.Authority.open(uri, kind_module.type_name(), create_freshness)
+      authority().open(uri, kind_module.type_name(), create_freshness)
 
     snapshot_result =
       case authority_result do
         {:ok, authority} ->
-          Ezagent.Cap.Authority.with_current(authority, fn ->
+          authority().with_authority(authority, fn ->
             Ezagent.Kind.Snapshot.safe_load_or_init(uri, kind_module, args)
           end)
 
@@ -348,7 +348,7 @@ defmodule Ezagent.Kind.Server do
       [] ->
         if Ezagent.Kind.ReadyTransition.drain_then_mark_ready(uri_str, self()) == :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
-          Ezagent.Cap.Authority.with_current(state.authority, fn ->
+          authority().with_authority(state.authority, fn ->
             run_on_ready_hooks(state.kind, uri, state.state)
           end)
         end
@@ -407,7 +407,7 @@ defmodule Ezagent.Kind.Server do
              :ready do
           # Task #49 — invoke on_ready hooks AFTER ReadyGate flip.
           # Uses the post-init mutated slice state.
-          Ezagent.Cap.Authority.with_current(new_state.authority, fn ->
+          authority().with_authority(new_state.authority, fn ->
             run_on_ready_hooks(new_state.kind, self_uri, new_state.state)
           end)
         end
@@ -427,7 +427,7 @@ defmodule Ezagent.Kind.Server do
          self_uri,
          authority
        ) do
-    Ezagent.Cap.Authority.with_current(authority, fn ->
+    authority().with_authority(authority, fn ->
       if function_exported?(behavior, :handle_continue, 3) do
         slice_key = behavior.state_slice()
         slice = Map.get(slice_state, slice_key, %{})
@@ -574,8 +574,8 @@ defmodule Ezagent.Kind.Server do
         state
       ) do
     result =
-      Ezagent.Cap.Authority.with_current(state.authority, fn ->
-        Ezagent.Cap.validate_for_current_target(artifact, receiver)
+      authority().with_authority(state.authority, fn ->
+        authority().validate_artifact(artifact, receiver)
       end)
 
     {:reply, result, state}
@@ -682,7 +682,7 @@ defmodule Ezagent.Kind.Server do
       end
     end)
 
-    :ok = Ezagent.Cap.Authority.retire(self_uri)
+    :ok = authority().retire(self_uri)
     {:reply, :ok, state}
   end
 
@@ -708,13 +708,17 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call(
-        {:ezagent_verify_cap_artifact, %Ezagent.Capability{} = artifact, %URI{} = presenter},
+        # C5 §3.4 opacity rule — the artifact crosses as OPAQUE data (plain
+        # binding, NEVER a `%Ezagent.Capability{}` struct match); the
+        # AuthorityPort adapter validates the representation and answers
+        # `false` for a non-Capability input.
+        {:ezagent_verify_cap_artifact, artifact, %URI{} = presenter},
         _from,
         state
       ) do
     valid? =
-      Ezagent.Cap.Authority.with_current(state.authority, fn ->
-        Ezagent.Cap.Verifier.valid_artifact?(artifact, presenter)
+      authority().with_authority(state.authority, fn ->
+        authority().verify_artifact(artifact, presenter)
       end)
 
     {:reply, valid?, state}
@@ -725,9 +729,12 @@ defmodule Ezagent.Kind.Server do
   # successful reply is published only after the durable active-row flip and
   # the private live authority swap have both completed.
   def handle_call({:ezagent_revoke_all_to, %{} = ctx}, _from, state) do
-    case Ezagent.Cap.Authority.regenesis(state.uri, state.kind.type_name(), ctx) do
-      {:ok, authority} ->
-        {:reply, {:ok, authority.generation}, %{state | authority: authority}}
+    case authority().regenesis(state.uri, state.kind.type_name(), ctx) do
+      {:ok, new_authority} ->
+        # The authority token is OPAQUE (§3.4) — the generation field read
+        # happens in the core adapter.
+        {:reply, {:ok, authority().generation(new_authority)},
+         %{state | authority: new_authority}}
 
       {:error, _reason} = error ->
         {:reply, error, state}
@@ -736,7 +743,7 @@ defmodule Ezagent.Kind.Server do
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
     dispatch_result =
-      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+      authority().with_authority(state.authority, fn ->
         Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
       end)
 
@@ -778,7 +785,7 @@ defmodule Ezagent.Kind.Server do
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
     dispatch_result =
-      Ezagent.Cap.Authority.with_current(state.authority, fn ->
+      authority().with_authority(state.authority, fn ->
         Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
       end)
 
@@ -859,6 +866,13 @@ defmodule Ezagent.Kind.Server do
   end
 
   defp mark_cap_delivery_applied(%Ezagent.Invocation{}), do: :ok
+
+  # C5 §3.4 AuthorityPort — signing-authority calls go through the
+  # config-resolved port, never the literal `Ezagent.Cap.Authority` spine;
+  # the authority token is OPAQUE. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.AuthorityAdapter`.
+  defp authority, do: Application.fetch_env!(:ezagent_actor, :authority)
 
   # C5 §3.4 OutboxPort — cap-delivery outbox calls go through the
   # config-resolved port, never the literal `Ezagent.Cap.DeliveryOutbox`
@@ -958,7 +972,7 @@ defmodule Ezagent.Kind.Server do
     # custody compartment so an exact K.grant issuance for canonical-admin
     # framework traffic can use this Kind's live signer. The key remains
     # process-local and the deferred command still traverses Router + verifier.
-    Ezagent.Cap.Authority.with_current(state.authority, fn ->
+    authority().with_authority(state.authority, fn ->
       Ezagent.Kind.DeferredDispatch.run(cmds)
     end)
 
@@ -1004,7 +1018,7 @@ defmodule Ezagent.Kind.Server do
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
     # never runs.
     new_slice_state =
-      Ezagent.Cap.Authority.with_current(authority, fn ->
+      authority().with_authority(authority, fn ->
         Ezagent.Kind.BehaviorSet.materialized_set(kind_module, slice_state)
         |> Enum.reduce(slice_state, fn behavior, acc_state ->
           forward_to_behavior(behavior, message, acc_state, kind_module, self_uri)
