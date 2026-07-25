@@ -103,7 +103,15 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # `:ezagent_actor, :dispatch_policy` adapter, −8 sites; the
   # `Ezagent.DispatchOrigin.t()` typespec demotions (cmd/invocation origin
   # specs → `term()`), −2 sites.
-  @reverse_frozen 58
+  # C5 chunk-2 lowered reverse 58→43: AuthzPort (§3.4) — the
+  # `holds_cap?/default_holds_cap?` block RELOCATED out of `Ezagent.Kind`
+  # into the core spine `Ezagent.Cap.HoldsCap` (reached via the port;
+  # `Ezagent.Kind` keeps thin delegates), −11 sites; dispatch step-5.5
+  # `Cap.Verifier.authorize` + the `{:cap, :grant}` path (opacity demotion
+  # at runtime.ex — plain `cap` binding, adapter validates) →
+  # authorize_dispatch/authorize_and_issue_grant, −3 sites;
+  # `CapabilityRegistry.data_owner_of` (behavior/introspection), −1 site.
+  @reverse_frozen 43
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

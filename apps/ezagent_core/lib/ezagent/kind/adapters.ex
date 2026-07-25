@@ -32,7 +32,8 @@ defmodule Ezagent.Kind.Adapters do
     event_log: Ezagent.Kind.Adapters.EventLogAdapter,
     capability: Ezagent.Kind.Adapters.CapabilityAdapter,
     outbox: Ezagent.Kind.Adapters.OutboxAdapter,
-    dispatch_policy: Ezagent.Kind.Adapters.DispatchPolicyAdapter
+    dispatch_policy: Ezagent.Kind.Adapters.DispatchPolicyAdapter,
+    authz: Ezagent.Kind.Adapters.AuthzAdapter
   ]
 
   @doc false

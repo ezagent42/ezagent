@@ -58,8 +58,15 @@ defmodule Ezagent.ActionSet.Introspection do
   @spec data_owner_of(module(), URI.t() | :any | {atom(), URI.t()}) ::
           URI.t() | :any | :no_owner | {:scope, atom(), URI.t()}
   def data_owner_of(behavior, instance) when is_atom(behavior) do
-    Ezagent.CapabilityRegistry.data_owner_of(behavior, instance)
+    # C5 §3.4 AuthzPort — data-owner resolution goes through the
+    # config-resolved port, never the literal `Ezagent.CapabilityRegistry`
+    # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+    # `Ezagent.Kind.Adapters.AuthzAdapter`.
+    authz().data_owner_of(behavior, instance)
   end
+
+  # C5 §3.4 AuthzPort accessor (see `data_owner_of/2` above).
+  defp authz, do: Application.fetch_env!(:ezagent_actor, :authz)
 
   @doc """
   Read `reads_sibling_slices/0` from `behavior_module`, defaulting

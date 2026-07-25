@@ -171,7 +171,7 @@ defmodule Ezagent.Kind.Runtime do
          # The verifier returns the exact target-signed cap (`nil` for a closed
          # non-cap action); that fact is threaded into the cross-org Receipt below.
          {:ok, verified_cap} <-
-           Ezagent.Cap.Verifier.authorize(
+           authz().authorize_dispatch(
              kind_module,
              behavior_module,
              action,
@@ -267,7 +267,11 @@ defmodule Ezagent.Kind.Runtime do
   defp handle_grant(
          %Ezagent.Invocation{
            target: target,
-           args: %{grantee: %URI{} = grantee, cap: %Ezagent.Capability{} = cap},
+           # C5 §3.4 opacity rule — the cap crosses as OPAQUE data (plain
+           # binding, NEVER a `%Ezagent.Capability{}` struct match); the
+           # AuthzPort adapter validates the representation and rejects a
+           # non-Capability input as `{:error, :invalid_artifact}`.
+           args: %{grantee: %URI{} = grantee, cap: cap},
            ctx: ctx,
            origin: origin
          },
@@ -279,7 +283,7 @@ defmodule Ezagent.Kind.Runtime do
            Ezagent.URI.stable_key(Ezagent.URI.instance(target)) ==
              Ezagent.URI.stable_key(self_uri),
          {:ok, issued} <-
-           Ezagent.Cap.Grant.authorize_and_issue_current(
+           authz().authorize_and_issue_grant(
              kind_module,
              target,
              origin,
@@ -749,4 +753,11 @@ defmodule Ezagent.Kind.Runtime do
   # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.DispatchPolicyAdapter`.
   defp dispatch_policy, do: Application.fetch_env!(:ezagent_actor, :dispatch_policy)
+
+  # C5 §3.4 AuthzPort — dispatch authorization (step 5.5) and the
+  # `{:cap, :grant}` issue path go through the config-resolved port, never
+  # the literal `Ezagent.Cap.Verifier` / `Ezagent.Cap.Grant` spine. Wired at
+  # core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.AuthzAdapter`.
+  defp authz, do: Application.fetch_env!(:ezagent_actor, :authz)
 end
