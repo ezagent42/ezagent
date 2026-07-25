@@ -39,6 +39,7 @@ defmodule EzagentPluginKb.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # The per-KB sqlite store driver, used DIRECTLY (NOT a 2nd Ecto.Repo —
       # one sqlite file PER kb-agent does not fit a single bound Ecto.Repo).

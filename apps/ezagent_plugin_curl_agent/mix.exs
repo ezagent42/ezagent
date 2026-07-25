@@ -43,6 +43,7 @@ defmodule EzagentPluginCurlAgent.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # User Kind lives here; CurlAgent dispatches identity/get_api_key
       # against the caller User to fetch the per-user DeepSeek key.
