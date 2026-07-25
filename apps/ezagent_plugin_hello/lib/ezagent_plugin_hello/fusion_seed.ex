@@ -115,6 +115,7 @@ defmodule EzagentPluginHello.FusionSeed do
   # rejected (`:cross_workspace_member_not_permitted`). Legacy callers that
   # fall back to the admin default (`entity://system/user/admin`) skip it,
   # exactly the pre-hello-A behavior.
+
   defp ensure_owner_member(workspace, %URI{} = owner) do
     if Ezagent.Capability.workspace_of(owner) == Ezagent.URI.workspace(workspace) do
       case Workspace.add_member(workspace, owner) do

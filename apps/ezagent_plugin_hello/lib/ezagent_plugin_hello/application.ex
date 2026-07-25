@@ -147,15 +147,13 @@ defmodule EzagentPluginHello.Application do
       name: "hello.llm",
       # curl behaviors come from the "curl" flavor's instance_behaviors, NOT here
       # (Definition.roles materialize drops recipe.behaviors).
-      requested_caps: [],
       config: %{
         provider: "deepseek",
         api_url: "https://api.deepseek.com/chat/completions",
-        model: "deepseek-chat",
-        # opt out of the required-by-default :slice credential (Task 1) so a
-        # deployment with no DeepSeek credential source still spawns this member.
+        model: "deepseek-v4-flash",
         credential_optional: true
-      }
+      },
+      requested_caps: []
     }
   end
 
@@ -224,64 +222,9 @@ defmodule EzagentPluginHello.Application do
   @impl Ezagent.Plugin
   def children do
     [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
-      credential_bridge_children() ++
       official_site_children() ++ demo_seed_children() ++ migrate_children()
   end
 
-  # #185 — the env→curl credential bridge. At boot (the SAME plugin boot the
-  # hello demo/workspace publish lane rides), when `DEEPSEEK_API_KEY` is
-  # present, bridge it into the hello HOME workspace's shared curl
-  # credential source (`EzagentPluginHello.CredentialBridge` — destination =
-  # `EzagentPluginHello.home_workspace/0`) so every hello `llm` curl member
-  # born in that workspace resolves the key through the unchanged platform
-  # cascade. Scoped to the home workspace ONLY — the shared hello template
-  # stays credential-optional and NO other workspace inherits our key. One-shot transient Task (never blocks the supervisor;
-  # a failure is logged, not fatal). Config-gated (`:credential_bridge_boot`,
-  # dev/prod on, test off) AND env-gated (`boot_enabled?/0`).
-  defp credential_bridge_children do
-    if EzagentPluginHello.CredentialBridge.boot_enabled?() do
-      [
-        Supervisor.child_spec({Task, &run_credential_bridge/0},
-          id: :hello_credential_bridge,
-          restart: :transient
-        )
-      ]
-    else
-      []
-    end
-  end
-
-  defp run_credential_bridge do
-    # Let the session / identity supervisors settle before spawning the source
-    # agent + dispatching the workspace-shared registration (the demo seed
-    # below waits longer, so the bridge always lands BEFORE a boot-seeded
-    # hello app materializes its `llm` member).
-    Process.sleep(1_000)
-
-    case EzagentPluginHello.CredentialBridge.ensure_deepseek_source() do
-      {:ok, %URI{} = source_uri} ->
-        Logger.info(
-          "hello credential bridge: deepseek workspace-shared curl source ready at " <>
-            URI.to_string(source_uri)
-        )
-
-      {:ok, :no_env_key} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("hello credential bridge failed: #{inspect(reason)}")
-    end
-  end
-
-  # The governed 官网 deploy-seed. At boot (config-gated dev/prod on, test off —
-  # `:site_seed_boot`, matching `:credential_bridge_boot`), idempotently ensure
-  # `session://<home>/hello/ezagent-official` is provisioned: the marketing
-  # ruihua page + the front-desk/builder/concierge/curl-`llm` greeter, owned by
-  # the home workspace's founder, with the DeepSeek credential wired first.
-  # Absence-gated (only (re)provisions when the site has no page) so a reseed
-  # self-heals while a plain reboot preserves a live `refresh_hello_site.exs`
-  # refresh. One-shot transient Task; fail-soft (a failure is logged, never
-  # crashes boot). See `EzagentPluginHello.OfficialSiteSeed`.
   defp official_site_children do
     if EzagentPluginHello.OfficialSiteSeed.boot_enabled?() do
       [

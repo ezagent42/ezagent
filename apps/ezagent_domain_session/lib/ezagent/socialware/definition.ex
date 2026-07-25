@@ -41,6 +41,7 @@ defmodule Ezagent.Socialware.Definition do
             required(:fill) => :agent,
             required(:recipe) => String.t(),
             required(:flavor) => String.t(),
+            optional(:config) => map(),
             optional(:provider) => String.t(),
             optional(:operates) => [operate_edge()]
           }
@@ -312,6 +313,7 @@ defmodule Ezagent.Socialware.Definition do
 
           {:ok,
            slot
+           |> maybe_put_config(item)
            |> maybe_put_provider(item)
            |> maybe_put_operates(operates)}
         else
@@ -392,6 +394,15 @@ defmodule Ezagent.Socialware.Definition do
 
   defp maybe_put_operates(slot, []), do: slot
   defp maybe_put_operates(slot, operates), do: Map.put(slot, :operates, operates)
+
+  defp maybe_put_config(slot, item) do
+    case get(item, :config) do
+      config when is_map(config) and map_size(config) > 0 -> Map.put(slot, :config, config)
+      nil -> slot
+      %{} -> slot
+      _ -> slot
+    end
+  end
 
   # Optional cc-custom backend profile NAME (spec 2026-07-17 Q2): additive and
   # shape-only — absent/empty leaves the key out (legacy slots byte-unchanged);

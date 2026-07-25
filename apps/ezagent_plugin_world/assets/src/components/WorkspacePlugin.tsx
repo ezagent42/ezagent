@@ -524,10 +524,30 @@ type RoleSlotChoice = {
   mode: "fresh" | "reuse"
   flavor?: string
   agent_uri?: string
+  config?: Record<string, unknown>
 }
 
 const FOUNDATION_SOCIALWARE_REFS = new Set(["chat", "orchestrator", "socialware"])
 const DEFAULT_TEMPLATE_INSTALLS = ["chat"]
+
+function helloLlmDefaults(): Record<string, unknown> {
+  return {
+    provider: "deepseek",
+    api_url: "https://api.deepseek.com/chat/completions",
+    model: "deepseek-v4-flash",
+    credential_optional: true,
+  }
+}
+
+function configurableTemplateRoles(socialware: SocialwareRow) {
+  const roles = socialware.roles || []
+
+  if (socialware.name === "hello") {
+    return roles.filter((role) => role.role_name === "llm")
+  }
+
+  return roles
+}
 
 function TemplateBuilder({
   state,
@@ -551,13 +571,14 @@ function TemplateBuilder({
       const next: Record<string, RoleSlotChoice> = {}
 
       for (const socialware of selectedSocialwares) {
-        for (const role of socialware.roles || []) {
+        for (const role of configurableTemplateRoles(socialware)) {
           if (role.fill !== "agent") continue
           const key = roleChoiceKey(socialware, role)
           next[key] = current[key] || {
             role_name: role.role_name,
             mode: "fresh",
             flavor: role.flavor || undefined,
+            config: socialware.name === "hello" && role.role_name === "llm" ? helloLlmDefaults() : undefined,
           }
         }
       }
@@ -706,8 +727,18 @@ function TemplateBuilder({
                 {(socialware.roles || []).length === 0 ? (
                   <EmptyState label="No role slots declared." />
                 ) : (
-                  (socialware.roles || []).map((role) =>
-                    role.fill === "agent" ? (
+                  configurableTemplateRoles(socialware).map((role) =>
+                    socialware.name === "hello" && role.role_name === "llm" ? (
+                      <HelloLlmRoleSlot
+                        key={String(socialware.name) + ":" + role.role_name}
+                        role={role}
+                        slotKey={roleDomId(socialware, role)}
+                        choice={roleChoices[roleChoiceKey(socialware, role)]}
+                        onChange={(choice) =>
+                          setRoleChoices((current) => ({...current, [roleChoiceKey(socialware, role)]: choice}))
+                        }
+                      />
+                    ) : role.fill === "agent" ? (
                       <TemplateAgentRoleSlot
                         key={`${socialware.name}:${role.role_name}`}
                         role={role}
@@ -760,7 +791,7 @@ function normalizeSocialwareRow(row: DataRow): SocialwareRow {
 }
 
 function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
-  const roleSlots = (socialware.roles || [])
+  const roleSlots = configurableTemplateRoles(socialware)
     .filter((role) => role.fill === "agent")
     .map((role) => {
       const choice = choices[roleChoiceKey(socialware, role)] || {
@@ -774,6 +805,7 @@ function installConfigForTemplate(socialware: SocialwareRow, choices: Record<str
         mode: choice.mode,
         flavor: choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined,
         agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
+        config: choice.mode === "fresh" ? choice.config : undefined,
       }
     })
     .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
@@ -787,6 +819,58 @@ function roleChoiceKey(socialware: SocialwareRow, role: SocialwareRole) {
 
 function roleDomId(socialware: SocialwareRow, role: SocialwareRole) {
   return roleChoiceKey(socialware, role).replace(/[^a-zA-Z0-9_-]+/g, "-")
+}
+
+function HelloLlmRoleSlot({
+  role,
+  slotKey,
+  choice,
+  onChange,
+}: {
+  role: SocialwareRole
+  slotKey: string
+  choice?: RoleSlotChoice
+  onChange: (choice: RoleSlotChoice) => void
+}) {
+  const current = choice || {
+    role_name: role.role_name,
+    mode: "fresh" as const,
+    flavor: "curl",
+    config: helloLlmDefaults(),
+  }
+  const config = {...helloLlmDefaults(), ...(current.config || {})}
+  const updateConfig = (key: string, value: string) =>
+    onChange({...current, mode: "fresh", flavor: "curl", config: {...config, [key]: value}})
+  const fieldId = (name: string) => "template-hello-" + name + "-" + slotKey
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-card p-3" data-world-template-hello-llm-config>
+      <div className="flex min-w-0 items-center gap-2">
+        <Bot className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground">Role: {role.role_name}</p>
+          <p className="truncate text-xs text-muted-foreground">The only Hello role that calls a model.</p>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Flavor: <code className={codeClass}>curl</code>. Credentials are bound after creation through the workspace credential flow; this template never stores a key.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <label className={fieldLabelClass} htmlFor={fieldId("provider")}>
+          <span>Provider <RequiredMarker /></span>
+          <Input id={fieldId("provider")} value={String(config.provider || "")} onChange={(event) => updateConfig("provider", event.target.value)} required aria-required="true" />
+        </label>
+        <label className={fieldLabelClass} htmlFor={fieldId("api-url")}>
+          <span>API URL <RequiredMarker /></span>
+          <Input id={fieldId("api-url")} value={String(config.api_url || "")} onChange={(event) => updateConfig("api_url", event.target.value)} required aria-required="true" />
+        </label>
+        <label className={fieldLabelClass} htmlFor={fieldId("model")}>
+          <span>Model <RequiredMarker /></span>
+          <Input id={fieldId("model")} value={String(config.model || "")} onChange={(event) => updateConfig("model", event.target.value)} required aria-required="true" />
+        </label>
+      </div>
+    </div>
+  )
 }
 
 export function TemplateAgentRoleSlot({

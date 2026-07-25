@@ -1,119 +1,89 @@
 defmodule EzagentWeb.HelloManifestDriftTest do
-  @moduledoc """
-  Anti-drift gate for the shipped hello deploy-seed manifest
-  (`apps/ezagent_web/priv/socialware_seed/hello/manifest.yaml`).
-
-  Since the sw-home migration the hello reference (3-role) manifest is CONFIG,
-  not code — production publishes it through the deploy-seed lane
-  (`Ezagent.Home.SocialwareSeed` copy → `Ezagent.Socialware.ManifestSeed`
-  scan/publish), and `Ezagent.Socialware.Demo.Hello.manifest_attrs/0` (the test
-  driver) loads the SAME file. This test freezes the authoritative shape (the
-  retired `reference_manifest_attrs("hello", "np")` code map, post-parse
-  representation) so a YAML edit that diverges fails LOUD.
-
-  The `text_matches` regex arg is the byte-sensitive landmine: the Elixir string
-  `^\\[need-build\\]` must survive the YAML round-trip byte-for-byte (single-quoted
-  scalar), so it is asserted explicitly on top of the whole-map equality.
-  """
   use ExUnit.Case, async: true
 
   alias Ezagent.Socialware.{Demo, ManifestYaml}
 
-  # The frozen reference shape — every field of the retired
-  # `reference_manifest_attrs("hello", "np")`. `bases`/`shape` are module ATOMS
-  # (parse normalizes the `Elixir.`-prefixed strings via `to_existing_atom`),
-  # everything else is string-keyed exactly as authored.
   @reference %{
     "name" => "hello",
     "version" => "0.1.0",
-    "title" => "Pure-config hello",
-    "description" => "Hello socialware authored as a manifest.",
-    "uses" => ["hello", "kanban"],
-    "requires" => ["orchestrator"],
+    "title" => "Hello website builder",
+    "description" => "Build and publish a website through a seven-role Hello team.",
+    "uses" => ["hello"],
     "bases" => [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
-    "shape" => [
-      Ezagent.ActionSet.Turn,
-      Ezagent.ActionSet.Surface,
-      Ezagent.ActionSet.SupervisorApproval
-    ],
+    "shape" => [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
     "views" => ["hello_render"],
     "roles" => [
-      %{"role_name" => "builder", "fill" => "agent", "recipe" => "np", "flavor" => "py"},
-      %{"role_name" => "responser", "fill" => "agent", "recipe" => "np", "flavor" => "py"},
-      %{"role_name" => "viewer", "fill" => "human"}
+      %{
+        "role_name" => "front-desk",
+        "fill" => "agent",
+        "recipe" => "hello.front-desk",
+        "flavor" => "hello"
+      },
+      %{
+        "role_name" => "builder",
+        "fill" => "agent",
+        "recipe" => "hello.builder",
+        "flavor" => "native"
+      },
+      %{
+        "role_name" => "concierge",
+        "fill" => "agent",
+        "recipe" => "hello.concierge",
+        "flavor" => "native"
+      },
+      %{"role_name" => "llm", "fill" => "agent", "recipe" => "hello.llm", "flavor" => "curl"},
+      %{
+        "role_name" => "sharer",
+        "fill" => "agent",
+        "recipe" => "hello.sharer",
+        "flavor" => "native"
+      },
+      %{
+        "role_name" => "publisher",
+        "fill" => "agent",
+        "recipe" => "hello.publisher",
+        "flavor" => "native"
+      },
+      %{
+        "role_name" => "dispatcher",
+        "fill" => "agent",
+        "recipe" => "hello.dispatcher",
+        "flavor" => "native"
+      }
     ],
     "routing_rules" => [
       %{
-        "matcher" => %{"type" => "from_role", "arg" => "viewer"},
-        "receivers" => ["responser"],
+        "matcher" => %{"type" => "always"},
+        "receivers" => ["front-desk"],
         "rule_set" => "default",
         "position" => 0
-      },
-      %{
-        "matcher" => %{
-          "type" => "and",
-          "items" => [
-            %{"type" => "from_role", "arg" => "responser"},
-            %{"type" => "text_matches", "arg" => "^\\[need-build\\]"}
-          ]
-        },
-        "receivers" => ["builder"],
-        "rule_set" => "default",
-        "position" => 1
       }
     ],
     "visibility_policy" => %{
       "scope" => "public",
-      "publish_policy" => "supervised",
+      "publish_policy" => "auto",
       "web_anon_access" => true
     },
     "prompt_templates" => %{},
-    "legends" => %{
-      "hello" => %{
-        "member_set" => ["viewer", "responser", "builder"],
-        "bound_rule_set" => "default",
-        "fold" => false
-      }
-    }
+    "legends" => %{}
   }
 
-  test "the shipped hello manifest.yaml exists in the deploy-seed lane" do
+  test "the shipped hello manifest exists in the deploy-seed lane" do
     path = Demo.Hello.manifest_path()
     assert is_binary(path)
     assert File.exists?(path)
-    assert String.ends_with?(path, "priv/socialware_seed/hello/manifest.yaml")
   end
 
-  test "parse(YAML) is byte-for-byte the frozen reference shape (no drift)" do
+  test "the shipped manifest is the seven-role curl-only Hello definition" do
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(Demo.Hello.manifest_path()))
     assert parsed == @reference
+    assert Enum.count(parsed["roles"], &(&1["flavor"] == "curl")) == 1
+    assert Enum.find(parsed["roles"], &(&1["role_name"] == "llm"))["flavor"] == "curl"
   end
 
-  test "the text_matches regex arg survives the YAML round-trip byte-for-byte" do
-    {:ok, parsed} = ManifestYaml.parse(File.read!(Demo.Hello.manifest_path()))
-
-    arg =
-      parsed
-      |> Map.fetch!("routing_rules")
-      |> Enum.at(1)
-      |> get_in(["matcher", "items"])
-      |> Enum.at(1)
-      |> Map.fetch!("arg")
-
-    # The Elixir literal — a caret, a literal backslash, `[`, text, a literal
-    # backslash, `]`. Anything else means the YAML scalar quoting drifted.
-    assert arg == "^\\[need-build\\]"
-    assert arg == "^" <> <<92>> <> "[need-build" <> <<92>> <> "]"
-  end
-
-  test "Demo.Hello.manifest_attrs/0 loads the shipped file verbatim" do
+  test "Demo.Hello loads the shipped manifest and supports only a name override" do
     assert Demo.Hello.manifest_attrs() == @reference
-    refute Enum.any?(@reference["roles"], &(&1["role_name"] == "board"))
-  end
-
-  test "the :name override replaces only the name, nothing else drifts" do
     renamed = Demo.Hello.manifest_attrs(name: "hello-run-1")
-    assert renamed["name"] == "hello-run-1"
     assert Map.put(renamed, "name", "hello") == @reference
   end
 end

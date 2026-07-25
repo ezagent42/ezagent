@@ -20,7 +20,7 @@ defmodule EzagentPluginHello.MigrateTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
+  alias Ezagent.Socialware.{DefinitionRegistry, Demo, Installation, ManifestSeed}
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentPluginHello.{App, Members, Migrate}
 
@@ -35,6 +35,12 @@ defmodule EzagentPluginHello.MigrateTest do
     Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
+
+    assert {:ok, %{name: "hello"}} =
+             ManifestSeed.import_package(File.read!(Demo.Hello.manifest_path()))
+
+    assert {:ok, _definition, _revision} =
+             DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "hello")
 
     ws = "hello-migrate-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
@@ -138,16 +144,8 @@ defmodule EzagentPluginHello.MigrateTest do
   defp bare_hello_session(ws, name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Ezagent.Capability.workspace_of(session_uri)
-    socialware_name = "hello-#{name}-#{System.unique_integer([:positive])}"
     admin = User.admin_uri()
-    raw_content = %{name: socialware_name, installs: [socialware_name]}
-
-    {:ok, _} =
-      DefinitionRegistry.seed_definition_if_absent(
-        App.hello_definition_attrs(socialware_name),
-        workspace_uri: workspace,
-        actor_uri: admin
-      )
+    raw_content = %{name: "hello", installs: ["hello"]}
 
     {:ok, content} = Installation.freeze_template_installs(raw_content, workspace)
     {:ok, owner_uri} = Installation.owner_uri_for_template(content, workspace, admin)

@@ -12,6 +12,7 @@ defmodule EzagentPluginHello.MembersTest do
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     # The team materialization resolves each role's recipe through the
     # RecipeRegistry (role-as-data). Boot seeds them, but that write is outside
     # this DataCase sandbox (and the ETS cache can be flushed) — reseed here.

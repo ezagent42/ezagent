@@ -260,6 +260,23 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     assert socket.assigns.world_state["last_socialware_refs"] == [socialware_name]
     assert {:ok, hash} = TemplateTags.resolve(workspace_uri, template_name, "current")
     assert is_binary(hash) and hash != ""
+
+    # A template saved by the workspace builder must carry its selected app's
+    # role declarations into a session. This is the production path used by
+    # the Sessions page; a missing declaration leaves the async installer with
+    # an empty agent list and the session permanently owner-only.
+    assert {:ok, session_uri, %{}} =
+             EzagentDomainInstanceMessage.SessionCreator.create_session(
+               "world-template-consumer-#{uniq()}",
+               operator,
+               template_name: template_name,
+               workspace_uri: workspace_uri
+             )
+
+    assert [%{role_name: "front-desk", fill: :agent} | _] =
+             session_uri
+             |> Ezagent.Entity.Session.read_template_working_copy()
+             |> Map.fetch!(:member_declarations)
   end
 
   test "multiple selected socialware installs save into one template manifest" do
@@ -310,6 +327,75 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
     assert is_binary(hash) and hash != ""
   end
 
+  test "a saved Hello template installs its declared role agents in the consuming session" do
+    :ok = EzagentPluginHello.TestCatalog.import!()
+
+    ws = "world-hello-template-#{uniq()}"
+    workspace_uri = Ezagent.URI.workspace(ws)
+    operator = Ezagent.URI.user(ws, "operator")
+    template_name = "world-hello-template-#{uniq()}"
+
+    {:ok, _} = Ezagent.Workspace.create(ws, %{})
+    caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator).caps
+    :ok = spawn_user(operator, caps)
+    :ok = grant_add_template(operator, workspace_uri)
+
+    {:noreply, socket} =
+      save_template_params(workspace_uri, operator, caps, %{
+        "name" => template_name,
+        "description" => "Hello template consumed through the Sessions page",
+        "installs" => [
+          %{
+            "ref" => "hello",
+            "config" => %{
+              "role_slots" => [
+                %{
+                  "role_name" => "llm",
+                  "mode" => "fresh",
+                  "flavor" => "curl",
+                  "config" => %{
+                    "provider" => "deepseek",
+                    "api_url" => "https://api.deepseek.com/chat/completions",
+                    "model" => "deepseek-v4-flash",
+                    "credential_optional" => true
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      })
+
+    assert socket.assigns.last_dispatch_status == "ok"
+
+    # Go through the same workspace facade as the Sessions-page form. It must
+    # start the post-create install Task after the owner-only session is durable.
+    admin_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, User.admin_uri())
+
+    assert {:ok, %{session_uri: session_uri}} =
+             Ezagent.Workspace.create_session(
+               workspace_uri,
+               %{short_name: "hello-consumer-#{uniq()}", template_name: template_name},
+               admin_ctx
+             )
+
+    assert eventually(fn ->
+             match?(
+               {:ok, _front_desk_uri},
+               EzagentPluginHello.Members.role_uri(session_uri, "front-desk")
+             )
+           end)
+  end
+
+  test "the Hello template builder defaults its LLM to a model accepted by the configured DeepSeek endpoint" do
+    source =
+      Path.expand("../../../assets/src/components/WorkspacePlugin.tsx", __DIR__)
+      |> File.read!()
+
+    assert source =~ "model: \"deepseek-v4-flash\""
+    refute source =~ "model: \"deepseek-chat\""
+  end
+
   test "empty socialware selection saves the same installs as the default template" do
     ws = "world-template-default-install-#{uniq()}"
     workspace_uri = Ezagent.URI.workspace(ws)
@@ -353,5 +439,21 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
            "template save failed with #{inspect(socket.assigns.world_state)}"
 
     assert socket.redirected == {:live, :patch, %{kind: :push, to: "/workspaces"}}
+  end
+
+  defp eventually(fun, attempts \\ 100)
+
+  defp eventually(fun, attempts) do
+    cond do
+      fun.() ->
+        true
+
+      attempts == 0 ->
+        false
+
+      true ->
+        Process.sleep(20)
+        eventually(fun, attempts - 1)
+    end
   end
 end

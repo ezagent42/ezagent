@@ -392,6 +392,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     |> maybe_put_flavor(map_get(choice, :flavor))
     |> maybe_put_install_mode(map_get(choice, :mode) || map_get(choice, :install_mode))
     |> maybe_put_reuse_agent_uri(map_get(choice, :agent_uri) || map_get(choice, :reuse_agent_uri))
+    |> maybe_put_role_config(map_get(choice, :config))
   end
 
   defp apply_role_slot_choice(role, _choice), do: role
@@ -416,6 +417,11 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   defp maybe_put_reuse_agent_uri(role, _), do: role
+
+  defp maybe_put_role_config(role, config) when is_map(config) and map_size(config) > 0,
+    do: Map.put(role, :config, config)
+
+  defp maybe_put_role_config(role, _), do: role
 
   defp merge_legacy_template_fields(config, template_content) do
     legacy_members = list_field(template_content, :members)

@@ -9,7 +9,7 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.Session
-  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
+  alias Ezagent.Socialware.{DefinitionRegistry, Demo, Installation, ManifestSeed}
   alias EzagentPluginHello.App
 
   setup do
@@ -18,6 +18,12 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
     Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
+
+    assert {:ok, %{name: "hello"}} =
+             ManifestSeed.import_package(File.read!(Demo.Hello.manifest_path()))
+
+    assert {:ok, _definition, _revision} =
+             DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "hello")
 
     ws = "hello-pin-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Ezagent.Workspace.create(ws, %{})
@@ -46,7 +52,7 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
     {:ok, session_uri, _orch} = App.ensure_app(ws, name, defer_orchestrator: false)
 
     workspace = Ezagent.URI.workspace(ws)
-    hello_def = "hello-#{name}"
+    hello_def = "hello"
 
     # the create-time (current) revision the freeze must pin to
     {:ok, _def_r1, r1} = DefinitionRegistry.lookup(workspace, hello_def)

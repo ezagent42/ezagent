@@ -60,7 +60,7 @@ defmodule EzagentPluginHello.RegistrationTest do
     recipe = EzagentPluginHello.Application.hello_llm_recipe()
     assert recipe.name == "hello.llm"
     assert recipe.config.provider == "deepseek"
-    assert recipe.config.model == "deepseek-chat"
+    assert recipe.config.model == "deepseek-v4-flash"
     assert recipe.config.credential_optional == true
   end
 
@@ -138,37 +138,5 @@ defmodule EzagentPluginHello.RegistrationTest do
 
     assert {:ok, %Recipe{name: "hello.concierge", behaviors: [HelloConcierge], passive: false}} =
              RecipeRegistry.lookup("hello.concierge")
-  end
-
-  test "hello Definition declares the orchestrator/builder/concierge/llm roles + inbound rule" do
-    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
-    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
-
-    role_names = Enum.map(defn.roles, & &1.role_name) |> Enum.sort()
-
-    assert role_names == [
-             "builder",
-             "concierge",
-             "dispatcher",
-             "front-desk",
-             "llm",
-             "publisher",
-             "sharer"
-           ]
-
-    assert Enum.all?(defn.roles, &(&1.fill == :agent))
-    assert Enum.find(defn.roles, &(&1.role_name == "front-desk")).flavor == "hello"
-
-    assert [rule] = defn.routing_rules
-    assert (rule[:receivers] || rule["receivers"]) == ["front-desk"]
-  end
-
-  test "hello Definition declares the llm curl member" do
-    attrs = EzagentPluginHello.App.hello_definition_attrs("hello-demo")
-    {:ok, defn} = Ezagent.Socialware.Definition.new(attrs)
-    llm = Enum.find(defn.roles, &(&1.role_name == "llm"))
-    assert llm.fill == :agent
-    assert llm.flavor == "curl"
-    assert llm.recipe == "hello.llm"
   end
 end

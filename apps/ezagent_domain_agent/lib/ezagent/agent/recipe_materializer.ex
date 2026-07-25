@@ -35,7 +35,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
           optional(:description) => String.t(),
           optional(:provider) => String.t(),
           optional(:source_template_uri) => URI.t(),
-          optional(:template_content) => map()
+          optional(:template_content) => map(),
+          optional(:template_content_overrides) => map()
         }
 
   @doc """
@@ -169,14 +170,20 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   defp materializer_content(%{template_content: content}) when is_map(content), do: {:ok, content}
 
   defp materializer_content(opts) do
-    template_content(Map.fetch!(opts, :recipe), %{
-      recipe_name: Map.fetch!(opts, :recipe_name),
-      role_name: Map.fetch!(opts, :role_name),
-      flavor: Map.fetch!(opts, :flavor),
-      agent_uri: Map.fetch!(opts, :agent_uri),
-      description: Map.get(opts, :description, "agent materialized from recipe"),
-      provider: Map.get(opts, :provider)
-    })
+    with {:ok, content} <-
+           template_content(Map.fetch!(opts, :recipe), %{
+             recipe_name: Map.fetch!(opts, :recipe_name),
+             role_name: Map.fetch!(opts, :role_name),
+             flavor: Map.fetch!(opts, :flavor),
+             agent_uri: Map.fetch!(opts, :agent_uri),
+             description: Map.get(opts, :description, "agent materialized from recipe"),
+             provider: Map.get(opts, :provider)
+           }) do
+      case Map.get(opts, :template_content_overrides, %{}) do
+        overrides when is_map(overrides) -> {:ok, Map.merge(content, overrides)}
+        other -> {:error, {:invalid_template_content_overrides, other}}
+      end
+    end
   end
 
   defp spawn_from_content(

@@ -24,6 +24,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
     # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
     # seeds it, but that write is outside this DataCase sandbox transaction (and the

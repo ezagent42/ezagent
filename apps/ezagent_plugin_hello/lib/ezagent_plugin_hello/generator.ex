@@ -13,12 +13,6 @@ defmodule EzagentPluginHello.Generator do
   FRESH spec otherwise; `land_page/6` drives the spec onto the Surface and then
   designs / updates the per-page CSS theme (`build_theme/5`).
 
-  ## LLM backend (Task 4)
-
-  `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI. Otherwise the
-  HTTP branch delegates to the session's own curl "llm" member
-  (`EzagentPluginHello.Members.role_uri/2` + `Ezagent.Entity.Agent.complete/3`) —
-  the API key lives on that agent's own `:api_keys` slice and is never seen by
   this module.
   """
 
@@ -475,30 +469,22 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # Backend switch: `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI
-  # (much stronger designer); otherwise the session's own curl "llm" member
-  # (a curl-flavor agent materialized by `Definition.roles` — see
-  # `EzagentPluginHello.Members`). Both return `{:ok, %{content: ...}}`.
+  @doc false
+  def complete(session_uri, system, user_text), do: call_llm(session_uri, system, user_text)
+
   defp call_llm(session_uri, system, user_text) do
-    case System.get_env("HELLO_LLM_BACKEND") do
-      "claude_code" ->
-        EzagentPluginHello.LLM.ClaudeCode.chat(system, user_text)
-
-      _ ->
-        case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
-          {:ok, curl_uri} ->
-            case Ezagent.Entity.Agent.complete(
-                   Ezagent.Entity.User.admin_uri(),
-                   curl_uri,
-                   compose_prompt(system, user_text)
-                 ) do
-              {:ok, content} -> {:ok, %{content: content}}
-              {:error, _} = err -> err
-            end
-
-          :error ->
-            {:error, :no_llm_agent}
+    case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
+      {:ok, curl_uri} ->
+        case Ezagent.Entity.Agent.complete(
+               Ezagent.Entity.User.admin_uri(),
+               curl_uri,
+               compose_prompt(system, user_text)
+             ) do
+          {:ok, content} -> {:ok, %{content: content}}
+          {:error, _} = err -> err
         end
+      :error ->
+        {:error, :no_llm_agent}
     end
   end
 

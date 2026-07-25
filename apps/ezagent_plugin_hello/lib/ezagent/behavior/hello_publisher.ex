@@ -41,7 +41,6 @@ defmodule Ezagent.ActionSet.HelloPublisher do
           with {:ok, name} <- resolve_template_name(session_uri, instruction),
                {:ok, %URI{} = tmpl_uri} <-
                  Ezagent.Orchestrator.Tools.Templates.save_template_as(name,
-                   session_uri: session_uri,
                    workspace_uri: Ezagent.Capability.workspace_of(session_uri),
                    caller: caller_uri,
                    caps: caps
@@ -100,7 +99,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   end
 
   defp extract_base_name(session_uri, instruction) do
-    case extract_explicit_name(instruction) do
+    case extract_explicit_name(session_uri, instruction) do
       {:ok, name} -> name
       :none -> session_base_name(session_uri)
     end
@@ -114,8 +113,8 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   - Return ONLY the name or \"auto\". No punctuation, no extra text.
   """
 
-  defp extract_explicit_name(instruction) when is_binary(instruction) and instruction != "" do
-    case EzagentPluginHello.LLM.ClaudeCode.chat(@name_prompt, instruction) do
+  defp extract_explicit_name(session_uri, instruction) when is_binary(instruction) and instruction != "" do
+    case EzagentPluginHello.Generator.complete(session_uri, @name_prompt, instruction) do
       {:ok, %{content: content}} when is_binary(content) ->
         name =
           content
@@ -134,7 +133,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   end
 
-  defp extract_explicit_name(_), do: :none
+  defp extract_explicit_name(_session_uri, _), do: :none
 
   # Session URIs are `session://<ws>/hello/<name>` (template/type axis is
   # "hello"). Read the name segment through the Ezagent.URI accessors rather

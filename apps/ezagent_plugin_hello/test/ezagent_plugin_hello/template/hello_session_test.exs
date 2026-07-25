@@ -8,6 +8,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   alias EzagentPluginHello.Template.HelloSession
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     # hello's builder/concierge are role × native agents; `App.ensure_app` creates
     # them via the RF-5a role-create path, which resolves the recipe through the
     # "role-as-data" `RecipeRegistry` (ConfigStore-backed). Boot seeds the recipes,

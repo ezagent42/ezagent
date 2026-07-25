@@ -44,6 +44,7 @@ defmodule EzagentPluginHello.RouterTest do
 
   describe "should_route?/2 (loop + multi-agent guard)" do
     setup do
+      :ok = EzagentPluginHello.TestCatalog.import!()
       # The guard resolves the orchestrator + managed members by `role_name` from
       # the LIVE session, so it needs a materialized hello app (the team comes from
       # `Definition.roles`). Reseed the recipes (boot's write is outside this

@@ -17,6 +17,7 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
 
     Enum.each(HelloApp.roles(), fn recipe ->

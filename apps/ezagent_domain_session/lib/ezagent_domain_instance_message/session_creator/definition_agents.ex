@@ -283,6 +283,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     provider = provider_of(agent)
 
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         recipe = merge_role_config(recipe, role_config(agent)),
          {:ok, planned_uri} <-
            planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
       materialize_at_planned_uri(
@@ -969,4 +970,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       _ -> nil
     end
   end
+  defp role_config(agent) do
+    case map_field(agent, :config) do
+      config when is_map(config) -> config
+      _ -> %{}
+    end
+  end
+
+  defp merge_role_config(recipe, config) when is_map(recipe) and is_map(config) do
+    base =
+      case map_field(recipe, :config) do
+        current when is_map(current) -> current
+        _ -> %{}
+      end
+
+    Map.put(recipe, :config, Map.merge(base, config))
+  end
+
 end
