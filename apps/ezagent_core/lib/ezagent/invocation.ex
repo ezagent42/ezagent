@@ -157,11 +157,11 @@ defmodule Ezagent.Invocation do
              {:dispatch, target}
            ) do
       cond do
-        Ezagent.Cap.DeliveryOutbox.replay?(inv) ->
+        outbox().replay?(inv) ->
           dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
-        Ezagent.Cap.DeliveryOutbox.eligible?(inv) ->
-          Ezagent.Cap.DeliveryOutbox.enqueue_and_attempt(inv)
+        outbox().eligible?(inv) ->
+          outbox().enqueue_and_attempt(inv)
 
         true ->
           with :ok <- maybe_idempotency_check(ctx) do
@@ -346,7 +346,7 @@ defmodule Ezagent.Invocation do
         # `:not_ready`. We bound the wait so a genuinely stuck `activate`
         # surfaces a DISTINCT `:activate_timeout` signal (never the
         # silent `:not_ready`), preserving let-it-crash visibility.
-        if Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+        if outbox().replay?(inv) do
           {:error, :not_ready}
         else
           case Ezagent.ReadyGate.await(instance_uri, activate_budget_ms()) do
@@ -391,7 +391,7 @@ defmodule Ezagent.Invocation do
             {:error, :dead_target}
 
           {:not_ready, _incarnation} ->
-            if Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+            if outbox().replay?(inv) do
               {:error, :durable_pending}
             else
               Ezagent.PendingDelivery.buffer_if_not_ready_locked(
@@ -444,7 +444,7 @@ defmodule Ezagent.Invocation do
                 dispatch_with_lazy_spawn(instance_uri, mode, inv)
 
               m when m in [:call, :call_stream] ->
-                unless Ezagent.Cap.DeliveryOutbox.replay?(inv) do
+                unless outbox().replay?(inv) do
                   _ = Ezagent.ReadyGate.await(instance_uri, activate_budget_ms())
                 end
 
@@ -730,4 +730,10 @@ defmodule Ezagent.Invocation do
   # (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.DeadLetterAdapter`.
   defp dead_letter, do: Application.fetch_env!(:ezagent_actor, :dead_letter)
+
+  # C5 §3.4 OutboxPort — cap-delivery outbox calls go through the
+  # config-resolved port, never the literal `Ezagent.Cap.DeliveryOutbox`
+  # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.OutboxAdapter`.
+  defp outbox, do: Application.fetch_env!(:ezagent_actor, :outbox)
 end

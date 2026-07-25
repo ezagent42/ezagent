@@ -1004,24 +1004,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "bb97846709e86453e96d6b6b82864e6e05581fe5bbadc6fc797ec2ba92ae6edb",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "57e953c716afb89cc14c9c4e5c2945cdf042f00aa3f816b4a27ded21acd4e706",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "c05cb6ea136a6f84dd0d5c27e41b0628f2fe86bc529bf50921f2fd4fb26d6dc6",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.Cap",
       sha: "bcd4738a093f45dce7f480afdb7ee63cf389601eff3c8225709695ca43219c87",
       note: "§3.4 upward ref: Ezagent.Cap"
@@ -1031,24 +1013,6 @@
       target: "Ezagent.Cap.Verifier",
       sha: "a213c0832a21d37b52c493faf877529fa5a7e1e7ca086a83555a81530d29ed98",
       note: "§3.4 upward ref: Ezagent.Cap.Verifier"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "b221962e510750be966a7e289be941cf13870b089f3b59d12deb2b8630aa6f2f",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "d754b39f6bc8633947fda3bd923c47392dd3637979b4dee95a1a12419bfffece",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
@@ -1255,18 +1219,6 @@
       note: "§3.4 upward ref: Ezagent.ActionSet.Publisher.SessionImpl"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "64310a46cf6f71a529a365a2d0c49e5a422e9ac444202ac75d40d109440ee4a9",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "6e8ed9feb600c477e340e029f4d33048f0e2634438a2a658e7b40cb0221d5e00",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Cap.RuntimeView",
       sha: "956a8f2555bb067f7c56df258fa3924fcd1fd75d3d4c78349a04231fb8f2122d",
@@ -1379,18 +1331,6 @@
       target: "Ezagent.Cap.Authority",
       sha: "9d4453a173de9ebb8af62ca3a0dc5664c1edbd3b4c20f36c76f79546c4bdb289",
       note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "bde4c77e310658701f364ab5fac86ad3aed8c6c2092f0c436b33808c5d7e503b",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/server.ex",
-      target: "Ezagent.Cap.DeliveryOutbox",
-      sha: "3a32602e1373817c511d7b94dad2fbd74ab2ed5154352b97ecbd38a9b0f10d52",
-      note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",

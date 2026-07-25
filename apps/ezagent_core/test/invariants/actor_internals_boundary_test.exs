@@ -90,7 +90,12 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # adapter, −7 sites; the §3.4 opacity typespec demotions
   # (`Ezagent.Capability.t()` → `term()` in behavior/cmd/invocation ctx
   # specs + the receipt maybe_emit spec), −4 sites.
-  @reverse_frozen 78
+  # C5 chunk-2 lowered reverse 78→68: OutboxPort (§3.4) — the SEVEN
+  # `Ezagent.Cap.DeliveryOutbox` functions (dispatch replay?/eligible?/
+  # enqueue_and_attempt, server mark_applied/record_handler_failure,
+  # ready_transition pending_target?/drain_target) → the config-resolved
+  # `:ezagent_actor, :outbox` adapter, −10 sites.
+  @reverse_frozen 68
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

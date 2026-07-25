@@ -842,7 +842,7 @@ defmodule Ezagent.Kind.Server do
 
   defp mark_cap_delivery_applied(%Ezagent.Invocation{ctx: %{cap_delivery_id: id}} = inv)
        when is_integer(id) do
-    case Ezagent.Cap.DeliveryOutbox.mark_applied(id, inv) do
+    case outbox().mark_applied(id, inv) do
       :ok ->
         :ok
 
@@ -860,8 +860,14 @@ defmodule Ezagent.Kind.Server do
 
   defp mark_cap_delivery_applied(%Ezagent.Invocation{}), do: :ok
 
+  # C5 §3.4 OutboxPort — cap-delivery outbox calls go through the
+  # config-resolved port, never the literal `Ezagent.Cap.DeliveryOutbox`
+  # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.OutboxAdapter`.
+  defp outbox, do: Application.fetch_env!(:ezagent_actor, :outbox)
+
   defp record_cap_delivery_failure(%Ezagent.Invocation{} = inv, reason) do
-    case Ezagent.Cap.DeliveryOutbox.record_handler_failure(inv, reason) do
+    case outbox().record_handler_failure(inv, reason) do
       :ok ->
         :ok
 

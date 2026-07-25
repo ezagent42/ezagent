@@ -53,7 +53,7 @@ defmodule Ezagent.Kind.ReadyTransition do
         result -> result
       end
 
-    if final_result == :ready and Ezagent.Cap.DeliveryOutbox.pending_target?(uri_str) do
+    if final_result == :ready and outbox().pending_target?(uri_str) do
       drain_cap_delivery_outbox(uri_str)
     end
 
@@ -196,6 +196,12 @@ defmodule Ezagent.Kind.ReadyTransition do
   # `Ezagent.Kind.Adapters.DeadLetterAdapter`.
   defp dead_letter, do: Application.fetch_env!(:ezagent_actor, :dead_letter)
 
+  # C5 §3.4 OutboxPort — cap-delivery outbox calls go through the
+  # config-resolved port, never the literal `Ezagent.Cap.DeliveryOutbox`
+  # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.OutboxAdapter`.
+  defp outbox, do: Application.fetch_env!(:ezagent_actor, :outbox)
+
   defp safe_dlq_put(reason, buffered_inv) do
     _ = dead_letter().put(reason, buffered_inv)
     :ok
@@ -221,7 +227,7 @@ defmodule Ezagent.Kind.ReadyTransition do
   defp to_uri_string(uri) when is_binary(uri), do: uri
 
   defp drain_cap_delivery_outbox(uri_str) do
-    Ezagent.Cap.DeliveryOutbox.drain_target(uri_str)
+    outbox().drain_target(uri_str)
   rescue
     error ->
       Logger.error(

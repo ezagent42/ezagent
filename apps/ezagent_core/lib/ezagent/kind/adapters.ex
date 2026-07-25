@@ -30,7 +30,8 @@ defmodule Ezagent.Kind.Adapters do
     dead_letter: Ezagent.Kind.Adapters.DeadLetterAdapter,
     saga: Ezagent.Kind.Adapters.SagaAdapter,
     event_log: Ezagent.Kind.Adapters.EventLogAdapter,
-    capability: Ezagent.Kind.Adapters.CapabilityAdapter
+    capability: Ezagent.Kind.Adapters.CapabilityAdapter,
+    outbox: Ezagent.Kind.Adapters.OutboxAdapter
   ]
 
   @doc false
