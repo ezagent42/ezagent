@@ -29,7 +29,22 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     @impl Ezagent.Kind.Template
     def instantiate(_name, data, _workspace_uri) do
       Process.put({__MODULE__, :received_template_data}, data)
-      {:ok, [Ezagent.URI.new!(data["agent_uri"])], %{fresh?: false}}
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      # Represent a GENUINE fresh spawn: create the live Entity.Agent Kind so the
+      # post-spawn obligations run against a real worker. `fresh?: false` (adopt)
+      # is now correctly rejected as `:agent_uri_already_live` by
+      # `spawn_from_template_content` (#1570 reject-double-spawn contract), so a
+      # capture-only fake that never spawns must report the fresh spawn it stands in for.
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors()
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
     end
 
     @behaviour Ezagent.Agent.CredentialAdapter
@@ -99,7 +114,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-capture-#{uniq()}")
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri)
 
     assert %{} = data = Process.get({CaptureTemplate, :received_template_data})
@@ -165,7 +180,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-grant-#{uniq()}")
     {caller, caps} = authorized_source_ctx()
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: caller,
                authenticated_principal: caller,
@@ -206,7 +221,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-default-#{uniq()}")
     {caller, caps} = authorized_source_ctx()
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
                caller: caller,
                authenticated_principal: caller,
@@ -235,7 +250,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     content = %{flavor: flavor, project_cwd: "/tmp/project"}
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-legacy-#{uniq()}")
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: @owner_uri,
                authenticated_principal: @owner_uri,
@@ -287,7 +302,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     content = %{flavor: flavor, project_cwd: "/tmp/project"}
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-ws-shared-#{uniq()}")
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, @owner_uri, @workspace_uri,
                caller: @owner_uri,
                authenticated_principal: @owner_uri,
@@ -497,7 +512,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-self-#{uniq()}")
     {caller, caps} = authorized_source_ctx()
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:ok, %{workers: [^agent_uri], fresh?: true}} =
              Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
                caller: caller,
                authenticated_principal: caller,
