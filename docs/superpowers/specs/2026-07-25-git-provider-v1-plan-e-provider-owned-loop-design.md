@@ -195,12 +195,17 @@ workflow 不直接运行 `git` 或自行解析 `.git`。
 保持 provider-neutral。允许新增最薄的 workspace-change port/value request，
 但不得加入 GitHub installation、token 或 REST response shape。
 
-冻结现有 adapter action vocabulary：
+冻结现有 adapter action vocabulary（`Ezagent.ActionSet.GitTaskAccess`，
+`apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`）：
 
+- `resolve_repository`
 - `create_change_request`
 - `read_change_request`
 - `list_checks`
 - `list_reviews`
+- `provision_workspace`（已接入 `WorkspaceProvisionPort`/`WorkspaceProvisionRegistry`，
+  Slice P2 应复用而非新建）
+- `cleanup_workspace`（同上）
 
 本切片不新增 merge action。
 
@@ -431,6 +436,14 @@ Owner：`ezagent_plugin_git_workflow`；表结构 migration 仅按仓库惯例�
 - legal transition graph；
 - typed facts schema/store；
 - 无 public ingress/no-Cap/no-secret gates。
+
+`ezagent_plugin_git_workflow` 已有 `workflow_run.ex` 状态词表，产出于更早的 E0-E9
+wave 计划（`docs/superpowers/plans/2026-07-24-git-provider-v1-plan-e-simplified-implementation.md`
+Slice E2；该计划的 E3-E9 覆盖 managed-Agent sidecar、check/review 门禁、human-merge
+确认、Kanban 投影、canary，均不在本 V1 范围）。§5.4 的状态机取代该词表——P1 落地时
+整体替换，不与旧词表并存；无需数据迁移（dev 阶段、`git_workflow_runs.status` 无 DB
+CHECK 约束）。若 E0-E9 剩余部分（尤其 E7 Kanban 投影、E9 canary）在 V1 之后仍要做，
+是独立的后续规划决定，不在本设计断言范围内。
 
 ### Slice P2：Workspace change collection
 
