@@ -270,12 +270,11 @@ defmodule EzagentWeb.Router do
 
     # T6.4 — receive a SHARED kanban board. A logged-in user clicks a bare share
     # link (`?token=` only, signed by the world `kanban.share_board` action); the
-    # controller verifies the read-only token, RESOLVES the receiver's own target
-    # session server-side (the sharer can't know the receiver's session), and
-    # `Mount.mount`s the board read-only into it (token IS the share-time
-    # authorization — the sharer had access; the receiver just mounts), then
-    # redirects to that session's world chat page. Behind RequireEntity so the
-    # clicker is a resolved principal.
+    # controller verifies the read-only token and mints a read-only capability to
+    # the CLICKER for the board (person-scoped — the board is reached via the
+    # clicker's own durable key, no session mount / no mount table; the token IS
+    # the share-time authorization — the sharer had access), then redirects to the
+    # kanban page. Behind RequireEntity so the clicker is a resolved principal.
     get "/socialware/kanban/receive", Socialware.KanbanShareController, :claim
   end
 

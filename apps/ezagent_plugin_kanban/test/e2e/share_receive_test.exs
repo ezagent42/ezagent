@@ -1,14 +1,14 @@
 defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
   @moduledoc """
   ㊵ 人本位 receive acceptance —— 分享链接被点击时,钥匙发给**点击者这个人**
-  (`Mount.mount_for_person/5`,person-scope 挂载行),不再解析落点 session、
-  不再发给 kanban-assistant。
+  (`CompositionCaps.mint_cap/4`,cap absorb 进点击者 identity slice,不落挂载表),
+  不再解析落点 session、不再发给 kanban-assistant。
 
   证四件事:
-    (a) 人本位挂载:`MountRow` person 行(`scope="person"`,access="read")+
-        点击者本人持只读钥匙(get_tree 成 / add_node 拒 —— 读/写按点击者与板的
-        关系在 dispatch chokepoint 如实判);
-    (b) 幂等:同 token 重复接收,person 行仍 1 行;
+    (a) 人本位钥匙:点击者本人的 durable caps(`Ezagent.EntityCaps.load/1`)含
+        指向板的只读 cap(read=持 :get_tree,不持写动作 :add_node —— 读/写按
+        点击者与板的关系在 dispatch chokepoint 如实判);
+    (b) 幂等:同 token 重复接收,指向板的 :get_tree cap 仍只 1 张;
     (c) 跨 ws 板:D4 read 放开 —— 点击者与板不同 workspace 也能收只读钥匙
         (`ws_policy/3` 单守卫点,D4 拍板后只翻这一处);
     (d) 坏 board 字符串 → `:bad_board`;坏 payload → `:bad_token`。
@@ -23,7 +23,6 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
   alias Ezagent.Entity.User
   alias Ezagent.AgentFlavorRegistry
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.Socialware.MountRow
   alias EzagentPluginKanban.Application, as: KanbanApp
   alias EzagentPluginKanban.ShareReceive
 
@@ -78,14 +77,13 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
 
       clicker = spawn_user(ws_name, "clicker")
 
-      # (a) 人本位:钥匙发给点击者本人,落 person-scope 挂载行(无 session 轴)。
+      # (a) 人本位:钥匙发给点击者本人,absorb 进其 identity slice(不落挂载表)。
       assert {:ok, %{board_uri: ^board_uri, grantee: ^clicker}} =
                ShareReceive.receive_shared_board(payload, clicker)
 
-      row = MountRow.get_person(board_uri, clicker, Ezagent.ActionSet.Kanban)
-      assert row != nil
-      assert row.scope == "person"
-      assert row.access == "read"
+      # read = 持指向板的 :get_tree cap;不持写动作(:add_node)cap。
+      assert eventually(fn -> :get_tree in durable_board_actions(clicker, board_uri) end)
+      refute :add_node in durable_board_actions(clicker, board_uri)
 
       # 读/写按点击者与板的关系判(gate check 在 dispatch chokepoint):
       # 点击者本人持只读钥匙 → get_tree 成;无写钥匙 → add_node 拒。
@@ -97,11 +95,11 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       assert {:error, :missing_cap} =
                dispatch_as(clicker, board_uri, :add_node, %{parent_id: "", title: "x"})
 
-      # (b) 幂等:同 token 重复接收,person 行仍 1 行。
+      # (b) 幂等:同 token 重复接收,指向板的 :get_tree cap 仍只 1 张。
       assert {:ok, _} = ShareReceive.receive_shared_board(payload, clicker)
 
-      assert MountRow.list_person_mounts_for_grantee(clicker)
-             |> Enum.count(&(&1.target_uri == s(board_uri))) == 1
+      assert durable_board_actions(clicker, board_uri)
+             |> Enum.count(&(&1 == :get_tree)) == 1
 
       # (c) 跨 ws:点击者在另一个 workspace —— D4 read 放开,同样收到只读钥匙。
       other_ws = "d3x-#{u()}"
@@ -111,7 +109,7 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
       assert {:ok, %{grantee: ^outsider}} =
                ShareReceive.receive_shared_board(payload, outsider)
 
-      assert MountRow.get_person(board_uri, outsider, Ezagent.ActionSet.Kanban) != nil
+      assert eventually(fn -> :get_tree in durable_board_actions(outsider, board_uri) end)
       assert eventually(fn -> holds_board_cap?(outsider, board_uri, :get_tree) end)
 
       # (d) 坏 board → :bad_board;坏 payload → :bad_token。
@@ -162,6 +160,16 @@ defmodule EzagentPluginKanban.E2E.ShareReceiveTest do
         }
       )
     )
+  end
+
+  # 发钥匙断言的统一形态:某人 durable caps(EntityCaps.load/1)里指向该板的
+  # Kanban behavior cap 的 action 列表(read=含 :get_tree,operate=含写动作)。
+  defp durable_board_actions(grantee, board_uri) do
+    instance = Ezagent.URI.instance(board_uri)
+
+    Ezagent.EntityCaps.load(grantee)
+    |> Enum.filter(&(&1.behavior == Ezagent.ActionSet.Kanban and &1.instance == instance))
+    |> Enum.map(& &1.action)
   end
 
   defp holds_board_cap?(grantee, board_uri, action) do

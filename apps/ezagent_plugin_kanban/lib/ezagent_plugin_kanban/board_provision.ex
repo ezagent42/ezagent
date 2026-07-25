@@ -1,25 +1,27 @@
-defmodule Ezagent.Socialware.BoardProvision do
+defmodule EzagentPluginKanban.BoardProvision do
   @moduledoc """
-  运行时数据宿主 "建板 / 拉板 / 转发 / 删板" 入口 —— **通用挂载 infra 的瘦消费面**。
+  运行时数据宿主 "建板 / 拉板 / 转发 / 删板" 入口 —— **板跟人走**的策略面。
 
-  挂载机制(发钥匙 + 落挂载表)全交给 `Ezagent.Socialware.Mount`;本模块只留**策略**:
-  谁能建 / 拉 / 转发 / 删的授权守卫、目标 session 的 assistant 解析,再把参数喂给
-  `Mount`。**零业务字面**(深扫 2026-07-16 默认值上提):behavior / assistant_role /
-  read_actions 全由调用方(kanban 侧代码,如 world `WorldActions` /
-  `EzagentPluginKanban.ShareReceive`)显式传入,本模块不再自带 kanban 默认值。
+  发钥匙统一走 `CompositionCaps.mint_cap/4` 唯一 mint chokepoint(granter 自动 = 板的
+  `data_owner`,#154),**不落任何表** —— cap 自身 durable(absorb 进 grantee 的 identity
+  slice,重启不丢);撤销走 `Ezagent.Cap.revoke_all_to/2` 整体 generation bump。本模块只留
+  **策略**:谁能建 / 拉 / 转发 / 删的授权守卫、目标 session 的 assistant 解析。**零业务字面**
+  (深扫 2026-07-16 默认值上提):behavior / assistant_role / read_actions 全由调用方
+  (kanban 侧代码,如 world `WorldActions` / `EzagentPluginKanban.ShareReceive`)显式传入,
+  本模块不再自带 kanban 默认值。
 
-    1. **建板**(`create_board/5`)—— 归属 = 触发建板的 owner。经 `Mount.provision/6`:
-       `Workspace.create_agent`(cap-gated,`data_owner` = `owner_ctx` 的 caller,即板主人,#154)
-       + 当场给本 session 的 assistant 挂 `access: :operate` 全动作钥匙。**建板是 cap-gated 的**
+    1. **建板**(`create_board/5`)—— 归属 = 触发建板的 owner。`Workspace.create_agent`
+       (cap-gated,`data_owner` = `owner_ctx` 的 caller,即板主人,#154)+ 当场给建板人
+       与本 session 的 assistant 各 mint 一把全动作操作钥匙。**建板是 cap-gated 的**
        (`{:workspace, create_agent}`),故 owner_ctx 的 caller 须持建 agent 的权(session owner /
-       admin);assistant 自己通常无此权,由 owner 建、再挂给 assistant。
-    2. **拉板**(`pull_board/4`)—— 只有板主人能;经 `Mount.mount/6` 挂 `access: :operate` 全动作。
+       admin);assistant 自己通常无此权,由 owner 建、再发给 assistant。
+    2. **拉板**(`pull_board/4`)—— 只有板主人能;给目标 session 的 assistant mint 全动作操作钥匙。
     3. **转发**(`forward_board/5`)—— 群成员(在 from_session 且该 session 对板有 access)能;
-       经 `Mount.mount/6` 挂 `access: :read` 只读动作。
+       给目标 session 的 assistant mint 只读动作钥匙。
 
-  `Mount` 内部走唯一 mint chokepoint(granter 永远 = 板主人 #154)+ `MountRow` 落表(挂载现在
-  有 durable SoT、session 重启存活)。`behavior` 由调用方传入(如 `Ezagent.ActionSet.Kanban`),
-  本模块不静态依赖任何 plugin。
+  access 语义从持有的 action cap 反推(read = 持只读动作,operate = 持全动作),可见性从
+  cap 反推 —— 没有独立的挂载表 / bookkeeping。`behavior` 由调用方传入
+  (如 `Ezagent.ActionSet.Kanban`),本模块不静态依赖任何 plugin。
 
   ## 参数
 
@@ -35,11 +37,11 @@ defmodule Ezagent.Socialware.BoardProvision do
   返回 `{:ok, %{board_uri, assistant_uri, minted}}` 或 `{:error, reason}`。建板失败则整体失败
   (fail-closed);assistant 解析不出(本 session 无该 role 成员)**不再整体失败**(⑳):
   assistant 钥匙只是 socialware 增强,跳过(`assistant_uri: nil, minted: []`),
-  建板人钥匙(plugin 基线)照发,留待 join 补发 / reconcile。
+  建板人钥匙(plugin 基线)照发,后续可由板主人 `pull_board` 补发。
   """
 
   alias Ezagent.ActionSet.Session.Members
-  alias Ezagent.Socialware.Mount
+  alias Ezagent.Socialware.CompositionCaps
 
   @type result :: %{
           board_uri: URI.t(),
@@ -51,16 +53,16 @@ defmodule Ezagent.Socialware.BoardProvision do
   @doc """
   建板(归属 = `owner_ctx` 的 caller)+ 发钥匙(主链一把 + 增强一把):
 
-    1. **建板人自己**(`owner_ctx.caller` = 板主人)挂一把全动作 operate 钥匙 —— **plugin
-       基线主链**(经 `Mount.provision/6` 建宿主 + 当场挂 + 落挂载表;分层债 ⑧:此前建板人
-       只拿到 `Manage` cap —— 管 agent 生命周期,behavior 轴对不上 `behavior` 的操作
-       required_caps,读写自己的板全 unauthorized。`CompositionCaps.mint_cap/4` 唯一 mint
-       chokepoint,granter = 板主人 = 建板人自己,`Cap.issue` 走 `{:held_by, owner}` 自路径,
-       per-grantee 签名);
-    2. 本 session 的 `assistant_role` 成员挂同款操作钥匙 —— **socialware 增强**(⑳):
-       assistant 解析成功才附加 `Mount.mount/6`;解析不出(本 session 无该 role 成员)
+    1. **建板人自己**(`owner_ctx.caller` = 板主人)得一把全动作 operate 钥匙 —— **plugin
+       基线主链**(`Workspace.create_agent` 建宿主 + 当场 `CompositionCaps.mint_cap/4`
+       发钥匙,不落表、cap 自身 durable;分层债 ⑧:此前建板人只拿到 `Manage` cap ——
+       管 agent 生命周期,behavior 轴对不上 `behavior` 的操作 required_caps,读写自己的板
+       全 unauthorized。mint_cap 是唯一 mint chokepoint,granter = 板主人 = 建板人自己,
+       `Cap.issue` 走 `{:held_by, owner}` 自路径,per-grantee 签名);
+    2. 本 session 的 `assistant_role` 成员得同款操作钥匙 —— **socialware 增强**(⑳):
+       assistant 解析成功才附加 mint;解析不出(本 session 无该 role 成员)
        跳过 assistant 钥匙(`assistant_uri: nil, minted: []`),**不再整体失败**,
-       留待 join 补发 / reconcile。
+       后续可由板主人 `pull_board` 补发。
 
   见模块文档的参数/返回契约;返回增加 `:creator_minted`(发给建板人的钥匙)。
   """
@@ -85,23 +87,25 @@ defmodule Ezagent.Socialware.BoardProvision do
          :ok <- assert_passive_recipe(board_role),
          {:ok, provision_ctx} <- runtime_provision_ctx(workspace_uri, owner_ctx, creator_uri),
          actions = Map.get(spec, :actions) || Ezagent.ActionSet.action_names(behavior),
-         provision_spec = %{
-           name: name,
+         # 主链(⑧+⑳):建宿主 agent(cap-gated,data_owner=建板人 #154)+ 当场给
+         # **建板人**发全动作 operate 钥匙。发钥匙走 `CompositionCaps.mint_cap` 唯一
+         # chokepoint(granter=data_owner=建板人,`Cap.issue` {:held_by} 自路径),
+         # **不落挂载表** —— cap 自身 durable(absorb 进 grantee identity slice,重启不丢)。
+         create_args = %{
            flavor: flavor,
+           name: name,
            role: board_role,
-           actions: actions
+           cwd: "",
+           with_pty: false
          },
-         # 主链(⑧+⑳):建宿主 + 当场给**建板人**发全动作 operate 钥匙(同一条 mount 路:
-         # mint + 落挂载表,session 重启可 reconcile)。
-         {:ok, %{target: board_uri, caps: creator_minted}} <-
-           Mount.provision(
-             session_uri,
+         {:ok, %{agent_uri: board_uri}} <-
+           Ezagent.Workspace.create_agent(
              workspace_uri,
-             provision_spec,
-             creator_uri,
-             behavior,
-             provision_ctx
+             create_args,
+             Map.put(provision_ctx, :deadline_ms, 30_000)
            ),
+         {:ok, creator_minted} <-
+           CompositionCaps.mint_cap(creator_uri, board_uri, behavior, actions),
          # 增强(⑳):assistant 解析成功才附加挂钥匙;解析不出跳过(nil / []),不 fail。
          {:ok, {assistant_uri, minted}} <-
            mount_assistant(session_uri, board_uri, assistant_role, behavior, actions) do
@@ -116,15 +120,13 @@ defmodule Ezagent.Socialware.BoardProvision do
   end
 
   # ⑳ assistant 钥匙 = socialware 增强,非硬前置:本 session 无该 role 成员 → 跳过
-  # (`{nil, []}`,留待 join 补发/reconcile);成员在、挂载失败 → 真错误,原样上抛
+  # (`{nil, []}`,后续可由板主人 pull_board 补发);成员在、mint 失败 → 真错误,原样上抛
   # (fail-closed —— 那不是"没有 assistant",是发钥匙路坏了,不能静默)。
   defp mount_assistant(session_uri, board_uri, assistant_role, behavior, actions) do
     case resolve_assistant(session_uri, assistant_role) do
       {:ok, %URI{} = assistant_uri} ->
-        case Mount.mount(session_uri, board_uri, assistant_uri, behavior, actions,
-               access: :operate
-             ) do
-          {:ok, %{caps: minted}} -> {:ok, {assistant_uri, minted}}
+        case CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, actions) do
+          {:ok, minted} -> {:ok, {assistant_uri, minted}}
           {:error, reason} -> {:error, reason}
         end
 
@@ -139,7 +141,7 @@ defmodule Ezagent.Socialware.BoardProvision do
   # ⑥ 规则边界①:建板人必须是触发建板 session 的成员(复用转发守卫的成员边检查)。
   defp assert_creator_member(session_uri, %URI{} = creator_uri) do
     members =
-      case Ezagent.Kind.get_slice(session_uri, :session) do
+      case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
         {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
         _ -> %{}
       end
@@ -215,18 +217,15 @@ defmodule Ezagent.Socialware.BoardProvision do
     2. **撤钥匙(cap-epoch)**:`Ezagent.Cap.revoke_all_to/2` 在板自己 mailbox 里
        bump authority generation → 指向本板的**所有** cap 一次性 inert(验签失效,但
        cap 仍在 holder store、不删除)。**这一步必须在 destroy 之前**(板得活着才能
-       ensure_started + bump)。取代旧的 `Mount.unmount_all_for_target/1` 逐行手动撤
-       钥匙(#1470,已作废):光 destroy agent 不让 cap 失效(authority 行留着、
-       旧 cap 验签仍可能过 = 泄漏),故必须显式 `revoke_all_to`;
+       ensure_started + bump)。光 destroy agent 不让 cap 失效(authority 行留着、
+       旧 cap 验签仍可能过 = 泄漏),故必须显式 `revoke_all_to`。撤销即完整 ——
+       钥匙不落表,没有额外 bookkeeping 要清;
     3. 退休 agent:dispatch `manage.delete` 到板(cap 校验落 dispatch chokepoint ——
        caller 须持 Manage cap;经 `Ezagent.Lifecycle.destroy` 走 destroy hooks +
        清快照 + terminate)。为什么不是 `Ezagent.Domain.Agent.retire_spawned/2`:
        retire 的 provenance 闸要求 `CreationInventory` 建档,而 direct-spawn 的
        数据宿主(`Workspace.create_agent`,非 template spawn)不建档,`manage.delete`
-       是同一「语义命令退休」家族里对 direct-spawn 宿主成立的那条路;
-    4. 清挂载表:`MountRow.delete_all_for_target/1` 删指向本板的全部挂载行(跨
-       session、跨 grantee,含 person 行)—— 纯 bookkeeping(cap 已在步骤 2 一次性
-       失效),best-effort。
+       是同一「语义命令退休」家族里对 direct-spawn 宿主成立的那条路。
 
   返回 `{:ok, %{deleted: true}}` 或 `{:error, :not_board_owner | term()}`。
   """
@@ -243,7 +242,6 @@ defmodule Ezagent.Socialware.BoardProvision do
              trace_id: nil
            }),
          {:ok, _} <- dispatch_manage_delete(board_uri, caller_ctx) do
-      _ = Ezagent.Socialware.MountRow.delete_all_for_target(board_uri)
       {:ok, %{deleted: true}}
     end
   end
@@ -276,19 +274,19 @@ defmodule Ezagent.Socialware.BoardProvision do
   defp dispatch_manage_delete(_board_uri, _ctx), do: {:error, :not_board_owner}
 
   @doc """
-  拉板 —— 把一块**已存在**的板拉进 `target_session_uri`,给该 session 的 assistant 挂指向
-  这块板的操作钥匙(`access: :operate`,数据跨 session 共享、板不进群、URI 寻址)。
+  拉板 —— 把一块**已存在**的板拉进 `target_session_uri`,给该 session 的 assistant mint 指向
+  这块板的全动作操作钥匙(operate = 持全动作,数据跨 session 共享、板不进群、URI 寻址)。
 
   **拉板 = 只有板主人能做**。授权检查在 call-site(这里):`caller_ctx.caller` 必须是这块板
   的 `data_owner`(经 `CapabilityRegistry.data_owner_of/2`),否则 `{:error, :not_board_owner}`。
-  这一步必须在本层做 —— `Mount.mount/6`(经 `CompositionCaps.mint_cap/4`)是用板主人权铸的、
-  不自检触发者,所以"只有主人能拉别人拉不了"的守卫落在这里(发现按 cap 收敛只保证看不到,
+  这一步必须在本层做 —— `CompositionCaps.mint_cap/4` 是用板主人权铸的、不自检触发者,
+  所以"只有主人能拉别人拉不了"的守卫落在这里(发现按 cap 收敛只保证看不到,
   不保证拉不了)。
 
   步骤:① 授权(caller == 板主人)→ ② 拿 target session 的 `assistant_role` 成员 URI(照
   建板同款读成员边;target 无该成员 → `{:error, :no_assistant_in_target}`)→ ③ 经
-  `Mount.mount/6`(`access: :operate`)挂**全部操作动作**(`Ezagent.ActionSet.action_names(behavior)`)
-  的实例精确钥匙 + 落挂载表。
+  `CompositionCaps.mint_cap/4` 发**全部操作动作**(`Ezagent.ActionSet.action_names(behavior)`)
+  的实例精确钥匙(不落表,cap 自身 durable)。
 
     * `board_uri` —— 已存在的板(数据宿主)。
     * `target_session_uri` —— 拉进的目标 session;assistant 从它的成员边解析。
@@ -309,35 +307,29 @@ defmodule Ezagent.Socialware.BoardProvision do
          :ok <- assert_board_owner(board_uri, behavior, caller_ctx),
          {:ok, assistant_uri} <- resolve_target_assistant(target_session_uri, assistant_role),
          actions = Ezagent.ActionSet.action_names(behavior),
-         {:ok, %{caps: minted}} <-
-           Mount.mount(
-             target_session_uri,
-             board_uri,
-             assistant_uri,
-             behavior,
-             actions,
-             access: :operate
-           ) do
+         {:ok, minted} <-
+           CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, actions) do
       {:ok, %{assistant_uri: assistant_uri, minted: minted}}
     end
   end
 
   @doc """
   转发只读 —— 群里**任何成员**能做:把一块板从 `from_session_uri` 转发给 `to_session_uri`,
-  给 to_session 的 assistant 挂指向这块板的**只读**钥匙(`caller_ctx.read_actions`,
-  `access: :read`),只能看不能改(数据跨 session 共享、板不进群、URI 寻址)。
+  给 to_session 的 assistant mint 指向这块板的**只读**钥匙(`caller_ctx.read_actions`),
+  只能看不能改(数据跨 session 共享、板不进群、URI 寻址)。
 
-  **对比拉板(`pull_board`)**:同一条 `Mount.mount/6`,只是 (1) 授权检查不同、(2) actions /
-  access 不同。拉板只有板主人能、`access: :operate` 发全部操作动作;转发**任何在 from_session
-  且 from_session 对板有 access 的成员**能、`access: :read` 发只读动作。granter 仍 = 板主人
-  (读的还是他的数据,`Mount` 内部用板主人权铸),转发成员只是"传递了他的 access"。
+  **对比拉板(`pull_board`)**:同一条 `CompositionCaps.mint_cap/4`,只是 (1) 授权检查不同、
+  (2) actions 不同(access 从持有的 action cap 反推)。拉板只有板主人能、发全部操作动作;
+  转发**任何在 from_session 且 from_session 对板有 access 的成员**能、发只读动作。
+  granter 仍 = 板主人(读的还是他的数据,mint_cap 内部用板主人权铸),转发成员只是
+  "传递了他的 access"。
 
   **授权检查(call-site,fail-closed)**:`caller_ctx.caller` 必须
     ① **在 from_session 里**(是 from_session 的成员),且
     ② **from_session 对这块板有 access** —— 即 from_session 的 `assistant_role` 成员持有一把
        指向这块板(instance 精确)的 `behavior` cap(这块板被 pull/create 进了 from_session)。
   任一不满足 → `{:error, :no_forward_access}`。此外 board、来源 session、目标 session
-  必须属于同一 workspace；跨 workspace 在解析接收者和 mint/Mount 之前返回
+  必须属于同一 workspace；跨 workspace 在解析接收者和 mint 之前返回
   `{:error, :cross_workspace_denied}`(#1435;分享业务=同 workspace 跨会话)。
   **不要求 caller 是板主人**(那是拉板)。
 
@@ -377,21 +369,14 @@ defmodule Ezagent.Socialware.BoardProvision do
              caller_ctx
            ),
          {:ok, assistant_uri} <- resolve_target_assistant(to_session_uri, assistant_role),
-         {:ok, %{caps: minted}} <-
-           Mount.mount(
-             to_session_uri,
-             board_uri,
-             assistant_uri,
-             behavior,
-             read_actions,
-             access: :read
-           ) do
+         {:ok, minted} <-
+           CompositionCaps.mint_cap(assistant_uri, board_uri, behavior, read_actions) do
       {:ok, %{assistant_uri: assistant_uri, minted: minted}}
     end
   end
 
   # 分享业务 = 同 workspace 跨会话(#1435/⑯):board、来源、目标三方 workspace 必须一致,
-  # 在解析接收者和 mint/Mount 之前 fail-closed。
+  # 在解析接收者和 mint 之前 fail-closed。
   defp same_workspace(board_uri, from_session_uri, to_session_uri) do
     workspaces =
       [board_uri, from_session_uri, to_session_uri]

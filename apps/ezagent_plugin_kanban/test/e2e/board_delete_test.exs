@@ -1,6 +1,6 @@
 defmodule EzagentPluginKanban.E2E.BoardDeleteTest do
   @moduledoc """
-  ⑲ acceptance —— 删板入口 `Ezagent.Socialware.BoardProvision.delete_board/3`:
+  ⑲ acceptance —— 删板入口 `EzagentPluginKanban.BoardProvision.delete_board/3`:
   板 = kanban-manager agent,建板人(= data_owner)持 Manage cap(建板时 create-entry
   授予),删板 = **cap-epoch 撤钥匙**(`Ezagent.Cap.revoke_all_to/2` 在 destroy 前 bump
   板的 authority generation → 指向板的所有 cap 一次性验签失效)+ 语义命令 `manage.delete`
@@ -19,7 +19,7 @@ defmodule EzagentPluginKanban.E2E.BoardDeleteTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
-  alias Ezagent.Socialware.BoardProvision
+  alias EzagentPluginKanban.BoardProvision
   alias Ezagent.Socialware.MountRow
   alias EzagentPluginKanban.Application, as: KanbanApp
 

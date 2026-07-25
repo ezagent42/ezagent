@@ -9,17 +9,17 @@ defmodule EzagentPluginKanban.ShareReceive do
   **人本位**:分享 = 钥匙给点击者本人。据此重做:
 
     1. token payload(已 verify)→ board URI + behavior(behavior 以字符串入 token,
-       `Module.concat` 反解,同 `Mount.decode_behavior` 约定;已签名,安全);
+       `Module.concat` 反解;已签名,安全);
     2. **ws policy 单守卫**(`ws_policy/3`):D4 拍板 = 只读放开、operate 隔离。
        链接分享是 `:read`,默认放行(含跨 workspace);D4 若翻案只改这一处;
-    3. `Ezagent.Socialware.Mount.mount_for_person/5` 给**点击者本人**挂
-       `access: :read` 只读钥匙(`[:get_tree, :export_markmap]`),落 person-scope
-       挂载行(无 session 轴;⑲ 删板撤钥匙走 cap-epoch `Ezagent.Cap.revoke_all_to/2`
-       —— 指向板的所有 cap 含 person 行一次性验签失效,挂载表行随后 bookkeeping 删)。
+    3. `Ezagent.Socialware.CompositionCaps.mint_cap/4` 给**点击者本人**铸
+       只读钥匙(`[:get_tree, :export_markmap]`)—— 不落挂载表,cap absorb 进
+       点击者 identity slice 即 durable(⑲ 删板撤钥匙走 cap-epoch
+       `Ezagent.Cap.revoke_all_to/2` —— 指向板的所有 cap 一次性验签失效)。
 
   授权只在**分享时**查(发起人有 access 才签得出 token),token 即凭证,接收侧
-  只管挂;granter 仍 = 板主人(`Mount` 内部用板主人权铸,#154 mint chokepoint
-  不变)。**不发生 session 跳转**:板经点击者自己的钥匙进他的 kanban tab
+  只管发钥匙;granter 仍 = 板主人(`mint_cap` 内部用板主人权铸,#154 mint
+  chokepoint 不变)。**不发生 session 跳转**:板经点击者自己的钥匙进他的 kanban tab
   (`WorldData.session_boards/2` ws∪cap 派生枚举),读/写按点击者与板的关系在
   dispatch chokepoint 如实判(只读钥匙 → get_tree 成、写动作 :missing_cap)。
 
@@ -36,7 +36,7 @@ defmodule EzagentPluginKanban.ShareReceive do
   `get_slice(:session)` 裸读 —— PR-5 全平面 gate 收紧后 CI 会红。
   """
 
-  alias Ezagent.Socialware.Mount
+  alias Ezagent.Socialware.CompositionCaps
 
   # kanban 只读动作集(能看不能改,同 BoardProvision 转发只读集)。
   @read_actions [:get_tree, :export_markmap]
@@ -44,7 +44,7 @@ defmodule EzagentPluginKanban.ShareReceive do
   @type receive_result :: %{board_uri: URI.t(), grantee: URI.t()}
 
   @doc """
-  接收一块分享的板(人本位):ws policy 守卫 → 给点击者本人只读挂载。
+  接收一块分享的板(人本位):ws policy 守卫 → 给点击者本人铸只读钥匙。
 
     * `payload` —— 已 verify 的 token payload(`%{"board" => str, "behavior" => str}`)。
     * `clicker` —— 点击者(登录用户)的 entity URI,即钥匙 grantee。
@@ -63,8 +63,7 @@ defmodule EzagentPluginKanban.ShareReceive do
     with {:ok, %URI{} = board_uri} <- parse_board(board_str),
          behavior = Module.concat([behavior_str]),
          :ok <- ws_policy(:read, clicker, board_uri),
-         {:ok, _} <-
-           Mount.mount_for_person(board_uri, clicker, behavior, @read_actions, access: :read) do
+         {:ok, _caps} <- CompositionCaps.mint_cap(clicker, board_uri, behavior, @read_actions) do
       {:ok, %{board_uri: board_uri, grantee: clicker}}
     end
   end

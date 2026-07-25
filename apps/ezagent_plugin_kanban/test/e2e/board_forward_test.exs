@@ -1,6 +1,6 @@
 defmodule EzagentPluginKanban.E2E.BoardForwardTest do
   @moduledoc """
-  T5b acceptance —— 群成员"转发只读" `Ezagent.Socialware.BoardProvision.forward_board/5`:
+  T5b acceptance —— 群成员"转发只读" `EzagentPluginKanban.BoardProvision.forward_board/5`:
   把一块**已存在**的板(owner=alice)从 from_session(alice 已把这板拉进来、其 assistant 有
   操作钥匙)转发给另一个 to_session → to_session 的 kanban-assistant 拿到指向这块板的**只读**
   钥匙(只 `[:get_tree, :export_markmap]`)→ 只能看不能改。
@@ -22,8 +22,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
-  alias Ezagent.Socialware.BoardProvision
-  alias Ezagent.Socialware.MountRow
+  alias EzagentPluginKanban.BoardProvision
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t5b-native"
@@ -136,11 +135,16 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
       assert minted_read.instance == Ezagent.URI.instance(board_uri)
       refute minted_read.instance == :any
 
-      # 挂载落表:to_session 有指向该板的 read 挂载行(转发 = read)
-      fwd_mount = MountRow.get(to_session, board_uri, to_assistant, Ezagent.ActionSet.Kanban)
-      assert fwd_mount != nil
-      assert fwd_mount.access == "read"
-      assert Enum.any?(MountRow.list_for_session(to_session), &(&1.id == fwd_mount.id))
+      # 钥匙即挂载(不落表):access 从持有的 action cap 反推 —— to_assistant 持指向
+      # 该板的**全部只读**动作 cap,且**不持任何写动作** cap → 转发 = read
+      assert eventually(fn ->
+               Enum.all?(@read_actions, &holds_board_cap?(to_assistant, board_uri, &1))
+             end)
+
+      write_actions =
+        Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban) -- @read_actions
+
+      refute Enum.any?(write_actions, &holds_board_cap?(to_assistant, board_uri, &1))
 
       # 先由板主人(admin)在板上建一个根节点,好让只读读到东西
       assert {:ok, %{id: "n1"}} =
@@ -206,7 +210,7 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                  bob_ctx
                )
 
-      # --- (b3) 跨 workspace 接收在 mint/Mount 前拒绝 ----------------------
+      # --- (b3) 跨 workspace 接收在 mint 前拒绝 -----------------------------
       foreign_ws_name = "t5b-foreign-#{System.unique_integer([:positive])}"
       {:ok, _foreign_ws_pid} = Workspace.create(foreign_ws_name, %{})
       foreign_workspace_uri = URI.new!("workspace://#{foreign_ws_name}")
@@ -223,12 +227,11 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
                  bob_ctx
                )
 
-      assert MountRow.get(
-               foreign_session,
-               board_uri,
-               foreign_assistant,
-               Ezagent.ActionSet.Kanban
-             ) == nil
+      # 跨 workspace 在 mint 前被拒 → foreign_assistant 未拿到任何指向该板的钥匙
+      refute Enum.any?(
+               Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban),
+               &holds_board_cap?(foreign_assistant, board_uri, &1)
+             )
 
       assert {:error, :missing_cap} =
                dispatch_as(foreign_assistant, board_uri, :get_tree, %{})
@@ -418,8 +421,10 @@ defmodule EzagentPluginKanban.E2E.BoardForwardTest do
     })
   end
 
+  # 发钥匙断言统一走 durable caps(EntityCaps.load):grantee 是否持指向该板的
+  # Kanban behavior cap(instance 精确到板,非 :any)
   defp holds_board_cap?(grantee, board_uri, action) do
-    Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+    Enum.any?(Ezagent.EntityCaps.load(grantee), fn cap ->
       cap.kind == :agent and cap.behavior == Ezagent.ActionSet.Kanban and
         cap.action == action and
         cap.instance == Ezagent.URI.instance(board_uri)

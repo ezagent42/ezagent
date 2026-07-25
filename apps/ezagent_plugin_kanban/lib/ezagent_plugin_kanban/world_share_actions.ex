@@ -22,14 +22,14 @@ defmodule EzagentPluginKanban.WorldShareActions do
 
   # 分享看板 token(T6.4):照 WorldActions upload-grant 的 Phoenix.Token 模式(sign/verify +
   # salt + max_age)。分享时校验发起人 access → 把 board + 只读意图签进 token → 拼接收链接;
-  # 接收侧(ezagent_web `KanbanShareController`)用同 salt/max_age verify + 直接
-  # `Mount.mount` 只读挂进点击者 session。
+  # 接收侧(ezagent_web `KanbanShareController`)用同 salt/max_age verify + 经
+  # `ShareReceive.receive_shared_board/2` 给点击者本人铸只读钥匙(mint_cap)。
   # salt/max_age 必须与接收侧常量逐一对齐;max_age(7 天)在接收侧 verify 时校验。
   @share_board_salt "world_kanban_share"
   # 7 天:与 web 深链入口(KanbanShareController)verify 口径逐一对齐。
   @share_board_max_age 604_800
   # behavior 以字符串入 token(token payload 是 JSON-safe 字符串契约;接收侧
-  # `Module.concat` 反解,同 `Mount.decode_behavior` 约定)。
+  # `Module.concat` 反解)。
   @share_board_behavior "Ezagent.ActionSet.Kanban"
   @share_board_receive_path "/socialware/kanban/receive"
 
@@ -173,8 +173,8 @@ defmodule EzagentPluginKanban.WorldShareActions do
   # 申请编辑 = 已持只读钥匙的人往当前会话物化一条申请气泡(带 request-edit 标记
   # 链接,unfurl 渲成「批准」按钮);板主人点批准 → `approve_edit` 复查
   # caller==data_owner + **D4 不变量 3:升级点复查同 ws**(operate 钥匙永不跨 ws,
-  # 升级不是绕过不变量的后门)+ 申请人已有 person read 挂载 → `Mount.mount_for_person`
-  # 全动作 `access: :operate` 重挂(person 自然键 upsert,read 行原地升级,仍 1 行)。
+  # 升级不是绕过不变量的后门)+ 申请人已持只读钥匙 → `CompositionCaps.mint_cap`
+  # 铸全动作钥匙(升级 = 在已持读钥匙之上补齐写动作 cap,不落挂载表)。
   @request_edit_path "/plugins/kanban/request-edit"
 
   @doc """
@@ -209,7 +209,8 @@ defmodule EzagentPluginKanban.WorldShareActions do
 
   @doc """
   规则8 批准(公开供测试):caller 必须是板主人(`data_owner`)→ D4 同 ws 复查 →
-  申请人须已有 person **read** 挂载 → 全动作 `access: :operate` 重挂升级。
+  申请人须已持该板**只读**钥匙(cap 反推,见 `person_read_mount?/3`)→
+  `CompositionCaps.mint_cap` 铸全动作钥匙升级。
   返回 `{:ok, grantee_uri}` 或 `{:error, :bad_kanban_uri | :not_board_owner |
   :cross_workspace_denied | :no_read_mount | term()}`。
   """
@@ -228,13 +229,12 @@ defmodule EzagentPluginKanban.WorldShareActions do
              do: :ok,
              else: {:error, :no_read_mount}
            ),
-         {:ok, _} <-
-           Ezagent.Socialware.Mount.mount_for_person(
-             board_uri,
+         {:ok, _caps} <-
+           Ezagent.Socialware.CompositionCaps.mint_cap(
              grantee,
+             board_uri,
              behavior,
-             Ezagent.ActionSet.action_names(behavior),
-             access: :operate
+             Ezagent.ActionSet.action_names(behavior)
            ) do
       {:ok, grantee}
     else
@@ -306,12 +306,30 @@ defmodule EzagentPluginKanban.WorldShareActions do
     _ -> false
   end
 
-  # 申请人已有 person read 挂载(规则8 前置:升级的是「已只读挂载的人」)。
-  # 读 MountRow 公开查询(不碰行内部/不绕表)。
+  # 申请人是否已持该板只读钥匙(规则8 前置:升级的是「已持只读钥匙的人」)。
+  # **不裸检查 cap-shape**(在 dispatch chokepoint 外判 cap 形状 = 违反
+  # CapCheckOnlyAtChokepoint)。改以申请人身份对板 dispatch 一个只读动作
+  # (`:get_tree`,mode `:call`),cap 校验落在 dispatch 许可路上:`{:ok,_}` = 有只读
+  # 钥匙,任何 `{:error,_}` = 没有。同 `BoardProvision.session_holds_board_cap?` 的
+  # 合规探针模式(EntityCaps.load 只用于装 envelope,不裸判 cap)。
   defp person_read_mount?(%URI{} = board_uri, %URI{} = grantee, behavior) do
-    case Ezagent.Socialware.MountRow.get_person(board_uri, grantee, behavior) do
-      %{access: "read"} -> true
-      _ -> false
+    target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), :get_tree)
+    caps = grantee |> Ezagent.EntityCaps.load() |> MapSet.new()
+
+    case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+           target: target,
+           mode: :call,
+           args: %{},
+           ctx: %{
+             caller: grantee,
+             authenticated_principal: grantee,
+             caps: caps,
+             reply: {:caller_inbox, self()}
+           },
+           origin: :trusted_internal
+         }) do
+      {:ok, _} -> true
+      {:error, _} -> false
     end
   rescue
     _ -> false

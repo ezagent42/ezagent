@@ -413,7 +413,7 @@ defmodule EzagentPluginKanban.WorldActions do
   #
   # kanban-as-role：看板 = 一个 passive native agent（role `kanban-manager`）。此前这里
   # 直调 `Workspace.create_agent`——普通成员无 create_agent cap 必拒（分层债 ⑥）。现改走
-  # `Ezagent.Socialware.BoardProvision.create_board/5`（runtime 建板 glue）：成员守卫 +
+  # `EzagentPluginKanban.BoardProvision.create_board/5`（runtime 建板 glue）：成员守卫 +
   # 一次性 provision authority（#1457 后经 `{:admin, admin_uri}` 具名签发，只造 passive
   # native）+ 建完当场发两把钥匙（assistant + 建板人自己，落挂载表）。建板因此是
   # **session-scoped**（collab 模型：板挂在会话、assistant 收钥匙）——无当前会话则拒。
@@ -440,7 +440,7 @@ defmodule EzagentPluginKanban.WorldActions do
         {:noreply, assign(socket, :last_dispatch_status, "error:no_session_context")}
 
       true ->
-        case Ezagent.Socialware.BoardProvision.create_board(
+        case EzagentPluginKanban.BoardProvision.create_board(
                workspace_uri,
                session_uri,
                %{
@@ -477,7 +477,7 @@ defmodule EzagentPluginKanban.WorldActions do
         # Kind 进程,先照其它动作的口径起活(已 live 幂等)。
         :ok = WorldData.ensure_spawned(uri)
 
-        case Ezagent.Socialware.BoardProvision.delete_board(
+        case EzagentPluginKanban.BoardProvision.delete_board(
                uri,
                @kanban_behavior,
                ctx(socket)

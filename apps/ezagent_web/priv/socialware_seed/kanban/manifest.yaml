@@ -16,7 +16,7 @@
 #     and NOTHING ELSE. T4b: installing this socialware materializes only the two
 #     "brains"; it does NOT auto-spawn a board nor mint board caps at install time.
 #     The board (a passive native `kanban-manager` agent) + the assistant's operate
-#     keys are provisioned at RUNTIME by `Ezagent.Socialware.BoardProvision.create_board`
+#     keys are provisioned at RUNTIME by `EzagentPluginKanban.BoardProvision.create_board`
 #     when a board is created from chat (T4a). This keeps "install socialware" ≠
 #     "create board" — a board is data owned by whoever creates it, addressed by URI.
 #   * routing_rules — ONLY the #1190 relay-back rule, #1212-hardened to
