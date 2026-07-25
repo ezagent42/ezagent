@@ -61,10 +61,18 @@ defmodule Ezagent.Kind.Adapters.DispatchPolicyAdapter do
     with true <- canonical_admin?(caller),
          true <- admin_operator_scope?(caller),
          true <- is_nil(target.authority),
-         # Liveness via the §2.2 public surface (`Kind.alive?/1`) — never a
+         # Liveness-ONLY probe via the §2.2 public surface
+         # (`Kind.alive_locally?/1`) — byte-for-byte the original bare
+         # registry lookup (`invocation.ex` @base): NO owner gate here.
+         # The single owner gate runs ONCE at the end of
+         # `before_delivery/1`; the owner-gated `Kind.alive?/1` would
+         # resolve ownership TWICE (extra owner-gate telemetry) AND open a
+         # placement-transition TOCTOU — probe says non-owner (skip
+         # materialization), placement flips, final gate passes → admin
+         # action dispatched without its materialized cap. Never a
          # `KindRegistry.lookup` reach into actor internals (§4.2 forward
          # gate; this module is core-side, post-move core→actor).
-         true <- Ezagent.Kind.alive?(Ezagent.URI.instance(target)),
+         true <- Ezagent.Kind.alive_locally?(Ezagent.URI.instance(target)),
          {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
          false <- globally_non_cap_action?(action),
          false <- action == :grant do

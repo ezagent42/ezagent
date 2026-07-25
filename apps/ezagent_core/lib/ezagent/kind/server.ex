@@ -615,10 +615,30 @@ defmodule Ezagent.Kind.Server do
   def handle_call(
         :ezagent_recredential_generation,
         _from,
-        %{create_freshness: :created, authority: %{generation: generation}} = state
-      )
-      when is_integer(generation) and generation > 0 do
-    {:reply, {:ok, generation}, state}
+        # C5 §3.4 opacity rule (codex fidelity fix) — the authority token is
+        # OPAQUE: gate on `create_freshness` ONLY, then read the generation
+        # via the port accessor (`authority().generation/1`). NEVER a
+        # `%{generation: _}` map match — a conforming adapter may return a
+        # non-map token, which the old match would have dropped into the
+        # `:principal_revoked` fall-through, wrongly denying bridge
+        # recredentialing.
+        %{create_freshness: :created, authority: token} = state
+      ) do
+    # Fail-closed: an adapter whose accessor raises (e.g. a token without a
+    # generation reading) gets the old match-fall-through semantics
+    # (`:principal_revoked`), not a GenServer crash.
+    generation =
+      try do
+        authority().generation(token)
+      rescue
+        _ -> nil
+      end
+
+    if is_integer(generation) and generation > 0 do
+      {:reply, {:ok, generation}, state}
+    else
+      {:reply, {:error, :principal_revoked}, state}
+    end
   end
 
   def handle_call(:ezagent_recredential_generation, _from, state) do
@@ -712,6 +732,18 @@ defmodule Ezagent.Kind.Server do
         # binding, NEVER a `%Ezagent.Capability{}` struct match); the
         # AuthorityPort adapter validates the representation and answers
         # `false` for a non-Capability input.
+        #
+        # INTENTIONAL DELTA from the base handler (codex fidelity review,
+        # C5 chunk-2): the base `:ezagent_verify_cap_artifact` clause
+        # struct-matched `%Capability{}`, so a malformed internal call had
+        # NO handler and crashed the Kind. The graceful `false` is a strict
+        # improvement AND is unreachable on valid production paths: the sole
+        # caller is `Ezagent.Cap.valid_for_target?/2` (`cap.ex`), whose head
+        # already requires `%Capability{}` and whose non-cap fallback clause
+        # answers `false` BEFORE any GenServer.call — so no conforming
+        # caller can ever present a malformed artifact here. Keeping the
+        # adapter's `false` (not restoring the strict match) because the
+        # only reachable effect of the old strictness was a crash.
         {:ezagent_verify_cap_artifact, artifact, %URI{} = presenter},
         _from,
         state

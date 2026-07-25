@@ -715,6 +715,21 @@ defmodule Ezagent.Kind do
   def alive?(%URI{} = uri), do: Ezagent.LocalRuntime.kind_alive?(uri)
 
   @doc """
+  Liveness-ONLY probe (§2.2): is a Kind process for `uri` registered
+  locally? Unlike `alive?/1` this runs NO workspace owner gate — it is the
+  public equivalent of the bare registry lookup for policy code that runs
+  its OWN owner gate separately (e.g. `DispatchPolicyAdapter.before_delivery/1`,
+  which owner-gates once after admin-cap materialization; routing its
+  liveness probe through the owner-gated `alive?/1` would resolve
+  ownership TWICE and open a placement-transition TOCTOU between the two
+  reads). Never use this for respawn/placement decisions — those need the
+  owner-gated `alive?/1`.
+  """
+  @spec alive_locally?(URI.t()) :: boolean()
+  def alive_locally?(%URI{} = uri),
+    do: match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri))
+
+  @doc """
   Am I (the calling process) the target URI's own Kind process? (§2.2) — the
   self-detection the `EntityCaps` self-read case needs to avoid a self-call
   deadlock. `false` when no live process is registered for `uri`.

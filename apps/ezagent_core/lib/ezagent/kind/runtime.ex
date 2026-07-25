@@ -274,7 +274,8 @@ defmodule Ezagent.Kind.Runtime do
            # C5 §3.4 opacity rule — the cap crosses as OPAQUE data (plain
            # binding, NEVER a `%Ezagent.Capability{}` struct match); the
            # AuthzPort adapter validates the representation and rejects a
-           # non-Capability input as `{:error, :invalid_artifact}`.
+           # non-Capability input as `{:error, :invalid_grant_intent}` —
+           # byte-identical to this function's own fall-through atom below.
            args: %{grantee: %URI{} = grantee, cap: cap},
            ctx: ctx,
            origin: origin

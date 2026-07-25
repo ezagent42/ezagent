@@ -9,7 +9,8 @@ defmodule Ezagent.Kind.Ports.AuthzPort do
   OPAQUE `term()` — the framework never pattern-matches the struct; the
   core adapter (`Ezagent.Kind.Adapters.AuthzAdapter`) validates the
   representation where a cap is minted (`authorize_and_issue_grant/6`
-  rejects a non-Capability input as `{:error, :invalid_artifact}`). Moves
+  rejects a non-Capability input as `{:error, :invalid_grant_intent}` —
+  the pre-port fall-through atom, kept byte-identical). Moves
   with the framework to `apps/ezagent_actor`.
   """
 
@@ -31,7 +32,8 @@ defmodule Ezagent.Kind.Ports.AuthzPort do
   The `{:cap, :grant}` action path: authorize and issue the exact grant
   artifact for `grantee`. `cap` is OPAQUE (`term()`); the ADAPTER validates
   the representation and rejects a non-Capability input as
-  `{:error, :invalid_artifact}`.
+  `{:error, :invalid_grant_intent}` (the pre-port `handle_grant`
+  fall-through atom, kept byte-identical).
   """
   @callback authorize_and_issue_grant(
               kind_module :: module(),

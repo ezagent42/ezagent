@@ -6,8 +6,9 @@ defmodule Ezagent.Kind.Adapters.AuthzAdapter do
   `Ezagent.Cap.HoldsCap`. Owns the representation check for
   `authorize_and_issue_grant/6` (§3.4 opacity rule: the framework passes
   the cap as OPAQUE `term()`; a non-`Ezagent.Capability` input is rejected
-  as `{:error, :invalid_artifact}`). STAYS in core when the framework moves
-  to `apps/ezagent_actor`.
+  as `{:error, :invalid_grant_intent}` — byte-identical to the pre-port
+  `Kind.Runtime.handle_grant` fall-through atom). STAYS in core when the
+  framework moves to `apps/ezagent_actor`.
   """
 
   @behaviour Ezagent.Kind.Ports.AuthzPort
@@ -36,7 +37,11 @@ defmodule Ezagent.Kind.Adapters.AuthzAdapter do
         cap
       )
     else
-      {:error, :invalid_artifact}
+      # Byte-identical to the pre-port `Kind.Runtime.handle_grant`
+      # fall-through atom (`:invalid_grant_intent`), NOT `:invalid_artifact`
+      # — the grant path's public error atom must not change (codex
+      # fidelity fix). Fail-closed either way.
+      {:error, :invalid_grant_intent}
     end
   end
 
