@@ -1853,7 +1853,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
   end
 
   defp worker_published?(worker_uri) do
-    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+    case Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never) do
       {:ok, %{count: count}} when is_integer(count) and count > 0 -> true
       _ -> false
     end

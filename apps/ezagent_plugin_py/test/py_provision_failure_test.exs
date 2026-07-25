@@ -121,7 +121,7 @@ defmodule Ezagent.PluginPy.ProvisionFailureTest do
   end
 
   defp read_last_error(agent_uri) do
-    case Ezagent.Kind.get_slice(agent_uri, Ezagent.ActionSet.PyAgent.state_slice()) do
+    case Ezagent.Kind.read(agent_uri, Ezagent.ActionSet.PyAgent.state_slice(), spawn: :never) do
       {:ok, slice} -> Ezagent.Kind.normalize_slice_view(slice) |> Map.get(:last_error)
       _ -> :no_slice
     end

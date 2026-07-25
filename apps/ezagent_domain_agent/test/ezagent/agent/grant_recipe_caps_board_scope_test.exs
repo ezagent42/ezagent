@@ -243,7 +243,7 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCapsBoardScopeTest do
                )
 
       assert eventually(fn ->
-               with {:ok, slice} <- Ezagent.Kind.get_slice(agent_uri, :identity) do
+               with {:ok, slice} <- Ezagent.Kind.read(agent_uri, :identity, spawn: :never) do
                  slice
                  |> Ezagent.Kind.normalize_slice_view()
                  |> Map.fetch!(:caps)

@@ -66,7 +66,8 @@ defmodule Ezagent.ActorBoundaryScanner do
   @banned_internal_prefix "Elixir.Ezagent.Kind.Runtime"
 
   # `Kind.<fn>` reach-ins that go actor-internal (§2.4). get_slice/get_raw_slice
-  # are the ratchet-to-C7 debt; runtime_view retires per §2.3.
+  # retired from the public façade in C7 (chunk 4) — the names stay BANNED here
+  # so any re-introduced public caller REDs; runtime_view retires per §2.3.
   @banned_kind_calls [:get_slice, :get_raw_slice, :runtime_view]
 
   @ready_gate_allowed_fn :register_external_gate

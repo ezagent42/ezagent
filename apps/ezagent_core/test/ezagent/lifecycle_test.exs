@@ -411,14 +411,16 @@ defmodule Ezagent.LifecycleTest do
         end
       end)
 
-      {:ok, %{state: target_state}} = Ezagent.Kind.SliceAccess.get_raw_slice(target, :lifecycle_fixture)
+      {:ok, %{state: target_state}} =
+        Ezagent.Kind.SliceAccess.get_raw_slice(target, :lifecycle_fixture)
+
       assert target_state.counter == 7
 
       # The signaling Kind's own :set landed too. get_slice/2 NORMALIZES a
       # two-container slice to flat .state for consumers (T3), so the field
       # is read at the top level here.
       {:ok, %{dispatched_to: dispatched_to}} =
-        Ezagent.Kind.get_slice(uri, :lifecycle_signal)
+        Ezagent.Kind.read(uri, :lifecycle_signal, spawn: :never)
 
       assert dispatched_to == target
     end
@@ -440,7 +442,7 @@ defmodule Ezagent.LifecycleTest do
       # the flat .state view a cross-module consumer expects — so
       # `flat.counter` resolves (NOT nil, which is what the raw
       # `%{state:, transients:}` map would give a flat-field reader).
-      {:ok, flat} = Ezagent.Kind.get_slice(uri, :lifecycle_fixture)
+      {:ok, flat} = Ezagent.Kind.read(uri, :lifecycle_fixture, spawn: :never)
       assert flat == %{counter: 3, label: "norm"}
       refute Map.has_key?(flat, :transients)
 

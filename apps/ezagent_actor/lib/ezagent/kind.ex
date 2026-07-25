@@ -156,7 +156,8 @@ defmodule Ezagent.Kind do
   When a Kind does not export `holds_cap?/2`, dispatch uses
   `Ezagent.Kind.default_holds_cap?/2` which:
 
-  1. Reads the entity's `:identity` slice via `Kind.get_slice/2` (NOT
+  1. Reads the entity's `:identity` slice via the framework-internal
+     `Kind.SliceAccess` live read (NOT
      `Invocation.dispatch/1` — breaks the self-list-caps recursion), through
      the classifying + bounded-retry read `SliceAccess.read_identity_caps/1`.
   2. Converts the `needed` `%Capability{}` into the 4-field map
@@ -524,13 +525,10 @@ defmodule Ezagent.Kind do
 
   # Slice cross-process reads + T3 normalization extracted to
   # `Ezagent.Kind.SliceAccess` (oversized-module arch gate, 2026-06-23).
-  # `get_raw_slice/2` retired from the public surface in C7 4a — the raw view is
-  # framework-internal now; the ONE remaining consumer (LifecycleCase's
-  # transients gate) calls `SliceAccess` directly.
-  @doc "Read a Kind instance's slice (T3-normalized) by URI (delegates to `Ezagent.Kind.SliceAccess`)."
-  @spec get_slice(URI.t() | String.t(), atom()) :: {:ok, term()} | {:error, term()}
-  defdelegate get_slice(uri, slice_key), to: Ezagent.Kind.SliceAccess
-
+  # `get_slice/2` + `get_raw_slice/2` retired from the public surface in C7
+  # (chunks 4a/4b) — both live-slice accessors are framework-internal now;
+  # callers use the §2.2 `read/3` surface below (`spawn: :never` mirrors the
+  # old live-only `get_slice` contract).
   @doc "Normalize a two-container slice view to its state map (delegates to `Ezagent.Kind.SliceAccess`)."
   @spec normalize_slice_view(term()) :: term()
   defdelegate normalize_slice_view(slice), to: Ezagent.Kind.SliceAccess
@@ -548,7 +546,8 @@ defmodule Ezagent.Kind do
   The authoritative read (§2.2). Returns a slice's consumer-facing value,
   spawning from durable state if the Kind is cold-but-created.
 
-  1. Live process → the normalized live slice (exactly `get_slice/2`).
+  1. Live process → the normalized live slice (exactly
+     `Ezagent.Kind.SliceAccess.get_slice/2`).
   2. Cold but durably created → lazy-spawn via the framework's own rehydration
      path (`SpawnRegistry.ensure_live/1`, which refuses never-created URIs),
      await `ReadyGate`, then read live.
@@ -574,7 +573,7 @@ defmodule Ezagent.Kind do
         end
 
       true ->
-        case get_slice(uri, slice_key) do
+        case Ezagent.Kind.SliceAccess.get_slice(uri, slice_key) do
           {:ok, slice} -> {:ok, slice}
           {:error, :not_found} -> read_cold(uri, slice_key, spawn_mode)
           {:error, reason} -> {:error, reason}
@@ -594,7 +593,7 @@ defmodule Ezagent.Kind do
         # ready_gate.ex:134).
         case Ezagent.ReadyGate.await(uri) do
           :ok ->
-            case get_slice(uri, slice_key) do
+            case Ezagent.Kind.SliceAccess.get_slice(uri, slice_key) do
               {:ok, slice} -> {:ok, slice}
               {:error, :not_found} -> {:error, :not_live}
               {:error, reason} -> {:error, reason}

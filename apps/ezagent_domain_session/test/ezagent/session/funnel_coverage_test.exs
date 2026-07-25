@@ -133,7 +133,7 @@ defmodule Ezagent.Session.FunnelCoverageTest do
   end
 
   defp members_of(session) do
-    case Ezagent.Kind.get_slice(session, :session) do
+    case Ezagent.Kind.read(session, :session, spawn: :never) do
       {:ok, %{state: %{members: members}}} -> members
       {:ok, %{members: members}} -> members
       _ -> %{}

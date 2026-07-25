@@ -83,7 +83,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
   end
 
   defp read_members(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: %{members: m}}} when is_map(m) -> m
       {:ok, %{members: m}} when is_map(m) -> m
       _ -> %{}

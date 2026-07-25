@@ -85,7 +85,7 @@ defmodule Ezagent.Kind.MountDetachTest do
 
     # After mount: the behavior is in the effective set + its slice materialized.
     assert UndeclaredProbe in Kind.BehaviorSet.effective_set(SupersetSessionKind, live_slice(uri))
-    assert {:ok, slice} = Kind.get_slice(uri, :undeclared_probe)
+    assert {:ok, slice} = Kind.read(uri, :undeclared_probe, spawn: :never)
     assert is_map(slice) and map_size(slice) > 0
 
     # And its action now dispatches (RF-1 per-instance resolution).

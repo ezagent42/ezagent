@@ -87,7 +87,7 @@ defmodule Ezagent.Session.CurrentEntitlementReconciliationTest do
   end
 
   defp roster_has?(session, member) do
-    case Ezagent.Kind.get_slice(session, :session) do
+    case Ezagent.Kind.read(session, :session, spawn: :never) do
       {:ok, slice} ->
         slice
         |> Ezagent.Kind.normalize_slice_view()

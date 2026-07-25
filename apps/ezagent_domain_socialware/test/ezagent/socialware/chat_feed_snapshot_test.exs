@@ -13,7 +13,7 @@ defmodule Ezagent.Socialware.ChatFeedSnapshotTest do
 
   Authorization is the LIVE chat membership predicate (P4-3): the caller is an
   owner/member of the live `:chat` slice. The session is a real chat `Session`
-  Kind so `Ezagent.Kind.get_slice(session, :session)` reflects join/leave live.
+  Kind so `Ezagent.Kind.read(session, :session, spawn: :never)` reflects join/leave live.
 
   ## Controlling order
 

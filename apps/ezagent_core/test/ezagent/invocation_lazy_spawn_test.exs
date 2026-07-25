@@ -125,7 +125,7 @@ defmodule Ezagent.InvocationLazySpawnTest do
       #    (from the seeded snapshot), not 0 (a fresh init would
       #    have started at 0; the dispatch then incremented to 100,
       #    not 1).
-      assert {:ok, test_slice} = Ezagent.Kind.get_slice(uri, :test)
+      assert {:ok, test_slice} = Ezagent.Kind.read(uri, :test, spawn: :never)
       assert test_slice.count == 100
       assert test_slice.last_msg == "lazy-spawn-test"
     end

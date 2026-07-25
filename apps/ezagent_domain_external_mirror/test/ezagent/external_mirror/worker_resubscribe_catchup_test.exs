@@ -128,7 +128,8 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       assert :ok = fire_until_publish_count(session_uri, worker_uri, 1, 20)
       drain_mailbox()
 
-      {:ok, worker_slice_before} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+      {:ok, worker_slice_before} =
+        Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
 
       assert is_integer(worker_slice_before.publisher_cursor),
              "test pre-condition broken — worker publisher_cursor must be an integer " <>
@@ -188,7 +189,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # PERSISTENT field (T3-normalized `get_slice` view), while `subscribers`
       # is a TRANSIENT — read the latter from the `transients` container via
       # `get_raw_slice/2` (the `get_slice` view hides it).
-      {:ok, publisher_slice_mid} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      {:ok, publisher_slice_mid} = Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
 
       {:ok, %{transients: publisher_transients_mid}} =
         Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
@@ -488,7 +489,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   defp await_publish_count_at_least(_worker_uri, _count, 0), do: {:error, :no_publish}
 
   defp await_publish_count_at_least(worker_uri, count, retries) do
-    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+    case Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never) do
       {:ok, %{count: actual}} when is_integer(actual) and actual >= count ->
         :ok
 
@@ -533,9 +534,9 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   end
 
   defp replay_diagnostic(session_uri, worker_uri, expected_count) do
-    publisher_slice = Ezagent.Kind.get_slice(session_uri, :publisher)
+    publisher_slice = Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
     publisher_raw = Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
-    worker_slice = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+    worker_slice = Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
     worker_raw = Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
     worker_lookup = Ezagent.KindRegistry.lookup(worker_uri)
 

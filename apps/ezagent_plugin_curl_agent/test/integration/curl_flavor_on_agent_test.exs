@@ -107,13 +107,13 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
 
       # The :curl_agent slice materialized on Entity.Agent (proves the
       # reparented Behavior is in this instance's effective set).
-      assert {:ok, curl_slice} = Kind.get_slice(uri, :curl_agent)
+      assert {:ok, curl_slice} = Kind.read(uri, :curl_agent, spawn: :never)
       assert curl_slice.provider == "deepseek"
       assert curl_slice.conversation == []
 
       # The base Agent behaviors are STILL present (api_keys is in the
       # curl set, so curl's credential need is satisfied with no dup).
-      assert {:ok, _api_keys} = Kind.get_slice(uri, :api_keys)
+      assert {:ok, _api_keys} = Kind.read(uri, :api_keys, spawn: :never)
 
       Kind.terminate(uri)
       wait_until(fn -> KindRegistry.lookup(URI.to_string(uri)) == :error end)
@@ -135,9 +135,9 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
       # No :curl_agent slice materialized — `Behavior.CurlAgent` is NOT in a
       # nil-:kind_base agent's effective set, so the slice is absent (the
       # runtime returns {:ok, nil} for an un-materialized slice key).
-      assert {:ok, nil} = Kind.get_slice(uri, :curl_agent)
+      assert {:ok, nil} = Kind.read(uri, :curl_agent, spawn: :never)
       # base behaviors still there
-      assert {:ok, api_keys} = Kind.get_slice(uri, :api_keys)
+      assert {:ok, api_keys} = Kind.read(uri, :api_keys, spawn: :never)
       assert is_map(api_keys)
 
       Kind.terminate(uri)
@@ -265,7 +265,7 @@ defmodule EzagentPluginCurlAgent.Integration.CurlFlavorOnAgentTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       # The durable slice carries the flavor (this is the O-2 stored field).
-      assert {:ok, %{flavor: "curl"}} = Kind.get_slice(uri, :curl_agent)
+      assert {:ok, %{flavor: "curl"}} = Kind.read(uri, :curl_agent, spawn: :never)
 
       # 2. Permanently terminate the live process — the snapshot row survives,
       #    and CRUCIALLY delete the ETS launch attribute to SIMULATE a cold

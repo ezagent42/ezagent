@@ -32,7 +32,7 @@ defmodule Ezagent.Architecture.CapAuthorityConfinementTest do
     refute Map.has_key?(runtime_view, :authority)
     refute contains_binary?(runtime_view, private_key)
 
-    assert {:ok, test_slice} = Ezagent.Kind.get_slice(uri, :test)
+    assert {:ok, test_slice} = Ezagent.Kind.read(uri, :test, spawn: :never)
     refute contains_binary?(test_slice, private_key)
 
     assert %KindSnapshot{} = row = KindSnapshot.get(URI.to_string(uri))

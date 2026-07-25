@@ -72,7 +72,7 @@ defmodule Ezagent.Socialware.ReuseBindTest do
   end
 
   defp session_state(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: state}} when is_map(state) -> state
       {:ok, state} when is_map(state) -> state
       _ -> %{}

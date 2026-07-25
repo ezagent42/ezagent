@@ -46,7 +46,9 @@ defmodule Ezagent.Invariants.CapSigningInvariantTest do
 
     tampered = %{issued | action: :raise}
     assert {:error, :missing_cap} = invoke(context, tampered, "blocked")
-    assert {:ok, %{count: 1, last_msg: "accepted"}} = Ezagent.Kind.get_slice(context.uri, :test)
+
+    assert {:ok, %{count: 1, last_msg: "accepted"}} =
+             Ezagent.Kind.read(context.uri, :test, spawn: :never)
   end
 
   test "INV-SIGN-2: private target authority never appears in the generic runtime view",

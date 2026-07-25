@@ -98,7 +98,9 @@ defmodule EzagentPluginKanban.E2E.RoleNativeCreateTest do
       assert map_size(nodes) == 2
 
       # Persisted on the Entity.Agent :kanban snapshot slice (not transient).
-      assert {:ok, %{tree: %{nodes: slice_nodes}}} = Ezagent.Kind.get_slice(agent_uri, :kanban)
+      assert {:ok, %{tree: %{nodes: slice_nodes}}} =
+               Ezagent.Kind.read(agent_uri, :kanban, spawn: :never)
+
       assert map_size(slice_nodes) == 2
 
       # --- (2) passive isolation (RF-6) ---------------------------------------

@@ -39,12 +39,14 @@ defmodule Ezagent.Kind.ReadSurfaceTest do
   # ── read/3 ──────────────────────────────────────────────────────────────────
 
   describe "read/3" do
-    test "live process → the normalized live slice (== get_slice/2)" do
+    test "live process → the normalized live slice (== SliceAccess.get_slice/2)" do
       uri = unique_uri()
       spawn_onchange(uri)
 
       assert {:ok, %{count: 0, last_msg: nil}} = Kind.read(uri, :test)
-      assert Kind.read(uri, :test) == Kind.get_slice(uri, :test)
+
+      assert Kind.read(uri, :test, spawn: :never) ==
+               Ezagent.Kind.SliceAccess.get_slice(uri, :test)
     end
 
     test "spawn: :never on a cold URI → {:error, :not_live}" do

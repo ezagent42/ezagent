@@ -36,7 +36,9 @@ defmodule EzagentDomainSocialware.Integration.TurnSurvivesRestartTest do
   end
 
   defp get_turns(session_uri) do
-    {:ok, %{turns: turns, turn_seq: turn_seq}} = Ezagent.Kind.get_slice(session_uri, :turns)
+    {:ok, %{turns: turns, turn_seq: turn_seq}} =
+      Ezagent.Kind.read(session_uri, :turns, spawn: :never)
+
     {turns, turn_seq}
   end
 

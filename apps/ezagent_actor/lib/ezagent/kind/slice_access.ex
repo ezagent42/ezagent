@@ -6,9 +6,10 @@ defmodule Ezagent.Kind.SliceAccess do
 
   Extracted verbatim from `Ezagent.Kind` for the oversized-module arch gate
   (`oversized_modules_gt_1000` burn-down, 2026-06-23). `Ezagent.Kind` keeps
-  `get_slice/2` and `normalize_slice_view/1` as `defdelegate`s to this module;
-  `get_raw_slice/2` left the public surface in C7 4a — the raw two-container
-  view is framework-internal now.
+  `normalize_slice_view/1` as a `defdelegate` to this module; `get_slice/2` and
+  `get_raw_slice/2` left the public surface in C7 (chunks 4a/4b) — both
+  live-slice accessors are framework-internal now, reached publicly through the
+  §2.2 `Kind.read/3` surface.
 
   These are NOT hot-path APIs — a `Behavior.invoke/4` reads its own slice via the
   `slice` argument. This module is for cross-process lookups during default-grant
@@ -94,7 +95,8 @@ defmodule Ezagent.Kind.SliceAccess do
   the `transients` container — a normalized read would hide it.
 
   Production cross-module consumers want the flat `.state` view and MUST
-  use `get_slice/2`; this raw variant exists for test infra + any rare
+  use `Kind.read/3` (or this module's `get_slice/2` inside the framework);
+  this raw variant exists for test infra + any rare
   caller that legitimately needs to see the container split.
   """
   @spec get_raw_slice(URI.t() | String.t(), atom()) ::
