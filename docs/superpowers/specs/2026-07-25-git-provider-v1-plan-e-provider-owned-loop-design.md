@@ -127,6 +127,34 @@ provider 和 Agent side effect 之前 fail closed。
 最终 production authorization backend 等 V1/V2 sanctioned contract 后接入；替换
 backend 不得改变 workflow state、idempotency key 或 provider facts schema。
 
+### 3.3 与 main 权限收敛的关系
+
+§3.1 seam 生产默认 `authorization_unavailable`，不是权宜绕过，而是 main 上真正的
+cap 收敛链路尚未到达可接入点。
+
+现状（读自 `docs/superpowers/specs/2026-07-24-ezagent-actor-convergence-design.md`
+v3，`origin/main@846265571` 时点）：
+
+- 真实 seam 的目标形态是该文档 §3「V2 — caps-resolution convergence」：
+  `EzAgentActor.call(uri, cmd, args, CALLER_IDENTITY)`，第四参数是已认证 principal
+  `%URI{}`，caps 在 chokepoint 现读现验，调用方不得自带 caps list。
+- `ezagent_actor` 抽取 C0–C3 已合（#1546/#1548/#1550+#1562/#1561），**C4–C7 待迁**。
+- V2 明确依赖 C5 的 port contract，且明确要求「coordinate w/ #195 owner」。V2 落地
+  前，不存在可接入的真实 authorization 语义。
+
+`ezagent_plugin_git_workflow` 与 Feishu 绑定（B1 #1568 / B2 #1547）处境相同：代码、
+测试、CI 均可独立做绿，但在主线权限稳定 + identity-in/fresh-authz 薄接入完成前，
+功能保持 dormant、PR 标 `blocked: auth-convergence`，不接入可调用路径，不合入 main
+的 boot 链。
+
+**CALLER_IDENTITY 假设（未验证，供 V2 落地后核对）：** 真实 `ExecutionSeam.authorize/2`
+大概率以 `TaskBinding.credential_owner_uri` 或 `Entity.GitTaskAccess.grantee_uri`
+作为 V2 的 `CALLER_IDENTITY`，调用 `EzAgentActor`/`GitTaskAccess` action surface。
+V2 落地后须先验证这条假设成立，再切换 `ExecutionSeam` 的 backend 实现；若不成立，
+需要补一个「workflow run 的 identity 从哪来」的独立设计，但不影响 P1–P4 已实现的
+workflow/branch/commit/PR/facts 逻辑——这正是 seam 模式把返工面限制在单一模块的
+设计意图。
+
 ## 4. 组件边界
 
 ### 4.1 Workflow owner：`ezagent_plugin_git_workflow`
