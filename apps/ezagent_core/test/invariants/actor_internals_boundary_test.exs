@@ -72,7 +72,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # snapshot + snapshot_store workspace derivation, ecto/kind_snapshot
   # scope_by_workspace + TransientRetry → the config-resolved
   # `:ezagent_actor, :persistence` adapter, −4 sites.
-  @reverse_frozen 101
+  # C5 chunk-1 lowered reverse 101→98: DeadLetterPort (§3.4 NEW) — invocation
+  # buffer_full/stale_incarnation + ready_transition drain DLQ writes → the
+  # config-resolved `:ezagent_actor, :dead_letter` adapter, −3 sites.
+  @reverse_frozen 98
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

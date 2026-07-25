@@ -1069,18 +1069,6 @@
       note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DLQ",
-      sha: "ddb075df7a5b51b90d7e3c7290a7acdc4651bfe0a0e6af5b5925508f6ffa8f6b",
-      note: "§3.4 upward ref: Ezagent.DLQ"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DLQ",
-      sha: "d40dc8d3fb306e34f0eb75a391cc98dce557567c5be16fab8d301faf41b62ce1",
-      note: "§3.4 upward ref: Ezagent.DLQ"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
       sha: "0fc0bc52a685b237af5b414ef472da9f907fdbc63d3c4fb7a31c9fb4a6a88735",
@@ -1289,12 +1277,6 @@
       target: "Ezagent.Cap.DeliveryOutbox",
       sha: "64310a46cf6f71a529a365a2d0c49e5a422e9ac444202ac75d40d109440ee4a9",
       note: "§3.4 upward ref: Ezagent.Cap.DeliveryOutbox"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",
-      target: "Ezagent.DLQ",
-      sha: "451b250ee0e1b6faca45e7730526173721e5ebe6ce6661b8c10e54195c85bc82",
-      note: "§3.4 upward ref: Ezagent.DLQ"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex",

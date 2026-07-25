@@ -70,6 +70,7 @@ defmodule Ezagent.ActorBoundaryScanner do
     ezagent/kind/launch_context_init.ex
     ezagent/kind/launch_context_relay.ex
     ezagent/kind/mount_detach.ex
+    ezagent/kind/ports/dead_letter_port.ex
     ezagent/kind/ports/persistence_port.ex
     ezagent/kind/ready_transition.ex
     ezagent/kind/runtime.ex

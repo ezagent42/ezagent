@@ -584,7 +584,7 @@ defmodule Ezagent.Invocation do
     )
 
     try do
-      Ezagent.DLQ.put(:buffer_full, inv)
+      dead_letter().put(:buffer_full, inv)
     rescue
       e ->
         Logger.error(
@@ -616,7 +616,7 @@ defmodule Ezagent.Invocation do
     )
 
     try do
-      Ezagent.DLQ.put(:stale_incarnation, inv)
+      dead_letter().put(:stale_incarnation, inv)
     rescue
       e ->
         Logger.error(
@@ -724,4 +724,9 @@ defmodule Ezagent.Invocation do
   # never a literal spine reference. Core config wires `:ezagent_actor,
   # :pubsub` to `EzagentCore.PubSub`.
   defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
+
+  # C5 §3.4 DeadLetterPort — DLQ writes go through the config-resolved port,
+  # never the literal `Ezagent.DLQ` spine. Core config wires `:ezagent_actor,
+  # :dead_letter` to `Ezagent.Kind.Adapters.DeadLetterAdapter`.
+  defp dead_letter, do: Application.fetch_env!(:ezagent_actor, :dead_letter)
 end

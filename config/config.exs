@@ -22,7 +22,8 @@ config :ezagent_core,
 config :ezagent_actor,
   repo: EzagentCore.Repo,
   pubsub: EzagentCore.PubSub,
-  persistence: Ezagent.Kind.Adapters.PersistenceAdapter
+  persistence: Ezagent.Kind.Adapters.PersistenceAdapter,
+  dead_letter: Ezagent.Kind.Adapters.DeadLetterAdapter
 
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,
