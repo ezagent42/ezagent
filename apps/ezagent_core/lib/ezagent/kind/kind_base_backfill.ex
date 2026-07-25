@@ -93,28 +93,20 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   # As-built concrete behavior sets (the value stored verbatim in `:kind_base`,
   # WITHOUT the always-on base behaviors KindBase/Manage which BehaviorSet
-  # appends). These are module ATOM references only — no function is called on
-  # them here, so referencing them creates NO compile dependency on the domain
-  # apps (same pattern as BehaviorSet.@slice_owners, which lives in core).
-  @instance_message_set [
-    Ezagent.ActionSet.Session,
-    Ezagent.ActionSet.Publisher.SessionImpl,
-    Ezagent.ActionSet.ExternalMirror
-  ]
-
-  # Order matches the former socialware-session Kind's behavior set exactly —
-  # now `Entity.Session.socialware_behaviors/0` (Session, Turn, Surface,
-  # SupervisorApproval, Publisher.SessionImpl) — so a backfilled :kind_base is
-  # byte-identical to a live socialware spawn — the P5-2 cold-restart round-trip
-  # invariant compares the raw captured list, not just the (reorder-normalized)
-  # effective set. (codex LOW)
-  @socialware_set [
-    Ezagent.ActionSet.Session,
-    Ezagent.ActionSet.Turn,
-    Ezagent.ActionSet.Surface,
-    Ezagent.ActionSet.SupervisorApproval,
-    Ezagent.ActionSet.Publisher.SessionImpl
-  ]
+  # appends).
+  #
+  # C5 §3.4 non-port findings — these sets hard-coded concrete domain/plugin
+  # ActionSet modules INSIDE the framework (module-ATOM refs the standalone
+  # compile would not flag). INVERTED to registration data: the values now
+  # live in core-side wiring (`Ezagent.Kind.Adapters.wire!/0`, app env
+  # `:ezagent_actor, :kind_base_backfill_sets`) and are read here at runtime.
+  #
+  # The `:socialware` order matches the former socialware-session Kind's
+  # behavior set exactly — now `Entity.Session.socialware_behaviors/0`
+  # (Session, Turn, Surface, SupervisorApproval, Publisher.SessionImpl) — so
+  # a backfilled :kind_base is byte-identical to a live socialware spawn —
+  # the P5-2 cold-restart round-trip invariant compares the raw captured
+  # list, not just the (reorder-normalized) effective set. (codex LOW)
 
   @type classification :: :instance_message | :socialware
   @type classify_error ::
@@ -124,8 +116,12 @@ defmodule Ezagent.Kind.KindBaseBackfill do
 
   @doc "The as-built behavior set for a classification (module atoms, no base behaviors)."
   @spec target_behaviors(classification()) :: [module()]
-  def target_behaviors(:instance_message), do: @instance_message_set
-  def target_behaviors(:socialware), do: @socialware_set
+  def target_behaviors(classification) when is_atom(classification),
+    do: Map.fetch!(backfill_sets(), classification)
+
+  # C5 §3.4 — the registration-data backfill sets (see the note above).
+  @spec backfill_sets() :: %{classification() => [module()]}
+  defp backfill_sets, do: Application.fetch_env!(:ezagent_actor, :kind_base_backfill_sets)
 
   @doc """
   Classify a decoded session snapshot state by its durable slice shape.

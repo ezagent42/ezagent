@@ -34,7 +34,52 @@ defmodule Ezagent.Kind.Adapters do
     outbox: Ezagent.Kind.Adapters.OutboxAdapter,
     dispatch_policy: Ezagent.Kind.Adapters.DispatchPolicyAdapter,
     authz: Ezagent.Kind.Adapters.AuthzAdapter,
-    authority: Ezagent.Kind.Adapters.AuthorityAdapter
+    authority: Ezagent.Kind.Adapters.AuthorityAdapter,
+    # §3.4 non-port findings — the `BehaviorSet` slice-owner / required-read
+    # tables and the `KindBaseBackfill` as-built sets INVERTED to
+    # registration data (they hard-coded concrete domain/plugin ActionSet
+    # modules inside the framework). The VALUES move here, core-side, and
+    # the framework reads them from app env at runtime. Module ATOMS only —
+    # no function is called on them at this site, so no compile dependency
+    # on the domain/plugin apps (same atom-reference pattern the tables
+    # themselves already relied on).
+    slice_owners: %{
+      chat: Ezagent.ActionSet.Session,
+      turns: Ezagent.ActionSet.Turn,
+      surface: Ezagent.ActionSet.Surface,
+      config_evolve: Ezagent.ActionSet.ConfigEvolve,
+      identity: Ezagent.ActionSet.Identity,
+      publisher: Ezagent.ActionSet.Publisher.SessionImpl,
+      sandbox: Ezagent.ActionSet.Sandbox,
+      api_keys: Ezagent.ActionSet.ApiKeys,
+      cc_headless_agent: Ezagent.ActionSet.CcHeadlessAgent,
+      external_mirror: Ezagent.ActionSet.ExternalMirror,
+      kind_base: Ezagent.ActionSet.KindBase
+    },
+    required_reads: %{
+      Ezagent.ActionSet.Turn => %{surface: :required},
+      Ezagent.ActionSet.ConfigEvolve => %{sandbox: :required, identity: :required},
+      Ezagent.ActionSet.ExternalMirror => %{publisher: :required},
+      Ezagent.ActionSet.Session => %{sandbox: :optional},
+      Ezagent.ActionSet.CurlAgent => %{api_keys: :optional}
+    },
+    kind_base_backfill_sets: %{
+      instance_message: [
+        Ezagent.ActionSet.Session,
+        Ezagent.ActionSet.Publisher.SessionImpl,
+        Ezagent.ActionSet.ExternalMirror
+      ],
+      # Order matches the former socialware-session Kind's behavior set
+      # exactly — see `KindBaseBackfill` for the byte-identical round-trip
+      # invariant this ordering preserves.
+      socialware: [
+        Ezagent.ActionSet.Session,
+        Ezagent.ActionSet.Turn,
+        Ezagent.ActionSet.Surface,
+        Ezagent.ActionSet.SupervisorApproval,
+        Ezagent.ActionSet.Publisher.SessionImpl
+      ]
+    }
   ]
 
   @doc false

@@ -119,7 +119,15 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # `with_runtime_view` (KEPT AS-IS, full state), snapshot's
   # `verified_set`, lifecycle's destroy-path `retire` → the
   # config-resolved `:ezagent_actor, :authority` adapter, −19 sites.
-  @reverse_frozen 24
+  # C5 chunk-2 lowered reverse 24→1: §3.4 non-port findings — the
+  # `BehaviorSet` `@slice_owners`/`@required_reads` tables (−15) and the
+  # `KindBaseBackfill` as-built sets (−8) INVERTED to registration data
+  # (values in core-side `wire!/0`, read from app env at runtime; the
+  # framework source names no domain/plugin ActionSet). The 5 core POLICY
+  # ActionSets STAY; the residual single site is `UniversalBehaviors`'s
+  # `Ezagent.ActionSet.Manage` reference (§6.8 config-list inversion
+  # deferred — core-policy module, boot-registered).
+  @reverse_frozen 1
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

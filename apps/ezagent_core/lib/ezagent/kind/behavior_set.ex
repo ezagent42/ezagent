@@ -324,30 +324,22 @@ defmodule Ezagent.Kind.BehaviorSet do
   # Slice-owner map: which Behavior module OWNS each slice key. Single
   # source of truth for the closure resolver. Derived from each
   # session-relevant Behavior's `state_slice/0`.
-  @slice_owners %{
-    chat: Ezagent.ActionSet.Session,
-    turns: Ezagent.ActionSet.Turn,
-    surface: Ezagent.ActionSet.Surface,
-    config_evolve: Ezagent.ActionSet.ConfigEvolve,
-    identity: Ezagent.ActionSet.Identity,
-    publisher: Ezagent.ActionSet.Publisher.SessionImpl,
-    sandbox: Ezagent.ActionSet.Sandbox,
-    api_keys: Ezagent.ActionSet.ApiKeys,
-    cc_headless_agent: Ezagent.ActionSet.CcHeadlessAgent,
-    external_mirror: Ezagent.ActionSet.ExternalMirror,
-    kind_base: Ezagent.ActionSet.KindBase
-  }
+  #
+  # C5 §3.4 non-port findings — this table (and `@required_reads` below)
+  # hard-coded concrete domain/plugin ActionSet modules INSIDE the framework
+  # (module-ATOM refs the standalone compile would not flag). INVERTED to
+  # registration data: the values now live in core-side wiring
+  # (`Ezagent.Kind.Adapters.wire!/0`, app env `:ezagent_actor`) and are read
+  # here at runtime — the framework source names no domain ActionSet.
+  @spec slice_owners() :: %{atom() => module()}
+  defp slice_owners, do: Application.fetch_env!(:ezagent_actor, :slice_owners)
 
   # Per-reader required-vs-optional classification of each `reads_siblings`
   # key. A key absent from a reader's entry defaults to :optional (preserves
   # the soft `%{}` default the runtime injects today — `context.ex`).
-  @required_reads %{
-    Ezagent.ActionSet.Turn => %{surface: :required},
-    Ezagent.ActionSet.ConfigEvolve => %{sandbox: :required, identity: :required},
-    Ezagent.ActionSet.ExternalMirror => %{publisher: :required},
-    Ezagent.ActionSet.Session => %{sandbox: :optional},
-    Ezagent.ActionSet.CurlAgent => %{api_keys: :optional}
-  }
+  # (C5 §3.4: registration data, see `slice_owners/0` above.)
+  @spec required_reads() :: %{module() => %{atom() => :required | :optional}}
+  defp required_reads, do: Application.fetch_env!(:ezagent_actor, :required_reads)
 
   @type closure_error ::
           {:missing_required_siblings, [{module(), atom()}]}
@@ -378,7 +370,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   """
   @spec resolve_closure([module()]) :: :ok | {:error, closure_error()}
   def resolve_closure(set) when is_list(set),
-    do: resolve_closure_for(set, @required_reads, @slice_owners)
+    do: resolve_closure_for(set, required_reads(), slice_owners())
 
   @doc """
   Map-injectable core of `resolve_closure/1`. The production call passes the
@@ -439,7 +431,7 @@ defmodule Ezagent.Kind.BehaviorSet do
   """
   @spec validate_closure!([module()]) :: [module()]
   def validate_closure!(set) when is_list(set),
-    do: validate_closure_for!(set, @required_reads, @slice_owners)
+    do: validate_closure_for!(set, required_reads(), slice_owners())
 
   @doc """
   Map-injectable raising form (production passes the module's
@@ -479,5 +471,5 @@ defmodule Ezagent.Kind.BehaviorSet do
 
   @doc "The owning Behavior module for a slice key (or nil)."
   @spec owner_of(atom()) :: module() | nil
-  def owner_of(slice_key) when is_atom(slice_key), do: Map.get(@slice_owners, slice_key)
+  def owner_of(slice_key) when is_atom(slice_key), do: Map.get(slice_owners(), slice_key)
 end
