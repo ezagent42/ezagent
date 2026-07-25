@@ -163,7 +163,7 @@ defmodule Ezagent.Kind.Runtime do
       |> Map.put(:session_uri, derive_session_uri(target))
       |> Map.put(:slice_change_cursor, slice_change_cursor)
 
-    with :ok <- Ezagent.DispatchOrigin.validate(origin, ctx),
+    with :ok <- dispatch_policy().validate_origin(origin, ctx),
          {:ok, {behavior_name_atom, action}} <- Ezagent.URI.behavior_action(target),
          {:ok, behavior_module} <-
            Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, state),
@@ -743,4 +743,10 @@ defmodule Ezagent.Kind.Runtime do
   # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.CapabilityAdapter`.
   defp capability, do: Application.fetch_env!(:ezagent_actor, :capability)
+
+  # C5 §3.4 DispatchPolicyPort — the in-actor origin re-check goes through
+  # the config-resolved port, never the literal `Ezagent.DispatchOrigin`
+  # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.DispatchPolicyAdapter`.
+  defp dispatch_policy, do: Application.fetch_env!(:ezagent_actor, :dispatch_policy)
 end

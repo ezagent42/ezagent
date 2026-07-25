@@ -65,7 +65,7 @@ defmodule Ezagent.Cmd do
           action: atom(),
           args: map(),
           ctx: ctx(),
-          origin: Ezagent.DispatchOrigin.t()
+          origin: term()
         }
 
   @doc """

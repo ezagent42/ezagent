@@ -187,7 +187,7 @@ defmodule Ezagent.SpawnRegistry do
   def spawn_detailed(%URI{scheme: scheme} = uri, opts \\ [])
       when is_binary(scheme) and is_list(opts) do
     with {:ok, opts} <- Keyword.validate(opts, [:launch_context]),
-         :ok <- Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:spawn, uri}) do
+         :ok <- dispatch_policy().assert_local_owner(uri, {:spawn, uri}) do
       do_spawn_detailed(uri, scheme, opts)
     end
   end
@@ -226,4 +226,11 @@ defmodule Ezagent.SpawnRegistry do
     |> Enum.map(fn {scheme, _fn} -> scheme end)
     |> Enum.sort()
   end
+
+  # C5 §3.4 DispatchPolicyPort — the per-URI workspace owner gate goes
+  # through the config-resolved port, never the literal
+  # `Ezagent.WorkspaceOwnerGate` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.DispatchPolicyAdapter`.
+  defp dispatch_policy, do: Application.fetch_env!(:ezagent_actor, :dispatch_policy)
 end

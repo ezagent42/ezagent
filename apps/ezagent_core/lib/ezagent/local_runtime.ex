@@ -36,7 +36,7 @@ defmodule Ezagent.LocalRuntime do
     the real safety net is the gate on `ensure_*`.
   """
 
-  alias Ezagent.{KindRegistry, SpawnRegistry, WorkspaceOwnerGate}
+  alias Ezagent.{KindRegistry, SpawnRegistry}
 
   @doc """
   Owner-gated liveness probe: is the Kind for `uri` alive on this (its owner)
@@ -47,7 +47,7 @@ defmodule Ezagent.LocalRuntime do
   """
   @spec kind_alive?(URI.t()) :: boolean()
   def kind_alive?(%URI{} = uri) do
-    case WorkspaceOwnerGate.assert_local_owner_for_uri(uri, {:liveness, uri}) do
+    case dispatch_policy().assert_local_owner(uri, {:liveness, uri}) do
       :ok -> match?({:ok, _pid}, KindRegistry.lookup(uri))
       {:error, _violation} -> false
     end
@@ -86,4 +86,11 @@ defmodule Ezagent.LocalRuntime do
   """
   @spec ensure_live(URI.t()) :: {:ok, :live | :rehydrated} | {:error, term()}
   def ensure_live(%URI{} = uri), do: SpawnRegistry.ensure_live(uri)
+
+  # C5 §3.4 DispatchPolicyPort — the per-URI workspace owner gate goes
+  # through the config-resolved port, never the literal
+  # `Ezagent.WorkspaceOwnerGate` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.DispatchPolicyAdapter`.
+  defp dispatch_policy, do: Application.fetch_env!(:ezagent_actor, :dispatch_policy)
 end

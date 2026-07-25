@@ -88,7 +88,7 @@ defmodule Ezagent.Invocation do
           mode: mode(),
           args: map(),
           ctx: ctx(),
-          origin: Ezagent.DispatchOrigin.t()
+          origin: term()
         }
 
   # --- dispatch ----------------------------------------------------------
@@ -145,17 +145,16 @@ defmodule Ezagent.Invocation do
     {:error, :unsupported_mode}
   end
 
-  def dispatch(%__MODULE__{target: target, origin: origin} = inv) do
+  def dispatch(%__MODULE__{target: target} = inv) do
     instance_uri = Ezagent.URI.instance(target)
 
-    with :ok <- Ezagent.DispatchOrigin.validate(origin, inv.ctx),
-         {:ok, %__MODULE__{mode: mode, ctx: ctx} = inv} <-
-           materialize_admin_action_cap(inv),
-         :ok <-
-           Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
-             instance_uri,
-             {:dispatch, target}
-           ) do
+    # C5 §3.4 DispatchPolicyPort — origin validation + canonical-admin
+    # action-cap materialization + workspace owner gate fold into ONE
+    # config-resolved port hook (`before_delivery/1`); the policy lives in
+    # the core adapter (`Ezagent.Kind.Adapters.DispatchPolicyAdapter`),
+    # never in the framework.
+    with {:ok, %__MODULE__{mode: mode, ctx: ctx} = inv} <-
+           dispatch_policy().before_delivery(inv) do
       cond do
         outbox().replay?(inv) ->
           dispatch_with_lazy_spawn(instance_uri, mode, inv)
@@ -169,76 +168,6 @@ defmodule Ezagent.Invocation do
           end
       end
     end
-  end
-
-  # Canonical-admin operator traffic is still least-authority on the wire: after
-  # the positive origin stamp has authenticated the presenter, ask the concrete
-  # target's K.grant path for the exact action artifact and replace no caller
-  # identity. This is the reviewed-code Path A convenience seam for UI/CLI and
-  # framework operator paths; the target verifier still sees and verifies an
-  # ordinary target-signed, receiver-bound capability. K.grant itself is the
-  # recursion bottom and already carries the target authority anchor.
-  defp materialize_admin_action_cap(
-         %__MODULE__{
-           target: %URI{} = target,
-           ctx: %{caller: %URI{} = caller} = ctx,
-           origin: origin
-         } = inv
-       )
-       when origin in [:trusted_internal, :authenticated_external] do
-    with true <- canonical_admin?(caller),
-         true <- admin_operator_scope?(caller),
-         true <- is_nil(target.authority),
-         {:ok, _pid} <- Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)),
-         {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
-         false <- globally_non_cap_action?(action),
-         false <- action == :grant do
-      case Ezagent.Cap.issue_for_action({:admin, caller}, caller, target) do
-        {:ok, cap} ->
-          caps = Map.get(ctx, :caps, MapSet.new()) || MapSet.new()
-          {:ok, %{inv | ctx: Map.put(ctx, :caps, MapSet.put(MapSet.new(caps), cap))}}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    else
-      _ -> {:ok, inv}
-    end
-  end
-
-  defp materialize_admin_action_cap(%__MODULE__{} = inv), do: {:ok, inv}
-
-  # Admin convenience minting must not turn an explicitly cap-exempt action
-  # into a synchronous K.grant round-trip. In-handler gates such as
-  # `session.add_self` deliberately carry no presented cap; minting one here is
-  # both semantically wrong and can deadlock when the action is a post-commit
-  # convergence cast back into a busy target Kind.
-  defp globally_non_cap_action?(action) do
-    registered_handlers =
-      Ezagent.BehaviorRegistry.list_all()
-      |> Enum.flat_map(fn
-        {{_kind, ^action}, behavior} -> [behavior]
-        _entry -> []
-      end)
-      |> Enum.uniq()
-
-    exempt_handlers =
-      Ezagent.Cap.Verifier.non_cap_actions()
-      |> Enum.flat_map(fn {behavior, actions} ->
-        if MapSet.member?(actions, action), do: [behavior], else: []
-      end)
-
-    exempt_handlers != [] and
-      Enum.all?(registered_handlers, &(&1 in exempt_handlers))
-  end
-
-  defp admin_operator_scope?(%URI{} = caller) do
-    Process.get(@admin_operator_scope_key) == Ezagent.URI.stable_key(caller)
-  end
-
-  defp canonical_admin?(%URI{} = caller) do
-    Ezagent.URI.stable_key(caller) ==
-      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
   end
 
   # codex E2E fix v2 Bug B (2026-05-29) — cold-spawn-from-snapshot on the
@@ -736,4 +665,12 @@ defmodule Ezagent.Invocation do
   # spine. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.OutboxAdapter`.
   defp outbox, do: Application.fetch_env!(:ezagent_actor, :outbox)
+
+  # C5 §3.4 DispatchPolicyPort — pre-delivery policy (origin validate +
+  # admin-cap materialization + owner gate) goes through the config-resolved
+  # port, never the literal `Ezagent.DispatchOrigin` /
+  # `Ezagent.WorkspaceOwnerGate` / `Ezagent.Cap` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.DispatchPolicyAdapter`.
+  defp dispatch_policy, do: Application.fetch_env!(:ezagent_actor, :dispatch_policy)
 end

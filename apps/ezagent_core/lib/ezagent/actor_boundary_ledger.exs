@@ -979,42 +979,6 @@
       note: "§3.4 upward ref: Ezagent.CapabilityRegistry"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/cmd.ex",
-      target: "Ezagent.DispatchOrigin",
-      sha: "fec578c34f032360fdb1da41b1b074754e9b39d0ce41b63dbc91e9ce4d1abd18",
-      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DispatchOrigin",
-      sha: "fec578c34f032360fdb1da41b1b074754e9b39d0ce41b63dbc91e9ce4d1abd18",
-      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.DispatchOrigin",
-      sha: "7cbebf161234c98750f0aa73f1db17c00e99d137c66a48191386442a0313f601",
-      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.WorkspaceOwnerGate",
-      sha: "6d6c3002363a4b77586d8b1d3a78f130e58ee5dc0ced1f4ea380ca7d1991957e",
-      note: "§3.4 upward ref: Ezagent.WorkspaceOwnerGate"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap",
-      sha: "bcd4738a093f45dce7f480afdb7ee63cf389601eff3c8225709695ca43219c87",
-      note: "§3.4 upward ref: Ezagent.Cap"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Cap.Verifier",
-      sha: "a213c0832a21d37b52c493faf877529fa5a7e1e7ca086a83555a81530d29ed98",
-      note: "§3.4 upward ref: Ezagent.Cap.Verifier"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/kind.ex",
       target: "Ezagent.Capability",
       sha: "0fc0bc52a685b237af5b414ef472da9f907fdbc63d3c4fb7a31c9fb4a6a88735",
@@ -1226,12 +1190,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.DispatchOrigin",
-      sha: "27fb882d715f63685a8914019b2484cd5382cb916099701658cb8a1089aed944",
-      note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
       target: "Ezagent.Cap.Verifier",
       sha: "55c9a846c0faf963f71c0912993cf7bb8dc361ae7b9ec6a8036dc5ad81a77e9c",
       note: "§3.4 upward ref: Ezagent.Cap.Verifier"
@@ -1355,24 +1313,6 @@
       target: "Ezagent.Cap.Authority",
       sha: "478a2dbf2016b0b2922ed6cbaa2e96f2d381b77de57caa5c0cc93a2fe97926e4",
       note: "§3.4 upward ref: Ezagent.Cap.Authority"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/local_runtime.ex",
-      target: "Ezagent.WorkspaceOwnerGate",
-      sha: "672ca424c7823eb5662f041b786aea51ff431260a5fc1655f11cb7249adb2428",
-      note: "§3.4 upward ref: Ezagent.WorkspaceOwnerGate"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/local_runtime.ex",
-      target: "Ezagent.WorkspaceOwnerGate",
-      sha: "d450dc485faa7a980118039faf68174e26b24fdac87e5c9565a3dd8b1105b59e",
-      note: "§3.4 upward ref: Ezagent.WorkspaceOwnerGate"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/spawn_registry.ex",
-      target: "Ezagent.WorkspaceOwnerGate",
-      sha: "3a6236f1f6e07a1637ad4ab3b1630d7f4c77b225379bbbc305a503a70e8f9447",
-      note: "§3.4 upward ref: Ezagent.WorkspaceOwnerGate"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/universal_behaviors.ex",

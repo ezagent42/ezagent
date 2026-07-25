@@ -95,7 +95,15 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # enqueue_and_attempt, server mark_applied/record_handler_failure,
   # ready_transition pending_target?/drain_target) → the config-resolved
   # `:ezagent_actor, :outbox` adapter, −10 sites.
-  @reverse_frozen 68
+  # C5 chunk-2 lowered reverse 68→58: DispatchPolicyPort (§3.4) — dispatch
+  # origin-validate + owner-gate + admin-cap materialization fold into ONE
+  # `before_delivery/1` hook (materialize_admin_action_cap +
+  # globally_non_cap_action? MOVED into the core adapter), the in-actor
+  # origin re-check + spawn/liveness owner gates → the config-resolved
+  # `:ezagent_actor, :dispatch_policy` adapter, −8 sites; the
+  # `Ezagent.DispatchOrigin.t()` typespec demotions (cmd/invocation origin
+  # specs → `term()`), −2 sites.
+  @reverse_frozen 58
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────
