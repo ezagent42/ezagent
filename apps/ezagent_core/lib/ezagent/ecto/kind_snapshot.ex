@@ -21,14 +21,15 @@ defmodule Ezagent.Ecto.KindSnapshot do
 
   # C5 §3.4 repo injection — the Ecto Repo is a config injection (Oban-style),
   # never a literal spine reference, so the actor framework can run against an
-  # isolated store. Core config wires `:ezagent_actor, :repo` to
+  # isolated store. Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `EzagentCore.Repo`.
   defp repo, do: Application.fetch_env!(:ezagent_actor, :repo)
 
   # C5 §3.4 PersistencePort — workspace derivation / query scoping / transient
   # retry go through the config-resolved port, never the literal
-  # `Ezagent.Persistence` spine. Core config wires `:ezagent_actor,
-  # :persistence` to `Ezagent.Kind.Adapters.PersistenceAdapter`.
+  # `Ezagent.Persistence` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.PersistenceAdapter`.
   defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
 
   @primary_key {:uri, :string, autogenerate: false}

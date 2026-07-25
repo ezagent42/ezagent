@@ -7,6 +7,12 @@ defmodule EzagentCore.Application do
 
   @impl true
   def start(_type, _args) do
+    # C5 §3.4 — wire the actor-framework ports/injections BEFORE any child
+    # (Snapshot.Writer, Kind instances, boot dispatch) can reach a
+    # config-resolved call site. See `Ezagent.Kind.Adapters` for why this is
+    # a boot-time put_env and not a `config :ezagent_actor` block.
+    :ok = Ezagent.Kind.Adapters.wire!()
+
     children =
       [
         # Survives EtsOwner restarts and publishes table readiness to supervised

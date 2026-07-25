@@ -571,7 +571,7 @@ defmodule Ezagent.Kind.Snapshot do
 
   # C5 §3.4 PersistencePort — workspace derivation goes through the
   # config-resolved port, never the literal `Ezagent.Persistence` spine.
-  # Core config wires `:ezagent_actor, :persistence` to
+  # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.PersistenceAdapter`.
   defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
 

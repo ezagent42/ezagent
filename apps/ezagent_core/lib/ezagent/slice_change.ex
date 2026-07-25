@@ -299,7 +299,7 @@ defmodule Ezagent.SliceChange do
   end
 
   # C5 §3.4 pubsub injection — the PubSub server name is a config injection,
-  # never a literal spine reference. Core config wires `:ezagent_actor,
-  # :pubsub` to `EzagentCore.PubSub`.
+  # never a literal spine reference. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to `EzagentCore.PubSub`.
   defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
 end

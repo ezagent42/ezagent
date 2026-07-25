@@ -376,21 +376,22 @@ defmodule Ezagent.Kind.Runtime.Effects do
   end
 
   # C5 §3.4 pubsub injection — the PubSub server name is a config injection,
-  # never a literal spine reference. Core config wires `:ezagent_actor,
-  # :pubsub` to `EzagentCore.PubSub`.
+  # never a literal spine reference. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to `EzagentCore.PubSub`.
   defp pubsub, do: Application.fetch_env!(:ezagent_actor, :pubsub)
 
   # C5 §3.4 SagaPort — saga execution goes through the config-resolved port;
   # the actor side never names the saga runner's types. The `:not_configured`
   # default raises into `execute_saga/2`'s rescue, preserving today's
-  # missing-runner contract. Core config wires `:ezagent_actor, :saga` to
-  # `Ezagent.Kind.Adapters.SagaAdapter`.
+  # missing-runner contract. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to `Ezagent.Kind.Adapters.SagaAdapter`.
   defp saga_port, do: Application.get_env(:ezagent_actor, :saga, :not_configured)
 
   # C5 §3.4 EventLogPort — `:emit` audit appends go through the
   # config-resolved port; the core adapter derives `workspace_uri` from the
-  # event target (the actor side never supplies it). Core config wires
-  # `:ezagent_actor, :event_log` to `Ezagent.Kind.Adapters.EventLogAdapter`.
+  # event target (the actor side never supplies it). Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.EventLogAdapter`.
   defp event_log, do: Application.fetch_env!(:ezagent_actor, :event_log)
 
   @doc """

@@ -288,7 +288,7 @@ defmodule Ezagent.Router do
 
   # C5 §3.4 EventLogPort — audit appends go through the config-resolved
   # port; the core adapter derives `workspace_uri` from the event target.
-  # Core config wires `:ezagent_actor, :event_log` to
+  # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.EventLogAdapter`.
   defp event_log, do: Application.fetch_env!(:ezagent_actor, :event_log)
 end

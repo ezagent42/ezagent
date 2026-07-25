@@ -280,13 +280,13 @@ defmodule Ezagent.SnapshotStore do
   end
 
   # C5 §3.4 repo injection — the Ecto Repo is a config injection (Oban-style),
-  # never a literal spine reference. Core config wires `:ezagent_actor, :repo`
-  # to `EzagentCore.Repo`.
+  # never a literal spine reference. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to `EzagentCore.Repo`.
   defp repo, do: Application.fetch_env!(:ezagent_actor, :repo)
 
   # C5 §3.4 PersistencePort — workspace derivation goes through the
   # config-resolved port, never the literal `Ezagent.Persistence` spine.
-  # Core config wires `:ezagent_actor, :persistence` to
+  # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
   # `Ezagent.Kind.Adapters.PersistenceAdapter`.
   defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
 

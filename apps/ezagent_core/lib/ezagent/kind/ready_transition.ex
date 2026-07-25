@@ -191,8 +191,9 @@ defmodule Ezagent.Kind.ReadyTransition do
   end
 
   # C5 §3.4 DeadLetterPort — DLQ writes go through the config-resolved port,
-  # never the literal `Ezagent.DLQ` spine. Core config wires `:ezagent_actor,
-  # :dead_letter` to `Ezagent.Kind.Adapters.DeadLetterAdapter`.
+  # never the literal `Ezagent.DLQ` spine. Wired at core boot
+  # (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.DeadLetterAdapter`.
   defp dead_letter, do: Application.fetch_env!(:ezagent_actor, :dead_letter)
 
   defp safe_dlq_put(reason, buffered_inv) do
