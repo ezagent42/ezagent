@@ -84,7 +84,13 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # single 4-arg contract (adapter derives workspace_uri from the target),
   # −3 sites; the respec also orphaned effects' private Capability-based
   # workspace-derivation helper (deleted with it), −1 site.
-  @reverse_frozen 89
+  # C5 chunk-2 lowered reverse 89→78: CapabilityPort (§3.4 NEW) — runtime
+  # workspace-isolation + receipt emission workspace_of/cross_workspace?/
+  # identity_key → the config-resolved `:ezagent_actor, :capability`
+  # adapter, −7 sites; the §3.4 opacity typespec demotions
+  # (`Ezagent.Capability.t()` → `term()` in behavior/cmd/invocation ctx
+  # specs + the receipt maybe_emit spec), −4 sites.
+  @reverse_frozen 78
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

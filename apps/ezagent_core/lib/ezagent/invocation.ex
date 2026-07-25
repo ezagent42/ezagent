@@ -72,7 +72,7 @@ defmodule Ezagent.Invocation do
 
   @type ctx :: %{
           required(:caller) => URI.t(),
-          required(:caps) => MapSet.t(Ezagent.Capability.t()),
+          required(:caps) => MapSet.t(term()),
           required(:reply) => reply_target(),
           optional(:authenticated_principal) => URI.t(),
           optional(:trace_id) => String.t(),

@@ -29,7 +29,8 @@ defmodule Ezagent.Kind.Adapters do
     persistence: Ezagent.Kind.Adapters.PersistenceAdapter,
     dead_letter: Ezagent.Kind.Adapters.DeadLetterAdapter,
     saga: Ezagent.Kind.Adapters.SagaAdapter,
-    event_log: Ezagent.Kind.Adapters.EventLogAdapter
+    event_log: Ezagent.Kind.Adapters.EventLogAdapter,
+    capability: Ezagent.Kind.Adapters.CapabilityAdapter
   ]
 
   @doc false

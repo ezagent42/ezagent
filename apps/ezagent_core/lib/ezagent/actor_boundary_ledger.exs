@@ -973,12 +973,6 @@
   # §3.4 port worklist — mover-set upward refs (retired at C5).
   reverse_ratchet: [
     %{
-      path: "apps/ezagent_core/lib/ezagent/behavior.ex",
-      target: "Ezagent.Capability",
-      sha: "2c8991cab2ed7fed28041b1d2951c6d8a51db27294a4a80648dbedbdf2469f32",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/behavior/introspection.ex",
       target: "Ezagent.CapabilityRegistry",
       sha: "8a67193ba0a8672245a3755d8f37367dd64f6c243151df4f64537f9b9b7e9dea",
@@ -986,21 +980,9 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/cmd.ex",
-      target: "Ezagent.Capability",
-      sha: "0d66c6f89e620d69569f6d025ee72f39c935ba2b45224eac575ce93ab09bf6e7",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cmd.ex",
       target: "Ezagent.DispatchOrigin",
       sha: "fec578c34f032360fdb1da41b1b074754e9b39d0ce41b63dbc91e9ce4d1abd18",
       note: "§3.4 upward ref: Ezagent.DispatchOrigin"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/invocation.ex",
-      target: "Ezagent.Capability",
-      sha: "61f9ccae304668476f5eac77dd5709c0086321eb09c7127b8d60157c7ba4f26d",
-      note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
@@ -1313,54 +1295,6 @@
       target: "Ezagent.Cap.Grant",
       sha: "82526fee5ea7129bd3b6883e662addb11fedde17030f457c6f50e21b26f58f25",
       note: "§3.4 upward ref: Ezagent.Cap.Grant"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.Capability",
-      sha: "20c0d41c46ec3b4e7856349c47450dd0a709d316cd6bb67629092eb9ede08889",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.Capability",
-      sha: "8350b1541939e3f22de276eb5912ed95a68f168a0082f82431c4c806365d7fd7",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-      target: "Ezagent.Capability",
-      sha: "3a2b871ba325494db758563e48b656cd9f466da992c4fc984d36e0e9def13cf4",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "029277439afe24f003819ddaf2a3fed12f03ded53bf1a29e1d8ebdfbe331a85e",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "a31eedbfaf2d81c68c6005a13d1f5261feb0195b5a0a0c51fa61c2ddd8da0eb3",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "20c0d41c46ec3b4e7856349c47450dd0a709d316cd6bb67629092eb9ede08889",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "30da584543aee87bbb364249feeb21ae53c52e5db05649a03f95eaeccb2b5052",
-      note: "§3.4 upward ref: Ezagent.Capability"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/runtime/receipt.ex",
-      target: "Ezagent.Capability",
-      sha: "8350b1541939e3f22de276eb5912ed95a68f168a0082f82431c4c806365d7fd7",
-      note: "§3.4 upward ref: Ezagent.Capability"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/server.ex",

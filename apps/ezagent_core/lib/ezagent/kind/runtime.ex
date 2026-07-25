@@ -403,7 +403,7 @@ defmodule Ezagent.Kind.Runtime do
 
   defp do_workspace_isolation_check(target, ctx) do
     caller_ws = workspace_of_caller(Map.get(ctx, :caller))
-    target_ws = Ezagent.Capability.workspace_of(target)
+    target_ws = capability().workspace_of(target)
 
     meta = %{
       target: target,
@@ -445,7 +445,7 @@ defmodule Ezagent.Kind.Runtime do
 
   defp workspace_of_caller(%URI{} = uri) do
     try do
-      Ezagent.Capability.workspace_of(uri)
+      capability().workspace_of(uri)
     rescue
       _ -> :any
     end
@@ -470,7 +470,7 @@ defmodule Ezagent.Kind.Runtime do
   defp caps_have_cross_workspace?(ctx) do
     caps = Map.get(ctx, :caps, MapSet.new())
     caller = Map.get(ctx, :caller)
-    Enum.any?(caps, &Ezagent.Capability.cross_workspace?(&1, caller))
+    Enum.any?(caps, &capability().cross_workspace?(&1, caller))
   end
 
   defp validate_args(behavior_module, action, args) do
@@ -736,4 +736,11 @@ defmodule Ezagent.Kind.Runtime do
   end
 
   defp derive_session_uri(target), do: Ezagent.Kind.Runtime.Context.derive_session_uri(target)
+
+  # C5 §3.4 CapabilityPort — capability semantics (workspace scope,
+  # cross-workspace check) go through the config-resolved port, never the
+  # literal `Ezagent.Capability` spine (the cap crosses as OPAQUE data).
+  # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.CapabilityAdapter`.
+  defp capability, do: Application.fetch_env!(:ezagent_actor, :capability)
 end

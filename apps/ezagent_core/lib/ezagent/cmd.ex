@@ -57,7 +57,7 @@ defmodule Ezagent.Cmd do
           optional(:trace_id) => String.t() | nil,
           optional(:command_uuid) => String.t() | nil,
           optional(:deadline_ms) => pos_integer() | nil,
-          optional(:caps) => MapSet.t(Ezagent.Capability.t()) | nil
+          optional(:caps) => MapSet.t(term()) | nil
         }
 
   @type t :: %__MODULE__{

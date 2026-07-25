@@ -50,7 +50,7 @@ defmodule Ezagent.Kind.Runtime.Receipt do
   genuine cross-org call, since 5.6's `caps_have_cross_workspace?` reads
   `ctx.caps` only.
   """
-  @spec maybe_emit(URI.t(), atom(), Ezagent.Capability.t() | nil, module(), map()) :: :ok
+  @spec maybe_emit(URI.t(), atom(), term() | nil, module(), map()) :: :ok
   def maybe_emit(%URI{} = target, action, matched_cap, behavior_module, ctx) do
     if cross_workspace_invocation?(behavior_module, target, ctx) do
       cap = matched_cap || cross_workspace_cap(ctx)
@@ -64,7 +64,7 @@ defmodule Ezagent.Kind.Runtime.Receipt do
         payload = %{
           caller: canonicalize_uri(Map.get(ctx, :caller)),
           provider: canonicalize_uri(provider),
-          capability: canonicalize_identity_key(Ezagent.Capability.identity_key(cap)),
+          capability: canonicalize_identity_key(capability().identity_key(cap)),
           action: action,
           trace_id: Map.get(ctx, :trace_id),
           outcome: :fulfilled,
@@ -96,7 +96,7 @@ defmodule Ezagent.Kind.Runtime.Receipt do
   defp cross_workspace_invocation?(behavior_module, target, ctx) do
     if Ezagent.ActionSet.workspace_scoped?(behavior_module) do
       caller_ws = workspace_of_caller(Map.get(ctx, :caller))
-      target_ws = Ezagent.Capability.workspace_of(target)
+      target_ws = capability().workspace_of(target)
 
       caller_ws != :any and target_ws != :any and not ws_equal?(caller_ws, target_ws)
     else
@@ -110,7 +110,7 @@ defmodule Ezagent.Kind.Runtime.Receipt do
   defp cross_workspace_cap(ctx) do
     caps = Map.get(ctx, :caps, MapSet.new())
     caller = Map.get(ctx, :caller)
-    Enum.find(caps, fn cap -> Ezagent.Capability.cross_workspace?(cap, caller) end)
+    Enum.find(caps, fn cap -> capability().cross_workspace?(cap, caller) end)
   end
 
   # Mirrors `Kind.Runtime`'s step-5.6 caller-workspace derivation.
@@ -118,7 +118,7 @@ defmodule Ezagent.Kind.Runtime.Receipt do
   defp workspace_of_caller(nil), do: :any
 
   defp workspace_of_caller(%URI{} = uri) do
-    Ezagent.Capability.workspace_of(uri)
+    capability().workspace_of(uri)
   rescue
     _ -> :any
   end
@@ -162,4 +162,11 @@ defmodule Ezagent.Kind.Runtime.Receipt do
     do: "#{tag}:#{URI.to_string(u)}"
 
   defp canonicalize_axis(other), do: inspect(other)
+
+  # C5 §3.4 CapabilityPort — capability semantics (identity key, workspace
+  # scope, cross-workspace check) go through the config-resolved port, never
+  # the literal `Ezagent.Capability` spine (the cap crosses as OPAQUE data).
+  # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`) to
+  # `Ezagent.Kind.Adapters.CapabilityAdapter`.
+  defp capability, do: Application.fetch_env!(:ezagent_actor, :capability)
 end

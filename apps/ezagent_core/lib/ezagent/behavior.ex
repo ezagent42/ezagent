@@ -336,7 +336,7 @@ defmodule Ezagent.ActionSet do
 
   SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   """
-  @callback required_caps() :: %{required(action :: atom()) => Ezagent.Capability.t()}
+  @callback required_caps() :: %{required(action :: atom()) => term()}
 
   @doc """
   Optional: actions that intentionally are NOT cap-gated.
