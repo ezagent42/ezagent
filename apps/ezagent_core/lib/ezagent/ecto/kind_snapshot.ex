@@ -25,6 +25,12 @@ defmodule Ezagent.Ecto.KindSnapshot do
   # `EzagentCore.Repo`.
   defp repo, do: Application.fetch_env!(:ezagent_actor, :repo)
 
+  # C5 §3.4 PersistencePort — workspace derivation / query scoping / transient
+  # retry go through the config-resolved port, never the literal
+  # `Ezagent.Persistence` spine. Core config wires `:ezagent_actor,
+  # :persistence` to `Ezagent.Kind.Adapters.PersistenceAdapter`.
+  defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
+
   @primary_key {:uri, :string, autogenerate: false}
   schema "kind_snapshots" do
     field :kind_type, :string
@@ -88,7 +94,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   @spec list_in_workspace(URI.t() | String.t()) :: [%__MODULE__{}]
   def list_in_workspace(workspace_uri) do
     __MODULE__
-    |> Ezagent.Persistence.scope_by_workspace(workspace_uri)
+    |> persistence().scope_by_workspace(workspace_uri)
     |> order_by([s], desc: s.updated_at)
     |> repo().all()
   end
@@ -140,7 +146,7 @@ defmodule Ezagent.Ecto.KindSnapshot do
   end
 
   defp do_upsert_with_retry(attrs, now, _attempt) do
-    Ezagent.Persistence.TransientRetry.with_retry(fn ->
+    persistence().with_transient_retry(fn ->
       do_upsert_once(attrs, now)
     end)
   end

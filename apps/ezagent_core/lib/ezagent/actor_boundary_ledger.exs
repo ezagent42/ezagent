@@ -997,18 +997,6 @@
       note: "§3.4 upward ref: Ezagent.DispatchOrigin"
     },
     %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "Ezagent.Persistence",
-      sha: "a85a69cb92fb073b94db403bee942119b45c43169b98d871db2b8bcce30fcac7",
-      note: "§3.4 upward ref: Ezagent.Persistence"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex",
-      target: "Ezagent.Persistence.TransientRetry",
-      sha: "81d2a56472251f1266ac2e13bf51528f28fe6029ecef3d317aff5748a9a44518",
-      note: "§3.4 upward ref: Ezagent.Persistence.TransientRetry"
-    },
-    %{
       path: "apps/ezagent_core/lib/ezagent/invocation.ex",
       target: "Ezagent.Capability",
       sha: "61f9ccae304668476f5eac77dd5709c0086321eb09c7127b8d60157c7ba4f26d",
@@ -1520,12 +1508,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
-      target: "Ezagent.Persistence",
-      sha: "8379b08f78bf9ec2c8e591153dc1d3a757ade679489a8173591db71a95c07a2b",
-      note: "§3.4 upward ref: Ezagent.Persistence"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
       target: "Ezagent.Cap",
       sha: "e6d1c812c7a66bab8771c5ce28d55720d0f735e3fa8bd598db4bba068036056f",
       note: "§3.4 upward ref: Ezagent.Cap"
@@ -1583,12 +1565,6 @@
       target: "Ezagent.EventLog",
       sha: "4d7f233ca1e0e5aac373b4e0dbb7cdfedb178db1148eb36ff58db6fb8233ed6b",
       note: "§3.4 upward ref: Ezagent.EventLog"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/snapshot_store.ex",
-      target: "Ezagent.Persistence",
-      sha: "8379b08f78bf9ec2c8e591153dc1d3a757ade679489a8173591db71a95c07a2b",
-      note: "§3.4 upward ref: Ezagent.Persistence"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/spawn_registry.ex",

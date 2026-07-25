@@ -537,7 +537,7 @@ defmodule Ezagent.Kind.Snapshot do
         s when is_binary(s) -> Ezagent.URI.new!(s)
       end
 
-    case Ezagent.Persistence.workspace_uri_for(parsed) do
+    case persistence().workspace_uri_for(parsed) do
       {:ok, ws} ->
         ws
 
@@ -568,6 +568,12 @@ defmodule Ezagent.Kind.Snapshot do
 
   # ---------------------------------------------------------------------
   # Internals
+
+  # C5 §3.4 PersistencePort — workspace derivation goes through the
+  # config-resolved port, never the literal `Ezagent.Persistence` spine.
+  # Core config wires `:ezagent_actor, :persistence` to
+  # `Ezagent.Kind.Adapters.PersistenceAdapter`.
+  defp persistence, do: Application.fetch_env!(:ezagent_actor, :persistence)
 
   @doc """
   Lifecycle Phase A (SPEC 2026-05-29 §0.1 + §10-R2) — return the

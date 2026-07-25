@@ -68,7 +68,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # C5 chunk-1 lowered reverse 110→105: pubsub injection (§3.4) — effects /
   # invocation / slice_change `EzagentCore.PubSub` refs → the config-resolved
   # `:ezagent_actor, :pubsub` injection, −5 sites.
-  @reverse_frozen 105
+  # C5 chunk-1 lowered reverse 105→101: PersistencePort (§3.4 NEW) — kind/
+  # snapshot + snapshot_store workspace derivation, ecto/kind_snapshot
+  # scope_by_workspace + TransientRetry → the config-resolved
+  # `:ezagent_actor, :persistence` adapter, −4 sites.
+  @reverse_frozen 101
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────

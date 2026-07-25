@@ -21,7 +21,8 @@ config :ezagent_core,
 # `:ezagent_actor` OTP app does not exist yet; config keys do not require it.
 config :ezagent_actor,
   repo: EzagentCore.Repo,
-  pubsub: EzagentCore.PubSub
+  pubsub: EzagentCore.PubSub,
+  persistence: Ezagent.Kind.Adapters.PersistenceAdapter
 
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,
