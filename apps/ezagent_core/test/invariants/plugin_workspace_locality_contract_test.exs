@@ -77,25 +77,15 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       line_substring:
         "GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)",
       reason: "existing SessionManager direct executor call; pending owner-gated executor facade"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 86,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason: "existing sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 100,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, {:query, text, session_id}, timeout)",
-      reason: "existing sidecar query call; sidecar has no workspace owner facade yet"
     }
-    # V5 A1b-rest: the two codex `GenServer.call(pid, :recent_output, …)`
+    # V5 A1b-rest chunk1: the two codex `GenServer.call(pid, :recent_output, …)`
     # entries (bridge_sidecar.ex, app_server.ex) left the allowlist — both
     # sidecars migrated onto the resolver seam (`Resolver.call/3`), so the
     # direct-pid status call debt is GONE, not re-justified.
+    # V5 A1b-rest chunk2: the two cc-sdk `GenServer.call(pid, …)` entries
+    # (sdk_sidecar.ex `:recent_output` + `{:query, …}`) left the allowlist
+    # the same way — `query/3` goes through the seam (`Resolver.call/3`)
+    # and the `recent_output/1` accessor was DROPPED (0 callers).
   ]
 
   test "plugin apps do not bypass workspace owner gate through local runtime APIs" do

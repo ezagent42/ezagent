@@ -941,13 +941,15 @@ defmodule Ezagent.ActorBoundaryScanner do
   # single module hosting both the facade functions and the GenServer
   # query APIs. Chunk2: the Python sidecar (facade `Ezagent.Domain.Python`
   # hosts the Resolver reaches; its Server only watches/re-registers,
-  # never calls the triple).
+  # never calls the triple) and the cc SDK sidecar (facade + GenServer in
+  # one module, same shape as the codex sidecars).
   @sidecar_facade_allowlist MapSet.new([
                               Ezagent.Domain.Pty,
                               Ezagent.Domain.Pty.Server,
                               EzagentPluginCodex.AppServer,
                               EzagentPluginCodex.BridgeSidecar,
-                              Ezagent.Domain.Python
+                              Ezagent.Domain.Python,
+                              EzagentPluginCc.SdkSidecar
                             ])
 
   # The fun names of the facade-gated triple (subset of

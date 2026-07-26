@@ -169,8 +169,13 @@ defmodule EzagentPluginCc.Application do
 
   @impl Ezagent.Plugin
   def children do
+    # V5 pid-closure A1b: the private `SdkSidecarRegistry` is RETIRED — the
+    # SDK sidecar self-registers in the unified
+    # `Ezagent.Runtime.SidecarRegistry` (started by `EzagentActor.Application`)
+    # and is reached only through the `Ezagent.Runtime.Resolver` seam. The
+    # supervisor stays: spawn remains the plugin's own
+    # `DynamicSupervisor.start_child`.
     [
-      {Registry, keys: :unique, name: EzagentPluginCc.SdkSidecarRegistry},
       {DynamicSupervisor, name: EzagentPluginCc.SdkSidecarSupervisor, strategy: :one_for_one}
     ]
   end

@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **129 entries.**
+for the A1b/A1c migration phases. **128 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -145,7 +145,6 @@ for the A1b/A1c migration phases. **129 entries.**
 | `EzagentDomainUi.AutoDerive` | `list_instances/1` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:38` | nested |
 | `EzagentDomainWorkspace.Application` | `start/2` | `apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:32` | body |
 | `EzagentPluginCc.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex:20` | guard |
-| `EzagentPluginCc.SdkSidecar` | `lookup/1` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex:53` | body + nested |
 | `EzagentPluginCodex.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_adapter.ex:18` | guard |
 | `EzagentPluginHello.Generator` | `concierge_start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:45` | nested |
 | `EzagentPluginHello.Generator` | `start/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:37` | nested |

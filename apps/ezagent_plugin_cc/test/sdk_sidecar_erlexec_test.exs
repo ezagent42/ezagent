@@ -112,6 +112,40 @@ defmodule EzagentPluginCc.SdkSidecarErlexecTest do
     end
   end
 
+  describe "SdkSidecar resolver seam (V5 A1b)" do
+    test "registered under the :via key; Resolver.alive?/call reach it; stop terminates via seam",
+         ctx do
+      :ok = start_sidecar(ctx.agent_uri, ctx.script_path)
+
+      key = SdkSidecar.resolver_key(ctx.agent_uri)
+      assert key == {ctx.agent_uri, :ezagent_plugin_cc, :cc_sdk}
+
+      # Resolvable through the seam (pid-free liveness + calls).
+      assert Ezagent.Runtime.Resolver.alive?(key)
+      assert Ezagent.Runtime.Resolver.whereis(key) == :ok
+
+      assert {:ok, {:ok, %{content: "pong"}}} =
+               Ezagent.Runtime.Resolver.call(key, {:query, "ping", nil}, 5_000)
+
+      # stop/1 goes through Resolver.terminate_child — the key leaves the
+      # seam on the Registry's async DOWN-cleanup (poll briefly).
+      :ok = SdkSidecar.stop(ctx.agent_uri)
+      assert await_seam_gone(key)
+    end
+  end
+
+  defp await_seam_gone(key, attempts \\ 100)
+  defp await_seam_gone(_key, 0), do: false
+
+  defp await_seam_gone(key, attempts) do
+    if Ezagent.Runtime.Resolver.alive?(key) do
+      Process.sleep(10)
+      await_seam_gone(key, attempts - 1)
+    else
+      true
+    end
+  end
+
   # ─── Step 3: Orphan proof ──────────────────────────────────────────────────
 
   describe "orphan proof (os_pid dies on stop)" do

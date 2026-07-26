@@ -14,14 +14,44 @@ defmodule EzagentPluginCc.SdkSidecar do
   (uv → python). Replaces the native `Port.open` used before.
 
   SPEC `docs/superpowers/specs/2026-06-25-sidecar-erlexec-runtime.md` §4.
+
+  ## V5 pid-closure A1b — resolver-seam registration
+
+  Every SdkSidecar SELF-registers under `{agent_uri, :ezagent_plugin_cc,
+  :cc_sdk}` in the unified `Ezagent.Runtime.SidecarRegistry` (the retired
+  private `EzagentPluginCc.SdkSidecarRegistry` is gone), and every reach
+  converges on the pid-free `Ezagent.Runtime.Resolver` face (`alive?/1`,
+  `call/3`, `terminate_child/2`) — no caller looks up a pid or walks the
+  DynamicSupervisor any more.
+
+  V5 A1b-rest dropped the dead faces: `lookup/1` (internal-only pid
+  surface) and the `recent_output/1` accessor (0 callers). The
+  output-BUFFER machinery stays — the EXIT crash log inlines
+  `state.output`.
   """
 
-  use GenServer
+  # `restart: :transient` (V5 A1b codex blocker B, PTY-pilot policy): an
+  # ABNORMAL stop — the erlexec child's `{:sdk_sidecar_exit, _}` — still
+  # restarts under `EzagentPluginCc.SdkSidecarSupervisor` exactly as
+  # `:permanent` did. But a GRACEFUL stop (only the registry-collision
+  # policy below stops this way) must NOT be restarted: the loser of a
+  # registry-restart race has its :via key owned by the replacement, so a
+  # restart would fail-start on `{:already_started, _}` in a loop until
+  # the DynamicSupervisor's intensity tripped and took EVERY SdkSidecar
+  # down.
+  use GenServer, restart: :transient
 
   require Logger
 
   alias Ezagent.Runtime.LineBuffer
   alias Ezagent.Runtime.OsProcess
+  alias Ezagent.Runtime.Resolver
+  alias Ezagent.Runtime.SidecarRegistry
+
+  # V5 pid-closure A1b — this sidecar's resolver-seam identity. The key is
+  # the address, never a pid (PTY-pilot pattern, `Ezagent.Domain.Pty.Server`).
+  @plugin :ezagent_plugin_cc
+  @role :cc_sdk
 
   defstruct [
     :agent_uri,
@@ -31,6 +61,11 @@ defmodule EzagentPluginCc.SdkSidecar do
     :session_id,
     :cwd,
     :config_dir,
+    # V5 A1b codex #5 — the `SidecarRegistry.watch/0` monitor ref. The
+    # registry lives in ANOTHER app's supervision tree; if it restarts,
+    # this worker's :via entry dies with it, and the worker re-registers
+    # ITSELF on the :DOWN (see the :DOWN clause + `reregister_with_registry/1`).
+    :registry_ref,
     pending: %{},
     next_id: 0,
     output: ""
@@ -48,67 +83,66 @@ defmodule EzagentPluginCc.SdkSidecar do
     )
   end
 
-  @doc false
-  @spec lookup(URI.t()) :: {:ok, pid()} | :error
-  def lookup(%URI{} = agent_uri) do
-    case Registry.lookup(EzagentPluginCc.SdkSidecarRegistry, URI.to_string(agent_uri)) do
-      [{pid, _}] -> {:ok, pid}
-      [] -> :error
-    end
-  end
+  @doc """
+  The resolver-seam key for this agent's cc-sdk sidecar:
+  `{agent_uri, :ezagent_plugin_cc, :cc_sdk}`. Public so callers build
+  the SAME key — the key is the address, never a pid.
+  """
+  @spec resolver_key(URI.t()) :: {URI.t(), atom(), atom()}
+  def resolver_key(%URI{} = agent_uri), do: {agent_uri, @plugin, @role}
+
+  @doc """
+  The `:via` tuple this sidecar SELF-registers under (the unified
+  `Ezagent.Runtime.SidecarRegistry`, plugin-qualified key).
+  """
+  def via(%URI{} = agent_uri), do: SidecarRegistry.via(agent_uri, @plugin, @role)
 
   @doc false
+  # Pid-free — resolved through the V5 resolver seam's `Resolver.alive?/1`.
   @spec alive?(URI.t()) :: boolean()
-  def alive?(%URI{} = agent_uri) do
-    case lookup(agent_uri) do
-      {:ok, pid} -> Process.alive?(pid)
-      :error -> false
-    end
-  end
+  def alive?(%URI{} = agent_uri), do: Resolver.alive?(resolver_key(agent_uri))
 
   @doc false
+  # Pid-free — the seam resolves the key and asks the plugin's own
+  # SdkSidecarSupervisor to terminate the child.
   @spec stop(URI.t()) :: :ok
   def stop(%URI{} = agent_uri) do
-    case lookup(agent_uri) do
-      {:ok, pid} ->
-        _ = DynamicSupervisor.terminate_child(EzagentPluginCc.SdkSidecarSupervisor, pid)
-        :ok
+    _ =
+      Resolver.terminate_child(
+        resolver_key(agent_uri),
+        EzagentPluginCc.SdkSidecarSupervisor
+      )
 
-      :error ->
-        :ok
-    end
+    :ok
   end
 
-  @doc false
-  @spec recent_output(URI.t()) :: String.t()
-  def recent_output(%URI{} = agent_uri) do
-    case lookup(agent_uri) do
-      {:ok, pid} -> GenServer.call(pid, :recent_output, 1_000)
-      :error -> ""
-    end
-  catch
-    _, _ -> ""
-  end
+  # V5 A1b-rest: the `recent_output/1` accessor is DROPPED (0 callers —
+  # the two workspace-locality `genserver_to_pid` allowlist entries it
+  # shared with `query/3` leave the debt ledger). The output-BUFFER
+  # machinery (`state.output` accumulation in `handle_line/2`) STAYS: the
+  # EXIT crash log inlines it.
 
   @doc false
+  # Pid-free — the seam resolves the key and `GenServer.call`s the worker.
   @spec query(URI.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def query(%URI{} = agent_uri, text, opts \\ []) when is_binary(text) do
     timeout = Keyword.get(opts, :timeout, @default_timeout)
     session_id = Keyword.get(opts, :session_id)
 
-    case lookup(agent_uri) do
-      {:ok, pid} -> GenServer.call(pid, {:query, text, session_id}, timeout)
-      :error -> {:error, :sdk_sidecar_not_started}
+    case Resolver.call(resolver_key(agent_uri), {:query, text, session_id}, timeout) do
+      {:ok, reply} -> reply
+      {:error, :no_such_actor} -> {:error, :sdk_sidecar_not_started}
+      {:error, {:noproc, _}} -> {:error, :sdk_sidecar_not_started}
+      {:error, {:timeout, _}} -> {:error, :sdk_sidecar_timeout}
+      {:error, reason} -> {:error, reason}
     end
-  catch
-    :exit, {:timeout, _} -> {:error, :sdk_sidecar_timeout}
   end
 
   @doc false
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
-    GenServer.start_link(__MODULE__, args,
-      name: {:via, Registry, {EzagentPluginCc.SdkSidecarRegistry, URI.to_string(agent_uri)}}
-    )
+    # V5 A1b: the :via lives on the unified `Ezagent.Runtime.SidecarRegistry`
+    # (plugin-qualified `{agent_uri, :ezagent_plugin_cc, :cc_sdk}` key).
+    GenServer.start_link(__MODULE__, args, name: via(agent_uri))
   end
 
   @impl true
@@ -122,7 +156,11 @@ defmodule EzagentPluginCc.SdkSidecar do
       session_id: Map.get(args, :session_id, new_session_id()),
       cwd: Map.fetch!(args, :cwd),
       config_dir: Map.fetch!(args, :config_dir),
-      line_buffer: LineBuffer.new(@line_buffer_max)
+      line_buffer: LineBuffer.new(@line_buffer_max),
+      # V5 A1b codex #5 — watch the unified registry so its restart (the
+      # entry dies with it) triggers self re-registration, keeping this
+      # sidecar resolvable through the seam.
+      registry_ref: SidecarRegistry.watch()
     }
 
     case start_process(args) do
@@ -135,10 +173,6 @@ defmodule EzagentPluginCc.SdkSidecar do
   end
 
   @impl true
-  def handle_call(:recent_output, _from, state) do
-    {:reply, state.output, state}
-  end
-
   def handle_call({:query, text, session_id}, from, state) do
     req_id = "cc-sdk-" <> Integer.to_string(state.next_id + 1)
 
@@ -159,9 +193,31 @@ defmodule EzagentPluginCc.SdkSidecar do
     end
   end
 
+  # ─── registry watch: SidecarRegistry restart → self re-register ───────────
+
+  # V5 A1b codex #5 — the unified SidecarRegistry restarted (it lives in
+  # ANOTHER app's supervision tree); our :via entry died with it. Re-register
+  # THIS process and re-arm the watch so the sidecar stays resolvable through
+  # the seam. Matched BEFORE any generic stale-:DOWN / stale-:EXIT clause
+  # (chunk1 gotcha).
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %__MODULE__{registry_ref: ref} = state)
+      when is_reference(ref) do
+    Logger.warning(
+      "cc-headless SDK sidecar: SidecarRegistry DOWN (#{inspect(reason)}) — re-registering " <>
+        URI.to_string(state.agent_uri)
+    )
+
+    reregister_with_registry(state)
+  end
+
+  def handle_info(:retry_registry_registration, %__MODULE__{registry_ref: nil} = state),
+    do: reregister_with_registry(state)
+
+  def handle_info(:retry_registry_registration, state), do: {:noreply, state}
+
   # ─── stdout: bytes arrive from erlexec in arbitrary chunks ────────────────
 
-  @impl true
   def handle_info({:stdout, os_pid, bytes}, %{os_pid: os_pid} = state) do
     {new_lb, lines} = LineBuffer.feed(state.line_buffer, bytes)
 
@@ -208,6 +264,42 @@ defmodule EzagentPluginCc.SdkSidecar do
   # Defensive: ignore exits from processes we didn't spawn.
   def handle_info({:EXIT, _other, _reason}, state) do
     {:noreply, state}
+  end
+
+  # V5 A1b codex #5 — re-register THIS process under its seam key after a
+  # registry restart, then re-arm the watch. On failure (registry still down
+  # after the helper's bounded wait) schedule a retry instead of crashing:
+  # the worker is healthy, only its discoverability is degraded.
+  #
+  # codex blocker B (collision policy) — `{:error, :already_registered}`
+  # means a REPLACEMENT worker won the key during the registry's empty-
+  # restart window. This original is now unreachable through the seam, and
+  # two live sdk sidecars for one agent must never coexist: LOSE
+  # GRACEFULLY — stop; `terminate/2` releases the erlexec child, and
+  # `restart: :transient` keeps the supervisor from resurrecting the loser.
+  defp reregister_with_registry(state) do
+    case SidecarRegistry.re_register(resolver_key(state.agent_uri)) do
+      :ok ->
+        {:noreply, %{state | registry_ref: SidecarRegistry.watch()}}
+
+      {:error, :already_registered} ->
+        Logger.warning(
+          "cc-headless SDK sidecar: SidecarRegistry key for #{URI.to_string(state.agent_uri)} " <>
+            "is owned by a replacement that won the restart race — this losing " <>
+            "original is terminating gracefully (releasing its child)"
+        )
+
+        {:stop, {:shutdown, :registry_collision}, state}
+
+      {:error, why} ->
+        Logger.error(
+          "cc-headless SDK sidecar: SidecarRegistry re-register failed for " <>
+            "#{URI.to_string(state.agent_uri)} (#{inspect(why)}) — retrying"
+        )
+
+        Process.send_after(self(), :retry_registry_registration, 200)
+        {:noreply, %{state | registry_ref: nil}}
+    end
   end
 
   @impl true
