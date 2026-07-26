@@ -37,10 +37,15 @@ defmodule Ezagent.ActorBoundaryScanner do
   `:global.whereis_name`, `GenServer.whereis`, `Process.whereis/list/monitor/
   link/info`, `:erlang.processes`, `:pg.get_members`, `:sys.get_state` family,
   `DynamicSupervisor.which_children`, `Task.Supervisor.children`, bare
-  `Task.async` / `Task.Supervisor.async[_nolink]/start_child`, `spawn*`, and
-  `GenServer.start_link` of a NON-self module) used ANYWHERE in
+  `Task.async` / `Task.Supervisor.async[_nolink]/start_child`, `spawn*`,
+  and `GenServer.start_link` of a NON-self module) used ANYWHERE in
   `apps/*/lib/**` — INCLUDING the actor app, which the FORWARD gate excludes —
-  OUTSIDE the two exemption classes:
+  OUTSIDE the two exemption classes below. A1b (codex #1) adds the
+  SEAM-INTERNAL pid accessors to the ban-set — `Resolver.pid_for/1`,
+  `SidecarRegistry.lookup/1`, and the pid-returning enumeration
+  `SidecarRegistry.entries_for_plugin/1` — so any use OUTSIDE the seam is
+  censused (the seam files themselves are exempt, so the seam's own uses
+  never fire).
 
     1. the V5 D3 resolver seam (`Ezagent.Runtime.Resolver` +
        `Ezagent.Runtime.SidecarRegistry`) — the single sanctioned
@@ -900,7 +905,15 @@ defmodule Ezagent.ActorBoundaryScanner do
     {Task.Supervisor, :start_child, [2, 3]},
     {:erlang, :spawn, [1, 2, 3, 4]},
     {:erlang, :spawn_link, [1, 2, 3, 4]},
-    {:erlang, :spawn_monitor, [1, 3]}
+    {:erlang, :spawn_monitor, [1, 3]},
+    # V5 A1b (codex #1): the SEAM-INTERNAL pid accessors. The resolver seam
+    # files are census-exempt, so these fire ONLY on seam-EXTERNAL use —
+    # exactly the "sidecar facade holds a pid" shape A1b eliminates.
+    {Ezagent.Runtime.Resolver, :pid_for, [1]},
+    {Ezagent.Runtime.SidecarRegistry, :lookup, [1]},
+    # The seam's pid-returning ENUMERATION (callers must use the pid-free
+    # `Resolver.list_keys/1` instead).
+    {Ezagent.Runtime.SidecarRegistry, :entries_for_plugin, [1]}
   ]
 
   # Bare Kernel spawn family (`spawn(fun)`, `spawn_link(m,f,a)`, …). An

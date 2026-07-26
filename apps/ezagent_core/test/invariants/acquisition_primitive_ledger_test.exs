@@ -28,9 +28,13 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     {"apps/ezagent_actor/lib/ezagent/kind.ex", "Process.info/2"},
     {"apps/ezagent_actor/lib/ezagent/kind/server.ex", "Process.whereis/1"},
     # domain/plugin apps
-    # (V5 A1b REMOVED the two ezagent_domain_pty server.ex seeds —
-    # `:sys.get_state/2` + `DynamicSupervisor.which_children/1` — the PTY
-    # sidecar migrated onto the resolver seam; its entries left the ledger)
+    # (V5 A1b REMOVED the ezagent_domain_pty server.ex seeds —
+    # `DynamicSupervisor.which_children/1` + `:sys.get_state/2` — the PTY
+    # sidecar migrated onto the resolver seam; its entries left the ledger.
+    # The `:sys.get_state` seed is RETARGETED to the remaining Python
+    # sidecar site so the census keeps teeth on the primitive (codex #1),
+    # and a synthetic detector test below covers `which_children/1`.)
+    {"apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex", ":sys.get_state/2"},
     {"apps/ezagent_domain_workspace/lib/ezagent/workspace.ex", "Task.Supervisor.start_child/2"},
     {"apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex",
      "Task.Supervisor.async_nolink/2"},
@@ -65,6 +69,41 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
       refute MapSet.member?(paths, exempt),
              "exempt file #{exempt} contributed an acquisition site — exemption broken"
     end
+  end
+
+  test "synthetic: DynamicSupervisor.which_children/1 is still detected (pilot teeth)" do
+    # The PTY pilot removed the last REAL which_children site; this synthetic
+    # source proves the census still has teeth on the primitive (codex #1).
+    source = """
+    defmodule SynthWhichChildren do
+      def child_pids(sup), do: DynamicSupervisor.which_children(sup)
+    end
+    """
+
+    sites = Scanner.acquisition_sites_in_source(source, "synth/which_children.ex")
+
+    assert %{target: "DynamicSupervisor.which_children/1"} =
+             Enum.find(sites, &(&1.target == "DynamicSupervisor.which_children/1"))
+  end
+
+  test "synthetic: seam-internal pid accessors are flagged OUTSIDE the seam (codex #1)" do
+    source = """
+    defmodule SynthSeamExternal do
+      alias Ezagent.Runtime.Resolver
+      alias Ezagent.Runtime.SidecarRegistry
+
+      def leak(key), do: Resolver.pid_for(key)
+      def leak2(key), do: SidecarRegistry.lookup(key)
+      def leak3(plugin), do: SidecarRegistry.entries_for_plugin(plugin)
+    end
+    """
+
+    targets =
+      MapSet.new(Scanner.acquisition_sites_in_source(source, "synth/leak.ex"), & &1.target)
+
+    assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.pid_for/1")
+    assert MapSet.member?(targets, "Ezagent.Runtime.SidecarRegistry.lookup/1")
+    assert MapSet.member?(targets, "Ezagent.Runtime.SidecarRegistry.entries_for_plugin/1")
   end
 
   test "regenerates the acquisition-primitive ledger markdown (full emit)" do

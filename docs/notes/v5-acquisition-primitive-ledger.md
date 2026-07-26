@@ -17,7 +17,7 @@ app INCLUDED — OUTSIDE the two exemption classes:
    (`GenServer.start_link(__MODULE__, …)`) is a supervision entry too and
    is not flagged.
 
-Primitives detected: `Registry.lookup/2`, `Registry.select/2`, `Registry.match/3`, `Registry.dispatch/3`, `Registry.dispatch/4`, `:global.whereis_name/1`, `:global.registered_names/0`, `GenServer.whereis/1`, `GenServer.whereis/2`, `Process.whereis/1`, `Process.list/0`, `:erlang.processes/0`, `:pg.get_members/1`, `:pg.get_members/2`, `:sys.get_state/1`, `:sys.get_state/2`, `:sys.replace_state/2`, `:sys.replace_state/3`, `:sys.get_status/1`, `:sys.get_status/2`, `DynamicSupervisor.which_children/1`, `Task.Supervisor.children/1`, `Process.monitor/1`, `Process.link/1`, `Process.info/1`, `Process.info/2`, `Task.async/1`, `Task.async/2`, `Task.Supervisor.async/2`, `Task.Supervisor.async/3`, `Task.Supervisor.async_nolink/2`, `Task.Supervisor.async_nolink/3`, `Task.Supervisor.start_child/2`, `Task.Supervisor.start_child/3`, `:erlang.spawn/1`, `:erlang.spawn/2`, `:erlang.spawn/3`, `:erlang.spawn/4`, `:erlang.spawn_link/1`, `:erlang.spawn_link/2`, `:erlang.spawn_link/3`, `:erlang.spawn_link/4`, `:erlang.spawn_monitor/1`, `:erlang.spawn_monitor/3`, plus the bare `Kernel.spawn*` family
+Primitives detected: `Registry.lookup/2`, `Registry.select/2`, `Registry.match/3`, `Registry.dispatch/3`, `Registry.dispatch/4`, `:global.whereis_name/1`, `:global.registered_names/0`, `GenServer.whereis/1`, `GenServer.whereis/2`, `Process.whereis/1`, `Process.list/0`, `:erlang.processes/0`, `:pg.get_members/1`, `:pg.get_members/2`, `:sys.get_state/1`, `:sys.get_state/2`, `:sys.replace_state/2`, `:sys.replace_state/3`, `:sys.get_status/1`, `:sys.get_status/2`, `DynamicSupervisor.which_children/1`, `Task.Supervisor.children/1`, `Process.monitor/1`, `Process.link/1`, `Process.info/1`, `Process.info/2`, `Task.async/1`, `Task.async/2`, `Task.Supervisor.async/2`, `Task.Supervisor.async/3`, `Task.Supervisor.async_nolink/2`, `Task.Supervisor.async_nolink/3`, `Task.Supervisor.start_child/2`, `Task.Supervisor.start_child/3`, `:erlang.spawn/1`, `:erlang.spawn/2`, `:erlang.spawn/3`, `:erlang.spawn/4`, `:erlang.spawn_link/1`, `:erlang.spawn_link/2`, `:erlang.spawn_link/3`, `:erlang.spawn_link/4`, `:erlang.spawn_monitor/1`, `:erlang.spawn_monitor/3`, `Ezagent.Runtime.Resolver.pid_for/1`, `Ezagent.Runtime.SidecarRegistry.lookup/1`, `Ezagent.Runtime.SidecarRegistry.entries_for_plugin/1`, plus the bare `Kernel.spawn*` family
 (unqualified `spawn`/`spawn_link`/`spawn_monitor` where the file defines
 no local function of that name) and `GenServer.start_link` of a NON-self
 module.
@@ -27,7 +27,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**66 entries.**
+**69 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -73,6 +73,9 @@ taint tracking, out of scope by design.
 | `:global.registered_names/0` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:91` | `13b893889a3c` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:100` | `f7a58e713fcf` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:105` | `0d0a314f833c` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:166` | `1d9396b25e9f` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:251` | `1d9396b25e9f` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:267` | `1d9396b25e9f` |
 | `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:177` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:215` | `ca5b5e2e6a26` |
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:238` | `ca5b5e2e6a26` |
