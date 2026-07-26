@@ -1,7 +1,7 @@
 defmodule Ezagent.Runtime.Resolver do
   @moduledoc """
-  V5 pid-closure, A1a — the single pid-acquisition SEAM (**ADDITIVE**;
-  nothing is wired onto it yet).
+  V5 pid-closure, A1a — the single pid-acquisition SEAM (built ADDITIVE in
+  A1a; A1b wires the PTY sidecar pilot onto it).
 
   North-star: "a pid is confined to one resolver". Every pid fetch in the
   system converges on `pid_for/1` here; every caller outside the seam holds
@@ -22,14 +22,26 @@ defmodule Ezagent.Runtime.Resolver do
 
   ## The public face never returns a pid
 
+    * `call/3` — resolves internally, `GenServer.call/3`s the target and
+      returns the REPLY (never the pid);
+    * `cast/2` — resolves internally and `GenServer.cast/2`s the target;
     * `dispatch/4` — resolves internally and delivers the standard
       `{:ezagent_dispatch, %Ezagent.Invocation{}}` envelope to the target
       (the same protocol verb `Ezagent.Kind.Server` already handles);
     * `send_envelope/2` — resolves internally and sends a raw message;
-    * `whereis/1` — liveness only (`:ok | :not_found`), no pid.
+    * `whereis/1` — liveness only (`:ok | :not_found`), no pid;
+    * `alive?/1` — liveness as a plain boolean;
+    * `terminate_child/2` — resolves internally and asks the CALLER-NAMED
+      `DynamicSupervisor` to terminate the child (the supervisor name is
+      public knowledge; the pid stays in the seam);
+    * `list_keys/1` — key-only enumeration of one plugin's sidecar
+      entries (KEYS, never pids) — the `list_agents/0`-style replacement.
 
   `pid_for/1` is public-for-the-seam (INTERNAL): it is the sole place a pid
-  is fetched. Callers outside the seam must use the public face above.
+  is fetched. Callers outside the seam must use the public face above — a
+  sidecar facade should NEVER need to call `pid_for/1` itself (A1b codex
+  review: the pilot leaked one through `find_by_agent_uri/1`; the
+  `call/cast/alive?/terminate_child/list_keys` face is what closes that).
   """
 
   alias Ezagent.{Invocation, KindRegistry}
@@ -127,6 +139,98 @@ defmodule Ezagent.Runtime.Resolver do
       {:ok, _pid} -> :ok
       :not_found -> :not_found
     end
+  end
+
+  @doc """
+  PUBLIC face — resolve `key` internally and `GenServer.call/3` the target,
+  returning the REPLY (never the pid).
+
+    * `{:ok, reply}` — the target's reply, whatever its shape;
+    * `{:error, :no_such_actor}` — nothing registered under `key`;
+    * `{:error, reason}` — the call itself failed (target died or was busy
+      past `timeout` mid-call): the exit reason, caught so a caller facing
+      a respawn-backing-off server gets a clean `{:error, _}` instead of an
+      escaping exit.
+  """
+  @spec call(key(), term(), timeout()) ::
+          {:ok, term()} | {:error, :no_such_actor} | {:error, term()}
+  def call(key, msg, timeout \\ 5_000) do
+    case pid_for(key) do
+      {:ok, pid} ->
+        try do
+          {:ok, GenServer.call(pid, msg, timeout)}
+        catch
+          :exit, reason -> {:error, reason}
+        end
+
+      :not_found ->
+        {:error, :no_such_actor}
+    end
+  end
+
+  @doc """
+  PUBLIC face — resolve `key` internally and `GenServer.cast/2` the target,
+  never returning the pid. `:ok` when delivered, `:not_found` otherwise.
+  """
+  @spec cast(key(), term()) :: :ok | :not_found
+  def cast(key, msg) do
+    case pid_for(key) do
+      {:ok, pid} ->
+        GenServer.cast(pid, msg)
+        :ok
+
+      :not_found ->
+        :not_found
+    end
+  end
+
+  @doc """
+  PUBLIC face — liveness of `key` as a plain boolean (the codex-named form
+  of `whereis/1`, which is kept for its `:ok | :not_found` callers).
+  """
+  @spec alive?(key()) :: boolean()
+  def alive?(key), do: whereis(key) == :ok
+
+  @doc """
+  PUBLIC face — resolve `key` internally and ask the CALLER-NAMED
+  `DynamicSupervisor` to terminate the child.
+
+  The caller names its own supervisor (public knowledge — a sidecar app
+  knows the supervisor its workers live under); the PID stays inside the
+  seam. This is the pid-free replacement for sidecars calling `pid_for/1`
+  to feed `DynamicSupervisor.terminate_child/2` themselves. `:ok` when the
+  child was terminated (or the supervisor no longer had it), `:not_found`
+  when nothing is registered under `key`.
+  """
+  @spec terminate_child(key(), DynamicSupervisor.supervisor()) :: :ok | :not_found
+  def terminate_child(key, supervisor) do
+    case pid_for(key) do
+      {:ok, pid} ->
+        case DynamicSupervisor.terminate_child(supervisor, pid) do
+          :ok -> :ok
+          {:error, :not_found} -> :not_found
+        end
+
+      :not_found ->
+        :not_found
+    end
+  end
+
+  @doc """
+  PUBLIC face — key-only enumeration: every resolver key one PLUGIN has
+  self-registered in the unified `SidecarRegistry`, as normalized
+  `{parent_uri_string, plugin, role}` tuples. NEVER a pid — this is the
+  seam's replacement for `list_agents/0`-style pid enumeration (the pid
+  stays inside `SidecarRegistry.entries_for_plugin/1`, seam-internal).
+
+  The returned keys are directly usable with `call/3`, `cast/2`,
+  `alive?/1` and `terminate_child/2` for per-entry follow-up queries.
+  """
+  @spec list_keys(atom()) :: [SidecarRegistry.key()]
+  def list_keys(plugin) when is_atom(plugin) do
+    plugin
+    |> SidecarRegistry.entries_for_plugin()
+    |> Enum.map(fn {parent_uri, role, _pid} -> {parent_uri, plugin, role} end)
   end
 
   # ── Internals ──────────────────────────────────────────────────────────────

@@ -1,8 +1,10 @@
 defmodule Ezagent.Runtime.ResolverTest do
   @moduledoc """
-  V5 A1a — the resolver facade: `pid_for/1` resolves both key spaces, the
-  public face (`dispatch/4`, `send_envelope/2`, `whereis/1`) routes without
-  ever returning a pid, and sidecar entries clean up on child death.
+  V5 A1a/A1b — the resolver facade: `pid_for/1` resolves both key spaces,
+  and the pid-free public face (`call/3`, `cast/2`, `alive?/1`,
+  `terminate_child/2`, `list_keys/1`, `dispatch/4`, `send_envelope/2`,
+  `whereis/1`) routes without ever returning a pid. Sidecar entries clean
+  up on child death.
 
   A1b: the `SidecarRegistry` is app-started (`EzagentActor.Application`);
   these tests register throwaway processes into it directly.
@@ -36,8 +38,17 @@ defmodule Ezagent.Runtime.ResolverTest do
       {:reply, {:echo, inv}, state}
     end
 
+    # Plain query verb for `Resolver.call/3` tests.
+    def handle_call({:echo, term}, _from, state), do: {:reply, {:echoed, term}, state}
+
     def handle_cast({:ezagent_dispatch, %Invocation{} = inv}, state) do
       if notify = inv.ctx[:test_notify], do: send(notify, {:cast_echo, inv})
+      {:noreply, state}
+    end
+
+    # Plain cast verb for `Resolver.cast/2` tests.
+    def handle_cast({:echo_cast, term}, state) do
+      if state.notify, do: send(state.notify, {:cast_received, term})
       {:noreply, state}
     end
 
@@ -159,6 +170,140 @@ defmodule Ezagent.Runtime.ResolverTest do
                  mode: :call,
                  caller: :vm_internal
                })
+    end
+  end
+
+  describe "call/3 — resolve + GenServer.call, never a pid (A1b)" do
+    test "returns the target's REPLY for a sidecar key" do
+      parent = unique_uri("parent")
+
+      {:ok, _pid} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent, :plugin_cc, :backend))
+
+      assert {:ok, {:echoed, :hello}} =
+               Resolver.call({parent, :plugin_cc, :backend}, {:echo, :hello})
+    end
+
+    test "returns the REPLY for a Kind URI target too" do
+      uri = unique_uri("call-kind")
+      _pid = start_kind(uri)
+
+      assert {:ok, {:echoed, 42}} = Resolver.call(uri, {:echo, 42})
+    end
+
+    test "{:error, :no_such_actor} for an unregistered key" do
+      assert {:error, :no_such_actor} =
+               Resolver.call({unique_uri("absent"), :plugin_cc, :backend}, {:echo, :x})
+    end
+
+    test "{:error, reason} (not an escaping exit) when the target dies mid-call" do
+      parent = unique_uri("parent")
+
+      {:ok, pid} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent, :plugin_cc, :backend))
+
+      ref = Process.monitor(pid)
+      GenServer.stop(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _}
+
+      # Once the registry entry is gone this is the :no_such_actor path; the
+      # exit-catching contract (busy/dead target → clean {:error, _}) is
+      # exercised by the PTY sidecar's write_input respawn-backoff test.
+      assert_eventually(fn ->
+        Resolver.call({parent, :plugin_cc, :backend}, {:echo, :x}) ==
+          {:error, :no_such_actor}
+      end)
+    end
+  end
+
+  describe "cast/2 — resolve + GenServer.cast, never a pid (A1b)" do
+    test "delivers the cast to the resolved sidecar" do
+      parent = unique_uri("parent")
+
+      {:ok, _pid} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent, :plugin_cc, :backend))
+
+      assert :ok = Resolver.cast({parent, :plugin_cc, :backend}, {:echo_cast, :ping})
+      assert_receive {:cast_received, :ping}
+    end
+
+    test ":not_found for an absent key" do
+      assert :not_found = Resolver.cast({unique_uri("absent"), :plugin_cc, :backend}, :ping)
+    end
+  end
+
+  describe "alive?/1 — boolean liveness, no pid (A1b)" do
+    test "true for a registered sidecar key, false otherwise" do
+      parent = unique_uri("parent")
+
+      {:ok, _pid} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent, :plugin_cc, :backend))
+
+      assert Resolver.alive?({parent, :plugin_cc, :backend}) == true
+      assert Resolver.alive?({parent, :plugin_codex, :backend}) == false
+      assert Resolver.alive?(unique_uri("absent")) == false
+    end
+  end
+
+  describe "terminate_child/2 — seam-held pid, caller-named supervisor (A1b)" do
+    test "terminates the resolved child under the CALLER's supervisor" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+      parent = unique_uri("parent")
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {EchoServer, name: SidecarRegistry.via(parent, :plugin_cc, :backend)}
+        )
+
+      assert :ok = Resolver.terminate_child({parent, :plugin_cc, :backend}, sup)
+      refute Process.alive?(pid)
+
+      assert_eventually(fn ->
+        Resolver.whereis({parent, :plugin_cc, :backend}) == :not_found
+      end)
+    end
+
+    test ":not_found when nothing is registered under the key" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+
+      assert :not_found =
+               Resolver.terminate_child({unique_uri("absent"), :plugin_cc, :backend}, sup)
+    end
+  end
+
+  describe "list_keys/1 — key-only enumeration, NEVER pids (A1b)" do
+    test "returns the plugin's resolver keys (usable with call/cast), never a pid" do
+      parent_a = unique_uri("parent-a")
+      parent_b = unique_uri("parent-b")
+
+      {:ok, _pid_a} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent_a, :plugin_cc, :backend))
+
+      {:ok, _pid_b} =
+        EchoServer.start_link(name: SidecarRegistry.via(parent_b, :plugin_cc, :frontend))
+
+      keys = Resolver.list_keys(:plugin_cc)
+
+      assert {parent_a, :plugin_cc, :backend} in keys
+      assert {parent_b, :plugin_cc, :frontend} in keys
+
+      # Pid-free: every entry is a {uri_string, plugin, role} key — no pid
+      # anywhere in the result.
+      for key <- keys do
+        assert {parent_uri, plugin, role} = key
+        assert is_binary(parent_uri)
+        assert is_atom(plugin)
+        assert is_atom(role)
+      end
+
+      # …and the keys are directly usable with the rest of the public face.
+      assert {:ok, {:echoed, :via_key}} =
+               Resolver.call({parent_a, :plugin_cc, :backend}, {:echo, :via_key})
+    end
+
+    test "an unknown plugin enumerates to []" do
+      assert Resolver.list_keys(:plugin_that_never_registers) == []
     end
   end
 
