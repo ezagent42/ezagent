@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**55 entries.**
+**56 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -84,7 +84,8 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:192` | `7d426e5ae957` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:626` | `7d426e5ae957` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:565` | `fc4c08124cf7` |
-| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:33` | `52bb96193cae` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:36` | `c88cb75b5fe5` |
+| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:37` | `52bb96193cae` |
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:159` | `e7ce1ed3aa9e` |
 | `GenServer.whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:136` | `72656dd22c72` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:284` | `e7850cf3319d` |

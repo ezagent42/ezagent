@@ -159,15 +159,34 @@ defmodule Ezagent.PidSurfaceScanner do
       `Ezagent.ActionSet.Session.Members.monitor_ref_for_current?/3` (was
       `monitor_ref_for_current_pid?/3`; `Kind.monitored_by?/1` now takes a URI
       and resolves the pid seam-internally).
-    - `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` — pid-returning
-      wrapper that re-obtains the pid from `KindRegistry`.
+    - V5 A1c chunk3 CLOSED (URI-native, no longer surfaced):
+      `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` (returns
+      `{:ok, uri}`; the duplicate-reconcile path moved off KindRegistry onto
+      the `Kind.alive?/1` read surface), `Ezagent.Domain.Agent.materialize_declared/1`
+      (keeps only the `:started | :already_started` tag),
+      `Ezagent.Domain.Agent.ensure_declared_member/1` (`:ok`),
+      `Ezagent.Workspace.create/2` + `spawn_workspace/2` (`{:ok, uri}` /
+      `{:already_started, uri}`), `Ezagent.Entity.Session.ensure_template_alive/1`
+      (`:ok`), `Ezagent.Orchestrator.Health.classify/1` +
+      `classify_in_workspace/2` (health struct no longer carries `:pid`),
+      `Ezagent.Entity.Agent.spawn_fresh/4` (result map drops `:pid`),
+      `Ezagent.ExternalMirror.WorkerSpawn.terminate_by_uri/1` (was
+      `terminate_by_pid/2`; the custom terminate_strategy callback contract is
+      now URI-only), `EzagentDomainInstanceMessage.AgentModuleResolver.spawn_agent/1`
+      (`{:ok, uri}`), `Ezagent.ProtocolApi.ReplyTransport.spawn_waiter/5` (`:ok`),
+      `EzagentPluginHello.Generator.start/2` + `concierge_start/3`,
+      `EzagentPluginHello.KanbanDelegation.start/3`, `EzagentPluginHello.Router.route/3`
+      (fire-and-forget, `:ok`), `Ezagent.ActionSet.Session.Membership.do_join/4`
+      (dead pid param deleted) and
+      `Ezagent.ActionSet.Session.SelfAdd.Effects.on_add/4` (monitor-site pid
+      resolved via `Runtime.Resolver.pid_for/1`).
     - `Ezagent.Kind.runtime_view/1` — public @spec is URI-only since A1c
       chunk1; still body-flagged (seam-internal `KindRegistry.lookup` →
       `GenServer.call`), as is `Kind.terminate_supervised/2` — both are
       sanctioned in-seam pid use, enumerated here until the enforcement flip
       distinguishes seam faces from leaks.
     - A1a has-teeth additions (codex round-2 #1 — public Kind-pid contracts
-      the A0 scope missed):
+      the A0 scope missed; all three CLOSED in A1c chunk3 above):
       `Ezagent.Domain.Agent.materialize_declared/1`,
       `Ezagent.Workspace.create/2`,
       `Ezagent.Entity.Session.ensure_template_alive/1`.
