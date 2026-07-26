@@ -36,7 +36,13 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     # pid form (consumed by composition_caps.ex, auto_derive.ex)
     {Ezagent.Kind, :runtime_view, 1},
     # intentional operator metadata — flagged, noted as candidate exception
-    {Ezagent.Identity.OperatorReads, :registry_all, 1}
+    {Ezagent.Identity.OperatorReads, :registry_all, 1},
+    # A1a floor (codex round-2 #1): public Kind-pid contracts the A0 scope
+    # (actor app + 5 seed files) MISSED — the whole-umbrella sweep must
+    # surface them
+    {Ezagent.Domain.Agent, :materialize_declared, 1},
+    {Ezagent.Workspace, :create, 2},
+    {Ezagent.Entity.Session, :ensure_template_alive, 1}
   ]
 
   test "has-teeth: surfaces every known pid-yielding seed site" do

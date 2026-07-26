@@ -17,16 +17,50 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
   pid-source call and USES it (self-detection `pid == self()`, raw
   serialized `GenServer.call(pid, …)`, pass-through)
 
-Scan scope: `apps/ezagent_actor/lib/**` wholesale (incl. the `Ezagent.Kind`
-facade) plus the elsewhere pid-handling seed files (`@extra_files` in the
-scanner). **48 entries.**
+Scan scope (A1a): the WHOLE umbrella public surface — every
+`apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
+5 seed files). This umbrella-wide list is the **frozen ledger authority**
+for the A1b/A1c migration phases. **135 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
+| `Ezagent.ActionSet.Session` | `activate/2` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:530` | body |
+| `Ezagent.ActionSet.Session.Members` | `monitor_ref_for_current_pid?/3` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/members.ex:34` | guard + param |
+| `Ezagent.ActionSet.Session.Membership` | `do_join/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex:28` | param |
+| `Ezagent.ActionSet.Session.SelfAdd.Effects` | `on_add/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:14` | guard + param |
+| `Ezagent.ActionSet.Workspace.Members` | `ensure_member_kind_spawned/1` | `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/members.ex:88` | body |
+| `Ezagent.Agent.TransportReadinessListener` | `arm_timeout/3` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:34` | body |
+| `Ezagent.AgentBridge.AdapterRegistry` | `deliver_or_buffer/3` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter_registry.ex:53` | guard + param |
+| `Ezagent.AgentBridge.Registry` | `bind/3` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:41` | guard + param |
+| `Ezagent.AgentBridge.Registry` | `list_all/0` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:124` | nested |
+| `Ezagent.AgentBridge.Registry` | `lookup/1` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:113` | nested |
+| `Ezagent.AgentBridge.Registry` | `unbind/2` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:94` | guard + param |
 | `Ezagent.Cap` | `issue_for_action/3` | `apps/ezagent_core/lib/ezagent/cap.ex:83` | body |
 | `Ezagent.Cap` | `revoke_all_to/2` | `apps/ezagent_core/lib/ezagent/cap.ex:245` | body |
 | `Ezagent.Cap` | `valid_for_target?/2` | `apps/ezagent_core/lib/ezagent/cap.ex:352` | body |
+| `Ezagent.Cap.TargetArtifactValidator` | `validate/2` | `apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex:7` | body |
+| `Ezagent.Domain.Agent` | `ensure_declared_member/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:317` | nested |
+| `Ezagent.Domain.Agent` | `materialize_declared/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:297` | nested |
+| `Ezagent.Domain.Pty` | `lookup/1` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:54` | nested |
+| `Ezagent.Domain.Pty` | `restart/1` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:163` | body |
+| `Ezagent.Domain.Pty.Server` | `status/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:143` | guard |
+| `Ezagent.Domain.Pty.Server` | `write_input/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:214` | guard |
+| `Ezagent.Domain.Python` | `alive?/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:281` | body |
+| `Ezagent.Domain.Python` | `call/4` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:211` | body |
+| `Ezagent.Domain.Python` | `notify/3` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:235` | body |
+| `Ezagent.Domain.Python` | `start_subprocess/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:144` | nested |
+| `Ezagent.Domain.Python` | `stop/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:258` | body |
+| `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:96` | nested |
+| `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:114` | nested |
+| `Ezagent.Domain.Python.Server` | `phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:130` | body |
 | `Ezagent.DomainGit.TaskAccessSupervisor` | `ensure_started/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/task_access_supervisor.ex:24` | nested |
+| `Ezagent.Entity.Agent` | `spawn_fresh/4` | `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex:351` | body + nested |
+| `Ezagent.Entity.Session` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:381` | body + nested |
+| `Ezagent.Entity.Session` | `subscribe_from/3` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:170` | guard |
+| `Ezagent.Entity.Session` | `subscribe_from/4` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:214` | guard + param |
+| `Ezagent.ExternalMirror.WorkerRegistry` | `list_all/0` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:77` | nested |
+| `Ezagent.ExternalMirror.WorkerRegistry` | `lookup/1` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:62` | body + nested |
+| `Ezagent.ExternalMirror.WorkerSpawn` | `terminate_by_pid/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex:208` | param |
 | `Ezagent.Identity.OperatorReads` | `registry_all/1` | `apps/ezagent_domain_identity/lib/ezagent/identity/operator_reads.ex:53` | nested |
 | `Ezagent.Invocation` | `call_live_target/3` | `apps/ezagent_actor/lib/ezagent/invocation.ex:475` | param |
 | `Ezagent.Invocation` | `dispatch/1` | `apps/ezagent_actor/lib/ezagent/invocation.ex:144` | param |
@@ -57,20 +91,74 @@ scanner). **48 entries.**
 | `Ezagent.KindRegistry` | `list_all/0` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:73` | nested |
 | `Ezagent.KindRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:60` | body + nested |
 | `Ezagent.KindRegistry` | `put_new/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:42` | nested + param |
+| `Ezagent.LifecycleCase` | `assert_transients_rebuilt/2` | `apps/ezagent_core/lib/ezagent/lifecycle_case.ex:206` | body |
+| `Ezagent.LifecycleCase` | `ensure_gate_supervisor!/0` | `apps/ezagent_core/lib/ezagent/lifecycle_case.ex:118` | body |
 | `Ezagent.LocalRuntime` | `ensure_started/2` | `apps/ezagent_actor/lib/ezagent/local_runtime.ex:62` | nested |
 | `Ezagent.LocalRuntime` | `ensure_started_detailed/2` | `apps/ezagent_actor/lib/ezagent/local_runtime.ex:72` | nested |
+| `Ezagent.Orchestrator.Health` | `classify/1` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex:86` | nested |
+| `Ezagent.Orchestrator.Health` | `classify_in_workspace/2` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex:103` | nested |
+| `Ezagent.Orchestrator.Tools` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex:909` | body |
 | `Ezagent.PendingDelivery` | `buffer_if_not_ready/3` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:75` | guard + param |
 | `Ezagent.PendingDelivery` | `buffer_if_not_ready_locked/3` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:91` | guard + param |
 | `Ezagent.PendingDelivery` | `partition_for_incarnation/2` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:174` | guard + param |
 | `Ezagent.PendingDelivery` | `take_locked/1` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:164` | nested |
 | `Ezagent.PendingDelivery` | `unwrap_entries/1` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:194` | param |
+| `Ezagent.Plugin` | `boot/1` | `apps/ezagent_core/lib/ezagent/plugin.ex:417` | body + nested |
+| `Ezagent.Presence` | `track/4` | `apps/ezagent_core/lib/ezagent/presence.ex:68` | guard + param |
+| `Ezagent.ProtocolApi.ReplyTransport` | `spawn_waiter/5` | `apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/reply_transport.ex:32` | nested |
+| `Ezagent.ProviderConnection.CredentialBackend.RefreshUse` | `new/5` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_backend/refresh_use.ex:25` | guard |
+| `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `claim/3` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:12` | guard |
+| `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `consume_claim/4` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:19` | guard |
+| `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `invalidate/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:33` | guard |
+| `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `start/2` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:7` | guard |
+| `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `validate_claim/4` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:26` | guard |
+| `Ezagent.ProviderConnection.LocalAuthorizationBackend.Support` | `portable_secret?/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/local_authorization_backend/support.ex:479` | guard |
+| `Ezagent.ProviderConnection.RegistryReadiness` | `ready/2` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:18` | guard |
+| `Ezagent.RoutingRegistry` | `declare_table/2` | `apps/ezagent_core/lib/ezagent/routing_registry.ex:67` | body |
+| `Ezagent.Runtime.OsProcess` | `send/2` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:101` | guard + param |
+| `Ezagent.Runtime.OsProcess` | `spawn/2` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:73` | nested |
+| `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:115` | param |
+| `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:117` | guard + param |
+| `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:174` | nested |
+| `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:144` | body + nested |
+| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:116` | nested |
+| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:118` | body + nested |
 | `Ezagent.SpawnRegistry` | `ensure_live/1` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:138` | body |
 | `Ezagent.SpawnRegistry` | `register/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:68` | param |
 | `Ezagent.SpawnRegistry` | `spawn/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:105` | nested |
 | `Ezagent.SpawnRegistry` | `spawn_detailed/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:187` | nested |
+| `Ezagent.SystemPrincipal` | `ensure/1` | `apps/ezagent_core/lib/ezagent/system_principal.ex:84` | body |
+| `Ezagent.Workspace` | `create/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:65` | nested |
+| `Ezagent.Workspace` | `spawn_workspace/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:39` | body + nested |
+| `Ezagent.World.Jsonable` | `to_json/1` | `apps/ezagent_plugin_world/lib/ezagent/world/jsonable.ex:20` | guard |
 | `EzagentActor.Application` | `start/2` | `apps/ezagent_actor/lib/ezagent_actor/application.ex:12` | body |
+| `EzagentCore.Application` | `start/2` | `apps/ezagent_core/lib/ezagent_core/application.ex:9` | body |
+| `EzagentCore.EtsOwner` | `subscribe_lifecycle/1` | `apps/ezagent_core/lib/ezagent_core/ets_owner.ex:175` | guard |
+| `EzagentCore.EtsReadiness` | `ready/1` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:24` | guard + param |
+| `EzagentCore.EtsReadiness` | `subscribe/1` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:18` | guard + nested + param |
+| `EzagentDomainAgent.Application` | `start/2` | `apps/ezagent_domain_agent/lib/ezagent_domain_agent/application.ex:25` | body |
+| `EzagentDomainExternalMirror.Application` | `start/2` | `apps/ezagent_domain_external_mirror/lib/ezagent_domain_external_mirror/application.ex:76` | body |
+| `EzagentDomainGit.Application` | `start/2` | `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex:7` | body |
+| `EzagentDomainIdentity.Application` | `start/2` | `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:62` | body |
+| `EzagentDomainInstanceMessage.AgentModuleResolver` | `spawn_agent/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/agent_module_resolver.ex:41` | nested |
+| `EzagentDomainInstanceMessage.Application` | `start/2` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/application.ex:62` | body |
+| `EzagentDomainInstanceMessage.SessionCreator` | `install_session_socialware_async/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:273` | body |
+| `EzagentDomainSocialware.Application` | `start/2` | `apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/application.ex:19` | body |
+| `EzagentDomainUi.Application` | `start/2` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/application.ex:30` | body |
 | `EzagentDomainUi.AutoDerive` | `instance_detail/1` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:56` | body |
 | `EzagentDomainUi.AutoDerive` | `list_instances/1` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:38` | nested |
+| `EzagentDomainWorkspace.Application` | `start/2` | `apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:32` | body |
+| `EzagentPluginCc.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex:20` | guard |
+| `EzagentPluginCc.SdkSidecar` | `lookup/1` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex:53` | body + nested |
+| `EzagentPluginCodex.AppServer` | `lookup/1` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex:42` | body + nested |
+| `EzagentPluginCodex.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_adapter.ex:18` | guard |
+| `EzagentPluginCodex.BridgeSidecar` | `lookup/1` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex:38` | body + nested |
+| `EzagentPluginHello.Generator` | `concierge_start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:45` | nested |
+| `EzagentPluginHello.Generator` | `start/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:37` | nested |
+| `EzagentPluginHello.KanbanDelegation` | `start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:23` | nested |
+| `EzagentPluginHello.Router` | `route/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex:36` | nested |
+| `EzagentPluginHello.Template.HelloAgent` | `instantiate/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/template/hello_agent.ex:27` | body |
+| `EzagentWeb.Application` | `start/2` | `apps/ezagent_web/lib/ezagent_web/application.ex:9` | body |
 
 ## Notable entries (seed annotations)
 
@@ -92,3 +180,8 @@ scanner). **48 entries.**
   metadata (the operator-gated global list-all chokepoint): flagged by the
   scanner as required, noted here as a candidate ENUMERATED-EXCEPTION for
   the later enforcement phase.
+- A1a has-teeth additions (codex round-2 #1 — public Kind-pid contracts
+  the A0 scope missed):
+  `Ezagent.Domain.Agent.materialize_declared/1`,
+  `Ezagent.Workspace.create/2`,
+  `Ezagent.Entity.Session.ensure_template_alive/1`.

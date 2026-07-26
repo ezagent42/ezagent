@@ -9,12 +9,14 @@ defmodule Ezagent.PidSurfaceScanner do
   with an EMPTY allowlist it EMITS the full list; nothing here fails CI on a
   violation. The enforcement flip is a separate, later, human-decided phase.
 
-  ## Scan scope
+  ## Scan scope (A1a broadening)
 
-    * `apps/ezagent_actor/lib/**/*.ex` — the actor framework wholesale
-      (`Ezagent.Kind` facade included, `Ezagent.SpawnRegistry`, …);
-    * public functions elsewhere that hand out actor pids (`@extra_files` —
-      the V5 seed files in ezagent_core / domain apps).
+    * `apps/*/lib/**/*.ex` — the WHOLE umbrella public surface (A1a: widened
+      from the A0 scope of `apps/ezagent_actor/lib/**` + 5 seed files). Every
+      public function anywhere in the tree whose spec/return/param/guard/body
+      yields or accepts a `pid()` is enumerated. The empty-allowlist emit is
+      the **frozen ledger authority** for the A1b/A1c migration phases
+      (`docs/notes/v5-obtain-side-pid-surface.md`).
 
   ## Detection (why-flagged)
 
@@ -42,18 +44,13 @@ defmodule Ezagent.PidSurfaceScanner do
   `docs/notes/v5-obtain-side-pid-surface.md`.
   """
 
-  @actor_lib "apps/ezagent_actor/lib"
-
-  # Public functions OUTSIDE the actor app that hand out actor pids (V5 seeds).
-  # Scope is deliberately explicit (not a whole-umbrella sweep): a blanket scan
-  # would drown the worklist in every generic OTP `start_link/1` in the tree.
-  @extra_files ~w(
-    apps/ezagent_core/lib/ezagent/cap.ex
-    apps/ezagent_core/lib/ezagent/behavior/terminable.ex
-    apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex
-    apps/ezagent_domain_git/lib/ezagent/domain_git/task_access_supervisor.ex
-    apps/ezagent_domain_identity/lib/ezagent/identity/operator_reads.ex
-  )
+  # A1a: the scan scope is the WHOLE umbrella public surface — every
+  # `apps/*/lib/**/*.ex` file. The A0 scope (`apps/ezagent_actor/lib/**` + 5
+  # hand-picked seed files) missed public Kind-pid contracts in the domain
+  # apps (codex round-2 #1: `Ezagent.Domain.Agent.materialize_declared/1`,
+  # `Ezagent.Workspace.create/2`, `Ezagent.Entity.Session.ensure_template_alive/1`);
+  # the blanket sweep is the only scope that provably cannot miss one.
+  @scan_glob "apps/*/lib/**/*.ex"
 
   # PID-SOURCE calls: a variable bound from one of these carries an actor pid.
   # Matched by trailing module-alias parts (string form, dot-boundary) so both
@@ -92,11 +89,9 @@ defmodule Ezagent.PidSurfaceScanner do
   def scan do
     root = repo_root()
 
-    files =
-      (root |> Path.join(@actor_lib) |> Path.join("**/*.ex") |> Path.wildcard()) ++
-        Enum.map(@extra_files, &Path.join(root, &1))
-
-    files
+    root
+    |> Path.join(@scan_glob)
+    |> Path.wildcard()
     |> Enum.flat_map(fn abs ->
       sites_in_source(File.read!(abs), Path.relative_to(abs, root))
     end)
@@ -136,9 +131,10 @@ defmodule Ezagent.PidSurfaceScanner do
       pid-source call and USES it (self-detection `pid == self()`, raw
       serialized `GenServer.call(pid, …)`, pass-through)
 
-    Scan scope: `apps/ezagent_actor/lib/**` wholesale (incl. the `Ezagent.Kind`
-    facade) plus the elsewhere pid-handling seed files (`@extra_files` in the
-    scanner). **#{length(sites)} entries.**
+    Scan scope (A1a): the WHOLE umbrella public surface — every
+    `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
+    5 seed files). This umbrella-wide list is the **frozen ledger authority**
+    for the A1b/A1c migration phases. **#{length(sites)} entries.**
 
     | Module | Function/Arity | File:Line | Why flagged |
     |---|---|---|---|
@@ -164,6 +160,11 @@ defmodule Ezagent.PidSurfaceScanner do
       metadata (the operator-gated global list-all chokepoint): flagged by the
       scanner as required, noted here as a candidate ENUMERATED-EXCEPTION for
       the later enforcement phase.
+    - A1a has-teeth additions (codex round-2 #1 — public Kind-pid contracts
+      the A0 scope missed):
+      `Ezagent.Domain.Agent.materialize_declared/1`,
+      `Ezagent.Workspace.create/2`,
+      `Ezagent.Entity.Session.ensure_template_alive/1`.
     """
   end
 
