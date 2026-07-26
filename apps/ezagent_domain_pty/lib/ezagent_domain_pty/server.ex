@@ -7,10 +7,13 @@ defmodule Ezagent.Domain.Pty.Server do
   Promoted from `Ezagent.PluginCc.PtyServer` to the Domain.Pty app per
   SPEC v1 §3.1 (Domain.Pty architecture, 2026-05-21). Module body is
   unchanged from the original cc-plugin implementation modulo the
-  Registry/Supervisor name renames (now `EzagentDomainPty.{Registry,
-  Supervisor}`); semantics, auto-prompt scanner, status snapshot,
-  trigger_redraw and snapshot_buffer all preserve their pre-move
-  behavior so the cc plugin (and tests) keep working unchanged.
+  Registry/Supervisor name renames (Supervisor is now
+  `EzagentDomainPty.Supervisor`; registration moved to the unified
+  `Ezagent.Runtime.SidecarRegistry` in V5 A1b — the private
+  `EzagentDomainPty.Registry` is retired); semantics, auto-prompt
+  scanner, status snapshot, trigger_redraw and snapshot_buffer all
+  preserve their pre-move behavior so the cc plugin (and tests) keep
+  working unchanged.
 
   ## Background — same as the pre-move docstring
 
@@ -66,7 +69,18 @@ defmodule Ezagent.Domain.Pty.Server do
   alias Ezagent.Domain.Pty.PhaseBroadcast
   alias Ezagent.Domain.Pty.RespawnPolicy
   alias Ezagent.Domain.Pty.ScreenMatch
+  alias Ezagent.Runtime.Resolver
+  alias Ezagent.Runtime.SidecarRegistry
   alias Ezagent.Utf8Tail
+
+  # V5 pid-closure A1b — this sidecar's resolver-seam identity. Every
+  # PtyServer SELF-registers under `{agent_uri, @plugin, @role}` in the
+  # unified `Ezagent.Runtime.SidecarRegistry` (the retired private
+  # `EzagentDomainPty.Registry` is gone), and every lookup converges on
+  # `Ezagent.Runtime.Resolver.pid_for/1` — no caller walks the
+  # DynamicSupervisor or probes state with `:sys.get_state/2` any more.
+  @plugin :ezagent_domain_pty
+  @role :pty
 
   defstruct [
     :agent_uri,
@@ -121,28 +135,70 @@ defmodule Ezagent.Domain.Pty.Server do
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
-    # PR-D2: register under :via Registry keyed by agent_uri so any
-    # concurrent attempt to spawn the same agent collapses to a single
-    # process atomically (start_link returns {:error, {:already_started,
-    # pid}} for the second caller, no race window).
+    # PR-D2: register under :via keyed by agent_uri so any concurrent
+    # attempt to spawn the same agent collapses to a single process
+    # atomically (start_link returns {:error, {:already_started, pid}}
+    # for the second caller, no race window).
+    # V5 A1b: the :via lives on the unified `Ezagent.Runtime.SidecarRegistry`
+    # (plugin-qualified `{agent_uri, :ezagent_domain_pty, :pty}` key).
     GenServer.start_link(__MODULE__, args, name: via(agent_uri))
   end
 
-  @doc "Build the :via tuple for an agent_uri (used as a process name)."
+  @doc """
+  Build the :via tuple for an agent_uri (used as a process name).
+
+  V5 A1b: the tuple targets the unified
+  `Ezagent.Runtime.SidecarRegistry` under the plugin-qualified key
+  `{agent_uri, :ezagent_domain_pty, :pty}`.
+  """
   def via(%URI{} = agent_uri) do
-    {:via, Registry, {EzagentDomainPty.Registry, URI.to_string(agent_uri)}}
+    SidecarRegistry.via(agent_uri, @plugin, @role)
+  end
+
+  # The resolver-seam key for this agent's PTY sidecar.
+  defp resolver_key(%URI{} = agent_uri), do: {agent_uri, @plugin, @role}
+
+  # Resolve-then-call through the seam: the ONLY place this module turns an
+  # agent_uri into a pid is `Resolver.pid_for/1`. Returns `{:ok, reply}` or
+  # `:error` (unregistered, or the server died/timed out mid-call).
+  @spec seam_call(URI.t(), term(), non_neg_integer()) :: {:ok, term()} | :error
+  defp seam_call(%URI{} = agent_uri, msg, timeout) do
+    case Resolver.pid_for(resolver_key(agent_uri)) do
+      {:ok, pid} ->
+        try do
+          {:ok, GenServer.call(pid, msg, timeout)}
+        catch
+          :exit, _ -> :error
+        end
+
+      :not_found ->
+        :error
+    end
   end
 
   @doc """
   Status snapshot for `/admin/agents/:uri` LV (Phase 5 PR 3).
 
-  Returns the live PTY's introspectable state — operator-facing fields
+  V5 A1b: a proper query API — resolves `(agent_uri, :ezagent_domain_pty,
+  :pty)` through the resolver seam and `GenServer.call`s the server for its
+  OWN snapshot (previously `:sys.get_state/2` on the pid — the
+  state-forgery vector codex flagged). Returns the snapshot map, or `nil`
+  when no server is alive / the call fails.
+
+  The live PTY's introspectable state — operator-facing fields
   only. Heavy fields (full pty_buffer) are trimmed; recent output is
   ANSI-stripped + bounded.
   """
-  def status(pid) when is_pid(pid) do
-    state = :sys.get_state(pid, 500)
+  @spec status(URI.t()) :: map() | nil
+  def status(%URI{} = agent_uri) do
+    case seam_call(agent_uri, :status, 500) do
+      {:ok, snapshot} -> snapshot
+      :error -> nil
+    end
+  end
 
+  # Server-side status snapshot (served via `handle_call(:status, ...)`).
+  defp status_snapshot(state) do
     recent_lines =
       state.pty_buffer
       |> AnsiStrip.strip()
@@ -178,41 +234,40 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc """
-  Walk the DynamicSupervisor's children for the PtyServer whose `agent_uri` matches.
-  Returns `{:ok, pid}` or `:error`. Cheap enough for the current child count.
+  Resolve the PtyServer pid for `agent_uri` through the resolver seam
+  (`Ezagent.Runtime.Resolver.pid_for/1` on the `{agent_uri,
+  :ezagent_domain_pty, :pty}` key). Returns `{:ok, pid}` or `:error`.
+
+  V5 A1b: this is the ONLY pid fetch left in the module, and it goes
+  through the seam — the old `DynamicSupervisor.which_children/1` +
+  `:sys.get_state/2` walk (the enumeration + state-forgery vector codex
+  flagged) is gone. Prefer the query APIs (`status/1`, `phase/1`,
+  `snapshot_buffer/2`, `trigger_redraw/1`) over holding the pid; this
+  remains for the Domain.Pty app's own supervisor plumbing
+  (`terminate_child`).
   """
+  @spec find_by_agent_uri(URI.t()) :: {:ok, pid()} | :error
   def find_by_agent_uri(%URI{} = agent_uri) do
-    target = URI.to_string(agent_uri)
-
-    sup_pid = Process.whereis(EzagentDomainPty.Supervisor)
-
-    if sup_pid do
-      DynamicSupervisor.which_children(sup_pid)
-      |> Enum.find_value(:error, fn
-        {_, child_pid, :worker, _} when is_pid(child_pid) ->
-          try do
-            state = :sys.get_state(child_pid, 500)
-            if URI.to_string(state.agent_uri) == target, do: {:ok, child_pid}, else: nil
-          catch
-            _, _ -> nil
-          end
-
-        _ ->
-          nil
-      end)
-    else
-      :error
+    case Resolver.pid_for(resolver_key(agent_uri)) do
+      {:ok, pid} -> {:ok, pid}
+      :not_found -> :error
     end
   end
 
   @doc """
   Write bytes to the PTY's stdin (called by Ezagent.ActionSet.Pty.invoke(:write, ...)).
 
-  Returns `:ok` on success or `{:error, reason}`. Test_mode short-circuits
-  to `:ok` without invoking erlexec.
+  V5 A1b: URI-addressed — resolves through the resolver seam; callers
+  never hold the pid. Returns `:ok` on success, `{:error, :no_pty_server}`
+  when no server is registered, or `{:error, reason}`. Test_mode
+  short-circuits to `:ok` without invoking erlexec.
   """
-  def write_input(pid, bytes) when is_pid(pid) and is_binary(bytes) do
-    GenServer.call(pid, {:write_input, bytes}, 1000)
+  @spec write_input(URI.t(), binary()) :: :ok | {:error, term()}
+  def write_input(%URI{} = agent_uri, bytes) when is_binary(bytes) do
+    case Resolver.pid_for(resolver_key(agent_uri)) do
+      {:ok, pid} -> GenServer.call(pid, {:write_input, bytes}, 1000)
+      :not_found -> {:error, :no_pty_server}
+    end
   end
 
   @doc "PubSub topic for an agent's PTY stdout/stderr stream (Phase 5 PR 4)."
@@ -249,24 +304,17 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc """
   Public accessor for the current phase of a live PtyServer.
 
-  Returns `:starting | :running | :dead` for a live server, or
-  `:dead` when no server exists (consistent with "no process → not
-  running"). Callers that need to distinguish "no server" from
+  V5 A1b: served by an explicit `GenServer.call` (`:phase`), not
+  `:sys.get_state/2`. Returns `:starting | :running | :dead` for a live
+  server, or `:dead` when no server exists (consistent with "no process →
+  not running"). Callers that need to distinguish "no server" from
   "server in :dead" should use `Ezagent.Domain.Pty.alive?/1` first.
   """
   @spec phase(URI.t()) :: :starting | :running | :dead
   def phase(%URI{} = agent_uri) do
-    case find_by_agent_uri(agent_uri) do
-      {:ok, pid} ->
-        try do
-          state = :sys.get_state(pid, 500)
-          state.phase || :dead
-        catch
-          _, _ -> :dead
-        end
-
-      :error ->
-        :dead
+    case seam_call(agent_uri, :phase, 500) do
+      {:ok, phase} -> phase
+      :error -> :dead
     end
   end
 
@@ -285,79 +333,56 @@ defmodule Ezagent.Domain.Pty.Server do
   visible screen within the last few KB via ANSI redraw sequences.
 
   Returns `{:ok, binary}` or `:error` if PtyServer not alive.
+
+  V5 A1b: served by an explicit `GenServer.call` (`{:snapshot_buffer,
+  max_bytes}`), not `:sys.get_state/2`.
   """
   @spec snapshot_buffer(URI.t(), pos_integer()) :: {:ok, binary()} | :error
   def snapshot_buffer(%URI{} = agent_uri, max_bytes \\ 65_536) do
-    case find_by_agent_uri(agent_uri) do
-      {:ok, pid} ->
-        try do
-          state = :sys.get_state(pid, 500)
-          buf = state.pty_buffer
-
-          # #1201 ①: codepoint-boundary-aware cut — a raw binary_part
-          # tail can start mid-codepoint and break downstream consumers
-          # (PubSub replay / LiveView render) on CJK-heavy output.
-          {:ok, Utf8Tail.tail(buf, max_bytes)}
-        catch
-          _, _ -> :error
-        end
-
-      :error ->
-        :error
-    end
+    seam_call(agent_uri, {:snapshot_buffer, max_bytes}, 500)
   end
 
   @doc """
   PR #128 — trigger a TUI redraw via a brief winsize change (most TUIs listen for
   SIGWINCH and re-emit their screen). Belt-and-suspenders companion to
   `snapshot_buffer/2`, for when the TUI's last redraw predates the bounded buffer.
+
+  V5 A1b: served by an explicit `GenServer.call` (`:trigger_redraw`) — the
+  winsize dance runs INSIDE the server now (it owns `os_pid`), not via
+  `:sys.get_state/2` + caller-side `:exec.winsz/3`.
   """
   @spec trigger_redraw(URI.t()) :: :ok | :error
   def trigger_redraw(%URI{} = agent_uri) do
-    case find_by_agent_uri(agent_uri) do
-      {:ok, pid} ->
-        try do
-          state = :sys.get_state(pid, 500)
-
-          if state.os_pid do
-            # Briefly shrink + restore to provoke a redraw without
-            # leaving a smaller window pinned.
-            :exec.winsz(state.os_pid, 40, 119)
-            Process.sleep(50)
-            :exec.winsz(state.os_pid, 40, 120)
-          end
-
-          :ok
-        catch
-          _, _ -> :error
-        end
-
-      :error ->
-        :error
+    case seam_call(agent_uri, :trigger_redraw, 1_000) do
+      {:ok, :ok} -> :ok
+      :error -> :error
     end
   end
 
-  @doc "List all live PtyServer agent_uris under the DynamicSupervisor."
+  @doc """
+  List all live PtyServer agent_uris.
+
+  V5 A1b: enumerated via `Registry.select/2` on the unified
+  `Ezagent.Runtime.SidecarRegistry` INSIDE the resolver seam
+  (`SidecarRegistry.entries_for_plugin/1`, seam-exempt) — the old
+  `DynamicSupervisor.which_children/1` + `:sys.get_state/2` walk is gone.
+  `os_pid` is fetched through the server's own `:os_pid` query call.
+  """
+  @spec list_agents() :: [%{agent_uri: URI.t(), pid: pid(), os_pid: non_neg_integer() | nil}]
   def list_agents do
-    sup_pid = Process.whereis(EzagentDomainPty.Supervisor)
+    @plugin
+    |> SidecarRegistry.entries_for_plugin()
+    |> Enum.filter(fn {_parent_uri, role, _pid} -> role == @role end)
+    |> Enum.map(fn {parent_uri, _role, pid} ->
+      os_pid =
+        try do
+          GenServer.call(pid, :os_pid, 500)
+        catch
+          :exit, _ -> nil
+        end
 
-    if sup_pid do
-      DynamicSupervisor.which_children(sup_pid)
-      |> Enum.flat_map(fn
-        {_, child_pid, :worker, _} when is_pid(child_pid) ->
-          try do
-            state = :sys.get_state(child_pid, 500)
-            [%{agent_uri: state.agent_uri, pid: child_pid, os_pid: state.os_pid}]
-          catch
-            _, _ -> []
-          end
-
-        _ ->
-          []
-      end)
-    else
-      []
-    end
+      %{agent_uri: Ezagent.URI.new!(parent_uri), pid: pid, os_pid: os_pid}
+    end)
   end
 
   @impl true
@@ -663,6 +688,35 @@ defmodule Ezagent.Domain.Pty.Server do
   defp redact_cmd_env(env), do: env
 
   # --- erlexec messages -----------------------------------------------
+
+  # V5 A1b — the explicit query APIs that replaced every external
+  # `:sys.get_state/2` reach-in. The server answers for its OWN state.
+
+  @impl true
+  def handle_call(:status, _from, state), do: {:reply, status_snapshot(state), state}
+
+  def handle_call(:phase, _from, state), do: {:reply, state.phase || :dead, state}
+
+  def handle_call({:snapshot_buffer, max_bytes}, _from, state) do
+    # #1201 ①: codepoint-boundary-aware cut — a raw binary_part
+    # tail can start mid-codepoint and break downstream consumers
+    # (PubSub replay / LiveView render) on CJK-heavy output.
+    {:reply, Utf8Tail.tail(state.pty_buffer, max_bytes), state}
+  end
+
+  def handle_call(:trigger_redraw, _from, %__MODULE__{os_pid: os_pid} = state) do
+    if os_pid do
+      # Briefly shrink + restore to provoke a redraw without
+      # leaving a smaller window pinned.
+      :exec.winsz(os_pid, 40, 119)
+      Process.sleep(50)
+      :exec.winsz(os_pid, 40, 120)
+    end
+
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:os_pid, _from, state), do: {:reply, state.os_pid, state}
 
   @impl true
   def handle_call({:write_input, _bytes}, _from, %__MODULE__{test_mode: true} = state) do

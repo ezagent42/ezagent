@@ -11,13 +11,17 @@ defmodule EzagentDomainPty.Application do
 
   ## Children
 
-  1. `EzagentDomainPty.Registry` — `:via` Registry keyed by
-     `URI.to_string(agent_uri)`. PtyServers register here on
-     `start_link`, so concurrent spawn attempts for the same agent
-     collapse atomically to `{:error, {:already_started, pid}}`
-     (PR-D2 atomic dedup invariant).
-  2. `EzagentDomainPty.Supervisor` — `DynamicSupervisor` parenting the
+  1. `EzagentDomainPty.Supervisor` — `DynamicSupervisor` parenting the
      PtyServer GenServers.
+
+  Registration: each PtyServer `:via`-self-registers under
+  `{agent_uri, :ezagent_domain_pty, :pty}` in the UNIFIED
+  `Ezagent.Runtime.SidecarRegistry` (started by
+  `EzagentActor.Application`, V5 A1b), so concurrent spawn attempts for
+  the same agent collapse atomically to `{:error, {:already_started,
+  pid}}` (PR-D2 atomic dedup invariant). The private
+  `EzagentDomainPty.Registry` child is RETIRED — lookups go through
+  `Ezagent.Runtime.Resolver`.
 
   No other state. PR-B (2026-05-21) moved `Ezagent.ActionSet.Pty` into
   this app — the Behavior module lives here, but its Agent-Kind
@@ -50,7 +54,6 @@ defmodule EzagentDomainPty.Application do
     :ok = Ezagent.Domain.Pty.RespawnPolicy.init()
 
     children = [
-      {Registry, keys: :unique, name: EzagentDomainPty.Registry},
       {DynamicSupervisor,
        name: EzagentDomainPty.Supervisor,
        strategy: :one_for_one,

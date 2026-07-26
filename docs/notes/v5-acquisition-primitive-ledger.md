@@ -27,7 +27,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**78 entries.**
+**66 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -73,18 +73,6 @@ taint tracking, out of scope by design.
 | `:global.registered_names/0` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:91` | `13b893889a3c` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:100` | `f7a58e713fcf` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:105` | `0d0a314f833c` |
-| `Registry.lookup/2` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:139` | `bf59ed38ae20` |
-| `Registry.lookup/2` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:169` | `1ae6b0f7c561` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:144` | `d7a39f8c14a4` |
-| `Process.whereis/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:187` | `c99c1e1de521` |
-| `DynamicSupervisor.which_children/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:190` | `f2a8970c18f0` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:194` | `65c7e1bd2c6b` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:262` | `d7a39f8c14a4` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:294` | `d7a39f8c14a4` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:320` | `d7a39f8c14a4` |
-| `Process.whereis/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:342` | `c99c1e1de521` |
-| `DynamicSupervisor.which_children/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:345` | `f2a8970c18f0` |
-| `:sys.get_state/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:349` | `65c7e1bd2c6b` |
 | `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:177` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:215` | `ca5b5e2e6a26` |
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:238` | `ca5b5e2e6a26` |

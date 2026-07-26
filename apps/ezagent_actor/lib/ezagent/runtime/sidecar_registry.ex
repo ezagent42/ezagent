@@ -1,11 +1,12 @@
 defmodule Ezagent.Runtime.SidecarRegistry do
   @moduledoc """
-  V5 pid-closure, A1a — the ONE unified sidecar registry (**ADDITIVE**).
+  V5 pid-closure, A1a/A1b — the ONE unified sidecar registry.
 
-  This registry REPLACES the 6 per-plugin sidecar registries in a later phase
-  (A1b). For now it merely EXISTS alongside them: they stay authoritative,
-  nothing is migrated, and this registry is deliberately NOT wired into any
-  supervision tree (zero behavior change — A1b starts it).
+  This registry REPLACES the 6 per-plugin sidecar registries one pilot at a
+  time (A1b: PTY first, then the rest). A1b starts it in
+  `EzagentActor.Application` (runtime infra, next to `Ezagent.KindRegistry`)
+  and migrates the PTY sidecar onto it; unmigrated plugins keep their own
+  registries until their turn.
 
   ## Keys: plugin-qualified tuples
 
@@ -45,8 +46,8 @@ defmodule Ezagent.Runtime.SidecarRegistry do
   @doc """
   Start the unified sidecar registry (standalone).
 
-  A1a: NOT started by any application supervision tree — tests and future
-  wiring (A1b) start it explicitly.
+  A1b: started by `EzagentActor.Application` in production/test boots;
+  `start_link/1` remains for standalone use.
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts \\ []) do
@@ -75,9 +76,9 @@ defmodule Ezagent.Runtime.SidecarRegistry do
     do: {uri_string(parent_uri), plugin, role}
 
   @doc """
-  Is the registry process running? A1a leaves the registry UNSTARTED by the
-  application (additive, unwired), so the resolver treats "not started" as
-  "no sidecar registered" rather than crashing.
+  Is the registry process running? The resolver treats "not started" as
+  "no sidecar registered" rather than crashing (A1a left it unwired; A1b
+  starts it in `EzagentActor.Application`).
   """
   @spec started?() :: boolean()
   def started?, do: Process.whereis(@registry) != nil
@@ -91,6 +92,24 @@ defmodule Ezagent.Runtime.SidecarRegistry do
     case Registry.lookup(@registry, key(parent_uri, plugin, role)) do
       [{pid, _value}] -> {:ok, pid}
       [] -> :error
+    end
+  end
+
+  # INTERNAL (seam-exempt) — enumerate every self-registered entry for one
+  # plugin as `{parent_uri_string, role, pid}` triples. This is the A1b
+  # replacement for the retired per-plugin `DynamicSupervisor.which_children/1`
+  # + `:sys.get_state/2` enumeration (codex: the enumeration vector): a
+  # sidecar app that must LIST its own children (e.g. PTY `list_agents/0`)
+  # does it HERE, inside the seam, never by walking a supervisor.
+  @doc false
+  @spec entries_for_plugin(atom()) :: [{String.t(), atom(), pid()}]
+  def entries_for_plugin(plugin) when is_atom(plugin) do
+    if started?() do
+      Registry.select(@registry, [
+        {{{:"$1", :"$2", :"$3"}, :"$4", :_}, [{:==, :"$2", plugin}], [{{:"$1", :"$3", :"$4"}}]}
+      ])
+    else
+      []
     end
   end
 

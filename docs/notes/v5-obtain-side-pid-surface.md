@@ -41,10 +41,9 @@ for the A1b/A1c migration phases. **139 entries.**
 | `Ezagent.Cap.TargetArtifactValidator` | `validate/2` | `apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex:7` | body |
 | `Ezagent.Domain.Agent` | `ensure_declared_member/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:317` | nested |
 | `Ezagent.Domain.Agent` | `materialize_declared/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:297` | nested |
-| `Ezagent.Domain.Pty` | `lookup/1` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:54` | nested |
-| `Ezagent.Domain.Pty` | `restart/1` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:163` | body |
-| `Ezagent.Domain.Pty.Server` | `status/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:143` | guard |
-| `Ezagent.Domain.Pty.Server` | `write_input/2` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:214` | guard |
+| `Ezagent.Domain.Pty` | `lookup/1` | `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:59` | nested |
+| `Ezagent.Domain.Pty.Server` | `find_by_agent_uri/1` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:250` | nested |
+| `Ezagent.Domain.Pty.Server` | `list_agents/0` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:372` | nested |
 | `Ezagent.Domain.Python` | `alive?/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:281` | body |
 | `Ezagent.Domain.Python` | `call/4` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:211` | body |
 | `Ezagent.Domain.Python` | `notify/3` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:235` | body |
@@ -122,7 +121,8 @@ for the A1b/A1c migration phases. **139 entries.**
 | `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:51` | nested |
 | `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:63` | nested |
 | `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:64` | nested |
-| `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:90` | body + nested |
+| `Ezagent.Runtime.SidecarRegistry` | `entries_for_plugin/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:106` | nested |
+| `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:91` | body + nested |
 | `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:174` | nested |
 | `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:144` | body + nested |
 | `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:116` | nested |

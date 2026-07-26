@@ -11,9 +11,10 @@ defmodule Ezagent.ActionSet.Pty do
       entity://agent/team-alpha/cc_<name>?action=pty.write   args: %{bytes: "..."}
 
   The Agent Kind hosts this Behavior; `ctx.self_uri` (injected by
-  `Ezagent.Kind.Runtime`) is the agent URI used to locate the
-  PtyServer via the `Ezagent.Domain.Pty.lookup/1` facade
-  (`EzagentDomainPty.Registry` is the underlying :via name source).
+  `Ezagent.Kind.Runtime`) is the agent URI used to reach the
+  PtyServer via the URI-addressed `Ezagent.Domain.Pty.Server.write_input/2`
+  (V5 A1b: resolved through the unified `Ezagent.Runtime.SidecarRegistry`
+  via the resolver seam — no pid is held here).
 
   ## Domain.Pty PR-A / PR-B (2026-05-21 SPEC v1)
 
@@ -85,8 +86,9 @@ defmodule Ezagent.ActionSet.Pty do
   Despite the name, this Behavior holds NO process-bound resource in
   its slice. The PtyServer port/process is owned by the
   `ezagent_domain_pty` app's own supervised `Ezagent.Domain.Pty.Server`
-  and is resolved fresh on every write via `Ezagent.Domain.Pty.lookup/1`
-  (the `EzagentDomainPty.Registry` `:via` source). The Behavior's slice
+  and is resolved fresh on every write through the resolver seam
+  (the unified `Ezagent.Runtime.SidecarRegistry` `:via` source, V5 A1b).
+  The Behavior's slice
   is therefore PURE durable counters:
 
   - **STATE (persistent):** `write_calls`, `total_bytes` — cumulative
@@ -188,41 +190,37 @@ defmodule Ezagent.ActionSet.Pty do
   def handle_write(%{bytes: bytes}, ctx) when is_binary(bytes) do
     case Map.get(ctx, :self_uri) do
       %URI{} = agent_uri ->
-        case Ezagent.Domain.Pty.lookup(agent_uri) do
-          {:ok, pid} ->
-            case Ezagent.Domain.Pty.Server.write_input(pid, bytes) do
-              :ok ->
-                # `state` may be `%{}` on first write — the host Agent
-                # Kind doesn't list `Behavior.Pty` in `behaviors/0`
-                # (PR #146: cc plugin can't be a chat-domain dep, so the
-                # Behavior is added via BehaviorRegistry at boot, not
-                # statically declared). Initialize lazily from the
-                # `create/1` base so re-writes accumulate normally.
-                # (Under Lifecycle `create/1` returns the durable `state`
-                # map directly; we pull its defaults for the lazy seed.)
-                {:ok, base} = create(%{})
+        # V5 A1b: URI-addressed write — the server resolves its own pid
+        # through the resolver seam; this Behavior never holds one.
+        case Ezagent.Domain.Pty.Server.write_input(agent_uri, bytes) do
+          :ok ->
+            # `state` may be `%{}` on first write — the host Agent
+            # Kind doesn't list `Behavior.Pty` in `behaviors/0`
+            # (PR #146: cc plugin can't be a chat-domain dep, so the
+            # Behavior is added via BehaviorRegistry at boot, not
+            # statically declared). Initialize lazily from the
+            # `create/1` base so re-writes accumulate normally.
+            # (Under Lifecycle `create/1` returns the durable `state`
+            # map directly; we pull its defaults for the lazy seed.)
+            {:ok, base} = create(%{})
 
-                prev_write_calls = ctx[:read].(:write_calls, base.write_calls)
-                prev_total_bytes = ctx[:read].(:total_bytes, base.total_bytes)
+            prev_write_calls = ctx[:read].(:write_calls, base.write_calls)
+            prev_total_bytes = ctx[:read].(:total_bytes, base.total_bytes)
 
-                new_write_calls = prev_write_calls + 1
-                new_total_bytes = prev_total_bytes + byte_size(bytes)
+            new_write_calls = prev_write_calls + 1
+            new_total_bytes = prev_total_bytes + byte_size(bytes)
 
-                {:ok, %{bytes_written: byte_size(bytes)},
-                 [
-                   {:set, :write_calls, new_write_calls},
-                   {:set, :total_bytes, new_total_bytes}
-                 ]}
+            {:ok, %{bytes_written: byte_size(bytes)},
+             [
+               {:set, :write_calls, new_write_calls},
+               {:set, :total_bytes, new_total_bytes}
+             ]}
 
-              {:error, _reason} = err ->
-                err
+          {:error, _reason} = err ->
+            err
 
-              other ->
-                {:error, {:pty_write_failed, other}}
-            end
-
-          :error ->
-            {:error, :no_pty_server}
+          other ->
+            {:error, {:pty_write_failed, other}}
         end
 
       _ ->

@@ -28,9 +28,9 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     {"apps/ezagent_actor/lib/ezagent/kind.ex", "Process.info/2"},
     {"apps/ezagent_actor/lib/ezagent/kind/server.ex", "Process.whereis/1"},
     # domain/plugin apps
-    {"apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex", ":sys.get_state/2"},
-    {"apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex",
-     "DynamicSupervisor.which_children/1"},
+    # (V5 A1b REMOVED the two ezagent_domain_pty server.ex seeds —
+    # `:sys.get_state/2` + `DynamicSupervisor.which_children/1` — the PTY
+    # sidecar migrated onto the resolver seam; its entries left the ledger)
     {"apps/ezagent_domain_workspace/lib/ezagent/workspace.ex", "Task.Supervisor.start_child/2"},
     {"apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex",
      "Task.Supervisor.async_nolink/2"},

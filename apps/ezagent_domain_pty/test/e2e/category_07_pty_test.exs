@@ -20,8 +20,9 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
 
   Crucially, `test_mode: true` is NOT a stub — it still:
 
-  - Allocates the GenServer + registers it under
-    `EzagentDomainPty.Registry` keyed by the agent URI.
+  - Allocates the GenServer + registers it under the unified
+    `Ezagent.Runtime.SidecarRegistry` (V5 A1b — `{agent_uri,
+    :ezagent_domain_pty, :pty}` key; the private registry is retired).
   - Walks the canonical phase state machine (`:starting → :running`).
   - Broadcasts `:starting` and `:running` over PubSub at
     `pty:phase:<agent_uri>`.

@@ -64,7 +64,11 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # public surface; lifecycle_case's two raw reach-ins collapse into ONE private
   # `raw_slice!/2` helper calling `Ezagent.Kind.SliceAccess.get_raw_slice/2`
   # directly (−1 site).
-  @forward_frozen 157
+  # V5 A1b lowered forward 157→151: the PTY sidecar migrated onto the resolver
+  # seam — its six `:sys.get_state` reach-ins (status/phase/snapshot_buffer/
+  # trigger_redraw/find_by_agent_uri/list_agents) became explicit GenServer.call
+  # client APIs resolved via `Ezagent.Runtime.Resolver` (−6 sites).
+  @forward_frozen 151
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
@@ -305,13 +309,17 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     assert Scanner.forward_sites_in_source(probe, "apps/x/lib/w.ex") != []
   end
 
-  test "the current PTY/Python sidecar :sys sites are ledgered debt (not new offenders)" do
+  test "the current Python sidecar :sys sites are ledgered debt (not new offenders)" do
+    # V5 A1b: the PTY sidecar migrated onto the resolver seam — its six
+    # `:sys.get_state` reach-ins became explicit GenServer.call client APIs
+    # and LEFT this ledger. Only the Python sidecar's site remains (its own
+    # A1b migration is a later pilot).
     sys_sites = Enum.filter(Scanner.forward_ratchet(), &String.starts_with?(&1.target, ":sys"))
-    assert length(sys_sites) == 7
+    assert length(sys_sites) == 1
 
     assert Enum.all?(
              sys_sites,
-             &(&1.path =~ "ezagent_domain_pty" or &1.path =~ "ezagent_domain_python")
+             &(&1.path =~ "ezagent_domain_python")
            )
 
     # they are NOT flagged as new debt (they are in the frozen ledger)
