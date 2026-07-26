@@ -19,6 +19,14 @@ defmodule EzagentActor.Application do
         # ② stdlib Registry for URI → pid (`Ezagent.KindRegistry` wraps this).
         {Registry, keys: :unique, name: Ezagent.KindRegistry},
 
+        # ②b Unified sidecar registry (V5 pid-closure, A1b) — runtime infra,
+        # NOT plugin-specific, so it lives here next to KindRegistry.
+        # Sidecar children `:via`-self-register under
+        # `{parent_uri, plugin, role}` keys; `Ezagent.Runtime.Resolver`
+        # reads it. Behavior-additive: the registry runs, but nothing
+        # resolves through it until a sidecar migrates onto the seam.
+        Ezagent.Runtime.SidecarRegistry,
+
         # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
         # take the ETS owner with it.
         Ezagent.Idempotency.Sweeper,
@@ -34,7 +42,8 @@ defmodule EzagentActor.Application do
       ]
       |> Enum.reject(&skip_in_test_env?/1)
 
-    result = Supervisor.start_link(children, strategy: :one_for_one, name: EzagentActor.Supervisor)
+    result =
+      Supervisor.start_link(children, strategy: :one_for_one, name: EzagentActor.Supervisor)
 
     # PR #145 (SPEC v2 §5.6 §5.11) — seed the runtime URI scheme allowlist
     # BEFORE any code path that calls `Ezagent.URI.new!/1` or

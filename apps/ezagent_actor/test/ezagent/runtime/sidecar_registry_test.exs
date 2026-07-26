@@ -1,8 +1,9 @@
 defmodule Ezagent.Runtime.SidecarRegistryTest do
   @moduledoc """
-  V5 A1a — the unified sidecar registry: `:via` self-registration,
-  plugin-qualified tuple keys, death-cleanup. ADDITIVE: the registry is
-  started by the tests only; nothing in the app wires it yet.
+  V5 A1a/A1b — the unified sidecar registry: `:via` self-registration,
+  plugin-qualified tuple keys, death-cleanup. A1b starts the registry in
+  `EzagentActor.Application` (runtime infra, next to `KindRegistry`), so
+  these tests use the app-started instance rather than starting their own.
   """
   use ExUnit.Case, async: false
 
@@ -16,9 +17,8 @@ defmodule Ezagent.Runtime.SidecarRegistryTest do
     def init(_), do: {:ok, nil}
   end
 
-  setup do
-    start_supervised!(SidecarRegistry)
-    :ok
+  test "the application supervision tree starts the registry (A1b)" do
+    assert SidecarRegistry.started?()
   end
 
   test "via/3 returns a plugin-qualified :via tuple with a string parent URI" do

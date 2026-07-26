@@ -4,8 +4,8 @@ defmodule Ezagent.Runtime.ResolverTest do
   public face (`dispatch/4`, `send_envelope/2`, `whereis/1`) routes without
   ever returning a pid, and sidecar entries clean up on child death.
 
-  ADDITIVE: nothing in the app is wired onto the resolver; these tests
-  register throwaway processes directly.
+  A1b: the `SidecarRegistry` is app-started (`EzagentActor.Application`);
+  these tests register throwaway processes into it directly.
   """
   use ExUnit.Case, async: false
 
@@ -70,7 +70,6 @@ defmodule Ezagent.Runtime.ResolverTest do
     end
 
     test "resolves a sidecar key through the unified SidecarRegistry" do
-      start_supervised!(SidecarRegistry)
       parent = unique_uri("parent")
 
       {:ok, pid} =
@@ -80,9 +79,10 @@ defmodule Ezagent.Runtime.ResolverTest do
       assert :not_found = Resolver.pid_for({parent, :plugin_codex, :backend})
     end
 
-    test "a sidecar key on an UNSTARTED SidecarRegistry is :not_found (A1a unwired default)" do
-      # A1a starts the registry nowhere; the seam must not crash on it.
-      refute SidecarRegistry.started?()
+    test "a sidecar key for an UNREGISTERED sidecar is :not_found" do
+      # A1b: the registry runs under EzagentActor.Application; an
+      # unregistered key must resolve to :not_found, never a crash.
+      assert SidecarRegistry.started?()
       assert :not_found = Resolver.pid_for({unique_uri("parent"), :plugin_cc, :backend})
     end
   end
@@ -107,7 +107,6 @@ defmodule Ezagent.Runtime.ResolverTest do
     end
 
     test "delivers to a sidecar key target" do
-      start_supervised!(SidecarRegistry)
       parent = unique_uri("parent")
 
       {:ok, _pid} =
@@ -165,7 +164,6 @@ defmodule Ezagent.Runtime.ResolverTest do
 
   describe "death-cleanup" do
     test "a sidecar entry resolves to :not_found after the child exits" do
-      start_supervised!(SidecarRegistry)
       parent = unique_uri("parent")
 
       {:ok, pid} =
