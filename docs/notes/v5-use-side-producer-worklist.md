@@ -52,7 +52,7 @@ this worklist proves "no ENUMERATED producer primitive occurs outside
 this list" (ANTI-DRIFT). It does NOT prove no other path can reach a
 Kind mailbox — that needs taint tracking, out of scope by design.
 
-**72 entries.**
+**70 entries.**
 
 | Primitive | Shape | File:Line | Note | Line SHA (12) |
 |---|---|---|---|---|
@@ -61,7 +61,7 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.broadcast/3` | `{:ezagent_reply, 2}` | `apps/ezagent_actor/lib/ezagent/invocation.ex:640` |  | `2f2b09bbae79` |
 | `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex:61` |  | `366e061019d6` |
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:364` |  | `ce2a7a8d797e` |
-| `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1037` |  | `c641d0752430` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1060` |  | `c641d0752430` |
 | `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:155` |  | `350e5f63b1c9` |
 | `Phoenix.PubSub.broadcast/3` | `{:slice_changed, 2}` | `apps/ezagent_actor/lib/ezagent/slice_change.ex:192` |  | `0361296c387b` |
 | `Process.send_after/3` | `:flush` | `apps/ezagent_actor/lib/ezagent/snapshot/writer.ex:112` |  | `fa68a62106bf` |
@@ -78,12 +78,10 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.local_broadcast/3` | `:dynamic` | `apps/ezagent_core/lib/ezagent/presence/tracker.ex:38` |  | `a16cac118e5e` |
 | `Kernel.send/2` | `{:ets_owner_ready, 3}` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:48` |  | `42d5b963576d` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_agent/lib/ezagent/agent/retirement_sweeper.ex:186` |  | `2f032c2ad34d` |
-| `Process.send_after/3` | `{:transport_join_timeout, 3}` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:82` |  | `f41156a91956` |
+| `Process.send_after/3` | `{:transport_join_timeout, 3}` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:84` |  | `f41156a91956` |
 | `Process.send_after/3` | `{:expire_pending, 3}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter_registry.ex:96` |  | `13c9bcfff39f` |
-| `Phoenix.PubSub.broadcast/3` | `{:agent_bridge_connected, 3}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:167` |  | `1e5f6b228241` |
-| `Phoenix.PubSub.broadcast/3` | `{:cc_connected, 3}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:168` |  | `e7b0c6a12c9a` |
-| `Phoenix.PubSub.broadcast/3` | `{:agent_bridge_disconnected, 2}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:172` |  | `e761f1f7acc6` |
-| `Phoenix.PubSub.broadcast/3` | `{:cc_disconnected, 2}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:173` |  | `036875f8f440` |
+| `Phoenix.PubSub.broadcast/3` | `{:cc_connected, 3}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:174` |  | `e7b0c6a12c9a` |
+| `Phoenix.PubSub.broadcast/3` | `{:cc_disconnected, 2}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:179` |  | `036875f8f440` |
 | `Kernel.send/2` | `:reconcile_pass` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/boot_reconciler.ex:170` |  | `e56dce379fda` |
 | `Process.send_after/3` | `:reconcile_pass` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/boot_reconciler.ex:242` |  | `8f072ac84055` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex:345` |  | `34c192a79fec` |

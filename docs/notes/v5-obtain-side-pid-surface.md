@@ -29,7 +29,7 @@ for the A1b/A1c migration phases. **134 entries.**
 | `Ezagent.ActionSet.Session.Membership` | `do_join/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex:28` | param |
 | `Ezagent.ActionSet.Session.SelfAdd.Effects` | `on_add/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:14` | guard + param |
 | `Ezagent.ActionSet.Workspace.Members` | `ensure_member_kind_spawned/1` | `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/members.ex:88` | body |
-| `Ezagent.Agent.TransportReadinessListener` | `arm_timeout/3` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:34` | body |
+| `Ezagent.Agent.TransportReadinessListener` | `arm_timeout/3` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:36` | body |
 | `Ezagent.AgentBridge.AdapterRegistry` | `deliver_or_buffer/3` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter_registry.ex:53` | guard + param |
 | `Ezagent.AgentBridge.Registry` | `bind/3` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:41` | guard + param |
 | `Ezagent.AgentBridge.Registry` | `list_all/0` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:124` | nested |

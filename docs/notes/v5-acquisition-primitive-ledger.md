@@ -48,7 +48,7 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:32` | `be34d1670e74` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:36` | `5ed3a0160303` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:40` | `2dfc67743c08` |
-| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1101` | `a3ff38add245` |
+| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1216` | `a3ff38add245` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:35` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:61` | `c0e0f15232a4` |
 | `Registry.select/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:74` | `6f7c665c8614` |
@@ -65,8 +65,8 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:73` | `d6fce9012ed3` |
 | `Process.info/2` | `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:472` | `1c3d800d0c4c` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/live_join_registry.ex:36` | `02bd3324e502` |
-| `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:36` | `0c34f7441131` |
-| `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:56` | `39d1d22c7f9e` |
+| `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:38` | `0c34f7441131` |
+| `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:58` | `39d1d22c7f9e` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:481` | `126bdf5c6894` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:602` | `126bdf5c6894` |
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex:303` | `8ba6652f7e63` |
