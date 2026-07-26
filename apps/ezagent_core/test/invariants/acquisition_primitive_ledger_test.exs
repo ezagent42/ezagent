@@ -216,23 +216,8 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
           "Ezagent.Runtime.Resolver.terminate_child/2"
         ]
       end)
-      |> Enum.reject(&uri_native_verb_delivery?/1)
 
     assert raw == [], "raw Resolver.call/cast sites outside the facade allowlist: #{inspect(raw)}"
-  end
-
-  # V5 A1c chunk4: `Ezagent.Identity.TargetAuthority` delivers the framework
-  # `:ezagent_kind_module` verb BY URI via `Resolver.call/2` — the URI-native
-  # form of its old `KindRegistry.lookup/1` + raw `GenServer.call/2`, exactly
-  # the sanctioned shape of the scanner's cap-protocol call allowlist
-  # (`Ezagent.Cap`). TargetAuthority lives in ezagent_domain_identity and the
-  # scanner's allowlist is Track-B-shared (not editable from this chunk), so
-  # the exemption is recorded HERE, narrowed to the exact site. A second
-  # Resolver face (cast/terminate_child) or a second call site in that file
-  # still REDS above.
-  defp uri_native_verb_delivery?(site) do
-    site.path == "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex" and
-      site.target == "Ezagent.Runtime.Resolver.call/2"
   end
 
   test "regenerates the acquisition-primitive ledger markdown (full emit)" do

@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**60 entries.**
+**59 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -76,7 +76,6 @@ taint tracking, out of scope by design.
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/adapter_registry.ex:74` | `f6f635b4ca50` |
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex:37` | `0366486f683a` |
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex:56` | `64ce83739f73` |
-| `Ezagent.Runtime.Resolver.call/2` | `apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex:59` | `1404a1e0876a` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:39` | `1f5d9365b364` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_owner.ex:94` | `2f643678d799` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:38` | `7d426e5ae957` |

@@ -965,19 +965,22 @@ defmodule Ezagent.ActorBoundaryScanner do
                               Ezagent.Orchestrator.McpServer
                             ])
 
-  # The sanctioned CAP-PROTOCOL call sites (V5 A1c chunk2). The Cap system
-  # addresses a target Kind's framework cap-protocol verbs
+  # The sanctioned URI-native FRAMEWORK-VERB call sites (V5 A1c chunk2 + chunk4).
+  # These domain modules address a target Kind's framework `handle_call` verbs BY
+  # URI via `Resolver.call/2,3` — the URI-native form of the pre-existing raw
+  # `GenServer.call(pid, verb)`: the Cap system's cap-protocol verbs
   # (`:ezagent_revoke_all_to` / `:ezagent_verify_cap_artifact` /
-  # `:ezagent_validate_cap_artifact`) BY URI via `Resolver.call/2,3` — the
-  # URI-native form of the pre-existing raw `GenServer.call(pid, verb)`. These
-  # are framework `handle_call` verbs, NOT `%Invocation{}` action dispatches, so
-  # they cannot ride the provenance-carrying `Resolver.dispatch/4` path; and they
-  # are NOT sidecar facades — so ONLY `Resolver.call/2,3` is exempted here (a
-  # future `cast`/`terminate_child` from these modules stays census-flagged, a
-  # deliberately NARROW exemption). Longer-term home: B4 `%Kind.Protocol{}` face.
+  # `:ezagent_validate_cap_artifact`) and `Ezagent.Identity.TargetAuthority`'s
+  # `:ezagent_kind_module` introspection verb. These are framework verbs, NOT
+  # `%Invocation{}` action dispatches, so they cannot ride the provenance-carrying
+  # `Resolver.dispatch/4` path; and they are NOT sidecar facades — so ONLY
+  # `Resolver.call/2,3` is exempted here (a future `cast`/`terminate_child` from
+  # these modules stays census-flagged, a deliberately NARROW exemption).
+  # Longer-term home: B4 `%Kind.Protocol{}` face.
   @cap_protocol_call_allowlist MapSet.new([
                                  Ezagent.Cap,
-                                 Ezagent.Cap.TargetArtifactValidator
+                                 Ezagent.Cap.TargetArtifactValidator,
+                                 Ezagent.Identity.TargetAuthority
                                ])
 
   # The fun names of the facade-gated triple (subset of
