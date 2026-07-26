@@ -64,6 +64,91 @@ defmodule EzagentPluginGitWorkflow.WorkflowFactsTest do
 
       assert {:ok, %WorkflowFacts{}} = WorkflowFacts.new(attrs)
     end
+
+    test "rejects a non-binary id" do
+      bad = %{@minimal | id: :not_a_binary}
+      assert {:error, {:invalid_field, :id}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects an empty-string id" do
+      bad = %{@minimal | id: ""}
+      assert {:error, {:invalid_field, :id}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a non-binary run_id" do
+      bad = %{@minimal | run_id: 12_345}
+      assert {:error, {:invalid_field, :run_id}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a PID placed in checks_summary" do
+      bad = Map.put(@minimal, :checks_summary, self())
+      assert {:error, {:invalid_field, :checks_summary}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a map placed in change_request_url" do
+      bad = Map.put(@minimal, :change_request_url, %{not: "a url"})
+      assert {:error, {:invalid_field, :change_request_url}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects an empty-string value in an optional string field" do
+      bad = Map.put(@minimal, :head_sha, "")
+      assert {:error, {:invalid_field, :head_sha}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a struct placed in an optional string field" do
+      bad = Map.put(@minimal, :deterministic_head_ref, %URI{})
+      assert {:error, {:invalid_field, :deterministic_head_ref}} = WorkflowFacts.new(bad)
+    end
+
+    test "accepts nil for every optional string field" do
+      assert {:ok, %WorkflowFacts{change_request_url: nil}} =
+               WorkflowFacts.new(Map.put(@minimal, :change_request_url, nil))
+    end
+
+    test "rejects a non-integer checks_revision" do
+      bad = Map.put(@minimal, :checks_revision, "1")
+      assert {:error, {:invalid_field, :checks_revision}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a negative checks_revision" do
+      bad = Map.put(@minimal, :checks_revision, -1)
+      assert {:error, {:invalid_field, :checks_revision}} = WorkflowFacts.new(bad)
+    end
+
+    test "accepts zero as checks_revision" do
+      assert {:ok, %WorkflowFacts{checks_revision: 0}} =
+               WorkflowFacts.new(Map.put(@minimal, :checks_revision, 0))
+    end
+
+    test "rejects a non-integer reviews_revision" do
+      bad = Map.put(@minimal, :reviews_revision, 1.5)
+      assert {:error, {:invalid_field, :reviews_revision}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a negative reviews_revision" do
+      bad = Map.put(@minimal, :reviews_revision, -7)
+      assert {:error, {:invalid_field, :reviews_revision}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a non-DateTime checks_observed_at" do
+      bad = Map.put(@minimal, :checks_observed_at, "2026-07-26T00:00:00Z")
+      assert {:error, {:invalid_field, :checks_observed_at}} = WorkflowFacts.new(bad)
+    end
+
+    test "rejects a non-DateTime reviews_observed_at" do
+      bad = Map.put(@minimal, :reviews_observed_at, ~D[2026-07-26])
+      assert {:error, {:invalid_field, :reviews_observed_at}} = WorkflowFacts.new(bad)
+    end
+
+    test "accepts nil for both observed_at fields" do
+      attrs =
+        @minimal
+        |> Map.put(:checks_observed_at, nil)
+        |> Map.put(:reviews_observed_at, nil)
+
+      assert {:ok, %WorkflowFacts{checks_observed_at: nil, reviews_observed_at: nil}} =
+               WorkflowFacts.new(attrs)
+    end
   end
 
   describe "struct field contract" do

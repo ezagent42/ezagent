@@ -349,6 +349,34 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     test "read_facts/1 returns not_found for an unknown run_id" do
       assert {:error, :not_found} = Store.read_facts("nonexistent")
     end
+
+    test "upsert_facts/1 never returns an id that was not persisted" do
+      # Two concurrent-shaped callers upsert the SAME run_id with DIFFERENT
+      # `id` values. The SQL update clause deliberately excludes `id`, so
+      # the row keeps its ORIGINAL id on conflict — the second caller's
+      # returned struct must reflect that persisted id, not its own input.
+      {:ok, first} =
+        WorkflowFacts.new(%{
+          id: "wf_conflict_first",
+          run_id: "run_conflict_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first"}} = Store.upsert_facts(first)
+
+      {:ok, second} =
+        WorkflowFacts.new(%{
+          id: "wf_conflict_second",
+          run_id: "run_conflict_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws"),
+          head_sha: "second-sha"
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first", head_sha: "second-sha"}} =
+               Store.upsert_facts(second)
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first"}} = Store.read_facts("run_conflict_1")
+    end
   end
 
   describe "register_binding/1" do

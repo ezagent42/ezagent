@@ -615,10 +615,22 @@ In `workflow_run.ex`, replace the moduledoc's status-set paragraph (lines
 
   Terminal states (reject further transitions): failed, cancelled.
   `blocked` is deliberately NOT terminal-in-the-CAS-sense (matching the
-  prior model), but its only legal edges in this slice are failed/cancelled
-  — resuming a blocked run onto the success path is Slice P4's
-  retry-classification concern, not defined here.
+  prior model); its legal edges in this slice are blocked (self-transition
+  — re-blocking an already-blocked run is harmless and idempotent),
+  failed, and cancelled. Resuming a blocked run onto the success path is
+  Slice P4's retry-classification concern, not defined here.
 ```
+
+> **Amended (Allen, 2026-07-26):** the moduledoc paragraph above and the
+> `@legal_edges` map below originally omitted the `blocked → blocked`
+> self-edge, even though design §5.4 states any non-terminal state
+> (`blocked` included) may transition to `blocked`/`failed`/`cancelled`.
+> The whole-branch final review caught the gap — the exhaustive
+> 81-pair test in `schema_test.exs` had frozen the omission, so it
+> confidently enforced a graph that didn't match the design. Owner
+> decision: add the self-transition, aligning the implementation to the
+> design, rather than carving out a design exception for no benefit. The
+> text below already reflects that decision.
 
 Replace the vocabulary block (lines 29-39):
 
@@ -643,7 +655,7 @@ Replace the vocabulary block (lines 29-39):
     "changes_ready" => ~w(pr_open blocked failed cancelled),
     "pr_open" => ~w(observations_current blocked failed cancelled),
     "observations_current" => ~w(observations_current blocked failed cancelled),
-    "blocked" => ~w(failed cancelled)
+    "blocked" => ~w(blocked failed cancelled)
   }
 ```
 
@@ -1117,9 +1129,25 @@ provision id, deterministic head ref, collected change digest, expected
 base SHA, created/reconciled head SHA, normalized change request
 id/URL/state/head-ref/base-ref, and checks/reviews observation
 revision+summary+observed_at. Every field except `id`/`run_id` is optional
-at creation — later slices (P2/P3/P4) populate them incrementally as the
-run progresses. No field may hold a raw response body, header, token, or
+at creation. No field may hold a raw response body, header, token, or
 credential (design §5.3, §3.2).
+
+> **Amended (Allen, 2026-07-26):** this paragraph originally continued
+> "...later slices (P2/P3/P4) populate them incrementally as the run
+> progresses," which contradicts `Store.upsert_facts/1`'s actual
+> semantics — a single-statement `INSERT ... ON CONFLICT (run_id) DO
+> UPDATE` that replaces every non-key column on every call. A later
+> partial write under that model would NULL out an earlier stage's
+> facts, not merge with them. The whole-branch final review caught the
+> contradiction. Owner decision: keep full-replace semantics as built
+> (P1 has no second writer at all — P2/P3/P4 don't exist yet, so
+> designing a merge protocol now would be guessing at a write pattern
+> nobody has); fix the documentation instead. A caller of
+> `upsert_facts/1` must always pass a **complete** snapshot of the facts
+> it wants persisted, never a delta. If a later slice needs incremental
+> accumulation from multiple writers, it must introduce explicit merge
+> or revision-CAS semantics at that point — see the current moduledoc in
+> `workflow_facts.ex` for the authoritative wording.
 
 - [ ] **Step 1: Write the failing migration/schema test**
 
@@ -1213,10 +1241,13 @@ defmodule EzagentPluginGitWorkflow.WorkflowFacts do
   docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
   §5.3).
 
-  Every field but `id`/`run_id` is populated incrementally by later
-  slices (P2 workspace collection, P3 GitHub reconciliation, P4 observation
-  ticks) — nil is a legal "not yet known" value, not an error. No field may
-  hold a raw response body, header, token, or credential.
+  Every field but `id`/`run_id` is optional — nil is a legal "not yet
+  known" value, not an error. `Store.upsert_facts/1` fully replaces the
+  row on every call, so a caller must always pass a complete snapshot,
+  never a delta (amended 2026-07-26 — see the note above this step and
+  the current moduledoc in workflow_facts.ex for the authoritative
+  full-replace semantics; this is not an incremental-merge store). No
+  field may hold a raw response body, header, token, or credential.
   """
 
   @required_fields [:id, :run_id]

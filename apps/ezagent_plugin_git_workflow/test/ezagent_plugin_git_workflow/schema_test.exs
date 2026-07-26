@@ -111,7 +111,7 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
         "changes_ready" => ~w(pr_open blocked failed cancelled),
         "pr_open" => ~w(observations_current blocked failed cancelled),
         "observations_current" => ~w(observations_current blocked failed cancelled),
-        "blocked" => ~w(failed cancelled),
+        "blocked" => ~w(blocked failed cancelled),
         "failed" => [],
         "cancelled" => []
       }

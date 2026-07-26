@@ -27,9 +27,10 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
 
   Terminal states (reject further transitions): failed, cancelled.
   `blocked` is deliberately NOT terminal-in-the-CAS-sense (matching the
-  prior model), but its only legal edges in this slice are failed/cancelled
-  — resuming a blocked run onto the success path is Slice P4's
-  retry-classification concern, not defined here.
+  prior model); its legal edges in this slice are blocked (self-transition
+  — re-blocking an already-blocked run is harmless and idempotent),
+  failed, and cancelled. Resuming a blocked run onto the success path is
+  Slice P4's retry-classification concern, not defined here.
   """
 
   # ── status vocabulary ────────────────────────────────────────
@@ -52,7 +53,7 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
     "changes_ready" => ~w(pr_open blocked failed cancelled),
     "pr_open" => ~w(observations_current blocked failed cancelled),
     "observations_current" => ~w(observations_current blocked failed cancelled),
-    "blocked" => ~w(failed cancelled)
+    "blocked" => ~w(blocked failed cancelled)
   }
 
   @doc "All valid workflow statuses."

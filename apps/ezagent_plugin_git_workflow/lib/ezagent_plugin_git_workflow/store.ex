@@ -217,6 +217,14 @@ defmodule EzagentPluginGitWorkflow.Store do
   always takes the ON CONFLICT DO UPDATE branch instead. Whichever caller's
   statement commits last simply overwrites every non-key column with its
   own values (last-write-wins), leaving exactly one row.
+
+  The update clause deliberately excludes `id`, so on conflict the row
+  keeps its ORIGINAL `id` — never the caller's. The statement therefore
+  carries `RETURNING *` and the returned struct is built from that
+  returned row (via `row_to_facts/1`), not from the caller's input struct:
+  two concurrent callers upserting the same `run_id` with different `id`
+  values must never both get back an `{:ok, facts}` whose `id` disagrees
+  with what is actually persisted.
   """
   @spec upsert_facts(WorkflowFacts.t()) :: {:ok, WorkflowFacts.t()}
   def upsert_facts(%WorkflowFacts{} = facts) do
@@ -233,16 +241,17 @@ defmodule EzagentPluginGitWorkflow.Store do
       |> Enum.map(&"#{&1} = EXCLUDED.#{&1}")
       |> Enum.join(", ")
 
-    Repo.query!(
-      "INSERT INTO git_workflow_facts (" <>
-        Enum.join(columns, ", ") <>
-        ") VALUES (" <>
-        placeholders <>
-        ") ON CONFLICT (run_id) DO UPDATE SET " <> update_clause,
-      values
-    )
+    %Postgrex.Result{columns: result_columns, rows: [result_row | _]} =
+      Repo.query!(
+        "INSERT INTO git_workflow_facts (" <>
+          Enum.join(columns, ", ") <>
+          ") VALUES (" <>
+          placeholders <>
+          ") ON CONFLICT (run_id) DO UPDATE SET " <> update_clause <> " RETURNING *",
+        values
+      )
 
-    {:ok, facts}
+    {:ok, Enum.zip(result_columns, result_row) |> Map.new() |> row_to_facts()}
   end
 
   @doc "Reads the facts row for a run id."
