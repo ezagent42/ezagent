@@ -136,6 +136,23 @@ defmodule EzagentActor.Signal do
     Process.send_after(self(), %__MODULE__{kind: :timer, from: self(), payload: payload}, time_ms)
   end
 
+  @doc """
+  The effective raw mailbox message an envelope stands in for (so existing
+  handlers match unchanged).
+
+  A `:down` envelope reconstructs the exact
+  `{:DOWN, ref, :process, pid, reason}` tuple a raw `Process.monitor/1`
+  would have delivered — every existing `handle_signal({:DOWN, …})`
+  consumer matches UNCHANGED. All other envelopes unwrap to `payload`
+  verbatim. The result is never a `%__MODULE__{}`, so a re-dispatch
+  through `Kind.Server.handle_info/2` cannot loop.
+  """
+  @spec effective_message(t()) :: term()
+  def effective_message(%__MODULE__{kind: :down, payload: %{ref: ref, pid: pid, reason: reason}}),
+    do: {:DOWN, ref, :process, pid, reason}
+
+  def effective_message(%__MODULE__{payload: payload}), do: payload
+
   # C5 §3.4 pubsub injection — the PubSub server name is a config port,
   # never a literal spine reference (same idiom as `Ezagent.SliceChange`).
   # Wired at core boot (`Ezagent.Kind.Adapters.wire!/0`); tests pre-wire

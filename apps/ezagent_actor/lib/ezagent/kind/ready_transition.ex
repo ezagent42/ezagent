@@ -60,7 +60,9 @@ defmodule Ezagent.Kind.ReadyTransition do
     final_result
   end
 
-  defp start_external_wait(module, uri_str, parent) do
+  # V5 use-side B2 — `_parent` (the Kind pid) is retained for the caller's
+  # sake, but delivery now resolves through the Kind URI (`Signal.signal/2`).
+  defp start_external_wait(module, uri_str, _parent) do
     {:ok, _pid} =
       Task.start(fn ->
         result =
@@ -70,7 +72,13 @@ defmodule Ezagent.Kind.ReadyTransition do
             {:error, :timeout}
           end
 
-        send(parent, {:ezagent_external_ready_gate, uri_str, result})
+        # V5 use-side B2 — the Kind URI is in scope (`uri_str`), so the
+        # result rides the sanctioned `Signal.signal/2` transport instead of
+        # a raw pid send. `:not_found` (the Kind died while the wait task
+        # blocked) is the exact analogue of a raw send to a dead pid: a
+        # silent no-op.
+        _ =
+          EzagentActor.Signal.signal(uri_str, {:ezagent_external_ready_gate, uri_str, result})
       end)
 
     :deferred

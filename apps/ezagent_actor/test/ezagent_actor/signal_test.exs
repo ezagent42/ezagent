@@ -122,4 +122,38 @@ defmodule EzagentActor.SignalTest do
       refute_receive %Signal{kind: :timer, payload: :never}, 100
     end
   end
+
+  describe "effective_message/1 (B2 — the Kind.Server envelope unwrap)" do
+    test "a :down envelope reconstructs the exact raw {:DOWN, ref, :process, pid, reason} tuple" do
+      ref = make_ref()
+      pid = self()
+
+      envelope = %Signal{kind: :down, from: pid, payload: %{ref: ref, pid: pid, reason: :killed}}
+
+      assert Signal.effective_message(envelope) == {:DOWN, ref, :process, pid, :killed}
+    end
+
+    test "every other envelope kind unwraps to the payload verbatim" do
+      assert Signal.effective_message(%Signal{kind: :signal, payload: :snapshot_tick}) ==
+               :snapshot_tick
+
+      assert Signal.effective_message(%Signal{kind: :timer, payload: {:tick, 1}}) == {:tick, 1}
+
+      assert Signal.effective_message(%Signal{kind: :broadcast, from: "t", payload: {:ev, 2}}) ==
+               {:ev, 2}
+    end
+
+    test "the :down reconstruction is a plain tuple, never an envelope (no re-dispatch loop)" do
+      ref = make_ref()
+
+      message =
+        Signal.effective_message(%Signal{
+          kind: :down,
+          payload: %{ref: ref, pid: self(), reason: :normal}
+        })
+
+      refute match?(%Signal{}, message)
+      assert {:DOWN, ^ref, :process, _pid, :normal} = message
+    end
+  end
 end

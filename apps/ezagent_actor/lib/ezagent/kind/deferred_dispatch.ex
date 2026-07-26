@@ -53,7 +53,16 @@ defmodule Ezagent.Kind.DeferredDispatch do
   def enqueue([]), do: :ok
 
   def enqueue(cmds) when is_list(cmds) do
-    send(self(), {:ezagent_run_deferred, cmds})
+    # V5 use-side B2 — deliver through the sanctioned envelope. No
+    # `self_uri` is in scope here (`enqueue/1` only carries the Cmds), so
+    # this is the bare-self raw-wrap form: same mailbox ordering as the
+    # previous raw `send/2`, arriving as `%EzagentActor.Signal{}` which
+    # `Kind.Server.handle_info/2` unwraps back to `{:ezagent_run_deferred, cmds}`.
+    send(self(), %EzagentActor.Signal{
+      kind: :signal,
+      payload: {:ezagent_run_deferred, cmds}
+    })
+
     :ok
   end
 

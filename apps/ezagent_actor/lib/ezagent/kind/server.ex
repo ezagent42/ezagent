@@ -319,7 +319,10 @@ defmodule Ezagent.Kind.Server do
   defp schedule_periodic_snapshot(kind_module) do
     case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
-        Process.send_after(self(), :snapshot_tick, ms)
+        # V5 use-side B2 — the periodic self-timer rides the sanctioned
+        # transport (arrives as `%Signal{kind: :timer}`, unwrapped by the
+        # `handle_info` envelope clause back to `:snapshot_tick`).
+        EzagentActor.Signal.send_after(:snapshot_tick, ms)
         :ok
 
       _ ->
@@ -1014,6 +1017,13 @@ defmodule Ezagent.Kind.Server do
   # commands run on a later mailbox turn, after the parent commit, to avoid
   # dispatch deadlock. `DeferredDispatch` owns the detailed ordering contract.
   @impl true
+  # V5 use-side B2 — sanctioned framework envelope: unwrap to the effective
+  # message and re-dispatch through the existing handlers (additive; the raw
+  # clauses still accept un-migrated producers. B3 seals: raw becomes drop).
+  def handle_info(%EzagentActor.Signal{} = sig, wrapper) do
+    handle_info(EzagentActor.Signal.effective_message(sig), wrapper)
+  end
+
   def handle_info({:ezagent_external_ready_gate, uri_str, :ok} = msg, state)
       when is_binary(uri_str) do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
@@ -1070,7 +1080,9 @@ defmodule Ezagent.Kind.Server do
           end
         end
 
-        Process.send_after(self(), :snapshot_tick, ms)
+        # V5 use-side B2 — re-schedule through the sanctioned transport
+        # (arrives `%Signal{kind: :timer}` → envelope clause → this clause).
+        EzagentActor.Signal.send_after(:snapshot_tick, ms)
         {:noreply, wrapper}
 
       _ ->
