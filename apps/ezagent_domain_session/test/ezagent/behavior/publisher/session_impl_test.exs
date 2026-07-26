@@ -160,14 +160,15 @@ defmodule Ezagent.ActionSet.Publisher.SessionImplTest do
       assert {:ok, %{retention: 3}} = SessionImpl.create(%{publisher_retention: 3})
     end
 
-    test "activate/2 rebuilds the transient subscriber/monitor maps EMPTY + the SliceChange subscription token" do
+    test "activate/2 rebuilds the transient subscriber/monitor maps EMPTY (H2: no self-subscription)" do
       ctx = %{self_uri: Ezagent.URI.new!("session://team-alpha/default/activate")}
       assert {:ok, transients} = SessionImpl.activate(%{ring: [], cursor: 0, retention: 100}, ctx)
       assert transients.subscribers == %{}
       assert transients.monitors == %{}
-      # The subscription record is itself a transient; subscriber pid is
-      # the cold-restart-detectable token (SPEC §6 step 5c).
-      assert transients.slice_change_subscription.subscriber == self()
+      # H2 (delete-holes #200): the SliceChange self-subscription is GONE —
+      # slice changes arrive as the commit path's sealed self-signal, so
+      # there is no subscription token transient anymore.
+      refute Map.has_key?(transients, :slice_change_subscription)
     end
   end
 
@@ -178,6 +179,19 @@ defmodule Ezagent.ActionSet.Publisher.SessionImplTest do
 
     test "state_slice/0 is :publisher (sibling to :chat, not nested)" do
       assert SessionImpl.state_slice() == :publisher
+    end
+
+    test "reacts_to_slice_change?/0 opts in (H2) — and the Lifecycle default is false" do
+      # H2 (delete-holes #200): the Publisher declares the delivery-
+      # selection hook so the commit path self-signals it; the hook is
+      # opt-in — the macro-injected default is false.
+      assert SessionImpl.reacts_to_slice_change?() == true
+
+      defmodule NonReactingLifecycle do
+        use Ezagent.Lifecycle
+      end
+
+      assert NonReactingLifecycle.reacts_to_slice_change?() == false
     end
 
     test "cap_subjects/0 declares English descriptions for every action" do

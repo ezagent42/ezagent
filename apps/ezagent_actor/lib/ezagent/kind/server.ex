@@ -1004,12 +1004,47 @@ defmodule Ezagent.Kind.Server do
       Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
 
     if slice_change_event && commit_result in [:ok, :not_durable] do
-      Ezagent.SliceChange.emit(slice_change_event)
+      emit_result = Ezagent.SliceChange.emit_with_projection(slice_change_event)
+      # V5 use-side H2 (delete-holes #200): sealed self-signal to any
+      # materialized behavior that reacts to slice changes — replaces the
+      # Publisher's DELETED PubSub self-subscription. Runs right AFTER the
+      # outbound emit and BEFORE the cascade enqueue: a DIRECT self-send
+      # (NOT `Signal.send_after(…, 0)`) so mailbox ordering vs the
+      # cascade/deferred self-sends below is preserved, and delivery on a
+      # later turn keeps the no-re-entrancy contract.
+      maybe_self_signal_slice_change(state.kind, new_slice_state, emit_result)
       # Membership-cap B.3 (spec §10/K3): cascade hook — enqueues a self-message.
       Ezagent.Kind.CascadeHook.maybe_enqueue(slice_change_event)
     end
 
     commit_result
+  end
+
+  # V5 use-side H2 (delete-holes #200) — when ANY behavior in the Kind's
+  # MATERIALIZED set declares `reacts_to_slice_change?/0` (an opt-in
+  # `Ezagent.Lifecycle` hook, default false), deliver the EXACT canonical
+  # 5-key projection `SliceChange.emit/1` just broadcast as a sealed
+  # self-signal. The hook ONLY selects delivery — no behavior callback
+  # runs inline here; the reaction runs on a later mailbox turn through
+  # the ordinary `%Signal{}` enabler → `handle_signal({:slice_changed, …})`
+  # path. Core names no concrete behavior and no slice.
+  @spec maybe_self_signal_slice_change(module(), map(), {:ok, map()} | :ok) :: :ok
+  defp maybe_self_signal_slice_change(kind_module, new_slice_state, {:ok, projection}) do
+    if Enum.any?(
+         Ezagent.Kind.BehaviorSet.materialized_set(kind_module, new_slice_state),
+         &reacts_to_slice_change?/1
+       ) do
+      send(self(), %EzagentActor.Signal{kind: :signal, payload: {:slice_changed, projection}})
+    end
+
+    :ok
+  end
+
+  defp maybe_self_signal_slice_change(_kind_module, _new_slice_state, :ok), do: :ok
+
+  defp reacts_to_slice_change?(behavior) do
+    function_exported?(behavior, :reacts_to_slice_change?, 0) and
+      behavior.reacts_to_slice_change?()
   end
 
   # Behavior mailbox forwarding receives the raw message, its slice, and

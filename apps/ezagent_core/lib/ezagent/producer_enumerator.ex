@@ -353,6 +353,19 @@ defmodule Ezagent.ProducerEnumerator do
     `signal/monitor.ex`) — enumerated by the empty allowlist, NOT B2
     migration targets.
 
+    Post-H1/H2 (delete-holes #200) reclassification: the `{:pty_phase, 4}`
+    broadcasts (`ezagent_domain_pty/phase_broadcast.ex`,
+    `ezagent_domain_python/server.ex`) and the `{:slice_changed, 2}`
+    broadcast (`ezagent_actor/slice_change.ex`) now feed READ-ONLY
+    LiveView / external subscribers ONLY — no KIND subscribes to those
+    topics anymore (a read-only UI subscription is not a hole, so the
+    broadcasts STAY as the outbound read stream). The Kind paths moved
+    onto the sanctioned envelope: H1's point-to-point
+    `EzagentActor.Signal.signal/2` dual-emit (not an enumerated
+    primitive) and H2's commit-path sealed self-signal (the
+    `Kernel.send/2` bare-self envelope wrap in
+    `ezagent_actor/kind/server.ex`, enumerated below).
+
     The **Shape** column is the statically-visible message literal: an
     atom, a `{head, size}` tuple summary, or `:dynamic` (runtime-computed
     — inspect manually at migration time). Module attributes bound to

@@ -147,6 +147,26 @@ defmodule Ezagent.Lifecycle do
               {:ok, [Ezagent.ActionSet.effect()]} | :ignore
 
   @doc """
+  `reacts_to_slice_change?/0` — DELIVERY-SELECTION declaration (V5
+  use-side H2, delete-holes #200), default `false`.
+
+  When `true`, the Kind's commit path (`Kind.Server.commit_and_notify/3`)
+  delivers every successfully-committed slice change to this behavior as a
+  SEALED SELF-SIGNAL — `%EzagentActor.Signal{kind: :signal, payload:
+  {:slice_changed, projection}}` carrying the EXACT canonical 5-key
+  projection `Ezagent.SliceChange.emit/1` broadcast — arriving on a LATER
+  mailbox turn (no commit re-entrancy). The reaction itself runs in the
+  behavior's ordinary `handle_signal({:slice_changed, …})` clause.
+
+  The hook ONLY selects delivery: the framework NEVER runs a behavior
+  callback inline from the commit path, and core names no concrete
+  behavior or slice. It replaces the deleted PubSub self-subscription
+  pattern (a Kind subscribing to its own `esr:entity:<uri>:slice_changed`
+  topic and mutating on receipt — the H2 hole).
+  """
+  @callback reacts_to_slice_change?() :: boolean()
+
+  @doc """
   `pre_handle/3` — fine interception BEFORE the matched
   `handle_<action>`. See SPEC §2 for the return grammar.
   """
@@ -173,7 +193,8 @@ defmodule Ezagent.Lifecycle do
     detached: 2,
     handle_signal: 2,
     pre_handle: 3,
-    post_handle: 4
+    post_handle: 4,
+    reacts_to_slice_change?: 0
   ]
 
   @doc """
@@ -317,13 +338,21 @@ defmodule Ezagent.Lifecycle do
       def detached(_state, _ctx), do: :ok
       def handle_signal(_message, _ctx), do: :ignore
 
+      # V5 use-side H2 (delete-holes #200) — delivery-selection hook,
+      # default false. See the `@callback` doc on `Ezagent.Lifecycle`.
+      # (No `@impl` here, mirroring the sibling defaults above: an
+      # annotation inside the quote would force one onto every injected
+      # default in every `use`r module.)
+      def reacts_to_slice_change?, do: false
+
       defoverridable create: 1,
                      activate: 2,
                      deactivate: 2,
                      destroy: 2,
                      activated: 2,
                      detached: 2,
-                     handle_signal: 2
+                     handle_signal: 2,
+                     reacts_to_slice_change?: 0
     end
   end
 

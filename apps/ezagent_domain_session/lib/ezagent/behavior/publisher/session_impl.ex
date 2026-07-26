@@ -6,8 +6,9 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   Allen's option (a)).
 
   Added to `Ezagent.Entity.Session.behaviors/0` so every Session Kind
-  boots with a `:publisher` slice and self-subscribes to its own
-  `Ezagent.SliceChange` topic in `activate/2`.
+  boots with a `:publisher` slice and reacts to its own slice changes —
+  post-H2 (delete-holes #200) via `reacts_to_slice_change?/0` + the
+  commit path's sealed self-signal, NOT a PubSub self-subscription.
 
   ## Lifecycle migration (Phase B, SPEC 2026-05-29 — the transients +
   ## post-ready reference case)
@@ -35,14 +36,13 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   ### Boot hooks (SPEC §10-R1 / §9 OQ-5)
 
   - `init_slice/1` → `create/1` (persistent `ring`/`cursor`/`retention`).
-  - `post_init/2` + `handle_continue(:subscribe_to_self_slice_change)`
-    → folded into `activate/2`: the self-subscription to this Kind's OWN
-    `Ezagent.SliceChange` topic is pre-`:ready` boot work with NO
-    `send(self(), ...)` self-deferral, so per §10-R1 it belongs in
-    `activate/2`. The subscription is also a TRANSIENT (it binds THIS
-    Kind.Server process; `activate/2` records the subscriber pid as the
-    cold-restart-detectable token — a brutal kill + cold-load yields a
-    DIFFERENT live pid, proving the binding was rebuilt, not rehydrated).
+  - `post_init/2` + `handle_continue` → folded into `activate/2`, which
+    rebuilds the EMPTY transient `subscribers`/`monitors` maps on every
+    start (pre-`:ready` boot work with NO `send(self(), ...)` self-deferral
+    — §10-R1). (Pre-H2 this hook also self-subscribed the Kind to its OWN
+    SliceChange topic; V5 use-side H2 — delete-holes #200 — DELETED that
+    self-loop: slice changes now arrive as a sealed self-signal from the
+    commit path, selected by `reacts_to_slice_change?/0`.)
   - `on_ready/2` (the `:publisher_alive` reachability broadcast that
     invites a worker `:call` round-trip) → `activated/2` (§9 OQ-5 /
     §10-R1): it MUST fire AFTER the `ReadyGate` flips or the worker's
@@ -108,27 +108,28 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   the monitor ref without scanning all subscribers (same pattern as
   `Ezagent.ActionSet.Session`'s members + monitors).
 
-  ## post_init self-subscription
+  ## Slice-change reaction (H2 — sealed self-signal, no self-subscription)
 
-  `post_init/2` returns `{:continue, :subscribe_to_self_slice_change}`
-  so the Kind's Server runs `handle_continue/3` AFTER `:announce_ready`
-  is published. The continuation calls
-  `Ezagent.SliceChange.subscribe_unverified(self_uri)` (same-VM trust
-  per PR-N1 round-5 disposition — the Session Kind subscribing to its
-  OWN topic at boot is the canonical legitimate use of the unverified
-  primitive; the Kind's pid IS the topic owner). Subscription is
-  idempotent on PubSub level — a snapshot-restored Session that
-  re-runs `post_init/2` re-subscribes without dup-fan-out (PubSub
-  dedups identical {pid, topic} pairs).
+  `reacts_to_slice_change?/0` returns `true`: the Kind's commit path
+  (`Kind.Server.commit_and_notify/3`) delivers every committed slice
+  change to this behavior as a SEALED SELF-SIGNAL —
+  `%EzagentActor.Signal{kind: :signal, payload: {:slice_changed,
+  projection}}` carrying the EXACT canonical 5-key projection
+  `Ezagent.SliceChange.emit/1` broadcast — on a LATER mailbox turn (the
+  same deferral the deleted PubSub self-loop relied on: the reaction
+  never runs inside the parent commit). `SliceChange.emit` STAYS as the
+  outbound READ stream (UI / external readers); no KIND subscribes to it
+  anymore.
 
   ## handle_kind_message hook
 
-  - `{:slice_changed, event}` from `Ezagent.SliceChange` —
+  - `{:slice_changed, event}` (the sealed self-signal's payload, via the
+    B2-core `%Signal{}` enabler) —
     bumps cursor, builds `%Ezagent.Publisher.Event{}`, appends to
     ring (trimming to `retention`), fans out to all live subscribers.
-    Skips events from OTHER URIs (the topic shape `esr:entity:<uri>:slice_changed`
-    means this shouldn't happen, but defensively pattern-matches on
-    `:self_uri == ctx.self_uri`).
+    Skips events from OTHER URIs (defense-in-depth `event.uri ==
+    ctx.self_uri` match) and events for the `:publisher` slice itself
+    (they would re-trigger an emit-loop).
   - `{:DOWN, ref, :process, _, _}` — removes the subscriber (best-
     effort cleanup; subscribers that come back via a new pid must
     re-subscribe).
@@ -259,65 +260,42 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
 
   @doc """
   `activate/2` (SPEC §10-R1) — EVERY process (re)start. UNIFIES the
-  pre-Lifecycle `post_init/2` + `handle_continue(:subscribe_to_self_slice_change)`
-  AND the `reconcile_after_load/2` subscriber-clear:
+  pre-Lifecycle `post_init/2` + `handle_continue` subscriber-clear:
 
-  1. Self-subscribe this Kind's pid to its OWN `Ezagent.SliceChange`
-     topic via `Ezagent.SliceChange.subscribe_unverified/1` (same-VM
-     trust per PR-N1 round-5 — the Kind subscribing to its own topic is
-     the canonical legitimate use; the Kind's pid IS the topic owner).
-     This is pre-`:ready` boot work with NO `send(self(), ...)`
-     self-deferral, so per §10-R1 it folds into `activate/2` (NOT
-     `activated/2`). Idempotent at the PubSub level — a cold-restored
-     Session re-running `activate/2` re-subscribes without dup-fan-out.
+  Rebuild the TRANSIENT bookkeeping: `subscribers` + `monitors` start
+  EMPTY on every start. Live workers re-subscribe via the lifecycle
+  handshake (the `activated/2` `:publisher_alive` broadcast →
+  worker `:subscribe_from`). This SUBSUMES the old
+  `reconcile_after_load/2` clear: the maps cannot carry stale handles
+  because they live in `transients`, which has no serialization path and
+  is rebuilt here every start.
 
-  2. Rebuild the TRANSIENT bookkeeping: `subscribers` + `monitors` start
-     EMPTY on every start. Live workers re-subscribe via the lifecycle
-     handshake (the `activated/2` `:publisher_alive` broadcast →
-     worker `:subscribe_from`). The subscription record is itself a
-     transient — `subscription.subscriber` is the host Kind.Server pid,
-     the cold-restart-detectable token (a brutal kill + cold-load yields
-     a DIFFERENT live pid, proving the binding was rebuilt — SPEC §6
-     step 5c). This SUBSUMES the old `reconcile_after_load/2` clear: the
-     maps cannot carry stale handles because they live in `transients`,
-     which has no serialization path and is rebuilt here every start.
+  (Pre-H2 this hook ALSO self-subscribed the Kind's pid to its OWN
+  `Ezagent.SliceChange` topic. V5 use-side H2 — delete-holes #200 —
+  DELETED that self-loop: a Kind subscribed to a shared topic and
+  mutating on receipt was the hole. Slice changes now arrive as a sealed
+  self-signal from the commit path, selected by `reacts_to_slice_change?/0`.)
 
   Runs PRE-`:ready` (the `:publisher_alive` reachability broadcast is in
   `activated/2`, post-`:ready` — §9 OQ-5).
   """
   @impl Ezagent.Lifecycle
-  def activate(_state, ctx) do
-    self_uri = Map.fetch!(ctx, :self_uri)
-
-    subscription = subscribe_to_self_slice_change(self_uri)
-
+  def activate(_state, _ctx) do
     {:ok,
      %{
        subscribers: %{},
-       monitors: %{},
-       slice_change_subscription: subscription
+       monitors: %{}
      }}
   end
 
-  # Subscribe THIS process to its own SliceChange topic and return the
-  # transient record. The `subscriber` pid (= the host Kind.Server) is the
-  # cold-restart-detectable token (SPEC §6 step 5c). Best-effort: a
-  # subscribe failure must not crash the boot.
-  defp subscribe_to_self_slice_change(%URI{} = self_uri) do
-    try do
-      :ok = Ezagent.SliceChange.subscribe_unverified(self_uri)
-      %{subscribed_to: Ezagent.URI.stable_key(self_uri), subscriber: self()}
-    catch
-      kind, reason ->
-        Logger.warning(
-          "Ezagent.ActionSet.Publisher.SessionImpl.activate: SliceChange.subscribe " <>
-            "failed (#{inspect(kind)}, #{inspect(reason)}) for " <>
-            "#{URI.to_string(self_uri)}; this incarnation will not mirror slice changes"
-        )
-
-        %{subscribed_to: Ezagent.URI.stable_key(self_uri), subscriber: self()}
-    end
-  end
+  # V5 use-side H2 (delete-holes #200) — this behavior REACTS to its own
+  # Kind's slice changes (advancing `cursor` + `ring` + fan-out). The
+  # commit path (`Kind.Server.commit_and_notify/3`) reads this declaration
+  # and delivers each committed slice change as a sealed self-signal
+  # carrying the canonical 5-key projection; the reaction itself runs in
+  # `handle_signal({:slice_changed, …})` below on a later mailbox turn.
+  @impl Ezagent.Lifecycle
+  def reacts_to_slice_change?, do: true
 
   @doc """
   `activated/2` (SPEC §9 OQ-5 / §10-R1, post-`:ready`) — successor to the
@@ -356,8 +334,8 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   `handle_<action>/2` does; the macro reduces it into the two-container
   slice (`:set` → state, `:set_transient` → transients).
 
-  Receives `{:slice_changed, event}` from `Ezagent.SliceChange` (our
-  own topic — we subscribed in `activate/2`) and
+  Receives `{:slice_changed, event}` (the sealed self-signal delivered by
+  the commit path because `reacts_to_slice_change?/0` is `true` — H2) and
   `{:DOWN, ref, :process, pid, reason}` from `Process.monitor/1` of
   subscriber pids.
 

@@ -48,7 +48,7 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:32` | `be34d1670e74` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:36` | `5ed3a0160303` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:40` | `2dfc67743c08` |
-| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1066` | `a3ff38add245` |
+| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1101` | `a3ff38add245` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:35` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:61` | `c0e0f15232a4` |
 | `Registry.select/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:74` | `6f7c665c8614` |

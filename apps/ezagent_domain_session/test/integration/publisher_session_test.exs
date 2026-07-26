@@ -1,12 +1,13 @@
 defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
   @moduledoc """
   Integration test for the Session Kind as a `Ezagent.ActionSet.Publisher`
-  implementer — drives the production path:
+  implementer — drives the production path (post-H2, delete-holes #200):
 
-      Kind.spawn(Session) → post_init/2 subscribes to SliceChange topic →
-      chat.send / chat.join mutates :chat slice → Runtime emits SliceChange →
-      Server forwards via handle_info → SessionImpl.handle_kind_message →
-      ring + fanout to live subscribers.
+      Kind.spawn(Session) → SessionImpl declares reacts_to_slice_change?/0 →
+      chat.send / chat.join mutates :chat slice → commit_and_notify emits
+      SliceChange (the outbound READ stream) AND self-signals the sealed
+      %Signal{payload: {:slice_changed, projection}} → Server enabler
+      forwards → SessionImpl.handle_signal → ring + fanout to live subscribers.
 
   Plus the `subscribe_from / snapshot / history` dispatch round-trips
   go through the standard `Invocation.dispatch/1` path (Session module

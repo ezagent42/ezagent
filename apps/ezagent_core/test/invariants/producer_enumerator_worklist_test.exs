@@ -7,14 +7,16 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
   Two jobs:
 
     1. prove the enumerator is not blinded: it MUST surface every known
-       producer FLOOR site below. Post-B2 the floor is the DEFERRED
-       mixed-subscriber family ONLY (`{:pty_phase}` / `{:slice_changed}` —
-       topics with BOTH a Kind and a LiveView subscriber, left raw pending
-       a separate UI-coupling decision). The B2-migrated sites are pinned
-       by the "post-B2 migration" tests below (envelope-form sites are
-       still enumerated, with their new shapes). If the enumerator misses
-       any floor site, the ENUMERATOR is wrong — fix the enumerator, not
-       this test.
+       producer FLOOR site below. Post-H1/H2 (delete-holes #200) the
+       floor is the UI-READ-ONLY broadcast family: the `{:pty_phase, 4}`
+       and `{:slice_changed, 2}` broadcasts now feed read-only LiveView /
+       external subscribers ONLY — NO Kind subscribes to those topics
+       anymore (a read-only UI subscription is not a hole; the Kind paths
+       are the sanctioned `EzagentActor.Signal.signal/2` dual-emit and
+       the commit-path sealed self-signal, pinned below). The B2-migrated
+       sites are pinned by the "post-B2 migration" tests below. If the
+       enumerator misses any floor site, the ENUMERATOR is wrong — fix
+       the enumerator, not this test.
     2. regenerate the committed producer worklist
        `docs/notes/v5-use-side-producer-worklist.md` (full emit) — the B2
        migration worklist authority.
@@ -26,11 +28,12 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
   @worklist_path "docs/notes/v5-use-side-producer-worklist.md"
 
   # The has-teeth floor ({path, target, shape}) — every entry MUST be
-  # surfaced. Post-B2 this is the DEFERRED mixed-subscriber family: both
-  # topics have a LiveView subscriber as well as a Kind subscriber, so the
-  # producer stays raw until the UI-coupling decision (a later, separate
-  # task). Everything else from the B1 floor was migrated onto the
-  # `%EzagentActor.Signal{}` transport in B2 (see the post-B2 tests below).
+  # surfaced. Post-H1/H2 (delete-holes #200) this is the UI-READ-ONLY
+  # broadcast family: both broadcasts stay as the outbound READ stream
+  # (world_live / external readers), but no KIND consumes them anymore —
+  # the H1 Kind path is `EzagentActor.Signal.signal/2` (the sanctioned
+  # transport, not an enumerated primitive) and the H2 Kind path is the
+  # commit-path sealed self-signal (pinned by its own test below).
   @floor [
     {"apps/ezagent_domain_pty/lib/ezagent_domain_pty/phase_broadcast.ex",
      "Phoenix.PubSub.broadcast/3", {:pty_phase, 4}},
@@ -80,6 +83,22 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
 
     assert count == 1,
            "expected 1 bare-self %Signal{} wrap send in deferred_dispatch.ex, got #{count}"
+  end
+
+  test "post-H2: the commit-path slice-change self-signal is enumerated as the bare-self envelope wrap" do
+    # H2 (delete-holes #200): `Kind.Server.maybe_self_signal_slice_change/3`
+    # direct-self-sends `%EzagentActor.Signal{kind: :signal, payload:
+    # {:slice_changed, projection}}` — the sanctioned replacement for the
+    # Publisher's DELETED PubSub self-subscription. Exactly ONE such site
+    # exists (struct literal → :dynamic shape).
+    count =
+      Enum.count(ProducerEnumerator.sites(), fn s ->
+        s.path == "apps/ezagent_actor/lib/ezagent/kind/server.ex" and
+          s.target == "Kernel.send/2" and s.shape == :dynamic
+      end)
+
+    assert count == 1,
+           "expected 1 bare-self %Signal{} slice-change self-signal in kind/server.ex, got #{count}"
   end
 
   test "has-teeth: the B1 transport's own envelope sends are enumerated (empty allowlist)" do

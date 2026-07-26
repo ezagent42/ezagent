@@ -29,6 +29,19 @@ envelope sends (`apps/ezagent_actor/lib/ezagent_actor/signal.ex`,
 `signal/monitor.ex`) — enumerated by the empty allowlist, NOT B2
 migration targets.
 
+Post-H1/H2 (delete-holes #200) reclassification: the `{:pty_phase, 4}`
+broadcasts (`ezagent_domain_pty/phase_broadcast.ex`,
+`ezagent_domain_python/server.ex`) and the `{:slice_changed, 2}`
+broadcast (`ezagent_actor/slice_change.ex`) now feed READ-ONLY
+LiveView / external subscribers ONLY — no KIND subscribes to those
+topics anymore (a read-only UI subscription is not a hole, so the
+broadcasts STAY as the outbound read stream). The Kind paths moved
+onto the sanctioned envelope: H1's point-to-point
+`EzagentActor.Signal.signal/2` dual-emit (not an enumerated
+primitive) and H2's commit-path sealed self-signal (the
+`Kernel.send/2` bare-self envelope wrap in
+`ezagent_actor/kind/server.ex`, enumerated below).
+
 The **Shape** column is the statically-visible message literal: an
 atom, a `{head, size}` tuple summary, or `:dynamic` (runtime-computed
 — inspect manually at migration time). Module attributes bound to
@@ -39,7 +52,7 @@ this worklist proves "no ENUMERATED producer primitive occurs outside
 this list" (ANTI-DRIFT). It does NOT prove no other path can reach a
 Kind mailbox — that needs taint tracking, out of scope by design.
 
-**71 entries.**
+**72 entries.**
 
 | Primitive | Shape | File:Line | Note | Line SHA (12) |
 |---|---|---|---|---|
@@ -48,8 +61,9 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.broadcast/3` | `{:ezagent_reply, 2}` | `apps/ezagent_actor/lib/ezagent/invocation.ex:640` |  | `2f2b09bbae79` |
 | `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex:61` |  | `366e061019d6` |
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:364` |  | `ce2a7a8d797e` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1037` |  | `c641d0752430` |
 | `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:155` |  | `350e5f63b1c9` |
-| `Phoenix.PubSub.broadcast/3` | `{:slice_changed, 2}` | `apps/ezagent_actor/lib/ezagent/slice_change.ex:166` |  | `0361296c387b` |
+| `Phoenix.PubSub.broadcast/3` | `{:slice_changed, 2}` | `apps/ezagent_actor/lib/ezagent/slice_change.ex:192` |  | `0361296c387b` |
 | `Process.send_after/3` | `:flush` | `apps/ezagent_actor/lib/ezagent/snapshot/writer.ex:112` |  | `fa68a62106bf` |
 | `Ezagent.Runtime.Resolver.send_envelope/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent_actor/signal.ex:79` | **transport** | `c5cb4d9574bf` |
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_actor/lib/ezagent_actor/signal.ex:92` | **transport** | `0361296c387b` |
@@ -84,17 +98,17 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/auth_observers.ex:83` |  | `747510f66638` |
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/auth_observers.ex:84` |  | `2760cf3951d8` |
 | `Phoenix.PubSub.broadcast/3` | `{:pty_parked_unknown_dialog, 3}` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/parked_dialog_watch.ex:85` |  | `0361296c387b` |
-| `Phoenix.PubSub.broadcast/3` | `{:pty_phase, 4}` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/phase_broadcast.ex:48` |  | `0361296c387b` |
+| `Phoenix.PubSub.broadcast/3` | `{:pty_phase, 4}` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/phase_broadcast.ex:60` |  | `0361296c387b` |
 | `Process.send_after/3` | `{:mark_healthy, 2}` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:489` |  | `1d73c72975ab` |
 | `Process.send_after/3` | `:send_default_winsize` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:506` |  | `f05e02e69203` |
 | `Process.send_after/3` | `:restore_redraw_winsz` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:720` |  | `7a18c726396e` |
 | `Phoenix.PubSub.broadcast/3` | `{:pty_output, 3}` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:860` |  | `0361296c387b` |
 | `Process.send_after/3` | `:retry_registry_registration` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:972` |  | `0024f3ca500b` |
 | `Process.send_after/3` | `:check_parked_dialog` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:1004` |  | `c52a2726ec39` |
-| `Process.send_after/3` | `{:rpc_timeout, 2}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:415` |  | `83ff81ad447e` |
-| `Phoenix.PubSub.broadcast/3` | `{:pty_phase, 4}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:869` |  | `0361296c387b` |
-| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:474` |  | `ad4261f9d0db` |
-| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:631` |  | `14ef59068548` |
+| `Process.send_after/3` | `{:rpc_timeout, 2}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:417` |  | `83ff81ad447e` |
+| `Phoenix.PubSub.broadcast/3` | `{:pty_phase, 4}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:871` |  | `0361296c387b` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:452` |  | `ad4261f9d0db` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:609` |  | `14ef59068548` |
 | `Phoenix.PubSub.broadcast/3` | `{:read_marker_updated, 4}` | `apps/ezagent_domain_session/lib/ezagent/session/read_marker.ex:369` |  | `0361296c387b` |
 | `Phoenix.PubSub.broadcast/3` | `{:external_delivery, 2}` | `apps/ezagent_domain_session/lib/ezagent/socialware/settlement.ex:133` |  | `0361296c387b` |
 | `Phoenix.PubSub.broadcast/3` | `{:member_presence, 4}` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/presence_fanout.ex:201` |  | `0361296c387b` |

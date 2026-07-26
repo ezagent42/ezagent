@@ -105,7 +105,28 @@ defmodule Ezagent.SliceChange do
   PubSub outage.
   """
   @spec emit(map()) :: :ok
-  def emit(%{} = event), do: do_emit(event)
+  def emit(%{} = event) do
+    _ = emit_with_projection(event)
+    :ok
+  end
+
+  @doc """
+  `emit/1` PLUS the canonical projection (V5 use-side H2, delete-holes
+  #200).
+
+  Identical broadcast semantics to `emit/1`, but returns
+  `{:ok, projection}` where `projection` is the SAME canonical 5-key
+  broadcast envelope (`uri / slice_key / cursor / event_at /
+  result_summary`) that just crossed PubSub — factored out so
+  `Ezagent.Kind.Server.commit_and_notify/3` can deliver the EXACT value
+  (one cursor allocation, one `event_at`) to a `reacts_to_slice_change?`
+  behavior as a sealed self-signal (the Publisher's PubSub
+  self-subscription is deleted; the broadcast remains the outbound READ
+  stream for UI/external readers). Returns `:ok` when no projection was
+  built (no `:self_uri` in the event, or a rescued failure).
+  """
+  @spec emit_with_projection(map()) :: {:ok, map()} | :ok
+  def emit_with_projection(%{} = event), do: do_emit(event)
 
   @doc """
   True iff the slice-change hook is enabled.
@@ -157,21 +178,28 @@ defmodule Ezagent.SliceChange do
     # persisted the slice — exactly the non-fatal post-commit contract
     # this function exists to preserve.
     try do
-      :telemetry.span(
-        [:ezagent, :slice_change, :emit],
-        metadata,
-        fn ->
-          broadcast_event = build_broadcast_event(self_uri, producer_event)
+      # V5 use-side H2: the telemetry span returns the built projection
+      # (previously `:ok`), so the caller can deliver the EXACT SAME
+      # canonical envelope to a `reacts_to_slice_change?` behavior as a
+      # sealed self-signal — one cursor allocation, one `event_at`, one
+      # value feeding both the broadcast and the self-signal.
+      case :telemetry.span(
+             [:ezagent, :slice_change, :emit],
+             metadata,
+             fn ->
+               broadcast_event = build_broadcast_event(self_uri, producer_event)
 
-          Phoenix.PubSub.broadcast(
-            pubsub(),
-            topic(self_uri),
-            {:slice_changed, broadcast_event}
-          )
+               Phoenix.PubSub.broadcast(
+                 pubsub(),
+                 topic(self_uri),
+                 {:slice_changed, broadcast_event}
+               )
 
-          {:ok, %{count: 1}}
-        end
-      )
+               {broadcast_event, %{count: 1}}
+             end
+           ) do
+        %{} = broadcast_event -> {:ok, broadcast_event}
+      end
     rescue
       error ->
         # Observable + non-fatal: failures surface via telemetry +
@@ -187,9 +215,9 @@ defmodule Ezagent.SliceChange do
           "Ezagent.SliceChange.emit failed for #{inspect(self_uri)} (post-commit): " <>
             inspect(error)
         )
-    end
 
-    :ok
+        :ok
+    end
   end
 
   defp do_emit(_), do: :ok
