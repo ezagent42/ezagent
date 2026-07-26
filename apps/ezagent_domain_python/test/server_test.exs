@@ -58,7 +58,10 @@ defmodule Ezagent.Domain.Python.ServerTest do
     assert Python.alive?(handle)
 
     :ok = Python.stop(handle)
-    refute Python.alive?(handle)
+    # V5 A1b: alive?/1 is registry-based now — the seam entry leaves on
+    # the Registry's async DOWN-cleanup, not synchronously with
+    # terminate_child. Poll instead of asserting the very next line.
+    assert await_not_alive(handle)
   end
 
   test "stop/1 is idempotent — returns :ok even if not started" do
@@ -70,11 +73,6 @@ defmodule Ezagent.Domain.Python.ServerTest do
   test "call/4 returns {:error, :not_alive} when no Server registered" do
     handle = test_handle()
     assert {:error, :not_alive} = Python.call(handle, "echo", %{}, 100)
-  end
-
-  test "notify/3 returns {:error, :not_alive} when no Server registered" do
-    handle = test_handle()
-    assert {:error, :not_alive} = Python.notify(handle, "log_something", %{})
   end
 
   test "start_subprocess preflight: bad cwd → {:error, :bad_cwd}, no child registered" do
@@ -182,7 +180,6 @@ defmodule Ezagent.Domain.Python.ServerTest do
 
   test "call with bad handle raises ArgumentError" do
     assert_raise ArgumentError, fn -> Python.call(:bogus_atom, "echo", %{}) end
-    assert_raise ArgumentError, fn -> Python.notify(:bogus_atom, "log", %{}) end
     assert_raise ArgumentError, fn -> Python.alive?(:bogus_atom) end
     assert_raise ArgumentError, fn -> Python.stop(:bogus_atom) end
   end
@@ -195,5 +192,42 @@ defmodule Ezagent.Domain.Python.ServerTest do
     :sys.replace_state(pid, fn s -> %{s | tearing_down?: true} end)
 
     assert {:error, :subprocess_unhealthy} = Python.call(handle, "anything", %{}, 100)
+  end
+
+  describe "resolver seam (V5 A1b)" do
+    test "registered under the :via key; Resolver.alive?/call reach it; stop removes the key" do
+      handle = test_handle()
+
+      assert {:ok, _pid} = Python.start_subprocess(test_spec(handle))
+
+      key = Python.Server.resolver_key(handle)
+      assert key == {handle, :ezagent_domain_python, :python}
+
+      # Resolvable through the seam (pid-free liveness + calls).
+      assert Ezagent.Runtime.Resolver.alive?(key)
+      assert Ezagent.Runtime.Resolver.whereis(key) == :ok
+      # test_mode rpc_call replies {:error, :not_alive} (no real
+      # subprocess) — the point is the call RESOLVED through the seam.
+      assert {:ok, {:error, :not_alive}} =
+               Ezagent.Runtime.Resolver.call(key, {:rpc_call, "echo", %{}, 100}, 1_000)
+
+      # stop/1 goes through Resolver.terminate_child — the key leaves the seam.
+      :ok = Python.stop(handle)
+      assert await_not_alive(handle)
+    end
+  end
+
+  # V5 A1b: `alive?/1` resolves through the seam's registry entry, which
+  # disappears on the Registry's async DOWN-cleanup — poll briefly.
+  defp await_not_alive(handle, attempts \\ 100)
+  defp await_not_alive(_handle, 0), do: false
+
+  defp await_not_alive(handle, attempts) do
+    if Python.alive?(handle) do
+      Process.sleep(10)
+      await_not_alive(handle, attempts - 1)
+    else
+      true
+    end
   end
 end

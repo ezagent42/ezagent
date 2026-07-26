@@ -2,7 +2,7 @@ defmodule Ezagent.Domain.Python.IntegrationTest do
   @moduledoc """
   End-to-end integration suite — spins up a real Python subprocess via
   `uv run --script test/support/echo_server.py` and exercises the full
-  Domain.Python contract: spawn, ping, call, notify, late-result race,
+  Domain.Python contract: spawn, ping, call, late-result race,
   hung-handler tear-down, bounded stderr, shutdown, no-orphan.
 
   Tagged `:uv` so `mix test --exclude uv` skips when uv is absent.
@@ -79,7 +79,9 @@ defmodule Ezagent.Domain.Python.IntegrationTest do
              Python.call(handle, "echo", %{"x" => 1, "y" => "hello"}, 10_000)
 
     :ok = Python.stop(handle)
-    refute Python.alive?(handle)
+    # V5 A1b: alive?/1 is registry-based — the seam entry leaves on the
+    # Registry's async DOWN-cleanup; poll briefly.
+    assert await_not_alive(handle)
   end
 
   test "method not found returns -32601" do
@@ -109,20 +111,12 @@ defmodule Ezagent.Domain.Python.IntegrationTest do
     {:ok, _pid} = Python.start_subprocess(test_spec(handle))
 
     assert {:error,
-            %{"code" => -32_099, "message" => "structured error from fixture",
-              "data" => %{"hint" => "expected"}}} =
+            %{
+              "code" => -32_099,
+              "message" => "structured error from fixture",
+              "data" => %{"hint" => "expected"}
+            }} =
              Python.call(handle, "rpc_error", %{}, 5_000)
-
-    :ok = Python.stop(handle)
-  end
-
-  test "notify/3 returns :ok and the log notification arrives at Logger" do
-    handle = test_handle()
-    {:ok, _pid} = Python.start_subprocess(test_spec(handle))
-
-    assert :ok = Python.notify(handle, "log_something", %{})
-    # Give the subprocess a tick to emit + Server to consume.
-    Process.sleep(200)
 
     :ok = Python.stop(handle)
   end
@@ -248,6 +242,20 @@ defmodule Ezagent.Domain.Python.IntegrationTest do
     case File.stat(path) do
       {:ok, %{size: n}} -> n
       _ -> 0
+    end
+  end
+
+  # V5 A1b: `alive?/1` resolves through the seam's registry entry, which
+  # disappears on the Registry's async DOWN-cleanup — poll briefly.
+  defp await_not_alive(handle, attempts \\ 100)
+  defp await_not_alive(_handle, 0), do: false
+
+  defp await_not_alive(handle, attempts) do
+    if Python.alive?(handle) do
+      Process.sleep(10)
+      await_not_alive(handle, attempts - 1)
+    else
+      true
     end
   end
 end

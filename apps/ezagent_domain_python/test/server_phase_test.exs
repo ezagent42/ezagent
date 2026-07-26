@@ -2,8 +2,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
   @moduledoc """
   PTY-phase-state-machine 2026-05-26 follow-up (b) — verify that
   `Ezagent.Domain.Python.Server` broadcasts canonical phase
-  transitions on `pty:phase:<agent_uri>` when the handle is a URI,
-  and exposes the current phase via `phase/1`.
+  transitions on `pty:phase:<agent_uri>` when the handle is a URI.
 
   Per Allen's directive — the same three phases as PtyServer:
 
@@ -11,6 +10,10 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
                     handshake completes
     * `:running`  — after ping pong success (test_mode short-circuits)
     * `:dead`     — on spawn / ping failure or subprocess death
+
+  V5 A1b-rest: the `phase/1` query (`:sys.get_state` reach-in) is
+  DROPPED — live phase reaches operators exclusively through this
+  PubSub broadcast; there is no state query to test any more.
 
   Test mode (`Spec.test_mode: true`) short-circuits the real
   `:exec.run/2` + ping handshake — sufficient for exercising the
@@ -24,9 +27,7 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
   alias Ezagent.Domain.Python.Spec
 
   defp fresh_uri do
-    URI.new!(
-      "entity://team-alpha/agent/test_pyphase-#{System.unique_integer([:positive])}"
-    )
+    URI.new!("entity://team-alpha/agent/test_pyphase-#{System.unique_integer([:positive])}")
   end
 
   defp test_spec(handle) do
@@ -75,22 +76,6 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
       assert_receive {:pty_phase, ^uri, :starting, %{os_pid: _, at: _}}, 1_000
       assert_receive {:pty_phase, ^uri, :running, %{os_pid: nil, at: _}}, 1_000
     end
-
-    test "phase/1 returns :running after test_mode init settles" do
-      uri = fresh_uri()
-      assert {:ok, _pid} = Python.start_subprocess(test_spec(uri))
-
-      assert :running = PyServer.phase(uri)
-    end
-
-    test "phase/1 returns :dead when no server exists" do
-      ghost =
-        URI.new!(
-          "entity://team-alpha/agent/test_pyphase-nonexistent-#{System.unique_integer([:positive])}"
-        )
-
-      assert :dead = PyServer.phase(ghost)
-    end
   end
 
   describe "init (test_mode) — binary handle SKIPS broadcast" do
@@ -98,7 +83,8 @@ defmodule Ezagent.Domain.Python.Server.PhaseTest do
       # When the handle is a binary (used by facade-level tests), we
       # skip the broadcast entirely — there's no agent URI to derive
       # a topic from, and the binary key isn't a LV/Sandbox concern.
-      bin_handle = "test://server-phase-bin/" <> Integer.to_string(System.unique_integer([:positive]))
+      bin_handle =
+        "test://server-phase-bin/" <> Integer.to_string(System.unique_integer([:positive]))
 
       # Subscribe to a URI-shaped topic — should never receive anything
       probe_uri = URI.new!("entity://team-alpha/agent/test_pyphase-probe")

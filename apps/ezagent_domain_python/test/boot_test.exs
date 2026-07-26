@@ -11,13 +11,16 @@ defmodule EzagentDomainPython.BootTest do
 
   test "ensure_all_started includes erlexec" do
     assert {:ok, started} = Application.ensure_all_started(:ezagent_domain_python)
-    started_or_already = started ++ Application.started_applications() |> Enum.map(&elem(&1, 0))
+    started_or_already = (started ++ Application.started_applications()) |> Enum.map(&elem(&1, 0))
     assert :erlexec in started_or_already
   end
 
-  test "Registry + Supervisor are alive after boot" do
+  test "Supervisor is alive after boot (private Registry retired — V5 A1b)" do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_python)
-    assert Process.whereis(EzagentDomainPython.Registry) |> is_pid()
     assert Process.whereis(EzagentDomainPython.Supervisor) |> is_pid()
+    # V5 pid-closure A1b: registration moved to the unified
+    # `Ezagent.Runtime.SidecarRegistry` (actor app); the private
+    # `EzagentDomainPython.Registry` is retired — nothing starts it.
+    assert Process.whereis(Ezagent.Runtime.SidecarRegistry) |> is_pid()
   end
 end

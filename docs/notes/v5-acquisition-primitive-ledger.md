@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**64 entries.**
+**58 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -80,13 +80,7 @@ taint tracking, out of scope by design.
 | `:global.registered_names/0` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:91` | `13b893889a3c` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:100` | `f7a58e713fcf` |
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:105` | `0d0a314f833c` |
-| `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:177` | `7d426e5ae957` |
-| `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:215` | `ca5b5e2e6a26` |
-| `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:238` | `ca5b5e2e6a26` |
-| `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:261` | `ca5b5e2e6a26` |
-| `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:284` | `ca5b5e2e6a26` |
-| `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:133` | `ca5b5e2e6a26` |
-| `:sys.get_state/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:136` | `d7a39f8c14a4` |
+| `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:192` | `7d426e5ae957` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:626` | `7d426e5ae957` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:565` | `fc4c08124cf7` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:33` | `52bb96193cae` |

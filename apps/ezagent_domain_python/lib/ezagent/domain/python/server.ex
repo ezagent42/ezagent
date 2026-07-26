@@ -21,6 +21,16 @@ defmodule Ezagent.Domain.Python.Server do
   Sibling of `Ezagent.Domain.Pty.Server` — both wrap `:exec.run/2`;
   Domain.Pty allocates a tty (`:pty` opt), Domain.Python does not.
 
+  ## V5 pid-closure A1b — resolver-seam registration
+
+  Every Python Server SELF-registers under `{handle_key,
+  :ezagent_domain_python, :python}` in the unified
+  `Ezagent.Runtime.SidecarRegistry` (the retired private
+  `EzagentDomainPython.Registry` is gone), and every reach converges on
+  the pid-free `Ezagent.Runtime.Resolver` face (`alive?/1`, `call/3`,
+  `terminate_child/2`) — no caller looks up a pid or walks the
+  DynamicSupervisor any more.
+
   ## Test mode
 
   When `Spec.test_mode` is `true` (default in `:test`), `init/1`
@@ -30,11 +40,26 @@ defmodule Ezagent.Domain.Python.Server do
   without exercising real uv / Python.
   """
 
+  # `restart: :transient` (set in `child_spec/1`; V5 A1b PTY-pilot
+  # policy): an ABNORMAL stop — the erlexec child's
+  # `{:subprocess_died, _}` — still restarts under
+  # `EzagentDomainPython.Supervisor`. But a GRACEFUL stop (only the
+  # registry-collision policy below stops this way) must NOT be
+  # restarted: the loser of a registry-restart race has its :via key
+  # owned by the replacement, so a restart would fail-start on
+  # `{:already_started, _}` in a loop until the DynamicSupervisor's
+  # intensity tripped and took EVERY Python Server down.
   use GenServer
   require Logger
 
   alias Ezagent.Domain.Python
+  alias Ezagent.Runtime.SidecarRegistry
   alias EzagentDomainPython.{FrameBuffer, JsonRpc}
+
+  # V5 pid-closure A1b — this sidecar's resolver-seam identity. The key is
+  # the address, never a pid (PTY-pilot pattern, `Ezagent.Domain.Pty.Server`).
+  @plugin :ezagent_domain_python
+  @role :python
 
   defstruct [
     :handle,
@@ -43,6 +68,7 @@ defmodule Ezagent.Domain.Python.Server do
     :exec_pid,
     :os_pid,
     :monitor_ref,
+    :registry_ref,
     :stderr_log_path,
     :stderr_log_io,
     :stderr_log_bytes,
@@ -86,15 +112,26 @@ defmodule Ezagent.Domain.Python.Server do
     }
   end
 
-  @doc "Start a Server bound to `spec.handle` via the Registry."
+  @doc "Start a Server bound to `spec.handle` via the unified SidecarRegistry."
   def start_link(%Python.Spec{} = spec) do
     key = Python.handle_key(spec.handle)
-    GenServer.start_link(__MODULE__, {spec, key}, name: via(key))
+    GenServer.start_link(__MODULE__, {spec, key}, name: SidecarRegistry.via(key, @plugin, @role))
   end
 
-  defp via(key) when is_binary(key) do
-    {:via, Registry, {EzagentDomainPython.Registry, key}}
-  end
+  @doc """
+  The resolver-seam key for this handle's Python Server:
+  `{handle_key, :ezagent_domain_python, :python}` where `handle_key` is
+  the canonical `Python.handle_key/1`. Public so callers build the SAME
+  key — the key is the address, never a pid.
+  """
+  @spec resolver_key(Python.handle()) :: {binary(), atom(), atom()}
+  def resolver_key(handle), do: {Python.handle_key(handle), @plugin, @role}
+
+  @doc """
+  The `:via` tuple this Server SELF-registers under (the unified
+  `Ezagent.Runtime.SidecarRegistry`, plugin-qualified key).
+  """
+  def via(handle), do: SidecarRegistry.via(Python.handle_key(handle), @plugin, @role)
 
   @doc """
   PubSub topic for a Python subprocess's phase transitions
@@ -118,31 +155,11 @@ defmodule Ezagent.Domain.Python.Server do
   def phase_topic(%URI{} = agent_uri),
     do: "pty:phase:" <> URI.to_string(agent_uri)
 
-  @doc """
-  Public accessor for the current phase of a live Python Server.
-
-  Returns `:starting | :running | :dead` for a live server, or
-  `:dead` when no server exists. Callers that need to distinguish
-  "no server" from "server in :dead" should use
-  `Ezagent.Domain.Python.alive?/1` first.
-  """
-  @spec phase(URI.t() | binary()) :: :starting | :running | :dead
-  def phase(handle) do
-    key = Python.handle_key(handle)
-
-    case Registry.lookup(EzagentDomainPython.Registry, key) do
-      [{pid, _}] ->
-        try do
-          state = :sys.get_state(pid, 500)
-          state.phase || :dead
-        catch
-          _, _ -> :dead
-        end
-
-      [] ->
-        :dead
-    end
-  end
+  # V5 A1b-rest: the `phase/1` query (+ its `:sys.get_state` reach-in) is
+  # DROPPED, not migrated — its only consumer
+  # (`Ezagent.Domain.Agent.subprocess_phase/1`) had zero callers, and the
+  # live phase already reaches operators via `broadcast_phase` → PubSub →
+  # slice. Subscribe to `phase_topic/1`; never query the Server's state.
 
   # --- init: SYNCHRONOUS spawn + ping (SPEC §3.2) ----------------------
 
@@ -159,7 +176,11 @@ defmodule Ezagent.Domain.Python.Server do
       test_mode: test_mode,
       stderr_log_path: stderr_log_path(key),
       stderr_log_bytes: 0,
-      phase: :starting
+      phase: :starting,
+      # V5 A1b — watch the unified registry so its restart (the entry
+      # dies with it) triggers self re-registration, keeping this
+      # sidecar resolvable through the seam.
+      registry_ref: SidecarRegistry.watch()
     }
 
     # PTY-phase-state-machine follow-up (b): emit :starting before any
@@ -180,7 +201,9 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
-  defp resolve_test_mode(%Python.Spec{test_mode: nil}), do: (Code.ensure_loaded?(Mix) and Mix.env() == :test)
+  defp resolve_test_mode(%Python.Spec{test_mode: nil}),
+    do: Code.ensure_loaded?(Mix) and Mix.env() == :test
+
   defp resolve_test_mode(%Python.Spec{test_mode: tm}) when is_boolean(tm), do: tm
 
   defp do_spawn_and_ping(state) do
@@ -362,7 +385,7 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
-  # --- call / notify (post-ready) --------------------------------------
+  # --- call (post-ready) -----------------------------------------------
 
   @impl true
   def handle_call(:await_ready, _from, %__MODULE__{ready?: true} = state) do
@@ -460,23 +483,9 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
-  @impl true
-  def handle_cast({:rpc_notify, _method, _params}, %__MODULE__{ready?: false} = state) do
-    {:noreply, state}
-  end
-
-  def handle_cast({:rpc_notify, _method, _params}, %__MODULE__{test_mode: true} = state) do
-    {:noreply, state}
-  end
-
-  def handle_cast({:rpc_notify, method, params}, state) do
-    frame =
-      JsonRpc.encode_frame({:notification, method, params})
-      |> IO.iodata_to_binary()
-
-    safe_exec_send(state.exec_pid, frame)
-    {:noreply, state}
-  end
+  # V5 A1b-rest: the `{:rpc_notify, ...}` cast handlers are DROPPED with
+  # the facade's `notify/3` (tests-only, zero prod callers) — fire-and-
+  # forget JSON-RPC notifications never had a production reach.
 
   # --- erlexec messages ------------------------------------------------
 
@@ -496,6 +505,28 @@ defmodule Ezagent.Domain.Python.Server do
     state = append_stderr(state, IO.iodata_to_binary(bytes))
     {:noreply, state}
   end
+
+  # V5 A1b — the unified SidecarRegistry restarted (it lives in ANOTHER
+  # app's supervision tree); our :via entry died with it. Re-register THIS
+  # process and re-arm the watch so the sidecar stays resolvable through
+  # the seam. Matched BEFORE the subprocess's generic stale-:DOWN clause
+  # below (chunk1 gotcha — a registry :DOWN must never read as subprocess
+  # death). The `is_reference/1` guard also keeps the erlexec DOWN (whose
+  # "ref" is the exec PID) out of this clause.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %__MODULE__{registry_ref: ref} = state)
+      when is_reference(ref) do
+    Logger.warning(
+      "Domain.Python: SidecarRegistry DOWN (#{inspect(reason)}) — re-registering " <>
+        state.handle_key
+    )
+
+    reregister_with_registry(state)
+  end
+
+  def handle_info(:retry_registry_registration, %__MODULE__{registry_ref: nil} = state),
+    do: reregister_with_registry(state)
+
+  def handle_info(:retry_registry_registration, state), do: {:noreply, state}
 
   def handle_info({:DOWN, _ref, :process, _pid, reason}, state) do
     Logger.warning(
@@ -651,6 +682,43 @@ defmodule Ezagent.Domain.Python.Server do
     end)
 
     %{state | ready_waiters: []}
+  end
+
+  # V5 A1b — re-register THIS process under its seam key after a
+  # registry restart, then re-arm the watch. On failure (registry still
+  # down after the helper's bounded wait) schedule a retry instead of
+  # crashing: the worker is healthy, only its discoverability is degraded.
+  #
+  # Collision policy (V5 A1b codex blocker B) — `{:error,
+  # :already_registered}` means a REPLACEMENT worker won the key during
+  # the registry's empty-restart window. This original is now unreachable
+  # through the seam, and two live Python Servers for one handle must
+  # never coexist: LOSE GRACEFULLY — stop; `terminate/2` releases the
+  # erlexec child, and `restart: :transient` keeps the supervisor from
+  # resurrecting the loser.
+  defp reregister_with_registry(state) do
+    case SidecarRegistry.re_register({state.handle_key, @plugin, @role}) do
+      :ok ->
+        {:noreply, %{state | registry_ref: SidecarRegistry.watch()}}
+
+      {:error, :already_registered} ->
+        Logger.warning(
+          "Domain.Python: SidecarRegistry key for #{state.handle_key} is owned by a " <>
+            "replacement that won the restart race — this losing original is " <>
+            "terminating gracefully (releasing its child)"
+        )
+
+        {:stop, {:shutdown, :registry_collision}, state}
+
+      {:error, why} ->
+        Logger.error(
+          "Domain.Python: SidecarRegistry re-register failed for #{state.handle_key} " <>
+            "(#{inspect(why)}) — retrying"
+        )
+
+        Process.send_after(self(), :retry_registry_registration, 200)
+        {:noreply, %{state | registry_ref: nil}}
+    end
   end
 
   # --- terminate -------------------------------------------------------

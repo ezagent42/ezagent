@@ -7,9 +7,10 @@ defmodule EzagentDomainPython do
   (merged #254). This app owns the OS-process lifecycle for any
   Python subprocess that ezagent itself launches via uv: one
   `Ezagent.Domain.Python.Server` GenServer per managed handle,
-  parented by `EzagentDomainPython.Supervisor` and registered under
-  `EzagentDomainPython.Registry` (`:via` Registry keyed by the
-  canonical handle).
+  parented by `EzagentDomainPython.Supervisor` and self-registered
+  in the unified `Ezagent.Runtime.SidecarRegistry` (`:via` keyed by
+  the canonical handle — V5 pid-closure A1b; the private
+  `EzagentDomainPython.Registry` is retired).
 
   ## What Domain.Python is
 
@@ -40,7 +41,6 @@ defmodule EzagentDomainPython do
 
       Ezagent.Domain.Python.start_subprocess/1
       Ezagent.Domain.Python.call/4
-      Ezagent.Domain.Python.notify/3
       Ezagent.Domain.Python.stop/1
       Ezagent.Domain.Python.alive?/1
 

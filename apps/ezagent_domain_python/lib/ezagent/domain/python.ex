@@ -1,12 +1,26 @@
 defmodule Ezagent.Domain.Python do
   @moduledoc """
-  Domain.Python facade — start, call, notify, stop for a uv-launched
+  Domain.Python facade — start, call, stop for a uv-launched
   Python subprocess.
 
   Per SPEC `docs/superpowers/specs/2026-05-23-domain-python.md` §4.
   This is the ONLY API plugins / Behaviors / Template Classes should
-  use; direct references to `Server`, `EzagentDomainPython.Supervisor`,
-  or `EzagentDomainPython.Registry` are an internal concern.
+  use; direct references to `Server` or `EzagentDomainPython.Supervisor`
+  are an internal concern.
+
+  ## V5 pid-closure A1b — resolver seam
+
+  Servers SELF-register in the unified `Ezagent.Runtime.SidecarRegistry`
+  under `{handle_key, :ezagent_domain_python, :python}` (the retired
+  private `EzagentDomainPython.Registry` is gone); every facade reach —
+  `call/4`, `alive?/1`, `stop/1` — resolves through the pid-free
+  `Ezagent.Runtime.Resolver` face. No pid ever crosses this module's
+  public surface (`start_subprocess/1`'s `{:ok, pid}` is the
+  DynamicSupervisor's own start return).
+
+  V5 A1b-rest dropped the dead faces: `notify/3` (tests-only cast) and
+  `Server.phase/1` (zero-callers `:sys.get_state` reach-in — the live
+  phase reaches operators via the `phase_topic/1` PubSub broadcast).
 
   ## Handle canonicalization (§1.2.1, codex round-1 HIGH-4 + round-2 HIGH-3)
 
@@ -29,6 +43,7 @@ defmodule Ezagent.Domain.Python do
   """
 
   alias Ezagent.Domain.Python.{Server, Spec}
+  alias Ezagent.Runtime.Resolver
 
   @typedoc "Canonical handle — `URI.t()` or a canonical binary (see §1.2.1)."
   @type handle :: URI.t() | binary()
@@ -122,10 +137,10 @@ defmodule Ezagent.Domain.Python do
   half-started child, no restart loop.
 
   Concurrent starts for the same handle collapse atomically at the
-  `:via` Registry. The losing caller calls `:await_ready` on the
-  winning pid (SPEC §3.2 step 2, D13) — both callers observe the
-  SAME final outcome (`{:ok, pid}` only when the subprocess actually
-  reached ready, never a soon-to-die pid).
+  `:via` unified `SidecarRegistry`. The losing caller calls
+  `:await_ready` on the winning pid (SPEC §3.2 step 2, D13) — both
+  callers observe the SAME final outcome (`{:ok, pid}` only when the
+  subprocess actually reached ready, never a soon-to-die pid).
   """
   @spec start_subprocess(Spec.t()) ::
           {:ok, pid()}
@@ -210,80 +225,66 @@ defmodule Ezagent.Domain.Python do
              | %{required(String.t()) => term()}}
   def call(handle, method, params, timeout \\ 5_000)
       when is_binary(method) and is_map(params) and is_integer(timeout) and timeout > 0 do
-    key = handle_key(handle)
-
-    case Registry.lookup(EzagentDomainPython.Registry, key) do
-      [{pid, _}] ->
-        # Allow GenServer.call extra budget to cover the in-Server
-        # timer + reply path (Server's :rpc_timeout fires at `timeout`
-        # ms; we wait a touch longer to receive the :error result).
-        try do
-          GenServer.call(pid, {:rpc_call, method, params, timeout}, timeout + 1_000)
-        catch
-          :exit, {:noproc, _} -> {:error, :not_alive}
-          :exit, {:timeout, _} -> {:error, :rpc_timeout}
-          :exit, {reason, _} -> {:error, {:subprocess_died, reason}}
-        end
-
-      [] ->
-        {:error, :not_alive}
-    end
-  end
-
-  @doc "Fire-and-forget JSON-RPC notification."
-  @spec notify(handle(), String.t(), map()) :: :ok | {:error, :not_alive}
-  def notify(handle, method, params) when is_binary(method) and is_map(params) do
-    key = handle_key(handle)
-
-    case Registry.lookup(EzagentDomainPython.Registry, key) do
-      [{pid, _}] ->
-        try do
-          GenServer.cast(pid, {:rpc_notify, method, params})
-          :ok
-        catch
-          _, _ -> {:error, :not_alive}
-        end
-
-      [] ->
-        {:error, :not_alive}
+    # V5 A1b — pid-free: the seam resolves the resolver key and calls the
+    # Server. Allow GenServer.call extra budget to cover the in-Server
+    # timer + reply path (Server's :rpc_timeout fires at `timeout` ms; we
+    # wait a touch longer to receive the :error result). Exit-reason
+    # mapping preserves the pre-seam error contract exactly.
+    case Resolver.call(
+           Server.resolver_key(handle),
+           {:rpc_call, method, params, timeout},
+           timeout + 1_000
+         ) do
+      {:ok, reply} -> reply
+      {:error, :no_such_actor} -> {:error, :not_alive}
+      {:error, {:noproc, _}} -> {:error, :not_alive}
+      {:error, {:timeout, _}} -> {:error, :rpc_timeout}
+      {:error, {reason, _}} -> {:error, {:subprocess_died, reason}}
+      {:error, reason} -> {:error, {:subprocess_died, reason}}
     end
   end
 
   @doc """
   Graceful shutdown. Idempotent — returns `:ok` whether the server was
   alive or not. Sends `python.shutdown` notification, waits up to
-  `shutdown_grace_ms`, then force-stops via the supervisor.
+  `shutdown_grace_ms`, then force-stops via the supervisor. Pid-free —
+  both reaches resolve through the V5 resolver seam (`Resolver.call/3` +
+  `Resolver.terminate_child/2`).
+
+  Returns only after the seam entry is GONE: the registry entry dies
+  asynchronously with the child (Registry DOWN-cleanup), so a bare
+  terminate would let a caller's immediate `alive?/1` see a stopping
+  server as still up (PTY `terminate_until_gone` precedent).
   """
   @spec stop(handle()) :: :ok
   def stop(handle) do
-    key = handle_key(handle)
+    key = Server.resolver_key(handle)
 
-    case Registry.lookup(EzagentDomainPython.Registry, key) do
-      [{pid, _}] ->
-        try do
-          GenServer.call(pid, :graceful_stop, 30_000)
-        catch
-          _, _ -> :ok
-        end
+    _ = Resolver.call(key, :graceful_stop, 30_000)
+    _ = Resolver.terminate_child(key, EzagentDomainPython.Supervisor)
+    await_unregistered(key, 50)
 
-        case DynamicSupervisor.terminate_child(EzagentDomainPython.Supervisor, pid) do
-          :ok -> :ok
-          {:error, :not_found} -> :ok
-        end
+    :ok
+  end
 
-      [] ->
-        :ok
+  # Bounded poll for the Registry's asynchronous DOWN-cleanup. 50 × 10 ms
+  # is generous for a local ETS delete; on exhaustion we still report
+  # `:ok` (the child IS terminated — only the entry lags).
+  defp await_unregistered(_key, 0), do: :ok
+
+  defp await_unregistered(key, attempts_left) do
+    if Resolver.alive?(key) do
+      Process.sleep(10)
+      await_unregistered(key, attempts_left - 1)
+    else
+      :ok
     end
   end
 
-  @doc "True iff a Server is registered and the process is alive."
+  @doc """
+  True iff a Server is registered and the process is alive. Pid-free —
+  resolved through the V5 resolver seam's `Resolver.alive?/1`.
+  """
   @spec alive?(handle()) :: boolean()
-  def alive?(handle) do
-    key = handle_key(handle)
-
-    case Registry.lookup(EzagentDomainPython.Registry, key) do
-      [{pid, _}] -> Process.alive?(pid)
-      [] -> false
-    end
-  end
+  def alive?(handle), do: Resolver.alive?(Server.resolver_key(handle))
 end

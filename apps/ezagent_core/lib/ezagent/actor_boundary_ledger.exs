@@ -504,12 +504,6 @@
       note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
     },
     %{
-      path: "apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex",
-      target: ":sys.get_state",
-      sha: "d7a39f8c14a4f839260cda13194e249f6482f8c16e0ea1b1c25e6a6f0d1e34ee",
-      note: "PTY/Python sidecar inspects its OWN domain process, not a Kind (allowlisted debt)"
-    },
-    %{
       path: "apps/ezagent_domain_session/lib/ezagent/behavior/session.ex",
       target: "Ezagent.KindRegistry",
       sha: "8cecb884167fcb6fe269d6e9b38267929519ce94d307fb6080e878e5e54bee70",

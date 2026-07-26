@@ -117,9 +117,19 @@ defmodule Ezagent.Domain.Python.AgentLifecycleTest do
       assert Python.alive?(handle)
 
       # Capture the live pid, ensure_alive again, assert SAME process.
-      [{pid1, _}] = Registry.lookup(EzagentDomainPython.Registry, Python.handle_key(handle))
+      # V5 A1b: resolved through the unified SidecarRegistry (the private
+      # EzagentDomainPython.Registry is retired).
+      {:ok, pid1} =
+        Ezagent.Runtime.SidecarRegistry.lookup(
+          {Python.handle_key(handle), :ezagent_domain_python, :python}
+        )
+
       assert :ok = AgentLifecycle.ensure_alive(py_spec(handle))
-      [{pid2, _}] = Registry.lookup(EzagentDomainPython.Registry, Python.handle_key(handle))
+
+      {:ok, pid2} =
+        Ezagent.Runtime.SidecarRegistry.lookup(
+          {Python.handle_key(handle), :ezagent_domain_python, :python}
+        )
 
       assert pid1 == pid2
     end

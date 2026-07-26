@@ -31,10 +31,11 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     # (V5 A1b REMOVED the ezagent_domain_pty server.ex seeds —
     # `DynamicSupervisor.which_children/1` + `:sys.get_state/2` — the PTY
     # sidecar migrated onto the resolver seam; its entries left the ledger.
-    # The `:sys.get_state` seed is RETARGETED to the remaining Python
-    # sidecar site so the census keeps teeth on the primitive (codex #1),
-    # and a synthetic detector test below covers `which_children/1`.)
-    {"apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex", ":sys.get_state/2"},
+    # V5 A1b-rest chunk2 REMOVED the ezagent_domain_python server.ex
+    # `:sys.get_state/2` seed — the Python sidecar's dead `phase/1`
+    # reach-in was dropped with its seam migration, so the LAST real
+    # `:sys.get_state` site left the tree. Synthetic detector tests below
+    # keep census teeth on both primitives (codex #1).)
     {"apps/ezagent_domain_workspace/lib/ezagent/workspace.ex", "Task.Supervisor.start_child/2"},
     {"apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex",
      "Task.Supervisor.async_nolink/2"},
@@ -84,6 +85,22 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
 
     assert %{target: "DynamicSupervisor.which_children/1"} =
              Enum.find(sites, &(&1.target == "DynamicSupervisor.which_children/1"))
+  end
+
+  test "synthetic: :sys.get_state/2 is still detected (A1b-rest chunk2 teeth)" do
+    # The Python sidecar's dead `phase/1` reach-in was the last REAL
+    # `:sys.get_state` site; this synthetic source proves the census
+    # still has teeth on the primitive.
+    source = """
+    defmodule SynthSysGetState do
+      def peek(pid), do: :sys.get_state(pid, 500)
+    end
+    """
+
+    sites = Scanner.acquisition_sites_in_source(source, "synth/sys_get_state.ex")
+
+    assert %{target: ":sys.get_state/2"} =
+             Enum.find(sites, &(&1.target == ":sys.get_state/2"))
   end
 
   test "synthetic: seam-internal pid accessors are flagged OUTSIDE the seam (codex #1)" do
@@ -150,9 +167,10 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     end
   end
 
-  test "no REAL raw Resolver.call/cast/terminate_child site is censused (PTY facade is sanctioned)" do
-    # The only prod users of the triple are the allowlisted PTY facade +
-    # Server; anything else would be new drift (surfaced here, report-only).
+  test "no REAL raw Resolver.call/cast/terminate_child site is censused (sidecar facades are sanctioned)" do
+    # The only prod users of the triple are the allowlisted sidecar
+    # facades (PTY pilot, codex chunk1, Python chunk2); anything else
+    # would be new drift (surfaced here, report-only).
     raw =
       Enum.filter(Scanner.acquisition_sites(), fn s ->
         s.target in [

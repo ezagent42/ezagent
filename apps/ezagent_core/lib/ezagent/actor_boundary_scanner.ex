@@ -936,15 +936,18 @@ defmodule Ezagent.ActorBoundaryScanner do
   # sidecar-messaging triple (`Resolver.call/cast/terminate_child`) — every
   # other module is census-flagged for them. The PTY pilot is the first
   # entry (its facade module + the Server module that hosts the facade's
-  # query APIs); the 6 remaining sidecars add their facades when templated.
-  # V5 A1b-rest: the codex AppServer + BridgeSidecar are next — each is a
-  # single module hosting both the facade functions and the GenServer query
-  # APIs.
+  # query APIs); the remaining sidecars add their facades when templated.
+  # V5 A1b-rest chunk1: the codex AppServer + BridgeSidecar — each a
+  # single module hosting both the facade functions and the GenServer
+  # query APIs. Chunk2: the Python sidecar (facade `Ezagent.Domain.Python`
+  # hosts the Resolver reaches; its Server only watches/re-registers,
+  # never calls the triple).
   @sidecar_facade_allowlist MapSet.new([
                               Ezagent.Domain.Pty,
                               Ezagent.Domain.Pty.Server,
                               EzagentPluginCodex.AppServer,
-                              EzagentPluginCodex.BridgeSidecar
+                              EzagentPluginCodex.BridgeSidecar,
+                              Ezagent.Domain.Python
                             ])
 
   # The fun names of the facade-gated triple (subset of

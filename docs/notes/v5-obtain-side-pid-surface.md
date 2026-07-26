@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **134 entries.**
+for the A1b/A1c migration phases. **129 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -41,14 +41,9 @@ for the A1b/A1c migration phases. **134 entries.**
 | `Ezagent.Cap.TargetArtifactValidator` | `validate/2` | `apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex:7` | body |
 | `Ezagent.Domain.Agent` | `ensure_declared_member/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:317` | nested |
 | `Ezagent.Domain.Agent` | `materialize_declared/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:297` | nested |
-| `Ezagent.Domain.Python` | `alive?/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:281` | body |
-| `Ezagent.Domain.Python` | `call/4` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:211` | body |
-| `Ezagent.Domain.Python` | `notify/3` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:235` | body |
-| `Ezagent.Domain.Python` | `start_subprocess/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:144` | nested |
-| `Ezagent.Domain.Python` | `stop/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:258` | body |
+| `Ezagent.Domain.Python` | `start_subprocess/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:159` | nested |
 | `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:96` | nested |
 | `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:114` | nested |
-| `Ezagent.Domain.Python.Server` | `phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:130` | body |
 | `Ezagent.DomainGit.TaskAccessSupervisor` | `ensure_started/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/task_access_supervisor.ex:24` | nested |
 | `Ezagent.Entity.Agent` | `spawn_fresh/4` | `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex:351` | body + nested |
 | `Ezagent.Entity.Session` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:381` | body + nested |

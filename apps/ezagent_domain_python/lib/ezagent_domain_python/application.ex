@@ -10,15 +10,19 @@ defmodule EzagentDomainPython.Application do
 
   ## Children
 
-  1. `EzagentDomainPython.Registry` — `:via` Registry keyed by
-     `Ezagent.Domain.Python.handle_key/1` (canonical handle). Servers
-     register here on `start_link`, so concurrent spawn attempts for
-     the same handle collapse atomically to
-     `{:error, {:already_started, pid}}`. The facade's
-     `start_subprocess/1` then performs readiness-aware adoption via
-     `:await_ready` (SPEC §3.2 step 2 / D13).
-  2. `EzagentDomainPython.Supervisor` — `DynamicSupervisor` parenting
+  1. `EzagentDomainPython.Supervisor` — `DynamicSupervisor` parenting
      the Server GenServers.
+
+  V5 pid-closure A1b: the private `EzagentDomainPython.Registry` is
+  RETIRED — Servers self-register in the unified
+  `Ezagent.Runtime.SidecarRegistry` (started by
+  `EzagentActor.Application`) under `{handle_key,
+  :ezagent_domain_python, :python}` and are reached only through the
+  `Ezagent.Runtime.Resolver` seam. Concurrent spawn attempts for the
+  same handle still collapse atomically at the `:via` registration
+  (`{:error, {:already_started, pid}}`), and the facade's
+  `start_subprocess/1` keeps its readiness-aware `:await_ready`
+  adoption (SPEC §3.2 step 2 / D13).
   """
 
   use Application
@@ -26,7 +30,6 @@ defmodule EzagentDomainPython.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Registry, keys: :unique, name: EzagentDomainPython.Registry},
       {DynamicSupervisor, name: EzagentDomainPython.Supervisor, strategy: :one_for_one}
     ]
 

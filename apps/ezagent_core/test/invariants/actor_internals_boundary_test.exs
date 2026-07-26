@@ -309,20 +309,18 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     assert Scanner.forward_sites_in_source(probe, "apps/x/lib/w.ex") != []
   end
 
-  test "the current Python sidecar :sys sites are ledgered debt (not new offenders)" do
+  test "no real :sys reach-in sites remain (both sidecars on the seam)" do
     # V5 A1b: the PTY sidecar migrated onto the resolver seam — its six
     # `:sys.get_state` reach-ins became explicit GenServer.call client APIs
-    # and LEFT this ledger. Only the Python sidecar's site remains (its own
-    # A1b migration is a later pilot).
+    # and LEFT this ledger. V5 A1b-rest chunk2 DROPPED the last real :sys
+    # site — the Python sidecar's `phase/1` reach-in (dead op: its only
+    # consumer had zero callers; live phase rides the PubSub broadcast).
+    # The :sys family keeps teeth via the synthetic forward-detector test
+    # above.
     sys_sites = Enum.filter(Scanner.forward_ratchet(), &String.starts_with?(&1.target, ":sys"))
-    assert length(sys_sites) == 1
+    assert sys_sites == []
 
-    assert Enum.all?(
-             sys_sites,
-             &(&1.path =~ "ezagent_domain_python")
-           )
-
-    # they are NOT flagged as new debt (they are in the frozen ledger)
+    # no :sys site is flagged as new debt either (none exist any more)
     assert Enum.all?(
              Scanner.forward_new_offenders(),
              &(not String.starts_with?(&1.target, ":sys"))
