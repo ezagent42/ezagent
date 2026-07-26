@@ -180,9 +180,9 @@ defmodule EzagentWeb.HomeLive do
       case Ezagent.Workspace.Store.get_by_name("system") do
         nil ->
           case Ezagent.Workspace.create("system", %{created_by: creator_uri}) do
-            {:ok, _pid} -> :ok
+            {:ok, _uri} -> :ok
             {:error, :workspace_exists} -> :ok
-            {:error, {:already_started, _pid}} -> :ok
+            {:error, {:already_started, _uri}} -> :ok
             {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
           end
 

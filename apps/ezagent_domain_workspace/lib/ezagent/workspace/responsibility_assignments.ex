@@ -104,8 +104,8 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
                  session_templates: templates,
                  routing_rules: rules
                }) do
-            {:ok, _pid} -> :ok
-            {:error, {:already_started, _pid}} -> :ok
+            {:ok, _uri} -> :ok
+            {:error, {:already_started, _uri}} -> :ok
             {:error, reason} -> {:error, {:workspace_spawn_failed, reason}}
           end
       end

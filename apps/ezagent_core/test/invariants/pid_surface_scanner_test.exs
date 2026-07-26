@@ -40,17 +40,15 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     {Ezagent.DomainGit.TaskAccessSupervisor, :ensure_started, 1},
     # body-bound pid (KindRegistry.lookup -> GenServer.call); the public
     # @spec is URI-only since V5 A1c chunk1
-    {Ezagent.Kind, :runtime_view, 1},
-    # A1a floor (codex round-2 #1): public Kind-pid contracts the A0 scope
-    # (actor app + 5 seed files) MISSED — the whole-umbrella sweep must
-    # surface them
-    {Ezagent.Workspace, :create, 2}
-    # (V5 A1c chunk3 REMOVED the {Ezagent.Domain.Agent, :materialize_declared, 1}
-    # and {Ezagent.Entity.Session, :ensure_template_alive, 1} seeds — both went
+    {Ezagent.Kind, :runtime_view, 1}
+    # (V5 A1c chunk3 REMOVED the {Ezagent.Domain.Agent, :materialize_declared, 1},
+    # {Ezagent.Workspace, :create, 2} and
+    # {Ezagent.Entity.Session, :ensure_template_alive, 1} seeds — all three went
     # URI-native: materialize_declared/1 keeps only the :started |
-    # :already_started tag, ensure_template_alive/1 returns :ok. The Kind pids
-    # stay behind the actor-app seam. The scanner no longer surfaces them —
-    # that is the closure, not blindness.)
+    # :already_started tag, ensure_template_alive/1 returns :ok, create/2 (+ the
+    # spawn_workspace/2 it wraps) returns {:ok, uri} / {:already_started, uri}.
+    # The Kind pids stay behind the actor-app seam. The scanner no longer
+    # surfaces them — that is the closure, not blindness.)
   ]
 
   test "has-teeth: surfaces every known pid-yielding seed site" do

@@ -16,16 +16,16 @@ defmodule Ezagent.WorkspaceTest do
       name = "spawn-test-#{System.unique_integer([:positive])}"
       uri = WK.uri_for(name)
 
-      assert {:ok, pid} = Ezagent.Workspace.spawn_workspace(name)
+      assert {:ok, ^uri} = Ezagent.Workspace.spawn_workspace(name)
+      assert {:ok, pid} = KindRegistry.lookup(uri)
       assert is_pid(pid)
-      assert {:ok, ^pid} = KindRegistry.lookup(uri)
     end
 
-    test "second spawn at same URI returns {:error, {:already_started, pid}}" do
+    test "second spawn at same URI returns {:error, {:already_started, uri}}" do
       name = "dup-test-#{System.unique_integer([:positive])}"
 
-      {:ok, pid1} = Ezagent.Workspace.spawn_workspace(name)
-      assert {:error, {:already_started, ^pid1}} = Ezagent.Workspace.spawn_workspace(name)
+      {:ok, uri1} = Ezagent.Workspace.spawn_workspace(name)
+      assert {:error, {:already_started, ^uri1}} = Ezagent.Workspace.spawn_workspace(name)
     end
 
     test "members in initial args are reachable via :list_members dispatch" do

@@ -55,7 +55,7 @@ defmodule EzagentCli.Application do
     members = parsed.options[:members] || []
 
     case Ezagent.Workspace.create(name, %{members: members}) do
-      {:ok, _pid} ->
+      {:ok, _uri} ->
         {:ok,
          %{
            name: name,

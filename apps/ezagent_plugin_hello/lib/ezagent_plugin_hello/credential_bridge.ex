@@ -172,8 +172,8 @@ defmodule EzagentPluginHello.CredentialBridge do
     case Ezagent.Workspace.Store.get_by_name(workspace) do
       nil ->
         case Ezagent.Workspace.create(workspace, %{created_by: User.admin_uri()}) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
+          {:ok, _uri} -> :ok
+          {:error, {:already_started, _uri}} -> :ok
           {:error, reason} -> {:error, {:workspace, reason}}
         end
 

@@ -21,7 +21,8 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     {:ok, _user} = Ezagent.Users.create(owner_uri, nil, [])
     {:ok, owner_pid} = Ezagent.SpawnRegistry.spawn(owner_uri)
-    {:ok, workspace_pid} = Ezagent.Workspace.spawn_workspace(workspace_name, %{})
+    {:ok, ^workspace_uri} = Ezagent.Workspace.spawn_workspace(workspace_name, %{})
+    {:ok, workspace_pid} = Ezagent.KindRegistry.lookup(workspace_uri)
 
     {:ok, session_pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.Session, %{

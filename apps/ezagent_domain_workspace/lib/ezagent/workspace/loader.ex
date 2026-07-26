@@ -465,12 +465,12 @@ defmodule Ezagent.Workspace.Loader do
            session_templates: decoded.session_templates,
            routing_rules: decoded.routing_rules
          }) do
-      {:ok, _pid} ->
+      {:ok, _uri} ->
         children = instantiate_via_dispatch(decoded.uri)
         results = Enum.map(children, &spawn_child(&1, decoded.uri))
         {name, results}
 
-      {:error, {:already_started, _pid}} ->
+      {:error, {:already_started, _uri}} ->
         # Already alive (e.g. test setup spawned it before Loader ran).
         # Dispatch :instantiate to re-spawn any missing members.
         children = instantiate_via_dispatch(decoded.uri)

@@ -30,7 +30,7 @@ defmodule Mix.Tasks.Ezagent.Workspace.Create do
         trimmed = String.trim(name)
 
         case Ezagent.Workspace.create(trimmed, %{}) do
-          {:ok, _pid} ->
+          {:ok, _uri} ->
             Mix.shell().info("✓ created workspace #{trimmed}")
 
           {:error, reason} ->

@@ -247,7 +247,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
 
     # 2. Plugin-author work: persist a Workspace declaring the probe as a member.
     workspace_name = "persist-#{System.unique_integer([:positive])}"
-    {:ok, ws_pid} = Workspace.create(workspace_name, %{members: [probe_uri]})
+    {:ok, ws_uri} = Workspace.create(workspace_name, %{members: [probe_uri]})
 
     # Sanity: probe is not yet alive (create/2 only persists + spawns the
     # Workspace Kind itself; member spawning happens via Loader).
@@ -272,7 +272,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     assert Process.alive?(probe_pid)
 
     # #108: tear down this test's own lingering Kinds before the owner stops.
-    terminate_kinds_on_exit([ws_pid, probe_pid])
+    terminate_kinds_on_exit([ws_uri, probe_pid])
 
     # 4. The probe is now in KindRegistry under its URI — Loader truly
     #    spawned it from persisted Workspace state, no ezagent_core /
@@ -304,7 +304,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
       "probe_name" => probe_name
     }
 
-    {:ok, ws_pid} =
+    {:ok, ws_uri} =
       Workspace.create(workspace_name, %{
         session_templates: %{"main" => tmpl_data}
       })
@@ -325,7 +325,7 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
     assert Process.alive?(probe_pid)
 
     # #108: tear down this test's own lingering Kinds before the owner stops.
-    terminate_kinds_on_exit([ws_pid, probe_pid])
+    terminate_kinds_on_exit([ws_uri, probe_pid])
   end
 
   test "Workspace.add_template/3 fail-fast: rejects template without registered Class" do
@@ -419,10 +419,17 @@ defmodule Ezagent.Integration.PluginIsolationWorkspaceTest do
   # + `:ephemeral`, so `terminate_child` won't wake the `:not_ready` restart
   # class the fixed-URI session suites protect against. `{:error, :not_found}`
   # (already gone / not this supervisor's child) is ignored.
-  defp terminate_kinds_on_exit(pids) do
+  defp terminate_kinds_on_exit(refs) do
     on_exit(fn ->
-      for pid <- pids, is_pid(pid) and Process.alive?(pid) do
-        DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+      for ref <- refs do
+        case ref do
+          %URI{} = uri ->
+            _ = Ezagent.Kind.terminate(uri)
+
+          pid when is_pid(pid) ->
+            if Process.alive?(pid),
+              do: DynamicSupervisor.terminate_child(Ezagent.Workspace.Supervisor, pid)
+        end
       end
     end)
   end

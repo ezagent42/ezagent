@@ -409,9 +409,9 @@ defmodule EzagentDomainInstanceMessage.Application do
           # user's workspace with an env-provided founder.
           # arch-allow: genesis system-workspace seed (no_hardcoded_seed_principal)
           case Ezagent.Workspace.create("system", %{created_by: User.admin_uri()}) do
-            {:ok, _pid} -> :ok
+            {:ok, _uri} -> :ok
             {:error, :workspace_exists} -> :ok
-            {:error, {:already_started, _pid}} -> :ok
+            {:error, {:already_started, _uri}} -> :ok
             {:error, reason} -> {:error, {:system_workspace_seed_failed, reason}}
           end
 
@@ -421,8 +421,8 @@ defmodule EzagentDomainInstanceMessage.Application do
 
     with :ok <- persisted do
       case Ezagent.Workspace.spawn_workspace("system", %{created_by: User.admin_uri()}) do
-        {:ok, _pid} -> :ok
-        {:error, {:already_started, _pid}} -> :ok
+        {:ok, _uri} -> :ok
+        {:error, {:already_started, _uri}} -> :ok
         {:error, reason} -> {:error, {:system_workspace_runtime_failed, reason}}
       end
     end
@@ -465,10 +465,10 @@ defmodule EzagentDomainInstanceMessage.Application do
       case Ezagent.Workspace.Store.get_by_name(name) do
         nil ->
           case Ezagent.Workspace.create(name, attrs) do
-            {:ok, _pid} ->
+            {:ok, _uri} ->
               :ok
 
-            {:error, {:already_started, _pid}} ->
+            {:error, {:already_started, _uri}} ->
               # Kind already alive but no Store row — happens if a
               # prior boot bound via WorkspaceRegistry without
               # persisting. Re-attempt just the Store row.

@@ -98,7 +98,7 @@ defmodule EzagentPluginHello.FusionSeed do
   defp ensure_workspace(workspace, owner) do
     case Workspace.create(workspace, %{created_by: owner}) do
       {:ok, _workspace_uri} -> ensure_owner_member(workspace, owner)
-      {:error, {:already_started, _pid}} -> :ok
+      {:error, {:already_started, _uri}} -> :ok
       {:error, :workspace_exists} -> :ok
       {:error, reason} -> {:error, {:workspace, reason}}
     end

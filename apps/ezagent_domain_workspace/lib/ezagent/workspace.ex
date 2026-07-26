@@ -35,20 +35,25 @@ defmodule Ezagent.Workspace do
   initial slice args. In-memory only — use `create/2` for durable.
   """
   @spec spawn_workspace(String.t(), map()) ::
-          {:ok, pid()} | {:error, term()}
+          {:ok, URI.t()} | {:error, {:already_started, URI.t()} | term()}
   def spawn_workspace(name, args \\ %{}) when is_binary(name) do
     uri = WK.uri_for(name)
 
     case KindRegistry.lookup(uri) do
-      {:ok, pid} ->
-        {:error, {:already_started, pid}}
+      {:ok, _pid} ->
+        {:error, {:already_started, uri}}
 
       :error ->
         # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
         # Workspace Kind declares `Ezagent.Workspace.Supervisor` via its
         # supervisor/0 callback so the destination is preserved.
         # derivation-edge: recorded-by record_derivation_edge/2 below
-        Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri))
+        # V5 A1c — the public contract carries the workspace URI; the Kind
+        # pid stays behind the actor-app seam (Kind.spawn / KindRegistry).
+        case Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri)) do
+          {:ok, _pid} -> {:ok, uri}
+          {:error, _} = err -> err
+        end
     end
   end
 
@@ -61,11 +66,11 @@ defmodule Ezagent.Workspace do
 
   `attrs` shape matches `Ezagent.Workspace.Store.create/2`.
   """
-  @spec create(String.t(), map()) :: {:ok, pid()} | {:error, term()}
+  @spec create(String.t(), map()) :: {:ok, URI.t()} | {:error, term()}
   def create(name, attrs \\ %{}) when is_binary(name) and name != "" do
     with {:ok, _decoded} <- create_workspace_record(name, attrs),
-         {:ok, pid} <- spawn_workspace(name, attrs) do
-      {:ok, pid}
+         {:ok, uri} <- spawn_workspace(name, attrs) do
+      {:ok, uri}
     else
       # #533 5a — Store.create now signals an existing workspace as
       # {:exists, decoded} (the ephemeral freshness signal). This facade is
@@ -73,7 +78,7 @@ defmodule Ezagent.Workspace do
       # create on an existing workspace must FAIL — see the onboarding
       # "cannot hijack an existing workspace" security test. Map it to a
       # clear error; preserve every other {:error, _} (incl. spawn's
-      # {:already_started, pid}) unchanged.
+      # {:already_started, uri}) unchanged.
       {:exists, _decoded} -> {:error, :workspace_exists}
       {:error, _} = err -> err
     end

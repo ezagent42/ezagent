@@ -18,8 +18,8 @@ defmodule Ezagent.World.LayoutBootstrap do
 
   defp ensure_system_workspace_runtime do
     case Ezagent.Workspace.spawn_workspace("system") do
-      {:ok, _pid} -> :ok
-      {:error, {:already_started, _pid}} -> :ok
+      {:ok, _uri} -> :ok
+      {:error, {:already_started, _uri}} -> :ok
       {:error, {:already_registered, _uri}} -> :ok
       {:error, reason} -> {:error, {:system_workspace_runtime_failed, reason}}
     end
