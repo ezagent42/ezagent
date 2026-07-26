@@ -387,7 +387,8 @@ defmodule Ezagent.Kind.Template do
   def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri, opts)
       when is_atom(class_module) and is_map(tmpl_data) and is_list(opts) do
     with :ok <- validate_instantiate_callback(class_module, opts),
-         {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data) do
+         {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
+         :ok <- maybe_store_agent_flavor(class_module, data, opts) do
       result =
         case opts do
           [] ->
@@ -397,32 +398,15 @@ defmodule Ezagent.Kind.Template do
             class_module.instantiate(tmpl_name, data, workspace_uri, opts)
         end
 
-      # Record the flavor ONLY for a genuinely fresh instance, AFTER instantiate
-      # returns its fresh-vs-adopted signal — never before. Storing before
-      # instantiate CLOBBERED an ADOPTED instance's original flavor: instantiate
-      # can adopt a pre-existing worker (a concurrent spawn registered the URI
-      # first) and return `{:ok, workers, %{fresh?: false}}` — an :ok path, so the
-      # pre-store's flavor was never undone (undo only fired on `{:error, _}`).
-      # Gate on fresh?: true (mirrors `Ezagent.Entity.Agent.TemplateSpawn` codex
-      # round-7). The legacy 2-tuple return carries no adopt signal → fresh by
-      # contract. `AttributeHook` is write-only (no reader), so deferring the store
-      # past instantiate is safe. (#1570 regression; main-red #189.)
       case result do
         {:ok, _workers} = ok ->
-          :ok = maybe_store_agent_flavor(class_module, data, opts)
-          ok
-
-        {:ok, _workers, %{fresh?: true}} = ok ->
-          :ok = maybe_store_agent_flavor(class_module, data, opts)
           ok
 
         {:ok, _workers, _meta} = ok ->
-          # Adopted a pre-existing instance (fresh?: false) or no fresh signal —
-          # leave its original flavor untouched; do NOT store.
           ok
 
         {:error, _reason} = error ->
-          # instantiate failed before any flavor store — nothing to undo.
+          maybe_delete_agent_flavor(data, opts)
           error
       end
     end
@@ -474,6 +458,21 @@ defmodule Ezagent.Kind.Template do
         s
         |> Ezagent.URI.new!()
         |> Ezagent.Kind.Template.AttributeHook.store(class_module)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp maybe_delete_agent_flavor(_tmpl_data, launch_context: _context), do: :ok
+  defp maybe_delete_agent_flavor(tmpl_data, []), do: delete_agent_flavor(tmpl_data)
+
+  defp delete_agent_flavor(tmpl_data) do
+    case Map.get(tmpl_data, "agent_uri") do
+      s when is_binary(s) and s != "" ->
+        s
+        |> Ezagent.URI.new!()
+        |> Ezagent.Kind.Template.AttributeHook.delete()
 
       _ ->
         :ok
