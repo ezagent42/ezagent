@@ -74,7 +74,15 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # `Kind.list_instances/0` + URI-form `runtime_view/1`); the two
   # `Kind.runtime_view` sites remain ledgered under their new URI-form SHAs
   # (runtime_view itself retires per §2.3 in a later chunk), −4 sites.
-  @forward_frozen 147
+  # V5 A1c chunk2 lowered forward 147→142: the 4 cap-security contracts went
+  # URI-native — `Cap.issue_for_action/3` self-detect + subject resolution
+  # (Kind.self?/1 + URI-form resolve_action_subject/2), `Cap.revoke_all_to/2`
+  # (self?/1 guard + Resolver.call/3), `Cap.valid_for_target?/2` +
+  # `Cap.TargetArtifactValidator.validate/2` (Resolver.call/3) — the two
+  # KindRegistry lookups and three raw `GenServer.call(:ezagent_*)` sites in
+  # cap.ex/target_artifact_validator.ex left the tree (dispatch_grant's
+  # KindRegistry + :ezagent_dispatch sites remain ledgered), −5 sites.
+  @forward_frozen 142
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved

@@ -23,10 +23,12 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     # return pids; only register/2 is meant to stay public
     {Ezagent.SpawnRegistry, :spawn, 2},
     {Ezagent.SpawnRegistry, :spawn_detailed, 2},
-    # pid self-detection + a raw serialized call — NOT via issue_for_action
-    {Ezagent.Cap, :revoke_all_to, 2},
-    # pid self-detect + subject resolution
-    {Ezagent.Cap, :issue_for_action, 3},
+    # (V5 A1c chunk2 REMOVED the {Ezagent.Cap, :revoke_all_to, 2} and
+    # {Ezagent.Cap, :issue_for_action, 3} seeds — both went URI-native:
+    # self-detection via Kind.self?/1, subject resolution via the URI-form
+    # Kind.resolve_action_subject/2, delivery via Runtime.Resolver.call/3;
+    # ensure_started's pid is discarded, never used. The scanner no longer
+    # surfaces them — that is the closure, not blindness.)
     # (V5 A1c chunk1 REMOVED the {Ezagent.Kind, :list_instances, 0},
     # {EzagentDomainUi.AutoDerive, :list_instances, 1} and
     # {Ezagent.Identity.OperatorReads, :registry_all, 1} seeds — all three went

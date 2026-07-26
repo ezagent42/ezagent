@@ -15,26 +15,8 @@
     %{
       path: "apps/ezagent_core/lib/ezagent/cap.ex",
       target: "Ezagent.KindRegistry",
-      sha: "3682c2563fb9dcdc44357d99068fbc3d4f6698baabde172b4b94efb37b035e52",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap.ex",
-      target: "Ezagent.KindRegistry",
       sha: "6ca359df5da0b3e0ca7a988d3b29f1c8a20d4260db22358ed4bb72f41b0be53d",
       note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap.ex",
-      target: "GenServer.call(:ezagent_*)",
-      sha: "0e54a30dcf36c53ed2d9468c2c028f63570abd87bf0f1efde35686cff278f072",
-      note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap.ex",
-      target: "GenServer.call(:ezagent_*)",
-      sha: "0e54a30dcf36c53ed2d9468c2c028f63570abd87bf0f1efde35686cff278f072",
-      note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/cap.ex",
@@ -47,18 +29,6 @@
       target: "ReadyGate.status",
       sha: "8c05836c1b96135ccb6743eb16010565eda730f83a7b2620d875bb248adb4b50",
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "af1d73b8895ee8e0412eb7071a036050a858705f6b80c3c8b27d2097426d4c9b",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex",
-      target: "GenServer.call(:ezagent_*)",
-      sha: "28ded14ab5cc75498ef8d3c4cd214870d50ef6811ad5dc370651f6473efdb0a1",
-      note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/home/migration.ex",
