@@ -20,10 +20,10 @@ defmodule EzagentPluginKanban.WorldData do
       = `entity://<ws>/agent/<id>?action=kanban.<action>`，**带登录者身份/caps**
       （R3：caller=人类用户，per-node owner 授权在 Behavior 内如实判）。
 
-  连接器配置（github_repo/miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
+  连接器配置（miro 板名）、Miro 凭证连接状态、pr 节点的 CI 评价，
   全部由 `:get_tree` dispatch 一并返回（Behavior 内只读投影），world 侧不再持有 kanban
-  数据代码（债②可搬半 2026-07-17 搬进本 plugin）。GitHub 主动连接器已退役（gh 连通是 agent 的 CLI 行为），
-  `github` 连接状态字段随之退役；`config.github_repo` 仍是纯数据（拼 git 链接用）。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
+  数据代码（债②可搬半 2026-07-17 搬进本 plugin）。GitHub 集成已整体移出 kanban（gh 连通是
+  agent 的 CLI 行为、挂代码库用独立 github plugin），连接器配置只剩 miro。dormant 的 passive kanban-manager 经 `ensure_spawned/1`
   （`SpawnRegistry.spawn` 从快照 rehydrate）先起活，再 dispatch（HIGH-3 liveness）。
 
   写动作在 `EzagentPluginKanban.WorldActions`；本模块只读。
@@ -102,6 +102,7 @@ defmodule EzagentPluginKanban.WorldData do
   @spec session_state_for(URI.t(), map()) :: map()
   def session_state_for(%URI{} = session_uri, ctx) do
     boards = session_boards(session_uri, ctx)
+
     # session_uri 透传给前端 renderer：kanban 附件上传走通用 /world/uploads 端点需带
     # session（renderer 内 uploadForKanban 从 state.session_uri 读，不再依赖宿主注入）。
     base = %{"instances" => boards, "session_uri" => URI.to_string(session_uri)}
@@ -247,7 +248,8 @@ defmodule EzagentPluginKanban.WorldData do
           })
         )
 
-      _ -> false
+      _ ->
+        false
     end)
   rescue
     _ -> false
@@ -336,7 +338,7 @@ defmodule EzagentPluginKanban.WorldData do
         %{
           "tree" => %{"nodes" => %{}, "root_id" => nil, "drops" => []},
           "stages" => stages_from_recipe(),
-          "config" => %{"github_repo" => nil, "miro_board" => nil},
+          "config" => %{"miro_board" => nil},
           "miro" => %{"configured" => false}
         }
     end
@@ -392,11 +394,10 @@ defmodule EzagentPluginKanban.WorldData do
     end
   end
 
-  # 连接器配置（github_repo + miro 板名）：Behavior 返回 atom 键 map，转 string 键给前端。
-  defp jsonable_config(%{github_repo: repo, miro_board: board}),
-    do: %{"github_repo" => repo, "miro_board" => board}
+  # 连接器配置（miro 板名）：Behavior 返回 atom 键 map，转 string 键给前端。
+  defp jsonable_config(%{miro_board: board}), do: %{"miro_board" => board}
 
-  defp jsonable_config(_), do: %{"github_repo" => nil, "miro_board" => nil}
+  defp jsonable_config(_), do: %{"miro_board" => nil}
 
   # 凭证连接状态（configured + board_id/repo）：atom 键 → string 键。
   defp jsonable_status(%{configured: true} = s),

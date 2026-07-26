@@ -172,27 +172,10 @@ defmodule Ezagent.ActionSet.Kanban do
 
   # ---------------------------------------------------------------
   # 节点 git 定位数据动作（纯数据：把 PR / commit 链接钉到节点 artifacts）。
-  # GitHub 主动连接器（sync_github / push_pr / sync_prs / save_github_creds —— 调
-  # GitHub API 建 issue / post 评论 / 轮询 PR）已删；这里留下的只把 git 引用
-  # （PR 号、commit SHA + 路径）拼成链接挂到节点，不发任何出站 HTTP。repo 取本图
-  # 配置（BoardConfig，纯数据），set_board_config 仍可记 github_repo。
+  # GitHub 集成已整体移出 kanban：要挂代码库/看 PR 进度用独立的 github plugin 直接
+  # 同步，kanban 不再拼 github 链接（原 register_pr / attach_code_file 两个 action +
+  # board 级 github_repo 配置随之删除）。留下的出站连接器仅 Miro 一侧。
   # ---------------------------------------------------------------
-
-  action(:register_pr,
-    args: %{id: :string, pr: :string},
-    returns: %{},
-    caps: [:register_pr],
-    modes: [:call],
-    description: "登记 PR 号→把 PR 链接挂到节点（不发评论）"
-  )
-
-  action(:attach_code_file,
-    args: %{id: :string, sha: :string, path: :string},
-    returns: %{url: :string},
-    caps: [:attach_code_file],
-    modes: [:call],
-    description: "钉 commit SHA + 路径 → 拼 github blob 链接挂到节点"
-  )
 
   action(:sync_miro,
     args: %{name: :string},
@@ -204,11 +187,11 @@ defmodule Ezagent.ActionSet.Kanban do
   )
 
   action(:set_board_config,
-    args: %{github_repo: :string, miro_board: :string},
-    returns: %{github_repo: :string, miro_board: :string},
+    args: %{miro_board: :string},
+    returns: %{miro_board: :string},
     caps: [:set_board_config],
     modes: [:call],
-    description: "写本图连接器配置（github_repo + miro 板名；token 在全局）"
+    description: "写本图连接器配置（miro 板名；token 在全局）"
   )
 
   action(:save_miro_creds,
@@ -242,8 +225,6 @@ defmodule Ezagent.ActionSet.Kanban do
           :get_tree,
           :export_markmap,
           :import_markmap,
-          :register_pr,
-          :attach_code_file,
           :sync_miro,
           :set_board_config,
           :save_miro_creds
@@ -580,8 +561,7 @@ defmodule Ezagent.ActionSet.Kanban do
 
     # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）。
     # config/miro/ci = 只读投影（df-tech 下沉：world 不再直读 BoardConfig/Miro，
-    # 全经此 dispatch 返回拿到）。config.github_repo 仍是纯数据（节点/板记 repo），
-    # 但 GitHub 主动连接器已删，故不再返回 `github` 连接状态字段。
+    # 全经此 dispatch 返回拿到）。github 集成已移出 kanban，config 只剩 miro 板名。
     # stages = 接力链（layer-2 recipe config 数据投影）：world 读模型 + 前端经此
     # dispatch 返回拿到棒链，不再 world 侧硬编码 @stages（taxonomy §4.1 de-bake）。
     {:ok,
@@ -596,15 +576,14 @@ defmodule Ezagent.ActionSet.Kanban do
      }, []}
   end
 
-  # 本图连接器配置（github_repo + miro 板名）；self_uri = 本 kanban 实例 URI。
+  # 本图连接器配置（miro 板名）；self_uri = 本 kanban 实例 URI。
   defp board_config(ctx) do
     case ctx[:self_uri] do
       %URI{} = uri ->
-        c = BoardConfig.read(uri)
-        %{github_repo: c.github_repo, miro_board: c.miro_board}
+        %{miro_board: BoardConfig.read(uri).miro_board}
 
       _ ->
-        %{github_repo: nil, miro_board: nil}
+        %{miro_board: nil}
     end
   end
 
@@ -681,12 +660,6 @@ defmodule Ezagent.ActionSet.Kanban do
   # 任意持 cap 成员，凭证保存 admin-gated；树写入仍是全 Behavior 唯一的
   # `Shared.commit/1`（`tree set-effect（经 commit/1 收口）`）。
   # ---------------------------------------------------------------
-
-  @doc false
-  def handle_register_pr(args, ctx), do: Connectors.register_pr(args, ctx)
-
-  @doc false
-  def handle_attach_code_file(args, ctx), do: Connectors.attach_code_file(args, ctx)
 
   @doc false
   def handle_sync_miro(args, ctx), do: Connectors.sync_miro(args, ctx)

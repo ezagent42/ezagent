@@ -1,5 +1,5 @@
 import {Suspense, lazy, useEffect, useRef, useState, type ReactNode} from "react"
-import {ExternalLink, GitPullRequest, Hand, Paperclip, Plus, RefreshCw, Scissors, Send, Trash2} from "lucide-react"
+import {ExternalLink, Hand, Paperclip, Plus, RefreshCw, Scissors, Send, Trash2} from "lucide-react"
 
 import {Button} from "../../../ezagent_plugin_world/assets/src/components/ui/primitives"
 import {KanbanCanvas, STAGE_LABEL, STAGES, gateVerdict} from "./KanbanCanvas"
@@ -38,8 +38,8 @@ export type KanbanState = {
   statuses?: string[]
   miro_board_url?: string | null
   miro?: {configured?: boolean; board_id?: string | null}
-  // 每图独立配置（github 仓库=纯数据拼 git 链接 + miro 板名；GitHub 主动连接器已退役）
-  config?: {github_repo?: string | null; miro_board?: string | null}
+  // 每图独立配置（miro 板名；github 拼接已整体移除，要 github 用独立 gh 插件）
+  config?: {miro_board?: string | null}
   last_dispatch_status?: string | null
   // 分享看板生成的只读接收链接（kanban.share_board 成功后经 world:state 回推）。
   share_link?: string | null
@@ -188,7 +188,7 @@ function KanbanList({state, onAction, showCreate = false}: {state: KanbanState; 
         </div>
       </div>
 
-      <p className="text-xs text-muted-foreground">凭证存到 system://credentials/*.yaml（节点级，0600，仅 admin 可改，不写死）。GitHub 集成已移出看板插件——走独立 gh 插件（建设中），看板只保留 repo/PR/SHA 纯数据链接。</p>
+      <p className="text-xs text-muted-foreground">凭证存到 system://credentials/*.yaml（节点级，0600，仅 admin 可改，不写死）。GitHub 集成已整体移出看板插件——走独立 gh 插件（建设中），要挂 PR 用「添加→链接」直接贴 URL。</p>
       <Status state={state} />
     </div>
   )
@@ -437,7 +437,7 @@ function KanbanDetail({state, onAction, onShareArtifact}: {state: KanbanState; o
 // * ㉖ 名称 = 面板顶部就地编辑输入框（认领人可编辑；改名不再走 window.prompt）。
 // * 产物区 =「添加」+ 下拉框[链接/内容/画图/附件] + 添加按钮；每个产物一个删除按钮
 //   （detach_artifact）；「内容」弹大框最简 md 编辑器（照 ExcalidrawModal 模态形态）；
-//   挂代码文件/SHA 入口已删（收束到「链接」，attach_code_file 动作后端保留）。
+//   代码文件/PR 登记入口已随 github 拼接整体移除（前后端都删，挂 PR 用「链接」产物）。
 // 协作模型（docs/notes/2026-07-15-kanban-collab-model.md）：
 // * 规则 2：未认领节点除「加子」「认领」外不显示任何属性/操作（未认领恒为空，H3）。
 // * 规则 3：认领 ↔ 取消认领 toggle；有内容后端拒 has_content_cannot_unclaim。
@@ -756,20 +756,6 @@ function NodePanel({node, args, stages, statuses, callerUri, sessionUri, dropEnt
           改名按钮已删（㉖：名称在面板顶部就地编辑）。 */}
       {canEdit && (
         <div className="flex flex-wrap gap-2 border-t border-border pt-2 text-xs">
-          {/* pr 棒：登记 PR（纯数据：把 PR 链接挂到节点；GitHub 集成走独立 gh 插件） */}
-          {node.stage === "pr" && (
-            <button
-              type="button"
-              className="inline-flex items-center gap-1 text-primary hover:underline"
-              title="登记一个已开的 PR 到本节点（拼链接挂节点，不出站）"
-              onClick={() => {
-                const pr = window.prompt("已开 PR 的编号（如 42）")
-                if (pr && pr.trim()) onAction("kanban.register_pr", {...args, pr: pr.trim()})
-              }}
-            >
-              <GitPullRequest className="h-3 w-3" /> 登记 PR
-            </button>
-          )}
           <button
             type="button"
             className="inline-flex items-center gap-1 text-destructive hover:underline"
@@ -1013,8 +999,6 @@ const DISPATCH_ERR: Record<string, string> = {
   name_required: "名称不能为空",
   invalid_workspace: "工作区无效",
   access_token_required: "缺 Miro access token（在 Plugins → 看板 配置面填）",
-  github_repo_missing: "GitHub 仓库未配置（板级 repo 配置已移除）：改用「添加→链接」直接挂 PR 链接",
-  bad_pr_number: "PR 号无效：填数字，如 42",
   // 协作模型（2026-07-15）新错误码 → 人话
   root_exists: "已有根节点：本期单根，只能在现有节点下加子",
   // ⑲ 删板

@@ -72,9 +72,9 @@ defmodule EzagentPluginKanban.Application do
   # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
   #   * `behaviors: [Ezagent.ActionSet.Kanban]` —— **仅** Kanban。`Connectors`
-  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 20 个动作（含 5 个
-  #     连接器动作：register_pr/attach_code_file/sync_miro/set_board_config/save_miro_creds，
-  #     GitHub 主动连接器已删）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
+  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 18 个动作（含 3 个
+  #     连接器动作：sync_miro/set_board_config/save_miro_creds，GitHub 集成已整体移出
+  #     kanban）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
   #     薄转发给 `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
   #   * `requested_caps` = 每个动作一个 **cap-template map** `%{behavior:, action:}`
   #     —— 不是裸 atom（`Recipe.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
@@ -202,7 +202,7 @@ defmodule EzagentPluginKanban.Application do
           state_builder: EzagentPluginKanban.WorldData
         },
         actions:
-          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board kanban.share_to_session kanban.request_edit kanban.approve_edit kanban.receive_shared kanban.delete_board),
+          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.share_board kanban.share_to_session kanban.request_edit kanban.approve_edit kanban.receive_shared kanban.delete_board),
         actions_module: EzagentPluginKanban.WorldActions,
         renderer: %{
           source: "assets/src/world_page.tsx",
@@ -229,7 +229,10 @@ defmodule EzagentPluginKanban.Application do
             id: "kanban_request_edit",
             pattern:
               "(?:https?://[^\\s\"'）)]*)?/plugins/kanban/request-edit\\?[A-Za-z0-9._~%=&-]+",
-            renderer: %{source: "assets/src/unfurl_bubbles.tsx", export: "KanbanRequestEditBubble"}
+            renderer: %{
+              source: "assets/src/unfurl_bubbles.tsx",
+              export: "KanbanRequestEditBubble"
+            }
           }
         ]
       }

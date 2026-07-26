@@ -228,7 +228,7 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   # `<a href>` 会被浏览器当相对路径拼上站点 base（变成 localhost 死链）。kind=="link"
   # 时补 "https://"；已带 scheme（"xx://" 任意 scheme，含 resource://）或站内绝对路径
   # （"/" 开头）不动。只动 link——file 的 url 是 uploads resource URI，别的 kind 由
-  # 各自动作拼（register_pr / attach_code_file 拼的都是完整 https 链接）。
+  # 各自动作拼（如 link 产物是完整 https 链接）。
   defp normalize_url(url, "link") when is_binary(url) and url != "" do
     if String.contains?(url, "://") or String.starts_with?(url, "/"),
       do: url,

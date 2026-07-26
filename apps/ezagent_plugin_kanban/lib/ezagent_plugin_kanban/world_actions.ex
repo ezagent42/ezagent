@@ -18,11 +18,10 @@ defmodule EzagentPluginKanban.WorldActions do
   （role × native，RF-5a），不再合成 `resource://` URI。
 
   本模块退成**纯 dispatcher**：连接器逻辑（Miro / BoardConfig / Ci 等）全部住在
-  `Ezagent.ActionSet.Kanban` 的动作里（register_pr / attach_code_file / sync_miro /
-  set_board_config / save_miro_creds）。GitHub 主动连接器（sync_github / push_pr /
-  sync_prs / save_github_creds）已整体退役——gh 连通现在是 agent 的 CLI 行为，不走
-  world 派发；留下的 register_pr / attach_code_file 是纯数据（拼 git 链接挂节点）。
-  本模块只 dispatch + 刷 UI，world 侧不再持有任何 kanban 数据/动作代码。dormant 的
+  `Ezagent.ActionSet.Kanban` 的动作里（sync_miro / set_board_config / save_miro_creds）。
+  GitHub 集成已整体移出 kanban——gh 连通是 agent 的 CLI 行为、挂代码库/看 PR 用独立的
+  github plugin，都不走 world 派发。本模块只 dispatch + 刷 UI，world 侧不再持有任何
+  kanban 数据/动作代码。dormant 的
   passive kanban-manager 经 `WorldData.ensure_spawned/1` 从快照 rehydrate 起活。
   """
 
@@ -119,11 +118,7 @@ defmodule EzagentPluginKanban.WorldActions do
         })
 
   def handle_dispatch(socket, "kanban.set_board_config", %{"kanban_uri" => u} = a),
-    do:
-      act_board(socket, u, :set_board_config, %{
-        github_repo: Map.get(a, "github_repo", ""),
-        miro_board: Map.get(a, "miro_board", "")
-      })
+    do: act_board(socket, u, :set_board_config, %{miro_board: Map.get(a, "miro_board", "")})
 
   def handle_dispatch(
         socket,
@@ -132,18 +127,6 @@ defmodule EzagentPluginKanban.WorldActions do
       )
       when is_binary(grant),
       do: attach_upload(socket, u, id, grant, Map.get(a, "name", "file"))
-
-  def handle_dispatch(socket, "kanban.register_pr", %{"kanban_uri" => u, "id" => id, "pr" => pr}),
-    do: act(socket, u, :register_pr, %{id: id, pr: to_string(pr)})
-
-  def handle_dispatch(socket, "kanban.attach_code_file", %{
-        "kanban_uri" => u,
-        "id" => id,
-        "sha" => sha,
-        "path" => path
-      })
-      when is_binary(sha) and is_binary(path),
-      do: act(socket, u, :attach_code_file, %{id: id, sha: sha, path: path})
 
   def handle_dispatch(socket, "kanban.share_board", %{"kanban_uri" => u}) when is_binary(u),
     do: share_board(socket, u)
@@ -422,11 +405,13 @@ defmodule EzagentPluginKanban.WorldActions do
     workspace_uri = socket.assigns.current_workspace_uri
     session_uri = socket.assigns[:current_session_uri]
     caller = socket.assigns.current_entity_uri
+
     caller_ctx = %{
       caller: caller,
       authenticated_principal: caller,
       caps: presenter_caps(socket)
     }
+
     clean = sanitize(name)
 
     cond do
@@ -590,8 +575,6 @@ defmodule EzagentPluginKanban.WorldActions do
         :detach_artifact -> "移除了节点「#{title.()}」的产物「#{args[:ref]}」"
         :set_metric -> "更新了节点「#{title.()}」的指标"
         :drop_subtree -> "drop 标记了节点「#{title.()}」（不达标跟踪，未删除）"
-        :register_pr -> "在节点「#{title.()}」登记了 PR ##{args[:pr]}"
-        :attach_code_file -> "在节点「#{title.()}」钉了代码文件 #{args[:path]}"
         :save_miro_creds -> "更新了 Miro 凭证"
         :set_board_config -> "更新了看板配置"
         other -> "执行了 #{other}"
