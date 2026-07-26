@@ -620,12 +620,14 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMcpBridgeTest do
       token = "tok_cc-hop-#{uniq()}"
 
       # Stand in for the per-orchestrator SessionManager: register a plain test
-      # process under the SAME Registry name + key the cc transport looks up, so
-      # we capture the EXACT message the cc hop sends.
+      # process under the SAME seam key the cc transport resolves
+      # (`{orchestrator_uri, :ezagent_domain_session, :manager}` in the unified
+      # `Ezagent.Runtime.SidecarRegistry` — V5 A1b), so we capture the EXACT
+      # message the cc hop sends.
       {:ok, _} =
         Registry.register(
-          Ezagent.Session.SessionManagerRegistry,
-          URI.to_string(orchestrator_uri),
+          Ezagent.Runtime.SidecarRegistry,
+          {URI.to_string(orchestrator_uri), :ezagent_domain_session, :manager},
           nil
         )
 

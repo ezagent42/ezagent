@@ -1016,19 +1016,12 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, ^orchestrator_uri} =
              Ezagent.Entity.Session.Orchestrator.orchestrator_uri(session_uri)
 
+    # V5 A1b: the tests-only `handle_call(:binding)` introspection was DROPPED
+    # with the resolver-seam migration — the executor's liveness is probed
+    # through the kept `whereis/1` (alive?-filtered); its binding is exercised
+    # behaviorally by the tool calls in the sibling tests.
     assert {:ok, manager_pid} = Ezagent.Session.SessionManager.whereis(orchestrator_uri)
-
-    binding = GenServer.call(manager_pid, :binding)
-    assert binding.orchestrator_uri == orchestrator_uri
-    assert binding.session_uri == session_uri
-    assert binding.workspace_uri == @workspace_uri
-    assert binding.owner_uri == @owner_uri
-
-    expected_parent_template_uri =
-      Map.get(working_copy, :session_template_uri) ||
-        Ezagent.URI.template(:system, :session, "default")
-
-    assert binding.parent_template_uri == expected_parent_template_uri
+    assert is_pid(manager_pid)
   end
 
   test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do

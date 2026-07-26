@@ -393,7 +393,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       ctx = provision([:agent_template])
 
       # Simulate the executor being gone after a BEAM restart (the cc McpRegistry
-      # + SessionManagerRegistry are empty post-restart).
+      # + the unified SidecarRegistry entry are empty post-restart).
       :ok = SessionManager.stop(ctx.orchestrator_uri)
       assert SessionManager.whereis(ctx.orchestrator_uri) == :error
 
@@ -404,6 +404,25 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       assert {:ok, ^pid} = SessionManager.whereis(ctx.orchestrator_uri)
 
       # And it works end-to-end again (token + cap reconstruction restored).
+      assert {:ok, _} = run_tool(ctx, "list_templates", %{})
+    end
+
+    test "stop/1 is SYNCHRONOUS: an immediate recreate gets a FRESH pid (V5 A1b sync teardown)" do
+      ctx = provision([:agent_template])
+      assert {:ok, old_pid} = SessionManager.whereis(ctx.orchestrator_uri)
+
+      :ok = SessionManager.stop(ctx.orchestrator_uri)
+
+      # NO polling: the sync teardown (Resolver `terminate_child(..., sync: true)`)
+      # returned only after the child was DOWN and the seam's `:unique` key was
+      # freed, so an immediate recreate cannot observe the dying registration
+      # and reuse a STALE pid (the rollback→recreate race, codex C-rC-P2).
+      assert {:ok, new_pid} = SessionManager.ensure_for_session(ctx.session_uri)
+      assert is_pid(new_pid)
+      assert new_pid != old_pid
+
+      # The seam key resolves to the NEW pid and the executor works.
+      assert {:ok, ^new_pid} = SessionManager.whereis(ctx.orchestrator_uri)
       assert {:ok, _} = run_tool(ctx, "list_templates", %{})
     end
 
@@ -504,15 +523,15 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do
-    test "SessionManager.tool_names/0 exposes the CORE member + participant + rule-set + template surface" do
+    test "the Session-Config catalog exposes the CORE member + participant + rule-set + template surface" do
       core =
-        MapSet.new(
-          ~w(add_managed_member add_participant update_member_template remove_member
+        MapSet.new(~w(add_managed_member add_participant update_member_template remove_member
              define_rule_set_rule define_prompt_template define_legend update_template
-             save_template_as migrate_session list_templates)
-        )
+             save_template_as migrate_session list_templates))
 
-      # `tool_names/0` is `core ++ ExtensionRegistry-discovered plugin tools`, so its
+      # V5 A1b: `SessionManager.tool_names/0` was DROPPED (tests-only dead
+      # face) — the catalog is read directly here. The catalog is
+      # `core ++ ExtensionRegistry-discovered plugin tools`, so its
       # EXACT membership is env-shape-fragile: kb_query/kb_ingest appear iff the kb
       # plugin registered (depends on which apps booted). Hardcoding the exact set
       # coupled this test to an ambient ezagent_web boot that #1522 sharding removed
@@ -520,7 +539,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
       # tools are neither core nor asserted here. The "kb is NOT core" exclusivity
       # invariant lives at the catalog layer (catalog_test.exs — `core_operations`
       # excludes `kb_`).
-      assert MapSet.subset?(core, MapSet.new(SessionManager.tool_names()))
+      tool_names =
+        Ezagent.Session.Config.Catalog.operations()
+        |> Enum.map(& &1.name)
+
+      assert MapSet.subset?(core, MapSet.new(tool_names))
     end
   end
 

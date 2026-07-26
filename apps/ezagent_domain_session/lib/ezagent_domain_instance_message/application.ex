@@ -104,10 +104,12 @@ defmodule EzagentDomainInstanceMessage.Application do
       # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
       Ezagent.Agent.CredentialNotifier,
       # Transport #53 Decision C — the per-orchestrator MCP executor
-      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind): Registry keys
-      # it by orchestrator URI (cc reaches it by URI, no compile dep); the
+      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind). V5 A1b:
+      # it SELF-registers in the unified `Ezagent.Runtime.SidecarRegistry`
+      # (`{orchestrator_uri, :ezagent_domain_session, :manager}` — the private
+      # SessionManagerRegistry is retired; cc reaches it through the
+      # `Ezagent.Runtime.Resolver` seam by that key, no compile dep); the
       # DynamicSupervisor owns the per-session processes.
-      {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
       {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one},
       # send-echo-decouple (2026-07-08) — per-recipient message delivery runs
       # OFF the Session Kind's hot path in an UNLINKED supervised Task, so one

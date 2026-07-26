@@ -70,14 +70,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   ]
 
   @allowlist [
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
-      line: 428,
-      key: :genserver_to_pid,
-      line_substring:
-        "GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)",
-      reason: "existing SessionManager direct executor call; pending owner-gated executor facade"
-    }
     # V5 A1b-rest chunk1: the two codex `GenServer.call(pid, :recent_output, …)`
     # entries (bridge_sidecar.ex, app_server.ex) left the allowlist — both
     # sidecars migrated onto the resolver seam (`Resolver.call/3`), so the
@@ -86,6 +78,12 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     # (sdk_sidecar.ex `:recent_output` + `{:query, …}`) left the allowlist
     # the same way — `query/3` goes through the seam (`Resolver.call/3`)
     # and the `recent_output/1` accessor was DROPPED (0 callers).
+    # V5 A1b-rest chunk3: the LAST entry (mcp_server.ex `GenServer.call(pid,
+    # {:run_tool, …})` — the SessionManager executor hop) left the allowlist:
+    # the cc transport now reaches SessionManager through the resolver seam
+    # (`Resolver.call/3` on the `{orchestrator_uri, :ezagent_domain_session,
+    # :manager}` key), so the workspace-locality `genserver_to_pid` debt is
+    # ZERO — keep this list EMPTY.
   ]
 
   test "plugin apps do not bypass workspace owner gate through local runtime APIs" do

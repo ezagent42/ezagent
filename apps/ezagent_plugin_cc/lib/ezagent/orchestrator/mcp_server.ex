@@ -14,12 +14,13 @@ defmodule Ezagent.Orchestrator.McpServer do
   2. **`tools/call` decode → look up → call → encode** — `handle_tool_call/3`
      DECODES the wire `{tool, arguments}`, LOOKS UP the per-orchestrator
      `Ezagent.Session.SessionManager` GenServer (in the session domain) BY
-     ORCHESTRATOR URI through its `Registry`, `GenServer.call`s it a bare
-     `{:run_tool, tool, arguments, bridge_token}` tuple, and ENCODES the raw
-     result into the MCP shape. The **bridge token is the orchestrator's
-     connection credential** — the cc socket authenticated the WS with it and
-     forwards it so SessionManager can VERIFY it (the unforgeable authz gate,
-     Decision C §2 step 0). cc carries NO caps.
+     ORCHESTRATOR URI through the V5 resolver seam
+     (`Ezagent.Runtime.Resolver.call/3` on the
+     `{orchestrator_uri, :ezagent_domain_session, :manager}` sidecar key),
+     and ENCODES the raw result into the MCP shape. The **bridge token is the
+     orchestrator's connection credential** — the cc socket authenticated the
+     WS with it and forwards it so SessionManager can VERIFY it (the
+     unforgeable authz gate, Decision C §2 step 0). cc carries NO caps.
   3. **Result encode** — maps the SessionManager's raw `{:ok, value}` /
      `{:error, reason}` to the MCP success / structured-tool-error map.
 
@@ -27,9 +28,13 @@ defmodule Ezagent.Orchestrator.McpServer do
 
   cc's `mix.exs` keeps `ezagent_domain_session` as `only: :test`, so
   this prod transport MUST reach `SessionManager` WITHOUT aliasing/importing it.
-  It builds the Registry `:via` tuple from the orchestrator URI STRING + the
-  session-domain Registry NAME (a plain atom) and `GenServer.call`s a bare
-  tuple. No `alias Ezagent.Session.SessionManager`, no struct of an im module.
+  V5 pid-closure A1b made that clean: SessionManager self-registers in the
+  unified `Ezagent.Runtime.SidecarRegistry` (the retired
+  `Ezagent.Session.SessionManagerRegistry` is gone), and cc — which DOES dep
+  `ezagent_actor` — reaches it through the pid-free `Ezagent.Runtime.Resolver`
+  seam by the `{orchestrator_uri, :ezagent_domain_session, :manager}` key. No
+  `alias Ezagent.Session.SessionManager`, no struct of an im module, and no
+  direct-pid `GenServer.call` any more (the seam resolves + calls internally).
   This is a runtime edge (the same shape as the cc `reply` tool dispatching
   `session.send`), NOT a compile edge.
 
@@ -55,14 +60,17 @@ defmodule Ezagent.Orchestrator.McpServer do
   require Logger
 
   alias Ezagent.Orchestrator.McpServer.ToolCatalog
+  alias Ezagent.Runtime.Resolver
   alias Ezagent.Session.OrchestratorBinding
 
-  # The session-domain Registry the per-orchestrator `SessionManager`
-  # GenServers register under (keyed by orchestrator URI string). Named here as
-  # a bare atom — NOT an `alias` of the im module — so cc reaches SessionManager
-  # by URI without a prod compile dependency on `ezagent_domain_session`
-  # (Decision C §5; cc deps im `only: :test`).
-  @session_manager_registry Ezagent.Session.SessionManagerRegistry
+  # V5 pid-closure A1b — the resolver-seam identity of the per-orchestrator
+  # `SessionManager` executor (session-domain sidecar). A bare plugin/role
+  # atom pair — NOT an `alias` of an im module — so cc reaches SessionManager
+  # by key without a prod compile dependency on `ezagent_domain_session`
+  # (Decision C §5; cc deps im `only: :test` but DOES dep `ezagent_actor`,
+  # the seam's home).
+  @session_manager_plugin :ezagent_domain_session
+  @session_manager_role :manager
 
   @enforce_keys [:orchestrator_uri, :bridge_token]
   defstruct [:orchestrator_uri, :bridge_token]
@@ -385,8 +393,9 @@ defmodule Ezagent.Orchestrator.McpServer do
   Execute an MCP `tools/call` against the bound transport context.
 
   DECODES the `tool` name + `arguments`, LOOKS UP the per-orchestrator
-  `SessionManager` by orchestrator URI (Decision C §5 — by URI, no im import),
-  `GenServer.call`s `{:run_tool, tool, arguments, bridge_token}`, and ENCODES
+  `SessionManager` by orchestrator URI through the resolver seam (Decision C
+  §5 — by key, no im import, no pid), delivers the
+  `{:run_tool, tool, arguments, bridge_token}` call, and ENCODES
   the raw result to the MCP shape.
 
   Returns an MCP-shaped result map:
@@ -407,28 +416,28 @@ defmodule Ezagent.Orchestrator.McpServer do
     handle_tool_call(ctx, tool, %{})
   end
 
-  # Look the SessionManager up by orchestrator URI in the session-domain
-  # Registry (a runtime edge — no compile dep on the im module) and call it a
-  # bare `{:run_tool, …}` tuple carrying the tool, args, and the bridge token
-  # (the connection credential SessionManager verifies). NO caps cross this
-  # hop. Returns the SessionManager's raw result, or a transport-level error
-  # when no SessionManager is running for the orchestrator.
+  # Look the SessionManager up by orchestrator URI through the V5 resolver
+  # seam (a runtime edge — no compile dep on the im module, and the pid never
+  # leaves the seam) and call it a bare `{:run_tool, …}` tuple carrying the
+  # tool, args, and the bridge token (the connection credential SessionManager
+  # verifies). NO caps cross this hop. Returns the SessionManager's raw
+  # result, or a transport-level error when no SessionManager is running for
+  # the orchestrator.
   defp call_session_manager(%__MODULE__{} = ctx, tool, arguments) do
-    key = URI.to_string(ctx.orchestrator_uri)
+    key = {ctx.orchestrator_uri, @session_manager_plugin, @session_manager_role}
 
-    case Registry.lookup(@session_manager_registry, key) do
-      [{pid, _}] ->
-        # `:infinity` (codex C-rC-P2) — a tool such as `add_managed_member` /
-        # `update_member_template` spawns or regenerates a worker agent, which
-        # can exceed the default 5s `GenServer.call` timeout. A premature client
-        # timeout here would abandon the call while SessionManager keeps mutating
-        # state (failed / duplicated MCP op). The outer transports bound the
-        # latency (the Channel reply + the bridge's own 30s `call_beam` timeout),
-        # so the executor call itself waits for the real result.
-        GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)
-
-      [] ->
-        {:error, :orchestrator_context_unavailable}
+    # `:infinity` (codex C-rC-P2) — a tool such as `add_managed_member` /
+    # `update_member_template` spawns or regenerates a worker agent, which
+    # can exceed the default 5s `GenServer.call` timeout. A premature client
+    # timeout here would abandon the call while SessionManager keeps mutating
+    # state (failed / duplicated MCP op). The outer transports bound the
+    # latency (the Channel reply + the bridge's own 30s `call_beam` timeout),
+    # so the executor call itself waits for the real result.
+    case Resolver.call(key, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity) do
+      {:ok, reply} -> reply
+      {:error, :no_such_actor} -> {:error, :orchestrator_context_unavailable}
+      {:error, {:noproc, _}} -> {:error, :orchestrator_context_unavailable}
+      {:error, reason} -> {:error, reason}
     end
   end
 

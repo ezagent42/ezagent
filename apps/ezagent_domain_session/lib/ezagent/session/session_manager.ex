@@ -16,13 +16,15 @@ defmodule Ezagent.Session.SessionManager do
   it is NOT a Kind — there is no `SessionManager` URI scheme and no
   cap-exempt dispatchable action that could be a forgeable entry.
 
-  ## Identity / addressing
+  ## Identity / addressing (V5 pid-closure A1b — resolver seam)
 
-  Registered in `Ezagent.Session.SessionManagerRegistry` keyed by the
-  orchestrator URI string, so the cc transport can `GenServer.call` it by URI
-  without naming this module (cc depends on the session domain `only: :test`).
-  The cc transport reaches it via the Registry `:via` tuple built from the URI
-  string — a runtime edge, NOT a compile dependency.
+  Self-registers in the unified `Ezagent.Runtime.SidecarRegistry` under the
+  plugin-qualified key `{orchestrator_uri, :ezagent_domain_session, :manager}`
+  (the private `Ezagent.Session.SessionManagerRegistry` is RETIRED), and every
+  reach converges on the pid-free `Ezagent.Runtime.Resolver` face: the cc
+  transport `Resolver.call`s `{:run_tool, …}` by that key — a runtime edge,
+  NOT a compile dependency (cc still deps the session domain `only: :test`,
+  and cc DOES dep `ezagent_actor`, the seam's home).
 
   ## Lifecycle
 
@@ -44,10 +46,10 @@ defmodule Ezagent.Session.SessionManager do
      INSIDE the TokenStore, so the secret never leaves it (a getter would let
      co-resident code read it + forge this very call). A mismatch / absent
      token → `{:error, :unauthorized}` (fail-loud) BEFORE anything else. Being a
-     GenServer is NOT sufficient authz: the Registry key is URI-derivable and
-     the pid is enumerable, so a co-resident process could `GenServer.call`
-     it; only the secret token closes that. cc forwarding caps would not help
-     (caps are readable, hence forgeable).
+     GenServer is NOT sufficient authz: the seam key is URI-derivable, so a
+     co-resident process could `Resolver.call` it; only the secret token
+     closes that. cc forwarding caps would not help (caps are readable, hence
+     forgeable).
   1. **Structural check (defense-in-depth).** The bound `orchestrator_uri`
      must equal this session's stored orchestrator (the durable
      `template_working_copy.orchestrator_uri` field) — fail-closed; a
@@ -72,8 +74,14 @@ defmodule Ezagent.Session.SessionManager do
 
   alias Ezagent.Session.OrchestratorBinding
   alias Ezagent.Session.Config, as: SessionConfig
+  alias Ezagent.Runtime.Resolver
+  alias Ezagent.Runtime.SidecarRegistry
 
-  @registry Ezagent.Session.SessionManagerRegistry
+  # V5 pid-closure A1b — this sidecar's resolver-seam identity. The key is
+  # the address, never a pid (PTY-pilot pattern).
+  @plugin :ezagent_domain_session
+  @role :manager
+
   @supervisor Ezagent.Session.SessionManagerSupervisor
 
   @enforce_keys [:orchestrator_uri, :session_uri, :workspace_uri]
@@ -82,7 +90,12 @@ defmodule Ezagent.Session.SessionManager do
     :session_uri,
     :workspace_uri,
     :owner_uri,
-    :parent_template_uri
+    :parent_template_uri,
+    # V5 A1b codex #5 — the `SidecarRegistry.watch/0` monitor ref. The
+    # registry lives in ANOTHER app's supervision tree; if it restarts, this
+    # executor's :via entry dies with it, and the executor re-registers
+    # ITSELF on the :DOWN (see the :DOWN clause + `reregister_with_registry/1`).
+    :registry_ref
   ]
 
   @type binding :: %__MODULE__{
@@ -90,38 +103,39 @@ defmodule Ezagent.Session.SessionManager do
           session_uri: URI.t(),
           workspace_uri: URI.t(),
           owner_uri: URI.t() | nil,
-          parent_template_uri: URI.t() | nil
+          parent_template_uri: URI.t() | nil,
+          registry_ref: reference() | nil
         }
 
   # --- addressing -------------------------------------------------------
 
-  @doc "The Registry name used for `:via` addressing (exposed for cc + tests)."
-  @spec registry() :: module()
-  def registry, do: @registry
-
   @doc """
-  The `:via` tuple addressing the SessionManager for `orchestrator_uri`.
-
-  Built from the URI STRING through the shared Registry — the cc transport
-  uses this (NOT an `alias` of this module) to reach the process.
+  The resolver-seam key for an orchestrator's SessionManager:
+  `{orchestrator_uri, :ezagent_domain_session, :manager}`. Public so callers
+  build the SAME key — the key is the address, never a pid.
   """
-  @spec via(URI.t() | String.t()) :: {:via, Registry, {module(), String.t()}}
-  def via(%URI{} = orchestrator_uri), do: via(URI.to_string(orchestrator_uri))
+  @spec resolver_key(URI.t() | String.t()) :: {URI.t() | String.t(), atom(), atom()}
+  def resolver_key(orchestrator_uri), do: {orchestrator_uri, @plugin, @role}
 
-  def via(orchestrator_uri) when is_binary(orchestrator_uri),
-    do: {:via, Registry, {@registry, orchestrator_uri}}
+  # The `:via` tuple this executor SELF-registers under (the unified
+  # `Ezagent.Runtime.SidecarRegistry`, plugin-qualified key).
+  defp via(%URI{} = orchestrator_uri), do: via(URI.to_string(orchestrator_uri))
 
-  @doc "Look up the running SessionManager pid for `orchestrator_uri`."
+  defp via(orchestrator_uri) when is_binary(orchestrator_uri),
+    do: SidecarRegistry.via(orchestrator_uri, @plugin, @role)
+
+  @doc false
+  # INTERNAL liveness probe (kept for the facade's own callers + tests; the
+  # `Process.alive?/1` filter drops a just-terminated pid whose Registry
+  # monitor-cleanup has not yet fired — a dead pid is NOT a live executor).
+  # Pid-returning by design; prod callers use the pid-free seam faces.
   @spec whereis(URI.t() | String.t()) :: {:ok, pid()} | :error
   def whereis(%URI{} = orchestrator_uri), do: whereis(URI.to_string(orchestrator_uri))
 
   def whereis(orchestrator_uri) when is_binary(orchestrator_uri) do
-    case Registry.lookup(@registry, orchestrator_uri) do
-      # Filter a just-terminated pid whose Registry monitor-cleanup has not yet
-      # fired (the `:DOWN` reaches `stop/1` before the Registry processes its own
-      # monitor) — a dead pid is NOT a live executor.
-      [{pid, _}] -> if Process.alive?(pid), do: {:ok, pid}, else: :error
-      [] -> :error
+    case GenServer.whereis(via(orchestrator_uri)) do
+      pid when is_pid(pid) -> if Process.alive?(pid), do: {:ok, pid}, else: :error
+      nil -> :error
     end
   end
 
@@ -129,9 +143,10 @@ defmodule Ezagent.Session.SessionManager do
 
   @doc """
   Start a SessionManager bound to one orchestrator under the
-  `SessionManagerSupervisor`, registered in `SessionManagerRegistry` keyed by
-  the orchestrator URI string. Idempotent: if one is already running for the
-  orchestrator, returns it.
+  `SessionManagerSupervisor`, self-registered in the unified
+  `Ezagent.Runtime.SidecarRegistry` under
+  `{orchestrator_uri, :ezagent_domain_session, :manager}`. Idempotent: if one
+  is already running for the orchestrator, returns it.
 
   `opts` (all `%URI{}`):
   - `:orchestrator_uri` (required)
@@ -162,7 +177,7 @@ defmodule Ezagent.Session.SessionManager do
   the binding from the session's LIVE `:session` slice.
 
   This is the COLD-RESTART self-heal (codex C-rC-P1): after a BEAM restart both
-  the `SessionManagerRegistry` and the cc `McpRegistry` start empty; when the
+  the unified `SidecarRegistry` and the cc `McpRegistry` start empty; when the
   Session Kind rehydrates (the `session` SpawnRegistry route), this re-derives
   the orchestrator binding from the durable working copy + starts the executor,
   so the orchestrator's bridge can reconnect + drive `tools/call` without a fresh
@@ -210,28 +225,22 @@ defmodule Ezagent.Session.SessionManager do
   @doc """
   Terminate the SessionManager for `orchestrator_uri` (with the session).
 
-  SYNCHRONOUS w.r.t. the Registry: it waits for the process to die before
-  returning, so the `SessionManagerRegistry` key is free. This matters for the
-  rollback→recreate path (codex C-rC-P2): `Registry` cleans up its entry on the
-  process `:DOWN` monitor (async), so without the wait a recreate's
-  `ensure_started` could observe the dying registration and reuse a STALE pid.
+  SYNCHRONOUS w.r.t. the seam registry (V5 A1b-rest chunk 3 — the Resolver
+  `sync: true` teardown): it waits for the process to die AND for the
+  `SidecarRegistry`'s async DOWN-cleanup to free the `:unique` key before
+  returning. This matters for the rollback→recreate path (codex C-rC-P2): the
+  Registry cleans up its entry on its own process `:DOWN` monitor (async), so
+  a fire-and-forget teardown lets a recreate's `ensure_started` observe the
+  dying registration and reuse a STALE pid. The pid never leaves the seam.
   """
   @spec stop(URI.t() | String.t()) :: :ok
   def stop(orchestrator_uri) do
-    case whereis(orchestrator_uri) do
-      {:ok, pid} ->
-        ref = Process.monitor(pid)
-        _ = DynamicSupervisor.terminate_child(@supervisor, pid)
-
-        receive do
-          {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-        after
-          5_000 -> Process.demonitor(ref, [:flush])
-        end
-
-      :error ->
-        :ok
-    end
+    _ =
+      Resolver.terminate_child(
+        resolver_key(orchestrator_uri),
+        @supervisor,
+        sync: true
+      )
 
     :ok
   end
@@ -248,37 +257,35 @@ defmodule Ezagent.Session.SessionManager do
   Run an orchestrator tool against the SessionManager for `orchestrator_uri`,
   authenticated by the orchestrator's `bridge_token`.
 
-  This is what the cc transport calls (by URI, NOT by aliasing this module —
-  cc uses the bare-tuple message form via `via/1`). Returns the tool's raw
-  `{:ok, value}` / `{:error, reason}`, or `{:error, :session_manager_unavailable}`
-  when no SessionManager is running for the orchestrator.
+  Resolved through the V5 resolver seam (`Resolver.call/3` on the
+  `{orchestrator_uri, :ezagent_domain_session, :manager}` key — the pid never
+  leaves the seam). Returns the tool's raw `{:ok, value}` /
+  `{:error, reason}`, or `{:error, :session_manager_unavailable}` when no
+  SessionManager is running for the orchestrator.
   """
   @spec run_tool(URI.t() | String.t(), String.t() | atom(), map(), String.t()) ::
           {:ok, term()} | {:error, term()}
   def run_tool(orchestrator_uri, tool, arguments, bridge_token) do
-    case whereis(orchestrator_uri) do
-      {:ok, pid} ->
-        # `:infinity` (codex C-rC-P2) — a tool may spawn/regenerate a worker
-        # agent, exceeding the default 5s call timeout; the outer transports
-        # bound the latency. Match the cc transport hop.
-        GenServer.call(pid, {:run_tool, tool, arguments, bridge_token}, :infinity)
-
-      :error ->
-        {:error, :session_manager_unavailable}
+    # `:infinity` (codex C-rC-P2) — a tool may spawn/regenerate a worker
+    # agent, exceeding the default 5s call timeout; the outer transports
+    # bound the latency. Match the cc transport hop.
+    case Resolver.call(
+           resolver_key(orchestrator_uri),
+           {:run_tool, tool, arguments, bridge_token},
+           :infinity
+         ) do
+      {:ok, reply} -> reply
+      {:error, :no_such_actor} -> {:error, :session_manager_unavailable}
+      {:error, {:noproc, _}} -> {:error, :session_manager_unavailable}
+      {:error, reason} -> {:error, reason}
     end
-  end
-
-  @doc "The assembled Session-Config operation names."
-  @spec tool_names() :: [String.t()]
-  def tool_names do
-    Ezagent.Session.Config.Catalog.operations()
-    |> Enum.map(& &1.name)
   end
 
   # --- GenServer --------------------------------------------------------
 
   @impl GenServer
-  def init(%__MODULE__{} = binding), do: {:ok, binding}
+  def init(%__MODULE__{} = binding),
+    do: {:ok, %{binding | registry_ref: SidecarRegistry.watch()}}
 
   @impl GenServer
   def handle_call({:run_tool, tool, arguments, bridge_token}, _from, %__MODULE__{} = binding) do
@@ -286,7 +293,58 @@ defmodule Ezagent.Session.SessionManager do
     {:reply, run(binding, tool, args, bridge_token), binding}
   end
 
-  def handle_call(:binding, _from, %__MODULE__{} = binding), do: {:reply, binding, binding}
+  # ─── registry watch: SidecarRegistry restart → self re-register ───────────
+
+  # V5 A1b codex #5 — the unified SidecarRegistry restarted (it lives in
+  # ANOTHER app's supervision tree); our :via entry died with it. Re-register
+  # THIS process and re-arm the watch so the executor stays resolvable
+  # through the seam.
+  @impl GenServer
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %__MODULE__{registry_ref: ref} = binding)
+      when is_reference(ref) do
+    Logger.warning(
+      "SessionManager: SidecarRegistry DOWN (#{inspect(reason)}) — re-registering " <>
+        URI.to_string(binding.orchestrator_uri)
+    )
+
+    reregister_with_registry(binding)
+  end
+
+  def handle_info(:retry_registry_registration, %__MODULE__{registry_ref: nil} = binding),
+    do: reregister_with_registry(binding)
+
+  def handle_info(:retry_registry_registration, binding), do: {:noreply, binding}
+
+  # V5 A1b codex blocker B (collision policy) — `{:error, :already_registered}`
+  # means a REPLACEMENT executor won the key during the registry's empty-
+  # restart window. This original is now unreachable through the seam, and
+  # two live SessionManagers for one orchestrator must never coexist: LOSE
+  # GRACEFULLY — stop; `restart: :transient` keeps the supervisor from
+  # resurrecting the loser.
+  defp reregister_with_registry(binding) do
+    case SidecarRegistry.re_register(resolver_key(binding.orchestrator_uri)) do
+      :ok ->
+        {:noreply, %{binding | registry_ref: SidecarRegistry.watch()}}
+
+      {:error, :already_registered} ->
+        Logger.warning(
+          "SessionManager: SidecarRegistry key for #{URI.to_string(binding.orchestrator_uri)} " <>
+            "is owned by a replacement that won the restart race — this losing " <>
+            "original is terminating gracefully"
+        )
+
+        {:stop, {:shutdown, :registry_collision}, binding}
+
+      {:error, why} ->
+        Logger.error(
+          "SessionManager: SidecarRegistry re-register failed for " <>
+            "#{URI.to_string(binding.orchestrator_uri)} (#{inspect(why)}) — retrying"
+        )
+
+        Process.send_after(self(), :retry_registry_registration, 200)
+        {:noreply, %{binding | registry_ref: nil}}
+    end
+  end
 
   # Transport authN and structural binding stay here; executable ownership
   # begins at the SessionConfig domain boundary.

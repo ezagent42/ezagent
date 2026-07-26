@@ -929,7 +929,8 @@ defmodule Ezagent.ActorBoundaryScanner do
     # provenance-carrying KIND path (`Resolver.dispatch/4`) is NOT gated here.
     {Ezagent.Runtime.Resolver, :call, [2, 3]},
     {Ezagent.Runtime.Resolver, :cast, [2]},
-    {Ezagent.Runtime.Resolver, :terminate_child, [2]}
+    # V5 A1b-rest chunk3: arity 3 is the `sync: true` teardown variant.
+    {Ezagent.Runtime.Resolver, :terminate_child, [2, 3]}
   ]
 
   # The sanctioned sidecar-FACADE modules allowed to use the raw
@@ -943,13 +944,25 @@ defmodule Ezagent.ActorBoundaryScanner do
   # hosts the Resolver reaches; its Server only watches/re-registers,
   # never calls the triple) and the cc SDK sidecar (facade + GenServer in
   # one module, same shape as the codex sidecars).
+  # V5 A1b-rest chunk3: the SessionManager executor (facade + GenServer in
+  # one module; its `stop/1` is the seam's `sync: true` teardown) and the
+  # kanban MiroSync poller (facade + GenServer in one module). ALSO the cc
+  # MCP transport `Ezagent.Orchestrator.McpServer`: cc deps the session
+  # domain `only: :test` so it CANNOT call the SessionManager facade
+  # module — the seam is precisely the no-compile-dep reach, and this
+  # transport's single `Resolver.call/3` is the sanctioned cross-app caller
+  # (V5 A1b chunk3; removed the last workspace-locality `genserver_to_pid`
+  # debt entry).
   @sidecar_facade_allowlist MapSet.new([
                               Ezagent.Domain.Pty,
                               Ezagent.Domain.Pty.Server,
                               EzagentPluginCodex.AppServer,
                               EzagentPluginCodex.BridgeSidecar,
                               Ezagent.Domain.Python,
-                              EzagentPluginCc.SdkSidecar
+                              EzagentPluginCc.SdkSidecar,
+                              Ezagent.Session.SessionManager,
+                              EzagentPluginKanban.MiroSync,
+                              Ezagent.Orchestrator.McpServer
                             ])
 
   # The fun names of the facade-gated triple (subset of

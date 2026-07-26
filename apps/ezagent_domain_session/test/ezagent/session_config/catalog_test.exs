@@ -79,7 +79,13 @@ defmodule Ezagent.Session.Config.CatalogTest do
                }
              ])
 
-    assert Ezagent.Session.SessionManager.tool_names() == @core_names ++ [name]
+    # V5 A1b: `SessionManager.tool_names/0` (a tests-only dead face) was
+    # DROPPED with the resolver-seam migration — read the catalog directly.
+    tool_names =
+      Ezagent.Session.Config.Catalog.operations()
+      |> Enum.map(& &1.name)
+
+    assert tool_names == @core_names ++ [name]
   end
 
   defp object_schema, do: %{"type" => "object", "properties" => %{}, "required" => []}
