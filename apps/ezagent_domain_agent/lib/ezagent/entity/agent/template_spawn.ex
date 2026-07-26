@@ -627,6 +627,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       {:error, {:agent_display_profile_failed, {kind, reason}}}
   end
 
+  # Contract-level return: the test-injection hook (test env) can return an error;
+  # in non-test env the fn is always `:ok`. The @spec declares the union so the
+  # `{:error, _}` branch at `establish_fresh_spawn_obligations/7` is a valid case
+  # clause in every env — otherwise the non-test inference (`dynamic(:ok)`) flags it
+  # as a typing violation (surfaced by the C6 get_slice→read/3 type-flow change).
+  @spec test_hook_after_display_profile(term(), atom()) :: :ok | {:error, term()}
   if Mix.env() == :test do
     defp test_hook_after_display_profile(agent_uri, status) when status in [:inserted, :exists] do
       Ezagent.Agent.TestTemplateSpawn.hook(:after_display_profile, agent_uri, status)
