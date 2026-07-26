@@ -661,14 +661,8 @@
     },
     %{
       path: "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "bce79b3dbfc2e001096a2e3e9c0a45faafdf11803ba012172e364fb176e3f3b2",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/composition_caps.ex",
       target: "Kind.runtime_view",
-      sha: "c387091dbc25db84a1591b3e86110f0aaef55b1719639cab2c47f246a65c9c7a",
+      sha: "9d776616656459d16fa0322309b559475eb3ed774e9618b28c853c37f8a28001",
       note: "runtime_view retires (§2.3) → resolve_action_subject/2 or read/3 (C3)"
     },
     %{
@@ -714,26 +708,8 @@
     },
     %{
       path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "8b568d2d67cae73c759aa6c9486dbf2fb1a542f0c817dc0fd5d105d80d07d9c2",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "8cecb884167fcb6fe269d6e9b38267929519ce94d307fb6080e878e5e54bee70",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "e889c0adde1b4c0e06372ed06513463b15ca7724dbf9d9b9cd9cbfb0a2bb5fe4",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex",
       target: "Kind.runtime_view",
-      sha: "910bc99333697e505fd0c7b0309bdf995434e0646578f128ecd79204afb213a3",
+      sha: "c313817f919b37d2f9fc7846344f5c26aa87d9c60882dff441e7093dc31f502b",
       note: "runtime_view retires (§2.3) → resolve_action_subject/2 or read/3 (C3)"
     },
     %{

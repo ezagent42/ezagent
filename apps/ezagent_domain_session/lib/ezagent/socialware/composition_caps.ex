@@ -505,8 +505,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
   end
 
   defp assert_target_conformance(target_uri, behavior, action) do
-    with {:ok, pid} <- Ezagent.KindRegistry.lookup(target_uri),
-         {:ok, %{state: state}} when is_map(state) <- Ezagent.Kind.runtime_view(pid),
+    with {:ok, %{state: state}} when is_map(state) <- Ezagent.Kind.runtime_view(target_uri),
          {:ok, resolved} <-
            Ezagent.Kind.BehaviorSet.resolve_action(Ezagent.Entity.Agent, action, state),
          true <- resolved == behavior,

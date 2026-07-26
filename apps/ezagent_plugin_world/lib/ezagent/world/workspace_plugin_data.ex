@@ -624,14 +624,13 @@ defmodule Ezagent.World.WorkspacePluginData do
   end
 
   defp auto_instance_row(
-         %{uri: uri, pid: pid, slice_keys: slice_keys, kind_module: kind_module},
+         %{uri: uri, slice_keys: slice_keys, kind_module: kind_module},
          kind
        ) do
     uri_str = encode_uri(uri)
 
     %{
       "uri" => uri_str,
-      "pid" => inspect(pid),
       "kind_module" => inspect(kind_module),
       "slice_keys" => Enum.map(slice_keys || [], &to_string/1),
       "detail_path" => "/plugins/auto/#{Atom.to_string(kind)}/#{URI.encode_www_form(uri_str)}"
@@ -643,7 +642,6 @@ defmodule Ezagent.World.WorkspacePluginData do
 
     %{
       "uri" => encode_uri(uri),
-      "pid" => inspect(Map.get(detail, :pid)),
       "kind_module" => Map.get(detail, :kind_module),
       "slices" => jsonable(Map.get(detail, :slices, %{})),
       "behaviors" => jsonable(Map.get(detail, :behaviors, [])),

@@ -68,7 +68,13 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # seam — its six `:sys.get_state` reach-ins (status/phase/snapshot_buffer/
   # trigger_redraw/write_input/list_agents) became explicit GenServer.call
   # client APIs resolved via `Ezagent.Runtime.Resolver` (−6 sites).
-  @forward_frozen 151
+  # V5 A1c chunk1 lowered forward 151→147: AutoDerive + CompositionCaps went
+  # URI-native — the raw `Registry.select(KindRegistry)` enumeration and the
+  # three `KindRegistry.lookup` reach-ins left the tree (replaced by
+  # `Kind.list_instances/0` + URI-form `runtime_view/1`); the two
+  # `Kind.runtime_view` sites remain ledgered under their new URI-form SHAs
+  # (runtime_view itself retires per §2.3 in a later chunk), −4 sites.
+  @forward_frozen 147
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved

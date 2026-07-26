@@ -6,9 +6,11 @@ defmodule EzagentDomainUi.AutoDerive do
 
   Two outputs:
 
-    * `list_instances(kind_atom)` — walks `KindRegistry` for live
-      Kinds whose `type_name == kind_atom`. Returns `[%{uri, pid,
-      slices_summary}]`.
+    * `list_instances(kind_atom)` — walks the public `Ezagent.Kind`
+      operator plane (`list_instances/0`) for live Kinds whose
+      `type_name == kind_atom`. Returns `[%{uri, kind_module,
+      slice_keys}]` — V5 A1c: NO pid; the pid never leaves the actor
+      seam.
 
     * `instance_detail(uri)` — looks up a live Kind, captures its
       framework runtime-view slice map, and zips it with the registered
@@ -20,24 +22,25 @@ defmodule EzagentDomainUi.AutoDerive do
   Behavior).
   """
 
-  alias Ezagent.{BehaviorRegistry, KindRegistry}
+  alias Ezagent.BehaviorRegistry
 
   @type instance_summary :: %{
           uri: URI.t(),
-          pid: pid(),
+          kind_module: module() | nil,
           slice_keys: [atom()]
         }
 
   @doc """
   Return all live instances of `kind_atom` in the running BEAM.
 
-  Walks `Registry.select` on `Ezagent.KindRegistry` and filters by
-  `type_name`. Order is by URI string (stable across reads).
+  Enumerates the public `Ezagent.Kind.list_instances/0` operator plane
+  and filters by `type_name`. Order is by URI string (stable across
+  reads).
   """
   @spec list_instances(atom()) :: [instance_summary()]
   def list_instances(kind_atom) when is_atom(kind_atom) do
-    Registry.select(Ezagent.KindRegistry, [{{:"$1", :"$2", :_}, [], [{{:"$1", :"$2"}}]}])
-    |> Enum.map(fn {uri_raw, pid} -> summarize(parse_uri(uri_raw), pid) end)
+    Ezagent.Kind.list_instances()
+    |> Enum.map(fn {uri_raw, _status} -> summarize(parse_uri(uri_raw)) end)
     |> Enum.filter(&match_kind?(&1, kind_atom))
     |> Enum.sort_by(&URI.to_string(&1.uri))
   end
@@ -48,33 +51,27 @@ defmodule EzagentDomainUi.AutoDerive do
   @doc """
   Fetch detail for a single live instance.
 
-  Returns `{:ok, %{uri, pid, kind_module, slices: %{key => value},
-  behaviors: [{behavior_module, [action, ...]}]}}` or
-  `{:error, :not_found | :dead}`.
+  Returns `{:ok, %{uri, kind_module, slices: %{key => value},
+  behaviors: [{behavior_module, [action, ...]}]}}` — V5 A1c: NO pid —
+  or `{:error, :not_found}`.
   """
   @spec instance_detail(URI.t()) :: {:ok, map()} | {:error, atom()}
   def instance_detail(%URI{} = uri) do
-    case KindRegistry.lookup(uri) do
-      :error ->
-        {:error, :not_found}
-
-      {:ok, pid} ->
-        if Process.alive?(pid) do
-          case safe_state(pid) do
-            {:ok, state} -> {:ok, build_detail(uri, pid, state)}
-            {:error, _} = err -> err
-          end
-        else
-          {:error, :dead}
-        end
+    if Ezagent.Kind.alive_locally?(uri) do
+      case safe_state(uri) do
+        {:ok, state} -> {:ok, build_detail(uri, state)}
+        {:error, _} = err -> err
+      end
+    else
+      {:error, :not_found}
     end
   end
 
   # --- Internals -----------------------------------------------------
 
-  defp summarize(uri, pid) do
+  defp summarize(uri) do
     {kind_module, slice_keys} =
-      case safe_state(pid) do
+      case safe_state(uri) do
         {:ok, state} ->
           {Map.get(state, :kind), state |> Map.get(:state, %{}) |> Map.keys()}
 
@@ -82,7 +79,7 @@ defmodule EzagentDomainUi.AutoDerive do
           {nil, []}
       end
 
-    %{uri: uri, pid: pid, slice_keys: slice_keys, kind_module: kind_module}
+    %{uri: uri, kind_module: kind_module, slice_keys: slice_keys}
   end
 
   defp match_kind?(%{kind_module: nil}, _kind_atom), do: false
@@ -91,11 +88,11 @@ defmodule EzagentDomainUi.AutoDerive do
     safe_type_name(km) == kind_atom
   end
 
-  defp safe_state(pid) do
-    Ezagent.Kind.runtime_view(pid)
+  defp safe_state(uri) do
+    Ezagent.Kind.runtime_view(uri)
   end
 
-  defp build_detail(uri, pid, state) do
+  defp build_detail(uri, state) do
     kind_module = Map.get(state, :kind)
 
     behaviors =
@@ -112,7 +109,6 @@ defmodule EzagentDomainUi.AutoDerive do
 
     %{
       uri: uri,
-      pid: pid,
       kind_module: inspect(kind_module),
       slices: Map.get(state, :state, %{}),
       behaviors: behaviors

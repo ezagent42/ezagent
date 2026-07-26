@@ -692,8 +692,12 @@ defmodule Ezagent.Kind do
   replacement for the raw `runtime_view` reach-through. Does NOT spawn;
   `{:error, :not_live}` when cold.
   """
-  @spec resolve_action_subject(URI.t() | String.t() | pid(), atom()) ::
+  @spec resolve_action_subject(URI.t() | String.t(), atom()) ::
           {:ok, {module(), module()}} | {:error, :not_live | term()}
+  # INTERNAL pid bridge — retained ONLY so `Ezagent.Cap` (its sole consumer)
+  # keeps working until its own URI migration lands (V5 A1c Chunk2/B1).
+  # Deliberately OUTSIDE the public @spec: the public contract is URI-native.
+  # Do not call this form from new code.
   def resolve_action_subject(pid, action) when is_pid(pid) and is_atom(action),
     do: GenServer.call(pid, {:ezagent_resolve_action_subject, action}, 5_000)
 
@@ -786,12 +790,10 @@ defmodule Ezagent.Kind do
   defp uri_to_string(uri) when is_binary(uri), do: uri
 
   @doc "Return the live Kind metadata and slice map without private framework authority state."
-  @spec runtime_view(pid() | URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
-  def runtime_view(pid) when is_pid(pid), do: GenServer.call(pid, :ezagent_runtime_view, 5_000)
-
+  @spec runtime_view(URI.t() | String.t()) :: {:ok, map()} | {:error, term()}
   def runtime_view(uri) do
     with {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
-      runtime_view(pid)
+      GenServer.call(pid, :ezagent_runtime_view, 5_000)
     end
   end
 

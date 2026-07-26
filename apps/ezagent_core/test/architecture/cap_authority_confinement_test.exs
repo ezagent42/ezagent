@@ -28,7 +28,7 @@ defmodule Ezagent.Architecture.CapAuthorityConfinementTest do
     assert byte_size(private_key) > 0
     refute contains_binary?(server_state.state, private_key)
 
-    assert {:ok, runtime_view} = Ezagent.Kind.runtime_view(pid)
+    assert {:ok, runtime_view} = Ezagent.Kind.runtime_view(uri)
     refute Map.has_key?(runtime_view, :authority)
     refute contains_binary?(runtime_view, private_key)
 
