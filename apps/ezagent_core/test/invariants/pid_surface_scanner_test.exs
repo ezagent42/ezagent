@@ -27,16 +27,18 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     {Ezagent.Cap, :revoke_all_to, 2},
     # pid self-detect + subject resolution
     {Ezagent.Cap, :issue_for_action, 3},
-    # pids drive supervised termination in Terminable + Sandbox
-    {Ezagent.Kind, :list_instances, 0},
-    # pids exposed in summaries/details
-    {EzagentDomainUi.AutoDerive, :list_instances, 1},
+    # (V5 A1c chunk1 REMOVED the {Ezagent.Kind, :list_instances, 0},
+    # {EzagentDomainUi.AutoDerive, :list_instances, 1} and
+    # {Ezagent.Identity.OperatorReads, :registry_all, 1} seeds — all three went
+    # URI-native: list_instances/0 returns %{alive?: bool} status maps,
+    # AutoDerive enumerates that public plane instead of a raw
+    # Registry.select, and registry_all/1 passes the status map through. The
+    # scanner no longer surfaces them — that is the closure, not blindness.)
     # pid-returning wrapper, re-obtains pid from KindRegistry
     {Ezagent.DomainGit.TaskAccessSupervisor, :ensure_started, 1},
-    # pid form (consumed by composition_caps.ex, auto_derive.ex)
+    # body-bound pid (KindRegistry.lookup -> GenServer.call); the public
+    # @spec is URI-only since V5 A1c chunk1
     {Ezagent.Kind, :runtime_view, 1},
-    # intentional operator metadata — flagged, noted as candidate exception
-    {Ezagent.Identity.OperatorReads, :registry_all, 1},
     # A1a floor (codex round-2 #1): public Kind-pid contracts the A0 scope
     # (actor app + 5 seed files) MISSED — the whole-umbrella sweep must
     # surface them

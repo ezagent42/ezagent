@@ -20,12 +20,11 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **128 entries.**
+for the A1b/A1c migration phases. **122 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
 | `Ezagent.ActionSet.Session` | `activate/2` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:530` | body |
-| `Ezagent.ActionSet.Session.Members` | `monitor_ref_for_current_pid?/3` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/members.ex:34` | guard + param |
 | `Ezagent.ActionSet.Session.Membership` | `do_join/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex:28` | param |
 | `Ezagent.ActionSet.Session.SelfAdd.Effects` | `on_add/5` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:14` | guard + param |
 | `Ezagent.ActionSet.Workspace.Members` | `ensure_member_kind_spawned/1` | `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/members.ex:88` | body |
@@ -52,7 +51,6 @@ for the A1b/A1c migration phases. **128 entries.**
 | `Ezagent.ExternalMirror.WorkerRegistry` | `list_all/0` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:77` | nested |
 | `Ezagent.ExternalMirror.WorkerRegistry` | `lookup/1` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:62` | body + nested |
 | `Ezagent.ExternalMirror.WorkerSpawn` | `terminate_by_pid/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex:208` | param |
-| `Ezagent.Identity.OperatorReads` | `registry_all/1` | `apps/ezagent_domain_identity/lib/ezagent/identity/operator_reads.ex:53` | nested |
 | `Ezagent.Invocation` | `call_live_target/3` | `apps/ezagent_actor/lib/ezagent/invocation.ex:475` | param |
 | `Ezagent.Invocation` | `dispatch/1` | `apps/ezagent_actor/lib/ezagent/invocation.ex:144` | param |
 | `Ezagent.Invocation` | `dispatch/1` | `apps/ezagent_actor/lib/ezagent/invocation.ex:148` | param |
@@ -61,16 +59,14 @@ for the A1b/A1c migration phases. **128 entries.**
 | `Ezagent.Invocation` | `reply/2` | `apps/ezagent_actor/lib/ezagent/invocation.ex:644` | param |
 | `Ezagent.Invocation` | `reply/2` | `apps/ezagent_actor/lib/ezagent/invocation.ex:646` | param |
 | `Ezagent.Kind` | `detach/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:517` | body |
-| `Ezagent.Kind` | `list_instances/0` | `apps/ezagent_actor/lib/ezagent/kind.ex:748` | nested |
-| `Ezagent.Kind` | `monitored_by?/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:781` | guard + param |
 | `Ezagent.Kind` | `mount/3` | `apps/ezagent_actor/lib/ezagent/kind.ex:493` | body |
-| `Ezagent.Kind` | `recredential_generation/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:773` | body |
-| `Ezagent.Kind` | `resolve_action_subject/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:697` | guard + param |
-| `Ezagent.Kind` | `resolve_action_subject/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:700` | body + param |
-| `Ezagent.Kind` | `runtime_view/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:762` | guard + param |
-| `Ezagent.Kind` | `runtime_view/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:764` | body + param |
-| `Ezagent.Kind` | `self?/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:735` | body |
+| `Ezagent.Kind` | `recredential_generation/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:803` | body |
+| `Ezagent.Kind` | `resolve_action_subject/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:701` | guard |
+| `Ezagent.Kind` | `resolve_action_subject/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:704` | body |
+| `Ezagent.Kind` | `runtime_view/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:794` | body |
+| `Ezagent.Kind` | `self?/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:739` | body |
 | `Ezagent.Kind` | `terminate/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:408` | body |
+| `Ezagent.Kind` | `terminate_supervised/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:769` | body |
 | `Ezagent.Kind.LaunchContextRelay` | `issue/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:6` | body |
 | `Ezagent.Kind.ReadyTransition` | `drain_pending_then_mark_ready/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:36` | guard + param |
 | `Ezagent.Kind.ReadyTransition` | `drain_pending_then_mark_ready_locked/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:82` | guard + param |
@@ -141,8 +137,6 @@ for the A1b/A1c migration phases. **128 entries.**
 | `EzagentDomainInstanceMessage.SessionCreator` | `install_session_socialware_async/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:273` | body |
 | `EzagentDomainSocialware.Application` | `start/2` | `apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/application.ex:19` | body |
 | `EzagentDomainUi.Application` | `start/2` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/application.ex:30` | body |
-| `EzagentDomainUi.AutoDerive` | `instance_detail/1` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:56` | body |
-| `EzagentDomainUi.AutoDerive` | `list_instances/1` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:38` | nested |
 | `EzagentDomainWorkspace.Application` | `start/2` | `apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:32` | body |
 | `EzagentPluginCc.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex:20` | guard |
 | `EzagentPluginCodex.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_adapter.ex:18` | guard |
@@ -162,17 +156,23 @@ for the A1b/A1c migration phases. **128 entries.**
   NOT go through `issue_for_action`.
 - `Ezagent.Cap.issue_for_action/3` — pid self-detect + action-subject
   resolution against the live target.
-- `Ezagent.Kind.list_instances/0` — the returned pids drive supervised
-  termination in `Ezagent.ActionSet.Terminable` and Sandbox.
-- `EzagentDomainUi.AutoDerive` — exposes pids in instance summaries/details.
+- V5 A1c chunk1 CLOSED (URI-native, no longer surfaced):
+  `Ezagent.Kind.list_instances/0` (returns `%{alive?: bool}` status maps —
+  supervised termination moved behind `Kind.terminate_supervised/2`),
+  `EzagentDomainUi.AutoDerive.list_instances/1` (enumerates the public
+  `Kind.list_instances/0` plane; no raw `Registry.select`, no pid in
+  summaries/details), `Ezagent.Identity.OperatorReads.registry_all/1`
+  (passes the pid-free status map through), and
+  `Ezagent.ActionSet.Session.Members.monitor_ref_for_current?/3` (was
+  `monitor_ref_for_current_pid?/3`; `Kind.monitored_by?/1` now takes a URI
+  and resolves the pid seam-internally).
 - `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` — pid-returning
   wrapper that re-obtains the pid from `KindRegistry`.
-- `Ezagent.Kind.runtime_view/1` — pid form consumed by
-  `composition_caps.ex` and `auto_derive.ex`.
-- `Ezagent.Identity.OperatorReads.registry_all/1` — INTENTIONAL operator
-  metadata (the operator-gated global list-all chokepoint): flagged by the
-  scanner as required, noted here as a candidate ENUMERATED-EXCEPTION for
-  the later enforcement phase.
+- `Ezagent.Kind.runtime_view/1` — public @spec is URI-only since A1c
+  chunk1; still body-flagged (seam-internal `KindRegistry.lookup` →
+  `GenServer.call`), as is `Kind.terminate_supervised/2` — both are
+  sanctioned in-seam pid use, enumerated here until the enforcement flip
+  distinguishes seam faces from leaks.
 - A1a has-teeth additions (codex round-2 #1 — public Kind-pid contracts
   the A0 scope missed):
   `Ezagent.Domain.Agent.materialize_declared/1`,

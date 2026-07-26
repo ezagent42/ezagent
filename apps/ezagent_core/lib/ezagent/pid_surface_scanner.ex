@@ -149,17 +149,23 @@ defmodule Ezagent.PidSurfaceScanner do
       NOT go through `issue_for_action`.
     - `Ezagent.Cap.issue_for_action/3` — pid self-detect + action-subject
       resolution against the live target.
-    - `Ezagent.Kind.list_instances/0` — the returned pids drive supervised
-      termination in `Ezagent.ActionSet.Terminable` and Sandbox.
-    - `EzagentDomainUi.AutoDerive` — exposes pids in instance summaries/details.
+    - V5 A1c chunk1 CLOSED (URI-native, no longer surfaced):
+      `Ezagent.Kind.list_instances/0` (returns `%{alive?: bool}` status maps —
+      supervised termination moved behind `Kind.terminate_supervised/2`),
+      `EzagentDomainUi.AutoDerive.list_instances/1` (enumerates the public
+      `Kind.list_instances/0` plane; no raw `Registry.select`, no pid in
+      summaries/details), `Ezagent.Identity.OperatorReads.registry_all/1`
+      (passes the pid-free status map through), and
+      `Ezagent.ActionSet.Session.Members.monitor_ref_for_current?/3` (was
+      `monitor_ref_for_current_pid?/3`; `Kind.monitored_by?/1` now takes a URI
+      and resolves the pid seam-internally).
     - `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` — pid-returning
       wrapper that re-obtains the pid from `KindRegistry`.
-    - `Ezagent.Kind.runtime_view/1` — pid form consumed by
-      `composition_caps.ex` and `auto_derive.ex`.
-    - `Ezagent.Identity.OperatorReads.registry_all/1` — INTENTIONAL operator
-      metadata (the operator-gated global list-all chokepoint): flagged by the
-      scanner as required, noted here as a candidate ENUMERATED-EXCEPTION for
-      the later enforcement phase.
+    - `Ezagent.Kind.runtime_view/1` — public @spec is URI-only since A1c
+      chunk1; still body-flagged (seam-internal `KindRegistry.lookup` →
+      `GenServer.call`), as is `Kind.terminate_supervised/2` — both are
+      sanctioned in-seam pid use, enumerated here until the enforcement flip
+      distinguishes seam faces from leaks.
     - A1a has-teeth additions (codex round-2 #1 — public Kind-pid contracts
       the A0 scope missed):
       `Ezagent.Domain.Agent.materialize_declared/1`,

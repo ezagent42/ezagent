@@ -38,7 +38,8 @@ taint tracking, out of scope by design.
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
-| `Process.info/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:782` | `109500f4b74f` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:812` | `b10255b7babf` |
+| `Process.info/2` | `apps/ezagent_actor/lib/ezagent/kind.ex:813` | `dcdbc4230945` |
 | `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/ingress_census_collector.ex:33` | `0c34f7441131` |
 | `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/ingress_census_collector.ex:46` | `0c34f7441131` |
 | `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/ingress_census_collector.ex:60` | `0c34f7441131` |
@@ -87,7 +88,6 @@ taint tracking, out of scope by design.
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:159` | `e7ce1ed3aa9e` |
 | `GenServer.whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:136` | `72656dd22c72` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:284` | `e7850cf3319d` |
-| `Registry.select/2` | `apps/ezagent_domain_ui/lib/ezagent_domain_ui/auto_derive.ex:39` | `e889c0adde1b` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:895` | `199e5f2c818c` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:38` | `99bfa828f500` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:47` | `99bfa828f500` |
