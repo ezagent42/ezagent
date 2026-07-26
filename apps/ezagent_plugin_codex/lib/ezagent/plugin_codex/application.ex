@@ -67,8 +67,14 @@ defmodule EzagentPluginCodex.Application do
 
   @impl Ezagent.Plugin
   def children do
+    # V5 pid-closure A1b: the private `AppServerRegistry` is RETIRED — the
+    # AppServer sidecar self-registers in the unified
+    # `Ezagent.Runtime.SidecarRegistry` (started by `EzagentActor.Application`)
+    # and is reached only through the `Ezagent.Runtime.Resolver` seam. The
+    # supervisors stay: spawn remains the plugin's own
+    # `DynamicSupervisor.start_child`. (`BridgeSidecarRegistry` retires with
+    # the BridgeSidecar migration, next commit.)
     [
-      {Registry, keys: :unique, name: EzagentPluginCodex.AppServerRegistry},
       {DynamicSupervisor, name: EzagentPluginCodex.AppServerSupervisor, strategy: :one_for_one},
       {Registry, keys: :unique, name: EzagentPluginCodex.BridgeSidecarRegistry},
       {DynamicSupervisor,

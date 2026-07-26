@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **136 entries.**
+for the A1b/A1c migration phases. **135 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -115,11 +115,11 @@ for the A1b/A1c migration phases. **136 entries.**
 | `Ezagent.Runtime.OsProcess` | `spawn/2` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:73` | nested |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:115` | param |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:117` | guard + param |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:63` | nested |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:75` | nested |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:76` | nested |
-| `Ezagent.Runtime.SidecarRegistry` | `entries_for_plugin/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:198` | nested |
-| `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:177` | body + nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:66` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:78` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:79` | nested |
+| `Ezagent.Runtime.SidecarRegistry` | `entries_for_plugin/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:228` | nested |
+| `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:207` | body + nested |
 | `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:174` | nested |
 | `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:144` | body + nested |
 | `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:116` | nested |
@@ -151,7 +151,6 @@ for the A1b/A1c migration phases. **136 entries.**
 | `EzagentDomainWorkspace.Application` | `start/2` | `apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:32` | body |
 | `EzagentPluginCc.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex:20` | guard |
 | `EzagentPluginCc.SdkSidecar` | `lookup/1` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex:53` | body + nested |
-| `EzagentPluginCodex.AppServer` | `lookup/1` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex:42` | body + nested |
 | `EzagentPluginCodex.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_adapter.ex:18` | guard |
 | `EzagentPluginCodex.BridgeSidecar` | `lookup/1` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex:38` | body + nested |
 | `EzagentPluginHello.Generator` | `concierge_start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:45` | nested |

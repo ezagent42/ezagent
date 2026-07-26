@@ -9,6 +9,7 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
 
   use ExUnit.Case, async: false
 
+  alias Ezagent.Runtime.Resolver
   alias EzagentPluginCodex.AppServer
   alias EzagentPluginCodex.BridgeSidecar
 
@@ -82,6 +83,38 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
                })
 
       assert AppServer.recent_output(agent_uri) == ""
+    end
+  end
+
+  describe "AppServer resolver seam (V5 A1b)" do
+    test "registered under the :via key; Resolver.alive?/call reach it; os_pid served by call" do
+      agent_uri = test_uri("app-server-seam")
+
+      on_exit(fn -> ensure_stopped(AppServer, agent_uri) end)
+
+      assert {:ok, _pid} =
+               AppServer.start(agent_uri, %{
+                 cwd: System.tmp_dir!(),
+                 socket_path: "/tmp/codex_test_seam.sock"
+               })
+
+      key = AppServer.resolver_key(agent_uri)
+      assert key == {agent_uri, :ezagent_plugin_codex, :codex_app}
+
+      # Resolvable through the seam (pid-free liveness + calls).
+      assert Resolver.alive?(key)
+      assert Resolver.whereis(key) == :ok
+      assert {:ok, ""} = Resolver.call(key, :recent_output, 500)
+
+      # test_mode: no OS child — os_pid served by handle_call(:os_pid)
+      # through the seam, never `:sys.get_state/2`.
+      assert {:ok, nil} = Resolver.call(key, :os_pid, 500)
+      assert AppServer.os_pid(agent_uri) == nil
+
+      # stop/1 goes through Resolver.terminate_child — the key leaves the seam.
+      AppServer.stop(agent_uri)
+      :timer.sleep(50)
+      refute Resolver.alive?(key)
     end
   end
 
@@ -177,9 +210,10 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
 
       assert AppServer.alive?(agent_uri)
 
-      # Get the os_pid from the GenServer state to verify it dies.
-      {:ok, gs_pid} = AppServer.lookup(agent_uri)
-      %{os_pid: os_pid} = :sys.get_state(gs_pid)
+      # V5 A1b: os_pid comes from the explicit seam query
+      # (`handle_call(:os_pid)` via `Resolver.call/3`), never
+      # `:sys.get_state/2`.
+      os_pid = AppServer.os_pid(agent_uri)
       assert is_integer(os_pid) and os_pid > 0
 
       # Stop the sidecar (goes through OsProcess.stop → :exec.stop).
@@ -222,7 +256,7 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
         File.rm(socket_path)
       end)
 
-      assert {:ok, _child_pid} =
+      assert {:ok, gs_pid} =
                AppServer.start(agent_uri, %{
                  cwd: cwd,
                  socket_path: socket_path,
@@ -230,8 +264,9 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
                  test_mode: false
                })
 
-      {:ok, gs_pid} = AppServer.lookup(agent_uri)
-      %{os_pid: os_pid} = :sys.get_state(gs_pid)
+      # V5 A1b: os_pid via the explicit seam query; the GenServer pid itself
+      # comes from the plugin's own spawn return (no registry lookup).
+      os_pid = AppServer.os_pid(agent_uri)
       assert is_integer(os_pid) and os_pid > 0
 
       # Monitor so we can wait for the GenServer to die without needing a link.
