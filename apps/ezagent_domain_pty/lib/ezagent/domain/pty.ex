@@ -19,6 +19,7 @@ defmodule Ezagent.Domain.Pty do
   """
 
   alias Ezagent.Domain.Pty.Server
+  alias Ezagent.Runtime.Resolver
 
   @doc """
   Start a `Ezagent.Domain.Pty.Server` for the given `agent_uri` under
@@ -54,18 +55,18 @@ defmodule Ezagent.Domain.Pty do
     )
   end
 
-  @doc "Lookup the PtyServer pid by agent_uri (resolved through the V5 resolver seam)."
-  @spec lookup(URI.t()) :: {:ok, pid()} | :error
-  def lookup(%URI{} = agent_uri), do: Server.find_by_agent_uri(agent_uri)
+  @doc """
+  True iff a PtyServer exists + is alive for this agent_uri (resolved
+  through the V5 resolver seam's `Resolver.alive?/1` — pid-free).
 
-  @doc "True iff a PtyServer exists + is alive for this agent_uri."
+  The A1b-pilot `lookup/1` (which returned `{:ok, pid}`) is RETIRED
+  (codex A1b-pilot #2): no public pid surface remains on this facade —
+  callers that checked "is it up" use this, and callers that acted on the
+  pid use the query APIs (`status/1`) or the seam's
+  `terminate_child`/`cast` (see `stop/1` + `restart/1` below).
+  """
   @spec alive?(URI.t()) :: boolean()
-  def alive?(%URI{} = agent_uri) do
-    case lookup(agent_uri) do
-      {:ok, pid} -> Process.alive?(pid)
-      :error -> false
-    end
-  end
+  def alive?(%URI{} = agent_uri), do: Resolver.alive?(Server.resolver_key(agent_uri))
 
   @doc """
   Operator-facing status snapshot (delegates to `Server.status/1`,
@@ -102,17 +103,17 @@ defmodule Ezagent.Domain.Pty do
   end
 
   # A crash racing the stop can have the supervisor replace the server between our
-  # terminate and the re-check. Re-look-up and stop the replacement too. Bounded — the
-  # window is tiny, and a terminated DynamicSupervisor child is not restarted.
+  # terminate and the re-check. Re-resolve and stop the replacement too. Bounded —
+  # the window is tiny, and a terminated DynamicSupervisor child is not restarted.
   #
-  # P1 (codex review): the lookup must find the PID WITHOUT probing the process.
-  # When the PtyServer is sleeping inside `apply_respawn_backoff/1` (up to 30 s),
-  # a probe with a 500 ms timeout fires and reports the child gone even though it
-  # is ALIVE — handing a still-looping agent a clean crash history.
-  # `Server.find_by_agent_uri/1` resolves through the resolver seam
-  # (`Registry` entry owned by the child itself), so a sleeping server is
-  # correctly found and terminated. (V5 A1b: was the retired
-  # `EzagentDomainPty.Registry`, now the unified SidecarRegistry.)
+  # P1 (codex review): the resolution must find the child WITHOUT probing the
+  # process. When the PtyServer is sleeping inside `apply_respawn_backoff/1`
+  # (up to 30 s), a probe with a 500 ms timeout fires and reports the child
+  # gone even though it is ALIVE — handing a still-looping agent a clean crash
+  # history. `Resolver.terminate_child/2` resolves through the seam (`Registry`
+  # entry owned by the child itself), so a sleeping server is correctly found
+  # and terminated — and the pid never leaves the seam (V5 A1b codex #2: this
+  # loop was the last in-app pid fetch).
   defp terminate_until_gone(%URI{} = agent_uri, 0) do
     if alive?(agent_uri) do
       require Logger
@@ -128,15 +129,15 @@ defmodule Ezagent.Domain.Pty do
   end
 
   defp terminate_until_gone(%URI{} = agent_uri, attempts_left) do
-    sup = EzagentDomainPty.Supervisor
-
-    # Seam resolution gives us the PID without probing via :sys.get_state
-    case Server.find_by_agent_uri(agent_uri) do
-      {:ok, pid} ->
-        _ = DynamicSupervisor.terminate_child(sup, pid)
+    case Resolver.terminate_child(Server.resolver_key(agent_uri), EzagentDomainPty.Supervisor) do
+      :ok ->
+        # The registry entry dies ASYNCHRONOUSLY with the child (Registry
+        # DOWN-cleanup); give it a tick so the re-resolve below doesn't
+        # burn attempts on an already-terminating pid.
+        Process.sleep(10)
         terminate_until_gone(agent_uri, attempts_left - 1)
 
-      :error ->
+      :not_found ->
         # Not registered → definitely gone (or was never started).
         :ok
     end
@@ -159,11 +160,13 @@ defmodule Ezagent.Domain.Pty do
     Ezagent.Domain.Pty.RespawnPolicy.clear(agent_uri)
     Ezagent.Domain.Pty.RespawnBackoff.clear(URI.to_string(agent_uri))
 
-    # Seam resolution finds the PID without probing via :sys.get_state, so a server
-    # sleeping in apply_respawn_backoff (up to 30 s) is correctly found (codex P1).
-    case Server.find_by_agent_uri(agent_uri) do
-      {:ok, pid} -> GenServer.cast(pid, :respawn)
-      :error -> {:error, :not_running}
+    # Seam resolution finds the server without probing via :sys.get_state,
+    # so a server sleeping in apply_respawn_backoff (up to 30 s) is
+    # correctly found (codex P1) — and the pid never leaves the seam
+    # (`Resolver.cast/2`, V5 A1b codex #2).
+    case Resolver.cast(Server.resolver_key(agent_uri), :respawn) do
+      :ok -> :ok
+      :not_found -> {:error, :not_running}
     end
   end
 

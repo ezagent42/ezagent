@@ -260,7 +260,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # V1 fix Allen 2026-05-21: instantiate is the sole producer of
       # the cc agent's runtime resources. After it returns:
       # 1. KindRegistry.lookup(agent_uri) must succeed — Agent Kind alive
-      # 2. PtyServer.find_by_agent_uri(agent_uri) must succeed — PTY alive
+      # 2. PtyServer must be alive for agent_uri (V5 A1b codex #2: the
+      #    pid-returning `Pty.lookup/1` is retired; `Pty.alive?/1` is the
+      #    pid-free check)
       agent_uri_str = "entity://team-alpha/agent/cc_v1fix-#{System.unique_integer([:positive])}"
       agent_uri = Ezagent.URI.new!(agent_uri_str)
 
@@ -282,11 +284,8 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       assert is_pid(agent_pid)
       assert Process.alive?(agent_pid)
 
-      assert {:ok, pty_pid} = Ezagent.Domain.Pty.lookup(agent_uri),
+      assert Ezagent.Domain.Pty.alive?(agent_uri),
              "PtyServer must be alive after cc.agent.instantiate (V1 fix invariant)"
-
-      assert is_pid(pty_pid)
-      assert Process.alive?(pty_pid)
     end
 
     test "is idempotent — second call returns same URI without spawning a second PtyServer" do
@@ -305,13 +304,13 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       # re-call adopts the already-live worker (`fresh?: false`).
       assert {:ok, [^uri], %{fresh?: true}} = CcAgent.instantiate("t", tmpl, workspace_uri)
 
-      pids_before = list_pty_pids_for(agent_uri_str)
-      assert length(pids_before) == 1
+      servers_before = list_pty_servers_for(agent_uri_str)
+      assert length(servers_before) == 1
 
       assert {:ok, [^uri], %{fresh?: false}} = CcAgent.instantiate("t", tmpl, workspace_uri)
 
-      pids_after = list_pty_pids_for(agent_uri_str)
-      assert pids_after == pids_before
+      servers_after = list_pty_servers_for(agent_uri_str)
+      assert servers_after == servers_before
     end
 
     # codex round-8 HIGH-1 — when the Agent Kind already exists (a
@@ -353,7 +352,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
       refute Ezagent.Domain.Pty.alive?(agent_uri),
              "a rejected adoption must NOT start a PTY sidecar (codex round-8 HIGH-1)"
 
-      assert list_pty_pids_for(agent_uri_str) == [],
+      assert list_pty_servers_for(agent_uri_str) == [],
              "no PtyServer process may exist for an already-started Agent Kind"
     end
   end
@@ -573,10 +572,12 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
     end
   end
 
-  defp list_pty_pids_for(agent_uri_str) do
+  # V5 A1b codex #2: `list_agents/0` entries are pid-free
+  # (`%{agent_uri, os_pid}`) — the idempotency check compares the
+  # enumerated server SET, not pids.
+  defp list_pty_servers_for(agent_uri_str) do
     Ezagent.Domain.Pty.Server.list_agents()
     |> Enum.filter(fn a -> URI.to_string(a.agent_uri) == agent_uri_str end)
-    |> Enum.map(& &1.pid)
   end
 
   # PTY-orphan-restart 2026-05-26 — `ensure_subprocess_alive/2` is the

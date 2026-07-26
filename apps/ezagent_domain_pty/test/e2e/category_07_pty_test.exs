@@ -26,8 +26,8 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
   - Walks the canonical phase state machine (`:starting → :running`).
   - Broadcasts `:starting` and `:running` over PubSub at
     `pty:phase:<agent_uri>`.
-  - Responds to `Pty.lookup/1`, `Pty.alive?/1`, `Pty.status/1`,
-    `Pty.stop/1`.
+  - Responds to `Pty.alive?/1`, `Pty.status/1`, `Pty.stop/1`
+    (the pid-returning `Pty.lookup/1` is retired — codex A1b-pilot #2).
   - Accepts `write_input/2` calls and returns `:ok` (no bytes
     physically reach a PTY — the mock IS the seam).
 
@@ -78,7 +78,6 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       on_exit(fn -> if Process.alive?(pid), do: :ok = Pty.stop(uri) end)
 
       # Facade observables — all the surfaces Domain.Pty exposes.
-      assert {:ok, ^pid} = Pty.lookup(uri)
       assert Pty.alive?(uri) == true
       # status snapshot reflects the live process.
       status = Pty.status(uri)
@@ -181,12 +180,12 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
   describe "scenario 19 — restart preserves cwd + lookup recovers" do
     @describetag scenario: "19-pty-restart-orphan"
 
-    test "after stop/1 + restart, Pty.lookup/1 + status reflect the NEW server with same cwd" do
+    test "after stop/1 + restart, the facade + status reflect the NEW server with same cwd" do
       uri = fresh_uri("restart")
       cwd = "/tmp"
 
       {:ok, pid1} = Pty.start(uri, %{cwd: cwd, test_mode: true})
-      assert {:ok, ^pid1} = Pty.lookup(uri)
+      assert Pty.alive?(uri)
       pre_status = Pty.status(uri)
       assert pre_status.cwd == cwd
 
@@ -203,7 +202,7 @@ defmodule Ezagent.Domain.Pty.E2E.Category07PtyTest do
       on_exit(fn -> if Process.alive?(pid2), do: :ok = Pty.stop(uri) end)
 
       refute pid1 == pid2
-      assert {:ok, ^pid2} = Pty.lookup(uri)
+      assert Pty.alive?(uri)
 
       post_status = Pty.status(uri)
       assert post_status.cwd == cwd

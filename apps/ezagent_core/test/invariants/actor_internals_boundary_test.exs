@@ -66,7 +66,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # directly (−1 site).
   # V5 A1b lowered forward 157→151: the PTY sidecar migrated onto the resolver
   # seam — its six `:sys.get_state` reach-ins (status/phase/snapshot_buffer/
-  # trigger_redraw/find_by_agent_uri/list_agents) became explicit GenServer.call
+  # trigger_redraw/write_input/list_agents) became explicit GenServer.call
   # client APIs resolved via `Ezagent.Runtime.Resolver` (−6 sites).
   @forward_frozen 151
   @forward_fixed_frozen 2

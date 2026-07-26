@@ -94,10 +94,9 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
 
       # The server stays ALIVE and halted — that is what makes the halt observable
       # (status answers, the buffer survives) and gives the operator something to
-      # restart. A dead process would just be another dead end. (The pid is NOT the
-      # one start_pty returned: the supervisor replaced it on each restart.)
-      assert {:ok, live} = Pty.lookup(uri)
-      assert Process.alive?(live)
+      # restart. A dead process would just be another dead end. (It is NOT the
+      # process start_pty returned: the supervisor replaced it on each restart.)
+      assert Pty.alive?(uri)
       assert RespawnPolicy.halt_info(uri)
 
       status = Pty.status(uri)
@@ -151,8 +150,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
              "a stale DOWN from the replaced child was booked as a failure of its successor"
 
       assert RespawnPolicy.halt_info(uri) == nil
-      assert {:ok, live} = Pty.lookup(uri)
-      assert Process.alive?(live)
+      assert Pty.alive?(uri)
       assert Pty.status(uri).running == true
     end
   end
@@ -235,8 +233,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       assert RespawnPolicy.halt_info(uri) == nil,
              "an ordinary crash-and-respawn was mistaken for an unrecoverable start"
 
-      assert {:ok, live} = Pty.lookup(uri)
-      assert Process.alive?(live)
+      assert Pty.alive?(uri)
     end
   end
 
@@ -258,8 +255,7 @@ defmodule Ezagent.Domain.Pty.Server.RespawnBreakerTest do
       # instead of respawning the doomed command until the breaker tripped.
       assert count(log, "preferred") == 1
       assert count(log, "fallback") == 1
-      assert {:ok, live} = Pty.lookup(uri)
-      assert Process.alive?(live)
+      assert Pty.alive?(uri)
 
       # A healthy fallback child clears the history, so a LATER restart is free to
       # try the preferred command again (by then a conversation exists to resume).

@@ -14,7 +14,7 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
   The `:write` dispatch-path test exercises the WHOLE pipeline:
 
       Invocation → BehaviorRegistry → CapBAC → handle_write/2 →
-      Domain.Pty.lookup + write_input → {:set, :write_calls, ...} +
+      Server.write_input/2 (URI-addressed) → {:set, :write_calls, ...} +
       {:set, :total_bytes, ...} effects → state writeback
 
   Reuses the same test_mode PtyServer pattern as the pre-migration
@@ -98,7 +98,7 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
       #   - BehaviorRegistry lookup
       #   - CapBAC (admin caps satisfy the :agent/:write gate)
       #   - handle_write/2 invocation
-      #   - Domain.Pty.lookup + Server.write_input (real test_mode
+      #   - Server.write_input/2 (URI-addressed; real test_mode
       #     PtyServer writes)
       #   - {:set, :write_calls, +1} + {:set, :total_bytes, +N} effects
       #   - State writeback to the live Agent Kind
@@ -216,7 +216,7 @@ defmodule Ezagent.ActionSet.PtyMigrationParityTest do
       # macro-emitted and returns the two-container `%{state: ...,
       # transients: %{}}` shape. The durable counters `create/1` builds
       # live under `:state`; `transients` is empty (no PtyServer handle is
-      # held — it's resolved per-write via `Domain.Pty.lookup/1`).
+      # held — it's resolved per-write through the resolver seam).
       assert Pty.init_slice(%{}) == %{state: %{write_calls: 0, total_bytes: 0}, transients: %{}}
     end
 

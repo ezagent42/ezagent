@@ -5,7 +5,7 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
   §6) — the NO-TRANSIENTS shape (like example A `CurlAgent`).
 
   Pty holds NO process-bound resource in its slice (the PtyServer port is
-  resolved per-write via `Ezagent.Domain.Pty.lookup/1`, never stored), so
+  resolved per-write through the resolver seam, never stored), so
   the `assert_transients_rebuilt/2` helper does NOT apply — there is no
   transient to rebuild. The architectural invariant for a no-transients
   Lifecycle module is instead:

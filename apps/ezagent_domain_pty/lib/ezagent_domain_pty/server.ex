@@ -76,9 +76,10 @@ defmodule Ezagent.Domain.Pty.Server do
   # V5 pid-closure A1b — this sidecar's resolver-seam identity. Every
   # PtyServer SELF-registers under `{agent_uri, @plugin, @role}` in the
   # unified `Ezagent.Runtime.SidecarRegistry` (the retired private
-  # `EzagentDomainPty.Registry` is gone), and every lookup converges on
-  # `Ezagent.Runtime.Resolver.pid_for/1` — no caller walks the
-  # DynamicSupervisor or probes state with `:sys.get_state/2` any more.
+  # `EzagentDomainPty.Registry` is gone), and every reach converges on the
+  # pid-free `Ezagent.Runtime.Resolver` face (`call/3`, `list_keys/1`) —
+  # no caller walks the DynamicSupervisor, probes state with
+  # `:sys.get_state/2`, or holds a pid any more.
   @plugin :ezagent_domain_pty
   @role :pty
 
@@ -155,24 +156,24 @@ defmodule Ezagent.Domain.Pty.Server do
     SidecarRegistry.via(agent_uri, @plugin, @role)
   end
 
-  # The resolver-seam key for this agent's PTY sidecar.
-  defp resolver_key(%URI{} = agent_uri), do: {agent_uri, @plugin, @role}
+  @doc """
+  The resolver-seam key for this agent's PTY sidecar:
+  `{agent_uri, :ezagent_domain_pty, :pty}`. Public so the Domain.Pty
+  facade (and the A1b-rest sidecars templating on this pilot) build the
+  SAME key — the key is the address, never a pid.
+  """
+  @spec resolver_key(URI.t()) :: {URI.t(), atom(), atom()}
+  def resolver_key(%URI{} = agent_uri), do: {agent_uri, @plugin, @role}
 
-  # Resolve-then-call through the seam: the ONLY place this module turns an
-  # agent_uri into a pid is `Resolver.pid_for/1`. Returns `{:ok, reply}` or
-  # `:error` (unregistered, or the server died/timed out mid-call).
-  @spec seam_call(URI.t(), term(), non_neg_integer()) :: {:ok, term()} | :error
+  # Resolve-then-call through the seam's pid-free `Resolver.call/3`: no
+  # place in this module turns an agent_uri into a pid. Returns
+  # `{:ok, reply}` or `:error` (unregistered, or the server died/timed out
+  # mid-call — `Resolver.call/3` catches the exit).
+  @spec seam_call(URI.t(), term(), timeout()) :: {:ok, term()} | :error
   defp seam_call(%URI{} = agent_uri, msg, timeout) do
-    case Resolver.pid_for(resolver_key(agent_uri)) do
-      {:ok, pid} ->
-        try do
-          {:ok, GenServer.call(pid, msg, timeout)}
-        catch
-          :exit, _ -> :error
-        end
-
-      :not_found ->
-        :error
+    case Resolver.call(resolver_key(agent_uri), msg, timeout) do
+      {:ok, reply} -> {:ok, reply}
+      {:error, _} -> :error
     end
   end
 
@@ -234,39 +235,23 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   @doc """
-  Resolve the PtyServer pid for `agent_uri` through the resolver seam
-  (`Ezagent.Runtime.Resolver.pid_for/1` on the `{agent_uri,
-  :ezagent_domain_pty, :pty}` key). Returns `{:ok, pid}` or `:error`.
-
-  V5 A1b: this is the ONLY pid fetch left in the module, and it goes
-  through the seam — the old `DynamicSupervisor.which_children/1` +
-  `:sys.get_state/2` walk (the enumeration + state-forgery vector codex
-  flagged) is gone. Prefer the query APIs (`status/1`, `phase/1`,
-  `snapshot_buffer/2`, `trigger_redraw/1`) over holding the pid; this
-  remains for the Domain.Pty app's own supervisor plumbing
-  (`terminate_child`).
-  """
-  @spec find_by_agent_uri(URI.t()) :: {:ok, pid()} | :error
-  def find_by_agent_uri(%URI{} = agent_uri) do
-    case Resolver.pid_for(resolver_key(agent_uri)) do
-      {:ok, pid} -> {:ok, pid}
-      :not_found -> :error
-    end
-  end
-
-  @doc """
   Write bytes to the PTY's stdin (called by Ezagent.ActionSet.Pty.invoke(:write, ...)).
 
-  V5 A1b: URI-addressed — resolves through the resolver seam; callers
-  never hold the pid. Returns `:ok` on success, `{:error, :no_pty_server}`
-  when no server is registered, or `{:error, reason}`. Test_mode
-  short-circuits to `:ok` without invoking erlexec.
+  V5 A1b: URI-addressed — resolves through the resolver seam's pid-free
+  `Resolver.call/3`; callers never hold the pid. Returns `:ok` on success,
+  `{:error, :no_pty_server}` when no server is registered, or
+  `{:error, reason}` — INCLUDING when the server is busy past the 1s
+  timeout (e.g. sleeping inside `RespawnBackoff.throttle/1`): the seam
+  catches the call exit so the caller gets the pre-migration clean
+  `{:error, _}` instead of an escaping exit (codex A1b-pilot #2).
+  Test_mode short-circuits to `:ok` without invoking erlexec.
   """
   @spec write_input(URI.t(), binary()) :: :ok | {:error, term()}
   def write_input(%URI{} = agent_uri, bytes) when is_binary(bytes) do
-    case Resolver.pid_for(resolver_key(agent_uri)) do
-      {:ok, pid} -> GenServer.call(pid, {:write_input, bytes}, 1000)
-      :not_found -> {:error, :no_pty_server}
+    case Resolver.call(resolver_key(agent_uri), {:write_input, bytes}, 1_000) do
+      {:ok, reply} -> reply
+      {:error, :no_such_actor} -> {:error, :no_pty_server}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -362,26 +347,26 @@ defmodule Ezagent.Domain.Pty.Server do
   @doc """
   List all live PtyServer agent_uris.
 
-  V5 A1b: enumerated via `Registry.select/2` on the unified
-  `Ezagent.Runtime.SidecarRegistry` INSIDE the resolver seam
-  (`SidecarRegistry.entries_for_plugin/1`, seam-exempt) — the old
-  `DynamicSupervisor.which_children/1` + `:sys.get_state/2` walk is gone.
-  `os_pid` is fetched through the server's own `:os_pid` query call.
+  V5 A1b (codex A1b-pilot #2): pid-free — enumerated via
+  `Resolver.list_keys/1` (KEYS, never pids) and each entry's `os_pid` is
+  fetched through the seam's `Resolver.call/3` on that key. The old
+  `DynamicSupervisor.which_children/1` + `:sys.get_state/2` walk is gone,
+  and the A1b-pilot's pid-carrying entries (`%{pid: pid}`) are gone too —
+  no public pid surface remains on this module.
   """
-  @spec list_agents() :: [%{agent_uri: URI.t(), pid: pid(), os_pid: non_neg_integer() | nil}]
+  @spec list_agents() :: [%{agent_uri: URI.t(), os_pid: non_neg_integer() | nil}]
   def list_agents do
     @plugin
-    |> SidecarRegistry.entries_for_plugin()
-    |> Enum.filter(fn {_parent_uri, role, _pid} -> role == @role end)
-    |> Enum.map(fn {parent_uri, _role, pid} ->
+    |> Resolver.list_keys()
+    |> Enum.filter(fn {_parent_uri, _plugin, role} -> role == @role end)
+    |> Enum.map(fn {parent_uri, _plugin, _role} = key ->
       os_pid =
-        try do
-          GenServer.call(pid, :os_pid, 500)
-        catch
-          :exit, _ -> nil
+        case Resolver.call(key, :os_pid, 500) do
+          {:ok, os_pid} -> os_pid
+          {:error, _} -> nil
         end
 
-      %{agent_uri: Ezagent.URI.new!(parent_uri), pid: pid, os_pid: os_pid}
+      %{agent_uri: Ezagent.URI.new!(parent_uri), os_pid: os_pid}
     end)
   end
 
@@ -706,11 +691,15 @@ defmodule Ezagent.Domain.Pty.Server do
 
   def handle_call(:trigger_redraw, _from, %__MODULE__{os_pid: os_pid} = state) do
     if os_pid do
-      # Briefly shrink + restore to provoke a redraw without
-      # leaving a smaller window pinned.
-      :exec.winsz(os_pid, 40, 119)
-      Process.sleep(50)
-      :exec.winsz(os_pid, 40, 120)
+      # Briefly shrink + restore to provoke a redraw without leaving a
+      # smaller window pinned. codex A1b-pilot #2 — two regressions fixed
+      # here: (1) the restore is SCHEDULED (`Process.send_after/3`), not an
+      # inline `Process.sleep(50)` that blocked ALL PTY traffic for 50 ms
+      # inside the GenServer; (2) both `:exec.winsz/3` FFI calls go through
+      # `safe_winsz/3`, so an FFI failure logs + continues instead of
+      # crashing the server.
+      safe_winsz(os_pid, 40, 119)
+      Process.send_after(self(), :restore_redraw_winsz, 50)
     end
 
     {:reply, :ok, state}
@@ -859,13 +848,19 @@ defmodule Ezagent.Domain.Pty.Server do
 
   def handle_info(:send_default_winsize, %__MODULE__{os_pid: os_pid} = state) do
     # Per `feedback_verify_ffi_arg_order`: rows first, cols second.
-    try do
-      :exec.winsz(os_pid, 40, 120)
-    catch
-      kind, why ->
-        Logger.warning("PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})")
-    end
+    safe_winsz(os_pid, 40, 120)
+    {:noreply, state}
+  end
 
+  # The scheduled restore half of `:trigger_redraw` (see the handle_call) —
+  # runs OUTSIDE the call so the server never sleeps with PTY traffic
+  # queued behind it. A nil os_pid (child died/exchanged in the 50 ms
+  # window) just skips the restore.
+  def handle_info(:restore_redraw_winsz, %__MODULE__{os_pid: nil} = state),
+    do: {:noreply, state}
+
+  def handle_info(:restore_redraw_winsz, %__MODULE__{os_pid: os_pid} = state) do
+    safe_winsz(os_pid, 40, 120)
     {:noreply, state}
   end
 
@@ -908,6 +903,16 @@ defmodule Ezagent.Domain.Pty.Server do
     :ok
   catch
     _, _ -> :ok
+  end
+
+  # `:exec.winsz/3` is an FFI call into erlexec's port — a failure there
+  # (dead os_pid, port gone) must NEVER crash this GenServer (codex
+  # A1b-pilot #2: the pilot's `:trigger_redraw` let it). Log + continue.
+  defp safe_winsz(os_pid, rows, cols) do
+    :exec.winsz(os_pid, rows, cols)
+  catch
+    kind, why ->
+      Logger.warning("PtyServer: winsz send failed (#{inspect(kind)}, #{inspect(why)})")
   end
 
   # --- parked-on-unknown-dialog watchdog (cc-PTY hardening 2026-07-10) --

@@ -22,6 +22,19 @@ defmodule Ezagent.Domain.Pty.ResolverSeamTest do
   @plugin :ezagent_domain_pty
   @role :pty
 
+  defmodule SlowServer do
+    @moduledoc false
+    # Stands in for a PtyServer sleeping inside RespawnBackoff.throttle/1:
+    # it answers NO call within the 1s write_input timeout.
+    use GenServer
+    def init(_), do: {:ok, %{}}
+
+    def handle_call({:write_input, _bytes}, _from, state) do
+      Process.sleep(2_000)
+      {:reply, :ok, state}
+    end
+  end
+
   setup do
     agent_uri =
       URI.new!("entity://team-alpha/agent/test_seam-#{System.unique_integer([:positive])}")
@@ -98,16 +111,36 @@ defmodule Ezagent.Domain.Pty.ResolverSeamTest do
     end)
   end
 
-  test "list_agents/0 enumerates via the seam (no which_children walk)", %{
-    agent_uri: uri,
-    pid: pid
+  test "list_agents/0 enumerates via the seam (no which_children walk, no pids)", %{
+    agent_uri: uri
   } do
     entries = PtyServer.list_agents()
-    assert Enum.any?(entries, fn e -> e.agent_uri == uri and e.pid == pid end)
+    assert Enum.any?(entries, fn e -> e.agent_uri == uri end)
+
+    # Pid-free entries (codex A1b-pilot #2): keys + os_pid only.
+    for e <- entries do
+      assert Map.keys(e) |> Enum.sort() == [:agent_uri, :os_pid]
+    end
   end
 
   test "the retired private registry is NOT started anywhere" do
     assert Process.whereis(EzagentDomainPty.Registry) == nil
+  end
+
+  test "write_input/2 to a busy (respawn-backing-off) server returns a clean {:error, _}",
+       %{agent_uri: _uri} do
+    # codex A1b-pilot #2 — the pilot's uncaught 1s GenServer.call ESCAPED
+    # as an exit when the server was sleeping inside
+    # RespawnBackoff.throttle/1. The seam's Resolver.call/3 catches the
+    # exit; the caller gets the pre-migration clean error tuple.
+    busy_uri =
+      URI.new!("entity://team-alpha/agent/test_seam-busy-#{System.unique_integer([:positive])}")
+
+    {:ok, slow} = GenServer.start_link(SlowServer, [], name: PtyServer.via(busy_uri))
+    on_exit(fn -> if Process.alive?(slow), do: GenServer.stop(slow, :normal, 5_000) end)
+
+    assert {:error, reason} = PtyServer.write_input(busy_uri, "x")
+    assert match?({:timeout, _}, reason)
   end
 
   # Registry DOWN-cleanup is prompt but asynchronous — poll briefly.
