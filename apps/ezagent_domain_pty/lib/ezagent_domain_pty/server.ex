@@ -132,7 +132,12 @@ defmodule Ezagent.Domain.Pty.Server do
     # reason instead of the opaque exit code. See `tag_reason/2`.
     auth_failed?: false,
     # Which cmd this incarnation launched — breaker books per-mode.
-    spawn_mode: :primary
+    spawn_mode: :primary,
+    # V5 A1b codex #5 — the `SidecarRegistry.watch/0` monitor ref. The
+    # registry lives in ANOTHER app's supervision tree; if it restarts,
+    # this worker's :via entry dies with it, and the worker re-registers
+    # ITSELF on the :DOWN (see the :DOWN clause + `reregister/1`).
+    registry_ref: nil
   ]
 
   def start_link(%{agent_uri: %URI{} = agent_uri} = args) do
@@ -392,7 +397,11 @@ defmodule Ezagent.Domain.Pty.Server do
         Enum.map(Map.get(args, :auth_observers, []), fn o ->
           %{name: o.name, match: o.match, fired?: false}
         end),
-      phase: :starting
+      phase: :starting,
+      # V5 A1b codex #5 — watch the unified registry so its restart (the
+      # entry dies with it) triggers self re-registration, keeping this
+      # worker resolvable through the seam.
+      registry_ref: SidecarRegistry.watch()
     }
 
     # PTY-phase-state-machine follow-up (b): broadcast :starting as
@@ -756,6 +765,28 @@ defmodule Ezagent.Domain.Pty.Server do
     {:noreply, fresh, {:continue, :spawn_pty}}
   end
 
+  # V5 A1b codex #5 — the unified SidecarRegistry restarted (it lives in
+  # ANOTHER app's supervision tree); our :via entry died with it. Re-register
+  # THIS process and re-arm the watch so the sidecar stays resolvable through
+  # the seam. Matched BEFORE the erlexec :DOWN clauses below (the registry
+  # monitor's ref never collides with an exec DOWN, which carries no ref —
+  # and the generic stale-DOWN clause would otherwise swallow it).
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %__MODULE__{registry_ref: ref} = state)
+      when is_reference(ref) do
+    Logger.warning(
+      "PtyServer: SidecarRegistry DOWN (#{inspect(reason)}) — re-registering " <>
+        URI.to_string(state.agent_uri)
+    )
+
+    {:noreply, reregister_with_registry(state)}
+  end
+
+  def handle_info(:retry_registry_registration, %__MODULE__{registry_ref: nil} = state),
+    do: {:noreply, reregister_with_registry(state)}
+
+  def handle_info(:retry_registry_registration, state), do: {:noreply, state}
+
   # erlexec DOWN, correlated on exec_pid (an Erlang pid — never recycled). A stale one
   # (operator `:respawn` swapped the child) must NOT hit its successor (codex, HIGH).
   @impl true
@@ -897,6 +928,26 @@ defmodule Ezagent.Domain.Pty.Server do
   end
 
   defp halt_reason(_state), do: nil
+
+  # codex #5 — re-register THIS process under its seam key after a registry
+  # restart, then re-arm the watch. On failure (registry still down after
+  # the helper's bounded wait) schedule a retry instead of crashing: the
+  # worker is healthy, only its discoverability is degraded.
+  defp reregister_with_registry(state) do
+    case SidecarRegistry.re_register(resolver_key(state.agent_uri)) do
+      :ok ->
+        %{state | registry_ref: SidecarRegistry.watch()}
+
+      {:error, why} ->
+        Logger.error(
+          "PtyServer: SidecarRegistry re-register failed for " <>
+            "#{URI.to_string(state.agent_uri)} (#{inspect(why)}) — retrying"
+        )
+
+        Process.send_after(self(), :retry_registry_registration, 200)
+        %{state | registry_ref: nil}
+    end
+  end
 
   defp safe_stop_child(pid) do
     :exec.stop(pid)

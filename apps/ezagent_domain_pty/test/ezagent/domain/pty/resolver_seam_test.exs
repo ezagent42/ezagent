@@ -143,6 +143,37 @@ defmodule Ezagent.Domain.Pty.ResolverSeamTest do
     assert match?({:timeout, _}, reason)
   end
 
+  test "a live worker re-registers after a SidecarRegistry restart (codex #5)", %{
+    agent_uri: uri,
+    pid: pid
+  } do
+    assert :ok = Resolver.whereis({uri, @plugin, @role})
+
+    registry_pid = Process.whereis(SidecarRegistry)
+    ref = Process.monitor(registry_pid)
+    # A simulated CRASH via the system-stop protocol (the Registry traps
+    # exits, so `Process.exit/2` only :kill can take it down — and a brutal
+    # :kill races its NAMED partition supervisor's cleanup against the
+    # actor supervisor's restart: every restart attempt hits a still-
+    # registered partition name, the intensity trips, and the WHOLE
+    # ezagent_actor app — plus every app depending on it — goes down).
+    # `GenServer.stop/3` with a crash reason terminates the registry
+    # abnormally but cleanly: the supervisor restarts it EMPTY, which is
+    # the topology hazard this test covers.
+    GenServer.stop(SidecarRegistry, :simulated_crash)
+    assert_receive {:DOWN, ^ref, :process, ^registry_pid, :simulated_crash}, 1_000
+
+    # The actor-app supervisor restarts the registry EMPTY; the live worker
+    # notices its watch :DOWN and re-registers ITSELF — same pid, still
+    # resolvable, still answering queries.
+    assert_eventually(fn ->
+      Resolver.alive?({uri, @plugin, @role}) and
+        Resolver.pid_for({uri, @plugin, @role}) == {:ok, pid}
+    end)
+
+    assert is_map(PtyServer.status(uri))
+  end
+
   # Registry DOWN-cleanup is prompt but asynchronous — poll briefly.
   defp assert_eventually(fun, attempts \\ 50)
   defp assert_eventually(_fun, 0), do: flunk("condition never became true")
