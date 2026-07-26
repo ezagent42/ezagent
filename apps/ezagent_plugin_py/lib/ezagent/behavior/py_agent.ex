@@ -38,13 +38,15 @@ defmodule Ezagent.ActionSet.PyAgent do
     `last_result`, `last_error`. `script_path` + `cwd` are read by the
     cold-load `activate/2` to re-spawn the subprocess from the installed
     script (NOT re-write it).
-  - **`transients` (NEVER persisted)** — `phase_subscription`. Rebuilt every
-    `activate/2` via `Ezagent.Domain.Python.AgentLifecycle.subscribe_phase/1`.
+  - **`transients` (NEVER persisted)** — none today. (Pre-H1 this held the
+    `phase_subscription` PubSub binding; V5 use-side H1 — delete-holes #200 —
+    DELETED the Kind's `pty:phase:` subscription. The phase now arrives
+    point-to-point as a sealed `%Signal{}` → `handle_signal({:pty_phase, …})`.)
 
   ## activate/2 — re-spawn from `script_path` on EVERY start
 
   `activate/2` (the unified start hook: fresh spawn, supervisor restart,
-  cold-load) rebuilds the phase subscription transient AND self-heals the
+  cold-load) self-heals the
   Python subprocess from durable `state` via the shared
   `Ezagent.Domain.Python.AgentLifecycle.ensure_alive/1` — re-spawning from
   the EXISTING `agent.py` (it is not re-written here; re-write only happens on
@@ -337,7 +339,7 @@ defmodule Ezagent.ActionSet.PyAgent do
   @doc false
   def data_owner(_), do: :no_owner
 
-  # --- activate/2 — rebuild transients + self-heal the subprocess ----------
+  # --- activate/2 — self-heal the subprocess ---------------------------------
   #
   # Re-spawns the Python subprocess from the EXISTING installed script
   # (`state.script_path`) on EVERY start via the shared AgentLifecycle helper
@@ -346,12 +348,10 @@ defmodule Ezagent.ActionSet.PyAgent do
   def activate(state, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
-    phase_subscription = AgentLifecycle.subscribe_phase(self_uri)
-
     script_path = Map.get(state, :script_path)
     cwd = Map.get(state, :cwd)
 
-    transients = %{phase_subscription: phase_subscription}
+    transients = %{}
 
     cond do
       not is_struct(self_uri, URI) ->
@@ -363,9 +363,9 @@ defmodule Ezagent.ActionSet.PyAgent do
         {:ok, transients}
 
       not (is_binary(script_path) and script_path != "") or not (is_binary(cwd) and cwd != "") ->
-        # Demand-spawn / pre-instantiate: no installed script yet. The phase
-        # subscription is in place; the Template's instantiate (or a later
-        # ensure) brings the subprocess up.
+        # Demand-spawn / pre-instantiate: no installed script yet. The
+        # Template's instantiate (or a later ensure) brings the subprocess
+        # up; the phase then arrives point-to-point via Signal (H1).
         {:ok, transients}
 
       true ->
@@ -414,7 +414,10 @@ defmodule Ezagent.ActionSet.PyAgent do
     end
   end
 
-  # --- handle_signal/2 — phase broadcasts → durable python_phase -----------
+  # --- handle_signal/2 — phase signals → durable python_phase -------------
+  # Post-H1 (delete-holes #200) the phase arrives point-to-point via
+  # `EzagentActor.Signal.signal/2` (the producer dual-emits; the Kind no
+  # longer subscribes to the `pty:phase:` topic). Body unchanged.
   @impl Ezagent.Lifecycle
   def handle_signal({:pty_phase, %URI{}, _phase, _meta} = signal, ctx) do
     self_uri = Map.get(ctx, :self_uri)

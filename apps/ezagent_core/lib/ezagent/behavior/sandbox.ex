@@ -70,19 +70,13 @@ defmodule Ezagent.ActionSet.Sandbox do
 
   ### `transients` (NEVER persisted — rebuilt every `activate/2`)
 
-      %{
-        phase_subscription: %{topic: String.t(), subscriber: pid()}
-      }
-
-  The PTY phase-topic PubSub subscription is process-bound: it binds the
-  host `Kind.Server` process to `pty:phase:<agent_uri>` so the live
-  `{:pty_phase, ...}` broadcasts land in `handle_signal/2`. The
-  subscription DIES with the process and has no serialization path — it
-  is the textbook transient. `activate/2` re-subscribes on EVERY start
-  (fresh spawn, supervisor restart, cold-load), recording the topic + the
-  CURRENT subscriber pid so the cold-restart invariant test can prove the
-  binding was rebuilt against the NEW process (the prior incarnation's pid
-  would be a stale, dead reference).
+  Sandbox currently has NO transients. (Pre-H1 it held the
+  `phase_subscription` PubSub binding; V5 use-side H1 — delete-holes #200 —
+  DELETED that Kind subscription: the phase now reaches this behavior
+  point-to-point via `EzagentActor.Signal.signal/2` → the sealed `%Signal{}`
+  enabler → `handle_signal({:pty_phase, …})`. A Kind subscribing to a shared
+  broadcast topic and mutating on receipt was the hole; the read-only
+  LiveView subscription is unaffected and stays.)
 
   ## The `destroyed?` gate DISAPPEARS (SPEC §2.3B)
 
@@ -264,34 +258,27 @@ defmodule Ezagent.ActionSet.Sandbox do
   # (`send(self(), ...)`), so per §10-R1 both belong here in `activate`
   # (NOT `activated/2` / `handle_signal/2`):
   #
-  #   1. transient: subscribe to the PTY phase topic. The subscription
-  #      binds THIS Kind.Server process; it is rebuilt every start and
-  #      recorded in `transients` (the subscriber pid is the
-  #      cold-restart-detectable token).
-  #   2. self-heal: (re)spawn the plugin subprocess if `state` says there
+  #   1. self-heal: (re)spawn the plugin subprocess if `state` says there
   #      should be one. Best-effort — a brutal kill may have skipped
   #      `destroy`/`deactivate`, so the orphan-reap/ensure-alive runs HERE
   #      every start (§OTP / §10-F4), not solely in `destroy`.
+  #
+  # (Pre-H1 there was a second step — rebuilding the `pty:phase:` PubSub
+  # subscription transient. V5 use-side H1 (delete-holes #200) DELETED it:
+  # the phase now arrives point-to-point as a sealed `%Signal{}`, so there
+  # is nothing to re-bind on start. Sandbox has no transients.)
   @impl Ezagent.Lifecycle
   def activate(state, ctx) do
     self_uri = Map.get(ctx, :self_uri)
 
-    # 1. Rebuild the phase-topic subscription transient. The subscription
-    #    is process-bound (Phoenix.PubSub registers `self()` as the
-    #    recipient); incoming `{:pty_phase, ...}` tuples land in
-    #    `handle_signal/2`. Best-effort: a subscribe failure (PubSub down)
-    #    is logged + swallowed — operator-visibility plumbing must not
-    #    crash the boot.
-    phase_subscription = subscribe_to_phase_topic(self_uri)
-
-    # 2. Self-heal the plugin subprocess from durable `state`. Skipped
+    # Self-heal the plugin subprocess from durable `state`. Skipped
     #    when the agent has no Template Class or no respawn data (a
     #    brand-new / non-subprocess agent).
     if should_ensure_subprocess?(state.template_class, state.respawn_template_data) do
       _ = do_ensure_subprocess_alive(state.template_class, self_uri, state.respawn_template_data)
     end
 
-    {:ok, %{phase_subscription: phase_subscription}}
+    {:ok, %{}}
   end
 
   # ---- :read ----------------------------------------------------------------
@@ -501,12 +488,15 @@ defmodule Ezagent.ActionSet.Sandbox do
   # ---- handle_signal/2 — non-action GenServer messages (SPEC §9 OQ-3) ------
 
   # `handle_kind_message/3` → `handle_signal/2`: consume the phase
-  # broadcasts PtyServer (or Python Server) emit on every
-  # `:starting | :running | :dead` transition. The phase is DURABLE
+  # transitions PtyServer (or Python Server) emit on every
+  # `:starting | :running | :dead` transition. Post-H1 (delete-holes #200)
+  # the phase arrives ONLY point-to-point: the producer dual-emits
+  # `EzagentActor.Signal.signal(agent_uri, {:pty_phase, …})` → the B2-core
+  # `%Signal{}` enabler → this clause (the PubSub broadcast on `pty:phase:`
+  # remains, feeding read-only UI subscribers only — this Kind no longer
+  # subscribes). The phase is DURABLE
   # `state` (the snapshot-persisted LV-badge mirror), so it is written via
-  # `{:set, :pty_phase, phase}` — NOT a transient. The subscription
-  # delivering the message is the transient; the phase value it carries is
-  # persistent state.
+  # `{:set, :pty_phase, phase}` — NOT a transient.
   @impl Ezagent.Lifecycle
   def handle_signal({:pty_phase, %URI{} = agent_uri, phase, meta}, ctx)
       when phase in [:starting, :running, :dead] do
@@ -570,32 +560,7 @@ defmodule Ezagent.ActionSet.Sandbox do
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
-  # --- internals: subscription transient -------------------------------------
-
-  # Subscribe THIS process to the agent's PTY phase topic and return the
-  # transient record. The `subscriber` pid (= the host Kind.Server) is the
-  # cold-restart-detectable token: after a brutal kill + cold-load it is a
-  # DIFFERENT, live pid — proving the subscription was rebuilt against the
-  # new process, not rehydrated as a stale binding (SPEC §6 step 5c).
-  defp subscribe_to_phase_topic(%URI{} = self_uri) do
-    topic = "pty:phase:" <> URI.to_string(self_uri)
-
-    try do
-      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
-      %{topic: topic, subscriber: self()}
-    catch
-      kind, reason ->
-        Logger.warning(
-          "Ezagent.ActionSet.Sandbox.activate: PubSub.subscribe failed " <>
-            "(#{inspect(kind)}, #{inspect(reason)}) for #{URI.to_string(self_uri)}; " <>
-            "phase tracking disabled for this incarnation"
-        )
-
-        %{topic: topic, subscriber: self()}
-    end
-  end
-
-  defp subscribe_to_phase_topic(_), do: %{topic: nil, subscriber: self()}
+  # --- internals: subprocess self-heal ---------------------------------------
 
   defp should_ensure_subprocess?(template_class, respawn_data) do
     is_atom(template_class) and not is_nil(template_class) and not is_nil(respawn_data) and

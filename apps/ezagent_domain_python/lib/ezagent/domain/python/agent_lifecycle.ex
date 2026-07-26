@@ -12,13 +12,14 @@ defmodule Ezagent.Domain.Python.AgentLifecycle do
     ON TOP of the real `Ezagent.Domain.Python.start_subprocess/1`
     (`python.ex`), NOT a new spawn API. If the subprocess is already alive
     for `spec.handle` it returns `:ok` without re-spawning.
-  - `subscribe_phase/1` — subscribe THIS process to an agent's PTY/Python
-    phase topic and return the transient record (`%{topic, subscriber}`).
-    The `subscriber` pid is the cold-restart-detectable token: after a
-    brutal kill + cold-load it is a DIFFERENT live pid.
-  - `phase_topic/1` — the canonical phase-topic string for an agent URI.
   - `phase_from_signal/1` — map a `{:pty_phase, uri, phase, meta}` signal to
     its `:starting | :running | :dead` phase atom (or `:ignore`).
+
+  (Pre-H1 this module also owned `subscribe_phase/1` + `phase_topic/1` —
+  the Kind-side `pty:phase:` PubSub subscription. V5 use-side H1
+  (delete-holes #200) DELETED them: the phase now reaches the behavior
+  point-to-point via `EzagentActor.Signal.signal/2`, so no Kind subscribes
+  to the shared topic anymore.)
 
   ## What this module deliberately does NOT own
 
@@ -38,9 +39,6 @@ defmodule Ezagent.Domain.Python.AgentLifecycle do
 
   alias Ezagent.Domain.Python
   alias Ezagent.Domain.Python.Spec
-
-  @typedoc "Phase-subscription transient record (NEVER persisted)."
-  @type phase_subscription :: %{topic: String.t() | nil, subscriber: pid()}
 
   @typedoc "Python subprocess phase."
   @type phase :: :starting | :running | :dead
@@ -76,42 +74,6 @@ defmodule Ezagent.Domain.Python.AgentLifecycle do
       end
     end
   end
-
-  @doc """
-  The canonical phase-topic string for an agent URI. Byte-identical to np's
-  `"pty:phase:" <> URI.to_string(uri)` convention (the topic the
-  `Domain.Python.Server` broadcasts phase transitions on).
-  """
-  @spec phase_topic(URI.t()) :: String.t()
-  def phase_topic(%URI{} = self_uri), do: "pty:phase:" <> URI.to_string(self_uri)
-
-  @doc """
-  Subscribe THIS process to the agent's phase topic and return the transient
-  record. Best-effort: a `PubSub.subscribe` failure (PubSub down) is logged
-  and swallowed so operator-visibility plumbing never crashes the boot. The
-  record is recorded in `transients` by the calling Behavior's `activate/2`;
-  the `subscriber` pid is the cold-restart-detectable token.
-  """
-  @spec subscribe_phase(URI.t() | term()) :: phase_subscription()
-  def subscribe_phase(%URI{} = self_uri) do
-    topic = phase_topic(self_uri)
-
-    try do
-      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
-      %{topic: topic, subscriber: self()}
-    catch
-      kind, reason ->
-        Logger.warning(
-          "Ezagent.Domain.Python.AgentLifecycle.subscribe_phase: " <>
-            "PubSub.subscribe failed (#{inspect(kind)}, #{inspect(reason)}) " <>
-            "for #{URI.to_string(self_uri)}; phase tracking disabled for this incarnation"
-        )
-
-        %{topic: topic, subscriber: self()}
-    end
-  end
-
-  def subscribe_phase(_), do: %{topic: nil, subscriber: self()}
 
   @doc """
   Map a Domain.Python phase signal to its phase atom.

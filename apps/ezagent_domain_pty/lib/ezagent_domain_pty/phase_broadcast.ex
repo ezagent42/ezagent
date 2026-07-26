@@ -19,6 +19,18 @@ defmodule Ezagent.Domain.Pty.PhaseBroadcast do
   MUST NOT block the primary PTY path (spawn / write / shutdown). A broadcast failure logs
   and degrades — subscribers losing one transition is acceptable, the periodic LV poll
   picks the next one up.
+
+  ## V5 use-side H1 (delete-holes, #200) — dual-emit
+
+  `emit/4` delivers the phase TWICE:
+
+    1. `Phoenix.PubSub.broadcast/3` on `pty:phase:<agent_uri>` — the READ-ONLY
+       UI read stream (`world_live`'s badge). A read-only LiveView
+       subscription is NOT a hole; it STAYS.
+    2. `EzagentActor.Signal.signal/2` point-to-point to the agent's own Kind
+       — the ONLY path by which a phase now reaches + mutates a Kind (the
+       Sandbox / PyAgent behavior's `handle_signal({:pty_phase, …})`). No
+       Kind subscribes to the shared topic anymore.
   """
 
   require Logger
@@ -50,6 +62,14 @@ defmodule Ezagent.Domain.Pty.PhaseBroadcast do
       topic(agent_uri),
       {:pty_phase, agent_uri, phase, meta}
     )
+
+    # V5 use-side H1 (delete-holes #200): dual-emit — the SAME phase also
+    # goes point-to-point to the agent's Kind via the sanctioned signal
+    # transport. The Kind no longer subscribes to the topic above (that
+    # broadcast now feeds read-only UI subscribers only). Best-effort:
+    # `:not_found` (a cold agent) is fine — the phase is mirrored into
+    # durable state only while the Kind is live, same as the PubSub era.
+    _ = EzagentActor.Signal.signal(agent_uri, {:pty_phase, agent_uri, phase, meta})
 
     :ok
   catch

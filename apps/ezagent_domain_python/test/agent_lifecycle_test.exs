@@ -2,12 +2,14 @@ defmodule Ezagent.Domain.Python.AgentLifecycleTest do
   @moduledoc """
   Task 1.1 (py-agent plan) — the shared `Domain.Python.AgentLifecycle`
   helper: `ensure_alive(%Spec{})` (idempotent self-heal built on
-  `start_subprocess/1`), `subscribe_phase/1` (transient token),
-  `phase_from_signal/1` (phase mapping).
+  `start_subprocess/1`) and `phase_from_signal/1` (phase mapping).
 
   The live-subprocess assertions are `:uv`-tagged (skipped when uv is
-  absent); the pure helpers (`subscribe_phase`, `phase_from_signal`,
-  `phase_topic`) run unconditionally.
+  absent); the pure helper (`phase_from_signal`) runs unconditionally.
+
+  (`subscribe_phase/1` + `phase_topic/1` were DELETED in V5 use-side H1 —
+  delete-holes #200: no Kind subscribes to `pty:phase:` anymore; the phase
+  reaches the behavior point-to-point via `EzagentActor.Signal.signal/2`.)
   """
 
   use ExUnit.Case, async: false
@@ -52,29 +54,6 @@ defmodule Ezagent.Domain.Python.AgentLifecycleTest do
     end)
 
     :ok
-  end
-
-  describe "phase_topic/1" do
-    test "is byte-identical to the pty:phase: convention" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_calc")
-      assert AgentLifecycle.phase_topic(uri) == "pty:phase:" <> URI.to_string(uri)
-    end
-  end
-
-  describe "subscribe_phase/1" do
-    test "returns a transient record carrying THIS process as subscriber" do
-      uri = Ezagent.URI.new!("entity://team-alpha/agent/py_sub")
-      record = AgentLifecycle.subscribe_phase(uri)
-
-      assert record.topic == AgentLifecycle.phase_topic(uri)
-      assert record.subscriber == self()
-    end
-
-    test "non-URI input degrades to a nil-topic record (never crashes)" do
-      record = AgentLifecycle.subscribe_phase(:not_a_uri)
-      assert record.topic == nil
-      assert record.subscriber == self()
-    end
   end
 
   describe "phase_from_signal/1" do

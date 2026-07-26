@@ -336,15 +336,18 @@ defmodule Ezagent.ActionSet.SandboxTest do
     test "post_init/2 schedules the unified :ezagent_activate continuation (macro-emitted)" do
       # The pre-Lifecycle module returned `{:continue, {:setup_phase_tracking,
       # ...}}`; the Lifecycle macro now emits `{:continue, :ezagent_activate}`,
-      # which runs the author's `activate/2`. The subscribe + ensure-subprocess
-      # logic moved INTO activate/2 (both pre-`:ready`, no `send(self(), ...)`
-      # self-deferral — §10-R1).
+      # which runs the author's `activate/2`. The ensure-subprocess
+      # logic moved INTO activate/2 (pre-`:ready`, no `send(self(), ...)`
+      # self-deferral — §10-R1). The phase-topic subscribe is GONE (H1 —
+      # the phase arrives point-to-point via Signal now).
       assert {:continue, :ezagent_activate} = Sandbox.post_init(%{}, %{})
     end
 
-    test "activate/2 rebuilds the phase-subscription transient (subscribe-only path)" do
-      # nil template_class → "subscribe-only": phase-topic subscription
-      # transient is rebuilt, but no subprocess re-spawn is attempted.
+    test "activate/2 returns empty transients (H1: the phase subscription is gone)" do
+      # nil template_class → no subprocess re-spawn attempted. Post-H1
+      # (delete-holes #200) the Kind no longer subscribes to `pty:phase:` —
+      # the phase arrives point-to-point via `EzagentActor.Signal.signal/2`,
+      # so Sandbox has NO transients to rebuild.
       state = %{
         config_dir_path: nil,
         template_class: nil,
@@ -354,17 +357,13 @@ defmodule Ezagent.ActionSet.SandboxTest do
 
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 
-      assert {:ok, %{phase_subscription: %{topic: topic, subscriber: sub}}} =
-               Sandbox.activate(state, ctx)
-
-      assert topic == "pty:phase:" <> URI.to_string(ctx.self_uri)
-      assert sub == self()
+      assert {:ok, %{}} = Sandbox.activate(state, ctx)
     end
 
     test "activate/2 skips subprocess re-spawn when template_class lacks ensure_subprocess_alive/2" do
       # `Enum` is a stdlib module that does not export the callback — the
       # `should_ensure_subprocess?/2` probe path is exercised; activate
-      # still rebuilds the subscription transient and returns cleanly.
+      # still returns cleanly (empty transients post-H1).
       state = %{
         config_dir_path: nil,
         template_class: Enum,
@@ -374,7 +373,7 @@ defmodule Ezagent.ActionSet.SandboxTest do
 
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 
-      assert {:ok, %{phase_subscription: %{}}} = Sandbox.activate(state, ctx)
+      assert {:ok, %{}} = Sandbox.activate(state, ctx)
     end
 
     test "activate/2 skips subprocess re-spawn when template_class is not an atom" do
@@ -388,7 +387,7 @@ defmodule Ezagent.ActionSet.SandboxTest do
 
       ctx = %{self_uri: uniq_uri(), kind_module: SomeKind}
 
-      assert {:ok, %{phase_subscription: %{}}} = Sandbox.activate(state, ctx)
+      assert {:ok, %{}} = Sandbox.activate(state, ctx)
     end
   end
 

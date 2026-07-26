@@ -427,9 +427,11 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
       assert {:continue, :ezagent_activate} = Sandbox.post_init(%{}, %{})
     end
 
-    test "activate/2 rebuilds the phase-subscription transient (subscribe-only path)" do
-      # nil template_class → no subprocess re-spawn; activate still
-      # rebuilds the phase-topic subscription transient on every start.
+    test "activate/2 returns empty transients (H1: the phase subscription is gone)" do
+      # nil template_class → no subprocess re-spawn. Post-H1 (delete-holes
+      # #200) the Kind no longer subscribes to `pty:phase:` — the phase
+      # arrives point-to-point via `EzagentActor.Signal.signal/2` — so
+      # Sandbox has NO transients to rebuild.
       state = %{
         config_dir_path: nil,
         template_class: nil,
@@ -444,9 +446,7 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
       }
 
       assert {:ok, transients} = Sandbox.activate(state, ctx)
-      assert %{phase_subscription: %{topic: topic, subscriber: sub}} = transients
-      assert is_binary(topic)
-      assert sub == self()
+      assert transients == %{}
     end
   end
 end

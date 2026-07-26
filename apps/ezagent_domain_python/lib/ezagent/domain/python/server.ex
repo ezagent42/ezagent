@@ -180,7 +180,9 @@ defmodule Ezagent.Domain.Python.Server do
     end
   end
 
-  defp resolve_test_mode(%Python.Spec{test_mode: nil}), do: (Code.ensure_loaded?(Mix) and Mix.env() == :test)
+  defp resolve_test_mode(%Python.Spec{test_mode: nil}),
+    do: Code.ensure_loaded?(Mix) and Mix.env() == :test
+
   defp resolve_test_mode(%Python.Spec{test_mode: tm}) when is_boolean(tm), do: tm
 
   defp do_spawn_and_ping(state) do
@@ -871,6 +873,14 @@ defmodule Ezagent.Domain.Python.Server do
         phase_topic(agent_uri),
         {:pty_phase, agent_uri, phase, meta}
       )
+
+      # V5 use-side H1 (delete-holes #200): dual-emit — the SAME phase also
+      # goes point-to-point to the agent's Kind via the sanctioned signal
+      # transport (the PyAgent behavior's `handle_signal({:pty_phase, …})`).
+      # The Kind no longer subscribes to the topic above; that broadcast now
+      # feeds read-only UI subscribers only. Best-effort — `:not_found`
+      # (a cold agent) is acceptable.
+      _ = EzagentActor.Signal.signal(agent_uri, {:pty_phase, agent_uri, phase, meta})
     catch
       kind, reason ->
         Logger.warning(
