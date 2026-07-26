@@ -210,12 +210,18 @@ defmodule Ezagent.Cap do
 
     case Ezagent.ReadyGate.status(instance) do
       :not_ready ->
-        with {:ok, pid} <- Ezagent.KindRegistry.lookup(instance) do
-          GenServer.call(
-            pid,
-            {:ezagent_dispatch, invocation},
-            Ezagent.Invocation.activate_budget_ms()
-          )
+        # V5 A1c — the dispatch envelope is delivered BY URI through the
+        # resolver seam (was `KindRegistry.lookup/1` + a raw
+        # `GenServer.call/3`); the pid never enters domain code. The
+        # not-registered shape stays `:error` for `issue/3`'s `with` chain.
+        case Ezagent.Runtime.Resolver.call(
+               instance,
+               {:ezagent_dispatch, invocation},
+               Ezagent.Invocation.activate_budget_ms()
+             ) do
+          {:ok, reply} -> reply
+          {:error, :no_such_actor} -> :error
+          {:error, _reason} = error -> error
         end
 
       _ ->

@@ -36,10 +36,10 @@ defmodule Ezagent.Identity.Offboarding.Reaper do
     end
   end
 
+  # V5 A1c — liveness by URI through the resolver seam (was
+  # `KindRegistry.lookup/1` + a defensive `Process.alive?/1`; the Registry's
+  # async dead-pid cleanup window made that double-check advisory at best).
   defp live_process?(uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid} when is_pid(pid) -> Process.alive?(pid)
-      :error -> false
-    end
+    Ezagent.Runtime.Resolver.alive?(uri)
   end
 end

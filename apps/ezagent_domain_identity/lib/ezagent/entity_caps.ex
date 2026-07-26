@@ -224,21 +224,21 @@ defmodule Ezagent.EntityCaps do
         {:error, :not_found}
       end
     else
-      case Ezagent.KindRegistry.lookup(uri) do
-        {:ok, _pid} ->
-          :ok
-
-        :error ->
-          with {:ok, _snapshot} <- SnapshotStore.latest(uri) do
-            case SpawnRegistry.ensure_live(uri) do
-              {:ok, _status} -> :ok
-              {:error, {:already_registered, _winner}} -> :ok
-              {:error, _reason} = error -> error
-            end
-          else
-            {:error, :not_found} -> {:error, :not_found}
+      # V5 A1c — liveness only, by URI through the resolver seam; the Kind
+      # pid never enters domain code.
+      if Ezagent.Runtime.Resolver.alive?(uri) do
+        :ok
+      else
+        with {:ok, _snapshot} <- SnapshotStore.latest(uri) do
+          case SpawnRegistry.ensure_live(uri) do
+            {:ok, _status} -> :ok
+            {:error, {:already_registered, _winner}} -> :ok
             {:error, _reason} = error -> error
           end
+        else
+          {:error, :not_found} -> {:error, :not_found}
+          {:error, _reason} = error -> error
+        end
       end
     end
   end

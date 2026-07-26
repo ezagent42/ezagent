@@ -24,7 +24,7 @@ defmodule Ezagent.Workspace do
   """
 
   alias Ezagent.Entity.Workspace, as: WK
-  alias Ezagent.{Cmd, KindRegistry, Router, Workspace.Loader, Workspace.Store}
+  alias Ezagent.{Cmd, Router, Workspace.Loader, Workspace.Store}
 
   require Logger
 
@@ -39,21 +39,21 @@ defmodule Ezagent.Workspace do
   def spawn_workspace(name, args \\ %{}) when is_binary(name) do
     uri = WK.uri_for(name)
 
-    case KindRegistry.lookup(uri) do
-      {:ok, _pid} ->
-        {:error, {:already_started, uri}}
-
-      :error ->
-        # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
-        # Workspace Kind declares `Ezagent.Workspace.Supervisor` via its
-        # supervisor/0 callback so the destination is preserved.
-        # derivation-edge: recorded-by record_derivation_edge/2 below
-        # V5 A1c — the public contract carries the workspace URI; the Kind
-        # pid stays behind the actor-app seam (Kind.spawn / KindRegistry).
-        case Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri)) do
-          {:ok, _pid} -> {:ok, uri}
-          {:error, _} = err -> err
-        end
+    # V5 A1c — liveness only, by URI through the resolver seam (was
+    # `KindRegistry.lookup/1`); the pid never enters domain code.
+    if Ezagent.Runtime.Resolver.alive?(uri) do
+      {:error, {:already_started, uri}}
+    else
+      # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.
+      # Workspace Kind declares `Ezagent.Workspace.Supervisor` via its
+      # supervisor/0 callback so the destination is preserved.
+      # derivation-edge: recorded-by record_derivation_edge/2 below
+      # V5 A1c — the public contract carries the workspace URI; the Kind
+      # pid stays behind the actor-app seam (Kind.spawn / KindRegistry).
+      case Ezagent.Kind.spawn(WK, Map.put(args, :uri, uri)) do
+        {:ok, _pid} -> {:ok, uri}
+        {:error, _} = err -> err
+      end
     end
   end
 

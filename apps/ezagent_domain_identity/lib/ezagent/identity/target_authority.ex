@@ -13,7 +13,7 @@ defmodule Ezagent.Identity.TargetAuthority do
   against malicious code already executing in the BEAM.
   """
 
-  alias Ezagent.{Cap, Capability, KindRegistry}
+  alias Ezagent.{Cap, Capability}
 
   @store_timeout_ms 2_000
 
@@ -52,9 +52,15 @@ defmodule Ezagent.Identity.TargetAuthority do
     if Cap.Authority.current_target?(target) do
       Cap.Authority.current_kind_type()
     else
-      with {:ok, pid} <- KindRegistry.lookup(target),
-           {:ok, kind_module} <- GenServer.call(pid, :ezagent_kind_module) do
-        {:ok, kind_module.type_name()}
+      # V5 A1c — the `:ezagent_kind_module` framework verb is delivered BY URI
+      # through the resolver seam (was `KindRegistry.lookup/1` + a raw
+      # `GenServer.call/2`); the pid never enters domain code. The not-
+      # registered shape stays `:error` for `ensure/2`'s `with` chain.
+      case Ezagent.Runtime.Resolver.call(target, :ezagent_kind_module) do
+        {:ok, {:ok, kind_module}} -> {:ok, kind_module.type_name()}
+        {:ok, other} -> other
+        {:error, :no_such_actor} -> :error
+        {:error, _reason} = error -> error
       end
     end
   end

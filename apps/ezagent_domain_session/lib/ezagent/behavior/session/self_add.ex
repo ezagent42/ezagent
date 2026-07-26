@@ -65,15 +65,15 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
             {:ok, %{status: :already_member}, []}
 
           _missing_or_offline ->
-            case Ezagent.KindRegistry.lookup(holder) do
-              {:ok, _member_pid} ->
-                {_members, effects} =
-                  Effects.on_add(holder, effective_facets, ctx, source_module)
+            # V5 A1c — liveness only, by URI through the resolver seam; the
+            # member Kind's pid never enters domain code.
+            if Ezagent.Runtime.Resolver.alive?(holder) do
+              {_members, effects} =
+                Effects.on_add(holder, effective_facets, ctx, source_module)
 
-                {:ok, %{status: :added}, effects}
-
-              :error ->
-                {:error, {:member_not_registered, holder}}
+              {:ok, %{status: :added}, effects}
+            else
+              {:error, {:member_not_registered, holder}}
             end
         end
     end

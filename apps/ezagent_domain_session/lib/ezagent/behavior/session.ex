@@ -119,7 +119,7 @@ defmodule Ezagent.ActionSet.Session do
 
   require Logger
 
-  alias Ezagent.{KindRegistry, Message, MessageStore}
+  alias Ezagent.{Message, MessageStore}
 
   alias Ezagent.ActionSet.Session.{
     ConfigActions,
@@ -520,8 +520,8 @@ defmodule Ezagent.ActionSet.Session do
   # `ref → URI` map. The refs from a prior incarnation are dead; this is
   # the self-heal that the old snapshot-of-`:monitors` lacked.
   #
-  # `:error` from `KindRegistry.lookup/1` means the member's Kind is not
-  # currently alive — we simply do not install a monitor for it (its URI
+  # `:not_found` from `Runtime.Resolver.pid_for/1` means the member's Kind is
+  # not currently alive — we simply do not install a monitor for it (its URI
   # stays in the persisted `members` so a later `:join` / `:DOWN` still
   # recognizes it; if it is genuinely offline, no monitor is needed until
   # it rejoins). Members that ARE live get a fresh, REAL monitor — so the
@@ -561,9 +561,12 @@ defmodule Ezagent.ActionSet.Session do
       reconciled_members
       |> Map.keys()
       |> Enum.flat_map(fn %URI{} = uri ->
-        case KindRegistry.lookup(uri) do
+        # V5 A1c — the member Kind's pid is resolved at the monitor site
+        # through the sanctioned actor-app seam (`Runtime.Resolver.pid_for/1`,
+        # the chunk3 precedent); it never crosses this module's boundary.
+        case Ezagent.Runtime.Resolver.pid_for(uri) do
           {:ok, pid} when is_pid(pid) -> [{Process.monitor(pid), uri}]
-          _ -> []
+          :not_found -> []
         end
       end)
       |> Map.new()

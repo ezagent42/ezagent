@@ -225,43 +225,44 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   #     committing lineage+bind inside the spawn, there is no "spawn
   #     inflight" limbo to wait out — a live-but-unmatched URI is a real
   #     foreign claim, surfaced fail-loud so the caller rolls back.
-  #   :not_live — KindRegistry lookup missed (we are clear to spawn)
+  #   :not_live — the resolver seam reports the URI not registered (we are
+  #     clear to spawn)
   defp check_orchestrator(%URI{} = uri, %URI{} = owner_uri, %URI{} = workspace_uri) do
-    case Ezagent.KindRegistry.lookup(uri) do
-      :error ->
-        :not_live
+    # V5 A1c — liveness only, by URI through the resolver seam (was
+    # `KindRegistry.lookup/1`); the pid never enters domain code.
+    if Ezagent.Runtime.Resolver.alive?(uri) do
+      lineage_state =
+        case Ezagent.AgentLineage.lookup(uri) do
+          {:ok, %URI{} = principal} ->
+            if URI.to_string(principal) == URI.to_string(owner_uri),
+              do: :match,
+              else: {:mismatch, URI.to_string(principal)}
 
-      {:ok, _pid} ->
-        lineage_state =
-          case Ezagent.AgentLineage.lookup(uri) do
-            {:ok, %URI{} = principal} ->
-              if URI.to_string(principal) == URI.to_string(owner_uri),
-                do: :match,
-                else: {:mismatch, URI.to_string(principal)}
-
-            :error ->
-              :absent
-          end
-
-        workspace_state =
-          case Ezagent.WorkspaceRegistry.lookup(uri) do
-            {:ok, %URI{} = bound} ->
-              if URI.to_string(bound) == URI.to_string(workspace_uri),
-                do: :match,
-                else: {:mismatch, URI.to_string(bound)}
-
-            :error ->
-              :absent
-          end
-
-        if lineage_state == :match and workspace_state == :match do
-          {:owned, uri}
-        else
-          # Live URI that does not positively match us — a foreign claim
-          # (mismatch) OR an incomplete binding under an already-registered
-          # URI. No retry/limbo (adoption + Generator removed); fail-loud.
-          {:foreign, %{lineage: lineage_state, workspace: workspace_state}}
+          :error ->
+            :absent
         end
+
+      workspace_state =
+        case Ezagent.WorkspaceRegistry.lookup(uri) do
+          {:ok, %URI{} = bound} ->
+            if URI.to_string(bound) == URI.to_string(workspace_uri),
+              do: :match,
+              else: {:mismatch, URI.to_string(bound)}
+
+          :error ->
+            :absent
+        end
+
+      if lineage_state == :match and workspace_state == :match do
+        {:owned, uri}
+      else
+        # Live URI that does not positively match us — a foreign claim
+        # (mismatch) OR an incomplete binding under an already-registered
+        # URI. No retry/limbo (adoption + Generator removed); fail-loud.
+        {:foreign, %{lineage: lineage_state, workspace: workspace_state}}
+      end
+    else
+      :not_live
     end
   end
 
@@ -320,24 +321,24 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   """
   @spec worker_already_owned_by_us?(URI.t(), URI.t(), URI.t()) :: boolean()
   def worker_already_owned_by_us?(%URI{} = worker_uri, %URI{} = orch_uri, %URI{} = ws_uri) do
-    case Ezagent.KindRegistry.lookup(worker_uri) do
-      {:ok, _pid} ->
-        lineage_ok? =
-          case Ezagent.AgentLineage.lookup(worker_uri) do
-            {:ok, %URI{} = sb} -> URI.to_string(sb) == URI.to_string(orch_uri)
-            :error -> false
-          end
+    # V5 A1c — liveness only, by URI through the resolver seam (was
+    # `KindRegistry.lookup/1`); the pid never enters domain code.
+    if Ezagent.Runtime.Resolver.alive?(worker_uri) do
+      lineage_ok? =
+        case Ezagent.AgentLineage.lookup(worker_uri) do
+          {:ok, %URI{} = sb} -> URI.to_string(sb) == URI.to_string(orch_uri)
+          :error -> false
+        end
 
-        ws_ok? =
-          case Ezagent.WorkspaceRegistry.lookup(worker_uri) do
-            {:ok, %URI{} = bw} -> URI.to_string(bw) == URI.to_string(ws_uri)
-            :error -> false
-          end
+      ws_ok? =
+        case Ezagent.WorkspaceRegistry.lookup(worker_uri) do
+          {:ok, %URI{} = bw} -> URI.to_string(bw) == URI.to_string(ws_uri)
+          :error -> false
+        end
 
-        lineage_ok? and ws_ok?
-
-      :error ->
-        false
+      lineage_ok? and ws_ok?
+    else
+      false
     end
   end
 

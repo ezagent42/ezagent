@@ -371,7 +371,7 @@ defmodule Ezagent.Entity.Session do
 
   @doc """
   Ensure the template Kind at `template_uri` is alive, spawning it (via
-  `SpawnRegistry`) if the `KindRegistry` lookup misses. Returns
+  `SpawnRegistry`) when the resolver seam reports it not registered. Returns
   `:ok` | `{:error, reason}` (V5 A1c — the Kind pid stays behind the
   actor-app seam; callers address the template by its URI).
 
@@ -380,16 +380,16 @@ defmodule Ezagent.Entity.Session do
   """
   @spec ensure_template_alive(URI.t()) :: :ok | {:error, term()}
   def ensure_template_alive(%URI{} = template_uri) do
-    case Ezagent.KindRegistry.lookup(template_uri) do
-      {:ok, _pid} ->
-        :ok
-
-      :error ->
-        case Ezagent.SpawnRegistry.spawn(template_uri) do
-          {:ok, _pid} -> :ok
-          {:error, {:already_started, _pid}} -> :ok
-          {:error, _} = err -> err
-        end
+    # V5 A1c — liveness only, by URI through the resolver seam; the Kind
+    # pid never enters domain code.
+    if Ezagent.Runtime.Resolver.alive?(template_uri) do
+      :ok
+    else
+      case Ezagent.SpawnRegistry.spawn(template_uri) do
+        {:ok, _pid} -> :ok
+        {:error, {:already_started, _pid}} -> :ok
+        {:error, _} = err -> err
+      end
     end
   end
 

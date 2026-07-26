@@ -373,7 +373,15 @@ defmodule Ezagent.Agent.TransportReadiness do
         # A bridge event without its Kind is a late/stale incarnation, not a
         # success. Failing it drains authority-bearing artifacts so a later
         # entity at the same URI cannot absorb them.
-        case {expected_incarnation, Ezagent.KindRegistry.lookup(agent_uri)} do
+        # V5 A1c — the incarnation token is resolved through the sanctioned
+        # seam (`Runtime.Resolver.pid_for/1`, the chunk3 monitor-site
+        # precedent): no URI-native face can express pid-identity
+        # ("is this the SAME Kind process that armed the gate"), and the
+        # token only ever flows back INTO the actor seam
+        # (`ReadyTransition.drain_pending_then_mark_ready_locked/2`, which
+        # partitions buffered casts BY incarnation pid). It never crosses
+        # this module's public boundary.
+        case {expected_incarnation, Ezagent.Runtime.Resolver.pid_for(agent_uri)} do
           {expected_pid, {:ok, registered_pid}}
           when is_pid(expected_pid) and registered_pid == expected_pid ->
             settle_registered_incarnation_locked(agent_uri, expected_pid)
@@ -381,7 +389,7 @@ defmodule Ezagent.Agent.TransportReadiness do
           {:legacy, {:ok, pid}} when is_pid(pid) ->
             settle_registered_incarnation_locked(agent_uri, pid)
 
-          {:unregistered, :error} ->
+          {:unregistered, :not_found} ->
             failed_entries =
               Ezagent.Kind.ReadyTransition.mark_failed_locked(URI.to_string(agent_uri))
 
@@ -434,10 +442,14 @@ defmodule Ezagent.Agent.TransportReadiness do
     end
   end
 
+  # The current incarnation token of `agent_uri`'s Kind — the pid, used
+  # ONLY as an opaque identity token (compared for equality, handed back to
+  # the actor seam; see `settle_join_event_locked/2`). Resolved through
+  # `Runtime.Resolver.pid_for/1` (V5 A1c, sanctioned seam face).
   defp current_incarnation(%URI{} = agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
+    case Ezagent.Runtime.Resolver.pid_for(agent_uri) do
       {:ok, pid} when is_pid(pid) -> pid
-      _ -> :unregistered
+      :not_found -> :unregistered
     end
   end
 

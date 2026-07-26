@@ -8,9 +8,11 @@ defmodule Ezagent.Session.Config.Readiness do
   def check(%Operation{target_scope: :workspace}, %URI{scheme: "workspace"}), do: :ok
 
   def check(%Operation{target_scope: :session}, %URI{scheme: "session"} = session_uri) do
-    case {Ezagent.ReadyGate.status(session_uri), Ezagent.KindRegistry.lookup(session_uri)} do
-      {:ready, {:ok, _pid}} -> :ok
-      {status, _lookup} -> {:error, {:gate_failed, :readiness, status}}
+    # V5 A1c — liveness leg by URI through the resolver seam (was
+    # `KindRegistry.lookup/1`); the pid never enters domain code.
+    case {Ezagent.ReadyGate.status(session_uri), Ezagent.Runtime.Resolver.alive?(session_uri)} do
+      {:ready, true} -> :ok
+      {status, _live?} -> {:error, {:gate_failed, :readiness, status}}
     end
   end
 end

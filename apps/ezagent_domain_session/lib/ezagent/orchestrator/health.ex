@@ -13,16 +13,15 @@ defmodule Ezagent.Orchestrator.Health do
   of:
 
   * `Ezagent.Entity.Session.orchestrator_uri/1` — stored session attribute
-    * `Ezagent.KindRegistry.lookup/1` — live process lookup
-    * `Process.alive?/1` — defensive liveness double-check (Registry
-      auto-removes dead pids asynchronously, so a stale match is briefly
-      possible)
+    * `Ezagent.Runtime.Resolver.alive?/1` — live-process liveness BY URI
+      (V5 A1c; was `KindRegistry.lookup/1` + a defensive `Process.alive?/1`
+      double-check — the pid never enters domain code now)
     * `Ezagent.Ecto.KindSnapshot.get/1` — persisted snapshot row
 
   The three classification outcomes:
 
-    * `:alive` — the orchestrator is live (Registry lookup succeeds AND
-      `Process.alive?/1` returns true on the returned pid).
+    * `:alive` — the orchestrator is live (the resolver seam registers the
+      URI).
     * `:crashed` — no live process, BUT a `kind_snapshots` row exists for
       the orchestrator URI. The instance was spawned at some point and
       its slice persisted; it is no longer running. Restart is meaningful.
@@ -54,7 +53,6 @@ defmodule Ezagent.Orchestrator.Health do
 
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.Entity.Session
-  alias Ezagent.KindRegistry
   alias Ezagent.WorkspaceRegistry
 
   @type status :: :alive | :crashed | :not_spawned
@@ -106,8 +104,9 @@ defmodule Ezagent.Orchestrator.Health do
     {status, _pid} = lookup_status(orch_uri)
     snapshot_updated_at = snapshot_updated_at_for(orch_uri)
 
-    # If lookup returned :error AND we have a snapshot, the orchestrator
-    # was spawned but isn't live → :crashed. Otherwise :not_spawned.
+    # If the seam reports the URI not registered AND we have a snapshot, the
+    # orchestrator was spawned but isn't live → :crashed. Otherwise
+    # :not_spawned.
     final_status =
       case {status, snapshot_updated_at} do
         {:alive, _} -> :alive
@@ -155,22 +154,13 @@ defmodule Ezagent.Orchestrator.Health do
     end
   end
 
-  # KindRegistry.lookup returns `{:ok, pid}` for a registered URI. We
-  # add `Process.alive?` because Registry's dead-pid cleanup is async —
-  # a freshly-crashed orchestrator can briefly still appear registered.
-  # The pid itself never leaves this module (V5 A1c); only the liveness
-  # verdict does.
+  # Liveness through the resolver seam BY URI (V5 A1c) — the pid never
+  # enters this module; only the `:alive | :not_alive` verdict is used.
   defp lookup_status(%URI{} = orch_uri) do
-    case KindRegistry.lookup(orch_uri) do
-      {:ok, pid} when is_pid(pid) ->
-        if Process.alive?(pid) do
-          {:alive, pid}
-        else
-          {:not_alive, nil}
-        end
-
-      :error ->
-        {:not_alive, nil}
+    if Ezagent.Runtime.Resolver.alive?(orch_uri) do
+      {:alive, nil}
+    else
+      {:not_alive, nil}
     end
   end
 
