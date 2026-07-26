@@ -163,7 +163,16 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
   @per_tenant_schemaless_tables [
     "invocations",
     "git_workflow_bindings",
-    "git_workflow_runs"
+    "git_workflow_runs",
+    # Plan E Slice P1 Task 4 — durable typed facts for one workflow run
+    # (design docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+    # §5.3). `run_id` is a foreign-key-by-convention back to
+    # git_workflow_runs (no DB FK, matching this plugin's existing style),
+    # so workspace_uri is technically re-derivable via that join — but it
+    # is copied down onto this row for the same reason git_workflow_runs
+    # already copies it down from git_workflow_bindings: direct
+    # workspace-scoped reads without a join, per this invariant.
+    "git_workflow_facts"
   ]
 
   # Tables that exist but intentionally lack `workspace_uri`. Documented

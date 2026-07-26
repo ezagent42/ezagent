@@ -11,7 +11,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   # scan missed deterministic_ref.ex).
   @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
-                   authorization.ex)
+                   authorization.ex workflow_facts.ex)
 
   # The small, closed set of non-test config files that could theoretically
   # select the ExecutionSeam backend. config/test.exs is deliberately
@@ -247,6 +247,23 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       if File.exists?(mig) do
         content = File.read!(mig)
         refute content =~ "authenticated_principal"
+      end
+    end
+
+    test "git_workflow_facts migration has no secret/raw-response column" do
+      mig =
+        Path.join(
+          @app_dir,
+          "../../ezagent_core/priv/repo_pg/migrations/20260725120000_create_git_workflow_facts.exs"
+        )
+        |> Path.expand()
+
+      if File.exists?(mig) do
+        content = File.read!(mig)
+
+        for forbidden <- ~w(token authorization private_key raw_response header credential) do
+          refute content =~ forbidden, "migration must not have a #{forbidden} column"
+        end
       end
     end
 

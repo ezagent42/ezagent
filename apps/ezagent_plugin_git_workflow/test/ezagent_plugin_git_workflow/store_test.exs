@@ -5,6 +5,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Store
   alias EzagentPluginGitWorkflow.TaskBinding
+  alias EzagentPluginGitWorkflow.WorkflowFacts
   alias EzagentPluginGitWorkflow.WorkflowRun
 
   @moduletag :store
@@ -299,6 +300,54 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
     test "returns error for unknown id" do
       assert {:error, :not_found} = Store.read_run("nonexistent")
+    end
+  end
+
+  describe "facts" do
+    test "upsert_facts/1 then read_facts/1 round-trips" do
+      {:ok, facts} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_1",
+          run_id: "run_rt_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_rt_1"}} = Store.upsert_facts(facts)
+
+      assert {:ok, %WorkflowFacts{id: "wf_rt_1", run_id: "run_rt_1"}} =
+               Store.read_facts("run_rt_1")
+    end
+
+    test "upsert_facts/1 updates in place on repeated calls for the same run_id" do
+      {:ok, facts} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_2",
+          run_id: "run_rt_2",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      {:ok, _} = Store.upsert_facts(facts)
+
+      {:ok, updated} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_2",
+          run_id: "run_rt_2",
+          workspace_uri: Ezagent.URI.workspace("test-ws"),
+          head_sha: "abc123"
+        })
+
+      {:ok, _} = Store.upsert_facts(updated)
+
+      assert {:ok, %WorkflowFacts{head_sha: "abc123"}} = Store.read_facts("run_rt_2")
+      # still exactly one row for this run_id
+      [[count]] =
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_facts WHERE run_id = $1", ["run_rt_2"]).rows
+
+      assert count == 1
+    end
+
+    test "read_facts/1 returns not_found for an unknown run_id" do
+      assert {:error, :not_found} = Store.read_facts("nonexistent")
     end
   end
 

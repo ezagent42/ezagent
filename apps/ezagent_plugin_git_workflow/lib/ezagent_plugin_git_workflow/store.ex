@@ -16,6 +16,7 @@ defmodule EzagentPluginGitWorkflow.Store do
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.DeterministicRef
   alias EzagentPluginGitWorkflow.TaskBinding
+  alias EzagentPluginGitWorkflow.WorkflowFacts
   alias EzagentPluginGitWorkflow.WorkflowRun
 
   # ---------------------------------------------------------------------------
@@ -197,6 +198,62 @@ defmodule EzagentPluginGitWorkflow.Store do
     case read_run_row(run_id) do
       nil -> {:error, :not_found}
       row -> {:ok, row_to_run(row)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Facts operations
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Inserts or fully replaces the facts row for `facts.run_id`.
+
+  Single-statement `INSERT ... ON CONFLICT (run_id) DO UPDATE` — never
+  read-then-write. This is what makes concurrent upserts for the same
+  run_id race-free: Postgres resolves the conflict against its own unique
+  index inside one statement, so two concurrent callers can never both
+  observe "no row yet" and both INSERT (which would violate the unique
+  index and surface as a DB error, not a silent duplicate) — one of them
+  always takes the ON CONFLICT DO UPDATE branch instead. Whichever caller's
+  statement commits last simply overwrites every non-key column with its
+  own values (last-write-wins), leaving exactly one row.
+  """
+  @spec upsert_facts(WorkflowFacts.t()) :: {:ok, WorkflowFacts.t()}
+  def upsert_facts(%WorkflowFacts{} = facts) do
+    now = DateTime.utc_now()
+    row = facts_to_row(facts, now)
+
+    columns = Map.keys(row)
+    values = Map.values(row)
+    placeholders = 1..length(columns) |> Enum.map(&"$#{&1}") |> Enum.join(", ")
+
+    update_clause =
+      columns
+      |> Enum.reject(&(&1 in ["id", "run_id", "inserted_at"]))
+      |> Enum.map(&"#{&1} = EXCLUDED.#{&1}")
+      |> Enum.join(", ")
+
+    Repo.query!(
+      "INSERT INTO git_workflow_facts (" <>
+        Enum.join(columns, ", ") <>
+        ") VALUES (" <>
+        placeholders <>
+        ") ON CONFLICT (run_id) DO UPDATE SET " <> update_clause,
+      values
+    )
+
+    {:ok, facts}
+  end
+
+  @doc "Reads the facts row for a run id."
+  @spec read_facts(String.t()) :: {:ok, WorkflowFacts.t()} | {:error, :not_found}
+  def read_facts(run_id) when is_binary(run_id) do
+    %Postgrex.Result{rows: rows, columns: columns} =
+      Repo.query!("SELECT * FROM git_workflow_facts WHERE run_id = $1", [run_id])
+
+    case rows do
+      [] -> {:error, :not_found}
+      [row | _] -> {:ok, Enum.zip(columns, row) |> Map.new() |> row_to_facts()}
     end
   end
 
@@ -535,6 +592,42 @@ defmodule EzagentPluginGitWorkflow.Store do
       source_revision: row["source_revision"],
       requested_head_ref: row["requested_head_ref"],
       last_error_code: row["last_error_code"],
+      inserted_at: row["inserted_at"],
+      updated_at: row["updated_at"]
+    })
+  end
+
+  defp facts_to_row(%WorkflowFacts{workspace_uri: workspace_uri} = facts, now) do
+    facts
+    |> Map.from_struct()
+    |> Map.drop([:inserted_at, :updated_at])
+    |> Map.put(:workspace_uri, to_string(workspace_uri))
+    |> Map.new(fn {k, v} -> {Atom.to_string(k), v} end)
+    |> Map.put("inserted_at", now)
+    |> Map.put("updated_at", now)
+  end
+
+  defp row_to_facts(row) when is_map(row) do
+    struct!(WorkflowFacts, %{
+      id: row["id"],
+      run_id: row["run_id"],
+      workspace_uri: parse_uri!(row["workspace_uri"]),
+      workspace_provision_id: row["workspace_provision_id"],
+      deterministic_head_ref: row["deterministic_head_ref"],
+      change_digest: row["change_digest"],
+      expected_base_sha: row["expected_base_sha"],
+      head_sha: row["head_sha"],
+      change_request_id: row["change_request_id"],
+      change_request_url: row["change_request_url"],
+      change_request_state: row["change_request_state"],
+      change_request_head_ref: row["change_request_head_ref"],
+      change_request_base_ref: row["change_request_base_ref"],
+      checks_revision: row["checks_revision"],
+      checks_summary: row["checks_summary"],
+      checks_observed_at: row["checks_observed_at"],
+      reviews_revision: row["reviews_revision"],
+      reviews_summary: row["reviews_summary"],
+      reviews_observed_at: row["reviews_observed_at"],
       inserted_at: row["inserted_at"],
       updated_at: row["updated_at"]
     })
