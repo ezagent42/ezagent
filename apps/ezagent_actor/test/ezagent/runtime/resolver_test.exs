@@ -141,7 +141,8 @@ defmodule Ezagent.Runtime.ResolverTest do
                Resolver.dispatch(uri, :ping, %{"x" => 1}, %{
                  mode: :call,
                  caller: :vm_internal,
-                 reply: :ignore
+                 reply: :ignore,
+                 origin: :trusted_internal
                })
 
       assert inv.mode == :call
@@ -158,6 +159,7 @@ defmodule Ezagent.Runtime.ResolverTest do
                Resolver.dispatch(uri, :bump, %{}, %{
                  caller: :vm_internal,
                  reply: :ignore,
+                 origin: :trusted_internal,
                  test_notify: self()
                })
 
@@ -168,8 +170,57 @@ defmodule Ezagent.Runtime.ResolverTest do
       assert {:error, :no_such_actor} =
                Resolver.dispatch(unique_uri("absent"), :ping, %{}, %{
                  mode: :call,
-                 caller: :vm_internal
+                 caller: :vm_internal,
+                 origin: :trusted_internal
                })
+    end
+  end
+
+  describe "dispatch/4 — provenance is CALLER-OWNED (V5 A1b codex blocker A)" do
+    test "REJECTS a missing origin instead of stamping :trusted_internal" do
+      uri = unique_uri("dispatch-no-origin")
+      _pid = start_kind(uri)
+
+      assert {:error, :missing_origin} =
+               Resolver.dispatch(uri, :ping, %{}, %{mode: :call, caller: :vm_internal})
+    end
+
+    test "REJECTS an invalid origin" do
+      uri = unique_uri("dispatch-bad-origin")
+      _pid = start_kind(uri)
+
+      assert {:error, {:invalid_origin, :bogus}} =
+               Resolver.dispatch(uri, :ping, %{}, %{
+                 mode: :call,
+                 caller: :vm_internal,
+                 origin: :bogus
+               })
+
+      assert {:error, :missing_origin} =
+               Resolver.dispatch(uri, :ping, %{}, %{
+                 mode: :call,
+                 caller: :vm_internal,
+                 origin: nil
+               })
+    end
+
+    test "PRESERVES a caller-supplied origin on the envelope" do
+      uri = unique_uri("dispatch-origin")
+      _pid = start_kind(uri)
+
+      for origin <- [:trusted_internal, :authenticated_external] do
+        assert {:echo, %Invocation{} = inv} =
+                 Resolver.dispatch(uri, :ping, %{}, %{
+                   mode: :call,
+                   caller: :vm_internal,
+                   origin: origin
+                 })
+
+        assert inv.origin == origin
+        # The :origin key is consumed (stamped on the envelope), not passed
+        # through in ctx.
+        refute Map.has_key?(inv.ctx, :origin)
+      end
     end
   end
 

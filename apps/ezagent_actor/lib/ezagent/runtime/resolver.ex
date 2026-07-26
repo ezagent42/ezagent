@@ -27,7 +27,10 @@ defmodule Ezagent.Runtime.Resolver do
     * `cast/2` — resolves internally and `GenServer.cast/2`s the target;
     * `dispatch/4` — resolves internally and delivers the standard
       `{:ezagent_dispatch, %Ezagent.Invocation{}}` envelope to the target
-      (the same protocol verb `Ezagent.Kind.Server` already handles);
+      (the same protocol verb `Ezagent.Kind.Server` already handles). The
+      envelope's `origin` is CALLER-OWNED (`ctx.origin`, V5 A1b): the seam
+      preserves it and REJECTS a missing/invalid one rather than stamping
+      `:trusted_internal` itself;
     * `send_envelope/2` — resolves internally and sends a raw message;
     * `whereis/1` — liveness only (`:ok | :not_found`), no pid;
     * `alive?/1` — liveness as a plain boolean;
@@ -75,6 +78,14 @@ defmodule Ezagent.Runtime.Resolver do
   def pid_for(%URI{} = uri), do: kind_pid(uri)
   def pid_for(uri) when is_binary(uri), do: kind_pid(uri)
 
+  # Provenance the resolver accepts from its CALLER (V5 A1b codex blocker A).
+  # The seam NEVER invents an origin: stamping `:trusted_internal` here would
+  # let any in-BEAM caller launder external-origin traffic as internal. These
+  # are exactly `Ezagent.DispatchOrigin`'s two positive values — kept as local
+  # literals because the actor app must not reach up into staying-core (the
+  # §4.2 REVERSE boundary gate).
+  @accepted_origins [:authenticated_external, :trusted_internal]
+
   @doc """
   PUBLIC face — resolve `uri` internally and dispatch `action` to it, never
   returning the pid.
@@ -87,29 +98,49 @@ defmodule Ezagent.Runtime.Resolver do
   `ctx` exactly as the Router derives it). Returns `{:error, :no_such_actor}`
   when the target is not registered.
 
+  PROVENANCE IS CALLER-OWNED (V5 A1b codex blocker A): the caller must supply
+  the dispatch origin as `ctx.origin` — one of `:authenticated_external` or
+  `:trusted_internal`. The resolver PRESERVES that stamp on the envelope and
+  NEVER invents one: a missing origin is rejected with
+  `{:error, :missing_origin}`, an unknown one with
+  `{:error, {:invalid_origin, origin}}` (no default, no laundering). The
+  `:origin` key is consumed here (stamped on the envelope, not passed through
+  in `ctx`).
+
   NOTE (A1a): unlike `Ezagent.Invocation.dispatch/1` this seam performs NO
   lazy spawn, no outbox, and no policy hook — it is the resolution+delivery
   primitive those higher layers will sit on after A1b.
   """
   @spec dispatch(URI.t() | String.t(), atom(), map(), map()) ::
-          {:ok, term()} | :ok | {:error, :no_such_actor} | {:error, term()}
+          {:ok, term()}
+          | :ok
+          | {:error, :no_such_actor}
+          | {:error, :missing_origin}
+          | {:error, {:invalid_origin, term()}}
+          | {:error, term()}
   def dispatch(uri, action, args, ctx)
       when is_atom(action) and is_map(args) and is_map(ctx) do
-    case pid_for(uri) do
-      {:ok, pid} ->
-        inv = invocation(uri, action, args, ctx)
+    case fetch_origin(ctx) do
+      {:ok, origin, ctx} ->
+        case pid_for(uri) do
+          {:ok, pid} ->
+            inv = invocation(uri, action, args, ctx, origin)
 
-        case inv.mode do
-          :cast ->
-            GenServer.cast(pid, {:ezagent_dispatch, inv})
-            :ok
+            case inv.mode do
+              :cast ->
+                GenServer.cast(pid, {:ezagent_dispatch, inv})
+                :ok
 
-          _call ->
-            GenServer.call(pid, {:ezagent_dispatch, inv}, call_timeout(ctx))
+              _call ->
+                GenServer.call(pid, {:ezagent_dispatch, inv}, call_timeout(ctx))
+            end
+
+          :not_found ->
+            {:error, :no_such_actor}
         end
 
-      :not_found ->
-        {:error, :no_such_actor}
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -242,17 +273,36 @@ defmodule Ezagent.Runtime.Resolver do
     end
   end
 
+  # Extract and validate the CALLER-OWNED dispatch origin (V5 A1b codex
+  # blocker A). The caller's stamp is returned alongside the ctx with the
+  # `:origin` key consumed (provenance lives on the envelope, not in ctx). A
+  # missing origin REJECTS — the seam never defaults to `:trusted_internal`.
+  defp fetch_origin(ctx) do
+    case Map.pop(ctx, :origin) do
+      {nil, _ctx} ->
+        {:error, :missing_origin}
+
+      {origin, ctx} when origin in @accepted_origins ->
+        {:ok, origin, ctx}
+
+      {origin, _ctx} ->
+        {:error, {:invalid_origin, origin}}
+    end
+  end
+
   # Build the standard dispatch envelope. Mirrors the Router's private
   # Cmd→Invocation encoding (`?action=_.<action>` target annotation, mode
   # derivation, caps/reply defaults) — duplicated HERE, not called through,
   # because the seam must deliver to its OWN resolved pid while the Router
   # resolves independently; A1b consolidates the two paths onto this seam.
   #
-  # `origin: :trusted_internal` (dispatch-provenance gate): the seam is an
-  # INTERNAL delivery primitive — no external transport reaches it — and an
-  # origin-less envelope is rejected by `handle_dispatch`'s
-  # `validate_origin/2` (and reds the DispatchOrigin source gate).
-  defp invocation(uri, action, args, ctx) do
+  # `origin:` is the CALLER-OWNED stamp `dispatch/4` already validated
+  # (dispatch-provenance gate): the seam is a delivery primitive that
+  # PRESERVES provenance, never manufactures it — an origin-less envelope
+  # would be rejected by `handle_dispatch`'s `validate_origin/2`, and this
+  # file is registered as a dynamic-origin site with the DispatchOrigin
+  # source gate.
+  defp invocation(uri, action, args, ctx, origin) do
     legacy_ctx =
       ctx
       |> Map.put_new(:caps, MapSet.new())
@@ -264,7 +314,7 @@ defmodule Ezagent.Runtime.Resolver do
       mode: derive_mode(legacy_ctx),
       args: args,
       ctx: legacy_ctx,
-      origin: :trusted_internal
+      origin: origin
     }
   end
 

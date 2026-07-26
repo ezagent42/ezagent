@@ -108,6 +108,35 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
     assert [{"mutation.ex", _, :unstamped_origin}] = Gate.check_source(mutation, "mutation.ex")
   end
 
+  test "the source gate inventories the resolver seam as a dispatch source (V5 A1b)" do
+    root = Path.expand("../../../..", __DIR__)
+    resolver = Path.join(root, "apps/ezagent_actor/lib/ezagent/runtime/resolver.ex")
+
+    # The seam's envelope constructor takes the origin from the CALLER (a
+    # runtime value) — the gate knows the file as a dynamic-origin site and
+    # does NOT red it.
+    assert [] = Gate.check_source(File.read!(resolver), resolver)
+
+    # `Resolver.dispatch/4` + raw `Resolver.call/3` count as dispatch
+    # sources in the inventory (alongside Router.dispatch / Invocation.dispatch).
+    fixture =
+      Path.join(
+        System.tmp_dir!(),
+        "dispatch_origin_gate_fixture_#{System.unique_integer([:positive])}.ex"
+      )
+
+    File.write!(fixture, ~S"""
+    Resolver.dispatch(uri, :ping, %{}, %{origin: :trusted_internal})
+    Resolver.call(key, :msg)
+    """)
+
+    on_exit(fn -> File.rm(fixture) end)
+
+    inventory = Gate.inventory([fixture])
+    assert inventory.dispatches == 2
+    assert inventory.constructors == 0
+  end
+
   test "Feishu transports pass provenance into the shared dispatcher" do
     root = Path.expand("../../../..", __DIR__)
 

@@ -11,7 +11,18 @@ defmodule Ezagent.DispatchOrigin.Gate do
   """
 
   @positive [:authenticated_external, :trusted_internal]
-  @dynamic_origin_sites ["inbound_dispatcher.ex", "ezagent/router.ex"]
+
+  # Files whose envelope constructors take the origin from a RUNTIME value
+  # (transport-derived, or caller-owned) rather than a literal: the Feishu
+  # inbound dispatcher, the Router (re-stamps the Cmd's origin onto the
+  # Invocation), and — V5 A1b (codex blocker A) — the resolver seam, whose
+  # `dispatch/4` PRESERVES the caller-owned `ctx.origin` and rejects a
+  # missing/invalid one instead of stamping `:trusted_internal` itself.
+  @dynamic_origin_sites [
+    "inbound_dispatcher.ex",
+    "ezagent/router.ex",
+    "ezagent/runtime/resolver.ex"
+  ]
 
   @type finding :: {String.t(), pos_integer(), term()}
 
@@ -40,7 +51,15 @@ defmodule Ezagent.DispatchOrigin.Gate do
       %{
         dispatches:
           counts.dispatches +
-            occurrences(source, ["Router.dispatch(", "Invocation.dispatch("]),
+            occurrences(source, [
+              "Router.dispatch(",
+              "Invocation.dispatch(",
+              # V5 A1b (codex blocker A): the resolver seam is a dispatch
+              # SOURCE too — `dispatch/4` (the provenance-carrying KIND path)
+              # and raw `call/3` (the sidecar-messaging path).
+              "Resolver.dispatch(",
+              "Resolver.call("
+            ]),
         constructors:
           counts.constructors +
             occurrences(source, ["%Cmd{", "%Ezagent.Cmd{", "%Invocation{", "%Ezagent.Invocation{"])
