@@ -102,7 +102,15 @@ defmodule Ezagent.Kind.Server do
   end
 
   @impl true
-  def init({kind_module, args}) do
+  def init({kind_module, args} = init_arg) do
+    # V5 pid-closure use-side ENUMERATION (report-only): observe every ingress
+    # via IngressCensus as the FIRST expression of each callback clause; the
+    # original logic below runs unchanged. NOTE: `:sys` traffic
+    # (`:sys.get_state/2`, `:sys.replace_state/2`, `:sys.get_status/1`, …) is
+    # served inside the `:gen_server`/`proc_lib` shim and NEVER reaches these
+    # callbacks — `:sys` is a PERMANENT static-ban-only tier, out of census
+    # scope BY DESIGN (see `Ezagent.Kind.IngressCensus` moduledoc).
+    _ = Ezagent.Kind.IngressCensus.observe(:init, init_arg)
     Process.flag(:trap_exit, true)
 
     uri = Map.fetch!(args, :uri)
@@ -321,6 +329,7 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def handle_continue(:announce_ready, %{uri: uri, post_init_queue: queue} = state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_continue, :announce_ready)
     uri_str = URI.to_string(uri)
 
     # PR-EM-CORE codex round-2 HIGH-1 fix: defer BOTH ReadyGate mark +
@@ -377,7 +386,8 @@ defmodule Ezagent.Kind.Server do
   # logging (rather than crashing) keeps a buggy Behavior from taking
   # down its host Kind on init; the Behavior author still sees the
   # warning in test runs.
-  def handle_continue({:ezagent_post_init, [{behavior, term} | rest]}, state) do
+  def handle_continue({:ezagent_post_init, [{behavior, term} | rest]} = continuation, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_continue, continuation)
     %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = state
 
     new_slice_state =
@@ -565,14 +575,17 @@ defmodule Ezagent.Kind.Server do
   # lets a Tier-1 helper resolve the supervisor without that coupling.
   @impl true
   def handle_call(:ezagent_kind_module, _from, %{kind: kind_module} = state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, :ezagent_kind_module)
     {:reply, {:ok, kind_module}, state}
   end
 
   def handle_call(
-        {:ezagent_validate_cap_artifact, artifact, receiver},
+        {:ezagent_validate_cap_artifact, artifact, receiver} = msg,
         _from,
         state
       ) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
+
     result =
       authority().with_authority(state.authority, fn ->
         authority().validate_artifact(artifact, receiver)
@@ -582,6 +595,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call(:ezagent_runtime_view, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, :ezagent_runtime_view)
     view = Map.take(state, [:kind, :uri, :state])
     {:reply, {:ok, view}, state}
   end
@@ -594,11 +608,13 @@ defmodule Ezagent.Kind.Server do
   # the process, so publishing this op does not make arbitrary state reach-in
   # gate-legal. Additive (C0) — existing `:ezagent_runtime_view` unchanged.
   def handle_call(
-        {:ezagent_resolve_action_subject, action},
+        {:ezagent_resolve_action_subject, action} = msg,
         _from,
         %{kind: kind_module, state: slice_state} = state
       )
       when is_atom(action) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
+
     result =
       case Ezagent.Kind.BehaviorSet.resolve_action(kind_module, action, slice_state) do
         {:ok, behavior_module} -> {:ok, {kind_module, behavior_module}}
@@ -624,6 +640,7 @@ defmodule Ezagent.Kind.Server do
         # recredentialing.
         %{create_freshness: :created, authority: token} = state
       ) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, :ezagent_recredential_generation)
     # Fail-closed: an adapter whose accessor raises (e.g. a token without a
     # generation reading) gets the old match-fall-through semantics
     # (`:principal_revoked`), not a GenServer crash.
@@ -642,10 +659,12 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call(:ezagent_recredential_generation, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, :ezagent_recredential_generation)
     {:reply, {:error, :principal_revoked}, state}
   end
 
   def handle_call(:ezagent_launch_context_relay, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, :ezagent_launch_context_relay)
     {:reply, Map.get(state, :launch_context_relay), state}
   end
 
@@ -653,8 +672,9 @@ defmodule Ezagent.Kind.Server do
   # Behavior slice. Used by `Ezagent.Kind.get_slice/2` for cross-
   # process lookups (e.g. `Session.owner/1` resolves session.owner_uri
   # so `Behavior.Session.data_owner/1` can return a real URI).
-  def handle_call({:ezagent_get_slice, slice_key}, _from, %{state: slice_state} = state)
+  def handle_call({:ezagent_get_slice, slice_key} = msg, _from, %{state: slice_state} = state)
       when is_atom(slice_key) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
     {:reply, {:ok, Map.get(slice_state, slice_key)}, state}
   end
 
@@ -669,7 +689,8 @@ defmodule Ezagent.Kind.Server do
   # Per-Behavior isolated (try/rescue) so one buggy hook doesn't block
   # the others or the caller's durable delete. The slice is NOT mutated —
   # the row is about to be deleted regardless.
-  def handle_call({:ezagent_lifecycle_destroy, reason}, _from, state) do
+  def handle_call({:ezagent_lifecycle_destroy, reason} = msg, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
     %{kind: kind_module, uri: self_uri, state: slice_state} = state
     ctx = %{kind_module: kind_module, self_uri: self_uri}
 
@@ -714,14 +735,16 @@ defmodule Ezagent.Kind.Server do
   # on_detach (detach), and return the new slice state; `reply_after_set_change`
   # durably snapshots it (no SliceChange emit — structural reconfig, mirroring
   # commit_post_init).
-  def handle_call({:ezagent_mount, behavior, args}, _from, state)
+  def handle_call({:ezagent_mount, behavior, args} = msg, _from, state)
       when is_atom(behavior) and is_map(args) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
     %{kind: kind_module, uri: uri, state: slice_state} = state
     result = Ezagent.Kind.MountDetach.mount(slice_state, kind_module, behavior, args, uri)
     reply_after_set_change(result, state)
   end
 
-  def handle_call({:ezagent_detach, behavior}, _from, state) when is_atom(behavior) do
+  def handle_call({:ezagent_detach, behavior} = msg, _from, state) when is_atom(behavior) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
     %{kind: kind_module, uri: uri, state: slice_state} = state
     result = Ezagent.Kind.MountDetach.detach(slice_state, kind_module, behavior, uri)
     reply_after_set_change(result, state)
@@ -744,10 +767,12 @@ defmodule Ezagent.Kind.Server do
         # caller can ever present a malformed artifact here. Keeping the
         # adapter's `false` (not restoring the strict match) because the
         # only reachable effect of the old strictness was a crash.
-        {:ezagent_verify_cap_artifact, artifact, %URI{} = presenter},
+        {:ezagent_verify_cap_artifact, artifact, %URI{} = presenter} = msg,
         _from,
         state
       ) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
+
     valid? =
       authority().with_authority(state.authority, fn ->
         authority().verify_artifact(artifact, presenter)
@@ -760,7 +785,9 @@ defmodule Ezagent.Kind.Server do
   # target's own mailbox. Authorization is cap-based inside `regenesis/3`; a
   # successful reply is published only after the durable active-row flip and
   # the private live authority swap have both completed.
-  def handle_call({:ezagent_revoke_all_to, %{} = ctx}, _from, state) do
+  def handle_call({:ezagent_revoke_all_to, %{} = ctx} = msg, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, msg)
+
     case authority().regenesis(state.uri, state.kind.type_name(), ctx) do
       {:ok, new_authority} ->
         # The authority token is OPAQUE (§3.4) — the generation field read
@@ -774,6 +801,8 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_call({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, _from, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, {:ezagent_dispatch, inv})
+
     dispatch_result =
       authority().with_authority(state.authority, fn ->
         Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
@@ -816,6 +845,8 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_cast, {:ezagent_dispatch, inv})
+
     dispatch_result =
       authority().with_authority(state.authority, fn ->
         Ezagent.Kind.Runtime.handle_dispatch(inv, state.state, state.kind, state.uri)
@@ -983,8 +1014,10 @@ defmodule Ezagent.Kind.Server do
   # commands run on a later mailbox turn, after the parent commit, to avoid
   # dispatch deadlock. `DeferredDispatch` owns the detailed ordering contract.
   @impl true
-  def handle_info({:ezagent_external_ready_gate, uri_str, :ok}, state)
+  def handle_info({:ezagent_external_ready_gate, uri_str, :ok} = msg, state)
       when is_binary(uri_str) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
+
     if Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(uri_str, self()) == :ready do
       run_on_ready_hooks(state.kind, state.uri, state.state)
     end
@@ -993,12 +1026,14 @@ defmodule Ezagent.Kind.Server do
   end
 
   # The waiter already committed timeout/supersession generation-safely.
-  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, reason}}, state)
+  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, reason}} = msg, state)
       when is_binary(uri_str) and reason in [:timeout, :superseded] do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
     {:noreply, state}
   end
 
-  def handle_info({:ezagent_run_deferred, cmds}, state) when is_list(cmds) do
+  def handle_info({:ezagent_run_deferred, cmds} = msg, state) when is_list(cmds) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
     # A deferred self-dispatch runs on a later mailbox turn, outside the
     # handle_call/handle_cast authority scope above. Re-enter the same sealed
     # custody compartment so an exact K.grant issuance for canonical-admin
@@ -1012,6 +1047,7 @@ defmodule Ezagent.Kind.Server do
   end
 
   def handle_info(:snapshot_tick, %{kind: kind_module, uri: uri, state: slice_state} = wrapper) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, :snapshot_tick)
     # Phase 4-completion: periodic strategy — write via Writer (async)
     # then re-schedule. If Writer isn't running (e.g. test envs without
     # full sup tree), fall back to sync save_now to remain useful.
@@ -1046,6 +1082,10 @@ defmodule Ezagent.Kind.Server do
         message,
         %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = wrapper
       ) do
+    # V5 use-side ingress census (report-only): this is the CATCH-ALL — every
+    # behavior-forwarded mailbox message (`:DOWN`, `:EXIT`, task replies,
+    # SliceChange fan-out, publisher replay, …) is observed here.
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, message)
     # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
     # never runs.
@@ -1160,6 +1200,7 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def terminate(reason, %{kind: kind_module, uri: uri, state: slice_state} = _state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:terminate, reason)
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.
@@ -1197,7 +1238,10 @@ defmodule Ezagent.Kind.Server do
     :ok
   end
 
-  def terminate(_reason, _state), do: :ok
+  def terminate(reason, _state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:terminate, reason)
+    :ok
+  end
 
   # PR-EM-2 codex round-1 HIGH-1 — invoke each Behavior's optional
   # `terminate/3` callback in `behaviors/0` declaration order.
