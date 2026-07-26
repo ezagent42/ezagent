@@ -17,10 +17,17 @@ app INCLUDED — OUTSIDE the two exemption classes:
    (`GenServer.start_link(__MODULE__, …)`) is a supervision entry too and
    is not flagged.
 
-Primitives detected: `Registry.lookup/2`, `Registry.select/2`, `Registry.match/3`, `Registry.dispatch/3`, `Registry.dispatch/4`, `:global.whereis_name/1`, `:global.registered_names/0`, `GenServer.whereis/1`, `GenServer.whereis/2`, `Process.whereis/1`, `Process.list/0`, `:erlang.processes/0`, `:pg.get_members/1`, `:pg.get_members/2`, `:sys.get_state/1`, `:sys.get_state/2`, `:sys.replace_state/2`, `:sys.replace_state/3`, `:sys.get_status/1`, `:sys.get_status/2`, `DynamicSupervisor.which_children/1`, `Task.Supervisor.children/1`, `Process.monitor/1`, `Process.link/1`, `Process.info/1`, `Process.info/2`, `Task.async/1`, `Task.async/2`, `Task.Supervisor.async/2`, `Task.Supervisor.async/3`, `Task.Supervisor.async_nolink/2`, `Task.Supervisor.async_nolink/3`, `Task.Supervisor.start_child/2`, `Task.Supervisor.start_child/3`, `:erlang.spawn/1`, `:erlang.spawn/2`, `:erlang.spawn/3`, `:erlang.spawn/4`, `:erlang.spawn_link/1`, `:erlang.spawn_link/2`, `:erlang.spawn_link/3`, `:erlang.spawn_link/4`, `:erlang.spawn_monitor/1`, `:erlang.spawn_monitor/3`, `Ezagent.Runtime.Resolver.pid_for/1`, `Ezagent.Runtime.SidecarRegistry.lookup/1`, `Ezagent.Runtime.SidecarRegistry.entries_for_plugin/1`, plus the bare `Kernel.spawn*` family
+Primitives detected: `Registry.lookup/2`, `Registry.select/2`, `Registry.match/3`, `Registry.dispatch/3`, `Registry.dispatch/4`, `:global.whereis_name/1`, `:global.registered_names/0`, `GenServer.whereis/1`, `GenServer.whereis/2`, `Process.whereis/1`, `Process.list/0`, `:erlang.processes/0`, `:pg.get_members/1`, `:pg.get_members/2`, `:sys.get_state/1`, `:sys.get_state/2`, `:sys.replace_state/2`, `:sys.replace_state/3`, `:sys.get_status/1`, `:sys.get_status/2`, `DynamicSupervisor.which_children/1`, `Task.Supervisor.children/1`, `Process.monitor/1`, `Process.link/1`, `Process.info/1`, `Process.info/2`, `Task.async/1`, `Task.async/2`, `Task.Supervisor.async/2`, `Task.Supervisor.async/3`, `Task.Supervisor.async_nolink/2`, `Task.Supervisor.async_nolink/3`, `Task.Supervisor.start_child/2`, `Task.Supervisor.start_child/3`, `:erlang.spawn/1`, `:erlang.spawn/2`, `:erlang.spawn/3`, `:erlang.spawn/4`, `:erlang.spawn_link/1`, `:erlang.spawn_link/2`, `:erlang.spawn_link/3`, `:erlang.spawn_link/4`, `:erlang.spawn_monitor/1`, `:erlang.spawn_monitor/3`, `Ezagent.Runtime.Resolver.pid_for/1`, `Ezagent.Runtime.SidecarRegistry.lookup/1`, `Ezagent.Runtime.SidecarRegistry.entries_for_plugin/1`, `Ezagent.Runtime.Resolver.call/2`, `Ezagent.Runtime.Resolver.call/3`, `Ezagent.Runtime.Resolver.cast/2`, `Ezagent.Runtime.Resolver.terminate_child/2`, plus the bare `Kernel.spawn*` family
 (unqualified `spawn`/`spawn_link`/`spawn_monitor` where the file defines
 no local function of that name) and `GenServer.start_link` of a NON-self
 module.
+
+The raw sidecar-messaging triple (`Ezagent.Runtime.Resolver.call/2,3`,
+`cast/2`, `terminate_child/2` — a raw `GenServer.call` to a resolved
+process carries NO origin) is flagged only OUTSIDE the sanctioned
+sidecar-facade allowlist (`Ezagent.Domain.Pty`,
+`Ezagent.Domain.Pty.Server` — the PTY pilot; the 6 remaining sidecars
+add their facades when templated, V5 A1b).
 
 **The honest guarantee** (restated from the scanner moduledoc): this
 ledger proves "no ENUMERATED acquisition primitive outside the resolver

@@ -45,7 +45,15 @@ defmodule Ezagent.ActorBoundaryScanner do
   `SidecarRegistry.lookup/1`, and the pid-returning enumeration
   `SidecarRegistry.entries_for_plugin/1` — so any use OUTSIDE the seam is
   censused (the seam files themselves are exempt, so the seam's own uses
-  never fire).
+  never fire). A1b (codex blocker A, cont.) also gates the RAW
+  sidecar-messaging triple — `Resolver.call/2,3`, `Resolver.cast/2`,
+  `Resolver.terminate_child/2`: a raw `GenServer.call` to a resolved process
+  carries NO origin, so any in-BEAM code could use it to raw-message any
+  registered process. Uses are censused OUTSIDE the sanctioned sidecar-facade
+  allowlist (`@sidecar_facade_allowlist` — the PTY facade is the first entry;
+  the 6 remaining sidecars add their facades when templated). The KIND-
+  dispatch path (`Resolver.dispatch/4`, provenance-carrying since A1b) is
+  deliberately NOT in this ban-set.
 
     1. the V5 D3 resolver seam (`Ezagent.Runtime.Resolver` +
        `Ezagent.Runtime.SidecarRegistry`) — the single sanctioned
@@ -913,8 +921,30 @@ defmodule Ezagent.ActorBoundaryScanner do
     {Ezagent.Runtime.SidecarRegistry, :lookup, [1]},
     # The seam's pid-returning ENUMERATION (callers must use the pid-free
     # `Resolver.list_keys/1` instead).
-    {Ezagent.Runtime.SidecarRegistry, :entries_for_plugin, [1]}
+    {Ezagent.Runtime.SidecarRegistry, :entries_for_plugin, [1]},
+    # V5 A1b (codex blocker A, cont.): the RAW sidecar-messaging triple. A
+    # raw `Resolver.call` carries NO origin — any in-BEAM caller could use it
+    # to raw-message any registered process. Flagged only OUTSIDE the
+    # sanctioned sidecar-facade allowlist (`@sidecar_facade_allowlist`); the
+    # provenance-carrying KIND path (`Resolver.dispatch/4`) is NOT gated here.
+    {Ezagent.Runtime.Resolver, :call, [2, 3]},
+    {Ezagent.Runtime.Resolver, :cast, [2]},
+    {Ezagent.Runtime.Resolver, :terminate_child, [2]}
   ]
+
+  # The sanctioned sidecar-FACADE modules allowed to use the raw
+  # sidecar-messaging triple (`Resolver.call/cast/terminate_child`) — every
+  # other module is census-flagged for them. The PTY pilot is the first
+  # entry (its facade module + the Server module that hosts the facade's
+  # query APIs); the 6 remaining sidecars add their facades when templated.
+  @sidecar_facade_allowlist MapSet.new([
+                              Ezagent.Domain.Pty,
+                              Ezagent.Domain.Pty.Server
+                            ])
+
+  # The fun names of the facade-gated triple (subset of
+  # `@acquisition_primitives` above).
+  @facade_gated_funs [:call, :cast, :terminate_child]
 
   # Bare Kernel spawn family (`spawn(fun)`, `spawn_link(m,f,a)`, …). An
   # unqualified call is matched ONLY when the file defines no local function
@@ -1005,6 +1035,13 @@ defmodule Ezagent.ActorBoundaryScanner do
     no local function of that name) and `GenServer.start_link` of a NON-self
     module.
 
+    The raw sidecar-messaging triple (`Ezagent.Runtime.Resolver.call/2,3`,
+    `cast/2`, `terminate_child/2` — a raw `GenServer.call` to a resolved
+    process carries NO origin) is flagged only OUTSIDE the sanctioned
+    sidecar-facade allowlist (`Ezagent.Domain.Pty`,
+    `Ezagent.Domain.Pty.Server` — the PTY pilot; the 6 remaining sidecars
+    add their facades when templated, V5 A1b).
+
     **The honest guarantee** (restated from the scanner moduledoc): this
     ledger proves "no ENUMERATED acquisition primitive outside the resolver
     seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
@@ -1060,7 +1097,9 @@ defmodule Ezagent.ActorBoundaryScanner do
         if self_start?(hd(args), ctx), do: [], else: [hit(acq_target(module, fun, arity), meta)]
 
       banned_primitive?(module, fun, arity) ->
-        [hit(acq_target(module, fun, arity), meta)]
+        if sanctioned_facade_use?(module, fun, ctx),
+          do: [],
+          else: [hit(acq_target(module, fun, arity), meta)]
 
       true ->
         []
@@ -1084,6 +1123,15 @@ defmodule Ezagent.ActorBoundaryScanner do
       module == mod and fun == f and arity in arities
     end)
   end
+
+  # A use of the raw sidecar-messaging triple (`Resolver.call/cast/
+  # terminate_child`) is NOT censused when the calling file defines a
+  # sanctioned sidecar-facade module (V5 A1b codex blocker A, cont.).
+  defp sanctioned_facade_use?(Ezagent.Runtime.Resolver, fun, ctx)
+       when fun in @facade_gated_funs,
+       do: not MapSet.disjoint?(ctx.own, @sidecar_facade_allowlist)
+
+  defp sanctioned_facade_use?(_module, _fun, _ctx), do: false
 
   # `GenServer.start_link(__MODULE__, …)` or `…(SelfAlias, …)` — the canonical
   # child start API a supervisor invokes; a supervision entry, not acquisition.

@@ -106,6 +106,66 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     assert MapSet.member?(targets, "Ezagent.Runtime.SidecarRegistry.entries_for_plugin/1")
   end
 
+  test "synthetic: raw Resolver.call/cast/terminate_child is flagged OUTSIDE the facade allowlist (A1b)" do
+    # Codex blocker A (cont.): a raw `Resolver.call` carries NO origin — any
+    # in-BEAM caller could raw-message any registered process. Uses outside
+    # the sanctioned sidecar-facade allowlist are censused (report-only).
+    source = """
+    defmodule SynthRawMessaging do
+      alias Ezagent.Runtime.Resolver
+
+      def a(key, msg), do: Resolver.call(key, msg)
+      def b(key, msg, t), do: Resolver.call(key, msg, t)
+      def c(key, msg), do: Resolver.cast(key, msg)
+      def d(key, sup), do: Resolver.terminate_child(key, sup)
+    end
+    """
+
+    targets =
+      MapSet.new(
+        Scanner.acquisition_sites_in_source(source, "synth/raw_messaging.ex"),
+        & &1.target
+      )
+
+    assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.call/2")
+    assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.call/3")
+    assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.cast/2")
+    assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.terminate_child/2")
+  end
+
+  test "synthetic: the sanctioned sidecar-facade allowlist exempts facade modules (A1b)" do
+    for module <- ["Ezagent.Domain.Pty", "Ezagent.Domain.Pty.Server"] do
+      source = """
+      defmodule #{module} do
+        alias Ezagent.Runtime.Resolver
+
+        def a(key, msg), do: Resolver.call(key, msg)
+        def b(key, msg), do: Resolver.cast(key, msg)
+        def c(key, sup), do: Resolver.terminate_child(key, sup)
+      end
+      """
+
+      assert Scanner.acquisition_sites_in_source(source, "synth/facade.ex") == [],
+             "sanctioned facade #{module} must NOT be censused for the raw-messaging triple"
+    end
+  end
+
+  test "no REAL raw Resolver.call/cast/terminate_child site is censused (PTY facade is sanctioned)" do
+    # The only prod users of the triple are the allowlisted PTY facade +
+    # Server; anything else would be new drift (surfaced here, report-only).
+    raw =
+      Enum.filter(Scanner.acquisition_sites(), fn s ->
+        s.target in [
+          "Ezagent.Runtime.Resolver.call/2",
+          "Ezagent.Runtime.Resolver.call/3",
+          "Ezagent.Runtime.Resolver.cast/2",
+          "Ezagent.Runtime.Resolver.terminate_child/2"
+        ]
+      end)
+
+    assert raw == [], "raw Resolver.call/cast sites outside the facade allowlist: #{inspect(raw)}"
+  end
+
   test "regenerates the acquisition-primitive ledger markdown (full emit)" do
     sites = Scanner.acquisition_sites()
     assert sites != []
