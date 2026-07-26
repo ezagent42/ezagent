@@ -10,9 +10,9 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
   alias Ezagent.ActionSet.Session.{Delivery, Members}
 
   @doc false
-  @spec on_add(URI.t(), pid(), map(), map(), module()) :: {map(), [term()]}
-  def on_add(%URI{} = member_uri, member_pid, facets, ctx, source_module)
-      when is_pid(member_pid) and is_map(facets) do
+  @spec on_add(URI.t(), map(), map(), module()) :: {map(), [term()]}
+  def on_add(%URI{} = member_uri, facets, ctx, source_module)
+      when is_map(facets) do
     session_uri = ctx[:self_uri]
     members = ctx[:read].(:members, %{})
     monitors = (ctx[:transients] || %{})[:monitors] || %{}
@@ -30,6 +30,10 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
       _ = Process.demonitor(ref, [:flush])
     end)
 
+    # V5 A1c — the member's Kind pid is resolved at the monitor site through
+    # the sanctioned actor-app seam (`Runtime.Resolver.pid_for/1`); the pid
+    # never crosses this function's public boundary.
+    {:ok, member_pid} = Ezagent.Runtime.Resolver.pid_for(member_uri)
     ref = Process.monitor(member_pid)
     existing_meta = Map.get(members, member_uri, %{})
 

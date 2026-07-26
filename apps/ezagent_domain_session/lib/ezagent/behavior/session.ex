@@ -850,10 +850,10 @@ defmodule Ezagent.ActionSet.Session do
   defp do_handle_join(%URI{} = member_uri, facets, ctx) do
     # M-10: roster/monitor state is projection, never entitlement and never a
     # reason to skip the tier-0 -> tier-1 seam. Every authorized join reaches
-    # do_join/5 so it consumes its single-use join grant and either confirms or
+    # do_join/4 so it consumes its single-use join grant and either confirms or
     # restores current tier-1. do_join preserves :already_member as an output
     # status when the projection was already present.
-    Membership.do_join(member_uri, nil, ctx, facets, __MODULE__)
+    Membership.do_join(member_uri, ctx, facets, __MODULE__)
   end
 
   @doc """

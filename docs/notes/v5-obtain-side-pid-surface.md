@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **118 entries.**
+for the A1b/A1c migration phases. **112 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -34,19 +34,16 @@ for the A1b/A1c migration phases. **118 entries.**
 | `Ezagent.AgentBridge.Registry` | `list_all/0` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:124` | nested |
 | `Ezagent.AgentBridge.Registry` | `lookup/1` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:113` | nested |
 | `Ezagent.AgentBridge.Registry` | `unbind/2` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:94` | guard + param |
-| `Ezagent.Domain.Agent` | `ensure_declared_member/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:317` | nested |
-| `Ezagent.Domain.Agent` | `materialize_declared/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:297` | nested |
+| `Ezagent.Domain.Agent` | `ensure_declared_member/1` | `apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex:323` | body |
 | `Ezagent.Domain.Python` | `start_subprocess/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:159` | nested |
 | `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:96` | nested |
 | `Ezagent.Domain.Python.AgentLifecycle` | `subscribe_phase/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python/agent_lifecycle.ex:114` | nested |
-| `Ezagent.DomainGit.TaskAccessSupervisor` | `ensure_started/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/task_access_supervisor.ex:24` | nested |
-| `Ezagent.Entity.Agent` | `spawn_fresh/4` | `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex:351` | body + nested |
-| `Ezagent.Entity.Session` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:381` | body + nested |
+| `Ezagent.Entity.Agent` | `spawn_fresh/4` | `apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex:355` | body |
+| `Ezagent.Entity.Session` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:382` | body |
 | `Ezagent.Entity.Session` | `subscribe_from/3` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:170` | guard |
 | `Ezagent.Entity.Session` | `subscribe_from/4` | `apps/ezagent_domain_session/lib/ezagent/entity/session.ex:214` | guard + param |
 | `Ezagent.ExternalMirror.WorkerRegistry` | `list_all/0` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:77` | nested |
 | `Ezagent.ExternalMirror.WorkerRegistry` | `lookup/1` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:62` | body + nested |
-| `Ezagent.ExternalMirror.WorkerSpawn` | `terminate_by_pid/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_spawn.ex:208` | param |
 | `Ezagent.Invocation` | `call_live_target/3` | `apps/ezagent_actor/lib/ezagent/invocation.ex:475` | param |
 | `Ezagent.Invocation` | `dispatch/1` | `apps/ezagent_actor/lib/ezagent/invocation.ex:144` | param |
 | `Ezagent.Invocation` | `dispatch/1` | `apps/ezagent_actor/lib/ezagent/invocation.ex:148` | param |
@@ -78,8 +75,6 @@ for the A1b/A1c migration phases. **118 entries.**
 | `Ezagent.LifecycleCase` | `ensure_gate_supervisor!/0` | `apps/ezagent_core/lib/ezagent/lifecycle_case.ex:118` | body |
 | `Ezagent.LocalRuntime` | `ensure_started/2` | `apps/ezagent_actor/lib/ezagent/local_runtime.ex:62` | nested |
 | `Ezagent.LocalRuntime` | `ensure_started_detailed/2` | `apps/ezagent_actor/lib/ezagent/local_runtime.ex:72` | nested |
-| `Ezagent.Orchestrator.Health` | `classify/1` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex:86` | nested |
-| `Ezagent.Orchestrator.Health` | `classify_in_workspace/2` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex:103` | nested |
 | `Ezagent.Orchestrator.Tools` | `ensure_template_alive/1` | `apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex:909` | body |
 | `Ezagent.PendingDelivery` | `buffer_if_not_ready/3` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:75` | guard + param |
 | `Ezagent.PendingDelivery` | `buffer_if_not_ready_locked/3` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:91` | guard + param |
@@ -88,7 +83,7 @@ for the A1b/A1c migration phases. **118 entries.**
 | `Ezagent.PendingDelivery` | `unwrap_entries/1` | `apps/ezagent_actor/lib/ezagent/pending_delivery.ex:194` | param |
 | `Ezagent.Plugin` | `boot/1` | `apps/ezagent_core/lib/ezagent/plugin.ex:417` | body + nested |
 | `Ezagent.Presence` | `track/4` | `apps/ezagent_core/lib/ezagent/presence.ex:68` | guard + param |
-| `Ezagent.ProtocolApi.ReplyTransport` | `spawn_waiter/5` | `apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/reply_transport.ex:32` | nested |
+| `Ezagent.ProtocolApi.ReplyTransport` | `spawn_waiter/5` | `apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/reply_transport.ex:32` | body |
 | `Ezagent.ProviderConnection.CredentialBackend.RefreshUse` | `new/5` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_backend/refresh_use.ex:25` | guard |
 | `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `claim/3` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:12` | guard |
 | `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority` | `consume_claim/4` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:19` | guard |
@@ -116,8 +111,7 @@ for the A1b/A1c migration phases. **118 entries.**
 | `Ezagent.SpawnRegistry` | `spawn/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:105` | nested |
 | `Ezagent.SpawnRegistry` | `spawn_detailed/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:187` | nested |
 | `Ezagent.SystemPrincipal` | `ensure/1` | `apps/ezagent_core/lib/ezagent/system_principal.ex:84` | body |
-| `Ezagent.Workspace` | `create/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:65` | nested |
-| `Ezagent.Workspace` | `spawn_workspace/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:39` | body + nested |
+| `Ezagent.Workspace` | `spawn_workspace/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:39` | body |
 | `Ezagent.World.Jsonable` | `to_json/1` | `apps/ezagent_plugin_world/lib/ezagent/world/jsonable.ex:20` | guard |
 | `EzagentActor.Application` | `start/2` | `apps/ezagent_actor/lib/ezagent_actor/application.ex:12` | body |
 | `EzagentCore.Application` | `start/2` | `apps/ezagent_core/lib/ezagent_core/application.ex:9` | body |
@@ -128,7 +122,7 @@ for the A1b/A1c migration phases. **118 entries.**
 | `EzagentDomainExternalMirror.Application` | `start/2` | `apps/ezagent_domain_external_mirror/lib/ezagent_domain_external_mirror/application.ex:76` | body |
 | `EzagentDomainGit.Application` | `start/2` | `apps/ezagent_domain_git/lib/ezagent_domain_git/application.ex:7` | body |
 | `EzagentDomainIdentity.Application` | `start/2` | `apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex:62` | body |
-| `EzagentDomainInstanceMessage.AgentModuleResolver` | `spawn_agent/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/agent_module_resolver.ex:41` | nested |
+| `EzagentDomainInstanceMessage.AgentModuleResolver` | `spawn_agent/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/agent_module_resolver.ex:41` | body |
 | `EzagentDomainInstanceMessage.Application` | `start/2` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/application.ex:62` | body |
 | `EzagentDomainInstanceMessage.SessionCreator` | `install_session_socialware_async/1` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:273` | body |
 | `EzagentDomainSocialware.Application` | `start/2` | `apps/ezagent_domain_socialware/lib/ezagent_domain_socialware/application.ex:19` | body |
@@ -136,10 +130,10 @@ for the A1b/A1c migration phases. **118 entries.**
 | `EzagentDomainWorkspace.Application` | `start/2` | `apps/ezagent_domain_workspace/lib/ezagent_domain_workspace/application.ex:32` | body |
 | `EzagentPluginCc.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/bridge_adapter.ex:20` | guard |
 | `EzagentPluginCodex.BridgeAdapter` | `deliver/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_adapter.ex:18` | guard |
-| `EzagentPluginHello.Generator` | `concierge_start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:45` | nested |
-| `EzagentPluginHello.Generator` | `start/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:37` | nested |
-| `EzagentPluginHello.KanbanDelegation` | `start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:23` | nested |
-| `EzagentPluginHello.Router` | `route/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex:36` | nested |
+| `EzagentPluginHello.Generator` | `concierge_start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:49` | body |
+| `EzagentPluginHello.Generator` | `start/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:37` | body |
+| `EzagentPluginHello.KanbanDelegation` | `start/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:23` | body |
+| `EzagentPluginHello.Router` | `route/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex:38` | body |
 | `EzagentPluginHello.Template.HelloAgent` | `instantiate/3` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/template/hello_agent.ex:27` | body |
 | `EzagentWeb.Application` | `start/2` | `apps/ezagent_web/lib/ezagent_web/application.ex:9` | body |
 

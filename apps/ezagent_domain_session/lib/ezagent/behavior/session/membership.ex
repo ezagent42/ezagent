@@ -23,9 +23,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
   `:source` on join notifications (preserves the pre-extraction
   `__MODULE__` semantics).
   """
-  @spec do_join(URI.t(), pid(), map(), map(), module()) ::
+  @spec do_join(URI.t(), map(), map(), module()) ::
           {:ok, map(), [term()]} | {:error, term()}
-  def do_join(%URI{} = member_uri, _member_pid, ctx, facets, _source_module) do
+  def do_join(%URI{} = member_uri, ctx, facets, _source_module) do
     members = ctx[:read].(:members, %{})
     join_status = if Map.has_key?(members, member_uri), do: :already_member, else: :granted
     reserved_facets = ctx[:read].(:join_facets, %{})
@@ -323,7 +323,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
       true ->
         with {:ok, result, join_effects} <-
-               do_join(member_uri, nil, ctx, %{}, source_module) do
+               do_join(member_uri, ctx, %{}, source_module) do
           {:ok, Map.put(result, :approved, member_uri),
            join_effects ++ [{:set, :pending_members, Map.delete(pending, member_uri)}]}
         end
@@ -405,7 +405,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
         |> Members.sanitize_facets()
 
       with {:ok, %{status: :granted} = join_result, join_effects} <-
-             do_join(to_uri, nil, merge_intent_ctx(ctx, from_uri), facets, source_module),
+             do_join(to_uri, merge_intent_ctx(ctx, from_uri), facets, source_module),
            :ok <- repoint_read_markers(session_uri, from_uri, to_uri) do
         build_merge_member_effects(
           session_uri,

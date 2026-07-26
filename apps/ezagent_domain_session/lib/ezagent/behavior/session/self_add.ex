@@ -66,9 +66,9 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
           _missing_or_offline ->
             case Ezagent.KindRegistry.lookup(holder) do
-              {:ok, member_pid} ->
+              {:ok, _member_pid} ->
                 {_members, effects} =
-                  Effects.on_add(holder, member_pid, effective_facets, ctx, source_module)
+                  Effects.on_add(holder, effective_facets, ctx, source_module)
 
                 {:ok, %{status: :added}, effects}
 

@@ -33,7 +33,6 @@ defmodule Ezagent.ActionSet.Session.RouteProvisioner do
          {:ok, _result, effects} <-
            Membership.do_join(
              member_uri,
-             nil,
              system_mediated_ctx(ctx),
              facets,
              behavior_module

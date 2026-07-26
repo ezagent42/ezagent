@@ -50,7 +50,7 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:36` | `5ed3a0160303` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:40` | `2dfc67743c08` |
 | `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1056` | `a3ff38add245` |
-| `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:35` | `7d426e5ae957` |
+| `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:36` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:61` | `c0e0f15232a4` |
 | `Registry.select/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:74` | `6f7c665c8614` |
 | `Process.whereis/1` | `apps/ezagent_core/lib/ezagent/home/migration.ex:579` | `69eb90b5e732` |
@@ -88,8 +88,8 @@ taint tracking, out of scope by design.
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:159` | `e7ce1ed3aa9e` |
 | `GenServer.whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:136` | `72656dd22c72` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator.ex:284` | `e7850cf3319d` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:895` | `199e5f2c818c` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:38` | `99bfa828f500` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:47` | `99bfa828f500` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:25` | `99bfa828f500` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex:38` | `99bfa828f500` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:900` | `199e5f2c818c` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:39` | `3ab8cd3825a9` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:51` | `3ab8cd3825a9` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:26` | `3ab8cd3825a9` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/router.ex:41` | `3ab8cd3825a9` |

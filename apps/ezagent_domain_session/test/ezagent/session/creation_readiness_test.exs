@@ -10,7 +10,7 @@ defmodule Ezagent.Session.CreationReadinessTest do
 
   test "a message written after grant intent is replayed when the member projection converges" do
     {session, _session_pid} = spawn_session()
-    {member, member_pid} = confirmed_user("readiness")
+    {member, _member_pid} = confirmed_user("readiness")
     :ok = grant_member_cap(member, session)
     assert wait_mounted(session, member)
 
@@ -21,7 +21,6 @@ defmodule Ezagent.Session.CreationReadinessTest do
     {_members, effects} =
       Effects.on_add(
         member,
-        member_pid,
         %{},
         handler_ctx(session, member, 0),
         Session

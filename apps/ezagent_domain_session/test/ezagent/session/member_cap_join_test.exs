@@ -340,7 +340,6 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     owner = confirmed_user("owner")
     session = new_session("mc-compensate", owner)
     member = confirmed_user("member")
-    {:ok, member_pid} = Ezagent.KindRegistry.lookup(member)
 
     refute member_cap(member, session), "precondition: member holds no member-cap yet"
 
@@ -358,7 +357,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     }
 
     assert {:ok, _result, effects} =
-             Membership.do_join(member, member_pid, ctx, %{}, Ezagent.ActionSet.Session)
+             Membership.do_join(member, ctx, %{}, Ezagent.ActionSet.Session)
 
     refute Enum.any?(effects, &match?({:set, :members, _}, &1))
     assert wait_member_cap(member, session)
