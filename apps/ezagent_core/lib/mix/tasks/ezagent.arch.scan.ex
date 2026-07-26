@@ -143,9 +143,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # sanctioned anchors down by +46 (254→300 call site, 293→339 `@spec`,
     # 295→341 `def spawn_fresh/4`). SAME spawn-fresh ownership boundary; A1 added
     # no new spawn_fresh caller, it only pushed the frozen surface lower.
+    # V5 A1c chunk3 — `spawn_fresh/4` dropped the leaked `:pid` key from its
+    # result map (+ the `spawn/4` shim's `pid: _pid` match); the doc/spec grew
+    # by +4, shifting the SAME sanctioned `@spec`/`def` anchors 349→353 and
+    # 351→355. No new spawn_fresh caller; the spawn-fresh ownership boundary
+    # is unchanged.
     {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 310},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 349},
-    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 351},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 353},
+    {"apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex", 355},
     # PR-3S — `spawn_fresh_member/8` (def) + its single call site moved VERBATIM
     # from `Orchestrator.Tools` to `Orchestrator.Tools.MemberTemplate` along with
     # the `update_member_template` regenerate cluster (gt_1000 4→3 extraction).

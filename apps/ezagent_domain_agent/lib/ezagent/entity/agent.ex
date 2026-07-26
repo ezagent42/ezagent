@@ -308,10 +308,10 @@ defmodule Ezagent.Entity.Agent do
     # HIGH-1). Non-reconciler callers (test fixtures, future legacy
     # paths) keep the old behaviour through this shim.
     case spawn_fresh(template_uri, instance_name, workspace_uri, granted_by) do
-      {:ok, %{pid: _pid, fresh?: true, agent_uri: agent_uri}} ->
+      {:ok, %{fresh?: true, agent_uri: agent_uri}} ->
         {:ok, agent_uri}
 
-      {:ok, %{pid: _pid, fresh?: false, agent_uri: agent_uri}} ->
+      {:ok, %{fresh?: false, agent_uri: agent_uri}} ->
         # Legacy shim contract: an adopted worker still gets re-bound +
         # re-lineaged so the call returns the same `{:ok, agent_uri}`
         # shape pre-PR-A callers expect. This is the TOCTOU window
@@ -333,10 +333,10 @@ defmodule Ezagent.Entity.Agent do
   `spawn_fresh/4` performs `SpawnRegistry.spawn_detailed/1` and:
 
     * for `:started` (THIS call won the supervisor start) — records
-      lineage + binds workspace, returns `{:ok, %{pid, fresh?: true,
+      lineage + binds workspace, returns `{:ok, %{fresh?: true,
       agent_uri}}`;
     * for `:already_started` (the URI was live before this call) —
-      records NOTHING, returns `{:ok, %{pid, fresh?: false, agent_uri}}`.
+      records NOTHING, returns `{:ok, %{fresh?: false, agent_uri}}`.
       No `WorkspaceRegistry.bind`, no `AgentLineage.record`. The caller
       decides what to do with the existing process (re-enter an
       ownership gate, refuse to adopt, etc.).
@@ -345,9 +345,13 @@ defmodule Ezagent.Entity.Agent do
   Reconciler use: the orchestrator-ensure step (SPEC §2 step 2) calls
   `spawn_fresh/4` and on `fresh?: false` re-enters its ownership gate
   rather than silently re-parenting a foreign process at the same URI.
+
+  V5 A1c — the result map carries NO pid: callers address the worker by
+  `agent_uri`; the Kind pid stays behind the actor-app seam
+  (`SpawnRegistry`).
   """
   @spec spawn_fresh(URI.t(), String.t(), URI.t(), URI.t()) ::
-          {:ok, %{pid: pid(), fresh?: boolean(), agent_uri: URI.t()}} | {:error, term()}
+          {:ok, %{fresh?: boolean(), agent_uri: URI.t()}} | {:error, term()}
   def spawn_fresh(
         %URI{} = _template_uri,
         instance_name,
@@ -361,16 +365,16 @@ defmodule Ezagent.Entity.Agent do
 
     # derivation-edge: recorded-by SpawnObligations.record_lineage/2 on :started
     case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-      {:ok, :started, pid} ->
+      {:ok, :started, _pid} ->
         with :ok <- Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri),
              :ok <- Ezagent.Entity.Agent.SpawnObligations.record_lineage(agent_uri, granted_by) do
-          {:ok, %{pid: pid, fresh?: true, agent_uri: agent_uri}}
+          {:ok, %{fresh?: true, agent_uri: agent_uri}}
         end
 
-      {:ok, :already_started, pid} ->
+      {:ok, :already_started, _pid} ->
         # ZERO side effects on already-started — preserves the TOCTOU
         # avoidance contract (codex rev-4 HIGH-1). The caller decides.
-        {:ok, %{pid: pid, fresh?: false, agent_uri: agent_uri}}
+        {:ok, %{fresh?: false, agent_uri: agent_uri}}
 
       {:error, _} = err ->
         err

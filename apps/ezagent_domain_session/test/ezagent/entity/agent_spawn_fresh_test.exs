@@ -8,9 +8,11 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
 
   `Agent.spawn_fresh/4` semantics (codex rev-4 HIGH-1):
     * `{:ok, :started, pid}` from SpawnRegistry → record lineage +
-      bind workspace, return `{:ok, %{pid, fresh?: true, agent_uri}}`.
+      bind workspace, return `{:ok, %{fresh?: true, agent_uri}}`.
     * `{:ok, :already_started, pid}` → ZERO side effects (no bind, no
-      lineage record), return `{:ok, %{pid, fresh?: false, agent_uri}}`.
+      lineage record), return `{:ok, %{fresh?: false, agent_uri}}`.
+    * V5 A1c — the result map carries no pid; the worker is addressed
+      by `agent_uri`.
 
   `Agent.spawn/4` legacy-shim contract: return `{:ok, agent_uri}` on
   either fresh OR already_started — preserves the pre-PR-A behaviour
@@ -65,9 +67,11 @@ defmodule Ezagent.Entity.AgentSpawnFreshTest do
       granted_by = Ezagent.URI.new!("entity://team-alpha/user/granter-#{uniq()}")
       :ok = store_flavor(instance, flavor)
 
-      assert {:ok, %{pid: pid, fresh?: true, agent_uri: agent_uri}} =
+      assert {:ok, %{fresh?: true, agent_uri: agent_uri} = result} =
                Agent.spawn_fresh(@template_uri, instance, @default_ws, granted_by)
 
+      refute Map.has_key?(result, :pid)
+      assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
       assert is_pid(pid)
       assert URI.to_string(agent_uri) == "entity://team-alpha/agent/#{instance}"
 
