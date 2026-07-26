@@ -203,14 +203,18 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
                "persisted + rehydrated instead of rebuilt by activate/2 (the §2.3C bug)"
 
       # --- 4. The rebuilt monitor is a REAL, LIVE monitor on the member ---
-      # `activate/2` calls `Process.monitor(member_pid)`; the watched pid is
-      # the member Kind's live pid, so the host process appears in the
-      # member's :monitored_by set.
-      {:ok, host_pid_after} = KindRegistry.lookup(session_uri)
+      # `activate/2` re-monitors via `EzagentActor.Signal.monitor/1` (V5
+      # use-side B2): the raw `Process.monitor/1` is owned by the
+      # `EzagentActor.Signal.Monitor` relay on the host Kind's behalf, so
+      # the RELAY's pid appears in the member's :monitored_by set (the Kind
+      # receives the death as a `%Signal{kind: :down}` envelope, unwrapped
+      # back to the raw `{:DOWN, …}` tuple its `handle_signal/2` matches).
+      {:ok, _host_pid_after} = KindRegistry.lookup(session_uri)
+      relay_pid = Process.whereis(EzagentActor.Signal.Monitor)
       {:monitored_by, monitored_by} = Process.info(member_pid, :monitored_by)
 
-      assert host_pid_after in monitored_by,
-             "the rebuilt monitor is not a live Process.monitor on the member — " <>
+      assert relay_pid in monitored_by,
+             "the rebuilt monitor is not a live monitor on the member — " <>
                "activate/2 did not actually re-monitor the persisted member set"
 
       # --- 5. monitors is NEVER persisted (it is absent from the snapshot's

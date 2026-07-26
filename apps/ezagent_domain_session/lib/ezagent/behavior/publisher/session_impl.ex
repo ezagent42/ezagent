@@ -466,7 +466,15 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
 
       {:ok, replay_events} ->
         Enum.each(replay_events, fn %Event{} = ev ->
-          send(subscriber_pid, {:publisher_event, ev})
+          # V5 use-side B2 — the subscriber pid is all this slice stores
+          # (bare-pid fallback: no worker URI is keyed here), so the raw
+          # send carries the sanctioned envelope; the Kind.Server unwraps
+          # it back to `{:publisher_event, ev}` for the subscriber's
+          # `handle_signal/2`.
+          send(subscriber_pid, %EzagentActor.Signal{
+            kind: :signal,
+            payload: {:publisher_event, ev}
+          })
         end)
 
         # 2026-05-26 (Allen e2e perf fix): proactively flush dead-pid
@@ -616,14 +624,24 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
 
   defp fan_out(%Event{} = event, subscribers) when is_map(subscribers) do
     Enum.each(subscribers, fn {pid, _ref} ->
-      send(pid, {:publisher_event, event})
+      # V5 use-side B2 — bare-pid fallback (subscribers are keyed by pid,
+      # no URI is stored): raw send carrying the sanctioned envelope, which
+      # the subscriber Kind's envelope clause unwraps back to
+      # `{:publisher_event, event}`.
+      send(pid, %EzagentActor.Signal{kind: :signal, payload: {:publisher_event, event}})
     end)
   end
 
   defp ensure_monitored(publisher_slice, pid) do
     case Map.get(publisher_slice.subscribers, pid) do
       nil ->
-        ref = Process.monitor(pid)
+        # V5 use-side B2 — monitor via the sanctioned relay
+        # (`Signal.monitor/1`); the death arrives as `%Signal{kind: :down}`
+        # and the Kind.Server envelope clause reconstructs the exact
+        # `{:DOWN, ref, :process, pid, reason}` tuple the
+        # `handle_signal({:DOWN, …})` clause matches. Ref correlation
+        # (subscribers pid→ref, monitors ref→pid) is unchanged.
+        {:ok, ref} = EzagentActor.Signal.monitor(pid)
 
         new_publisher_slice = %{
           publisher_slice
@@ -644,6 +662,11 @@ defmodule Ezagent.ActionSet.Publisher.SessionImpl do
   # is no longer alive locally. Demonitors the matching ref with
   # `:flush` so the inevitable `:DOWN` (already queued for these dead
   # pids) is swallowed rather than racing the next `handle_kind_message`.
+  # (V5 use-side B2: refs now belong to the `EzagentActor.Signal.Monitor`
+  # relay, so the demonitor is a no-op for this Kind; the relay's
+  # re-delivered `%Signal{kind: :down}` for a pruned ref is ignored by
+  # `handle_signal({:DOWN, …})` — the ref was already dropped from
+  # `:monitors` here.)
   # If two nodes ever publish into one Session this needs to grow a
   # remote-node liveness check; today's single-node invariant lets us
   # use `Process.alive?/1`.

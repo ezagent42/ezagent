@@ -117,14 +117,20 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionAutoJoinTest do
 
       {_members, monitors_before, _slice} = session_members(session_uri)
 
-      # Check that `:monitored_by` on admin includes the session pid.
-      {:ok, session_pid} = KindRegistry.lookup(session_uri)
+      # Check that `:monitored_by` on admin includes the monitor owner.
+      # (V5 use-side B2: the raw `Process.monitor/1` is owned by the
+      # `EzagentActor.Signal.Monitor` relay on the Session Kind's behalf —
+      # the Kind receives the death as a `%Signal{kind: :down}` envelope.
+      # So the relay's pid, not the Session pid, appears in `:monitored_by`.)
+      {:ok, _session_pid} = KindRegistry.lookup(session_uri)
+      relay_pid = Process.whereis(EzagentActor.Signal.Monitor)
 
       {:monitored_by, monitored_by} = Process.info(admin_pid_before, :monitored_by)
 
-      assert session_pid in monitored_by,
-             "Session must hold a monitor on the admin pid (the structural " <>
-               "anchor for the chat.join idempotency short-circuit)"
+      assert relay_pid in monitored_by,
+             "the Signal.Monitor relay must hold a monitor on the admin pid on the " <>
+               "Session's behalf (the structural anchor for the chat.join idempotency " <>
+               "short-circuit)"
 
       # Repeated chat.join with the SAME admin pid — must NOT stack
       # monitors AND must NOT install a fresh ref (the existing one

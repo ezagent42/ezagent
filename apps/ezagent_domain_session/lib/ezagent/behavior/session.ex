@@ -562,8 +562,17 @@ defmodule Ezagent.ActionSet.Session do
       |> Map.keys()
       |> Enum.flat_map(fn %URI{} = uri ->
         case KindRegistry.lookup(uri) do
-          {:ok, pid} when is_pid(pid) -> [{Process.monitor(pid), uri}]
-          _ -> []
+          # V5 use-side B2 — the monitor rides the sanctioned relay
+          # (`Signal.monitor/1`); the death arrives as `%Signal{kind: :down}`
+          # and the Kind.Server envelope clause reconstructs the exact
+          # `{:DOWN, ref, :process, pid, reason}` tuple `handle_signal/2`
+          # matches. Ref correlation is unchanged.
+          {:ok, pid} when is_pid(pid) ->
+            {:ok, ref} = EzagentActor.Signal.monitor(pid)
+            [{ref, uri}]
+
+          _ ->
+            []
         end
       end)
       |> Map.new()

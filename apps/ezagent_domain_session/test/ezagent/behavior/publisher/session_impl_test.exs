@@ -345,8 +345,14 @@ defmodule Ezagent.ActionSet.Publisher.SessionImplTest do
       {:ok, _new_slice} =
         signal({:slice_changed, change}, slice, ctx(self_uri))
 
-      assert {:publisher_event, %Event{cursor: 1}} = Task.await(task1)
-      assert {:publisher_event, %Event{cursor: 1}} = Task.await(task2)
+      # V5 use-side B2 — the fan-out delivers the sanctioned envelope (these
+      # listener pids are not Kinds, so they see the envelope directly; a
+      # subscriber Kind's Server unwraps it back to `{:publisher_event, _}`).
+      assert %EzagentActor.Signal{kind: :signal, payload: {:publisher_event, %Event{cursor: 1}}} =
+               Task.await(task1)
+
+      assert %EzagentActor.Signal{kind: :signal, payload: {:publisher_event, %Event{cursor: 1}}} =
+               Task.await(task2)
     end
   end
 
@@ -824,7 +830,10 @@ defmodule Ezagent.ActionSet.Publisher.SessionImplTest do
 
   defp collect_events(n, acc) when n > 0 do
     receive do
-      {:publisher_event, %Event{} = ev} -> collect_events(n - 1, [ev | acc])
+      # V5 use-side B2 — replay arrives as the sanctioned envelope (this
+      # collector pid is not a Kind, so no unwrap happens here).
+      %EzagentActor.Signal{kind: :signal, payload: {:publisher_event, %Event{} = ev}} ->
+        collect_events(n - 1, [ev | acc])
     after
       500 -> Enum.reverse(acc)
     end

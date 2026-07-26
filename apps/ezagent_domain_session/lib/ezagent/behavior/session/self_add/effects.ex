@@ -27,10 +27,18 @@ defmodule Ezagent.ActionSet.Session.SelfAdd.Effects do
       end)
 
     Enum.each(old_refs_for_member, fn {ref, _uri} ->
+      # V5 use-side B2: refs now belong to the `EzagentActor.Signal.Monitor`
+      # relay, so this demonitor is a no-op for the Kind (it owns no raw
+      # monitor). A late `%Signal{kind: :down}` for a dropped ref is ignored
+      # by `handle_signal({:DOWN, …})` (the ref is no longer in `:monitors`).
       _ = Process.demonitor(ref, [:flush])
     end)
 
-    ref = Process.monitor(member_pid)
+    # V5 use-side B2 — monitor via the sanctioned relay; the death arrives
+    # as `%Signal{kind: :down}` and the Kind.Server envelope clause
+    # reconstructs the raw `{:DOWN, ref, :process, pid, reason}` tuple
+    # `handle_signal/2` matches. Ref correlation is unchanged.
+    {:ok, ref} = EzagentActor.Signal.monitor(member_pid)
     existing_meta = Map.get(members, member_uri, %{})
 
     joined_cursor =

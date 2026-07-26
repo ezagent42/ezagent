@@ -167,8 +167,15 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       # Mutate (chat.join adds a new member to the :chat slice).
       assert {:ok, %{status: :granted}} = mutate_chat_slice(session_uri)
 
-      # Receive the publisher event.
-      assert_receive {:publisher_event, %Event{cursor: cursor, slice_key: :session}}, 500
+      # Receive the publisher event (V5 use-side B2: the fan-out delivers
+      # the sanctioned envelope; this test pid is not a Kind, so it sees
+      # the envelope directly — a Kind's Server would unwrap it).
+      assert_receive %EzagentActor.Signal{
+                       kind: :signal,
+                       payload: {:publisher_event, %Event{cursor: cursor, slice_key: :session}}
+                     },
+                     500
+
       assert cursor == baseline + 1
     end
   end
@@ -371,7 +378,10 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
   defp collect_events(n, acc) when n > 0 do
     receive do
-      {:publisher_event, %Event{} = ev} -> collect_events(n - 1, [ev | acc])
+      # V5 use-side B2 — the fan-out delivers the sanctioned envelope (this
+      # collector pid is not a Kind, so no unwrap happens here).
+      %EzagentActor.Signal{kind: :signal, payload: {:publisher_event, %Event{} = ev}} ->
+        collect_events(n - 1, [ev | acc])
     after
       500 -> Enum.reverse(acc)
     end
