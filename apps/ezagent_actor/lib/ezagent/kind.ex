@@ -742,13 +742,41 @@ defmodule Ezagent.Kind do
   @doc """
   List every live Kind instance as `{uri_string, meta}` (§2.2 — the operator
   plane; the sole sanctioned `KindRegistry.list_all/0` wrapper). `meta` carries
-  the registered `pid`.
+  NON-pid status only (`:alive?`) — the registered pid never leaves the actor
+  seam (V5 A1c); act on an instance through the URI-keyed faces
+  (`terminate_supervised/2`, `Ezagent.Runtime.Resolver`).
   """
-  @spec list_instances() :: [{String.t(), %{pid: pid()}}]
+  @spec list_instances() :: [{String.t(), %{alive?: boolean()}}]
   def list_instances do
     Enum.map(Ezagent.KindRegistry.list_all(), fn {uri_str, pid} ->
-      {uri_str, %{pid: pid}}
+      {uri_str, %{alive?: Process.alive?(pid)}}
     end)
+  end
+
+  @doc """
+  Terminate the live Kind for `uri` as a child of `supervisor` (§2.2 — the
+  URI-keyed supervised-terminate face). The pid is resolved INSIDE the actor
+  seam and never returned. Idempotent: an unregistered `uri` is `:ok`; when the
+  child is not under `supervisor` (or already gone from it) the process is
+  still brought down with a direct `:shutdown` exit so the worker never
+  survives a supervisor mismatch.
+  """
+  @spec terminate_supervised(URI.t() | String.t(), DynamicSupervisor.supervisor()) :: :ok
+  def terminate_supervised(uri, supervisor) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} ->
+        case DynamicSupervisor.terminate_child(supervisor, pid) do
+          :ok ->
+            :ok
+
+          {:error, :not_found} ->
+            _ = Process.exit(pid, :shutdown)
+            :ok
+        end
+
+      :error ->
+        :ok
+    end
   end
 
   defp to_uri(%URI{} = uri), do: uri

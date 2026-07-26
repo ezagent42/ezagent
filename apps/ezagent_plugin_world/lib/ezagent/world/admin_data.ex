@@ -215,13 +215,13 @@ defmodule Ezagent.World.AdminData do
   defp overview_session_rows(_, _), do: []
 
   defp count_scheme(kinds, scheme) do
-    Enum.count(kinds, fn {uri_str, _pid} ->
+    Enum.count(kinds, fn {uri_str, _status} ->
       match?(%URI{scheme: ^scheme}, parse_uri(uri_str))
     end)
   end
 
   defp count_entity_type(kinds, type) do
-    Enum.count(kinds, fn {uri_str, _pid} ->
+    Enum.count(kinds, fn {uri_str, _status} ->
       case parse_uri(uri_str) do
         %URI{scheme: "entity"} = uri -> Ezagent.URI.type(uri) == {:ok, type}
         _ -> false
@@ -239,12 +239,11 @@ defmodule Ezagent.World.AdminData do
       {:ok, kinds} ->
         {:ok,
          kinds
-         |> Enum.map(fn {uri_str, pid} ->
+         |> Enum.map(fn {uri_str, status} ->
            %{
              "uri" => uri_str,
              "scheme" => uri_scheme(uri_str),
-             "alive" => is_pid(pid) and Process.alive?(pid),
-             "pid" => if(is_pid(pid), do: inspect(pid), else: nil)
+             "alive" => Map.get(status, :alive?, false)
            }
          end)
          |> Enum.sort_by(& &1["uri"])}
@@ -259,10 +258,10 @@ defmodule Ezagent.World.AdminData do
       {:ok, kinds} ->
         {:ok,
          kinds
-         |> Enum.flat_map(fn {uri_str, pid} ->
+         |> Enum.flat_map(fn {uri_str, status} ->
            case parse_uri(uri_str) do
              %URI{scheme: "template"} ->
-               [%{"uri" => uri_str, "alive" => is_pid(pid) and Process.alive?(pid)}]
+               [%{"uri" => uri_str, "alive" => Map.get(status, :alive?, false)}]
 
              _ ->
                []

@@ -44,15 +44,17 @@ defmodule Ezagent.Identity.OperatorReads do
   Authorized GLOBAL registry list-all for `caller`.
 
   Authorizes `caller` as an OPERATOR/admin BEFORE reading. On success
-  returns `{:ok, [{uri_string, pid}]}` (the raw
-  `Ezagent.KindRegistry.list_all/0` shape); a non-operator / nil /
-  malformed caller gets `{:error, :unauthorized}`.
+  returns `{:ok, [{uri_string, status_map}]}` where `status_map` carries
+  NON-pid status only (`:alive?`) — V5 A1c: the pid never escapes the
+  actor seam; operator introspection that needs to ACT on an instance does
+  so through the URI-keyed seam faces, not a bare pid. A non-operator /
+  nil / malformed caller gets `{:error, :unauthorized}`.
   """
   @spec registry_all(URI.t() | String.t() | term()) ::
-          {:ok, [{String.t(), pid()}]} | {:error, :unauthorized}
+          {:ok, [{String.t(), %{alive?: boolean()}}]} | {:error, :unauthorized}
   def registry_all(caller) do
     with :ok <- authorize(caller) do
-      {:ok, Enum.map(Ezagent.Kind.list_instances(), fn {uri, %{pid: pid}} -> {uri, pid} end)}
+      {:ok, Ezagent.Kind.list_instances()}
     end
   end
 

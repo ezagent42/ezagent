@@ -22,7 +22,7 @@ defmodule Ezagent.Identity.OperatorReadsTest do
 
       assert {:ok, kinds} = OperatorReads.registry_all(Ezagent.Entity.User.admin_uri())
 
-      assert Enum.any?(kinds, fn {uri, pid} -> uri == uri_str and pid == self() end)
+      assert Enum.any?(kinds, fn {uri, status} -> uri == uri_str and status.alive? end)
     end
 
     # F5 (read-plane PR-4 rework): the gate is
@@ -45,7 +45,7 @@ defmodule Ezagent.Identity.OperatorReadsTest do
       :ok = Ezagent.KindRegistry.put_new(uri_str, self())
 
       assert {:ok, kinds} = OperatorReads.registry_all(promoted)
-      assert Enum.any?(kinds, fn {uri, pid} -> uri == uri_str and pid == self() end)
+      assert Enum.any?(kinds, fn {uri, status} -> uri == uri_str and status.alive? end)
     end
 
     # F5: an ordinary authenticated non-admin is REJECTED — and the

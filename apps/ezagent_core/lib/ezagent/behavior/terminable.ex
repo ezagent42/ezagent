@@ -267,31 +267,13 @@ defmodule Ezagent.ActionSet.Terminable do
     end
   end
 
-  # Idempotent: look up the live pid, terminate it via the owning
-  # DynamicSupervisor. An absent pid (already terminated) is success.
+  # Idempotent: the URI-keyed public operator plane (§2.2
+  # `Kind.terminate_supervised/2`, V5 A1c) resolves the live pid INSIDE the
+  # actor seam and terminates it via the owning DynamicSupervisor (a
+  # supervisor mismatch still brings the process down). An absent instance
+  # (already terminated) is success.
   defp terminate_supervised(%URI{} = self_uri, supervisor) do
-    # Live pid via the public operator plane (§2.2 `Kind.list_instances/0`) — the
-    # actor-internal-free replacement for the `KindRegistry.lookup/1` pid
-    # resolution the supervised terminate needs.
-    uri_str = URI.to_string(self_uri)
-
-    case Enum.find(Ezagent.Kind.list_instances(), fn {u, _meta} -> u == uri_str end) do
-      {_u, %{pid: pid}} ->
-        case DynamicSupervisor.terminate_child(supervisor, pid) do
-          :ok ->
-            :ok
-
-          {:error, :not_found} ->
-            # The child is not under `supervisor` (or already gone) —
-            # terminate by pid directly so the worker still goes down.
-            _ = Process.exit(pid, :shutdown)
-            :ok
-        end
-
-      nil ->
-        # Already terminated — idempotent success.
-        :ok
-    end
+    Ezagent.Kind.terminate_supervised(self_uri, supervisor)
   rescue
     error ->
       Logger.warning(

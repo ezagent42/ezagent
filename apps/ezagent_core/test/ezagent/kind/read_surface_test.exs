@@ -187,16 +187,17 @@ defmodule Ezagent.Kind.ReadSurfaceTest do
       assert Kind.self?(uri) == false
     end
 
-    test "list_instances/0 wraps KindRegistry.list_all as {uri_string, %{pid: pid}}" do
+    test "list_instances/0 wraps KindRegistry.list_all as {uri_string, %{alive?: bool}} (no pid)" do
       uri = unique_uri()
-      pid = spawn_onchange(uri)
+      spawn_onchange(uri)
 
       instances = Kind.list_instances()
-      assert {URI.to_string(uri), %{pid: pid}} in instances
+      assert {URI.to_string(uri), %{alive?: true}} in instances
+      refute Enum.any?(instances, fn {_u, meta} -> Map.has_key?(meta, :pid) end)
 
       assert Enum.sort(instances) ==
                Ezagent.KindRegistry.list_all()
-               |> Enum.map(fn {u, p} -> {u, %{pid: p}} end)
+               |> Enum.map(fn {u, p} -> {u, %{alive?: Process.alive?(p)}} end)
                |> Enum.sort()
     end
   end

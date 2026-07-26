@@ -710,25 +710,10 @@ defmodule Ezagent.ActionSet.Sandbox do
   end
 
   defp terminate_supervised(%URI{} = self_uri, supervisor) do
-    # Live pid via the public operator plane (§2.2 `Kind.list_instances/0`) — the
-    # actor-internal-free replacement for the `KindRegistry.lookup/1` pid
-    # resolution the supervised terminate needs.
-    uri_str = URI.to_string(self_uri)
-
-    case Enum.find(Ezagent.Kind.list_instances(), fn {u, _meta} -> u == uri_str end) do
-      {_u, %{pid: pid}} ->
-        case DynamicSupervisor.terminate_child(supervisor, pid) do
-          :ok ->
-            :ok
-
-          {:error, :not_found} ->
-            _ = Process.exit(pid, :shutdown)
-            :ok
-        end
-
-      nil ->
-        :ok
-    end
+    # Supervised terminate via the URI-keyed public operator plane (§2.2
+    # `Kind.terminate_supervised/2`, V5 A1c) — the pid is resolved inside the
+    # actor seam and never held here.
+    Ezagent.Kind.terminate_supervised(self_uri, supervisor)
   rescue
     error ->
       Logger.warning(
