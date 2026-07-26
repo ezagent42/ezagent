@@ -366,16 +366,18 @@ defmodule Ezagent.Cap do
       if Ezagent.Cap.Authority.current_target?(target) do
         Ezagent.Cap.Verifier.valid_artifact?(artifact, presenter)
       else
-        case Ezagent.KindRegistry.lookup(Ezagent.URI.instance(target)) do
-          {:ok, pid} ->
-            GenServer.call(
-              pid,
-              {:ezagent_verify_cap_artifact, artifact, presenter},
-              Ezagent.Invocation.activate_budget_ms()
-            )
-
-          :error ->
-            false
+        # Delivery is URI-native (V5 A1c chunk2): the resolver resolves the
+        # instance URI to a pid INSIDE the seam. `{:error, :no_such_actor}`
+        # preserves the KindRegistry-miss -> false mapping; a mid-call
+        # death/timeout (`{:error, _}`) preserves the exit-catch -> false
+        # mapping below. Message shape + activate-budget timeout unchanged.
+        case Ezagent.Runtime.Resolver.call(
+               Ezagent.URI.instance(target),
+               {:ezagent_verify_cap_artifact, artifact, presenter},
+               Ezagent.Invocation.activate_budget_ms()
+             ) do
+          {:ok, reply} -> reply
+          {:error, _reason} -> false
         end
       end
     else
