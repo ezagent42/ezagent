@@ -39,18 +39,15 @@ this worklist proves "no ENUMERATED producer primitive occurs outside
 this list" (ANTI-DRIFT). It does NOT prove no other path can reach a
 Kind mailbox — that needs taint tracking, out of scope by design.
 
-**82 entries.**
+**71 entries.**
 
 | Primitive | Shape | File:Line | Note | Line SHA (12) |
 |---|---|---|---|---|
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_actor/lib/ezagent/idempotency/sweeper.ex:47` |  | `df427fbe1674` |
 | `Kernel.send/2` | `{:ezagent_reply, 2}` | `apps/ezagent_actor/lib/ezagent/invocation.ex:635` |  | `9457920f89b5` |
 | `Phoenix.PubSub.broadcast/3` | `{:ezagent_reply, 2}` | `apps/ezagent_actor/lib/ezagent/invocation.ex:640` |  | `2f2b09bbae79` |
-| `Kernel.send/2` | `{:ezagent_run_deferred, 2}` | `apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex:56` |  | `7c46750dca34` |
-| `Kernel.send/2` | `{:ezagent_external_ready_gate, 3}` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:73` |  | `a17e15811fa1` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex:61` |  | `366e061019d6` |
 | `Phoenix.PubSub.broadcast/3` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:364` |  | `ce2a7a8d797e` |
-| `Process.send_after/3` | `:snapshot_tick` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:322` |  | `e95511c07f72` |
-| `Process.send_after/3` | `:snapshot_tick` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1073` |  | `e95511c07f72` |
 | `Kernel.send/2` | `:dynamic` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:155` |  | `350e5f63b1c9` |
 | `Phoenix.PubSub.broadcast/3` | `{:slice_changed, 2}` | `apps/ezagent_actor/lib/ezagent/slice_change.ex:166` |  | `0361296c387b` |
 | `Process.send_after/3` | `:flush` | `apps/ezagent_actor/lib/ezagent/snapshot/writer.ex:112` |  | `fa68a62106bf` |
@@ -65,7 +62,6 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.broadcast/3` | `{:cc_event, 2}` | `apps/ezagent_core/lib/ezagent/cc_events.ex:49` |  | `d5f48462f038` |
 | `Phoenix.PubSub.broadcast/3` | `{:notification, 3}` | `apps/ezagent_core/lib/ezagent/notifications.ex:112` |  | `0361296c387b` |
 | `Phoenix.PubSub.local_broadcast/3` | `:dynamic` | `apps/ezagent_core/lib/ezagent/presence/tracker.ex:38` |  | `a16cac118e5e` |
-| `Phoenix.PubSub.broadcast/3` | `{:publisher_alive, 2}` | `apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex:144` |  | `0361296c387b` |
 | `Kernel.send/2` | `{:ets_owner_ready, 3}` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:48` |  | `42d5b963576d` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_agent/lib/ezagent/agent/retirement_sweeper.ex:186` |  | `2f032c2ad34d` |
 | `Process.send_after/3` | `{:transport_join_timeout, 3}` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:82` |  | `f41156a91956` |
@@ -74,16 +70,10 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Phoenix.PubSub.broadcast/3` | `{:cc_connected, 3}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:168` |  | `e7b0c6a12c9a` |
 | `Phoenix.PubSub.broadcast/3` | `{:agent_bridge_disconnected, 2}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:172` |  | `e761f1f7acc6` |
 | `Phoenix.PubSub.broadcast/3` | `{:cc_disconnected, 2}` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/registry.ex:173` |  | `036875f8f440` |
-| `Kernel.send/2` | `{:ezagent_em_reconcile, 2}` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex:249` |  | `a717ee66aeee` |
-| `Kernel.send/2` | `:ezagent_worker_initial_subscribe` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:279` |  | `f45c817b512a` |
-| `Process.send_after/3` | `{:ezagent_worker_resubscribe_retry, 2}` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:442` |  | `92b7d4eb2603` |
-| `Kernel.send/2` | `{:ezagent_worker_subscribe_result, 2}` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:489` |  | `d13876c38bdc` |
-| `Kernel.send/2` | `{:ezagent_worker_resubscribe_result, 3}` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:610` |  | `a4eb9503d31a` |
 | `Kernel.send/2` | `:reconcile_pass` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/boot_reconciler.ex:170` |  | `e56dce379fda` |
 | `Process.send_after/3` | `:reconcile_pass` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/boot_reconciler.ex:242` |  | `8f072ac84055` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/facade_nonce_table.ex:345` |  | `34c192a79fec` |
 | `Kernel.send/2` | `{:reconcile_adapters, 2}` | `apps/ezagent_domain_git/lib/ezagent/domain_git/adapter_registry.ex:75` |  | `18967b3e75ce` |
-| `Kernel.send/2` | `:ezagent_ce_reconcile` | `apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex:197` |  | `7f104c795ae8` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_identity/lib/ezagent/identity/reap_queue.ex:118` |  | `98e138d1528c` |
 | `Process.send_after/3` | `:sweep` | `apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding/sweeper.ex:65` |  | `44f1e1157f46` |
 | `Kernel.send/2` | `:recover_batch` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/recovery.ex:188` |  | `44abe5122779` |
@@ -103,9 +93,8 @@ Kind mailbox — that needs taint tracking, out of scope by design.
 | `Process.send_after/3` | `:check_parked_dialog` | `apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex:1004` |  | `c52a2726ec39` |
 | `Process.send_after/3` | `{:rpc_timeout, 2}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:415` |  | `83ff81ad447e` |
 | `Phoenix.PubSub.broadcast/3` | `{:pty_phase, 4}` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:869` |  | `0361296c387b` |
-| `Kernel.send/2` | `{:publisher_event, 2}` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:469` |  | `22e998d73d67` |
-| `Kernel.send/2` | `{:publisher_event, 2}` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:619` |  | `1c25e2bc84a4` |
-| `Kernel.send/2` | `{:ezagent_recover_settlements, 1}` | `apps/ezagent_domain_session/lib/ezagent/behavior/turn.ex:93` |  | `4eb7dbaf1616` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:474` |  | `ad4261f9d0db` |
+| `Kernel.send/2` | `:dynamic` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:631` |  | `14ef59068548` |
 | `Phoenix.PubSub.broadcast/3` | `{:read_marker_updated, 4}` | `apps/ezagent_domain_session/lib/ezagent/session/read_marker.ex:369` |  | `0361296c387b` |
 | `Phoenix.PubSub.broadcast/3` | `{:external_delivery, 2}` | `apps/ezagent_domain_session/lib/ezagent/socialware/settlement.ex:133` |  | `0361296c387b` |
 | `Phoenix.PubSub.broadcast/3` | `{:member_presence, 4}` | `apps/ezagent_domain_session/lib/ezagent_domain_instance_message/presence_fanout.ex:201` |  | `0361296c387b` |

@@ -40,7 +40,11 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
      "Task.Supervisor.async_nolink/2"},
     {"apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex",
      ":global.whereis_name/1"},
-    {"apps/ezagent_domain_session/lib/ezagent/behavior/session.ex", "Process.monitor/1"}
+    # (V5 use-side B2 RETARGETED the `behavior/session.ex` `Process.monitor/1`
+    # seed — the Kind-internal member monitors migrated onto the
+    # `EzagentActor.Signal.monitor/1` relay; the seed moves to the remaining
+    # session-app monitor site so the census keeps teeth on the primitive.)
+    {"apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex", "Process.monitor/1"}
   ]
 
   # The ONLY exempt files: the D3 resolver seam + the explicit supervision

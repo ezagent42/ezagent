@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**64 entries.**
+**63 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -48,10 +48,12 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:32` | `be34d1670e74` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:36` | `5ed3a0160303` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:40` | `2dfc67743c08` |
-| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1056` | `a3ff38add245` |
+| `Process.whereis/1` | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1066` | `a3ff38add245` |
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:35` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:61` | `c0e0f15232a4` |
 | `Registry.select/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:74` | `6f7c665c8614` |
+| `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent_actor/signal/monitor.ex:67` | `3da17a2026b0` |
+| `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent_actor/signal/monitor.ex:106` | `21199b519151` |
 | `Process.whereis/1` | `apps/ezagent_core/lib/ezagent/home/migration.ex:579` | `69eb90b5e732` |
 | `Process.monitor/1` | `apps/ezagent_core/lib/ezagent/kind/template/pre_start.ex:111` | `51cc02ba784f` |
 | `Process.whereis/1` | `apps/ezagent_core/lib/ezagent/lifecycle_case.ex:119` | `9afbc14196ea` |
@@ -65,8 +67,8 @@ taint tracking, out of scope by design.
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/live_join_registry.ex:36` | `02bd3324e502` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:36` | `0c34f7441131` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:56` | `39d1d22c7f9e` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:479` | `126bdf5c6894` |
-| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:600` | `126bdf5c6894` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:481` | `126bdf5c6894` |
+| `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:602` | `126bdf5c6894` |
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/gates.ex:303` | `8ba6652f7e63` |
 | `Registry.lookup/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:63` | `33e952ff1f75` |
 | `Registry.select/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/external_mirror/worker_registry.ex:78` | `164901f5e077` |
@@ -87,9 +89,6 @@ taint tracking, out of scope by design.
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:284` | `ca5b5e2e6a26` |
 | `Registry.lookup/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:133` | `ca5b5e2e6a26` |
 | `:sys.get_state/2` | `apps/ezagent_domain_python/lib/ezagent/domain/python/server.ex:136` | `d7a39f8c14a4` |
-| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:626` | `7d426e5ae957` |
-| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:565` | `fc4c08124cf7` |
-| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:33` | `52bb96193cae` |
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:159` | `e7ce1ed3aa9e` |
 | `Registry.lookup/2` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:119` | `f01aa338981c` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:223` | `7d426e5ae957` |

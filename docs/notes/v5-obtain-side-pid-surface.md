@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **134 entries.**
+for the A1b/A1c migration phases. **136 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -78,7 +78,7 @@ for the A1b/A1c migration phases. **134 entries.**
 | `Ezagent.Kind` | `terminate/1` | `apps/ezagent_actor/lib/ezagent/kind.ex:408` | body |
 | `Ezagent.Kind.LaunchContextRelay` | `issue/1` | `apps/ezagent_actor/lib/ezagent/kind/launch_context_relay.ex:6` | body |
 | `Ezagent.Kind.ReadyTransition` | `drain_pending_then_mark_ready/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:36` | guard + param |
-| `Ezagent.Kind.ReadyTransition` | `drain_pending_then_mark_ready_locked/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:82` | guard + param |
+| `Ezagent.Kind.ReadyTransition` | `drain_pending_then_mark_ready_locked/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:90` | guard + param |
 | `Ezagent.Kind.ReadyTransition` | `drain_then_mark_ready/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:24` | guard + param |
 | `Ezagent.Kind.ReadyTransition` | `register_not_ready/2` | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:9` | guard + nested + param |
 | `Ezagent.Kind.SliceAccess` | `get_raw_slice/2` | `apps/ezagent_actor/lib/ezagent/kind/slice_access.ex:104` | body |
@@ -133,6 +133,8 @@ for the A1b/A1c migration phases. **134 entries.**
 | `Ezagent.Workspace` | `spawn_workspace/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:39` | body + nested |
 | `Ezagent.World.Jsonable` | `to_json/1` | `apps/ezagent_plugin_world/lib/ezagent/world/jsonable.ex:20` | guard |
 | `EzagentActor.Application` | `start/2` | `apps/ezagent_actor/lib/ezagent_actor/application.ex:12` | body |
+| `EzagentActor.Signal` | `monitor/1` | `apps/ezagent_actor/lib/ezagent_actor/signal.ex:122` | guard + param |
+| `EzagentActor.Signal.Monitor` | `monitor/1` | `apps/ezagent_actor/lib/ezagent_actor/signal/monitor.ex:56` | guard + param |
 | `EzagentCore.Application` | `start/2` | `apps/ezagent_core/lib/ezagent_core/application.ex:9` | body |
 | `EzagentCore.EtsOwner` | `subscribe_lifecycle/1` | `apps/ezagent_core/lib/ezagent_core/ets_owner.ex:175` | guard |
 | `EzagentCore.EtsReadiness` | `ready/1` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:24` | guard + param |

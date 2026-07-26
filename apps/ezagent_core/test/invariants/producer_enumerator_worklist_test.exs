@@ -7,11 +7,14 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
   Two jobs:
 
     1. prove the enumerator is not blinded: it MUST surface every known
-       producer FLOOR site below (the B1 task's has-teeth floor — the
-       known raw producers into Kind mailboxes), INCLUDING sites inside
-       the actor app (which the FORWARD boundary gate excludes). If the
-       enumerator misses any, the ENUMERATOR is wrong — fix the
-       enumerator, not this test.
+       producer FLOOR site below. Post-B2 the floor is the DEFERRED
+       mixed-subscriber family ONLY (`{:pty_phase}` / `{:slice_changed}` —
+       topics with BOTH a Kind and a LiveView subscriber, left raw pending
+       a separate UI-coupling decision). The B2-migrated sites are pinned
+       by the "post-B2 migration" tests below (envelope-form sites are
+       still enumerated, with their new shapes). If the enumerator misses
+       any floor site, the ENUMERATOR is wrong — fix the enumerator, not
+       this test.
     2. regenerate the committed producer worklist
        `docs/notes/v5-use-side-producer-worklist.md` (full emit) — the B2
        migration worklist authority.
@@ -23,35 +26,16 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
   @worklist_path "docs/notes/v5-use-side-producer-worklist.md"
 
   # The has-teeth floor ({path, target, shape}) — every entry MUST be
-  # surfaced. Shapes are the statically-visible message literals (module
-  # attributes resolved: `:ezagent_ce_reconcile` arrives via
-  # `@ce_reconcile_signal` in config_evolve.ex).
+  # surfaced. Post-B2 this is the DEFERRED mixed-subscriber family: both
+  # topics have a LiveView subscriber as well as a Kind subscriber, so the
+  # producer stays raw until the UI-coupling decision (a later, separate
+  # task). Everything else from the B1 floor was migrated onto the
+  # `%EzagentActor.Signal{}` transport in B2 (see the post-B2 tests below).
   @floor [
-    # PubSub fan-out a Kind subscribes to
     {"apps/ezagent_domain_pty/lib/ezagent_domain_pty/phase_broadcast.ex",
      "Phoenix.PubSub.broadcast/3", {:pty_phase, 4}},
     {"apps/ezagent_actor/lib/ezagent/slice_change.ex", "Phoenix.PubSub.broadcast/3",
-     {:slice_changed, 2}},
-    {"apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex", "Phoenix.PubSub.broadcast/3",
-     {:publisher_alive, 2}},
-    # Raw cross-process sends into a Kind mailbox
-    {"apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex",
-     "Kernel.send/2", {:publisher_event, 2}},
-    {"apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex",
-     "Kernel.send/2", {:ezagent_worker_subscribe_result, 2}},
-    {"apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex",
-     "Kernel.send/2", {:ezagent_worker_resubscribe_result, 3}},
-    {"apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex", "Kernel.send/2",
-     {:ezagent_external_ready_gate, 3}},
-    # Raw SELF-sends (incl. deferred dispatch + Lifecycle activate loops)
-    {"apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex", "Kernel.send/2",
-     {:ezagent_run_deferred, 2}},
-    {"apps/ezagent_domain_session/lib/ezagent/behavior/turn.ex", "Kernel.send/2",
-     {:ezagent_recover_settlements, 1}},
-    {"apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex", "Kernel.send/2",
-     :ezagent_ce_reconcile},
-    {"apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror.ex",
-     "Kernel.send/2", {:ezagent_em_reconcile, 2}}
+     {:slice_changed, 2}}
   ]
 
   test "has-teeth: surfaces every producer floor site (path + primitive + shape)" do
@@ -63,15 +47,39 @@ defmodule EzagentCore.Invariants.ProducerEnumeratorWorklistTest do
     end
   end
 
-  test "has-teeth: BOTH publisher_event fan-out sites surface (replay + live)" do
-    count =
-      Enum.count(ProducerEnumerator.sites(), fn s ->
+  test "post-B2: the raw {:publisher_event} sends are gone; BOTH fan-out sites remain as bare-pid envelope wraps" do
+    sites = ProducerEnumerator.sites()
+
+    raw_count =
+      Enum.count(sites, fn s ->
         s.path == "apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex" and
           s.target == "Kernel.send/2" and s.shape == {:publisher_event, 2}
       end)
 
-    assert count == 2,
-           "expected 2 {:publisher_event} send sites in session_impl.ex, got #{count}"
+    assert raw_count == 0,
+           "expected 0 raw {:publisher_event} sends in session_impl.ex, got #{raw_count}"
+
+    # The bare-pid fallback form (B2): `send(pid, %EzagentActor.Signal{…})`
+    # is still a Kernel.send/2, with a :dynamic (struct-literal) shape.
+    wrapped_count =
+      Enum.count(sites, fn s ->
+        s.path == "apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex" and
+          s.target == "Kernel.send/2" and s.shape == :dynamic
+      end)
+
+    assert wrapped_count == 2,
+           "expected 2 bare-pid %Signal{} wrap sends in session_impl.ex, got #{wrapped_count}"
+  end
+
+  test "post-B2: the deferred-dispatch self-send remains as the bare-self envelope wrap" do
+    count =
+      Enum.count(ProducerEnumerator.sites(), fn s ->
+        s.path == "apps/ezagent_actor/lib/ezagent/kind/deferred_dispatch.ex" and
+          s.target == "Kernel.send/2" and s.shape == :dynamic
+      end)
+
+    assert count == 1,
+           "expected 1 bare-self %Signal{} wrap send in deferred_dispatch.ex, got #{count}"
   end
 
   test "has-teeth: the B1 transport's own envelope sends are enumerated (empty allowlist)" do

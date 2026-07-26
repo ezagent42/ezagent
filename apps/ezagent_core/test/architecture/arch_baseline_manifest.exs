@@ -355,7 +355,17 @@
   #   `caller_caps: presenter_caps(socket)` while world's `session_view_ctx/1`
   #   still calls `PresenterCaps.load(socket)` — so the two bodies DIVERGE and the
   #   duplicate group is gone. Back to main's pre-extraction value.
-  cross_file_duplicate_fn_groups: 42,
+  # arch-cap-bump: +3 V5 pid-closure B1 (use side) — the producer enumerator
+  #   (`ezagent_core/lib/ezagent/producer_enumerator.ex`) is deliberately
+  #   SELF-CONTAINED (NOT an extension of `Ezagent.ActorBoundaryScanner` —
+  #   the obtain-side track owns that file, so the B1 task could not share
+  #   it): its AST helpers (`collect_aliases/1`, `local_fun_names/1`,
+  #   `fn_name/1`, `resolve_ast`+`resolve`, `literal_attributes/1`, …) are
+  #   documented own-copies of the scanner's, producing 3 cross-file
+  #   duplicate-body groups. Burn-down = fold the enumerator into the
+  #   scanner (or extract a shared `Ezagent.AstIdioms` helper) once the
+  #   parallel-track shared-file constraint lifts. 42→45.
+  cross_file_duplicate_fn_groups: 45,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

@@ -64,8 +64,10 @@ defmodule Ezagent.PublisherLifecycle do
       esr:publisher:<self_uri>:lifecycle
 
   One topic per Publisher Kind URI. Subscribers receive
-  `{:publisher_alive, %URI{}}` messages when the publisher (re-)reaches
-  `:ready`.
+  `%EzagentActor.Signal{kind: :broadcast, payload: {:publisher_alive, %URI{}}}`
+  envelopes (V5 use-side B2) when the publisher (re-)reaches `:ready`; the
+  Kind.Server envelope clause unwraps them back to
+  `{:publisher_alive, %URI{}}` for the subscriber's `handle_signal/2`.
 
   ## Producer wiring
 
@@ -109,9 +111,11 @@ defmodule Ezagent.PublisherLifecycle do
   @doc """
   Subscribe the calling process to the lifecycle topic for `publisher_uri`.
 
-  After subscribing, the caller will receive `{:publisher_alive, %URI{}}`
-  messages every time the Publisher Kind at `publisher_uri` reaches
-  `:ready` (boot or cold-spawn rehydrate).
+  After subscribing, the caller will receive
+  `%EzagentActor.Signal{kind: :broadcast, payload: {:publisher_alive, %URI{}}}`
+  envelopes every time the Publisher Kind at `publisher_uri` reaches
+  `:ready` (boot or cold-spawn rehydrate); the Kind.Server envelope clause
+  unwraps them back to `{:publisher_alive, %URI{}}`.
 
   Returns `:ok`. Subscribing twice from the same pid is a no-op at the
   PubSub layer.
@@ -141,11 +145,15 @@ defmodule Ezagent.PublisherLifecycle do
   """
   @spec broadcast_alive(URI.t()) :: :ok
   def broadcast_alive(%URI{} = publisher_uri) do
-    Phoenix.PubSub.broadcast(
-      EzagentCore.PubSub,
-      topic(publisher_uri),
-      {:publisher_alive, publisher_uri}
-    )
+    # V5 use-side B2 — the broadcast rides the sanctioned transport
+    # (`Signal.broadcast/2` → the `:ezagent_actor, :pubsub` config port,
+    # wired to `EzagentCore.PubSub` at core boot, so it is the SAME server
+    # `subscribe/1` below uses). The only subscriber is the
+    # ExternalMirrorWorker Kind: it receives
+    # `%EzagentActor.Signal{kind: :broadcast, payload: {:publisher_alive, uri}}`,
+    # which the Kind.Server envelope clause unwraps back to
+    # `{:publisher_alive, uri}` for its `handle_signal/2`.
+    EzagentActor.Signal.broadcast(topic(publisher_uri), {:publisher_alive, publisher_uri})
 
     :ok
   rescue
