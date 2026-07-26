@@ -656,7 +656,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
                version: 1
              })
 
-    assert {:ok, original_sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    assert {:ok, original_sandbox_slice} = Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
     original_sandbox = Ezagent.Kind.normalize_slice_view(original_sandbox_slice)
 
     on_exit(fn ->
@@ -696,7 +696,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     refute instance_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     assert Profile.get(instance_uri) == original_profile
 
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
     assert Ezagent.Kind.normalize_slice_view(sandbox_slice) == original_sandbox
 
     assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(instance_uri)) ==
