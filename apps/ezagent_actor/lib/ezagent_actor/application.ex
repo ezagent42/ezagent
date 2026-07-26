@@ -27,6 +27,12 @@ defmodule EzagentActor.Application do
         # resolves through it until a sidecar migrates onto the seam.
         Ezagent.Runtime.SidecarRegistry,
 
+        # ②c Signal monitor relay (V5 use-side B1) — owns the raw
+        # `Process.monitor/1`s behind `EzagentActor.Signal.monitor/1` and
+        # re-delivers deaths as `%EzagentActor.Signal{kind: :down}`
+        # envelopes. Additive: nothing monitors through it yet.
+        EzagentActor.Signal.Monitor,
+
         # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
         # take the ETS owner with it.
         Ezagent.Idempotency.Sweeper,
