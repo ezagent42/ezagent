@@ -39,6 +39,23 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeamTest do
              ExecutionSeam.implementation().authorize(:anything, :anything)
   end
 
+  test "authorize/2 dispatches to the compile-time-selected backend, failing closed with no per-process backend installed" do
+    ExecutionSeamTestDelegate.clear_backend()
+
+    assert {:error, :authorization_unavailable} = ExecutionSeam.authorize(:anything, :anything)
+  end
+
+  test "authorize/2 dispatches through an injected fake backend, same as implementation/0 would" do
+    ExecutionSeamTestDelegate.put_backend(FakeExecutionSeam)
+
+    assert {:ok, %{authorized: true}} =
+             ExecutionSeam.authorize(%{binding_id: "whatever"}, :some_binding)
+
+    ExecutionSeamTestDelegate.clear_backend()
+
+    assert {:error, :authorization_unavailable} = ExecutionSeam.authorize(:anything, :anything)
+  end
+
   test "Unavailable.authorize/2 always fails closed regardless of input" do
     assert {:error, :authorization_unavailable} = Unavailable.authorize(:anything, :anything)
     assert {:error, :authorization_unavailable} = Unavailable.authorize(nil, nil)

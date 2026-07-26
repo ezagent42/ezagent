@@ -82,4 +82,20 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
   @doc "Resolves the compile-time-selected seam implementation. Defaults to the fail-closed backend."
   @spec implementation() :: module()
   def implementation, do: @backend
+
+  @doc """
+  Authorizes `run` against `binding` through the compile-time-selected seam.
+
+  This is the single call site that dispatches to `@backend` — callers
+  (e.g. `Authorization.authorize_run/2`) invoke this static remote function
+  instead of resolving `implementation/0` and calling the resulting module
+  themselves, so the dynamic-dispatch indirection this seam requires (see
+  moduledoc) is concentrated in one place rather than repeated at every
+  call site.
+  """
+  @spec authorize(WorkflowRun.t(), TaskBinding.t()) ::
+          {:ok, authorized_task()}
+          | {:error, :authorization_unavailable}
+          | {:error, :not_authorized}
+  def authorize(run, binding), do: @backend.authorize(run, binding)
 end

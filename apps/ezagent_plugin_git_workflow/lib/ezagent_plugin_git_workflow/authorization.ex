@@ -26,12 +26,13 @@ defmodule EzagentPluginGitWorkflow.Authorization do
           | {:error, :authorization_unavailable}
           | {:error, :not_authorized}
           | {:error, term()}
-  def authorize_run(%WorkflowRun{status: "accepted"} = run, %TaskBinding{} = binding) do
-    seam = ExecutionSeam.implementation()
-
-    case seam.authorize(run, binding) do
+  def authorize_run(
+        %WorkflowRun{status: "accepted", id: id, state_version: state_version} = run,
+        %TaskBinding{} = binding
+      ) do
+    case ExecutionSeam.authorize(run, binding) do
       {:ok, _authorized_task} ->
-        Store.transition(run.id, run.state_version, "accepted", "authorized")
+        Store.transition(id, state_version, "accepted", "authorized")
 
       {:error, _reason} = error ->
         error

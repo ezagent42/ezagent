@@ -2052,9 +2052,23 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
      "fddb236494dfb8322ed6c97cd41a96c9a8ef0f613b0dbc0ed08b02959fdf8241"}
   ]
 
+  # Git Provider V1 Plan E Slice P1 — ExecutionSeam.authorize/2 dispatches to
+  # `@backend` (a compile-time module attribute, see
+  # EzagentPluginGitWorkflow.ExecutionSeam moduledoc "Backend selection is
+  # compile-time, not runtime"). The scanner cannot distinguish an attribute
+  # receiver from a genuinely dynamic one, so this single consolidated
+  # dispatch site (the only caller of `@backend`, replacing what used to be a
+  # per-caller `ExecutionSeam.implementation().authorize(...)` call in
+  # Authorization.authorize_run/2) is tracked here rather than exempted.
+  @git_workflow_new_sites [
+    {"apps/ezagent_plugin_git_workflow/lib/ezagent_plugin_git_workflow/execution_seam.ex", 100,
+     {:authorize, 2}, :remote, "authorize/2",
+     "4ca59c6e6def622a62e585463a9dee15bc837de4eb0872d9c133524bcca5f3d8"}
+  ]
+
   @doc "Returns the audited dynamic receiver sites used by plugin production code."
   def sites do
-    Enum.map(@sites, &migrate_pr1497_site/1) ++ @pr1497_new_sites
+    Enum.map(@sites, &migrate_pr1497_site/1) ++ @pr1497_new_sites ++ @git_workflow_new_sites
   end
 
   defp migrate_pr1497_site({path, line, function, kind, call, fingerprint}) do
