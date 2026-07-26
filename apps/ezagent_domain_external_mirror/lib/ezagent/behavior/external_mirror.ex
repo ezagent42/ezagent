@@ -244,9 +244,12 @@ defmodule Ezagent.ActionSet.ExternalMirror do
   def activate(state, %{self_uri: session_uri}) do
     reconciled = reconcile_bindings(session_uri, state)
 
-    # §10-R1: defer the worker-spawn loop to post-`:ready`. `self()` is the
-    # Kind.Server pid — `:ready` by the time the mailbox drains.
-    send(self(), {:ezagent_em_reconcile, reconciled.bindings})
+    # §10-R1: defer the worker-spawn loop to post-`:ready`. The zero-delay
+    # `Signal.send_after/2` self-signal (V5 use-side B2) targets `self()`
+    # directly — the Kind.Server pid — `:ready` by the time the mailbox
+    # drains; the envelope clause unwraps it back to
+    # `{:ezagent_em_reconcile, reconciled.bindings}`.
+    EzagentActor.Signal.send_after({:ezagent_em_reconcile, reconciled.bindings}, 0)
 
     {:ok, %{}, reconciled}
   end

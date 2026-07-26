@@ -190,11 +190,13 @@ defmodule Ezagent.ActionSet.ConfigEvolve do
   # only return transients (no effects). It therefore CANNOT do the reconcile
   # directly. Per §10-R1 (ExternalMirror precedent) it self-defers a mailbox
   # message; `handle_signal/2` runs post-`:ready` and self-dispatches the
-  # `reconcile_cascade` action (full ctx). `send(self(), …)` is the only work
-  # done here. No transients to rebuild.
+  # `reconcile_cascade` action (full ctx). The zero-delay `Signal.send_after/2`
+  # self-signal (V5 use-side B2 — arrives as `%Signal{kind: :timer}`, unwrapped
+  # back to `@ce_reconcile_signal` by the Kind.Server envelope clause) is the
+  # only work done here. No transients to rebuild.
   @impl Ezagent.Lifecycle
   def activate(_state, _ctx) do
-    send(self(), @ce_reconcile_signal)
+    EzagentActor.Signal.send_after(@ce_reconcile_signal, 0)
     {:ok, %{}}
   end
 

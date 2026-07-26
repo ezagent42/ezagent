@@ -137,13 +137,18 @@ defmodule Ezagent.ActionSet.ExternalMirror.ReconcileAfterLoadTest do
       _row = insert_binding!(session, "feishu", "oc_activate")
 
       # Drives the exact crash site: activate/2 → reconcile_bindings → then
-      # `reconciled.bindings` (KeyError pre-fix). activate sends a message
-      # to self(); the test process receives it, proving no raise.
+      # `reconciled.bindings` (KeyError pre-fix). activate self-signals via
+      # the B2 transport (`Signal.send_after/2`); the test process receives
+      # the envelope, proving no raise.
       assert {:ok, %{}, reconciled} =
                ExternalMirror.activate(%{}, %{self_uri: session})
 
       assert length(reconciled.bindings) == 1
-      assert_receive {:ezagent_em_reconcile, [_binding]}
+
+      assert_receive %EzagentActor.Signal{
+        kind: :timer,
+        payload: {:ezagent_em_reconcile, [_binding]}
+      }
     end
   end
 end

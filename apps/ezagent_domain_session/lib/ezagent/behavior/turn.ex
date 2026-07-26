@@ -90,7 +90,10 @@ defmodule Ezagent.ActionSet.Turn do
   # `apply_signal_effects` → `Router.dispatch`); `activated/2` itself cannot.
   @impl Ezagent.Lifecycle
   def activated(_state, _ctx) do
-    send(self(), {:ezagent_recover_settlements})
+    # V5 use-side B2 — the recovery self-signal rides the sanctioned
+    # transport (zero-delay `Signal.send_after/2`; the Kind.Server envelope
+    # clause unwraps it back to `{:ezagent_recover_settlements}`).
+    EzagentActor.Signal.send_after({:ezagent_recover_settlements}, 0)
     :ok
   end
 

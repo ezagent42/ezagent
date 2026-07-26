@@ -268,7 +268,8 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
     # The Task carries the Worker's pid as `subscriber_pid` (so the Session
     # fans publisher events to the Worker, not the Task) and reports its
     # outcome back as a `{:ezagent_worker_subscribe_result, _}` signal. This
-    # is the canonical §10-R1 `activate → defer → handle_signal` pattern.
+    # is the canonical §10-R1 `activate → defer → handle_signal` pattern
+    # (V5 use-side B2: the deferral is a zero-delay `Signal.send_after/2`).
     #
     # On a cold-load `state.publisher_cursor` is the last-published cursor
     # (cursor-based catch-up replay); on a fresh spawn it is the cursor
@@ -276,7 +277,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
     # Session's then-current publisher cursor as `initial_publisher_cursor`),
     # so the first subscribe replays any slice change emitted during the
     # spawn→subscribe window — no first-event loss.
-    send(self(), :ezagent_worker_initial_subscribe)
+    EzagentActor.Signal.send_after(:ezagent_worker_initial_subscribe, 0)
 
     # Task #49 (2026-05-27) — subscribe to the Session's lifecycle topic
     # so we get a kick if the Session is cold-spawned later. On
@@ -439,8 +440,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
         {:ok, [{:set, :publisher_cursor, current_cursor}]}
 
       {:error, :not_ready} when attempt < @max_resubscribe_attempts ->
-        Process.send_after(
-          self(),
+        EzagentActor.Signal.send_after(
           {:ezagent_worker_resubscribe_retry, attempt + 1},
           @resubscribe_backoff_ms
         )
@@ -464,7 +464,9 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
   # for the deadlock rationale). The Task carries the Worker's pid as the
   # `subscriber_pid` (so the Session fans publisher events to the Worker, not
   # the Task) and the Worker URI as the CapBAC caller; it sends the result
-  # back as a signal.
+  # back as a signal (V5 use-side B2: via the sanctioned `Signal.signal/2` —
+  # the Worker URI is already in scope; `:not_found` means the Worker died
+  # mid-subscribe, the exact analogue of a raw send to a dead pid).
   defp spawn_initial_subscribe_task(nil, _self_uri, _cursor, _subscribe_cap), do: :ok
 
   defp spawn_initial_subscribe_task(
@@ -486,7 +488,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
             subscribe_cap
           )
 
-        send(worker_pid, {:ezagent_worker_subscribe_result, result})
+        _ = EzagentActor.Signal.signal(self_uri, {:ezagent_worker_subscribe_result, result})
       end)
 
     :ok
@@ -607,7 +609,12 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorker do
             subscribe_cap
           )
 
-        send(worker_pid, {:ezagent_worker_resubscribe_result, result, attempt})
+        # V5 use-side B2 — result back via `Signal.signal/2` (URI in scope).
+        _ =
+          EzagentActor.Signal.signal(
+            self_uri,
+            {:ezagent_worker_resubscribe_result, result, attempt}
+          )
       end)
 
     :ignore
