@@ -325,7 +325,9 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
         reply: :ignore
       })
 
-    send(pid, {:ezagent_run_deferred, [cmd]})
+    # H3: deliver via the sealed envelope (same shape DeferredDispatch.enqueue
+    # self-sends) — a raw `{:ezagent_run_deferred, …}` tuple is unsanctioned.
+    send(pid, %EzagentActor.Signal{kind: :signal, payload: {:ezagent_run_deferred, [cmd]}})
 
     assert_receive {:probe_ran, observed_caller, :initial}, 1000
     assert observed_caller == Ezagent.Entity.User.admin_uri()

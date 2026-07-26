@@ -233,9 +233,14 @@ defmodule Ezagent.Agent.TransportReadinessTest do
 
     state = %{sentinel: true}
 
+    # H3: the ready-gate timeout rides the sealed transport — deliver it as a
+    # `%Signal{}` envelope (the raw public clause no longer exists).
     assert {:noreply, ^state} =
              Ezagent.Kind.Server.handle_info(
-               {:ezagent_external_ready_gate, URI.to_string(uri), {:error, :timeout}},
+               %EzagentActor.Signal{
+                 kind: :signal,
+                 payload: {:ezagent_external_ready_gate, URI.to_string(uri), {:error, :timeout}}
+               },
                state
              )
 
@@ -296,9 +301,7 @@ defmodule Ezagent.Agent.TransportReadinessTest do
     on_exit(fn -> :persistent_term.erase(probe_key) end)
 
     {:ok, kind_pid} =
-      Ezagent.Kind.Server.start_link(
-        {Ezagent.Agent.TransportRearmProbeKind, %{uri: uri}}
-      )
+      Ezagent.Kind.Server.start_link({Ezagent.Agent.TransportRearmProbeKind, %{uri: uri}})
 
     on_exit(fn ->
       :ok = TransportReadiness.clear(uri)
@@ -393,7 +396,8 @@ defmodule Ezagent.Agent.TransportReadinessTest do
       BridgeRegistry.unbind(uri)
     end)
 
-    # bind/3 broadcasts {:agent_bridge_connected, uri, info} on Registry.topic().
+    # bind/3 broadcasts {:agent_bridge_connected, uri, info} on Registry.topic()
+    # (as a %Signal{kind: :broadcast} envelope, H3).
     :ok = BridgeRegistry.bind(uri, bridge, %{bridge_flavor: "cc"})
 
     # The listener reacts asynchronously; poll briefly.
@@ -444,7 +448,8 @@ defmodule Ezagent.Agent.TransportReadinessTest do
       granted_at: DateTime.utc_now()
     }
 
-    %Ezagent.Invocation{origin: :trusted_internal,
+    %Ezagent.Invocation{
+      origin: :trusted_internal,
       target: Ezagent.URI.with_action(uri, :identity, :absorb_cap),
       mode: :cast,
       args: %{artifact: artifact},

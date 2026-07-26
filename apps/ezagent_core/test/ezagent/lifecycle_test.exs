@@ -340,9 +340,9 @@ defmodule Ezagent.LifecycleTest do
       topic = "lifecycle_signal_test:#{System.unique_integer([:positive])}"
       :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, topic)
 
-      # Deliver the signal as a raw GenServer message — the engine's
-      # handle_info forwards it to handle_kind_message → __run_signal__.
-      send(pid, {:lifecycle_signal_notify, topic})
+      # Deliver the signal via the sealed transport — the engine's
+      # handle_info(%Signal{}) routes it to handle_kind_message → __run_signal__.
+      send(pid, %EzagentActor.Signal{kind: :signal, payload: {:lifecycle_signal_notify, topic}})
 
       # The :notify side-effect bucket must have executed (NOT just the
       # :set / :set_transient) — we receive the broadcast.
@@ -399,7 +399,7 @@ defmodule Ezagent.LifecycleTest do
         Application.put_env(:ezagent_core, Ezagent.Cap, previous)
       end)
 
-      send(pid, {:lifecycle_signal_dispatch, target})
+      send(pid, %EzagentActor.Signal{kind: :signal, payload: {:lifecycle_signal_dispatch, target}})
 
       # The :dispatch effect must have executed against the target Kind:
       # its counter is bumped by 7 (proving the signal path ran the

@@ -412,7 +412,7 @@ defmodule Ezagent.Kind.InstanceSetDenialTest do
 
     {:ok, pid} = Ezagent.Kind.spawn(SupersetSessionKind, %{uri: uri, behaviors: chat_only})
 
-    send(pid, {:some_signal, :payload})
+    send(pid, %EzagentActor.Signal{kind: :signal, payload: {:some_signal, :payload}})
     _ = :sys.get_state(pid)
 
     refute_received {:probe, :handle_signal}
