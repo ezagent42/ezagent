@@ -323,6 +323,59 @@ defmodule Ezagent.Runtime.ResolverTest do
     end
   end
 
+  describe "terminate_child/3 sync: true — provably-free key on return (A1b-rest chunk 3)" do
+    test "returns only after the child is DOWN and the key no longer resolves to it" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+      parent = unique_uri("parent")
+      key = {parent, :plugin_cc, :backend}
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {EchoServer, name: SidecarRegistry.via(parent, :plugin_cc, :backend)}
+        )
+
+      assert :ok = Resolver.terminate_child(key, sup, sync: true)
+
+      # NO polling: the sync variant blocked until the :via entry was freed —
+      # the plain variant would need `assert_eventually` here (chunk-2 gotcha).
+      refute Process.alive?(pid)
+      assert Resolver.pid_for(key) == :not_found
+    end
+
+    test "an immediate recreate under the same key gets a FRESH pid (no stale reuse)" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+      parent = unique_uri("parent")
+      key = {parent, :plugin_cc, :backend}
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          sup,
+          {EchoServer, name: SidecarRegistry.via(parent, :plugin_cc, :backend)}
+        )
+
+      assert :ok = Resolver.terminate_child(key, sup, sync: true)
+
+      {:ok, pid2} =
+        DynamicSupervisor.start_child(
+          sup,
+          {EchoServer, name: SidecarRegistry.via(parent, :plugin_cc, :backend)}
+        )
+
+      assert pid2 != pid
+      assert {:ok, {:echoed, :fresh}} = Resolver.call(key, {:echo, :fresh})
+    end
+
+    test ":not_found when nothing is registered under the key" do
+      {:ok, sup} = DynamicSupervisor.start_link(strategy: :one_for_one)
+
+      assert :not_found =
+               Resolver.terminate_child({unique_uri("absent"), :plugin_cc, :backend}, sup,
+                 sync: true
+               )
+    end
+  end
+
   describe "list_keys/1 — key-only enumeration, NEVER pids (A1b)" do
     test "returns the plugin's resolver keys (usable with call/cast), never a pid" do
       parent_a = unique_uri("parent-a")

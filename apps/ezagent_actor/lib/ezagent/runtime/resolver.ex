@@ -36,7 +36,10 @@ defmodule Ezagent.Runtime.Resolver do
     * `alive?/1` — liveness as a plain boolean;
     * `terminate_child/2` — resolves internally and asks the CALLER-NAMED
       `DynamicSupervisor` to terminate the child (the supervisor name is
-      public knowledge; the pid stays in the seam);
+      public knowledge; the pid stays in the seam). `terminate_child/3` with
+      `sync: true` additionally BLOCKS until the child is DOWN and the
+      registry key no longer resolves to the terminated pid (V5 A1b-rest
+      chunk 3 — teardown→recreate paths like SessionManager `stop/1`);
     * `list_keys/1` — key-only enumeration of one plugin's sidecar
       entries (KEYS, never pids) — the `list_agents/0`-style replacement.
 
@@ -232,18 +235,90 @@ defmodule Ezagent.Runtime.Resolver do
   to feed `DynamicSupervisor.terminate_child/2` themselves. `:ok` when the
   child was terminated (or the supervisor no longer had it), `:not_found`
   when nothing is registered under `key`.
+
+  ## `sync: true` — the synchronous variant (V5 A1b-rest chunk 3)
+
+  With `sync: true` the call BLOCKS until the child is provably gone: the
+  seam `Process.monitor`s the resolved pid, issues the supervisor
+  `terminate_child`, waits for the `{:DOWN, ...}` (bounded, 5s), then waits
+  out the `SidecarRegistry`'s ASYNCHRONOUS DOWN-cleanup so the `:unique` key
+  no longer resolves to the terminated pid before returning. A
+  fire-and-forget teardown lets an immediate recreate observe the dying
+  `:via` registration and reuse a STALE pid (the Registry frees its entry on
+  its own monitor, not synchronously with `terminate_child`); the sync
+  variant exists for teardown→recreate paths (e.g. SessionManager `stop/1`,
+  whose rollback→recreate must never race) that need the key provably free
+  on return. The pid stays in the seam either way.
   """
-  @spec terminate_child(key(), DynamicSupervisor.supervisor()) :: :ok | :not_found
-  def terminate_child(key, supervisor) do
+  @spec terminate_child(key(), DynamicSupervisor.supervisor(), keyword()) :: :ok | :not_found
+  def terminate_child(key, supervisor, opts \\ []) do
     case pid_for(key) do
       {:ok, pid} ->
-        case DynamicSupervisor.terminate_child(supervisor, pid) do
-          :ok -> :ok
-          {:error, :not_found} -> :not_found
+        if Keyword.get(opts, :sync, false) do
+          terminate_child_sync(key, supervisor, pid)
+        else
+          terminate_supervisor_child(supervisor, pid)
         end
 
       :not_found ->
         :not_found
+    end
+  end
+
+  # The plain (fire-and-forget) variant: the Registry's async DOWN-cleanup
+  # frees the key a beat later — callers that `alive?`-probe right after must
+  # poll (the chunk-2 eventually-consistent gotcha).
+  defp terminate_supervisor_child(supervisor, pid) do
+    case DynamicSupervisor.terminate_child(supervisor, pid) do
+      :ok -> :ok
+      {:error, :not_found} -> :not_found
+    end
+  end
+
+  # Bounded wait for the child's :DOWN (matches the 5s bound the old
+  # SessionManager `stop/1` used for the same guarantee).
+  @sync_terminate_down_timeout 5_000
+
+  # Bounded extra wait for the SidecarRegistry's async DOWN-cleanup once the
+  # child is confirmed dead (50 × 10ms — cleanup is prompt; this only absorbs
+  # the registry's scheduling lag).
+  @sync_terminate_key_free_attempts 50
+
+  defp terminate_child_sync(key, supervisor, pid) do
+    ref = Process.monitor(pid)
+
+    case DynamicSupervisor.terminate_child(supervisor, pid) do
+      :ok ->
+        receive do
+          {:DOWN, ^ref, :process, ^pid, _reason} ->
+            await_key_free(key, pid, @sync_terminate_key_free_attempts)
+        after
+          @sync_terminate_down_timeout ->
+            Process.demonitor(ref, [:flush])
+        end
+
+        :ok
+
+      {:error, :not_found} ->
+        Process.demonitor(ref, [:flush])
+        :not_found
+    end
+  end
+
+  # The Registry frees the :via entry on its own :DOWN monitor — prompt but
+  # ASYNC w.r.t. the caller's. Poll (bounded) until the seam no longer
+  # resolves the key to the TERMINATED pid; a DIFFERENT pid means a
+  # replacement already owns the key (fine — our terminate still landed).
+  defp await_key_free(_key, _pid, 0), do: :ok
+
+  defp await_key_free(key, pid, attempts) do
+    case pid_for(key) do
+      {:ok, ^pid} ->
+        Process.sleep(10)
+        await_key_free(key, pid, attempts - 1)
+
+      _ ->
+        :ok
     end
   end
 
