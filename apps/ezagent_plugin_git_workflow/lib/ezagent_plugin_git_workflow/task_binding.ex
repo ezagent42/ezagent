@@ -5,9 +5,19 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
   Validates provider-neutral repository coordinates through
   `Ezagent.DomainGit.RepositoryRef.new/1`. No credential, token,
   installation id, OAuth value, or private key fields.
+
+  `allowed_head_namespace` is validated at construction so every ref it can
+  ever produce is a legal Git ref within the 255-byte limit (design
+  docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+  §5.2). The digest half of a derived ref is always exactly 24 lowercase hex
+  characters, so deriving one representative ref from a dummy run id and
+  checking it is sufficient — see `valid_head_namespace?/1`.
   """
 
   alias Ezagent.DomainGit.RepositoryRef
+  alias EzagentPluginGitWorkflow.DeterministicRef
+
+  @representative_run_id "run_" <> String.duplicate("a", 64)
 
   @fields [
     :id,
@@ -110,7 +120,7 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
       {:owner_path, is_binary(owner_path) and byte_size(owner_path) > 0},
       {:base_ref, is_binary(base_ref) and byte_size(base_ref) > 0},
       {:visibility, visibility in [:public, :private]},
-      {:allowed_head_namespace, is_binary(allowed_head_namespace)},
+      {:allowed_head_namespace, valid_head_namespace?(allowed_head_namespace)},
       {:enabled, is_boolean(enabled)}
     ]
 
@@ -119,6 +129,17 @@ defmodule EzagentPluginGitWorkflow.TaskBinding do
       {field, _} -> {:error, {:invalid_field, field}}
     end
   end
+
+  # A namespace is valid iff every ref it can ever derive is a valid Git ref.
+  # Only the namespace varies the outcome (the digest half is always 24 fixed
+  # hex chars), so checking one representative derived ref is exhaustive.
+  defp valid_head_namespace?(ns) when is_binary(ns) do
+    ns
+    |> DeterministicRef.derive(@representative_run_id)
+    |> RepositoryRef.valid_ref?()
+  end
+
+  defp valid_head_namespace?(_ns), do: false
 
   defp validate_repository_ref(attrs) do
     repo_attrs = %{

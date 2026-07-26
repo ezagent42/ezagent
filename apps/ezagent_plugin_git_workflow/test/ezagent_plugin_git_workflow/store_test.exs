@@ -40,7 +40,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       external_task_id: "task-accept-1",
       source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
       source_revision: "abc123",
-      requested_head_ref: "feature/test"
+      requested_head_ref: nil
     }
 
     {:ok, intent} = Map.merge(defaults, attrs) |> AcceptIntent.new()

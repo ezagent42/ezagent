@@ -48,6 +48,39 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       bad = %{@valid_binding_attrs | base_ref: "refs/heads/main"}
       assert {:error, {:invalid_repository_ref, _}} = TaskBinding.new(bad)
     end
+
+    test "accepts a normal allowed_head_namespace like feature/" do
+      assert {:ok, %TaskBinding{allowed_head_namespace: "feature/"}} =
+               TaskBinding.new(@valid_binding_attrs)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain .." do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature/../"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain //" do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature//sub/"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain @{" do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature/@{/"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would exceed 255 bytes" do
+      # derived length = byte_size(ns) + byte_size("run-") + 24 hex chars
+      #                = byte_size(ns) + 28
+      # 255 - 28 = 227, so 228+ overflows the limit.
+      bad = %{@valid_binding_attrs | allowed_head_namespace: String.duplicate("a", 228)}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "accepts allowed_head_namespace exactly at the 255-byte derived-ref boundary" do
+      ok = %{@valid_binding_attrs | allowed_head_namespace: String.duplicate("a", 227)}
+      assert {:ok, %TaskBinding{}} = TaskBinding.new(ok)
+    end
   end
 
   describe "WorkflowRun closed status set" do

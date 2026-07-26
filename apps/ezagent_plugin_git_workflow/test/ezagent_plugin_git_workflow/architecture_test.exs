@@ -6,6 +6,11 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   @app_dir Path.expand("../..", __DIR__)
   @lib_dir Path.join(@app_dir, "lib")
 
+  # Single source of truth for the "scan every claim-path source file" checks
+  # below (previously duplicated three times, which is how the atom-safety
+  # scan missed deterministic_ref.ex).
+  @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex)
+
   describe "no public ingress" do
     test "no ActionSet module exists" do
       action_set_dir = Path.join(@app_dir, "lib/ezagent/behavior")
@@ -91,14 +96,13 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
   describe "claim path rejects forbidden modules" do
     test "no Kind/Cap/Agent/sidecar/Req in lib modules" do
-      sources = ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex)
       forbidden = ~w(
         Kind.spawn Cap.issue Cap.store Ezagent.ActionSet.GitTaskAccess
         EzagentPluginGithub EzagentPluginKanban WorkspaceProvision Agent.Sidecar
         Req.get Req.post Req.put Req.delete Req.request
       )
 
-      for source <- sources do
+      for source <- @source_files do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do
@@ -140,7 +144,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
     end
 
     test "no String.to_atom/1 (atom safety)" do
-      for source <- ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex) do
+      for source <- @source_files do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do
@@ -242,8 +246,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
   describe "no CapBAC / authorization" do
     test "no reference to Ezagent.Cap in lib modules" do
-      for source <-
-            ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex) do
+      for source <- @source_files do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do
