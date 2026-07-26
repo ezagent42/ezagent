@@ -806,11 +806,13 @@ defmodule Ezagent.Kind do
     end
   end
 
-  @doc "Return whether `observer` monitors a live process without exposing process state."
-  @spec monitored_by?(pid(), pid()) :: boolean()
-  def monitored_by?(pid, observer \\ self()) when is_pid(pid) and is_pid(observer) do
-    case Process.info(pid, :monitored_by) do
-      {:monitored_by, monitors} when is_list(monitors) -> observer in monitors
+  @doc "Return whether the calling process monitors the live Kind for `uri` without exposing process state."
+  @spec monitored_by?(URI.t() | String.t()) :: boolean()
+  def monitored_by?(uri) do
+    with {:ok, pid} <- Ezagent.Runtime.Resolver.pid_for(uri),
+         {:monitored_by, monitors} when is_list(monitors) <- Process.info(pid, :monitored_by) do
+      self() in monitors
+    else
       _ -> false
     end
   end

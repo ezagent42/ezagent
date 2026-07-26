@@ -23,26 +23,25 @@ defmodule Ezagent.ActionSet.Session.Members do
 
   @doc """
   Heuristic combining two INDEPENDENT facts: `monitors` (a `ref => uri` map) has
-  SOME entry for `member_uri`, AND the calling process is among `current_pid`'s
-  monitors. It does NOT tie the two together — the stored ref for `member_uri` is
-  not checked to be the ref actually monitoring `current_pid`, so a stale
-  `member_uri` entry plus any unrelated live self-monitor can return a false
-  positive. Treat it as a fast rejoin pre-check, not a proof of a correct live
-  monitor.
+  SOME entry for `member_uri`, AND the calling process is among the monitors of
+  the live Kind at `current_uri`. It does NOT tie the two together — the stored
+  ref for `member_uri` is not checked to be the ref actually monitoring the
+  current Kind, so a stale `member_uri` entry plus any unrelated live
+  self-monitor can return a false positive. Treat it as a fast rejoin
+  pre-check, not a proof of a correct live monitor.
   """
-  @spec monitor_ref_for_current_pid?(map(), URI.t(), pid()) :: boolean()
-  def monitor_ref_for_current_pid?(monitors, %URI{} = member_uri, current_pid)
-      when is_pid(current_pid) do
+  @spec monitor_ref_for_current?(map(), URI.t(), URI.t() | String.t()) :: boolean()
+  def monitor_ref_for_current?(monitors, %URI{} = member_uri, current_uri) do
     has_uri_entry? =
       Enum.any?(monitors, fn {_ref, uri} ->
         URI.to_string(uri) == URI.to_string(member_uri)
       end)
 
-    has_uri_entry? and self_monitors?(current_pid)
+    has_uri_entry? and self_monitors?(current_uri)
   end
 
-  defp self_monitors?(pid) when is_pid(pid) do
-    Ezagent.Kind.monitored_by?(pid)
+  defp self_monitors?(uri) do
+    Ezagent.Kind.monitored_by?(uri)
   end
 
   @doc "Merge the recognized member facets (`:role_name`, `:in_session_template`, `:source_template_uri`) from `facets` into a member's `meta` map, skipping any whose value is `nil` (so absent facets don't overwrite)."
