@@ -20,7 +20,7 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   def init(_opts), do: DynamicSupervisor.init(strategy: :one_for_one)
 
   @doc "Starts or reconciles the entity instance for an authoritative policy."
-  @spec ensure_started(term()) :: {:ok, pid()} | {:error, term()}
+  @spec ensure_started(term()) :: {:ok, URI.t()} | {:error, term()}
   def ensure_started(policy) do
     with {:ok, validated} <- GitTaskAccess.revalidate(policy) do
       uri = GitTaskAccess.uri_from_args(validated)
@@ -46,8 +46,10 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
 
   defp spawn_or_reconcile(uri, policy) do
     # derivation-edge: non-principal ephemeral task-access policy Kind
+    # V5 A1c — the public contract carries the entity URI; the Kind pid
+    # stays behind the actor-app seam (Kind.spawn / KindRegistry).
     case Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy}) do
-      {:ok, pid} -> {:ok, pid}
+      {:ok, _pid} -> {:ok, uri}
       {:error, {:already_registered, _uri}} -> reconcile_duplicate(uri, policy)
       {:error, reason} -> {:error, reason}
     end
@@ -55,8 +57,8 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
 
   defp reconcile_duplicate(uri, policy) do
     with :ok <- GitTaskAccess.initialization_result(uri, policy),
-         {:ok, pid} <- Ezagent.KindRegistry.lookup(uri) do
-      {:ok, pid}
+         {:ok, _pid} <- Ezagent.KindRegistry.lookup(uri) do
+      {:ok, uri}
     else
       :error -> {:error, :not_found}
       {:error, reason} -> {:error, reason}

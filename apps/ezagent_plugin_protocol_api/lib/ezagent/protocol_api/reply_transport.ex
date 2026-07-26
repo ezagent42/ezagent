@@ -28,24 +28,32 @@ defmodule Ezagent.ProtocolApi.ReplyTransport do
   e.g. `&Ezagent.ProtocolApi.ResponseRenderer.openai_chat_completion(request_id, &1)`.
   """
   @spec spawn_waiter(String.t(), URI.t(), URI.t(), URI.t(), (Message.t() -> map())) ::
-          {:ok, pid()} | {:error, term()}
+          :ok
   def spawn_waiter(request_id, agent, session_uri, entity_uri, render_fun)
       when is_function(render_fun, 1) do
-    Task.start(fn ->
-      # Subscribe to Publisher from THIS task's PID
-      with {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri) do
-        case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
-          {:ok, reply_msg} ->
-            PendingReplyStore.put_reply(request_id, render_fun.(reply_msg))
+    # V5 A1c — fire-and-forget: the waiter task's pid never escapes.
+    case Task.start(fn ->
+           # Subscribe to Publisher from THIS task's PID
+           with {:ok, _cursor} <- subscribe_publisher(session_uri, entity_uri) do
+             case ReplyWaiter.wait_for_reply(request_id, agent, @deadline_ms) do
+               {:ok, reply_msg} ->
+                 PendingReplyStore.put_reply(request_id, render_fun.(reply_msg))
 
-          {:error, :timeout} ->
-            PendingReplyStore.put_error(request_id, "timed out waiting for agent reply")
-        end
-      else
-        {:error, reason} ->
-          PendingReplyStore.put_error(request_id, "subscribe failed: #{inspect(reason)}")
-      end
-    end)
+               {:error, :timeout} ->
+                 PendingReplyStore.put_error(request_id, "timed out waiting for agent reply")
+             end
+           else
+             {:error, reason} ->
+               PendingReplyStore.put_error(request_id, "subscribe failed: #{inspect(reason)}")
+           end
+         end) do
+      {:ok, _pid} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("ReplyTransport.spawn_waiter failed to start: #{inspect(reason)}")
+        :ok
+    end
   end
 
   @doc """

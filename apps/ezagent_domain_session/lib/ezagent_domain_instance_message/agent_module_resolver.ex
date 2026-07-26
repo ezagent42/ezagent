@@ -37,12 +37,17 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   end
 
   @doc "Resolve the Kind for `uri` and spawn it through the Kind lifecycle."
-  @spec spawn_agent(URI.t()) :: {:ok, pid()} | {:error, term()}
+  @spec spawn_agent(URI.t()) :: {:ok, URI.t()} | {:error, term()}
   def spawn_agent(%URI{} = uri) do
     case lookup_kind_module_for_agent(uri) do
       {:ok, kind_module} ->
         # derivation-edge: rehydration-only resolver for an existing agent URI
-        Ezagent.Kind.spawn(kind_module, %{uri: uri})
+        # V5 A1c — the public contract carries the agent URI; the Kind pid
+        # stays behind the actor-app seam (Kind.spawn / KindRegistry).
+        case Ezagent.Kind.spawn(kind_module, %{uri: uri}) do
+          {:ok, _pid} -> {:ok, uri}
+          {:error, _} = err -> err
+        end
 
       {:error, reason} ->
         {:error, reason}

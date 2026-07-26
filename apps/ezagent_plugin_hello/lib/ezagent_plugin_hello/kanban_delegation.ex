@@ -19,12 +19,16 @@ defmodule EzagentPluginHello.KanbanDelegation do
   @max_instruction 500
 
   @doc "Start a supervised hello-to-Kanban delegation and report its result in chat."
-  @spec start(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  @spec start(URI.t(), String.t(), URI.t()) :: :ok | {:error, term()}
   def start(%URI{} = session_uri, instruction, %URI{} = sender_uri)
       when is_binary(instruction) do
-    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-      report(session_uri, instruction, sender_uri)
-    end)
+    # V5 A1c — fire-and-forget: the supervised Task pid never escapes.
+    case Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+           report(session_uri, instruction, sender_uri)
+         end) do
+      {:ok, _pid} -> :ok
+      {:error, _} = err -> err
+    end
   end
 
   @doc "Delegate one instruction under the authenticated sender's persisted capabilities."

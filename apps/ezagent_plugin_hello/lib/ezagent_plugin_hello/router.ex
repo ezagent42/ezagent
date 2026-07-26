@@ -21,6 +21,8 @@ defmodule EzagentPluginHello.Router do
 
   alias EzagentPluginHello.{Generator, Members}
 
+  require Logger
+
   # The front-desk's own worker roles (builder + concierge) — their output must
   # never re-route back (loop guard). The platform orchestrator (`requires:
   # ["orchestrator"]`) is NOT a hello worker.
@@ -29,21 +31,29 @@ defmodule EzagentPluginHello.Router do
   @doc """
   Route `user_text` (sent by `sender`) in `session_uri` to the builder's
   `:rebuild` or the concierge's `:answer` action. Spawns a supervised Task;
-  returns `{:ok, pid}` (fire-and-forget). No-ops (`:ignored`) when
+  returns `:ok` (fire-and-forget). No-ops (`:ignored`) when
   `should_route?/2` rejects the sender — the loop guard.
   """
-  @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()} | :ignored
+  @spec route(URI.t(), String.t(), URI.t()) :: :ok | :ignored
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
     if should_route?(session_uri, sender) do
-      Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-        action = classify(user_text, owner?(session_uri, sender), session_uri)
-        # F2 fail-closed: publish/share require a real owner. An ownerless
-        # session (nil owner_uri, e.g. a pre-owner_uri old session) has
-        # owner?→true (fail-open for builder/concierge) but must NOT grant
-        # admin-level publish/share. Downgrade to concierge.
-        action = guard_admin_actions(action, session_uri)
-        dispatch_to_member(session_uri, action, user_text, sender)
-      end)
+      # V5 A1c — fire-and-forget: the supervised Task pid never escapes.
+      case Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+             action = classify(user_text, owner?(session_uri, sender), session_uri)
+             # F2 fail-closed: publish/share require a real owner. An ownerless
+             # session (nil owner_uri, e.g. a pre-owner_uri old session) has
+             # owner?→true (fail-open for builder/concierge) but must NOT grant
+             # admin-level publish/share. Downgrade to concierge.
+             action = guard_admin_actions(action, session_uri)
+             dispatch_to_member(session_uri, action, user_text, sender)
+           end) do
+        {:ok, _pid} ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("hello.Router: route task failed to start: #{inspect(reason)}")
+          :ok
+      end
     else
       :ignored
     end

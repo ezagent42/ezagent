@@ -33,10 +33,11 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     policy: policy,
     uri: uri
   } do
-    assert {:ok, pid} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, ^uri} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
     assert Process.alive?(pid)
     assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
-    assert {:ok, ^pid} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, ^uri} = TaskAccessSupervisor.ensure_started(policy)
   end
 
   test "rejects a conflicting full policy already live at the deterministic URI", %{
@@ -67,8 +68,8 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
       )
       |> Enum.map(fn {:ok, result} -> result end)
 
-    assert Enum.all?(results, &match?({:ok, _pid}, &1))
-    assert results |> Enum.map(fn {:ok, pid} -> pid end) |> Enum.uniq() |> length() == 1
+    assert Enum.all?(results, &match?({:ok, _uri}, &1))
+    assert results |> Enum.map(fn {:ok, uri} -> uri end) |> Enum.uniq() |> length() == 1
     assert length(child_pids()) == 1
 
     uri = GitTaskAccess.uri_from_args(policy)
@@ -82,7 +83,8 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
   end
 
   test "supervised teardown removes the child and is idempotent", %{policy: policy, uri: uri} do
-    assert {:ok, pid} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, ^uri} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, pid} = Ezagent.KindRegistry.lookup(uri)
     assert child?(pid)
 
     assert :ok = TaskAccessSupervisor.teardown(uri)
@@ -116,7 +118,8 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     policy: policy,
     uri: uri
   } do
-    assert {:ok, child_pid} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, ^uri} = TaskAccessSupervisor.ensure_started(policy)
+    assert {:ok, child_pid} = Ezagent.KindRegistry.lookup(uri)
     ref = Process.monitor(child_pid)
     Process.exit(child_pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^child_pid, :killed}, 1_000
@@ -150,8 +153,9 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     send(teardown_task.pid, :finish_teardown)
 
     assert :ok = Task.await(teardown_task)
-    assert {:ok, live_pid} = Task.await(start_task)
-    assert {:ok, ^live_pid} = Ezagent.KindRegistry.lookup(uri)
+    assert {:ok, ^uri} = Task.await(start_task)
+    assert {:ok, live_pid} = Ezagent.KindRegistry.lookup(uri)
+    assert is_pid(live_pid)
     assert Ezagent.ReadyGate.status(uri) == :ready
     assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
   end

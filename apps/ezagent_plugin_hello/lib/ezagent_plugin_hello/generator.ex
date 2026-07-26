@@ -33,20 +33,27 @@ defmodule EzagentPluginHello.Generator do
   alias EzagentPluginHello.{Prompts, Sanitize, Spec, TurnDriver}
 
   @doc "Spawn a supervised Task that generates + lands a page for `user_text`."
-  @spec start(URI.t(), String.t()) :: {:ok, pid()} | {:error, term()}
+  @spec start(URI.t(), String.t()) :: :ok | {:error, term()}
   def start(%URI{} = session_uri, user_text) when is_binary(user_text) do
-    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-      generate(session_uri, user_text)
-    end)
+    # V5 A1c — fire-and-forget: the supervised Task pid never escapes.
+    case Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+           generate(session_uri, user_text)
+         end) do
+      {:ok, _pid} -> :ok
+      {:error, _} = err -> err
+    end
   end
 
   @doc "Spawn a supervised Task that answers a visitor question as the CONCIERGE — a read-only navigation/Q&A assistant that NEVER touches the Surface."
-  @spec concierge_start(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()}
+  @spec concierge_start(URI.t(), String.t(), URI.t()) :: :ok | {:error, term()}
   def concierge_start(%URI{} = session_uri, user_text, %URI{} = concierge_uri)
       when is_binary(user_text) do
-    Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
-      concierge_answer(session_uri, user_text, concierge_uri)
-    end)
+    case Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
+           concierge_answer(session_uri, user_text, concierge_uri)
+         end) do
+      {:ok, _pid} -> :ok
+      {:error, _} = err -> err
+    end
   end
 
   @doc """
