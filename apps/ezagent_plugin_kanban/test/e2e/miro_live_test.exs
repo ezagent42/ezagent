@@ -202,7 +202,7 @@ defmodule EzagentPluginKanban.MiroLiveTest do
     assert rich =~ "📊周闭环:1/2", "metric 缺失: #{rich}"
   end
 
-  describe "MiroSync 双向轮询器 + 生命周期" do
+  describe "MiroSync 双向同步器 + 生命周期" do
     setup ctx do
       uri = new_board(ctx)
 
@@ -215,21 +215,23 @@ defmodule EzagentPluginKanban.MiroLiveTest do
     end
 
     test "sync_now：一轮内 出站(ezagent→Miro) + 入站(人加→ezagent)", ctx do
-      %{board: board, token: token, uri: uri, admin: admin} = ctx
+      %{token: token, uri: uri, admin: admin} = ctx
       assert {:ok, %{id: _}} = dispatch(uri, "add_node", %{parent_id: "", title: "轮询根"}, admin)
 
-      {:ok, poller} =
-        EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: board, interval: 0)
+      # V5 A1b：独占一块板（测试收尾 poller terminate/2 会联动删板，不能删共享板）。
+      {:ok, board} = Miro.create_board(token, "sync-now-test")
 
-      # 第一轮：纯出站（无人加）
-      assert {:ok, %{inbound: 0}} = EzagentPluginKanban.MiroSync.sync_now(poller)
+      {:ok, _poller} = EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: board)
+
+      # 第一轮：纯出站（无人加）。V5 A1b：sync_now 按 URI 经 resolver seam 解析。
+      assert {:ok, %{inbound: 0}} = EzagentPluginKanban.MiroSync.sync_now(uri)
       {:ok, n1} = Miro.get_nodes(token, board)
       assert Enum.any?(contents(n1), &(&1 =~ "轮询根"))
       root_miro = Enum.find(n1, &get_in(&1, ["data", "isRoot"]))["id"]
 
       # 人在 Miro 手加 → 第二轮：入站 detect+回写 + 出站重建
       assert {:ok, _} = Miro.create_node(token, board, "<p>轮询入站</p>", root_miro)
-      assert {:ok, %{inbound: 1}} = EzagentPluginKanban.MiroSync.sync_now(poller)
+      assert {:ok, %{inbound: 1}} = EzagentPluginKanban.MiroSync.sync_now(uri)
       {:ok, %{tree: %{nodes: nodes}}} = dispatch(uri, "get_tree", %{}, admin)
       assert "轮询入站" in (nodes |> Map.values() |> Enum.map(& &1.title))
     end
@@ -241,44 +243,48 @@ defmodule EzagentPluginKanban.MiroLiveTest do
       {:ok, gone} = Miro.create_board(token, "gone-test")
       :ok = Miro.delete_board(token, gone)
 
-      {:ok, poller} =
-        EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: gone, interval: 0)
+      {:ok, _poller} = EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: gone)
 
-      assert {:error, :board_gone} = EzagentPluginKanban.MiroSync.sync_now(poller)
+      assert {:error, :board_gone} = EzagentPluginKanban.MiroSync.sync_now(uri)
       # ezagent 真相源未被破坏
       {:ok, %{tree: %{nodes: nodes}}} = dispatch(uri, "get_tree", %{}, admin)
       assert "保留根" in (nodes |> Map.values() |> Enum.map(& &1.title))
     end
 
-    test "teardown：ezagent 删 kanban → 联动删 Miro 板", ctx do
+    test "teardown：停 poller → terminate/2 联动删 Miro 板", ctx do
       %{token: token, uri: uri} = ctx
       {:ok, throwaway} = Miro.create_board(token, "teardown-test")
 
-      {:ok, poller} =
-        EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: throwaway, interval: 0)
+      {:ok, poller} = EzagentPluginKanban.MiroSync.start_link(uri: uri, board_id: throwaway)
 
-      assert :ok = EzagentPluginKanban.MiroSync.teardown(poller)
+      # V5 A1b：删板逻辑搬进 terminate/2（ANY stop 都触发），public teardown/unbind 已删。
+      assert :ok = GenServer.stop(poller)
       refute Process.alive?(poller)
       # 板已删：GET → 404
       assert {:error, {:http_status, 404, _}} = Miro.get_nodes(token, throwaway)
     end
 
-    test "bind/unbind：监督树下起轮询器 + sync_now(uri 经 Registry) + unbind 删板停轮询", ctx do
+    test "bind/teardown：监督树下起同步进程 + sync_now(uri 经 seam) + terminate_child 删板停进程", ctx do
       %{token: token, uri: uri, admin: admin} = ctx
       {:ok, board} = Miro.create_board(token, "bind-test")
       assert {:ok, %{id: _}} = dispatch(uri, "add_node", %{parent_id: "", title: "bind根"}, admin)
 
-      # bind：在 plugin 监督树下起轮询器（不手动 start_link）
-      assert {:ok, poller} = EzagentPluginKanban.MiroSync.bind(uri, board, interval: 0)
+      # bind：在 plugin 监督树下起同步进程（不手动 start_link）
+      assert {:ok, poller} = EzagentPluginKanban.MiroSync.bind(uri, board)
       assert is_pid(poller)
 
-      # 经 uri（Registry 解析）触发同步
+      # 经 uri（resolver seam 解析）触发同步
       assert {:ok, %{inbound: 0}} = EzagentPluginKanban.MiroSync.sync_now(uri)
       {:ok, n} = Miro.get_nodes(token, board)
       assert Enum.any?(contents(n), &(&1 =~ "bind根"))
 
-      # unbind：删板 + 停轮询
-      assert :ok = EzagentPluginKanban.MiroSync.unbind(uri)
+      # seam terminate_child：删板（terminate/2）+ 停进程（transient 不重生）
+      assert :ok =
+               Ezagent.Runtime.Resolver.terminate_child(
+                 EzagentPluginKanban.MiroSync.resolver_key(uri),
+                 EzagentPluginKanban.MiroSyncSupervisor
+               )
+
       refute Process.alive?(poller)
       assert {:error, {:http_status, 404, _}} = Miro.get_nodes(token, board)
     end
@@ -287,7 +293,8 @@ defmodule EzagentPluginKanban.MiroLiveTest do
   defp dispatch(uri, action, args, {caller, caps}) do
     target = Ezagent.URI.new!("#{URI.to_string(uri)}?action=kanban.#{action}")
 
-    Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
       target: target,
       mode: :call,
       args: args,

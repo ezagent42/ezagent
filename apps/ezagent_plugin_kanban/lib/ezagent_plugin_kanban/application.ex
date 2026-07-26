@@ -155,10 +155,11 @@ defmodule EzagentPluginKanban.Application do
   @impl Ezagent.Plugin
   def children do
     [
-      # Miro 双向同步轮询器：按 kanban URI 唯一注册 + 监督树下动态起停。
+      # Miro 双向同步进程：按 `{kanban_uri, :ezagent_plugin_kanban, :miro_sync}`
+      # 在统一 `Ezagent.Runtime.SidecarRegistry` 自注册（V5 A1b —— 私有
+      # `MiroSyncRegistry` 已退役），监督树下动态起停。
       # （`InstanceSupervisor` was the deleted resource Kanban Kind's `supervisor:`
       # and is dropped with it — nothing else references it.）
-      {Registry, keys: :unique, name: EzagentPluginKanban.MiroSyncRegistry},
       {DynamicSupervisor, name: EzagentPluginKanban.MiroSyncSupervisor, strategy: :one_for_one}
     ]
   end
