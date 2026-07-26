@@ -247,6 +247,11 @@ defmodule Ezagent.Runtime.Resolver do
   # derivation, caps/reply defaults) — duplicated HERE, not called through,
   # because the seam must deliver to its OWN resolved pid while the Router
   # resolves independently; A1b consolidates the two paths onto this seam.
+  #
+  # `origin: :trusted_internal` (dispatch-provenance gate): the seam is an
+  # INTERNAL delivery primitive — no external transport reaches it — and an
+  # origin-less envelope is rejected by `handle_dispatch`'s
+  # `validate_origin/2` (and reds the DispatchOrigin source gate).
   defp invocation(uri, action, args, ctx) do
     legacy_ctx =
       ctx
@@ -258,7 +263,8 @@ defmodule Ezagent.Runtime.Resolver do
       target: uri |> to_uri() |> annotate_target(action),
       mode: derive_mode(legacy_ctx),
       args: args,
-      ctx: legacy_ctx
+      ctx: legacy_ctx,
+      origin: :trusted_internal
     }
   end
 
