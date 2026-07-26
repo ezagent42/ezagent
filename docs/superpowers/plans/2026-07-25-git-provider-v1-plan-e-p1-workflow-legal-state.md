@@ -393,6 +393,69 @@ git commit -m "feat(git-workflow): deterministic head ref, exact-match accept va
 
 ---
 
+### Task 1 — post-review corrections (2026-07-26)
+
+Codex reviewed Task 1's implementation and found three defects that trace
+back to gaps in this plan, not to the implementer. Apply these on top of
+Task 1's commit; all three must be verified by an actual test run (they were
+not, originally — see the note below).
+
+**Correction 1 — `store_test.exs`'s own fixture breaks the suite (plan bug).**
+Task 1 Step 8 fixed `concurrency_test.exs`'s fixture but missed that
+`store_test.exs:36-48`'s `build_intent/1` defaults to
+`requested_head_ref: "feature/test"`. Under the new exact-match rule that
+value can never equal `"feature/run-" <> <24 hex>`, so
+`Store.accept(build_intent())` now returns
+`{:error, :head_ref_not_allowed}` — breaking every test in that file that
+pattern-matches `{:ok, run} = Store.accept(intent)` (~10 sites out of 21
+`Store.accept` calls) before it reaches the behavior it means to test.
+Change that default to `nil`, exactly as Step 8 did for
+`concurrency_test.exs`. Do not change the two tests added in Step 5 — they
+supply their refs explicitly and are correct as written.
+
+**Correction 2 — derived refs are never validated against Git ref rules
+(design §5.2 requirement this plan dropped).** §5.2 requires the derived ref
+to "满足 Git ref validation 和 255-byte 上限", but `derive/2` concatenates
+without checking, and `TaskBinding` validates `allowed_head_namespace` only
+as `is_binary/1` (`task_binding.ex:113`). A namespace containing `//`, `..`,
+`@{`, or one long enough to push the result past 255 bytes silently yields
+an illegal server-derived ref. The repo already has the exact predicate:
+`Ezagent.DomainGit.RepositoryRef.valid_ref?/1`
+(`apps/ezagent_domain_git/lib/ezagent/domain_git/repository_ref.ex:38-45`),
+which enforces the 1..255 byte range, the character class, and rejects
+`//`, `..`, `@{`, leading `refs/`, and trailing `/` or `.`.
+
+Validate the *completed* ref, and validate the binding's namespace at
+construction so a bad namespace fails early rather than at accept time. Add
+tests for: a namespace producing an over-255-byte ref, and a namespace
+containing `..` / `//` / `@{`. `RepositoryRef` is already a dependency of
+this app (`task_binding.ex` uses it), so this adds no new dependency.
+
+**Correction 3 (Minor) — third scan list missed.** `architecture_test.exs`
+has a *third* hardcoded source-file list, in the `String.to_atom/1` safety
+test (~line 142-150), which Task 1 Step 10 did not update. Add
+`deterministic_ref.ex` there too. Consider replacing the three duplicated
+lists with one module attribute — three copies is why one was missed.
+
+**Decisions recorded (Allen, 2026-07-26):**
+
+- **Empty-string `requested_head_ref` stays rejected.** §5.2's "只能为空"
+  means `nil`; `AcceptIntent` rejecting `""` as a malformed value
+  (`accept_intent.ex:100-102`) is correct and is pre-existing behavior Task 1
+  never touched. Do **not** canonicalize `""` to `nil`.
+- **Ref validation lands in Task 1**, not a later slice — it belongs with the
+  derivation logic it constrains.
+
+**Verification note:** Task 1's original commit was made with **zero test
+runs** — the local PostgreSQL at 127.0.0.1:55432 was down, and `ezagent_core`
+cannot boot without it (`Ezagent.TemplateTags.load_into_registry/0` queries
+the DB during `Application.start/2`), which kills even DB-free unit tests in
+this umbrella. That is exactly how Correction 1 reached a commit unnoticed.
+Do not mark these corrections complete on inspection alone: start the
+cluster (`sudo systemctl enable --now postgresql@16-main`) and run the tests.
+
+---
+
 ### Task 2: Legal transition graph (supersedes the E2-A status vocabulary)
 
 **Files:**
