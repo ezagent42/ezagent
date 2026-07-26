@@ -84,8 +84,8 @@ defmodule Ezagent.Cap do
     instance = Ezagent.URI.instance(target)
 
     with {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target),
-         {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(instance),
-         {:ok, {kind_module, behavior_module}} <- action_context(pid, instance, action),
+         {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(instance),
+         {:ok, {kind_module, behavior_module}} <- action_context(instance, action),
          needed <-
            Ezagent.Cap.Verifier.required_cap(kind_module, behavior_module, action, target),
          requested <-
@@ -100,26 +100,30 @@ defmodule Ezagent.Cap do
     end
   end
 
-  defp action_context(pid, instance, action) when pid == self() do
-    with true <- Ezagent.Cap.Authority.current_target?(instance),
-         :ok <- current_target_generation(instance),
-         {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
-         {:ok, {kind_module, behavior_module}} <- self_target_subject(kind_type, action) do
-      {:ok, {kind_module, behavior_module}}
+  # Self-detection is URI-native (V5 A1c chunk2): `Kind.self?/1` resolves the
+  # instance URI INSIDE the actor seam and compares the registered pid to the
+  # caller — byte-equivalent to the former `pid == self()` on the
+  # `ensure_started/1` result (both read the same KindRegistry entry).
+  defp action_context(instance, action) do
+    if Ezagent.Kind.self?(instance) do
+      with true <- Ezagent.Cap.Authority.current_target?(instance),
+           :ok <- current_target_generation(instance),
+           {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
+           {:ok, {kind_module, behavior_module}} <- self_target_subject(kind_type, action) do
+        {:ok, {kind_module, behavior_module}}
+      else
+        false -> {:error, :self_target_without_authority}
+        :error -> {:error, {:unknown_action, action}}
+        {:error, _reason} = error -> error
+      end
     else
-      false -> {:error, :self_target_without_authority}
-      :error -> {:error, {:unknown_action, action}}
-      {:error, _reason} = error -> error
+      # §2.2 purpose-specific action-subject resolution — the public replacement
+      # for the raw `:ezagent_runtime_view` reach-through + out-of-actor
+      # `BehaviorSet.resolve_action`. The resolution now runs INSIDE the actor and
+      # returns ONLY `{kind_module, behavior_module}` (never the slice map),
+      # byte-identical success/`{:error, {:unknown_action, _}}` shapes.
+      Ezagent.Kind.resolve_action_subject(instance, action)
     end
-  end
-
-  defp action_context(pid, _instance, action) do
-    # §2.2 purpose-specific action-subject resolution — the public replacement
-    # for the raw `:ezagent_runtime_view` reach-through + out-of-actor
-    # `BehaviorSet.resolve_action`. The resolution now runs INSIDE the actor and
-    # returns ONLY `{kind_module, behavior_module}` (never the slice map),
-    # byte-identical success/`{:error, {:unknown_action, _}}` shapes.
-    Ezagent.Kind.resolve_action_subject(pid, action)
   end
 
   # G-6/MF5: the target process may retain generation N after an external
@@ -144,7 +148,7 @@ defmodule Ezagent.Cap do
   # own dispatch — `Ezagent.Kind.Runtime.do_handle_dispatch/4` installs it), resolve
   # against the instance's OWN effective behavior set via
   # `Ezagent.Kind.BehaviorSet.resolve_action/3` — the SAME authoritative truth the
-  # cross-process branch (`action_context/3` with `pid != self()`) reads from the
+  # cross-process branch (the non-self branch of `action_context/2`) reads from the
   # live `slice_state` — WITHOUT a self `GenServer.call` (which would deadlock the
   # Kind process). This lets a flavor-only, per-instance action (e.g.
   # `:hello_sync_result`, mounted via a role recipe but NOT globally registered)
