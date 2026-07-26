@@ -3,8 +3,7 @@ defmodule EzagentPluginGitWorkflow.AuthorizationTest do
 
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Authorization
-  alias EzagentPluginGitWorkflow.ExecutionSeam
-  alias EzagentPluginGitWorkflow.ExecutionSeam.Unavailable
+  alias EzagentPluginGitWorkflow.ExecutionSeamTestDelegate
   alias EzagentPluginGitWorkflow.FakeExecutionSeam
   alias EzagentPluginGitWorkflow.Store
   alias EzagentPluginGitWorkflow.TaskBinding
@@ -45,7 +44,7 @@ defmodule EzagentPluginGitWorkflow.AuthorizationTest do
 
     {:ok, run} = Store.accept(intent)
 
-    on_exit(fn -> Application.delete_env(:ezagent_plugin_git_workflow, :execution_seam) end)
+    on_exit(fn -> ExecutionSeamTestDelegate.clear_backend() end)
 
     {:ok, binding: binding, run: run}
   end
@@ -54,8 +53,11 @@ defmodule EzagentPluginGitWorkflow.AuthorizationTest do
     run: run,
     binding: binding
   } do
-    assert ExecutionSeam.implementation() == Unavailable
-
+    # No backend installed for this process — ExecutionSeam.implementation/0
+    # resolves to the test delegate (compile-time fixed), which itself falls
+    # back to Unavailable when nothing was injected. The assertion below is
+    # therefore a behavioral proof of the fail-closed default, not a check
+    # on which module identity implementation/0 happens to return.
     assert {:error, :authorization_unavailable} = Authorization.authorize_run(run, binding)
 
     {:ok, unchanged} = Store.read_run(run.id)
@@ -67,36 +69,40 @@ defmodule EzagentPluginGitWorkflow.AuthorizationTest do
     run: run,
     binding: binding
   } do
-    Application.put_env(:ezagent_plugin_git_workflow, :execution_seam, FakeExecutionSeam)
+    ExecutionSeamTestDelegate.put_backend(FakeExecutionSeam)
 
     assert {:ok, %WorkflowRun{status: "authorized", state_version: 2}} =
              Authorization.authorize_run(run, binding)
   end
 
-  test "injected fake seam: not_authorized leaves the run at accepted", %{binding: binding} do
-    Application.put_env(:ezagent_plugin_git_workflow, :execution_seam, FakeExecutionSeam)
+  test "injected fake seam: not_authorized leaves a REAL persisted run at accepted" do
+    ExecutionSeamTestDelegate.put_backend(FakeExecutionSeam)
 
-    # FakeExecutionSeam denies on binding_id "bnd_denied" — build that run
-    # struct directly (mirrors Store's own struct!(WorkflowRun, %{...})
-    # idiom); Authorization.authorize_run/2 never reads the DB for `run`
-    # itself, so no matching binding row needs to exist for this case.
-    denied_run =
-      struct!(WorkflowRun, %{
-        id: "run_denied",
+    # FakeExecutionSeam denies on binding_id "bnd_denied" — register a real
+    # binding under that id and accept a real intent against it through the
+    # same Store path every other run in this file goes through, so the run
+    # being denied here is an actual persisted row (mirrors the unavailable
+    # -path test above), not a struct that was never written to the database.
+    {:ok, denied_binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_denied"})
+    {:ok, _} = Store.register_binding(denied_binding)
+
+    {:ok, intent} =
+      AcceptIntent.new(%{
         binding_id: "bnd_denied",
         binding_generation: 1,
         external_task_id: "task-denied-1",
-        workspace_uri: binding.workspace_uri,
-        status: "accepted",
-        state_version: 1,
-        input_digest: "sha256:test",
         source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
         source_revision: "abc123",
-        requested_head_ref: nil,
-        last_error_code: nil
+        requested_head_ref: nil
       })
 
-    assert {:error, :not_authorized} = Authorization.authorize_run(denied_run, binding)
+    {:ok, denied_run} = Store.accept(intent)
+
+    assert {:error, :not_authorized} = Authorization.authorize_run(denied_run, denied_binding)
+
+    {:ok, unchanged} = Store.read_run(denied_run.id)
+    assert unchanged.status == "accepted"
+    assert unchanged.state_version == 1
   end
 
   test "refuses to authorize a run that is not accepted", %{run: run, binding: binding} do

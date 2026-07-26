@@ -13,6 +13,17 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
                    authorization.ex)
 
+  # The small, closed set of non-test config files that could theoretically
+  # select the ExecutionSeam backend. config/test.exs is deliberately
+  # excluded — it is the one place allowed to name a (test-only) backend.
+  @execution_seam_config_files ~w(config/config.exs config/dev.exs config/prod.exs config/runtime.exs)
+
+  # Matches the key in either legal Elixir config spelling:
+  #   config :ezagent_plugin_git_workflow, :execution_seam, Foo   (leading colon)
+  #   config :ezagent_plugin_git_workflow, execution_seam: Foo    (trailing colon,
+  #     the ordinary keyword-list form — this is the one the original gate missed)
+  @execution_seam_key_pattern ~r/:execution_seam\b|\bexecution_seam\s*:/
+
   describe "no public ingress" do
     test "no ActionSet module exists" do
       action_set_dir = Path.join(@app_dir, "lib/ezagent/behavior")
@@ -282,37 +293,60 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   end
 
   describe "execution seam is fail-closed and test-only-injectable" do
-    test "no non-test config sets :execution_seam" do
-      for file <- ~w(config/config.exs config/dev.exs config/prod.exs config/runtime.exs) do
+    test "no non-test config file sets :execution_seam, in any spelling" do
+      for file <- @execution_seam_config_files do
         path = Path.join(@app_dir, "../../#{file}") |> Path.expand()
 
         if File.exists?(path) do
           content = File.read!(path)
 
-          refute content =~ ":execution_seam",
-                 "#{file} must not set :execution_seam — only test config/setup may (design §3.1)"
+          refute content =~ @execution_seam_key_pattern,
+                 "#{file} must not set :execution_seam (any spelling) — only " <>
+                   "config/test.exs may, and only to a test-build-only delegator (design §3.1)"
         end
       end
     end
 
-    test "no lib module calls Application.put_env for :execution_seam" do
-      lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
+    # Fix 1 (Application.compile_env/3) already made every runtime mutation
+    # path — Application.put_env/3, Application.put_all_env/2,
+    # :application.set_env/3, release config applied post-compile, a remote
+    # IEx/RPC session, any other in-VM caller — unable to change what
+    # implementation/0 resolves to: the value is baked into the module at
+    # compile time. A gate that greps lib/ for mutation call spellings is
+    # therefore both unwinnable (String.to_atom/apply/variable-argument
+    # indirection are not statically decidable — same reasoning as
+    # Ezagent.ActorBoundaryScanner's "necessary, not sufficient" scanner) and
+    # unnecessary (the mutation is inert even when found). That gate is
+    # removed rather than widened; ExecutionSeamTest ("no runtime mutation
+    # can change what implementation/0 resolves to") demonstrates the
+    # in-process immutability directly, and the test below demonstrates the
+    # compile-time resolution itself.
+    test "dev and prod compile-time config resolve :execution_seam to Unavailable (behavioral)" do
+      # Application.compile_env/3 only ever sees compile-time config
+      # (config.exs plus the per-env file it `import_config`s at its
+      # bottom) — config/runtime.exs is loaded AFTER compilation and
+      # structurally cannot affect what implementation/0 resolves to, so it
+      # is intentionally not evaluated here (it IS covered by the text scan
+      # above, since a stray key there would still be a smell worth
+      # flagging even though it can't reach compile_env).
+      #
+      # Config.Reader actually EVALUATES the real Elixir config DSL for the
+      # given env (handling import_config, config_env() branches, etc.) and
+      # returns the resulting data — this is a runtime fact about what the
+      # config resolves to, not a text scan, so it cannot be evaded by
+      # spelling the key differently than expected.
+      root_config_exs = Path.join(@app_dir, "../../config/config.exs") |> Path.expand()
+      default_backend = EzagentPluginGitWorkflow.ExecutionSeam.Unavailable
 
-      for file <- lib_files do
-        content = File.read!(file)
-        base = Path.basename(file)
+      for env <- [:dev, :prod] do
+        resolved = Config.Reader.read!(root_config_exs, env: env)
+        git_workflow_env = Keyword.get(resolved, :ezagent_plugin_git_workflow, [])
+        resolved_backend = Keyword.get(git_workflow_env, :execution_seam, default_backend)
 
-        refute content =~
-                 ~r/Application\.put_env\(:ezagent_plugin_git_workflow,\s*:execution_seam/,
-               "#{base}: only test code may override :execution_seam"
+        assert resolved_backend == default_backend,
+               "compile-time config for env=#{env} resolves :execution_seam to " <>
+                 "#{inspect(resolved_backend)}, not Unavailable"
       end
-    end
-
-    test "ExecutionSeam.implementation/0 defaults to the Unavailable backend" do
-      content =
-        Path.join(@lib_dir, "ezagent_plugin_git_workflow/execution_seam.ex") |> File.read!()
-
-      assert content =~ "__MODULE__.Unavailable"
     end
   end
 end
