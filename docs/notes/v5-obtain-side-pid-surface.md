@@ -20,11 +20,10 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **110 entries.**
+for the A1b/A1c migration phases. **109 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
-| `Ezagent.ActionSet.Session` | `activate/2` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:530` | body |
 | `Ezagent.ActionSet.Workspace.Members` | `ensure_member_kind_spawned/1` | `apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/members.ex:88` | body |
 | `Ezagent.Agent.TransportReadinessListener` | `arm_timeout/3` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:34` | body |
 | `Ezagent.AgentBridge.AdapterRegistry` | `deliver_or_buffer/3` | `apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/adapter_registry.ex:53` | guard + param |

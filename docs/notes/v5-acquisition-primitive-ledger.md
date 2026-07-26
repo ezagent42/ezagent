@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**56 entries.**
+**60 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -64,6 +64,8 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_core/lib/ezagent_core/ets_readiness.ex:73` | `d6fce9012ed3` |
 | `Process.info/2` | `apps/ezagent_core/lib/mix/tasks/ezagent.stress.ex:472` | `1c3d800d0c4c` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/live_join_registry.ex:36` | `02bd3324e502` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex:384` | `89ad081af3f6` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex:450` | `2c181e5201ba` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:36` | `0c34f7441131` |
 | `Process.whereis/1` | `apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness_listener.ex:56` | `39d1d22c7f9e` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_external_mirror/lib/ezagent/behavior/external_mirror_worker.ex:479` | `126bdf5c6894` |
@@ -74,6 +76,7 @@ taint tracking, out of scope by design.
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/adapter_registry.ex:74` | `f6f635b4ca50` |
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex:37` | `0366486f683a` |
 | `Process.whereis/1` | `apps/ezagent_domain_git/lib/ezagent/domain_git/boot_registration.ex:56` | `64ce83739f73` |
+| `Ezagent.Runtime.Resolver.call/2` | `apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex:59` | `1404a1e0876a` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/credential_refresh_exchange/scope_authority.ex:39` | `1f5d9365b364` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_owner.ex:94` | `2f643678d799` |
 | `Process.monitor/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:38` | `7d426e5ae957` |
@@ -83,7 +86,8 @@ taint tracking, out of scope by design.
 | `Process.whereis/1` | `apps/ezagent_domain_provider_connection/lib/ezagent/provider_connection/registry_readiness.ex:105` | `0d0a314f833c` |
 | `Process.monitor/1` | `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:192` | `7d426e5ae957` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/publisher/session_impl.ex:626` | `7d426e5ae957` |
-| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:565` | `fc4c08124cf7` |
+| `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:567` | `2762a02721d0` |
+| `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session.ex:568` | `fc4c08124cf7` |
 | `Ezagent.Runtime.Resolver.pid_for/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:36` | `c88cb75b5fe5` |
 | `Process.monitor/1` | `apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add/effects.ex:37` | `52bb96193cae` |
 | `Task.Supervisor.async_nolink/2` | `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:159` | `e7ce1ed3aa9e` |
