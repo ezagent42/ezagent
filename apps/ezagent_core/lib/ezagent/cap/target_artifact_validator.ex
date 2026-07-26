@@ -6,22 +6,22 @@ defmodule Ezagent.Cap.TargetArtifactValidator do
           :ok | {:error, :invalid_cap_signature}
   def validate(%Ezagent.Capability{} = artifact, %URI{} = receiver) do
     with {:ok, target} <- Ezagent.Cap.Authority.target_uri(artifact) do
-      case Ezagent.KindRegistry.lookup(target) do
-        {:ok, pid} ->
-          validate_live(pid, artifact, receiver)
-
-        :error ->
-          validate_cold(target, artifact, receiver)
+      # Delivery is URI-native (V5 A1c chunk2): the resolver resolves the
+      # target URI to a pid INSIDE the seam and performs the call (default
+      # 5_000 timeout, as before). The not-found/dead-target mapping is
+      # preserved exactly: a KindRegistry miss fell through to the durable
+      # cold validation; a mid-call exit mapped to :invalid_cap_signature.
+      case Ezagent.Runtime.Resolver.call(
+             target,
+             {:ezagent_validate_cap_artifact, artifact, receiver}
+           ) do
+        {:ok, reply} -> reply
+        {:error, :no_such_actor} -> validate_cold(target, artifact, receiver)
+        {:error, _reason} -> {:error, :invalid_cap_signature}
       end
     else
       _reason -> {:error, :invalid_cap_signature}
     end
-  end
-
-  defp validate_live(pid, artifact, receiver) do
-    GenServer.call(pid, {:ezagent_validate_cap_artifact, artifact, receiver})
-  catch
-    :exit, _reason -> {:error, :invalid_cap_signature}
   end
 
   defp validate_cold(target, artifact, receiver) do
