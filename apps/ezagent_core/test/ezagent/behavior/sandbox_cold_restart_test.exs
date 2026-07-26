@@ -168,7 +168,9 @@ defmodule Ezagent.ActionSet.SandboxColdRestartTest do
       end
     end)
 
-    {:ok, %{state: %{pty_phase: final_phase}}} = Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :sandbox)
+    {:ok, %{state: %{pty_phase: final_phase}}} =
+      Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :sandbox)
+
     assert final_phase == :dead
   end
 end
