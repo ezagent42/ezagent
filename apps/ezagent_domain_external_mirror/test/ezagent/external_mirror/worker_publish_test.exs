@@ -127,7 +127,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       # to the persistent `.state` view (T3) which would hide them — use
       # `get_raw_slice/2` to inspect the `transients` container.
       {:ok, %{transients: transients}} =
-        Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+        Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
 
       # After activate/2 completes, subscription_state is :active and
       # binding_state + the adapter/binding modules are bound.
@@ -164,7 +164,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       assert ev.cursor >= 1
 
       # Slice carries the cursor + count.
-      {:ok, slice} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+      {:ok, slice} = Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
       assert slice.publisher_cursor >= ev.cursor
       assert slice.count >= 1
       assert slice.last_publish_result == :ok
@@ -408,7 +408,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       assert_receive {:published, _, ^target_id, _}, 1_000
 
       Process.sleep(50)
-      {:ok, slice_before} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+      {:ok, slice_before} = Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
       assert slice_before.publisher_cursor != :latest
       assert slice_before.count >= 2
 
@@ -421,7 +421,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
       :ok = wait_for_new_inner_pid(sup_pid, old_inner_pid, 50)
       Process.sleep(50)
 
-      {:ok, slice_after} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+      {:ok, slice_after} = Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
 
       # OQ-EM-10: restart resets to :latest-equivalent (no replay of
       # missed events). The Worker re-subscribes via `:latest` on
@@ -724,7 +724,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
     with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
          {:ok, %{transients: %{subscribers: subscribers}}} <-
-           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+           Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher),
          true <- Map.has_key?(subscribers, worker_pid) do
       :ok
     else
@@ -762,7 +762,7 @@ defmodule Ezagent.ExternalMirror.WorkerPublishTest do
   end
 
   defp worker_publish_count_at_least?(worker_uri, count) do
-    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+    case Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never) do
       {:ok, %{count: actual}} when is_integer(actual) and actual >= count -> true
       _ -> false
     end

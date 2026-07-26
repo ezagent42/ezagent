@@ -226,7 +226,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
       assert File.exists?(expected), "the corpus sqlite file must be under the kb-store backend"
 
       # The store URI on the snapshot is identity-derived (never caller input).
-      assert {:ok, slice} = Ezagent.Kind.get_slice(agent_uri, :kb)
+      assert {:ok, slice} = Ezagent.Kind.read(agent_uri, :kb, spawn: :never)
       assert slice.store_uri == Ezagent.URI.resource(ws_name, "kb-store", name)
     end)
   end

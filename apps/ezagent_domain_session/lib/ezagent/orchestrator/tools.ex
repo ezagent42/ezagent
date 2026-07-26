@@ -922,12 +922,13 @@ defmodule Ezagent.Orchestrator.Tools do
 
   # --- live session-slice reads ------------------------------------------
 
-  # Read the live Session Kind's :chat slice (two-container — unwrap to its
-  # persistent :state). Empty map when the session is not alive.
+  # Read the live Session Kind's :chat slice (normalized to its persistent
+  # :state view by `Ezagent.Kind.read/3`). Empty map when the session is not
+  # alive.
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, chat_slice} ->
-        Map.get(chat_slice, :state, chat_slice)
+        chat_slice
 
       {:error, _} ->
         %{}

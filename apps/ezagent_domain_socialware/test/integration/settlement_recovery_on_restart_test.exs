@@ -111,7 +111,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
              })
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(ctx.session, :surface)
+      {:ok, surface} = Ezagent.Kind.read(ctx.session, :surface, spawn: :never)
       Map.has_key?(surface.versions, version)
     end)
 
@@ -162,7 +162,7 @@ defmodule EzagentDomainSocialware.Integration.SettlementRecoveryOnRestartTest do
 
     # The settled turn re-loaded from the snapshot.
     wait_until(fn ->
-      case Ezagent.Kind.get_slice(ctx.session, :turns) do
+      case Ezagent.Kind.read(ctx.session, :turns, spawn: :never) do
         {:ok, %{turns: turns}} -> Map.get(turns, turn_id, %{})[:status] == :settled
         _ -> false
       end

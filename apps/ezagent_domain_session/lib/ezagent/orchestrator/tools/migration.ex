@@ -338,11 +338,9 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
   end
 
   defp current_chat_field(%URI{} = session_uri, field) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} ->
-        slice
-        |> get_in([:state, field])
-        |> case do
+        case Map.get(slice, field) do
           value when is_map(value) -> value
           _ -> %{}
         end

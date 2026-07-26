@@ -380,7 +380,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
 
       # The surface read — byte-identical to the live :surface slice read
       # ExternalFeed made pre-consolidation.
-      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+      {:ok, live_surface} = Ezagent.Kind.read(session, :surface, spawn: :never)
 
       assert {:ok, surface} = SessionReads.external_surface(owner(), session)
       assert surface == live_surface
@@ -391,7 +391,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       msg = write(session, "delivered", :external_visible)
       _turn = commit(session, [msg.id], 1)
 
-      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+      {:ok, live_surface} = Ezagent.Kind.read(session, :surface, spawn: :never)
 
       expected = %{
         messages: MessageStore.committed_external_visible(session, 100),
@@ -452,7 +452,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       _turn = commit(session, [msg.id], 1)
 
       # The LIVE surface — the committed page the migrated read must reproduce.
-      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+      {:ok, live_surface} = Ezagent.Kind.read(session, :surface, spawn: :never)
 
       # LIVE: the live chokepoint returns the committed surface (post-migration
       # parity — surface_slice's read/3 live path == the pre-migration get_slice).
@@ -485,7 +485,7 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       msg = write(session, "delivered", :external_visible)
       _turn = commit(session, [msg.id], 1)
 
-      {:ok, live_surface} = Ezagent.Kind.get_slice(session, :surface)
+      {:ok, live_surface} = Ezagent.Kind.read(session, :surface, spawn: :never)
 
       # Take the session COLD and WAIT for its process to fully die (a BEAM-restart
       # / reap surrogate) — no racy "stays de-registered" assumption.

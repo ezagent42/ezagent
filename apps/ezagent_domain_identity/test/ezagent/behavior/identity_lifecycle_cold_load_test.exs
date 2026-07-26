@@ -92,7 +92,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       # create/1 ran once: empty keys. The ever-created marker is now set.
-      {:ok, %{state: state0, transients: tr0}} = Ezagent.Kind.get_raw_slice(uri, :api_keys)
+      {:ok, %{state: state0, transients: tr0}} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :api_keys)
       assert state0.keys == %{}
       # STATE-ONLY: the transients container is empty (no activate rebuild).
       assert tr0 == %{}
@@ -126,7 +126,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
                |> signed_invocation!(:identity_lifecycle_apikeys_host)
                |> Invocation.dispatch()
 
-      {:ok, %{state: state1}} = Ezagent.Kind.get_raw_slice(uri, :api_keys)
+      {:ok, %{state: state1}} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :api_keys)
       assert state1.keys == %{"deepseek" => "sk-aaaabbbbccccdddd"}
 
       # Brutal kill (skips graceful deactivate/destroy) — only the durable
@@ -143,7 +143,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
       {:ok, pid2} = Ezagent.KindRegistry.lookup(uri)
       refute pid1 == pid2
 
-      {:ok, %{state: state2, transients: tr2}} = Ezagent.Kind.get_raw_slice(uri, :api_keys)
+      {:ok, %{state: state2, transients: tr2}} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :api_keys)
 
       # 1. Persistent state rehydrated from the snapshot.
       assert state2.keys == %{"deepseek" => "sk-aaaabbbbccccdddd"},
@@ -197,7 +197,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
       {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: user_uri, initial_caps: []})
       wait_until(fn -> Ezagent.ReadyGate.status(user_uri) == :ready end)
 
-      {:ok, %{state: state0}} = Ezagent.Kind.get_raw_slice(user_uri, :identity)
+      {:ok, %{state: state0}} = Ezagent.Kind.SliceAccess.get_raw_slice(user_uri, :identity)
 
       assert Enum.any?(state0.caps, fn c ->
                c.behavior == Ezagent.ActionSet.Session and c.action == :send
@@ -235,7 +235,7 @@ defmodule Ezagent.ActionSet.IdentityLifecycleColdLoadTest do
       {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: user_uri, initial_caps: []})
       wait_until(fn -> Ezagent.ReadyGate.status(user_uri) == :ready end)
 
-      {:ok, %{state: state0}} = Ezagent.Kind.get_raw_slice(user_uri, :identity)
+      {:ok, %{state: state0}} = Ezagent.Kind.SliceAccess.get_raw_slice(user_uri, :identity)
 
       refute Enum.any?(state0.caps, fn cap ->
                cap.behavior == Ezagent.ActionSet.Session and cap.action == :send

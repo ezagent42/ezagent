@@ -240,13 +240,11 @@ defmodule EzagentDomainInstanceMessage.PresenceFanout do
   # member. Best-effort; failure is tolerated (next
   # :session_membership_change event will fix the index).
   defp add_session_members(state, session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
-      {:ok, slice} ->
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, chat_persistent} ->
         try do
-          # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is
-          # now two-container; `members` lives under `:state` (a flat slice
-          # falls through unchanged).
-          chat_persistent = Map.get(slice, :state, slice)
+          # `Ezagent.Kind.read/3` normalizes the two-container Chat slice to
+          # its persistent `:state` view, where `members` lives.
           members = Map.keys(Map.get(chat_persistent, :members, %{}))
 
           Enum.reduce(members, state, fn member_uri, acc ->

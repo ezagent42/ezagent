@@ -331,15 +331,17 @@ defmodule Ezagent.Socialware.SessionReads do
     end
   end
 
+  # Live-only probes (`spawn: :never`): authorization must see the LIVE
+  # members map — a durable fallback could serve a stale roster.
   defp chat_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} -> slice
       _ -> nil
     end
   end
 
   defp members_map(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{members: members}} when is_map(members) -> members
       _ -> %{}
     end

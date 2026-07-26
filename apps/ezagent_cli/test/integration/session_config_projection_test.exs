@@ -116,7 +116,7 @@ defmodule EzagentCli.Integration.SessionConfigProjectionTest do
       )
 
     assert result.exit_code == 0, inspect(result)
-    assert {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     assert slice.members[agent_uri].in_session_template == false
   end
 end

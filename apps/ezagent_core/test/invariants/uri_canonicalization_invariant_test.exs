@@ -47,12 +47,12 @@ defmodule EzagentCore.Invariants.UriCanonicalizationInvariantTest do
   @moduletag :umbrella_only
 
   @uri_new_allowlist [
-    "apps/ezagent_core/lib/ezagent/uri.ex",
-    "apps/ezagent_core/lib/ezagent/ecto/uri_type.ex"
+    "apps/ezagent_actor/lib/ezagent/uri.ex",
+    "apps/ezagent_actor/lib/ezagent/ecto/uri_type.ex"
   ]
 
   @uri_parse_allowlist [
-    "apps/ezagent_core/lib/ezagent/uri.ex",
+    "apps/ezagent_actor/lib/ezagent/uri.ex",
     # cc_orchestrator_seed.ex `swap_ws_path/2` parses a ws(s):// NETWORK URL
     # (orchestrator MCP mount), not an Ezagent-scheme URI. The inline
     # `# uri-canonical-allow` marker is NOT format-stable across Elixir patch

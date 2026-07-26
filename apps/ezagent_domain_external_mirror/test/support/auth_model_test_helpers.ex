@@ -295,7 +295,7 @@ defmodule Ezagent.ExternalMirror.AuthModelTestHelpers do
     end
 
     # No slice mutation
-    case Ezagent.Kind.get_slice(session_uri, :external_mirror) do
+    case Ezagent.Kind.read(session_uri, :external_mirror, spawn: :never) do
       {:ok, slice} ->
         refute Enum.any?(
                  slice.bindings,

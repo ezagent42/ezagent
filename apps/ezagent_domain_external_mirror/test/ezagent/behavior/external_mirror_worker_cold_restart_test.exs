@@ -77,7 +77,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
     wait_until(fn ->
       match?(
         {:ok, %{transients: %{subscription_state: :active}}},
-        Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+        Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
       )
     end)
 
@@ -87,7 +87,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
     assert_receive {:published, _payload, ^target_id, _count}, 1_000
 
     wait_until(fn ->
-      case Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker) do
+      case Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker) do
         {:ok, %{transients: %{binding_state: %{publish_count: n}}}} when n >= 1 -> true
         _ -> false
       end
@@ -95,7 +95,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
 
     # --- 1. Structural split: transports in transients, NOT in state. ---
     {:ok, %{state: state_before, transients: transients_before}} =
-      Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+      Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
 
     assert transients_before.subscription_state == :active
     assert transients_before.adapter_module == MockPublishAdapter
@@ -129,7 +129,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
             [{_id, p, _, _}] when is_pid(p) and p != inner_pid_before ->
               match?(
                 {:ok, %{transients: %{subscription_state: :active}}},
-                Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+                Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
               )
 
             _ ->
@@ -142,7 +142,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorWorkerColdRestartTest do
     end)
 
     {:ok, %{transients: transients_after}} =
-      Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+      Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
 
     # Transients rebuilt to a LIVE equivalent.
     assert transients_after.subscription_state == :active

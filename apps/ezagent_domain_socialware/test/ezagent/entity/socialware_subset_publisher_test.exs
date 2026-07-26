@@ -88,7 +88,7 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
   end
 
   defp publisher_slice(session_uri) do
-    {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :publisher)
+    {:ok, slice} = Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
     slice
   end
 
@@ -121,7 +121,8 @@ defmodule Ezagent.Entity.SocialwareSubsetPublisherTest do
   test "a spawned socialware-subset Session has a :publisher slice" do
     session_uri = spawn_session()
 
-    assert {:ok, %{ring: [], cursor: 0}} = Ezagent.Kind.get_slice(session_uri, :publisher)
+    assert {:ok, %{ring: [], cursor: 0}} =
+             Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
   end
 
   test "a non-publisher slice change records into the publisher ring (trunk works)" do

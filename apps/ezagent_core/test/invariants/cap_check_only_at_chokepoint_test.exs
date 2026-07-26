@@ -48,6 +48,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       pattern: ~r/Capability\.matches\?/,
       allowlist: [
         "apps/ezagent_core/lib/ezagent/",
+        "apps/ezagent_actor/lib/ezagent/",
         "apps/ezagent_domain_identity/lib/ezagent/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/",
         # PR-8 (transport #53 / O-4) — the orchestrator tool OPERATIONS
@@ -83,7 +84,11 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       desc: "cap_subjects/0 callback declaration outside Behavior contract + impls",
       pattern: ~r/def\s+cap_subjects\b/,
       allowlist: [
-        "apps/ezagent_core/lib/ezagent/behavior.ex",
+        "apps/ezagent_actor/lib/ezagent/behavior.ex",
+        # The Behavior ENGINE contract files moved to ezagent_actor; core's
+        # `behavior/` dir still holds the core Behavior impls (Manage,
+        # Routing, Terminable, ...) that declare `cap_subjects/0`.
+        "apps/ezagent_actor/lib/ezagent/behavior/",
         "apps/ezagent_core/lib/ezagent/behavior/",
         "apps/ezagent_domain_session/lib/ezagent/behavior/",
         "apps/ezagent_domain_external_mirror/lib/ezagent/behavior/",
@@ -118,7 +123,8 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       desc: "CapabilityRegistry.lookup outside dispatch + LV admin display",
       pattern: ~r/CapabilityRegistry\.(?:lookup|fetch|get)\b/,
       allowlist: [
-        "apps/ezagent_core/lib/ezagent/"
+        "apps/ezagent_core/lib/ezagent/",
+        "apps/ezagent_actor/lib/ezagent/"
       ]
     },
     %{
@@ -127,7 +133,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       pattern: ~r/Identity\.list_caps_for\b/,
       allowlist: [
         "apps/ezagent_domain_identity/",
-        "apps/ezagent_core/lib/ezagent/kind.ex",
+        "apps/ezagent_actor/lib/ezagent/kind.ex",
         # PR-8 (transport #53 / O-4): the cc McpServer no longer reads caps —
         # it is a thin transport that dispatches; the orchestrator's delegated
         # caps are reconstructed SESSION-side via the `identity.list_caps`
@@ -267,7 +273,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
       pattern: ~r/caller_workspace\s*==\s*target_workspace/,
       allowlist: [
         # Only the dispatch step 5.6 site should compare workspaces.
-        "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
+        "apps/ezagent_actor/lib/ezagent/kind/runtime.ex"
       ]
     },
     %{

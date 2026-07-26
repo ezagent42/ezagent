@@ -245,7 +245,7 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
 
       # The framework persisted the slice; read it back through the
       # plugin-isolation-safe entry point.
-      assert {:ok, slice} = Ezagent.Kind.get_slice(target, :widget)
+      assert {:ok, slice} = Ezagent.Kind.read(target, :widget, spawn: :never)
       assert slice.last_input == "hello-greenfield"
       assert slice.count == 1
     end
@@ -257,7 +257,8 @@ defmodule Ezagent.E2E.Scenario30PluginGreenfieldTest do
       _ =
         Router.dispatch(signed_cmd(target, :process, %{input: "b"}))
 
-      assert {:ok, %{count: 2, last_input: "b"}} = Ezagent.Kind.get_slice(target, :widget)
+      assert {:ok, %{count: 2, last_input: "b"}} =
+               Ezagent.Kind.read(target, :widget, spawn: :never)
     end
   end
 

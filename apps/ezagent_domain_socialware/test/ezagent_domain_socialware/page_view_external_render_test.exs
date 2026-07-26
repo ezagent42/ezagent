@@ -105,7 +105,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
       surface.approved == version
     end)
 
@@ -129,7 +129,7 @@ defmodule EzagentDomainSocialware.PageViewExternalRenderTest do
       uri = spawn_session()
       _version = approve_page(uri, page_tree)
 
-      {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(uri, :surface, spawn: :never)
       assert PageView.external_render(uri, owner()) == Surface.external_tree(surface)
       assert PageView.external_render(uri, owner()) == page_tree
     end

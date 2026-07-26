@@ -31,7 +31,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
   @snapshot_identity_caps_allowlist MapSet.new([
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
-                                      {"apps/ezagent_core/lib/ezagent/kind/snapshot.ex",
+                                      {"apps/ezagent_actor/lib/ezagent/kind/snapshot.ex",
                                        :verify_snapshot_caps, 2}
                                     ])
 

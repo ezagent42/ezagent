@@ -163,7 +163,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatMembersSurviveRestartTest
                      join(live_uri, member_uri)
 
             wait_until(fn ->
-              case Ezagent.Kind.get_slice(live_uri, :session) do
+              case Ezagent.Kind.read(live_uri, :session, spawn: :never) do
                 {:ok, slice} ->
                   state = Ezagent.Kind.normalize_slice_view(slice)
                   Map.has_key?(Map.get(state, :members, %{}), member_uri)

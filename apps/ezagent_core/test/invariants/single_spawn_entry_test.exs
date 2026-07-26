@@ -108,10 +108,10 @@ defmodule Ezagent.Invariants.SingleSpawnEntryTest do
     Path.join(String.trim(out), "apps")
   end
 
-  # `apps/ezagent_core/lib/ezagent/kind.ex` IS the API — the one allowed
+  # `apps/ezagent_actor/lib/ezagent/kind.ex` IS the API — the one allowed
   # `DynamicSupervisor.start_child` call lives in `Ezagent.Kind.spawn/2`.
   defp kind_module_self?(line) do
-    String.contains?(line, "apps/ezagent_core/lib/ezagent/kind.ex:")
+    String.contains?(line, "apps/ezagent_actor/lib/ezagent/kind.ex:")
   end
 
   # Lines where `DynamicSupervisor.start_child` appears as TEXT — inside

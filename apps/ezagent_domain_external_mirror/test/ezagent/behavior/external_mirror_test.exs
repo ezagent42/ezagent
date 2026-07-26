@@ -1818,7 +1818,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
     with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
          {:ok, %{transients: %{subscribers: subscribers}}} <-
-           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+           Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher),
          true <- Map.has_key?(subscribers, worker_pid) do
       :ok
     else
@@ -1853,7 +1853,7 @@ defmodule Ezagent.ActionSet.ExternalMirrorTest do
   end
 
   defp worker_published?(worker_uri) do
-    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+    case Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never) do
       {:ok, %{count: count}} when is_integer(count) and count > 0 -> true
       _ -> false
     end

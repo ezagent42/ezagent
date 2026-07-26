@@ -622,9 +622,9 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   end
 
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, chat_slice} ->
-        Map.get(chat_slice, :state, chat_slice)
+        chat_slice
 
       {:error, _reason} ->
         %{}

@@ -26,7 +26,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionKindBaseThreadingTest 
   defp get_slice_eventually(_uri, _slice_key, 0), do: {:error, :never_ready}
 
   defp get_slice_eventually(uri, slice_key, attempts) do
-    case Ezagent.Kind.get_slice(uri, slice_key) do
+    case Ezagent.Kind.read(uri, slice_key, spawn: :never) do
       {:ok, _} = ok ->
         ok
 

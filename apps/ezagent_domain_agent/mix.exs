@@ -41,6 +41,7 @@ defmodule EzagentDomainAgent.MixProject do
       # domain nor on any plugin (PR-9a, #53). Identity/curl behaviors composed onto
       # the Agent Kind are referenced as bare atoms (runtime, via the umbrella
       # app load + the BehaviorRegistry), not compile deps.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # Agent.Config is the cap-gated facade over ConfigEvolve + ConfigStore,
       # both owned by the identity/socialware substrate.

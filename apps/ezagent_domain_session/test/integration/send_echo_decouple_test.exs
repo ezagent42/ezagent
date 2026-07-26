@@ -356,7 +356,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SendEchoDecoupleTest do
 
     drain_delivery_tasks()
 
-    {:ok, slice} = Ezagent.Kind.get_slice(member, :session)
+    {:ok, slice} = Ezagent.Kind.read(member, :session, spawn: :never)
     state = Map.get(slice, :state, slice)
 
     ring_ids =

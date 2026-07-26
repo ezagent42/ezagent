@@ -64,14 +64,18 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
 
   defp agent_member(ws, prefix) do
     uri = URI.new!("entity://#{ws}/agent/#{prefix}-#{uniq()}")
-    {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
     :ok = Ezagent.WorkspaceRegistry.bind(uri, Capability.workspace_of(uri))
     uri
   end
 
   # Grant `granter` durable manage-authority over `target` so `manages?/2` is true.
   defp grant_manage(granter, target) do
-    cap = Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
+    cap =
+      Ezagent.CreatorGrant.manage_cap(:agent, target, Capability.workspace_of(target), granter)
 
     :ok =
       Ezagent.Identity.Grant.grant_cap_via_router(
@@ -83,7 +87,7 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
   end
 
   defp session_state(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: state}} when is_map(state) -> state
       {:ok, state} when is_map(state) -> state
       _ -> %{}

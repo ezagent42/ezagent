@@ -128,7 +128,8 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       assert :ok = fire_until_publish_count(session_uri, worker_uri, 1, 20)
       drain_mailbox()
 
-      {:ok, worker_slice_before} = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
+      {:ok, worker_slice_before} =
+        Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
 
       assert is_integer(worker_slice_before.publisher_cursor),
              "test pre-condition broken — worker publisher_cursor must be an integer " <>
@@ -188,10 +189,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # PERSISTENT field (T3-normalized `get_slice` view), while `subscribers`
       # is a TRANSIENT — read the latter from the `transients` container via
       # `get_raw_slice/2` (the `get_slice` view hides it).
-      {:ok, publisher_slice_mid} = Ezagent.Kind.get_slice(session_uri, :publisher)
+      {:ok, publisher_slice_mid} = Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
 
       {:ok, %{transients: publisher_transients_mid}} =
-        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
+        Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
 
       assert publisher_slice_mid.cursor > cursor_at_window_start,
              "test pre-condition broken — the slice change in the empty-fanout window " <>
@@ -328,7 +329,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
       # `subscribers` is a TRANSIENT (remediation 2026-05-30) — read it from
       # the `transients` container via `get_raw_slice/2`.
       {:ok, %{transients: publisher_transients_after}} =
-        Ezagent.Kind.get_raw_slice(session_uri, :publisher)
+        Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
 
       assert map_size(publisher_transients_after.subscribers) >= 1,
              "Out-of-window fallback did not re-subscribe the worker at :latest. " <>
@@ -475,7 +476,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   defp await_worker_subscribed(session_uri, worker_uri, retries) do
     with {:ok, worker_pid} <- Ezagent.KindRegistry.lookup(worker_uri),
          {:ok, %{transients: %{subscribers: subscribers}}} <-
-           Ezagent.Kind.get_raw_slice(session_uri, :publisher),
+           Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher),
          true <- Map.has_key?(subscribers, worker_pid) do
       :ok
     else
@@ -488,7 +489,7 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   defp await_publish_count_at_least(_worker_uri, _count, 0), do: {:error, :no_publish}
 
   defp await_publish_count_at_least(worker_uri, count, retries) do
-    case Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker) do
+    case Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never) do
       {:ok, %{count: actual}} when is_integer(actual) and actual >= count ->
         :ok
 
@@ -533,10 +534,10 @@ defmodule Ezagent.ExternalMirror.WorkerResubscribeCatchupTest do
   end
 
   defp replay_diagnostic(session_uri, worker_uri, expected_count) do
-    publisher_slice = Ezagent.Kind.get_slice(session_uri, :publisher)
-    publisher_raw = Ezagent.Kind.get_raw_slice(session_uri, :publisher)
-    worker_slice = Ezagent.Kind.get_slice(worker_uri, :external_mirror_worker)
-    worker_raw = Ezagent.Kind.get_raw_slice(worker_uri, :external_mirror_worker)
+    publisher_slice = Ezagent.Kind.read(session_uri, :publisher, spawn: :never)
+    publisher_raw = Ezagent.Kind.SliceAccess.get_raw_slice(session_uri, :publisher)
+    worker_slice = Ezagent.Kind.read(worker_uri, :external_mirror_worker, spawn: :never)
+    worker_raw = Ezagent.Kind.SliceAccess.get_raw_slice(worker_uri, :external_mirror_worker)
     worker_lookup = Ezagent.KindRegistry.lookup(worker_uri)
 
     subscriber_pids =

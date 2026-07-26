@@ -205,7 +205,7 @@ defmodule Ezagent.Socialware.AnonUser.GC do
   # confirmed → keep the binding claimed for retry.
   defp member_removed?(session_uri, entity_uri)
        when is_binary(session_uri) and is_binary(entity_uri) do
-    case Ezagent.Kind.get_slice(Ezagent.URI.new!(session_uri), :session) do
+    case Ezagent.Kind.read(Ezagent.URI.new!(session_uri), :session, spawn: :never) do
       {:ok, slice} ->
         match?(
           {:error, _},

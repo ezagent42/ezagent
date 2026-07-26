@@ -64,6 +64,7 @@ defmodule EzagentDomainExternalMirror.MixProject do
     # PR-EM-1 keeps deps/0 as only `:ezagent_core`; comment documents
     # why the brief's literal instruction would have broken the build.
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # PR-EM-5 (2026-05-25): the `mix ezagent.external_mirror.*` Mix
       # tasks under `lib/mix/tasks/` need `Ezagent.Identity.list_caps_for/1`

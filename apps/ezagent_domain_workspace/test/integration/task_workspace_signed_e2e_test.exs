@@ -296,7 +296,9 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
 
     assert {:ok, %{policy: ^policy}} =
-             Ezagent.Kind.get_slice(GitTaskAccess.uri_from_args(policy), :git_task_access)
+             Ezagent.Kind.read(GitTaskAccess.uri_from_args(policy), :git_task_access,
+               spawn: :never
+             )
 
     on_exit(fn -> TaskAccessSupervisor.teardown(GitTaskAccess.uri_from_args(policy)) end)
 

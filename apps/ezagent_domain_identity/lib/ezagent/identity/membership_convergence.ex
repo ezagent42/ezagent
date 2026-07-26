@@ -53,12 +53,9 @@ defmodule Ezagent.Identity.MembershipConvergence do
   defp membership_cap?(_cap), do: false
 
   defp projection_missing?(session_uri, entity_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) ->
-        members =
-          slice
-          |> Ezagent.Kind.normalize_slice_view()
-          |> Map.get(:members, %{})
+        members = Map.get(slice, :members, %{})
 
         case Map.get(members, entity_uri) do
           %{online: true} -> false

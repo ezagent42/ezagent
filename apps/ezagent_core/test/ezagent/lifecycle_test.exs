@@ -238,7 +238,7 @@ defmodule Ezagent.LifecycleTest do
       # Raw read — these tests inspect the two-container split (T3's
       # get_slice/2 normalizes to flat .state for production consumers).
       {:ok, %{state: state0, transients: tr0}} =
-        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+        Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle_fixture)
 
       assert state0 == %{counter: 0, label: "fx"}
       assert is_pid(tr0.worker)
@@ -257,7 +257,7 @@ defmodule Ezagent.LifecycleTest do
                })
 
       {:ok, %{state: state1, transients: tr1}} =
-        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+        Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle_fixture)
 
       assert state1.counter == 2
       assert tr1.hits == 1
@@ -351,7 +351,7 @@ defmodule Ezagent.LifecycleTest do
       # Both containers advanced (R10-2 pre-commit): :set → state,
       # :set_transient → transients. Raw read to inspect both containers.
       {:ok, %{state: state, transients: transients}} =
-        Ezagent.Kind.get_raw_slice(uri, :lifecycle_signal)
+        Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle_signal)
 
       assert state.signaled == true
       assert transients.signal_hits == 1
@@ -405,20 +405,22 @@ defmodule Ezagent.LifecycleTest do
       # its counter is bumped by 7 (proving the signal path ran the
       # dispatch bucket, not just slice mutations).
       wait_until(fn ->
-        case Ezagent.Kind.get_raw_slice(target, :lifecycle_fixture) do
+        case Ezagent.Kind.SliceAccess.get_raw_slice(target, :lifecycle_fixture) do
           {:ok, %{state: %{counter: 7}}} -> true
           _ -> false
         end
       end)
 
-      {:ok, %{state: target_state}} = Ezagent.Kind.get_raw_slice(target, :lifecycle_fixture)
+      {:ok, %{state: target_state}} =
+        Ezagent.Kind.SliceAccess.get_raw_slice(target, :lifecycle_fixture)
+
       assert target_state.counter == 7
 
       # The signaling Kind's own :set landed too. get_slice/2 NORMALIZES a
       # two-container slice to flat .state for consumers (T3), so the field
       # is read at the top level here.
       {:ok, %{dispatched_to: dispatched_to}} =
-        Ezagent.Kind.get_slice(uri, :lifecycle_signal)
+        Ezagent.Kind.read(uri, :lifecycle_signal, spawn: :never)
 
       assert dispatched_to == target
     end
@@ -440,13 +442,13 @@ defmodule Ezagent.LifecycleTest do
       # the flat .state view a cross-module consumer expects — so
       # `flat.counter` resolves (NOT nil, which is what the raw
       # `%{state:, transients:}` map would give a flat-field reader).
-      {:ok, flat} = Ezagent.Kind.get_slice(uri, :lifecycle_fixture)
+      {:ok, flat} = Ezagent.Kind.read(uri, :lifecycle_fixture, spawn: :never)
       assert flat == %{counter: 3, label: "norm"}
       refute Map.has_key?(flat, :transients)
 
       # get_raw_slice/2 still exposes the unnormalized two-container split
       # for test infra / introspection.
-      {:ok, raw} = Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+      {:ok, raw} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle_fixture)
       assert %{state: %{counter: 3, label: "norm"}, transients: _} = raw
     end
 
@@ -526,7 +528,7 @@ defmodule Ezagent.LifecycleTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       {:ok, %{state: state, transients: transients}} =
-        Ezagent.Kind.get_raw_slice(uri, :lifecycle_fixture)
+        Ezagent.Kind.SliceAccess.get_raw_slice(uri, :lifecycle_fixture)
 
       # The legacy persistent data rehydrated UNDER :state.
       assert state == %{counter: 42, label: "legacy-flat"}

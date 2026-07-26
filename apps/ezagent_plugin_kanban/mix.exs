@@ -40,6 +40,7 @@ defmodule EzagentPluginKanban.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # Miro REST client JSON encode/decode（飞书也用，:httpc + Jason 不引重依赖）。
       {:jason, "~> 1.2"},

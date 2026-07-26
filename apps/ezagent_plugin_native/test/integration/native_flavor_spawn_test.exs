@@ -44,12 +44,12 @@ defmodule EzagentPluginNative.Integration.NativeFlavorSpawnTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       # The base Agent behaviors are present (identity / sandbox / api_keys).
-      assert {:ok, _api_keys} = Kind.get_slice(uri, :api_keys)
-      assert {:ok, _sandbox} = Kind.get_slice(uri, :sandbox)
+      assert {:ok, _api_keys} = Kind.read(uri, :api_keys, spawn: :never)
+      assert {:ok, _sandbox} = Kind.read(uri, :sandbox, spawn: :never)
 
       # native declares NOTHING role-specific — no sibling flavor's behavior
       # leaks in (curl's :curl_agent slice is absent).
-      assert {:ok, nil} = Kind.get_slice(uri, :curl_agent)
+      assert {:ok, nil} = Kind.read(uri, :curl_agent, spawn: :never)
 
       Kind.terminate(uri)
       wait_until(fn -> KindRegistry.lookup(URI.to_string(uri)) == :error end)
@@ -72,7 +72,7 @@ defmodule EzagentPluginNative.Integration.NativeFlavorSpawnTest do
                )
 
       wait_until(fn -> Ezagent.ReadyGate.status(agent_uri) == :ready end)
-      assert {:ok, _sandbox} = Kind.get_slice(agent_uri, :sandbox)
+      assert {:ok, _sandbox} = Kind.read(agent_uri, :sandbox, spawn: :never)
 
       Kind.terminate(agent_uri)
       wait_until(fn -> KindRegistry.lookup(URI.to_string(agent_uri)) == :error end)
