@@ -410,7 +410,9 @@
   #   counted here). Measured 1766→1786.
   # arch-cap-bump: custom-backend templates now forward the Plan C launch receipt
   #   option through their shared CC instantiate boundary.
-  cc_codex_template_class_combined_loc: 1787,
+  # arch-cap-bump: V5 A1b — cc_agent.ex moduledoc documents the PtyServer `:via`
+  #   SidecarRegistry migration (retired EzagentDomainPty.Registry); +2 doc LOC.
+  cc_codex_template_class_combined_loc: 1789,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
