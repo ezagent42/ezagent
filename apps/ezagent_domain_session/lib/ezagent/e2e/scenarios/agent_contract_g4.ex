@@ -557,8 +557,8 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
       agent_uri = Ezagent.URI.new!(uri_str)
 
       case Ezagent.Domain.Agent.materialize_declared(agent_uri) do
-        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
-        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
+        {:ok, :started} -> {:ok, [agent_uri], %{fresh?: true}}
+        {:ok, :already_started} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err
       end
     end

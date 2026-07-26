@@ -293,9 +293,15 @@ defmodule Ezagent.Domain.Agent do
   call started the process or adopted an already-running process.
   """
   @spec materialize_declared(URI.t()) ::
-          {:ok, :started | :already_started, pid()} | {:error, term()}
-  def materialize_declared(%URI{} = agent_uri),
-    do: Ezagent.LocalRuntime.ensure_started_detailed(agent_uri)
+          {:ok, :started | :already_started} | {:error, term()}
+  def materialize_declared(%URI{} = agent_uri) do
+    # V5 A1c — the freshness tag is the public contract; the Kind pid
+    # stays behind the actor-app seam (LocalRuntime / SpawnRegistry).
+    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri) do
+      {:ok, tag, _pid} -> {:ok, tag}
+      {:error, _} = err -> err
+    end
+  end
 
   @doc """
   Retire an Agent under explicit authority and creation-attempt provenance.
@@ -313,9 +319,15 @@ defmodule Ezagent.Domain.Agent do
   declaration and URI; template materialization belongs to the separate
   `materialize_*` facade commands.
   """
-  @spec ensure_declared_member(URI.t()) :: {:ok, pid()} | {:error, term()}
-  def ensure_declared_member(%URI{} = agent_uri),
-    do: Ezagent.LocalRuntime.ensure_started(agent_uri)
+  @spec ensure_declared_member(URI.t()) :: :ok | {:error, term()}
+  def ensure_declared_member(%URI{} = agent_uri) do
+    # V5 A1c — callers only need liveness, addressed by URI; the Kind
+    # pid stays behind the actor-app seam (LocalRuntime / SpawnRegistry).
+    case Ezagent.LocalRuntime.ensure_started(agent_uri) do
+      {:ok, _pid} -> :ok
+      {:error, _} = err -> err
+    end
+  end
 
   @doc """
   Read `agent_uri`'s NORMALIZED credential status (#160) WITHOUT activating it.

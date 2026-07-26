@@ -191,17 +191,17 @@ defmodule Ezagent.Domain.AgentTest do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/declared-member-#{u()}")
       put_flavors(%{agent_uri => "py"})
 
-      assert {:ok, pid} = Agent.ensure_declared_member(agent_uri)
+      assert :ok = Agent.ensure_declared_member(agent_uri)
+      assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
       assert is_pid(pid)
-      assert {:ok, ^pid} = Ezagent.KindRegistry.lookup(agent_uri)
     end
 
     test "reuses the existing process for an already-live declared Agent" do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/declared-live-#{u()}")
       put_flavors(%{agent_uri => "future"})
-      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+      {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
 
-      assert {:ok, ^pid} = Agent.ensure_declared_member(agent_uri)
+      assert :ok = Agent.ensure_declared_member(agent_uri)
     end
   end
 
@@ -209,9 +209,9 @@ defmodule Ezagent.Domain.AgentTest do
     test "declared materialization preserves atomic adoption metadata" do
       agent_uri = Ezagent.URI.new!("entity://team-alpha/agent/materialized-live-#{u()}")
       put_flavors(%{agent_uri => "future"})
-      {:ok, pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
+      {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
 
-      assert {:ok, :already_started, ^pid} = Agent.materialize_declared(agent_uri)
+      assert {:ok, :already_started} = Agent.materialize_declared(agent_uri)
     end
 
     test "template materialization preserves the owner implementation's invalid-argument result" do

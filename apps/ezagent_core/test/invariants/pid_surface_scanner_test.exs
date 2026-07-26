@@ -44,12 +44,13 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     # A1a floor (codex round-2 #1): public Kind-pid contracts the A0 scope
     # (actor app + 5 seed files) MISSED — the whole-umbrella sweep must
     # surface them
-    {Ezagent.Domain.Agent, :materialize_declared, 1},
     {Ezagent.Workspace, :create, 2}
-    # (V5 A1c chunk3 REMOVED the {Ezagent.Entity.Session, :ensure_template_alive, 1}
-    # seed — the wrapper now returns `:ok`; the Kind pid stays behind the
-    # actor-app seam. The scanner no longer surfaces it — that is the closure,
-    # not blindness.)
+    # (V5 A1c chunk3 REMOVED the {Ezagent.Domain.Agent, :materialize_declared, 1}
+    # and {Ezagent.Entity.Session, :ensure_template_alive, 1} seeds — both went
+    # URI-native: materialize_declared/1 keeps only the :started |
+    # :already_started tag, ensure_template_alive/1 returns :ok. The Kind pids
+    # stay behind the actor-app seam. The scanner no longer surfaces them —
+    # that is the closure, not blindness.)
   ]
 
   test "has-teeth: surfaces every known pid-yielding seed site" do
