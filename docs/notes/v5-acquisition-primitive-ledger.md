@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**55 entries.**
+**58 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -53,6 +53,9 @@ taint tracking, out of scope by design.
 | `Process.monitor/1` | `apps/ezagent_actor/lib/ezagent/kind/termination.ex:35` | `7d426e5ae957` |
 | `Registry.lookup/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:61` | `c0e0f15232a4` |
 | `Registry.select/2` | `apps/ezagent_actor/lib/ezagent/kind_registry.ex:74` | `6f7c665c8614` |
+| `Ezagent.Runtime.Resolver.call/3` | `apps/ezagent_core/lib/ezagent/cap.ex:260` | `0b1619e3d493` |
+| `Ezagent.Runtime.Resolver.call/3` | `apps/ezagent_core/lib/ezagent/cap.ex:374` | `0b1619e3d493` |
+| `Ezagent.Runtime.Resolver.call/2` | `apps/ezagent_core/lib/ezagent/cap/target_artifact_validator.ex:14` | `0b1619e3d493` |
 | `Process.whereis/1` | `apps/ezagent_core/lib/ezagent/home/migration.ex:579` | `69eb90b5e732` |
 | `Process.monitor/1` | `apps/ezagent_core/lib/ezagent/kind/template/pre_start.ex:111` | `51cc02ba784f` |
 | `Process.whereis/1` | `apps/ezagent_core/lib/ezagent/lifecycle_case.ex:119` | `9afbc14196ea` |
