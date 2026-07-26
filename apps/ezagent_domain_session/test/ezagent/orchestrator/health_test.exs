@@ -56,7 +56,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
 
       assert URI.to_string(health.uri) == URI.to_string(expected_uri)
       assert health.status == :not_spawned
-      assert health.pid == nil
+      refute Map.has_key?(health, :pid)
       assert health.snapshot_updated_at == nil
       assert URI.to_string(health.workspace_uri) == URI.to_string(workspace_uri)
       assert health.instance_name == "cc_orchestrator-" <> session_discriminator(session_uri)
@@ -95,8 +95,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
       try do
         assert {:ok, health} = Health.classify(session_uri)
         assert health.status == :alive
-        assert health.pid == child_pid
-        assert Process.alive?(health.pid)
+        refute Map.has_key?(health, :pid)
       after
         send(child_pid, :stop)
       end
@@ -125,7 +124,7 @@ defmodule Ezagent.Orchestrator.HealthTest do
       # returns :error → snapshot present → :crashed.
       assert {:ok, health} = Health.classify(session_uri)
       assert health.status == :crashed
-      assert health.pid == nil
+      refute Map.has_key?(health, :pid)
       assert %DateTime{} = health.snapshot_updated_at
 
       # Cleanup so the snapshot doesn't leak into other tests sharing

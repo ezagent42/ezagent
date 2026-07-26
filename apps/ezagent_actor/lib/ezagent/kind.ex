@@ -120,7 +120,7 @@ defmodule Ezagent.Kind do
   `supervisor()`.
 
   `{:custom, mod, fun}` makes `Kind.terminate/1` delegate the
-  teardown to `apply(mod, fun, [uri, kind_server_pid])`. The
+  teardown to `apply(mod, fun, [uri])`. The
   custom function returns `:ok` (idempotent — absent / already-
   terminated URI returns `:ok`, mirroring `Kind.terminate/1`'s
   best-effort contract).

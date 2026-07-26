@@ -98,14 +98,14 @@ defmodule Ezagent.Entity.ExternalMirrorWorker do
   topology because `RootSupervisor` owns the PerBindingSupervisor
   pid, NOT the Kind.Server pid. `terminate_strategy/0` declares
   the custom teardown so `Kind.terminate/1` delegates to
-  `WorkerSpawn.terminate_by_pid/2` which resolves the
+  `WorkerSpawn.terminate_by_uri/1` which resolves the
   PerBindingSupervisor via the Kind.Server's URI + the
   WorkerRegistry, then calls
   `DynamicSupervisor.terminate_child(RootSupervisor,
   per_binding_sup_pid)`.
   """
   @impl Ezagent.Kind
-  def terminate_strategy, do: {:custom, WorkerSpawn, :terminate_by_pid}
+  def terminate_strategy, do: {:custom, WorkerSpawn, :terminate_by_uri}
 
   @doc """
   The two-tier root that owns all ExternalMirrorWorker instances.

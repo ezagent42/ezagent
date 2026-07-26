@@ -44,7 +44,6 @@ defmodule Ezagent.Orchestrator.Health do
         workspace_uri: %URI{},
         template_uri: %URI{},
         status: :alive | :crashed | :not_spawned,
-        pid: pid() | nil,
         snapshot_updated_at: DateTime.t() | nil
       }
 
@@ -66,7 +65,6 @@ defmodule Ezagent.Orchestrator.Health do
           workspace_uri: URI.t(),
           template_uri: URI.t(),
           status: status(),
-          pid: pid() | nil,
           snapshot_updated_at: DateTime.t() | nil
         }
 
@@ -105,7 +103,7 @@ defmodule Ezagent.Orchestrator.Health do
     instance_name = Ezagent.URI.name!(orch_uri)
     template_uri = orchestrator_template_uri(workspace_uri)
 
-    {status, pid} = lookup_status(orch_uri)
+    {status, _pid} = lookup_status(orch_uri)
     snapshot_updated_at = snapshot_updated_at_for(orch_uri)
 
     # If lookup returned :error AND we have a snapshot, the orchestrator
@@ -117,13 +115,14 @@ defmodule Ezagent.Orchestrator.Health do
         {:not_alive, nil} -> :not_spawned
       end
 
+    # V5 A1c — the health struct carries NO pid: `status` already conveys
+    # liveness, and callers address the orchestrator by `uri`.
     %{
       uri: orch_uri,
       instance_name: instance_name,
       workspace_uri: workspace_uri,
       template_uri: template_uri,
       status: final_status,
-      pid: pid,
       snapshot_updated_at: snapshot_updated_at
     }
   end
@@ -159,6 +158,8 @@ defmodule Ezagent.Orchestrator.Health do
   # KindRegistry.lookup returns `{:ok, pid}` for a registered URI. We
   # add `Process.alive?` because Registry's dead-pid cleanup is async —
   # a freshly-crashed orchestrator can briefly still appear registered.
+  # The pid itself never leaves this module (V5 A1c); only the liveness
+  # verdict does.
   defp lookup_status(%URI{} = orch_uri) do
     case KindRegistry.lookup(orch_uri) do
       {:ok, pid} when is_pid(pid) ->

@@ -15,5 +15,5 @@ defmodule Ezagent.TestSupport.HonestTerminateKind do
   @impl Ezagent.Kind
   def terminate_strategy, do: {:custom, __MODULE__, :leave_running}
 
-  def leave_running(_uri, _pid), do: :ok
+  def leave_running(_uri), do: :ok
 end

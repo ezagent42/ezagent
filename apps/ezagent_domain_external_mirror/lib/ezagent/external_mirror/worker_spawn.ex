@@ -188,28 +188,25 @@ defmodule Ezagent.ExternalMirror.WorkerSpawn do
   Companion to `spawn_kind_server/1` — declared via
   `Ezagent.Entity.ExternalMirrorWorker.terminate_strategy/0`
   per the `Ezagent.Kind.terminate_strategy` callback contract.
-  Called by `Ezagent.Kind.terminate/1` with the Worker URI +
-  Kind.Server pid.
+  Called by `Ezagent.Kind.terminate/1` with the Worker URI.
 
   Resolves the PerBindingSupervisor pid via the WorkerRegistry
   (the Kind.Server's URI is the WorkerRegistry key) and
   terminates THAT supervisor via
   `DynamicSupervisor.terminate_child(RootSupervisor, _)`. The
-  `pid` arg (the Kind.Server pid) is IGNORED — the standard
-  `DynamicSupervisor.terminate_child(RootSupervisor, kind_server_pid)`
-  call returns `:not_found` because RootSupervisor only knows about
-  PerBindingSupervisor pids, not their inner Kind.Server children.
-  This is exactly the bug `terminate_strategy/0` exists to fix
-  (codex round-1 HIGH-2, 2026-05-25).
+  strategy takes ONLY the URI (V5 A1c — renamed from
+  `terminate_by_pid/2`, whose `pid` arg was always ignored): the
+  standard `DynamicSupervisor.terminate_child(RootSupervisor,
+  kind_server_pid)` call returns `:not_found` because RootSupervisor
+  only knows about PerBindingSupervisor pids, not their inner
+  Kind.Server children. This is exactly the bug
+  `terminate_strategy/0` exists to fix (codex round-1 HIGH-2,
+  2026-05-25).
 
   Idempotent — already-absent URI returns `:ok`.
   """
-  @spec terminate_by_pid(URI.t(), pid()) :: :ok
-  def terminate_by_pid(%URI{} = worker_uri, _kind_server_pid) do
-    terminate_by_uri(worker_uri)
-  end
-
-  defp terminate_by_uri(%URI{} = worker_uri) do
+  @spec terminate_by_uri(URI.t()) :: :ok
+  def terminate_by_uri(%URI{} = worker_uri) do
     binding_uri = URI.to_string(worker_uri)
 
     case WorkerRegistry.lookup(binding_uri) do

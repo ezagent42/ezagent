@@ -15,8 +15,9 @@ defmodule Ezagent.Kind.Termination do
   @spec custom(module(), atom(), URI.t(), pid()) :: :ok | {:error, :still_alive}
   def custom(mod, fun, uri, pid) when is_atom(mod) and is_atom(fun) and is_pid(pid) do
     # The custom callback owns the whole aggregate. Stopping only an inner
-    # permanent Kind.Server can make its supervisor restart it.
-    _ = apply(mod, fun, [uri, pid])
+    # permanent Kind.Server can make its supervisor restart it. The callback
+    # contract is URI-only (V5 A1c) — no Kind pid crosses into domain code.
+    _ = apply(mod, fun, [uri])
     verify_dead(pid)
   end
 
