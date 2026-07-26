@@ -1,8 +1,0 @@
-              target_uri               |                    grantee_uri                    | access  
----------------------------------------+---------------------------------------------------+---------
- entity://owner-c9f54a/agent/test-0716 | entity://owner-c9f54a/agent/assistant-test-kanban | operate
- entity://owner-c9f54a/agent/test-0717 | entity://owner-c9f54a/agent/assistant-test-kanban | read
- entity://owner-c9f54a/agent/test-0716 | entity://owner-c9f54a/user/editor                 | operate
- entity://owner-c9f54a/agent/test-0716 | entity://owner-c9f54a/user/owner                  | operate
-(4 rows)
-

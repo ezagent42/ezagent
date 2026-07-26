@@ -1,3 +1,0 @@
-2472:  Parameters: %{"action" => "session.create", "args" => %{"role_slots" => [%{"flavor" => "cc-custom", "mode" => "fresh", "role_name" => "orchestrator"}], "short_name" => "t7-keyless-orch", "socialware_config_id" => "9f4a4621-9122-478e-aebf-5bddb3fc6ec5", 
-2710:[error] socialware role slot "orchestrator" SKIPPED on session://system/socialware-install-orchestrator/t7-keyless-orch: {:credential_unavailable, "cc-custom"} — the agent would boot without credentials, never join its transport bridge, and hang at :not
-2768:[error] session socialware install completed with SKIPPED roles for session://system/socialware-install-orchestrator/t7-keyless-orch: [%{reason: {:credential_unavailable, "cc-custom"}, role_name: "orchestrator"}] — the session is alive and usable, but t

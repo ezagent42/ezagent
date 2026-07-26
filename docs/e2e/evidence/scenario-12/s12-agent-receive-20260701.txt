@@ -1,9 +1,0 @@
-              caller               |                        target                         | action  |  authz  |        inserted_at
------------------------------------+-------------------------------------------------------+---------+---------+----------------------------
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:04:52.524769
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:04:52.572192
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:06:23.837566
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:06:23.840756
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:06:53.878973
- session://system/default/e2e-auto | entity://system/agent/py_default?action=agent.receive | receive | granted | 2026-07-01 04:06:53.880261
-(6 ÐÐ¼ÇÂ¼)

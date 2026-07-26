@@ -1,6 +1,0 @@
-{
-  "hasE2eNative": true,
-  "hasPyDefault": true,
-  "text": "ez\nezagent/system\nChat\nAgents\nManage\nNew agent\nAdmin\n\nDIRECTORY\n\nUsers + agents\nAgents\nUsers\nAll\nUsers\nAgents\nagent:native\nagent:py\ne2e-native\nnative\nentity://system/agent/e2e-native\npy_default\npy\nentity://system/agent/py_default\n\nAGENTS\n\nAgent directory\nNew agent\nAGENTS\n2\nLIVE\n2\nFLAVORS\n2\nOverview\nConfig\nKeys\nCaps\nExtensions\nTerminal\ne2e-native\nentity://system/agent/e2e-native\nOverview\nConfig\nKeys\nCaps\nExtensions\nTerminal\npy_default\nentity://system/agent/py_default\nOverview\nConfig\nKeys\nCaps\nExtensions\nTerminal",
-  "url": "http://world.localhost:10043/identities/agents"
-}

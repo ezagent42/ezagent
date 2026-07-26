@@ -1,6 +1,0 @@
-              target_uri               |            grantee_uri            | access  
----------------------------------------+-----------------------------------+---------
- entity://owner-c9f54a/agent/r08-board | entity://owner-c9f54a/user/editor | operate
- entity://owner-c9f54a/agent/r08-board | entity://owner-c9f54a/user/owner  | operate
-(2 rows)
-

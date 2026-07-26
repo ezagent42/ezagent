@@ -1,29 +1,0 @@
-=== run4: kimi-coding create + chat (sanitized) ===
-694:[info] PtyServer spawned claude os_pid=224945 for agent=entity://system/agent/t7-kc-1
-695:[info] cc.agent.ensure_subprocess_alive: respawned PtyServer for entity://system/agent/t7-kc-1
-748:[debug] PtyServer[224945] stdout:           ──────────────────────────────────────────────────────────────────────�
-762:[info] JOINED agent_bridge:cc-custom:entity://system/agent/t7-kc-1 in 215µs
-792:[warning] PtyServer: DEGRADED respawn for entity://system/agent/t7-kc-1 — the preferred command failed to start; retrying with the `cmd_fallback` argv. The agent comes up with reduced capability rather than not at all; what is given up is defined by the 
-793:[info] PtyServer spawned claude os_pid=225320 for agent=entity://system/agent/t7-kc-1
-816:  Channels: server:esr-bridge 
-830:[debug] PtyServer[225320] stdout:     ╭─── Claude Code  v2.1.212  ────────────────────────────────────────────────────────────�
-835:[info] JOINED agent_bridge:cc-custom:entity://system/agent/t7-kc-1 in 325µs
-2154:  Parameters: %{"action" => "chat.send", "args" => %{"grants" => [], "session_uri" => "session://system/default/t7-proof", "text" => "@t7-kc-1 please reply with exactly: kc-pong"}}
-2222:[debug] PtyServer[225320] stdout:      ←  esr-bridge:  @t7-kc-1 please reply with exactly: kc-pong
-2251:[debug] PtyServer[225320] stdout:      ●  Calling esr-bridge…
-2252:[debug] PtyServer[225320] stdout:      Thinking for  2s , calling esr-bridge…
-2257:  Parameters: %{"ref" => "ab6ec9b6881d76ae", "session_uris" => ["session://system/default/t7-proof"], "text" => "kc-pong"}
-2302:[debug] PtyServer[225320] stdout:        ⎿     The user sent a channel message via esr-bridge asking me to reply with exactly "kc-pong". I need to use the   mcp__esr-bridge__reply tool.      ·  thinking )
-2306:[debug] PtyServer[225320] stdout:      esr-bridge…
-2325:[debug] PtyServer[225320] stdout:        Thought for  4s , called esr-bridge       ●  kc-pong
-
-=== run4: TUI banner (model identity) ===
-830:[debug] PtyServer[225320] stdout:     ╭─── Claude Code  v2.1.212  ─────────────────────────────────────────────────────────────────────────────────────────────╮ │  │   Tips for getting started  │ │   Welcome back!    │   Run /init to create a CLAUDE.md file with instructions for Claude  │ │  │  ────────────────────────────────────────────────────────────────────────────── │ │  ▐ ▛███▜ ▌  │   What's new  │ │ ▝▜ █████ ▛▘  │   `/fork` now copies your conversation into a new background session (its own r…  │ │   ▘▘ ▝▝    │   Added `claude auto-mode reset` to restore the default auto-mode configuration…  │ │  │   Added a session-wide limit on WebSearch tool calls (default 200, tunable via …  │ │  kimi-k3[1m] · API Usage Billing   │    /r
-
-=== run5 (kc2): cold-restart respawn after full server restart ===
-526:[info] PtyServer spawned claude os_pid=228193 for agent=entity://system/agent/t7-kc-1
-527:[info] cc.agent.ensure_subprocess_alive: respawned PtyServer for entity://system/agent/t7-kc-1
-574:[info] JOINED agent_bridge:cc-custom:entity://system/agent/t7-kc-1 in 1ms
-601:[warning] PtyServer: DEGRADED respawn for entity://system/agent/t7-kc-1 — the preferred command failed to start; retrying with the `cmd_fallback` argv. The agent comes up with reduced capability rather than not at all; what is given up is defined by the 
-602:[info] PtyServer spawned claude os_pid=228266 for agent=entity://system/agent/t7-kc-1
-642:[info] JOINED agent_bridge:cc-custom:entity://system/agent/t7-kc-1 in 223µs

@@ -1,2 +1,0 @@
-{"id": "cc-sdk-1", "ok": true, "content": "kc-pong"
-{"id": "cc-sdk-2", "ok": true, "content": "kc-pong"
