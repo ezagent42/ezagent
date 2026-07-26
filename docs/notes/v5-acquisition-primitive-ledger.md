@@ -34,7 +34,7 @@ ledger proves "no ENUMERATED acquisition primitive outside the resolver
 seam" (ANTI-DRIFT). It does NOT prove "no pid is ever held" — that needs
 taint tracking, out of scope by design.
 
-**65 entries.**
+**64 entries.**
 
 | Primitive | File:Line | Line SHA (12) |
 |---|---|---|
@@ -98,7 +98,6 @@ taint tracking, out of scope by design.
 | `Task.Supervisor.start_child/2` | `apps/ezagent_domain_workspace/lib/ezagent/workspace.ex:895` | `199e5f2c818c` |
 | `Registry.lookup/2` | `apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex:419` | `94a6c4d47ff7` |
 | `Registry.lookup/2` | `apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex:54` | `4ac02fc0c2bb` |
-| `Registry.lookup/2` | `apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex:39` | `652bf5b6af3c` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:38` | `99bfa828f500` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/generator.ex:47` | `99bfa828f500` |
 | `Task.Supervisor.start_child/2` | `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/kanban_delegation.ex:25` | `99bfa828f500` |

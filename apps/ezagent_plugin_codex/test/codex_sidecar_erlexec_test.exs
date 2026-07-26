@@ -171,6 +171,29 @@ defmodule EzagentPluginCodex.CodexSidecarErlexecTest do
     end
   end
 
+  describe "BridgeSidecar resolver seam (V5 A1b)" do
+    test "registered under the :via key; Resolver.alive?/call reach it; stop terminates via seam" do
+      agent_uri = test_uri("bridge-seam")
+
+      on_exit(fn -> ensure_stopped(BridgeSidecar, agent_uri) end)
+
+      assert {:ok, _pid} = BridgeSidecar.start(agent_uri, %{})
+
+      key = BridgeSidecar.resolver_key(agent_uri)
+      assert key == {agent_uri, :ezagent_plugin_codex, :codex_bridge}
+
+      # Resolvable through the seam (pid-free liveness + calls).
+      assert Resolver.alive?(key)
+      assert Resolver.whereis(key) == :ok
+      assert {:ok, ""} = Resolver.call(key, :recent_output, 500)
+
+      # stop/1 goes through Resolver.terminate_child — the key leaves the seam.
+      BridgeSidecar.stop(agent_uri)
+      :timer.sleep(50)
+      refute Resolver.alive?(key)
+    end
+  end
+
   # ---------------------------------------------------------------------------
   # Step 4: orphan proof @tag :slow
   # Codex binary likely absent in CI; we use AppServer with a stub executable

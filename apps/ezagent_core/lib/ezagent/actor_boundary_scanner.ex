@@ -937,12 +937,14 @@ defmodule Ezagent.ActorBoundaryScanner do
   # other module is census-flagged for them. The PTY pilot is the first
   # entry (its facade module + the Server module that hosts the facade's
   # query APIs); the 6 remaining sidecars add their facades when templated.
-  # V5 A1b-rest: the codex AppServer is next — a single module hosts both
-  # the facade functions and the GenServer query APIs.
+  # V5 A1b-rest: the codex AppServer + BridgeSidecar are next — each is a
+  # single module hosting both the facade functions and the GenServer query
+  # APIs.
   @sidecar_facade_allowlist MapSet.new([
                               Ezagent.Domain.Pty,
                               Ezagent.Domain.Pty.Server,
-                              EzagentPluginCodex.AppServer
+                              EzagentPluginCodex.AppServer,
+                              EzagentPluginCodex.BridgeSidecar
                             ])
 
   # The fun names of the facade-gated triple (subset of
