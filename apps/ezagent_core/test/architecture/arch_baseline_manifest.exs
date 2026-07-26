@@ -108,7 +108,16 @@
   #   burn-down is a module split (extract the §2.2 read surface into a sibling
   #   `Ezagent.Kind.Read` once callers have migrated), tracked for a later chunk.
   #   8→9.
-  oversized_modules_gt_1000: 9,
+  # arch-cap-bump: +1 V5 pid-closure A1a/A1b — the acquisition-primitive
+  #   census (report-only Track-A scanner section: `acquisition_sites/0`,
+  #   the ban-set table, the site detector, the ledger markdown renderer +
+  #   their doc prose) grew actor_boundary_scanner.ex 838 → ~1150 LOC,
+  #   crossing >1000 as the tenth oversized module. Intentional, gate-
+  #   justified growth (the census is the V5 anti-drift instrument); the
+  #   burn-down is extracting the V5 census section into a sibling
+  #   `Ezagent.AcquisitionScanner` module once A1b-rest templating lands.
+  #   9→10.
+  oversized_modules_gt_1000: 10,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
