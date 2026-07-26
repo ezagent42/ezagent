@@ -5,6 +5,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Store
   alias EzagentPluginGitWorkflow.TaskBinding
+  alias EzagentPluginGitWorkflow.WorkflowFacts
   alias EzagentPluginGitWorkflow.WorkflowRun
 
   @moduletag :store
@@ -40,7 +41,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       external_task_id: "task-accept-1",
       source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
       source_revision: "abc123",
-      requested_head_ref: "feature/test"
+      requested_head_ref: nil
     }
 
     {:ok, intent} = Map.merge(defaults, attrs) |> AcceptIntent.new()
@@ -132,6 +133,36 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert {:error, :head_ref_not_allowed} = Store.accept(intent)
     end
 
+    test "requested_head_ref inside namespace but not the deterministic value returns error" do
+      # Regression for the pre-P1 gap: the old check only verified
+      # String.starts_with?/2 against the namespace, so any suffix under
+      # "feature/" was accepted. It must now match derive/2 exactly.
+      intent =
+        build_intent(%{
+          external_task_id: "task-non-deterministic-head",
+          requested_head_ref: "feature/whatever-i-want"
+        })
+
+      assert {:error, :head_ref_not_allowed} = Store.accept(intent)
+    end
+
+    test "requested_head_ref matching the deterministic value is accepted" do
+      external_task_id = "task-deterministic-head"
+
+      run_id =
+        EzagentPluginGitWorkflow.WorkflowRun.generate_id("bnd_store_test", 1, external_task_id)
+
+      expected_ref = EzagentPluginGitWorkflow.DeterministicRef.derive("feature/", run_id)
+
+      intent =
+        build_intent(%{
+          external_task_id: external_task_id,
+          requested_head_ref: expected_ref
+        })
+
+      assert {:ok, %WorkflowRun{requested_head_ref: ^expected_ref}} = Store.accept(intent)
+    end
+
     test "run.workspace_uri equals binding.workspace_uri" do
       intent = build_intent(%{external_task_id: "task-ws-proof"})
       {:ok, run} = Store.accept(intent)
@@ -172,32 +203,38 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       {:ok, run: run}
     end
 
-    test "transitions from accepted to workspace_ready", %{run: run} do
-      assert {:ok, %WorkflowRun{status: "workspace_ready", state_version: 2}} =
-               Store.transition(run.id, 1, "accepted", "workspace_ready")
+    test "transitions from accepted to authorized", %{run: run} do
+      assert {:ok, %WorkflowRun{status: "authorized", state_version: 2}} =
+               Store.transition(run.id, 1, "accepted", "authorized")
     end
 
     test "exact retry is idempotent", %{run: run} do
-      {:ok, r1} = Store.transition(run.id, 1, "accepted", "workspace_ready")
-      {:ok, r2} = Store.transition(run.id, 1, "accepted", "workspace_ready")
+      {:ok, r1} = Store.transition(run.id, 1, "accepted", "authorized")
+      {:ok, r2} = Store.transition(run.id, 1, "accepted", "authorized")
       assert r1.state_version == r2.state_version
     end
 
     test "stale state_version returns error", %{run: run} do
-      {:ok, _} = Store.transition(run.id, 1, "accepted", "workspace_ready")
+      {:ok, _} = Store.transition(run.id, 1, "accepted", "authorized")
 
+      # Second call's target must itself be a legal edge from the claimed
+      # expected_status ("accepted") so it clears check_legal_edge and
+      # reaches the DB CAS, where it is then classified as stale against
+      # the run's actual (now "authorized") state. "blocked" is legal from
+      # every non-terminal state, so it always reaches that classification
+      # regardless of which state the run actually raced ahead to.
       assert {:error, :stale_state_version} =
-               Store.transition(run.id, 1, "accepted", "worker_ready")
+               Store.transition(run.id, 1, "accepted", "blocked")
     end
 
     test "wrong expected_status returns conflict", %{run: run} do
       assert {:error, :workflow_state_conflict} =
-               Store.transition(run.id, 1, "workspace_ready", "worker_ready")
+               Store.transition(run.id, 1, "workspace_ready", "changes_ready")
     end
 
     test "non-existent run returns not_found" do
       assert {:error, :not_found} =
-               Store.transition("nonexistent", 1, "accepted", "workspace_ready")
+               Store.transition("nonexistent", 1, "accepted", "authorized")
     end
 
     test "rejects unknown status at gate" do
@@ -208,29 +245,44 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
                Store.transition(run.id, 1, "accepted", "invalid_status")
     end
 
-    test "terminal runs: exact retry returns same run, different transition rejected" do
-      intent = build_intent()
-      {:ok, run} = Store.accept(intent)
+    test "rejects a known status that is not a legal edge from the current one", %{run: run} do
+      assert {:error, {:illegal_transition, "accepted", "pr_open"}} =
+               Store.transition(run.id, 1, "accepted", "pr_open")
+    end
 
-      # First: accepted → completed (terminal). CAS succeeds.
-      {:ok, r1} = Store.transition(run.id, 1, "accepted", "completed")
-      assert r1.status == "completed"
+    test "terminal runs: exact retry returns same run, different transition rejected", %{
+      run: run
+    } do
+      {:ok, r1} = Store.transition(run.id, 1, "accepted", "blocked")
+      assert r1.status == "blocked"
       assert r1.state_version == 2
 
-      # Exact retry with same params: returns same completed run (idempotent).
-      {:ok, r2} = Store.transition(run.id, 1, "accepted", "completed")
+      # Exact retry with same params: returns same run (idempotent).
+      {:ok, r2} = Store.transition(run.id, 1, "accepted", "blocked")
       assert r2.id == r1.id
-      assert r2.status == "completed"
+      assert r2.status == "blocked"
       assert r2.state_version == 2
 
-      # Different transition attempt on terminal run: rejected.
-      assert {:error, :workflow_terminal} =
-               Store.transition(run.id, 2, "completed", "projected")
+      {:ok, r3} = Store.transition(run.id, 2, "blocked", "failed")
+      assert r3.status == "failed"
+      assert r3.state_version == 3
 
-      # State didn't change.
+      # Different transition attempt on terminal run: rejected. Terminal
+      # states have no outgoing @legal_edges entry at all, so a caller
+      # that (correctly) names "failed" as expected_status would be
+      # rejected at the check_legal_edge gate with {:illegal_transition,
+      # "failed", _} before ever reaching the DB — never exercising the
+      # :workflow_terminal classification this test targets. Using
+      # "blocked" here models a caller with a stale-but-plausible view
+      # (legal edge, reaches the DB) who discovers upon CAS-miss
+      # classification that the run has since become terminal — which is
+      # exactly the case :workflow_terminal exists to report.
+      assert {:error, :workflow_terminal} =
+               Store.transition(run.id, 3, "blocked", "cancelled")
+
       {:ok, final} = Store.read_run(run.id)
-      assert final.state_version == 2
-      assert final.status == "completed"
+      assert final.state_version == 3
+      assert final.status == "failed"
     end
   end
 
@@ -248,6 +300,82 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
     test "returns error for unknown id" do
       assert {:error, :not_found} = Store.read_run("nonexistent")
+    end
+  end
+
+  describe "facts" do
+    test "upsert_facts/1 then read_facts/1 round-trips" do
+      {:ok, facts} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_1",
+          run_id: "run_rt_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_rt_1"}} = Store.upsert_facts(facts)
+
+      assert {:ok, %WorkflowFacts{id: "wf_rt_1", run_id: "run_rt_1"}} =
+               Store.read_facts("run_rt_1")
+    end
+
+    test "upsert_facts/1 updates in place on repeated calls for the same run_id" do
+      {:ok, facts} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_2",
+          run_id: "run_rt_2",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      {:ok, _} = Store.upsert_facts(facts)
+
+      {:ok, updated} =
+        WorkflowFacts.new(%{
+          id: "wf_rt_2",
+          run_id: "run_rt_2",
+          workspace_uri: Ezagent.URI.workspace("test-ws"),
+          head_sha: "abc123"
+        })
+
+      {:ok, _} = Store.upsert_facts(updated)
+
+      assert {:ok, %WorkflowFacts{head_sha: "abc123"}} = Store.read_facts("run_rt_2")
+      # still exactly one row for this run_id
+      [[count]] =
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_facts WHERE run_id = $1", ["run_rt_2"]).rows
+
+      assert count == 1
+    end
+
+    test "read_facts/1 returns not_found for an unknown run_id" do
+      assert {:error, :not_found} = Store.read_facts("nonexistent")
+    end
+
+    test "upsert_facts/1 never returns an id that was not persisted" do
+      # Two concurrent-shaped callers upsert the SAME run_id with DIFFERENT
+      # `id` values. The SQL update clause deliberately excludes `id`, so
+      # the row keeps its ORIGINAL id on conflict — the second caller's
+      # returned struct must reflect that persisted id, not its own input.
+      {:ok, first} =
+        WorkflowFacts.new(%{
+          id: "wf_conflict_first",
+          run_id: "run_conflict_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws")
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first"}} = Store.upsert_facts(first)
+
+      {:ok, second} =
+        WorkflowFacts.new(%{
+          id: "wf_conflict_second",
+          run_id: "run_conflict_1",
+          workspace_uri: Ezagent.URI.workspace("test-ws"),
+          head_sha: "second-sha"
+        })
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first", head_sha: "second-sha"}} =
+               Store.upsert_facts(second)
+
+      assert {:ok, %WorkflowFacts{id: "wf_conflict_first"}} = Store.read_facts("run_conflict_1")
     end
   end
 

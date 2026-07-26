@@ -48,6 +48,39 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       bad = %{@valid_binding_attrs | base_ref: "refs/heads/main"}
       assert {:error, {:invalid_repository_ref, _}} = TaskBinding.new(bad)
     end
+
+    test "accepts a normal allowed_head_namespace like feature/" do
+      assert {:ok, %TaskBinding{allowed_head_namespace: "feature/"}} =
+               TaskBinding.new(@valid_binding_attrs)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain .." do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature/../"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain //" do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature//sub/"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would contain @{" do
+      bad = %{@valid_binding_attrs | allowed_head_namespace: "feature/@{/"}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "rejects allowed_head_namespace whose derived ref would exceed 255 bytes" do
+      # derived length = byte_size(ns) + byte_size("run-") + 24 hex chars
+      #                = byte_size(ns) + 28
+      # 255 - 28 = 227, so 228+ overflows the limit.
+      bad = %{@valid_binding_attrs | allowed_head_namespace: String.duplicate("a", 228)}
+      assert {:error, {:invalid_field, :allowed_head_namespace}} = TaskBinding.new(bad)
+    end
+
+    test "accepts allowed_head_namespace exactly at the 255-byte derived-ref boundary" do
+      ok = %{@valid_binding_attrs | allowed_head_namespace: String.duplicate("a", 227)}
+      assert {:ok, %TaskBinding{}} = TaskBinding.new(ok)
+    end
   end
 
   describe "WorkflowRun closed status set" do
@@ -62,12 +95,49 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "terminal statuses are correctly identified" do
-      assert WorkflowRun.terminal?("completed")
       assert WorkflowRun.terminal?("failed")
       assert WorkflowRun.terminal?("cancelled")
 
       refute WorkflowRun.terminal?("accepted")
-      refute WorkflowRun.terminal?("workspace_ready")
+      refute WorkflowRun.terminal?("authorized")
+      refute WorkflowRun.terminal?("blocked")
+    end
+
+    test "legal_transition?/2 matches the exact §5.4 edge set for every ordered status pair" do
+      expected_edges = %{
+        "accepted" => ~w(authorized blocked failed cancelled),
+        "authorized" => ~w(workspace_ready blocked failed cancelled),
+        "workspace_ready" => ~w(changes_ready blocked failed cancelled),
+        "changes_ready" => ~w(pr_open blocked failed cancelled),
+        "pr_open" => ~w(observations_current blocked failed cancelled),
+        "observations_current" => ~w(observations_current blocked failed cancelled),
+        "blocked" => ~w(blocked failed cancelled),
+        "failed" => [],
+        "cancelled" => []
+      }
+
+      statuses = WorkflowRun.statuses()
+
+      # The status set itself is part of the invariant — without this, an added
+      # status would simply never be enumerated by the pair loop below.
+      assert Enum.sort(statuses) == Enum.sort(Map.keys(expected_edges))
+
+      for from <- statuses, to <- statuses do
+        expected? = to in Map.fetch!(expected_edges, from)
+
+        assert WorkflowRun.legal_transition?(from, to) == expected?,
+               "#{from} -> #{to}: expected legal_transition? to be #{expected?}"
+      end
+    end
+
+    test "blocked has no defined resume edge in this slice" do
+      # P1 scope only: resuming a blocked run onto the success path is
+      # Slice P4's retry-classification concern (design §4.1/§9). Blocked
+      # can still reach failed/cancelled.
+      assert WorkflowRun.legal_transition?("blocked", "failed")
+      assert WorkflowRun.legal_transition?("blocked", "cancelled")
+      refute WorkflowRun.legal_transition?("blocked", "accepted")
+      refute WorkflowRun.legal_transition?("blocked", "authorized")
     end
 
     test "invalid status rejected by WorkflowRun.new" do

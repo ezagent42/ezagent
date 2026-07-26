@@ -4,6 +4,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
   alias EzagentCore.Repo
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Store
+  alias EzagentPluginGitWorkflow.WorkflowFacts
 
   @moduletag :concurrency
 
@@ -19,7 +20,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       external_task_id: "task-default",
       source_task_uri: Ezagent.URI.resource("test-ws", "kanban-task", "task-src"),
       source_revision: "abc123",
-      requested_head_ref: "feature/conc"
+      requested_head_ref: nil
     }
 
     {:ok, intent} = Map.merge(defaults, overrides) |> AcceptIntent.new()
@@ -198,7 +199,11 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       parent = self()
       ref = make_ref()
 
-      next_states = for i <- 1..@n, do: if(rem(i, 2) == 0, do: "workspace_ready", else: "blocked")
+      # "authorized" is the only legal edge from "accepted" besides the
+      # control states (design §5.4) — "workspace_ready" is no longer
+      # directly reachable from "accepted" now that Store.transition/4
+      # enforces WorkflowRun.legal_transition?/2.
+      next_states = for i <- 1..@n, do: if(rem(i, 2) == 0, do: "authorized", else: "blocked")
 
       tasks =
         for {next_s, i} <- Enum.with_index(next_states, 1) do
@@ -227,7 +232,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       run_unboxed(fn ->
         {:ok, final} = Store.read_run(run.id)
         assert final.state_version == 2
-        assert final.status in ["workspace_ready", "blocked"]
+        assert final.status in ["authorized", "blocked"]
       end)
 
       for {:error, reason} <- errors do
@@ -235,6 +240,72 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       end
 
       cleanup_unboxed(binding_id)
+    end
+  end
+
+  # ── Concurrent facts upsert ───────────────────────────────────
+  # Design §5.3/§3.2: upsert_facts/1 must be a single `INSERT ... ON
+  # CONFLICT (run_id) DO UPDATE` statement, not read-then-write — a
+  # read-then-write races under concurrency and can silently produce two
+  # rows or a lost update. This proves it against REAL concurrent
+  # connections (not the sandboxed single-connection default), same
+  # method as the accept/1 and transition/4 proofs above.
+
+  describe "real multi-connection: concurrent facts upsert" do
+    test "#{@n} concurrent upserts to the same run_id → exactly one row survives" do
+      run_id = "run-facts-conc-#{System.unique_integer([:positive])}"
+      barrier = self()
+      parent = self()
+      ref = make_ref()
+
+      tasks =
+        for i <- 1..@n do
+          Task.async(fn ->
+            await_barrier(barrier)
+
+            {:ok, facts} =
+              WorkflowFacts.new(%{
+                id: "wf-facts-conc-#{i}",
+                run_id: run_id,
+                workspace_uri: Ezagent.URI.workspace("test-ws"),
+                head_sha: "sha-#{i}"
+              })
+
+            result = run_unboxed(fn -> Store.upsert_facts(facts) end)
+            send(parent, {ref, i, result})
+          end)
+        end
+
+      barrier_sync(@n)
+      Task.await_many(tasks, @timeout)
+
+      results = for _ <- 1..@n, do: receive(do: ({^ref, _i, r} -> r))
+      assert Enum.all?(results, &match?({:ok, _}, &1))
+
+      run_unboxed(fn ->
+        [[count]] =
+          Repo.query!(
+            "SELECT COUNT(*) FROM git_workflow_facts WHERE run_id = $1",
+            [run_id]
+          ).rows
+
+        # Exactly one row: no lost writer created a duplicate, and the
+        # single ON CONFLICT DO UPDATE statement is what prevents the
+        # classic read-then-write TOCTOU race from splitting into two rows.
+        assert count == 1
+
+        {:ok, final} = Store.read_facts(run_id)
+        assert final.run_id == run_id
+        # Whichever writer's UPDATE landed last, the column values are
+        # never a corrupted mix — head_sha always matches the "sha-N"
+        # shape produced by exactly one of the N concurrent structs.
+        assert final.head_sha =~ ~r/^sha-\d+$/
+      end)
+
+      run_unboxed(fn ->
+        Repo.query!("DELETE FROM git_workflow_facts WHERE run_id = $1", [run_id])
+        :ok
+      end)
     end
   end
 end

@@ -14,7 +14,9 @@ defmodule EzagentPluginGitWorkflow.Store do
 
   alias EzagentCore.Repo
   alias EzagentPluginGitWorkflow.AcceptIntent
+  alias EzagentPluginGitWorkflow.DeterministicRef
   alias EzagentPluginGitWorkflow.TaskBinding
+  alias EzagentPluginGitWorkflow.WorkflowFacts
   alias EzagentPluginGitWorkflow.WorkflowRun
 
   # ---------------------------------------------------------------------------
@@ -101,15 +103,11 @@ defmodule EzagentPluginGitWorkflow.Store do
         source_revision: source_revision,
         requested_head_ref: requested_head_ref
       }) do
+    run_id = WorkflowRun.generate_id(binding_id, binding_generation, external_task_id)
+
     with {:ok, binding} <- check_binding_active(binding_id),
          :ok <- validate_binding_generation(binding_generation, binding),
-         :ok <- validate_source_workspace(source_task_uri, binding, requested_head_ref),
-         run_id =
-           WorkflowRun.generate_id(
-             binding_id,
-             binding_generation,
-             external_task_id
-           ),
+         :ok <- validate_source_workspace(source_task_uri, binding, requested_head_ref, run_id),
          digest =
            compute_accept_digest(
              binding_id,
@@ -148,7 +146,8 @@ defmodule EzagentPluginGitWorkflow.Store do
   Atomically transition a run's status using single-statement PostgreSQL CAS.
 
   UPDATE succeeds only when id, state_version, and status all match.
-  Rejects unknown statuses at call time. Terminal runs are rejected.
+  Rejects unknown statuses and illegal edges (WorkflowRun.legal_transition?/2)
+  at call time. Terminal runs are rejected.
 
   On zero rows updated, fresh-reads and distinguishes:
     - exact retry (already at target state+version)
@@ -162,13 +161,14 @@ defmodule EzagentPluginGitWorkflow.Store do
   def transition(run_id, expected_version, expected_status, next_status)
       when is_binary(run_id) and is_integer(expected_version) and
              is_binary(expected_status) and is_binary(next_status) do
-    # Reject invalid statuses at the gate.
+    # Reject invalid statuses and illegal edges at the gate.
     # Terminal states are blocked INSIDE the CAS WHERE clause (no pre-read
-    # TOCTOU): `AND status NOT IN ('completed','failed','cancelled')` makes
-    # the UPDATE a no-op when the row is terminal — even if expected_status
+    # TOCTOU): `AND status NOT IN ('failed','cancelled')` makes the UPDATE
+    # a no-op when the row is terminal — even if expected_status
     # accidentally names a terminal state.
     with :ok <- check_valid_status(expected_status),
-         :ok <- check_valid_status(next_status) do
+         :ok <- check_valid_status(next_status),
+         :ok <- check_legal_edge(expected_status, next_status) do
       next_version = expected_version + 1
       now = DateTime.utc_now()
 
@@ -176,7 +176,7 @@ defmodule EzagentPluginGitWorkflow.Store do
         Repo.query!(
           "UPDATE git_workflow_runs SET status = $1, state_version = $2, updated_at = $3
            WHERE id = $4 AND state_version = $5 AND status = $6
-             AND status NOT IN ('completed', 'failed', 'cancelled')",
+             AND status NOT IN ('failed', 'cancelled')",
           [next_status, next_version, now, run_id, expected_version, expected_status]
         )
 
@@ -198,6 +198,71 @@ defmodule EzagentPluginGitWorkflow.Store do
     case read_run_row(run_id) do
       nil -> {:error, :not_found}
       row -> {:ok, row_to_run(row)}
+    end
+  end
+
+  # ---------------------------------------------------------------------------
+  # Facts operations
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Inserts or fully replaces the facts row for `facts.run_id`.
+
+  Single-statement `INSERT ... ON CONFLICT (run_id) DO UPDATE` — never
+  read-then-write. This is what makes concurrent upserts for the same
+  run_id race-free: Postgres resolves the conflict against its own unique
+  index inside one statement, so two concurrent callers can never both
+  observe "no row yet" and both INSERT (which would violate the unique
+  index and surface as a DB error, not a silent duplicate) — one of them
+  always takes the ON CONFLICT DO UPDATE branch instead. Whichever caller's
+  statement commits last simply overwrites every non-key column with its
+  own values (last-write-wins), leaving exactly one row.
+
+  The update clause deliberately excludes `id`, so on conflict the row
+  keeps its ORIGINAL `id` — never the caller's. The statement therefore
+  carries `RETURNING *` and the returned struct is built from that
+  returned row (via `row_to_facts/1`), not from the caller's input struct:
+  two concurrent callers upserting the same `run_id` with different `id`
+  values must never both get back an `{:ok, facts}` whose `id` disagrees
+  with what is actually persisted.
+  """
+  @spec upsert_facts(WorkflowFacts.t()) :: {:ok, WorkflowFacts.t()}
+  def upsert_facts(%WorkflowFacts{} = facts) do
+    now = DateTime.utc_now()
+    row = facts_to_row(facts, now)
+
+    columns = Map.keys(row)
+    values = Map.values(row)
+    placeholders = 1..length(columns) |> Enum.map(&"$#{&1}") |> Enum.join(", ")
+
+    update_clause =
+      columns
+      |> Enum.reject(&(&1 in ["id", "run_id", "inserted_at"]))
+      |> Enum.map(&"#{&1} = EXCLUDED.#{&1}")
+      |> Enum.join(", ")
+
+    %Postgrex.Result{columns: result_columns, rows: [result_row | _]} =
+      Repo.query!(
+        "INSERT INTO git_workflow_facts (" <>
+          Enum.join(columns, ", ") <>
+          ") VALUES (" <>
+          placeholders <>
+          ") ON CONFLICT (run_id) DO UPDATE SET " <> update_clause <> " RETURNING *",
+        values
+      )
+
+    {:ok, Enum.zip(result_columns, result_row) |> Map.new() |> row_to_facts()}
+  end
+
+  @doc "Reads the facts row for a run id."
+  @spec read_facts(String.t()) :: {:ok, WorkflowFacts.t()} | {:error, :not_found}
+  def read_facts(run_id) when is_binary(run_id) do
+    %Postgrex.Result{rows: rows, columns: columns} =
+      Repo.query!("SELECT * FROM git_workflow_facts WHERE run_id = $1", [run_id])
+
+    case rows do
+      [] -> {:error, :not_found}
+      [row | _] -> {:ok, Enum.zip(columns, row) |> Map.new() |> row_to_facts()}
     end
   end
 
@@ -241,14 +306,15 @@ defmodule EzagentPluginGitWorkflow.Store do
   defp validate_source_workspace(
          source_task_uri,
          %TaskBinding{workspace_uri: workspace_uri} = binding,
-         requested_head_ref
+         requested_head_ref,
+         run_id
        ) do
     source_ws = Ezagent.URI.workspace_name(source_task_uri)
     binding_ws = Ezagent.URI.workspace_name(workspace_uri)
 
     case {source_ws, binding_ws} do
       {{:ok, ws}, {:ok, ws}} ->
-        validate_requested_head_ref(requested_head_ref, binding)
+        validate_requested_head_ref(requested_head_ref, binding, run_id)
 
       {{:ok, _}, {:ok, _}} ->
         {:error, :source_workspace_mismatch}
@@ -258,10 +324,14 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
-  defp validate_requested_head_ref(nil, _binding), do: :ok
+  defp validate_requested_head_ref(nil, _binding, _run_id), do: :ok
 
-  defp validate_requested_head_ref(ref, %TaskBinding{allowed_head_namespace: ns}) do
-    if String.starts_with?(ref, ns),
+  defp validate_requested_head_ref(
+         ref,
+         %TaskBinding{allowed_head_namespace: ns},
+         run_id
+       ) do
+    if ref == DeterministicRef.derive(ns, run_id),
       do: :ok,
       else: {:error, :head_ref_not_allowed}
   end
@@ -364,6 +434,12 @@ defmodule EzagentPluginGitWorkflow.Store do
     if WorkflowRun.valid_status?(status),
       do: :ok,
       else: {:error, {:invalid_status, status}}
+  end
+
+  defp check_legal_edge(expected_status, next_status) do
+    if WorkflowRun.legal_transition?(expected_status, next_status),
+      do: :ok,
+      else: {:error, {:illegal_transition, expected_status, next_status}}
   end
 
   defp classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status) do
@@ -525,6 +601,42 @@ defmodule EzagentPluginGitWorkflow.Store do
       source_revision: row["source_revision"],
       requested_head_ref: row["requested_head_ref"],
       last_error_code: row["last_error_code"],
+      inserted_at: row["inserted_at"],
+      updated_at: row["updated_at"]
+    })
+  end
+
+  defp facts_to_row(%WorkflowFacts{workspace_uri: workspace_uri} = facts, now) do
+    facts
+    |> Map.from_struct()
+    |> Map.drop([:inserted_at, :updated_at])
+    |> Map.put(:workspace_uri, to_string(workspace_uri))
+    |> Map.new(fn {k, v} -> {Atom.to_string(k), v} end)
+    |> Map.put("inserted_at", now)
+    |> Map.put("updated_at", now)
+  end
+
+  defp row_to_facts(row) when is_map(row) do
+    struct!(WorkflowFacts, %{
+      id: row["id"],
+      run_id: row["run_id"],
+      workspace_uri: parse_uri!(row["workspace_uri"]),
+      workspace_provision_id: row["workspace_provision_id"],
+      deterministic_head_ref: row["deterministic_head_ref"],
+      change_digest: row["change_digest"],
+      expected_base_sha: row["expected_base_sha"],
+      head_sha: row["head_sha"],
+      change_request_id: row["change_request_id"],
+      change_request_url: row["change_request_url"],
+      change_request_state: row["change_request_state"],
+      change_request_head_ref: row["change_request_head_ref"],
+      change_request_base_ref: row["change_request_base_ref"],
+      checks_revision: row["checks_revision"],
+      checks_summary: row["checks_summary"],
+      checks_observed_at: row["checks_observed_at"],
+      reviews_revision: row["reviews_revision"],
+      reviews_summary: row["reviews_summary"],
+      reviews_observed_at: row["reviews_observed_at"],
       inserted_at: row["inserted_at"],
       updated_at: row["updated_at"]
     })

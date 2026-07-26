@@ -15,30 +15,46 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
 
   All URI fields are canonical Ezagent URIs (Ezagent.URI.canonical?/1).
 
-  Closed status set (E2-A):
-    accepted → workspace_ready → worker_ready → authority_ready
-    → pr_open → checks_passed → awaiting_external_merge
-    → merged_confirmed → projected → completed
+  Closed status set (Plan E V1 — design
+  docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+  §5.4, which supersedes the wider E0-E9 wave-plan vocabulary this app
+  shipped with under Slice E2):
+    accepted → authorized → workspace_ready → changes_ready
+    → pr_open → observations_current (self-loop on repeated ticks)
 
-  Control states: blocked | failed | cancelled
+  Control states: blocked | failed | cancelled — any non-terminal status may
+  transition to any of the three.
 
-  Terminal states (reject further transitions):
-    completed, failed, cancelled
+  Terminal states (reject further transitions): failed, cancelled.
+  `blocked` is deliberately NOT terminal-in-the-CAS-sense (matching the
+  prior model); its legal edges in this slice are blocked (self-transition
+  — re-blocking an already-blocked run is harmless and idempotent),
+  failed, and cancelled. Resuming a blocked run onto the success path is
+  Slice P4's retry-classification concern, not defined here.
   """
 
   # ── status vocabulary ────────────────────────────────────────
 
   @success_path ~w(
-    accepted workspace_ready worker_ready authority_ready
-    pr_open checks_passed awaiting_external_merge
-    merged_confirmed projected completed
+    accepted authorized workspace_ready changes_ready
+    pr_open observations_current
   )
 
   @control_states ~w(blocked failed cancelled)
 
   @all_statuses @success_path ++ @control_states
 
-  @terminal_statuses ~w(completed failed cancelled)
+  @terminal_statuses ~w(failed cancelled)
+
+  @legal_edges %{
+    "accepted" => ~w(authorized blocked failed cancelled),
+    "authorized" => ~w(workspace_ready blocked failed cancelled),
+    "workspace_ready" => ~w(changes_ready blocked failed cancelled),
+    "changes_ready" => ~w(pr_open blocked failed cancelled),
+    "pr_open" => ~w(observations_current blocked failed cancelled),
+    "observations_current" => ~w(observations_current blocked failed cancelled),
+    "blocked" => ~w(blocked failed cancelled)
+  }
 
   @doc "All valid workflow statuses."
   def statuses, do: @all_statuses
@@ -50,6 +66,10 @@ defmodule EzagentPluginGitWorkflow.WorkflowRun do
   @doc "Terminal status?"
   @spec terminal?(String.t()) :: boolean()
   def terminal?(s), do: s in @terminal_statuses
+
+  @doc "Whether `next` is a legal CAS transition target from `current`."
+  @spec legal_transition?(String.t(), String.t()) :: boolean()
+  def legal_transition?(current, next), do: next in Map.get(@legal_edges, current, [])
 
   @doc "Initial status on accept."
   def initial_status, do: "accepted"

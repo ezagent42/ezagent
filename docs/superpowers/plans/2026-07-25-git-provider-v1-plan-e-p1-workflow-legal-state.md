@@ -393,6 +393,69 @@ git commit -m "feat(git-workflow): deterministic head ref, exact-match accept va
 
 ---
 
+### Task 1 — post-review corrections (2026-07-26)
+
+Codex reviewed Task 1's implementation and found three defects that trace
+back to gaps in this plan, not to the implementer. Apply these on top of
+Task 1's commit; all three must be verified by an actual test run (they were
+not, originally — see the note below).
+
+**Correction 1 — `store_test.exs`'s own fixture breaks the suite (plan bug).**
+Task 1 Step 8 fixed `concurrency_test.exs`'s fixture but missed that
+`store_test.exs:36-48`'s `build_intent/1` defaults to
+`requested_head_ref: "feature/test"`. Under the new exact-match rule that
+value can never equal `"feature/run-" <> <24 hex>`, so
+`Store.accept(build_intent())` now returns
+`{:error, :head_ref_not_allowed}` — breaking every test in that file that
+pattern-matches `{:ok, run} = Store.accept(intent)` (~10 sites out of 21
+`Store.accept` calls) before it reaches the behavior it means to test.
+Change that default to `nil`, exactly as Step 8 did for
+`concurrency_test.exs`. Do not change the two tests added in Step 5 — they
+supply their refs explicitly and are correct as written.
+
+**Correction 2 — derived refs are never validated against Git ref rules
+(design §5.2 requirement this plan dropped).** §5.2 requires the derived ref
+to "满足 Git ref validation 和 255-byte 上限", but `derive/2` concatenates
+without checking, and `TaskBinding` validates `allowed_head_namespace` only
+as `is_binary/1` (`task_binding.ex:113`). A namespace containing `//`, `..`,
+`@{`, or one long enough to push the result past 255 bytes silently yields
+an illegal server-derived ref. The repo already has the exact predicate:
+`Ezagent.DomainGit.RepositoryRef.valid_ref?/1`
+(`apps/ezagent_domain_git/lib/ezagent/domain_git/repository_ref.ex:38-45`),
+which enforces the 1..255 byte range, the character class, and rejects
+`//`, `..`, `@{`, leading `refs/`, and trailing `/` or `.`.
+
+Validate the *completed* ref, and validate the binding's namespace at
+construction so a bad namespace fails early rather than at accept time. Add
+tests for: a namespace producing an over-255-byte ref, and a namespace
+containing `..` / `//` / `@{`. `RepositoryRef` is already a dependency of
+this app (`task_binding.ex` uses it), so this adds no new dependency.
+
+**Correction 3 (Minor) — third scan list missed.** `architecture_test.exs`
+has a *third* hardcoded source-file list, in the `String.to_atom/1` safety
+test (~line 142-150), which Task 1 Step 10 did not update. Add
+`deterministic_ref.ex` there too. Consider replacing the three duplicated
+lists with one module attribute — three copies is why one was missed.
+
+**Decisions recorded (Allen, 2026-07-26):**
+
+- **Empty-string `requested_head_ref` stays rejected.** §5.2's "只能为空"
+  means `nil`; `AcceptIntent` rejecting `""` as a malformed value
+  (`accept_intent.ex:100-102`) is correct and is pre-existing behavior Task 1
+  never touched. Do **not** canonicalize `""` to `nil`.
+- **Ref validation lands in Task 1**, not a later slice — it belongs with the
+  derivation logic it constrains.
+
+**Verification note:** Task 1's original commit was made with **zero test
+runs** — the local PostgreSQL at 127.0.0.1:55432 was down, and `ezagent_core`
+cannot boot without it (`Ezagent.TemplateTags.load_into_registry/0` queries
+the DB during `Application.start/2`), which kills even DB-free unit tests in
+this umbrella. That is exactly how Correction 1 reached a commit unnoticed.
+Do not mark these corrections complete on inspection alone: start the
+cluster (`sudo systemctl enable --now postgresql@16-main`) and run the tests.
+
+---
+
 ### Task 2: Legal transition graph (supersedes the E2-A status vocabulary)
 
 **Files:**
@@ -552,10 +615,22 @@ In `workflow_run.ex`, replace the moduledoc's status-set paragraph (lines
 
   Terminal states (reject further transitions): failed, cancelled.
   `blocked` is deliberately NOT terminal-in-the-CAS-sense (matching the
-  prior model), but its only legal edges in this slice are failed/cancelled
-  — resuming a blocked run onto the success path is Slice P4's
-  retry-classification concern, not defined here.
+  prior model); its legal edges in this slice are blocked (self-transition
+  — re-blocking an already-blocked run is harmless and idempotent),
+  failed, and cancelled. Resuming a blocked run onto the success path is
+  Slice P4's retry-classification concern, not defined here.
 ```
+
+> **Amended (Allen, 2026-07-26):** the moduledoc paragraph above and the
+> `@legal_edges` map below originally omitted the `blocked → blocked`
+> self-edge, even though design §5.4 states any non-terminal state
+> (`blocked` included) may transition to `blocked`/`failed`/`cancelled`.
+> The whole-branch final review caught the gap — the exhaustive
+> 81-pair test in `schema_test.exs` had frozen the omission, so it
+> confidently enforced a graph that didn't match the design. Owner
+> decision: add the self-transition, aligning the implementation to the
+> design, rather than carving out a design exception for no benefit. The
+> text below already reflects that decision.
 
 Replace the vocabulary block (lines 29-39):
 
@@ -580,7 +655,7 @@ Replace the vocabulary block (lines 29-39):
     "changes_ready" => ~w(pr_open blocked failed cancelled),
     "pr_open" => ~w(observations_current blocked failed cancelled),
     "observations_current" => ~w(observations_current blocked failed cancelled),
-    "blocked" => ~w(failed cancelled)
+    "blocked" => ~w(blocked failed cancelled)
   }
 ```
 
@@ -1054,9 +1129,25 @@ provision id, deterministic head ref, collected change digest, expected
 base SHA, created/reconciled head SHA, normalized change request
 id/URL/state/head-ref/base-ref, and checks/reviews observation
 revision+summary+observed_at. Every field except `id`/`run_id` is optional
-at creation — later slices (P2/P3/P4) populate them incrementally as the
-run progresses. No field may hold a raw response body, header, token, or
+at creation. No field may hold a raw response body, header, token, or
 credential (design §5.3, §3.2).
+
+> **Amended (Allen, 2026-07-26):** this paragraph originally continued
+> "...later slices (P2/P3/P4) populate them incrementally as the run
+> progresses," which contradicts `Store.upsert_facts/1`'s actual
+> semantics — a single-statement `INSERT ... ON CONFLICT (run_id) DO
+> UPDATE` that replaces every non-key column on every call. A later
+> partial write under that model would NULL out an earlier stage's
+> facts, not merge with them. The whole-branch final review caught the
+> contradiction. Owner decision: keep full-replace semantics as built
+> (P1 has no second writer at all — P2/P3/P4 don't exist yet, so
+> designing a merge protocol now would be guessing at a write pattern
+> nobody has); fix the documentation instead. A caller of
+> `upsert_facts/1` must always pass a **complete** snapshot of the facts
+> it wants persisted, never a delta. If a later slice needs incremental
+> accumulation from multiple writers, it must introduce explicit merge
+> or revision-CAS semantics at that point — see the current moduledoc in
+> `workflow_facts.ex` for the authoritative wording.
 
 - [ ] **Step 1: Write the failing migration/schema test**
 
@@ -1150,10 +1241,13 @@ defmodule EzagentPluginGitWorkflow.WorkflowFacts do
   docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
   §5.3).
 
-  Every field but `id`/`run_id` is populated incrementally by later
-  slices (P2 workspace collection, P3 GitHub reconciliation, P4 observation
-  ticks) — nil is a legal "not yet known" value, not an error. No field may
-  hold a raw response body, header, token, or credential.
+  Every field but `id`/`run_id` is optional — nil is a legal "not yet
+  known" value, not an error. `Store.upsert_facts/1` fully replaces the
+  row on every call, so a caller must always pass a complete snapshot,
+  never a delta (amended 2026-07-26 — see the note above this step and
+  the current moduledoc in workflow_facts.ex for the authoritative
+  full-replace semantics; this is not an incremental-merge store). No
+  field may hold a raw response body, header, token, or credential.
   """
 
   @required_fields [:id, :run_id]
