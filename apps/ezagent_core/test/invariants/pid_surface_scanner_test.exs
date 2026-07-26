@@ -45,8 +45,11 @@ defmodule EzagentCore.Invariants.PidSurfaceScannerTest do
     # (actor app + 5 seed files) MISSED — the whole-umbrella sweep must
     # surface them
     {Ezagent.Domain.Agent, :materialize_declared, 1},
-    {Ezagent.Workspace, :create, 2},
-    {Ezagent.Entity.Session, :ensure_template_alive, 1}
+    {Ezagent.Workspace, :create, 2}
+    # (V5 A1c chunk3 REMOVED the {Ezagent.Entity.Session, :ensure_template_alive, 1}
+    # seed — the wrapper now returns `:ok`; the Kind pid stays behind the
+    # actor-app seam. The scanner no longer surfaces it — that is the closure,
+    # not blindness.)
   ]
 
   test "has-teeth: surfaces every known pid-yielding seed site" do

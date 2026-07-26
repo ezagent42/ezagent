@@ -26,7 +26,7 @@ defmodule Ezagent.Session.TemplateReadsTest do
 
   defmodule FakeSessionFacade do
     @moduledoc false
-    def ensure_template_alive(%URI{}), do: {:ok, self()}
+    def ensure_template_alive(%URI{}), do: :ok
 
     def read_template_content(%URI{} = uri) do
       {:ok,

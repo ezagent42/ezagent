@@ -51,7 +51,7 @@ defmodule Ezagent.Orchestrator.Tools.Migration do
     with true <-
            Ezagent.URI.type?(target_uri, :session) ||
              {:error, {:not_a_session_template_uri, target_uri}},
-         {:ok, _pid} <- SessionEntity.ensure_template_alive(target_uri),
+         :ok <- SessionEntity.ensure_template_alive(target_uri),
          {:ok, content} when is_map(content) <- SessionEntity.read_template_content(target_uri) do
       {:ok, content}
     else

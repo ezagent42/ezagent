@@ -434,7 +434,7 @@ defmodule Ezagent.Orchestrator.Tools.MemberTemplate do
          %URI{} = session_uri,
          %URI{} = workspace_uri
        ) do
-    with {:ok, _pid} <- Tools.ensure_template_alive(new_source_template_uri),
+    with :ok <- Tools.ensure_template_alive(new_source_template_uri),
          {:ok, content} <- Tools.read_source_template_content(new_source_template_uri),
          {:ok, flavor} <- Tools.content_flavor(content, new_source_template_uri) do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)

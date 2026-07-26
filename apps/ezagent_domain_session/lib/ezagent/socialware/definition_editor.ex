@@ -246,7 +246,7 @@ defmodule Ezagent.Socialware.DefinitionEditor do
     wc = Session.read_template_working_copy(session_uri)
 
     with %URI{} = template_uri <- Map.get(wc, :session_template_uri),
-         {:ok, _pid} <- Session.ensure_template_alive(template_uri),
+         :ok <- Session.ensure_template_alive(template_uri),
          {:ok, content} when is_map(content) <- Session.read_template_content(template_uri) do
       {:ok, content}
     else

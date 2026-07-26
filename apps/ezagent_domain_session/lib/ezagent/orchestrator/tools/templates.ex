@@ -349,7 +349,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
        do: [install_ref]
 
   defp template_installs_or_default(%URI{} = template_uri, _install_ref) do
-    with {:ok, _pid} <- Ezagent.Entity.Session.ensure_template_alive(template_uri),
+    with :ok <- Ezagent.Entity.Session.ensure_template_alive(template_uri),
          {:ok, content} <- Ezagent.Entity.Session.read_template_content(template_uri) do
       Ezagent.Socialware.Installation.installs_from_template(content)
     else

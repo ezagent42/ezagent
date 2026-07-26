@@ -68,7 +68,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
     case Map.get(wc, :session_template_uri) do
       %URI{} = recorded ->
-        with {:ok, _pid} <- Session.ensure_template_alive(recorded),
+        with :ok <- Session.ensure_template_alive(recorded),
              {:ok, content} <- Session.read_template_content(recorded) do
           {:ok, recorded, content}
         else
@@ -87,7 +87,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
     case find_session_template_uri(template_name, workspace_uri, workspace_name) do
       {:ok, %URI{} = session_template_uri} ->
-        with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
+        with :ok <- Session.ensure_template_alive(session_template_uri),
              {:ok, content} <- Session.read_template_content(session_template_uri) do
           {:ok, session_template_uri, content}
         else
@@ -136,7 +136,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
       :ok ->
         case find_session_template_uri(template_name, workspace_uri, workspace_name) do
           {:ok, %URI{} = session_template_uri} ->
-            with {:ok, _pid} <- Session.ensure_template_alive(session_template_uri),
+            with :ok <- Session.ensure_template_alive(session_template_uri),
                  {:ok, content} <- Session.read_template_content(session_template_uri) do
               {:ok, session_template_uri, content}
             else

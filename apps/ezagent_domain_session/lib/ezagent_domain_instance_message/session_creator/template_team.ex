@@ -239,7 +239,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateTeam do
   end
 
   defp source_template_content_and_flavor(%URI{} = source_template_uri) do
-    with {:ok, _pid} <- Session.ensure_template_alive(source_template_uri),
+    with :ok <- Session.ensure_template_alive(source_template_uri),
          {:ok, content} <- Session.read_template_content(source_template_uri) do
       case Map.get(content, :flavor) || Map.get(content, "flavor") do
         flavor when is_binary(flavor) and flavor != "" -> {:ok, content, flavor}

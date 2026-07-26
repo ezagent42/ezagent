@@ -107,7 +107,7 @@ defmodule Ezagent.Session.TemplateReads do
        |> Enum.flat_map(fn {uri_str, pid} ->
          with {:ok, uri} <- Ezagent.URI.parse(uri_str),
               true <- session_template_for_workspace?(uri, workspace_name),
-              {:ok, _pid} <- session.ensure_template_alive(uri),
+              :ok <- session.ensure_template_alive(uri),
               {:ok, content} <- session.read_template_content(uri) do
            [
              %{

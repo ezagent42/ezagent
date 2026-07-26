@@ -229,7 +229,7 @@ defmodule Ezagent.Orchestrator.Tools do
     # NEW content. Bridge routing derives flavor from the URI prefix, so that
     # divergence would route the sidecar via the wrong adapter / reject it.
     # One read = no divergence by construction.
-    with {:ok, _pid} <- ensure_template_alive(source_template_uri),
+    with :ok <- ensure_template_alive(source_template_uri),
          {:ok, content} <- read_source_template_content(source_template_uri),
          {:ok, flavor} <- content_flavor(content, source_template_uri) do
       do_spawn_member(
@@ -908,13 +908,13 @@ defmodule Ezagent.Orchestrator.Tools do
   @doc false
   def ensure_template_alive(%URI{} = template_uri) do
     case Ezagent.KindRegistry.lookup(template_uri) do
-      {:ok, pid} ->
-        {:ok, pid}
+      {:ok, _pid} ->
+        :ok
 
       :error ->
         case Ezagent.SpawnRegistry.spawn(template_uri) do
-          {:ok, pid} -> {:ok, pid}
-          {:error, {:already_started, pid}} -> {:ok, pid}
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
           {:error, _} = err -> err
         end
     end
