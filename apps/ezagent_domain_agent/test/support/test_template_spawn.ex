@@ -18,6 +18,10 @@ defmodule Ezagent.Agent.TestTemplateSpawn do
           :release_template_complete -> :ok
         end
 
+      {:after_display_profile, {:fail_after_display_profile, owner}} ->
+        send(owner, {:template_spawn_after_display_profile, completion, result})
+        {:error, :injected_post_profile_failure}
+
       _ ->
         :ok
     end

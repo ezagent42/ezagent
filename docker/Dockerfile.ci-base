@@ -55,8 +55,11 @@ RUN mix local.hex --force && mix local.rebar --force
 
 # --- Manifests ONLY — the deps layer is keyed on mix.lock, not source. `COPY --parents`
 #     (BuildKit, enabled by the syntax header above) preserves the apps/<app>/ layout
-#     that the umbrella's mix.exs expects. ---
-COPY mix.exs mix.lock ./
+#     that the umbrella's mix.exs expects. `ci_shards.exs` is `Code.eval_file`d by the
+#     root mix.exs at load time (#1522 shard manifest) — it MUST be present for
+#     `mix deps.get` here, else the base build fails `could not load ci_shards.exs`
+#     (latent since #1522; masked by the cached base image, exposed on a cache-clean rebuild). ---
+COPY mix.exs mix.lock ci_shards.exs ./
 COPY --parents apps/*/mix.exs ./
 # Resilient deps fetch: the proxy to hex.pm is flaky under concurrency.
 # Unset SET-BUT-EMPTY proxy vars first (same fix as Dockerfile.dev #1061): the ARG/ENV

@@ -1,5 +1,17 @@
 defmodule Ezagent.World.ConversationActionsTest do
-  use ExUnit.Case, async: true
+  # Was `use ExUnit.Case, async: true` — an outlier among this app's DB-touching
+  # tests. `switch_view/3 → AdminData.external_mirror_bindings_for/1` runs a
+  # synchronous `EzagentCore.Repo.all` in the test process. With no sandbox
+  # ownership that read only worked when this file ran ALONE (plugin_world's
+  # bare `test_helper.exs` never sets `:manual` mode, so the pool checks out
+  # normally). In the full umbrella shard another app sets the Repo sandbox to
+  # `:manual` globally, so this unowned read hit `DBConnection.OwnershipError`,
+  # which `external_mirror_bindings_for/1`'s prod `rescue` folded into
+  # `bindings` — flunking `assert bindings == []` non-deterministically by seed.
+  # Route through DataCase (the pattern every DB-touching sibling here uses,
+  # incl. `admin_data_test.exs` for the SAME module) so the test owns a sandbox
+  # connection. Test-harness only; no production change.
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.World.ConversationActions
 

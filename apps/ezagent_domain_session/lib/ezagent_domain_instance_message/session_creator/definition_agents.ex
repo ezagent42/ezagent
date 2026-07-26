@@ -284,14 +284,82 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
     with {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          {:ok, planned_uri} <-
-           planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe),
-         # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
-         # #17 cascade resolves the installer's user-default source), ensure the
-         # INSTALLER's host login is adopted as that source. No-ops for
-         # credential-less flavors (py/curl), for flavors/nodes without a host
-         # login, and for non-host-operator installers; the spawn below then
-         # inherits through the UNCHANGED cascade (no ad-hoc copy here).
-         :ok <-
+           planned_uri_for_role(session_uri, workspace_uri, agent, role_name, recipe) do
+      materialize_at_planned_uri(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        agent,
+        recipe,
+        recipe_name,
+        role_name,
+        flavor,
+        provider,
+        planned_uri
+      )
+    end
+  end
+
+  # A DETERMINISTIC-URI role (a passive data role's `sw-data-<digest>` URI is a
+  # pure function of session + role_name) whose agent is ALREADY LIVE from a
+  # prior materialize is an idempotent re-materialize/repair. Re-running the full
+  # spawn would fail: `spawn_from_template_content` correctly rejects a spawn onto
+  # an already-live URI as `:agent_uri_already_live` (the reject-double-spawn
+  # contract). Mirror the existing-member idempotent branch — refresh the durable
+  # recipe binding without re-spawning. A fresh (non-passive) role's URI is a
+  # random UUID, so it is never live here and always takes the spawn path.
+  defp materialize_at_planned_uri(
+         session_uri,
+         workspace_uri,
+         granted_by,
+         agent,
+         recipe,
+         recipe_name,
+         role_name,
+         flavor,
+         provider,
+         %URI{} = planned_uri
+       ) do
+    if Ezagent.Kind.alive?(planned_uri) do
+      with :ok <-
+             refresh_existing_binding(workspace_uri, planned_uri, recipe_name, role_name) do
+        {:ok, planned_uri}
+      end
+    else
+      spawn_fresh_at_planned_uri(
+        session_uri,
+        workspace_uri,
+        granted_by,
+        agent,
+        recipe,
+        recipe_name,
+        role_name,
+        flavor,
+        provider,
+        planned_uri
+      )
+    end
+  end
+
+  defp spawn_fresh_at_planned_uri(
+         session_uri,
+         workspace_uri,
+         granted_by,
+         _agent,
+         recipe,
+         recipe_name,
+         role_name,
+         flavor,
+         provider,
+         planned_uri
+       ) do
+    # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
+    # #17 cascade resolves the installer's user-default source), ensure the
+    # INSTALLER's host login is adopted as that source. No-ops for
+    # credential-less flavors (py/curl), for flavors/nodes without a host
+    # login, and for non-host-operator installers; the spawn below then
+    # inherits through the UNCHANGED cascade (no ad-hoc copy here).
+    with :ok <-
            Ezagent.Agent.HostLoginAdopt.ensure_installer_source(
              granted_by,
              workspace_uri,

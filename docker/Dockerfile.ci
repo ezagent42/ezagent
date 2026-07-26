@@ -16,6 +16,17 @@
 ARG CI_BASE=ezagent-ci-base:latest
 FROM ${CI_BASE}
 
+# --- Ephemeral marker for the nightly disk sweep (scripts/nightly-cache-sweep.sh) ---
+# This THIN per-PR image (built as `ci-gate-<run_id>-<attempt>-ci` by the CI gate and
+# as `ezagent-ci-local` locally) is disposable: every gate run leaves one behind, and
+# the compose `down -v` trap only tears down containers/volumes, never the built image.
+# The label lets the sweep age-prune these safely (>24h) WITHOUT ever matching the base
+# `ezagent-ci-base` (built from docker/Dockerfile.ci-base — NOT labeled, must survive:
+# rebuilding it needs docker.io, which flakes through GFW) or the live deploy images.
+# A LABEL in this child Dockerfile stamps ONLY this image, never the FROM base. Placed
+# before `COPY . .` so it stays in the cached layer set. See docs/guide/nightly-cache-sweep.md.
+LABEL ezagent.ephemeral="true"
+
 WORKDIR /app
 # Source now — this is the ONLY layer that changes per PR.
 COPY . .

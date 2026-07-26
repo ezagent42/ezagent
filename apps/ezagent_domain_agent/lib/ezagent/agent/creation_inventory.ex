@@ -128,6 +128,48 @@ defmodule Ezagent.Agent.CreationInventory do
     end
   end
 
+  @doc false
+  @spec rollback_record(String.t(), URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
+  def rollback_record(
+        attempt_id,
+        %URI{} = agent_uri,
+        %URI{} = root_uri,
+        %URI{} = workspace_uri
+      )
+      when is_binary(attempt_id) and attempt_id != "" do
+    attrs = exact_attrs(attempt_id, agent_uri, root_uri, workspace_uri)
+
+    Repo.transaction(fn ->
+      case Repo.get_by(CreationInventoryEntry,
+             creation_attempt_id: attrs.creation_attempt_id,
+             agent_uri: attrs.agent_uri
+           ) do
+        %CreationInventoryEntry{} = entry ->
+          if exact_fact?(entry, attrs) do
+            Repo.delete_all(
+              from(edge in Ezagent.Provenance.DerivationEdges,
+                where: edge.child_uri == ^attrs.agent_uri,
+                where: edge.parent_uri == ^attrs.provenance_root_uri,
+                where: edge.edge_kind == "creation_root",
+                where: edge.attempt_id == ^attrs.creation_attempt_id
+              )
+            )
+
+            Repo.delete!(entry)
+          end
+
+          :ok
+
+        nil ->
+          :ok
+      end
+    end)
+    |> case do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp exact_fact?(entry, attrs) do
     entry.provenance_root_uri == attrs.provenance_root_uri and
       entry.workspace_uri == attrs.workspace_uri

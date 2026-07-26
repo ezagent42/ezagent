@@ -2,11 +2,13 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Entity.Agent.TemplateSpawn
+  alias Ezagent.Entity.Profile
   alias Ezagent.Agent.TemplateOverlayTestBehavior
   alias Ezagent.Kind.Template.PreStart
   alias Ezagent.TestSupport.TemplatePreStartProbe
   alias EzagentDomainAgent.TestSupport.FreshPreStartTemplateClass
   alias EzagentDomainAgent.TestSupport.PreStartTemplateClass
+  alias EzagentDomainAgent.TestSupport.ProfileFailureTemplate
 
   defmodule PreinitializedSandboxTemplate do
     @behaviour Ezagent.Kind.Template
@@ -170,6 +172,400 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     assert is_map(sandbox.respawn_template_data) and map_size(sandbox.respawn_template_data) > 0
   end
 
+  describe "fresh template spawn display profiles" do
+    setup do
+      # The Session domain owns the production `entity://` resolver that
+      # dispatches Agent entities to their host Kind. This child app otherwise
+      # only starts Identity's User-only resolver.
+      {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+      :ok
+    end
+
+    test "persists unique names only for fresh workers" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-#{unique}"
+      flavor = "display-profile-#{unique}"
+      first_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      second_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      adopted_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      blank_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: PreinitializedSandboxTemplate
+        })
+
+      case Ezagent.Resource.FsResolver.register_type("cc-agents", %{
+             backend_component: "cc-agents",
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type("cc-agents") end)
+
+        {:error, {:already_registered, "cc-agents"}} ->
+          :ok
+      end
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(first_uri)
+        _ = Ezagent.Kind.terminate(second_uri)
+        _ = Ezagent.Kind.terminate(adopted_uri)
+        _ = Ezagent.Kind.terminate(blank_uri)
+        :ok
+      end)
+
+      first_content = %{
+        "name" => "  front-desk  ",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-first-#{unique}")
+      }
+
+      second_content = %{
+        name: "front-desk",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-second-#{unique}")
+      }
+
+      adopted_content = %{
+        name: "adopted-without-profile",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-adopted-#{unique}")
+      }
+
+      blank_content = %{
+        name: "   ",
+        flavor: flavor,
+        project_cwd: System.tmp_dir!(),
+        config_dir: Path.join(System.tmp_dir!(), "display-profile-blank-#{unique}")
+      }
+
+      assert {:ok, %{workers: [^first_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 first_content,
+                 first_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, %{workers: [^second_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 second_content,
+                 second_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:error, :agent_uri_already_live} =
+               TemplateSpawn.spawn_from_template_content(
+                 first_content,
+                 first_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+                 uri: adopted_uri,
+                 behaviors: Ezagent.Entity.Agent.base_behaviors()
+               })
+
+      assert Profile.get(adopted_uri) == nil
+
+      assert {:error, :agent_uri_already_live} =
+               TemplateSpawn.spawn_from_template_content(
+                 adopted_content,
+                 adopted_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert {:ok, %{workers: [^blank_uri], fresh?: true}} =
+               TemplateSpawn.spawn_from_template_content(
+                 blank_content,
+                 blank_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert %Profile{display_name: "front-desk"} = Profile.get(first_uri)
+      assert %Profile{display_name: "front-desk-2"} = Profile.get(second_uri)
+      assert Profile.get(adopted_uri) == nil
+      assert Profile.get(blank_uri) == nil
+    end
+
+    test "overlong profile failure rolls back every fresh-spawn artifact" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-failure-#{unique}"
+      flavor = "display-profile-failure-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert {:error, {:agent_display_profile_failed, %Ecto.Changeset{} = changeset}} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: String.duplicate("x", 256),
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-failure-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert "should be at most 255 character(s)" in errors_on(changeset).display_name
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert :error = Ezagent.AgentLineage.lookup(agent_uri)
+      assert :error = Ezagent.WorkspaceRegistry.lookup(agent_uri)
+      assert Profile.get(agent_uri) == nil
+      refute File.exists?(config_dir)
+      assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+
+      assert {:error, :creation_attempt_not_found} =
+               Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
+
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    end
+
+    test "failure after profile insertion rolls back every fresh-spawn artifact" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-post-insert-failure-#{unique}"
+      flavor = "display-profile-post-insert-failure-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+      Ezagent.Agent.TestTemplateSpawn.inject(:fail_after_display_profile, self())
+
+      on_exit(fn ->
+        Ezagent.Agent.TestTemplateSpawn.clear()
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert {:error, :injected_post_profile_failure} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: "post-insert-profile",
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-post-insert-failure-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert_receive {:template_spawn_after_display_profile, ^agent_uri, :inserted}
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert :error = Ezagent.AgentLineage.lookup(agent_uri)
+      assert :error = Ezagent.WorkspaceRegistry.lookup(agent_uri)
+      assert :none = Ezagent.AgentFlavorAttributes.get(agent_uri)
+      assert Profile.get(agent_uri) == nil
+      refute File.exists?(config_dir)
+      assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+
+      assert {:error, :creation_attempt_not_found} =
+               Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
+
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    end
+
+    test "failure after finding a pre-existing same-URI profile preserves it" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-pre-existing-#{unique}"
+      flavor = "display-profile-pre-existing-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      assert {:ok, %Profile{display_name: "preserved"} = existing_profile} =
+               Profile.ensure_agent_display_name(agent_uri, "preserved")
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+      Ezagent.Agent.TestTemplateSpawn.inject(:fail_after_display_profile, self())
+
+      on_exit(fn ->
+        Ezagent.Agent.TestTemplateSpawn.clear()
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert {:error, :injected_post_profile_failure} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: "must-not-overwrite",
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-pre-existing-failure-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert_receive {:template_spawn_after_display_profile, ^agent_uri, :exists}
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert :error = Ezagent.AgentLineage.lookup(agent_uri)
+      assert :error = Ezagent.WorkspaceRegistry.lookup(agent_uri)
+      assert :none = Ezagent.AgentFlavorAttributes.get(agent_uri)
+      assert Profile.get(agent_uri) == existing_profile
+      refute File.exists?(config_dir)
+      assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+
+      assert {:error, :creation_attempt_not_found} =
+               Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri)
+
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    end
+
+    test "profile failure preserves an exact pre-existing lineage fact" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-existing-lineage-#{unique}"
+      flavor = "display-profile-existing-lineage-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = Ezagent.AgentLineage.forget(agent_uri)
+        _ = File.rm_rf(config_dir)
+        :ok
+      end)
+
+      assert :ok = Ezagent.AgentLineage.record(agent_uri, owner_uri)
+      assert {:ok, ^owner_uri} = Ezagent.AgentLineage.lookup(agent_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+
+      assert {:error, {:agent_display_profile_failed, %Ecto.Changeset{}}} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: String.duplicate("x", 256),
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-failure-existing-lineage-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      assert :error = Ezagent.KindRegistry.lookup(agent_uri)
+      assert {:ok, ^owner_uri} = Ezagent.AgentLineage.lookup(agent_uri)
+      assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    end
+  end
+
   test "spawn skips sandbox.update_config dispatch when sandbox was initialized by Kind spawn args" do
     unique = System.unique_integer([:positive])
     flavor = "preinit-sandbox"
@@ -210,6 +606,101 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     assert sandbox.config_dir_path =~ "preinit-sandbox-#{unique}/preinit_sandbox"
     assert sandbox.template_class == PreinitializedSandboxTemplate
     assert sandbox.respawn_template_data["agent_config_dir"] == sandbox.config_dir_path
+  end
+
+  test "same-URI spawn rejects an adopted worker without changing its state" do
+    unique = System.unique_integer([:positive])
+    workspace_name = "same-uri-adopted-#{unique}"
+    flavor = "same-uri-adopted-new-#{unique}"
+    original_flavor = "same-uri-adopted-original-#{unique}"
+    instance_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+    owner_uri = Ezagent.URI.user(workspace_name, "owner")
+    original_owner_uri = Ezagent.URI.user(workspace_name, "original-owner")
+    workspace_uri = Ezagent.URI.workspace(workspace_name)
+    original_workspace_uri = Ezagent.URI.workspace("same-uri-original-#{unique}")
+    original_config_dir = Path.join(System.tmp_dir!(), "same-uri-original-config-#{unique}")
+
+    original_respawn_data = %{
+      "agent_config_dir" => original_config_dir,
+      "flavor" => original_flavor
+    }
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: PreinitializedSandboxTemplate
+      })
+
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+               uri: instance_uri,
+               config_dir_path: original_config_dir,
+               template_class: PreinitializedSandboxTemplate,
+               respawn_template_data: original_respawn_data
+             })
+
+    :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, original_flavor)
+    :ok = Ezagent.AgentLineage.record(instance_uri, original_owner_uri)
+    :ok = Ezagent.WorkspaceRegistry.bind(instance_uri, original_workspace_uri)
+
+    assert {:ok, %Profile{} = original_profile} =
+             Profile.ensure_agent_display_name(instance_uri, "original same-uri profile")
+
+    assert {:ok, original_grant} =
+             Ezagent.Credential.GrantRow.insert(%{
+               agent_uri: URI.to_string(instance_uri),
+               credential_source_uri: URI.to_string(original_owner_uri),
+               approved_by: URI.to_string(original_owner_uri),
+               approved_scope: URI.to_string(original_owner_uri),
+               version: 1
+             })
+
+    assert {:ok, original_sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    original_sandbox = Ezagent.Kind.normalize_slice_view(original_sandbox_slice)
+
+    on_exit(fn ->
+      _ = Ezagent.Kind.terminate(instance_uri)
+      _ = Ezagent.AgentFlavorAttributes.delete(instance_uri)
+      _ = Ezagent.AgentLineage.forget(instance_uri)
+      _ = Ezagent.WorkspaceRegistry.unbind(instance_uri)
+      _ = Ezagent.Credential.GrantRow.delete(URI.to_string(instance_uri))
+      :ok
+    end)
+
+    content = %{
+      name: "must-not-replace-original-profile",
+      flavor: flavor,
+      project_cwd: System.tmp_dir!(),
+      config_dir: Path.join(System.tmp_dir!(), "same-uri-adopted-source-#{unique}")
+    }
+
+    assert {:error, :agent_uri_already_live} =
+             TemplateSpawn.spawn_from_template_content(
+               content,
+               instance_uri,
+               owner_uri,
+               workspace_uri,
+               []
+             )
+
+    assert {:ok, ^original_flavor} = Ezagent.AgentFlavorAttributes.get(instance_uri)
+    assert {:ok, _pid} = Ezagent.KindRegistry.lookup(instance_uri)
+    assert {:ok, ^original_owner_uri} = Ezagent.AgentLineage.lookup(instance_uri)
+    assert {:ok, ^original_workspace_uri} = Ezagent.WorkspaceRegistry.lookup(instance_uri)
+
+    assert instance_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(
+             original_owner_uri
+           )
+
+    refute instance_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
+    assert Profile.get(instance_uri) == original_profile
+
+    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    assert Ezagent.Kind.normalize_slice_view(sandbox_slice) == original_sandbox
+
+    assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(instance_uri)) ==
+             original_grant
   end
 
   test "behavior_overlay mounts only for fresh template-spawned workers" do
@@ -281,7 +772,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       config_dir: Path.join(System.tmp_dir!(), "overlay-adopted-source-#{unique}")
     }
 
-    assert {:ok, %{workers: [^agent_uri], fresh?: false}} =
+    assert {:error, :agent_uri_already_live} =
              TemplateSpawn.spawn_from_template_content(
                content,
                agent_uri,
@@ -409,7 +900,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       prepare_success()
       :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
 
-      assert {:error, :sidecar_start_not_fresh} = spawn_with_reference(fixture)
+      assert {:error, :agent_uri_already_live} = spawn_with_reference(fixture)
       assert_receive {:flavor_during_instantiate, {:ok, "preexisting-flavor"}}
       assert_receive {:instantiate_called, data}
       assert data["cwd"] == "/safe/task"
@@ -417,8 +908,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       refute Map.has_key?(data, "pre_start_ref")
       assert {:ok, "preexisting-flavor"} = Ezagent.AgentFlavorAttributes.get(fixture.instance_uri)
 
-      assert_receive {:pre_start_complete, "claim-one",
-                      {:ok, %{workers: [_worker], fresh?: false}}}
+      assert_receive {:pre_start_complete, "claim-one", {:error, :agent_uri_already_live}}
     end
 
     test "instantiate error completes exactly once", fixture do
@@ -495,7 +985,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     end
 
     test "no reference preserves the existing path without consulting the gate", fixture do
-      assert {:ok, %{fresh?: false}} =
+      assert {:error, :agent_uri_already_live} =
                TemplateSpawn.spawn_from_template_content(
                  fixture.content,
                  fixture.instance_uri,

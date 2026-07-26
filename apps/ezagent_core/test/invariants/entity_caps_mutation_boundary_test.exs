@@ -309,6 +309,20 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   end
 
   defp production_asts do
+    cache_key = {__MODULE__, :production_asts}
+
+    case :persistent_term.get(cache_key, :missing) do
+      :missing ->
+        asts = load_production_asts()
+        :persistent_term.put(cache_key, asts)
+        asts
+
+      asts ->
+        asts
+    end
+  end
+
+  defp load_production_asts do
     root = repo_root()
 
     ["apps/**/*.ex", "apps/**/*.exs"]
