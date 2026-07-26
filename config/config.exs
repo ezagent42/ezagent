@@ -34,6 +34,22 @@ config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
   socialware_manifest_boot_scan: config_env() in [:prod]
 
+# `:role_plugins` — deploy-owned list of role-owning plugins the p7 grant mix
+# task boots so their `roles/0` recipes register into RecipeRegistry. Add a role
+# plugin HERE (config), never as a literal in the task. Same deploy-seed family
+# as `socialware_manifest_boot_scan`/`site_seed_boot`.
+config :ezagent_domain_agent,
+  role_plugins: [:ezagent_plugin_kanban]
+
+# `:socialware_check_reference_apps` — deploy-owned apps the conformance-check
+# mix task boots (same rationale as `:role_plugins`).
+config :ezagent_domain_session,
+  socialware_check_reference_apps: [
+    :ezagent_domain_socialware,
+    :ezagent_plugin_hello,
+    :ezagent_plugin_kanban
+  ]
+
 # `:home_workspace` — the SINGLE source of truth for the hello home workspace
 # (`EzagentPluginHello.home_workspace/0`). The boot 官网 seed, the #185
 # credential bridge destination, and the `/hello/<name>` serve side ALL read
