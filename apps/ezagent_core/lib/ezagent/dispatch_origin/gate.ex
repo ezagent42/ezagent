@@ -26,6 +26,23 @@ defmodule Ezagent.DispatchOrigin.Gate do
 
   @type finding :: {String.t(), pos_integer(), term()}
 
+  # The dispatch/raw-call SOURCES the inventory tracks (V5 A1b codex
+  # NOT-CLOSED — AST-resolved, no longer substring-matched): `{module, fun}`
+  # pairs a call-site must RESOLVE to (through the file's own aliases) before
+  # it counts. The resolver seam is a dispatch source too — `dispatch/4` (the
+  # provenance-carrying KIND path) and raw `call/3` (the sidecar-messaging
+  # path) sit alongside `Router.dispatch/1` and `Invocation.dispatch/1`.
+  @dispatch_sources MapSet.new([
+                      {Ezagent.Router, :dispatch},
+                      {Ezagent.Invocation, :dispatch},
+                      {Ezagent.Runtime.Resolver, :dispatch},
+                      {Ezagent.Runtime.Resolver, :call}
+                    ])
+
+  # The envelope modules whose `%Struct{}` construction counts as a
+  # constructor site (AST-resolved like the dispatch sources).
+  @envelope_modules MapSet.new([Ezagent.Cmd, Ezagent.Invocation])
+
   @doc false
   @spec check_source(String.t(), String.t()) :: [finding()]
   def check_source(source, path \\ "fixture.ex") when is_binary(source) do
@@ -46,24 +63,23 @@ defmodule Ezagent.DispatchOrigin.Gate do
         }
   def inventory(paths) do
     Enum.reduce(paths, %{dispatches: 0, constructors: 0}, fn path, counts ->
-      source = File.read!(path)
+      case Code.string_to_quoted(File.read!(path)) do
+        {:ok, ast} ->
+          # AST-RESOLVED (V5 A1b codex NOT-CLOSED): dispatch sources and
+          # envelope constructors are counted as real call/struct nodes whose
+          # module resolves — through the FILE'S OWN aliases — to a tracked
+          # module. The old substring count self-counted this gate's own
+          # literal needles, missed alias forms, and double-counted
+          # `%Ezagent.Cmd{` (it contains the `%Cmd{` substring); a bare
+          # unaliased `Resolver.call` now resolves to `Elixir.Resolver` and
+          # correctly does NOT count.
+          aliases = collect_aliases(ast)
+          {_ast, counts} = Macro.prewalk(ast, counts, &count_node(&1, &2, aliases))
+          counts
 
-      %{
-        dispatches:
-          counts.dispatches +
-            occurrences(source, [
-              "Router.dispatch(",
-              "Invocation.dispatch(",
-              # V5 A1b (codex blocker A): the resolver seam is a dispatch
-              # SOURCE too — `dispatch/4` (the provenance-carrying KIND path)
-              # and raw `call/3` (the sidecar-messaging path).
-              "Resolver.dispatch(",
-              "Resolver.call("
-            ]),
-        constructors:
-          counts.constructors +
-            occurrences(source, ["%Cmd{", "%Ezagent.Cmd{", "%Invocation{", "%Ezagent.Invocation{"])
-      }
+        {:error, _error} ->
+          counts
+      end
     end)
   end
 
@@ -113,9 +129,94 @@ defmodule Ezagent.DispatchOrigin.Gate do
   defp module_name({:__aliases__, _, parts}), do: List.last(parts)
   defp module_name(_module), do: nil
 
-  defp occurrences(source, needles) do
-    Enum.reduce(needles, 0, fn needle, total ->
-      total + max(length(String.split(source, needle)) - 1, 0)
+  # A dispatch/raw-call SITE: `Mod.fun(...)` whose module resolves to a
+  # tracked source. An unresolvable or unrelated module never counts.
+  defp count_node({{:., _, [module_ast, fun]}, _, args} = node, counts, aliases)
+       when is_atom(fun) and is_list(args) do
+    if MapSet.member?(@dispatch_sources, {resolve_ast(module_ast, aliases), fun}) do
+      {node, %{counts | dispatches: counts.dispatches + 1}}
+    else
+      {node, counts}
+    end
+  end
+
+  # An envelope CONSTRUCTOR site: `%Mod{...}` resolving to Cmd/Invocation.
+  defp count_node({:%, _, [module_ast, {:%{}, _, _}]} = node, counts, aliases) do
+    if MapSet.member?(@envelope_modules, resolve_ast(module_ast, aliases)) do
+      {node, %{counts | constructors: counts.constructors + 1}}
+    else
+      {node, counts}
+    end
+  end
+
+  defp count_node(node, counts, _aliases), do: {node, counts}
+
+  # Module resolution through the file's own aliases (same idiom as
+  # `Ezagent.ActorBoundaryScanner`): a fully-qualified `Ezagent.Router`
+  # resolves directly, a single-segment `Router` resolves ONLY when the file
+  # aliases it, and an alias head also resolves a longer suffix
+  # (`alias Ezagent.Runtime` + `Runtime.Resolver.call`).
+  defp resolve_ast({:__aliases__, _, parts}, aliases) when is_list(parts) do
+    if Enum.all?(parts, &is_atom/1), do: resolve(parts, aliases), else: nil
+  end
+
+  defp resolve_ast(_other, _aliases), do: nil
+
+  defp resolve([first | rest], aliases) do
+    parts =
+      case Map.get(aliases, first) do
+        nil -> [first | rest]
+        full -> full ++ rest
+      end
+
+    # `Module.concat/1` raises on non-alias segments (e.g. an
+    # `alias __MODULE__.Saga` head) — treat those as unresolvable instead.
+    if alias_parts?(parts), do: Module.concat(parts), else: nil
+  end
+
+  # Valid alias segments only (uppercase-led atoms): `__MODULE__` heads and
+  # other non-alias atoms make a module UNRESOLVABLE, never a crash.
+  defp alias_parts?(parts) do
+    Enum.all?(parts, fn part ->
+      is_atom(part) and match?(<<first, _::binary>> when first in ?A..?Z, Atom.to_string(part))
     end)
+  end
+
+  defp collect_aliases(ast) do
+    {_, acc} =
+      Macro.prewalk(ast, %{}, fn
+        {:alias, _, [{{:., _, [{:__aliases__, _, prefix}, :{}]}, _, kids}]} = node, acc
+        when is_list(kids) ->
+          acc =
+            Enum.reduce(kids, acc, fn
+              {:__aliases__, _, [last]}, a ->
+                parts = prefix ++ [last]
+                if alias_parts?(parts), do: Map.put(a, last, parts), else: a
+
+              _, a ->
+                a
+            end)
+
+          {node, acc}
+
+        {:alias, _, [{:__aliases__, _, parts}]} = node, acc ->
+          if alias_parts?(parts),
+            do: {node, Map.put(acc, List.last(parts), parts)},
+            else: {node, acc}
+
+        {:alias, _, [{:__aliases__, _, parts}, opts]} = node, acc when is_list(opts) ->
+          case Keyword.get(opts, :as) do
+            {:__aliases__, _, [as_name]} ->
+              if alias_parts?(parts), do: {node, Map.put(acc, as_name, parts)}, else: {node, acc}
+
+            _ ->
+              {node, acc}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    acc
   end
 end

@@ -119,6 +119,8 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
 
     # `Resolver.dispatch/4` + raw `Resolver.call/3` count as dispatch
     # sources in the inventory (alongside Router.dispatch / Invocation.dispatch).
+    # AST-RESOLVED (V5 A1b codex NOT-CLOSED): the calls must RESOLVE through
+    # the file's aliases — a substring or an unrelated `call` never counts.
     fixture =
       Path.join(
         System.tmp_dir!(),
@@ -126,8 +128,18 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
       )
 
     File.write!(fixture, ~S"""
-    Resolver.dispatch(uri, :ping, %{}, %{origin: :trusted_internal})
-    Resolver.call(key, :msg)
+    defmodule DispatchOriginGateFixture do
+      alias Ezagent.Runtime.Resolver
+
+      def go(uri, key) do
+        Resolver.dispatch(uri, :ping, %{}, %{origin: :trusted_internal})
+        Resolver.call(key, :msg)
+        # NOT sources: an unrelated module's own call/dispatch and a mere
+        # string literal mentioning a source must not count.
+        Other.call(key, :msg)
+        "Resolver.call(key, :msg)"
+      end
+    end
     """)
 
     on_exit(fn -> File.rm(fixture) end)
@@ -135,6 +147,11 @@ defmodule Ezagent.Architecture.DispatchOriginTest do
     inventory = Gate.inventory([fixture])
     assert inventory.dispatches == 2
     assert inventory.constructors == 0
+
+    # The gate's own module mentions every source as DATA (the tracked-module
+    # list + docstrings) — AST resolution must not self-count those.
+    gate = Path.join(root, "apps/ezagent_core/lib/ezagent/dispatch_origin/gate.ex")
+    assert Gate.inventory([gate]) == %{dispatches: 0, constructors: 0}
   end
 
   test "Feishu transports pass provenance into the shared dispatcher" do
