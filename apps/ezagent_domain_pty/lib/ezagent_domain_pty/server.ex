@@ -60,7 +60,16 @@ defmodule Ezagent.Domain.Pty.Server do
   Template Class path works without exercising claude itself.
   """
 
-  use GenServer
+  # `restart: :transient` (V5 A1b codex blocker B): an ABNORMAL stop — the
+  # crash policy's `{:child_exited, _}` / `{:spawn_failed, _}` — still
+  # restarts under `EzagentDomainPty.Supervisor` exactly as `:permanent`
+  # did. But a GRACEFUL stop (`:normal` / `:shutdown` — only the
+  # registry-collision policy below stops this way) must NOT be restarted:
+  # the loser of a registry-restart race has its :via key owned by the
+  # replacement, so a restart would fail-start on `{:already_started, _}`
+  # in a loop until the DynamicSupervisor's intensity tripped and took
+  # EVERY PtyServer down.
+  use GenServer, restart: :transient
   require Logger
 
   alias Ezagent.AnsiStrip
@@ -779,11 +788,11 @@ defmodule Ezagent.Domain.Pty.Server do
         URI.to_string(state.agent_uri)
     )
 
-    {:noreply, reregister_with_registry(state)}
+    reregister_with_registry(state)
   end
 
   def handle_info(:retry_registry_registration, %__MODULE__{registry_ref: nil} = state),
-    do: {:noreply, reregister_with_registry(state)}
+    do: reregister_with_registry(state)
 
   def handle_info(:retry_registry_registration, state), do: {:noreply, state}
 
@@ -933,10 +942,26 @@ defmodule Ezagent.Domain.Pty.Server do
   # restart, then re-arm the watch. On failure (registry still down after
   # the helper's bounded wait) schedule a retry instead of crashing: the
   # worker is healthy, only its discoverability is degraded.
+  #
+  # codex blocker B (collision policy) — `{:error, :already_registered}`
+  # means a REPLACEMENT worker won the key during the registry's empty-
+  # restart window. This original is now unreachable through the seam, and
+  # two live PTYs for one agent must never coexist: LOSE GRACEFULLY — stop;
+  # `terminate/2` releases the erlexec child, and `restart: :transient`
+  # keeps the supervisor from resurrecting the loser.
   defp reregister_with_registry(state) do
     case SidecarRegistry.re_register(resolver_key(state.agent_uri)) do
       :ok ->
-        %{state | registry_ref: SidecarRegistry.watch()}
+        {:noreply, %{state | registry_ref: SidecarRegistry.watch()}}
+
+      {:error, :already_registered} ->
+        Logger.warning(
+          "PtyServer: SidecarRegistry key for #{URI.to_string(state.agent_uri)} is " <>
+            "owned by a replacement that won the restart race — this losing " <>
+            "original is terminating gracefully (releasing its child)"
+        )
+
+        {:stop, {:shutdown, :registry_collision}, state}
 
       {:error, why} ->
         Logger.error(
@@ -945,7 +970,7 @@ defmodule Ezagent.Domain.Pty.Server do
         )
 
         Process.send_after(self(), :retry_registry_registration, 200)
-        %{state | registry_ref: nil}
+        {:noreply, %{state | registry_ref: nil}}
     end
   end
 

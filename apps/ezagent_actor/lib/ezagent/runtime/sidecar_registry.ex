@@ -41,6 +41,11 @@ defmodule Ezagent.Runtime.SidecarRegistry do
     * `re_register/1` — on that `:DOWN`: re-register the CALLING process
       under its key (self-registration, same owner rule as `:via`),
       waiting briefly for the restarted registry, then re-arm `watch/0`.
+      COLLISION POLICY (V5 A1b codex blocker B): if a replacement won the
+      key during the empty-restart window, `re_register` reports
+      `{:error, :already_registered}` and the LOSING worker terminates
+      itself gracefully (its `terminate/2` releases the OS child) instead
+      of retrying forever — exactly one sidecar survives per key.
   """
 
   @registry __MODULE__
@@ -135,6 +140,21 @@ defmodule Ezagent.Runtime.SidecarRegistry do
   if it did not. On failure the worker should retry later (its entry is
   gone until it does). Pid-free: the registry's owner pid never leaves the
   seam.
+
+  ## Collision policy (V5 A1b codex blocker B)
+
+  During the registry's empty-restart window a fresh sidecar start can
+  register a REPLACEMENT under the same key. When the ORIGINAL worker then
+  re-registers and finds the key owned by a DIFFERENT LIVE pid, it lost the
+  race: `re_register` returns `{:error, :already_registered}` and does NOT
+  retry. Two live sidecars for one key must never coexist — and the
+  replacement is the one reachable through the seam — so the ONLY correct
+  handling is for the LOSING (original) worker to TERMINATE ITSELF
+  gracefully (stop; its `terminate/2` releases its OS child). Every sidecar
+  inherits the detection here; the graceful-stop mapping lives in each
+  sidecar's re-register clause (see `Ezagent.Domain.Pty.Server`). A
+  `{:error, :already_registered}` whose owner is already DEAD is just the
+  Registry's asynchronous DOWN-cleanup lagging — that case retries normally.
   """
   @spec re_register({URI.t() | String.t(), atom(), atom()}, non_neg_integer()) ::
           :ok | {:error, :registry_unavailable} | {:error, :already_registered}
@@ -147,7 +167,7 @@ defmodule Ezagent.Runtime.SidecarRegistry do
         case Registry.register(@registry, key(parent_uri, plugin, role), nil) do
           {:ok, _owner} -> :ok
           {:error, {:already_registered, pid}} when pid == self() -> :ok
-          {:error, {:already_registered, _pid}} -> {:error, :already_registered}
+          {:error, {:already_registered, pid}} -> collision_or_retry(pid, key_tuple, attempts)
         end
       rescue
         # The registry's name is back (started?/0) but its ETS tables are
@@ -162,6 +182,16 @@ defmodule Ezagent.Runtime.SidecarRegistry do
     else
       retry_re_register(key_tuple, attempts)
     end
+  end
+
+  # The key is owned by a DIFFERENT pid. A LIVE owner is a replacement that
+  # won the restart race (collision policy above — the caller must stop, no
+  # retry); a DEAD one is the Registry's DOWN-cleanup still in flight — wait
+  # it out like any other restart-window race.
+  defp collision_or_retry(pid, key_tuple, attempts) do
+    if Process.alive?(pid),
+      do: {:error, :already_registered},
+      else: retry_re_register(key_tuple, attempts)
   end
 
   defp retry_re_register(key_tuple, attempts) do
