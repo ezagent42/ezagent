@@ -103,25 +103,30 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
       refute WorkflowRun.terminal?("blocked")
     end
 
-    test "legal_transition?/2 allows only the design's §5.4 success-path edges plus control states" do
-      assert WorkflowRun.legal_transition?("accepted", "authorized")
-      assert WorkflowRun.legal_transition?("authorized", "workspace_ready")
-      assert WorkflowRun.legal_transition?("workspace_ready", "changes_ready")
-      assert WorkflowRun.legal_transition?("changes_ready", "pr_open")
-      assert WorkflowRun.legal_transition?("pr_open", "observations_current")
-      assert WorkflowRun.legal_transition?("observations_current", "observations_current")
+    test "legal_transition?/2 matches the exact §5.4 edge set for every ordered status pair" do
+      expected_edges = %{
+        "accepted" => ~w(authorized blocked failed cancelled),
+        "authorized" => ~w(workspace_ready blocked failed cancelled),
+        "workspace_ready" => ~w(changes_ready blocked failed cancelled),
+        "changes_ready" => ~w(pr_open blocked failed cancelled),
+        "pr_open" => ~w(observations_current blocked failed cancelled),
+        "observations_current" => ~w(observations_current blocked failed cancelled),
+        "blocked" => ~w(failed cancelled),
+        "failed" => [],
+        "cancelled" => []
+      }
 
-      refute WorkflowRun.legal_transition?("accepted", "pr_open")
-      refute WorkflowRun.legal_transition?("accepted", "changes_ready")
-      refute WorkflowRun.legal_transition?("observations_current", "accepted")
-    end
+      statuses = WorkflowRun.statuses()
 
-    test "legal_transition?/2 allows any non-terminal state into blocked/failed/cancelled" do
-      for state <-
-            ~w(accepted authorized workspace_ready changes_ready pr_open observations_current) do
-        assert WorkflowRun.legal_transition?(state, "blocked"), "#{state} -> blocked"
-        assert WorkflowRun.legal_transition?(state, "failed"), "#{state} -> failed"
-        assert WorkflowRun.legal_transition?(state, "cancelled"), "#{state} -> cancelled"
+      # The status set itself is part of the invariant — without this, an added
+      # status would simply never be enumerated by the pair loop below.
+      assert Enum.sort(statuses) == Enum.sort(Map.keys(expected_edges))
+
+      for from <- statuses, to <- statuses do
+        expected? = to in Map.fetch!(expected_edges, from)
+
+        assert WorkflowRun.legal_transition?(from, to) == expected?,
+               "#{from} -> #{to}: expected legal_transition? to be #{expected?}"
       end
     end
 
