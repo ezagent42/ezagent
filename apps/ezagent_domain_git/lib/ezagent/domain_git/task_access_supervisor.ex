@@ -56,11 +56,13 @@ defmodule Ezagent.DomainGit.TaskAccessSupervisor do
   end
 
   defp reconcile_duplicate(uri, policy) do
+    # §2.2 read surface (`Kind.alive?/1`) — no KindRegistry reach-in (V5 A1c).
     with :ok <- GitTaskAccess.initialization_result(uri, policy),
-         {:ok, _pid} <- Ezagent.KindRegistry.lookup(uri) do
+         true <- Ezagent.Kind.alive?(uri) do
       {:ok, uri}
     else
       :error -> {:error, :not_found}
+      false -> {:error, :not_found}
       {:error, reason} -> {:error, reason}
     end
   end

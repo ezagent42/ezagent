@@ -335,12 +335,6 @@
       note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
     },
     %{
-      path: "apps/ezagent_domain_git/lib/ezagent/domain_git/task_access_supervisor.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "d7be9688fdeb689151879e0f458c60d95248422758e069b61202be0a47703140",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
       path: "apps/ezagent_domain_identity/lib/ezagent/behavior/user_default_credential_source.ex",
       target: "Ezagent.SnapshotStore",
       sha: "139207f444c1d6a0d374534ef1a8ecda6d995392a30e94b3b9da51636e1e289a",
