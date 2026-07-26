@@ -164,12 +164,18 @@ defmodule Ezagent.AgentBridge.Registry do
   end
 
   defp broadcast_connected(agent_uri, info) do
-    Phoenix.PubSub.broadcast(@pubsub, @topic, {:agent_bridge_connected, agent_uri, info})
+    # V5 use-side H3 — the MAIN topic rides the sealed transport
+    # (`%Signal{kind: :broadcast}`): `AgentBridge.ensure_ready/2` subscribes
+    # from INSIDE an Agent Kind's dispatch, so every stray connect/disconnect
+    # in its subscribe window must arrive as a sanctioned envelope (the
+    # sealed Kind mailbox fail-louds on raw tuples). The legacy topic's only
+    # subscriber is the world LiveView (never a Kind) — it stays raw.
+    EzagentActor.Signal.broadcast(@topic, {:agent_bridge_connected, agent_uri, info})
     Phoenix.PubSub.broadcast(@pubsub, @legacy_topic, {:cc_connected, agent_uri, info})
   end
 
   defp broadcast_disconnected(agent_uri) do
-    Phoenix.PubSub.broadcast(@pubsub, @topic, {:agent_bridge_disconnected, agent_uri})
+    EzagentActor.Signal.broadcast(@topic, {:agent_bridge_disconnected, agent_uri})
     Phoenix.PubSub.broadcast(@pubsub, @legacy_topic, {:cc_disconnected, agent_uri})
   end
 end

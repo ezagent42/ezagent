@@ -10,7 +10,9 @@ defmodule Ezagent.Agent.TransportReadinessListener do
   `Ezagent.AgentBridge.Registry.bind/3` broadcasts `{:agent_bridge_connected,
   agent_uri, info}` on `Ezagent.AgentBridge.Registry.topic/0` whenever an agent's
   transport bridge channel JOINs end-to-end (PTY up → `claude` up → esr-bridge
-  MCP connected → channel joined → bound). For a REGULAR (non-orchestrator) cc
+  MCP connected → channel joined → bound). V5 use-side H3: the broadcast rides
+  the sealed transport, so it arrives here as a
+  `%EzagentActor.Signal{kind: :broadcast}` envelope. For a REGULAR (non-orchestrator) cc
   agent nothing marks `LiveJoinRegistry` (only the orchestrator MCP channel does),
   so this listener is what carries the regular-cc bind into readiness for the
   FRESH-spawn ordering — where the Agent Kind already announced `:ready` before
@@ -106,7 +108,13 @@ defmodule Ezagent.Agent.TransportReadinessListener do
   end
 
   @impl true
-  def handle_info({:agent_bridge_connected, %URI{} = agent_uri, _info}, state) do
+  def handle_info(
+        %EzagentActor.Signal{
+          kind: :broadcast,
+          payload: {:agent_bridge_connected, %URI{} = agent_uri, _info}
+        },
+        state
+      ) do
     TransportReadiness.on_transport_joined(agent_uri)
     {:noreply, state}
   end

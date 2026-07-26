@@ -187,7 +187,9 @@ defmodule Ezagent.AgentBridge do
   Already bound → `:ok`. Otherwise: subscribe to the Registry connect topic
   (subscribe-then-recheck to close the bind race), run `heal_fn` to trigger a
   subprocess relaunch, then await the `{:agent_bridge_connected, uri, _}`
-  broadcast (or a lookup that becomes bound) up to `:bridge_ready_timeout_ms`.
+  broadcast (delivered as a `%EzagentActor.Signal{kind: :broadcast}` envelope,
+  V5 use-side H3 — this runs INSIDE the Agent Kind's sealed mailbox) or a
+  lookup that becomes bound, up to `:bridge_ready_timeout_ms`.
   Returns `{:error, :timeout}` if no rebind, or the heal fn's `{:error, _}`.
   """
   @spec ensure_ready(URI.t(), (URI.t() -> :ok | {:error, term()})) :: :ok | {:error, term()}
@@ -227,7 +229,12 @@ defmodule Ezagent.AgentBridge do
 
       :error ->
         receive do
-          {:agent_bridge_connected, ^agent_uri, _info} -> :ok
+          # H3: the connect broadcast arrives as a sealed envelope.
+          %EzagentActor.Signal{
+            kind: :broadcast,
+            payload: {:agent_bridge_connected, ^agent_uri, _info}
+          } ->
+            :ok
         after
           timeout ->
             # Final lookup — the connect broadcast can race the receive window.

@@ -109,12 +109,24 @@ defmodule Ezagent.AgentBridge.RegistryTest do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     :ok = Registry.bind(uri, pid, %{tools: ["reply"]})
 
-    assert_receive {:agent_bridge_connected, ^uri, %{tools: ["reply"]}}, 500
+    # H3: the main topic rides the sealed transport (envelope); the legacy
+    # topic stays raw (LiveView-only subscriber).
+    assert_receive %EzagentActor.Signal{
+                     kind: :broadcast,
+                     payload: {:agent_bridge_connected, ^uri, %{tools: ["reply"]}}
+                   },
+                   500
+
     assert_receive {:cc_connected, ^uri, %{tools: ["reply"]}}, 500
 
     :ok = Registry.unbind(uri)
 
-    assert_receive {:agent_bridge_disconnected, ^uri}, 500
+    assert_receive %EzagentActor.Signal{
+                     kind: :broadcast,
+                     payload: {:agent_bridge_disconnected, ^uri}
+                   },
+                   500
+
     assert_receive {:cc_disconnected, ^uri}, 500
   end
 end
