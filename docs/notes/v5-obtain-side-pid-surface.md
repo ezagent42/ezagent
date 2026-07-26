@@ -110,15 +110,15 @@ for the A1b/A1c migration phases. **128 entries.**
 | `Ezagent.Runtime.OsProcess` | `spawn/2` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:73` | nested |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:115` | param |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:117` | guard + param |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:66` | nested |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:78` | nested |
-| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:79` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:69` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:81` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:82` | nested |
 | `Ezagent.Runtime.SidecarRegistry` | `entries_for_plugin/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:228` | nested |
 | `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:207` | body + nested |
-| `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:174` | nested |
-| `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:144` | body + nested |
-| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:116` | nested |
-| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:118` | body + nested |
+| `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:189` | nested |
+| `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:159` | body + nested |
+| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:133` | nested |
+| `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:135` | nested |
 | `Ezagent.SpawnRegistry` | `ensure_live/1` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:138` | body |
 | `Ezagent.SpawnRegistry` | `register/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:68` | param |
 | `Ezagent.SpawnRegistry` | `spawn/2` | `apps/ezagent_actor/lib/ezagent/spawn_registry.ex:105` | nested |
