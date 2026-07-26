@@ -91,23 +91,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       key: :genserver_to_pid,
       line_substring: "GenServer.call(pid, {:query, text, session_id}, timeout)",
       reason: "existing sidecar query call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
-      line: 56,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
-      line: 61,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason:
-        "existing codex app-server sidecar status call (per-agent AppServer GenServer, " <>
-          "same class as bridge_sidecar); sidecar has no workspace owner facade yet"
     }
+    # V5 A1b-rest: the two codex `GenServer.call(pid, :recent_output, …)`
+    # entries (bridge_sidecar.ex, app_server.ex) left the allowlist — both
+    # sidecars migrated onto the resolver seam (`Resolver.call/3`), so the
+    # direct-pid status call debt is GONE, not re-justified.
   ]
 
   test "plugin apps do not bypass workspace owner gate through local runtime APIs" do
