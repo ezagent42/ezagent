@@ -145,7 +145,8 @@ defmodule EzagentPluginGitWorkflow.Store do
   Atomically transition a run's status using single-statement PostgreSQL CAS.
 
   UPDATE succeeds only when id, state_version, and status all match.
-  Rejects unknown statuses at call time. Terminal runs are rejected.
+  Rejects unknown statuses and illegal edges (WorkflowRun.legal_transition?/2)
+  at call time. Terminal runs are rejected.
 
   On zero rows updated, fresh-reads and distinguishes:
     - exact retry (already at target state+version)
@@ -159,13 +160,14 @@ defmodule EzagentPluginGitWorkflow.Store do
   def transition(run_id, expected_version, expected_status, next_status)
       when is_binary(run_id) and is_integer(expected_version) and
              is_binary(expected_status) and is_binary(next_status) do
-    # Reject invalid statuses at the gate.
+    # Reject invalid statuses and illegal edges at the gate.
     # Terminal states are blocked INSIDE the CAS WHERE clause (no pre-read
-    # TOCTOU): `AND status NOT IN ('completed','failed','cancelled')` makes
-    # the UPDATE a no-op when the row is terminal — even if expected_status
+    # TOCTOU): `AND status NOT IN ('failed','cancelled')` makes the UPDATE
+    # a no-op when the row is terminal — even if expected_status
     # accidentally names a terminal state.
     with :ok <- check_valid_status(expected_status),
-         :ok <- check_valid_status(next_status) do
+         :ok <- check_valid_status(next_status),
+         :ok <- check_legal_edge(expected_status, next_status) do
       next_version = expected_version + 1
       now = DateTime.utc_now()
 
@@ -173,7 +175,7 @@ defmodule EzagentPluginGitWorkflow.Store do
         Repo.query!(
           "UPDATE git_workflow_runs SET status = $1, state_version = $2, updated_at = $3
            WHERE id = $4 AND state_version = $5 AND status = $6
-             AND status NOT IN ('completed', 'failed', 'cancelled')",
+             AND status NOT IN ('failed', 'cancelled')",
           [next_status, next_version, now, run_id, expected_version, expected_status]
         )
 
@@ -366,6 +368,12 @@ defmodule EzagentPluginGitWorkflow.Store do
     if WorkflowRun.valid_status?(status),
       do: :ok,
       else: {:error, {:invalid_status, status}}
+  end
+
+  defp check_legal_edge(expected_status, next_status) do
+    if WorkflowRun.legal_transition?(expected_status, next_status),
+      do: :ok,
+      else: {:error, {:illegal_transition, expected_status, next_status}}
   end
 
   defp classify_cas_miss(run_id, next_status, next_version, expected_version, expected_status) do

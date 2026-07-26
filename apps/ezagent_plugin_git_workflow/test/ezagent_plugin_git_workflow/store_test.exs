@@ -202,32 +202,38 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       {:ok, run: run}
     end
 
-    test "transitions from accepted to workspace_ready", %{run: run} do
-      assert {:ok, %WorkflowRun{status: "workspace_ready", state_version: 2}} =
-               Store.transition(run.id, 1, "accepted", "workspace_ready")
+    test "transitions from accepted to authorized", %{run: run} do
+      assert {:ok, %WorkflowRun{status: "authorized", state_version: 2}} =
+               Store.transition(run.id, 1, "accepted", "authorized")
     end
 
     test "exact retry is idempotent", %{run: run} do
-      {:ok, r1} = Store.transition(run.id, 1, "accepted", "workspace_ready")
-      {:ok, r2} = Store.transition(run.id, 1, "accepted", "workspace_ready")
+      {:ok, r1} = Store.transition(run.id, 1, "accepted", "authorized")
+      {:ok, r2} = Store.transition(run.id, 1, "accepted", "authorized")
       assert r1.state_version == r2.state_version
     end
 
     test "stale state_version returns error", %{run: run} do
-      {:ok, _} = Store.transition(run.id, 1, "accepted", "workspace_ready")
+      {:ok, _} = Store.transition(run.id, 1, "accepted", "authorized")
 
+      # Second call's target must itself be a legal edge from the claimed
+      # expected_status ("accepted") so it clears check_legal_edge and
+      # reaches the DB CAS, where it is then classified as stale against
+      # the run's actual (now "authorized") state. "blocked" is legal from
+      # every non-terminal state, so it always reaches that classification
+      # regardless of which state the run actually raced ahead to.
       assert {:error, :stale_state_version} =
-               Store.transition(run.id, 1, "accepted", "worker_ready")
+               Store.transition(run.id, 1, "accepted", "blocked")
     end
 
     test "wrong expected_status returns conflict", %{run: run} do
       assert {:error, :workflow_state_conflict} =
-               Store.transition(run.id, 1, "workspace_ready", "worker_ready")
+               Store.transition(run.id, 1, "workspace_ready", "changes_ready")
     end
 
     test "non-existent run returns not_found" do
       assert {:error, :not_found} =
-               Store.transition("nonexistent", 1, "accepted", "workspace_ready")
+               Store.transition("nonexistent", 1, "accepted", "authorized")
     end
 
     test "rejects unknown status at gate" do
@@ -238,29 +244,44 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
                Store.transition(run.id, 1, "accepted", "invalid_status")
     end
 
-    test "terminal runs: exact retry returns same run, different transition rejected" do
-      intent = build_intent()
-      {:ok, run} = Store.accept(intent)
+    test "rejects a known status that is not a legal edge from the current one", %{run: run} do
+      assert {:error, {:illegal_transition, "accepted", "pr_open"}} =
+               Store.transition(run.id, 1, "accepted", "pr_open")
+    end
 
-      # First: accepted → completed (terminal). CAS succeeds.
-      {:ok, r1} = Store.transition(run.id, 1, "accepted", "completed")
-      assert r1.status == "completed"
+    test "terminal runs: exact retry returns same run, different transition rejected", %{
+      run: run
+    } do
+      {:ok, r1} = Store.transition(run.id, 1, "accepted", "blocked")
+      assert r1.status == "blocked"
       assert r1.state_version == 2
 
-      # Exact retry with same params: returns same completed run (idempotent).
-      {:ok, r2} = Store.transition(run.id, 1, "accepted", "completed")
+      # Exact retry with same params: returns same run (idempotent).
+      {:ok, r2} = Store.transition(run.id, 1, "accepted", "blocked")
       assert r2.id == r1.id
-      assert r2.status == "completed"
+      assert r2.status == "blocked"
       assert r2.state_version == 2
 
-      # Different transition attempt on terminal run: rejected.
-      assert {:error, :workflow_terminal} =
-               Store.transition(run.id, 2, "completed", "projected")
+      {:ok, r3} = Store.transition(run.id, 2, "blocked", "failed")
+      assert r3.status == "failed"
+      assert r3.state_version == 3
 
-      # State didn't change.
+      # Different transition attempt on terminal run: rejected. Terminal
+      # states have no outgoing @legal_edges entry at all, so a caller
+      # that (correctly) names "failed" as expected_status would be
+      # rejected at the check_legal_edge gate with {:illegal_transition,
+      # "failed", _} before ever reaching the DB — never exercising the
+      # :workflow_terminal classification this test targets. Using
+      # "blocked" here models a caller with a stale-but-plausible view
+      # (legal edge, reaches the DB) who discovers upon CAS-miss
+      # classification that the run has since become terminal — which is
+      # exactly the case :workflow_terminal exists to report.
+      assert {:error, :workflow_terminal} =
+               Store.transition(run.id, 3, "blocked", "cancelled")
+
       {:ok, final} = Store.read_run(run.id)
-      assert final.state_version == 2
-      assert final.status == "completed"
+      assert final.state_version == 3
+      assert final.status == "failed"
     end
   end
 

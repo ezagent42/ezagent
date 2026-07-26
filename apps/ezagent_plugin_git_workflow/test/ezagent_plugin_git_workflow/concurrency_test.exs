@@ -198,7 +198,11 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       parent = self()
       ref = make_ref()
 
-      next_states = for i <- 1..@n, do: if(rem(i, 2) == 0, do: "workspace_ready", else: "blocked")
+      # "authorized" is the only legal edge from "accepted" besides the
+      # control states (design §5.4) — "workspace_ready" is no longer
+      # directly reachable from "accepted" now that Store.transition/4
+      # enforces WorkflowRun.legal_transition?/2.
+      next_states = for i <- 1..@n, do: if(rem(i, 2) == 0, do: "authorized", else: "blocked")
 
       tasks =
         for {next_s, i} <- Enum.with_index(next_states, 1) do
@@ -227,7 +231,7 @@ defmodule EzagentPluginGitWorkflow.ConcurrencyTest do
       run_unboxed(fn ->
         {:ok, final} = Store.read_run(run.id)
         assert final.state_version == 2
-        assert final.status in ["workspace_ready", "blocked"]
+        assert final.status in ["authorized", "blocked"]
       end)
 
       for {:error, reason} <- errors do

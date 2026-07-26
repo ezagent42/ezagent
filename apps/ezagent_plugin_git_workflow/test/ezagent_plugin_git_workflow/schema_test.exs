@@ -95,12 +95,44 @@ defmodule EzagentPluginGitWorkflow.SchemaTest do
     end
 
     test "terminal statuses are correctly identified" do
-      assert WorkflowRun.terminal?("completed")
       assert WorkflowRun.terminal?("failed")
       assert WorkflowRun.terminal?("cancelled")
 
       refute WorkflowRun.terminal?("accepted")
-      refute WorkflowRun.terminal?("workspace_ready")
+      refute WorkflowRun.terminal?("authorized")
+      refute WorkflowRun.terminal?("blocked")
+    end
+
+    test "legal_transition?/2 allows only the design's §5.4 success-path edges plus control states" do
+      assert WorkflowRun.legal_transition?("accepted", "authorized")
+      assert WorkflowRun.legal_transition?("authorized", "workspace_ready")
+      assert WorkflowRun.legal_transition?("workspace_ready", "changes_ready")
+      assert WorkflowRun.legal_transition?("changes_ready", "pr_open")
+      assert WorkflowRun.legal_transition?("pr_open", "observations_current")
+      assert WorkflowRun.legal_transition?("observations_current", "observations_current")
+
+      refute WorkflowRun.legal_transition?("accepted", "pr_open")
+      refute WorkflowRun.legal_transition?("accepted", "changes_ready")
+      refute WorkflowRun.legal_transition?("observations_current", "accepted")
+    end
+
+    test "legal_transition?/2 allows any non-terminal state into blocked/failed/cancelled" do
+      for state <-
+            ~w(accepted authorized workspace_ready changes_ready pr_open observations_current) do
+        assert WorkflowRun.legal_transition?(state, "blocked"), "#{state} -> blocked"
+        assert WorkflowRun.legal_transition?(state, "failed"), "#{state} -> failed"
+        assert WorkflowRun.legal_transition?(state, "cancelled"), "#{state} -> cancelled"
+      end
+    end
+
+    test "blocked has no defined resume edge in this slice" do
+      # P1 scope only: resuming a blocked run onto the success path is
+      # Slice P4's retry-classification concern (design §4.1/§9). Blocked
+      # can still reach failed/cancelled.
+      assert WorkflowRun.legal_transition?("blocked", "failed")
+      assert WorkflowRun.legal_transition?("blocked", "cancelled")
+      refute WorkflowRun.legal_transition?("blocked", "accepted")
+      refute WorkflowRun.legal_transition?("blocked", "authorized")
     end
 
     test "invalid status rejected by WorkflowRun.new" do
