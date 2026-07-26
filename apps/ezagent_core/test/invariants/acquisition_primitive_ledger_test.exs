@@ -167,6 +167,41 @@ defmodule EzagentCore.Invariants.AcquisitionPrimitiveLedgerTest do
     end
   end
 
+  test "synthetic: the cap-protocol allowlist exempts Resolver.call ONLY, not cast/terminate_child (A1c chunk2)" do
+    for module <- ["Ezagent.Cap", "Ezagent.Cap.TargetArtifactValidator"] do
+      # call/2,3 — the URI-native cap-protocol verb delivery — is exempt.
+      call_src = """
+      defmodule #{module} do
+        alias Ezagent.Runtime.Resolver
+        def a(uri, msg), do: Resolver.call(uri, msg)
+        def b(uri, msg, t), do: Resolver.call(uri, msg, t)
+      end
+      """
+
+      assert Scanner.acquisition_sites_in_source(call_src, "synth/cap.ex") == [],
+             "cap-protocol #{module} Resolver.call/2,3 must be exempt"
+
+      # cast/terminate_child from the SAME modules stay flagged — the narrow,
+      # call-only exemption must NOT implicitly sanction the rest of the triple.
+      other_src = """
+      defmodule #{module} do
+        alias Ezagent.Runtime.Resolver
+        def c(uri, msg), do: Resolver.cast(uri, msg)
+        def d(uri, sup), do: Resolver.terminate_child(uri, sup)
+      end
+      """
+
+      targets =
+        MapSet.new(Scanner.acquisition_sites_in_source(other_src, "synth/cap.ex"), & &1.target)
+
+      assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.cast/2"),
+             "cap-protocol #{module} Resolver.cast/2 must STILL be flagged (narrow call-only exemption)"
+
+      assert MapSet.member?(targets, "Ezagent.Runtime.Resolver.terminate_child/2"),
+             "cap-protocol #{module} Resolver.terminate_child/2 must STILL be flagged"
+    end
+  end
+
   test "no REAL raw Resolver.call/cast/terminate_child site is censused (sidecar facades are sanctioned)" do
     # The only prod users of the triple are the allowlisted sidecar
     # facades (PTY pilot, codex chunk1, Python chunk2); anything else

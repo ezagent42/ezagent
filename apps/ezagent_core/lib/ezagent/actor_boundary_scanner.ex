@@ -965,6 +965,21 @@ defmodule Ezagent.ActorBoundaryScanner do
                               Ezagent.Orchestrator.McpServer
                             ])
 
+  # The sanctioned CAP-PROTOCOL call sites (V5 A1c chunk2). The Cap system
+  # addresses a target Kind's framework cap-protocol verbs
+  # (`:ezagent_revoke_all_to` / `:ezagent_verify_cap_artifact` /
+  # `:ezagent_validate_cap_artifact`) BY URI via `Resolver.call/2,3` — the
+  # URI-native form of the pre-existing raw `GenServer.call(pid, verb)`. These
+  # are framework `handle_call` verbs, NOT `%Invocation{}` action dispatches, so
+  # they cannot ride the provenance-carrying `Resolver.dispatch/4` path; and they
+  # are NOT sidecar facades — so ONLY `Resolver.call/2,3` is exempted here (a
+  # future `cast`/`terminate_child` from these modules stays census-flagged, a
+  # deliberately NARROW exemption). Longer-term home: B4 `%Kind.Protocol{}` face.
+  @cap_protocol_call_allowlist MapSet.new([
+                                 Ezagent.Cap,
+                                 Ezagent.Cap.TargetArtifactValidator
+                               ])
+
   # The fun names of the facade-gated triple (subset of
   # `@acquisition_primitives` above).
   @facade_gated_funs [:call, :cast, :terminate_child]
@@ -1150,6 +1165,14 @@ defmodule Ezagent.ActorBoundaryScanner do
   # A use of the raw sidecar-messaging triple (`Resolver.call/cast/
   # terminate_child`) is NOT censused when the calling file defines a
   # sanctioned sidecar-facade module (V5 A1b codex blocker A, cont.).
+  # `Resolver.call/2,3` is additionally sanctioned for the cap-protocol call
+  # sites (framework verbs addressed BY URI, not sidecars) — but `cast` /
+  # `terminate_child` from those modules stay flagged (narrow, call-only).
+  defp sanctioned_facade_use?(Ezagent.Runtime.Resolver, :call, ctx),
+    do:
+      not MapSet.disjoint?(ctx.own, @sidecar_facade_allowlist) or
+        not MapSet.disjoint?(ctx.own, @cap_protocol_call_allowlist)
+
   defp sanctioned_facade_use?(Ezagent.Runtime.Resolver, fun, ctx)
        when fun in @facade_gated_funs,
        do: not MapSet.disjoint?(ctx.own, @sidecar_facade_allowlist)
