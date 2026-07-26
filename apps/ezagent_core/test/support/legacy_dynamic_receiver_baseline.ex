@@ -122,7 +122,7 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
      :remote, "pending/0", "ba3ee618a656be83a3e0a0225841009ef8a661e15058169e30edf0f59a6d00d5"},
     {"apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex", 427, {:handle_line, 2},
      :remote, "pending/0", "ba3ee618a656be83a3e0a0225841009ef8a661e15058169e30edf0f59a6d00d5"},
-    {"apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex", 715, {:when, 2}, :remote,
+    {"apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent.ex", 717, {:when, 2}, :remote,
      "name/0", "f7efc9dc45ff995f24213b3d11761133354b2afbb4f4a960f16f6dd962d2ddc7"},
     {"apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex", 65, {:run, 1}, :remote,
      "info/1", "aead62ed107c152e88cf5cff150c12046d5cdd13c4c9edb356f59f34c30932da"},

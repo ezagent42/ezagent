@@ -107,8 +107,10 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   then starts the PtyServer via `Ezagent.Domain.Pty.start/2` (facade
   over the `ezagent_domain_pty` Tier-2 app). Both layers are atomically
   dedup'd: Agent Kind via `KindRegistry` (entity:// spawn fn returns
-  `{:error, {:already_started, _}}` for duplicates), PtyServer via the
-  Domain.Pty :via Registry (`EzagentDomainPty.Registry`).
+  `{:error, {:already_started, _}}` for duplicates), PtyServer via its
+  `:via` self-registration in the unified
+  `Ezagent.Runtime.SidecarRegistry` (V5 A1b — the private
+  `EzagentDomainPty.Registry` is retired).
 
   ## codex round-6 HIGH-1 — the `fresh?` signal
 
