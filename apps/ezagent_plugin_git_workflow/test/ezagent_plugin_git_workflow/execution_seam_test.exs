@@ -1,5 +1,10 @@
 defmodule EzagentPluginGitWorkflow.ExecutionSeamTest do
-  use ExUnit.Case, async: true
+  # async: false — "no runtime mutation can change what implementation/0
+  # resolves to" deliberately mutates the GLOBAL application environment for
+  # this app. The compiled seam is immune to that (it reads a compile-time
+  # module attribute), but a concurrent test reading the raw config key could
+  # transiently observe the bogus values this test writes.
+  use ExUnit.Case, async: false
 
   alias EzagentPluginGitWorkflow.ExecutionSeam
   alias EzagentPluginGitWorkflow.ExecutionSeam.Unavailable
