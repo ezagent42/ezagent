@@ -9,7 +9,9 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   # Single source of truth for the "scan every claim-path source file" checks
   # below (previously duplicated three times, which is how the atom-safety
   # scan missed deterministic_ref.ex).
-  @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex deterministic_ref.ex)
+  @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex
+                   deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
+                   authorization.ex)
 
   describe "no public ingress" do
     test "no ActionSet module exists" do
@@ -276,6 +278,41 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
         refute content =~ ~r/Cap\.issue/
         refute content =~ ~r/Cap\.store/
       end
+    end
+  end
+
+  describe "execution seam is fail-closed and test-only-injectable" do
+    test "no non-test config sets :execution_seam" do
+      for file <- ~w(config/config.exs config/dev.exs config/prod.exs config/runtime.exs) do
+        path = Path.join(@app_dir, "../../#{file}") |> Path.expand()
+
+        if File.exists?(path) do
+          content = File.read!(path)
+
+          refute content =~ ":execution_seam",
+                 "#{file} must not set :execution_seam — only test config/setup may (design §3.1)"
+        end
+      end
+    end
+
+    test "no lib module calls Application.put_env for :execution_seam" do
+      lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
+
+      for file <- lib_files do
+        content = File.read!(file)
+        base = Path.basename(file)
+
+        refute content =~
+                 ~r/Application\.put_env\(:ezagent_plugin_git_workflow,\s*:execution_seam/,
+               "#{base}: only test code may override :execution_seam"
+      end
+    end
+
+    test "ExecutionSeam.implementation/0 defaults to the Unavailable backend" do
+      content =
+        Path.join(@lib_dir, "ezagent_plugin_git_workflow/execution_seam.ex") |> File.read!()
+
+      assert content =~ "__MODULE__.Unavailable"
     end
   end
 end
