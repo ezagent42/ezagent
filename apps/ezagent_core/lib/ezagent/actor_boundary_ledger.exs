@@ -14,18 +14,6 @@
     },
     %{
       path: "apps/ezagent_core/lib/ezagent/cap.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "6ca359df5da0b3e0ca7a988d3b29f1c8a20d4260db22358ed4bb72f41b0be53d",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap.ex",
-      target: "GenServer.call(:ezagent_*)",
-      sha: "0e54a30dcf36c53ed2d9468c2c028f63570abd87bf0f1efde35686cff278f072",
-      note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
-    },
-    %{
-      path: "apps/ezagent_core/lib/ezagent/cap.ex",
       target: "ReadyGate.status",
       sha: "8c05836c1b96135ccb6743eb16010565eda730f83a7b2620d875bb248adb4b50",
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
@@ -249,18 +237,6 @@
     },
     %{
       path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "6633a680e7cd5c9b9477d8f8aa0f7880e778242ecca758cd0313e80a9bdcd400",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "c0e413a25b0daa95c40722523009af7a0c74473ee56d296d00d68f1767ebbaf2",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
       target: "Ezagent.PendingDelivery",
       sha: "6a84fa6fda3cf0057bf48f67a2843b0f2e76707a0cda008474a89ed1c77ce182",
       note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
@@ -349,12 +325,6 @@
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "0c59eb032044922fbe2493bc6433ece9b3ed332c03c604ed40baeec86b721300",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
       target: "Ezagent.SnapshotStore",
       sha: "3e6fcf45ef18fa1de19b71991bb9a5ff12d24cd9c707d4aa7b0585cf71dc0491",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
@@ -438,70 +408,10 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/offboarding/reaper.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "0c59eb032044922fbe2493bc6433ece9b3ed332c03c604ed40baeec86b721300",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex",
       target: "ReadyGate.status",
       sha: "92765b9b0c18ef956977e1bc45ea64abc8d24b4d022a5633069b5fd15fc3c524",
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "b75fca1808cf51e332ff55e67a5d12450773d7a1fb4cae7465878b99b928b71c",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "ba1fafde98168e24355912b18ba7cb3c702ad491a7b92c5d1ff1c4c99d581468",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex",
-      target: "GenServer.call(:ezagent_*)",
-      sha: "e9a02c3a7bc01168171f4f6f6a38f3ed3f0207958878f3089491e9bb5e3b68a0",
-      note: "raw :ezagent_* GenServer shape → dispatch/read (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "8cecb884167fcb6fe269d6e9b38267929519ce94d307fb6080e878e5e54bee70",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "cfabeae7c6b688ee727970a4173ae2e6ae741544afa021e91e18c88b7ed9bd10",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "d5e92588fc0809d6a697f283719f8fe0b49d6fc855621731ba66094155d53aa2",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/entity/session.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "d92b05c20cd55e5c247aab6ff03077ba5c1eee0546d46cbff835c2842b73c441",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "0c59eb032044922fbe2493bc6433ece9b3ed332c03c604ed40baeec86b721300",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/entity/session/orchestrator.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "5da2c73d01496f99f9af5c03ff5259488f4f567e1a9134b4e505aa8cc60be608",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
     },
     %{
       path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex",
@@ -526,24 +436,6 @@
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "f2b47209114e7270916146e0bef16dc94cdeff7d35e32d22c739befb461f65f3",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "47da3456be371efbc286f62ac6784982fcb3ccea71becf603e88a9d88af06712",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/health.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "db45bcff63b2cb440f4e104d7f6009f340c3e7127c1f3e336c44432f2eb933da",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "d92b05c20cd55e5c247aab6ff03077ba5c1eee0546d46cbff835c2842b73c441",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
     },
     %{
       path: "apps/ezagent_domain_session/lib/ezagent/orchestrator/tools/templates.ex",
@@ -595,14 +487,8 @@
     },
     %{
       path: "apps/ezagent_domain_session/lib/ezagent/session_config/readiness.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "07cbd8fab4c32130211cd21ac6c78dd6a8fe42c31bbf267c8c82b5996e63fbf0",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_session/lib/ezagent/session_config/readiness.ex",
       target: "ReadyGate.status",
-      sha: "07cbd8fab4c32130211cd21ac6c78dd6a8fe42c31bbf267c8c82b5996e63fbf0",
+      sha: "c26dd2cc8bae0bb7d996f47a231b561db658555097deef8590d7b4b3b70d6ea4",
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
     },
     %{
@@ -681,18 +567,6 @@
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "007498fd3e0fb1d62958eed18b328851e8f250ea5085d4d11f11d04933cf9b82",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "8cecb884167fcb6fe269d6e9b38267929519ce94d307fb6080e878e5e54bee70",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "f13ce4b0ead16f71c811f19e366b7051b93d384d6dac8fbc7f55f9181ffe024d",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
     },
     %{
       path: "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex",

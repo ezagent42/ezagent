@@ -82,7 +82,18 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # KindRegistry lookups and three raw `GenServer.call(:ezagent_*)` sites in
   # cap.ex/target_artifact_validator.ex left the tree (dispatch_grant's
   # KindRegistry + :ezagent_dispatch sites remain ledgered), −5 sites.
-  @forward_frozen 142
+  # V5 A1c chunk4 lowered forward 142→121: the LAST domain-app
+  # `KindRegistry.lookup/1` consumers burned onto the resolver seam — eight
+  # liveness-only sites → `Resolver.alive?/1`, the two monitor/incarnation
+  # sites (behavior/session activate/2, agent transport_readiness) →
+  # `Resolver.pid_for/1` (the chunk3 monitor-site precedent), and the two
+  # pid-then-`GenServer.call` sites (identity target_authority
+  # `:ezagent_kind_module`, core Cap dispatch_grant `:ezagent_dispatch`) →
+  # `Resolver.call/2,3`; readiness.ex's `ReadyGate.status` entry is
+  # RE-ANCHORED (same reach-in, new line content after the tuple edit),
+  # −21 sites. The domain-app lookup set is now enumerated EMPTY by
+  # `domain_kind_lookup_gate_test.exs` (the A2 correctness guarantee).
+  @forward_frozen 121
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
