@@ -150,7 +150,7 @@ defmodule Ezagent.PidSurfaceScanner do
     - `Ezagent.Cap.issue_for_action/3` — pid self-detect + action-subject
       resolution against the live target.
     - `Ezagent.Kind.list_instances/0` — the returned pids drive supervised
-      termination in `Ezagent.Behavior.Terminable` and Sandbox.
+      termination in `Ezagent.ActionSet.Terminable` and Sandbox.
     - `EzagentDomainUi.AutoDerive` — exposes pids in instance summaries/details.
     - `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` — pid-returning
       wrapper that re-obtains the pid from `KindRegistry`.

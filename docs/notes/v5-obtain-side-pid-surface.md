@@ -20,7 +20,7 @@ yields or accepts a `pid()` (spec-preferred, AST fallback):
 Scan scope (A1a): the WHOLE umbrella public surface — every
 `apps/*/lib/**/*.ex` file (A0 scanned only `apps/ezagent_actor/lib/**` +
 5 seed files). This umbrella-wide list is the **frozen ledger authority**
-for the A1b/A1c migration phases. **135 entries.**
+for the A1b/A1c migration phases. **139 entries.**
 
 | Module | Function/Arity | File:Line | Why flagged |
 |---|---|---|---|
@@ -119,6 +119,10 @@ for the A1b/A1c migration phases. **135 entries.**
 | `Ezagent.Runtime.OsProcess` | `spawn/2` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:73` | nested |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:115` | param |
 | `Ezagent.Runtime.OsProcess` | `stop/1` | `apps/ezagent_core/lib/ezagent/runtime/os_process.ex:117` | guard + param |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:51` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:63` | nested |
+| `Ezagent.Runtime.Resolver` | `pid_for/1` | `apps/ezagent_actor/lib/ezagent/runtime/resolver.ex:64` | nested |
+| `Ezagent.Runtime.SidecarRegistry` | `lookup/1` | `apps/ezagent_actor/lib/ezagent/runtime/sidecar_registry.ex:90` | body + nested |
 | `Ezagent.Session.SessionManager` | `ensure_for_session/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:174` | nested |
 | `Ezagent.Session.SessionManager` | `ensure_started/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:144` | body + nested |
 | `Ezagent.Session.SessionManager` | `whereis/1` | `apps/ezagent_domain_session/lib/ezagent/session/session_manager.ex:116` | nested |
@@ -170,7 +174,7 @@ for the A1b/A1c migration phases. **135 entries.**
 - `Ezagent.Cap.issue_for_action/3` — pid self-detect + action-subject
   resolution against the live target.
 - `Ezagent.Kind.list_instances/0` — the returned pids drive supervised
-  termination in `Ezagent.Behavior.Terminable` and Sandbox.
+  termination in `Ezagent.ActionSet.Terminable` and Sandbox.
 - `EzagentDomainUi.AutoDerive` — exposes pids in instance summaries/details.
 - `Ezagent.DomainGit.TaskAccessSupervisor.ensure_started/1` — pid-returning
   wrapper that re-obtains the pid from `KindRegistry`.
