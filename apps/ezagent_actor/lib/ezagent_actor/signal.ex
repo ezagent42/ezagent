@@ -5,7 +5,7 @@ defmodule EzagentActor.Signal do
 
   The sanctioned way to put a message into a Kind mailbox. Every function
   here delivers the SAME envelope shape — this module's struct — so a
-  recipient (`Ezagent.Kind.Server.handle_info/2`, sealing in B3) can
+  recipient (`Ezagent.Kind.Server.handle_info/2`, sealed in H3) can
   pattern-match `%EzagentActor.Signal{}` and know the message came through
   the framework transport:
 
@@ -144,8 +144,9 @@ defmodule EzagentActor.Signal do
   `{:DOWN, ref, :process, pid, reason}` tuple a raw `Process.monitor/1`
   would have delivered — every existing `handle_signal({:DOWN, …})`
   consumer matches UNCHANGED. All other envelopes unwrap to `payload`
-  verbatim. The result is never a `%__MODULE__{}`, so a re-dispatch
-  through `Kind.Server.handle_info/2` cannot loop.
+  verbatim. The result is never a `%__MODULE__{}`, so the H3 sealed
+  `Kind.Server` routing (`handle_info(%Signal{})` → the private
+  `dispatch_sanctioned/2` router) cannot loop.
   """
   @spec effective_message(t()) :: term()
   def effective_message(%__MODULE__{kind: :down, payload: %{ref: ref, pid: pid, reason: reason}}),

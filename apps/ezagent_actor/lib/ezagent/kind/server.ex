@@ -319,9 +319,9 @@ defmodule Ezagent.Kind.Server do
   defp schedule_periodic_snapshot(kind_module) do
     case Ezagent.Kind.persistence_of(kind_module) do
       {:snapshot, :periodic, ms} when is_integer(ms) and ms > 0 ->
-        # V5 use-side B2 — the periodic self-timer rides the sanctioned
+        # V5 use-side B2/H3 — the periodic self-timer rides the sanctioned
         # transport (arrives as `%Signal{kind: :timer}`, unwrapped by the
-        # `handle_info` envelope clause back to `:snapshot_tick`).
+        # `handle_info` envelope clause into `dispatch_sanctioned(:snapshot_tick, …)`).
         EzagentActor.Signal.send_after(:snapshot_tick, ms)
         :ok
 
@@ -846,6 +846,18 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
+  # V5 use-side H3 — the SEAL, call door. A non-sanctioned call (NOT
+  # `{:ezagent_dispatch, %Invocation{}}`, NOT one of the framework
+  # call-verbs above) becomes an observable `{:error, :unsanctioned}` + loud
+  # telemetry — NEVER the pre-seal `FunctionClauseError` that killed the
+  # Kind (the unmatched-call DoS). No raise here even in dev/test: the reply
+  # IS the loud signal to the caller.
+  def handle_call(other, _from, %{uri: uri, kind: kind_module} = state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_call, other)
+    unsanctioned_ingress(:handle_call, other, uri, kind_module)
+    {:reply, {:error, :unsanctioned}, state}
+  end
+
   @impl true
   def handle_cast({:ezagent_dispatch, %Ezagent.Invocation{} = inv}, state) do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_cast, {:ezagent_dispatch, inv})
@@ -886,6 +898,16 @@ defmodule Ezagent.Kind.Server do
         Ezagent.Invocation.reply(inv.ctx, {:error, reason})
         {:noreply, state}
     end
+  end
+
+  # V5 use-side H3 — the SEAL, cast door. A non-sanctioned cast is dropped
+  # loudly (telemetry + `Logger.error`), never forwarded to behaviors, never
+  # persisted, and — unlike the pre-seal `FunctionClauseError` — never kills
+  # the Kind.
+  def handle_cast(other, %{uri: uri, kind: kind_module} = state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_cast, other)
+    unsanctioned_ingress(:handle_cast, other, uri, kind_module)
+    {:noreply, state}
   end
 
   # P2.5c (codex impl HIGH r2) — a cast dispatch is fire-and-forget: its error
@@ -1026,8 +1048,9 @@ defmodule Ezagent.Kind.Server do
   # 5-key projection `SliceChange.emit/1` just broadcast as a sealed
   # self-signal. The hook ONLY selects delivery — no behavior callback
   # runs inline here; the reaction runs on a later mailbox turn through
-  # the ordinary `%Signal{}` enabler → `handle_signal({:slice_changed, …})`
-  # path. Core names no concrete behavior and no slice.
+  # the sealed `%Signal{}` envelope → `dispatch_sanctioned` →
+  # `handle_signal({:slice_changed, …})` path. Core names no concrete
+  # behavior and no slice.
   @spec maybe_self_signal_slice_change(module(), map(), {:ok, map()} | :ok) :: :ok
   defp maybe_self_signal_slice_change(kind_module, new_slice_state, {:ok, projection}) do
     if Enum.any?(
@@ -1047,20 +1070,109 @@ defmodule Ezagent.Kind.Server do
       behavior.reacts_to_slice_change?()
   end
 
-  # Behavior mailbox forwarding receives the raw message, its slice, and
-  # `%{kind_module:, self_uri:}`; `:ignore` preserves that slice. Deferred
-  # commands run on a later mailbox turn, after the parent commit, to avoid
-  # dispatch deadlock. `DeferredDispatch` owns the detailed ordering contract.
+  # V5 use-side H3 — THE SEAL (Allen-approved 0727, FAIL-LOUD). A Kind's
+  # mailbox now accepts ONLY two shapes:
+  #
+  #   1. `%EzagentActor.Signal{}` envelopes — the sanctioned framework
+  #      transport (`Signal.signal/2`, `broadcast/2`, `monitor/1`,
+  #      `send_after/2`). The envelope unwraps to its effective message and
+  #      routes to the PRIVATE `dispatch_sanctioned/2` router below — NEVER
+  #      back through `handle_info/2` (the B2 enabler re-dispatched the
+  #      unwrapped payload through `handle_info`; under the seal a valid
+  #      Signal carrying a behavior message would unwrap → hit the fail-loud
+  #      catch-all → be dropped/raise).
+  #   2. VM-generated `{:EXIT, pid, reason}` — `trap_exit` is on (init/1)
+  #      for graceful `terminate/2`, so linked-resource deaths arrive as raw
+  #      EXIT tuples an application producer CANNOT envelope-wrap.
+  #
+  # Everything else is a MISSED PRODUCER (a raw send/broadcast/monitor-DOWN/
+  # task-reply that B2/H1/H2 did not migrate) and FAILS LOUD — see the
+  # catch-all clause.
   @impl true
-  # V5 use-side B2 — sanctioned framework envelope: unwrap to the effective
-  # message and re-dispatch through the existing handlers (additive; the raw
-  # clauses still accept un-migrated producers. B3 seals: raw becomes drop).
   def handle_info(%EzagentActor.Signal{} = sig, wrapper) do
-    handle_info(EzagentActor.Signal.effective_message(sig), wrapper)
+    dispatch_sanctioned(EzagentActor.Signal.effective_message(sig), wrapper)
   end
 
-  def handle_info({:ezagent_external_ready_gate, uri_str, :ok} = msg, state)
-      when is_binary(uri_str) do
+  # `{:EXIT, pid, reason}` — VM-generated (see above). Framework lifecycle
+  # policy: OBSERVE ONLY. Pre-seal the catch-all forwarded these to
+  # behaviors, which `:ignore`d them; that no-op is preserved deliberately —
+  # NO behavior forward, NO persist, NOT unsanctioned drift (never
+  # fail-loud). Exits from the PARENT are proc_lib system messages and never
+  # reach this clause, so the supervision contract is untouched.
+  def handle_info({:EXIT, _pid, _reason} = msg, state) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
+    {:noreply, state}
+  end
+
+  # THE SEAL, fail-loud catch-all — `other` is neither a `%Signal{}` nor an
+  # `{:EXIT, …}`: emit high-severity telemetry always; in `:dev`/`:test`
+  # RAISE `Ezagent.Kind.UnsanctionedMailboxError` (a missed producer's test
+  # SCREAMS — the migration completeness proof); in `:prod` `Logger.error` +
+  # drop (loud, never silent). NEVER forwarded to behaviors, NEVER persisted.
+  def handle_info(other, %{uri: uri, kind: kind_module} = wrapper) do
+    _ = Ezagent.Kind.IngressCensus.observe(:handle_info, other)
+    unsanctioned_ingress(:handle_info, other, uri, kind_module)
+    {:noreply, wrapper}
+  end
+
+  @unsanctioned_mailbox_event [:ezagent, :kind, :unsanctioned_mailbox]
+
+  # dev/test — FAIL-LOUD raise (the completeness proof). Telemetry fires
+  # first so the observation survives the crash.
+  if Mix.env() in [:dev, :test] do
+    defp unsanctioned_ingress(:handle_info = door, term, uri, kind_module) do
+      emit_unsanctioned_telemetry(door, term, uri, kind_module)
+
+      raise Ezagent.Kind.UnsanctionedMailboxError,
+        door: door,
+        uri: uri,
+        kind: kind_module,
+        offending_term: term
+    end
+  end
+
+  # prod (all doors) + the call/cast doors (all envs) — loud, never a Kind
+  # crash: an unmatched call/cast becomes an observable error, not the
+  # pre-seal `FunctionClauseError` that killed the Kind (the mailbox DoS).
+  defp unsanctioned_ingress(door, term, uri, kind_module) do
+    emit_unsanctioned_telemetry(door, term, uri, kind_module)
+
+    require Logger
+
+    {_class, shape} = Ezagent.Kind.IngressCensus.classify(door, term)
+
+    Logger.error(
+      "Ezagent.Kind.Server: unsanctioned #{door} ingress on SEALED Kind mailbox " <>
+        "uri=#{inspect(uri)} kind=#{inspect(kind_module)} shape=#{inspect(shape)} — " <>
+        "dropped (never forwarded to behaviors, never persisted)"
+    )
+
+    :ok
+  end
+
+  # Bounded shape metadata only (the census rule: Kind traffic can carry
+  # private authority state — full payloads never leave the process).
+  defp emit_unsanctioned_telemetry(door, term, uri, kind_module) do
+    {_class, shape} = Ezagent.Kind.IngressCensus.classify(door, term)
+
+    :telemetry.execute(@unsanctioned_mailbox_event, %{count: 1}, %{
+      door: door,
+      uri: URI.to_string(uri),
+      kind: kind_module,
+      shape: shape
+    })
+  end
+
+  # V5 use-side H3 — the private SANCTIONED dispatcher. Routes an unwrapped
+  # Signal payload to exactly the handling the pre-seal named + catch-all
+  # `handle_info` clauses had: framework verbs (`:snapshot_tick`,
+  # `{:ezagent_run_deferred, _}`, `{:ezagent_external_ready_gate, _, _}`) to
+  # their framework handling; everything else (reconstructed `{:DOWN, …}`,
+  # every behavior payload) to the behavior forward path. Behavior
+  # `handle_kind_message/3` bodies are UNCHANGED — they still see the same
+  # effective payloads.
+  defp dispatch_sanctioned({:ezagent_external_ready_gate, uri_str, :ok} = msg, state)
+       when is_binary(uri_str) do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
 
     if Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(uri_str, self()) == :ready do
@@ -1071,13 +1183,13 @@ defmodule Ezagent.Kind.Server do
   end
 
   # The waiter already committed timeout/supersession generation-safely.
-  def handle_info({:ezagent_external_ready_gate, uri_str, {:error, reason}} = msg, state)
-      when is_binary(uri_str) and reason in [:timeout, :superseded] do
+  defp dispatch_sanctioned({:ezagent_external_ready_gate, uri_str, {:error, reason}} = msg, state)
+       when is_binary(uri_str) and reason in [:timeout, :superseded] do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
     {:noreply, state}
   end
 
-  def handle_info({:ezagent_run_deferred, cmds} = msg, state) when is_list(cmds) do
+  defp dispatch_sanctioned({:ezagent_run_deferred, cmds} = msg, state) when is_list(cmds) do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, msg)
     # A deferred self-dispatch runs on a later mailbox turn, outside the
     # handle_call/handle_cast authority scope above. Re-enter the same sealed
@@ -1091,7 +1203,10 @@ defmodule Ezagent.Kind.Server do
     {:noreply, state}
   end
 
-  def handle_info(:snapshot_tick, %{kind: kind_module, uri: uri, state: slice_state} = wrapper) do
+  defp dispatch_sanctioned(
+         :snapshot_tick,
+         %{kind: kind_module, uri: uri, state: slice_state} = wrapper
+       ) do
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, :snapshot_tick)
     # Phase 4-completion: periodic strategy — write via Writer (async)
     # then re-schedule. If Writer isn't running (e.g. test envs without
@@ -1115,8 +1230,9 @@ defmodule Ezagent.Kind.Server do
           end
         end
 
-        # V5 use-side B2 — re-schedule through the sanctioned transport
-        # (arrives `%Signal{kind: :timer}` → envelope clause → this clause).
+        # V5 use-side H3 — re-schedule through the sanctioned transport
+        # (arrives `%Signal{kind: :timer}` → handle_info envelope clause →
+        # this dispatcher clause).
         EzagentActor.Signal.send_after(:snapshot_tick, ms)
         {:noreply, wrapper}
 
@@ -1125,13 +1241,19 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  def handle_info(
-        message,
-        %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = wrapper
-      ) do
-    # V5 use-side ingress census (report-only): this is the CATCH-ALL — every
-    # behavior-forwarded mailbox message (`:DOWN`, `:EXIT`, task replies,
-    # SliceChange fan-out, publisher replay, …) is observed here.
+  # Behavior payload path — reconstructed `{:DOWN, …}` (from
+  # `%Signal{kind: :down}`), SliceChange fan-out, publisher replay, behavior
+  # verbs (`:ezagent_em_reconcile`, `:ezagent_presence_diff`, …). The
+  # forwarding receives the effective message, its slice, and
+  # `%{kind_module:, self_uri:}`; `:ignore` preserves that slice. Identical
+  # semantics to the pre-seal catch-all clause.
+  defp dispatch_sanctioned(
+         message,
+         %{kind: kind_module, uri: self_uri, state: slice_state, authority: authority} = wrapper
+       ) do
+    # V5 use-side ingress census (report-only): this is the BEHAVIOR-FORWARD
+    # branch — every behavior-facing mailbox message (`:DOWN`, SliceChange
+    # fan-out, publisher replay, …) is observed here.
     _ = Ezagent.Kind.IngressCensus.observe(:handle_info, message)
     # P1 (SPEC §3.1, E4) — only the INSTANCE effective set sees the mailbox
     # message, so an out-of-set behavior's handle_signal/handle_kind_message
