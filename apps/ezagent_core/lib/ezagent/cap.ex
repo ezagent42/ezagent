@@ -250,14 +250,21 @@ defmodule Ezagent.Cap do
     target = Ezagent.URI.instance(target)
 
     with %URI{} = holder <- Map.get(ctx, :authenticated_principal),
-         {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(target),
-         false <- pid == self() do
+         {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(target),
+         false <- Ezagent.Kind.self?(target) do
+      # Delivery is URI-native (V5 A1c chunk2): the resolver resolves the URI
+      # to a pid INSIDE the seam and performs the call — the pid never escapes.
+      # A mid-call death/timeout arrives as `{:error, reason}` instead of an
+      # escaping exit; the error-tuple contract below is unchanged.
       result =
-        GenServer.call(
-          pid,
-          {:ezagent_revoke_all_to, ctx},
-          Ezagent.Invocation.activate_budget_ms()
-        )
+        case Ezagent.Runtime.Resolver.call(
+               target,
+               {:ezagent_revoke_all_to, ctx},
+               Ezagent.Invocation.activate_budget_ms()
+             ) do
+          {:ok, reply} -> reply
+          {:error, _reason} = error -> error
+        end
 
       case result do
         {:ok, generation} = ok ->
