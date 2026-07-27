@@ -128,6 +128,48 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   end
 
   @doc false
+  @spec grant_agent_participation_at_join(URI.t(), map()) :: :ok | {:error, term()}
+  def grant_agent_participation_at_join(%URI{} = member_uri, ctx) when is_map(ctx) do
+    if Ezagent.URI.type?(member_uri, :agent) do
+      session_uri = ctx[:self_uri]
+      workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+      granter = grant_granter(ctx)
+
+      Enum.reduce_while([:send, :leave, :attach], :ok, fn action, :ok ->
+        cap =
+          Ezagent.Capability.cap(
+            :session,
+            Ezagent.ActionSet.Session,
+            action,
+            session_uri,
+            workspace_uri
+          )
+
+        result =
+          with :ok <- Ezagent.Identity.TargetAuthority.ensure(granter, session_uri),
+               {:ok, artifact} <-
+                 Ezagent.Identity.Grant.issue_cap(
+                   member_uri,
+                   cap,
+                   grant_authorization(granter)
+                 ),
+               :ok <- Ezagent.Identity.absorb_cap(member_uri, artifact) do
+            :ok
+          end
+
+        case result do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    else
+      :ok
+    end
+  end
+
+  def grant_agent_participation_at_join(_, _), do: :ok
+
+  @doc false
   @spec grant_for_reownership(URI.t(), URI.t()) :: :ok | {:error, term()}
   def grant_for_reownership(%URI{} = session_uri, %URI{} = new_owner) do
     grant_guaranteed(session_uri, new_owner)

@@ -109,10 +109,16 @@ defmodule Ezagent.ActionSet.Session.Membership do
               {:error, {:member_cap_grant_failed, reason}}
 
             grant_status when grant_status in [:already_held, :enqueued] ->
-              # Phase A only. Cursor/facets/owner claim commit together; the
-              # holder-driven `add_self` action is the sole roster writer.
-              {:ok, %{status: join_status, member: member_uri},
-               [join_cursor_effect, join_facets_effect | owner_effects]}
+              case MemberCap.grant_agent_participation_at_join(member_uri, ctx) do
+                :ok ->
+                  # Phase A only. Cursor/facets/owner claim commit together; the
+                  # holder-driven `add_self` action is the sole roster writer.
+                  {:ok, %{status: join_status, member: member_uri},
+                   [join_cursor_effect, join_facets_effect | owner_effects]}
+
+                {:error, reason} ->
+                  {:error, {:member_cap_grant_failed, reason}}
+              end
           end
         end
     end
