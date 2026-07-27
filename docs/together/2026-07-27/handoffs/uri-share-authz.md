@@ -98,3 +98,52 @@
 - [ ] 落地后,kanban(PR #1474 保留的 person-cap 现状)作为第一个消费者收编
 
 > 溯源:#1552(Sy, 2026-07-23)提 token 泛化;本 handoff(2026-07-27)出自 kanban 示范重构 PR #1474 的三轮讨论 + 两次代码查实,补上审批/可见性/模型,完整化成"URI 授权分享统一"。read-plane 主线(PR-1~5)已 MERGED,token 泛化至今悬着 —— 建议一并推进。
+
+---
+
+## 7. 设计定案(2026-07-27,与 Allen 对齐后 —— 权威,取代上文分歧处)
+
+以下决策已与 Allen 逐条对齐(甲/乙 + 4 处纠正 + Mount + 反向索引),作为实现依据。
+
+### 7.1 Mount 表:删对了,不恢复;缺口用「派生反向索引」补(Allen 确认)
+
+**实证**(main):`socialware_mounts` 表除 mount.ex 内部 upsert 去重外,外部只被两处读——session 启动 `reconcile_session_mounts`、入会 `backfill_member_mounts`,**全是"照表重新 mint 钥匙"**。无任何读点做授权/可见性/feed(feed 列成员读 `:session` 的 `:members` slice,不碰 Mount)。
+
+**结论**:Mount 的"账本身份"(照表重发)= 第二真理源 trap,#1474 删对(合甲 cap-as-truth)。它唯一 cap 给不了的是 `session_uri` 维度(cap 形状 `(holder,target,actions)` 无上下文轴)。**不恢复 Mount**;这个反向缺口用**从 cap 投影出的派生只读索引**补(cap→行,永不反过来重发钥匙)。
+
+### 7.2 反向索引 `grantees_of`(新增第 5 件,Allen 拍板现在做)
+
+**需求**:统一的"某资源的 cap 发给了谁"反查,避免每个 biz 各造(`:members` 今天就是这个,但在 biz 层手做)。
+
+**实现(低-中难度,靠现成收口)**:
+- **单一存储收口已存在** = `Ezagent.Identity.absorb_cap/2` —— 所有 cap 落地(含 member-cap:`grant_at_join`→`issue_and_absorb_cap`→`Cap.issue`→`absorb_cap`)都过它,无活的绕过口(`workspace_user_admin` 那处历史绕过已修、现走 `Cap.issue`)。
+- **写**:在 `absorb_cap` 顺手写一行反向表 `(target_uri, grantee_uri, behavior, actions, key_id/generation, granted_by)`(≈ MountRow schema 去掉 reconcile/session-scope 包袱)。
+- **读**:`grantees_of(target_uri, behavior \\ :any)`,**按目标当前 generation 过滤**(撤销=generation-bump 不删行,旧行自动失效,镜像 `verify_against_current`,不引入新撤销机制)。
+- **`:members` 迁移分两步**(碰 M-9 授权不变量,授权敏感):先出索引+接口、验证与现有 `:members` 逐条一致 → 再迁 `:members` 成投影。
+- **drift gate**:禁 biz 层再各自实现反向查询(仿 `attachment_plane_chokepoint`)。
+
+### 7.3 两个设计题(Allen 留给我定)的决定
+
+- **令牌 bearer vs grantee-bound → 分层,两个都要**:分享**链接** = bearer(不知谁点、谁拿到谁兑);claim 那刻 mint 出的 **cap** = grantee-bound(person-cap,甲)。即泛化 `DownloadToken` 加一个"grantee 在 claim/verify 时才填"的 bearer 模式(= 甲的 bearer→mint)。
+- **4 处可见性统一 → `caps_toward` 做共享过滤器**:各处枚举源不同(list_by_recipe / 全 ws / agent)属 use-layer 各管;真正重复的是"∩ 我持有指向它的 cap"过滤 + 3 条 caps-loading。`caps_toward(holder, behavior)`(正向)做这个共享 filter,每处保留自己的枚举、只把 cap 过滤路由进来。
+
+### 7.4 乙(访问=持 cap,不自动建展示 session)→ 非回归守卫
+
+Allen 核实:"创建资源/agent 自动建 owner 展示 session"在现 main **不成立**(独立 session Kind 已删、`create_session` 独立 action、建 agent 只写潜伏 cap-gated 蓝图)。所以乙 = 非回归守卫 + 关两个**真**残留:`KanbanRender.boards_for/1`(`kanban_render.ex:113`,无 caller/cap 过滤的 render 路)+ `:members` roster(确认是 cap 派生投影 —— 正好由 §7.2 的 `grantees_of` 收编)。
+
+### 7.5 最终 PR 拆分
+
+```
+PR-1  分享令牌 + claim 落点     ② bearer token 轴(泛化 DownloadToken,claim 时绑 grantee)
+                               + ⑤ 通用 /socialware/claim(= #1552 token 泛化 + 通用接收)
+PR-2  可见性 + 反向索引         ③ caps_toward(正向共享过滤,收 4 处)
+                               + 【新】grantees_of 反向索引(挂 absorb_cap 收口 + generation 过滤)
+PR-3  审批统一                 ④ CompositionConsent 入口泛化到 (grantee, target_uri, actions)
+PR-4  :members 迁移 + drift gate  :members 投影到 grantees_of(验证一致后)+ 防漂移闸
+────────────────────────────────
+然后  rebase #1474 → kanban 3 残留指到新 seam(salt→PR-1 · rule-8→PR-3 · union_cap_boards→PR-2)→ 合
+```
+
+PR-1/2/3 相互独立可并行;PR-4 最后(锁 worklist + 迁 `:members`);#1474 最后 rebase 上去合(Allen 建议顺序:先原语 → rebase #1474 → 合)。
+
+> **本节所有决策已与 Allen 对齐并 ok。** 实现从 PR-1 起。
