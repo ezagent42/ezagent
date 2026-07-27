@@ -16,10 +16,12 @@ function ss(page, label) { seq++; return page.screenshot({ path: path.join(DIR, 
 
   try {
     // ═══ 1. Login ═══
+    // Seeded G5 user (fresh DBs have no admin@ezagent.chat). The founder holds
+    // durable join+send caps for the pre-seeded session (see g5_e2e_seed.exs).
     console.log('[1] Login...');
     await page.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
-    await page.fill('input[name="email"]', 'admin@ezagent.chat');
-    await page.fill('input[name="password"]', 'worlddev');
+    await page.fill('input[name="email"]', process.env.G5_LOGIN_EMAIL || 'g5-founder@e2e.local');
+    await page.fill('input[name="password"]', process.env.G5_LOGIN_PASSWORD || 'e2etest123');
     await page.click('button[type="submit"]');
     await page.waitForURL('**/sessions', { timeout: 15000 });
     console.log('[1] Logged in');
@@ -39,20 +41,26 @@ function ss(page, label) { seq++; return page.screenshot({ path: path.join(DIR, 
     await ss(page, '03-pre-send');
 
     if (hasComposer) {
-      console.log('[3] Sending: hello');
+      // The curl agent only ACTS on @mention (world activation rule) — a bare
+      // "hello" is accepted but never reaches the agent, so no error card.
+      // Pass the seeded agent URI: G5_AGENT_URI=entity://system/agent/g5-e2e-agent-...
+      const agentUri = process.env.G5_AGENT_URI;
+      const text = agentUri ? `@${agentUri} hello` : 'hello';
+      console.log('[3] Sending:', text);
       await composer.click();
-      await composer.fill('hello');
+      await composer.fill(text);
       await page.waitForTimeout(300);
       await ss(page, '04-message-typed');
 
       // Try clicking send button first (more reliable than Enter)
-      const sendBtn = page.locator('button[type="submit"], button:has-text("Send"), button[aria-label*="Send"]').first();
+      const sendBtn = page.locator('button[type="submit"], button:has-text("Send"), button[aria-label*="Send"], button:has-text("发送")').first();
       if (await sendBtn.isVisible().catch(() => false)) {
         await sendBtn.click();
       } else {
         await page.keyboard.press('Enter');
       }
-      await page.waitForTimeout(8000);
+      // Agent turn + structured error card render can take >10s.
+      await page.waitForTimeout(15000);
       await ss(page, '05-after-send');
       console.log('[3] Message sent — check 05-after-send for G5 error card');
     } else {

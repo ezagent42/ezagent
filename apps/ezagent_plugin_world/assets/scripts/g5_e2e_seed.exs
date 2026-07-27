@@ -3,9 +3,14 @@
 # Creates: 1 workspace + 2 users (founder + member) + 1 curl agent WITHOUT api key.
 # The agent will fail with {:no_api_key} → G5 ErrorMatcher → Layer 1/2 cards.
 #
-# RUN WITH DEV SERVER STOPPED, against an isolated home:
+# RUN WITH DEV SERVER STOPPED, against an isolated home + fresh DB:
 #
-#   EZAGENT_HOME=/tmp/ezagent_g5_e2e mix run scripts/g5_e2e_seed.exs
+#   EZAGENT_HOME=/tmp/ezagent_g5_e2e POSTGRES_DB=ezagent_g5_e2e \
+#     mix run apps/ezagent_plugin_world/assets/scripts/g5_e2e_seed.exs
+#
+# (POSTGRES_DB selects the DB — EZAGENT_HOME only isolates the FS layer, NOT
+# the database. A fresh DB is required so post-G-3 user creation mints
+# self-licenses; pre-G-3 rows never get one and loads return [].)
 #
 # Then start vite + phoenix and follow the printed instructions.
 
@@ -45,6 +50,7 @@ IO.puts("[1/4] Creating users...")
 founder_uri = EzUri.new!("entity://system/user/g5-founder")
 member_uri = EzUri.new!("entity://system/user/g5-member")
 session = EzUri.new!("session://system/default/g5-test")
+g5_session = EzUri.new!("session://system/default/g5-e2e-test")
 
 # Create session if needed
 join_founder = cap.(founder_uri, :join, session)
@@ -52,10 +58,19 @@ send_founder = cap.(founder_uri, :send, session)
 join_member = cap.(member_uri, :join, session)
 send_member = cap.(member_uri, :send, session)
 
+# E2E session caps MUST ride the creation payload: `Cap.issue` returns the
+# signed artifact but does NOT deliver it to the user's durable cap store
+# (users.caps_json / EntityCaps). Web sends load caps from that store, so
+# e2e-session caps issued later would still verify as :missing_cap.
+e2e_join_founder = cap.(founder_uri, :join, g5_session)
+e2e_send_founder = cap.(founder_uri, :send, g5_session)
+e2e_join_member = cap.(member_uri, :join, g5_session)
+e2e_send_member = cap.(member_uri, :send, g5_session)
+
 # Create users with join+send caps
 for {uri, label, caps} <- [
-  {founder_uri, "founder", [join_founder, send_founder]},
-  {member_uri, "member", [join_member, send_member]}
+  {founder_uri, "founder", [join_founder, send_founder, e2e_join_founder, e2e_send_founder]},
+  {member_uri, "member", [join_member, send_member, e2e_join_member, e2e_send_member]}
 ] do
   case Ezagent.Users.create_read_only(uri, issue.(uri, caps)) do
     {:ok, _} -> IO.puts("  #{label}: created #{URI.to_string(uri)}")
@@ -75,7 +90,8 @@ for {uri, label, caps} <- [
     target: EzUri.with_action(session, :session, :join),
     mode: :call,
     args: %{member: uri},
-    ctx: %{caller: uri, caps: MapSet.new([join_founder]), reply: :ignore}
+    ctx: %{caller: uri, authenticated_principal: uri, caps: MapSet.new([hd(caps)]), reply: :ignore},
+    origin: :authenticated_external
   })
   case result do
     :ok -> :ok
@@ -144,7 +160,7 @@ create_agent_cap = %Capability{
 {:ok, %{agent_uri: agent_uri}} = Ezagent.Workspace.Provisioning.create_agent(
   admin_ws.uri,
   %{name: agent_name, flavor: "curl", cwd: "/tmp", with_pty: false},
-  %{caller: admin, caps: MapSet.new([signed_cap])}
+  %{caller: admin, authenticated_principal: admin, caps: MapSet.new([signed_cap])}
 )
 IO.puts("  agent: #{URI.to_string(agent_uri)}")
 
@@ -154,13 +170,13 @@ IO.puts("  agent has NO api key — E2E will trigger {:no_api_key}")
 # ── Step 3: Create session + grant caps ──
 
 IO.puts("[3/5] Creating G5 test session...")
-g5_session = EzUri.new!("session://system/default/g5-e2e-test")
 
-# Grant founder send+join caps for this session
+# Join/send caps for this session already persisted via the creation payload
+# (step 1). Re-issue here only to get signed artifacts for the join dispatch.
 sess_join = cap.(founder_uri, :join, g5_session)
 sess_send = cap.(founder_uri, :send, g5_session)
-{:ok, _} = Ezagent.Cap.issue({:admin, admin}, founder_uri, sess_join)
-{:ok, _} = Ezagent.Cap.issue({:admin, admin}, founder_uri, sess_send)
+{:ok, signed_sess_join} = Ezagent.Cap.issue({:admin, admin}, founder_uri, sess_join)
+{:ok, _signed_sess_send} = Ezagent.Cap.issue({:admin, admin}, founder_uri, sess_send)
 IO.puts("  Founder join+send caps issued for #{URI.to_string(g5_session)}")
 
 # Join founder
@@ -168,7 +184,8 @@ result = Invocation.dispatch(%Invocation{
   target: EzUri.with_action(g5_session, :session, :join),
   mode: :call,
   args: %{member: founder_uri},
-  ctx: %{caller: founder_uri, caps: MapSet.new([sess_join]), reply: :ignore}
+  ctx: %{caller: founder_uri, authenticated_principal: founder_uri, caps: MapSet.new([signed_sess_join]), reply: :ignore},
+  origin: :authenticated_external
 })
 IO.puts("  Founder session join: #{inspect(result)}")
 
@@ -183,7 +200,8 @@ aj_result = Invocation.dispatch(%Invocation{
   target: EzUri.with_action(g5_session, :session, :join),
   mode: :call,
   args: %{member: agent_uri},
-  ctx: %{caller: agent_uri, caps: MapSet.new([signed_aj]), reply: :ignore}
+  ctx: %{caller: agent_uri, authenticated_principal: agent_uri, caps: MapSet.new([signed_aj]), reply: :ignore},
+  origin: :authenticated_external
 })
 IO.puts("  Agent join: #{inspect(aj_result)}")
 
@@ -203,14 +221,18 @@ G5 E2E — Manual Test Steps
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Start the server:
-  EZAGENT_HOME=/tmp/ezagent_g5_e2e mix phx.server
+  EZAGENT_HOME=/tmp/ezagent_g5_e2e POSTGRES_DB=ezagent_g5_e2e mix phx.server
 
-Then in your browser (http://localhost:4000):
+Automated (Playwright, headless optional):
+  G5_AGENT_URI=#{URI.to_string(agent_uri)} node scripts/g5-e2e-playwright.js
+
+Then in your browser (http://world.localhost:10042):
 
 A / Layer 1 (founder sees fix link):
   Login: g5-founder@e2e.local / e2etest123
-  → Create a session with agent "#{URI.to_string(agent_uri)}"
-  → Send: "hello"
+  → Open session "session://system/default/g5-e2e-test"
+  → Send: "@#{URI.to_string(agent_uri)} hello"
+    (the curl agent only ACTS on @mention — a bare "hello" never reaches it)
   → 📸 EXPECT: card "Agent 未配置凭证" + impact + fix link
 
 B / Layer 2 (member sees notify button):
