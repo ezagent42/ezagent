@@ -38,6 +38,13 @@ defmodule EzagentPluginGitWorkflow.MixProject do
 
   defp deps do
     [
+      # Ezagent.URI moved into ezagent_actor by the C4-C7 extraction (#1579).
+      # Every app that uses it declares this dep directly rather than relying
+      # on reaching it transitively through ezagent_core — same as
+      # ezagent_domain_git, ezagent_plugin_world, and ezagent_plugin_kanban.
+      # This app was invisible to #1579 because it lives only on the Plan E
+      # integration branch, so the dep is added here instead.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_git, in_umbrella: true}
     ]
