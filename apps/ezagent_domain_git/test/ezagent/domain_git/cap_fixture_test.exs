@@ -151,7 +151,7 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: coordinates.task_access_uri.path |> String.split("/") |> List.last(),
-        task_id: "fixture-task",
+        task_uri: Ezagent.URI.resource(workspace, "task", "fixture-task"),
         generation: 1,
         workspace_uri: coordinates.workspace_uri,
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -160,7 +160,10 @@ defmodule Ezagent.DomainGit.CapFixtureTest do
         provider_adapter: :fixture_git,
         allowed_head_ref: "task/fixture",
         allowed_actions: [@action, :list_reviews],
-        idempotency_inputs: %{task_id: "fixture-task", generation: 1}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource(workspace, "task", "fixture-task"),
+          generation: 1
+        }
       })
 
     coordinates = GitCapFixture.bind_policy(coordinates, policy)
