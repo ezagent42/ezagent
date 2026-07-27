@@ -678,7 +678,16 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
     defp test_hook_after_display_profile(_agent_uri, :skipped), do: :ok
   else
-    defp test_hook_after_display_profile(_agent_uri, _status), do: :ok
+    # Non-test env: no injection point, always `:ok`. Read through `Process.get/2`
+    # (typed `term()`; the key is never set so it always yields `:ok`) so the
+    # compiler does NOT narrow this fn's return to the `:ok` singleton — otherwise
+    # the caller's env-conditional `{:error, _}` branch in
+    # `establish_fresh_spawn_obligations/7` (live in test env, where the hook
+    # forwards `TestTemplateSpawn.hook/3`) is flagged "clause will never match"
+    # under `--warnings-as-errors`. The `@spec` union above does not suppress the
+    # Elixir 1.18 set-theoretic inference for a private fn.
+    defp test_hook_after_display_profile(_agent_uri, _status),
+      do: Process.get(:"$ezagent_template_spawn_no_hook", :ok)
   end
 
   # codex r5 HIGH — post-mint failures delete EXACTLY this attempt's minted
