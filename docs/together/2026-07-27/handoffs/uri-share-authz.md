@@ -131,19 +131,34 @@
 
 Allen 核实:"创建资源/agent 自动建 owner 展示 session"在现 main **不成立**(独立 session Kind 已删、`create_session` 独立 action、建 agent 只写潜伏 cap-gated 蓝图)。所以乙 = 非回归守卫 + 关两个**真**残留:`KanbanRender.boards_for/1`(`kanban_render.ex:113`,无 caller/cap 过滤的 render 路)+ `:members` roster(确认是 cap 派生投影 —— 正好由 §7.2 的 `grantees_of` 收编)。
 
-### 7.5 最终 PR 拆分
+### 7.5 命名(与 Allen 对齐,2026-07-27)
 
+`target` = cap 指向的 URI 的**既定通用词**(`cap.ex` 通篇、`mint_cap`/`consent` 的 `target_uri`)——**不是 `resource`**(target 可为 agent/session/resource 任意 URI)。避开 `Delegation`(与 #153/#137 "delegation policy"/`:grant_not_delegable` 撞车)。
+
+- **`Ezagent.Socialware.Share`** —— URI 无关的"授/分享/撤/查 指向 target 的 cap"(mint、bearer token→claim、caps_toward、grantees_of、consent、revoke)。
+- **`Ezagent.Socialware.Provision`** —— 建数据宿主 + 发 owner cap(= board_provision 泛化,现 `Mount.provision`),接口按 target/spec 参数化。
+- **分层**:`Share`+`Provision` 复合体住 socialware(domain_session,唯一能同碰 `create_agent` + `mint_cap` 的层);纯 cap 索引 `caps_toward`/`grantees_of` 下沉 cap/identity(挂 `EntityCaps`/`absorb_cap`)= Allen 说的 "cap/identity layer"。
+
+### 7.6 board_provision = 泛化,不是删(选 a)
+
+**xy 实证**:`Mount.provision` moduledoc 自述"这是 `BoardProvision.create_board/5` 的泛化,零 kanban 字面,所有 socialware 复用"——**通用原语早已存在 = `Mount`**。#1474 为 kanban 纯化把它删了、让 kanban 重造薄 board_provision,对"通用 infra"目标是倒退。选 a 的正解 = **重构 Mount → `Provision`/`Share`(改名 + 去 MountRow trap),非删**:保留 provision + mint 边;删 MountRow 账本/reconcile(第二真理源 trap)→ 由 `grantees_of` 派生索引替。kanban board_provision 退成薄壳(甚至无,直调通用原语)。
+
+### 7.7 最终 PR 拆分(两组严格先后:infra 全合 → kanban 统一迁,防 drift)
+
+**Group A —— 纯 infra(无 kanban 文件,全部先合):**
 ```
-PR-1  分享令牌 + claim 落点     ② bearer token 轴(泛化 DownloadToken,claim 时绑 grantee)
-                               + ⑤ 通用 /socialware/claim(= #1552 token 泛化 + 通用接收)
-PR-2  可见性 + 反向索引         ③ caps_toward(正向共享过滤,收 4 处)
-                               + 【新】grantees_of 反向索引(挂 absorb_cap 收口 + generation 过滤)
-PR-3  审批统一                 ④ CompositionConsent 入口泛化到 (grantee, target_uri, actions)
-PR-4  :members 迁移 + drift gate  :members 投影到 grantees_of(验证一致后)+ 防漂移闸
-────────────────────────────────
-然后  rebase #1474 → kanban 3 残留指到新 seam(salt→PR-1 · rule-8→PR-3 · union_cap_boards→PR-2)→ 合
+A1  分享令牌 + claim 落点      Socialware.Share 的 bearer token 轴(泛化 DownloadToken,claim 绑 grantee)
+                              + 通用 /socialware/claim(= #1552 token 泛化 + 通用接收)。additive
+A2  可见性 + 反向索引          cap/identity 层 caps_toward(正向)+ grantees_of(挂 absorb_cap + generation
+                              过滤 + 反向表)。additive
+A3  审批泛化                  CompositionConsent 入口泛化到 (grantee, target_uri, actions)。additive
+A4  Mount → 通用原语(重构非删) 重构 Mount 成 Socialware.Provision/Share:保留 provision+mint,去 MountRow
+                              trap;迁 member_backfill/reconcile 脱 Mount;:members 投影到 grantees_of  [依赖 A2]
+config PR  部署 config        role_plugins / socialware_check_reference_apps 挪 config.exs(独立,决定 2)
 ```
+**Group B —— kanban #1474 slim + rebase(A 全合后统一改):** 只留纯 kanban 业务;authz 指向 A 的新 seam(share→A1、rule-8→A3、union_cap_boards→A2、board_provision→A4 薄壳)。
+**最后 —— drift gate:** 禁 biz 外造 token签/mint/holder查/审批(kanban 也迁完才能过)。
 
-PR-1/2/3 相互独立可并行;PR-4 最后(锁 worklist + 迁 `:members`);#1474 最后 rebase 上去合(Allen 建议顺序:先原语 → rebase #1474 → 合)。
+依赖:A1/A2/A3 可并行 → A4(等 A2 的 grantees_of)→ config 独立 → Group A 全 merge → #1474 → drift gate。**每个 PR 走 dev-together:测试 + 需 e2e 者截图 + full suite CI 绿 + 提交后监控 CI。**
 
-> **本节所有决策已与 Allen 对齐并 ok。** 实现从 PR-1 起。
+> **本节所有决策已与 Allen 对齐并 ok。** 实现从 A1 起。
