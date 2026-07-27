@@ -26,7 +26,13 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
       :grantee_uri,
       :idempotency_key
     ],
-    Ezagent.DomainGit.CreateChangeRequest => [:title, :body, :head_ref, :expected_base_sha],
+    Ezagent.DomainGit.CreateChangeRequest => [
+      :title,
+      :body,
+      :head_ref,
+      :expected_base_sha,
+      :commit_date
+    ],
     Ezagent.DomainGit.ChangeRequestId => [:external_id],
     Ezagent.DomainGit.CommitSha => [:value],
     Ezagent.DomainGit.Check => [:external_id, :name, :status, :conclusion, :url],
@@ -83,6 +89,9 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
         | :checks_unavailable
         | :provider_unavailable
         | :authentication_rejected
+        | :installation_scope_mismatch
+        | :head_ref_conflict
+        | :provider_rate_limited
         | {:provider_request_failed, operation :: atom(), status :: pos_integer()}
       end
       |> union_strings()

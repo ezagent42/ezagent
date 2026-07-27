@@ -34,7 +34,7 @@ defmodule EzagentPluginGithub.GitHubClientTest do
              GitHubClient.get("/repos/owner/nonexistent", "token", plug: {Req.Test, @stub_name})
   end
 
-  test "get maps 403 to provider_denied (rate limit / forbidden)" do
+  test "get maps a plain 403 (no rate-limit signal) to provider_denied" do
     Req.Test.stub(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 403, ~s({"message": "Forbidden"}))
     end)
@@ -43,12 +43,34 @@ defmodule EzagentPluginGithub.GitHubClientTest do
              GitHubClient.get("/repos/owner/private-repo", "token", plug: {Req.Test, @stub_name})
   end
 
-  test "get maps 422 to change_request_conflict" do
+  test "get maps a 403 with x-ratelimit-remaining: 0 to provider_rate_limited" do
+    Req.Test.stub(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("x-ratelimit-remaining", "0")
+      |> Plug.Conn.resp(403, ~s({"message": "API rate limit exceeded"}))
+    end)
+
+    assert {:error, :provider_rate_limited} =
+             GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
+  end
+
+  test "get maps a 403 with retry-after to provider_rate_limited" do
+    Req.Test.stub(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("retry-after", "30")
+      |> Plug.Conn.resp(403, ~s({"message": "You have exceeded a secondary rate limit"}))
+    end)
+
+    assert {:error, :provider_rate_limited} =
+             GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
+  end
+
+  test "get maps 422 to unprocessable_entity, not a guessed identity" do
     Req.Test.stub(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
 
-    assert {:error, :change_request_conflict} =
+    assert {:error, :unprocessable_entity} =
              GitHubClient.get("/repos/owner/repo/pulls", "token", plug: {Req.Test, @stub_name})
   end
 
@@ -58,6 +80,15 @@ defmodule EzagentPluginGithub.GitHubClientTest do
     end)
 
     assert {:error, :provider_unavailable} =
+             GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
+  end
+
+  test "get maps 429 to provider_rate_limited" do
+    Req.Test.stub(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 429, ~s({"message": "You have exceeded a secondary rate limit"}))
+    end)
+
+    assert {:error, :provider_rate_limited} =
              GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
   end
 
@@ -75,12 +106,12 @@ defmodule EzagentPluginGithub.GitHubClientTest do
              )
   end
 
-  test "post maps 422 to change_request_conflict" do
+  test "post maps 422 to unprocessable_entity, not a guessed identity" do
     Req.Test.stub(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
 
-    assert {:error, :change_request_conflict} =
+    assert {:error, :unprocessable_entity} =
              GitHubClient.post("/repos/owner/repo/issues", "token", %{title: "Bad"},
                plug: {Req.Test, @stub_name}
              )
