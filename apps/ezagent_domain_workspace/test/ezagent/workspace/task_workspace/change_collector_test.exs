@@ -205,6 +205,85 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
     end
   end
 
+  describe "collect/1 rejects limit and read-failure violations" do
+    setup do
+      previous = Application.get_env(:ezagent_domain_git, :change_limits, :absent)
+      on_exit(fn -> restore_change_limits(previous) end)
+      :ok
+    end
+
+    test "rejects a single file over max_file_bytes", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(:ezagent_domain_git, :change_limits, %{
+        max_files: 100,
+        max_file_bytes: 10,
+        max_total_bytes: 1_000
+      })
+
+      File.write!(Path.join(worktree_path, "too_big.txt"), String.duplicate("a", 11))
+
+      assert {:error, :change_limit_exceeded} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects when the file count exceeds max_files", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(:ezagent_domain_git, :change_limits, %{
+        max_files: 2,
+        max_file_bytes: 1_000,
+        max_total_bytes: 1_000_000
+      })
+
+      for n <- 1..3 do
+        File.write!(Path.join(worktree_path, "file-#{n}.txt"), "content #{n}\n")
+      end
+
+      assert {:error, :change_limit_exceeded} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects when total bytes exceed max_total_bytes", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(:ezagent_domain_git, :change_limits, %{
+        max_files: 100,
+        max_file_bytes: 1_000,
+        max_total_bytes: 15
+      })
+
+      File.write!(Path.join(worktree_path, "a.txt"), String.duplicate("a", 10))
+      File.write!(Path.join(worktree_path, "b.txt"), String.duplicate("b", 10))
+
+      assert {:error, :change_limit_exceeded} = ChangeCollector.collect(change_request)
+    end
+
+    test "surfaces a vanished reported path as workspace_read_failed, not a false rejection", %{
+      root: root
+    } do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :provisioner_test_collect_status_result,
+        {:ok, [%{path: "vanished.txt", index_status: "?", worktree_status: "?"}]}
+      )
+
+      assert {:error, :workspace_read_failed} = ChangeCollector.collect(change_request)
+    end
+  end
+
+  defp restore_change_limits(:absent),
+    do: Application.delete_env(:ezagent_domain_git, :change_limits)
+
+  defp restore_change_limits(value),
+    do: Application.put_env(:ezagent_domain_git, :change_limits, value)
+
   defp ready_fixture!(root, suffix \\ "one") do
     origin = local_origin!(root)
     workspace = "change-collector-#{suffix}-#{System.unique_integer([:positive])}"
