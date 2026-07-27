@@ -66,4 +66,15 @@ defmodule EzagentDomainWorkspace.TestSupport.FakeTaskWorkspaceGitRunner do
       :ok
     )
   end
+
+  def collect_status(ready) do
+    owner = Application.get_env(:ezagent_domain_workspace, :provisioner_test_owner)
+    if owner, do: send(owner, {:git_collect_status, ready})
+
+    Application.get_env(
+      :ezagent_domain_workspace,
+      :provisioner_test_collect_status_result,
+      {:ok, []}
+    )
+  end
 end

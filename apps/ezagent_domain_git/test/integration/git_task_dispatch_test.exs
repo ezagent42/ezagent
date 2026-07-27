@@ -26,7 +26,8 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     :list_checks,
     :list_reviews,
     :provision_workspace,
-    :cleanup_workspace
+    :cleanup_workspace,
+    :collect_workspace_changes
   ]
   @providers [
     {:"task11-sync-a", "task11-sync-a", SynchronizedGitAdapterA, "sync-a"},
