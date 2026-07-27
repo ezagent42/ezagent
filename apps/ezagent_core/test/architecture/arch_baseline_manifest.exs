@@ -401,7 +401,12 @@
   #   counted here). Measured 1766→1786.
   # arch-cap-bump: custom-backend templates now forward the Plan C launch receipt
   #   option through their shared CC instantiate boundary.
-  cc_codex_template_class_combined_loc: 1787,
+  # arch-cap-bump: #201 PR-1/PR-3 — the spawn-receipt arms. codex_agent gains the
+  #   `{:started, false}` rehydrating-winner arm (zero credential writes on
+  #   `:started ∧ ¬created?`) + the core-verdict meta threading; cc_agent's
+  #   instantiate_for_flavor documents the deleted speculative flavor write
+  #   (net-zero LOC). Measured 1787→1801.
+  cc_codex_template_class_combined_loc: 1801,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

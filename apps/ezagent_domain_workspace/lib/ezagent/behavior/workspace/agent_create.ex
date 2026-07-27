@@ -888,14 +888,14 @@ defmodule Ezagent.ActionSet.Workspace.AgentCreate do
         # creator. Surface `:already_exists` → `invoke_or_rollback` rolls back this
         # call's Store write.
         #
-        # codex r7 HIGH — the cascade may have MINTED a grant for `agent_uri` before
-        # adopting. Because UNIFIED CREATE rejects the adoption (unlike the
-        # orchestrator, which accepts `fresh?: false`), the grant this call minted
-        # for an agent it refuses to own must be cleaned up here (caller-specific —
-        # the shared `spawn_from_template_content` cannot know the create rejects
-        # adoption). HARD-delete frees the unique key for the real owner / a retry.
+        # #201 PR-3 — the grant cleanup this arm used to do (`GrantRow.delete/1`
+        # by URI) moved INTO the chokepoint and is now incarnation-scoped:
+        # `TemplateSpawn` deletes EXACTLY this attempt's minted grant (R4
+        # ABA-safe) before reporting the adoption rejection, so by the time any
+        # `fresh?: false` / `:agent_uri_already_live` reaches this caller the
+        # residue is already gone. A bare URI-delete here could wipe a
+        # DIFFERENT incarnation's freshly re-minted row.
         {:ok, %{fresh?: false}} ->
-          _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
           {:error, {:already_exists, URI.to_string(agent_uri)}}
 
         {:error, {:already_started, _}} ->

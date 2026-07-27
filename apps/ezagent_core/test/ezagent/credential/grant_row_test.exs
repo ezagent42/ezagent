@@ -124,4 +124,88 @@ defmodule Ezagent.Credential.GrantRowTest do
     assert re.revoked_at == nil and re.version >= g.version + 2
     assert re.workspace_uri == "workspace://team-a"
   end
+
+  # #201 PR-3 (R4) — the immutable grant-incarnation id is the ABA-safe
+  # identity for compensating deletes.
+  describe "incarnation-scoped delete" do
+    test "insert mints an incarnation id" do
+      {:ok, row} =
+        GrantRow.insert(%{
+          agent_uri: "entity://team-a/agent/inc1",
+          credential_source_uri: "s",
+          approved_by: "u",
+          approved_scope: "s",
+          version: 1
+        })
+
+      assert is_binary(row.incarnation_id)
+    end
+
+    test "a stale compensator cannot delete a reapproved row (reapprove re-incarnates)" do
+      {:ok, g} =
+        GrantRow.insert(%{
+          agent_uri: "entity://team-a/agent/inc2",
+          credential_source_uri: "s",
+          approved_by: "u",
+          approved_scope: "s",
+          version: 1
+        })
+
+      {:ok, re} =
+        GrantRow.reapprove(%{
+          agent_uri: g.agent_uri,
+          credential_source_uri: "s2",
+          approved_by: "u",
+          approved_scope: "s2"
+        })
+
+      refute re.incarnation_id == g.incarnation_id
+
+      # The stale compensator holds the OLD incarnation: it must NOT delete
+      # the new row.
+      assert {:ok, :no_grant} = GrantRow.delete_incarnation(g.agent_uri, g.incarnation_id)
+
+      assert Map.get(GrantRow.get_for_agent(g.agent_uri), :incarnation_id) ==
+               re.incarnation_id
+
+      # The CURRENT incarnation's owner can delete.
+      assert {:ok, :deleted} = GrantRow.delete_incarnation(g.agent_uri, re.incarnation_id)
+      assert GrantRow.get_for_agent(g.agent_uri) == nil
+    end
+
+    test "a stale compensator cannot delete a hard-delete + reinsert row (ABA)" do
+      attrs = %{
+        agent_uri: "entity://team-a/agent/inc3",
+        credential_source_uri: "s",
+        approved_by: "u",
+        approved_scope: "s",
+        version: 1
+      }
+
+      {:ok, first} = GrantRow.insert(attrs)
+      {:ok, _} = GrantRow.delete(first.agent_uri)
+
+      # Reinsert: version resets to 1 — URI+version looks identical to the
+      # first row, but the incarnation differs.
+      {:ok, second} = GrantRow.insert(attrs)
+      assert second.version == 1
+      refute second.incarnation_id == first.incarnation_id
+
+      assert {:ok, :no_grant} =
+               GrantRow.delete_incarnation(first.agent_uri, first.incarnation_id)
+
+      assert Map.get(GrantRow.get_for_agent(first.agent_uri), :incarnation_id) ==
+               second.incarnation_id
+
+      assert {:ok, :deleted} =
+               GrantRow.delete_incarnation(first.agent_uri, second.incarnation_id)
+
+      assert GrantRow.get_for_agent(first.agent_uri) == nil
+    end
+
+    test "delete_incarnation is a no-op when no row exists" do
+      assert {:ok, :no_grant} =
+               GrantRow.delete_incarnation("entity://team-a/agent/ghost-inc", "nope")
+    end
+  end
 end

@@ -234,23 +234,31 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
     # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
     # swap can refuse adopting a worker it did not create.
+    #
+    # #201 PR-3 — the spawn receipt ALSO carries the core logical-create
+    # verdict (`created?`). The `:api_keys` slice materialization is a
+    # create-only credential write: it runs ONLY on `:started ∧ created?`
+    # (a genuine first-ever create). A rehydrating winner
+    # (`:started ∧ ¬created?`) and an adopt (`:already_started`) write
+    # NOTHING into the live agent's slice (the adopt arm previously
+    # re-wrote THIS attempt's key into the adopted agent — a clobber).
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, _pid} ->
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+      {:ok, :started, _pid, %{created?: true}} ->
         case materialize_credential_slice(agent_uri, tmpl) do
           :ok ->
-            {:ok, [agent_uri], %{fresh?: true}}
+            {:ok, [agent_uri], %{fresh?: true, created?: true}}
 
           {:error, reason} ->
             Ezagent.Kind.terminate!(agent_uri)
             {:error, reason}
         end
 
-      {:error, {:already_started, _pid}} ->
-        case materialize_credential_slice(agent_uri, tmpl) do
-          :ok -> {:ok, [agent_uri], %{fresh?: false}}
-          {:error, reason} -> {:error, reason}
-        end
+      {:ok, :started, _pid, %{created?: false}} ->
+        {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
       {:error, reason} ->
         Logger.warning(

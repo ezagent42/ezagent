@@ -30,8 +30,11 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
              approved_scope: URI.to_string(source_uri),
              version: 1
            }),
-         {:ok, _pid} <-
-           Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+         # #201 PR-1/PR-3 — spawn through the receipt so the chokepoint gates
+         # this fixture's grant on the core logical-create verdict like any
+         # other credential-carrying Template Class.
+         {:ok, :started, _pid, %{created?: created?}} <-
+           Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
              uri: agent_uri,
              config_dir_path: config_dir,
              template_class: __MODULE__,
@@ -40,6 +43,7 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
       {:ok, [agent_uri],
        %{
          fresh?: true,
+         created?: created?,
          config_dir_path: config_dir,
          respawn_template_data: data
        }}

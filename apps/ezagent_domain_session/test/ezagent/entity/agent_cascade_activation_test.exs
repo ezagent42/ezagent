@@ -36,14 +36,21 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
       # is now correctly rejected as `:agent_uri_already_live` by
       # `spawn_from_template_content` (#1570 reject-double-spawn contract), so a
       # capture-only fake that never spawns must report the fresh spawn it stands in for.
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
              uri: uri,
              behaviors: Ezagent.Entity.Agent.base_behaviors()
            }) do
-        {:ok, _pid} -> {:ok, [uri], %{fresh?: true}}
-        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
-        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
-        {:error, reason} -> {:error, reason}
+        {:ok, :started, _pid, %{created?: created?}} ->
+          {:ok, [uri], %{fresh?: true, created?: created?}}
+
+        {:ok, :already_started, _pid, _receipt} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
 
