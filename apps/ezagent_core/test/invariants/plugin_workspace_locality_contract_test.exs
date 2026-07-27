@@ -27,17 +27,27 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        "Do not call/cast workspace-bound Kind pids directly from plugins."}
   ]
 
-  # ── Concern (A): the REAL owner-bypass debt — empty-allowlist enumerator ──
+  # ── Concern (A): the enumerated owner-bypass debt — empty-allowlist enumerator ──
   #
   # The burn target. It runs the owner-bypass detection with NO suppression
-  # (empty allowlists passed explicitly), so ANY plugin owner-bypass site is a
-  # violation and the failure output IS the enforced worklist. All original
-  # debt has been migrated onto owner-gated core facades, so this is GREEN at 0:
-  #   * `GenServer.call(pid, …)` sidecar/executor sites → `Ezagent.OwnerGatedExecutor.call/4`
-  #   * `WorkspaceRegistry.bind` / `AgentLineage.record` sites →
+  # (empty allowlists passed explicitly), so any hit in the ENUMERATED debt
+  # classes is a violation and the failure output IS the enforced worklist.
+  # Scope — what this enforces (the `@forbidden_patterns` + concrete ownership
+  # calls), NOT "all owner-bypasses":
+  #   * `GenServer.call/cast(pid, …)` where the receiver is literally `pid`
+  #   * `(Ezagent.)KindRegistry.lookup` / `Registry.lookup(Ezagent.KindRegistry,…)`
+  #   * `(Ezagent.)SpawnRegistry.spawn(_detailed)`
+  #   * concrete calls to the ownership modules (WorkspaceRegistry.bind,
+  #     AgentLineage.record, CreationInventory, TaskWorkspace.*, LaunchAuthority…)
+  # It deliberately does NOT catch a `GenServer.call` on a differently-named
+  # receiver, nor `Ezagent.Kind.spawn/2` (an un-gated spawn path — a KNOWN
+  # follow-up debt class, out of this burn's scope). All debt in the enumerated
+  # classes has been migrated onto owner-gated core facades, so this is GREEN at 0:
+  #   * the pid-call sidecar/executor sites → `Ezagent.OwnerGatedExecutor.call/4`
+  #   * the bind / lineage-record sites →
   #     `Ezagent.OwnerGatedWorkspace.{bind/2, record_lineage/2}`
-  # A NEW un-gated bypass re-reddens it (there is no allowlist to add to — that
-  # ledger was deleted with the burn; new debt is fixed, not allowlisted).
+  # A new hit in the enumerated classes re-reddens it (the allowlist ledger was
+  # deleted with the burn; new enumerated debt is fixed, not allowlisted).
   test "(A) plugin owner-bypass debt burns to zero (owner-gate worklist enumerator)" do
     root = repo_root()
 

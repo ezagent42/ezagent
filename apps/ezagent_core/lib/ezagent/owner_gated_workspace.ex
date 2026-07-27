@@ -15,13 +15,17 @@ defmodule Ezagent.OwnerGatedWorkspace do
   non-owner violation returns `{:error, {:not_workspace_owner, ...}}` (the gate's
   own violation term), never a new success shape.
 
-  `bind/2` gates on the TARGET `workspace_uri` (the workspace being written into),
-  mirroring `EzagentDomainInstanceMessage.SessionCreator`'s
-  `assert_local_owner(workspace_uri, {:session_create, session_uri})` — the
-  session URI can carry a placeholder workspace segment (e.g. protocol_api's
+  `bind/2` gates on the TARGET `workspace_uri` (the workspace being written into)
+  via the STRICT `assert_local_owner/2`, mirroring
+  `EzagentDomainInstanceMessage.SessionCreator`'s
+  `assert_local_owner(workspace_uri, {:session_create, session_uri})`. Strict
+  gating validates the arg is a real `workspace://` URI (a non-workspace or
+  cross-workspace target is refused, not silently derived) — the session URI can
+  carry a placeholder workspace segment (e.g. protocol_api's
   `session://system/generic/...`), so gating the session's structural workspace
-  would check the wrong thing. `record_lineage/2` gates on the `agent_uri`, whose
-  own workspace is the subject of the write.
+  would check the wrong thing. `record_lineage/2` gates on the `agent_uri` via
+  `assert_local_owner_for_uri/2` (the agent's own workspace is derived and is the
+  subject of the write).
   """
 
   @doc """
@@ -33,7 +37,11 @@ defmodule Ezagent.OwnerGatedWorkspace do
   """
   @spec bind(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def bind(session_uri, workspace_uri) do
-    with :ok <- gate(workspace_uri, {:workspace_bind, session_uri}) do
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner(
+             to_uri(workspace_uri),
+             {:workspace_bind, session_uri}
+           ) do
       Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
     end
   end
@@ -47,13 +55,13 @@ defmodule Ezagent.OwnerGatedWorkspace do
   """
   @spec record_lineage(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
   def record_lineage(agent_uri, spawned_by) do
-    with :ok <- gate(agent_uri, {:lineage_record, agent_uri}) do
+    with :ok <-
+           Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(
+             to_uri(agent_uri),
+             {:lineage_record, agent_uri}
+           ) do
       Ezagent.AgentLineage.record(agent_uri, spawned_by)
     end
-  end
-
-  defp gate(uri, operation) do
-    Ezagent.WorkspaceOwnerGate.assert_local_owner_for_uri(to_uri(uri), operation)
   end
 
   defp to_uri(%URI{} = uri), do: uri

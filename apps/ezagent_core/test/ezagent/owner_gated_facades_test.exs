@@ -19,8 +19,12 @@ defmodule Ezagent.OwnerGatedFacadesTest do
   defmodule RemoteResolver do
     @behaviour Ezagent.WorkspacePlacement
 
+    # Owns ONLY workspace://team-alpha (as a remote node). Matching a single host
+    # asserts the facade derives the EXACT expected workspace from each target
+    # URI — a wrong derivation (e.g. gating workspace://agent from a malformed
+    # entity URI) raises FunctionClauseError here instead of passing silently.
     @impl true
-    def owner_of(%URI{scheme: "workspace"}), do: {:ok, "remote-node"}
+    def owner_of(%URI{scheme: "workspace", host: "team-alpha"}), do: {:ok, "remote-node"}
   end
 
   # Stand-in for a workspace-bound sidecar/executor GenServer (the cc/codex
@@ -51,14 +55,16 @@ defmodule Ezagent.OwnerGatedFacadesTest do
     end)
 
     {:ok, echo} = start_supervised(Echo)
-    # Uniqueness goes in the session NAME segment (not the workspace/host) so the
+    # Real URI shapes (workspace-first): entity://<workspace>/agent/<name> and
+    # session://<workspace>/<template>/<name> — both derive workspace://team-alpha.
+    # Uniqueness goes in the NAME segment (not the workspace/host) so the
     # `session://<X>` 1-segment grep gate (all_per_tenant_uris_have_workspace)
     # sees `session://team-alpha/…` — host followed by `/`, not an interpolation.
     n = System.unique_integer([:positive])
 
     %{
       echo: echo,
-      agent_uri: Ezagent.URI.new!("entity://agent/team-alpha/a1"),
+      agent_uri: Ezagent.URI.new!("entity://team-alpha/agent/a1-#{n}"),
       session_uri: Ezagent.URI.new!("session://team-alpha/default/facade-#{n}"),
       workspace_uri: Ezagent.URI.new!("workspace://team-alpha")
     }
@@ -112,7 +118,7 @@ defmodule Ezagent.OwnerGatedFacadesTest do
   test "OwnerGatedWorkspace.record_lineage/2 fails closed off-owner (short-circuits the write)",
        %{agent_uri: agent_uri} do
     put_remote_owner()
-    spawned_by = Ezagent.URI.new!("entity://agent/team-x/admin")
+    spawned_by = Ezagent.URI.new!("entity://team-alpha/agent/admin")
 
     assert {:error,
             {:not_workspace_owner, _ws, "remote-node", "test-node-a",
