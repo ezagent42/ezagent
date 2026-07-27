@@ -146,18 +146,24 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
                        # spawn receipt, passed through for the chokepoint's
                        # create-only write gates.
                        |> Map.put(:created?, true)
+                       # #201-cred — the deferred-mint receipt for the
+                       # chokepoint's rollback (nil = no grant minted).
+                       |> Map.put(
+                         :grant_incarnation_id,
+                         Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx)
+                       )
                        |> Map.put(:config_dir_path, config_dir)
                        |> Map.put(:respawn_template_data, tmpl_with_dir)}
 
                     {:error, reason} ->
                       rollback_remote_sidecars(agent_uri)
                       _ = Ezagent.Kind.terminate!(agent_uri)
-                      handle_spawn_failure(agent_uri, reason)
+                      compensate_and_report(agent_uri, grant_ctx, reason)
                   end
 
                 {:error, reason} ->
                   _ = Ezagent.Kind.terminate!(agent_uri)
-                  handle_spawn_failure(agent_uri, reason)
+                  compensate_and_report(agent_uri, grant_ctx, reason)
               end
 
             {:error, reason} ->
@@ -182,6 +188,19 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      Ezagent.PluginCodex.Template.CodexAgent,
+      "codex-remote.agent"
+    )
+  end
 
   # ---- Sidecars (AppServer + BridgeSidecar, NO PTY) -----------------------
 

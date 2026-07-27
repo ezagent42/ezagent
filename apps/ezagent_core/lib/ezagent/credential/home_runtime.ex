@@ -10,10 +10,16 @@ defmodule Ezagent.Credential.HomeRuntime do
 
   @config_complete_marker ".ezagent-config-complete"
 
-  @type grant_ctx :: {:grant, String.t(), non_neg_integer()} | nil
+  # #201-cred (codex r2 HIGH-4) — the grant context threads the grant's
+  # INCARNATION ID alongside the version: the pre-launch revalidation
+  # (`revalidate_grant_before_launch/1`) re-checks `(agent_uri,
+  # incarnation_id, version)`, so a delete+reinsert at the same version or
+  # two reapprovals racing one version number can no longer pass a stale
+  # materializer through.
+  @type grant_ctx :: {:grant, String.t(), String.t(), non_neg_integer()} | nil
   @type create_result ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
+          | {:ok, String.t(), {:grant, String.t(), String.t(), non_neg_integer()}}
           | {:error, term()}
 
   # #1201 A② — the SHARED host-login-home derivation for file-backed flavors
@@ -165,10 +171,57 @@ defmodule Ezagent.Credential.HomeRuntime do
   @spec revalidate_grant_before_launch(grant_ctx()) :: :ok | {:error, term()}
   def revalidate_grant_before_launch(nil), do: :ok
 
-  def revalidate_grant_before_launch({:grant, agent_uri_str, version}) do
-    case Ezagent.Credential.GrantRow.revalidate_version!(agent_uri_str, version) do
+  def revalidate_grant_before_launch({:grant, agent_uri_str, incarnation_id, version}) do
+    case Ezagent.Credential.GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version) do
       :ok -> :ok
       {:error, :grant_changed} -> {:error, {:grant_changed_before_launch, agent_uri_str}}
+    end
+  end
+
+  @doc """
+  #201-cred (codex r2 HIGH-2) — CONFIRMED compensation of the grant a
+  created-winner minted during materialization, for a spawn that failed
+  AFTER the mint (role bootstrap / pre-launch revalidation / subprocess
+  launch). Deletes exactly the minted incarnation (ABA-safe); a compensation
+  failure propagates as `{:error, :grant_compensation_failed}` — the caller
+  must surface it, never swallow it. `nil` ctx (no grant minted) → `:ok`.
+  """
+  @spec compensate_grant_ctx(grant_ctx()) :: :ok | {:error, :grant_compensation_failed}
+  def compensate_grant_ctx(nil), do: :ok
+
+  def compensate_grant_ctx({:grant, agent_uri_str, incarnation_id, _version}) do
+    Ezagent.Credential.GrantMint.compensate(agent_uri_str, incarnation_id)
+  end
+
+  @doc "The minted grant's incarnation id from a grant_ctx (or nil)."
+  @spec grant_ctx_incarnation(grant_ctx()) :: String.t() | nil
+  def grant_ctx_incarnation(nil), do: nil
+  def grant_ctx_incarnation({:grant, _uri, incarnation_id, _version}), do: incarnation_id
+
+  @doc """
+  #201-cred (codex r2 HIGH-2) — the SHARED post-mint spawn-failure path for
+  every file-flavor plugin arm: CONFIRM-compensate exactly the grant
+  incarnation this spawn minted (`compensate_grant_ctx/1` — a
+  revoked/reapproved row under a NEWER incarnation is never touched), THEN
+  run the config-dir teardown (`handle_spawn_failure/4`). A compensation
+  failure is surfaced COMPOSITE (`{reason, :grant_compensation_failed}`) — a
+  silently leaked grant is a security-critical residue, never collapsed into
+  the primary error.
+  """
+  @spec compensate_spawn_failure(URI.t(), grant_ctx(), term(), module(), String.t()) ::
+          {:error, term()}
+  def compensate_spawn_failure(agent_uri, grant_ctx, reason, template_module, log_prefix) do
+    case compensate_grant_ctx(grant_ctx) do
+      :ok ->
+        handle_spawn_failure(agent_uri, reason, template_module, log_prefix)
+
+      {:error, :grant_compensation_failed} ->
+        handle_spawn_failure(
+          agent_uri,
+          {reason, :grant_compensation_failed},
+          template_module,
+          log_prefix
+        )
     end
   end
 
@@ -269,28 +322,75 @@ defmodule Ezagent.Credential.HomeRuntime do
            :ok <- materialize_sandbox_skills(staging, tmpl),
            :ok <- materialize_plugin_manifest(staging, tmpl),
            :ok <- File.chmod(staging, 0o700),
-           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n") do
-        Ezagent.Agent.Materializer.materialize_with_grant(%{
-          agent_uri: URI.to_string(agent_uri),
-          staging: staging,
-          secret_relpaths: template_module.secret_relpaths(),
-          source_dir_for: source_dir_for,
-          commit: fn version ->
-            with :ok <- chmod_credential_files(staging, template_module, opts),
-                 :ok <- swap_into_place(staging, target) do
-              {:ok, {target, version}}
-            end
-          end
-        })
+           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n"),
+           # #201-cred (codex r2 HIGH-1) — THE DEFERRED MINT. The cascade may
+           # carry a `:pending_grant` descriptor (authorized at domain
+           # resolution time); the durable grant is minted HERE — inside the
+           # created-winner's materialization boundary, after the `:started ∧
+           # created?` receipt — never earlier. Respawn/rehydrated cascades
+           # carry no pending grant and mint nothing.
+           {:ok, minted} <-
+             Ezagent.Credential.GrantMint.maybe_mint(
+               agent_uri,
+               Map.get(cascade, :pending_grant)
+             ),
+           {:ok, {^target, version, incarnation_id}} <-
+             materialize_and_compensate(agent_uri, minted, fn ->
+               Ezagent.Agent.Materializer.materialize_with_grant(%{
+                 agent_uri: URI.to_string(agent_uri),
+                 staging: staging,
+                 secret_relpaths: template_module.secret_relpaths(),
+                 source_dir_for: source_dir_for,
+                 commit: fn {version, incarnation_id} ->
+                   with :ok <- chmod_credential_files(staging, template_module, opts),
+                        :ok <- swap_into_place(staging, target) do
+                     {:ok, {target, version, incarnation_id}}
+                   end
+                 end
+               })
+             end) do
+        {:ok, target, version, incarnation_id}
       end
 
     case result do
-      {:ok, {^target, version}} ->
-        {:ok, target, {:grant, URI.to_string(agent_uri), version}}
+      {:ok, ^target, version, incarnation_id} ->
+        {:ok, target, {:grant, URI.to_string(agent_uri), incarnation_id, version}}
 
       {:error, reason} ->
         _ = File.rm_rf(staging)
         {:error, {:cascade_materialize_failed, reason}}
+    end
+  end
+
+  # #201-cred (codex r2 HIGH-2) — run the grant-leased materialization; if it
+  # fails AFTER this call minted, CONFIRM-compensate exactly the minted
+  # incarnation before returning the error. A compensation failure is
+  # surfaced COMPOSITE (`{:materialize_failed_and_grant_compensation_failed,
+  # ...}`) — never collapsed into the primary error (a silently leaked grant
+  # is a security-critical residue).
+  defp materialize_and_compensate(agent_uri, minted, materialize_fun) do
+    case materialize_fun.() do
+      {:ok, _} = ok ->
+        ok
+
+      {:error, reason} ->
+        case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
+          nil ->
+            {:error, reason}
+
+          incarnation_id ->
+            case Ezagent.Credential.GrantMint.compensate(
+                   URI.to_string(agent_uri),
+                   incarnation_id
+                 ) do
+              :ok ->
+                {:error, reason}
+
+              {:error, :grant_compensation_failed} ->
+                {:error,
+                 {:materialize_failed_and_grant_compensation_failed, reason, incarnation_id}}
+            end
+        end
     end
   end
 

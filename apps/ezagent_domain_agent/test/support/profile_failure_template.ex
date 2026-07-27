@@ -22,7 +22,7 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
     source_uri = Ezagent.URI.agent(workspace, "profile-failure-source")
 
     with :ok <- File.write(Path.join(config_dir, "materialized"), "profile failure fixture"),
-         {:ok, _grant} <-
+         {:ok, grant} <-
            Ezagent.Credential.GrantRow.insert(%{
              agent_uri: URI.to_string(agent_uri),
              credential_source_uri: URI.to_string(source_uri),
@@ -44,6 +44,10 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
        %{
          fresh?: true,
          created?: created?,
+         # #201-cred (codex r2 HIGH-3) — every credential writer returns its
+         # exact grant-incarnation receipt; the chokepoint's rollback
+         # compensates EXACTLY this incarnation (no URI-wide fallback).
+         grant_incarnation_id: grant.incarnation_id,
          config_dir_path: config_dir,
          respawn_template_data: data
        }}

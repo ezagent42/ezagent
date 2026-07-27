@@ -10,8 +10,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
         template_class,
         instance_uri,
         preserve_creation_receipts?,
-        minted_grant,
-        created?
+        grant_incarnation_id
       ) do
     undo_workers(workers)
     rollback_receipts(receipts, preserve_creation_receipts?)
@@ -20,33 +19,30 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
     # post-ownership store in `complete_spawn_obligations`, which runs AFTER
     # every step this rollback compensates. Nothing to undo (and deleting
     # could clobber a pre-existing live owner's cache row).
-    compensate_grant(instance_uri, minted_grant, created?)
-    :ok
+    compensate_grant(instance_uri, grant_incarnation_id)
   end
 
-  # #201 PR-3 (R4) — grant compensation on fresh-spawn rollback:
-  #   * this attempt minted a grant → delete EXACTLY that incarnation
-  #     (ABA-safe; a reinserted/reapproved row is never touched);
-  #   * no cascade mint, but a GENUINE fresh create (`created?`) → legacy
-  #     URI-delete: any row for this brand-new URI is this attempt's residue
-  #     (e.g. a Template Class that inserts its own grant mid-instantiate);
-  #   * `:started ∧ ¬created?` (rehydrating winner) → NEVER URI-delete: the
-  #     row could be the pre-existing agent's original grant.
-  defp compensate_grant(
-         instance_uri,
-         %Ezagent.Credential.GrantRow{incarnation_id: inc},
-         _created?
-       ) do
-    _ = Ezagent.Credential.GrantRow.delete_incarnation(URI.to_string(instance_uri), inc)
-    :ok
-  end
+  # #201-cred (codex r2 HIGH-2/3) — grant compensation on fresh-spawn
+  # rollback:
+  #   * the created-winner minted and returned its exact incarnation receipt
+  #     (`:grant_incarnation_id` in the plugin's instantiate meta) → delete
+  #     EXACTLY that incarnation, CONFIRMED (retried; failure PROPAGATES as
+  #     `{:error, :grant_compensation_failed}` — never rescued-to-`:ok`, so a
+  #     grant can never silently survive a failed cleanup);
+  #   * no receipt → NOTHING is deleted. The former URI-wide
+  #     `GrantRow.delete/1` fallback for `minted_grant == nil` is DELETED
+  #     (codex r2 HIGH-3): it was ABA-unsafe — a concurrent `reapprove/1`
+  #     landing between the worker/config cleanup and the grant step
+  #     installed a NEW incarnation G2 that the URI-wide delete then wiped.
+  #     Every credential writer MUST return its exact grant-incarnation
+  #     receipt (`GrantMint` does, and the mint is now structurally deferred
+  #     to the created-winner), so rollback requires — and only ever acts on —
+  #     that receipt.
+  defp compensate_grant(_instance_uri, nil), do: :ok
 
-  defp compensate_grant(instance_uri, nil, true) do
-    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(instance_uri))
-    :ok
+  defp compensate_grant(instance_uri, incarnation_id) when is_binary(incarnation_id) do
+    Ezagent.Credential.GrantMint.compensate(URI.to_string(instance_uri), incarnation_id)
   end
-
-  defp compensate_grant(_instance_uri, nil, false), do: :ok
 
   defp rollback_receipts(receipts, preserve_creation_receipts?) do
     Enum.each(receipts, fn

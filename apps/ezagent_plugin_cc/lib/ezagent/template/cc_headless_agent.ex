@@ -214,18 +214,22 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
                          # the spawn receipt, passed through for the chokepoint's
                          # create-only write gates.
                          created?: true,
+                         # #201-cred — the deferred-mint receipt for the
+                         # chokepoint's rollback (nil = no grant minted).
+                         grant_incarnation_id:
+                           Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx),
                          config_dir_path: config_dir,
                          respawn_template_data: tmpl_with_dir
                        }}
 
                     {:error, reason} ->
                       rollback_runtime(agent_uri)
-                      handle_spawn_failure(agent_uri, reason)
+                      compensate_and_report(agent_uri, grant_ctx, reason)
                   end
 
                 {:error, reason} ->
                   rollback_runtime(agent_uri)
-                  handle_spawn_failure(agent_uri, reason)
+                  compensate_and_report(agent_uri, grant_ctx, reason)
               end
 
             {:error, reason} ->
@@ -293,6 +297,19 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   end
 
   # ---- Failure handling ---------------------------------------------------
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      __MODULE__,
+      "cc-headless.agent"
+    )
+  end
 
   defp handle_spawn_failure(agent_uri, reason) do
     Ezagent.PluginCc.Template.CcAgent.handle_spawn_failure(agent_uri, reason)

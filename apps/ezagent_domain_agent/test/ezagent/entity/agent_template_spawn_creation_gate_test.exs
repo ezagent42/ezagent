@@ -6,9 +6,10 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       re-writes the SAME flavor idempotently — benign self-heal);
     * credential grant (mint + keep) → gated on `:started ∧ created?`
       (grant-mint is a create-only, non-idempotent side effect);
-    * a loser (`:already_started`) or a rehydrating winner
-      (`:started ∧ ¬created?`) keeps NOTHING — exactly its own minted grant
-      incarnation is deleted (R4 ABA-safe), never a bare URI delete.
+    * #201-cred — the grant mint is DEFERRED to the created-winner's
+      materialization boundary: a loser (`:already_started`) or a rehydrating
+      winner (`:started ∧ ¬created?`) never mints, so there is nothing to
+      compensate.
 
   Each test in this file fails on the pre-#201 baseline: the speculative
   writes it pins down were exactly the clobber source.
@@ -41,8 +42,24 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
 
       case spawn_agent(uri) do
-        {:ok, :started, _pid, created?} ->
-          {:ok, [uri], %{fresh?: true, created?: created?}}
+        {:ok, :started, _pid, true} ->
+          # #201-cred — mirrors the production plugin arms: the grant is
+          # minted ONLY by the created-winner, from the pending descriptor the
+          # domain cascade authorized + threaded in the cascade data, AFTER
+          # the spawn receipt. The mint receipt rides out in meta for the
+          # chokepoint's rollback.
+          case mint_pending_grant(uri, data) do
+            {:ok, grant_incarnation_id} ->
+              {:ok, [uri],
+               %{fresh?: true, created?: true, grant_incarnation_id: grant_incarnation_id}}
+
+            {:error, reason} ->
+              _ = Ezagent.Kind.terminate!(uri)
+              {:error, reason}
+          end
+
+        {:ok, :started, _pid, false} ->
+          {:ok, [uri], %{fresh?: true, created?: false}}
 
         {:ok, :already_started, _pid, _created?} ->
           {:ok, [uri], %{fresh?: false}}
@@ -52,6 +69,19 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
 
         {:error, reason} ->
           {:error, reason}
+      end
+    end
+
+    defp mint_pending_grant(uri, data) do
+      case get_in(data, ["cascade", :pending_grant]) do
+        nil ->
+          {:ok, nil}
+
+        %{} = pending ->
+          case Ezagent.Credential.GrantMint.mint(uri, pending) do
+            {:ok, grant} -> {:ok, grant.incarnation_id}
+            {:error, reason} -> {:error, reason}
+          end
       end
     end
 
@@ -231,7 +261,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       assert flavor == winning_flavor
     end
 
-    test "adopt-of-live: the loser keeps nothing — its minted grant is deleted", fixture do
+    test "adopt-of-live: the loser keeps nothing — it never mints", fixture do
       # Live agent with NO grant row (its "key-A" is its pre-existing
       # flavor/lineage/profile state, created credential-free).
       assert {:ok, %{fresh?: true}} =
@@ -242,24 +272,23 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       assert flavor == fixture.flavor
 
       # An adopt attempt against the LIVE agent carrying a credential source:
-      # its mint SUCCEEDS (no prior row to conflict with) before it loses the
-      # spawn. The loser's minted grant must be deleted by incarnation-scoped
-      # compensation — on the pre-#201 baseline it SURVIVES as injected residue
-      # (that is the clobber this test fails on).
+      # #201-cred — the mint is deferred to the created-winner, so the losing
+      # attempt never reaches it (pre-fix its mint succeeded before it lost
+      # the spawn and had to be compensated). No grant may appear.
       {source_b, caller_b, caps_b} = authorized_source(fixture.workspace_name, "b")
 
       assert {:error, :agent_uri_already_live} =
                spawn(fixture, credentialed_content(fixture, source_b), caller_b, caps_b)
 
       assert grant_for(fixture.agent_uri) == nil,
-             "the losing attempt's minted grant must be deleted, not left on the live owner"
+             "the losing attempt must never mint a grant onto the live owner"
 
       # The live owner's state is untouched.
       assert {:ok, ^flavor} = AgentFlavorAttributes.get(fixture.agent_uri)
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(fixture.agent_uri)
     end
 
-    test "duplicate-create against a live CREDENTIALED agent fails at the mint boundary without touching the owner's grant",
+    test "duplicate-create against a live CREDENTIALED agent mints nothing and leaves the owner's grant untouched",
          fixture do
       {source_a, caller_a, caps_a} = authorized_source(fixture.workspace_name, "a")
       {source_b, caller_b, caps_b} = authorized_source(fixture.workspace_name, "b")
@@ -271,10 +300,13 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       assert original.credential_source_uri == URI.to_string(source_a)
 
       # A duplicate create against the LIVE agent carrying a different
-      # source: its mint collides with the live owner's row (unique
-      # agent_uri) — the attempt fails at the mint boundary and the live
-      # owner's grant is left byte-identical (same incarnation + version).
-      assert {:error, %Ecto.Changeset{}} =
+      # source: #201-cred — the attempt loses the spawn BEFORE any mint (the
+      # mint is deferred to the created-winner), so it fails as a plain
+      # adoption rejection and the live owner's grant is left byte-identical
+      # (same incarnation + version). (Pre-#201-cred this failed LATER, at
+      # the pre-spawn mint's unique-constraint collision — the deferred mint
+      # removes that wasteful insert entirely.)
+      assert {:error, :agent_uri_already_live} =
                spawn(fixture, credentialed_content(fixture, source_b), caller_b, caps_b)
 
       assert grant_for(fixture.agent_uri) == original
@@ -301,9 +333,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       assert {:ok, %{fresh?: true}} =
                spawn(fixture, credentialed_content(fixture, source), caller, caps)
 
-      # The attempt's minted grant was deleted by incarnation-scoped
-      # compensation: grant-mint is a create-only side effect and this
-      # attempt did NOT logically create the agent.
+      # The rehydrating winner never minted: grant-mint is a create-only side
+      # effect deferred to the created-winner, and this attempt did NOT
+      # logically create the agent.
       assert grant_for(fixture.agent_uri) == nil,
              "a rehydrating winner must not keep an injected credential grant"
 
