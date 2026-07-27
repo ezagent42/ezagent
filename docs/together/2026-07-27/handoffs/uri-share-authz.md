@@ -1,89 +1,77 @@
-# Handoff：把"分享一个 URI"做成通用授权机制
+# Handoff：URI 授权分享统一机制 —— #1552 的完整化
 
-- **类型**：平台 infra 设计(动 domain_session 授权底座) → Allen 拍板 + 排期
-- **一句话**：现在"把一个东西分享给别人、给读/写权限"这件事,每个 plugin 各造一套;但它本质上是同一件事——**授予某人一个指向某 URI 的 cap**,应该有一个通用机制,而不是 kanban 一套、下一个 plugin 再一套。
+> **这是 #1552 的接续与完整化,不是新提案。** #1552(Sy, 2026-07-23,已 CLOSED、Allen 轨道跟踪)已提出核心——把 person-bound token 从 uploads-only **泛化到任意 target URI**、消掉 kanban 平行分享,并点明 `DownloadToken` = Allen 的 read-plane **PR-3**。**token 那一块本 handoff 不重复(直接见 #1552)**,只补它没覆盖的三块——**审批 / 可见性 / 模型裁决**,把"share token 统一"升级成完整的"URI 授权分享统一"。
+
+- **类型**：平台 infra 设计(动 domain_session + core 授权底座) → Allen 拍板 + 排期
+- **一句话**：分享 = 授予某人一个指向某 URI 的 cap,天生 URI 无关。#1552 已提了其中的"令牌"一块;这里把它补成完整五块。
+
+---
+
+## 0. 时机:为什么现在把它完整化
+
+- Allen 的 **read-plane 5-PR 主线已全部 MERGED**(PR-1~5,2026-07-19~21),其中 **PR-3(#1471) 的 person-bound `DownloadToken` 底座已落地**——我们刚确认的 kanban 附件下载就跑在它上面(授权跟资源走、令牌承载 web 边界)。
+- 但 **#1552 提的"PR-3 延伸:token 泛化到任意 URI"至今悬着没做**:main(`7ec3c8bda`)上 `DownloadToken` 还锁死 `uploads-only`、kanban 的 `@share_board_salt` 平行 token 还在。
+- **read-plane 底座既已铺完,token 泛化是明摆着的下一步**,却一直没人推。本 handoff 把这一步补全(token=#1552 + 审批 + 可见性 + 模型),凑成一份完整提案,建议直接排进 read-plane 的收尾。
 
 ---
 
 ## 1. 现象和需求
 
-**具体现象(以 kanban 打样)**:用户想把一块看板分享给同事。他要能:
-- 生成一个**只读链接**和一个**读写链接**;
-- 谁拿到链接、点一下,就获得对应的读或写权限;
-- 只读的人看着看着想改,能**申请**升级成读写,由板主**批准**。
+**具体现象(以 kanban 打样)**:用户想把一块看板分享给同事——生成**只读链接**和**读写链接**,谁拿到谁获得对应权限,只读的能**申请**升级、由板主**批准**。这套东西 kanban 现在是自己从头搭的:自签令牌(`Phoenix.Token`)、自开 web controller、自搭"申请-批准"气泡。
 
-这套东西 kanban 现在是**自己从头搭的**:自己签一个分享令牌(`Phoenix.Token`)、自己在 web 层开一个接收 controller、自己用消息气泡搭了一套"申请-批准"流程。
+**通用需求(重点)**:这件事**跟"看板"无关**。主语换成任何有 URI 的东西——
 
-**通用需求(这才是重点)**:上面这件事**跟"看板"一点关系都没有**。把主语换成任何有 URI 的东西——
+> 把 **X** 分享给某人,给读/写权限,只读的能申请升级。X = 一块看板 / 一个 agent / 一个 resource / 一份数据资产。
 
-> 把 **X** 分享给某人,给 TA 读 / 写权限,只读的能申请升级。
->
-> X = 一块看板 / 一个 agent / 一个 resource / 一份被当成数据资产的东西。
-
-这是一类**通用需求**。今天是 kanban,明天就是下一个想"被分享"的数据资产。参照飞书:文档、多维表格、看板,分享逻辑**完全一样**(协作者 + 链接权限档位 + 申请权限),因为对飞书来说它们都只是"一个可授权的对象"。
+参照飞书:文档/多维表格/看板分享逻辑完全一样,因为对它们都只是"一个可授权的对象"。
 
 ---
 
 ## 2. 原因:为什么现在每个都得自己造
 
-**分享的本质 = 授予一个指向某 URI 的 cap。** 系统里 cap 就是 `(持有人, 行为, 目标URI, 动作)`——"把 X 分享给你、给你读权限" = "给你铸一个指向 X 的 URI 的只读 cap"。这件事**天生跟 X 是什么 kind 无关**(`mint_cap(grantee, target_uri, ...)` 里 target 是任意 URI)。
-
-**但系统没有把"分享这件事"沉淀成一个通用编排**,只有最底层的"铸一把钥匙"是通用的。于是:
-- kanban 为了能分享,在"铸钥匙"外面自己包了一整层(令牌 / 接收落点 / 申请审批);
-- 下一个想被分享的数据资产,会**照着 kanban 再抄一遍**——重复造轮子;
-- 更糟的是,系统里现在**已经有两套不一致的分享模型**并存(见 §4 的模型分叉),越往后越乱。
-
-一句话:**该通用的"分享编排"没通用,导致每个 plugin 各搭各的。**
+**分享的本质 = 授予一个指向某 URI 的 cap**(`mint_cap(grantee, target_uri, ...)` 里 target 是任意 URI,跟 kind 无关)。但系统只有最底层的"铸钥匙"通用了,**"分享这件事"的完整编排没沉淀成通用件**,于是 kanban 在铸钥匙外面自己包了一整层;下一个想被分享的数据资产会照抄一遍。**#1552 已经诊断了其中的一半(两套平行 token);本 handoff 把另一半(审批/可见性/模型)也摊开。**
 
 ---
 
-## 3. 系统现有的支撑(哪些是现成的,不用重造)
+## 3. 系统现有的支撑
 
-好消息是**授权底座本身是对的、而且大多 URI 无关**,已经能拼一部分:
+授权底座本身是对的、且大多 URI 无关,已能拼一部分:
 
-| 现成积木 | 是什么 | 位置 |
+| 现成积木 | 是什么 | 状态 |
 |---|---|---|
-| **铸钥匙** | `CompositionCaps.mint_cap/4` —— 通用发钥匙入口,目标 URI/行为/动作全参数化,granter 自动=目标 owner,fail-closed | domain_session |
-| **申请-批准原语** | `CompositionConsent` —— 耐久的两方同意状态机(待批准/已批准/拒绝/撤销)+ **owner 待办箱**(`pending_for_owner`)。schema 层就是"某人对某目标的批准状态",本身 URI 无关 | domain_session |
-| **令牌样板** | `Ezagent.Uploads.DownloadToken` —— 已在 core、已解决 TTL 双层封顶 + "令牌绑定到具体收件人"(person-binding) | core |
+| **铸钥匙** | `CompositionCaps.mint_cap/4` —— 通用发钥匙,target/行为/动作参数化,fail-closed | 现成,kanban 已用 |
+| **令牌底座** | `Ezagent.Uploads.DownloadToken`(read-plane **PR-3 #1471**) —— person-bound + URI 绑定 + 短 TTL + mint-behind-chokepoint | **已落地,但锁死 uploads**(泛化=#1552) |
+| **申请-批准原语** | `CompositionConsent` —— 两方同意状态机 + **owner 待办箱** `pending_for_owner`。schema 层 URI 无关 | 现成,但入口绑 composition(见 §4) |
 
-**关键**:kanban 自己搭的"申请-批准气泡",其实是把 `CompositionConsent` 这个现成原语**重复造了一遍**——包括你担心的"申请了板主看不到"的问题,`pending_for_owner` 待办箱**本来就解决**。所以这不是"要不要造",是"该不该用现成的"。
+**关键**:kanban 自搭的"申请-批准气泡"是把 `CompositionConsent` 重复造了一遍——你担心的"申请了板主看不到",`pending_for_owner` 待办箱本就解决。
 
 ---
 
-## 4. 现有支撑解决不了什么(真正的缺口)
+## 4. 现有支撑解决不了什么(缺口)
 
-现成积木只覆盖了"铸钥匙"和"审批状态机"两块。**把它们串成"一次完整的分享"还差四样,系统现在没有**:
+现成件覆盖了"铸钥匙"和"审批状态机",串成一次完整分享还差四样:
 
-1. **通用的分享令牌服务**。现在全系统有 **6 处各签各的 `Phoenix.Token`**,kanban 甚至要在 plugin 和 web controller **两个文件里手工对齐同一个 salt 常量**(改一个漏一个就静默 403)。缺一个统一的"签发/校验授权令牌"服务(带 TTL、可选'绑不绑具体人')。
-2. **通用的"我能看到哪些东西"派生**。"拿到 cap 后在自己空间看到这个资源",kanban 是自己写的(硬编码只认看板);workspace、session、kanban **三处各写一遍**"把自己持有的 cap 捞出来手工过滤"。缺一个通用的"从某人持有的 cap → 派生出他能看见的某类资源"。
-3. **通用的接收落点**。浏览器点分享链接得有个 HTTP 入口接住(验令牌→给权限)。kanban 是一个**孤立的、写死 kanban 的 controller**。缺一个"验令牌 → 交给注册的处理器 → 授权"的通用入口,让任何 plugin 注册进去。
-4. **审批原语的"入口"绑死了 composition**。§3 说 `CompositionConsent` 的状态机 URI 无关——**对**,但它的**创建/命令入口**要求传一个 composition 专属的绑定结构 + session 上下文,当前只有 composition 自己在用。要给"任意 URI 的分享升级"用,得把入口泛化成"任意 (被授权人, 目标URI, 动作)"。
+1. **令牌:泛化到任意 URI** —— **= #1552,不在此重复**。现状 `DownloadToken` 锁死 uploads、kanban 另签 `Phoenix.Token`。#1552 已列 5 个待裁设计问题(scheme 开到哪、board-share 授权口径、`kanban.share_board` 归宿、person-binding 语义、消息 share 是否纳入)。
+2. **可见性派生(本 handoff 补)** —— "拿到 cap 后在自己空间看到这个资源",workspace/session/kanban **三处各写一遍**"把自己的 cap 捞出来手工过滤"(`union_cap_boards` 硬编码只认看板)。缺一个通用"从某人的 cap → 派生指向某类资源的可见实例"。
+3. **审批入口泛化(本 handoff 补)** —— `CompositionConsent` 的状态机 URI 无关,但**创建/命令入口绑死 composition**(`sync(%CompositionBinding{})`、`command(binding_id, session_uri, ...)`,调用方全是 composition_caps)。要给"任意 URI 分享升级"用,得把入口泛化成"任意 (被授权人, 目标URI, 动作)"。kanban 规则 8 现在是绕过它、自己搭的重复轮子。
+4. **通用接收落点(本 handoff 补)** —— kanban 是孤立写死的 controller。缺一个"验令牌 → 交给注册的处理器 → 授权"的通用 `/socialware/claim`。
 
-**外加一个必须先裁决的分叉**:系统里已经有**两套分享哲学**并存——
-- **socialware feed 那套**:点链接 → 变成匿名成员 → 靠"你还是不是成员"实时判权(令牌只是入场票、不是授权本身);
-- **kanban 这套**:点链接 → 直接铸一把 cap(令牌即凭证、兑换即拥有)。
-
-这两套是不同的心智。**做通用机制之前,得先由 Allen 定:通用的"URI 分享"统一走哪一套。**
+**外加一个必须先裁的分叉(本 handoff 补)**:系统里已有**两套分享哲学**——socialware feed 的"入会 + 实时判权"(令牌只是入场票) vs kanban 的"令牌即凭证、兑换即铸 cap"。**通用机制该统一走哪套,得先裁。**
 
 ---
 
 ## 5. 我们 propose 什么
 
-**一个通用的"URI 授权分享"机制,授权层统一、使用层各管各的:**
+**一个通用的"URI 授权分享"机制,授权层统一(URI 无关)、使用层各 plugin 管自己怎么渲染。**
 
-| 层 | 该不该通用 | 谁负责 |
-|---|---|---|
-| **授权层**:签令牌 → 铸 cap → 申请升级 → 从 cap 派生"能看到啥" | ✅ **统一,URI 无关** | infra(本 PR) |
-| **使用层**:拿到权限后,这个 URI 具体怎么渲染/怎么用 | ❌ 按 kind 不同 | 各 plugin 声明 |
+- **授权层**(签令牌 → 铸 cap → 申请升级 → 从 cap 派生可见):对所有 URI 一视同仁,infra 负责;
+- **使用层**(拿到权限后这个 URI 怎么 render):按 kind,plugin 声明。
 
-也就是:**"分享/授权"是底座的事,对所有 URI 一视同仁;"分享完怎么看这块看板/那个 agent"才是 plugin 的事。** kanban 的病就是把授权层也做成了自己专属的。
-
-**模型裁决建议**:统一走 **person-cap 那套**(链接=授权凭证,兑换即铸 cap)——它本来就是"对 URI 授权"本身;feed 那套是 session 特有的"参与"语义,留给 session,不当通用分享底座。
+**模型裁决建议**:统一走 **person-cap 那套**(链接=授权凭证、兑换即铸 cap)——它本来就是"对 URI 授权"本身;feed 那套是 session 的"参与"语义,留给 session。
 
 ---
 
-## 6. 怎么改(5 块,标注现成 / 要补)
+## 6. 怎么改(五块,标注归属)
 
 ```
 [② 分享令牌(带目标URI)] → [⑤ 通用接收落点] → [① 铸 cap(mint_cap,任意目标)]
@@ -91,23 +79,22 @@
 [③ 从 cap 派生"能看到啥"]              [④ 申请→owner 批准→升级(任意目标)]
 ```
 
-| # | 改什么 | 现成 / 要补 |
+| # | 改什么 | 归属 |
 |---|---|---|
 | ① 铸 cap | 直接用 `mint_cap` | **现成,不动** |
-| ② 分享令牌 | 以 `DownloadToken` 为底,**加一个"不记名、谁拿到谁能兑换"的模式**(它现在结构上禁止无收件人签发),取代 6 处各签 | 补(小,有样板) |
-| ③ 可见性派生 | 加一个通用"从某人的 cap → 派生指向某类资源的可见实例",收掉 workspace/session/kanban 三处重复 | 补(新查询) |
-| ④ 申请-批准 | **泛化 `CompositionConsent` 的创建/命令入口**,脱离 composition 专属结构 + session,接受"任意 (被授权人,目标URI,动作)";状态机 + 待办箱不用重写 | 补(泛化入口,原语现成) |
-| ⑤ 接收落点 | 一个通用 `/socialware/claim`:验令牌 → 调注册的处理器 → 授权 | 补(通用 controller) |
+| ② 分享令牌泛化 | 以 `DownloadToken`(PR-3)为底,加"不记名 bearer 可兑换"轴,取代 kanban 平行 token | **= #1552(已提,直接接续)** |
+| ③ 可见性派生 | 通用 `caps_toward(holder, behavior)`,收掉三处重复 | **本 handoff 补** |
+| ④ 审批入口泛化 | 把 `CompositionConsent` 创建/命令入口脱离 composition + session,接受任意 target;状态机+待办箱不用重写 | **本 handoff 补** |
+| ⑤ 接收落点 | 通用 `/socialware/claim`(验令牌→注册处理器→授权) | **本 handoff 补** |
 
-**收益**:做完这一套,下一个想"被分享"的数据资产——零 per-kind 代码,声明一下"我是可授权的对象"就能复用整条链;kanban 自己那套令牌 + controller + 审批气泡全部删掉,收编进底座。
+**收益**:read-plane 底座 + #1552 的 token 泛化 + 这三块,合起来 = 一套完整的 URI 授权分享。下一个想被分享的数据资产零 per-kind 代码;kanban 自己那套令牌/controller/审批气泡全删、收编进底座。
 
 ---
 
 ## DoD(本 handoff 的完成 = 拿到方向)
 
-- [ ] Allen 裁决:通用 URI 分享统一走 person-cap 模型?
-- [ ] 确定 ②③④⑤ 是一个 PR 还是拆几个 + 排期
-- [ ] 与 Allen 此前的 read-plane / share 后端统一车道对齐(是否同一件事)
-- [ ] 落地后,kanban(PR #1474 保留的 person-cap 现状)作为第一个消费者收编,删自造的令牌/controller/审批气泡
+- [ ] **模型裁决**:通用 URI 分享统一走 person-cap 模型?(feed 留 session 参与语义)
+- [ ] **#1552 的 5 个 token 设计问题** + 本 handoff 的 ③④⑤,是并进 read-plane 收尾(#1552 说的"PR-3 延伸")一起做,还是拆?
+- [ ] 落地后,kanban(PR #1474 保留的 person-cap 现状)作为第一个消费者收编
 
-> 溯源:本设计出自 kanban 示范重构(PR #1474)的三轮讨论 + 两次代码查实。kanban 侧只是"第一个撞上这个通用缺口的 plugin",本 PR 的目标是把缺口补在底座上,让它对所有 URI 通用。
+> 溯源:#1552(Sy, 2026-07-23)提 token 泛化;本 handoff(2026-07-27)出自 kanban 示范重构 PR #1474 的三轮讨论 + 两次代码查实,补上审批/可见性/模型,完整化成"URI 授权分享统一"。read-plane 主线(PR-1~5)已 MERGED,token 泛化至今悬着 —— 建议一并推进。
