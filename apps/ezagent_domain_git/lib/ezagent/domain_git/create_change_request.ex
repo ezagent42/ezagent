@@ -49,7 +49,7 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
       not valid_commit_sha?(attrs.expected_base_sha) ->
         {:error, {:invalid_field, :expected_base_sha}}
 
-      not match?(%DateTime{}, attrs.commit_date) ->
+      not valid_commit_date?(attrs.commit_date) ->
         {:error, {:invalid_field, :commit_date}}
 
       true ->
@@ -61,4 +61,44 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
     do: CommitSha.valid_sha1?(value) and value == String.downcase(value)
 
   defp valid_commit_sha?(_value), do: false
+
+  # `match?(%DateTime{}, value)` alone only proves shape: a hand-built struct
+  # (bypassing the smart constructors -- `DateTime.new/2`, `DateTime.utc_now/0`,
+  # the `~U` sigil -- which all validate and would reject it) can carry an
+  # out-of-range field such as `month: 13` and still match. `Calendar.ISO`'s
+  # own `valid_date?/3` and `valid_time?/4` are the calendar-validity check
+  # (leap years, month lengths, hour/minute/second/microsecond ranges) --
+  # delegating to them proves the value denotes a real instant without
+  # reimplementing any calendar rule here. `Calendar.ISO` is hardcoded rather
+  # than read from the struct's `:calendar` field: every `commit_date` this
+  # module will ever see traces back to an Ecto `utc_datetime` column
+  # (`git_workflow_runs.inserted_at`, see moduledoc), which is always
+  # `Calendar.ISO`, and dispatching to whatever `:calendar` atom a hand-built
+  # struct happened to carry would let a bogus, non-callback-implementing
+  # atom crash this check with `UndefinedFunctionError` instead of failing
+  # closed with `{:error, {:invalid_field, :commit_date}}`.
+  #
+  # The `is_integer` guard keeps this function total. Unlike `match?/2`,
+  # `Calendar.ISO.valid_date?/3` and `valid_time?/4` raise `FunctionClauseError`
+  # on a non-integer field (e.g. a hand-built struct with `microsecond: nil`)
+  # rather than returning `false` -- confirmed empirically, not assumed -- and
+  # a validator that can itself crash the caller instead of returning
+  # `{:error, _}` would be worse than the bug it fixes.
+  defp valid_commit_date?(%DateTime{
+         year: year,
+         month: month,
+         day: day,
+         hour: hour,
+         minute: minute,
+         second: second,
+         microsecond: {microsecond, precision}
+       })
+       when is_integer(year) and is_integer(month) and is_integer(day) and
+              is_integer(hour) and is_integer(minute) and is_integer(second) and
+              is_integer(microsecond) and is_integer(precision) do
+    Calendar.ISO.valid_date?(year, month, day) and
+      Calendar.ISO.valid_time?(hour, minute, second, {microsecond, precision})
+  end
+
+  defp valid_commit_date?(_value), do: false
 end

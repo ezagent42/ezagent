@@ -442,6 +442,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
   end
 
   test "create_change_request with empty file_changes fetches the base tree and posts an empty tree before reconciling the existing head ref to the PR search" do
+    test_pid = self()
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
     expect_mint(:change_request_write)
@@ -464,12 +465,21 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     # the existing head's tree matches what this call's (idempotent, empty)
     # tree creation produces -- fetch the base tree sha, then create the
     # (empty) tree; returning the SAME sha as the existing head's tree
-    # proves "no changes" reuse is safe.
+    # proves "no changes" reuse is safe. The path/body assertions below are
+    # what makes this test actually prove "fetches the base tree and posts
+    # an empty tree" instead of merely tolerating it: the stubs return the
+    # same canned JSON regardless of what was requested, so without them a
+    # regression that fetched the wrong commit or posted a non-empty tree
+    # would still produce the same {:ok, ...} result.
     Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/commits/#{sha}"
       Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/trees"
+      {body, conn} = read_json_body(conn)
+      send(test_pid, {:empty_tree_body, body})
       Req.Test.json(conn, %{"sha" => "tree_base"})
     end)
 
@@ -490,6 +500,10 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:ok, %ChangeRequest{external_id: "42"}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [], create_request())
+
+    assert_received {:empty_tree_body, tree_body}
+    assert tree_body["tree"] == []
+    assert tree_body["base_tree"] == "tree_base"
   end
 
   test "create_change_request returns base_sha_mismatch when SHA doesn't match" do
@@ -552,7 +566,14 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     # Step 10: POST pulls fails with 422 -- a Git-data-unrelated PR-create
     # validation error, correctly kept as change_request_conflict (Fix 5).
+    # The path/method assertion is what proves this 422 is genuinely the PR
+    # *create* call and not some other step: `:change_request_conflict` is
+    # also the PR-search ">1 match" result (`reconcile_pull_request/3`), so
+    # without pinning the request here, a regression that misrouted an
+    # unrelated 422 into that same atom could pass unnoticed.
     Req.Test.expect(@stub_name, fn conn ->
+      assert conn.method == "POST"
+      assert conn.request_path == "/repos/owner/repo/pulls"
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
 
@@ -607,7 +628,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
   # ── create_change_request: ref-create 422 disambiguation ───────────────
   #
-  # `create_head_commit/6`'s 422 branch (github_adapter.ex) re-reads the head
+  # `create_head_commit/5`'s 422 branch (github_adapter.ex) re-reads the head
   # ref path rather than assuming every 422 from ref *creation* means the
   # same thing. The two tests below cover the two outcomes that re-read can
   # have (design §6.2): the ref now being found (a genuine
@@ -713,6 +734,16 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:error, :invalid_ref} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # `Req.Test.expect` entries that are never fetched are NOT verified at
+    # test exit on their own (see `Req.Test.verify!/1` moduledoc) -- so
+    # without this, an implementation that returned `{:error, :invalid_ref}`
+    # right after the 422 (skipping the re-read this test exists to prove
+    # happens) would produce the exact same top-level result above and pass
+    # anyway, leaving the re-read `Req.Test.expect` above permanently
+    # unconsumed. This asserts the queue was fully drained, i.e. the re-read
+    # actually happened.
+    Req.Test.verify!(@stub_name)
   end
 
   # ── create_change_request: ref + PR reconciliation ────────────────────

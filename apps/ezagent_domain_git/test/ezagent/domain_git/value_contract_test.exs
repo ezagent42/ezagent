@@ -242,6 +242,37 @@ defmodule Ezagent.DomainGit.ValueContractTest do
     end
   end
 
+  test "commit_date rejects a structurally-valid DateTime with an impossible calendar date or time" do
+    request = %{
+      title: "T",
+      body: "B",
+      head_ref: "feature/x",
+      expected_base_sha: struct!(CommitSha, value: sha()),
+      commit_date: commit_date()
+    }
+
+    # `match?(%DateTime{}, term)` (the check this replaces) proves only
+    # shape. Each case below is built via struct UPDATE syntax on a
+    # legitimate DateTime -- bypassing DateTime.new/2, DateTime.utc_now/0,
+    # and the ~U sigil, all of which validate and would reject these -- so
+    # it still matches `%DateTime{}` while denoting no real instant. The
+    # Feb-29-on-a-non-leap-year case in particular proves the fix delegates
+    # to real calendar rules (leap years) rather than naive per-field bounds
+    # checks.
+    for malformed <- [
+          %{commit_date() | month: 13},
+          %{commit_date() | day: 32},
+          %{commit_date() | month: 2, day: 29},
+          %{commit_date() | hour: 25},
+          %{commit_date() | minute: 61},
+          %{commit_date() | second: 61},
+          %{commit_date() | microsecond: {1_000_000, 6}}
+        ] do
+      assert {:error, {:invalid_field, :commit_date}} =
+               CreateChangeRequest.new(%{request | commit_date: malformed})
+    end
+  end
+
   test "file changes are UTF-8 upserts with protected repository paths" do
     assert {:ok, %FileChange{content: "hello"}} =
              FileChange.new(%{path: "lib/a.ex", operation: :upsert, content: "hello"})
