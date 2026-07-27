@@ -184,11 +184,15 @@ defmodule Ezagent.Template.PyAgent do
       # cleared (network back, uv installed), the retry recovers the member
       # and clears the `:last_error` marker.
       # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-        {:ok, _pid} ->
-          {:ok, [agent_uri], %{fresh?: true, config_dir_path: config_dir}}
+      # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
+      # (`:started` / `:already_started`) and the core logical-create verdict
+      # (`created?`), which the TemplateSpawn chokepoint gates create-only
+      # writes on.
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+        {:ok, :started, _pid, %{created?: created?}} ->
+          {:ok, [agent_uri], %{fresh?: true, created?: created?, config_dir_path: config_dir}}
 
-        {:error, {:already_started, _pid}} ->
+        {:ok, :already_started, _pid, _receipt} ->
           _ = async_reensure_if_dead(agent_uri)
           {:ok, [agent_uri], %{fresh?: false, config_dir_path: config_dir}}
 

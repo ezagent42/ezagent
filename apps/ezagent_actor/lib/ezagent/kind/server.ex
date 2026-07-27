@@ -108,6 +108,11 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
     create_freshness = create_freshness(kind_module, uri)
+    # #201 PR-1 — publish the verdict BEFORE any later init step can fail and
+    # BEFORE the initial persist writes the `ever_created` marker, so the
+    # atomic spawn winner reads THIS incarnation's verdict back from the
+    # spawning process (no GenServer.call queued behind post_init/activate).
+    :ok = Ezagent.Kind.CreateFreshness.record(uri_str, create_freshness)
     args = Map.put(args, :create_freshness, create_freshness)
 
     # main's before-start hook: `LaunchContextInit.prepare` may transform

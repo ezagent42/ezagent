@@ -73,6 +73,21 @@ defmodule Ezagent.LocalRuntime do
     do: SpawnRegistry.spawn_detailed(uri, opts)
 
   @doc """
+  #201 PR-1 — like `ensure_started_detailed/2`, but returns the full core-issued
+  creation receipt `{:ok, :started | :already_started, pid, %{created?: bool}}`
+  (delegates to the already-owner-gated `SpawnRegistry.spawn_receipt/2`). The
+  `created?` verdict distinguishes a genuine first-ever logical create from a
+  cold rehydrate that merely won the process start — the signal creation-state
+  writers (credential grant mint / materialization) must gate on.
+  """
+  @spec ensure_started_receipt(URI.t(), keyword()) ::
+          {:ok, :started | :already_started, pid(), %{created?: boolean()}}
+          | {:error, term()}
+  # derivation-edge: recorded-by the scheme-specific SpawnRegistry handler
+  def ensure_started_receipt(%URI{} = uri, opts \\ []),
+    do: SpawnRegistry.spawn_receipt(uri, opts)
+
+  @doc """
   Owner-gated ensure-live: return the live Kind for `uri`, rehydrating it from
   durable state if it is cold but was genuinely created before. Delegates to the
   already-owner-gated `SpawnRegistry.ensure_live/1` (whose `spawn/1` carries the

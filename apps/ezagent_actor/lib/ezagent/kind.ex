@@ -289,6 +289,89 @@ defmodule Ezagent.Kind do
     end
   end
 
+  @doc """
+  #201 PR-1 — like `spawn/3`, but surfaces BOTH ownership signals as a
+  core-issued creation receipt:
+
+      {:ok, :started, pid, %{created?: created?}}
+      {:ok, :already_started, pid, %{created?: false}}
+      {:error, term()}
+
+  `:started` / `:already_started` is the atomic `DynamicSupervisor`
+  winner verdict (exactly one concurrent caller wins `:started`).
+  `created?` is the Lifecycle-owned logical-create verdict
+  (`Ezagent.Lifecycle.fresh_create?/1`, durable `ever_created` marker),
+  recorded by the fresh Kind's own `init/1` (before the marker write) and
+  read back SYNCHRONOUSLY by the sole `:started` winner from this calling
+  process — no message round-trip to the fresh Kind, no two-both-read
+  race. The two signals are deliberately distinct: a cold rehydrate of a
+  durably pre-existing Kind wins `:started` with `created?: false` (a
+  duplicate-create attempt against it must NOT re-run create-only side
+  effects like credential-grant minting).
+
+  `created?` is meaningful only on `:started`; on `:already_started`
+  this call did not create anything and `created?` is pinned `false`.
+
+  The receipt is a plain synchronous return value — nothing is threaded
+  through invocation/signal. Callers that only need the pid keep using
+  `spawn/3`.
+  """
+  @spec spawn_receipt(module(), map(), keyword()) ::
+          {:ok, :started | :already_started, pid(), %{created?: boolean()}}
+          | {:error, term()}
+  def spawn_receipt(kind_module, params, opts \\ [])
+      when is_atom(kind_module) and is_map(params) and is_list(opts) do
+    case spawn(kind_module, params, opts) do
+      {:ok, pid} ->
+        {:ok, :started, pid, %{created?: params_create_freshness(params) == :created}}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, :already_started, pid, %{created?: false}}
+
+      {:error, {:already_registered, _}} = err ->
+        # Registry-dedup inside the loser's init (`ReadyTransition` /
+        # `KindRegistry` collision): a live Kind already holds this URI, so
+        # THIS call did not win the start. Resolve the live pid to report
+        # the adoption; if the holder died in the race window, return the
+        # original error (the caller retries).
+        case existing_pid(params) do
+          {:ok, pid} -> {:ok, :already_started, pid, %{created?: false}}
+          :error -> err
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp existing_pid(%{uri: %URI{} = uri}), do: Ezagent.KindRegistry.lookup(uri)
+  defp existing_pid(_params), do: :error
+
+  defp params_create_freshness(%{uri: %URI{} = uri}), do: create_freshness(uri)
+  defp params_create_freshness(_params), do: :unknown
+
+  @doc """
+  #201 PR-1 — read the create-vs-activate verdict recorded by the CURRENT
+  incarnation of the Kind at `uri` (`:created` = that incarnation's init saw
+  no durable `ever_created` marker — a genuine logical create; `:existed` =
+  rehydrate/activate of a durably pre-existing Kind; `:unknown` = never
+  spawned this BEAM, or the verdict could not be read).
+
+  This is an ETS read in the CALLING process, not a message to the Kind —
+  see `Ezagent.Kind.CreateFreshness` for the happens-before argument. It is
+  meaningful ONLY for the sole `:started` winner reading back its own spawn;
+  any other reader may see a stale verdict from an earlier incarnation.
+
+  Fail-CONSERVATIVE: an unknown/unreadable verdict is `:unknown` (never
+  `:created`), so a caller gating create-only side effects on
+  `create_freshness(uri) == :created` cannot be tricked into running them.
+  """
+  @spec create_freshness(URI.t() | String.t()) :: :created | :existed | :unknown
+  def create_freshness(%URI{} = uri), do: Ezagent.Kind.CreateFreshness.lookup(URI.to_string(uri))
+
+  def create_freshness(uri_str) when is_binary(uri_str),
+    do: Ezagent.Kind.CreateFreshness.lookup(uri_str)
+
   defp start_child(kind_module, params, {:standard, supervisor}) do
     DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
   end

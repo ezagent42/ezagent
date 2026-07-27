@@ -124,7 +124,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        :started ->
+        {:started, created?} ->
           # codex round-10 HIGH-2 + PR3 2026-05-24 cascade:
           # 1. Create per-agent config_dir BEFORE PTY launch (so the
           #    cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>`
@@ -191,6 +191,13 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
             base_meta = %{
               fresh?: true,
+              # #201 PR-1 — the core-issued logical-create verdict from the
+              # spawn receipt (`Ezagent.Kind.spawn_receipt/3`), passed through
+              # unmodified so the chokepoint can gate create-only writes
+              # (credential grant mint / materialization) on it. `:started`
+              # alone is NOT proof of logical create (a cold rehydrate wins
+              # `:started` with `created?: false`).
+              created?: created?,
               config_dir_path: materialized_config_dir,
               respawn_template_data: tmpl_with_dir
             }
@@ -242,7 +249,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # `DynamicSupervisor` outcome: exactly one concurrent caller gets
   # `:started`, every other gets `:already_started`. This is the
   # ground-truth freshness signal — NOT a pre-probe (a pre-probe is a
-  # TOCTOU window). Returns `{:ok, :started | :already_started}`.
+  # TOCTOU window). Returns `{:ok, {:started, created?} | :already_started}`
+  # where `created?` is the core-issued logical-create verdict from the
+  # #201 PR-1 spawn receipt (`Ezagent.Kind.spawn_receipt/3`).
   #
   # AutoService cc-orchestrator materialization (2026-06-30): pass the
   # sandbox state as Agent Kind init args so `Sandbox.create/1` persists
@@ -259,11 +268,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
     }
 
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, _pid} ->
-        {:ok, :started}
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+      {:ok, :started, _pid, %{created?: created?}} ->
+        {:ok, {:started, created?}}
 
-      {:error, {:already_started, _pid}} ->
+      {:ok, :already_started, _pid, _receipt} ->
         # Atomic dedup at KindRegistry / supervisor level — the Kind was
         # spawned by a concurrent caller (or by an earlier instantiate
         # that crashed between Kind spawn and PtyServer start). Still a
