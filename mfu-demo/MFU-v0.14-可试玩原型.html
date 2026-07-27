@@ -549,7 +549,7 @@ const S={
   lines:{design:0,copy:0,growth:0,perform:0},premiumAdded:false,
   credits:{design:0,copy:0,growth:0,strategy:0,comm:0},
   treeNodes:{},
-  profile:{judgeG:0,judgeT:0,net:0,portfolio:0,skill:{strategy:2,comm:2,design:.5,copy:.5,growth:.5,perform:.2}},
+  profile:{judgeG:0,judgeT:0,net:0,portfolio:0,gigs:0,guildHist:{},certs:{},skill:{strategy:2,comm:2,design:.5,copy:.5,growth:.5,perform:.2}},
   realQ:[],realN:0,
   rivals:['隔壁宿舍工作室','元气满满小组','肝帝三人组','摸鱼但认真队','咖啡因驱动社','学霸联合体','极客车库'].map(n=>({name:n,rep:ri(2,18)}))
 };
@@ -560,28 +560,28 @@ const TREE_NODES=[
    cond:'进入游戏即解锁',condFn:()=>S.started,level:{cur:0,max:1}},
   // Tier 1 — 专精分叉
   {id:'N-01',tier:1,name:'设计专精',verb:'调教',icon:'🎨',group:'specialty',scope:'company',deps:['N-00'],
-   cond:'设计练习单 ≥ 5',condFn:()=>S.credits.design>=5,level:{cur:0,max:1}},
+   cond:'设计课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.design>=5,level:{cur:0,max:1}},
   {id:'N-02',tier:1,name:'文案专精',verb:'编写',icon:'✍️',group:'specialty',scope:'company',deps:['N-00'],
-   cond:'文案练习单 ≥ 5',condFn:()=>S.credits.copy>=5,level:{cur:0,max:1}},
+   cond:'文案课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.copy>=5,level:{cur:0,max:1}},
   {id:'N-03',tier:1,name:'增长专精',verb:'投放',icon:'📈',group:'specialty',scope:'company',deps:['N-00'],
-   cond:'增长练习单 ≥ 5',condFn:()=>S.credits.growth>=5,level:{cur:0,max:1}},
+   cond:'增长课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.growth>=5,level:{cur:0,max:1}},
   // Tier 2 — 深化
   {id:'N-04',tier:2,name:'设计提案',verb:'提案',icon:'📋',group:'deepen',scope:'company',deps:['N-01'],
-   cond:'设计专精 + 真单≥3',condFn:()=>{const n=S.treeNodes['N-01'];return n&&n.unlocked&&S.lines.design>=3;},level:{cur:0,max:1}},
+   cond:'设计专精 + 真单≥3',condFn:()=>S.lines.design>=3,level:{cur:0,max:1}},
   {id:'N-05',tier:2,name:'品牌模板',verb:'复用',icon:'📄',group:'deepen',scope:'company',deps:['N-02'],
-   cond:'文案专精 + 真单≥3',condFn:()=>{const n=S.treeNodes['N-02'];return n&&n.unlocked&&S.lines.copy>=3;},level:{cur:0,max:1}},
+   cond:'文案专精 + 真单≥3',condFn:()=>S.lines.copy>=3,level:{cur:0,max:1}},
   {id:'N-06',tier:2,name:'A/B实验',verb:'实验',icon:'🧪',group:'deepen',scope:'company',deps:['N-03'],
-   cond:'增长专精 + 真单≥3',condFn:()=>{const n=S.treeNodes['N-03'];return n&&n.unlocked&&S.lines.growth>=3;},level:{cur:0,max:1}},
+   cond:'增长专精 + 真单≥3',condFn:()=>S.lines.growth>=3,level:{cur:0,max:1}},
   // Tier 2.5 — 资质门
   {id:'N-07',tier:2.5,name:'白银认证',verb:'入会',icon:'🥈',group:'gate',scope:'company',deps:[],
    cond:'声望≥30 + 信用≥70',condFn:()=>S.rep>=30&&S.cred>=70,level:{cur:0,max:1}},
   // Tier 3 — 跨专精
   {id:'N-08',tier:3,name:'联合竞标',verb:'联合',icon:'🤝',group:'cross',scope:'company',deps:['N-07'],
-   cond:'白银 + ≥2条T1线',condFn:()=>{const t1=['N-01','N-02','N-03'];const n7=S.treeNodes['N-07'];return n7&&n7.unlocked&&t1.filter(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked).length>=2;},level:{cur:0,max:1}},
+   cond:'白银 + ≥2条T1线',condFn:()=>{const t1=['N-01','N-02','N-03'];return t1.filter(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked).length>=2;},level:{cur:0,max:1}},
   {id:'N-09',tier:3,name:'资产出租',verb:'出租',icon:'🏷️',group:'cross',scope:'company',deps:['N-07'],
-   cond:'白银 + 任一T2',condFn:()=>{const n7=S.treeNodes['N-07'];if(!n7||!n7.unlocked)return false;return ['N-04','N-05','N-06'].some(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked);},level:{cur:0,max:1}},
+   cond:'白银 + 任一T2',condFn:()=>['N-04','N-05','N-06'].some(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked),level:{cur:0,max:1}},
   {id:'N-10',tier:3,name:'公开评审',verb:'评审',icon:'🔍',group:'cross',scope:'company',deps:['N-07'],
-   cond:'白银 + 作品集≥10',condFn:()=>{const n7=S.treeNodes['N-07'];return n7&&n7.unlocked&&S.profile.portfolio>=10;},level:{cur:0,max:1}},
+   cond:'白银 + 作品集≥10',condFn:()=>S.profile.portfolio>=10,level:{cur:0,max:1}},
   // Tier 3.5 — 角色分叉
   {id:'N-11',tier:3.5,name:'黄金认证',verb:'入驻',icon:'🥇',group:'role',scope:'company',deps:['N-07'],
    cond:'声望≥85 + 均分≥74',condFn:()=>S.rank>=2&&S.realN>=2&&(S.realQ.length?S.realQ.reduce((a,b)=>a+b,0)/S.realQ.length:0)>=74,level:{cur:0,max:1}},
@@ -594,7 +594,7 @@ const TREE_NODES=[
    cond:'ezagent团队内部资质',condFn:()=>false,level:{cur:0,max:1}},
   // ---- 个人成长树节点 (scope:'personal') ----
   {id:'P-00',tier:0,name:'跨组织从业',verb:'连接',icon:'🔗',group:'base',scope:'personal',deps:[],
-   cond:'完成打工 ≥ 1 次',condFn:()=>S.profile.net>=1,level:{cur:0,max:1}},
+   cond:'完成打工 ≥ 1 次',condFn:()=>S.profile.gigs>=1,level:{cur:0,max:1}},
   {id:'P-01',tier:1,name:'作品积累',verb:'归档',icon:'🗂️',group:'specialty',scope:'personal',deps:['P-00'],
    cond:'作品集 ≥ 3',condFn:()=>S.profile.portfolio>=3,level:{cur:0,max:1}},
   {id:'P-02',tier:1,name:'人脉经营',verb:'拓展',icon:'🤝',group:'specialty',scope:'personal',deps:['P-00'],
@@ -604,19 +604,22 @@ const TREE_NODES=[
   {id:'P-04',tier:2.5,name:'判断力认证',verb:'认证',icon:'🎯',group:'gate',scope:'personal',deps:['P-02'],
    cond:'判断力 ≥ 60%（至少5次判断）',condFn:()=>{const jt=S.profile.judgeT;return jt>=5&&S.profile.judgeG/jt>=0.6;},level:{cur:0,max:1}},
   {id:'P-05',tier:3,name:'孵化器背书',verb:'背书',icon:'🏭',group:'cross',scope:'personal',deps:['P-04'],
-   cond:'加入孵化器预备营',condFn:()=>S.guilds.incu===true,level:{cur:0,max:1}},
+   cond:'加入孵化器预备营',condFn:()=>S.profile.guildHist.incu===true,level:{cur:0,max:1}},
   {id:'P-06',tier:3.5,name:'创业导师',verb:'带教',icon:'🎓',group:'role',scope:'personal',deps:['P-05'],
-   cond:'黄金认证（声望≥85）',condFn:()=>S.rank>=2,level:{cur:0,max:1}},
+   cond:'黄金认证（声望≥85）',condFn:()=>S.profile.certs.gold===true,level:{cur:0,max:1}},
 ];
 
 
 function initTreeNodes(){
   TREE_NODES.forEach(n=>{S.treeNodes[n.id]={unlocked:n.condFn()};});
 }
+function nodeAvail(n){
+  return n.deps.every(d=>{const ds=S.treeNodes[d];return ds&&ds.unlocked;})&&n.condFn();
+}
 function checkTreeNodes(){
   let newly=[];
   TREE_NODES.forEach(n=>{
-    if(!S.treeNodes[n.id].unlocked && n.condFn()){
+    if(!S.treeNodes[n.id].unlocked&&nodeAvail(n)){
       S.treeNodes[n.id].unlocked=true;newly.push(n);
     }
   });
@@ -1053,7 +1056,7 @@ window.takeGig=id=>{
   const g=S.gigs.find(x=>x.id===id);
   if(!g||S.ap<2)return;
   S.ap-=2;earn(g.wage,'打工收入');
-  S.profile.skill[g.dm]=clamp(S.profile.skill[g.dm]+0.3,0,8);S.profile.net++;
+  S.profile.skill[g.dm]=clamp(S.profile.skill[g.dm]+0.3,0,8);S.profile.net++;S.profile.gigs++;
   S.gigs=S.gigs.filter(x=>x!==g);
   log('💼 你为 '+g.co+' 完成了一单「'+DOM[g.dm]+'」,+'+yuan(g.wage)+'。对方主理人负责确认担责 —— 确认权跟着角色走。');
   render();
@@ -1273,10 +1276,10 @@ function finishContest(p,overall){
   });
   const o=p.order;
   const isReal=o.src!=='practice';
-  if(!isReal){o.stages.forEach(dm=>{if(S.credits[dm]!==undefined)S.credits[dm]++;});}
   const rq=[];for(let i=0;i<o.rivalsN;i++)rq.push(clamp((isReal?59+o.diff*4:50+o.diff*3)+rnd(-9,9),20,97));
   const all=[{me:true,q:overall},...rq.map(q=>({me:false,q}))].sort((a,b)=>b.q-a.q);
   const rank=all.findIndex(x=>x.me)+1;
+  if(!isReal&&rank<=2){o.stages.forEach(dm=>{if(S.credits[dm]!==undefined)S.credits[dm]++;});}
   const n=all.length;
   const share=rank===1?0.55:rank===2?0.25:0.20/(n-2);
   const prize=o.pool*share;
@@ -1362,6 +1365,7 @@ function tick(){
   const oldRank=S.rank;
   while(S.rank<RANKS.length-1&&S.rep>=RANKS[S.rank+1].need)S.rank++;
   if(S.rank>oldRank){
+    if(S.rank>=2)S.profile.certs.gold=true;
     log('🎖️ 协会颁发新认证:'+RANKS[S.rank].n+'!');
     if(S.rank===1)log('🏭 白银达成!DHS 预备营与协会会员的准入已解锁 —— 去生态页加入会籍。');
   }
@@ -1443,8 +1447,8 @@ function openCrisis(){
 /* ---- ending / views / plumbing ---- */
 function checkEnd(){
   if(S.endShown)return;
-  const avg=S.realQ.length?S.realQ.reduce((a,b)=>a+b,0)/S.realQ.length:0;
-  if(S.rank>=2&&S.realN>=2&&avg>=74){
+  const n11=TREE_NODES.find(n=>n.id==='N-11');
+  if(n11&&n11.condFn()){
     S.endShown=true;$('endCo').textContent=S.co;
     setTimeout(()=>$('mEnd').classList.add('show'),700);
   }
@@ -1544,7 +1548,8 @@ window.openBiz=tab=>{
       '<div>🤝 信用 '+S.cred+'</div>'+
       '<div>💼 打工收入 '+yuan(S.tx.filter(function(x){return x.cat==='打工收入';}).reduce(function(a,x){return a+x.v;},0))+'</div></div>'+
       '<p style="margin:8px 0 2px;color:#8a765a">个人技能（打工与亲自干会成长）· 学分（推进科技树）:</p>'+skills+
-      '<div style="font-size:10px;color:#8a765a;margin:2px 0 6px;">学分：设计 '+S.credits.design+' · 文案 '+S.credits.copy+' · 增长 '+S.credits.growth+' · 策略 '+S.credits.strategy+' · 沟通 '+S.credits.comm+'</div>'+
+      '<div style="font-size:10px;color:#8a765a;margin:2px 0 6px;">学分（课程作业达标 · 竞赛前 50% 才计）：设计 '+S.credits.design+' · 文案 '+S.credits.copy+' · 增长 '+S.credits.growth+'</div>'+
+      '<details style="font-size:10px;color:#8a765a;margin:2px 0 6px;"><summary style="cursor:pointer;">未开启：策略 / 沟通线（数据已在积累，开线后可用）</summary>策略 '+S.credits.strategy+' · 沟通 '+S.credits.comm+'</details>'+
       (function(){const pn=TREE_NODES.filter(function(n){return n.scope==='personal';});const pu=pn.filter(function(n){return S.treeNodes[n.id]&&S.treeNodes[n.id].unlocked;}).length;return '<div class="tree-panel" style="margin-top:8px">'+
         '<div class="tp-head"><span class="tp-title">🌱 个人成长树</span><span class="tp-count">已解锁 '+pu+'/'+pn.length+'</span></div>'+
         '<div class="tree-svg-wrap" id="personalTreePanWrap" style="height:320px">'+renderRadialTree('personal')+'</div>'+
@@ -1651,7 +1656,7 @@ window.joinGuild=k=>{
   if(S.guilds[k]||g.fixed)return;
   if(S.week<S.cool[k]){log('⏳ '+g.n+' 冷却中,第 '+S.cool[k]+' 周后可再加入。');return;}
   if(!g.adm()){log('🔒 未达 '+g.n+' 准入:'+g.admTxt);return;}
-  S.guilds[k]=true;
+  S.guilds[k]=true;S.profile.guildHist[k]=true;
   if(k==='incu'&&!S.grantGiven){S.grantGiven=true;earn(3000,'孵化器 grant');log('🏭 加入预备营!孵化器发放 grant ¥3,000。');}
   log('🎪 加入 '+g.n+' —— 资源流已接通:'+g.give);
   render();
@@ -1665,7 +1670,6 @@ window.leaveGuild=k=>{
 };
 /* ---- 径向技能树渲染 (MFU 风格) ---- */
 const TREE_RINGS=[0,1,2,2.5,3,3.5];
-const RING_RADII={0:0,1:78,2:150,2.5:220,3:285,3.5:350};
 
 function renderRadialTree(scope){
   scope=scope||'company';
@@ -1697,7 +1701,7 @@ function renderRadialTree(scope){
     const a=nodeAngle(n,scope);const r=radii[n.tier];
     const nx=cx+Math.cos(a)*r,ny=cy-Math.sin(a)*r;
     const st=S.treeNodes[n.id];if(!st)return;
-    const cls=st.unlocked?'unlocked':(n.condFn()?'available':'locked');
+    const cls=st.unlocked?'unlocked':(nodeAvail(n)?'available':'locked');
     const rr=isCompact?12:(n.tier===0?20:16);
     svg+='<circle cx="'+nx+'" cy="'+ny+'" r="'+rr+'" class="tnode '+cls+'" data-nid="'+n.id+'" onclick="openNodeDetail(\''+n.id+'\')"/>';
     svg+='<text x="'+nx+'" y="'+(ny+rr+11)+'" class="tnode-label">'+n.name+'</text>';
