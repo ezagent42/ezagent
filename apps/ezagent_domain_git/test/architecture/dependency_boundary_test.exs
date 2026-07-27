@@ -1,7 +1,12 @@
 defmodule EzagentDomainGit.Architecture.DependencyBoundaryTest do
   use ExUnit.Case, async: true
 
-  @approved_umbrella_dependencies [:ezagent_core]
+  # :ezagent_actor was added by the C4-C7 actor-framework extraction (#1579),
+  # which moved Ezagent.URI into that app. Every app using it declares the dep
+  # directly rather than reaching it transitively through ezagent_core. That PR
+  # updated the mix.exs files but not this approved list, leaving this test red
+  # on main. The dep is inward and framework-tier, so it belongs here.
+  @approved_umbrella_dependencies [:ezagent_actor, :ezagent_core]
   @forbidden_dependency_fragments [
     "ezagent_plugin_",
     "ezagent_domain_socialware",
