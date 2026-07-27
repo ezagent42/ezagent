@@ -1,7 +1,12 @@
 defmodule EzagentDomainGit.Architecture.DependencyBoundaryTest do
   use ExUnit.Case, async: true
 
-  @approved_umbrella_dependencies [:ezagent_core]
+  # `:ezagent_actor` is the runtime framework (Ezagent.Kind/KindRegistry),
+  # extracted from core in #1579 (actor-framework extraction, via ports). domain_git
+  # calls Ezagent.Kind directly to operate its task-workspace Kinds, so actor is a
+  # legitimate foundation dep alongside :ezagent_core — not an upward/lateral leak
+  # (those stay covered by @forbidden_dependency_fragments below).
+  @approved_umbrella_dependencies [:ezagent_actor, :ezagent_core]
   @forbidden_dependency_fragments [
     "ezagent_plugin_",
     "ezagent_domain_socialware",
