@@ -1,0 +1,95 @@
+CANARY AGENT-CALLABILITY — PTY / CHANNEL / BRIDGE EVIDENCE
+Date: 2026-07-13
+Session: session://ezagent/socialware-install-orchestrator/acc-20260713t065612z-79e83afd
+Agent: entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+
+MATERIALIZATION AND PTY
+07:00:09.475Z config home was not yet materialized at the generic activation
+  hook, so subprocess launch was deferred to the template spawn path (expected
+  for a fresh create).
+07:00:09.625Z PtyServer spawned the initial Claude process for this agent.
+07:00:10.914Z the initial process exited during onboarding and entered guarded
+  respawn.
+07:00:11.923Z PtyServer spawned the stable Claude process.
+07:00:12.648Z the known dev_channels_dialog auto-prompt matched and selected the
+  enable path.
+
+Evidence limitation:
+  The captured logs prove that the generic activation hook deferred launch and
+  that the later PTY used the materialized cwd, but they do not contain an
+  explicit config-home-materialization completion event before the first spawn.
+  The strict materialization-before-PTY ordering is therefore NOT PROVEN by
+  this evidence set and must be rechecked after an authorized deployment.
+
+Read-only agent detail after startup:
+  flavor=cc-deepseek
+  lifecycle_phase=alive
+  child_phase=running
+  running=true
+  cwd=/home/ezagent/.ezagent/orchestrator
+  pty_alive=true
+  dev_channels_dialog fired=true
+  recent UI status included:
+    Channels (experimental) messages from server:esr-bridge ... +1 more
+
+AGENT CHAT BRIDGE
+[esr_mcp_bridge entity-ezagent_agent_5825561c-cbd6-433e-a1ea-b45d681371b6]
+2026-07-13 07:00:14.870 INFO ws connected; joining agent_bridge:cc-deepseek:entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+2026-07-13 07:00:14.870 INFO join ok; starting loops
+
+ORCHESTRATOR MCP BRIDGE
+[orchestrator_bridge]
+2026-07-13 07:00:15.225 INFO ws connected; joining orch:bridge:entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+2026-07-13 07:00:15.225 INFO join ok; orchestrator MCP transport ready
+
+MESSAGE CORRELATION
+07:10:33.304Z agent bridge delivered nonce P1 to Claude.
+07:10:39.173Z Claude called the bridge response tool (id=2).
+07:11:43.457Z agent bridge delivered nonce P2 to Claude.
+07:11:46.773Z Claude called the bridge response tool (id=3).
+07:12:28.774Z agent bridge delivered development task T1 to Claude.
+07:13:22.252Z Claude called the bridge response tool (id=4).
+
+KNOWN PTY UI DEFECT (STABLE REPRODUCTION)
+Action:
+  Open this session in the authenticated product UI and click Terminal.
+
+Observed on four independent LiveView connections:
+  session.pty.open reaches ConversationActions.switch_to_pty/3, then the
+  LiveView terminates before rendering the PTY panel.
+
+Sanitized exception:
+  ** (Protocol.UndefinedError) protocol Jason.Encoder not implemented for PID
+  Got value: #PID<redacted>
+  (jason 1.4.5) lib/jason.ex:164: Jason.encode!/2
+  (ezagent_plugin_world 0.1.0)
+    lib/ezagent/world/conversation_actions.ex:1119:
+    Ezagent.World.ConversationActions.push_world_state/2
+  (ezagent_plugin_world 0.1.0)
+    lib/ezagent/world/conversation_actions.ex:554:
+    Ezagent.World.ConversationActions.switch_to_pty/3
+
+Root-cause layer:
+  Product UI serialization. lifecycle_status.detail.exec_pid is a PID;
+  ConversationActions.jsonable/1 leaves unknown runtime values unchanged, and
+  push_world_state/2 then calls Jason.encode!/1 on the resulting map.
+
+Impact:
+  The operator Terminal tab cannot render. The process and bridges remain
+  alive, and all three sanctioned chat calls completed, so this is not an agent
+  transport-readiness failure.
+
+Safety:
+  Connection URLs containing tokens, authorization data, cookies, PATs,
+  provider keys, magic links, and full environment output were excluded.
+
+LOCAL REPAIR DISPOSITION
+  A public session.pty.open LiveView regression now starts a real erlexec-backed
+  PTY, observes its exec_pid, and verifies that World state projects the PID as
+  a readable string while preserving cwd as a string and os_pid as an integer,
+  without terminating the LiveView.
+  Focused test: PASS (1 test, 0 failures)
+  Full World conversation test file: PASS (41 tests, 0 failures)
+  Independent final review: APPROVED after scalar-preservation correction
+    (no remaining Critical, Important, or Minor findings)
+  Canary deployment/revalidation: PENDING EXPLICIT AUTHORIZATION

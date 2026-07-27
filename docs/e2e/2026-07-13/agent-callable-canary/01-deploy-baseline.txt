@@ -1,0 +1,39 @@
+CANARY AGENT-CALLABILITY — DEPLOY BASELINE
+Date: 2026-07-13
+
+Endpoint:
+  https://canary.ezagent.chat
+Resolved tailnet address:
+  100.64.0.18
+
+HTTP liveness command:
+  curl --noproxy '*' -fsS https://canary.ezagent.chat/_health
+
+Observed result:
+  HTTP 200
+  {"status":"ok"}
+
+Important network note:
+  The environment HTTP(S) proxy cannot reach the tailnet address and times out.
+  Canary probes must bypass the proxy. The earlier proxy timeout was not a
+  canary health failure.
+
+Release baseline:
+  VERIFIED
+
+Read-only deployment-host inspection:
+  SSH: h2oslabs@100.64.0.27
+  Container: ezagent-canary-ezagent-1
+  Compose project: ezagent-canary
+  Image: ezagent:canary / ezagent:a915343de
+  Application SHA: a915343de2c9e2ba36f2395670562495b7fd57fd
+  Health: healthy
+
+Required commits to prove present in the deployed SHA:
+  #1294 2d47475b2ef565d1fe9caccb2fc3ce5473eb9e7a PRESENT
+  #1326 4ac9e0a75da955bcaca9dc3d3fff834578ae0b6b PRESENT
+  #1332 4b48c12ce3690ca5d4e2b98fd1a5a4616d84c09b PRESENT
+  #1333 ed7f448b46271e1689b2679f85734fdbcc7b83e7 PRESENT
+
+No conclusion about agent readiness or orchestrator replies is supported by
+this liveness result alone.

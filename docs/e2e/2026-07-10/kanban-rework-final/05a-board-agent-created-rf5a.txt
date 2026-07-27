@@ -1,0 +1,28 @@
+# 05a 建板证据 — kanban-as-role（RF-5a role-create 路径，2026-07-10）
+
+板 = kanban-manager recipe × native flavor 的 workspace-level agent
+（manifest 刻意无 kanban-manager 槽：该 recipe passive: true，被 RF-6 passive-join
+ gate 拒于会话 materialize——板是 URI-dispatch 数据角色，S2 修正）。
+
+## 建板（erpc 进 server 节点，真 Workspace.create_agent dispatch，与 K3 验收测试同路径）
+
+Ezagent.Workspace.create_agent(
+  URI.new!("workspace://system"),
+  %{flavor: "native", name: "e2e-board", role: "kanban-manager", cwd: "", with_pty: false},
+  %{caller: Ezagent.Entity.User.admin_uri(), caps: MapSet.new([Ezagent.Capability.admin_genesis_cap()])}
+)
+
+## DB invocation 行（真 dispatch 审计，authz=granted）
+
+workspace://system?action=workspace.create_agent | granted | duration_us=2993194 | 2026-07-10 03:39:26Z
+
+## 建成核验（erpc）
+
+RecipeResolver.list_by_recipe("kanban-manager") → ["entity://system/agent/e2e-board"]
+KindRegistry.lookup(entity://system/agent/e2e-board) → {:ok, pid}，Process.alive? = true
+
+## 注记
+
+- 不走 world「New agent」表单：该表单把 role 放进 config_fields（string key）而
+  agent_create 只读 atom :role → role 静默掉地（main 既有缺口，非本分支改动，
+  07-09 证据 README Blockers 2 已记，候选 issue）。本次直接走同一后端 dispatch 路径。

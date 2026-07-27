@@ -1,0 +1,68 @@
+CANARY AGENT-CALLABILITY — DURABLE TRANSCRIPT
+Date: 2026-07-13
+Session: session://ezagent/socialware-install-orchestrator/acc-20260713t065612z-79e83afd
+User: entity://ezagent/user/huang_jiajia
+Agent: entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+
+[2026-07-13T07:10:33.278893Z]
+message_id: 41a9b22cc961737b
+sender_kind: user
+sender: entity://ezagent/user/huang_jiajia
+text:
+  @orchestrator CANARY ACC-20260713T070923Z-79e83afd-P1. Reply with exactly: ACK ACC-20260713T070923Z-79e83afd-P1
+
+[2026-07-13T07:10:39.174189Z]
+message_id: 69107128a6d9097e
+sender_kind: agent
+sender: entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+text:
+  ACK ACC-20260713T070923Z-79e83afd-P1
+
+[2026-07-13T07:11:43.439155Z]
+message_id: d92cc08b4eba1780
+sender_kind: user
+sender: entity://ezagent/user/huang_jiajia
+text:
+  @orchestrator CANARY ACC-20260713T071131Z-79e83afd-P2. Reply with exactly: ACK ACC-20260713T071131Z-79e83afd-P2
+
+[2026-07-13T07:11:46.774167Z]
+message_id: 7db9de49f6ab31bc
+sender_kind: agent
+sender: entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+text:
+  ACK ACC-20260713T071131Z-79e83afd-P2
+
+[2026-07-13T07:12:28.760094Z]
+message_id: 0f2c278b6c58b603
+sender_kind: user
+sender: entity://ezagent/user/huang_jiajia
+text:
+  @orchestrator TASK ACC-20260713T071210Z-79e83afd-T1: Prepare an implementation plan for adding a health-check endpoint. Do not edit files, commit, push, open a PR, or create additional agents. Reply with first line: ACCEPTED ACC-20260713T071210Z-79e83afd-T1, then give Scope, a three-step Plan, and Status.
+
+[2026-07-13T07:13:22.253094Z]
+message_id: c6a460b24bcf3ff4
+sender_kind: agent
+sender: entity://ezagent/agent/5825561c-cbd6-433e-a1ea-b45d681371b6
+text:
+  ACCEPTED ACC-20260713T071210Z-79e83afd-T1
+
+  Scope: Add a health_check MCP tool to the orchestrator bridge, served locally
+  through the existing MCP tools/call channel, reporting connection/join state
+  and uptime without introducing an HTTP server.
+
+  Plan:
+  1. Add the health_check tool schema and returned-field contract.
+  2. Implement a local handler using WebSocket, join, and monotonic-start state.
+  3. Verify tools/list plus offline/online tools/call behavior and latency.
+
+  Status: Plan ready — no files edited.
+
+Correlation:
+  - Both ACKs and the task reply use the same newly materialized agent URI.
+  - Agent bridge logged inbound delivery at 07:10:33.304Z, 07:11:43.457Z,
+    and 07:12:28.774Z.
+  - The agent called the bridge response tool at 07:10:39.173Z,
+    07:11:46.773Z, and 07:13:22.252Z.
+
+Sensitive values (cookies, magic links, PATs, provider keys, bridge tokens, and
+authorization headers) are intentionally absent.

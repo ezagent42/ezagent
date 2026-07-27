@@ -1,0 +1,62 @@
+2026-07-14 Asia/Shanghai — redacted live transcript
+
+[runtime]
+backend: deepseek
+HELLO_DEMO_SEED: 1
+HELLO_DEMO_WS: system
+HELLO_DEMO_NAME: fusion
+GET /_health -> 200
+GET /hello/fusion -> 200
+resolved session: session://system/hello/fusion
+feed: /socialware_external_socket / socialware:external
+
+[public product entry]
+browser: Playwright Chromium, zh-CN, Noto CJK available
+assertion: #hello-product-entry exists
+assertion: #hello-task-cta is a BUTTON
+assertion: #hello-coupling-boundary contains 松耦合，非最终挂载
+assertion: #hello-prompt-form is the only task composer
+CTA: 派个任务 · Delegate →
+capabilities: 一句话生成可用界面 / 第二次描述继续修改 / 确认后派给 Kanban
+
+[anonymous continuation]
+instruction: 完成官网首程验收并生成截图 companion
+POST /hello/delegate
+redirect: /login?return_to=%2Fhello%2Fdelegate%2Fresume
+credentials principal: entity://system/user/admin
+PAT delivery: /login/token (token value omitted)
+continue: /hello/delegate/resume
+return: /hello/fusion
+
+[real Hello receipt]
+title: 完成官网首程验收并生成截图 companion
+board: entity://system/agent/hello-kanban
+node: n1
+raw status: unassigned
+display status: 待派
+boundary: 松耦合，非最终挂载
+link: /plugins/kanban/entity%3A%2F%2Fsystem%2Fagent%2Fhello-kanban
+
+[real Kanban product]
+World page loaded: 200
+board title: 看板 · hello-kanban
+node title: 完成官网首程验收并生成截图 companion
+node status: unassigned
+artifact count: 1
+artifact ref: session://system/hello/fusion
+node count produced by this continuation: 1
+
+[real DeepSeek attempt]
+model: deepseek-chat
+transport: EzagentPluginCurlAgent.BridgeAdapter -> ApiClient -> :httpc
+endpoint: https://api.deepseek.com/chat/completions
+provider result: HTTP 401 authentication_error; local DeepSeek key is invalid
+honesty note: no stub or shell-curl output is reported as model generation
+
+[deterministic product contracts]
+Spec.validate -> TurnDriver -> Surface -> ExternalFeed: hello_page_e2e_test.exs
+second validated page changes anonymous live view: hello_page_e2e_test.exs
+concierge read-only/no Surface mutation: product integration tests
+catalog parity: exactly 36 components
+anonymous continuation: continuation/controller tests
+hello -> Kanban real node/artifact/status: delegation tests + live proof above

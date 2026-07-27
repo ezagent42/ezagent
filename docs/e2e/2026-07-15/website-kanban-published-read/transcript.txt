@@ -1,0 +1,37 @@
+2026-07-15 Asia/Shanghai — redacted live browser transcript
+
+[runtime]
+GET /login -> 200
+GET /hello/fusion -> 200
+browser: Playwright Chromium, zh-CN, 1440x1000
+credentials: supplied through process environment; omitted
+one-time PAT: response-redacted before render; omitted
+published-read token: omitted
+
+[website / Hello]
+assertion: #hello-product-entry is visible
+action: enter a real delegation instruction in #hello-prompt-form
+action: submit through the anonymous login continuation
+result: returned to /hello/fusion after authentication
+
+[publication receipt]
+assertion: #hello-published-board-status is visible
+display: KANBAN · 已发布只读看板 · r1
+assertion: the newly submitted instruction is visible
+assertion: board URI + node id are rendered
+boundary: 访客接收后只读；修改仍由原 Kanban 管理
+receive action: 接收只读看板 →
+
+[Session 2]
+action: claim the signed receive reference without exposing it in browser chrome
+redirect: /sessions?session=<redacted-session-uri>
+assertion: 看板已加入你的工作区（只读）。在会话页的「看板」标签查看。
+assertion: receiving session exposes the 看板 tab
+
+[machine-checked authorization companion]
+source: apps/ezagent_web/test/ezagent_web/controllers/socialware/kanban_share_controller_test.exs
+read: receiver kanban-assistant dispatches get_tree successfully
+write: receiver kanban-assistant add_node returns {:error, :unauthorized}
+identity: repeated claim yields one Mount natural-key row for the same board URI
+ownership: original Kanban entity remains the only tree/data owner
+

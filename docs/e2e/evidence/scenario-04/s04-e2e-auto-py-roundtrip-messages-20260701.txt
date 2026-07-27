@@ -1,0 +1,5 @@
+        id        |            session_uri            |              sender              |              mentions              |            text            |      ref_id      |        inserted_at
+------------------+-----------------------------------+----------------------------------+------------------------------------+----------------------------+------------------+----------------------------
+ 85b532a60a1f02f1 | session://system/default/e2e-auto | entity://system/user/admin       | {entity://system/agent/py_default} | @py_default  manual-120451 |                  | 2026-07-01 04:04:52.508906
+ cfbd62e7a669cf9d | session://system/default/e2e-auto | entity://system/agent/py_default | {}                                 | @py_default  manual-120451 | 85b532a60a1f02f1 | 2026-07-01 04:04:52.575722
+(2 ÐÐ¼ÇÂ¼)

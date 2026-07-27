@@ -1,0 +1,38 @@
+scenario-05 cc bugs — server 日志关键行固化(scratchpad 临时日志会丢,故落盘)
+2026-06-25, branch feat/product-gaps-f9-f12 (= main 8b673310)
+
+== Bug A: cc-PTY 旧 claude-bot 消息送达但不回(latest main, phx_proxy.log) ==
+6423:  Parameters: %{"action" => "chat.send", "args" => %{"grants" => [], "session_uri" => "session://system/default/zyli-test-1", "text" => "@claude-bot 你好，你是谁"}}
+6436:SELECT r0."id", r0."workspace_uri", r0."session_uri", r0."user_uri", r0."source", r0."last_read_message_uri", r0."observed_at", r0."inserted_at", r0."updated_at" FROM "read_markers" AS r0 WHERE (((r0."session_uri" = $1) AND (r0."user_uri" = $2)) AND (r0."source" = $3)) ["session://system/default/zyli-test-1", "entity://system/agent/claude-bot", "delivered"]
+9946:  Parameters: %{"action" => "chat.send", "args" => %{"grants" => [], "session_uri" => "session://system/default/zyli-test-1", "text" => "@claude-bot 你是谁"}}
+2306:[debug] PtyServer[95153] stdout:   
+  ╭─── Claude Code  v2.1.191  ─────────────────────────────────────────────────────────────────────────────────────────────╮
+ │                                           │     Tips for getting started                                                       │
+ │                Welcome back!               │   Run /init to create a CLAUDE.md file with instructions for Claude  │
+ │  │  ─────────────────────────────────────────────────────────────────────────── │
+ │                   ▐ ▛███▜ ▌                   │     What's new                                                             │
+ │                  ▝▜ █████ ▛▘                  │   Added `/rewind` support for resuming a conversation from before `/clear` w…  │
+ │   ▘▘ ▝▝    │   Fixed scroll position jumping to the bottom while reading earlier output d…  │
+ │                                           │   Fixed background agents resurrecting after being stopped — stopping an age…  │
+ │  Opus 4.8 (1M context) · Claude Max   │    /release-notes for more   │
+ │             /tmp/cc-agent-home   │  │
+ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+    
+   Claude Fable 5 is currently unavailable. Please use Opus 4.8 or another available model. Learn more: 
+  https://www.anthropic.com/news/fable-mythos-access
+    
+
+  → claude-bot 已认证(Welcome back/Claude Max)但 delivered 后无 PTY 转发/回复
+
+== Bug B: cc-PTY 新建 :activate_timeout(latest main, phx_main.log) ==
+  invocations.result: {:cascade_spawn_failed, {:sandbox_write_path_failed, .../agent/zyli-cc-1, :activate_timeout}}
+  duration ~10s(10174050µs)> create_agent 的 5s :call 预算(invocation.ex:181 ReadyGate.await(_,5_000));两次创建(with_pty true/false)同样回滚
+== (旧代码 benign 对照)cc.agent template skip — echo 也报,非根因(phx_live.log) ==
+82:[warning] Workspace.Loader: no Template Class registered for "cc.agent" (template "cc.agent.claude-bot") in workspace workspace://system, skipping
+83:[warning] Workspace.Loader: no Template Class registered for "cc.agent" (template "cc.agent.e2e-test") in workspace workspace://system, skipping
+86:[warning] Workspace.Loader: no Template Class registered for "echo.agent" (template "echo.agent.r2-echo") in workspace workspace://system, skipping
+87:[warning] Workspace.Loader: no Template Class registered for "echo.agent" (template "echo.agent.r2-echo-1") in workspace workspace://system, skipping
+
+== Bug C: cc-headless config-dir :none — 见截图 s05-cc-headless-create-fail-zyli.png ==
+  RuntimeError: config-dir resolution failed for resource://system/cc-headless-agents/zyli-cch-1: :none
+  来源 config_dir.ex:66(FsResolver 未注册 cc-headless-agents ns)

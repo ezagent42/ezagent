@@ -1,0 +1,101 @@
+Hello live E2E + Kanban fusion transcript
+Date: 2026-07-15 (Asia/Shanghai)
+Route: http://127.0.0.1:10042/hello/fusion-live-0715
+Provider/model: deepseek / deepseek-chat
+LLM member: entity://system/agent/fa5dbfe7-2f7c-4710-bb23-e3e0522eb805
+Credential handling: configured through the authorized World API-key UI;
+  credential value and one-time login token are omitted from this transcript.
+
+[17:37] REAL GENERATION
+Prompt:
+  请生成一个咖啡店落地页，包含品牌标题、三项特色、营业时间和立即预订按钮。
+Result:
+  DeepSeek returned a json-render page headed “Brew & Bean”.
+  Rendered node count: 152
+  Surface/spec SHA-256:
+    c7a876fa35d259d0ac290dece3a7b81f27d6ee04ac1d820bd868adccc6f7f026
+Evidence:
+  01-deepseek-generated-page.png
+
+[17:38] SECOND PROMPT / EDIT
+Prompt intent:
+  将标题改为“山岚咖啡”，并将 CTA 改为“预约座位”。
+Result:
+  Existing live page changed to “山岚咖啡”; CTA changed to “预约座位”.
+  Rendered node count: 152
+  Surface/spec SHA-256 after edit:
+    d9f3adaf660d899486fb20bb5b9556d65b09dfed2a3e9a4fee065808808f15bb
+  Hash changed from the first generation, proving an edited surface revision.
+Evidence:
+  02-deepseek-patch-page.png
+
+[17:43] CONCIERGE READ-ONLY TURN
+Question:
+  这个咖啡店周日几点营业？请只根据当前页面回答，不要修改页面。
+Persisted concierge answer:
+  周日营业时间为9:00 - 18:00。
+Mutation check:
+  Surface/spec SHA-256 before concierge:
+    d9f3adaf660d899486fb20bb5b9556d65b09dfed2a3e9a4fee065808808f15bb
+  Surface/spec SHA-256 after concierge:
+    d9f3adaf660d899486fb20bb5b9556d65b09dfed2a3e9a4fee065808808f15bb
+  Result: unchanged; concierge did not mutate the page.
+Evidence:
+  03-concierge-read-only.png
+Note:
+  The current customer SPA did not live-refresh the message list during this
+  capture. The answer was verified in the persisted server-side response; the
+  screenshot companion therefore proves the unchanged rendered surface while
+  this transcript records the response and exact hash check.
+
+[17:46] ANONYMOUS PUBLIC VIEW
+Fresh browser viewer state:
+  member=false
+  logged_in=false
+Result:
+  The same 152-node “山岚咖啡” page was visible. Delegation remained login
+  gated (“登录并交给 Kanban”), so the anonymous visitor received no write path.
+Evidence:
+  04-anonymous-public-view.png
+
+[17:46] SPEC AND CATALOG VALIDATION
+Exported live spec validation:
+  EzagentPluginHello.Spec.validate/1 -> {:ok, validated_spec}
+Backend catalog component count:
+  36
+Live component types used:
+  13, all present in the shipped catalog
+Result:
+  The generated and edited live surface stays inside the exact 36-component
+  contract.
+
+[17:47] HELLO -> KANBAN DELEGATION
+Delegation result:
+  board_uri=entity://system/agent/hello-kanban
+  node_id=n7
+  status=待派
+  source_session=/hello/fusion-live-0715
+Consistency checks:
+  A real node existed in the Kanban tree with the delegated task title.
+  The Hello surface hash stayed
+    d9f3adaf660d899486fb20bb5b9556d65b09dfed2a3e9a4fee065808808f15bb
+  before and after delegation.
+Evidence:
+  05-kanban-receipt.png
+  06-world-kanban-node.png
+
+[17:53] RECORDING COMPANION
+File:
+  hello-live-deepseek-kanban.webm
+Media metadata:
+  duration=31.44 seconds
+  resolution=1440x900
+  frame_rate=25 fps
+Privacy review:
+  The one-time login token region is blurred. No API credential is displayed.
+
+Scope note:
+  This run proves the real DeepSeek Hello loop and the existing stable,
+  loose-coupled Hello-to-Kanban delegation reference. It does not claim
+  cross-session sharing, bidirectional binding, Hello-side task editing, or
+  #1360 Layer B mounting.
