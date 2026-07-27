@@ -88,6 +88,123 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
     end
   end
 
+  describe "collect/1 rejects filesystem-shape violations" do
+    test "rejects a symlink even when it points inside the worktree", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      target = Path.join(worktree_path, "README.md")
+      link = Path.join(worktree_path, "shortcut.md")
+      File.ln_s!(target, link)
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a deleted tracked file", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      File.rm!(Path.join(worktree_path, "README.md"))
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a rename (seen as a delete plus an untracked add, since V1 disables rename detection)",
+         %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      old_path = Path.join(worktree_path, "README.md")
+      new_path = Path.join(worktree_path, "RENAMED.md")
+      File.rename!(old_path, new_path)
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects an executable mode change on an otherwise-unmodified file", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      File.chmod!(Path.join(worktree_path, "README.md"), 0o755)
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects content containing an embedded NUL byte, even though it is valid UTF-8", %{
+      root: root
+    } do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      File.write!(Path.join(worktree_path, "binary.dat"), "abc" <> <<0>> <> "def")
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects content that is not valid UTF-8", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      File.write!(Path.join(worktree_path, "invalid_utf8.dat"), <<255, 254, 253>>)
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a reported path that is a directory — the shape a submodule mount takes", %{
+      root: root
+    } do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      vendor = Path.join(worktree_path, "vendor")
+      File.mkdir_p!(vendor)
+      File.write!(Path.join(vendor, "nested.txt"), "not part of the parent tree\n")
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :provisioner_test_collect_status_result,
+        {:ok, [%{path: "vendor", index_status: "?", worktree_status: "?"}]}
+      )
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a relative path that climbs out of the worktree", %{root: root} do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :provisioner_test_collect_status_result,
+        {:ok, [%{path: "../../etc/passwd", index_status: "?", worktree_status: "?"}]}
+      )
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects an absolute path reported in place of a worktree-relative one", %{root: root} do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :provisioner_test_collect_status_result,
+        {:ok, [%{path: "/etc/passwd", index_status: "?", worktree_status: "?"}]}
+      )
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+  end
+
   defp ready_fixture!(root, suffix \\ "one") do
     origin = local_origin!(root)
     workspace = "change-collector-#{suffix}-#{System.unique_integer([:positive])}"
