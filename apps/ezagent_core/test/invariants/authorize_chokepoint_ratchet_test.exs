@@ -230,17 +230,26 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # ACCESS: read-plane predicates that decide visibility off loaded caps —
         # M-1 folds the membership predicate into authorize/3.
         "apps/ezagent_domain_session/lib/ezagent/session/membership_predicate.ex",
-        "apps/ezagent_domain_session/lib/ezagent/socialware/board_provision.ex",
         "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_admission.ex",
         "apps/ezagent_domain_socialware/lib/ezagent/socialware/session_reads.ex",
         "apps/ezagent_domain_workspace/lib/ezagent/workspace/workspace_reads.ex",
         "apps/ezagent_plugin_world/lib/ezagent/world/presenter_caps.ex",
         "apps/ezagent_plugin_world/lib/ezagent/world/user_data.ex",
         # ctx/display: CLI + web load the caller's caps to build a dispatch ctx.
+        # ctx: kanban dispatch 探针(session_holds_board_cap? / person_read_mount?)load
+        # grantee caps 装进 dispatch ctx envelope;cap 授权仍落 dispatch 的 authorize/3。
+        "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/board_provision.ex",
+        "apps/ezagent_plugin_kanban/lib/ezagent_plugin_kanban/world_share_actions.ex",
         "apps/ezagent_cli/lib/ezagent_cli/exec.ex",
         "apps/ezagent_domain_agent/lib/ezagent/domain/agent.ex",
         "apps/ezagent_web/lib/ezagent_web/controllers/api_v1_controller.ex",
-        "apps/ezagent_web/lib/ezagent_web/live_auth.ex"
+        "apps/ezagent_web/lib/ezagent_web/live_auth.ex",
+        # ctx: #1457 strict signing 后 runtime 不再从 caller IDENTITY ambient 装载
+        # caps,空 ctx caps 会让合法 :attach 持有者被 :missing_cap 拒。该控制器在
+        # transport ingress 处装载 caller 的 durable caps 作 presenter bundle 呈交,
+        # 授权判定仍全在 Kind chokepoint(控制器不检查/枚举 cap 语义)——与同组的
+        # `live_auth.ex` / `api_v1_controller.ex` 同一类,非 ACCESS 判定点。
+        "apps/ezagent_web/lib/ezagent_web/controllers/world_uploads_controller.ex"
       ]
     },
     %{

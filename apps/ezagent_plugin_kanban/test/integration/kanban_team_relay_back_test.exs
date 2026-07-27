@@ -13,7 +13,7 @@ defmodule EzagentPluginKanban.Integration.KanbanTeamRelayBackTest do
   `kanban-assistant` and `dev-together`. Both materialize and join the session.
   There is NO board role-slot: installing the socialware does NOT auto-spawn a
   board nor mint board caps at materialize. The board + the assistant's operate
-  keys are provisioned at RUNTIME by `Ezagent.Socialware.BoardProvision.create_board`
+  keys are provisioned at RUNTIME by `EzagentPluginKanban.BoardProvision.create_board`
   (T4a, covered end-to-end by `board_provision_grant_test.exs`). This test asserts
   that install ≠ auto board, then focuses on the `__done__` relay routing.
 

@@ -1,6 +1,6 @@
 defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   @moduledoc """
-  T4a acceptance —— 运行时"建板"入口 `Ezagent.Socialware.BoardProvision.create_board/5`:
+  T4a acceptance —— 运行时"建板"入口 `EzagentPluginKanban.BoardProvision.create_board/5`:
   会话内建出一块 kanban board(kanban-manager × native agent),归属 = 触发建板的 owner,
   并当场用 `CompositionCaps.mint_cap/4` 给**本 session 的 kanban-assistant** 发一把指向
   这块新板的 Kanban 操作钥匙(全 20 动作)。
@@ -21,8 +21,7 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
-  alias Ezagent.Socialware.BoardProvision
-  alias Ezagent.Socialware.MountRow
+  alias EzagentPluginKanban.BoardProvision
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t4a-native"
@@ -71,24 +70,15 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
   test "chat 建板: 建出 board(owner=触发者) + 当场给本 session 的 kanban-assistant 发操作钥匙",
        %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
     skip_if_no_entity_spawn(fn ->
-      # --- owner = 常规用户(会话 owner / 建板触发者),持 create_agent 权 ----------
+      # --- owner = 常规用户(会话 owner / 建板触发者)。⑥ 后**不再预授 create_agent**:
+      # 建板授权由 create_board 内的一次性 provision authority(#1457 后经
+      # `{:admin, admin_uri}` 具名签发;成员守卫 + passive flavor 白名单),本测试即证明
+      # 「普通成员零 create_agent cap 也能建板」这条产品路。
       owner_uri =
         URI.new!("entity://#{ws_name}/user/board-owner-#{System.unique_integer([:positive])}")
 
-      create_cap =
-        Ezagent.Capability.cap(
-          :workspace,
-          Ezagent.ActionSet.Workspace,
-          :create_agent,
-          workspace_uri,
-          workspace_uri
-        )
-
-      create_cap =
-        Ezagent.Test.CapHelper.signed_cap!(workspace_uri, owner_uri, create_cap)
-
-      assert {:ok, _row} =
-               Ezagent.Users.create(owner_uri, "test-password", [create_cap])
+      {:ok, _owner_pid} =
+        Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new()})
 
       assert :ok = Ezagent.Entity.spawn_principal(owner_uri)
       on_exit(fn -> Ezagent.Kind.terminate(owner_uri) end)
@@ -118,10 +108,19 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
 
       :ok = join_member(session_uri, assistant_uri, "kanban-assistant", admin_ctx)
 
+      # ⑥ 成员守卫:建板人必须是本 session 成员(collab 模型「编辑 session 成员可建板」)。
+      :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
+
       # --- T4a 入口:建板 + 发钥匙 ----------------------------------------------
       board_name = "board-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{board_uri: board_uri, assistant_uri: minted_to, minted: minted}} =
+      assert {:ok,
+              %{
+                board_uri: board_uri,
+                assistant_uri: minted_to,
+                minted: minted,
+                creator_minted: creator_minted
+              }} =
                BoardProvision.create_board(
                  workspace_uri,
                  session_uri,
@@ -151,11 +150,9 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       assert length(minted) == length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
       assert Enum.all?(minted, &(URI.to_string(&1.granted_by) == URI.to_string(owner_uri)))
 
-      # 挂载落表:本 session 有指向新板的 operate 挂载行(建板 = operate)
-      board_mount = MountRow.get(session_uri, board_uri, assistant_uri, Ezagent.ActionSet.Kanban)
-      assert board_mount != nil
-      assert board_mount.access == "operate"
-      assert Enum.any?(MountRow.list_for_session(session_uri), &(&1.id == board_mount.id))
+      # 发钥匙不落挂载表:assistant 的 durable caps(`Ezagent.EntityCaps.load/1`)里
+      # 含指向新板的 Kanban behavior cap,operate = 持写动作(:add_node)
+      assert eventually(fn -> holds_durable_board_cap?(assistant_uri, board_uri, :add_node) end)
 
       # (b) assistant 持指向该新板的实例精确 add_node cap
       assert eventually(fn -> holds_board_cap?(assistant_uri, board_uri, :add_node) end)
@@ -165,13 +162,31 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
       assert minted_add.instance == Ezagent.URI.instance(board_uri)
       refute minted_add.instance == :any
 
-      # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
-      # canonical admin 经 board K.grant 播根 → assistant 认领根 → assistant 在自己认领的
-      # 节点下 add_node 子 = 真正成功。
-      assert {:ok, %{id: "n1"}} =
-               dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
+      # --- 分层债 ⑧:建板人(creator human)也当场拿到指向新板的 operate 钥匙 -------
+      # 之前只给 assistant 发钥匙,建板的人类只持 Manage cap(管 agent 生命周期),
+      # 读写自己的板全 unauthorized。修复后 create_board 给 creator 也 mount 一把
+      # 全动作 operate cap(granter = 板主人自己,{:held_by, creator} 自路径)。
+      assert length(creator_minted) ==
+               length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
 
-      assert {:ok, %{}} = dispatch_as(assistant_uri, board_uri, :claim_node, %{id: "n1"})
+      assert Enum.all?(
+               creator_minted,
+               &(URI.to_string(&1.granted_by) == URI.to_string(owner_uri))
+             )
+
+      # creator 持实例精确 operate cap,且 durable(EntityCaps.load 可见,不查挂载表):
+      # operate = 持写动作(:add_node),read 面 = 持 :get_tree
+      assert eventually(fn -> holds_board_cap?(owner_uri, board_uri, :add_node) end)
+      assert eventually(fn -> holds_durable_board_cap?(owner_uri, board_uri, :add_node) end)
+      assert eventually(fn -> holds_durable_board_cap?(owner_uri, board_uri, :get_tree) end)
+
+      # creator 自身份 dispatch 读/写自己的板成功(⑧ 的直接验收:owner 不再 unauthorized)
+      assert {:ok, _tree} = dispatch_as(owner_uri, board_uri, :get_tree, %{})
+
+      # (c) assistant 自身份 dispatch kanban.add_node 到新板成功(经 minted 钥匙)。
+      # 新协作模型：加节点自动认领 —— assistant 自身份加根(自动认领)再在自己节点下加子 = 真正成功。
+      assert {:ok, %{id: "n1"}} =
+               dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "根"})
 
       assert {:ok, %{id: child_id}} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "n1", title: "子"})
@@ -188,6 +203,79 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
 
       assert {:error, :missing_cap} =
                dispatch_as(assistant_uri, unrelated, :add_node, %{parent_id: "", title: "x"})
+    end)
+  end
+
+  @tag :integration
+  test "⑳ 无 assistant 会话建板成功: assistant 钥匙降级为增强,建板人钥匙照发",
+       %{ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx} do
+    skip_if_no_entity_spawn(fn ->
+      owner_uri =
+        URI.new!("entity://#{ws_name}/user/no-assist-#{System.unique_integer([:positive])}")
+
+      {:ok, _owner_pid} =
+        Ezagent.Kind.spawn(User, %{uri: owner_uri, initial_caps: MapSet.new()})
+
+      owner_ctx = %{caller: owner_uri, caps: Ezagent.Identity.list_caps_for(owner_uri)}
+
+      # session 里**没有** kanban-assistant 成员(只有建板人自己)。
+      session_uri =
+        URI.new!("session://#{ws_name}/default/t4a-na-#{System.unique_integer([:positive])}")
+
+      {:ok, _sess_pid} =
+        Ezagent.Kind.spawn(Ezagent.Entity.Session, %{
+          uri: session_uri,
+          behaviors: Ezagent.Entity.Session.behaviors(),
+          owner_uri: owner_uri
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+      on_exit(fn -> Ezagent.Kind.terminate(session_uri) end)
+      :ok = join_member(session_uri, owner_uri, "member", admin_ctx)
+
+      board_name = "board-na-#{System.unique_integer([:positive])}"
+
+      # ⑳:resolve_assistant 失败不再整体 fail —— assistant 钥匙跳过(nil / []),
+      # 主链(建宿主 + 建板人钥匙)照走。
+      assert {:ok,
+              %{
+                board_uri: board_uri,
+                assistant_uri: nil,
+                minted: [],
+                creator_minted: creator_minted
+              }} =
+               BoardProvision.create_board(
+                 workspace_uri,
+                 session_uri,
+                 %{
+                   name: board_name,
+                   board_role: "kanban-manager",
+                   flavor: @flavor,
+                   assistant_role: "kanban-assistant"
+                 },
+                 Ezagent.ActionSet.Kanban,
+                 owner_ctx
+               )
+
+      # 板存在 + 归属建板人
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(board_uri)
+
+      assert URI.to_string(
+               Ezagent.CapabilityRegistry.data_owner_of(
+                 Ezagent.ActionSet.Kanban,
+                 Ezagent.URI.instance(board_uri)
+               )
+             ) == URI.to_string(owner_uri)
+
+      # 建板人钥匙照发(plugin 基线):全动作 + durable cap(EntityCaps.load)+ 真 dispatch 通
+      assert length(creator_minted) ==
+               length(Ezagent.ActionSet.action_names(Ezagent.ActionSet.Kanban))
+
+      assert eventually(fn -> holds_durable_board_cap?(owner_uri, board_uri, :add_node) end)
+      assert eventually(fn -> holds_durable_board_cap?(owner_uri, board_uri, :get_tree) end)
+
+      assert eventually(fn -> holds_board_cap?(owner_uri, board_uri, :add_node) end)
+      assert {:ok, _tree} = dispatch_as(owner_uri, board_uri, :get_tree, %{})
     end)
   end
 
@@ -306,6 +394,17 @@ defmodule EzagentPluginKanban.E2E.BoardProvisionGrantTest do
 
   defp holds_board_cap?(grantee, board_uri, action) do
     Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+      cap.kind == :agent and cap.behavior == Ezagent.ActionSet.Kanban and
+        cap.action == action and
+        cap.instance == Ezagent.URI.instance(board_uri)
+    end)
+  end
+
+  # durable 面:钥匙 absorb 进 grantee 的 identity slice(重启不丢),
+  # 读 `Ezagent.EntityCaps.load/1` 反查是否持指向该板的 Kanban behavior cap。
+  # read = 含 :get_tree;operate = 含写动作(如 :add_node)。
+  defp holds_durable_board_cap?(grantee, board_uri, action) do
+    Enum.any?(Ezagent.EntityCaps.load(grantee), fn cap ->
       cap.kind == :agent and cap.behavior == Ezagent.ActionSet.Kanban and
         cap.action == action and
         cap.instance == Ezagent.URI.instance(board_uri)

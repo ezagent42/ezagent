@@ -22,7 +22,7 @@ defmodule EzagentPluginKanban.Application do
   路径（`Workspace.create_agent` flavor `native` × role `kanban-manager`），20 个 kanban
   behaviors 经 RF-1 在通用 `Entity.Agent` 宿主上 per-instance 加载。dispatch 到没 live 的
   agent 经 `SpawnRegistry.spawn` 从快照 rehydrate 起活（world 读模型在 dispatch 前
-  `KanbanData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
+  `EzagentPluginKanban.WorldData.ensure_spawned/1`，保 dormant 的 passive kanban-manager 复活）。
   """
 
   use Application
@@ -72,9 +72,9 @@ defmodule EzagentPluginKanban.Application do
   # `RecipeRegistry.register/1` 在 boot 时登记（作者只声明、框架代登记）。
   #
   #   * `behaviors: [Ezagent.ActionSet.Kanban]` —— **仅** Kanban。`Connectors`
-  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 20 个动作（含 5 个
-  #     连接器动作：register_pr/attach_code_file/sync_miro/set_board_config/save_miro_creds，
-  #     GitHub 主动连接器已删）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
+  #     不是 Behavior（无 `use Lifecycle` / 无 `actions/0`）；全部 18 个动作（含 3 个
+  #     连接器动作：sync_miro/set_board_config/save_miro_creds，GitHub 集成已整体移出
+  #     kanban）都在 `lib/ezagent/behavior/kanban.ex` 经 `action/3` 声明、
   #     薄转发给 `Connectors`，故全经 `Behavior.Kanban` 解析（RF-1 `BehaviorSet.resolve_action`）。
   #   * `requested_caps` = 每个动作一个 **cap-template map** `%{behavior:, action:}`
   #     —— 不是裸 atom（`Recipe.new/1` 的 `canon_cap` 拒非 map），也不带 `kind`（kind 是
@@ -202,13 +202,39 @@ defmodule EzagentPluginKanban.Application do
           state_builder: EzagentPluginKanban.WorldData
         },
         actions:
-          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board),
+          ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.share_board kanban.share_to_session kanban.request_edit kanban.approve_edit kanban.receive_shared kanban.delete_board),
         actions_module: EzagentPluginKanban.WorldActions,
         renderer: %{
           source: "assets/src/world_page.tsx",
           export: "KanbanWorldPage",
           full_bleed: true
-        }
+        },
+        # world 通用链接 unfurl（#1569）：chat 消息命中 pattern（正则 source，JS 侧
+        # `new RegExp/1` 编译）时渲成本插件的气泡组件（`unfurl_bubbles.tsx`），
+        # 点击动作走 world:dispatch。两条：
+        #   * kanban_share —— `KanbanActions.build_share_link` 生成的
+        #     `/socialware/kanban/receive?token=...` 接收链接（㉙「分享到会话」物化
+        #     的消息与手工粘贴走同一条渲染路）→「加入我的看板」气泡。
+        #   * kanban_request_edit —— 规则8 `kanban.request_edit` 物化的
+        #     `/plugins/kanban/request-edit?board=..&grantee=..` 伪链接 →
+        #     「批准编辑」气泡（授权在后端，按钮只是入口）。
+        unfurl: [
+          %{
+            id: "kanban_share",
+            pattern:
+              "(?:https?://[^\\s\"'）)]*)?/socialware/kanban/receive\\?token=[A-Za-z0-9._~%-]+",
+            renderer: %{source: "assets/src/unfurl_bubbles.tsx", export: "KanbanShareBubble"}
+          },
+          %{
+            id: "kanban_request_edit",
+            pattern:
+              "(?:https?://[^\\s\"'）)]*)?/plugins/kanban/request-edit\\?[A-Za-z0-9._~%=&-]+",
+            renderer: %{
+              source: "assets/src/unfurl_bubbles.tsx",
+              export: "KanbanRequestEditBubble"
+            }
+          }
+        ]
       }
     ]
   end

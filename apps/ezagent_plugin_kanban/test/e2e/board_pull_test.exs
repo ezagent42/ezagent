@@ -1,6 +1,6 @@
 defmodule EzagentPluginKanban.E2E.BoardPullTest do
   @moduledoc """
-  T5a acceptance —— 跨房间"拉板"入口 `Ezagent.Socialware.BoardProvision.pull_board/4`:
+  T5a acceptance —— 跨房间"拉板"入口 `EzagentPluginKanban.BoardProvision.pull_board/4`:
   把一块**已存在**的板(owner=alice)拉进另一个 session B → B 的 kanban-assistant 拿到
   指向这块板的操作钥匙 → 能跨 session 操作它(数据跨 session 共享、板不进群、URI 寻址)。
 
@@ -19,8 +19,7 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
   alias Ezagent.{AgentFlavorRegistry, Agent.RecipeRegistry, Invocation}
-  alias Ezagent.Socialware.BoardProvision
-  alias Ezagent.Socialware.MountRow
+  alias EzagentPluginKanban.BoardProvision
   alias EzagentPluginKanban.Application, as: KanbanApp
 
   @flavor "t5a-native"
@@ -101,11 +100,10 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
                &(URI.to_string(&1.granted_by) == URI.to_string(alice_ctx.caller))
              )
 
-      # 挂载落表:session B 有指向该板的 operate 挂载行(拉板 = operate)
-      pull_mount = MountRow.get(session_b, board_uri, assistant_uri, Ezagent.ActionSet.Kanban)
-      assert pull_mount != nil
-      assert pull_mount.access == "operate"
-      assert Enum.any?(MountRow.list_for_session(session_b), &(&1.id == pull_mount.id))
+      # 发钥匙不落表:B assistant 的 durable caps 里有指向该板的钥匙。
+      # 拉板 = operate → 既持读动作(:get_tree)也持写动作(:add_node)。
+      assert eventually(fn -> holds_durable_board_cap?(assistant_uri, board_uri, :get_tree) end)
+      assert eventually(fn -> holds_durable_board_cap?(assistant_uri, board_uri, :add_node) end)
 
       # (a) assistant 持指向该板的实例精确 add_node cap
       assert eventually(fn -> holds_board_cap?(assistant_uri, board_uri, :add_node) end)
@@ -116,10 +114,9 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
       refute minted_add.instance == :any
 
       # (a) assistant 自身份跨 session dispatch kanban.add_node 到该板成功(经 minted 钥匙)。
+      # 新协作模型：加节点自动认领 —— assistant 自身份加根(自动认领)再在自己节点下加子。
       assert {:ok, %{id: "n1"}} =
-               dispatch(board_uri, :add_node, %{parent_id: "", title: "根"}, admin_ctx)
-
-      assert {:ok, %{}} = dispatch_as(assistant_uri, board_uri, :claim_node, %{id: "n1"})
+               dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "", title: "根"})
 
       assert {:ok, %{id: child_id}} =
                dispatch_as(assistant_uri, board_uri, :add_node, %{parent_id: "n1", title: "子"})
@@ -129,7 +126,8 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
       # (b) bob(非板主人)拉同一块板 → 拒。
       bob_ctx = %{
         caller: URI.new!("entity://#{ws_name}/user/bob-#{System.unique_integer([:positive])}"),
-        caps: MapSet.new()
+        caps: MapSet.new(),
+        assistant_role: "kanban-assistant"
       }
 
       bob_ctx = Map.put(bob_ctx, :authenticated_principal, bob_ctx.caller)
@@ -204,7 +202,11 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
     assert :ok = Ezagent.Entity.spawn_principal(user_uri)
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
 
-    Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, user_uri)
+    # 深扫 2026-07-16(默认值上提):assistant_role 业务字面归调用方 —— caller_ctx 显式带。
+    # ctx 底座走 #1457 的 signed_workspace_ctx!(per-Kind 签名 workspace cap)。
+    workspace_uri
+    |> Ezagent.Test.CapHelper.signed_workspace_ctx!(user_uri)
+    |> Map.put(:assistant_role, "kanban-assistant")
   end
 
   # 建一块板,owner = ctx.caller(create_agent 记 lineage → data_owner)。
@@ -336,6 +338,15 @@ defmodule EzagentPluginKanban.E2E.BoardPullTest do
       caller: caller_uri,
       caps: MapSet.new(Ezagent.Identity.list_caps_for(caller_uri))
     })
+  end
+
+  # 发钥匙断言(标杆范式):grantee 的 durable caps(EntityCaps.load)里有指向该板的
+  # Kanban action cap。read = 持 :get_tree;operate = 还持写动作(如 :add_node)。
+  defp holds_durable_board_cap?(grantee, board_uri, action) do
+    Enum.any?(Ezagent.EntityCaps.load(grantee), fn cap ->
+      cap.behavior == Ezagent.ActionSet.Kanban and cap.action == action and
+        cap.instance == Ezagent.URI.instance(board_uri)
+    end)
   end
 
   defp holds_board_cap?(grantee, board_uri, action) do

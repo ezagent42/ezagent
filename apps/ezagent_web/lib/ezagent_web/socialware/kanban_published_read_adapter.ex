@@ -5,7 +5,7 @@ defmodule EzagentWeb.Socialware.KanbanPublishedReadAdapter do
 
   The adapter never copies board contents or mints capabilities. Receiving the
   signed reference remains the responsibility of `KanbanShareController`,
-  which mounts the original board read-only through `Ezagent.Socialware.Mount`.
+  which mints a read-only capability to the receiver for the original board.
   """
 
   @behaviour EzagentPluginHello.KanbanPublishedRead

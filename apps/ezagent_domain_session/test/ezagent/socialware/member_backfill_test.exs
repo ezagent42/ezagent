@@ -3,20 +3,22 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
   D1 join 补发 —— `Ezagent.Socialware.MemberBackfill.backfill/2`(唯一的
   「入会确认后补发」共享 caller-side helper)。
 
-  盖 handoff DoD 的 helper 单测三件套:
+  盖 handoff DoD 的 helper 单测:
 
-    * 补发本体:confirmed 成员拿到 ① session declared views 的 render cap
-      (granter = session owner 路,#1457)② 挂载表 `:operate`
-      行的 person keys(`Mount.mount` 同路)。
-    * 幂等:重复调用不重复发(cap 不翻倍、挂载行仍 1 行)。
-    * `:read` 行不扩散;单行失败不牵连其余行、永不 raise;
-      unconfirmed(anon)成员只拿 participation tier。
+    * 补发本体:confirmed 成员拿到 session declared views 的 render cap
+      (granter = session owner 路,#1457)。
+    * **不发数据宿主钥匙**(板跟人走):入会不补发指向 data-host agent
+      (如看板)的 behavior cap —— 编辑权只来自 owner 本人 mint 或被分享,
+      不来自"是这个会话的成员"。
+    * 幂等:重复调用不重复发(cap 不翻倍)。
+    * 口径边界:unconfirmed(anon)成员只拿 participation tier;
+      agent 成员整体 no-op。
   """
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Socialware.{Definition, DefinitionRegistry, Installation, MemberBackfill}
-  alias Ezagent.Socialware.{Mount, MountRow}
+  alias Ezagent.Socialware.{CompositionCaps, Definition, DefinitionRegistry, Installation}
+  alias Ezagent.Socialware.MemberBackfill
 
   alias EzagentDomainInstanceMessage.CompositionGrantTargetBehavior, as: Target
 
@@ -161,10 +163,14 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
     end)
   end
 
-  defp mount_caps_of(member, target) do
-    Enum.filter(Ezagent.Identity.list_caps_for(member), fn cap ->
-      match?(%Ezagent.Capability{}, cap) and cap.kind == :agent and
-        cap.behavior == Target and cap.instance == Ezagent.URI.instance(target)
+  # 数据宿主钥匙口径:grantee 的 durable caps 里指向 target 的 behavior cap
+  # (read=含 :get_tree,operate=含写动作如 :add_node)。
+  defp data_host_caps_of(grantee, target) do
+    target_instance = Ezagent.URI.instance(target)
+
+    Enum.filter(Ezagent.EntityCaps.load(grantee), fn cap ->
+      match?(%Ezagent.Capability{}, cap) and cap.behavior == Target and
+        cap.instance == target_instance
     end)
   end
 
@@ -180,18 +186,17 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
     end
   end
 
-  describe "backfill/2 — confirmed 成员的三段补发" do
-    test "补发 declared-view render cap + 挂载表 :operate 行的 person keys" do
+  describe "backfill/2 — confirmed 成员" do
+    test "补发 declared-view render cap;不发数据宿主钥匙(板跟人走)" do
       owner = confirmed_user("owner")
       session = live_session()
       _ = install_view_definition(session)
 
-      # 既有挂载:owner 建的板(target),operate 行 grantee = 助手 agent。
+      # 既有的板(data-host agent):owner 的助手持 operate 钥匙(mint_cap 路)。
       assistant = live_agent("assistant", owner)
       board = live_agent("board", owner, [Target])
 
-      {:ok, _} =
-        Mount.mount(session, board, assistant, Target, [:add_node, :get_tree], access: :operate)
+      {:ok, _caps} = CompositionCaps.mint_cap(assistant, board, Target, [:add_node, :get_tree])
 
       member = confirmed_user("member")
       :ok = join_member(session, member)
@@ -205,104 +210,40 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
       assert view_cap.action == :member_render
       assert view_cap.instance == Ezagent.URI.instance(session)
 
-      # ② mount operate keys:member 有自己的 operate 挂载行 + 两把 person keys
-      row = MountRow.get(session, board, member, Target)
-      assert %MountRow{access: "operate"} = row
-      assert eventually(fn -> length(mount_caps_of(member, board)) == 2 end)
-
-      # 钥匙 granter = 板 data_owner(#154)
-      assert Enum.all?(
-               mount_caps_of(member, board),
-               &(URI.to_string(&1.granted_by) == URI.to_string(owner))
-             )
+      # ② 板跟人走:入会不补发指向数据宿主的钥匙
+      assert data_host_caps_of(member, board) == [],
+             "joining a session must NOT grant data-host (board) keys"
     end
 
-    test "幂等:重复调用不重复发(cap 不翻倍、挂载行仍 1 行)" do
-      owner = confirmed_user("owner")
+    test "幂等:重复调用不重复发(cap 不翻倍)" do
       session = live_session()
       _ = install_view_definition(session)
-
-      assistant = live_agent("assistant", owner)
-      board = live_agent("board", owner, [Target])
-      {:ok, _} = Mount.mount(session, board, assistant, Target, [:add_node], access: :operate)
 
       member = confirmed_user("member")
       :ok = join_member(session, member)
       assert :ok = MemberBackfill.backfill(session, member)
       assert eventually(fn -> view_caps_of(member) != [] end)
-      assert eventually(fn -> mount_caps_of(member, board) != [] end)
 
       caps_before = Enum.count(Ezagent.Identity.list_caps_for(member))
-      rows_before = length(MountRow.list_for_session(session))
 
       assert :ok = MemberBackfill.backfill(session, member)
 
       assert Enum.count(Ezagent.Identity.list_caps_for(member)) == caps_before,
              "a second backfill must not re-grant (cap churn)"
 
-      assert length(MountRow.list_for_session(session)) == rows_before
       assert length(view_caps_of(member)) == 1
-    end
-
-    test ":read 行不扩散 —— 只读挂载不因入会升格" do
-      owner = confirmed_user("owner")
-      session = live_session()
-
-      viewer = live_agent("viewer", owner)
-      shared = live_agent("shared-board", owner, [Target])
-      {:ok, _} = Mount.mount(session, shared, viewer, Target, [:get_tree], access: :read)
-
-      member = confirmed_user("member")
-      :ok = join_member(session, member)
-      assert :ok = MemberBackfill.backfill(session, member)
-
-      assert MountRow.get(session, shared, member, Target) == nil,
-             "a :read mount row must NOT spread to the new member"
-
-      assert mount_caps_of(member, shared) == []
-    end
-
-    test "单行失败不牵连其余行、backfill 永不 raise" do
-      owner = confirmed_user("owner")
-      session = live_session()
-
-      assistant = live_agent("assistant", owner)
-      good = live_agent("good-board", owner, [Target])
-      {:ok, _} = Mount.mount(session, good, assistant, Target, [:add_node], access: :operate)
-
-      # 直接落一条指向已消失宿主的 operate 行(remint 会 fail-closed)。
-      {:ok, _} =
-        MountRow.upsert(%{
-          session_uri: session,
-          target_uri: "entity://composition/agent/gone-#{uniq()}",
-          grantee_uri: URI.to_string(assistant),
-          behavior: Target,
-          actions: [:add_node],
-          access: :operate,
-          granted_by: URI.to_string(owner),
-          workspace_uri: "workspace://composition"
-        })
-
-      member = confirmed_user("member")
-      :ok = join_member(session, member)
-      assert :ok = MemberBackfill.backfill(session, member)
-
-      # 好板照发,坏行只计 failed
-      assert eventually(fn -> MountRow.get(session, good, member, Target) != nil end)
-
-      assert {:ok, %{failed: 1, skipped: 1}} = Mount.backfill_member_mounts(session, member)
     end
   end
 
   describe "backfill/2 — 口径边界" do
-    test "unconfirmed(anon)成员:只有 participation tier,无 view cap、无挂载钥匙" do
+    test "unconfirmed(anon)成员:只有 participation tier,无 view cap、无数据宿主钥匙" do
       owner = confirmed_user("owner")
       session = live_session()
       _ = install_view_definition(session)
 
       assistant = live_agent("assistant", owner)
       board = live_agent("board", owner, [Target])
-      {:ok, _} = Mount.mount(session, board, assistant, Target, [:add_node], access: :operate)
+      {:ok, _caps} = CompositionCaps.mint_cap(assistant, board, Target, [:add_node])
 
       anon = unconfirmed_user("viewer")
       :ok = join_member(session, anon)
@@ -318,7 +259,7 @@ defmodule Ezagent.Socialware.MemberBackfillTest do
              "anon must still get the read-only participation tier"
 
       assert view_caps_of(anon) == []
-      assert MountRow.get(session, board, anon, Target) == nil
+      assert data_host_caps_of(anon, board) == []
     end
 
     test "agent 成员:整体 no-op(participation mount 对 agent 也是 no-op)" do

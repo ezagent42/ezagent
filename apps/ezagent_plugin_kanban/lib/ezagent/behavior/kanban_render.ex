@@ -21,7 +21,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
       `external_tree/1` 是 per-session 读入口 —— board 是 workspace 级 actor
       （非 session 成员，S2 建模修正），按 session 的 workspace 经
       `Agent.RecipeResolver.list_by_recipe("kanban-manager", ws)` 枚举（快照来源，
-      覆盖 dormant；`Ezagent.World.KanbanData.list_instances` 同款），取首个
+      覆盖 dormant；`EzagentPluginKanban.WorldData.list_instances` 同款），取首个
       board 读它的 `:kanban` slice。**零写**：无 `{:set, ...}`、无 dispatch 写
       action —— 这是投影，不是操作面（操作面是 pm 持 kanban action caps 对 board
       URI dispatch）。
@@ -94,7 +94,7 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   ## Task 2 —— read-side CBAC 收敛：为何这里不按 caller 权属过滤（需确认边界）
 
-  world 的"发现"列表（`Ezagent.World.KanbanData.list_instances/1`）已按 caller
+  world 的"发现"列表（`EzagentPluginKanban.WorldData.list_instances/1`）已按 caller
   own/持 cap 收敛（admin 见全 ws）。本入口是 **另一条读面**：SessionView 的
   `external_render/1` json-render 投影，其契约签名只有 `session_uri`
   （`Ezagent.UI.SessionView` `@callback external_render(session_uri :: URI.t())`）
@@ -190,15 +190,13 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   defp sort_cards(cards), do: Enum.sort_by(cards, &{&1["order"] || 0, &1["id"]})
 
-  # board 的 `:kanban` slice 里的 tree（真相源）。dormant board 先经核心 owner-gated
-  # chokepoint `LocalRuntime.ensure_started/1` 起活（kanban_data.ensure_spawned 同款,
-  # HIGH-3 liveness），再 live-only read（§2.2 `Kind.read/3`, `spawn: :never`）；
-  # 任何失败退 nil → 空列投影（fail-safe）。
+  # board 的 `:kanban` slice 里的 tree（真相源）。走 actor-framework 公共 durable 读面
+  # `Kind.read_durable/3`（§2.2 冷读面，直读 KindSnapshot 快照、不唤醒 dormant board——
+  # 渲染是只读投影，无需起活；替代原先 `ensure_started` + 内部 `get_slice` 裸读）。
+  # 返回 `{:ok, slice, meta}`；无快照/无 tree 退 nil → 空列投影（fail-safe）。
   defp board_slice_tree(_session_uri, %URI{} = board_uri) do
-    _ = Ezagent.LocalRuntime.ensure_started(board_uri)
-
-    case Ezagent.Kind.read(board_uri, :kanban, spawn: :never) do
-      {:ok, %{} = slice} -> Map.get(slice, :tree) || Map.get(slice, "tree")
+    case Ezagent.Kind.read_durable(board_uri, :kanban) do
+      {:ok, %{} = slice, _meta} -> Map.get(slice, :tree) || Map.get(slice, "tree")
       _ -> nil
     end
   rescue

@@ -15,9 +15,12 @@ defmodule EzagentPluginKanban.BoardView do
       元数据（icon 是 lucide 名，world 侧 icon lookup + fallback）。
     * `view_behavior/0 → Ezagent.ActionSet.KanbanRender`：cap-gated（T2-2b），
       `SessionView.authorize_view/3` 检查 caller 持 `{Session, :kanban_render}`。
-    * `applies_to?/1`：本 session 装了 kanban-team Definition 才 true（看
-      installed Definition 的 `views` 含 `KanbanRender`）—— **fail-safe**（任何
-      异常 → false，坏插件不拖垮整个 session 渲染）。
+    * `applies_to?/1`：**D3 tab 恒显**（Allen option a，2026-07-19）——系统装了
+      kanban plugin，**所有 session** 都显示 kanban tab（任何 session URI →
+      true）；被门控的是板内容/钥匙（cap gate + dispatch chokepoint），不是 tab
+      显隐——这也让「分享链接在任何会话点开」有意义。非 session 输入仍 false
+      （fail-safe）。（供给半件：全体登录成员按 plugin 基线发 `kanban_render`
+      cap 归 D1 membership 供给机制，domain 面，随 join/backfill 路走。）
     * `external_render?/0 → true` + `external_render/1`：EXTERNAL json-render
       target（P2 unified view contract），委托 `KanbanRender.external_tree/1`
       （只读 board 投影；无 board → nil = "nothing to render yet"）。
@@ -47,17 +50,11 @@ defmodule EzagentPluginKanban.BoardView do
   @impl true
   def view_behavior, do: KanbanRender
 
+  # D3 tab 恒显（Allen option a，2026-07-19）：任何 session → true，不再按
+  # installed Definition 判（旧读法：installed_definitions 含 KanbanRender 才
+  # true）。非 session 输入 false（fail-safe）。
   @impl true
-  def applies_to?(%URI{} = session_uri) do
-    session_uri
-    |> Ezagent.Socialware.Installation.installed_definitions()
-    |> Enum.any?(fn definition -> KanbanRender in definition.views end)
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
-  end
-
+  def applies_to?(%URI{scheme: "session"}), do: true
   def applies_to?(_), do: false
 
   # P2 — this view declares an EXTERNAL json-render target (the board tree the
@@ -80,7 +77,8 @@ defmodule EzagentPluginKanban.BoardView do
         id="kanban-board-empty"
         class="h-full min-h-64 flex items-center justify-center text-sm text-zinc-500 dark:text-zinc-400"
       >
-        本 workspace 还没有看板 —— 请 owner 在「看板」页（/plugins/kanban）新建。
+        这里还没有看板 —— 在会话的「看板」标签新建一块，或点别人分享的看板链接把它领进来（只读钥匙发给你本人）。
+
       </div>
 
       <div :if={not is_nil(@board_tree)} id="kanban-board-columns" class="flex gap-4 items-start">

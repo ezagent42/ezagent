@@ -34,7 +34,7 @@ defmodule EzagentPluginKanban.KanbanManifestTest do
 
   The `kanban-manager` recipe stays in the plugin's `roles/0` (still `passive:
   true`) so a board can be provisioned at RUNTIME via
-  `Ezagent.Socialware.BoardProvision.create_board` (T4a) — it is just no longer a
+  `EzagentPluginKanban.BoardProvision.create_board` (T4a) — it is just no longer a
   role-slot in this socialware Definition (T4b: install ≠ auto board).
   """
   use ExUnit.Case, async: true

@@ -58,23 +58,17 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   @operator_telemetry_prefix [:ezagent, :agent, :grant_recipe_caps]
   @operator_store_timeout_ms 5_000
 
-  # Role-owning plugins booted best-effort so their `roles/0` recipes register
-  # into `RecipeRegistry` for the lookup below. Atom-only — a no-op if a plugin
-  # is absent from this build (same pattern as `Mix.Tasks.Ezagent.Agent.Create`).
-  #
-  # A role resolves here IFF some booted plugin registered it via `roles/0`. This
-  # list is a RUNTIME atom set (no compile dep) — kanban owns `kanban-manager` (and
-  # the `pm-coordinator` product recipe) via its own `roles/0`, and loads
-  # `Ezagent.ActionSet.Kanban` for the cap-resolve loaded-check. Any role NOT
-  # registered by a booted plugin fails closed at `lookup_recipe/1`
-  # (`{:role_not_registered, role}`) — this task never seeds a role itself.
-  @role_plugins [:ezagent_plugin_kanban]
-
   @impl Mix.Task
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
-    for plugin <- @role_plugins, do: _ = Application.ensure_all_started(plugin)
+
+    # Role-owning plugins (deploy-owned config list, `:role_plugins`) booted
+    # best-effort so their `roles/0` recipes register into RecipeRegistry; a role
+    # fails closed at `lookup_recipe/1` if no booted plugin registered it. This
+    # task never seeds a role itself.
+    for plugin <- Application.get_env(:ezagent_domain_agent, :role_plugins, []),
+        do: _ = Application.ensure_all_started(plugin)
 
     {opts, positional, _} =
       OptionParser.parse(args, strict: [agent_uri: :string])

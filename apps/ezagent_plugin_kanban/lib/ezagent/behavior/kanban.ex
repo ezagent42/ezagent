@@ -16,7 +16,8 @@ defmodule Ezagent.ActionSet.Kanban do
         owner:     user_uri | nil,                      # 认领人; 既问责又是权限闸
         status:    :unassigned|:claimed|:doing|:done,   # 粗4态(细状态归外部工具)
         artifacts: [%{tool,kind,ref,url}],              # 挂工具产物(github PR/飞书文档/xmind…)
-        metrics:   [%{name,target,current,unit}]        # 挂指标(价值/运营节点)
+        metrics:   [%{name,target,current,unit}],       # 挂指标(价值/运营节点)
+        dropped:   boolean                              # ㉕ 非破坏 drop 标(标红跟踪,不删)
       }
 
   ## stage 链 = LAYER-2 DATA（taxonomy §4.1）
@@ -26,9 +27,13 @@ defmodule Ezagent.ActionSet.Kanban do
   本 Behavior 在运行时经 `Shared.stages/1` / `Shared.config_get/3` 读回（read-through over
   `RecipeRegistry`）。这样业务语义不进 layer-1 代码（taxonomy 红线 1+2）。
 
-  ## 权限 = admin + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
-  改一个节点 = `ctx.caller == node.owner` 或 caller 持 wildcard cap(admin)；未认领节点
-  任意成员可 `claim`。**不变式**：`owner==nil ⟺ status==:unassigned`。
+  ## 权限 = board_admin(版主) + 节点 owner（per-node，在 handler 内查；data_owner 是 per-instance）
+  改一个节点 = `ctx.caller == node.owner` 或 caller 是 `board_admin`（本板 data_owner=版主，
+  **或**全局 wildcard cap）——版主可编辑本板任何节点（C2）。加任何节点=自动认领给 caller
+  （H1，单根先行 H5）；退领需空（H3）；**删除**（remove_node）=级联删子树，规则5 授权：
+  board_admin 兜底，否则子树须全「自己认领或未认领」（H2）；**drop**（drop_subtree）=
+  非破坏跟踪标记（㉕）：子树标 `dropped: true` 不删，权限=节点认领人（版主兜底）。
+  **不变式**：`owner==nil ⟺ status==:unassigned`。
   """
 
   use Ezagent.Lifecycle
@@ -48,7 +53,8 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{id: :string},
     caps: [:add_node],
     modes: [:call],
-    description: "新增节点；parent_id=\"\" 建根（建根=admin；加子=父节点owner或admin）"
+    description:
+      "新增节点；parent_id=\"\" 建根（单根：已有根则 :root_exists）。任何成员可加（cap gate 在 dispatch 层）；新节点自动认领给 caller（H1）"
   )
 
   action(:rename_node,
@@ -96,7 +102,7 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{},
     caps: [:unclaim_node],
     modes: [:call],
-    description: "退领(owner=nil,status→unassigned)"
+    description: "退领(owner=nil,status→unassigned)；有内容(artifacts/metrics)不能退(H3)"
   )
 
   action(:set_status,
@@ -136,7 +142,8 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{},
     caps: [:drop_subtree],
     modes: [:call],
-    description: "砍子树(指标不达标 drop)+ 记进图级别 drop 历史(:drops, 全图属性)"
+    description:
+      "drop=非破坏跟踪标记(北极星指标不达标)：节点及子树标 dropped(不删)+ 记图级 drop 历史(:drops,%{id,reason,at,by})；权限=节点认领人(版主兜底)"
   )
 
   action(:get_tree,
@@ -160,47 +167,31 @@ defmodule Ezagent.ActionSet.Kanban do
     returns: %{count: :integer},
     caps: [:import_markmap],
     modes: [:call],
-    description: "覆盖导入(admin)"
+    description: "覆盖导入(board_admin=版主/wildcard)"
   )
 
   # ---------------------------------------------------------------
   # 节点 git 定位数据动作（纯数据：把 PR / commit 链接钉到节点 artifacts）。
-  # GitHub 主动连接器（sync_github / push_pr / sync_prs / save_github_creds —— 调
-  # GitHub API 建 issue / post 评论 / 轮询 PR）已删；这里留下的只把 git 引用
-  # （PR 号、commit SHA + 路径）拼成链接挂到节点，不发任何出站 HTTP。repo 取本图
-  # 配置（BoardConfig，纯数据），set_board_config 仍可记 github_repo。
+  # GitHub 集成已整体移出 kanban：要挂代码库/看 PR 进度用独立的 github plugin 直接
+  # 同步，kanban 不再拼 github 链接（原 register_pr / attach_code_file 两个 action +
+  # board 级 github_repo 配置随之删除）。留下的出站连接器仅 Miro 一侧。
   # ---------------------------------------------------------------
 
-  action(:register_pr,
-    args: %{id: :string, pr: :string},
-    returns: %{},
-    caps: [:register_pr],
-    modes: [:call],
-    description: "登记 PR 号→把 PR 链接挂到节点（不发评论）"
-  )
-
-  action(:attach_code_file,
-    args: %{id: :string, sha: :string, path: :string},
-    returns: %{url: :string},
-    caps: [:attach_code_file],
-    modes: [:call],
-    description: "钉 commit SHA + 路径 → 拼 github blob 链接挂到节点"
-  )
-
   action(:sync_miro,
-    args: %{},
+    args: %{name: :string},
     returns: %{board_id: :string},
     caps: [:sync_miro],
     modes: [:call],
-    description: "一键推 Miro（首次建板+绑定，之后复用同板同步）"
+    description:
+      "一键推 Miro（首次建板+绑定，之后复用同板同步）；name=本次同步的 Miro 板名（去gh 决策：同步时弹框填名，可选，缺省用 BoardConfig/URI 名）"
   )
 
   action(:set_board_config,
-    args: %{github_repo: :string, miro_board: :string},
-    returns: %{github_repo: :string, miro_board: :string},
+    args: %{miro_board: :string},
+    returns: %{miro_board: :string},
     caps: [:set_board_config],
     modes: [:call],
-    description: "写本图连接器配置（github_repo + miro 板名；token 在全局）"
+    description: "写本图连接器配置（miro 板名；token 在全局）"
   )
 
   action(:save_miro_creds,
@@ -234,8 +225,6 @@ defmodule Ezagent.ActionSet.Kanban do
           :get_tree,
           :export_markmap,
           :import_markmap,
-          :register_pr,
-          :attach_code_file,
           :sync_miro,
           :set_board_config,
           :save_miro_creds
@@ -256,20 +245,25 @@ defmodule Ezagent.ActionSet.Kanban do
   # ---------------------------------------------------------------
 
   @doc false
+  # H1：加任何节点（根/子）= 创建者自动认领（owner=caller, status=:claimed）。任何持板
+  # operate cap 的成员都能加（cap gate 在 dispatch 层，handler 内不再门控加节点）。
+  # H5：单根先行 —— parent_id==nil 仅当 root_id==nil 允许；已有根再传 nil → :root_exists。
   def handle_add_node(args, ctx) do
     parent_id = nilify(Map.get(args, :parent_id))
     title = Map.fetch!(args, :title)
     %{nodes: nodes, root_id: root_id, seq: seq} = t = tree(ctx)
+    caller = caller_str(ctx)
 
     cond do
-      parent_id == nil and not admin?(ctx) ->
-        {:error, :forbidden}
+      parent_id == nil and root_id != nil ->
+        {:error, :root_exists}
 
       parent_id != nil and not Map.has_key?(nodes, parent_id) ->
         {:error, :parent_not_found}
 
-      parent_id != nil and not owner_or_admin?(ctx, nodes[parent_id]) ->
-        {:error, :forbidden}
+      # 自动认领需 caller（谁认领这个新节点）。dispatch 边界总带 caller；缺则拒。
+      caller == nil ->
+        {:error, :no_caller}
 
       true ->
         new_seq = seq + 1
@@ -280,7 +274,9 @@ defmodule Ezagent.ActionSet.Kanban do
         # （插入校验在 set_stage 收口）。
         stages = Shared.stages(ctx)
         stage = if parent_id, do: nodes[parent_id].stage, else: List.first(stages)
-        node = new_node(parent_id, title, order, stage)
+
+        # H1 自动认领：新节点 owner=caller, status=:claimed（一出生就有属性，H7）。
+        node = new_node(parent_id, title, order, stage, caller, :claimed)
         new_root = root_id || if(parent_id == nil, do: id, else: nil)
 
         {:ok, %{id: id},
@@ -325,6 +321,9 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
+  # 删除=级联删子树，授权走 collab 规则5（原 drop 的整树校验，㉕ 后 drop 改跟踪标记、
+  # 规则5 移到这里）：board_admin（版主/wildcard）兜底可删任何；否则子树内每个节点须
+  # owner==caller 或未认领（未认领恒空谁都可删）；含他人已认领后代 → 挡（保护别人的活）。
   def handle_remove_node(%{id: id}, ctx) do
     t = tree(ctx)
 
@@ -332,8 +331,8 @@ defmodule Ezagent.ActionSet.Kanban do
       not Map.has_key?(t.nodes, id) ->
         {:error, :node_not_found}
 
-      not owner_or_admin?(ctx, t.nodes[id]) ->
-        {:error, :forbidden}
+      not subtree_removal_authorized?(ctx, t.nodes, id) ->
+        {:error, :forbidden_mixed_ownership}
 
       true ->
         new_nodes = Map.drop(t.nodes, subtree_ids(t.nodes, id))
@@ -343,7 +342,12 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
-  # drop 闭环（片8）：砍子树 + 反哺最近 pain 祖先记一笔（指标不达标→drop→回 pain 重选）。
+  # ㉕ drop = **非破坏跟踪标记**（北极星指标不达标时标红跟踪，不是删除）：
+  #   ① 不删节点/子树 —— 节点及整棵子树打 `dropped: true`（前端渲染红框）；
+  #   ② `:drops` 图级历史追加 `%{id, reason, at, by}`（理由+时间+操作者）；
+  #   ③ 权限 = 节点认领人（owner==caller），版主/wildcard 兜底（C2）——不再整树校验
+  #      （删除的整树校验留在 remove_node，规则5 不变）；
+  #   ④ 幂等：已 dropped 的节点重复 drop 是 no-op（不重复记历史）。
   def handle_drop_subtree(%{id: id} = args, ctx) do
     reason = to_string(Map.get(args, :reason, ""))
     t = tree(ctx)
@@ -355,33 +359,35 @@ defmodule Ezagent.ActionSet.Kanban do
       not owner_or_admin?(ctx, t.nodes[id]) ->
         {:error, :forbidden}
 
-      true ->
-        node = t.nodes[id]
-        dropped = subtree_ids(t.nodes, id)
-        nodes1 = Map.drop(t.nodes, dropped)
-        new_root = if id == t.root_id, do: nil, else: t.root_id
+      # ④ 幂等：已标过的节点再 drop → no-op（树不变、历史不追加）。
+      node_dropped?(t.nodes[id]) ->
+        {:ok, %{dropped: 0}, []}
 
-        # drop 历史 = **图级别属性**（不挂某个节点）：任何棒 drop 都追加一条到 tree.drops。
+      true ->
+        marked = subtree_ids(t.nodes, id)
+
+        nodes1 =
+          Enum.reduce(marked, t.nodes, fn nid, acc ->
+            Map.update!(acc, nid, &Map.put(&1, :dropped, true))
+          end)
+
+        # drop 历史 = **图级别属性**（不挂某个节点）：任何 drop 都追加一条到 tree.drops。
         # drops 归在 tree 里（跟 nodes/root_id 一样是 board 级数据），经唯一 commit/1 收敛——
         # 不另开 set-effect 站点（守 moduledoc「所有写动作经唯一 commit/1」约定）。
         drop_entry = %{
-          title: node.title,
-          stage: to_string(node.stage),
+          id: id,
           reason: reason,
-          count: length(dropped)
+          at: DateTime.utc_now(),
+          by: caller_str(ctx)
         }
 
-        {:ok, %{dropped: length(dropped)},
-         [
-           commit(%{
-             t
-             | nodes: nodes1,
-               root_id: new_root,
-               drops: Map.get(t, :drops, []) ++ [drop_entry]
-           })
-         ]}
+        {:ok, %{dropped: length(marked)},
+         [commit(%{t | nodes: nodes1, drops: Map.get(t, :drops, []) ++ [drop_entry]})]}
     end
   end
+
+  # 旧快照的节点没有 :dropped 键 —— 读取一律带默认 false。
+  defp node_dropped?(node), do: Map.get(node, :dropped, false)
 
   @doc false
   def handle_set_stage(%{id: id, stage: stage}, ctx) do
@@ -469,8 +475,30 @@ defmodule Ezagent.ActionSet.Kanban do
   end
 
   @doc false
-  def handle_unclaim_node(%{id: id}, ctx),
-    do: update_node(ctx, id, &%{&1 | owner: nil, status: :unassigned})
+  # H3：取消认领需空 —— 有「内容」（artifacts 或 metrics；子节点不算内容，C3）的节点
+  # 不能 unclaim（否则未认领节点会带内容，破坏「未认领恒为空」）。仅 owner/board_admin 可退。
+  # 成功 → owner=nil, status=:unassigned（→ 未认领=空=谁都可删可重认领）。
+  def handle_unclaim_node(%{id: id}, ctx) do
+    t = tree(ctx)
+
+    cond do
+      not Map.has_key?(t.nodes, id) ->
+        {:error, :node_not_found}
+
+      not owner_or_admin?(ctx, t.nodes[id]) ->
+        {:error, :forbidden}
+
+      has_content?(t.nodes[id]) ->
+        {:error, :has_content_cannot_unclaim}
+
+      true ->
+        node = %{t.nodes[id] | owner: nil, status: :unassigned}
+        {:ok, %{}, [commit(%{t | nodes: Map.put(t.nodes, id, node)})]}
+    end
+  end
+
+  # 「内容」= artifacts 或 metrics（C3：子节点不算内容，结构容器仍可退领）。
+  defp has_content?(node), do: node.artifacts != [] or node.metrics != []
 
   @doc false
   def handle_set_status(%{id: id, status: status}, ctx) do
@@ -523,14 +551,17 @@ defmodule Ezagent.ActionSet.Kanban do
   @doc false
   def handle_get_tree(_args, ctx) do
     t = tree(ctx)
-    inner = %{nodes: t.nodes, root_id: t.root_id}
+
+    # ㉕ 投影带 dropped 标：旧快照节点没有 :dropped 键，投影统一补默认 false，
+    # 前端（红框渲染）拿到的每个节点都有确定的 dropped 布尔。
+    nodes = Map.new(t.nodes, fn {id, n} -> {id, Map.put_new(n, :dropped, false)} end)
+    inner = %{nodes: nodes, root_id: t.root_id}
     stages = Shared.stages(ctx)
     ci_stage = Shared.config_atom(ctx, :ci_stage, List.last(stages))
 
     # drops = 图级别 drop 历史（全图属性，存在 tree 里，随 tree 一起读出）。
     # config/miro/ci = 只读投影（df-tech 下沉：world 不再直读 BoardConfig/Miro，
-    # 全经此 dispatch 返回拿到）。config.github_repo 仍是纯数据（节点/板记 repo），
-    # 但 GitHub 主动连接器已删，故不再返回 `github` 连接状态字段。
+    # 全经此 dispatch 返回拿到）。github 集成已移出 kanban，config 只剩 miro 板名。
     # stages = 接力链（layer-2 recipe config 数据投影）：world 读模型 + 前端经此
     # dispatch 返回拿到棒链，不再 world 侧硬编码 @stages（taxonomy §4.1 de-bake）。
     {:ok,
@@ -545,15 +576,14 @@ defmodule Ezagent.ActionSet.Kanban do
      }, []}
   end
 
-  # 本图连接器配置（github_repo + miro 板名）；self_uri = 本 kanban 实例 URI。
+  # 本图连接器配置（miro 板名）；self_uri = 本 kanban 实例 URI。
   defp board_config(ctx) do
     case ctx[:self_uri] do
       %URI{} = uri ->
-        c = BoardConfig.read(uri)
-        %{github_repo: c.github_repo, miro_board: c.miro_board}
+        %{miro_board: BoardConfig.read(uri).miro_board}
 
       _ ->
-        %{github_repo: nil, miro_board: nil}
+        %{miro_board: nil}
     end
   end
 
@@ -590,7 +620,8 @@ defmodule Ezagent.ActionSet.Kanban do
   @doc false
   def handle_import_markmap(%{markdown: markdown}, ctx) do
     cond do
-      not admin?(ctx) ->
+      # 覆盖导入 = 板级动作，版主（board_admin）能覆盖导入自己的板（C2）。
+      not board_admin?(ctx) ->
         {:error, :forbidden}
 
       true ->
@@ -631,12 +662,6 @@ defmodule Ezagent.ActionSet.Kanban do
   # ---------------------------------------------------------------
 
   @doc false
-  def handle_register_pr(args, ctx), do: Connectors.register_pr(args, ctx)
-
-  @doc false
-  def handle_attach_code_file(args, ctx), do: Connectors.attach_code_file(args, ctx)
-
-  @doc false
   def handle_sync_miro(args, ctx), do: Connectors.sync_miro(args, ctx)
 
   @doc false
@@ -649,21 +674,25 @@ defmodule Ezagent.ActionSet.Kanban do
 
   defp empty_tree, do: Shared.empty_tree()
 
-  defp new_node(parent_id, title, order, stage) do
+  # owner/status 参数化：add_node 自动认领传 (caller, :claimed)；import 批量传 (nil, :unassigned)。
+  defp new_node(parent_id, title, order, stage, owner, status) do
     %{
       parent_id: parent_id,
       title: title,
       order: order,
       stage: stage,
-      owner: nil,
-      status: :unassigned,
+      owner: owner,
+      status: status,
       artifacts: [],
-      metrics: []
+      metrics: [],
+      # ㉕ 非破坏 drop 标记（true = 北极星不达标被标红跟踪，节点仍在）。
+      dropped: false
     }
   end
 
+  # markmap 覆盖导入的节点始终**未认领**（owner=nil, status=:unassigned）——一批空拓扑。
   defp enrich_parsed(%{parent_id: p, title: t, order: o}, import_default_stage),
-    do: new_node(p, t, o, import_default_stage)
+    do: new_node(p, t, o, import_default_stage, nil, :unassigned)
 
   defp tree(ctx), do: Shared.tree(ctx)
 
@@ -693,9 +722,26 @@ defmodule Ezagent.ActionSet.Kanban do
 
   defp owner_or_admin?(ctx, node), do: Shared.owner_or_admin?(ctx, node)
 
-  defp admin?(ctx), do: Shared.admin?(ctx)
+  # 板级 admin = 版主（本板 data_owner）或全局 wildcard（C2）；用于建根删除兜底 / 覆盖导入。
+  defp board_admin?(ctx), do: Shared.board_admin?(ctx)
 
   defp caller_str(ctx), do: Shared.caller_str(ctx)
+
+  # 规则5 删除授权（原 H2 drop 授权，㉕ 后归 remove_node）：board_admin 兜底可删任何；
+  # 否则子树内每个节点须 owner==caller 或未认领（含他人已认领后代 → 挡）。
+  defp subtree_removal_authorized?(ctx, nodes, id) do
+    board_admin?(ctx) or
+      (fn ->
+         caller = caller_str(ctx)
+
+         nodes
+         |> subtree_ids(id)
+         |> Enum.all?(fn nid ->
+           o = nodes[nid].owner
+           o == nil or o == caller
+         end)
+       end).()
+  end
 
   # --- 解析/归一 ------------------------------------------------------
 

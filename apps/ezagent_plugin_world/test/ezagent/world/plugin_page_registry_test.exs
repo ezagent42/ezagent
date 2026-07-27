@@ -8,7 +8,9 @@ defmodule Ezagent.World.PluginPageRegistryTest do
   # 的 dispatch 准入面，必须是显式决策，不是注册表重构的副作用。
   # T6.4（显式决策）：`kanban.share_board` 加入 dispatch 准入白名单（分享看板动作）。
   # 这份 verbatim 锁存在正是为了强制「改白名单 = 显式决策」，故随白名单一并更新。
-  @legacy_kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.register_pr kanban.attach_code_file kanban.share_board)
+  # 分享二期（显式决策）：share_to_session / request_edit / approve_edit（规则8 读→写升级）
+  # + receive_shared（㊵ 人本位接收）+ delete_board（⑲ 板主删板）加入 dispatch 准入白名单。
+  @legacy_kanban_actions ~w(kanban.add_node kanban.rename_node kanban.move_node kanban.remove_node kanban.set_stage kanban.claim_node kanban.unclaim_node kanban.set_status kanban.attach_artifact kanban.detach_artifact kanban.set_metric kanban.create kanban.sync_miro kanban.save_miro_creds kanban.select_board kanban.drop_subtree kanban.set_board_config kanban.attach_upload kanban.share_board kanban.share_to_session kanban.request_edit kanban.approve_edit kanban.receive_shared kanban.delete_board)
 
   describe "pages/0 shape" do
     test "every page carries the full registration shape" do

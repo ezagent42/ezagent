@@ -2,28 +2,26 @@ defmodule EzagentPluginKanban.WorldActions do
   @moduledoc """
   Socket-side dispatch handlers for the world **kanban operating surface**。
 
-  对齐 `Ezagent.World.ConversationActions`：`WorldLive` 保持瘦 `handle_event` 子句、
-  委派到这里。
+  对齐 `Ezagent.World.ConversationActions` 的分工：`WorldLive` 保持瘦 `handle_event`
+  子句、经 `Ezagent.World.PluginPageRegistry` 条目的 `actions_module` 反射委派到这里
+  （债②可搬半 2026-07-17：本模块从 world 搬进 kanban plugin，world 只留 @pages
+  注册数据；dep 方向 world → plugin_kanban，本模块不得反向引 world 模块）。
 
   ## kanban-as-role（K4）
   看板 = 一个 agent（role `kanban-manager` × flavor `native`），board = 该 agent 的
   `:kanban` snapshot slice。所有节点动作经
   `Ezagent.URI.with_action(entity://<ws>/agent/<id>, :kanban, action)` =
   `entity://<ws>/agent/<id>?action=kanban.<action>` dispatch（不再 `resource://kanban`）。
-  **ctx 带登录者 `current_entity_uri` + 注入的 `presenter_caps`**（R3：caller=人类用户，
-  不重写成 agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。caps 由
-  **world（UI 宿主）经 `Ezagent.World.PresenterCaps.load/1` 算好后注入 `:presenter_caps`
-  socket assign**（见下方 `presenter_caps/1`）——本插件只消费注入值，对 world 零编译依赖
-  （#1476：plugin 不得依赖 UI 宿主 world）。动作成功后 re-read
+  **ctx 带登录者 `current_entity_uri`/`current_caps`**（R3：caller=人类用户，不重写成
+  agent）——per-node owner 授权在 Behavior 内如实判，world 层不放水。动作成功后 re-read
   树 + `push_event("world:state")` 刷前端。**新建看板** = `Ezagent.Workspace.create_agent`
   （role × native，RF-5a），不再合成 `resource://` URI。
 
   本模块退成**纯 dispatcher**：连接器逻辑（Miro / BoardConfig / Ci 等）全部住在
-  `Ezagent.ActionSet.Kanban` 的动作里（register_pr / attach_code_file / sync_miro /
-  set_board_config / save_miro_creds）。GitHub 主动连接器（sync_github / push_pr /
-  sync_prs / save_github_creds）已整体退役——gh 连通现在是 agent 的 CLI 行为，不走
-  world 派发；留下的 register_pr / attach_code_file 是纯数据（拼 git 链接挂节点）。
-  world 只 dispatch + 刷 UI，不直引任何 kanban plugin 模块。dormant 的
+  `Ezagent.ActionSet.Kanban` 的动作里（sync_miro / set_board_config / save_miro_creds）。
+  GitHub 集成已整体移出 kanban——gh 连通是 agent 的 CLI 行为、挂代码库/看 PR 用独立的
+  github plugin，都不走 world 派发。本模块只 dispatch + 刷 UI，world 侧不再持有任何
+  kanban 数据/动作代码。dormant 的
   passive kanban-manager 经 `WorldData.ensure_spawned/1` 从快照 rehydrate 起活。
   """
 
@@ -32,6 +30,7 @@ defmodule EzagentPluginKanban.WorldActions do
 
   alias Ezagent.Invocation
   alias EzagentPluginKanban.WorldData
+  alias EzagentPluginKanban.WorldShareActions
 
   # kanban-as-role：新建看板 = 创建 role `kanban-manager` × flavor `native` 的 agent。
   @kanban_role "kanban-manager"
@@ -106,8 +105,9 @@ defmodule EzagentPluginKanban.WorldActions do
     do: select_board(socket, u)
 
   # 一键推 Miro：dispatch → 拿 board_id → 推 miro_board_url（出站动作，结果带链接）。
-  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u}),
-    do: sync_miro(socket, u)
+  # name = 前端同步弹框填的 Miro 板名（去gh 决策），透传给 behavior（缺省用板配置/URI 名）。
+  def handle_dispatch(socket, "kanban.sync_miro", %{"kanban_uri" => u} = a),
+    do: sync_miro(socket, u, Map.get(a, "name"))
 
   def handle_dispatch(socket, "kanban.save_miro_creds", %{"access_token" => token} = a)
       when is_binary(token),
@@ -118,11 +118,7 @@ defmodule EzagentPluginKanban.WorldActions do
         })
 
   def handle_dispatch(socket, "kanban.set_board_config", %{"kanban_uri" => u} = a),
-    do:
-      act_board(socket, u, :set_board_config, %{
-        github_repo: Map.get(a, "github_repo", ""),
-        miro_board: Map.get(a, "miro_board", "")
-      })
+    do: act_board(socket, u, :set_board_config, %{miro_board: Map.get(a, "miro_board", "")})
 
   def handle_dispatch(
         socket,
@@ -132,20 +128,34 @@ defmodule EzagentPluginKanban.WorldActions do
       when is_binary(grant),
       do: attach_upload(socket, u, id, grant, Map.get(a, "name", "file"))
 
-  def handle_dispatch(socket, "kanban.register_pr", %{"kanban_uri" => u, "id" => id, "pr" => pr}),
-    do: act(socket, u, :register_pr, %{id: id, pr: to_string(pr)})
-
-  def handle_dispatch(socket, "kanban.attach_code_file", %{
-        "kanban_uri" => u,
-        "id" => id,
-        "sha" => sha,
-        "path" => path
-      })
-      when is_binary(sha) and is_binary(path),
-      do: act(socket, u, :attach_code_file, %{id: id, sha: sha, path: path})
-
   def handle_dispatch(socket, "kanban.share_board", %{"kanban_uri" => u}) when is_binary(u),
     do: share_board(socket, u)
+
+  # ㊵ 人本位接收(in-app 气泡点击):verify token → 只读钥匙发给点击者本人
+  # (person-scope 挂载)→ 刷新 caps 快照 → 原地切 kanban tab,零整屏跳转。
+  def handle_dispatch(socket, "kanban.receive_shared", %{"token" => token})
+      when is_binary(token),
+      do: receive_shared(socket, token)
+
+  # ㉙ 分享二期:把板分享进某个 session(缺省当前会话)——服务端物化分享消息,
+  # 不再前端 onSend 拼字符串。
+  def handle_dispatch(socket, "kanban.share_to_session", %{"kanban_uri" => u} = a)
+      when is_binary(u),
+      do: share_to_session(socket, u, Map.get(a, "session_uri"))
+
+  # 规则8:已持只读钥匙的人申请编辑(往当前会话物化申请气泡,板主人批准)。
+  def handle_dispatch(socket, "kanban.request_edit", %{"kanban_uri" => u}) when is_binary(u),
+    do: request_edit(socket, u)
+
+  # 规则8:板主人批准 → person 挂载 read→operate 重挂升级。
+  def handle_dispatch(socket, "kanban.approve_edit", %{"kanban_uri" => u, "grantee" => g})
+      when is_binary(u) and is_binary(g),
+      do: approve_edit(socket, u, g)
+
+  # ⑲ 删板:板主人(建板人)删除自己的板(语义命令 manage.delete + 清挂载,授权在
+  # BoardProvision.delete_board —— caller==data_owner + Manage cap 过 dispatch 校验)。
+  def handle_dispatch(socket, "kanban.delete_board", %{"kanban_uri" => u}) when is_binary(u),
+    do: delete_board(socket, u)
 
   def handle_dispatch(socket, _action, _args),
     do: {:noreply, assign(socket, :last_dispatch_status, "error:unsupported_action")}
@@ -154,16 +164,9 @@ defmodule EzagentPluginKanban.WorldActions do
   @upload_grant_salt "world_attach"
   @upload_grant_max_age 86_400
 
-  # 分享看板 token（T6.4）：照本模块 upload-grant 的 Phoenix.Token 模式（sign/verify +
-  # salt + max_age）。分享时校验发起人 access → 把 board + 只读意图签进 token → 拼接收链接；
-  # 接收侧（ezagent_web `KanbanShareController`）用同 salt/max_age verify + 直接
-  # `Mount.mount` 只读挂进点击者 session。
-  # salt/max_age 必须与接收侧常量逐一对齐；max_age（7 天）在接收侧 verify 时校验。
-  @share_board_salt "world_kanban_share"
-  # behavior 以字符串入 token（world 无 kanban plugin dep，不静态引模块；接收侧
-  # `Module.concat` 反解，同 `Mount.decode_behavior` 约定）。
-  @share_board_behavior "Ezagent.ActionSet.Kanban"
-  @share_board_receive_path "/socialware/kanban/receive"
+  # 板的 behavior 模块（建板/删板传 BoardProvision）。分享 token 侧的字符串形态
+  # (`"Ezagent.ActionSet.Kanban"`)住在 `WorldShareActions`,两处必须指同一模块。
+  @kanban_behavior Ezagent.ActionSet.Kanban
 
   # --- 动作：dispatch（登录者身份）→ re-read 树 → push tree --------------
 
@@ -182,7 +185,18 @@ defmodule EzagentPluginKanban.WorldActions do
             origin: :authenticated_external
           })
 
-        {:noreply, push_tree(socket, uri, status_of(result))}
+        status = status_of(result)
+        snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
+
+        if status == "ok" do
+          materialize_op(
+            socket,
+            op_text(action, args, uri, snapshot),
+            op_attachments(action, args)
+          )
+        end
+
+        {:noreply, push_snapshot(socket, snapshot, status)}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
@@ -207,6 +221,10 @@ defmodule EzagentPluginKanban.WorldActions do
 
         status = status_of(result)
 
+        if status == "ok" do
+          materialize_op(socket, op_text(action, args, uri, nil))
+        end
+
         {:noreply,
          socket
          |> assign(:last_dispatch_status, status)
@@ -222,22 +240,26 @@ defmodule EzagentPluginKanban.WorldActions do
 
   # --- 一键推 Miro：dispatch → board_id → 推 miro_board_url -----------------
 
-  defp sync_miro(socket, uri_str) do
+  defp sync_miro(socket, uri_str, name) do
     case parse(uri_str) do
       %URI{} = uri ->
         :ok = WorldData.ensure_spawned(uri)
+
+        args = if is_binary(name) and name != "", do: %{name: name}, else: %{}
 
         result =
           Invocation.dispatch(%Invocation{
             target: Ezagent.URI.with_action(uri, :kanban, :sync_miro),
             mode: :call,
-            args: %{},
+            args: args,
             ctx: ctx(socket),
             origin: :authenticated_external
           })
 
         case result do
           {:ok, %{board_id: board}} ->
+            materialize_op(socket, "【看板·#{uri_label(uri)}】同步了看板到 Miro")
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
@@ -255,34 +277,25 @@ defmodule EzagentPluginKanban.WorldActions do
     end
   end
 
-  # --- 分享看板（T6.4）：校验 access → 签只读 token → 拼接收链接 -----------------
+  # --- 分享面(T6.4/㊵/㉙/规则8):业务逻辑拆在 WorldShareActions ---------------
+  #
+  # oversized_modules_gt_1000 gate(2026-07-20)拆分:分享链接签发/接收、
+  # share_to_session、request_edit/approve_edit 的业务结果都在
+  # `EzagentPluginKanban.WorldShareActions`;这里只留 handle_dispatch 的
+  # `{:noreply, socket}` 包装 + materialize_op 操作留痕。公开 API 经 defdelegate
+  # 原位保留(share_link 等外部调用方/测试不感知拆分)。
 
-  @doc """
-  分享看板 = 生成一个只读接收链接。
+  @doc "T6.4 分享链接(委派 `WorldShareActions.share_link/2`,契约见该函数 doc)。"
+  defdelegate share_link(socket, uri_str), to: WorldShareActions
 
-  ① 校验发起人对这块板有 access —— 以自身份（登录者）dispatch `kanban.get_tree` 探针，
-     cap 校验落 dispatch chokepoint（不直读 cap 列表，同
-     `Ezagent.Socialware.BoardProvision.session_holds_board_cap?` 思路）；
-  ② `Phoenix.Token.sign` 把 board_uri + behavior + 只读意图签成 token（照本模块
-     upload-grant 的 sign/verify + salt + max_age 模式）；
-  ③ 拼成接收链接（接收 route 见 `EzagentWeb.Socialware.KanbanShareController`）。
+  @doc "㉙ 分享到会话业务结果(委派 `WorldShareActions.share_to_session_result/3`)。"
+  defdelegate share_to_session_result(socket, uri_str, session_str), to: WorldShareActions
 
-  授权只在**分享时**查（token 携带凭证），接收侧只管挂。返回 `{:ok, link}`（发起人有
-  access）或 `{:error, :no_access | :bad_kanban_uri}`。
-  """
-  @spec share_link(Phoenix.LiveView.Socket.t(), String.t()) ::
-          {:ok, String.t()} | {:error, :no_access | :bad_kanban_uri}
-  def share_link(socket, uri_str) do
-    case parse(uri_str) do
-      %URI{} = uri ->
-        if share_access?(socket, uri),
-          do: {:ok, build_share_link(socket, uri)},
-          else: {:error, :no_access}
+  @doc "规则8 申请编辑业务结果(委派 `WorldShareActions.request_edit_result/2`)。"
+  defdelegate request_edit_result(socket, uri_str), to: WorldShareActions
 
-      :error ->
-        {:error, :bad_kanban_uri}
-    end
-  end
+  @doc "规则8 批准升级业务结果(委派 `WorldShareActions.approve_edit_result/3`)。"
+  defdelegate approve_edit_result(socket, uri_str, grantee_str), to: WorldShareActions
 
   defp share_board(socket, uri_str) do
     case share_link(socket, uri_str) do
@@ -297,29 +310,51 @@ defmodule EzagentPluginKanban.WorldActions do
     end
   end
 
-  # 发起人对板是否有 access：复用 world 的发现可见性谓词（admin / 板主人 data_owner / 持指向
-  # 该板的 cap）—— 能看见即可分享。**不**用 dispatch 探针：kanban 板动作的 cap 由 session 的
-  # kanban-assistant（agent）持有，登录者（人）自身通常不持板动作 cap（他是 data_owner），
-  # 故以「登录者 own / 持 cap」判 access（同 `KanbanData.visible?` 的发现口径）。
-  defp share_access?(socket, %URI{} = uri) do
-    WorldData.can_share?(uri, read_ctx(socket))
+  defp receive_shared(socket, token), do: WorldShareActions.receive_shared(socket, token)
+
+  defp share_to_session(socket, uri_str, session_str) do
+    case share_to_session_result(socket, uri_str, session_str) do
+      {:ok, _session_uri} ->
+        materialize_op(socket, "分享了看板「#{board_label(uri_str)}」到会话")
+
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
   end
 
-  defp build_share_link(socket, %URI{} = uri) do
-    board_uri = encode_uri(uri)
+  defp request_edit(socket, uri_str) do
+    case request_edit_result(socket, uri_str) do
+      {:ok, _} ->
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
 
-    payload = %{
-      "board" => board_uri,
-      "behavior" => @share_board_behavior,
-      "access" => "read"
-    }
-
-    # max_age 在接收侧 `Phoenix.Token.verify` 时校验（sign 不带 max_age）。
-    token = Phoenix.Token.sign(socket, @share_board_salt, payload)
-    @share_board_receive_path <> "?" <> URI.encode_query(token: token)
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
   end
 
-  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
+  defp approve_edit(socket, uri_str, grantee_str) do
+    case approve_edit_result(socket, uri_str, grantee_str) do
+      {:ok, grantee} ->
+        materialize_op(
+          socket,
+          "批准了 #{uri_label(grantee)} 对看板「#{board_label(uri_str)}」的编辑申请(只读→可编辑)"
+        )
+
+        {:noreply, assign(socket, :last_dispatch_status, "ok")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp board_label(uri_str) do
+    case parse(uri_str) do
+      %URI{} = uri -> uri_label(uri)
+      _ -> uri_str
+    end
+  end
 
   # --- 上传文件挂到节点（v1.5）：验 upload grant 取 uploads URI → attach_artifact ----
 
@@ -357,21 +392,26 @@ defmodule EzagentPluginKanban.WorldActions do
 
   defp verify_upload_grant(_socket, _grant, _caller), do: {:error, :no_caller}
 
-  # --- 新建 kanban = 创建一个 kanban-manager agent（role × flavor native）---
+  # --- 新建 kanban = 建板走 BoardProvision（⑥ 会诊 2026-07-16）---
   #
-  # kanban-as-role：看板不再是 `resource://<ws>/kanban/<name>` 独立 Kind，而是一个
-  # agent。新建 = `Ezagent.Workspace.create_agent`（RF-5a role-create 路径），flavor
-  # `native`（boot 注册的通用宿主，RF-8）× role `kanban-manager`（kanban plugin
-  # `roles/0` boot 注册的 recipe，含 24 个 behaviors + caps + passive:true）。创建后
-  # 该 agent 的 `entity://<ws>/agent/<name>` 即 board 的寻址 + dispatch 目标。
+  # kanban-as-role：看板 = 一个 passive native agent（role `kanban-manager`）。此前这里
+  # 直调 `Workspace.create_agent`——普通成员无 create_agent cap 必拒（分层债 ⑥）。现改走
+  # `EzagentPluginKanban.BoardProvision.create_board/5`（runtime 建板 glue）：成员守卫 +
+  # 一次性 provision authority（#1457 后经 `{:admin, admin_uri}` 具名签发，只造 passive
+  # native）+ 建完当场发两把钥匙（assistant + 建板人自己，落挂载表）。建板因此是
+  # **session-scoped**（collab 模型：板挂在会话、assistant 收钥匙）——无当前会话则拒。
+  # behavior 以字符串反解（token payload 字符串契约，照 @share_board_behavior 约定）。
   defp create_kanban(socket, name) do
     workspace_uri = socket.assigns.current_workspace_uri
+    session_uri = socket.assigns[:current_session_uri]
     caller = socket.assigns.current_entity_uri
+
     caller_ctx = %{
       caller: caller,
       authenticated_principal: caller,
       caps: presenter_caps(socket)
     }
+
     clean = sanitize(name)
 
     cond do
@@ -381,28 +421,72 @@ defmodule EzagentPluginKanban.WorldActions do
       not match?(%URI{scheme: "workspace"}, workspace_uri) ->
         {:noreply, assign(socket, :last_dispatch_status, "error:invalid_workspace")}
 
+      not match?(%URI{scheme: "session"}, session_uri) ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:no_session_context")}
+
       true ->
-        case Ezagent.Workspace.create_agent(
+        case EzagentPluginKanban.BoardProvision.create_board(
                workspace_uri,
+               session_uri,
                %{
-                 flavor: @native_flavor,
                  name: clean,
-                 role: @kanban_role,
-                 cwd: "",
-                 with_pty: false
+                 board_role: @kanban_role,
+                 flavor: @native_flavor,
+                 assistant_role: "kanban-assistant"
                },
+               @kanban_behavior,
                caller_ctx
              ) do
-          {:ok, %{agent_uri: agent_uri}} ->
+          {:ok, %{board_uri: board_uri}} ->
             # board_state 列出全量 instances（含新建的）+ 推该 agent 的空 board。
+            # 建板后其他成员的界面刷新不在本 PR 范围（见模块 doc 的实时刷新说明）。
+            materialize_op(socket, "新建了看板「#{uri_label(board_uri)}」")
+
             {:noreply,
              socket
              |> assign(:last_dispatch_status, "ok")
-             |> push_event("world:state", WorldData.board_state(agent_uri, read_ctx(socket)))}
+             |> push_event("world:state", WorldData.board_state(board_uri, read_ctx(socket)))}
 
           {:error, reason} ->
             {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
         end
+    end
+  end
+
+  # --- ⑲ 删板：BoardProvision.delete_board → 推刷新后的 boards 列表 -----------
+
+  defp delete_board(socket, uri_str) do
+    case parse(uri_str) do
+      %URI{} = uri ->
+        # 板可能 dormant(BEAM 重启后休眠)——manage.delete 要 dispatch 进它自己的
+        # Kind 进程,先照其它动作的口径起活(已 live 幂等)。
+        :ok = WorldData.ensure_spawned(uri)
+
+        case EzagentPluginKanban.BoardProvision.delete_board(
+               uri,
+               @kanban_behavior,
+               ctx(socket)
+             ) do
+          {:ok, _report} ->
+            # 板没了:清掉选中板,推刷新后的列表(前端回列表态);同会话其他成员靠广播刷新。
+            materialize_op(socket, "删除了看板「#{uri_label(uri)}」（含全部挂载）")
+
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "ok")
+             |> push_event("world:state", %{
+               "kanban_uri" => nil,
+               "tree" => nil,
+               "instances" => WorldData.list_instances(read_ctx(socket)),
+               "last_dispatch_status" => "ok"
+             })}
+
+          {:error, reason} ->
+            {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+        end
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:bad_kanban_uri")}
     end
   end
 
@@ -421,7 +505,116 @@ defmodule EzagentPluginKanban.WorldActions do
     end
   end
 
+  # --- 操作物化消息（2026-07-18 一等任务）-----------------------------------
+  #
+  # 所有 kanban 写操作成功后，以**操作者身份**往当前会话物化一条
+  # `visibility: :internal, hops: 0` 消息（动作 + 节点摘要；attach 消息带附件引用）：
+  #   * `:internal` —— 普通 chat 读面（`recent_visible_in_session`）过滤掉，不刷屏；
+  #     留痕在 MessageStore，立「一切操作皆对话」心智模型；
+  #   * `hops: 0` —— `session.send` 存完即 `:hop_exhausted`，零路由 fan-out
+  #     （不惊动 assistant / relay / 外部 channel）；
+  #   * attach 的附件引用 = uploads resource URI 进 `body.attachments`
+  #     （㊲ 救济半件：同会话成员日后经消息参与面可下载——serve 侧归 infra-C）。
+  # 无当前会话（/plugins/kanban 独立页）无处可记，静默跳过；发送 best-effort
+  # （:cast），失败不回滚动作（留痕缺一条 vs 动作报错，取前者）。
+  defp materialize_op(socket, text, attachments \\ []) do
+    case socket.assigns[:current_session_uri] do
+      %URI{} = session_uri ->
+        caller = socket.assigns.current_entity_uri
+
+        msg =
+          Ezagent.Message.new(caller, %{text: text, attachments: attachments},
+            visibility: :internal,
+            hops: 0
+          )
+
+        _ =
+          Invocation.dispatch(%Invocation{
+            target: Ezagent.URI.with_action(session_uri, :session, :send),
+            mode: :cast,
+            args: %{message: msg},
+            ctx: %{
+              caller: caller,
+              authenticated_principal: caller,
+              caps: Map.get(socket.assigns, :current_caps, MapSet.new()),
+              reply: :ignore
+            },
+            origin: :authenticated_external
+          })
+
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  # 动作 → 中文摘要（节点名从 post-action snapshot 取——rename 后是新名；remove 后
+  # 节点已不在，退成通用句）。snapshot=nil（act_board 图级动作）只出图级句。
+  defp op_text(action, args, board_uri, snapshot) do
+    board = uri_label(board_uri)
+
+    title = fn ->
+      case snapshot && get_in(snapshot, ["tree", "nodes", args[:id], "title"]) do
+        t when is_binary(t) and t != "" -> t
+        _ -> to_string(args[:id] || "?")
+      end
+    end
+
+    body =
+      case action do
+        :add_node -> "新增节点「#{args[:title]}」"
+        :rename_node -> "把节点改名为「#{args[:title]}」"
+        :move_node -> "移动了节点「#{title.()}」"
+        :remove_node -> "删除了一个节点及其整棵子树"
+        :set_stage -> "把节点「#{title.()}」的阶段设为 #{args[:stage]}"
+        :claim_node -> "认领了节点「#{title.()}」"
+        :unclaim_node -> "取消认领了节点「#{title.()}」"
+        :set_status -> "把节点「#{title.()}」的状态设为 #{args[:status]}"
+        :attach_artifact -> "在节点「#{title.()}」挂了产物「#{artifact_ref(args)}」"
+        :detach_artifact -> "移除了节点「#{title.()}」的产物「#{args[:ref]}」"
+        :set_metric -> "更新了节点「#{title.()}」的指标"
+        :drop_subtree -> "drop 标记了节点「#{title.()}」（不达标跟踪，未删除）"
+        :save_miro_creds -> "更新了 Miro 凭证"
+        :set_board_config -> "更新了看板配置"
+        other -> "执行了 #{other}"
+      end
+
+    "【看板·#{board}】" <> body
+  end
+
+  # attach 的附件引用：file 产物（attach_upload 路挂进来的）url 是 uploads resource
+  # URI → 作为消息 attachments（%URI{} 列表，chat attachments 同形）。其余动作无附件。
+  defp op_attachments(:attach_artifact, %{artifact: artifact}) when is_map(artifact) do
+    with "file" <- artifact[:kind] || artifact["kind"],
+         url when is_binary(url) <- artifact[:url] || artifact["url"],
+         {:ok, %URI{} = uri} <- Ezagent.URI.parse(url),
+         true <- Ezagent.URI.scheme?(uri, :resource) do
+      [uri]
+    else
+      _ -> []
+    end
+  end
+
+  defp op_attachments(_action, _args), do: []
+
+  defp artifact_ref(%{artifact: artifact}) when is_map(artifact),
+    do: artifact[:ref] || artifact["ref"] || artifact[:kind] || artifact["kind"] || "artifact"
+
+  defp artifact_ref(_), do: "artifact"
+
+  defp uri_label(%URI{} = uri), do: uri |> URI.to_string() |> String.split("/") |> List.last()
+
   # --- helpers --------------------------------------------------------
+
+  # presenter 的 cap 快照——**只读 world 放进来的 assign，绝不反向调 world 模块**
+  # （本模块住 plugin_kanban，world → plugin_kanban 是允许的箭头，反向会成环）。
+  # 新鲜度策略是 world 的（`Ezagent.World.PresenterCaps.put/1` 在把 socket 交给
+  # 插件前算好塞进 `:presenter_caps`，见该函数 doc）；这里只消费那份数据。
+  # assign 缺失 → 空集 = fail-closed（CBAC 判定拒绝，不是放行）。
+  defp presenter_caps(socket) do
+    Map.get(socket.assigns, :presenter_caps) || MapSet.new()
+  end
 
   defp ctx(socket) do
     %{
@@ -432,23 +625,10 @@ defmodule EzagentPluginKanban.WorldActions do
     }
   end
 
-  # World (the UI host) computes the presenter's freshly-loaded caps via
-  # `Ezagent.World.PresenterCaps.load/1` and INJECTS the result into this socket
-  # assign BEFORE handing off to this plugin — at world_live's `world:dispatch`
-  # chokepoint for every `handle_dispatch`, and at `KanbanPublishedReadAdapter`
-  # for the `share_link/2` web path. This plugin consumes the injected value and
-  # therefore has NO compile dependency on world's `PresenterCaps` (#1476: a
-  # plugin must not depend on the UI host `world`). The
-  # `presenter_caps_dispatch_gate` invariant stays enforced on WORLD's side —
-  # caps still originate from `PresenterCaps.load/1`, never the raw mount
-  # snapshot. `:presenter_caps` is a world→plugin socket contract, peer to the
-  # world-populated `current_entity_uri` / `current_workspace_uri` assigns.
-  defp presenter_caps(socket), do: socket.assigns.presenter_caps
-
-  # read-side ctx（caller_uri/caller_caps/workspace_uri）给 KanbanData.read_tree/
+  # read-side ctx（caller_uri/caller_caps/workspace_uri）给 WorldData.read_tree/
   # board_state/list_instances。workspace_uri 让 list-by-role 限定在本 tenant（RF-7）。
   @doc """
-  KanbanData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
+  WorldData 读侧 ctx（caller 身份 + cap 快照 + workspace 域）——从 world socket assigns
   取。`ConversationActions.switch_view`（切 kanban tab 载板）也复用此函数，故公开。
   """
   def read_ctx(socket) do
@@ -466,9 +646,7 @@ defmodule EzagentPluginKanban.WorldActions do
   defp kanban_uri(_socket, %{"kanban_uri" => u}) when is_binary(u) and u != "", do: u
   defp kanban_uri(_socket, _a), do: nil
 
-  defp push_tree(socket, uri, status) do
-    snapshot = WorldData.board_snapshot(uri, read_ctx(socket))
-
+  defp push_snapshot(socket, snapshot, status) do
     socket
     |> assign(:last_dispatch_status, status)
     |> push_event(

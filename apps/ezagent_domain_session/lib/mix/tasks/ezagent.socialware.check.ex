@@ -25,13 +25,9 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
 
   # Apps that register the adapters / recipes / view render-caps a definition
   # references but that are NOT compile-deps of this task's app (the dep graph
-  # runs the other way). Started best-effort (atom-only — a no-op if absent from
-  # this build), mirroring `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps`.
-  @reference_apps [
-    :ezagent_domain_socialware,
-    :ezagent_plugin_hello,
-    :ezagent_plugin_kanban
-  ]
+  # runs the other way). Started best-effort (deploy-owned config list
+  # `:socialware_check_reference_apps`), mirroring
+  # `Mix.Tasks.Ezagent.Agent.GrantRecipeCaps`.
 
   @impl Mix.Task
   def run(args) do
@@ -41,7 +37,8 @@ defmodule Mix.Tasks.Ezagent.Socialware.Check do
     # workspace STRUCTURALLY when `--workspace` is omitted.
     workspace_uri = ManifestArgs.workspace_uri(opts)
 
-    for app <- @reference_apps, do: _ = Application.ensure_all_started(app)
+    for app <- Application.get_env(:ezagent_domain_session, :socialware_check_reference_apps, []),
+        do: _ = Application.ensure_all_started(app)
     _ = seed_builtins()
 
     definitions = resolve_definitions(positional, workspace_uri)

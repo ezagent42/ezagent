@@ -5,8 +5,8 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
   `:template` content). It is boot-safe and runs from each plugin's `after_boot/0`.
 
   This is a generic template-seed engine reused by any role-owning caller's boot
-  seed (e.g. the kanban board-scoping `EzagentPluginKanban.PmCoordinatorSeed`) and
-  by the generic by-role materialize path. It carries NO product-recipe knowledge
+  seed and by the generic by-role materialize path. It carries NO product-recipe
+  knowledge
   of its own — callers pass the role name + content; this engine only writes the
   `cc × <role>` template. It lives in `ezagent_domain_agent` (NOT forked
   per-plugin) because it COMPOSES
@@ -55,7 +55,7 @@ defmodule Ezagent.Agent.DefaultAgentSeed do
         description: "...",                  # AgentTemplate content description
         recipe: %{requested_caps: [...]},   # the role recipe (caps to grant)
         project_cwd: "/abs/dir",             # required cwd for the cc template
-        telemetry_prefix: [:ezagent, :kanban, :pm_coordinator_seed]
+        telemetry_prefix: [:ezagent, :my_plugin, :role_seed]
       }
   """
 

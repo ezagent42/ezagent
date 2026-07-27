@@ -147,11 +147,14 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
   """
   def commit(tree), do: {:set, :tree, Map.put_new(tree, :drops, [])}
 
-  @doc "节点级授权：caller 是 canonical admin，或 node.owner == caller。"
+  @doc """
+  节点级授权（C2 版主兜底）：caller 是本板 admin（版主/canonical admin），或 node.owner == caller。
+  版主对本板任何节点有编辑权（rename/set_stage/set_status/attach/detach/set_metric …）。
+  """
   def owner_or_admin?(ctx, node),
-    do: admin?(ctx) or (node.owner != nil and node.owner == caller_str(ctx))
+    do: board_admin?(ctx) or (node.owner != nil and node.owner == caller_str(ctx))
 
-  @doc "已认证 presenter 是否为唯一 canonical admin root。"
+  @doc "已认证 presenter 是否为唯一 canonical admin root（真正全局 admin，非本板版主）。"
   def admin?(ctx) do
     case Map.get(ctx, :caller) do
       %URI{} = caller ->
@@ -163,6 +166,42 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
     end
   end
 
+  @doc """
+  本板 admin（C2 版主）判定：全局 wildcard admin，**或** caller == 本板 data_owner
+  （建板人 = 版主，H6）。data_owner 优先 ctx 直注 `:data_owner`（测试夹具），次选经
+  `ctx[:self_uri]` 解实例 URI → `Ezagent.ActionSet.Kanban.data_owner/1` 解析。
+  用于建根删除兜底 / 编辑兜底 / import 覆盖导入等**板级**授权（版主能管自己的板）。
+  """
+  def board_admin?(ctx), do: admin?(ctx) or board_owner_match?(ctx)
+
+  defp board_owner_match?(ctx) do
+    case {data_owner_str(ctx), caller_str(ctx)} do
+      {nil, _} -> false
+      {_, nil} -> false
+      {owner, caller} -> owner == caller
+    end
+  end
+
+  # 本板 data_owner 的字符串形式（版主比对用）：ctx 直注（测试）优先，次选 self_uri 解析。
+  defp data_owner_str(ctx) do
+    case ctx[:data_owner] do
+      %URI{} = u -> URI.to_string(u)
+      s when is_binary(s) and s != "" -> s
+      _ -> resolve_board_owner(ctx[:self_uri])
+    end
+  end
+
+  defp resolve_board_owner(%URI{} = self_uri) do
+    instance = Ezagent.URI.instance(self_uri)
+
+    case Ezagent.ActionSet.Kanban.data_owner(instance) do
+      %URI{} = u -> URI.to_string(u)
+      _ -> nil
+    end
+  end
+
+  defp resolve_board_owner(_), do: nil
+
   @doc "caller URI 的字符串形式（per-node owner 比对用）。"
   def caller_str(ctx) do
     case Map.get(ctx, :caller) do
@@ -172,16 +211,31 @@ defmodule Ezagent.ActionSet.Kanban.Shared do
     end
   end
 
-  @doc "归一一个 artifact（atom/string 键兼容；content 限长）。"
+  @doc "归一一个 artifact（atom/string 键兼容；content 限长；link 的 url 补 scheme）。"
   def normalize_artifact(a) do
+    kind = sget(a, :kind)
+
     %{
       tool: sget(a, :tool),
-      kind: sget(a, :kind),
+      kind: kind,
       ref: sget(a, :ref),
-      url: sget(a, :url),
+      url: normalize_url(sget(a, :url), kind),
       content: cap_content(sget(a, :content))
     }
   end
+
+  # ㊳ 链接产物 URL 归一（存储侧）：用户常填 "example.com/x"（无 scheme）——前端
+  # `<a href>` 会被浏览器当相对路径拼上站点 base（变成 localhost 死链）。kind=="link"
+  # 时补 "https://"；已带 scheme（"xx://" 任意 scheme，含 resource://）或站内绝对路径
+  # （"/" 开头）不动。只动 link——file 的 url 是 uploads resource URI，别的 kind 由
+  # 各自动作拼（如 link 产物是完整 https 链接）。
+  defp normalize_url(url, "link") when is_binary(url) and url != "" do
+    if String.contains?(url, "://") or String.starts_with?(url, "/"),
+      do: url,
+      else: "https://" <> url
+  end
+
+  defp normalize_url(url, _kind), do: url
 
   defp cap_content(c) when is_binary(c), do: String.slice(c, 0, @artifact_content_limit)
   defp cap_content(_), do: nil
