@@ -1,5 +1,5 @@
 import React from "react"
-import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Loader2, Plus, RotateCcw, Save, TerminalSquare, UserRound, UsersRound} from "lucide-react"
+import {Ban, CheckCircle2, FolderLock, HardDrive, KeyRound, Loader2, Plus, RotateCcw, Save, TerminalSquare, Trash2, UserRound, UsersRound} from "lucide-react"
 
 import {Button, EmptyState, Input, Select} from "./ui/primitives"
 
@@ -183,6 +183,7 @@ type Props = {
   onConfigUpdate?: (agentUri: string, key: string, patch: Record<string, unknown>) => void
   onConfigDeletePath?: (agentUri: string, key: string, path: string[]) => void
   onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+  onDeleteApiKey?: (payload: {agent_uri: string; provider: string}) => void
 }
 
 // Shared shadcn token classes (consistent with the admin/sessions clusters).
@@ -238,7 +239,7 @@ const defaultCreateSchema: Record<string, ConfigSchemaField[]> = {
   native: [{key: "role", type: "string", label: "role"}],
 }
 
-export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUserProfile, onSetUserPassword, onDisableUser, onEnableUser, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey}: Props) {
+export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUserProfile, onSetUserPassword, onDisableUser, onEnableUser, onDeleteAgent, onConfigUpdate, onConfigDeletePath, onPutApiKey, onDeleteApiKey}: Props) {
   if (state.component === "users_table") return <UsersTable state={state} />
   if (state.component === "user_new_form") return <UserNewForm state={state} onCreateUser={onCreateUser} />
   if (state.component === "user_detail") {
@@ -256,7 +257,7 @@ export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUse
   if (state.component === "entity_caps") return <EntityCaps state={state} />
   if (state.component === "agent_detail") return <AgentDetail state={state} onDeleteAgent={onDeleteAgent} />
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
-  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} onPutApiKey={onPutApiKey} />
+  if (state.component === "agent_api_keys") return <AgentApiKeys state={state} onPutApiKey={onPutApiKey} onDeleteApiKey={onDeleteApiKey} />
   if (state.component === "agent_extensions") return <AgentExtensions state={state} />
   if (state.component === "agent_config") return <AgentConfigEditor state={state} onConfigUpdate={onConfigUpdate} onConfigDeletePath={onConfigDeletePath} />
   return <IdentityDirectory state={state} />
@@ -1522,9 +1523,11 @@ function ConfigFieldWidget({field: _field, value, schemaType, options, onChange}
 function AgentApiKeys({
   state,
   onPutApiKey,
+  onDeleteApiKey,
 }: {
   state: IdentitiesState
   onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+  onDeleteApiKey?: (payload: {agent_uri: string; provider: string}) => void
 }) {
   const keys = Array.isArray(state.api_keys) ? state.api_keys : []
   const error = !Array.isArray(state.api_keys) ? state.api_keys?.error : undefined
@@ -1553,6 +1556,7 @@ function AgentApiKeys({
             <tr>
               <th className={thClass}>Provider</th>
               <th className={thClass}>Masked</th>
+              {state.can_edit && <th className={thClass}>Actions</th>}
             </tr>
           </thead>
           <tbody className={tbodyClass}>
@@ -1562,6 +1566,24 @@ function AgentApiKeys({
                 <td className={tdClass}>
                   <code className={codeClass}>{key.masked}</code>
                 </td>
+                {state.can_edit && (
+                  <td className={tdClass}>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      data-world-api-key-delete={key.provider}
+                      onClick={() => {
+                        if (!state.agent_uri || !key.provider) return
+                        if (!window.confirm(`Delete the API key for ${key.provider}? This cannot be undone.`)) return
+                        onDeleteApiKey?.({agent_uri: state.agent_uri, provider: key.provider})
+                      }}
+                    >
+                      <Trash2 aria-hidden="true" />
+                      Delete
+                    </Button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>

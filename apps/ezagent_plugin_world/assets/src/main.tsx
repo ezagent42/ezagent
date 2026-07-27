@@ -498,6 +498,12 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: payload,
                   })
                 },
+                onDeleteApiKey: (payload) => {
+                  sendEvent("world:dispatch", {
+                    action: "agent.api_key.delete",
+                    args: payload,
+                  })
+                },
                 onAdminAction: (action, args) => {
                   sendEvent("world:dispatch", {action, args})
                 },
@@ -1023,6 +1029,7 @@ type RenderContext = {
   onCreateUser: (user: Record<string, unknown>) => void
   onSaveUserProfile: (payload: {user_uri: string; display_name: string; email: string}) => void
   onSetUserPassword: (payload: {user_uri: string; password: string}) => void
+  onDeleteApiKey: (payload: {agent_uri: string; provider: string}) => void
   onDisableUser: (payload: {user_uri: string; reason: string}) => void
   onEnableUser: (payload: {user_uri: string}) => void
   onDeleteAgent: (agentUri: string) => void
@@ -1141,6 +1148,7 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onCreateAgent={context.onCreateAgent}
           onCreateUser={context.onCreateUser}
           onSaveUserProfile={context.onSaveUserProfile}
+          onDeleteApiKey={context.onDeleteApiKey}
           onSetUserPassword={context.onSetUserPassword}
           onDisableUser={context.onDisableUser}
           onEnableUser={context.onEnableUser}

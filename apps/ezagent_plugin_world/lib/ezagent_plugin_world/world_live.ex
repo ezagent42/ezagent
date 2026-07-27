@@ -479,6 +479,18 @@ defmodule EzagentPluginWorld.WorldLive do
     with_admin_operator(socket, fn -> dispatch_api_key_put(socket, agent_uri_str, args) end)
   end
 
+  def handle_event(
+        "world:dispatch",
+        %{
+          "action" => "agent.api_key.delete",
+          "args" => %{"agent_uri" => agent_uri_str, "provider" => provider}
+        },
+        socket
+      )
+      when is_binary(provider) do
+    with_admin_operator(socket, fn -> dispatch_api_key_delete(socket, agent_uri_str, provider) end)
+  end
+
   @cmdk_actions Ezagent.World.DispatchContract.actions(:cmdk)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @cmdk_actions and is_map(args) do
@@ -770,7 +782,12 @@ defmodule EzagentPluginWorld.WorldLive do
         target: target,
         mode: :call,
         args: %{layout: layout},
-        ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: {:caller_inbox, self()}},
+        ctx: %{
+          caller: caller,
+          authenticated_principal: caller,
+          caps: caps,
+          reply: {:caller_inbox, self()}
+        },
         origin: :authenticated_external
       })
 
@@ -830,6 +847,37 @@ defmodule EzagentPluginWorld.WorldLive do
       false ->
         {:noreply,
          assign(socket, :last_dispatch_status, "error:api_key_provider_and_key_required")}
+
+      :error ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent_uri")}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
+    end
+  end
+
+  # Delete an agent credential through the same Behavior.ApiKeys dispatch gate as
+  # saving it. The provider is the stable key identifier in the ApiKeys slice;
+  # never accept a masked value or plaintext credential from the browser here.
+  defp dispatch_api_key_delete(socket, agent_uri_str, provider) when is_binary(provider) do
+    caller = socket.assigns.current_entity_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
+    provider = String.trim(provider)
+
+    with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
+         true <- provider != "",
+         {:ok, _result} <-
+           Invocation.dispatch(%Invocation{
+             target: Ezagent.URI.with_action(agent_uri, :identity, :delete_api_key),
+             mode: :call,
+             args: %{provider: provider},
+             ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :sync},
+             origin: :authenticated_external
+           }) do
+      refresh_api_keys_state(socket, agent_uri)
+    else
+      false ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:api_key_provider_required")}
 
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:invalid_agent_uri")}
