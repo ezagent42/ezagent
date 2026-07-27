@@ -622,6 +622,90 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
     assert source =~ "if @local_fixtures_enabled"
   end
 
+  describe "collect_status/1" do
+    test "classifies untracked, modified, deleted, and unknown status codes" do
+      executor = fn argv, _opts ->
+        assert "-C" in argv
+        assert "status" in argv
+        assert "-z" in argv
+
+        entries =
+          Enum.join(
+            [
+              "?? new_file.txt",
+              " M modified.txt",
+              "M  staged_modified.txt",
+              " D deleted.txt",
+              "!! ignored.log"
+            ],
+            <<0>>
+          ) <> <<0>>
+
+        {:ok, %{stdout: entries, stderr: "", exit_status: 0}}
+      end
+
+      assert {:ok, entries} =
+               GitRunner.collect_status(%{
+                 worktree_path: "/worktree",
+                 runner_opts: %{executor: executor}
+               })
+
+      assert entries == [
+               %{path: "new_file.txt", index_status: "?", worktree_status: "?"},
+               %{path: "modified.txt", index_status: " ", worktree_status: "M"},
+               %{path: "staged_modified.txt", index_status: "M", worktree_status: " "},
+               %{path: "deleted.txt", index_status: " ", worktree_status: "D"},
+               %{path: "ignored.log", index_status: "!", worktree_status: "!"}
+             ]
+    end
+
+    test "requires an exact worktree_path key" do
+      assert {:error, :invalid_ready_workspace} = GitRunner.collect_status(%{})
+    end
+
+    test "maps a git exit failure to a stable checkout-mismatch error" do
+      executor = fn _argv, _opts -> {:error, {:git_exit, 128}} end
+
+      assert {:error, :workspace_checkout_mismatch} =
+               GitRunner.collect_status(%{
+                 worktree_path: "/worktree",
+                 runner_opts: %{executor: executor}
+               })
+    end
+
+    test "propagates infrastructure executor failures unchanged" do
+      executor = fn _argv, _opts -> {:error, :git_command_timeout} end
+
+      assert {:error, :git_command_timeout} =
+               GitRunner.collect_status(%{
+                 worktree_path: "/worktree",
+                 runner_opts: %{executor: executor}
+               })
+    end
+
+    test "reports a real untracked file and a real modified file from a live worktree", %{
+      root: root
+    } do
+      origin = local_origin!(root)
+
+      assert {:ok, ready} =
+               GitRunner.prepare(request(remote_url: origin, allow_local_fixture: true))
+
+      File.write!(Path.join(ready.worktree_path, "untracked.txt"), "new\n")
+      File.write!(Path.join(ready.worktree_path, "README.md"), "changed\n")
+
+      assert {:ok, entries} = GitRunner.collect_status(ready)
+      paths = entries |> Enum.map(& &1.path) |> Enum.sort()
+      assert paths == ["README.md", "untracked.txt"]
+
+      assert %{path: "untracked.txt", index_status: "?", worktree_status: "?"} =
+               Enum.find(entries, &(&1.path == "untracked.txt"))
+
+      assert %{path: "README.md", worktree_status: "M"} =
+               Enum.find(entries, &(&1.path == "README.md"))
+    end
+  end
+
   defp request(overrides) do
     base = %{
       workspace_uri: Ezagent.URI.workspace("git-runner-team"),

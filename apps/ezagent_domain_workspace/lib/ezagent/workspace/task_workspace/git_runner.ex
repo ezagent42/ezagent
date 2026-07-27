@@ -1,6 +1,7 @@
 defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   @moduledoc """
-  Executes bounded anonymous Git argv plans for task workspace preparation.
+  Executes bounded anonymous Git argv plans for task workspace preparation
+  and status collection.
 
   Production transport accepts HTTPS without userinfo. A local path is accepted
   only behind the explicit test-fixture flag. Every real command is owned by a
@@ -22,6 +23,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
           stdout: String.t(),
           stderr: String.t(),
           exit_status: non_neg_integer()
+        }
+
+  @type status_entry :: %{
+          path: String.t(),
+          index_status: String.t(),
+          worktree_status: String.t()
         }
 
   @doc false
@@ -209,6 +216,29 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   end
 
   def verify_absent(_ready), do: {:error, :invalid_ready_workspace}
+
+  @doc """
+  Collects the porcelain-v1 worktree status of a prepared worktree against
+  its current index (design §4.2 — the raw material the workspace-change
+  collector classifies into V1 upsert candidates or rejections). Unlike
+  `verify/1`, a non-empty result is the expected, useful case — this
+  function does not require a clean tree.
+  """
+  @spec collect_status(map()) :: {:ok, [status_entry()]} | {:error, term()}
+  def collect_status(%{worktree_path: worktree} = ready) when is_binary(worktree) do
+    opts = command_opts(Map.get(ready, :runner_opts, %{}))
+
+    status_argv =
+      git_argv(["-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+
+    case execute(status_argv, opts) do
+      {:ok, %{stdout: stdout}} -> {:ok, parse_status_entries(stdout)}
+      {:error, {:git_exit, _status}} -> {:error, :workspace_checkout_mismatch}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def collect_status(_ready), do: {:error, :invalid_ready_workspace}
 
   defp remove_if_unregistered(cache, worktree, ready, opts, original_error) do
     list_argv = git_argv(["--git-dir", cache, "worktree", "list", "--porcelain", "-z"])
@@ -576,6 +606,18 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
     |> Enum.any?(fn %{path: path} ->
       is_binary(path) and same_path?(path, expected_path)
     end)
+  end
+
+  defp parse_status_entries(stdout) do
+    stdout
+    |> String.split(<<0>>, trim: true)
+    |> Enum.map(&parse_status_entry/1)
+  end
+
+  defp parse_status_entry(
+         <<index_status::binary-size(1), worktree_status::binary-size(1), " ", path::binary>>
+       ) do
+    %{path: path, index_status: index_status, worktree_status: worktree_status}
   end
 
   defp command_opts(request) do
