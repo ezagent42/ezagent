@@ -188,26 +188,6 @@ defmodule Ezagent.Capability do
   def action_of(cap), do: Match.action_of(cap)
 
   @doc """
-  The concrete target instances a cap set grants access toward for `behavior` —
-  the generic **forward visibility** derivation ("what can I see of this kind").
-
-  Given a holder's caps, returns the de-duped (by stable key) `%URI{}` target
-  instances of caps whose `behavior` matches; wildcard / non-`%URI{}` instances
-  (`:any`) are excluded (they name no concrete target). Pure over `%Capability{}`
-  structs — no store, no authorization: this only ENUMERATES the visible target
-  set (the authorization chokepoint stays `Cap.authorize/3`). Generalizes the
-  per-plugin "derive visible targets from caller_caps" pattern (kanban's private
-  board derivation, workspace / session visibility) into one reusable helper.
-  """
-  @spec caps_toward(Enumerable.t(), module()) :: [URI.t()]
-  def caps_toward(caps, behavior) when is_atom(behavior) do
-    caps
-    |> Enum.filter(&match?(%__MODULE__{behavior: ^behavior, instance: %URI{}}, &1))
-    |> Enum.map(fn %__MODULE__{instance: instance} -> Ezagent.URI.instance(instance) end)
-    |> Enum.uniq_by(&Ezagent.URI.stable_key/1)
-  end
-
-  @doc """
   Remove a capability from a MapSet of caps.
 
   Refuses to remove the admin all-caps invariant — the admin entity
