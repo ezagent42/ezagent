@@ -16,6 +16,7 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
   alias Ezagent.DomainGit.{
     ChangeRequest,
+    ChangeRequestId,
     CommitSha,
     CreateChangeRequest,
     FileChange,
@@ -115,6 +116,16 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
   defp base_sha, do: String.duplicate("a", 40)
   defp head_sha, do: String.duplicate("b", 40)
+
+  defp change_request_id do
+    {:ok, id} = ChangeRequestId.new(%{external_id: "42"})
+    id
+  end
+
+  defp commit_sha do
+    {:ok, sha} = CommitSha.new(%{value: base_sha()})
+    sha
+  end
 
   defp create_request do
     {:ok, sha} = CommitSha.new(%{value: base_sha()})
@@ -330,5 +341,70 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
     assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  # ── Window 5: "after an observation HTTP success, before the snapshot
+  #    persists" -- read_change_request/list_checks/list_reviews are pure
+  #    reads with nothing to duplicate. Proven explicitly rather than assumed:
+  #    the stub below flunks on any non-GET, non-mint request, so an
+  #    accidental write anywhere in these three callbacks fails this test. ──
+
+  test "observation callbacks are pure reads -- repeated calls make zero mutating requests and return consistent facts" do
+    sha = base_sha()
+
+    Req.Test.stub(@stub_name, fn conn ->
+      case {conn.method, conn.request_path} do
+        {"GET", "/repos/owner/repo/installation"} ->
+          Req.Test.json(conn, %{"id" => 123})
+
+        {"POST", "/app/installations/123/access_tokens"} ->
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          {:ok, decoded} = Jason.decode(body)
+
+          conn
+          |> Plug.Conn.put_status(201)
+          |> Req.Test.json(%{
+            "token" => "ghs-test-token",
+            "expires_at" => future_iso(),
+            "repository_selection" => "selected",
+            "repositories" => [%{"full_name" => "owner/repo"}],
+            "permissions" => decoded["permissions"]
+          })
+
+        {"GET", "/repos/owner/repo/pulls/42"} ->
+          Req.Test.json(conn, %{
+            "number" => 42,
+            "html_url" => "https://github.com/owner/repo/pull/42",
+            "state" => "open",
+            "head" => %{"ref" => "feature-branch", "sha" => sha},
+            "base" => %{"ref" => "main"},
+            "merged" => false
+          })
+
+        {"GET", "/repos/owner/repo/commits/" <> _rest} ->
+          Req.Test.json(conn, %{"total_count" => 0, "check_runs" => []})
+
+        {"GET", "/repos/owner/repo/pulls/42/reviews"} ->
+          Req.Test.json(conn, [])
+
+        {method, path} ->
+          flunk("observation must be read-only; got #{method} #{path}")
+      end
+    end)
+
+    read_1 = GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
+    read_2 = GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} = read_1
+    assert read_1 == read_2
+
+    checks_1 = GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
+    checks_2 = GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
+    assert {:ok, []} = checks_1
+    assert checks_1 == checks_2
+
+    reviews_1 = GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
+    reviews_2 = GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
+    assert {:ok, []} = reviews_1
+    assert reviews_1 == reviews_2
   end
 end

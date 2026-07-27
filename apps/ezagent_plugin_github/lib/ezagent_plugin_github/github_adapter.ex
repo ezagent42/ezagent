@@ -11,6 +11,28 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   permission profile (statically selected here, never from `ctx`, action args,
   prompt, or card) and discarded when the callback returns; there is no shared
   cache. Every callback fails closed if the token cannot be minted or scoped.
+
+  ## Reconciliation
+
+  `create_change_request/4` is create-or-reconcile, not create-only (design
+  docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+  §6.1-§6.2): re-invoking it with the same repo/head_ref/expected_base_sha
+  after any crash never duplicates a remote mutation.
+
+    * The deterministic head ref is the mutation identity. If it does not
+      exist, a fresh blob/tree/commit chain is built and the ref is created
+      (`POST git/refs`) for the first time. If it already exists, it is
+      reused when its sole parent commit is exactly the verified base sha —
+      otherwise the callback fails closed with `:head_ref_conflict`. There is
+      no PATCH/force-push path: an existing ref is never moved.
+    * The PR's head+base pair (never its title or body) is the reconciliation
+      identity: an exact, open, head+base search runs before any PR is
+      created. Zero matches creates one; exactly one match is normalized and
+      returned; more than one match fails closed with
+      `:change_request_conflict`.
+    * `resolve_repository/2`, `read_change_request/3`, `list_checks/3`, and
+      `list_reviews/3` are pure reads and need no reconciliation logic — a
+      repeated read cannot duplicate a mutation.
   """
   @behaviour Ezagent.DomainGit.Adapter
 
