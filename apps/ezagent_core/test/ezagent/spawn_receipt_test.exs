@@ -76,9 +76,9 @@ defmodule Ezagent.SpawnReceiptTest do
       stop_kind(uri)
     end
 
-    test "create_freshness/1 is fail-conservative for a never-spawned URI" do
+    test "create_freshness/2 is fail-conservative for a never-spawned URI" do
       uri = fixture_uri()
-      assert Ezagent.Kind.create_freshness(uri) == :unknown
+      assert Ezagent.Kind.create_freshness(uri, self()) == :unknown
     end
   end
 

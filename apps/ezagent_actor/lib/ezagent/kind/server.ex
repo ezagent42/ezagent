@@ -1165,6 +1165,11 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def terminate(reason, %{kind: kind_module, uri: uri, state: slice_state} = _state) do
+    # #201-cred (codex r2 MEDIUM-6) — free THIS incarnation's pid-bound
+    # freshness verdict row. Best-effort: a leaked row is never consulted
+    # (its pid never recurs).
+    :ok = Ezagent.Kind.CreateFreshness.delete(URI.to_string(uri), self())
+
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.
