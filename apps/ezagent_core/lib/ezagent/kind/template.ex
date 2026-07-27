@@ -386,28 +386,21 @@ defmodule Ezagent.Kind.Template do
           | {:error, term()}
   def provision_and_instantiate(class_module, tmpl_name, tmpl_data, %URI{} = workspace_uri, opts)
       when is_atom(class_module) and is_map(tmpl_data) and is_list(opts) do
+    # #201 PR-2 — no speculative flavor write here. The pre-instantiate
+    # `maybe_store_agent_flavor` global-ETS store (and its failure
+    # compensation) was DELETED: the only flavor write is the spawn winner's
+    # post-ownership store in `TemplateSpawn.complete_spawn_obligations`
+    # (gated on the `:started` receipt). Instantiate-time flavor reads come
+    # from the data map (`"flavor"`, authored by
+    # `AgentTemplate.to_template_data/2`), never the global table.
     with :ok <- validate_instantiate_callback(class_module, opts),
-         {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data),
-         :ok <- maybe_store_agent_flavor(class_module, data, opts) do
-      result =
-        case opts do
-          [] ->
-            class_module.instantiate(tmpl_name, data, workspace_uri)
+         {:ok, data} <- maybe_allocate_config_dir(class_module, tmpl_data) do
+      case opts do
+        [] ->
+          class_module.instantiate(tmpl_name, data, workspace_uri)
 
-          [launch_context: _context] ->
-            class_module.instantiate(tmpl_name, data, workspace_uri, opts)
-        end
-
-      case result do
-        {:ok, _workers} = ok ->
-          ok
-
-        {:ok, _workers, _meta} = ok ->
-          ok
-
-        {:error, _reason} = error ->
-          maybe_delete_agent_flavor(data, opts)
-          error
+        [launch_context: _context] ->
+          class_module.instantiate(tmpl_name, data, workspace_uri, opts)
       end
     end
   end
@@ -447,35 +440,6 @@ defmodule Ezagent.Kind.Template do
     case Map.get(tmpl_data, "agent_uri") do
       s when is_binary(s) and s != "" -> {:ok, Ezagent.URI.new!(s)}
       _ -> {:error, :config_dir_allocate_missing_agent_uri}
-    end
-  end
-
-  defp maybe_store_agent_flavor(_class_module, _tmpl_data, launch_context: _context), do: :ok
-
-  defp maybe_store_agent_flavor(class_module, tmpl_data, []) do
-    case Map.get(tmpl_data, "agent_uri") do
-      s when is_binary(s) and s != "" ->
-        s
-        |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.AttributeHook.store(class_module)
-
-      _ ->
-        :ok
-    end
-  end
-
-  defp maybe_delete_agent_flavor(_tmpl_data, launch_context: _context), do: :ok
-  defp maybe_delete_agent_flavor(tmpl_data, []), do: delete_agent_flavor(tmpl_data)
-
-  defp delete_agent_flavor(tmpl_data) do
-    case Map.get(tmpl_data, "agent_uri") do
-      s when is_binary(s) and s != "" ->
-        s
-        |> Ezagent.URI.new!()
-        |> Ezagent.Kind.Template.AttributeHook.delete()
-
-      _ ->
-        :ok
     end
   end
 

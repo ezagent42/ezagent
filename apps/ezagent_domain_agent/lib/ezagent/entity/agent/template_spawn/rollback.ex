@@ -8,7 +8,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
     undo_workers(workers)
     rollback_receipts(receipts, preserve_creation_receipts?)
     cleanup_config_dirs(workers, template_class)
-    Ezagent.AgentFlavorAttributes.delete(instance_uri)
+    # #201 PR-2 — no flavor cleanup here: the only flavor write is the
+    # post-ownership store in `complete_spawn_obligations`, which runs AFTER
+    # every step this rollback compensates. Nothing to undo (and deleting
+    # could clobber a pre-existing live owner's cache row).
     _ = Ezagent.Credential.GrantRow.delete(URI.to_string(instance_uri))
     :ok
   end

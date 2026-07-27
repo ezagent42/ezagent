@@ -26,7 +26,17 @@ defmodule EzagentDomainAgent.TestSupport.PreStartTemplateClass do
     owner = Application.fetch_env!(:ezagent_domain_agent, :pre_start_test_owner)
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
 
-    send(owner, {:flavor_during_instantiate, Ezagent.AgentFlavorAttributes.get(agent_uri)})
+    # #201 PR-2 — instantiate-time flavor reads come from the data map
+    # (authored by `AgentTemplate.to_template_data/2`), NEVER the global
+    # `AgentFlavorAttributes` ETS table, which is no longer written before
+    # the spawn winner is known.
+    flavor_read =
+      case Map.get(data, "flavor") do
+        flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+        _ -> :none
+      end
+
+    send(owner, {:flavor_during_instantiate, flavor_read})
     send(owner, {:instantiate_called, data})
 
     case Application.get_env(:ezagent_domain_agent, :pre_start_test_mode, :success) do

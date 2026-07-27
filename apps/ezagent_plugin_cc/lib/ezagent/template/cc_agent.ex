@@ -441,6 +441,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs
   # `cc-custom`) while spawn/PTY/credential-cascade stays the single
   # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
+  #
+  # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes.put_from_template_class`
+  # write was DELETED: the only flavor write is the spawn winner's post-ownership
+  # store in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+  # The `flavor_class` param is retained for the shim-delegation contract even
+  # though this body no longer writes flavor itself.
   @doc false
   @spec instantiate_for_flavor(module(), String.t(), map(), URI.t(), keyword()) ::
           {:ok, [URI.t()], map()} | {:error, term()}
@@ -448,24 +454,22 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
-      # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the PtyServer
-      # are already alive we have nothing to do (each plugin re-running
-      # Workspace.Loader.load_all/0 hits this; first pass spawns, rest no-op).
-      # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
-      # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
-      cond do
-        opts == [] and agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the PtyServer
+    # are already alive we have nothing to do (each plugin re-running
+    # Workspace.Loader.load_all/0 hits this; first pass spawns, rest no-op).
+    # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
+    # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
+    cond do
+      opts == [] and agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          Ezagent.PluginCc.Template.CcAgent.Spawn.spawn_for_local_pty(
-            agent_uri,
-            tmpl,
-            workspace_uri,
-            opts
-          )
-      end
+      true ->
+        Ezagent.PluginCc.Template.CcAgent.Spawn.spawn_for_local_pty(
+          agent_uri,
+          tmpl,
+          workspace_uri,
+          opts
+        )
     end
   end
 

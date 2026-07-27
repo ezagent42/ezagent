@@ -129,7 +129,6 @@ defmodule Ezagent.Template.PyAgent do
 
     with {:ok, config_dir} <- fetch_config_dir(tmpl),
          {:ok, script} <- fetch_script(tmpl),
-         :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__),
          {:ok, script_path} <- install_script(config_dir, script) do
       timeout_ms = parse_int(Map.get(tmpl, "timeout_ms"), @default_timeout_ms)
 

@@ -123,16 +123,17 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
-      cond do
-        opts == [] and agent_kind_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes` write was
+    # DELETED: the only flavor write is the spawn winner's post-ownership store
+    # in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+    cond do
+      opts == [] and agent_kind_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
-            spawn_for_headless(agent_uri, tmpl, workspace_uri, opts)
-          end
-      end
+      true ->
+        with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
+          spawn_for_headless(agent_uri, tmpl, workspace_uri, opts)
+        end
     end
   end
 

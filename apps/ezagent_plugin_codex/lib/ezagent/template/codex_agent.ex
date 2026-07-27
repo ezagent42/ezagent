@@ -140,14 +140,15 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # `EzagentPluginCc.Template.CcAgent`.
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
-      cond do
-        opts == [] and fully_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes` write was
+    # DELETED: the only flavor write is the spawn winner's post-ownership store
+    # in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+    cond do
+      opts == [] and fully_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          spawn_for_codex(agent_uri, tmpl, workspace_uri, opts)
-      end
+      true ->
+        spawn_for_codex(agent_uri, tmpl, workspace_uri, opts)
     end
   end
 
@@ -612,7 +613,15 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # (`:started` / `:already_started`) and the core logical-create verdict
     # (`created?`), which the TemplateSpawn chokepoint gates create-only
     # writes on.
-    case Ezagent.LocalRuntime.ensure_started_receipt(agent_uri, opts) do
+    #
+    # #201 PR-2 — spawn the Agent Kind DIRECTLY (cc/py precedent) instead of
+    # routing through the entity-scheme spawn fn's global flavor resolution
+    # (`AgentModuleResolver` reads the — now never pre-written — global ETS
+    # flavor row). This instantiate KNOWS its Kind in-process; the
+    # codex/codex-remote flavor declarations both resolve to
+    # `Ezagent.Entity.Agent`, and the URI path passed `%{uri: agent_uri}` as
+    # the only init arg — identical here.
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
       {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
       {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}

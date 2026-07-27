@@ -24,9 +24,15 @@ defmodule Ezagent.TestSupport.NoopAgentTemplate do
     agent_uri = Ezagent.URI.new!(uri_str)
 
     with :ok <- validate(tmpl) do
-      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-        {:ok, :started, _pid} -> {:ok, [agent_uri], meta(tmpl, true)}
-        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
+      # #201 PR-2 — spawn the Kind DIRECTLY. This template KNOWS its Kind
+      # in-process (Entity.Agent); the global flavor resolution
+      # (`AgentModuleResolver`) is a rehydrate-time concern for EXISTING
+      # agents and can no longer see a speculatively pre-written flavor row
+      # (that write was deleted).
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+        {:ok, _pid} -> {:ok, [agent_uri], meta(tmpl, true)}
+        {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, reason} -> {:error, reason}
       end
     end

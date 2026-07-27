@@ -16,7 +16,10 @@ defmodule Ezagent.World.AgentDisplayNameTemplate do
   def instantiate(_name, data, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
     config_dir = Map.fetch!(data, "allocated_config_dir")
-    {:ok, flavor} = Ezagent.AgentFlavorAttributes.get(agent_uri)
+    # #201 PR-2 — instantiate-time flavor reads come from the data map
+    # (authored by `AgentTemplate.to_template_data/2`), NEVER the global
+    # `AgentFlavorAttributes` ETS table.
+    flavor = Map.fetch!(data, "flavor")
 
     respawn_template_data =
       data
