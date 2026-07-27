@@ -146,7 +146,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
   @spec initialization_result(URI.t(), t()) :: :ok | {:error, term()}
   def initialization_result(%URI{} = uri, %__MODULE__{} = requested) do
     with {:ok, validated_requested} <- revalidate(requested),
-         {:ok, %{policy: current}} <- Ezagent.Kind.get_slice(uri, :git_task_access),
+         {:ok, %{policy: current}} <- Ezagent.Kind.read(uri, :git_task_access, spawn: :never),
          {:ok, validated_current} <- revalidate_current(current) do
       if validated_current == validated_requested,
         do: :ok,

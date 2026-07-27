@@ -113,7 +113,7 @@ defmodule EzagentWeb.SessionConfigControllerTest do
 
     assert conn.status == 200, conn.resp_body
     assert Jason.decode!(conn.resp_body)["ok"] == true
-    assert {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     assert slice.members[agent_uri].role_name == "reviewer"
     assert slice.members[agent_uri].in_session_template == false
   end

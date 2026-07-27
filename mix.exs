@@ -128,6 +128,7 @@ defmodule EzagentCore.Umbrella.MixProject do
   # deterministic, never-flaky gates (arch scans, invariant tests) that catch the
   # class of red-test-slipped-to-review a killed 120s full-suite run misses.
   @arch_invariant_test_paths [
+    "apps/ezagent_actor/test/architecture",
     "apps/ezagent_core/test/architecture",
     "apps/ezagent_core/test/invariants",
     "apps/ezagent_domain_external_mirror/test/invariants",

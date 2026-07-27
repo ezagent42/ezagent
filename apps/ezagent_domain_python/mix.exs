@@ -43,6 +43,7 @@ defmodule EzagentDomainPython.MixProject do
     [
       # Tier-2 rule: Domain apps depend on ezagent_core ONLY — no other
       # Domain apps, no plugin apps.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:jason, "~> 1.2"},
       # erlexec is the subprocess primitive — same dep

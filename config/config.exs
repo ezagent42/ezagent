@@ -13,6 +13,12 @@ import Config
 config :ezagent_core,
   ecto_repos: [EzagentCore.Repo]
 
+# NOTE (C5 §3.4): the actor-framework port wiring (`:ezagent_actor` app env)
+# is applied at core boot by `Ezagent.Kind.Adapters.wire!/0`, NOT here —
+# `config :ezagent_actor, …` for the not-yet-existing app makes Elixir
+# 1.19's app.config validation hard-fail child-app boots and silently
+# aborts umbrella-root `mix test` recursion. See the module's moduledoc.
+
 config :ezagent_core, Ezagent.Authentication,
   pat_resolver: Ezagent.Entity.Token,
   bridge_resolver: Ezagent.AgentBridge.TokenStore

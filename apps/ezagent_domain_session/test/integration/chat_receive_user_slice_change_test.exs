@@ -181,7 +181,7 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatReceiveUserSliceChangeTes
       # `Kind.get_slice/2` path (this test runs in-VM so the read
       # succeeds; production code would dispatch a cap-gated read
       # action like `chat.list_recent` instead).
-      {:ok, slice} = Ezagent.Kind.get_slice(receiver, :session)
+      {:ok, slice} = Ezagent.Kind.read(receiver, :session, spawn: :never)
       assert slice.last_received.message_id == msg.id
       assert %DateTime{} = slice.last_received.at
     end

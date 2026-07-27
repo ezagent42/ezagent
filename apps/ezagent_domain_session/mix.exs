@@ -35,6 +35,7 @@ defmodule EzagentDomainInstanceMessage.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # Chat references User Kind (admin join, :receive on User) and
       # Workspace.Loader (boot_complete in start callback). The dep

@@ -6,10 +6,13 @@ defmodule EzagentCore.EtsOwner do
   Per DECISIONS implementation-decision §ETS table owner — Option B:
   one GenServer holds all tables, reducing supervisor noise and
   giving a single restart point that recreates every table together.
-  Phase 1 owns: `:ezagent_ready_gate`, `:ezagent_pending_delivery`,
-  `:ezagent_idempotency`, `:ezagent_behavior_registry`. The stdlib `Registry`
-  for `Ezagent.KindRegistry` is its own supervisor child (different
-  lifecycle shape).
+  Post-C5 this owner holds the CORE tables (cap spine, registries,
+  plugin/query caches); the actor-framework tables (`:ezagent_ready_gate`,
+  `:ezagent_pending_delivery`, `:ezagent_idempotency`,
+  `:ezagent_behavior_registry`, `:ezagent_spawn_registry`,
+  `:ezagent_slice_change_cursors`, scheme registry) moved to
+  `EzagentActor.EtsOwner`. The stdlib `Registry` for `Ezagent.KindRegistry`
+  is a child of `EzagentActor.Application` (different lifecycle shape).
 
   ## Boot order invariant (DECISIONS impl-time §ETS+Application children)
 
@@ -30,8 +33,11 @@ defmodule EzagentCore.EtsOwner do
   use GenServer
 
   @tables [
-    {Ezagent.ReadyGate, :set},
-    {Ezagent.PendingDelivery, :set},
+    # C5 physical move (§3.2): the framework tables — `Ezagent.ReadyGate`,
+    # `Ezagent.PendingDelivery`, `Ezagent.Idempotency`,
+    # `Ezagent.BehaviorRegistry`, `Ezagent.SpawnRegistry`,
+    # `Ezagent.SliceChange.Cursors` — moved to `EzagentActor.EtsOwner`
+    # (OTP starts `ezagent_actor` before core).
     # Durable capability delivery keeps only target-presence hints in ETS so
     # ordinary Kind ready transitions avoid a cross-workspace DB query. The
     # outbox rows remain authoritative and the Sweeper rehydrates this cache.
@@ -41,10 +47,7 @@ defmodule EzagentCore.EtsOwner do
     # "current" pointer (the current key_id always comes fresh from the DB
     # active row), so there is no stale-cache window to invalidate.
     {Ezagent.Cap.AuthorityCache, :set},
-    {Ezagent.Idempotency, :set},
-    {Ezagent.BehaviorRegistry, :set},
     {Ezagent.RoutingRegistry, :set},
-    {Ezagent.SpawnRegistry, :set},
     {Ezagent.TemplateRegistry, :set},
     # role-as-data (SPEC §3): `Ezagent.Agent.RecipeRegistry`'s ETS cache moved to
     # `EzagentDomainAgent.EtsOwner`. The registry now resolves read-through over
@@ -67,12 +70,12 @@ defmodule EzagentCore.EtsOwner do
     # backing kind_module. The chat plugin's `entity://` SpawnRegistry
     # fn looks up kind_module from snapshot first, AgentTemplate
     # second — no per-flavor lookup table needed.
-    # PR #145 (SPEC v2 §5.6 §5.11): runtime ETS allowlist of URI schemes
-    # accepted by `Ezagent.URI.new!/1`. Seeded at boot with the 6 core
-    # schemes; plugins extend it ONLY via `Ezagent.SpawnRegistry.register/2`
-    # (which co-registers). Eliminates the hardcoded `@known_schemes`
-    # drift bug.
-    {Ezagent.URI.SchemeRegistry, :set},
+    # PR #145 (SPEC v2 §5.6 §5.11): the runtime ETS allowlist of URI
+    # schemes (`{Ezagent.URI.SchemeRegistry, :set}`) moved to
+    # `EzagentActor.EtsOwner` in the C5 atomic scheme-registry commit —
+    # module, table, and the 6-scheme boot seed travel together (§3.2);
+    # OTP starts `ezagent_actor` before core, so the seed precedes any
+    # core `Ezagent.URI.new!/1`.
     # Plugin authoring contract PR-1 (SPEC
     # docs/superpowers/specs/2026-05-22-plugin-authoring-contract.md):
     # - PluginRegistry §4 — runtime catalog of installed plugins;
@@ -119,18 +122,9 @@ defmodule EzagentCore.EtsOwner do
     # dispatch (PR-EM-2) to reach the Binding's `publish/2` callback.
     {:literal, :ezagent_external_mirror_binding_registry, :set},
     # Notification SPEC v2 PR-N3 codex r2 HIGH-1 fix (Allen 2026-05-25):
-    # `:ezagent_slice_change_cursors` — keyed by URI string → integer.
-    # Per-URI monotonic cursor for `Ezagent.SliceChange.emit/1`'s
-    # broadcast envelope. Owned here (rather than lazy-init in
-    # SliceChange) so we get the same crash-recovery + boot-order
-    # discipline as every other reliability primitive table.
-    #
-    # Cursor reset on owner restart is acceptable: the broadcast
-    # envelope is transport-level, not a persisted log — subscribers
-    # that need durable ordering use `Ezagent.MessageStore` /
-    # `Ezagent.Kind.Snapshot`. The cursor is a "you missed N events
-    # since you last saw cursor X" hint, not a primary key.
-    {Ezagent.SliceChange.Cursors, :set},
+    # `:ezagent_slice_change_cursors` — moved to `EzagentActor.EtsOwner`
+    # with `Ezagent.SliceChange` in the C5 physical move (the owning module
+    # is framework).
     # Plugin-package (Q1-C): runtime catalog of unpacked plugin packages —
     # slug → %{manifest, app, ebin, priv_dir, modules}. Populated by
     # `Ezagent.PluginPackage.install/1`, reduced by `unload/1`. Owned here

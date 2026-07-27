@@ -201,8 +201,7 @@ defmodule Ezagent.Session.SessionManager do
   end
 
   defp live_owner_uri(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, %{state: %{owner_uri: %URI{} = owner}}} -> owner
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{owner_uri: %URI{} = owner}} -> owner
       _ -> nil
     end
@@ -351,14 +350,14 @@ defmodule Ezagent.Session.SessionManager do
   end
 
   # Read the LIVE Session Kind's `:session` slice working copy via the
-  # same-domain canonical reader `Ezagent.Kind.get_slice/2`. SessionManager is
-  # materialized alongside the live session, so the live slice is authoritative;
-  # we do not re-read the durable snapshot (that path belongs to the cc
-  # transport's registration rebuild). Unwraps the Lifecycle two-container
-  # `%{state: %{...}}` shape (a flat slice falls through unchanged).
+  # same-domain canonical reader `Ezagent.Kind.read/3` with `spawn: :never`.
+  # SessionManager is materialized alongside the live session, so the live
+  # slice is authoritative; we do not re-read the durable snapshot (that path
+  # belongs to the cc transport's registration rebuild). The returned value is
+  # already normalized out of the Lifecycle two-container `%{state: %{...}}`
+  # shape.
   defp live_working_copy(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, %{state: %{template_working_copy: wc}}} when is_map(wc) -> wc
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{template_working_copy: wc}} when is_map(wc) -> wc
       _ -> nil
     end

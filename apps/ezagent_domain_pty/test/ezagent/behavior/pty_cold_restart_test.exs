@@ -108,13 +108,13 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
     for b <- ["a", "bb", "ccc"], do: assert({:ok, _} = write(self_uri, b))
 
     wait_until(fn ->
-      case Ezagent.Kind.get_raw_slice(self_uri, :pty) do
+      case Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :pty) do
         {:ok, %{state: %{write_calls: 3, total_bytes: 6}}} -> true
         _ -> false
       end
     end)
 
-    {:ok, %{state: state_before}} = Ezagent.Kind.get_raw_slice(self_uri, :pty)
+    {:ok, %{state: state_before}} = Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :pty)
     assert state_before == %{write_calls: 3, total_bytes: 6}
 
     # 3. Brutal kill — skips graceful deactivate/terminate. The :permanent
@@ -135,7 +135,7 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
     # 4. THE GATE — counters rehydrated, NOT reset. If create/1 re-ran on
     #    cold-load the counters would be %{write_calls: 0, total_bytes: 0}.
     {:ok, %{state: state_after, transients: transients_after}} =
-      Ezagent.Kind.get_raw_slice(self_uri, :pty)
+      Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :pty)
 
     assert state_after == %{write_calls: 3, total_bytes: 6},
            "durable counters did NOT rehydrate (or create/1 re-ran and reset them) " <>
@@ -151,7 +151,7 @@ defmodule Ezagent.ActionSet.PtyColdRestartTest do
     assert {:ok, _} = write(self_uri, "dddd")
 
     wait_until(fn ->
-      case Ezagent.Kind.get_raw_slice(self_uri, :pty) do
+      case Ezagent.Kind.SliceAccess.get_raw_slice(self_uri, :pty) do
         {:ok, %{state: %{write_calls: 4, total_bytes: 10}}} -> true
         _ -> false
       end

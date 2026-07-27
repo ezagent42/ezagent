@@ -87,16 +87,25 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
   end
 
   test "runtime has one handler route and its verifier precedes invocation" do
-    source = File.read!(path("apps/ezagent_core/lib/ezagent/kind/runtime.ex"))
+    source = File.read!(path("apps/ezagent_actor/lib/ezagent/kind/runtime.ex"))
 
     assert occurrences(source, "invoke_behavior(") == 2,
            "invoke_behavior must have exactly one call site plus its definition"
 
-    {verify_offset, _} = :binary.match(source, "Ezagent.Cap.Verifier.authorize(")
+    # C5 §3.4 AuthzPort — the step-5.5 verifier call goes through the
+    # config-resolved port (`authz().authorize_dispatch(`); the literal
+    # `Ezagent.Cap.Verifier.authorize(` lives in the core adapter. The
+    # ORDERING invariant (verify precedes invoke) is unchanged.
+    {verify_offset, _} = :binary.match(source, "authz().authorize_dispatch(")
     {invoke_offset, _} = :binary.match(source, "invoke_behavior(")
     assert verify_offset < invoke_offset
 
-    server = File.read!(path("apps/ezagent_core/lib/ezagent/kind/server.ex"))
+    adapter =
+      File.read!(path("apps/ezagent_core/lib/ezagent/kind/adapters/authz_adapter.ex"))
+
+    assert adapter =~ "Ezagent.Cap.Verifier.authorize("
+
+    server = File.read!(path("apps/ezagent_actor/lib/ezagent/kind/server.ex"))
     assert occurrences(server, "Ezagent.Kind.Runtime.handle_dispatch(") == 2
   end
 

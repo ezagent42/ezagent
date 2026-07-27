@@ -41,13 +41,10 @@ defmodule Ezagent.Orchestrator.CodexOrchestratorSeed do
   def seed_status do
     uri = template_uri_struct()
 
-    case Ezagent.Kind.get_slice(uri, :template) do
-      {:ok, %{state: %{content: %{flavor: "codex", role: "orchestrator"} = content}}} ->
-        {:ok, %{template_uri: template_uri(), template_content: content}}
-
-      {:ok, %{state: %{content: content}}} ->
-        {:partial, %{template_uri: template_uri(), template_content: content || %{}}}
-
+    # Live-only read of the template's `:template` slice (§2.2 `Kind.read/3`,
+    # `spawn: :never`). The returned value is already normalized to the state
+    # view, so match the flat `%{content: ...}` shape directly.
+    case Ezagent.Kind.read(uri, :template, spawn: :never) do
       {:ok, %{content: %{flavor: "codex", role: "orchestrator"} = content}} ->
         {:ok, %{template_uri: template_uri(), template_content: content}}
 

@@ -304,26 +304,28 @@ defmodule Ezagent.PluginCurlAgent.Template do
     end
   end
 
+  # Read the credential source's `:api_keys` slice via the §2.2 public read
+  # surface, in its sanctioned live-preferred compose (§2.2): live slice via
+  # `read/3` (`spawn: :never`), falling back to `read_durable/3` — the durable
+  # snapshot-row projection — when the source is cold. NEVER spawns the source
+  # (its snapshot can predate the current rehydration loader — a spawn would
+  # fail `:snapshot_version_too_new` where a durable decode succeeds).
   defp source_api_keys_slice(%URI{} = source) do
-    case Ezagent.Kind.get_slice(source, :api_keys) do
+    case Ezagent.Kind.read(source, :api_keys, spawn: :never) do
       {:ok, slice} when is_map(slice) ->
         {:ok, slice}
 
       _ ->
-        source_snapshot_api_keys_slice(source)
-    end
-  end
+        case Ezagent.Kind.read_durable(source, :api_keys) do
+          {:ok, slice, _meta} when is_map(slice) ->
+            {:ok, slice}
 
-  defp source_snapshot_api_keys_slice(%URI{} = source) do
-    case Ezagent.SnapshotStore.latest(source) do
-      {:ok, %{state: state}} when is_map(state) ->
-        case Map.get(state, :api_keys) do
-          slice when is_map(slice) -> {:ok, Ezagent.Kind.normalize_slice_view(slice)}
-          _ -> {:error, {:cascade_api_keys_slice_missing, source}}
+          {:ok, _non_map, _meta} ->
+            {:error, {:cascade_api_keys_slice_missing, source}}
+
+          {:error, reason} ->
+            {:error, {:cascade_source_snapshot_missing, source, reason}}
         end
-
-      {:error, reason} ->
-        {:error, {:cascade_source_snapshot_missing, source, reason}}
     end
   end
 

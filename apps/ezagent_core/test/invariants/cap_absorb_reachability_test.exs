@@ -15,11 +15,11 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
 
   @same_beam_route_files [
     "apps/ezagent_domain_identity/lib/ezagent/identity.ex",
-    "apps/ezagent_core/lib/ezagent/router.ex",
-    "apps/ezagent_core/lib/ezagent/invocation.ex",
-    "apps/ezagent_core/lib/ezagent/kind_registry.ex",
-    "apps/ezagent_core/lib/ezagent/pending_delivery.ex",
-    "apps/ezagent_core/lib/ezagent/kind/ready_transition.ex"
+    "apps/ezagent_actor/lib/ezagent/router.ex",
+    "apps/ezagent_actor/lib/ezagent/invocation.ex",
+    "apps/ezagent_actor/lib/ezagent/kind_registry.ex",
+    "apps/ezagent_actor/lib/ezagent/pending_delivery.ex",
+    "apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex"
   ]
 
   @cross_node_markers [":rpc.", ":erpc.", "Node."]
@@ -100,11 +100,11 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
     assert sources["apps/ezagent_domain_identity/lib/ezagent/identity.ex"] =~
              "Router.dispatch(cmd)"
 
-    assert sources["apps/ezagent_core/lib/ezagent/router.ex"] =~ "Invocation.dispatch()"
-    assert sources["apps/ezagent_core/lib/ezagent/invocation.ex"] =~ "KindRegistry.lookup"
-    assert sources["apps/ezagent_core/lib/ezagent/kind_registry.ex"] =~ "Registry.lookup"
-    assert sources["apps/ezagent_core/lib/ezagent/pending_delivery.ex"] =~ ":ets."
-    assert sources["apps/ezagent_core/lib/ezagent/pending_delivery.ex"] =~ "[node()]"
+    assert sources["apps/ezagent_actor/lib/ezagent/router.ex"] =~ "Invocation.dispatch()"
+    assert sources["apps/ezagent_actor/lib/ezagent/invocation.ex"] =~ "KindRegistry.lookup"
+    assert sources["apps/ezagent_actor/lib/ezagent/kind_registry.ex"] =~ "Registry.lookup"
+    assert sources["apps/ezagent_actor/lib/ezagent/pending_delivery.ex"] =~ ":ets."
+    assert sources["apps/ezagent_actor/lib/ezagent/pending_delivery.ex"] =~ "[node()]"
 
     violations =
       Map.new(sources, fn {relative, source} ->

@@ -504,24 +504,23 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   end
 
   describe "the orchestrator tool surface (§3.8 member/rule-set + template tools)" do
-    test "SessionManager.tool_names/0 is the member + participant + rule-set + template set" do
-      assert MapSet.new(SessionManager.tool_names()) ==
-               MapSet.new([
-                 "add_managed_member",
-                 "add_participant",
-                 "update_member_template",
-                 "remove_member",
-                 "define_rule_set_rule",
-                 "define_prompt_template",
-                 "define_legend",
-                 "update_template",
-                 "save_template_as",
-                 "migrate_session",
-                 "list_templates",
-                 # kb-retrieval SPEC §5.3 option 1 — kb-agent retrieve / ingest.
-                 "kb_query",
-                 "kb_ingest"
-               ])
+    test "SessionManager.tool_names/0 exposes the CORE member + participant + rule-set + template surface" do
+      core =
+        MapSet.new(
+          ~w(add_managed_member add_participant update_member_template remove_member
+             define_rule_set_rule define_prompt_template define_legend update_template
+             save_template_as migrate_session list_templates)
+        )
+
+      # `tool_names/0` is `core ++ ExtensionRegistry-discovered plugin tools`, so its
+      # EXACT membership is env-shape-fragile: kb_query/kb_ingest appear iff the kb
+      # plugin registered (depends on which apps booted). Hardcoding the exact set
+      # coupled this test to an ambient ezagent_web boot that #1522 sharding removed
+      # (main-red #189). Assert the CORE surface is a SUBSET (always exposed); plugin
+      # tools are neither core nor asserted here. The "kb is NOT core" exclusivity
+      # invariant lives at the catalog layer (catalog_test.exs — `core_operations`
+      # excludes `kb_`).
+      assert MapSet.subset?(core, MapSet.new(SessionManager.tool_names()))
     end
   end
 

@@ -295,7 +295,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # adds admin AND the panel reads the live members incl. alice.
     {:ok, _view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
 
-    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, %{members: members}} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     member_uris = Enum.map(Map.keys(members), &URI.to_string/1)
 
     # (a) a member the viewer didn't bring is visible.
@@ -491,7 +491,7 @@ defmodule EzagentWeb.WorldConversationTest do
 
     assert html =~ ~s(data-last-dispatch="ok")
 
-    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, %{members: members}} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     assert invitee in Enum.map(Map.keys(members), &URI.to_string/1)
   end
 
@@ -529,7 +529,7 @@ defmodule EzagentWeb.WorldConversationTest do
       "args" => %{"session_uri" => URI.to_string(session_uri), "member" => invitee}
     })
 
-    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, %{members: members}} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     assert invitee in Enum.map(Map.keys(members), &URI.to_string/1)
 
     html =
@@ -541,7 +541,7 @@ defmodule EzagentWeb.WorldConversationTest do
       })
 
     assert html =~ ~s(data-last-dispatch="ok")
-    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, %{members: members}} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     refute invitee in Enum.map(Map.keys(members), &URI.to_string/1)
   end
 
@@ -568,7 +568,7 @@ defmodule EzagentWeb.WorldConversationTest do
       })
 
     assert html =~ ~s(data-last-dispatch="error:self_remove_not_allowed")
-    assert {:ok, %{members: members}} = Ezagent.Kind.get_slice(session_uri, :session)
+    assert {:ok, %{members: members}} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     assert URI.to_string(caller_uri) in Enum.map(Map.keys(members), &URI.to_string/1)
   end
 
@@ -1582,7 +1582,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # lives on the membership edge (asserted below via `members`).
     assert {:ok, ^recipe_name} = Ezagent.Agent.RecipeAttributes.fetch(planned_agent)
 
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned_agent, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(planned_agent, :sandbox, spawn: :never)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert is_binary(Map.get(sandbox, :config_dir_path))
 

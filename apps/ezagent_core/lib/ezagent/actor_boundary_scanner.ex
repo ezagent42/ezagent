@@ -9,13 +9,14 @@ defmodule Ezagent.ActorBoundaryScanner do
 
   ## Two directions (§4.2)
 
-  - **FORWARD ("The rule")** — non-framework code (`apps/*/lib`, excluding the
-    §1/§3.2 mover set) must not reach INTO actor internals (banned ROOTS, the
-    `:ezagent_*` GenServer / `Kind.get_slice/get_raw_slice/runtime_view` / process-
-    generation shapes, `ReadyGate.<fn>` except `register_external_gate`). Seeds
-    the §4.4 census.
-  - **REVERSE ("Reverse direction")** — the mover set must not reach UP into the
-    staying-core cap/authority/policy spine. Seeds the §3.4 port worklist.
+  - **FORWARD ("The rule")** — non-framework code (`apps/*/lib`, excluding
+    `apps/ezagent_actor/lib`, the actor framework's own app) must not reach
+    INTO actor internals (banned ROOTS, the `:ezagent_*` GenServer /
+    `Kind.get_slice/get_raw_slice/runtime_view` / process-generation shapes,
+    `ReadyGate.<fn>` except `register_external_gate`). Seeds the §4.4 census.
+  - **REVERSE ("Reverse direction")** — `apps/ezagent_actor/lib` must not
+    reach UP into the staying-core cap/authority/policy spine. Seeds the
+    §3.4 port worklist.
 
   ## SITE-level ratchet (not file/module level)
 
@@ -31,58 +32,13 @@ defmodule Ezagent.ActorBoundaryScanner do
 
   @core_lib "apps/ezagent_core/lib"
 
-  # ── The §1/§3.2 mover set (reverse scan target; forward scan exclusion) ─────
-  @mover_files ~w(
-    ezagent/kind.ex
-    ezagent/lifecycle.ex
-    ezagent/invocation.ex
-    ezagent/router.ex
-    ezagent/cmd.ex
-    ezagent/kind_registry.ex
-    ezagent/ready_gate.ex
-    ezagent/pending_delivery.ex
-    ezagent/idempotency.ex
-    ezagent/idempotency/sweeper.ex
-    ezagent/snapshot_store.ex
-    ezagent/snapshot/writer.ex
-    ezagent/spawn_registry.ex
-    ezagent/local_runtime.ex
-    ezagent/slice_change.ex
-    ezagent/slice_change/cursors.ex
-    ezagent/behavior.ex
-    ezagent/behavior/effects.ex
-    ezagent/behavior/kind_base.ex
-    ezagent/behavior/legacy_callbacks.ex
-    ezagent/behavior/introspection.ex
-    ezagent/behavior_registry.ex
-    ezagent/universal_behaviors.ex
-    ezagent/interface_validator.ex
-    ezagent/uri.ex
-    ezagent/uri/scheme_registry.ex
-    ezagent/ecto/kind_snapshot.ex
-    ezagent/ecto/uri_type.ex
-    ezagent/kind/behavior_set.ex
-    ezagent/kind/cascade_hook.ex
-    ezagent/kind/deferred_dispatch.ex
-    ezagent/kind/identity_read_error.ex
-    ezagent/kind/introspection.ex
-    ezagent/kind/kind_base_backfill.ex
-    ezagent/kind/launch_context_init.ex
-    ezagent/kind/launch_context_relay.ex
-    ezagent/kind/mount_detach.ex
-    ezagent/kind/ready_transition.ex
-    ezagent/kind/runtime.ex
-    ezagent/kind/runtime/context.ex
-    ezagent/kind/runtime/effects.ex
-    ezagent/kind/runtime/receipt.ex
-    ezagent/kind/server.ex
-    ezagent/kind/slice_access.ex
-    ezagent/kind/snapshot.ex
-    ezagent/kind/spawner.ex
-    ezagent/kind/state_rebuilder.ex
-    ezagent/kind/termination.ex
-    ezagent_core/kind_supervisor.ex
-  )
+  # C5 chunk-3 (the physical move): the §3.2 mover set now LIVES in
+  # `apps/ezagent_actor/lib` — the app's `lib/` IS the internal set (§3.1:
+  # "the gate's banned list is derived from it, not hand-curated"). The
+  # FORWARD scan excludes the whole app dir; the REVERSE scan covers it
+  # wholesale (wildcard, so future framework files are scanned
+  # automatically — no hand-maintained file list to drift).
+  @actor_lib "apps/ezagent_actor/lib"
 
   # ── FORWARD config ─────────────────────────────────────────────────────────
   @banned_internal_modules MapSet.new([
@@ -110,7 +66,8 @@ defmodule Ezagent.ActorBoundaryScanner do
   @banned_internal_prefix "Elixir.Ezagent.Kind.Runtime"
 
   # `Kind.<fn>` reach-ins that go actor-internal (§2.4). get_slice/get_raw_slice
-  # are the ratchet-to-C7 debt; runtime_view retires per §2.3.
+  # retired from the public façade in C7 (chunk 4) — the names stay BANNED here
+  # so any re-introduced public caller REDs; runtime_view retires per §2.3.
   @banned_kind_calls [:get_slice, :get_raw_slice, :runtime_view]
 
   @ready_gate_allowed_fn :register_external_gate
@@ -181,31 +138,35 @@ defmodule Ezagent.ActorBoundaryScanner do
     ezagent/actor_boundary_ledger.ex
   )
 
-  @doc "All FORWARD reach-in sites currently in the tree (non-mover apps/*/lib)."
+  @doc "All FORWARD reach-in sites currently in the tree (non-actor apps/*/lib)."
   @spec forward_sites() :: [map()]
   def forward_sites do
     root = repo_root()
-    excluded = MapSet.new(@mover_files ++ @gate_infra, &Path.join([root, @core_lib, &1]))
+    excluded = MapSet.new(@gate_infra, &Path.join([root, @core_lib, &1]))
+    actor_prefix = Path.join(root, @actor_lib) <> "/"
 
     root
     |> Path.join("apps/*/lib/**/*.ex")
     |> Path.wildcard()
-    |> Enum.reject(&MapSet.member?(excluded, &1))
+    |> Enum.reject(&(MapSet.member?(excluded, &1) or String.starts_with?(&1, actor_prefix)))
     |> Enum.flat_map(fn abs ->
       rel = Path.relative_to(abs, root)
       forward_sites_in_source(File.read!(abs), rel)
     end)
   end
 
-  @doc "All REVERSE upward-reference sites in the mover set."
+  @doc "All REVERSE upward-reference sites in the actor app (`apps/ezagent_actor/lib`)."
   @spec reverse_sites() :: [map()]
   def reverse_sites do
     own = own_modules()
     root = repo_root()
 
-    Enum.flat_map(@mover_files, fn rel ->
-      path = Path.join([root, @core_lib, rel])
-      reverse_sites_in_source(File.read!(path), Path.join(@core_lib, rel), own)
+    root
+    |> then(&Path.join([&1, @actor_lib, "**", "*.ex"]))
+    |> Path.wildcard()
+    |> Enum.flat_map(fn abs ->
+      rel = Path.relative_to(abs, root)
+      reverse_sites_in_source(File.read!(abs), rel, own)
     end)
   end
 
@@ -776,13 +737,14 @@ defmodule Ezagent.ActorBoundaryScanner do
     String.starts_with?(s, "Elixir.Ezagent.") or String.starts_with?(s, "Elixir.EzagentCore.")
   end
 
-  @doc "Every module DEFINED in the mover set (self-references, never offenders)."
+  @doc "Every module DEFINED in the actor app (self-references, never offenders)."
   def own_modules do
     root = repo_root()
 
-    Enum.reduce(@mover_files, MapSet.new(), fn rel, acc ->
-      path = Path.join([root, @core_lib, rel])
-
+    root
+    |> then(&Path.join([&1, @actor_lib, "**", "*.ex"]))
+    |> Path.wildcard()
+    |> Enum.reduce(MapSet.new(), fn path, acc ->
       case Code.string_to_quoted(File.read!(path)) do
         {:ok, ast} ->
           {_, mods} =

@@ -43,6 +43,7 @@ defmodule EzagentPluginFeishu.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},

@@ -43,6 +43,13 @@ defmodule EzagentCore.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      # C5 (actor-framework umbrella extraction §3.1): the actor framework
+      # moved to `ezagent_actor`; core depends on it (the framework has NO
+      # in-umbrella deps and reaches the spine only through the §3.4 ports
+      # wired by `Ezagent.Kind.Adapters.wire!/0`). OTP therefore starts
+      # `ezagent_actor` — its ETS owner, KindRegistry Registry, scheme seed —
+      # BEFORE any core boot code.
+      {:ezagent_actor, in_umbrella: true},
       {:dns_cluster, "~> 0.2.0"},
       {:phoenix_pubsub, "~> 2.1"},
       # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` —

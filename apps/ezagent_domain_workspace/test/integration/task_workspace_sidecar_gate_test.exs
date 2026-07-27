@@ -368,7 +368,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     :ok = Ezagent.AgentLineage.record(agent_uri, original_root)
     :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, original_workspace)
     :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "original-flavor")
-    assert {:ok, original_sandbox} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    assert {:ok, original_sandbox} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never)
 
     assert {:error, :sidecar_start_not_fresh} =
              AgentStart.start(
@@ -389,7 +389,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SidecarGateTest do
     assert {:ok, ^original_root} = Ezagent.AgentLineage.lookup(agent_uri)
     assert {:ok, ^original_workspace} = Ezagent.WorkspaceRegistry.lookup(agent_uri)
     assert {:ok, "original-flavor"} = Ezagent.AgentFlavorAttributes.get(agent_uri)
-    assert {:ok, ^original_sandbox} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    assert {:ok, ^original_sandbox} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never)
 
     assert {:error, :creation_attempt_not_found} =
              Ezagent.Agent.CreationInventory.find_attempt(agent_uri, workspace_uri())

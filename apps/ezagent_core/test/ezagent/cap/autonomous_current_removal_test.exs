@@ -314,7 +314,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
   defp as_list(_), do: []
 
   defp server_source,
-    do: File.read!(Path.join(repo_root(), "apps/ezagent_core/lib/ezagent/kind/server.ex"))
+    do: File.read!(Path.join(repo_root(), "apps/ezagent_actor/lib/ezagent/kind/server.ex"))
 
   defp repo_root, do: Path.expand("../../../../..", __DIR__)
 

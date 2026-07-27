@@ -136,7 +136,7 @@ defmodule Ezagent.Socialware.ExternalPageCommitGateTest do
       {:ok, _} = dispatch(uri, :surface, :approve, %{version: version})
 
       wait_until(fn ->
-        {:ok, surface} = Ezagent.Kind.get_slice(uri, :surface)
+        {:ok, surface} = Ezagent.Kind.read(uri, :surface, spawn: :never)
         surface.approved == version
       end)
 

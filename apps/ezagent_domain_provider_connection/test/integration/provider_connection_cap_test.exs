@@ -79,7 +79,9 @@ defmodule Ezagent.ProviderConnectionCapTest do
       refute_received {:boundary, _, _}
     end
 
-    assert {:ok, slice} = Ezagent.Kind.get_slice(ctx.owner, ProviderConnection.state_slice())
+    assert {:ok, slice} =
+             Ezagent.Kind.read(ctx.owner, ProviderConnection.state_slice(), spawn: :never)
+
     assert slice in [nil, %{state: %{}, transients: %{}}]
   end
 

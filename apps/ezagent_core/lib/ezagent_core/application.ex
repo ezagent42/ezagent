@@ -7,6 +7,12 @@ defmodule EzagentCore.Application do
 
   @impl true
   def start(_type, _args) do
+    # C5 §3.4 — wire the actor-framework ports/injections BEFORE any child
+    # (Snapshot.Writer, Kind instances, boot dispatch) can reach a
+    # config-resolved call site. See `Ezagent.Kind.Adapters` for why this is
+    # a boot-time put_env and not a `config :ezagent_actor` block.
+    :ok = Ezagent.Kind.Adapters.wire!()
+
     children =
       [
         # Survives EtsOwner restarts and publishes table readiness to supervised
@@ -14,7 +20,11 @@ defmodule EzagentCore.Application do
         EzagentCore.EtsReadiness,
 
         # ① ETS tables — must be ready before any process that reads/writes them
-        # (KindRegistry, Idempotency.Sweeper, plugin Kind instances).
+        # (plugin Kind instances). The FRAMEWORK tables (ReadyGate /
+        # PendingDelivery / Idempotency / BehaviorRegistry / SpawnRegistry /
+        # SliceChange.Cursors / URI.SchemeRegistry) moved to
+        # `EzagentActor.EtsOwner` in the C5 physical move; OTP starts
+        # `ezagent_actor` before core (core declares the dep).
         # See DECISIONS impl-time §ETS+Application children.
         EzagentCore.EtsOwner,
 
@@ -29,12 +39,9 @@ defmodule EzagentCore.Application do
         # domain when an authoritative preparation implementation is present.
         Ezagent.Kind.Template.PreStart,
 
-        # ② stdlib Registry for URI → pid (Ezagent.KindRegistry wraps this).
-        {Registry, keys: :unique, name: Ezagent.KindRegistry},
-
-        # ③ Idempotency LRU prune — its own GenServer so a crash doesn't
-        # take the ETS owner with it.
-        Ezagent.Idempotency.Sweeper,
+        # ②–③ (the `Ezagent.KindRegistry` stdlib Registry child and
+        # `Ezagent.Idempotency.Sweeper`) moved to `EzagentActor.Application`
+        # with the framework (C5 §3.2).
 
         # ③·5 Plugin RegistrationHooks (SPEC
         # docs/superpowers/specs/2026-05-25-external-mirror-auth-model-audit.md §5)
@@ -86,28 +93,16 @@ defmodule EzagentCore.Application do
         # re-subscriptions (PR-N2) depend on both being up.
         Ezagent.NotificationSubscriptions,
 
-        # ⑦ Snapshot async writer (Phase 4-completion Spec 04) — handles
-        # `:periodic` strategy; `:on_change` / `:on_terminate` go through
-        # `Ezagent.Kind.Snapshot.save_now/3` synchronously.
-        # **Skipped in :test env** for the same Sandbox-ownership reason
-        # as ⑥; see `Ezagent.Test.AuditCase` for opt-in pattern. Most
-        # tests use `:on_change` strategy so this writer is dormant; the
-        # 100ms timer firing in a sandbox-rolled-back state was leaving
-        # the DB connection contended for the next test's snapshot writes.
-        Ezagent.Snapshot.Writer,
+        # ⑦ (the snapshot async writer, `Ezagent.Snapshot.Writer`) and ⑨
+        # (the default `Ezagent.KindSupervisor`) moved to
+        # `EzagentActor.Application` with the framework (C5 §3.2); the
+        # writer keeps its skipped-in-:test semantics there.
 
         # ⑧ Foundation singleton supervisor — Phase 6 PR 2. Hosts core
         # singletons (System Kind sentinels + future cross-domain
         # controllers). Workspace.Supervisor moved out to
         # ezagent_domain_workspace as part of the three-layer split.
-        {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one},
-
-        # ⑨ Default Kind supervisor — V1 structural prevention (Allen
-        # 2026-05-21). `Ezagent.Kind.spawn/2` routes here when a Kind
-        # module doesn't declare its own `supervisor/0` callback. Always
-        # available so spawn calls from any plugin or domain app at boot
-        # have a destination.
-        Ezagent.KindSupervisor
+        {DynamicSupervisor, name: Ezagent.Core.SingletonSupervisor, strategy: :one_for_one}
       ]
       |> Enum.reject(&skip_in_test_env?/1)
 
@@ -116,11 +111,12 @@ defmodule EzagentCore.Application do
     # Attach telemetry handlers after the writer is up. Idempotent on restart.
     :ok = Ezagent.Audit.attach()
 
-    # PR #145 (SPEC v2 §5.6 §5.11) — seed the runtime URI scheme allowlist
-    # BEFORE any code path that calls `Ezagent.URI.new!/1` or
-    # `Ezagent.SpawnRegistry.register/2` (which now co-registers schemes).
-    # EtsOwner already created the table; this populates the 6 core schemes.
-    :ok = seed_uri_schemes()
+    # PR #145 (SPEC v2 §5.6 §5.11) / C5 §3.2 — the runtime URI scheme
+    # allowlist seed moved to `EzagentActor.Application.start/2` in the
+    # ATOMIC scheme-registry commit (module + ETS table + seed travel
+    # together). OTP starts `ezagent_actor` before this app (core declares
+    # the dep), so the 6 core schemes are seeded before any code path here
+    # calls `Ezagent.URI.new!/1` or `Ezagent.SpawnRegistry.register/2`.
 
     # Resource-unification P3 (SPEC §10 OI-3) — the `system://<type>[/<name>]`
     # resolution seam for node-global artifacts (global app creds, plugin config,
@@ -199,10 +195,11 @@ defmodule EzagentCore.Application do
     _ -> false
   end
 
-  # 2026-05-26 C-snapshot fix — `Ezagent.Audit.Writer` and
-  # `Ezagent.Snapshot.Writer` are global singleton GenServers that
-  # batch-flush to `Repo` on a 100ms timer. Against
-  # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model their
+  # 2026-05-26 C-snapshot fix — `Ezagent.Audit.Writer` (and, until the C5
+  # physical move, `Ezagent.Snapshot.Writer` — now owned and skipped by
+  # `EzagentActor.Application`) is a global singleton GenServer that
+  # batch-flushes to `Repo` on a 100ms timer. Against
+  # `Ecto.Adapters.SQL.Sandbox`'s per-test ownership model its
   # async flush stamps over connections owned by tests that have
   # already exited, causing `Database busy` to bleed into subsequent
   # tests (seen as operator UI baseline flakes and the 4 `SnapshotTest`
@@ -216,27 +213,11 @@ defmodule EzagentCore.Application do
   # writers, test env children list MUST NOT.
   @writers_skipped_in_test [
     Ezagent.Audit.Writer,
-    Ezagent.Snapshot.Writer,
     Ezagent.Cap.DeliveryOutbox.Sweeper
   ]
 
   defp skip_in_test_env?(child),
     do: is_test?() and child in @writers_skipped_in_test
-
-  # PR #145 — seed the 6 SPEC §5.6 schemes into SchemeRegistry. Idempotent
-  # (`:ets.insert/2` overwrites the same key), safe on supervisor restart.
-  # Idempotent `SchemeRegistry.init/0` covers the rare case where EtsOwner
-  # has not yet finished initializing on a hot path — in normal boot,
-  # EtsOwner is child ① in the supervision tree so the table is ready.
-  defp seed_uri_schemes do
-    :ok = Ezagent.URI.SchemeRegistry.init()
-
-    Enum.each(~w(entity workspace session template resource system), fn s ->
-      :ok = Ezagent.URI.SchemeRegistry.register(s)
-    end)
-
-    :ok
-  end
 
   # PR #146 — register Routing Behavior on the System Kind, spawn the
   # canonical global-rules sentinel `system://routing/default`, and

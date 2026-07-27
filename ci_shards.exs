@@ -35,6 +35,7 @@
 %{
   test_shards: [
     {"e2e", ["/test/e2e/"]},
+    {"actor", ["apps/ezagent_actor/test/"]},
     {"core", ["apps/ezagent_core/test/"]},
     {"session", ["apps/ezagent_domain_session/test/"]},
     {"web", ["apps/ezagent_web/test/", "apps/ezagent_cli/test/"]},

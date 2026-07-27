@@ -90,7 +90,7 @@ defmodule Ezagent.World.AgentDisplayNameTest do
     assert row["display_name"] == "dispatcher"
     refute row["display_name"] == row["name"]
 
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert sandbox.respawn_template_data["flavor"] == content.flavor
   end

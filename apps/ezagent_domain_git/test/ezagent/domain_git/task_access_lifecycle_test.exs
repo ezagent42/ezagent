@@ -22,10 +22,10 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
   end
 
   test "an absent ephemeral entity stays absent instead of lazy-restoring", %{uri: uri} do
-    assert {:error, :not_found} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:error, :not_live} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
     assert {:error, :not_found} = Ezagent.SnapshotStore.latest(uri)
     assert :ok = TaskAccessSupervisor.teardown(uri)
-    assert {:error, :not_found} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:error, :not_live} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
     assert {:error, :not_found} = Ezagent.SnapshotStore.latest(uri)
   end
 
@@ -35,7 +35,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
   } do
     assert {:ok, pid} = TaskAccessSupervisor.ensure_started(policy)
     assert Process.alive?(pid)
-    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
     assert {:ok, ^pid} = TaskAccessSupervisor.ensure_started(policy)
   end
 
@@ -53,7 +53,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
              GitTaskAccess.initialization_result(conflicting_uri, policy)
 
     assert {:ok, %{policy: ^conflicting}} =
-             Ezagent.Kind.get_slice(conflicting_uri, :git_task_access)
+             Ezagent.Kind.read(conflicting_uri, :git_task_access, spawn: :never)
 
     assert Process.alive?(pid)
   end
@@ -87,7 +87,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
 
     assert :ok = TaskAccessSupervisor.teardown(uri)
     refute Process.alive?(pid)
-    assert {:error, :not_found} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:error, :not_live} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
     assert :ok = TaskAccessSupervisor.teardown(uri)
   end
 
@@ -100,8 +100,10 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
 
     assert child_pids() == before
 
-    assert {:error, :not_found} =
-             Ezagent.Kind.get_slice(GitTaskAccess.uri_from_args(policy), :git_task_access)
+    assert {:error, :not_live} =
+             Ezagent.Kind.read(GitTaskAccess.uri_from_args(policy), :git_task_access,
+               spawn: :never
+             )
   end
 
   test "starting the named supervisor repeatedly reports the existing owner" do
@@ -125,7 +127,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
 
     assert {:ok, replacement_child} = Ezagent.KindRegistry.lookup(uri)
     assert replacement_child != child_pid
-    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
   end
 
   test "teardown linearizes before a concurrent start, which becomes ready", %{
@@ -151,7 +153,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     assert {:ok, live_pid} = Task.await(start_task)
     assert {:ok, ^live_pid} = Ezagent.KindRegistry.lookup(uri)
     assert Ezagent.ReadyGate.status(uri) == :ready
-    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
   end
 
   defp policy(id) do

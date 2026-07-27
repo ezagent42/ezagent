@@ -125,7 +125,7 @@ defmodule Ezagent.Session.OffboardingTransferTest do
     assert {:ok, generation} = Authority.current_generation(template_uri)
     assert :ok = Ezagent.Users.delete(deleted_user)
 
-    assert {:ok, slice} = Ezagent.Kind.get_slice(template_uri, :template)
+    assert {:ok, slice} = Ezagent.Kind.read(template_uri, :template, spawn: :never)
     content = slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:content)
     assert content.created_by == workspace_owner
     assert {:ok, ^generation} = Authority.current_generation(template_uri)

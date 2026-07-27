@@ -46,7 +46,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     wait_for(fn -> Ezagent.ReadyGate.status(target_uri) == :ready end)
 
     assert {:ok, %{keys: %{"deepseek" => "sk-source-key"}}} =
-             Ezagent.Kind.get_slice(target_uri, :api_keys)
+             Ezagent.Kind.read(target_uri, :api_keys, spawn: :never)
 
     Ezagent.Kind.terminate(source_uri)
     Ezagent.Kind.terminate(target_uri)
@@ -123,7 +123,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     wait_for(fn -> Ezagent.ReadyGate.status(target_uri) == :ready end)
 
     assert {:ok, %{keys: %{"deepseek" => "sk-workspace-key"}}} =
-             Ezagent.Kind.get_slice(target_uri, :api_keys)
+             Ezagent.Kind.read(target_uri, :api_keys, spawn: :never)
 
     assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(target_uri))
     assert row.credential_source_uri == URI.to_string(source_uri)
@@ -188,7 +188,7 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     wait_for(fn -> Ezagent.ReadyGate.status(target_uri) == :ready end)
 
     assert {:ok, %{keys: %{"deepseek" => "sk-user-key"}}} =
-             Ezagent.Kind.get_slice(target_uri, :api_keys)
+             Ezagent.Kind.read(target_uri, :api_keys, spawn: :never)
 
     assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(target_uri))
     assert row.credential_source_uri == URI.to_string(user_source_uri)

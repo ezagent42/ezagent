@@ -26,9 +26,8 @@ defmodule Ezagent.Session.OffboardingAdapter do
     new_owner = transfer_target(template_uri, deleted_user)
 
     with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(template_uri),
-         {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(template_uri, :template),
-         content when is_map(content) <-
-           slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:content),
+         {:ok, slice} when is_map(slice) <- Ezagent.Kind.read(template_uri, :template, spawn: :never),
+         content when is_map(content) <- Map.get(slice, :content),
          current_owner <- Map.get(content, :created_by),
          :ok <- maybe_transfer_template(template_uri, current_owner, deleted_user, new_owner) do
       :ok

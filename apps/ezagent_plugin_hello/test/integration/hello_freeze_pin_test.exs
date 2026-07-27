@@ -30,7 +30,7 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
     wc = Session.read_template_working_copy(session_uri)
     tmpl = Map.get(wc, :session_template_uri) || Map.get(wc, "session_template_uri")
 
-    {:ok, slice} = Ezagent.Kind.get_slice(tmpl, :template)
+    {:ok, slice} = Ezagent.Kind.read(tmpl, :template, spawn: :never)
     persistent = Map.get(slice, :state) || Map.get(slice, "state") || slice
     Map.get(persistent, :content) || Map.get(persistent, "content") || %{}
   end

@@ -97,11 +97,11 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
              dispatch(session_uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
       surface.versions[1] == %{tree: page_tree, by_turn: turn_id}
     end)
 
-    {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+    {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
     assert surface.approved == nil
   end
 
@@ -128,7 +128,7 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
              dispatch(session_uri, :turn, :compose, %{turn_id: turn_id, result_refs: []})
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
       Map.has_key?(surface.versions, version)
     end)
 
@@ -136,11 +136,11 @@ defmodule EzagentDomainSocialware.Integration.SurfaceDispatchIntegrationTest do
              dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
       surface.approved == version
     end)
 
-    {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+    {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
     assert Ezagent.ActionSet.Surface.internal_tree(surface) == page_tree
     assert Ezagent.ActionSet.Surface.external_tree(surface) == page_tree
   end

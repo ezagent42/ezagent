@@ -31,9 +31,9 @@ defmodule Ezagent.Invariants.EverCreatedMarkerPreservationTest do
   end
 
   test "the four grounded reachability sites use a marker-safe mechanism" do
-    snapshot_store = source("apps/ezagent_core/lib/ezagent/snapshot_store.ex")
-    clear_task = source("apps/ezagent_core/lib/mix/tasks/ezagent.snapshot.clear.ex")
-    backfill = source("apps/ezagent_core/lib/ezagent/kind/kind_base_backfill.ex")
+    snapshot_store = source("apps/ezagent_actor/lib/ezagent/snapshot_store.ex")
+    clear_task = source("apps/ezagent_actor/lib/mix/tasks/ezagent.snapshot.clear.ex")
+    backfill = source("apps/ezagent_actor/lib/ezagent/kind/kind_base_backfill.ex")
     teardown = source("apps/ezagent_domain_session/lib/ezagent/behavior/session/teardown.ex")
     retirement = source("apps/ezagent_domain_agent/lib/ezagent/agent/retirement.ex")
 
@@ -50,8 +50,8 @@ defmodule Ezagent.Invariants.EverCreatedMarkerPreservationTest do
 
     if source =~ "KindSnapshot.delete(" or source =~ "Ezagent.Ecto.KindSnapshot.delete(" do
       cond do
-        relative_path == "apps/ezagent_core/lib/ezagent/ecto/kind_snapshot.ex" -> []
-        relative_path == "apps/ezagent_core/lib/ezagent/lifecycle.ex" -> []
+        relative_path == "apps/ezagent_actor/lib/ezagent/ecto/kind_snapshot.ex" -> []
+        relative_path == "apps/ezagent_actor/lib/ezagent/lifecycle.ex" -> []
         true -> [relative_path]
       end
     else

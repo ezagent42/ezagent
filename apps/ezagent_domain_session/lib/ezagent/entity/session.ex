@@ -287,27 +287,27 @@ defmodule Ezagent.Entity.Session do
   entity that "owns" this session (the user/agent that created it).
 
   Looks up the live Session Kind's `:chat` slice via
-  `Ezagent.Kind.get_slice/2`. Returns:
+  `Ezagent.Kind.read/3` (`spawn: :never` — live-only). Returns:
   - `{:ok, %URI{}}` — the owner URI recorded at session creation
   - `{:ok, nil}` — session exists but has no recorded owner
     (system session, or pre-PR-OWN-2 snapshot without `:owner_uri`)
-  - `{:error, reason}` — session not live or call failed
+  - `{:error, reason}` — session not live (`:not_found`) or call failed
 
   Used by `Behavior.Session.data_owner/1` which converts the result
   into `%URI{} | :no_owner` for the cap-grant authorization path.
   """
   @spec owner(URI.t() | String.t()) :: {:ok, URI.t() | nil} | {:error, term()}
   def owner(uri) do
-    # Lifecycle migration (SPEC 2026-05-29 §2.3C): `Ezagent.ActionSet.Session`
-    # now stores the two-container `%{state, transients}` slice, so
-    # `get_slice(uri, :session)` returns that shape and `:owner_uri` lives
-    # under `:state`. Unwrap (a flat slice falls through unchanged for any
-    # not-yet-converted snapshot path).
-    case Ezagent.Kind.get_slice(uri, :session) do
-      {:ok, %{state: %{owner_uri: owner_uri}}} -> {:ok, owner_uri}
+    # `read/3` normalizes the two-container `%{state, transients}` slice to
+    # its `:state` view, so `:owner_uri` matches directly. `spawn: :never`
+    # keeps this a live-only probe; its `{:error, :not_live}` is translated
+    # back to the `{:error, :not_found}` this function has always returned
+    # for a non-live session (asserted by session_owner_test).
+    case Ezagent.Kind.read(uri, :session, spawn: :never) do
       {:ok, %{owner_uri: owner_uri}} -> {:ok, owner_uri}
       {:ok, nil} -> {:ok, nil}
       {:ok, _} -> {:ok, nil}
+      {:error, :not_live} -> {:error, :not_found}
       {:error, _} = err -> err
     end
   end

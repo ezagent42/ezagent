@@ -40,6 +40,7 @@ defmodule EzagentDomainIdentity.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:bcrypt_elixir, "~> 3.0"}
     ]

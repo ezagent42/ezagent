@@ -84,7 +84,7 @@ defmodule Ezagent.ActionSet.ExternalMirror do
   is owned by S's owner, so only the owner can grant
   `Behavior.ExternalMirror` caps on S.
 
-  We read the owner via `Ezagent.Kind.get_slice/2` rather than
+  We read the owner via `Ezagent.Kind.read/3` (`spawn: :never`) rather than
   `Ezagent.Entity.Session.owner/1` to avoid a runtime call into
   `:ezagent_domain_session` (Mix-dep cycle — see
   `apps/ezagent_domain_external_mirror/mix.exs` moduledoc).
@@ -733,7 +733,8 @@ defmodule Ezagent.ActionSet.ExternalMirror do
   external-mirror binding on session S is owned by S's owner; only
   the owner may grant `Behavior.ExternalMirror` caps on S.
 
-  Reads via `Ezagent.Kind.get_slice/2` on the `:chat` slice's
+  Reads via `Ezagent.Kind.read/3` (`spawn: :never` — live-only, same
+  semantics as the old `get_slice/2`) on the `:chat` slice's
   `:owner_uri` field (the SoT for session ownership per caps-
   data-ownership PR-OWN-2 #308). Reading the slice avoids a runtime
   call into `Ezagent.Entity.Session.owner/1` which would form a
@@ -745,7 +746,7 @@ defmodule Ezagent.ActionSet.ExternalMirror do
   three-branch enforcement).
   """
   def data_owner(%URI{scheme: "session"} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{owner_uri: %URI{} = owner_uri}} -> Ezagent.URI.instance(owner_uri)
       _ -> :no_owner
     end

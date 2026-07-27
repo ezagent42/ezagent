@@ -130,7 +130,7 @@ defmodule EzagentDomainSocialware.PageViewTest do
     {:ok, %{status: :settled}} = dispatch(session_uri, :turn, :settle, %{turn_id: turn_id})
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(session_uri, :surface)
+      {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
       surface.approved == version
     end)
 

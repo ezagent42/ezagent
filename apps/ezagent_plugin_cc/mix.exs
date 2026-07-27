@@ -43,6 +43,7 @@ defmodule EzagentPluginCc.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # cc-headless declares and spawns the shared Agent Kind with its
       # flavor-specific behavior set.

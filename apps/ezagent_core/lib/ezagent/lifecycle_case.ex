@@ -234,7 +234,7 @@ defmodule Ezagent.LifecycleCase do
     # `transients` container this gate must inspect. Use the RAW read so we
     # see the full `%{state:, transients:}` split.
     {:ok, %{state: state_before, transients: transients_before}} =
-      Ezagent.Kind.get_raw_slice(uri, slice_key)
+      raw_slice!(uri, slice_key)
 
     ExUnit.Assertions.assert(
       map_size(transients_before) > 0,
@@ -271,7 +271,7 @@ defmodule Ezagent.LifecycleCase do
     ExUnit.Assertions.refute(pid1 == pid2, "cold restart must produce a new pid")
 
     {:ok, %{state: state_after, transients: transients_after}} =
-      Ezagent.Kind.get_raw_slice(uri, slice_key)
+      raw_slice!(uri, slice_key)
 
     # 5a. State rehydrated correctly.
     ExUnit.Assertions.assert(
@@ -313,5 +313,14 @@ defmodule Ezagent.LifecycleCase do
       after: %{state: state_after, transients: transients_after},
       pids: {pid1, pid2}
     }
+  end
+
+  # The ONE framework-internal raw read (C7 4a): `Kind.get_raw_slice/2` is
+  # retired from the public surface, but this test-support gate must inspect the
+  # un-normalized `%{state:, transients:}` split, so it calls `SliceAccess`
+  # directly. Both assertions above route through this single site (the actor
+  # boundary ledger carries exactly this one).
+  defp raw_slice!(uri, slice_key) do
+    Ezagent.Kind.SliceAccess.get_raw_slice(uri, slice_key)
   end
 end

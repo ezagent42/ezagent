@@ -152,8 +152,9 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
   # Capture the session's CURRENT approved Surface page + theme into the template
   # content as `seed_surface`, so a session created from this template renders the
   # same page (see `Ezagent.Session.SurfaceSeed`). Core-only (reads the `:surface`
-  # slice via `Ezagent.Kind.get_slice`); a session with no surface / no approved
-  # version is left untouched. Never carries conversation history.
+  # slice via `Ezagent.Kind.read/3` with `spawn: :never`); a session with no
+  # surface / no approved version is left untouched. Never carries conversation
+  # history.
   defp maybe_put_seed_surface(content, %URI{} = session_uri) do
     case capture_seed_surface(session_uri) do
       %{} = seed -> Map.put(content, :seed_surface, seed)
@@ -162,7 +163,7 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
   end
 
   defp capture_seed_surface(session_uri) do
-    with {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(session_uri, :surface),
+    with {:ok, slice} when is_map(slice) <- Ezagent.Kind.read(session_uri, :surface, spawn: :never),
          approved when not is_nil(approved) <-
            Map.get(slice, :approved) || Map.get(slice, "approved"),
          versions when is_map(versions) <- Map.get(slice, :versions) || Map.get(slice, "versions"),
@@ -311,9 +312,9 @@ defmodule Ezagent.Orchestrator.Tools.Templates do
   defp extract_template_name(other), do: {:error, {:not_a_session_template_uri, other}}
 
   defp read_chat_slice(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, chat_slice} ->
-        Map.get(chat_slice, :state, chat_slice)
+        chat_slice
 
       {:error, _} ->
         %{}
