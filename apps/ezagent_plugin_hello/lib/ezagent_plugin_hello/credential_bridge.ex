@@ -198,7 +198,7 @@ defmodule EzagentPluginHello.CredentialBridge do
            behaviors: Ezagent.Entity.Agent.curl_behaviors()
          }) do
       {:ok, _pid} ->
-        :ok = Ezagent.AgentLineage.record(source_uri, User.admin_uri())
+        :ok = Ezagent.OwnerGatedWorkspace.record_lineage(source_uri, User.admin_uri())
         {:ok, source_uri}
 
       {:error, {:already_started, _pid}} ->

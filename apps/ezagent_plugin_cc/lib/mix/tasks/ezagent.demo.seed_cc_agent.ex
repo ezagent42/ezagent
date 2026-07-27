@@ -115,7 +115,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
         # same invariant as the wizard's create path (SPEC #324). Only on a
         # FRESH spawn (an already-alive session is already bound).
         :ok =
-          Ezagent.WorkspaceRegistry.bind(
+          Ezagent.OwnerGatedWorkspace.bind(
             session_uri,
             Ezagent.Capability.workspace_of(session_uri)
           )

@@ -58,8 +58,14 @@ defmodule EzagentPluginCodex.AppServer do
   @spec recent_output(URI.t()) :: String.t()
   def recent_output(%URI{} = agent_uri) do
     case lookup(agent_uri) do
-      {:ok, pid} -> GenServer.call(pid, :recent_output, 1_000)
-      :error -> ""
+      {:ok, pid} ->
+        case Ezagent.OwnerGatedExecutor.call(agent_uri, pid, :recent_output, 1_000) do
+          {:error, :cross_workspace_denied} -> ""
+          output -> output
+        end
+
+      :error ->
+        ""
     end
   catch
     _, _ -> ""
