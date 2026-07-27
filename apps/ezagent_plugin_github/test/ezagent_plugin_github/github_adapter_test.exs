@@ -125,7 +125,9 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
       expect_mint(:change_request_write)
 
-      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
 
       Req.Test.expect(@stub_name, fn conn ->
         conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
@@ -160,7 +162,12 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       # implementation re-minted per HTTP request instead of once per callback,
       # this ordered Req.Test.expect queue would desync and fail.
       assert {:ok, %ChangeRequest{external_id: "42"}} =
-               GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               )
     end
 
     test "two different callbacks each mint independently (no cross-callback reuse)" do
@@ -213,6 +220,31 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       # NOT reuse resolve_repository's token — each callback mints its own.
       assert {:ok, %ChangeRequest{external_id: "42"}} =
                GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
+    end
+
+    test "a malformed mint response surfaces as installation_scope_mismatch through the adapter, not a generic error" do
+      Req.Test.stub(@stub_name, fn conn ->
+        case {conn.method, conn.request_path} do
+          {"GET", "/repos/owner/repo/installation"} ->
+            Req.Test.json(conn, %{"id" => 123})
+
+          {"POST", "/app/installations/123/access_tokens"} ->
+            # Wider-than-requested permissions -- GitHubInstallation's strict
+            # scope validation must reject this before any repository call.
+            conn
+            |> Plug.Conn.put_status(201)
+            |> Req.Test.json(%{
+              "token" => "ghs-test-token",
+              "expires_at" => future_iso(),
+              "repository_selection" => "selected",
+              "repositories" => [%{"full_name" => "owner/repo"}],
+              "permissions" => %{"metadata" => "read", "contents" => "write"}
+            })
+        end
+      end)
+
+      assert {:error, :installation_scope_mismatch} =
+               GitHubAdapter.resolve_repository(ctx(), repo())
     end
   end
 

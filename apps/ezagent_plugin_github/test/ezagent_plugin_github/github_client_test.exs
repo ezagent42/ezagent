@@ -61,6 +61,15 @@ defmodule EzagentPluginGithub.GitHubClientTest do
              GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
   end
 
+  test "get maps 429 to provider_rate_limited" do
+    Req.Test.stub(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 429, ~s({"message": "You have exceeded a secondary rate limit"}))
+    end)
+
+    assert {:error, :provider_rate_limited} =
+             GitHubClient.get("/repos/owner/repo", "token", plug: {Req.Test, @stub_name})
+  end
+
   test "post injects Authorization and Accept headers and sends JSON body" do
     Req.Test.stub(@stub_name, fn conn ->
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test-token"]

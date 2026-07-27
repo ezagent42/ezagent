@@ -18,6 +18,7 @@ defmodule EzagentPluginGithub.GitHubClient do
       | 403    | `:provider_denied`            |
       | 404    | `:repository_not_found`       |
       | 422    | `:change_request_conflict`    |
+      | 429    | `:provider_rate_limited`      |
       | other  | `:provider_unavailable`       |
   """
 
@@ -111,6 +112,7 @@ defmodule EzagentPluginGithub.GitHubClient do
   defp handle_response({:ok, %{status: 404}}), do: {:error, :repository_not_found}
   defp handle_response({:ok, %{status: 403}}), do: {:error, :provider_denied}
   defp handle_response({:ok, %{status: 422}}), do: {:error, :change_request_conflict}
+  defp handle_response({:ok, %{status: 429}}), do: {:error, :provider_rate_limited}
   defp handle_response({:ok, _}), do: {:error, :provider_unavailable}
   defp handle_response({:error, _}), do: {:error, :provider_unavailable}
 end

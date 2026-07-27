@@ -83,6 +83,9 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
         | :checks_unavailable
         | :provider_unavailable
         | :authentication_rejected
+        | :installation_scope_mismatch
+        | :head_ref_conflict
+        | :provider_rate_limited
         | {:provider_request_failed, operation :: atom(), status :: pos_integer()}
       end
       |> union_strings()
