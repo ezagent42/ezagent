@@ -441,7 +441,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [], create_request())
   end
 
-  test "create_change_request with empty file_changes reconciles an already-existing safe head ref straight to the PR search" do
+  test "create_change_request with empty file_changes fetches the base tree and posts an empty tree before reconciling the existing head ref to the PR search" do
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
     expect_mint(:change_request_write)
@@ -514,7 +514,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
-  test "create_change_request maps 422 to change_request_conflict" do
+  test "create_change_request maps a PR-create 422 to change_request_conflict" do
     sha = String.duplicate("a", 40)
     expect_mint(:change_request_write)
 
@@ -605,9 +605,119 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
+  # ── create_change_request: ref-create 422 disambiguation ───────────────
+  #
+  # `create_head_commit/6`'s 422 branch (github_adapter.ex) re-reads the head
+  # ref path rather than assuming every 422 from ref *creation* means the
+  # same thing. The two tests below cover the two outcomes that re-read can
+  # have (design §6.2): the ref now being found (a genuine
+  # concurrent-creation race -- reconcile normally, no error) vs. the ref
+  # still missing (a real ref-validation failure -- fail closed with
+  # `:invalid_ref`, not the confusingly-reused `:repository_not_found`).
+
+  test "create_change_request recovers when ref creation 422s because a concurrent creator already planted the marker ref at base" do
+    sha = String.duplicate("a", 40)
+    new_commit_sha = String.duplicate("c", 40)
+    expect_mint(:change_request_write)
+
+    # Step 1: GET base ref
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    # Step 2: GET head ref -> absent, from THIS call's point of view
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    # Step 3: POST create ref -> 422. Not a validation failure: a concurrent
+    # creator (e.g. this exact idempotent operation racing itself elsewhere)
+    # planted the identical marker ref between this call's step-2 read and
+    # its own create attempt.
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs"
+      Plug.Conn.resp(conn, 422, ~s({"message": "Reference already exists"}))
+    end)
+
+    # Step 4: re-read the head ref -- now finds it, sitting exactly at base
+    # (the marker the concurrent creator planted). Not an error at all.
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/ref/heads/feature-branch"
+      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+    end)
+
+    # The chain resumes exactly as if this call had created the ref itself.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => new_commit_sha})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => new_commit_sha},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request returns invalid_ref when ref creation 422s and a re-read confirms the ref still does not exist" do
+    sha = String.duplicate("a", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    # POST create ref -> 422, NOT a benign existence race: a Git-data
+    # validation failure unrelated to the ref already existing.
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs"
+      Plug.Conn.resp(conn, 422, ~s({"message": "Validation Failed"}))
+    end)
+
+    # Re-read confirms the ref genuinely still does not exist -- this was
+    # never a race with a concurrent creator, so it must fail closed rather
+    # than loop back into ref creation, and it must not leak the
+    # confusingly-reused `:repository_not_found` (this repository
+    # unquestionably exists -- steps 1-2 above already proved that).
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/ref/heads/feature-branch"
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    assert {:error, :invalid_ref} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
   # ── create_change_request: ref + PR reconciliation ────────────────────
 
-  test "create_change_request reuses an existing head ref whose tree matches, without creating a new commit, ref, or PR" do
+  test "create_change_request reuses an existing head ref whose tree matches, creating no new commit or ref, but does create a PR since the search found none" do
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
     expect_mint(:change_request_write)

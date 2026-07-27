@@ -42,6 +42,26 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       created. Zero matches creates one; exactly one match is normalized and
       returned; more than one match fails closed with
       `:change_request_conflict`.
+    * The commit itself is made deterministic (design §6.1 step 5, amended
+      2026-07-27): `create_commit/5` passes explicit `author`/`committer`
+      objects whose `date` is derived from `ctx.idempotency_key` instead of
+      left for GitHub to fill in with wall-clock "now". Blob and tree
+      creation are already content-addressed and idempotent; without this,
+      the commit was the one object in the chain that was NOT, so a retry
+      landing while the deterministic ref still pointed at base rebuilt a
+      commit with a fresh timestamp — and therefore a fresh sha — leaving
+      the previous attempt's commit as an orphan. With a run-stable date,
+      `tree + parents + message + author + committer` are all fixed, so the
+      commit sha is a pure function of content and a retry reproduces the
+      SAME sha. The timestamp on the Git object is consequently not "when
+      the work happened" — that is recorded in the workflow's typed facts
+      (design §5.3's `observed_at` columns) — it exists solely to make the
+      sha reproducible.
+    * A 422 from ref *creation* is disambiguated, not assumed benign (design
+      §6.2): the re-read it triggers either finds the ref (a genuine
+      concurrent-creation race — reconcile normally) or still finds nothing
+      (a real ref-validation failure, surfaced as `:invalid_ref` rather than
+      the confusingly-reused `:repository_not_found`).
     * `resolve_repository/2`, `read_change_request/3`, `list_checks/3`, and
       `list_reviews/3` are pure reads and need no reconciliation logic — a
       repeated read cannot duplicate a mutation.
@@ -55,6 +75,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     CommitSha,
     CreateChangeRequest,
     FileChange,
+    OperationContext,
     RepositoryRef,
     Review
   }
@@ -62,6 +83,17 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   alias EzagentPluginGithub.{GitHubClient, GitHubInstallation}
 
   @github_host "github.com"
+
+  # Synthetic, fixed commit identity (design §6.1 step 5 amendment): the
+  # commit author/committer must be explicit so the sha is a pure function
+  # of content (see `create_commit/5` / `deterministic_commit_date/1`
+  # below). The name/email do not need to look like a real person or match
+  # any particular GitHub identity -- only to never vary -- so they are
+  # fixed constants rather than sourced from config or the installation.
+  # `.example` matches this plugin's existing placeholder-domain convention
+  # (see `Config.redirect_uri/0`).
+  @commit_author_name "Ezagent Git Provider"
+  @commit_author_email "git-provider@ezagent.example"
 
   @impl true
   def resolve_repository(_ctx, %RepositoryRef{} = repo) do
@@ -75,7 +107,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   @impl true
   def create_change_request(
-        _ctx,
+        ctx,
         %RepositoryRef{} = repo,
         file_changes,
         %CreateChangeRequest{} = create_req
@@ -84,7 +116,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, token} ->
         with {:ok, base_sha} <- verify_base_ref(repo, create_req, token),
              {:ok, _head_sha} <-
-               reconcile_head_ref(repo, file_changes, create_req, base_sha, token) do
+               reconcile_head_ref(ctx, repo, file_changes, create_req, base_sha, token) do
           reconcile_pull_request(repo, create_req, token)
         end
 
@@ -121,15 +153,15 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # this call's own recomputed tree) or fails closed (:head_ref_conflict).
   # There is no force-push path anywhere in this module.
 
-  defp reconcile_head_ref(repo, file_changes, create_req, base_sha, token) do
+  defp reconcile_head_ref(ctx, repo, file_changes, create_req, base_sha, token) do
     path = head_ref_path(repo, create_req.head_ref)
 
     case GitHubClient.get(path, token, request_opts()) do
       {:error, :repository_not_found} ->
-        create_head_commit(repo, file_changes, create_req, base_sha, token)
+        create_head_commit(ctx, repo, file_changes, create_req, base_sha, token)
 
       other ->
-        handle_head_lookup(other, repo, file_changes, create_req, base_sha, token)
+        handle_head_lookup(other, ctx, repo, file_changes, create_req, base_sha, token)
     end
   end
 
@@ -138,8 +170,21 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # existing head commit to verify against. Resume the chain rather than
   # treating it as "an existing head" (there is nothing to compare a tree
   # against yet).
+  #
+  # KNOWN LIMITATION (out of scope for this slice, tracked for P4): this
+  # clause performs no provenance check. Any pre-existing ref of this exact
+  # name that happens to sit at base -- planted by a wholly unrelated branch,
+  # not this operation's own retry -- is indistinguishable from this
+  # operation's own marker and is treated as safe to resume onto. Unlike the
+  # "ref exists past base" path below (`reconcile_existing_head/5`, which
+  # verifies parent AND tree), there is no commit here yet to check
+  # provenance against -- the ref points directly at base_sha, so there is
+  # nothing to compare. Closing this gap needs an identity the adapter does
+  # not have: the workflow's own durable facts (design §5.3) recording which
+  # ref belongs to which run. That is Slice P4's concern, not this adapter's.
   defp handle_head_lookup(
          {:ok, %{"object" => %{"sha" => sha}}},
+         ctx,
          repo,
          file_changes,
          create_req,
@@ -147,50 +192,95 @@ defmodule EzagentPluginGithub.GitHubAdapter do
          token
        )
        when sha == base_sha do
-    resume_head_commit(repo, file_changes, create_req, base_sha, token)
+    resume_head_commit(ctx, repo, file_changes, create_req, base_sha, token)
   end
 
-  defp handle_head_lookup({:ok, head_ref_data}, repo, file_changes, _create_req, base_sha, token) do
+  defp handle_head_lookup(
+         {:ok, head_ref_data},
+         _ctx,
+         repo,
+         file_changes,
+         _create_req,
+         base_sha,
+         token
+       ) do
     reconcile_existing_head(repo, head_ref_data, file_changes, base_sha, token)
   end
 
-  defp handle_head_lookup({:error, reason}, _repo, _file_changes, _create_req, _base_sha, _token) do
+  # A 422 on ref *creation* followed by a re-read that STILL finds nothing
+  # (design §6.2) is not the benign concurrent-creation race the clauses
+  # above already resolve by finding the ref -- it means GitHub rejected the
+  # ref creation for a real reason and it was genuinely never persisted.
+  # `:repository_not_found` would be the wrong code to surface here even
+  # though it is what the failed GET maps to: the repository was already
+  # proven to exist by the base-ref read earlier in this same callback, and
+  # reusing that atom would collide with its OTHER meaning in this very
+  # module -- on `reconcile_head_ref`'s first read (above), the identical
+  # atom is not an error at all, it is the normal "absent, go create it"
+  # signal. `:invalid_ref` (an existing closed-set `Ezagent.DomainGit.Error`
+  # value, unused elsewhere in this adapter) names the actual failure
+  # without overloading either of `:repository_not_found`'s other meanings.
+  # This clause only ever matches re-reads reached via `create_head_commit`'s
+  # 422 branch below: `reconcile_head_ref` intercepts a first-read
+  # `:repository_not_found` directly, so that value can never reach here as
+  # part of the plain "other" branch.
+  defp handle_head_lookup(
+         {:error, :repository_not_found},
+         _ctx,
+         _repo,
+         _file_changes,
+         _create_req,
+         _base_sha,
+         _token
+       ) do
+    {:error, :invalid_ref}
+  end
+
+  defp handle_head_lookup(
+         {:error, reason},
+         _ctx,
+         _repo,
+         _file_changes,
+         _create_req,
+         _base_sha,
+         _token
+       ) do
     {:error, map_git_data_error(reason)}
   end
 
-  defp create_head_commit(_repo, [], _create_req, _base_sha, _token),
+  defp create_head_commit(_ctx, _repo, [], _create_req, _base_sha, _token),
     do: {:error, :invalid_file_change}
 
-  defp create_head_commit(repo, file_changes, create_req, base_sha, token) do
+  defp create_head_commit(ctx, repo, file_changes, create_req, base_sha, token) do
     case create_ref(repo, base_sha, create_req.head_ref, token) do
       :ok ->
-        resume_head_commit(repo, file_changes, create_req, base_sha, token)
+        resume_head_commit(ctx, repo, file_changes, create_req, base_sha, token)
 
       {:error, :unprocessable_entity} ->
-        # A 422 creating a ref this call just confirmed absent is a
+        # A 422 creating a ref this call just confirmed absent could be a
         # legitimate race with a concurrent creator (design §6.2) -- re-read
         # and reconcile through the normal safe-reuse path instead of
-        # failing. A :repository_not_found on the re-read (the ref missing
-        # again) would be a genuinely confusing provider state, not a
-        # recursive retry target -- handle_head_lookup's error clause
-        # surfaces it as-is rather than looping back into create_head_commit.
+        # failing outright. `handle_head_lookup/7` disambiguates the two
+        # outcomes: the ref now being found (the race) vs. the re-read still
+        # coming back not-found (a genuine ref-validation failure, mapped to
+        # `:invalid_ref` rather than looping back into create_head_commit).
         head_ref_path(repo, create_req.head_ref)
         |> GitHubClient.get(token, request_opts())
-        |> handle_head_lookup(repo, file_changes, create_req, base_sha, token)
+        |> handle_head_lookup(ctx, repo, file_changes, create_req, base_sha, token)
 
       {:error, reason} ->
         {:error, map_git_data_error(reason)}
     end
   end
 
-  defp resume_head_commit(_repo, [], _create_req, _base_sha, _token),
+  defp resume_head_commit(_ctx, _repo, [], _create_req, _base_sha, _token),
     do: {:error, :invalid_file_change}
 
-  defp resume_head_commit(repo, file_changes, create_req, base_sha, token) do
+  defp resume_head_commit(ctx, repo, file_changes, create_req, base_sha, token) do
     with {:ok, base_tree_sha} <- fetch_base_tree_sha(repo, base_sha, token),
          {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
          {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha, token),
-         {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req, token),
+         {:ok, commit_sha} <- create_commit(ctx, repo, tree_sha, create_req, token),
          :ok <- advance_ref(repo, commit_sha, create_req.head_ref, token) do
       {:ok, commit_sha}
     else
@@ -311,13 +401,29 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp create_commit(repo, tree_sha, create_req, token) do
+  # Passes EXPLICIT `author`/`committer` (design §6.1 step 5 amendment,
+  # 2026-07-27) so GitHub never fills in the omitted date with wall-clock
+  # "now". Without this, `tree`/`parents`/`message` alone would still be
+  # identical across a retry, but the persisted commit would carry whatever
+  # time the retry happened to run at -- a different sha every time, and an
+  # orphan left behind whenever the deterministic ref was still sitting at
+  # base (design §6.2's first crash window). See `deterministic_commit_date/1`
+  # for where `date` comes from.
+  defp create_commit(ctx, repo, tree_sha, create_req, token) do
     path = "/repos/#{repo.external_id}/git/commits"
+
+    author = %{
+      name: @commit_author_name,
+      email: @commit_author_email,
+      date: deterministic_commit_date(ctx)
+    }
 
     body = %{
       message: create_req.title,
       tree: tree_sha,
-      parents: [create_req.expected_base_sha.value]
+      parents: [create_req.expected_base_sha.value],
+      author: author,
+      committer: author
     }
 
     case GitHubClient.post(path, token, body, request_opts()) do
@@ -332,14 +438,32 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
+  # Derives a commit `date` that is stable across retries of the SAME run
+  # without reading the wall clock (design §6.1 step 5 amendment). Built
+  # from `ctx.idempotency_key` ("task_id:generation:action", assembled in
+  # `Ezagent.ActionSet.GitTaskAccess.operation_context/3`) rather than a new
+  # field on any DomainGit value: that key is already this exact callback's
+  # stable-by-construction identity for the run -- unchanged across retries,
+  # since neither task id, generation, nor the literal `:create_change_request`
+  # action vary between them -- and it is the same primitive this codebase's
+  # other idempotency machinery keys on, so reusing it here does not invent
+  # a second identity concept. The resulting date does not need to look
+  # "real" (design §6.1: real timing lives in the workflow's typed facts,
+  # not on the Git object) -- only to never change for the same
+  # (task, generation, action) triple, which a deterministic hash guarantees.
+  defp deterministic_commit_date(%OperationContext{idempotency_key: key}) do
+    <<seed::unsigned-32, _rest::binary>> = :crypto.hash(:sha256, key)
+    seed |> DateTime.from_unix!() |> DateTime.to_iso8601()
+  end
+
   # Creates the deterministic ref for the FIRST time, pointing at the
   # VERIFIED BASE commit -- not a head commit, which does not exist yet.
   # This establishes the durable remote mutation identity (design §6.1 step
   # 4) BEFORE any blob/tree/commit work, so a crash anywhere after this
   # point (§6.2's "commit created, head update before" window) leaves a ref
   # the retry can find and continue from, instead of silently repeating the
-  # whole Git-data POST chain. POST (not PATCH): `create_head_commit/5` only
-  # reaches this function when `reconcile_head_ref/5` has confirmed the ref
+  # whole Git-data POST chain. POST (not PATCH): `create_head_commit/6` only
+  # reaches this function when `reconcile_head_ref/6` has confirmed the ref
   # absent.
   defp create_ref(repo, sha, head_ref, token) do
     path = "/repos/#{repo.external_id}/git/refs"

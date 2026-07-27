@@ -161,15 +161,20 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
   #    creates the marker ref (pointing at base) and the blob/tree/commit
   #    chain, but crashes before the ref-advance PATCH. Server-side, the ref
   #    exists but still points at base_sha -- there is no head commit yet to
-  #    verify against. Call 2 must recognize this durable marker, resume the
-  #    chain (blob/tree recreation is idempotent; the commit is necessarily
-  #    rebuilt fresh, since GitHub fills in author/committer dates when
-  #    omitted and this adapter has no way to look up an orphaned commit by
-  #    content -- see the design-level note on deterministic shas in the P3
-  #    fix report), and advance the ref for the first time. Exactly one ref
-  #    advance succeeds and exactly one PR is created. ────────────────────
+  #    verify against. Call 2 must recognize this durable marker and resume
+  #    the chain: blob/tree recreation is idempotent (content-addressed), and
+  #    the commit-create POST is RE-ISSUED (this adapter has no way to look
+  #    up an existing commit by content, so it cannot skip the call) but is
+  #    now byte-identical to call 1's -- same tree, parents, message, and an
+  #    explicit author/committer whose date is derived from
+  #    `ctx.idempotency_key` rather than left for GitHub to fill in (design
+  #    §6.1 step 5 amendment, P3 fix report) -- so GitHub's content
+  #    addressing hands back the SAME sha, not a second, orphaned commit.
+  #    Exactly one ref advance succeeds and exactly one PR is created. ─────
 
-  test "re-invoking create_change_request after a commit was created but the ref was never advanced past base recovers without creating a second ref or a second PR" do
+  test "re-invoking create_change_request after a commit was created but the ref was never advanced past base recovers by reproducing the identical commit sha, not a second orphan" do
+    test_pid = self()
+
     # Call 1: the marker ref is created pointing at base, then blob/tree/
     # commit all succeed, but the workflow crashes before the ref-advance
     # PATCH -- design §6.2's first crash window. The ref exists server-side,
@@ -207,7 +212,9 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_orphan"})
+      {:ok, raw_body, conn} = Plug.Conn.read_body(conn)
+      send(test_pid, {:commit_body, 1, Jason.decode!(raw_body)})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => head_sha()})
     end)
 
     # Simulated crash: the ref-advance PATCH never happens in call 1.
@@ -221,8 +228,10 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     # Call 2 (the retry): the head ref exists but is STILL at base_sha -- the
     # durable marker this design's ordering exists to produce, not an
     # existing head commit to verify. The chain resumes: blob/tree are
-    # recreated (idempotent, content-addressed -- no new objects), a commit
-    # is built fresh, and the ref advances for the first time.
+    # recreated (idempotent, content-addressed -- no new objects), and the
+    # commit-create POST is re-issued with the SAME tree/parents/message/
+    # author/committer/date as call 1's -- reproducing call 1's sha rather
+    # than minting a second one -- and the ref advances for the first time.
     expect_mint(:change_request_write)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -250,6 +259,8 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
+      {:ok, raw_body, conn} = Plug.Conn.read_body(conn)
+      send(test_pid, {:commit_body, 2, Jason.decode!(raw_body)})
       conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => head_sha()})
     end)
 
@@ -278,11 +289,30 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
 
+    # The mechanism, not just the outcome: call 1 and call 2's commit-create
+    # request bodies must be byte-identical, INCLUDING `date` -- that is what
+    # makes GitHub's content addressing return call 1's exact sha for call 2
+    # as well, rather than this test merely mocking a coincidentally-matching
+    # response. (Both mocks above return the same `head_sha()` regardless of
+    # what was sent -- asserting only that would pass even if the adapter
+    # still minted a fresh, different commit every time.)
+    assert_received {:commit_body, 1, commit_body_1}
+    assert_received {:commit_body, 2, commit_body_2}
+    assert commit_body_1 == commit_body_2
+    assert commit_body_1["committer"] == commit_body_1["author"]
+
+    # And that shared date is not wall-clock "now" wearing a disguise: a
+    # genuinely time-of-call value would land within moments of test
+    # execution; `ctx.idempotency_key`'s ~4-billion-second-wide derived range
+    # landing within a day of "now" by chance is negligible.
+    {:ok, author_date, _offset} = DateTime.from_iso8601(commit_body_1["author"]["date"])
+    assert DateTime.diff(DateTime.utc_now(), author_date) |> abs() > 86_400
+
     # No further Req.Test.expect entries are registered for either call: a
     # second ref-CREATE (POST /git/refs), a second ref-advance, or a second
-    # PR search miss followed by another PR POST would exhaust the queue
-    # and raise. Call 1's orphaned commit is never referenced by anything;
-    # it is invisible collateral, not a duplicate.
+    # PR search miss followed by another PR POST would exhaust the queue and
+    # raise. Call 2's commit-create POST reproduces call 1's exact sha
+    # (`head_sha()`) -- there is no second, orphaned commit left behind.
   end
 
   # ── Window 2: "head/ref updated, PR creation before" -- call 1 durably
