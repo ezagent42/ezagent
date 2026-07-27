@@ -623,20 +623,27 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
   end
 
   describe "collect_status/1" do
-    test "classifies untracked, modified, deleted, and unknown status codes" do
+    test "classifies untracked, modified, deleted, ignored, and unmerged status lines" do
       executor = fn argv, _opts ->
         assert "-C" in argv
         assert "status" in argv
         assert "-z" in argv
+        assert "--porcelain=v2" in argv
+        assert "--no-renames" in argv
 
+        # Every line below is copied verbatim from a real `git status
+        # --porcelain=v2 -z --untracked-files=all --no-renames` run (see the
+        # P2 fix report) — not hand-invented — so the field widths and
+        # separators are exactly what git emits.
         entries =
           Enum.join(
             [
-              "?? new_file.txt",
-              " M modified.txt",
-              "M  staged_modified.txt",
-              " D deleted.txt",
-              "!! ignored.log"
+              "1 .D N... 100644 100644 000000 f2ad6c76f0115a6ba5b00456a849810e7ec0af20 f2ad6c76f0115a6ba5b00456a849810e7ec0af20 deleted.txt",
+              "1 .M N... 100644 100644 100644 78981922613b2afb6025042ff6bd878ac1994e85 78981922613b2afb6025042ff6bd878ac1994e85 modified.txt",
+              "1 M. N... 100644 100644 100644 61780798228d17af2d34fce4cfbdf35556832472 558ef87a7254a91ce98a433f04b003ecd950a740 staged_modified.txt",
+              "? new_file.txt",
+              "! ignored.log",
+              "u UU N... 100644 100644 100644 100644 df967b96a579e45a18b8251732d16804b2e56a55 26d79bb74b1220d1b93a0c2779182f4a0da2a3bb cb217c4a8836a7e08600f83512df24c69f5e1eb4 conflict.txt"
             ],
             <<0>>
           ) <> <<0>>
@@ -651,12 +658,86 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunnerTest do
                })
 
       assert entries == [
-               %{path: "new_file.txt", index_status: "?", worktree_status: "?"},
-               %{path: "modified.txt", index_status: " ", worktree_status: "M"},
-               %{path: "staged_modified.txt", index_status: "M", worktree_status: " "},
-               %{path: "deleted.txt", index_status: " ", worktree_status: "D"},
-               %{path: "ignored.log", index_status: "!", worktree_status: "!"}
+               %{
+                 path: "deleted.txt",
+                 index_status: ".",
+                 worktree_status: "D",
+                 head_mode: "100644",
+                 index_mode: "100644",
+                 worktree_mode: "000000"
+               },
+               %{
+                 path: "modified.txt",
+                 index_status: ".",
+                 worktree_status: "M",
+                 head_mode: "100644",
+                 index_mode: "100644",
+                 worktree_mode: "100644"
+               },
+               %{
+                 path: "staged_modified.txt",
+                 index_status: "M",
+                 worktree_status: ".",
+                 head_mode: "100644",
+                 index_mode: "100644",
+                 worktree_mode: "100644"
+               },
+               %{
+                 path: "new_file.txt",
+                 index_status: "?",
+                 worktree_status: "?",
+                 head_mode: nil,
+                 index_mode: nil,
+                 worktree_mode: nil
+               },
+               %{
+                 path: "ignored.log",
+                 index_status: "!",
+                 worktree_status: "!",
+                 head_mode: nil,
+                 index_mode: nil,
+                 worktree_mode: nil
+               },
+               %{
+                 path: "conflict.txt",
+                 index_status: "U",
+                 worktree_status: "U",
+                 head_mode: nil,
+                 index_mode: nil,
+                 worktree_mode: nil
+               }
              ]
+    end
+
+    test "does not crash on a status line with no recognized prefix" do
+      executor = fn _argv, _opts ->
+        {:ok, %{stdout: "garbage-line-with-no-known-prefix" <> <<0>>, stderr: "", exit_status: 0}}
+      end
+
+      assert {:ok, [entry]} =
+               GitRunner.collect_status(%{
+                 worktree_path: "/worktree",
+                 runner_opts: %{executor: executor}
+               })
+
+      assert entry.index_status == "U"
+      assert entry.worktree_status == "U"
+    end
+
+    test "reports the real HEAD/index/worktree modes for a real executable-bit change", %{
+      root: root
+    } do
+      origin = local_origin!(root)
+
+      assert {:ok, ready} =
+               GitRunner.prepare(request(remote_url: origin, allow_local_fixture: true))
+
+      File.chmod!(Path.join(ready.worktree_path, "README.md"), 0o755)
+
+      assert {:ok, entries} = GitRunner.collect_status(ready)
+
+      assert %{head_mode: "100644", index_mode: "100644", worktree_mode: "100755"} =
+               Enum.find(entries, &(&1.path == "README.md"))
     end
 
     test "requires an exact worktree_path key" do

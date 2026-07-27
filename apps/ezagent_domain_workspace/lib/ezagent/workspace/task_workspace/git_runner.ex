@@ -26,9 +26,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
         }
 
   @type status_entry :: %{
-          path: String.t(),
+          path: String.t() | nil,
           index_status: String.t(),
-          worktree_status: String.t()
+          worktree_status: String.t(),
+          head_mode: String.t() | nil,
+          index_mode: String.t() | nil,
+          worktree_mode: String.t() | nil
         }
 
   @doc false
@@ -218,18 +221,35 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
   def verify_absent(_ready), do: {:error, :invalid_ready_workspace}
 
   @doc """
-  Collects the porcelain-v1 worktree status of a prepared worktree against
+  Collects the porcelain-v2 worktree status of a prepared worktree against
   its current index (design §4.2 — the raw material the workspace-change
   collector classifies into V1 upsert candidates or rejections). Unlike
   `verify/1`, a non-empty result is the expected, useful case — this
   function does not require a clean tree.
+
+  Uses `--porcelain=v2` (not v1) so every ordinary changed entry carries
+  its HEAD/index/worktree file mode alongside the status letters — the
+  collector needs all three to reject a mode change in either direction,
+  not just "is the file currently executable". Passes `--no-renames` so a
+  staged rename or copy is always reported as a plain delete-plus-add pair
+  (matching the unstaged filesystem-rename case already handled), never as
+  the two-path rename/copy record — the parser below only ever has to
+  understand single-path entries.
   """
   @spec collect_status(map()) :: {:ok, [status_entry()]} | {:error, term()}
   def collect_status(%{worktree_path: worktree} = ready) when is_binary(worktree) do
     opts = command_opts(Map.get(ready, :runner_opts, %{}))
 
     status_argv =
-      git_argv(["-C", worktree, "status", "--porcelain=v1", "-z", "--untracked-files=all"])
+      git_argv([
+        "-C",
+        worktree,
+        "status",
+        "--porcelain=v2",
+        "-z",
+        "--untracked-files=all",
+        "--no-renames"
+      ])
 
     case execute(status_argv, opts) do
       {:ok, %{stdout: stdout}} -> {:ok, parse_status_entries(stdout)}
@@ -614,10 +634,105 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
     |> Enum.map(&parse_status_entry/1)
   end
 
-  defp parse_status_entry(
-         <<index_status::binary-size(1), worktree_status::binary-size(1), " ", path::binary>>
-       ) do
-    %{path: path, index_status: index_status, worktree_status: worktree_status}
+  # Ordinary changed (tracked) entry: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>".
+  defp parse_status_entry("1 " <> rest) do
+    case String.split(rest, " ", parts: 8) do
+      [
+        <<index_status::binary-size(1), worktree_status::binary-size(1)>>,
+        _sub,
+        head_mode,
+        index_mode,
+        worktree_mode,
+        _head_oid,
+        _index_oid,
+        path
+      ] ->
+        %{
+          path: path,
+          index_status: index_status,
+          worktree_status: worktree_status,
+          head_mode: head_mode,
+          index_mode: index_mode,
+          worktree_mode: worktree_mode
+        }
+
+      _malformed ->
+        unparsable_entry()
+    end
+  end
+
+  # Unmerged (conflict) entry: "u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>".
+  # No mode comparison applies here; the collector's XY conflict-code check
+  # already rejects every unmerged combination it can reach.
+  defp parse_status_entry("u " <> rest) do
+    case String.split(rest, " ", parts: 10) do
+      [
+        <<index_status::binary-size(1), worktree_status::binary-size(1)>>,
+        _sub,
+        _m1,
+        _m2,
+        _m3,
+        _mw,
+        _h1,
+        _h2,
+        _h3,
+        path
+      ] ->
+        %{
+          path: path,
+          index_status: index_status,
+          worktree_status: worktree_status,
+          head_mode: nil,
+          index_mode: nil,
+          worktree_mode: nil
+        }
+
+      _malformed ->
+        unparsable_entry()
+    end
+  end
+
+  # Untracked entry: "? <path>".
+  defp parse_status_entry("? " <> path) do
+    %{
+      path: path,
+      index_status: "?",
+      worktree_status: "?",
+      head_mode: nil,
+      index_mode: nil,
+      worktree_mode: nil
+    }
+  end
+
+  # Ignored entry: "! <path>". Unreachable through the argv above (no
+  # `--ignored` flag is passed), kept only so the collector's "!"/"!"
+  # ignored-classification clause is not silently orphaned if a future
+  # caller ever requests ignored paths too.
+  defp parse_status_entry("! " <> path) do
+    %{
+      path: path,
+      index_status: "!",
+      worktree_status: "!",
+      head_mode: nil,
+      index_mode: nil,
+      worktree_mode: nil
+    }
+  end
+
+  defp parse_status_entry(_unrecognized), do: unparsable_entry()
+
+  # A line this module cannot recognize is treated the same as any other
+  # out-of-envelope change: the caller's closed vocabulary rejects the
+  # whole collection instead of this module raising on it.
+  defp unparsable_entry do
+    %{
+      path: nil,
+      index_status: "U",
+      worktree_status: "U",
+      head_mode: nil,
+      index_mode: nil,
+      worktree_mode: nil
+    }
   end
 
   defp command_opts(request) do

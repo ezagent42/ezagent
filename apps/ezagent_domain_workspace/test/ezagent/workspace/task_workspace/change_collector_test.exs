@@ -30,6 +30,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_git_runner)
       Application.delete_env(:ezagent_domain_workspace, :task_workspace_remote_builder)
       Application.delete_env(:ezagent_domain_workspace, :provisioner_test_collect_status_result)
+      Application.delete_env(:ezagent_domain_workspace, :provisioner_test_owner)
       File.rm_rf!(root)
     end)
 
@@ -83,6 +84,48 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
       assert {:error, :workspace_identity_mismatch} = ChangeCollector.collect(mismatched)
     end
 
+    test "rejects when task_uri does not match the provisioned identity, without invoking the runner",
+         %{root: root} do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
+
+      %URI{} = task_uri = change_request.task_uri
+      mismatched = %{change_request | task_uri: %{task_uri | path: task_uri.path <> "-other"}}
+
+      assert {:error, :workspace_identity_mismatch} = ChangeCollector.collect(mismatched)
+      refute_receive {:git_collect_status, _ready}
+    end
+
+    test "rejects when task_access_uri does not match the provisioned identity, without invoking the runner",
+         %{root: root} do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      Application.put_env(:ezagent_domain_workspace, :provisioner_test_owner, self())
+
+      %URI{} = task_access_uri = change_request.task_access_uri
+
+      mismatched = %{
+        change_request
+        | task_access_uri: %{task_access_uri | path: task_access_uri.path <> "-other"}
+      }
+
+      assert {:error, :workspace_identity_mismatch} = ChangeCollector.collect(mismatched)
+      refute_receive {:git_collect_status, _ready}
+    end
+
     test "rejects a malformed argument closed to the port contract" do
       assert {:error, :invalid_change_request} = ChangeCollector.collect(:not_a_request)
     end
@@ -118,10 +161,44 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
       assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
     end
 
+    test "rejects a staged rename without crashing the parser", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      # A staged rename (`git mv`, or `git add` after a filesystem rename)
+      # is reported by `git status --porcelain -z` as a single two-path
+      # record ("R  RENAMED.md\0README.md\0"), not the delete-plus-add pair
+      # produced by an unstaged rename above. Before the fix this crashed
+      # the porcelain parser (`FunctionClauseError`) instead of returning
+      # the stable rejection.
+      git!(worktree_path, ["mv", "README.md", "RENAMED.md"])
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
     test "rejects an executable mode change on an otherwise-unmodified file", %{root: root} do
       %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
 
       File.chmod!(Path.join(worktree_path, "README.md"), 0o755)
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects removing the executable bit from a tracked executable file", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
+
+      # The mode check must reject BOTH directions (design §2.2). Adding
+      # the executable bit is covered above; this covers the direction the
+      # filesystem-only check missed: a file tracked as executable in HEAD
+      # whose worktree copy has since lost the bit still classifies as a
+      # plain `M` candidate whose CURRENT mode is non-executable, so a
+      # check limited to "is it executable right now" lets it through.
+      script_path = Path.join(worktree_path, "script.sh")
+      File.write!(script_path, "#!/bin/sh\necho hi\n")
+      File.chmod!(script_path, 0o755)
+      git!(worktree_path, ["add", "script.sh"])
+      commit_fixture!(worktree_path, "add executable script")
+
+      File.chmod!(script_path, 0o644)
 
       assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
     end
@@ -140,30 +217,6 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
       %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
 
       File.write!(Path.join(worktree_path, "invalid_utf8.dat"), <<255, 254, 253>>)
-
-      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
-    end
-
-    test "rejects a reported path that is a directory — the shape a submodule mount takes", %{
-      root: root
-    } do
-      %{worktree_path: worktree_path, change_request: change_request} = ready_fixture!(root)
-
-      vendor = Path.join(worktree_path, "vendor")
-      File.mkdir_p!(vendor)
-      File.write!(Path.join(vendor, "nested.txt"), "not part of the parent tree\n")
-
-      Application.put_env(
-        :ezagent_domain_workspace,
-        :task_workspace_git_runner,
-        FakeTaskWorkspaceGitRunner
-      )
-
-      Application.put_env(
-        :ezagent_domain_workspace,
-        :provisioner_test_collect_status_result,
-        {:ok, [%{path: "vendor", index_status: "?", worktree_status: "?"}]}
-      )
 
       assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
     end
@@ -200,6 +253,67 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
         :provisioner_test_collect_status_result,
         {:ok, [%{path: "/etc/passwd", index_status: "?", worktree_status: "?"}]}
       )
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+  end
+
+  describe "collect/1 rejects submodule changes" do
+    # Each test here creates a REAL nested repository and a real gitlink
+    # entry (mode 160000) in the parent index, then drives the actual
+    # `git status`/classification/read path end to end — replacing a prior
+    # version of this coverage that fabricated a `??`-status entry for a
+    # plain directory and never exercised git's real submodule reporting
+    # (which never uses `??` for a submodule at all; see the mode/status
+    # combinations captured in the P2 fix report).
+
+    test "rejects a newly-added submodule", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} =
+        ready_fixture!(root, "submodule-added")
+
+      submodule_source = build_submodule_source!(root, "submodule-added")
+
+      git!(worktree_path, [
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "add",
+        submodule_source,
+        "vendor/sub"
+      ])
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a removed submodule", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} =
+        ready_fixture_with_submodule!(root, "submodule-removed")
+
+      git!(worktree_path, ["rm", "-q", "--cached", "vendor/sub"])
+      File.rm_rf!(Path.join(worktree_path, "vendor/sub"))
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a submodule whose recorded commit has advanced (a modified gitlink)", %{
+      root: root
+    } do
+      %{worktree_path: worktree_path, change_request: change_request} =
+        ready_fixture_with_submodule!(root, "submodule-gitlink")
+
+      sub_path = Path.join(worktree_path, "vendor/sub")
+      File.write!(Path.join(sub_path, "extra.txt"), "advance\n")
+      git!(sub_path, ["add", "extra.txt"])
+      commit_fixture!(sub_path, "advance submodule")
+
+      assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
+    end
+
+    test "rejects a dirty submodule (untracked content inside, gitlink unchanged)", %{root: root} do
+      %{worktree_path: worktree_path, change_request: change_request} =
+        ready_fixture_with_submodule!(root, "submodule-dirty")
+
+      File.write!(Path.join(worktree_path, "vendor/sub/untracked.txt"), "dirty\n")
 
       assert {:error, :unsupported_workspace_change} = ChangeCollector.collect(change_request)
     end
@@ -276,6 +390,38 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
 
       assert {:error, :workspace_read_failed} = ChangeCollector.collect(change_request)
     end
+
+    test "normalizes any runner infrastructure failure to workspace_read_failed", %{root: root} do
+      %{change_request: change_request} = ready_fixture!(root)
+
+      Application.put_env(
+        :ezagent_domain_workspace,
+        :task_workspace_git_runner,
+        FakeTaskWorkspaceGitRunner
+      )
+
+      # These are real `GitRunner.collect_status/1` failure shapes (see
+      # git_runner.ex: `:git_output_limit_exceeded` from the output-cap
+      # guard, `{:git_spawn_failed, reason}` from the spawn failure branch,
+      # `:workspace_checkout_mismatch` from a non-zero git exit) — none of
+      # them belong to this module's declared closed vocabulary, so all
+      # must collapse to the same stable blocker with no raw reason
+      # attached.
+      for raw_reason <- [
+            :git_output_limit_exceeded,
+            {:git_spawn_failed, :enoent},
+            :git_command_timeout,
+            :workspace_checkout_mismatch
+          ] do
+        Application.put_env(
+          :ezagent_domain_workspace,
+          :provisioner_test_collect_status_result,
+          {:error, raw_reason}
+        )
+
+        assert {:error, :workspace_read_failed} = ChangeCollector.collect(change_request)
+      end
+    end
   end
 
   defp restore_change_limits(:absent),
@@ -284,8 +430,8 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
   defp restore_change_limits(value),
     do: Application.put_env(:ezagent_domain_git, :change_limits, value)
 
-  defp ready_fixture!(root, suffix \\ "one") do
-    origin = local_origin!(root)
+  defp ready_fixture!(root, suffix \\ "one", local_origin_opts \\ []) do
+    origin = local_origin!(root, local_origin_opts)
     workspace = "change-collector-#{suffix}-#{System.unique_integer([:positive])}"
     workspace_uri = Ezagent.URI.workspace(workspace)
     task_id = "task-#{suffix}"
@@ -357,7 +503,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
     }
   end
 
-  defp local_origin!(root) do
+  defp local_origin!(root, opts) do
     origin = Path.join(root, "origin-#{System.unique_integer([:positive])}.git")
     source = Path.join(root, "source-#{System.unique_integer([:positive])}")
     File.mkdir_p!(source)
@@ -366,21 +512,77 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollectorTest do
     git!(source, ["init", "-b", "main"])
     File.write!(Path.join(source, "README.md"), "fixture\n")
     git!(source, ["add", "README.md"])
+    commit_fixture!(source, "fixture")
 
-    git!(source, [
+    case Keyword.get(opts, :submodule_source) do
+      nil ->
+        :ok
+
+      submodule_source ->
+        git!(source, [
+          "-c",
+          "protocol.file.allow=always",
+          "submodule",
+          "add",
+          submodule_source,
+          "vendor/sub"
+        ])
+
+        commit_fixture!(source, "add submodule")
+    end
+
+    git!(source, ["remote", "add", "origin", origin])
+    git!(source, ["push", "origin", "main"])
+    git!(root, ["--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main"])
+    origin
+  end
+
+  # Builds a small, real, standalone Git repository suitable for use as a
+  # `git submodule add` source (a plain non-bare local repo works fine as a
+  # submodule origin — no bare intermediate is needed for this fixture).
+  defp build_submodule_source!(root, suffix) do
+    sub = Path.join(root, "submodule-src-#{suffix}-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(sub)
+    git!(sub, ["init", "-b", "main"])
+    File.write!(Path.join(sub, "sub.txt"), "sub content\n")
+    git!(sub, ["add", "sub.txt"])
+    commit_fixture!(sub, "sub init")
+    sub
+  end
+
+  # A ready task worktree whose base commit already carries a submodule
+  # (`vendor/sub`) — for the "removed" / "modified gitlink" / "dirty"
+  # submodule scenarios, which all need the submodule already present and
+  # committed before the test mutates it further. `git worktree add` (what
+  # `Provisioner.prepare` uses under the hood) does not itself initialize
+  # submodules, so this explicitly runs `submodule update --init` against
+  # the resulting worktree, exactly as a real agent would need to before it
+  # could see or touch the submodule's contents.
+  defp ready_fixture_with_submodule!(root, suffix) do
+    submodule_source = build_submodule_source!(root, suffix)
+    fixture = ready_fixture!(root, suffix, submodule_source: submodule_source)
+
+    git!(fixture.worktree_path, [
+      "-c",
+      "protocol.file.allow=always",
+      "submodule",
+      "update",
+      "--init"
+    ])
+
+    fixture
+  end
+
+  defp commit_fixture!(cd, message) do
+    git!(cd, [
       "-c",
       "user.name=Fixture",
       "-c",
       "user.email=fixture@example.test",
       "commit",
       "-m",
-      "fixture"
+      message
     ])
-
-    git!(source, ["remote", "add", "origin", origin])
-    git!(source, ["push", "origin", "main"])
-    git!(root, ["--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/main"])
-    origin
   end
 
   defp git!(cd, args) do
