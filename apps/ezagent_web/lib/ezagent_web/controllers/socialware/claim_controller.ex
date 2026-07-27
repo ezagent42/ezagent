@@ -23,6 +23,12 @@ defmodule EzagentWeb.Socialware.ClaimController do
 
   alias Ezagent.Socialware.Share
 
+  @doc """
+  Claim a bearer share link: verify the `token`, mint a grantee-bound cap toward
+  its target for the logged-in clicker (`Share.claim/2`), then 302 to the world
+  root. A bad/expired/tampered token, a missing token, or a target with no owner
+  to grant from → 403 (fail-closed).
+  """
   def claim(conn, %{"token" => token}) when is_binary(token) do
     clicker = conn.assigns.current_entity_uri
 
