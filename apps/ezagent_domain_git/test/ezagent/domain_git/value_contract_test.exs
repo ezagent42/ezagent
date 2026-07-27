@@ -16,6 +16,13 @@ defmodule Ezagent.DomainGit.ValueContractTest do
   defp web(string), do: URI.new!(string)
   defp sha(char \\ "a"), do: String.duplicate(char, 40)
 
+  # A fixed, plausible, past wall-clock instant standing in for
+  # `git_workflow_runs.inserted_at` (design §6.1 step 5, corrected
+  # 2026-07-27 P3-fix3) -- the workflow supplies this in production
+  # (Slice P4); these unit tests supply it directly since only
+  # `CreateChangeRequest`'s own validation is under test here.
+  defp commit_date, do: ~U[2026-06-15 09:30:00Z]
+
   test "validation precedence rejects untrusted keys without echo or atom conversion" do
     unique = "never_atomize_#{System.unique_integer([:positive])}"
     refute existing_atom?(unique)
@@ -171,7 +178,8 @@ defmodule Ezagent.DomainGit.ValueContractTest do
                  title: "T",
                  body: "B",
                  head_ref: ref,
-                 expected_base_sha: struct!(CommitSha, value: sha())
+                 expected_base_sha: struct!(CommitSha, value: sha()),
+                 commit_date: commit_date()
                })
     end
 
@@ -181,7 +189,8 @@ defmodule Ezagent.DomainGit.ValueContractTest do
                  title: "T",
                  body: "B",
                  head_ref: ref,
-                 expected_base_sha: struct!(CommitSha, value: sha())
+                 expected_base_sha: struct!(CommitSha, value: sha()),
+                 commit_date: commit_date()
                })
     end
   end
@@ -195,7 +204,8 @@ defmodule Ezagent.DomainGit.ValueContractTest do
       title: "T",
       body: "B",
       head_ref: "feature/x",
-      expected_base_sha: struct!(CommitSha, value: sha())
+      expected_base_sha: struct!(CommitSha, value: sha()),
+      commit_date: commit_date()
     }
 
     assert {:ok, %CreateChangeRequest{}} = CreateChangeRequest.new(request)
@@ -203,6 +213,32 @@ defmodule Ezagent.DomainGit.ValueContractTest do
     for forged <- [struct!(CommitSha, value: "invalid"), struct!(CommitSha, value: sha("A"))] do
       assert {:error, {:invalid_field, :expected_base_sha}} =
                CreateChangeRequest.new(%{request | expected_base_sha: forged})
+    end
+  end
+
+  test "commit_date is required, has no default, and rejects non-DateTime values" do
+    request = %{
+      title: "T",
+      body: "B",
+      head_ref: "feature/x",
+      expected_base_sha: struct!(CommitSha, value: sha()),
+      commit_date: commit_date()
+    }
+
+    assert {:ok, %CreateChangeRequest{commit_date: %DateTime{}}} =
+             CreateChangeRequest.new(request)
+
+    assert {:error, {:missing_field, :commit_date}} =
+             CreateChangeRequest.new(Map.delete(request, :commit_date))
+
+    for malformed <- [
+          nil,
+          "2026-06-15T09:30:00Z",
+          ~D[2026-06-15],
+          DateTime.utc_now() |> DateTime.to_unix()
+        ] do
+      assert {:error, {:invalid_field, :commit_date}} =
+               CreateChangeRequest.new(%{request | commit_date: malformed})
     end
   end
 

@@ -1,8 +1,21 @@
 defmodule Ezagent.DomainGit.CreateChangeRequest do
-  @moduledoc "Provider-neutral request to create a change request."
+  @moduledoc """
+  Provider-neutral request to create a change request.
+
+  `commit_date` is required and has no default (design
+  docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+  §6.1 step 5, corrected 2026-07-27 P3-fix3): it is the wall-clock time an
+  adapter must stamp on the underlying Git commit's `author`/`committer`
+  `date` so that a retried commit-create is byte-identical to the first
+  attempt and reproduces the SAME sha. The caller (the workflow, Slice P4)
+  populates it from `git_workflow_runs.inserted_at` -- the moment the run was
+  durably accepted, written once and never touched again on retry. A missing
+  or malformed `commit_date` fails construction rather than silently
+  defaulting to a fabricated or wall-clock value.
+  """
 
   alias Ezagent.DomainGit.{CommitSha, RepositoryRef, ValidationError}
-  @fields [:title, :body, :head_ref, :expected_base_sha]
+  @fields [:title, :body, :head_ref, :expected_base_sha, :commit_date]
   @enforce_keys @fields
   defstruct @fields
 
@@ -10,7 +23,8 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
           title: String.t(),
           body: String.t(),
           head_ref: String.t(),
-          expected_base_sha: CommitSha.t()
+          expected_base_sha: CommitSha.t(),
+          commit_date: DateTime.t()
         }
 
   @doc "Builds a validated provider-neutral request to create a change request."
@@ -34,6 +48,9 @@ defmodule Ezagent.DomainGit.CreateChangeRequest do
 
       not valid_commit_sha?(attrs.expected_base_sha) ->
         {:error, {:invalid_field, :expected_base_sha}}
+
+      not match?(%DateTime{}, attrs.commit_date) ->
+        {:error, {:invalid_field, :commit_date}}
 
       true ->
         :ok

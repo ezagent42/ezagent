@@ -1148,7 +1148,8 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         title: "Test PR",
         body: "PR body text",
         head_ref: "feature-branch",
-        expected_base_sha: sha
+        expected_base_sha: sha,
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     cr

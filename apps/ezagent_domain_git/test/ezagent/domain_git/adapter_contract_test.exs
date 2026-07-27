@@ -188,7 +188,8 @@ defmodule EzagentDomainGit.AdapterContractTest do
         title: "Contract #{provider}",
         body: "Adapter contract",
         head_ref: "task/#{provider}",
-        expected_base_sha: commit_sha
+        expected_base_sha: commit_sha,
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     {:ok, change_request_id} = ChangeRequestId.new(%{external_id: provider <> "-change"})

@@ -26,7 +26,13 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
       :grantee_uri,
       :idempotency_key
     ],
-    Ezagent.DomainGit.CreateChangeRequest => [:title, :body, :head_ref, :expected_base_sha],
+    Ezagent.DomainGit.CreateChangeRequest => [
+      :title,
+      :body,
+      :head_ref,
+      :expected_base_sha,
+      :commit_date
+    ],
     Ezagent.DomainGit.ChangeRequestId => [:external_id],
     Ezagent.DomainGit.CommitSha => [:value],
     Ezagent.DomainGit.Check => [:external_id, :name, :status, :conclusion, :url],

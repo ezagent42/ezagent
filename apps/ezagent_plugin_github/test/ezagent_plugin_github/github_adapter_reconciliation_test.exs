@@ -133,6 +133,14 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
   defp base_sha, do: String.duplicate("a", 40)
   defp head_sha, do: String.duplicate("b", 40)
 
+  # Fixed, past, run-stable stand-in for `git_workflow_runs.inserted_at`
+  # (design §6.1 step 5, corrected 2026-07-27 P3-fix3): the workflow
+  # supplies this from the run row in production (Slice P4); this adapter
+  # test supplies it directly since `create_request/0` is called fresh on
+  # both call 1 and call 2 below and must hand back the SAME literal both
+  # times for the commit-create bodies to be byte-identical.
+  defp commit_date, do: ~U[2026-06-15 09:30:00Z]
+
   defp change_request_id do
     {:ok, id} = ChangeRequestId.new(%{external_id: "42"})
     id
@@ -151,7 +159,8 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
         title: "Test PR",
         body: "PR body text",
         head_ref: "feature-branch",
-        expected_base_sha: sha
+        expected_base_sha: sha,
+        commit_date: commit_date()
       })
 
     cr
@@ -166,11 +175,11 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
   #    the commit-create POST is RE-ISSUED (this adapter has no way to look
   #    up an existing commit by content, so it cannot skip the call) but is
   #    now byte-identical to call 1's -- same tree, parents, message, and an
-  #    explicit author/committer whose date is derived from
-  #    `ctx.idempotency_key` rather than left for GitHub to fill in (design
-  #    §6.1 step 5 amendment, P3 fix report) -- so GitHub's content
-  #    addressing hands back the SAME sha, not a second, orphaned commit.
-  #    Exactly one ref advance succeeds and exactly one PR is created. ─────
+  #    explicit author/committer whose date is `create_req.commit_date`
+  #    rather than left for GitHub to fill in (design §6.1 step 5 amendment,
+  #    corrected 2026-07-27 P3-fix3) -- so GitHub's content addressing hands
+  #    back the SAME sha, not a second, orphaned commit. Exactly one ref
+  #    advance succeeds and exactly one PR is created. ────────────────────
 
   test "re-invoking create_change_request after a commit was created but the ref was never advanced past base recovers by reproducing the identical commit sha, not a second orphan" do
     test_pid = self()
@@ -301,10 +310,12 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     assert commit_body_1 == commit_body_2
     assert commit_body_1["committer"] == commit_body_1["author"]
 
-    # And that shared date is not wall-clock "now" wearing a disguise: a
-    # genuinely time-of-call value would land within moments of test
-    # execution; `ctx.idempotency_key`'s ~4-billion-second-wide derived range
-    # landing within a day of "now" by chance is negligible.
+    # And that shared date is exactly the `commit_date()` value
+    # `create_request/0` supplied -- not wall-clock "now" wearing a
+    # disguise. A regression back to reading the clock at commit-creation
+    # time would produce a date near the moment this test ran, not this
+    # fixed, deliberately past literal.
+    assert commit_body_1["author"]["date"] == DateTime.to_iso8601(commit_date())
     {:ok, author_date, _offset} = DateTime.from_iso8601(commit_body_1["author"]["date"])
     assert DateTime.diff(DateTime.utc_now(), author_date) |> abs() > 86_400
 

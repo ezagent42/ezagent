@@ -313,7 +313,8 @@ defmodule EzagentPluginGithub.Architecture.OperationScopedCredentialTest do
         title: "Sentinel PR",
         body: "body",
         head_ref: "feature-branch",
-        expected_base_sha: base_sha_struct
+        expected_base_sha: base_sha_struct,
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     {:ok, file_change} =

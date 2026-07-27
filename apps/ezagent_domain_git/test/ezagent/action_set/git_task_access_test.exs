@@ -505,7 +505,8 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
         title: "Task 8",
         body: "body",
         head_ref: policy.allowed_head_ref,
-        expected_base_sha: %CommitSha{value: String.duplicate("a", 40)}
+        expected_base_sha: %CommitSha{value: String.duplicate("a", 40)},
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     %{
