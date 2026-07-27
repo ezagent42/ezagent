@@ -192,10 +192,13 @@ defmodule Ezagent.SpawnRegistry do
   # Kind's own URI from its registration, falling back to the requested
   # URI. A pid that registered nothing (a non-Kind spawn fn) reads the
   # requested URI, which has no verdict row → fail-conservative `:unknown`.
+  # #201-cred (codex r2 MEDIUM-6) — the verdict is read bound to the EXACT
+  # started pid, so a supervisor restart cannot overwrite the winning
+  # incarnation's verdict.
   defp started_create_freshness(%URI{} = uri, pid) do
     case Registry.keys(Ezagent.KindRegistry, pid) do
-      [uri_str] -> Ezagent.Kind.create_freshness(uri_str)
-      _ -> Ezagent.Kind.create_freshness(uri)
+      [uri_str] -> Ezagent.Kind.create_freshness(uri_str, pid)
+      _ -> Ezagent.Kind.create_freshness(uri, pid)
     end
   end
 
