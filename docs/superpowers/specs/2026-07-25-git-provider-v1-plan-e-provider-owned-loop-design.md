@@ -328,6 +328,21 @@ cap。生产默认 seam 不可用时保持 `accepted` 或进入 `blocked`，且�
 8. PR 不存在时创建；存在时规范化并返回；
 9. callback 返回前丢弃 token。
 
+**步骤 5 的 commit 必须是确定性的**（补充 2026-07-27）。blob 与 tree 天然内容
+寻址、重复创建幂等；但 commit 不是——GitHub 在 `author`/`committer` 日期缺省时
+填入当前时间，于是同一份内容每次重试都得到**不同的 commit sha**。这直接违反
+§6.2 的第一个 crash window：ref 尚停在 base 时重试，会产生第二个孤儿 commit。
+
+因此创建 commit 时必须显式传入 `author` 与 `committer`（含 `date`），且该 date
+在同一 run 的重试之间不得变化。这样 `tree + parents + message + author +
+committer` 全部确定，commit sha 成为内容的纯函数，重试得到同一个 sha，窗口 1 真
+正幂等。
+
+代价与取舍：commit 的时间戳不再是"提交发生的那一刻"。这是有意的——真实时序记录
+在 workflow 的 typed facts（§5.3 的 `observed_at` 等字段）里，Git 对象上的时间戳
+只是使 sha 可复现的输入。对机器创建的 commit 而言，可复现性比"时间戳看起来自然"
+更有价值。
+
 ### 6.2 Crash/retry
 
 必须覆盖下列 crash windows：
