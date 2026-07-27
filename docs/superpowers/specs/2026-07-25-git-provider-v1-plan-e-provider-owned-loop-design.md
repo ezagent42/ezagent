@@ -338,10 +338,26 @@ cap。生产默认 seam 不可用时保持 `accepted` 或进入 `blocked`，且�
 committer` 全部确定，commit sha 成为内容的纯函数，重试得到同一个 sha，窗口 1 真
 正幂等。
 
-代价与取舍：commit 的时间戳不再是"提交发生的那一刻"。这是有意的——真实时序记录
-在 workflow 的 typed facts（§5.3 的 `observed_at` 等字段）里，Git 对象上的时间戳
-只是使 sha 可复现的输入。对机器创建的 commit 而言，可复现性比"时间戳看起来自然"
-更有价值。
+**该 date 必须是 `git_workflow_runs.inserted_at`——run 被 accept 那一刻的真实
+时间**（订正 2026-07-27）。它同时满足四个条件：accept 时写入一次、重试永不改变
+（`Store.upsert_facts` 的 update 子句显式排除 `inserted_at`）、是真实挂钟时间、
+且每个 run 不同。
+
+不接受的替代方案，及其各自缺的那一条：
+
+- 创建 commit 时读挂钟 —— 破坏确定性，正是本条要修的问题；
+- 固定常量 —— 所有 commit 时间戳相同，Git 历史失去可读性；
+- 从 idempotency key 哈希推导 —— 确定但**产出虚构日期**（32 位无符号数当 Unix
+  秒，范围 1970–2106，实测 58% 落在未来，典型值 2085 年），reviewer 会认为工具
+  损坏。
+
+传递方式：`CreateChangeRequest` 携带一个 provider-neutral 的 commit date 字段，
+**必填、无默认值**——缺失即 fail，好过静默使用一个编造的时间。构造该 request 的
+是 workflow（Slice P4），它从自己的 run 行读取 `inserted_at` 传入。adapter 只使
+用该值，不自行推导时间。
+
+（本节冻结的是 §4.3 的 adapter callback 集合，不含 DomainGit 值形状，故为
+`CreateChangeRequest` 增加 provider-neutral 字段不违反冻结。）
 
 ### 6.2 Crash/retry
 
