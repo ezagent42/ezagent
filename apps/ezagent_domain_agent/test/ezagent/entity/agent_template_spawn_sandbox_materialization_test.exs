@@ -901,11 +901,16 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
 
       assert {:error, :agent_uri_already_live} = spawn_with_reference(fixture)
-      assert_receive {:flavor_during_instantiate, {:ok, "preexisting-flavor"}}
+      # #201 PR-2 — the instantiate-time flavor read is the attempt's OWN
+      # data flavor (authored by to_template_data), never the global ETS row…
+      assert_receive {:flavor_during_instantiate, {:ok, flavor}}
+      assert flavor == fixture.content.flavor
       assert_receive {:instantiate_called, data}
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)
       refute Map.has_key?(data, "pre_start_ref")
+      # …while the PRE-EXISTING global row is left exactly as it was: a
+      # losing/adopt attempt performs ZERO creation-state mutations.
       assert {:ok, "preexisting-flavor"} = Ezagent.AgentFlavorAttributes.get(fixture.instance_uri)
 
       assert_receive {:pre_start_complete, "claim-one", {:error, :agent_uri_already_live}}

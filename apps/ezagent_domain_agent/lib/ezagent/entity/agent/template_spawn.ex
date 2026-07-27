@@ -413,12 +413,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
         {:error, reason, pre_start_completion} ->
           revoke_cascade_grant_best_effort(instance_uri)
-          delete_agent_flavor_unless_pre_start(instance_uri, pre_start_completion)
           finalize_pre_start(pre_start_completion, {:error, reason})
 
         {:error, reason} ->
           revoke_cascade_grant_best_effort(instance_uri)
-          Ezagent.AgentFlavorAttributes.delete(instance_uri)
           {:error, reason}
 
         {:raised, kind, reason, stacktrace, pre_start_completion} ->
@@ -430,7 +428,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     else
       {:error, _reason} = err ->
         revoke_cascade_grant_best_effort(instance_uri)
-        delete_agent_flavor_unless_pre_start(instance_uri, pre_start_ref)
         err
     end
   end
@@ -535,6 +532,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                  ownership_receipts
                ) do
             {:ok, _receipts} ->
+              # #201 PR-1/PR-2 — THE only flavor write on the creation path,
+              # gated on the `:started` winner signal (`fresh?` derives from the
+              # atomic spawn outcome). Flavor needs ONLY `:started`: a cold
+              # rehydrate (`:started ∧ ¬created?`) re-writes the SAME flavor
+              # idempotently from the durable `:sandbox` slice lineage — a
+              # benign self-heal, not a clobber. The losing/adopt attempt
+              # (`:already_started`) never reaches this arm.
               :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
               {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
 
@@ -822,11 +826,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       _kind, _reason -> :completion_failed
     end
   end
-
-  defp delete_agent_flavor_unless_pre_start(instance_uri, nil),
-    do: Ezagent.AgentFlavorAttributes.delete(instance_uri)
-
-  defp delete_agent_flavor_unless_pre_start(_instance_uri, _pre_start), do: :ok
 
   defp finalize_pre_start(nil, result), do: result
 
