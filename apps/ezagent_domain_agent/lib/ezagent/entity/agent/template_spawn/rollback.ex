@@ -4,7 +4,15 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
   alias Ezagent.Entity.Agent.SpawnObligations
 
   @doc false
-  def fresh_spawn(workers, receipts, template_class, instance_uri, preserve_creation_receipts?) do
+  def fresh_spawn(
+        workers,
+        receipts,
+        template_class,
+        instance_uri,
+        preserve_creation_receipts?,
+        minted_grant,
+        created?
+      ) do
     undo_workers(workers)
     rollback_receipts(receipts, preserve_creation_receipts?)
     cleanup_config_dirs(workers, template_class)
@@ -12,9 +20,33 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
     # post-ownership store in `complete_spawn_obligations`, which runs AFTER
     # every step this rollback compensates. Nothing to undo (and deleting
     # could clobber a pre-existing live owner's cache row).
+    compensate_grant(instance_uri, minted_grant, created?)
+    :ok
+  end
+
+  # #201 PR-3 (R4) — grant compensation on fresh-spawn rollback:
+  #   * this attempt minted a grant → delete EXACTLY that incarnation
+  #     (ABA-safe; a reinserted/reapproved row is never touched);
+  #   * no cascade mint, but a GENUINE fresh create (`created?`) → legacy
+  #     URI-delete: any row for this brand-new URI is this attempt's residue
+  #     (e.g. a Template Class that inserts its own grant mid-instantiate);
+  #   * `:started ∧ ¬created?` (rehydrating winner) → NEVER URI-delete: the
+  #     row could be the pre-existing agent's original grant.
+  defp compensate_grant(
+         instance_uri,
+         %Ezagent.Credential.GrantRow{incarnation_id: inc},
+         _created?
+       ) do
+    _ = Ezagent.Credential.GrantRow.delete_incarnation(URI.to_string(instance_uri), inc)
+    :ok
+  end
+
+  defp compensate_grant(instance_uri, nil, true) do
     _ = Ezagent.Credential.GrantRow.delete(URI.to_string(instance_uri))
     :ok
   end
+
+  defp compensate_grant(_instance_uri, nil, false), do: :ok
 
   defp rollback_receipts(receipts, preserve_creation_receipts?) do
     Enum.each(receipts, fn

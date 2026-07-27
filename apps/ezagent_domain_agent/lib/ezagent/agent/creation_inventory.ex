@@ -129,6 +129,23 @@ defmodule Ezagent.Agent.CreationInventory do
   end
 
   @doc false
+  # #201 PR-3 (R5 N→N+1) — remove the PRIOR incarnation's winner row for an
+  # agent URI. Called by the spawn chokepoint ONLY when the core spawn receipt
+  # proves a genuine NEW logical create (`created?`, durable `ever_created`
+  # marker cleared — i.e. a destroy→recreate): the stale winner row belongs to
+  # the destroyed incarnation and must not block the new winner's record.
+  # NEVER call this on a rehydrate (`:started ∧ ¬created?`) — there the
+  # existing winner row is the live original and recording is skipped instead.
+  @spec delete_winner(URI.t()) :: :ok
+  def delete_winner(%URI{} = agent_uri) do
+    Repo.delete_all(
+      from(e in CreationInventoryEntry, where: e.agent_uri == ^URI.to_string(agent_uri))
+    )
+
+    :ok
+  end
+
+  @doc false
   @spec rollback_record(String.t(), URI.t(), URI.t(), URI.t()) :: :ok | {:error, term()}
   def rollback_record(
         attempt_id,

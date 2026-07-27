@@ -5,6 +5,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
   # bridge. Callers may provide the durable resolution INPUTS under `cascade_resolution`;
   # this bridge resolves them immediately before the Template Class sees data, so normal
   # spawn paths do not need to hand-author `tmpl["cascade"]`.
+  #
+  # #201 PR-3 — returns `{:ok, content, minted_grant}`: the grant THIS resolution
+  # minted (`%GrantRow{}`, carrying its immutable `incarnation_id`) or `nil` when
+  # no credential source was resolved / no mint ran. The chokepoint compensates a
+  # losing or non-created attempt by deleting EXACTLY that incarnation (R4
+  # ABA-safe), never by URI.
   def resolve_content(
         content,
         template_class,
@@ -17,7 +23,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       when is_map(content) do
     cond do
       is_map(content_field(content, :cascade)) ->
-        {:ok, content}
+        {:ok, content, nil}
 
       is_map(content_field(content, :cascade_resolution)) ->
         with {:ok, cascade, resolved} <-
@@ -28,7 +34,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                  workspace_uri,
                  flavor
                ),
-             {:ok, _grant} <-
+             {:ok, grant} <-
                maybe_mint_cascade_grant(
                  agent_uri,
                  resolved.secret_source,
@@ -40,7 +46,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
             |> Map.put(:cascade, cascade)
             |> put_selected_credential_source(resolved.secret_source)
 
-          {:ok, content}
+          {:ok, content, grant}
         end
 
       is_nil(content_field(content, :cascade_resolution)) ->
@@ -92,7 +98,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
       with {:ok, cascade, resolved} <-
              build_cascade(resolution, agent_uri, spawned_by_uri, workspace_uri, flavor),
-           {:ok, content} <-
+           {:ok, content, grant} <-
              put_default_cascade_if_source_present(
                content,
                cascade,
@@ -101,10 +107,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                opts,
                resolution
              ) do
-        {:ok, content}
+        {:ok, content, grant}
       end
     else
-      {:ok, content}
+      {:ok, content, nil}
     end
   end
 
@@ -116,7 +122,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
          _opts,
          _resolution
        ) do
-    {:ok, content}
+    {:ok, content, nil}
   end
 
   defp put_default_cascade_if_source_present(
@@ -127,7 +133,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
          opts,
          resolution
        ) do
-    with {:ok, _grant} <- maybe_mint_cascade_grant(agent_uri, source, opts, resolution) do
+    with {:ok, grant} <- maybe_mint_cascade_grant(agent_uri, source, opts, resolution) do
       content =
         content
         |> Map.put(
@@ -136,7 +142,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
         )
         |> Map.put(:cascade, cascade)
 
-      {:ok, content}
+      {:ok, content, grant}
     end
   end
 
@@ -519,6 +525,27 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       nil -> Map.get(content, Atom.to_string(key))
       v -> v
     end
+  end
+
+  # #201 PR-3 (R4) — best-effort HARD-delete of EXACTLY a spawn attempt's
+  # minted grant incarnation (compensating cleanup for a losing / non-created
+  # / failed attempt). Incarnation-scoped — NEVER a bare URI delete: a
+  # URI-delete racing a hard-delete + reinsert (or a `reapprove/1`) would wipe
+  # a DIFFERENT incarnation's fresh row (ABA). Delete (not soft `revoke`) so
+  # the unique `agent_uri` key is freed for a later retry. Idempotent: a no-op
+  # when the attempt minted nothing, or when the row no longer exists under
+  # this incarnation.
+  @doc false
+  @spec compensate_grant(URI.t(), Ezagent.Credential.GrantRow.t() | nil) :: :ok
+  def compensate_grant(%URI{}, nil), do: :ok
+
+  def compensate_grant(%URI{} = agent_uri, %Ezagent.Credential.GrantRow{
+        incarnation_id: incarnation_id
+      }) do
+    _ = Ezagent.Credential.GrantRow.delete_incarnation(URI.to_string(agent_uri), incarnation_id)
+    :ok
+  rescue
+    _ -> :ok
   end
 
   @doc false

@@ -28,12 +28,20 @@ defmodule Ezagent.TestSupport.NoopAgentTemplate do
       # in-process (Entity.Agent); the global flavor resolution
       # (`AgentModuleResolver`) is a rehydrate-time concern for EXISTING
       # agents and can no longer see a speculatively pre-written flavor row
-      # (that write was deleted).
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
-        {:ok, _pid} -> {:ok, [agent_uri], meta(tmpl, true)}
-        {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
-        {:error, {:already_registered, _}} -> {:ok, [agent_uri], %{fresh?: false}}
-        {:error, reason} -> {:error, reason}
+      # (that write was deleted). #201 PR-1 — through the receipt, so the
+      # chokepoint can gate create-only writes on the core `created?` verdict.
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+        {:ok, :started, _pid, %{created?: created?}} ->
+          {:ok, [agent_uri], meta(tmpl, true) |> Map.put(:created?, created?)}
+
+        {:ok, :already_started, _pid, _receipt} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end

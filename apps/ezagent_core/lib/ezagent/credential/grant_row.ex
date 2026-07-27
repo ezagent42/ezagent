@@ -29,6 +29,11 @@ defmodule Ezagent.Credential.GrantRow do
     field(:approved_scope, :string)
     field(:version, :integer, default: 1)
     field(:revoked_at, :utc_datetime_usec)
+    # #201 PR-3 (R4) — immutable grant-incarnation id, minted at insert. The
+    # ABA-safe identity for compensating deletes (`delete_incarnation/2`):
+    # a hard-delete + reinsert resets `version` to 1, so URI+version cannot
+    # distinguish two incarnations of a grant for the same agent.
+    field(:incarnation_id, :string)
 
     timestamps()
   end
@@ -42,7 +47,9 @@ defmodule Ezagent.Credential.GrantRow do
 
     %__MODULE__{}
     |> cast(
-      Map.put(attrs, :id, attrs.agent_uri),
+      attrs
+      |> Map.put(:id, attrs.agent_uri)
+      |> Map.put_new(:incarnation_id, Ecto.UUID.generate()),
       [
         :id,
         :agent_uri,
@@ -50,7 +57,8 @@ defmodule Ezagent.Credential.GrantRow do
         :credential_source_uri,
         :approved_by,
         :approved_scope,
-        :version
+        :version,
+        :incarnation_id
       ]
     )
     |> validate_required([
@@ -59,7 +67,8 @@ defmodule Ezagent.Credential.GrantRow do
       :workspace_uri,
       :credential_source_uri,
       :approved_by,
-      :approved_scope
+      :approved_scope,
+      :incarnation_id
     ])
     |> unique_constraint(:agent_uri, name: :credential_grants_agent_uri_index)
     |> unique_constraint(:id, name: :credential_grants_pkey)
@@ -84,6 +93,36 @@ defmodule Ezagent.Credential.GrantRow do
     case Repo.get(__MODULE__, agent_uri) do
       nil -> {:ok, :no_grant}
       row -> Repo.delete(row)
+    end
+  end
+
+  @doc """
+  #201 PR-3 (R4) — ABA-safe compensating HARD-delete: remove the grant row
+  ONLY if it is still the exact incarnation the caller minted. The compare
+  is transactional (a single `DELETE ... WHERE agent_uri = ? AND
+  incarnation_id = ?`), so a stale compensator racing a hard-delete +
+  reinsert (or a `reapprove/1`, which also re-incarnates) can never delete
+  a DIFFERENT incarnation's row — with `delete/1` that race wipes the new
+  owner's grant (URI key reused, `version` reset to 1).
+
+  Like `delete/1`, this frees the unique `agent_uri` key on success.
+  Idempotent + fail-conservative: `{:ok, :no_grant}` when the row is
+  absent OR present under a different incarnation (including legacy rows
+  with a NULL `incarnation_id`, which never match).
+  """
+  @spec delete_incarnation(String.t(), String.t()) ::
+          {:ok, :deleted | :no_grant} | {:error, term()}
+  def delete_incarnation(agent_uri, incarnation_id)
+      when is_binary(agent_uri) and is_binary(incarnation_id) do
+    import Ecto.Query
+
+    case Repo.delete_all(
+           from(g in __MODULE__,
+             where: g.agent_uri == ^agent_uri and g.incarnation_id == ^incarnation_id
+           )
+         ) do
+      {1, _} -> {:ok, :deleted}
+      {0, _} -> {:ok, :no_grant}
     end
   end
 
@@ -164,7 +203,16 @@ defmodule Ezagent.Credential.GrantRow do
 
     %__MODULE__{}
     |> cast(
-      Map.merge(attrs, %{id: attrs.agent_uri, version: next_version, revoked_at: nil}),
+      # A re-approval is a NEW logical grant: bump the version (so in-flight
+      # starts re-validating the OLD version abort) AND re-incarnate (so a
+      # stale #201 compensator holding the OLD incarnation id cannot delete
+      # this row).
+      Map.merge(attrs, %{
+        id: attrs.agent_uri,
+        version: next_version,
+        revoked_at: nil,
+        incarnation_id: Ecto.UUID.generate()
+      }),
       [
         :id,
         :agent_uri,
@@ -173,7 +221,8 @@ defmodule Ezagent.Credential.GrantRow do
         :approved_by,
         :approved_scope,
         :version,
-        :revoked_at
+        :revoked_at,
+        :incarnation_id
       ]
     )
     |> validate_required([
@@ -182,7 +231,8 @@ defmodule Ezagent.Credential.GrantRow do
       :workspace_uri,
       :credential_source_uri,
       :approved_by,
-      :approved_scope
+      :approved_scope,
+      :incarnation_id
     ])
     |> Repo.insert(
       on_conflict:
@@ -194,6 +244,7 @@ defmodule Ezagent.Credential.GrantRow do
            :approved_scope,
            :version,
            :revoked_at,
+           :incarnation_id,
            :updated_at
          ]},
       conflict_target: :id

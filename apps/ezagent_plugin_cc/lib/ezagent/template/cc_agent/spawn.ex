@@ -124,7 +124,23 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, created?} ->
+        {:started, false} ->
+          # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): this call
+          # won the process start, but the agent was logically created BEFORE
+          # (a cold, durably pre-existing agent — e.g. hit by a duplicate-create
+          # carrying a credential source). ZERO credential writes here: NO
+          # grant-scoped materialization (the config dir on disk is the agent's
+          # own pre-existing one; re-materializing would inject THIS attempt's
+          # source) and NO grant keep (the chokepoint deletes this attempt's
+          # minted grant incarnation). The Kind's own `Sandbox.post_init`
+          # self-heals the subprocess from the DURABLE respawn state.
+          # `fresh?: true` stays: the chokepoint needs the `:started` signal
+          # for the idempotent flavor/obligations self-heal. No
+          # `:config_dir_path` in meta → `record_sandbox_state` preserves the
+          # existing slice verbatim.
+          {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+        {:started, true} ->
           # codex round-10 HIGH-2 + PR3 2026-05-24 cascade:
           # 1. Create per-agent config_dir BEFORE PTY launch (so the
           #    cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>`
@@ -196,8 +212,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
               # unmodified so the chokepoint can gate create-only writes
               # (credential grant mint / materialization) on it. `:started`
               # alone is NOT proof of logical create (a cold rehydrate wins
-              # `:started` with `created?: false`).
-              created?: created?,
+              # `:started` with `created?: false` — handled by the arm above,
+              # which performs NO credential writes).
+              created?: true,
               config_dir_path: materialized_config_dir,
               respawn_template_data: tmpl_with_dir
             }

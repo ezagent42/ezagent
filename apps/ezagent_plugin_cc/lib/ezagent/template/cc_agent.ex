@@ -441,12 +441,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs
   # `cc-custom`) while spawn/PTY/credential-cascade stays the single
   # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
-  #
-  # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes.put_from_template_class`
-  # write was DELETED: the only flavor write is the spawn winner's post-ownership
-  # store in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
-  # The `flavor_class` param is retained for the shim-delegation contract even
-  # though this body no longer writes flavor itself.
+  # #201 PR-2 — no speculative flavor write here; the only write is the spawn
+  # winner's post-ownership store (from the content flavor).
   @doc false
   @spec instantiate_for_flavor(module(), String.t(), map(), URI.t(), keyword()) ::
           {:ok, [URI.t()], map()} | {:error, term()}

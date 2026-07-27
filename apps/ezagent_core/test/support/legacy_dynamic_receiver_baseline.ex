@@ -1051,7 +1051,7 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     {"apps/ezagent_plugin_protocol_api/lib/ezagent_plugin_protocol_api/open_ai/chat_completions_plug.ex",
      144, {:extract_id_from_path, 1}, :remote, "request_path/0",
      "9257ff46407f452314877ce75dbd52bb12773a0822249d5f90d851a73aa16d98"},
-    {"apps/ezagent_plugin_py/lib/ezagent/template/py_agent.ex", 225, {:async_reensure_if_dead, 1},
+    {"apps/ezagent_plugin_py/lib/ezagent/template/py_agent.ex", 228, {:async_reensure_if_dead, 1},
      :remote, "admin_uri/0", "2945d15ac69ae1441f28d0eb2b2cb14ebbab0360547ba515483034b328940b9c"},
     {"apps/ezagent_plugin_py/lib/ezagent_plugin_py/bridge_adapter.ex", 59, {:deliver, 2}, :remote,
      "text/0", "29a535d18533ce9b1dfb1537b404a1ca0dcae0a4587b1f1f56b7ff85c2edca73"},

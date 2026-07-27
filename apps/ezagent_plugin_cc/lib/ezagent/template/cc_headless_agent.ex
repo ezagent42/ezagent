@@ -182,7 +182,15 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           _ = ensure_subprocess_alive(agent_uri, tmpl)
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, created?} ->
+        {:started, false} ->
+          # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): a cold,
+          # durably pre-existing agent. ZERO credential writes: NO grant-scoped
+          # materialization; the Kind's own `Sandbox.post_init` self-heals the
+          # subprocess from the DURABLE respawn state. No `:config_dir_path` in
+          # meta → `record_sandbox_state` preserves the existing slice.
+          {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+        {:started, true} ->
           case create_agent_config_dir_with_grant(agent_uri, tmpl) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir =
@@ -205,7 +213,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
                          # #201 PR-1 — core-issued logical-create verdict from
                          # the spawn receipt, passed through for the chokepoint's
                          # create-only write gates.
-                         created?: created?,
+                         created?: true,
                          config_dir_path: config_dir,
                          respawn_template_data: tmpl_with_dir
                        }}

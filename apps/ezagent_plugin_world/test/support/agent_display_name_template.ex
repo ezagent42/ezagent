@@ -26,23 +26,24 @@ defmodule Ezagent.World.AgentDisplayNameTemplate do
       |> Map.put("agent_config_dir", config_dir)
       |> Map.put("flavor", flavor)
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
            uri: agent_uri,
            config_dir_path: config_dir,
            template_class: __MODULE__,
            respawn_template_data: respawn_template_data
          }) do
-      {:ok, _pid} ->
+      {:ok, :started, _pid, %{created?: created?}} ->
         :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
 
         {:ok, [agent_uri],
          %{
            fresh?: true,
+           created?: created?,
            config_dir_path: config_dir,
            respawn_template_data: respawn_template_data
          }}
 
-      {:error, {:already_started, _pid}} ->
+      {:ok, :already_started, _pid, _receipt} ->
         {:ok, [agent_uri], %{fresh?: false}}
 
       {:error, {:already_registered, _}} ->

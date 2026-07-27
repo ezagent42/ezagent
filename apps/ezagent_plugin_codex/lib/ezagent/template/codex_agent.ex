@@ -140,9 +140,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # `EzagentPluginCc.Template.CcAgent`.
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes` write was
-    # DELETED: the only flavor write is the spawn winner's post-ownership store
-    # in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+    # #201 PR-2 — no speculative flavor write here; the only write is the
+    # spawn winner's post-ownership store (from the content flavor).
     cond do
       opts == [] and fully_alive?(agent_uri) ->
         {:ok, [agent_uri], %{fresh?: false}}
@@ -214,7 +213,13 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, created?} ->
+        {:started, false} ->
+          # #201 PR-3 — rehydrating winner (`:started ∧ ¬created?`, a cold
+          # pre-existing agent): ZERO credential writes — no grant-scoped
+          # materialization; the Kind's own post_init self-heals the subprocess.
+          {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+        {:started, true} ->
           case create_agent_config_dir_with_grant(agent_uri, tmpl) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
@@ -231,10 +236,9 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
                       {:ok, [agent_uri],
                        meta
                        |> Map.put(:fresh?, true)
-                       # #201 PR-1 — core-issued logical-create verdict from the
-                       # spawn receipt, passed through for the chokepoint's
-                       # create-only write gates.
-                       |> Map.put(:created?, created?)
+                       # #201 PR-1 — core logical-create verdict from the
+                       # spawn receipt, for the chokepoint's create-only gates.
+                       |> Map.put(:created?, true)
                        |> Map.put(:config_dir_path, config_dir)
                        |> Map.put(:respawn_template_data, tmpl_with_dir)}
 
@@ -609,18 +613,11 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   defp ensure_agent_kind(agent_uri, opts) do
-    # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
-    # (`:started` / `:already_started`) and the core logical-create verdict
-    # (`created?`), which the TemplateSpawn chokepoint gates create-only
-    # writes on.
-    #
-    # #201 PR-2 — spawn the Agent Kind DIRECTLY (cc/py precedent) instead of
-    # routing through the entity-scheme spawn fn's global flavor resolution
-    # (`AgentModuleResolver` reads the — now never pre-written — global ETS
-    # flavor row). This instantiate KNOWS its Kind in-process; the
-    # codex/codex-remote flavor declarations both resolve to
-    # `Ezagent.Entity.Agent`, and the URI path passed `%{uri: agent_uri}` as
-    # the only init arg — identical here.
+    # #201 PR-1/PR-2 — spawn DIRECTLY via the receipt (cc/py precedent): the
+    # atomic winner verdict + the core `created?` verdict for the chokepoint,
+    # without the entity-scheme fn's global flavor resolution (the — now never
+    # pre-written — ETS flavor row). Both codex flavors resolve to Entity.Agent;
+    # the URI path passed the same single init arg — identical.
     case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
       {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
       {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
