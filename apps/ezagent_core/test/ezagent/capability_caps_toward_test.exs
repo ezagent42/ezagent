@@ -16,7 +16,13 @@ defmodule Ezagent.CapabilityCapsTowardTest do
   alias Ezagent.URI, as: EzURI
 
   defp cap(behavior, %URI{} = instance) do
-    Capability.cap(:agent, behavior, :get_tree, EzURI.instance(instance), EzURI.new!("workspace://acme"))
+    Capability.cap(
+      :agent,
+      behavior,
+      :get_tree,
+      EzURI.instance(instance),
+      EzURI.new!("workspace://acme")
+    )
   end
 
   @b1 Ezagent.ActionSet.ApiKeys
@@ -27,7 +33,11 @@ defmodule Ezagent.CapabilityCapsTowardTest do
   test "returns the concrete target instances for the given behavior only" do
     caps = [cap(@b1, @t1), cap(@b1, @t2), cap(@b2, @t1)]
     got = Capability.caps_toward(caps, @b1) |> Enum.map(&EzURI.stable_key/1) |> Enum.sort()
-    want = [EzURI.stable_key(EzURI.instance(@t1)), EzURI.stable_key(EzURI.instance(@t2))] |> Enum.sort()
+
+    want =
+      [EzURI.stable_key(EzURI.instance(@t1)), EzURI.stable_key(EzURI.instance(@t2))]
+      |> Enum.sort()
+
     assert got == want
     # b2 target is not included under b1.
     assert Capability.caps_toward(caps, @b2) |> Enum.map(&EzURI.stable_key/1) ==
@@ -46,6 +56,7 @@ defmodule Ezagent.CapabilityCapsTowardTest do
 
   test "excludes wildcard / non-concrete instances (:any) — only real targets" do
     wildcard = Capability.cap(:agent, @b1, :any, :any, EzURI.new!("workspace://acme"))
+
     assert Capability.caps_toward([wildcard, cap(@b1, @t1)], @b1)
            |> Enum.map(&EzURI.stable_key/1) == [EzURI.stable_key(EzURI.instance(@t1))]
   end
