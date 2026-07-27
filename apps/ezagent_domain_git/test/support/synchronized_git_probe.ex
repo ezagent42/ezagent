@@ -12,7 +12,10 @@ defmodule Ezagent.DomainGit.TestSupport.SynchronizedGitProbe do
     :ok
   end
 
-  defp owner_from_context(%{idempotency_key: "owner-" <> encoded}) do
+  # The idempotency key is `<task_uri>:<generation>:<action>`, and the fixture
+  # encodes the test owner pid in the task URI's name segment.
+  defp owner_from_context(%{idempotency_key: key}) do
+    "owner-" <> encoded = key |> String.split("/") |> List.last()
     [pid, _action] = String.split(encoded, ":", parts: 2)
     [a, b, c] = String.split(pid, "-", parts: 3)
     :erlang.list_to_pid(String.to_charlist("<#{a}.#{b}.#{c}>"))

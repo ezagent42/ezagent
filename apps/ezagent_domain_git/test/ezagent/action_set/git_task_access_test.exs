@@ -395,7 +395,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: fixture.task_access_uri.path |> String.split("/") |> List.last(),
-        task_id: "task-8",
+        task_uri: Ezagent.URI.resource(workspace, "task", "task-8"),
         generation: 1,
         workspace_uri: fixture.workspace_uri,
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -404,7 +404,10 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
         provider_adapter: provider_adapter,
         allowed_head_ref: "task/task-8",
         allowed_actions: @actions,
-        idempotency_inputs: %{task_id: "task-8", generation: 1}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource(workspace, "task", "task-8"),
+          generation: 1
+        }
       })
 
     policy
@@ -472,10 +475,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     artifact
   end
 
-  defp task_uri(policy) do
-    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
-    Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
-  end
+  defp task_uri(policy), do: policy.task_uri
 
   defp dispatch(fixture, args),
     do: Ezagent.Invocation.dispatch(%{fixture.invocation | args: args})

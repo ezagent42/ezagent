@@ -41,7 +41,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
     assert {:error, :unknown_fields} =
              WorkspaceProvisionPort.Request.new(%{
                task_access_uri: URI.parse("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
-               task_uri: URI.parse("resource://ws/kanban-task/t"),
+               task_uri: Ezagent.URI.resource("ws", "task", "t"),
                generation: 1,
                operation: :prepare,
                local_path: "/tmp/forged"
@@ -51,7 +51,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
   test "authorized constructor carries a validated policy outside caller attributes" do
     attrs = %{
       task_access_uri: URI.parse("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
-      task_uri: URI.parse("resource://ws/kanban-task/t"),
+      task_uri: Ezagent.URI.resource("ws", "task", "t"),
       generation: 1,
       operation: :prepare,
       provision_id: "provision"
@@ -85,7 +85,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
     {:ok, policy} =
       Ezagent.Entity.GitTaskAccess.new(%{
         id: "a",
-        task_id: "t",
+        task_uri: Ezagent.URI.resource("ws", "task", "t"),
         generation: 1,
         workspace_uri: workspace,
         credential_owner_uri: Ezagent.URI.user("ws", "owner"),
@@ -94,7 +94,7 @@ defmodule Ezagent.DomainGit.WorkspaceProvisionPortTest do
         provider_adapter: :fixture,
         allowed_head_ref: "task/head",
         allowed_actions: [:provision_workspace],
-        idempotency_inputs: %{task_id: "t", generation: 1}
+        idempotency_inputs: %{task_uri: Ezagent.URI.resource("ws", "task", "t"), generation: 1}
       })
 
     policy

@@ -294,7 +294,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: List.last(String.split(fixture.task_access_uri.path, "/")),
-        task_id: "owner-#{owner_id(self())}",
+        task_uri: Ezagent.URI.resource(workspace, "task", "owner-#{owner_id(self())}"),
         generation: 1,
         workspace_uri: fixture.workspace_uri,
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -308,7 +308,10 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
           :provision_workspace,
           :cleanup_workspace
         ],
-        idempotency_inputs: %{task_id: "owner-#{owner_id(self())}", generation: 1}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource(workspace, "task", "owner-#{owner_id(self())}"),
+          generation: 1
+        }
       })
 
     policy
@@ -368,10 +371,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     artifact
   end
 
-  defp task_uri(policy) do
-    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
-    Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
-  end
+  defp task_uri(policy), do: policy.task_uri
 
   defp owner_id(pid) do
     pid
