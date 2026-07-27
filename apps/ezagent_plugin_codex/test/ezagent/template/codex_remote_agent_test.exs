@@ -15,7 +15,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
 
     Ezagent.Agent.TemplateLaunchTrace.trace_call(
       Ezagent.LocalRuntime,
-      :ensure_started_detailed,
+      :ensure_started_receipt,
       2,
       fn ->
         assert {:error, _reason} =
@@ -24,7 +24,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
                  )
 
         assert_receive {:trace, _, :call,
-                        {Ezagent.LocalRuntime, :ensure_started_detailed,
+                        {Ezagent.LocalRuntime, :ensure_started_receipt,
                          [_, [launch_context: ^launch_context]]}}
       end
     )

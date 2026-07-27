@@ -121,7 +121,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        :started ->
+        {:started, created?} ->
           case create_agent_config_dir_with_grant(agent_uri, tmpl) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
@@ -133,6 +133,10 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
                       {:ok, [agent_uri],
                        meta
                        |> Map.put(:fresh?, true)
+                       # #201 PR-1 — core-issued logical-create verdict from the
+                       # spawn receipt, passed through for the chokepoint's
+                       # create-only write gates.
+                       |> Map.put(:created?, created?)
                        |> Map.put(:config_dir_path, config_dir)
                        |> Map.put(:respawn_template_data, tmpl_with_dir)}
 
@@ -367,9 +371,13 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   # ---- Agent Kind + ownership ---------------------------------------------
 
   defp ensure_agent_kind(agent_uri, opts) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
-      {:ok, :started, _pid} -> {:ok, :started}
-      {:ok, :already_started, _pid} -> {:ok, :already_started}
+    # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
+    # (`:started` / `:already_started`) and the core logical-create verdict
+    # (`created?`), which the TemplateSpawn chokepoint gates create-only
+    # writes on.
+    case Ezagent.LocalRuntime.ensure_started_receipt(agent_uri, opts) do
+      {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
+      {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
     end
   end

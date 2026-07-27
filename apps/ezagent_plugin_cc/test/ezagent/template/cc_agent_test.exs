@@ -47,14 +47,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentTest do
             extra
           )
 
-        Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn, 3, fn ->
+        Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn_receipt, 3, fn ->
           assert {:error, _reason} =
                    module.instantiate("test", tmpl, URI.new!("workspace://test"),
                      launch_context: launch_context
                    )
 
           assert_receive {:trace, _, :call,
-                          {Ezagent.Kind, :spawn,
+                          {Ezagent.Kind, :spawn_receipt,
                            [Ezagent.Entity.Agent, _, [launch_context: ^launch_context]]}}
         end)
       end

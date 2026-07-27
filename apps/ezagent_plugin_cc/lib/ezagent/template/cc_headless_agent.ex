@@ -181,7 +181,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           _ = ensure_subprocess_alive(agent_uri, tmpl)
           {:ok, [agent_uri], %{fresh?: false}}
 
-        :started ->
+        {:started, created?} ->
           case create_agent_config_dir_with_grant(agent_uri, tmpl) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir =
@@ -201,6 +201,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
                       {:ok, [agent_uri],
                        %{
                          fresh?: true,
+                         # #201 PR-1 — core-issued logical-create verdict from
+                         # the spawn receipt, passed through for the chokepoint's
+                         # create-only write gates.
+                         created?: created?,
                          config_dir_path: config_dir,
                          respawn_template_data: tmpl_with_dir
                        }}
@@ -264,9 +268,13 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     }
 
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, _pid} -> {:ok, :started}
-      {:error, {:already_started, _pid}} -> {:ok, :already_started}
+    # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
+    # (`:started` / `:already_started`) and the core logical-create verdict
+    # (`created?`), which the TemplateSpawn chokepoint gates create-only
+    # writes on.
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+      {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
+      {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
     end
   end

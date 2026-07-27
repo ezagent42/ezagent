@@ -153,6 +153,53 @@ defmodule Ezagent.SpawnRegistry do
   end
 
   @doc """
+  #201 PR-1 — like `spawn_detailed/2`, but additionally surfaces the
+  core-issued `created?` verdict as a creation receipt:
+
+    * `{:ok, :started, pid, %{created?: created?}}` — THIS call won the
+      atomic start; `created?` is the Lifecycle-owned logical-create
+      verdict read back synchronously from the freshly started Kind
+      (`Ezagent.Kind.create_freshness/1`). A cold rehydrate of a durably
+      pre-existing Kind reports `created?: false` even though it won
+      `:started` — the distinction a duplicate-create gate needs.
+    * `{:ok, :already_started, pid, %{created?: false}}` — adopted; this
+      call created nothing.
+    * `{:error, term()}` — as `spawn_detailed/2`.
+
+  The receipt is a synchronous return value only — nothing is threaded
+  through invocation/signal. `spawn_detailed/2` is unchanged for callers
+  that do not gate on logical-create.
+  """
+  @spec spawn_receipt(URI.t(), keyword()) ::
+          {:ok, :started | :already_started, pid(), %{created?: boolean()}}
+          | {:error, term()}
+  def spawn_receipt(%URI{} = uri, opts \\ []) when is_binary(uri.scheme) and is_list(opts) do
+    case spawn_detailed(uri, opts) do
+      {:ok, :started, pid} ->
+        {:ok, :started, pid, %{created?: started_create_freshness(uri, pid) == :created}}
+
+      {:ok, :already_started, pid} ->
+        {:ok, :already_started, pid, %{created?: false}}
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  # The registered spawn fn may spawn the Kind under a URI the registry
+  # caller did not literally pass (production entity fns spawn AT the
+  # requested URI, but the receipt must not assume it): resolve the fresh
+  # Kind's own URI from its registration, falling back to the requested
+  # URI. A pid that registered nothing (a non-Kind spawn fn) reads the
+  # requested URI, which has no verdict row → fail-conservative `:unknown`.
+  defp started_create_freshness(%URI{} = uri, pid) do
+    case Registry.keys(Ezagent.KindRegistry, pid) do
+      [uri_str] -> Ezagent.Kind.create_freshness(uri_str)
+      _ -> Ezagent.Kind.create_freshness(uri)
+    end
+  end
+
+  @doc """
   Spawn (or look up an existing) Kind at the given URI, PRESERVING the
   atomic "this call won the start" signal.
 
