@@ -662,7 +662,7 @@ defmodule Ezagent.World.ConversationData do
   # %{uri_string => member_meta} from the session slice members map. Empty for a
   # cold/unknown session.
   defp member_meta(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{members: members}} when is_map(members) ->
         Map.new(members, fn {uri, meta} ->
           {encode_uri(uri), meta}

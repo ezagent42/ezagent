@@ -92,7 +92,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
              "kanban.add_node did NOT dispatch via per-instance resolution (RF-1)"
 
       # The :kanban slice materialized + persisted (Entity.Agent snapshot).
-      assert {:ok, kanban_slice} = Ezagent.Kind.get_slice(agent_uri, :kanban),
+      assert {:ok, kanban_slice} = Ezagent.Kind.read(agent_uri, :kanban, spawn: :never),
              "the :kanban slice did not materialize on the Entity.Agent host"
 
       assert %{tree: %{nodes: nodes}} = kanban_slice
@@ -125,7 +125,7 @@ defmodule EzagentPluginKanban.E2E.RoleNativeDispatchTest do
       # And the :kanban slice never materializes on it (no kanban behavior in the
       # effective set → no slice; Entity.Agent returns {:ok, nil} for an absent
       # slice key, never an actual kanban tree).
-      assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :kanban)
+      assert {:ok, nil} = Ezagent.Kind.read(agent_uri, :kanban, spawn: :never)
     end)
   end
 

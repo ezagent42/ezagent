@@ -99,6 +99,7 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
 
   test "sync_live installs a binding created after the target Kind is live" do
     agent_uri = agent_uri()
+
     refute Enum.any?(
              Ezagent.Identity.list_caps_for(agent_uri),
              &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
@@ -122,7 +123,7 @@ defmodule Ezagent.ActionSet.RecipeCapBindingLifecycleTest do
 
     assert stored.grantee_uri == agent_uri
 
-    assert {:ok, identity_slice} = Ezagent.Kind.get_slice(agent_uri, :identity)
+    assert {:ok, identity_slice} = Ezagent.Kind.read(agent_uri, :identity, spawn: :never)
     identity = Ezagent.Kind.normalize_slice_view(identity_slice)
     assert identity.recipe_binding_version == version
   end

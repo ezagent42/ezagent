@@ -546,7 +546,7 @@ defmodule Ezagent.Socialware.CompositionCaps do
   defp validate_provenance(_), do: {:error, :operate_edge_provenance_missing}
 
   defp read_role_members(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) -> Map.get(slice, :members, %{})
       _ -> %{}
     end

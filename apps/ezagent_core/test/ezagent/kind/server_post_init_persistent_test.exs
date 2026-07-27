@@ -36,7 +36,7 @@ defmodule Ezagent.Kind.ServerPostInitPersistentTest do
     :ok =
       wait_until(
         fn ->
-          case Ezagent.Kind.get_slice(uri_str, :persistent) do
+          case Ezagent.Kind.read(uri_str, :persistent, spawn: :never) do
             {:ok, %{post_init_value: :written_by_post_init}} -> true
             _ -> false
           end

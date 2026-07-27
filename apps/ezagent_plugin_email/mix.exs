@@ -37,6 +37,7 @@ defmodule EzagentPluginEmail.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       # #88 PR-1 — the email external-mirror Adapter/Binding implement the

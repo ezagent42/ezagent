@@ -24,11 +24,12 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
 
   - `apps/ezagent_domain_*/lib/`
   - `apps/ezagent_plugin_*/lib/`
-  - `apps/ezagent_core/lib/` MINUS the engine allowlist (the four modules
-    that legitimately reference the engine surface or compile down to it):
-    - `apps/ezagent_core/lib/ezagent/behavior.ex` — the engine macro
-    - `apps/ezagent_core/lib/ezagent/kind/runtime.ex` — the executor
-    - `apps/ezagent_core/lib/ezagent/lifecycle.ex` — the Lifecycle macro
+  - `apps/ezagent_core/lib/` and `apps/ezagent_actor/lib/` MINUS the engine
+    allowlist (the four modules that legitimately reference the engine
+    surface or compile down to it):
+    - `apps/ezagent_actor/lib/ezagent/behavior.ex` — the engine macro
+    - `apps/ezagent_actor/lib/ezagent/kind/runtime.ex` — the executor
+    - `apps/ezagent_actor/lib/ezagent/lifecycle.ex` — the Lifecycle macro
       (it EMITS `use Ezagent.ActionSet` + `init_slice`/`state_slice`/
       `post_init`/`handle_continue`/`on_ready` underneath — R10-3)
     - `apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex`
@@ -55,9 +56,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
   # The four engine modules exempt from the developer-surface gates.
   # Anchored on the relative path so a substring match is unambiguous.
   @engine_allowlist [
-    "apps/ezagent_core/lib/ezagent/behavior.ex",
-    "apps/ezagent_core/lib/ezagent/kind/runtime.ex",
-    "apps/ezagent_core/lib/ezagent/lifecycle.ex",
+    "apps/ezagent_actor/lib/ezagent/behavior.ex",
+    "apps/ezagent_actor/lib/ezagent/kind/runtime.ex",
+    "apps/ezagent_actor/lib/ezagent/lifecycle.ex",
     "apps/ezagent_core/lib/mix/tasks/compile/ezagent_plugin_check.ex"
   ]
 
@@ -174,12 +175,17 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     domain_plugin =
       Path.wildcard("apps/ezagent_{domain,plugin}_*/lib/**/*.ex")
 
+    actor =
+      "apps/ezagent_actor/lib/**/*.ex"
+      |> Path.wildcard()
+      |> Enum.reject(&engine_allowlisted?/1)
+
     core =
       "apps/ezagent_core/lib/**/*.ex"
       |> Path.wildcard()
       |> Enum.reject(&engine_allowlisted?/1)
 
-    (domain_plugin ++ core)
+    (domain_plugin ++ actor ++ core)
     |> Enum.reject(&test_support_file?/1)
     |> Enum.sort()
   end
@@ -313,8 +319,8 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants.Lifecycle do
     word_re = ~r/(#{Enum.join(@layer_vocab_words, "|")})/
 
     offenders =
-      "apps/ezagent_core/lib/**/*.ex"
-      |> Path.wildcard()
+      (Path.wildcard("apps/ezagent_core/lib/**/*.ex") ++
+         Path.wildcard("apps/ezagent_actor/lib/**/*.ex"))
       |> Enum.reject(&test_support_file?/1)
       |> Enum.reject(&(&1 in @layer_vocab_allowlist))
       |> Enum.flat_map(fn path ->

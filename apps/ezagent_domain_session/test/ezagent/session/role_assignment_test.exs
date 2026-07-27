@@ -74,7 +74,7 @@ defmodule Ezagent.Session.RoleAssignmentTest do
   end
 
   defp members_of(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: %{members: members}}} -> members
       {:ok, %{members: members}} -> members
       _ -> %{}

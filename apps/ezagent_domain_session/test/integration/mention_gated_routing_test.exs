@@ -232,7 +232,7 @@ defmodule EzagentDomainInstanceMessage.Integration.MentionGatedRoutingTest do
     # via `Kind.get_slice/2` per the new contract; see
     # `apps/ezagent_core/test/invariants/slice_change_event_carries_no_slice_content_test.exs`.
     assert_receive {:slice_changed, %{uri: ^user_member, slice_key: :session}}, 1_000
-    {:ok, slice} = Ezagent.Kind.get_slice(user_member, :session)
+    {:ok, slice} = Ezagent.Kind.read(user_member, :session, spawn: :never)
     assert slice.last_received.message_id == msg.id
   end
 

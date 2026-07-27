@@ -37,6 +37,7 @@ defmodule EzagentDomainAgentBridge.MixProject do
     [
       # Tier-2 Domain app. AgentBridge owns the shared bridge primitives
       # that bridge-backed agent plugins use; it must not depend on plugins.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:phoenix, "~> 1.8.0"},
       {:yaml_elixir, "~> 2.9"}

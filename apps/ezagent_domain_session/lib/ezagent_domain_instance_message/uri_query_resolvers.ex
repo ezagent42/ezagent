@@ -300,11 +300,14 @@ defmodule EzagentDomainInstanceMessage.UriQueryResolvers do
     end
   end
 
+  # Live slice read via the §2.2 actor read surface (C6). `read/3` with
+  # `spawn: :never` is a live-only probe — `{:error, :not_live}` mirrors the
+  # old `get_slice/2` `{:error, :not_found}` (no live Kind) branch.
   defp kind_slice(%URI{} = uri, slice_key) when is_atom(slice_key) do
-    case Ezagent.Kind.get_slice(uri, slice_key) do
+    case Ezagent.Kind.read(uri, slice_key, spawn: :never) do
       {:ok, slice} when is_map(slice) -> {:ok, slice}
       {:ok, _} -> :none
-      {:error, :not_found} -> :none
+      {:error, :not_live} -> :none
       {:error, reason} -> {:error, reason}
     end
   end

@@ -62,7 +62,7 @@ defmodule EzagentPluginHello.Router do
   # :concierge so a nil-owner session's visitors can't publish or share.
   defp guard_admin_actions(action, session_uri)
        when action in [:publisher, :sharer] do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{owner_uri: owner}} when not is_nil(owner) -> action
       {:ok, %{"owner_uri" => owner}} when not is_nil(owner) -> action
       _ -> :concierge
@@ -139,7 +139,7 @@ defmodule EzagentPluginHello.Router do
   # session is OWNERLESS (nil owner — e.g. a pre-owner_uri hello session), fail-OPEN
   # and treat the sender as the owner.
   defp owner?(session_uri, %URI{} = sender) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) ->
         case Map.get(slice, :owner_uri) || Map.get(slice, "owner_uri") do
           nil -> true

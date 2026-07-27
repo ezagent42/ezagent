@@ -162,7 +162,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
   end
 
   defp page_summary(session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
       {:ok, %{versions: versions, approved: approved}} when is_map(versions) ->
         versions
         |> Map.get(approved, %{})

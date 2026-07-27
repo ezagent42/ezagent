@@ -61,7 +61,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
     assert {:ok, %{echoed: "hello"}} =
              GenServer.call(context.pid, {:ezagent_dispatch, invocation})
 
-    assert {:ok, %{count: 1}} = Ezagent.Kind.get_slice(context.uri, :test)
+    assert {:ok, %{count: 1}} = Ezagent.Kind.read(context.uri, :test, spawn: :never)
   end
 
   test "unsigned and vm_internal attempts fail before the handler mutates state", context do
@@ -82,7 +82,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
     assert {:error, :authenticated_principal_required} =
              GenServer.call(context.pid, {:ezagent_dispatch, vm_invocation})
 
-    assert {:ok, %{count: 0}} = Ezagent.Kind.get_slice(context.uri, :test)
+    assert {:ok, %{count: 0}} = Ezagent.Kind.read(context.uri, :test, spawn: :never)
   end
 
   test "verifier delegates to authorize/3 and denies a live target's old generation", context do
@@ -102,7 +102,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
                {:ezagent_dispatch, invocation(context, MapSet.new([signed]))}
              )
 
-    assert {:ok, %{count: 1}} = Ezagent.Kind.get_slice(context.uri, :test)
+    assert {:ok, %{count: 1}} = Ezagent.Kind.read(context.uri, :test, spawn: :never)
   end
 
   test "non-cap routing is a closed framework allowlist" do

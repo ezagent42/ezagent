@@ -155,7 +155,7 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
     assert {:ok, _pid} =
              Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy})
 
-    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.get_slice(uri, :git_task_access)
+    assert {:ok, %{policy: ^policy}} = Ezagent.Kind.read(uri, :git_task_access, spawn: :never)
 
     assert {:error, {:already_registered, registered_uri}} =
              Ezagent.Kind.spawn(GitTaskAccess, %{uri: uri, policy: policy})

@@ -231,7 +231,7 @@ defmodule Ezagent.ActionSet.ApiKeys do
   #  3. `:no_owner` — neither source has a record.
   def data_owner(%URI{scheme: "entity"} = agent_uri) do
     if Ezagent.URI.type?(agent_uri, :agent) do
-      case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
+      case Ezagent.Kind.read(agent_uri, :api_keys, spawn: :never) do
         {:ok, %{creator_uri: %URI{} = creator}} ->
           creator
 

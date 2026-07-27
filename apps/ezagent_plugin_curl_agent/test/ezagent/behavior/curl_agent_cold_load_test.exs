@@ -86,7 +86,7 @@ defmodule Ezagent.ActionSet.CurlAgentColdLoadTest do
     # asserts on BOTH containers (state + transients), so it reads the RAW
     # two-container slice the host GenServer holds.
     {:ok, %{state: state_before, transients: transients_before}} =
-      Kind.get_raw_slice(uri, @slice_key)
+      Ezagent.Kind.SliceAccess.get_raw_slice(uri, @slice_key)
 
     # The expected persistent state == what create/1 built from the args.
     {:ok, created} = CurlAgent.create(spawn_args)
@@ -127,7 +127,7 @@ defmodule Ezagent.ActionSet.CurlAgentColdLoadTest do
 
     # T3: RAW read — assert on both containers (see note above).
     {:ok, %{state: state_after, transients: transients_after}} =
-      Kind.get_raw_slice(uri, @slice_key)
+      Ezagent.Kind.SliceAccess.get_raw_slice(uri, @slice_key)
 
     # 4. State rehydrated correctly — the custom config + empty
     #    conversation survived, and create/1 did NOT re-run (which would

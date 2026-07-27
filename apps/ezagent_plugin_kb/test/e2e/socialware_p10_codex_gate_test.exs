@@ -97,7 +97,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
 
     assert Installation.installed?(session_uri, supervised_app)
 
-    {:ok, kind_base} = Ezagent.Kind.get_slice(session_uri, :kind_base)
+    {:ok, kind_base} = Ezagent.Kind.read(session_uri, :kind_base, spawn: :never)
     behaviors = KindBase.behaviors_in_slice(kind_base)
     assert Ezagent.ActionSet.Session in behaviors
     assert Ezagent.ActionSet.Turn in behaviors
@@ -578,13 +578,13 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   end
 
   defp session_member_uris(session_uri) do
-    {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :session)
+    {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     members = get_in(slice, [:state, :members]) || Map.get(slice, :members, %{})
     Map.keys(members)
   end
 
   defp role_member_uri(session_uri, role_name) do
-    {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :session)
+    {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     members = get_in(slice, [:state, :members]) || Map.get(slice, :members, %{})
 
     Enum.find_value(members, fn {uri, meta} ->

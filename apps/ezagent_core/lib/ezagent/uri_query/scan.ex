@@ -47,7 +47,7 @@ defmodule Ezagent.UriQuery.Scan do
   ]
 
   @default_excluded_paths [
-    "apps/ezagent_core/lib/ezagent/uri.ex",
+    "apps/ezagent_actor/lib/ezagent/uri.ex",
     "apps/ezagent_core/lib/ezagent/uri_query/scan.ex",
     # Scan data/anchor modules embed literals that would otherwise self-trip.
     "apps/ezagent_core/lib/ezagent/uri_query/scan/home_path_exceptions.ex",

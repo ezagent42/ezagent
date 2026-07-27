@@ -304,10 +304,10 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
     # The parent slice's in-handler marker committed (synchronous on the
     # :trigger call). probe_count is mutated by the async post-commit cast;
     # poll until it lands to confirm the deferred slice mutation committed.
-    assert {:ok, %{marker: :committed}} = Ezagent.Kind.get_slice(uri, :dac)
+    assert {:ok, %{marker: :committed}} = Ezagent.Kind.read(uri, :dac, spawn: :never)
 
     wait_until(fn ->
-      match?({:ok, %{probe_count: 1}}, Ezagent.Kind.get_slice(uri, :dac))
+      match?({:ok, %{probe_count: 1}}, Ezagent.Kind.read(uri, :dac, spawn: :never))
     end)
   end
 
@@ -352,7 +352,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     # The slice was NOT advanced (marker stays :initial, probe never ran).
     {:ok, %{probe_count: count, marker: marker}} =
-      Ezagent.Kind.get_slice(uri, :dac)
+      Ezagent.Kind.read(uri, :dac, spawn: :never)
 
     assert count == 0
     assert marker == :initial
@@ -371,7 +371,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
       end)
 
     # The parent slice DID commit (the deferred failure is observational).
-    {:ok, %{marker: marker}} = Ezagent.Kind.get_slice(uri, :dac)
+    {:ok, %{marker: marker}} = Ezagent.Kind.read(uri, :dac, spawn: :never)
     assert marker == :committed_bad
 
     # The failed post-commit dispatch was logged at :error.
@@ -396,7 +396,7 @@ defmodule Ezagent.Kind.DispatchAfterCommitTest do
 
     # The parent slice DID commit (the deferred target-side failure is
     # observational — it does not roll back the already-committed parent turn).
-    {:ok, %{marker: marker}} = Ezagent.Kind.get_slice(uri, :dac)
+    {:ok, %{marker: marker}} = Ezagent.Kind.read(uri, :dac, spawn: :never)
     assert marker == :committed_selffail
 
     # codex P2.5c r2 HIGH: the cast was ACCEPTED (Router.dispatch returned :ok),

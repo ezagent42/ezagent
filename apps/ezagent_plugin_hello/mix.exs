@@ -42,6 +42,7 @@ defmodule EzagentPluginHello.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # `Behavior.Turn` + `Behavior.Surface` (the page chokepoint) live in
       # ezagent_domain_session; the hello page is born only via

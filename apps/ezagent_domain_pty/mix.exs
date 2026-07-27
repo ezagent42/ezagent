@@ -39,6 +39,7 @@ defmodule EzagentDomainPty.MixProject do
       # Domain apps, no plugin apps. PTY runtime is a Domain-tier
       # primitive that plugins (cc, future echo-with-pty, etc.) call
       # via the Ezagent.Domain.Pty facade.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # erlexec is the PTY backend — used by Ezagent.Domain.Pty.Server
       # to allocate a real tty for child processes (claude TUI requires

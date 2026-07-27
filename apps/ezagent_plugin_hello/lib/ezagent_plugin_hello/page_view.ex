@@ -39,7 +39,7 @@ defmodule EzagentPluginHello.PageView do
   @impl true
   def applies_to?(%URI{} = session_uri) do
     hello_session?(session_uri) and
-      match?({:ok, surface} when is_map(surface), Ezagent.Kind.get_slice(session_uri, :surface))
+      match?({:ok, surface} when is_map(surface), Ezagent.Kind.read(session_uri, :surface, spawn: :never))
   rescue
     _ -> false
   catch
@@ -101,7 +101,7 @@ defmodule EzagentPluginHello.PageView do
   end
 
   defp load_surface(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :surface) do
+    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
       {:ok, surface} -> surface
       _ -> %{}
     end

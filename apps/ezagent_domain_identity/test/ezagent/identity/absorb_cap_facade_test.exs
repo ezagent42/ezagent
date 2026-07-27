@@ -57,7 +57,7 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
     assert delivery.attempts >= 1
     assert delivery.workspace_uri == "workspace://team-alpha"
 
-    assert {:ok, before_slice} = Ezagent.Kind.get_slice(user_uri, :identity)
+    assert {:ok, before_slice} = Ezagent.Kind.read(user_uri, :identity, spawn: :never)
     before_caps = before_slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
     refute Enum.member?(before_caps, artifact)
 
@@ -68,7 +68,7 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
              )
 
     assert eventually(fn ->
-             with {:ok, slice} <- Ezagent.Kind.get_slice(user_uri, :identity) do
+             with {:ok, slice} <- Ezagent.Kind.read(user_uri, :identity, spawn: :never) do
                caps = slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
 
                Enum.member?(caps, artifact) and
@@ -88,7 +88,7 @@ defmodule Ezagent.Identity.AbsorbCapFacadeTest do
     assert :ok = DeliveryOutbox.attempt(delivery.id)
 
     assert eventually(fn ->
-             with {:ok, slice} <- Ezagent.Kind.get_slice(user_uri, :identity) do
+             with {:ok, slice} <- Ezagent.Kind.read(user_uri, :identity, spawn: :never) do
                caps = slice |> Ezagent.Kind.normalize_slice_view() |> Map.fetch!(:caps)
 
                Repo.get!(Delivery, delivery.id).status == :applied and

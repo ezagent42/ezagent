@@ -192,11 +192,12 @@ defmodule Ezagent.ActionSet.KanbanRender do
 
   # board 的 `:kanban` slice 里的 tree（真相源）。dormant board 先经核心 owner-gated
   # chokepoint `LocalRuntime.ensure_started/1` 起活（kanban_data.ensure_spawned 同款,
-  # HIGH-3 liveness），再 get_slice；任何失败退 nil → 空列投影（fail-safe）。
+  # HIGH-3 liveness），再 live-only read（§2.2 `Kind.read/3`, `spawn: :never`）；
+  # 任何失败退 nil → 空列投影（fail-safe）。
   defp board_slice_tree(_session_uri, %URI{} = board_uri) do
     _ = Ezagent.LocalRuntime.ensure_started(board_uri)
 
-    case Ezagent.Kind.get_slice(board_uri, :kanban) do
+    case Ezagent.Kind.read(board_uri, :kanban, spawn: :never) do
       {:ok, %{} = slice} -> Map.get(slice, :tree) || Map.get(slice, "tree")
       _ -> nil
     end

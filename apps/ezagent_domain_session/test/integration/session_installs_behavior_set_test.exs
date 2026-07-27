@@ -80,7 +80,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionInstallsBehaviorSetTes
   end
 
   defp captured_behaviors(session_uri) do
-    {:ok, slice} = Ezagent.Kind.get_slice(session_uri, :kind_base)
+    {:ok, slice} = Ezagent.Kind.read(session_uri, :kind_base, spawn: :never)
     KindBase.behaviors_in_slice(slice)
   end
 

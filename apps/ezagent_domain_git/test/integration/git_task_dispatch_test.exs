@@ -183,7 +183,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
   test "missing cap leaves registry, resource state, and both providers unchanged" do
     {fixture, policy} = started_fixture(:resolve_repository, :"task11-sync-a")
     registry_before = AdapterRegistry.list_for_diagnostics()
-    slice_before = Ezagent.Kind.get_slice(fixture.task_access_uri, :git_task_access)
+    slice_before = Ezagent.Kind.read(fixture.task_access_uri, :git_task_access, spawn: :never)
 
     invocation = %{
       fixture.invocation
@@ -193,7 +193,10 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
 
     assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
     assert AdapterRegistry.list_for_diagnostics() == registry_before
-    assert Ezagent.Kind.get_slice(fixture.task_access_uri, :git_task_access) == slice_before
+
+    assert Ezagent.Kind.read(fixture.task_access_uri, :git_task_access, spawn: :never) ==
+             slice_before
+
     refute_received {:task11_adapter_call, _, _, _}
     refute_received {:task11_provider_mutation, _, _}
   end

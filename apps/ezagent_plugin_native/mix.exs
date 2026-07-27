@@ -43,6 +43,7 @@ defmodule EzagentPluginNative.MixProject do
 
   defp deps do
     [
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       # The `native` flavor resolves to the UNIFIED `Ezagent.Entity.Agent`
       # Kind (the generic, no-sidecar host) from the agent domain. plugin →

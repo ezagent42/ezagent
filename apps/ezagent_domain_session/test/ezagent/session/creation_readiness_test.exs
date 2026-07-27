@@ -218,7 +218,7 @@ defmodule Ezagent.Session.CreationReadinessTest do
   end
 
   defp session_state(session) do
-    case Ezagent.Kind.get_slice(session, :session) do
+    case Ezagent.Kind.read(session, :session, spawn: :never) do
       {:ok, slice} -> Ezagent.Kind.normalize_slice_view(slice)
       _ -> %{}
     end
@@ -241,7 +241,7 @@ defmodule Ezagent.Session.CreationReadinessTest do
   end
 
   defp wait_received(member, message_id, retries \\ 100) do
-    case Ezagent.Kind.get_slice(member, :session) do
+    case Ezagent.Kind.read(member, :session, spawn: :never) do
       {:ok, slice} ->
         slice = Ezagent.Kind.normalize_slice_view(slice)
 
