@@ -191,10 +191,8 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   end
 
   defp orchestrator_member_uri(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
-      {:ok, chat_slice} ->
-        chat_persistent = Map.get(chat_slice, :state, chat_slice)
-
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, chat_persistent} ->
         chat_persistent
         |> Map.get(:members, %{})
         |> Ezagent.ActionSet.Session.Members.role_name_to_uri("orchestrator")
@@ -353,15 +351,10 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   """
   @spec read_template_working_copy(URI.t()) :: map()
   def read_template_working_copy(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
-      {:ok, chat_slice} ->
-        # Lifecycle migration (SPEC 2026-05-29 §2.3C): the Chat slice is now
-        # two-container; the persistent `template_working_copy` lives under
-        # its `:state`. The outer `Map.get(:state, ...)` reaches the
-        # per-Kind slice store; the inner one unwraps the Chat two-container
-        # (falling through for a not-yet-converted flat slice).
-        chat_persistent = Map.get(chat_slice, :state, chat_slice)
-
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, chat_persistent} ->
+        # `Ezagent.Kind.read/3` normalizes the two-container Chat slice to its
+        # persistent `:state` view, where `template_working_copy` lives.
         Ezagent.ActionSet.Session.template_working_copy(chat_persistent)
 
       {:error, _reason} ->
@@ -375,17 +368,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
   2026-05-31 orchestrator-startup-atomicity §4 step 2 (codex-review Q2)
   — used by the completeness check for an already-existing session: an
   owner that is NOT a chat member is one symptom of a half-create that
-  crashed before the step-8 member join. Reads the same two-container
-  `:chat` slice `read_template_working_copy/1` does (the persistent
-  `:members` map lives under `:state`). Returns `[]` when the Session
+  crashed before the step-8 member join. Reads the same live `:chat` slice
+  `read_template_working_copy/1` does (normalized to its persistent `:state`
+  view, where the `:members` map lives). Returns `[]` when the Session
   Kind is not live (it cannot have members if it isn't running).
   """
   @spec session_member_uris(URI.t()) :: [URI.t()]
   def session_member_uris(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
-      {:ok, chat_slice} ->
-        chat_persistent = Map.get(chat_slice, :state, chat_slice)
-
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, chat_persistent} ->
         chat_persistent
         |> Map.get(:members, %{})
         |> Map.keys()
@@ -462,15 +453,15 @@ defmodule Ezagent.Entity.Session.Orchestrator do
 
   team-routing-unification §3.6 (PR-6) — the legend-aware mention parsers
   (Feishu / LiveView) read this to resolve a `@legend` symbolic handle to its
-  bound rule-set entry BEFORE the URI-mention path. Reads the same
-  two-container `:chat` slice as `session_member_uris/1`; returns `%{}` when the
-  Session Kind is not live (no legends if it isn't running).
+  bound rule-set entry BEFORE the URI-mention path. Reads the same live
+  `:chat` slice as `session_member_uris/1` (normalized to its persistent
+  `:state` view); returns `%{}` when the Session Kind is not live (no legends
+  if it isn't running).
   """
   @spec session_legends(URI.t()) :: map()
   def session_legends(%URI{} = session_uri) do
-    case Ezagent.Kind.get_raw_slice(session_uri, :session) do
-      {:ok, chat_slice} ->
-        chat_persistent = Map.get(chat_slice, :state, chat_slice)
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, chat_persistent} ->
         Ezagent.ActionSet.Session.legends_of(chat_persistent)
 
       {:error, _reason} ->

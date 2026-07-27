@@ -166,7 +166,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     # carries the respawn data (a subsequent `:call` is processed AFTER the cast).
     assert Process.alive?(agent_pid)
     assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert sandbox.config_dir_path != nil
     assert is_map(sandbox.respawn_template_data) and map_size(sandbox.respawn_template_data) > 0
@@ -600,7 +600,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
              )
 
     assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(agent_uri, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
 
     assert sandbox.config_dir_path =~ "preinit-sandbox-#{unique}/preinit_sandbox"
@@ -656,7 +656,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
                version: 1
              })
 
-    assert {:ok, original_sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    assert {:ok, original_sandbox_slice} = Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
     original_sandbox = Ezagent.Kind.normalize_slice_view(original_sandbox_slice)
 
     on_exit(fn ->
@@ -696,7 +696,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     refute instance_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     assert Profile.get(instance_uri) == original_profile
 
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(instance_uri, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
     assert Ezagent.Kind.normalize_slice_view(sandbox_slice) == original_sandbox
 
     assert Ezagent.Credential.GrantRow.get_for_agent(URI.to_string(instance_uri)) ==
@@ -737,7 +737,8 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
                behavior_overlay: [TemplateOverlayTestBehavior]
              )
 
-    assert {:ok, %{pinged: false}} = Ezagent.Kind.get_slice(agent_uri, :template_overlay_test)
+    assert {:ok, %{pinged: false}} =
+             Ezagent.Kind.read(agent_uri, :template_overlay_test, spawn: :never)
   end
 
   test "behavior_overlay does not retrofit adopted workers" do
@@ -780,7 +781,7 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
                behavior_overlay: [TemplateOverlayTestBehavior]
              )
 
-    assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :template_overlay_test)
+    assert {:ok, nil} = Ezagent.Kind.read(agent_uri, :template_overlay_test, spawn: :never)
   end
 
   test "behavior_overlay mount failure rolls back the fresh worker" do

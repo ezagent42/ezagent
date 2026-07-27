@@ -66,6 +66,7 @@ defmodule EzagentWeb.MixProject do
       {:gettext, "~> 0.26"},
       {:swoosh, "~> 1.17"},
       {:gen_smtp, "~> 1.2"},
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       {:ezagent_domain_workspace, in_umbrella: true},

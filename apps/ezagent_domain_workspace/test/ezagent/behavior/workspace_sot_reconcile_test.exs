@@ -104,7 +104,7 @@ defmodule Ezagent.ActionSet.WorkspaceSotReconcileTest do
     wait_until(fn -> Ezagent.ReadyGate.status(workspace_uri) == :ready end)
 
     {:ok, %{state: state_before, transients: tr_before}} =
-      Ezagent.Kind.get_raw_slice(workspace_uri, :workspace)
+      Ezagent.Kind.SliceAccess.get_raw_slice(workspace_uri, :workspace)
 
     assert MapSet.member?(state_before.members, member)
     assert state_before.session_templates == %{"echo.demo" => tmpl}
@@ -130,7 +130,7 @@ defmodule Ezagent.ActionSet.WorkspaceSotReconcileTest do
     # 3. THE GATE — state rehydrated identically (create-from-args ran with
     #    the re-threaded SoT args); still no transient.
     {:ok, %{state: state_after, transients: tr_after}} =
-      Ezagent.Kind.get_raw_slice(workspace_uri, :workspace)
+      Ezagent.Kind.SliceAccess.get_raw_slice(workspace_uri, :workspace)
 
     assert state_after == state_before,
            "cluster-shape state did NOT survive the cold restart — the " <>

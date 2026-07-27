@@ -4,18 +4,28 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
 
   Layer rules:
 
-  - `apps/ezagent_core/`         — depends on: nothing in umbrella
-  - `apps/ezagent_domain_*/`     — depends on: ezagent_core + other ezagent_domain_*
-  - `apps/ezagent_plugin_*/`     — depends on: ezagent_core + ezagent_domain_* + other
-                                ezagent_plugin_* allowed (e.g. ezagent uses
-                                cc_pty's Template Class)
+  - `apps/ezagent_actor/`        — depends on: nothing in umbrella (C5 §3.1:
+                                the actor framework is the extraction floor;
+                                it reaches the core spine ONLY through the
+                                §3.4 config-resolved ports)
+  - `apps/ezagent_core/`         — depends on: ezagent_actor ONLY (C5: the
+                                framework moved out; core keeps the spine)
+  - `apps/ezagent_domain_*/`     — depends on: ezagent_core + ezagent_actor +
+                                other ezagent_domain_*
+  - `apps/ezagent_plugin_*/`     — depends on: ezagent_core + ezagent_actor +
+                                ezagent_domain_* + other ezagent_plugin_*
+                                allowed (e.g. ezagent uses cc_pty's Template
+                                Class)
   - `apps/ezagent_web*/`         — depends on: anything (endpoint + router)
   - `apps/ezagent_cli/`          — depends on: anything (CLI surface)
 
   This test parses each app's mix.exs `deps` list and asserts:
 
-  1. **core has no umbrella deps** — core is the bottom of the stack.
-  2. **domain apps depend only on core + other domain** — no plugin
+  1. **actor has no umbrella deps** — the framework is the floor of the
+     stack (the standalone-compile proof's mix.exs half).
+  2. **core depends only on the actor** — the spine sits directly on the
+     framework.
+  3. **domain apps depend only on core + actor + other domain** — no plugin
      dep allowed (else "domain" would be impossible to use without
      pulling a specific plugin).
 
@@ -46,12 +56,24 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
     Path.join(String.trim(out), "apps")
   end
 
-  test "ezagent_core has zero umbrella deps" do
-    deps = read_in_umbrella_deps(:ezagent_core)
+  test "ezagent_actor has zero umbrella deps" do
+    deps = read_in_umbrella_deps(:ezagent_actor)
 
     assert deps == [],
            """
-           ezagent_core must not depend on any umbrella app.
+           ezagent_actor must not depend on any umbrella app (C5 §3.1 — the
+           framework reaches the core spine only via the §3.4 ports).
+           Found: #{inspect(deps)}
+           """
+  end
+
+  test "ezagent_core depends only on ezagent_actor" do
+    deps = read_in_umbrella_deps(:ezagent_core)
+
+    assert deps == [:ezagent_actor],
+           """
+           ezagent_core must depend on ezagent_actor and nothing else in the
+           umbrella (C5 §3.1 — the framework moved out, the spine stayed).
            Found: #{inspect(deps)}
            """
   end
@@ -79,13 +101,14 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
     assert offenders == []
   end
 
-  test "ezagent_domain_* apps only depend on core + other ezagent_domain_* apps" do
+  test "ezagent_domain_* apps only depend on core + actor + other ezagent_domain_* apps" do
     for app <- list_apps(~r/^ezagent_domain_/) do
       deps = read_in_umbrella_deps(app)
 
       offending =
         Enum.reject(deps, fn dep ->
           dep == :ezagent_core or
+            dep == :ezagent_actor or
             Atom.to_string(dep) |> String.starts_with?("ezagent_domain_") or
             exempt?(app, dep)
         end)
@@ -94,7 +117,8 @@ defmodule EzagentCore.Invariants.LayerPurityTest do
              """
              #{app}/mix.exs has disallowed umbrella deps: #{inspect(offending)}.
 
-             Domain apps must only depend on ezagent_core or other ezagent_domain_* apps.
+             Domain apps must only depend on ezagent_core, ezagent_actor, or other
+             ezagent_domain_* apps.
              Add `# layer-violation-exempt: <reason>` on the dep line to opt out
              (only for transient violations being repaid in a tracked PR).
              """

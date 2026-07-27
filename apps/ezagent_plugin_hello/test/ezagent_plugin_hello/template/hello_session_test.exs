@@ -88,7 +88,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       # The orchestrator holds no within-session orchestrator cap (it is a plain
       # router member, not a session orchestrator).
-      {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(orch_uri, :identity)
+      {:ok, %{caps: caps}} = Ezagent.Kind.read(orch_uri, :identity, spawn: :never)
 
       assert {:error, :unauthorized} =
                Ezagent.Orchestrator.Tools.preflight_within_session_cap(

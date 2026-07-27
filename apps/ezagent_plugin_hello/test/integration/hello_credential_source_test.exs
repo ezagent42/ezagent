@@ -123,7 +123,7 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
 
       # …and the live source agent (spawned by the prod path) carries the key.
       assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
-               Ezagent.Kind.get_slice(source_uri, :api_keys)
+               Ezagent.Kind.read(source_uri, :api_keys, spawn: :never)
     end
   end
 
@@ -186,7 +186,7 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     # …born-credentialed: the cascade resolved the workspace-shared source,
     # minted the grant, and materialized the key into the member's OWN slice.
     assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
-             Ezagent.Kind.get_slice(llm_uri, :api_keys)
+             Ezagent.Kind.read(llm_uri, :api_keys, spawn: :never)
 
     assert %GrantRow{credential_source_uri: credential_source_uri} =
              GrantRow.get_for_agent(URI.to_string(llm_uri))
@@ -222,7 +222,7 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     assert GrantRow.get_for_agent(URI.to_string(plain_llm)) == nil
 
     # …and stays KEYLESS: the deepseek key does NOT leak across workspaces.
-    assert {:ok, slice} = Ezagent.Kind.get_slice(plain_llm, :api_keys)
+    assert {:ok, slice} = Ezagent.Kind.read(plain_llm, :api_keys, spawn: :never)
     keys = Map.get(slice, :keys, %{})
     assert Map.get(keys, "deepseek") in [nil, ""]
 
@@ -232,7 +232,7 @@ defmodule EzagentPluginHello.Integration.HelloCredentialSourceTest do
     assert {:ok, bridged_llm} = Members.role_uri(bridged_session, "llm")
 
     assert {:ok, %{keys: %{"deepseek" => @test_key}}} =
-             Ezagent.Kind.get_slice(bridged_llm, :api_keys)
+             Ezagent.Kind.read(bridged_llm, :api_keys, spawn: :never)
 
     # Sanity: the source lives in the BRIDGED workspace only.
     assert Ezagent.Capability.workspace_of(bridged_source) ==

@@ -205,10 +205,10 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     private_key = server_state.authority.private_key
     refute contains_binary?(server_state.state, private_key)
 
-    assert {:ok, normalized_slice} = Ezagent.Kind.get_slice(uri, :test)
+    assert {:ok, normalized_slice} = Ezagent.Kind.read(uri, :test, spawn: :never)
     refute contains_binary?(normalized_slice, private_key)
 
-    assert {:ok, raw_slice} = Ezagent.Kind.get_raw_slice(uri, :test)
+    assert {:ok, raw_slice} = Ezagent.Kind.SliceAccess.get_raw_slice(uri, :test)
     refute contains_binary?(raw_slice, private_key)
 
     assert {:ok, runtime_view} = Ezagent.Kind.runtime_view(uri)
@@ -237,7 +237,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert {:ok, %{echoed: "accepted"}} =
              invoke(pid, uri, grantee, [signed], message: "accepted")
 
-    assert {:ok, %{count: 1, last_msg: "accepted"}} = Ezagent.Kind.get_slice(uri, :test)
+    assert {:ok, %{count: 1, last_msg: "accepted"}} = Ezagent.Kind.read(uri, :test, spawn: :never)
   end
 
   defp start_target(suffix, presenter \\ nil) do
@@ -302,7 +302,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
   end
 
   defp assert_unmodified(uri) do
-    assert {:ok, %{count: 0, last_msg: nil}} = Ezagent.Kind.get_slice(uri, :test)
+    assert {:ok, %{count: 0, last_msg: nil}} = Ezagent.Kind.read(uri, :test, spawn: :never)
   end
 
   defp unique_uri(suffix) do

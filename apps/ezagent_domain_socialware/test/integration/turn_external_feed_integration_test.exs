@@ -82,7 +82,7 @@ defmodule EzagentDomainSocialware.Integration.TurnExternalFeedIntegrationTest do
              })
 
     wait_until(fn ->
-      {:ok, surface} = Ezagent.Kind.get_slice(ctx.session, :surface)
+      {:ok, surface} = Ezagent.Kind.read(ctx.session, :surface, spawn: :never)
       Map.has_key?(surface.versions, version)
     end)
 

@@ -37,7 +37,7 @@ defmodule EzagentPluginHello.Members do
   """
   @spec members(URI.t()) :: {:ok, map()} | :error
   def members(%URI{} = session_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) -> {:ok, Map.get(slice, :members, %{})}
       _ -> :error
     end

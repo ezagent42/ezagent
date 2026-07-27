@@ -106,7 +106,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       # (1a) The recipe-loaded UNDECLARED behavior materialized its slice — proves
       # it is in this instance's effective set (RF-1 generalized init_set kept an
       # Entity.Agent-undeclared, validated real Behavior).
-      assert {:ok, role_slice} = Ezagent.Kind.get_slice(agent_uri, :role_test),
+      assert {:ok, role_slice} = Ezagent.Kind.read(agent_uri, :role_test, spawn: :never),
              "the role's recipe-loaded behavior did NOT materialize its slice — " <>
                "the :behaviors override did not reach :kind_base (RF-1/HIGH-1)"
 
@@ -115,10 +115,10 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       # (1b) The flavor BASE behaviors SURVIVED the override (HIGH-1): without
       # them there is no :sandbox slice to store passive / config_dir and no
       # :identity slice to grant caps into.
-      assert {:ok, _sandbox} = Ezagent.Kind.get_slice(agent_uri, :sandbox),
+      assert {:ok, _sandbox} = Ezagent.Kind.read(agent_uri, :sandbox, spawn: :never),
              "base :sandbox slice missing — the role :behaviors override stripped the flavor base"
 
-      assert {:ok, _identity} = Ezagent.Kind.get_slice(agent_uri, :identity),
+      assert {:ok, _identity} = Ezagent.Kind.read(agent_uri, :identity, spawn: :never),
              "base :identity slice missing — the role :behaviors override stripped the flavor base"
 
       # (1c) The undeclared behavior dispatches via per-instance resolution (RF-1)

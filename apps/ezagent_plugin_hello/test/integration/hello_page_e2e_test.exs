@@ -121,7 +121,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert %{^orchestrator => %{role_name: "front-desk"}} =
              Ezagent.Orchestrator.Tools.read_members(ctx.session)
 
-    {:ok, %{caps: caps}} = Ezagent.Kind.get_slice(ctx.orchestrator, :identity)
+    {:ok, %{caps: caps}} = Ezagent.Kind.read(ctx.orchestrator, :identity, spawn: :never)
 
     refute Enum.any?(caps, fn
              %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
@@ -141,7 +141,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   end
 
   test "ensure_app spawns the session through the socialware install set", ctx do
-    {:ok, slice} = Ezagent.Kind.get_slice(ctx.session, :kind_base)
+    {:ok, slice} = Ezagent.Kind.read(ctx.session, :kind_base, spawn: :never)
     behaviors = KindBase.behaviors_in_slice(slice)
 
     assert Ezagent.ActionSet.Session in behaviors
@@ -171,7 +171,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     spec = Spec.seed()
     assert {:ok, _} = TurnDriver.drive(ctx.session, spec, "Page ready")
     assert %{page: ^spec} = wait_for_page_value(ctx.session, ctx.caller, spec)
-    assert {:ok, surface_before} = Ezagent.Kind.get_slice(ctx.session, :surface)
+    assert {:ok, surface_before} = Ezagent.Kind.read(ctx.session, :surface, spawn: :never)
 
     assert {:ok, result} =
              KanbanDelegation.delegate(
@@ -180,7 +180,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
                Ezagent.Entity.User.admin_uri()
              )
 
-    assert {:ok, surface_after} = Ezagent.Kind.get_slice(ctx.session, :surface)
+    assert {:ok, surface_after} = Ezagent.Kind.read(ctx.session, :surface, spawn: :never)
     assert surface_after == surface_before
 
     target = Ezagent.URI.with_action(result.kanban_uri, :kanban, :get_tree)

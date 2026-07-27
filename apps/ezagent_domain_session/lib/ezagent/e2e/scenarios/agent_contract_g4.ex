@@ -534,8 +534,7 @@ defmodule Ezagent.E2E.Scenarios.AgentContractG4 do
   end
 
   defp chat_slice(session_uri) do
-    {:ok, %{state: slice}} =
-      Ezagent.Kind.get_raw_slice(session_uri, :session)
+    {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
 
     slice
   end

@@ -62,7 +62,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
     member = spawn_user("cfs-member")
     assert {:ok, %{status: :granted, member: ^member}} = chat_join(session, member)
     :ok = converge_member_projection(session, member)
-    {:ok, slice} = Ezagent.Kind.get_slice(session, :session)
+    {:ok, slice} = Ezagent.Kind.read(session, :session, spawn: :never)
     members = Map.keys(slice.members)
     assert member in members
     wait_until(fn -> Ezagent.Socialware.ExternalFeed.member?(session, member) end)

@@ -60,7 +60,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
 
       # 2. Slice has the post-init mutation merged back via Kind.Server +
       #    snapshot commit path.
-      {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :post_init_behavior)
+      {:ok, slice} = Ezagent.Kind.read(uri_str, :post_init_behavior, spawn: :never)
       assert slice.setup_done == true
       assert slice.continued_with == :setup_thing
 
@@ -94,7 +94,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
 
       # init_slice/1 output is intact — no post-init mutation, no surprise
       # continuations rewrote it.
-      {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :no_post_init)
+      {:ok, slice} = Ezagent.Kind.read(uri_str, :no_post_init, spawn: :never)
       assert slice == %{baseline: :ok, count: 0}
 
       # No continuation noise — process is alive and responsive to a
@@ -125,8 +125,8 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       assert [:post_init_a, :post_init_b] = OrderTracker.events(tracker)
 
       # Both slices got their handle_continue/3 mutations merged.
-      {:ok, slice_a} = Ezagent.Kind.get_slice(uri_str, :post_init_a)
-      {:ok, slice_b} = Ezagent.Kind.get_slice(uri_str, :post_init_b)
+      {:ok, slice_a} = Ezagent.Kind.read(uri_str, :post_init_a, spawn: :never)
+      {:ok, slice_b} = Ezagent.Kind.read(uri_str, :post_init_b, spawn: :never)
       assert slice_a.ran == true
       assert slice_b.ran == true
     end
@@ -269,7 +269,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
 
       # Slice contains the message that flowed through the buffered
       # cast — proves end-to-end delivery via PendingDelivery.
-      {:ok, slice} = Ezagent.Kind.get_slice(uri_str, :slow)
+      {:ok, slice} = Ezagent.Kind.read(uri_str, :slow, spawn: :never)
       assert "during-post-init" in slice.msgs
     end
 
@@ -344,7 +344,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
       :ok =
         wait_until(
           fn ->
-            case Ezagent.Kind.get_slice(uri_str, :slow) do
+            case Ezagent.Kind.read(uri_str, :slow, spawn: :never) do
               {:ok, %{msgs: msgs}} -> length(msgs) == 3
               _ -> false
             end
@@ -352,7 +352,7 @@ defmodule Ezagent.Kind.ServerPostInitTest do
           500
         )
 
-      {:ok, %{msgs: msgs}} = Ezagent.Kind.get_slice(uri_str, :slow)
+      {:ok, %{msgs: msgs}} = Ezagent.Kind.read(uri_str, :slow, spawn: :never)
       assert msgs == ["pre-ready-1", "pre-ready-2", "pre-ready-3"]
     end
   end

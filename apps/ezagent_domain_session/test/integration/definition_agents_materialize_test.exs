@@ -894,7 +894,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     # role_name lives only on the membership edge (asserted below).
     assert {:ok, ^recipe_name} = Ezagent.Agent.RecipeAttributes.fetch(planned)
 
-    assert {:ok, sandbox_slice} = Ezagent.Kind.get_slice(planned, :sandbox)
+    assert {:ok, sandbox_slice} = Ezagent.Kind.read(planned, :sandbox, spawn: :never)
     sandbox = Ezagent.Kind.normalize_slice_view(sandbox_slice)
     assert Map.has_key?(sandbox, :config_dir_path)
 
@@ -928,7 +928,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     on_exit(fn -> terminate(planned) end)
 
     assert {:ok, _pid} = KindRegistry.lookup(planned)
-    assert {:ok, %{pinged: false}} = Ezagent.Kind.get_slice(planned, :materialized_role_test)
+
+    assert {:ok, %{pinged: false}} =
+             Ezagent.Kind.read(planned, :materialized_role_test, spawn: :never)
 
     target = Ezagent.URI.with_action(planned, :materialized_role_test, :ping)
 

@@ -113,7 +113,7 @@ defmodule EzagentWeb.Socialware.AnonTakeoverTest do
   end
 
   defp member?(session, member) do
-    case Ezagent.Kind.get_slice(session, :session) do
+    case Ezagent.Kind.read(session, :session, spawn: :never) do
       {:ok, %{state: %{members: members}}} when is_map(members) ->
         Map.has_key?(members, member)
 

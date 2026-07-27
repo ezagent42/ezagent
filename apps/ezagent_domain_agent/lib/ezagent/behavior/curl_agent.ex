@@ -360,7 +360,7 @@ defmodule Ezagent.ActionSet.CurlAgent do
   # `:api_keys` slice's `:creator_uri`.
   def data_owner(%URI{scheme: "entity"} = agent_uri) do
     if Ezagent.URI.type?(agent_uri, :agent) do
-      case Ezagent.Kind.get_slice(agent_uri, :api_keys) do
+      case Ezagent.Kind.read(agent_uri, :api_keys, spawn: :never) do
         {:ok, %{creator_uri: %URI{} = creator}} -> creator
         _ -> :no_owner
       end

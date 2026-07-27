@@ -260,7 +260,7 @@ defmodule Ezagent.ActionSet.Template do
     target = Ezagent.URI.with_action(template_uri, :template, :write)
 
     with {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(template_uri),
-         {:ok, slice} when is_map(slice) <- Ezagent.Kind.get_slice(template_uri, :template),
+         {:ok, slice} when is_map(slice) <- Ezagent.Kind.read(template_uri, :template, spawn: :never),
          content when is_map(content) <-
            slice |> Ezagent.Kind.normalize_slice_view() |> Map.get(:content),
          {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target),

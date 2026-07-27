@@ -195,19 +195,35 @@ workflow 不直接运行 `git` 或自行解析 `.git`。
 保持 provider-neutral。允许新增最薄的 workspace-change port/value request，
 但不得加入 GitHub installation、token 或 REST response shape。
 
-冻结现有 adapter action vocabulary（`Ezagent.ActionSet.GitTaskAccess`，
-`apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`）：
+**冻结的是 provider-facing adapter callback 集合**（`Ezagent.DomainGit.Adapter`
+的 `@callback`）：
 
 - `resolve_repository`
 - `create_change_request`
 - `read_change_request`
 - `list_checks`
 - `list_reviews`
+
+V1 不新增任何 adapter callback，**尤其不新增 merge action**——真实 merge 由
+human/lead 在 GitHub 执行（§2.3）。
+
+`Ezagent.ActionSet.GitTaskAccess` 现有的 action 集合是上述 5 个 adapter callback
+加上两个 workspace action：
+
 - `provision_workspace`（已接入 `WorkspaceProvisionPort`/`WorkspaceProvisionRegistry`，
   Slice P2 应复用而非新建）
 - `cleanup_workspace`（同上）
 
-本切片不新增 merge action。
+**ActionSet 一侧不受上述冻结约束。** Slice P2 若需要 workflow 调用其
+workspace-change port，应按 `provision_workspace` 的既有形状新增一个
+provider-neutral 的 workspace action（例如 `collect_workspace_changes`），由
+ActionSet 承担策略校验与 receiver 授权，而不是让 workflow 绕过 ActionSet 直连
+port。新增此类 workspace action **不算**违反本节冻结——冻结针对的是 provider
+adapter 契约，不是 ActionSet 的 workspace 面。
+
+> 措辞订正 2026-07-26：本节原先把 7 个 GitTaskAccess action 混在一句"冻结现有
+> adapter action vocabulary"里，字面读法会禁止任何新增 action，与 §4.2 要求
+> workspace owner 提供 change-collection 能力相冲突。上文按原意拆分了两者。
 
 ### 4.4 GitHub owner：`ezagent_plugin_github`
 
@@ -364,9 +380,21 @@ reviews 是有效事实，不得伪造成通过或批准。
 - `provider_rate_limited`
 - `provider_unavailable`
 - `observation_incomplete`
+- `no_changes_collected`
 
 错误呈现只包含 code、stage、retryable、attempt 和 safe metadata；不得包含 raw
 response、token、authorization header、private key 或文件内容。
+
+**`no_changes_collected` 语义**（补充 2026-07-26）：task worktree 收集到零个
+change 时返回该码。它是**不可重试的 blocker**，不是 provider 失败——重跑同一个
+generation 只会再次得到空 diff。V1 不为空 diff 创建 PR：没有 commit 的 PR 对
+reviewer 无意义，且会污染 §5.3 的 facts（`change_digest` 无值可填）。run 停在
+`blocked` 并保留该码，由 operator 判断是任务本身无需改动、还是 Agent 未产出预期
+变更。P4 的 retry classification 据此把它归入"deterministic validation/conflict：
+不可重试"一类（§7.2 第一条）。
+
+> 该码由 Slice P2 规划期发现：§7.1 原清单未覆盖空 diff 这一必然会发生的正常路径
+> 结果。P2 的 collector 负责产出它，P4 负责按上述语义分类。
 
 ### 7.2 Retry policy
 

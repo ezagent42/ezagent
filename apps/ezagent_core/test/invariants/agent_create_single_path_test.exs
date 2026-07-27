@@ -52,7 +52,7 @@ defmodule EzagentCore.Invariants.AgentCreateSinglePathTest do
     # The reconciler module itself.
     "apps/ezagent_domain_session/lib/ezagent/orchestrator/reconciler.ex",
     # SpawnRegistry itself.
-    "apps/ezagent_core/lib/ezagent/spawn_registry.ex"
+    "apps/ezagent_actor/lib/ezagent/spawn_registry.ex"
   ]
 
   test "operator-facing agent create goes through Behavior.Workspace.:create_agent only" do

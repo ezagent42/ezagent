@@ -983,7 +983,7 @@ defmodule Ezagent.World.ConversationActions do
       |> Enum.uniq()
 
     with {:ok, %{members: members}} when is_map(members) <-
-           Ezagent.Kind.get_slice(session_uri, :session) do
+           Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       Enum.reduce_while(role_names, :ok, fn role_name, :ok ->
         case member_for_role(members, role_name) do
           nil ->

@@ -53,6 +53,7 @@ defmodule EzagentDomainUi.MixProject do
       # `Ezagent.EntityPresenter.display/1`. Identity is a sibling
       # Domain app that depends only on ezagent_core, so this introduces
       # no dependency cycle.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},

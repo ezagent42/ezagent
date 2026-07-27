@@ -47,9 +47,91 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # authz-decision branch (`cap/authorize.ex`) is deleted — `principal_current?`
   # collapses to `holder_caps != []`; the two generation-FENCE consumers
   # (`cap.ex`, `entity/token.ex`) survive on the fixed allowlist, −1 site.
-  @forward_frozen 207
+  # C6 lowered forward 207→185: session-domain get_slice/get_raw_slice sites
+  # migrate onto read/3 (live-only probes → spawn: :never; raw-slice manual
+  # two-container unwraps deleted — read/3 normalizes), −22 sites.
+  # C6 lowered forward 185→171: plugin get_slice sites → read/3 spawn: :never;
+  # curl_agent's hand-rolled SnapshotStore cold fallback DELETED (read/3
+  # default spawn rehydrates), −14 sites (13 get_slice + 1 SnapshotStore).
+  # C6 lowered forward 171→158: domain/web/core get_slice sites → read/3
+  # (socialware, identity, git, external_mirror, agent, ui, web probes →
+  # spawn: :never; core sandbox.ex read_persisted_state drops its hand-rolled
+  # SnapshotStore fallback → read/3 default spawn), −13 sites (11 get_slice
+  # + 2 SnapshotStore). Residual: lifecycle_case.ex get_raw_slice ×2 stays
+  # ledgered — raw %{state, transients} introspection has no §2.2 public
+  # replacement.
+  # C7 chunk-4a lowered forward 158→157: `Kind.get_raw_slice/2` retired from the
+  # public surface; lifecycle_case's two raw reach-ins collapse into ONE private
+  # `raw_slice!/2` helper calling `Ezagent.Kind.SliceAccess.get_raw_slice/2`
+  # directly (−1 site).
+  @forward_frozen 157
   @forward_fixed_frozen 2
-  @reverse_frozen 123
+  # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
+  # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
+  # `:ezagent_actor, :repo` injection, −13 sites.
+  # C5 chunk-1 lowered reverse 110→105: pubsub injection (§3.4) — effects /
+  # invocation / slice_change `EzagentCore.PubSub` refs → the config-resolved
+  # `:ezagent_actor, :pubsub` injection, −5 sites.
+  # C5 chunk-1 lowered reverse 105→101: PersistencePort (§3.4 NEW) — kind/
+  # snapshot + snapshot_store workspace derivation, ecto/kind_snapshot
+  # scope_by_workspace + TransientRetry → the config-resolved
+  # `:ezagent_actor, :persistence` adapter, −4 sites.
+  # C5 chunk-1 lowered reverse 101→98: DeadLetterPort (§3.4 NEW) — invocation
+  # buffer_full/stale_incarnation + ready_transition drain DLQ writes → the
+  # config-resolved `:ezagent_actor, :dead_letter` adapter, −3 sites.
+  # C5 chunk-1 lowered reverse 98→93: SagaPort (§3.4 NEW) — router
+  # dispatch_saga + effects :saga effect → the config-resolved
+  # `:ezagent_actor, :saga` adapter (the ensure_loaded probe + is_struct
+  # check MOVE into the core adapter), −5 sites.
+  # C5 chunk-1 lowered reverse 93→89: EventLogPort (§3.4 NEW, respec'd) —
+  # effects :emit append + Router's 2 dead map-form audit sites onto the
+  # single 4-arg contract (adapter derives workspace_uri from the target),
+  # −3 sites; the respec also orphaned effects' private Capability-based
+  # workspace-derivation helper (deleted with it), −1 site.
+  # C5 chunk-2 lowered reverse 89→78: CapabilityPort (§3.4 NEW) — runtime
+  # workspace-isolation + receipt emission workspace_of/cross_workspace?/
+  # identity_key → the config-resolved `:ezagent_actor, :capability`
+  # adapter, −7 sites; the §3.4 opacity typespec demotions
+  # (`Ezagent.Capability.t()` → `term()` in behavior/cmd/invocation ctx
+  # specs + the receipt maybe_emit spec), −4 sites.
+  # C5 chunk-2 lowered reverse 78→68: OutboxPort (§3.4) — the SEVEN
+  # `Ezagent.Cap.DeliveryOutbox` functions (dispatch replay?/eligible?/
+  # enqueue_and_attempt, server mark_applied/record_handler_failure,
+  # ready_transition pending_target?/drain_target) → the config-resolved
+  # `:ezagent_actor, :outbox` adapter, −10 sites.
+  # C5 chunk-2 lowered reverse 68→58: DispatchPolicyPort (§3.4) — dispatch
+  # origin-validate + owner-gate + admin-cap materialization fold into ONE
+  # `before_delivery/1` hook (materialize_admin_action_cap +
+  # globally_non_cap_action? MOVED into the core adapter), the in-actor
+  # origin re-check + spawn/liveness owner gates → the config-resolved
+  # `:ezagent_actor, :dispatch_policy` adapter, −8 sites; the
+  # `Ezagent.DispatchOrigin.t()` typespec demotions (cmd/invocation origin
+  # specs → `term()`), −2 sites.
+  # C5 chunk-2 lowered reverse 58→43: AuthzPort (§3.4) — the
+  # `holds_cap?/default_holds_cap?` block RELOCATED out of `Ezagent.Kind`
+  # into the core spine `Ezagent.Cap.HoldsCap` (reached via the port;
+  # `Ezagent.Kind` keeps thin delegates), −11 sites; dispatch step-5.5
+  # `Cap.Verifier.authorize` + the `{:cap, :grant}` path (opacity demotion
+  # at runtime.ex — plain `cap` binding, adapter validates) →
+  # authorize_dispatch/authorize_and_issue_grant, −3 sites;
+  # `CapabilityRegistry.data_owner_of` (behavior/introspection), −1 site.
+  # C5 chunk-2 lowered reverse 43→24: AuthorityPort (§3.4) — server
+  # open/with_current/retire/regenesis (+ the generation field read →
+  # `generation/1`, authority now OPAQUE) + the artifact handlers
+  # (validate/verify; the `:ezagent_verify_cap_artifact` struct match
+  # demoted to a plain binding — adapter validates), runtime's
+  # `with_runtime_view` (KEPT AS-IS, full state), snapshot's
+  # `verified_set`, lifecycle's destroy-path `retire` → the
+  # config-resolved `:ezagent_actor, :authority` adapter, −19 sites.
+  # C5 chunk-2 lowered reverse 24→1: §3.4 non-port findings — the
+  # `BehaviorSet` `@slice_owners`/`@required_reads` tables (−15) and the
+  # `KindBaseBackfill` as-built sets (−8) INVERTED to registration data
+  # (values in core-side `wire!/0`, read from app env at runtime; the
+  # framework source names no domain/plugin ActionSet). The 5 core POLICY
+  # ActionSets STAY; the residual single site is `UniversalBehaviors`'s
+  # `Ezagent.ActionSet.Manage` reference (§6.8 config-list inversion
+  # deferred — core-policy module, boot-registered).
+  @reverse_frozen 1
   @reverse_fixed_frozen 3
 
   # ── FORWARD (§4.2 "The rule") ──────────────────────────────────────────────
@@ -141,7 +223,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
     injected =
       Scanner.reverse_sites_in_source(
         "defmodule Ezagent.Kind.Server do\n  def m(%Ezagent.Capability{} = gate_teeth_probe), do: gate_teeth_probe\nend",
-        "apps/ezagent_core/lib/ezagent/kind/server.ex",
+        "apps/ezagent_actor/lib/ezagent/kind/server.ex",
         MapSet.new([Ezagent.Kind.Server])
       )
 
@@ -441,7 +523,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
       File.read!(
         Path.join(
           Scanner.repo_root(),
-          "apps/ezagent_core/lib/ezagent/behavior/legacy_callbacks.ex"
+          "apps/ezagent_actor/lib/ezagent/behavior/legacy_callbacks.ex"
         )
       )
 

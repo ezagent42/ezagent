@@ -59,7 +59,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex" => [
       validate_artifact: 4
     ],
-    "apps/ezagent_core/lib/ezagent/kind/snapshot.ex" => [
+    "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex" => [
       verify_snapshot_caps: 2,
       put_verified_snapshot_caps: 4
     ]
@@ -76,14 +76,14 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   ]
 
   @spawn_registry_sanctioned_files [
-    "apps/ezagent_core/lib/ezagent/spawn_registry.ex",
+    "apps/ezagent_actor/lib/ezagent/spawn_registry.ex",
     # #95 — the owner-gated plugin runtime facade. THE sanctioned chokepoint
     # plugins call instead of touching SpawnRegistry directly; it delegates to the
     # already-owner-gated SpawnRegistry.spawn[_detailed]. As plugins migrate onto
     # it (PR-2+), the off-chokepoint count drops; this keeps the facade itself
     # on-chokepoint.
-    "apps/ezagent_core/lib/ezagent/local_runtime.ex",
-    "apps/ezagent_core/lib/ezagent/invocation.ex",
+    "apps/ezagent_actor/lib/ezagent/local_runtime.ex",
+    "apps/ezagent_actor/lib/ezagent/invocation.ex",
     "apps/ezagent_core/lib/ezagent_core/application.ex",
     "apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex",
     "apps/ezagent_domain_session/lib/ezagent/entity/session.ex",
@@ -174,11 +174,11 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # central-verifier bind + receipt call were MORE than offset by condensing the ctx-enrichment /
     # slice-change / sibling-slice comment blocks (runtime.ex held ≤1000 LOC gate;
     # receipt logic itself lives in `Ezagent.Kind.Runtime.Receipt`).
-    {"apps/ezagent_core/lib/ezagent/kind/runtime.ex", 179},
+    {"apps/ezagent_actor/lib/ezagent/kind/runtime.ex", 179},
     # py-agent P2 (echo→py teaching-example re-home) — shifted 454→453: the
     # the echo worked-example moduledoc line was condensed to a
     # `Ezagent.ActionSet.PyAgent` reference (net -1 line ABOVE this comment).
-    {"apps/ezagent_core/lib/ezagent/behavior.ex", 453}
+    {"apps/ezagent_actor/lib/ezagent/behavior.ex", 453}
     # PR-4 (agent-owned config-evolve) — shifted 271→272 when the #607
     # `system://agent-internal` Sandbox:read drop replaced the old #607 comment
     # block with a (one-line-longer) note above this ApiKeys-flip comment. Same
@@ -208,7 +208,7 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     # (runtime.ex, behavior.ex) are untouched.
   ]
 
-  @runtime_file "apps/ezagent_core/lib/ezagent/kind/runtime.ex"
+  @runtime_file "apps/ezagent_actor/lib/ezagent/kind/runtime.ex"
   @measure_cache_key {__MODULE__, :measure}
 
   # FF-1 — cross_file_duplicate_fn_groups.

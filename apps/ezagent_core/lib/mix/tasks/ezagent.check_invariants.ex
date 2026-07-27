@@ -154,10 +154,10 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           "grep -rnE 'PubSub\\.broadcast' apps 2>/dev/null --include='*.ex' " <>
             "| grep -v '/test/' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/audit.ex' " <>
-            "| grep -v 'apps/ezagent_core/lib/ezagent/invocation.ex' " <>
-            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime.ex' " <>
-            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/runtime/effects.ex' " <>
-            "| grep -v 'apps/ezagent_core/lib/ezagent/slice_change.ex' " <>
+            "| grep -v 'apps/ezagent_actor/lib/ezagent/invocation.ex' " <>
+            "| grep -v 'apps/ezagent_actor/lib/ezagent/kind/runtime.ex' " <>
+            "| grep -v 'apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex' " <>
+            "| grep -v 'apps/ezagent_actor/lib/ezagent/slice_change.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/cc_events.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/notifications.ex' " <>
@@ -200,7 +200,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
           "for f in $(grep -rlE '@behaviou?r Ezagent\\.Kind' apps --include='*.ex' 2>/dev/null); do " <>
             "grep -nE '^\\s*def init\\(' \"$f\" | sed \"s#^#$f:#\"; " <>
             "done " <>
-            "| grep -v 'apps/ezagent_core/lib/ezagent/kind/server.ex' " <>
+            "| grep -v 'apps/ezagent_actor/lib/ezagent/kind/server.ex' " <>
             "| grep -v '/test/' || true"
         ],
         stderr_to_stdout: true
@@ -225,7 +225,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         [
           "-c",
           "grep -E ':not_ready, m\\} when m in \\[:call' " <>
-            "apps/ezagent_core/lib/ezagent/invocation.ex || true"
+            "apps/ezagent_actor/lib/ezagent/invocation.ex || true"
         ],
         stderr_to_stdout: true
       )
@@ -338,7 +338,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
         [
           "-c",
           "grep -E 'Capability\\.matches\\?' " <>
-            "apps/ezagent_core/lib/ezagent/kind/runtime.ex || true"
+            "apps/ezagent_actor/lib/ezagent/kind/runtime.ex || true"
         ],
         stderr_to_stdout: true
       )

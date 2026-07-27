@@ -557,7 +557,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         # (1) the :curl_agent slice materialized (proves Behavior.CurlAgent is in
         # this instance's effective set) AND its create/1 wrote the durable
         # flavor field.
-        assert {:ok, curl_slice} = Ezagent.Kind.get_slice(agent_uri, :curl_agent),
+        assert {:ok, curl_slice} = Ezagent.Kind.read(agent_uri, :curl_agent, spawn: :never),
                "curl agent created via create_agent/3 has NO :curl_agent slice — " <>
                  "the direct-spawn path did not thread curl_behaviors/0 (codex r3 P1-1)"
 
@@ -569,7 +569,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                  Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :reset_conversation)
 
         # (3) the base credential slice is present (api_keys is in the curl set).
-        assert {:ok, api_keys} = Ezagent.Kind.get_slice(agent_uri, :api_keys)
+        assert {:ok, api_keys} = Ezagent.Kind.read(agent_uri, :api_keys, spawn: :never)
         assert is_map(api_keys)
       end
     end
@@ -602,7 +602,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                  )
 
         assert agent_uri == expected_uri
-        assert {:ok, curl_slice} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
+        assert {:ok, curl_slice} = Ezagent.Kind.read(agent_uri, :curl_agent, spawn: :never)
         assert curl_slice.provider == "openai"
         assert curl_slice.api_url == "https://api.openai.com/v1/chat/completions"
         assert curl_slice.model == "gpt-4o"
@@ -610,7 +610,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
         _ = Ezagent.Kind.terminate(agent_uri)
         assert {:ok, _pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri})
-        assert {:ok, rehydrated} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
+        assert {:ok, rehydrated} = Ezagent.Kind.read(agent_uri, :curl_agent, spawn: :never)
 
         assert rehydrated.provider == "openai"
         assert rehydrated.api_url == "https://api.openai.com/v1/chat/completions"
@@ -805,7 +805,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
         assert {:ok, _pid} = Ezagent.KindRegistry.lookup(agent_uri)
         # native is NOT a curl agent — no :curl_agent slice pollution. (Kind.spawn
         # inside create_agent awaited :ready, so the slice set is settled.)
-        assert {:ok, nil} = Ezagent.Kind.get_slice(agent_uri, :curl_agent)
+        assert {:ok, nil} = Ezagent.Kind.read(agent_uri, :curl_agent, spawn: :never)
       end
     end
 

@@ -191,10 +191,7 @@ defmodule EzagentWeb.Socialware.AnonTakeover do
   end
 
   defp member?(%URI{} = session_uri, %URI{} = member_uri) do
-    case Ezagent.Kind.get_slice(session_uri, :session) do
-      {:ok, %{state: %{members: members}}} when is_map(members) ->
-        Map.has_key?(members, member_uri)
-
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{members: members}} when is_map(members) ->
         Map.has_key?(members, member_uri)
 

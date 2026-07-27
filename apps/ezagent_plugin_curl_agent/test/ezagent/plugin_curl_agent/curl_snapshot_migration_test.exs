@@ -204,7 +204,8 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     test "an undecodable curl_agent row FAILS LOUD (never persists over it)" do
       uri = "entity://team-alpha/agent/curl_corrupt-#{System.unique_integer([:positive])}"
       # empty binary → decode_state :error
-      {:ok, _} = KindSnapshot.upsert(uri, "curl_agent", "", 0, @workspace, mark_ever_created: true)
+      {:ok, _} =
+        KindSnapshot.upsert(uri, "curl_agent", "", 0, @workspace, mark_ever_created: true)
 
       assert_raise RuntimeError, ~r/undecodable/, fn -> Migration.run() end
     end
@@ -223,7 +224,6 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       end
     end
   end
-
 
   describe "cold-load round-trip — a migrated row rehydrates as a unified curl agent" do
     test "cold-loads on Entity.Agent with curl flavor + conversation + keys + creator_uri" do
@@ -253,21 +253,21 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
 
       # The curl slice rehydrated as a unified Entity.Agent curl agent.
-      assert {:ok, curl_slice} = Kind.get_slice(uri, :curl_agent)
+      assert {:ok, curl_slice} = Kind.read(uri, :curl_agent, spawn: :never)
       assert curl_slice.flavor == "curl"
       assert curl_slice.conversation == conv
       assert curl_slice.provider == "deepseek"
 
       # Keys + creator_uri survived (key-rotation authz provenance intact).
       assert {:ok, %{keys: %{"deepseek" => "sk-coldmig"}, creator_uri: ^creator}} =
-               Kind.get_slice(uri, :api_keys)
+               Kind.read(uri, :api_keys, spawn: :never)
 
       # codex P1 regression: the migration threaded the row URI into
       # Behavior.Identity.create/1, so the migrated agent cold-loads WITH its
       # self-scoped Sandbox.update_config + ConfigEvolve.reconcile_cascade caps
       # (fresh-spawn parity). Without the URI the identity slice is empty and
       # config-evolve self-dispatch is unauthorized.
-      assert {:ok, %{caps: identity_caps}} = Kind.get_slice(uri, :identity)
+      assert {:ok, %{caps: identity_caps}} = Kind.read(uri, :identity, spawn: :never)
       self_caps = identity_caps |> MapSet.to_list() |> Enum.map(&{&1.behavior, &1.action})
       assert {Ezagent.ActionSet.Sandbox, :update_config} in self_caps
       assert {Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade} in self_caps
