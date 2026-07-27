@@ -113,14 +113,13 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedCcAgent do
       {:ok, :started, _pid} ->
         # Re-bind to workspace structurally derived from session URI —
         # same invariant as the wizard's create path (SPEC #324). Only on a
-        # FRESH spawn (an already-alive session is already bound).
-        :ok =
-          Ezagent.OwnerGatedWorkspace.bind(
-            session_uri,
-            Ezagent.Capability.workspace_of(session_uri)
-          )
-
-        :ok
+        # FRESH spawn (an already-alive session is already bound). Return the
+        # owner-gated result directly: :ok on the owner path, {:error, violation}
+        # off-owner (fail-closed — the `with` caller short-circuits, no crash).
+        Ezagent.OwnerGatedWorkspace.bind(
+          session_uri,
+          Ezagent.Capability.workspace_of(session_uri)
+        )
 
       {:error, _} ->
         {:error, {:session_missing, URI.to_string(session_uri)}}

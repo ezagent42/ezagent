@@ -40,9 +40,11 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   #   * concrete calls to the ownership modules (WorkspaceRegistry.bind,
   #     AgentLineage.record, CreationInventory, TaskWorkspace.*, LaunchAuthority…)
   # It deliberately does NOT catch a `GenServer.call` on a differently-named
-  # receiver, nor `Ezagent.Kind.spawn/2` (an un-gated spawn path — a KNOWN
-  # follow-up debt class, out of this burn's scope). All debt in the enumerated
-  # classes has been migrated onto owner-gated core facades, so this is GREEN at 0:
+  # receiver, nor `Ezagent.Kind.spawn/2` (a verified un-gated spawn path). Those
+  # are real but out-of-scope owner-bypass classes tracked in issue #1592
+  # (widen to AST-scan arbitrary receivers + gate Kind.spawn) — this gate is NOT
+  # a guarantee that all owner-bypasses are eliminated. All debt in the
+  # enumerated classes has been migrated onto owner-gated core facades → GREEN at 0:
   #   * the pid-call sidecar/executor sites → `Ezagent.OwnerGatedExecutor.call/4`
   #   * the bind / lineage-record sites →
   #     `Ezagent.OwnerGatedWorkspace.{bind/2, record_lineage/2}`

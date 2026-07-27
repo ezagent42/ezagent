@@ -87,6 +87,20 @@ defmodule Ezagent.OwnerGatedFacadesTest do
     WorkspaceRegistry.unbind(session_uri)
   end
 
+  test "OwnerGatedExecutor.call/4 fails closed for a URI with no concrete workspace",
+       %{echo: pid} do
+    # system:// derives :any — a workspace-bound executor call cannot be
+    # ownership-verified, so it is denied even on the owner runtime (default
+    # resolver), and the target is never called. Defense-in-depth vs a
+    # workspace-less URI slipping past the gate.
+    sys_uri = Ezagent.URI.new!("system://routing/default")
+
+    assert {:error, :cross_workspace_denied} ==
+             OwnerGatedExecutor.call(sys_uri, pid, :recent_output, 1_000)
+
+    assert GenServer.call(pid, :call_count) == 0
+  end
+
   # ── ENFORCED non-owner: fail-closed, no side effects ─────────────────────
 
   test "OwnerGatedExecutor.call/4 fails closed and never calls the target off-owner",
