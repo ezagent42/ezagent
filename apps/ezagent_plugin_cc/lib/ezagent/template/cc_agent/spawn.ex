@@ -144,20 +144,25 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # codex round-10 HIGH-2 + PR3 2026-05-24 cascade:
           # 1. Create per-agent config_dir BEFORE PTY launch (so the
           #    cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>`
-          #    immediately).
+          #    immediately). #201-cred (codex r2 HIGH-1) — the credential
+          #    grant is MINTED inside this step (the deferred-mint boundary:
+          #    this arm is the created-winner, receipt already in hand).
           # 2. If config_dir creation fails → terminate the freshly-
           #    started Agent Kind (rollback what we created), return
           #    error.
           # 3. Thread `agent_config_dir` into `tmpl` so `build_claude_cmd/3`
           #    reads the PER-AGENT dir (not the template's reference
           #    dir).
-          # 4. If `ensure_pty_server/4` fails → terminate the Kind AND
-          #    remove the just-created config_dir (full rollback).
-          # 5. On full success: return `config_dir_path: dir` AND
-          #    `respawn_template_data: tmpl_with_dir` in meta so caller
-          #    dispatches `sandbox.update_config` with both. The persisted
-          #    respawn data lets Sandbox.post_init/2 call back into
-          #    `ensure_subprocess_alive/2` on a phx restart
+          # 4. If ANY post-materialize step fails (role bootstrap / grant
+          #    revalidation / PTY) → terminate the Kind, CONFIRM-compensate
+          #    exactly the minted grant incarnation (never best-effort),
+          #    AND remove the just-created config_dir (full rollback).
+          # 5. On full success: return `config_dir_path: dir`,
+          #    `respawn_template_data: tmpl_with_dir`, and the mint receipt
+          #    `:grant_incarnation_id` (the chokepoint's rollback compensates
+          #    EXACTLY that incarnation on a post-instantiate obligation
+          #    failure). The persisted respawn data lets Sandbox.post_init/2
+          #    call back into `ensure_subprocess_alive/2` on a phx restart
           #    (PTY-orphan-restart 2026-05-26).
           #
           # SPEC `2026-05-26-session-create-orchestrator-unified` Gap B —
@@ -180,47 +185,72 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # (config_dir, PTY) stays load-bearing.
           tmpl_for_materialization = materialization_template(tmpl, agent_uri)
 
-          with {:ok, materialized_config_dir, grant_ctx} <-
-                 create_agent_config_dir_with_grant(agent_uri, tmpl_for_materialization),
-               tmpl_with_dir =
-                 tmpl_for_materialization
-                 |> put_agent_config_dir(materialized_config_dir)
-                 |> Map.put_new("flavor", "cc"),
-               {:ok, role_meta} <-
-                 CcAgent.try_role_bootstrap(tmpl_with_dir, materialized_config_dir, agent_uri),
-               # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized
-               # but the subprocess launches HERE (ensure_pty_server). A grant revoked
-               # between materialize and launch would otherwise launch with the copied
-               # secret. Re-validate the grant version IMMEDIATELY before launch; on
-               # :grant_changed ABORT + clear the just-materialized config_dir so it is
-               # not left usable for the revoked grant. No-grant agents skip this (nil ctx).
-               :ok <- revalidate_grant_before_launch(grant_ctx),
-               # Fresh spawn → resume? = false (a brand-new agent has no prior
-               # conversation; `--continue` would only find nothing).
-               :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir, false) do
-            # #17 (c) — spawn-time OAuth freshness reminder. Best-effort, never
-            # blocks: surfaces `credential_stale` in meta (like `role_degraded`)
-            # + warns + telemetry when the materialized token is already expired,
-            # so the owner is told to re-login instead of the agent silently 401ing.
-            credential_meta =
-              EzagentPluginCc.CredentialFreshness.remind(agent_uri, materialized_config_dir)
+          case create_agent_config_dir_with_grant(agent_uri, tmpl_for_materialization) do
+            {:ok, materialized_config_dir, grant_ctx} ->
+              tmpl_with_dir =
+                tmpl_for_materialization
+                |> put_agent_config_dir(materialized_config_dir)
+                |> Map.put_new("flavor", "cc")
 
-            base_meta = %{
-              fresh?: true,
-              # #201 PR-1 — the core-issued logical-create verdict from the
-              # spawn receipt (`Ezagent.Kind.spawn_receipt/3`), passed through
-              # unmodified so the chokepoint can gate create-only writes
-              # (credential grant mint / materialization) on it. `:started`
-              # alone is NOT proof of logical create (a cold rehydrate wins
-              # `:started` with `created?: false` — handled by the arm above,
-              # which performs NO credential writes).
-              created?: true,
-              config_dir_path: materialized_config_dir,
-              respawn_template_data: tmpl_with_dir
-            }
+              # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized
+              # but the subprocess launches HERE (ensure_pty_server). A grant revoked
+              # between materialize and launch would otherwise launch with the copied
+              # secret. Re-validate the grant incarnation IMMEDIATELY before launch; on
+              # :grant_changed ABORT + clear the just-materialized config_dir so it is
+              # not left usable for the revoked grant. No-grant agents skip this (nil ctx).
+              launch_result =
+                with {:ok, role_meta} <-
+                       CcAgent.try_role_bootstrap(
+                         tmpl_with_dir,
+                         materialized_config_dir,
+                         agent_uri
+                       ),
+                     :ok <- revalidate_grant_before_launch(grant_ctx),
+                     # Fresh spawn → resume? = false (a brand-new agent has no prior
+                     # conversation; `--continue` would only find nothing).
+                     :ok <- ensure_pty_server(agent_uri, cwd, tmpl_with_dir, false) do
+                  {:ok, role_meta}
+                end
 
-            {:ok, [agent_uri], base_meta |> Map.merge(role_meta) |> Map.merge(credential_meta)}
-          else
+              case launch_result do
+                {:ok, role_meta} ->
+                  # #17 (c) — spawn-time OAuth freshness reminder. Best-effort, never
+                  # blocks: surfaces `credential_stale` in meta (like `role_degraded`)
+                  # + warns + telemetry when the materialized token is already expired,
+                  # so the owner is told to re-login instead of the agent silently 401ing.
+                  credential_meta =
+                    EzagentPluginCc.CredentialFreshness.remind(
+                      agent_uri,
+                      materialized_config_dir
+                    )
+
+                  base_meta = %{
+                    fresh?: true,
+                    # #201 PR-1 — the core-issued logical-create verdict from the
+                    # spawn receipt (`Ezagent.Kind.spawn_receipt/3`), passed through
+                    # unmodified so the chokepoint can gate create-only writes
+                    # (credential grant mint / materialization) on it. `:started`
+                    # alone is NOT proof of logical create (a cold rehydrate wins
+                    # `:started` with `created?: false` — handled by the arm above,
+                    # which performs NO credential writes).
+                    created?: true,
+                    # #201-cred — the deferred-mint receipt: the chokepoint's
+                    # rollback compensates EXACTLY this incarnation on a
+                    # post-instantiate obligation failure (nil = no grant minted).
+                    grant_incarnation_id:
+                      Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx),
+                    config_dir_path: materialized_config_dir,
+                    respawn_template_data: tmpl_with_dir
+                  }
+
+                  {:ok, [agent_uri],
+                   base_meta |> Map.merge(role_meta) |> Map.merge(credential_meta)}
+
+                {:error, reason} ->
+                  _ = Ezagent.Kind.terminate!(agent_uri)
+                  compensate_and_report(agent_uri, grant_ctx, reason)
+              end
+
             {:error, reason} ->
               _ = Ezagent.Kind.terminate!(agent_uri)
               handle_spawn_failure(agent_uri, reason)
@@ -261,6 +291,20 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # leaves usable — the secret of a now-revoked/changed grant.
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path). The adapter identity MUST remain
+  # `Ezagent.PluginCc.Template.CcAgent` (the credential cascade keys on it).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      Ezagent.PluginCc.Template.CcAgent,
+      "cc.agent"
+    )
+  end
 
   # codex round-6 HIGH-1 — `Kind.spawn/2` preserves the atomic
   # `DynamicSupervisor` outcome: exactly one concurrent caller gets

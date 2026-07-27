@@ -97,9 +97,11 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     #  re-anchored 680→702: #1276 world-template-UX added helpers above the def —
     #  +19 on-branch, +3 from the ensure_app_server_ready dedupe;
     #  re-anchored 699→713: #201 A-full defer-writes added flavor-via-data helpers
-    #  above the def — unchanged call, +14 line drift only)
+    #  above the def — unchanged call, +14 line drift only;
+    #  re-anchored 713→733: #201-cred added the grant-receipt threading +
+    #  compensate_and_report above the def — unchanged call, +20 line drift only)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 713,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 733,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
     # as the zip-unpack target for a plugin-package hot-load. The runtime

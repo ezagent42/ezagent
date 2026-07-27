@@ -54,7 +54,8 @@ defmodule Ezagent.Credential.GrantRowTest do
         version: 1
       })
 
-    assert {:ok, ^source, 1} = GrantRow.fetch_for_materialize(g.agent_uri)
+    assert {:ok, ^source, 1, incarnation_id} = GrantRow.fetch_for_materialize(g.agent_uri)
+    assert incarnation_id == g.incarnation_id
     {:ok, _} = GrantRow.revoke(g.agent_uri)
     assert {:error, :revoked} = GrantRow.fetch_for_materialize(g.agent_uri)
   end
@@ -95,10 +96,12 @@ defmodule Ezagent.Credential.GrantRowTest do
         version: 1
       })
 
-    assert :ok = GrantRow.revalidate_version!(g.agent_uri, 1)
+    assert :ok = GrantRow.revalidate_version!(g.agent_uri, g.incarnation_id, 1)
     # revoke bumps version + stamps
     {:ok, _} = GrantRow.revoke(g.agent_uri)
-    assert {:error, :grant_changed} = GrantRow.revalidate_version!(g.agent_uri, 1)
+
+    assert {:error, :grant_changed} =
+             GrantRow.revalidate_version!(g.agent_uri, g.incarnation_id, 1)
   end
 
   test "reapprove replaces a revoked grant and bumps version" do

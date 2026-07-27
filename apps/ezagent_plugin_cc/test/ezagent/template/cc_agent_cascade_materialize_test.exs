@@ -74,7 +74,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
     tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-    assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
 
     # whole-file-replace: user (higher) wins
@@ -204,13 +204,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       write!(base, "settings.json", "BASE")
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       assert agent_uri_str == URI.to_string(ctx.agent_uri)
-      # the captured version is the active grant's version (v1) — this is the value the
-      # pre-launch gate re-checks.
+      # the captured identity is the active grant's (v1 + its incarnation) — this is the
+      # value the pre-launch gate re-checks.
       assert version == 1
+      assert is_binary(incarnation_id)
       # the config dir IS materialized (the swap committed) — the threat is that the LATER
       # launch would proceed with this dir if the grant is revoked in between.
       assert File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
@@ -222,7 +223,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
       # 1. materialize commits the config_dir + captures the grant version.
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       # 2. grant revoked in the window BETWEEN materialize and the subprocess launch.
@@ -231,7 +232,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       # 3. the pre-launch re-validation (the exact GrantRow call spawn_for_local_pty's gate
       #    makes with the captured version) MUST abort the launch — no subprocess starts.
       assert {:error, :grant_changed} =
-               GrantRow.revalidate_version!(agent_uri_str, version)
+               GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
 
       # 4. on that abort, spawn_for_local_pty's `else` clause clears the just-materialized
       #    config_dir via rollback_agent_config_dir/1, which removes `agent_config_dir/1`.
@@ -279,7 +280,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-      assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the tombstone wins — the file must NOT be resurrected from the prior target.
       refute File.exists?(Path.join(target, "plugins/old.json"))
       refute File.exists?(Path.join(target, "plugins/old.json.tombstone"))
@@ -308,7 +309,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
         }
       }
 
-      assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the stale secret from the prior target must NOT survive — the merge tree has no
       # secret and the source supplied none, so the agent has no credential file.
       refute File.exists?(Path.join(target, ".credentials.json"))
@@ -331,7 +332,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     write!(base, "settings.json", "BASE")
     tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-    assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
     # recovery consumed the orphan `.bak` (entry-point self-heal ran)
     refute File.exists?(bak)

@@ -6,11 +6,15 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
   # this bridge resolves them immediately before the Template Class sees data, so normal
   # spawn paths do not need to hand-author `tmpl["cascade"]`.
   #
-  # #201 PR-3 — returns `{:ok, content, minted_grant}`: the grant THIS resolution
-  # minted (`%GrantRow{}`, carrying its immutable `incarnation_id`) or `nil` when
-  # no credential source was resolved / no mint ran. The chokepoint compensates a
-  # losing or non-created attempt by deleting EXACTLY that incarnation (R4
-  # ABA-safe), never by URI.
+  # #201-cred (codex r2 HIGH-1) — NO GRANT IS MINTED HERE. This bridge only
+  # RESOLVES the source and AUTHORIZES it (read-only cap check), producing a
+  # plain-data pending-grant descriptor threaded to the flavor plugin inside
+  # the cascade map (`:pending_grant`, file flavors) and the
+  # `cascade_resolution` (slice flavors). The DURABLE mint is deferred to the
+  # created-winner's materialization boundary (`Ezagent.Credential.GrantMint`),
+  # AFTER the immutable `:started ∧ created?` receipt — a losing / adopting /
+  # rehydrating / exception-raising attempt therefore never mints, and no
+  # compensate-the-loser machinery exists to fail.
   def resolve_content(
         content,
         template_class,
@@ -23,7 +27,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       when is_map(content) do
     cond do
       is_map(content_field(content, :cascade)) ->
-        {:ok, content, nil}
+        {:ok, content}
 
       is_map(content_field(content, :cascade_resolution)) ->
         with {:ok, cascade, resolved} <-
@@ -34,8 +38,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                  workspace_uri,
                  flavor
                ),
-             {:ok, grant} <-
-               maybe_mint_cascade_grant(
+             {:ok, pending_grant} <-
+               build_pending_grant(
                  agent_uri,
                  resolved.secret_source,
                  opts,
@@ -43,10 +47,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                ) do
           content =
             content
-            |> Map.put(:cascade, cascade)
-            |> put_selected_credential_source(resolved.secret_source)
+            |> Map.put(:cascade, put_pending_grant(cascade, pending_grant))
+            |> put_selected_credential_source(resolved.secret_source, pending_grant)
 
-          {:ok, content, grant}
+          {:ok, content}
         end
 
       is_nil(content_field(content, :cascade_resolution)) ->
@@ -98,7 +102,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
       with {:ok, cascade, resolved} <-
              build_cascade(resolution, agent_uri, spawned_by_uri, workspace_uri, flavor),
-           {:ok, content, grant} <-
+           {:ok, content} <-
              put_default_cascade_if_source_present(
                content,
                cascade,
@@ -107,10 +111,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                opts,
                resolution
              ) do
-        {:ok, content, grant}
+        {:ok, content}
       end
     else
-      {:ok, content, nil}
+      {:ok, content}
     end
   end
 
@@ -122,7 +126,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
          _opts,
          _resolution
        ) do
-    {:ok, content, nil}
+    {:ok, content}
   end
 
   defp put_default_cascade_if_source_present(
@@ -133,16 +137,18 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
          opts,
          resolution
        ) do
-    with {:ok, grant} <- maybe_mint_cascade_grant(agent_uri, source, opts, resolution) do
+    with {:ok, pending_grant} <- build_pending_grant(agent_uri, source, opts, resolution) do
       content =
         content
         |> Map.put(
           :cascade_resolution,
-          Map.put(resolution, :credential_source_uri, source)
+          resolution
+          |> Map.put(:credential_source_uri, source)
+          |> put_pending_grant_entry(pending_grant)
         )
-        |> Map.put(:cascade, cascade)
+        |> Map.put(:cascade, put_pending_grant(cascade, pending_grant))
 
-      {:ok, content, grant}
+      {:ok, content}
     end
   end
 
@@ -343,16 +349,19 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
     end
   end
 
-  defp maybe_mint_cascade_grant(_agent_uri, nil, _opts, _resolution), do: {:ok, nil}
+  # #201-cred — AUTHORIZE (read-only) and produce the pending-grant descriptor;
+  # the durable mint is deferred to the created-winner (`GrantMint`). Returns
+  # `{:ok, pending | nil}` (nil = no source to authorize) or `{:error, reason}`.
+  defp build_pending_grant(_agent_uri, nil, _opts, _resolution), do: {:ok, nil}
 
-  defp maybe_mint_cascade_grant(%URI{} = agent_uri, %URI{} = source, opts, resolution) do
+  defp build_pending_grant(%URI{} = agent_uri, %URI{} = source, opts, resolution) do
     caller = Keyword.get(opts, :caller)
     caps = Keyword.get(opts, :caps)
 
     result =
       cond do
         match?(%URI{}, caller) and is_list(caps) ->
-          Ezagent.Credential.Resolver.authorize_and_mint_grant!(%{
+          Ezagent.Credential.Resolver.authorize_grant(%{
             agent_uri: agent_uri,
             source: source,
             caller: caller,
@@ -361,7 +370,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
           })
 
         match?(%URI{}, caller) and match?(%MapSet{}, caps) ->
-          Ezagent.Credential.Resolver.authorize_and_mint_grant!(%{
+          Ezagent.Credential.Resolver.authorize_grant(%{
             agent_uri: agent_uri,
             source: source,
             caller: caller,
@@ -375,17 +384,19 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
     case result do
       {:error, :missing_cascade_authorization} ->
-        maybe_mint_workspace_shared_grant(agent_uri, source, caller, resolution)
+        workspace_shared_pending(agent_uri, source, caller, resolution)
 
       {:error, {:source_unauthorized, ^source}} ->
-        maybe_mint_workspace_shared_grant(agent_uri, source, caller, resolution)
+        workspace_shared_pending(agent_uri, source, caller, resolution)
 
       other ->
         other
     end
   end
 
-  defp maybe_mint_workspace_shared_grant(
+  # The no-cap workspace-shared fallback: a pending descriptor whose shared-source
+  # registration is RE-validated at mint time (`GrantMint.mint/2`).
+  defp workspace_shared_pending(
          %URI{} = agent_uri,
          %URI{} = source,
          %URI{} = _caller,
@@ -401,25 +412,30 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
            Ezagent.Credential.WorkspaceSharedSource.get(URI.to_string(workspace_uri), flavor),
          true <- row.source_uri == URI.to_string(source),
          set_by when is_binary(set_by) and set_by != "" <- row.set_by do
-      Ezagent.Credential.GrantRow.insert(%{
-        agent_uri: URI.to_string(agent_uri),
-        credential_source_uri: URI.to_string(source),
-        approved_by: set_by,
-        approved_scope: URI.to_string(source),
-        version: 1
-      })
+      {:ok,
+       %{kind: :workspace_shared, workspace_uri: workspace_uri, flavor: flavor, source: source}}
     else
       _ -> {:error, {:source_unauthorized, source}}
     end
   end
 
-  defp maybe_mint_workspace_shared_grant(_agent_uri, source, _caller, _resolution) do
+  defp workspace_shared_pending(_agent_uri, source, _caller, _resolution) do
     {:error, {:source_unauthorized, source}}
   end
 
-  defp put_selected_credential_source(content, nil), do: content
+  defp put_pending_grant(cascade, nil), do: cascade
 
-  defp put_selected_credential_source(content, %URI{} = source) do
+  defp put_pending_grant(cascade, %{} = pending),
+    do: Map.put(cascade, :pending_grant, pending)
+
+  defp put_pending_grant_entry(resolution, nil), do: resolution
+
+  defp put_pending_grant_entry(resolution, %{} = pending),
+    do: Map.put(resolution, :pending_grant, pending)
+
+  defp put_selected_credential_source(content, nil, _pending), do: content
+
+  defp put_selected_credential_source(content, %URI{} = source, pending_grant) do
     key =
       if Map.has_key?(content, :cascade_resolution) do
         :cascade_resolution
@@ -429,7 +445,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
     case Map.get(content, key) do
       resolution when is_map(resolution) ->
-        Map.put(content, key, Map.put(resolution, :credential_source_uri, source))
+        updated =
+          resolution
+          |> Map.put(:credential_source_uri, source)
+          |> put_pending_grant_entry(pending_grant)
+
+        Map.put(content, key, updated)
 
       _ ->
         content
@@ -525,27 +546,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       nil -> Map.get(content, Atom.to_string(key))
       v -> v
     end
-  end
-
-  # #201 PR-3 (R4) — best-effort HARD-delete of EXACTLY a spawn attempt's
-  # minted grant incarnation (compensating cleanup for a losing / non-created
-  # / failed attempt). Incarnation-scoped — NEVER a bare URI delete: a
-  # URI-delete racing a hard-delete + reinsert (or a `reapprove/1`) would wipe
-  # a DIFFERENT incarnation's fresh row (ABA). Delete (not soft `revoke`) so
-  # the unique `agent_uri` key is freed for a later retry. Idempotent: a no-op
-  # when the attempt minted nothing, or when the row no longer exists under
-  # this incarnation.
-  @doc false
-  @spec compensate_grant(URI.t(), Ezagent.Credential.GrantRow.t() | nil) :: :ok
-  def compensate_grant(%URI{}, nil), do: :ok
-
-  def compensate_grant(%URI{} = agent_uri, %Ezagent.Credential.GrantRow{
-        incarnation_id: incarnation_id
-      }) do
-    _ = Ezagent.Credential.GrantRow.delete_incarnation(URI.to_string(agent_uri), incarnation_id)
-    :ok
-  rescue
-    _ -> :ok
   end
 
   @doc false

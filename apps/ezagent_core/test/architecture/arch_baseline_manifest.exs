@@ -406,7 +406,13 @@
   #   `:started ∧ ¬created?`) + the core-verdict meta threading; cc_agent's
   #   instantiate_for_flavor documents the deleted speculative flavor write
   #   (net-zero LOC). Measured 1787→1801.
-  cc_codex_template_class_combined_loc: 1801,
+  # arch-cap-bump: #201-cred (codex r2 HIGH-1/2/4) — the deferred-mint receipt
+  #   threading (`:grant_incarnation_id` in the created-winner meta, so the
+  #   chokepoint rollback compensates the EXACT minted incarnation — the
+  #   ABA-unsafe URI-delete fallback is deleted) + the confirmed post-mint
+  #   grant compensation in the codex spawn arm (shared HomeRuntime path).
+  #   Security-fix wiring, not new surface. Measured 1801→1822.
+  cc_codex_template_class_combined_loc: 1822,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

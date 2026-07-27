@@ -226,7 +226,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
               # #17 cascade PR-2 (codex CRITICAL §5.1) — the config_dir is materialized but
               # the sidecars/PTY launch HERE (ensure_sidecars). Re-validate the grant
-              # version IMMEDIATELY before launch; on :grant_changed ABORT + clear the
+              # incarnation IMMEDIATELY before launch; on :grant_changed ABORT + clear the
               # just-materialized config_dir so it is not left usable for the revoked grant.
               # No-grant agents skip this (nil ctx).
               case revalidate_grant_before_launch(grant_ctx) do
@@ -239,18 +239,24 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
                        # #201 PR-1 — core logical-create verdict from the
                        # spawn receipt, for the chokepoint's create-only gates.
                        |> Map.put(:created?, true)
+                       # #201-cred — the deferred-mint receipt for the
+                       # chokepoint's rollback (nil = no grant minted).
+                       |> Map.put(
+                         :grant_incarnation_id,
+                         Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx)
+                       )
                        |> Map.put(:config_dir_path, config_dir)
                        |> Map.put(:respawn_template_data, tmpl_with_dir)}
 
                     {:error, reason} ->
                       rollback_sidecars(agent_uri)
                       _ = Ezagent.Kind.terminate!(agent_uri)
-                      handle_spawn_failure(agent_uri, reason)
+                      compensate_and_report(agent_uri, grant_ctx, reason)
                   end
 
                 {:error, reason} ->
                   _ = Ezagent.Kind.terminate!(agent_uri)
-                  handle_spawn_failure(agent_uri, reason)
+                  compensate_and_report(agent_uri, grant_ctx, reason)
               end
 
             {:error, reason} ->
@@ -280,6 +286,19 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   # the config_dir so nothing launches with (or leaves usable) a revoked grant's secret.
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      __MODULE__,
+      "codex.agent"
+    )
+  end
 
   defp ensure_sidecars(agent_uri, tmpl) do
     cwd = Map.fetch!(tmpl, "cwd")
@@ -579,13 +598,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   # Return: `{:ok, dir}` / `{:ok, nil}` on the non-cascade path (backward-compatible), OR
-  # `{:ok, dir, {:grant, agent_uri_str, version}}` on the cascade path — the third element
-  # carries the grant version validated at materialize so `spawn_for_codex/3` can
-  # re-validate the grant IMMEDIATELY before the sidecar/PTY launch (codex CRITICAL §5.1).
+  # `{:ok, dir, {:grant, agent_uri_str, incarnation_id, version}}` on the cascade path —
+  # the third element carries the grant identity validated at materialize so
+  # `spawn_for_codex/3` can re-validate the grant IMMEDIATELY before the
+  # sidecar/PTY launch (codex CRITICAL §5.1; #201-cred — incarnation-bound).
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
+          | {:ok, String.t(), {:grant, String.t(), String.t(), non_neg_integer()}}
           | {:error, term()}
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     Ezagent.Credential.HomeRuntime.create_agent_config_dir(

@@ -16,6 +16,7 @@ defmodule Ezagent.Credential.GrantRow do
   use Ecto.Schema
 
   import Ecto.Changeset
+  import Ecto.Query
 
   alias EzagentCore.Repo
 
@@ -34,13 +35,28 @@ defmodule Ezagent.Credential.GrantRow do
     # a hard-delete + reinsert resets `version` to 1, so URI+version cannot
     # distinguish two incarnations of a grant for the same agent.
     field(:incarnation_id, :string)
+    # #201-cred (codex r2 HIGH-5) — the authority generations this grant was
+    # authorized under (the cap-checked holder + the credential source). A
+    # stale mint (authorized before an authority regenesis, inserted after) is
+    # rejected at insertion and detectable at materialization. NULL = not
+    # generation-guarded (workspace-shared mints, pre-column rows).
+    field(:holder_generation, :integer)
+    field(:source_generation, :integer)
 
     timestamps()
   end
 
   @type t :: %__MODULE__{}
 
-  @doc "Insert a new grant (id = agent_uri). Collides if an active grant exists."
+  @doc """
+  Insert a new grant (id = agent_uri). Collides if an active grant exists.
+
+  #201-cred (codex r2 HIGH-3) — the `incarnation_id` is minted
+  UNCONDITIONALLY here: a caller-supplied id is ALWAYS overwritten, so no
+  caller can reuse a previous incarnation's identity (which would weaken the
+  ABA-safe compare in `delete_incarnation/2` and the materialize-time
+  `(agent_uri, incarnation_id, version)` revalidation).
+  """
   @spec insert(map()) :: {:ok, t()} | {:error, term()}
   def insert(attrs) do
     attrs = put_workspace_uri(attrs)
@@ -49,7 +65,7 @@ defmodule Ezagent.Credential.GrantRow do
     |> cast(
       attrs
       |> Map.put(:id, attrs.agent_uri)
-      |> Map.put_new(:incarnation_id, Ecto.UUID.generate()),
+      |> Map.put(:incarnation_id, Ecto.UUID.generate()),
       [
         :id,
         :agent_uri,
@@ -58,7 +74,9 @@ defmodule Ezagent.Credential.GrantRow do
         :approved_by,
         :approved_scope,
         :version,
-        :incarnation_id
+        :incarnation_id,
+        :holder_generation,
+        :source_generation
       ]
     )
     |> validate_required([
@@ -150,15 +168,32 @@ defmodule Ezagent.Credential.GrantRow do
   end
 
   @doc """
-  Materialize-facing fetch (codex H3'): returns `{:ok, source_uri, version}` ONLY for an
-  active, non-revoked grant whose `approved_scope` still matches the source's identity AND
-  whose source still exists; else `{:error, reason}` (`:revoked` | `:no_grant` |
-  `:source_not_found` | `:scope_mismatch`). The returned `version` is the value to
-  re-check immediately before exec (`revalidate_version!/2`).
+  Materialize-facing fetch (codex H3'): returns `{:ok, source_uri, version,
+  incarnation_id}` ONLY for an active, non-revoked grant whose `approved_scope`
+  still matches the source's identity, whose source still exists, AND whose
+  recorded authority generations are still current; else `{:error, reason}`
+  (`:revoked` | `:no_grant` | `:source_not_found` | `:scope_mismatch` |
+  `:stale_authority_generation`). The returned `{version, incarnation_id}` is
+  the ABA-safe identity to re-check immediately before exec
+  (`revalidate_version!/3`) — #201-cred (codex r2 HIGH-4): URI+version alone
+  cannot distinguish two incarnations (a hard-delete + reinsert resets
+  `version` to 1; two racing reapprovals once computed the same next version).
+
+  #201-cred (codex r2 HIGH-5) — a grant whose recorded holder/source
+  authority generation is no longer current fails here with
+  `:stale_authority_generation`: it was minted under an authority that has
+  since regenerated, so materializing from it would use a stale
+  authorization. Rows without recorded generations (workspace-shared mints,
+  legacy rows) skip this check.
   """
   @spec fetch_for_materialize(String.t()) ::
-          {:ok, String.t(), non_neg_integer()}
-          | {:error, :no_grant | :revoked | :scope_mismatch | :source_not_found}
+          {:ok, String.t(), non_neg_integer(), String.t()}
+          | {:error,
+             :no_grant
+             | :revoked
+             | :scope_mismatch
+             | :source_not_found
+             | :stale_authority_generation}
   def fetch_for_materialize(agent_uri) do
     case get_for_agent(agent_uri) do
       nil ->
@@ -171,21 +206,28 @@ defmodule Ezagent.Credential.GrantRow do
         cond do
           g.approved_scope != g.credential_source_uri -> {:error, :scope_mismatch}
           not source_exists?(g.credential_source_uri) -> {:error, :source_not_found}
-          true -> {:ok, g.credential_source_uri, g.version}
+          not generations_current?(g) -> {:error, :stale_authority_generation}
+          true -> {:ok, g.credential_source_uri, g.version, g.incarnation_id}
         end
     end
   end
 
   @doc """
-  TOCTOU re-check (codex H1'): call immediately before subprocess exec / curl-slice write
-  with the `version` from `fetch_for_materialize/1`. Returns `:ok` iff the grant is still
-  present, not revoked, AND its version is unchanged; else `{:error, :grant_changed}` —
-  the caller MUST abort the start (do NOT launch with the now-stale secret).
+  TOCTOU re-check (codex H1' + #201-cred codex r2 HIGH-4): call immediately
+  before subprocess exec / curl-slice write with the `{version,
+  incarnation_id}` from `fetch_for_materialize/1`. Returns `:ok` iff the
+  grant is still present, not revoked, AND still the exact incarnation the
+  caller materialized from; else `{:error, :grant_changed}` — the caller MUST
+  abort the start (do NOT launch with the now-stale secret). The incarnation
+  compare closes the ABA hole URI+version left open (delete + reinsert at the
+  same version, or two reapprovals racing one version number).
   """
-  @spec revalidate_version!(String.t(), non_neg_integer()) :: :ok | {:error, :grant_changed}
-  def revalidate_version!(agent_uri, version) do
+  @spec revalidate_version!(String.t(), String.t(), non_neg_integer()) ::
+          :ok | {:error, :grant_changed}
+  def revalidate_version!(agent_uri, incarnation_id, version)
+      when is_binary(incarnation_id) do
     case get_for_agent(agent_uri) do
-      %__MODULE__{revoked_at: nil, version: ^version} -> :ok
+      %__MODULE__{revoked_at: nil, version: ^version, incarnation_id: ^incarnation_id} -> :ok
       _ -> {:error, :grant_changed}
     end
   end
@@ -194,24 +236,32 @@ defmodule Ezagent.Credential.GrantRow do
   Re-approve / replace a grant for an agent (e.g. after revoke, owner re-approves a
   source). Upsert by agent_uri, bumping version so any in-flight start re-validating the
   OLD version aborts. Cap-check the re-approval at the calling Behavior (same as insert).
+
+  #201-cred (codex r2 HIGH-4) — the version advance is a SINGLE atomic
+  statement (`INSERT ... ON CONFLICT DO UPDATE SET version =
+  credential_grants.version + 1`): two concurrent reapprovals can no longer
+  both read version N and both install version N+1 (which let a stale
+  materializer's version-only revalidation pass against the WRONG source).
+  Each reapproval also installs its own freshly minted `incarnation_id`, so
+  the `(agent_uri, incarnation_id, version)` revalidation identifies exactly
+  one logical grant.
   """
   @spec reapprove(map()) :: {:ok, t()} | {:error, term()}
   def reapprove(attrs) do
     attrs = put_workspace_uri(attrs)
-    prev = get_for_agent(attrs.agent_uri)
-    next_version = if prev, do: prev.version + 1, else: 1
+    # A re-approval is a NEW logical grant: re-incarnate (so a stale #201
+    # compensator holding the OLD incarnation id cannot delete this row, and a
+    # stale materializer's revalidation fails). Minted client-side; the version
+    # bump is atomic server-side (below).
+    incarnation_id = Ecto.UUID.generate()
 
     %__MODULE__{}
     |> cast(
-      # A re-approval is a NEW logical grant: bump the version (so in-flight
-      # starts re-validating the OLD version abort) AND re-incarnate (so a
-      # stale #201 compensator holding the OLD incarnation id cannot delete
-      # this row).
       Map.merge(attrs, %{
         id: attrs.agent_uri,
-        version: next_version,
+        version: 1,
         revoked_at: nil,
-        incarnation_id: Ecto.UUID.generate()
+        incarnation_id: incarnation_id
       }),
       [
         :id,
@@ -222,7 +272,9 @@ defmodule Ezagent.Credential.GrantRow do
         :approved_scope,
         :version,
         :revoked_at,
-        :incarnation_id
+        :incarnation_id,
+        :holder_generation,
+        :source_generation
       ]
     )
     |> validate_required([
@@ -235,19 +287,27 @@ defmodule Ezagent.Credential.GrantRow do
       :incarnation_id
     ])
     |> Repo.insert(
-      on_conflict:
-        {:replace,
-         [
-           :workspace_uri,
-           :credential_source_uri,
-           :approved_by,
-           :approved_scope,
-           :version,
-           :revoked_at,
-           :incarnation_id,
-           :updated_at
-         ]},
-      conflict_target: :id
+      on_conflict: [
+        set: [
+          workspace_uri: attrs.workspace_uri,
+          credential_source_uri: attrs.credential_source_uri,
+          approved_by: attrs.approved_by,
+          approved_scope: attrs.approved_scope,
+          revoked_at: nil,
+          incarnation_id: incarnation_id,
+          holder_generation: Map.get(attrs, :holder_generation),
+          source_generation: Map.get(attrs, :source_generation),
+          updated_at: DateTime.utc_now()
+        ],
+        # Atomic server-side version advance (`version = version + 1` in the
+        # same INSERT ... ON CONFLICT statement): two concurrent reapprovals
+        # get DISTINCT versions — the read-prev-then-upsert race is gone.
+        inc: [version: 1]
+      ],
+      conflict_target: :id,
+      # The atomically-advanced version is computed server-side; read it back
+      # so the returned row carries the value the database actually stored.
+      returning: true
     )
   end
 
@@ -258,6 +318,27 @@ defmodule Ezagent.Credential.GrantRow do
   # `match?({:ok, _}, SnapshotStore.latest/1)`).
   defp source_exists?(source_uri) do
     match?({:ok, _, _}, Ezagent.Kind.read_durable(source_uri, :identity))
+  end
+
+  # #201-cred (codex r2 HIGH-5) — a generation-guarded grant is current only
+  # while BOTH recorded authority generations (approving holder + credential
+  # source) still match the CURRENT active authority rows. Fail-closed: an
+  # unreadable authority row invalidates the grant. Rows without recorded
+  # generations (workspace-shared mints, pre-column rows) skip the check.
+  defp generations_current?(%__MODULE__{} = g) do
+    generation_current?(g.approved_by, g.holder_generation) and
+      generation_current?(g.credential_source_uri, g.source_generation)
+  end
+
+  defp generation_current?(_uri_str, nil), do: true
+
+  defp generation_current?(uri_str, expected) do
+    case Ezagent.Cap.Authority.current_generation(Ezagent.URI.new!(uri_str)) do
+      {:ok, ^expected} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 
   defp put_workspace_uri(%{agent_uri: agent_uri} = attrs) do
