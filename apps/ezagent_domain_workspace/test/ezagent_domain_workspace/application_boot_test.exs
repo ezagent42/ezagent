@@ -48,6 +48,11 @@ defmodule EzagentDomainWorkspace.ApplicationBootTest do
              FsResolver.resolve(resource, %{workspace: "workspace-boot-registration"})
   end
 
+  test "production boot registers the change collector" do
+    assert {:ok, Ezagent.Workspace.TaskWorkspace.ChangeCollector} =
+             Ezagent.DomainGit.WorkspaceChangeRegistry.implementation()
+  end
+
   test "a later child boot failure rolls back the Workspace supervisor and restart succeeds" do
     assert :ok = Application.stop(:ezagent_domain_workspace)
 
