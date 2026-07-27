@@ -49,7 +49,8 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     bot_recipe = "p10-bot-recipe-#{uniq()}"
 
     {:ok, _} = Workspace.create(ws, %{})
-    :ok = spawn_user(author)
+    author_caps = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, author).caps
+    :ok = spawn_user(author, author_caps)
     :ok = grant_workspace_cap(author, workspace_uri, :add_template)
     :ok = spawn_user(supervisor_a)
     :ok = spawn_user(supervisor_b)
@@ -632,10 +633,16 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
     )
   end
 
-  defp spawn_user(uri) do
-    case Ezagent.Kind.spawn(User, %{uri: uri}) do
+  # #189 P10 harness fix: actor-extraction C1 (#1548) made world actions re-derive
+  # caps FRESH via PresenterCaps.load → EntityCaps.load (the mount `current_caps`
+  # snapshot is no longer trusted). So a caller must DURABLY hold its signed workspace
+  # caps at spawn (the spawn mints the self-license the fresh load needs), mirroring the
+  # migrated sibling save_session_template_public_scope_gate_test. P10 was the missed straggler.
+  defp spawn_user(uri, caps \\ []) do
+    case Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: Enum.to_list(caps)}) do
       {:ok, _pid} -> :ok
       {:error, {:already_started, _pid}} -> :ok
+      {:error, {:already_registered, _pid}} -> :ok
     end
   end
 
