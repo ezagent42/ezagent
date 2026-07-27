@@ -1,68 +1,65 @@
-# Handoff：通用 socialware 分享/接收机制（设计讨论 → Allen 拍板）
+# Handoff：URI 授权分享统一机制（infra PR → Allen 拍板）
 
-- **类型**：`clarify_first` / 平台设计决策（不是 build 任务；要 Allen 定方向）
-- **来源**：kanban 示范 plugin 重构（PR #1474）——重构时识别出的可泛化点
-- **触发**：Sy（用户）—— "担心之后有别的数据宿主的 agent 分享之类的，我们必须要抽象一个通用机制，才能保证快速自举开发"
+- **类型**：平台 infra 设计（动 domain_session 授权底座,不是 kanban 业务;单独 PR)
+- **来源**：kanban 示范重构(PR #1474)三轮讨论 + 两次代码查实的收敛
+- **触发**：Sy —— "既然 kanban 数据是一个 agent,为什么和别的 agent 分享、或者所有有 URI 的分享不能走一致的?"
 
 ---
 
 ## 一句话
 
-kanban 现在有一条**它专属的** web 分享落点（`/socialware/kanban/receive` + `KanbanShareController`）。将来任何**数据宿主类 agent**（不止 kanban）都会需要"发一个受控分享链接 → 别人点开 → 铸只读/操作钥匙给点击者"。**要不要现在抽象一个通用 `/socialware/:kind/receive` 机制**，让下一个数据宿主 plugin 零 web 代码就能分享？请 Allen 拍方向。
+**分享 = 授予某人一个指向某 URI 的 cap。** 这天然 URI 无关(`mint_cap(grantee, target_uri, behavior, actions)` 里 target 是任意 URI)。所以分享不该 kanban 专属、甚至不该"数据宿主专属",而该是一个**对任意 URI 授 cap 的统一编排**。kanban 现在自己包了一层(Phoenix.Token + 专属 controller + 规则 8 气泡)——那层本该是通用底座。请 Allen 拍这个统一机制 + 一个前置的模型裁决。
 
 ---
 
-## 现状（实证，非猜测）
+## 核心原则:授权层统一(URI 无关),使用层按 kind
 
-**已经通用的（"发钥匙"那半）**：
-- `Ezagent.Socialware.CompositionCaps.mint_cap/4`（domain_session）—— 唯一 mint chokepoint，任何 plugin 都能用来铸实例精确 cap。
-- 跨 workspace 守卫（`ShareReceive.ws_policy/3` 模式）可复用。
+| 层 | URI 无关? | 谁负责 |
+|---|---|---|
+| **授权层**:签令牌 → 铸 cap → 审批升级 → 从 cap 派生可见 | ✅ 统一底座 | infra |
+| **使用层**:拿到 cap 后怎么 render/用那个 URI | ❌ kind 相关 | plugin 声明 |
 
-**还是 kanban 专属的（"web transport 落点"那半）**：
-- 路由 `apps/ezagent_web/.../router.ex:278` `get "/socialware/kanban/receive"`。
-- controller `KanbanShareController`：`Phoenix.Token.verify`（web 层职责）→ 调 `EzagentPluginKanban.ShareReceive.receive_shared_board/2` → 302 到深链。
-- **三个 kanban 专属常量**散在两处，靠"两侧手动对齐"（改一处漏一处 → 静默 403）：
-  - salt `"world_kanban_share"`（sign 侧 `world_share_actions.ex` + verify 侧 controller）
-  - path `/socialware/kanban/receive`
-  - behavior 字符串 `"Ezagent.ActionSet.Kanban"`（token payload 里，`Module.concat` 反解）
-
-**现状不是 proliferation**：全库只有 kanban 一个 `_share_controller`，而且 **hello 分享看板是复用它**（`kanban_published_read_adapter` 产出的就是 `/socialware/kanban/receive?token=` 链接），不是各造一个。所以焦虑是**预防性**的，不是当下的痛。
+kanban 的病:把**授权层**也做成了 kanban 专属。渲染是 plugin 的,授权不是。
 
 ---
 
-## 为什么必须是通用机制（Sy 的论点）
+## 一个必须先裁决的分叉:系统里已并存两套分享模型
 
-数据宿主 agent 是 ezagent 的一等公民模式（kanban 只是第一个）。"发出去一个读写链接就等于发布消息"是**人本位数据资产的通用交互**，不该每加一个宿主 plugin 就在 `ezagent_web` 手写一个 controller + 一条路由 + 一套 salt 对齐。**快速自举** = 新 plugin 声明"我是可分享的数据宿主"就够，web transport 零改动。
+- **socialware feed 模型**：链接 → 匿名入会 → membership **live 授权**(令牌不是授权、成员资格实时复查,`ChatFeedAuth`/`AnonIngress`)。这是 **session 这个 kind 的"参与"语义**,不是通用分享。
+- **person-cap 模型**：链接 → 铸 person cap(令牌即凭证、兑换即铸,kanban `share_receive`)。这**就是"对 URI 授权"本身**。
 
-浏览器直开（无 socket、进不了 world dispatch chokepoint）决定了**必须有一个 HTTP 落点**——问题不是"要不要落点"，而是"落点要不要 per-plugin"。
-
----
-
-## 提议方向（供 Allen 评判，非既定方案）
-
-通用 `/socialware/:kind/receive` + 一个 web 层 receiver 注册表：
-
-1. **salt 统一**：`"socialware_share:" <> kind`（或 salt 里带 kind），消掉"两侧手动对齐"的静默 403 隐患。**低难度**。
-2. **receiver 分派注册表**：`kind → receiver 模块`。web 层不能直接 compile-dep plugin，得走 **behaviour**（现成样板 = `EzagentPluginHello.KanbanPublishedRead` 已用的 behaviour 注入模式）。**主要工作量在这**，中难度。
-3. **token payload 契约**：已经半通用（behavior 在 payload 里 `Module.concat` 反解），不是障碍。
-4. **cap-mint / ws-policy**：已在 domain_session 通用，重活已完成。
-
-难度评估：**低到中**。主要是抽一个 receiver-registry + 统一 salt 约定。
+**请 Allen 裁决:通用 URI 分享统一走 person-cap 模型**(feed 那套留给 session 的参与语义)。否则通用 claim 落点要同时伺候两套哲学 = 缝合怪。Sy 已在 kanban 侧选定 person-cap(不造展示会话)。
 
 ---
 
-## 待 Allen 决策的问题
+## 统一机制 = 5 块积木(xy 判定,file:line 实证)
 
-1. **现在做，还是等第二个真实用例？** 论据两面：
-   - *现在做*：Sy 要的"快速自举"——下一个数据宿主 plugin 零 web 代码分享。
-   - *等一等*：只有 1 个 controller、hello 已复用，过早抽象容易照 kanban 一家定型（错抽象比不抽象贵）。真出现第二个**语义不同**的分享落点时，才有足够差异设计对的抽象。
-2. **归属哪条轨**？这跟 Allen 的 read-plane / share 后端统一车道（此前提过 handoff）是否是同一件事？
-3. **本次 PR #1474 要不要顺手铺路**？低风险的两件：把 kanban 的 salt/path/behavior 三常量**收口成一处**（消静默 403 隐患）+ 把 receiver 分派做成 behaviour。即便通用机制推迟，这两步也让 kanban 示范更干净、且为将来通用化铺好路。**建议做**（除非 Allen 认为连这个也该等）。
+```
+[② bearer 令牌(带 target_uri)] → [⑤ 通用 claim 落点] → [① mint_cap 铸 person cap(任意 target)]
+          ↓                                                      ↓
+[③ caps_toward:从 cap 派生"我能看到哪些 URI 资源"]      [④ Consent:申请→owner 批准→升级(任意 target)]
+```
+
+| 积木 | X/Y | 现状实证 | infra 要做什么 |
+|---|---|---|---|
+| **① 铸 cap** | **Y** | `CompositionCaps.mint_cap/4`(composition_caps.ex:126-179)通用、参数化、fail-closed;kanban 已正确复用 | 不动 |
+| **② 令牌服务** | **X** | 6 处各签 `Phoenix.Token`(kanban 还 plugin/controller 两文件手工对齐 salt,world_share_actions.ex:28-30 ↔ kanban_share_controller.ex:21-23) | 以 `Ezagent.Uploads.DownloadToken`(core,已有 TTL 双层封顶 + person-binding,download_token.ex:69/113-119)为底,**补一个"bearer 不记名可兑换"轴**(它现在结构性禁止无 grantee mint,:31-33) |
+| **③ cap 派生可见性** | **X** | `union_cap_boards` kanban 私有、硬编码 `behavior: Kanban`(world_data.ex:165-181);workspace/session/kanban 三处各写 `EntityCaps.load`+手工过滤(listing.ex/workspace_reads.ex:191/session_reads.ex:508) | 补通用 `caps_toward(holder, behavior)` / "从 caller_caps 派生指向某 behavior 的可见实例";`EntityCaps` 现只有整包 `load/1`,`CapabilityRegistry` 只有 `data_owner_of` 正向、无反向 holders 索引 |
+| **④ 审批升级** | **Y-半** | **`CompositionConsent` 原语 URI 无关**(schema binding_id 任意 string + target/source_owner + approval 状态机 + `pending_for_owner/1` owner 待办箱,composition_consent.ex:23-67);**但入口绑死 composition**:`sync(%CompositionBinding{})`(:79)、`command(binding_id, session_uri, ...)`(:124,查 session_mismatch)、binding_id 由 `CompositionBinding.id_for(subject)` 从 session/role/cap_identity 构造;调用方全是 composition_caps。kanban 规则 8(world_share_actions.ex:187-244)重复造了这个轮子 | **泛化创建/命令入口**,让它接受"任意 `(grantee, target_uri, actions)`"、脱离 CompositionBinding + session_uri。原语层(状态机+待办箱)不用重写 |
+| **⑤ claim 落点 + 模型归一** | **X** | kanban_share_controller 孤立落点(verify→plugin claim→302);feed 侧通用形状 `AnonIngress` 绑死 session-membership 模型 | 补 plugin 可注册 claim handler 的通用 `/socialware/claim`(person-cap 语义);+ 上面的模型裁决 |
+
+**结论**:5 块里 **①④ 的原语是现成的(不重造)**,**②③⑤ + ④的入口是真缺口**,全是"URI 无关授权底座"级改动。
 
 ---
 
-## DoD（本 handoff 的完成 = 拿到 Allen 的方向）
+## 待 Allen 决策
 
-- [ ] Allen 决定：现在抽通用机制 / 等第二用例 / 本 PR 只做三常量收口
-- [ ] 若做通用：确定归属轨（独立 PR / 并入 read-plane 车道）+ receiver-registry 的 behaviour 契约草案
-- [ ] 若推迟：在 kanban 示范里加一条注释指向本 handoff，标记"已知可泛化点"
+1. **模型裁决**:通用 URI 分享统一走 **person-cap 模型**?(feed 留 session 参与语义)
+2. **infra PR 范围**:②令牌 bearer 轴 + ③caps_toward + ④Consent 入口泛化 + ⑤通用 claim 落点,是一个 PR 还是拆几个?
+3. **归属轨**:跟 Allen 此前的 read-plane / share 后端统一车道是不是同一件事?
+
+## 对本 PR #1474 的影响(已按此收敛)
+
+- kanban 分享**铸 cap 那半已站在正确底座 `mint_cap` 上(Y,没造 cap 轮子)**;唯一自造轮子是规则 8 审批,收编它要泛化 infra → **不在本 PR**。
+- 本 PR 关于分享**不做大改**:保留 person-cap 现状 + 清理 web 独立页 redirect 硬编码(`/plugins/kanban` → world,world 也是 plugin 不该焊)。
+- 分享统一收编**整体移交本 handoff 的 infra PR**。符合"业务修正+清理在本 PR,动底座单独 PR"的划分。
