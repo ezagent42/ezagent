@@ -1,0 +1,334 @@
+defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
+  @moduledoc """
+  Two-invocation crash/retry coverage for `EzagentPluginGithub.GitHubAdapter`
+  (design docs/superpowers/specs/2026-07-25-git-provider-v1-plan-e-provider-owned-loop-design.md
+  §6.2). Each test calls `create_change_request/4` (or an observation
+  callback) TWICE against provider state that reflects what GitHub already
+  durably holds after a partial completion of call 1 -- simulating a
+  workflow-level crash/restart between the two calls -- and asserts call 2
+  performs no duplicate remote mutation.
+
+  `github_adapter_test.exs` covers ONE-CALL behavior (a single invocation's
+  response to a given provider state); this file covers RE-INVOCATION safety.
+  """
+
+  use ExUnit.Case, async: false
+
+  alias Ezagent.DomainGit.{
+    ChangeRequest,
+    CommitSha,
+    CreateChangeRequest,
+    FileChange,
+    OperationContext,
+    RepositoryRef
+  }
+
+  alias EzagentPluginGithub.{GitHubAdapter, InstallationPermissions, TestHelpers}
+
+  @stub_name :github_adapter_reconciliation_test
+
+  setup do
+    Application.put_env(:ezagent_plugin_github, :app_id, "4361756")
+    Application.put_env(:ezagent_plugin_github, :private_key, TestHelpers.test_private_key_pem())
+
+    # `retry: false` -- this file exercises workflow-level crash/retry (two
+    # explicit, separate `create_change_request/4` invocations against an
+    # ordered `Req.Test.expect` queue), a different concern from Req's own
+    # transport-level auto-retry-on-5xx/429. Without disabling it, Req's
+    # default `:safe_transient` retry re-issues a failed GET (e.g. the "PR
+    # search fails transiently" step below) against the SAME ordered queue,
+    # consuming additional entries that were never registered for that
+    # purpose and desyncing the whole sequence -- not a bug in the adapter,
+    # an interaction between Req's default retry and single-use `expect`
+    # queues (github_client_test.exs covers Req-level retry/error-mapping
+    # separately, with `Req.Test.stub`, which tolerates repeat calls).
+    Application.put_env(:ezagent_plugin_github, :adapter_req_opts,
+      plug: {Req.Test, @stub_name},
+      retry: false
+    )
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_plugin_github, :app_id)
+      Application.delete_env(:ezagent_plugin_github, :private_key)
+      Application.delete_env(:ezagent_plugin_github, :adapter_req_opts)
+    end)
+
+    :ok
+  end
+
+  defp future_iso(seconds \\ 3600) do
+    DateTime.utc_now() |> DateTime.add(seconds, :second) |> DateTime.to_iso8601()
+  end
+
+  defp expect_mint(profile) do
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"id" => 123}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "token" => "ghs-test-token",
+        "expires_at" => future_iso(),
+        "repository_selection" => "selected",
+        "repositories" => [%{"full_name" => "owner/repo"}],
+        "permissions" => InstallationPermissions.for!(profile)
+      })
+    end)
+  end
+
+  defp ctx do
+    workspace = "test-ws"
+    hash = Base.encode16(:crypto.hash(:sha256, "github-adapter-reconciliation"), case: :lower)
+
+    {:ok, ctx} =
+      OperationContext.new(%{
+        task_access_uri: Ezagent.URI.worker(workspace, "gta_#{hash}"),
+        caller_uri: Ezagent.URI.entity(workspace, "agent", "caller"),
+        grantee_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
+        idempotency_key: "reconcile-test-idem-1"
+      })
+
+    ctx
+  end
+
+  defp repo do
+    {:ok, repo} =
+      RepositoryRef.new(%{
+        repository_uri: Ezagent.URI.resource("test-ws", "git-repository", "owner-repo"),
+        provider_adapter: EzagentPluginGithub.GitHubAdapter,
+        provider_host: "github.com",
+        external_id: "owner/repo",
+        owner_path: "owner",
+        base_ref: "main",
+        visibility: :public
+      })
+
+    repo
+  end
+
+  defp file_change do
+    {:ok, fc} =
+      FileChange.new(%{path: "README.md", operation: :upsert, content: "updated content"})
+
+    fc
+  end
+
+  defp base_sha, do: String.duplicate("a", 40)
+  defp head_sha, do: String.duplicate("b", 40)
+
+  defp create_request do
+    {:ok, sha} = CommitSha.new(%{value: base_sha()})
+
+    {:ok, cr} =
+      CreateChangeRequest.new(%{
+        title: "Test PR",
+        body: "PR body text",
+        head_ref: "feature-branch",
+        expected_base_sha: sha
+      })
+
+    cr
+  end
+
+  # ── Windows 1+2: "after commit creation, before head update" and "after
+  #    head update, before PR creation" -- call 1 durably creates the head
+  #    ref server-side but fails before/while creating the PR (simulating the
+  #    workflow crashing anywhere in that span and retrying from scratch).
+  #    Call 2 must reconcile the now-existing head ref without recreating any
+  #    git data, then create exactly one PR. ─────────────────────────────
+
+  test "re-invoking create_change_request after the head ref was durably created but the PR was not finds the ref and creates exactly one PR" do
+    # Call 1: fresh create through ref-creation, then the PR search fails
+    # transiently (simulating a crash/network failure before the PR could be
+    # found-or-created). The head ref is now durably present server-side even
+    # though call 1 itself returns an error.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => head_sha()})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # PR search fails transiently -- call 1 returns an error, but the ref
+    # above was already durably created.
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 503, ~s({"message": "Service Unavailable"}))
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # Call 2 (the retry): the head ref now exists server-side with a parent
+    # matching the verified base -- reconcile it, skip git data entirely, and
+    # create exactly one PR.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha(),
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => base_sha()}]
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => head_sha()},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # No further Req.Test.expect entries are registered for either call: had
+    # the implementation attempted to recreate the ref (a second POST
+    # /git/refs) or blindly re-POST the PR without searching first, the
+    # exhausted ordered-expect queue would raise instead of these two calls
+    # completing cleanly.
+  end
+
+  # ── Windows 3+4: "after PR creation succeeds, before the workflow fact is
+  #    persisted" and "after facts persist, before the state CAS" -- call 1
+  #    fully succeeds (ref + PR both created). Call 2 (the workflow retrying
+  #    because it crashed before durably recording call 1's success) must
+  #    fresh-read the existing ref and PR and make ZERO write calls. These
+  #    two design windows are indistinguishable at the adapter's observable
+  #    boundary -- both present as "everything already exists" on
+  #    re-invocation -- so one test covers both. ──────────────────────────
+
+  test "re-invoking create_change_request after both the head ref and the PR already exist performs only reads" do
+    # Call 1: full fresh create, succeeds completely.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => head_sha()})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => head_sha()},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42"}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # Call 2 (the retry): both the ref and the PR already exist. Only GETs
+    # (plus the mandatory mint POST) are registered -- any write call
+    # exhausts the queue and raises.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha(),
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => base_sha()}]
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "number" => 42,
+          "html_url" => "https://github.com/owner/repo/pull/42",
+          "state" => "open",
+          "head" => %{"ref" => "feature-branch", "sha" => head_sha()},
+          "base" => %{"ref" => "main"},
+          "merged" => false
+        }
+      ])
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+end
