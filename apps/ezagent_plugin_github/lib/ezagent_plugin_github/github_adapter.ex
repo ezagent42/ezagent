@@ -48,33 +48,10 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       ) do
     case installation_token(repo, :change_request_write) do
       {:ok, token} ->
-        base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
-
-        case GitHubClient.get(base_ref_path, token, request_opts()) do
-          {:ok, ref_data} ->
-            case verify_base_sha(ref_data, create_req.expected_base_sha) do
-              :ok ->
-                if file_changes == [] do
-                  create_pr(repo, create_req, token)
-                else
-                  create_change_request_with_files(
-                    repo,
-                    file_changes,
-                    create_req,
-                    ref_data,
-                    token
-                  )
-                end
-
-              {:error, _reason} = error ->
-                error
-            end
-
-          {:error, :repository_not_found} ->
-            {:error, :base_ref_not_found}
-
-          {:error, reason} ->
-            {:error, map_read_error(reason)}
+        with {:ok, base_sha} <- verify_base_ref(repo, create_req, token),
+             {:ok, _head_sha} <-
+               reconcile_head_ref(repo, file_changes, create_req, base_sha, token) do
+          reconcile_pull_request(repo, create_req, token)
         end
 
       {:error, reason} ->
@@ -82,24 +59,94 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  # ── Git data operations ──────────────────────────────────────────────
+  # ── Step 1: base ref verification ───────────────────────────────────────
+
+  defp verify_base_ref(repo, create_req, token) do
+    base_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{repo.base_ref}"
+
+    case GitHubClient.get(base_ref_path, token, request_opts()) do
+      {:ok, ref_data} -> verify_base_sha(ref_data, create_req.expected_base_sha)
+      {:error, :repository_not_found} -> {:error, :base_ref_not_found}
+      {:error, reason} -> {:error, map_read_error(reason)}
+    end
+  end
 
   defp verify_base_sha(%{"object" => %{"sha" => sha}}, %CommitSha{value: expected}) do
-    if sha == expected, do: :ok, else: {:error, :base_sha_mismatch}
+    if sha == expected, do: {:ok, expected}, else: {:error, :base_sha_mismatch}
   end
 
   defp verify_base_sha(_ref_data, _expected_sha), do: {:error, :base_sha_mismatch}
 
-  defp create_change_request_with_files(repo, file_changes, create_req, ref_data, token) do
-    base_tree_sha = ref_data["object"]["sha"]
+  # ── Step 2: deterministic head ref create-or-reconcile (design §6.1 steps 3-6) ──
+  #
+  # The deterministic ref is the remote mutation identity (design §6.2): if it
+  # already exists, this V1 either reuses it (parent matches the verified
+  # base) or fails closed (:head_ref_conflict) -- it never moves it. There is
+  # no PATCH/force-push path anywhere in this module.
 
-    with {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
+  defp reconcile_head_ref(repo, file_changes, create_req, base_sha, token) do
+    head_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{create_req.head_ref}"
+
+    case GitHubClient.get(head_ref_path, token, request_opts()) do
+      {:ok, head_ref_data} ->
+        verify_existing_head(repo, head_ref_data, base_sha, token)
+
+      {:error, :repository_not_found} ->
+        create_head_commit(repo, file_changes, create_req, base_sha, token)
+
+      {:error, reason} ->
+        {:error, map_git_data_error(reason)}
+    end
+  end
+
+  # Existing ref found -- verify it descends directly from expected_base_sha
+  # before reusing it. This checks the commit's sole parent only (not its
+  # tree): the caller-supplied file_changes for a given deterministic
+  # head_ref are assumed content-stable across retries (the workflow layer
+  # enforces this via its own input-digest check, design §5.1) -- this
+  # adapter has no run/generation identity to independently re-derive that
+  # guarantee, so parent-matches-base is the strongest check it can perform
+  # without recomputing (and thereby re-uploading) blob/tree content on every
+  # retry.
+  defp verify_existing_head(repo, %{"object" => %{"sha" => head_sha}}, base_sha, token)
+       when is_binary(head_sha) do
+    commit_path = "/repos/#{repo.external_id}/git/commits/#{head_sha}"
+
+    case GitHubClient.get(commit_path, token, request_opts()) do
+      {:ok, %{"parents" => [%{"sha" => ^base_sha}]}} -> {:ok, head_sha}
+      {:ok, _mismatched_or_unexpected_shape} -> {:error, :head_ref_conflict}
+      {:error, reason} -> {:error, map_git_data_error(reason)}
+    end
+  end
+
+  defp verify_existing_head(_repo, _head_ref_data, _base_sha, _token),
+    do: {:error, :head_ref_conflict}
+
+  defp create_head_commit(_repo, [], _create_req, _base_sha, _token),
+    do: {:error, :invalid_file_change}
+
+  defp create_head_commit(repo, file_changes, create_req, base_sha, token) do
+    with {:ok, base_tree_sha} <- fetch_base_tree_sha(repo, base_sha, token),
+         {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
          {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha, token),
          {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req, token),
-         :ok <- update_head_ref(repo, commit_sha, create_req.head_ref, token) do
-      create_pr(repo, create_req, token)
+         :ok <- create_head_ref(repo, commit_sha, create_req.head_ref, token) do
+      {:ok, commit_sha}
     else
       {:error, reason} -> {:error, map_git_data_error(reason)}
+    end
+  end
+
+  # Fetches the TREE sha for the verified base commit -- NOT the ref's commit
+  # sha itself, which `POST git/trees`'s `base_tree` parameter documents as
+  # requiring a tree object's sha, not a commit object's sha.
+  defp fetch_base_tree_sha(repo, base_sha, token) do
+    commit_path = "/repos/#{repo.external_id}/git/commits/#{base_sha}"
+
+    case GitHubClient.get(commit_path, token, request_opts()) do
+      {:ok, %{"tree" => %{"sha" => tree_sha}}} -> {:ok, tree_sha}
+      {:ok, _unexpected_shape} -> {:error, :provider_unavailable}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -163,15 +210,43 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp update_head_ref(repo, commit_sha, head_ref, token) do
-    path = "/repos/#{repo.external_id}/git/refs/heads/#{head_ref}"
+  # Creates the deterministic ref for the FIRST time -- POST (not PATCH):
+  # `reconcile_head_ref/5` only reaches this function when the ref is
+  # confirmed absent. An already-present ref is either reused as-is
+  # (`verify_existing_head/4`) or rejected as `:head_ref_conflict` -- there is
+  # no third path that mutates an existing ref.
+  defp create_head_ref(repo, commit_sha, head_ref, token) do
+    path = "/repos/#{repo.external_id}/git/refs"
+    body = %{ref: "refs/heads/#{head_ref}", sha: commit_sha}
 
-    case GitHubClient.patch(path, token, %{sha: commit_sha, force: false}, request_opts()) do
-      {:ok, _data} ->
-        :ok
+    case GitHubClient.post(path, token, body, request_opts()) do
+      {:ok, _data} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-      {:error, reason} ->
-        {:error, reason}
+  # ── Step 3: PR exact find-or-create (design §6.1 steps 7-8, §6.2) ───────
+  #
+  # Exact head+base is the PR reconciliation identity -- title/body are never
+  # used to find a match. `state: "open"` matches design §6.1 step 7's "查询
+  # exact head+base 的 open PR" literally: a closed/merged PR with the same
+  # head+base does not block creating a new one.
+
+  defp reconcile_pull_request(repo, create_req, token) do
+    path = "/repos/#{repo.external_id}/pulls"
+
+    query = [
+      head: "#{repo.owner_path}:#{create_req.head_ref}",
+      base: repo.base_ref,
+      state: "open"
+    ]
+
+    case GitHubClient.get(path, token, Keyword.merge(request_opts(), params: query)) do
+      {:ok, []} -> create_pr(repo, create_req, token)
+      {:ok, [single]} when is_map(single) -> build_change_request(single)
+      {:ok, [_, _ | _]} -> {:error, :change_request_conflict}
+      {:ok, _unexpected} -> {:error, :provider_unavailable}
+      {:error, reason} -> {:error, map_read_error(reason)}
     end
   end
 

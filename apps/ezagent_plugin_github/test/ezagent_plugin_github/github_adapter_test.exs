@@ -120,31 +120,52 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       assert permissions == InstallationPermissions.for!(:metadata_read)
     end
 
-    test "create_change_request's multi-step HTTP batch mints exactly once" do
+    test "create_change_request's multi-step reconciliation batch mints exactly once" do
       sha = String.duplicate("a", 40)
 
       expect_mint(:change_request_write)
 
+      # 1. GET base ref
       Req.Test.expect(@stub_name, fn conn ->
         Req.Test.json(conn, %{"object" => %{"sha" => sha}})
       end)
 
+      # 2. GET head ref -> absent
+      Req.Test.expect(@stub_name, fn conn ->
+        Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+      end)
+
+      # 3. GET base commit -> tree sha
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+      end)
+
+      # 4. POST blob
       Req.Test.expect(@stub_name, fn conn ->
         conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
       end)
 
+      # 5. POST tree
       Req.Test.expect(@stub_name, fn conn ->
         conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
       end)
 
+      # 6. POST commit
       Req.Test.expect(@stub_name, fn conn ->
         conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
       end)
 
+      # 7. POST create ref (new -- not PATCH)
       Req.Test.expect(@stub_name, fn conn ->
-        Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+        conn
+        |> Plug.Conn.put_status(201)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
       end)
 
+      # 8. GET pulls search -> no existing match
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+      # 9. POST pulls create
       Req.Test.expect(@stub_name, fn conn ->
         conn
         |> Plug.Conn.put_status(201)
@@ -158,9 +179,9 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         })
       end)
 
-      # 2 mint calls + 6 repo-operation calls, in this exact order — if the
-      # implementation re-minted per HTTP request instead of once per callback,
-      # this ordered Req.Test.expect queue would desync and fail.
+      # 2 mint calls + 9 reconciliation calls, in this exact order -- if the
+      # implementation re-minted per HTTP request instead of once per
+      # callback, this ordered Req.Test.expect queue would desync and fail.
       assert {:ok, %ChangeRequest{external_id: "42"}} =
                GitHubAdapter.create_change_request(
                  ctx(),
@@ -292,42 +313,66 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
   # ── create_change_request ───────────────────────────────────────────────
 
-  test "create_change_request returns ChangeRequest on 201" do
-    sha = String.duplicate("a", 40)
+  test "create_change_request returns ChangeRequest on 201, using the base commit's tree sha and an exact head+base+open PR search" do
+    test_pid = self()
+    base_commit_sha = String.duplicate("a", 40)
+    base_tree_sha = String.duplicate("t", 40)
     expect_mint(:change_request_write)
 
     # Step 1: GET base ref
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      Req.Test.json(conn, %{"object" => %{"sha" => base_commit_sha}})
     end)
 
-    # Step 2: POST blob
+    # Step 2: GET head ref -> absent
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
     end)
 
-    # Step 3: POST tree
+    # Step 3: GET base commit -> tree sha (proves the base_tree fix: this
+    # call must happen, and its tree.sha -- NOT the base ref's commit sha --
+    # must be what step 5 sends as base_tree)
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+      assert conn.request_path == "/repos/owner/repo/git/commits/#{base_commit_sha}"
+
+      Req.Test.json(conn, %{
+        "sha" => base_commit_sha,
+        "tree" => %{"sha" => base_tree_sha},
+        "parents" => []
+      })
     end)
 
-    # Step 4: POST commit
+    # Step 4: POST blob
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
     end)
 
-    # Step 5: PATCH ref
+    # Step 5: POST tree -- capture body
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+      {body, conn} = read_json_body(conn)
+      send(test_pid, {:tree_request_body, body})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
     end)
 
-    # Step 6: POST pulls
+    # Step 6: POST commit
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
+    end)
+
+    # Step 7: POST create ref
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs"
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # Step 8: GET pulls search -- capture query params, return no matches
+    Req.Test.expect(@stub_name, fn conn ->
+      conn = Plug.Conn.fetch_query_params(conn)
+      send(test_pid, {:pr_search_params, conn.query_params})
+      Req.Test.json(conn, [])
+    end)
+
+    # Step 9: POST pulls create
     Req.Test.expect(@stub_name, fn conn ->
       conn
       |> Plug.Conn.put_status(201)
@@ -335,7 +380,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         "number" => 42,
         "html_url" => "https://github.com/owner/repo/pull/42",
         "state" => "open",
-        "head" => %{"ref" => "feature-branch", "sha" => sha},
+        "head" => %{"ref" => "feature-branch", "sha" => String.duplicate("c", 40)},
         "base" => %{"ref" => "main"},
         "merged" => false
       })
@@ -343,18 +388,50 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    assert_received {:tree_request_body, tree_body}
+    assert tree_body["base_tree"] == base_tree_sha
+    refute tree_body["base_tree"] == base_commit_sha
+
+    assert_received {:pr_search_params, params}
+    assert params == %{"head" => "owner:feature-branch", "base" => "main", "state" => "open"}
   end
 
-  test "create_change_request with empty file_changes skips git data" do
+  test "create_change_request returns invalid_file_change when the head ref is absent and there are no file changes" do
     sha = String.duplicate("a", 40)
     expect_mint(:change_request_write)
 
-    # Step 1: GET base ref
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
     end)
 
-    # Step 2: POST pulls (skips git data steps 2-5 since file_changes is empty)
+    assert {:error, :invalid_file_change} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [], create_request())
+  end
+
+  test "create_change_request with empty file_changes reconciles an already-existing safe head ref straight to the PR search" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => sha}]
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
     Req.Test.expect(@stub_name, fn conn ->
       conn
       |> Plug.Conn.put_status(201)
@@ -362,13 +439,13 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         "number" => 42,
         "html_url" => "https://github.com/owner/repo/pull/42",
         "state" => "open",
-        "head" => %{"ref" => "feature-branch", "sha" => sha},
+        "head" => %{"ref" => "feature-branch", "sha" => head_sha},
         "base" => %{"ref" => "main"},
         "merged" => false
       })
     end)
 
-    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+    assert {:ok, %ChangeRequest{external_id: "42"}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [], create_request())
   end
 
@@ -398,34 +475,35 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     sha = String.duplicate("a", 40)
     expect_mint(:change_request_write)
 
-    # Steps 1-5 succeed
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
     end)
 
-    # Step 6: POST pulls fails with 422
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    # Step 9: POST pulls fails with 422
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
@@ -438,39 +516,214 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     sha = String.duplicate("a", 40)
     expect_mint(:change_request_write)
 
-    # Steps 1-5 succeed
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "blob_sha_1"})
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "tree_sha_1"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn
-      |> Plug.Conn.put_status(201)
-      |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      Req.Test.json(conn, %{"ref" => "refs/heads/feature-branch"})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
     end)
 
-    # Step 6: POST pulls fails with 403
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    # Step 9: POST pulls fails with 403
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 403, ~s({"message": "Forbidden"}))
     end)
 
     assert {:error, :repository_write_denied} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  # ── create_change_request: ref + PR reconciliation ────────────────────
+
+  test "create_change_request reconciles an existing safely-provenanced head ref without recreating git data" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    # head ref already exists
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    # existing head commit's sole parent is exactly the verified base sha ->
+    # safe to reuse
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/commits/#{head_sha}"
+
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => sha}]
+      })
+    end)
+
+    # no blob/tree/commit/ref-create calls -- straight to the PR search
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => head_sha},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42"}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request reconciles an existing head ref and an existing open PR with zero write calls" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => sha}]
+      })
+    end)
+
+    # exactly one open PR already matches head+base -- reconcile, do not create
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "number" => 42,
+          "html_url" => "https://github.com/owner/repo/pull/42",
+          "state" => "open",
+          "head" => %{"ref" => "feature-branch", "sha" => head_sha},
+          "base" => %{"ref" => "main"},
+          "merged" => false
+        }
+      ])
+    end)
+
+    # No further Req.Test.expect entries are registered: any additional HTTP
+    # call (a stray POST to blobs/trees/commits/refs/pulls) exhausts the
+    # queue and raises, failing this test.
+    assert {:ok, %ChangeRequest{external_id: "42", head_sha: ^head_sha, state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request returns head_ref_conflict when the existing head's parent does not match the expected base" do
+    sha = String.duplicate("a", 40)
+    other_sha = String.duplicate("z", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    # existing head's parent is a DIFFERENT commit than our verified base
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => other_sha}]
+      })
+    end)
+
+    assert {:error, :head_ref_conflict} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request returns head_ref_conflict when the existing head commit has no parents" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => head_sha, "tree" => %{"sha" => "tree_x"}, "parents" => []})
+    end)
+
+    assert {:error, :head_ref_conflict} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request returns change_request_conflict when the PR search finds more than one open match" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "tree_x"},
+        "parents" => [%{"sha" => sha}]
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "number" => 42,
+          "html_url" => "https://github.com/owner/repo/pull/42",
+          "state" => "open",
+          "head" => %{"ref" => "feature-branch", "sha" => head_sha},
+          "base" => %{"ref" => "main"},
+          "merged" => false
+        },
+        %{
+          "number" => 43,
+          "html_url" => "https://github.com/owner/repo/pull/43",
+          "state" => "open",
+          "head" => %{"ref" => "feature-branch", "sha" => head_sha},
+          "base" => %{"ref" => "main"},
+          "merged" => false
+        }
+      ])
+    end)
+
+    assert {:error, :change_request_conflict} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
