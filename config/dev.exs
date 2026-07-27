@@ -92,6 +92,11 @@ config :ezagent_plugin_world,
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO"
 
+# URI-share unification (A1) — bearer share-token signing secret (sibling of
+# DownloadToken; same secret_key_base value).
+config :ezagent_core, Ezagent.Cap.ShareToken,
+  secret_key_base: "LB/r5X+0G50lTmGaZonOO8PxwMhtOxdS3J308T7s+w3fBI0R8fkZbABhqZxjOFqO"
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed

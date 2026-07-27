@@ -115,6 +115,11 @@ config :ezagent_web, EzagentWeb.Endpoint,
 config :ezagent_core, Ezagent.Uploads.DownloadToken,
   secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy"
 
+# URI-share unification (A1) — bearer share-token signing secret (core-owned
+# config key, sibling of DownloadToken; same secret_key_base value).
+config :ezagent_core, Ezagent.Cap.ShareToken,
+  secret_key_base: "3v32NqyJT1oDLVf9Qcg2pz9caQu68+W737xqtaGSUPsaw6dDqwqXIC8VCQCSGLpy"
+
 # cc-custom orchestrator credentials (#1324; cc-custom-backends PR-5): the
 # orchestrator flavor's ONLY credential is the API-key env var the selected
 # cc-custom catalog profile names — DEEPSEEK_API_KEY for the stock "deepseek"
