@@ -135,37 +135,45 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
       end)
 
-      # 3. GET base commit -> tree sha
-      Req.Test.expect(@stub_name, fn conn ->
-        Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
-      end)
-
-      # 4. POST blob
-      Req.Test.expect(@stub_name, fn conn ->
-        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
-      end)
-
-      # 5. POST tree
-      Req.Test.expect(@stub_name, fn conn ->
-        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
-      end)
-
-      # 6. POST commit
-      Req.Test.expect(@stub_name, fn conn ->
-        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
-      end)
-
-      # 7. POST create ref (new -- not PATCH)
+      # 3. POST create ref, pointing at the verified base sha (Fix 1: this
+      # now happens BEFORE any blob/tree/commit work)
       Req.Test.expect(@stub_name, fn conn ->
         conn
         |> Plug.Conn.put_status(201)
         |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
       end)
 
-      # 8. GET pulls search -> no existing match
+      # 4. GET base commit -> tree sha
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+      end)
+
+      # 5. POST blob
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+      end)
+
+      # 6. POST tree
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+      end)
+
+      # 7. POST commit
+      Req.Test.expect(@stub_name, fn conn ->
+        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      end)
+
+      # 8. PATCH advance ref onto the new commit, non-force (Fix 1)
+      Req.Test.expect(@stub_name, fn conn ->
+        conn
+        |> Plug.Conn.put_status(200)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      end)
+
+      # 9. GET pulls search -> no existing match
       Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
 
-      # 9. POST pulls create
+      # 10. POST pulls create
       Req.Test.expect(@stub_name, fn conn ->
         conn
         |> Plug.Conn.put_status(201)
@@ -179,7 +187,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         })
       end)
 
-      # 2 mint calls + 9 reconciliation calls, in this exact order -- if the
+      # 2 mint calls + 10 reconciliation calls, in this exact order -- if the
       # implementation re-minted per HTTP request instead of once per
       # callback, this ordered Req.Test.expect queue would desync and fail.
       assert {:ok, %ChangeRequest{external_id: "42"}} =
@@ -329,9 +337,20 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
     end)
 
-    # Step 3: GET base commit -> tree sha (proves the base_tree fix: this
+    # Step 3: POST create ref, pointing at the verified base commit -- Fix 1:
+    # this establishes the durable mutation identity BEFORE any blob/tree/
+    # commit work, and is asserted here to prove the sha sent is the base
+    # commit, not a not-yet-existing head commit.
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs"
+      {body, conn} = read_json_body(conn)
+      send(test_pid, {:ref_create_body, body})
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    # Step 4: GET base commit -> tree sha (proves the base_tree fix: this
     # call must happen, and its tree.sha -- NOT the base ref's commit sha --
-    # must be what step 5 sends as base_tree)
+    # must be what step 6 sends as base_tree)
     Req.Test.expect(@stub_name, fn conn ->
       assert conn.request_path == "/repos/owner/repo/git/commits/#{base_commit_sha}"
 
@@ -342,37 +361,40 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    # Step 4: POST blob
+    # Step 5: POST blob
     Req.Test.expect(@stub_name, fn conn ->
       conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
     end)
 
-    # Step 5: POST tree -- capture body
+    # Step 6: POST tree -- capture body
     Req.Test.expect(@stub_name, fn conn ->
       {body, conn} = read_json_body(conn)
       send(test_pid, {:tree_request_body, body})
       conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
     end)
 
-    # Step 6: POST commit
+    # Step 7: POST commit
     Req.Test.expect(@stub_name, fn conn ->
       conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
     end)
 
-    # Step 7: POST create ref
+    # Step 8: PATCH advance ref onto the new commit -- Fix 1: non-force, and
+    # asserted here to prove `force: false` is actually sent.
     Req.Test.expect(@stub_name, fn conn ->
-      assert conn.request_path == "/repos/owner/repo/git/refs"
-      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      assert conn.request_path == "/repos/owner/repo/git/refs/heads/feature-branch"
+      {body, conn} = read_json_body(conn)
+      send(test_pid, {:ref_advance_body, body})
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
-    # Step 8: GET pulls search -- capture query params, return no matches
+    # Step 9: GET pulls search -- capture query params, return no matches
     Req.Test.expect(@stub_name, fn conn ->
       conn = Plug.Conn.fetch_query_params(conn)
       send(test_pid, {:pr_search_params, conn.query_params})
       Req.Test.json(conn, [])
     end)
 
-    # Step 9: POST pulls create
+    # Step 10: POST pulls create
     Req.Test.expect(@stub_name, fn conn ->
       conn
       |> Plug.Conn.put_status(201)
@@ -389,9 +411,17 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
 
+    assert_received {:ref_create_body, ref_create_body}
+    assert ref_create_body["sha"] == base_commit_sha
+    assert ref_create_body["ref"] == "refs/heads/feature-branch"
+
     assert_received {:tree_request_body, tree_body}
     assert tree_body["base_tree"] == base_tree_sha
     refute tree_body["base_tree"] == base_commit_sha
+
+    assert_received {:ref_advance_body, ref_advance_body}
+    assert ref_advance_body["sha"] == "commit_sha_1"
+    assert ref_advance_body["force"] == false
 
     assert_received {:pr_search_params, params}
     assert params == %{"head" => "owner:feature-branch", "base" => "main", "state" => "open"}
@@ -425,9 +455,22 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{
         "sha" => head_sha,
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_base"},
         "parents" => [%{"sha" => sha}]
       })
+    end)
+
+    # Fix 2: even with zero file_changes, branch provenance requires proving
+    # the existing head's tree matches what this call's (idempotent, empty)
+    # tree creation produces -- fetch the base tree sha, then create the
+    # (empty) tree; returning the SAME sha as the existing head's tree
+    # proves "no changes" reuse is safe.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_base"})
     end)
 
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
@@ -482,6 +525,10 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
     end)
 
@@ -498,12 +545,13 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
 
-    # Step 9: POST pulls fails with 422
+    # Step 10: POST pulls fails with 422 -- a Git-data-unrelated PR-create
+    # validation error, correctly kept as change_request_conflict (Fix 5).
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 422, ~s({"message": "Validation error"}))
     end)
@@ -523,6 +571,10 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
     end)
 
@@ -539,12 +591,12 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
 
-    # Step 9: POST pulls fails with 403
+    # Step 10: POST pulls fails with 403
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 403, ~s({"message": "Forbidden"}))
     end)
@@ -555,7 +607,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
   # ── create_change_request: ref + PR reconciliation ────────────────────
 
-  test "create_change_request reconciles an existing safely-provenanced head ref without recreating git data" do
+  test "create_change_request reuses an existing head ref whose tree matches, without creating a new commit, ref, or PR" do
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
     expect_mint(:change_request_write)
@@ -568,18 +620,34 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     # existing head commit's sole parent is exactly the verified base sha ->
-    # safe to reuse
+    # candidate for reuse, pending the tree check below
     Req.Test.expect(@stub_name, fn conn ->
       assert conn.request_path == "/repos/owner/repo/git/commits/#{head_sha}"
 
       Req.Test.json(conn, %{
         "sha" => head_sha,
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_match"},
         "parents" => [%{"sha" => sha}]
       })
     end)
 
-    # no blob/tree/commit/ref-create calls -- straight to the PR search
+    # Fix 2: parent equality alone is not provenance -- recompute this
+    # call's tree from file_changes and compare. Fetch the base tree sha,
+    # then (idempotently) create blob + tree; returning the SAME sha as the
+    # existing head's tree proves reuse is safe.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_match"})
+    end)
+
+    # no commit/ref-create/ref-advance calls -- straight to the PR search
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -599,7 +667,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
-  test "create_change_request reconciles an existing head ref and an existing open PR with zero write calls" do
+  test "create_change_request reconciles an existing head ref and an existing open PR after verifying tree provenance, creating no new commit, ref, or PR" do
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
     expect_mint(:change_request_write)
@@ -613,9 +681,23 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{
         "sha" => head_sha,
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_match"},
         "parents" => [%{"sha" => sha}]
       })
+    end)
+
+    # Fix 2's tree-provenance round trip (idempotent blob/tree creation, no
+    # new commit or ref) still runs before the PR search.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_match"})
     end)
 
     # exactly one open PR already matches head+base -- reconcile, do not create
@@ -633,8 +715,8 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end)
 
     # No further Req.Test.expect entries are registered: any additional HTTP
-    # call (a stray POST to blobs/trees/commits/refs/pulls) exhausts the
-    # queue and raises, failing this test.
+    # call (a stray POST to commits/refs/pulls, or a repeated blob/tree
+    # call) exhausts the queue and raises, failing this test.
     assert {:ok, %ChangeRequest{external_id: "42", head_sha: ^head_sha, state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
@@ -683,6 +765,47 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
+  test "create_change_request returns head_ref_conflict when the existing head has the correct parent but a different tree" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+    end)
+
+    # parent matches the verified base, but this is not enough on its own
+    # (Fix 2) -- any unrelated commit built on the same base would also
+    # match the parent check.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => head_sha,
+        "tree" => %{"sha" => "some_other_tree"},
+        "parents" => [%{"sha" => sha}]
+      })
+    end)
+
+    # This call's own (idempotent) tree creation produces a DIFFERENT tree
+    # sha than the existing head's -- branch provenance fails, even though
+    # the parent matched.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "this_calls_own_tree"})
+    end)
+
+    assert {:error, :head_ref_conflict} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
   test "create_change_request returns change_request_conflict when the PR search finds more than one open match" do
     sha = String.duplicate("a", 40)
     head_sha = String.duplicate("b", 40)
@@ -697,9 +820,23 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{
         "sha" => head_sha,
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_match"},
         "parents" => [%{"sha" => sha}]
       })
+    end)
+
+    # Fix 2's tree-provenance round trip passes (tree matches), so the
+    # reconciliation proceeds to the PR search where it finds a conflict.
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_match"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->

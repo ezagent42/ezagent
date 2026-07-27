@@ -19,12 +19,24 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   §6.1-§6.2): re-invoking it with the same repo/head_ref/expected_base_sha
   after any crash never duplicates a remote mutation.
 
-    * The deterministic head ref is the mutation identity. If it does not
-      exist, a fresh blob/tree/commit chain is built and the ref is created
-      (`POST git/refs`) for the first time. If it already exists, it is
-      reused when its sole parent commit is exactly the verified base sha —
-      otherwise the callback fails closed with `:head_ref_conflict`. There is
-      no PATCH/force-push path: an existing ref is never moved.
+    * The deterministic head ref is the mutation identity, and it is
+      created BEFORE any blob/tree/commit work — pointing at the verified
+      base commit, not a head commit that does not exist yet. That
+      establishes the durable remote mutation identity first, so a crash
+      anywhere after ref creation (§6.2's "commit created, head update
+      before" window) leaves a marker the retry can find, instead of
+      silently repeating the whole Git-data POST chain. Once blob/tree/
+      commit are built, the ref is ADVANCED onto the new commit with a
+      non-force update (`PATCH git/refs/heads/...`, `force: false`); a
+      rejected non-fast-forward advance is `:head_ref_conflict`, never a
+      force-push.
+    * If the ref already exists past base, it is reused only when its sole
+      parent is exactly the verified base sha AND its tree matches the tree
+      this call's own (idempotent, content-addressed) blob/tree creation
+      produces for the same `file_changes` — parent equality alone does not
+      prove this run produced that commit, since any unrelated commit built
+      on the same base would also match. Any mismatch fails closed with
+      `:head_ref_conflict`.
     * The PR's head+base pair (never its title or body) is the reconciliation
       identity: an exact, open, head+base search runs before any PR is
       created. Zero matches creates one; exactly one match is normalized and
@@ -102,62 +114,141 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # ── Step 2: deterministic head ref create-or-reconcile (design §6.1 steps 3-6) ──
   #
   # The deterministic ref is the remote mutation identity (design §6.2): if it
-  # already exists, this V1 either reuses it (parent matches the verified
-  # base) or fails closed (:head_ref_conflict) -- it never moves it. There is
-  # no PATCH/force-push path anywhere in this module.
+  # is absent, it is created FIRST -- pointing at the verified base commit --
+  # before any blob/tree/commit work, then advanced onto the new commit with
+  # a non-force update once that commit exists. If it already exists past
+  # base, this V1 either reuses it (parent AND tree match the verified base /
+  # this call's own recomputed tree) or fails closed (:head_ref_conflict).
+  # There is no force-push path anywhere in this module.
 
   defp reconcile_head_ref(repo, file_changes, create_req, base_sha, token) do
-    head_ref_path = "/repos/#{repo.external_id}/git/ref/heads/#{create_req.head_ref}"
+    path = head_ref_path(repo, create_req.head_ref)
 
-    case GitHubClient.get(head_ref_path, token, request_opts()) do
-      {:ok, head_ref_data} ->
-        verify_existing_head(repo, head_ref_data, base_sha, token)
-
+    case GitHubClient.get(path, token, request_opts()) do
       {:error, :repository_not_found} ->
         create_head_commit(repo, file_changes, create_req, base_sha, token)
+
+      other ->
+        handle_head_lookup(other, repo, file_changes, create_req, base_sha, token)
+    end
+  end
+
+  # The ref exists and still points at exactly the verified base sha -- this
+  # is the durable marker `create_ref/4` planted (design §6.1 step 4), not an
+  # existing head commit to verify against. Resume the chain rather than
+  # treating it as "an existing head" (there is nothing to compare a tree
+  # against yet).
+  defp handle_head_lookup(
+         {:ok, %{"object" => %{"sha" => sha}}},
+         repo,
+         file_changes,
+         create_req,
+         base_sha,
+         token
+       )
+       when sha == base_sha do
+    resume_head_commit(repo, file_changes, create_req, base_sha, token)
+  end
+
+  defp handle_head_lookup({:ok, head_ref_data}, repo, file_changes, _create_req, base_sha, token) do
+    reconcile_existing_head(repo, head_ref_data, file_changes, base_sha, token)
+  end
+
+  defp handle_head_lookup({:error, reason}, _repo, _file_changes, _create_req, _base_sha, _token) do
+    {:error, map_git_data_error(reason)}
+  end
+
+  defp create_head_commit(_repo, [], _create_req, _base_sha, _token),
+    do: {:error, :invalid_file_change}
+
+  defp create_head_commit(repo, file_changes, create_req, base_sha, token) do
+    case create_ref(repo, base_sha, create_req.head_ref, token) do
+      :ok ->
+        resume_head_commit(repo, file_changes, create_req, base_sha, token)
+
+      {:error, :unprocessable_entity} ->
+        # A 422 creating a ref this call just confirmed absent is a
+        # legitimate race with a concurrent creator (design §6.2) -- re-read
+        # and reconcile through the normal safe-reuse path instead of
+        # failing. A :repository_not_found on the re-read (the ref missing
+        # again) would be a genuinely confusing provider state, not a
+        # recursive retry target -- handle_head_lookup's error clause
+        # surfaces it as-is rather than looping back into create_head_commit.
+        head_ref_path(repo, create_req.head_ref)
+        |> GitHubClient.get(token, request_opts())
+        |> handle_head_lookup(repo, file_changes, create_req, base_sha, token)
 
       {:error, reason} ->
         {:error, map_git_data_error(reason)}
     end
   end
 
-  # Existing ref found -- verify it descends directly from expected_base_sha
-  # before reusing it. This checks the commit's sole parent only (not its
-  # tree): the caller-supplied file_changes for a given deterministic
-  # head_ref are assumed content-stable across retries (the workflow layer
-  # enforces this via its own input-digest check, design §5.1) -- this
-  # adapter has no run/generation identity to independently re-derive that
-  # guarantee, so parent-matches-base is the strongest check it can perform
-  # without recomputing (and thereby re-uploading) blob/tree content on every
-  # retry.
-  defp verify_existing_head(repo, %{"object" => %{"sha" => head_sha}}, base_sha, token)
-       when is_binary(head_sha) do
-    commit_path = "/repos/#{repo.external_id}/git/commits/#{head_sha}"
-
-    case GitHubClient.get(commit_path, token, request_opts()) do
-      {:ok, %{"parents" => [%{"sha" => ^base_sha}]}} -> {:ok, head_sha}
-      {:ok, _mismatched_or_unexpected_shape} -> {:error, :head_ref_conflict}
-      {:error, reason} -> {:error, map_git_data_error(reason)}
-    end
-  end
-
-  defp verify_existing_head(_repo, _head_ref_data, _base_sha, _token),
-    do: {:error, :head_ref_conflict}
-
-  defp create_head_commit(_repo, [], _create_req, _base_sha, _token),
+  defp resume_head_commit(_repo, [], _create_req, _base_sha, _token),
     do: {:error, :invalid_file_change}
 
-  defp create_head_commit(repo, file_changes, create_req, base_sha, token) do
+  defp resume_head_commit(repo, file_changes, create_req, base_sha, token) do
     with {:ok, base_tree_sha} <- fetch_base_tree_sha(repo, base_sha, token),
          {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
          {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha, token),
          {:ok, commit_sha} <- create_commit(repo, tree_sha, create_req, token),
-         :ok <- create_head_ref(repo, commit_sha, create_req.head_ref, token) do
+         :ok <- advance_ref(repo, commit_sha, create_req.head_ref, token) do
       {:ok, commit_sha}
     else
       {:error, reason} -> {:error, map_git_data_error(reason)}
     end
   end
+
+  # Existing ref found past base -- verify it descends directly from
+  # expected_base_sha AND that its tree matches. Parent equality alone does
+  # not distinguish this run's commit from any other commit that happens to
+  # share the same base (design §6.1 step 4's "verify safe reuse"); the tree
+  # check closes that gap.
+  defp reconcile_existing_head(
+         repo,
+         %{"object" => %{"sha" => head_sha}},
+         file_changes,
+         base_sha,
+         token
+       )
+       when is_binary(head_sha) do
+    commit_path = "/repos/#{repo.external_id}/git/commits/#{head_sha}"
+
+    case GitHubClient.get(commit_path, token, request_opts()) do
+      {:ok, %{"tree" => %{"sha" => existing_tree_sha}, "parents" => [%{"sha" => ^base_sha}]}} ->
+        verify_tree_reuse(repo, file_changes, base_sha, existing_tree_sha, head_sha, token)
+
+      {:ok, _mismatched_or_unexpected_shape} ->
+        {:error, :head_ref_conflict}
+
+      {:error, reason} ->
+        {:error, map_git_data_error(reason)}
+    end
+  end
+
+  defp reconcile_existing_head(_repo, _head_ref_data, _file_changes, _base_sha, _token),
+    do: {:error, :head_ref_conflict}
+
+  # Blob/tree creation is content-addressed and idempotent (design §6.1 step
+  # 5 note): recomputing this call's tree from `file_changes` and comparing
+  # shas is a cheap, exact provenance check, rather than trusting the
+  # caller's input digest -- which only guarantees stability across THIS
+  # run's own retries (design §5.1), not that the existing commit came from
+  # this run at all.
+  defp verify_tree_reuse(repo, file_changes, base_sha, existing_tree_sha, head_sha, token) do
+    with {:ok, base_tree_sha} <- fetch_base_tree_sha(repo, base_sha, token),
+         {:ok, blob_shas} <- create_blobs(repo, file_changes, token),
+         {:ok, tree_sha} <- create_tree(repo, file_changes, blob_shas, base_tree_sha, token) do
+      if tree_sha == existing_tree_sha do
+        {:ok, head_sha}
+      else
+        {:error, :head_ref_conflict}
+      end
+    else
+      {:error, reason} -> {:error, map_git_data_error(reason)}
+    end
+  end
+
+  defp head_ref_path(repo, head_ref), do: "/repos/#{repo.external_id}/git/ref/heads/#{head_ref}"
 
   # Fetches the TREE sha for the verified base commit -- NOT the ref's commit
   # sha itself, which `POST git/trees`'s `base_tree` parameter documents as
@@ -185,6 +276,9 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         {:ok, %{"sha" => sha}} ->
           {:cont, {:ok, acc ++ [sha]}}
 
+        {:ok, _unexpected} ->
+          {:halt, {:error, :provider_unavailable}}
+
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
@@ -209,6 +303,9 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, %{"sha" => sha}} ->
         {:ok, sha}
 
+      {:ok, _unexpected} ->
+        {:error, :provider_unavailable}
+
       {:error, reason} ->
         {:error, reason}
     end
@@ -227,22 +324,47 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, %{"sha" => sha}} ->
         {:ok, sha}
 
+      {:ok, _unexpected} ->
+        {:error, :provider_unavailable}
+
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  # Creates the deterministic ref for the FIRST time -- POST (not PATCH):
-  # `reconcile_head_ref/5` only reaches this function when the ref is
-  # confirmed absent. An already-present ref is either reused as-is
-  # (`verify_existing_head/4`) or rejected as `:head_ref_conflict` -- there is
-  # no third path that mutates an existing ref.
-  defp create_head_ref(repo, commit_sha, head_ref, token) do
+  # Creates the deterministic ref for the FIRST time, pointing at the
+  # VERIFIED BASE commit -- not a head commit, which does not exist yet.
+  # This establishes the durable remote mutation identity (design §6.1 step
+  # 4) BEFORE any blob/tree/commit work, so a crash anywhere after this
+  # point (§6.2's "commit created, head update before" window) leaves a ref
+  # the retry can find and continue from, instead of silently repeating the
+  # whole Git-data POST chain. POST (not PATCH): `create_head_commit/5` only
+  # reaches this function when `reconcile_head_ref/5` has confirmed the ref
+  # absent.
+  defp create_ref(repo, sha, head_ref, token) do
     path = "/repos/#{repo.external_id}/git/refs"
-    body = %{ref: "refs/heads/#{head_ref}", sha: commit_sha}
+    body = %{ref: "refs/heads/#{head_ref}", sha: sha}
 
     case GitHubClient.post(path, token, body, request_opts()) do
       {:ok, _data} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Advances the marker ref from base onto the newly-created commit with a
+  # NON-FORCE update (design §6.1 step 6): this is the only place the ref's
+  # target ever moves, and it only succeeds as a fast-forward from exactly
+  # the sha `create_ref/4` set. GitHub answers a rejected non-fast-forward
+  # update with 422 -- a real conflict (someone else advanced the ref), not
+  # a retryable transport error -- so it maps directly to
+  # `:head_ref_conflict` rather than through the generic Git-data mapper.
+  defp advance_ref(repo, commit_sha, head_ref, token) do
+    path = "/repos/#{repo.external_id}/git/refs/heads/#{head_ref}"
+    body = %{sha: commit_sha, force: false}
+
+    case GitHubClient.patch(path, token, body, request_opts()) do
+      {:ok, _data} -> :ok
+      {:error, :unprocessable_entity} -> {:error, :head_ref_conflict}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -285,6 +407,9 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     case GitHubClient.post(path, token, body, request_opts()) do
       {:ok, data} ->
         build_change_request(data)
+
+      {:error, :unprocessable_entity} ->
+        {:error, :change_request_conflict}
 
       {:error, reason} ->
         {:error, map_write_error(reason)}
@@ -478,15 +603,17 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # ── Error mappers ───────────────────────────────────────────────────────
 
   defp map_read_error(:provider_denied), do: :repository_read_denied
+  defp map_read_error(:unprocessable_entity), do: :provider_unavailable
   defp map_read_error(other), do: other
 
   defp map_write_error(:provider_denied), do: :repository_write_denied
   defp map_write_error(other), do: other
 
   defp map_checks_error(:provider_denied), do: :checks_unavailable
+  defp map_checks_error(:unprocessable_entity), do: :provider_unavailable
   defp map_checks_error(other), do: other
 
   defp map_git_data_error(:provider_denied), do: :repository_write_denied
-  defp map_git_data_error(:change_request_conflict), do: :change_request_conflict
+  defp map_git_data_error(:unprocessable_entity), do: :provider_unavailable
   defp map_git_data_error(other), do: other
 end

@@ -10,6 +10,22 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
   `github_adapter_test.exs` covers ONE-CALL behavior (a single invocation's
   response to a given provider state); this file covers RE-INVOCATION safety.
+
+  Design §6.2 crash windows and where each is covered:
+
+    * Window 1 ("commit created, head/ref update before") -- ref exists but
+      still points at base, no commit has been advanced onto it yet:
+      "...after a commit was created but the ref was never advanced..." below.
+    * Window 2 ("head/ref updated, PR creation before") -- ref exists and is
+      already advanced onto the real head commit, PR does not exist yet:
+      "...after the head ref was durably advanced but the PR was not...".
+    * Windows 3+4 ("PR created, fact persisted before" / "facts persisted,
+      state CAS before") -- both ref and PR already fully exist; these two
+      design windows are indistinguishable at the adapter's observable
+      boundary, so one test covers both: "...after both the head ref and
+      the PR already exist...".
+    * Window 5 ("observation HTTP success, snapshot persisted before") --
+      "observation callbacks are pure reads..." below.
   """
 
   use ExUnit.Case, async: false
@@ -141,18 +157,24 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     cr
   end
 
-  # ── Windows 1+2: "after commit creation, before head update" and "after
-  #    head update, before PR creation" -- call 1 durably creates the head
-  #    ref server-side but fails before/while creating the PR (simulating the
-  #    workflow crashing anywhere in that span and retrying from scratch).
-  #    Call 2 must reconcile the now-existing head ref without recreating any
-  #    git data, then create exactly one PR. ─────────────────────────────
+  # ── Window 1: "commit created, head/ref update before" -- call 1 durably
+  #    creates the marker ref (pointing at base) and the blob/tree/commit
+  #    chain, but crashes before the ref-advance PATCH. Server-side, the ref
+  #    exists but still points at base_sha -- there is no head commit yet to
+  #    verify against. Call 2 must recognize this durable marker, resume the
+  #    chain (blob/tree recreation is idempotent; the commit is necessarily
+  #    rebuilt fresh, since GitHub fills in author/committer dates when
+  #    omitted and this adapter has no way to look up an orphaned commit by
+  #    content -- see the design-level note on deterministic shas in the P3
+  #    fix report), and advance the ref for the first time. Exactly one ref
+  #    advance succeeds and exactly one PR is created. ────────────────────
 
-  test "re-invoking create_change_request after the head ref was durably created but the PR was not finds the ref and creates exactly one PR" do
-    # Call 1: fresh create through ref-creation, then the PR search fails
-    # transiently (simulating a crash/network failure before the PR could be
-    # found-or-created). The head ref is now durably present server-side even
-    # though call 1 itself returns an error.
+  test "re-invoking create_change_request after a commit was created but the ref was never advanced past base recovers without creating a second ref or a second PR" do
+    # Call 1: the marker ref is created pointing at base, then blob/tree/
+    # commit all succeed, but the workflow crashes before the ref-advance
+    # PATCH -- design §6.2's first crash window. The ref exists server-side,
+    # but it still points at base_sha, not at the new (as yet unreferenced)
+    # commit.
     expect_mint(:change_request_write)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -161,6 +183,54 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs"
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_orphan"})
+    end)
+
+    # Simulated crash: the ref-advance PATCH never happens in call 1.
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 503, ~s({"message": "Service Unavailable"}))
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # Call 2 (the retry): the head ref exists but is STILL at base_sha -- the
+    # durable marker this design's ordering exists to produce, not an
+    # existing head commit to verify. The chain resumes: blob/tree are
+    # recreated (idempotent, content-addressed -- no new objects), a commit
+    # is built fresh, and the ref advances for the first time.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -184,11 +254,90 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
+      assert conn.request_path == "/repos/owner/repo/git/refs/heads/feature-branch"
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      assert Jason.decode!(body) == %{"sha" => head_sha(), "force" => false}
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn
+      |> Plug.Conn.put_status(201)
+      |> Req.Test.json(%{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => head_sha()},
+        "base" => %{"ref" => "main"},
+        "merged" => false
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+
+    # No further Req.Test.expect entries are registered for either call: a
+    # second ref-CREATE (POST /git/refs), a second ref-advance, or a second
+    # PR search miss followed by another PR POST would exhaust the queue
+    # and raise. Call 1's orphaned commit is never referenced by anything;
+    # it is invisible collateral, not a duplicate.
+  end
+
+  # ── Window 2: "head/ref updated, PR creation before" -- call 1 durably
+  #    advances the head ref onto the real commit server-side but fails
+  #    before/while creating the PR (simulating the workflow crashing
+  #    anywhere in that span and retrying from scratch). Call 2 must
+  #    reconcile the now-existing, already-advanced head ref without
+  #    recreating any git data, then create exactly one PR. ─────────────
+
+  test "re-invoking create_change_request after the head ref was durably advanced but the PR was not finds the ref and creates exactly one PR" do
+    # Call 1: fresh create all the way through the ref advance, then the PR
+    # search fails transiently (simulating a crash/network failure before
+    # the PR could be found-or-created). The ref is now durably advanced
+    # onto the real head commit server-side even though call 1 itself
+    # returns an error.
+    expect_mint(:change_request_write)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"object" => %{"sha" => base_sha()}})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
       conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => head_sha()})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+    end)
+
     # PR search fails transiently -- call 1 returns an error, but the ref
-    # above was already durably created.
+    # above was already durably advanced.
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 503, ~s({"message": "Service Unavailable"}))
     end)
@@ -196,8 +345,9 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     assert {:error, :provider_unavailable} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
 
-    # Call 2 (the retry): the head ref now exists server-side with a parent
-    # matching the verified base -- reconcile it, skip git data entirely, and
+    # Call 2 (the retry): the head ref now exists server-side, already
+    # advanced past base, with a parent and tree matching this call's own --
+    # reconcile it (Fix 2's tree check), skip creating any new git data, and
     # create exactly one PR.
     expect_mint(:change_request_write)
 
@@ -212,9 +362,25 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{
         "sha" => head_sha(),
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_match"},
         "parents" => [%{"sha" => base_sha()}]
       })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_match"})
     end)
 
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
@@ -237,21 +403,23 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
     # No further Req.Test.expect entries are registered for either call: had
     # the implementation attempted to recreate the ref (a second POST
-    # /git/refs) or blindly re-POST the PR without searching first, the
-    # exhausted ordered-expect queue would raise instead of these two calls
-    # completing cleanly.
+    # /git/refs), re-advance it (a second PATCH), or blindly re-POST the PR
+    # without searching first, the exhausted ordered-expect queue would
+    # raise instead of these two calls completing cleanly.
   end
 
   # ── Windows 3+4: "after PR creation succeeds, before the workflow fact is
   #    persisted" and "after facts persist, before the state CAS" -- call 1
   #    fully succeeds (ref + PR both created). Call 2 (the workflow retrying
   #    because it crashed before durably recording call 1's success) must
-  #    fresh-read the existing ref and PR and make ZERO write calls. These
-  #    two design windows are indistinguishable at the adapter's observable
-  #    boundary -- both present as "everything already exists" on
-  #    re-invocation -- so one test covers both. ──────────────────────────
+  #    fresh-read the existing ref and PR and create no new commit, ref, or
+  #    PR (Fix 2's tree-provenance check still issues idempotent blob/tree
+  #    POSTs -- content-addressed no-ops, not new data). These two design
+  #    windows are indistinguishable at the adapter's observable boundary --
+  #    both present as "everything already exists" on re-invocation -- so one
+  #    test covers both. ────────────────────────────────────────────────
 
-  test "re-invoking create_change_request after both the head ref and the PR already exist performs only reads" do
+  test "re-invoking create_change_request after both the head ref and the PR already exist creates no new commit, ref, or PR" do
     # Call 1: full fresh create, succeeds completely.
     expect_mint(:change_request_write)
 
@@ -261,6 +429,10 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
 
     Req.Test.expect(@stub_name, fn conn ->
       Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"}))
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -284,7 +456,7 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     end)
 
     Req.Test.expect(@stub_name, fn conn ->
-      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      conn |> Plug.Conn.put_status(200) |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
     end)
 
     Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, []) end)
@@ -305,9 +477,9 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     assert {:ok, %ChangeRequest{external_id: "42"}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
 
-    # Call 2 (the retry): both the ref and the PR already exist. Only GETs
-    # (plus the mandatory mint POST) are registered -- any write call
-    # exhausts the queue and raises.
+    # Call 2 (the retry): both the ref and the PR already exist. Fix 2's
+    # tree-provenance round trip (idempotent blob/tree creation) still runs
+    # before the PR search -- but no commit, ref, or PR write happens.
     expect_mint(:change_request_write)
 
     Req.Test.expect(@stub_name, fn conn ->
@@ -321,9 +493,25 @@ defmodule EzagentPluginGithub.GitHubAdapterReconciliationTest do
     Req.Test.expect(@stub_name, fn conn ->
       Req.Test.json(conn, %{
         "sha" => head_sha(),
-        "tree" => %{"sha" => "tree_x"},
+        "tree" => %{"sha" => "tree_match"},
         "parents" => [%{"sha" => base_sha()}]
       })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{
+        "sha" => base_sha(),
+        "tree" => %{"sha" => "tree_base"},
+        "parents" => []
+      })
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"})
+    end)
+
+    Req.Test.expect(@stub_name, fn conn ->
+      Req.Test.json(conn, %{"sha" => "tree_match"})
     end)
 
     Req.Test.expect(@stub_name, fn conn ->

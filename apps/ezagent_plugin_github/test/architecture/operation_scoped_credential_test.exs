@@ -7,7 +7,10 @@ defmodule EzagentPluginGithub.Architecture.OperationScopedCredentialTest do
   deleted.
   """
 
-  use ExUnit.Case, async: true
+  # async: false -- the sentinel tests below mutate global Application
+  # config (app_id/private_key/adapter_req_opts); same fix as the equivalent
+  # test in Slice P1.
+  use ExUnit.Case, async: false
 
   alias EzagentPluginGithub.{GitHubInstallation, GitHubAdapter}
 
@@ -255,6 +258,14 @@ defmodule EzagentPluginGithub.Architecture.OperationScopedCredentialTest do
           conn
           |> Plug.Conn.put_status(201)
           |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+
+        {"PATCH", "/repos/owner/repo/git/refs/heads/feature-branch"} ->
+          conn
+          |> Plug.Conn.put_status(200)
+          |> Req.Test.json(%{
+            "ref" => "refs/heads/feature-branch",
+            "object" => %{"sha" => "commitsha"}
+          })
 
         {"GET", "/repos/owner/repo/pulls"} ->
           Req.Test.json(conn, [])
