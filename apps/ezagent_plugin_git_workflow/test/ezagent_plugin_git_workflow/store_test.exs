@@ -1,6 +1,8 @@
 defmodule EzagentPluginGitWorkflow.StoreTest do
   use EzagentPluginGitWorkflow.ConnCase, async: false
 
+  alias Ezagent.DomainGit.CommitSha
+  alias Ezagent.DomainGit.CreateChangeRequest
   alias EzagentCore.Repo
   alias EzagentPluginGitWorkflow.AcceptIntent
   alias EzagentPluginGitWorkflow.Store
@@ -379,6 +381,81 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     end
   end
 
+  # Design §6.1 requires the commit date stamped on the provider-side Git
+  # commit to be `git_workflow_runs.inserted_at`, read by the workflow from
+  # its OWN run row and handed to `CreateChangeRequest`. That constructor
+  # requires a `%DateTime{}` and rejects a `%NaiveDateTime{}`, so a store that
+  # hands back the naive value breaks the mandated path outright — this is not
+  # a representation preference.
+  #
+  # The columns are `timestamp without time zone` by design (Ecto's
+  # `timestamps(type: :utc_datetime_usec)` stores UTC there); what was missing
+  # is that raw `Repo.query!/2` bypasses Ecto's load casting, which is what
+  # would otherwise return a `DateTime`. The fix is load-side only, in all
+  # THREE row mappers — a mapper left unconverted is the same trap for
+  # whichever slice reads it next.
+  describe "timestamp round-trip (design §6.1)" do
+    test "a run read back carries a UTC DateTime that CreateChangeRequest accepts" do
+      {:ok, accepted} = Store.accept(build_intent(%{external_task_id: "task-ts-run"}))
+      {:ok, run} = Store.read_run(accepted.id)
+
+      assert %DateTime{time_zone: "Etc/UTC"} = run.inserted_at
+      assert %DateTime{time_zone: "Etc/UTC"} = run.updated_at
+
+      assert {:ok, %CreateChangeRequest{commit_date: commit_date}} =
+               CreateChangeRequest.new(%{
+                 title: "P4c",
+                 body: "",
+                 head_ref: "feature/run-ts",
+                 expected_base_sha: %CommitSha{value: String.duplicate("a", 40)},
+                 commit_date: run.inserted_at
+               })
+
+      assert commit_date == run.inserted_at
+    end
+
+    test "the transition CAS path returns the same UTC DateTime" do
+      {:ok, accepted} = Store.accept(build_intent(%{external_task_id: "task-ts-cas"}))
+
+      assert {:ok, transitioned} =
+               Store.transition(accepted.id, accepted.state_version, "accepted", "authorized")
+
+      assert %DateTime{time_zone: "Etc/UTC"} = transitioned.inserted_at
+      assert %DateTime{time_zone: "Etc/UTC"} = transitioned.updated_at
+    end
+
+    test "facts read back carry UTC DateTimes, bookkeeping and fact columns alike" do
+      established = establish_facts!("run_ts_facts")
+
+      assert %DateTime{time_zone: "Etc/UTC"} = established.inserted_at
+      assert %DateTime{time_zone: "Etc/UTC"} = established.updated_at
+
+      observed_at = ~U[2026-07-28 09:30:00.000000Z]
+
+      assert {:ok, updated} =
+               Store.update_facts("run_ts_facts", %{checks_observed_at: observed_at})
+
+      assert updated.checks_observed_at == observed_at
+      assert %DateTime{time_zone: "Etc/UTC"} = updated.checks_observed_at
+
+      assert {:ok, reread} = Store.read_facts("run_ts_facts")
+      assert reread.checks_observed_at == observed_at
+      assert %DateTime{time_zone: "Etc/UTC"} = reread.inserted_at
+    end
+
+    test "a binding read back carries UTC DateTimes" do
+      insert_binding!(%{id: "bnd_ts"})
+
+      assert {:ok, binding} = Store.read_binding("bnd_ts")
+      assert %DateTime{time_zone: "Etc/UTC"} = binding.inserted_at
+      assert %DateTime{time_zone: "Etc/UTC"} = binding.updated_at
+
+      assert {:ok, disabled} = Store.disable_binding("bnd_ts")
+      assert %DateTime{time_zone: "Etc/UTC"} = disabled.inserted_at
+      assert %DateTime{time_zone: "Etc/UTC"} = disabled.updated_at
+    end
+  end
+
   defp establish_facts!(run_id, attrs \\ %{}) do
     {:ok, facts} =
       %{
@@ -393,17 +470,12 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     established
   end
 
-  # FINDING (P4a, pre-existing): `git_workflow_facts`' timestamp columns are
-  # `timestamp without time zone`, and `Store` reads them with raw
-  # `Repo.query!/2` (no Ecto casting), so they come back as `NaiveDateTime`
-  # even though `WorkflowFacts`'s typespec says `DateTime.t()` and
-  # `WorkflowFacts.new/1` REJECTS a `NaiveDateTime`. That predates this slice
-  # (P1's `row_to_facts/1`) and is reported rather than changed here.
-  # Normalizing keeps these tests about the WRITE path — they stay meaningful
-  # whichever representation the store settles on.
-  defp as_naive(%DateTime{} = value), do: DateTime.to_naive(value)
-  defp as_naive(%NaiveDateTime{} = value), do: value
-
+  # P4a reported the naive/aware mismatch here as a pre-existing defect and
+  # normalized around it with an `as_naive/1` helper, because P4a had no
+  # consumer that broke. P4c is that consumer (design §6.1), so the store now
+  # converts on read and these assertions compare `%DateTime{}` values
+  # DIRECTLY — a regression to `NaiveDateTime` fails them instead of being
+  # normalized away.
   describe "update_facts/2" do
     # THE reason this function exists (plan gap ③, design §5.3). `upsert_facts/1`
     # is a full-row replace: its ON CONFLICT sets EVERY column to EXCLUDED, so a
@@ -425,7 +497,9 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
 
       # A third write must preserve BOTH of the first two, not just the latest.
       assert {:ok, %WorkflowFacts{}} =
-               Store.update_facts("run_incr_1", %{expected_base_sha: "a" <> String.duplicate("0", 39)})
+               Store.update_facts("run_incr_1", %{
+                 expected_base_sha: "a" <> String.duplicate("0", 39)
+               })
 
       assert {:ok,
               %WorkflowFacts{
@@ -495,10 +569,7 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert updated.id == established.id
       assert updated.inserted_at == established.inserted_at
 
-      assert NaiveDateTime.compare(
-               as_naive(updated.updated_at),
-               as_naive(established.updated_at)
-             ) == :gt
+      assert DateTime.compare(updated.updated_at, established.updated_at) == :gt
     end
 
     test "round-trips datetime and integer columns, not only strings" do
@@ -511,10 +582,10 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
                  checks_observed_at: observed_at
                })
 
-      assert {:ok, %WorkflowFacts{checks_revision: 7} = facts} = Store.read_facts("run_incr_types")
+      assert {:ok, %WorkflowFacts{checks_revision: 7} = facts} =
+               Store.read_facts("run_incr_types")
 
-      assert NaiveDateTime.compare(as_naive(facts.checks_observed_at), as_naive(observed_at)) ==
-               :eq
+      assert facts.checks_observed_at == observed_at
     end
   end
 

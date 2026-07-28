@@ -662,8 +662,8 @@ defmodule EzagentPluginGitWorkflow.Store do
       visibility: parse_visibility(row["visibility"]),
       allowed_head_namespace: row["allowed_head_namespace"],
       enabled: row["enabled"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
@@ -681,8 +681,8 @@ defmodule EzagentPluginGitWorkflow.Store do
       source_revision: row["source_revision"],
       requested_head_ref: row["requested_head_ref"],
       last_error_code: row["last_error_code"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
@@ -713,17 +713,38 @@ defmodule EzagentPluginGitWorkflow.Store do
       change_request_base_ref: row["change_request_base_ref"],
       checks_revision: row["checks_revision"],
       checks_summary: row["checks_summary"],
-      checks_observed_at: row["checks_observed_at"],
+      checks_observed_at: parse_timestamp(row["checks_observed_at"]),
       reviews_revision: row["reviews_revision"],
       reviews_summary: row["reviews_summary"],
-      reviews_observed_at: row["reviews_observed_at"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      reviews_observed_at: parse_timestamp(row["reviews_observed_at"]),
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
   defp parse_uri!(str) when is_binary(str), do: Ezagent.URI.new!(str)
   defp parse_uri!(nil), do: nil
+
+  # Every timestamp column here is declared `:utc_datetime_usec`, which Ecto
+  # stores in a `timestamp without time zone` column ALREADY IN UTC. This
+  # module reads with raw `Repo.query!/2`, which bypasses Ecto's load casting,
+  # so Postgrex hands back a `%NaiveDateTime{}` — a value the structs' own
+  # typespecs disagree with, and one that `WorkflowFacts.new/1` and
+  # `Ezagent.DomainGit.CreateChangeRequest.new/1` both REJECT.
+  #
+  # Design §6.1 makes that a broken path, not a cosmetic mismatch: the commit
+  # date an adapter stamps on the Git commit must be `git_workflow_runs.
+  # inserted_at`, read by the workflow from its own run row and passed into
+  # `CreateChangeRequest` — construction fails on the naive value.
+  #
+  # This is a load-side conversion only. The column type and the migration are
+  # correct as written and are deliberately not touched: the stored value is
+  # already UTC, so attaching the zone loses nothing and invents nothing.
+  # All THREE row mappers convert, not only the one that unblocked §6.1 — a
+  # mapper left raw is the identical trap for whichever slice reads it next.
+  defp parse_timestamp(nil), do: nil
+  defp parse_timestamp(%DateTime{} = value), do: value
+  defp parse_timestamp(%NaiveDateTime{} = value), do: DateTime.from_naive!(value, "Etc/UTC")
 
   defp parse_visibility("public"), do: :public
   defp parse_visibility("private"), do: :private
