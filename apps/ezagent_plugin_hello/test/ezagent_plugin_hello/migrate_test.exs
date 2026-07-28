@@ -53,15 +53,13 @@ defmodule EzagentPluginHello.MigrateTest do
       {:ok, session_uri, orch_uri} = App.ensure_app(ws, "current")
 
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, llm_uri} = Members.role_uri(session_uri, "llm")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       # Same members, same recipe — a true no-op re-run.
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, ^builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, ^concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, ^llm_uri} = Members.role_uri(session_uri, "llm")
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
 
       # And migrate_all/0 (the boot entry point) reports it migrated, not failed.
@@ -73,19 +71,17 @@ defmodule EzagentPluginHello.MigrateTest do
   end
 
   describe "migrate_one/1 on a session missing the declarative team" do
-    test "materializes orchestrator + builder + concierge from scratch", %{ws: ws} do
+    test "materializes front-desk + llm from scratch", %{ws: ws} do
       {session_uri, _owner_uri, _workspace_uri} = bare_hello_session(ws, "bare")
 
       # Before migrate: behaviors + template binding exist, but NO team.
       assert :error = Members.role_uri(session_uri, "front-desk")
-      assert :error = Members.role_uri(session_uri, "builder")
-      assert :error = Members.role_uri(session_uri, "concierge")
+      assert :error = Members.role_uri(session_uri, "llm")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, _llm_uri} = Members.role_uri(session_uri, "llm")
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
     end
   end

@@ -32,8 +32,9 @@ defmodule EzagentPluginHello.MembersTest do
     {:ok, session_uri, orch_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
 
     assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-    assert {:ok, %URI{}} = Members.role_uri(session_uri, "builder")
-    assert {:ok, %URI{}} = Members.role_uri(session_uri, "concierge")
+    assert {:ok, %URI{}} = Members.role_uri(session_uri, "llm")
+    assert :error = Members.role_uri(session_uri, "builder")
+    assert :error = Members.role_uri(session_uri, "concierge")
     assert :error = Members.role_uri(session_uri, "nope")
   end
 end

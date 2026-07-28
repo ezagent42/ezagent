@@ -44,41 +44,41 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Classify a PAGE-OWNER message as page `:builder`, read-only `:concierge`,
-  `:sharer` (share link), or `:publisher` (publish template), via one cheap
-  LLM round-trip (`Prompts.route_system/0`). Fail-closed to `:builder` — the
+  Classify a PAGE-OWNER message as a Session action: `:rebuild`, `:answer`,
+  `:share`, `:publish`, or `:delegate_to_kanban`, via one cheap LLM round-trip
+  (`Prompts.route_system/0`). Fail-closed to `:rebuild` — the
   owner is here to build, and a mis-route to the builder is recoverable (it
   just regenerates), whereas losing a build request is not.
   """
   @spec classify_intent(URI.t(), String.t()) ::
-          :builder | :concierge | :sharer | :publisher | :dispatcher
+          :rebuild | :answer | :share | :publish | :delegate_to_kanban
   def classify_intent(%URI{} = session_uri, user_text) when is_binary(user_text) do
     case call_llm(session_uri, Prompts.route_system(), user_text) do
       {:ok, %{content: content}} when is_binary(content) ->
         interpret_intent(content)
 
       other ->
-        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → builder")
-        :builder
+        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → rebuild")
+        :rebuild
     end
   end
 
   @doc """
-  Interpret the router model's one-word answer. SHARE→:sharer, PUBLISH→:publisher,
-  ASK→:concierge, anything else→:builder (fail-open to build, the owner default).
+  Interpret the router model's one-word answer. SHARE→:share, PUBLISH→:publish,
+  ASK→:answer, anything else→:rebuild (fail-open to build, the owner default).
   Pure — split out so the routing policy is unit-testable without the LLM.
   """
   @spec interpret_intent(String.t()) ::
-          :builder | :concierge | :sharer | :publisher | :dispatcher
+          :rebuild | :answer | :share | :publish | :delegate_to_kanban
   def interpret_intent(content) when is_binary(content) do
     up = String.upcase(content)
 
     cond do
-      String.contains?(up, "KANBAN") -> :dispatcher
-      String.contains?(up, "SHARE") -> :sharer
-      String.contains?(up, "PUBLISH") -> :publisher
-      String.contains?(up, "ASK") -> :concierge
-      true -> :builder
+      String.contains?(up, "KANBAN") -> :delegate_to_kanban
+      String.contains?(up, "SHARE") -> :share
+      String.contains?(up, "PUBLISH") -> :publish
+      String.contains?(up, "ASK") -> :answer
+      true -> :rebuild
     end
   end
 
@@ -785,17 +785,10 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # The session's builder agent URI. The builder is a PLANNED-URI member
-  # (materialized via `Definition.roles`, `EzagentPluginHello.Members`) — the
-  # old `session://<ws>/hello/<name> -> entity://<ws>/agent/hello_<name>`
-  # convention no longer points at a live entity, so resolve by `role_name` off
-  # the session's live membership slice first. This URI is used ONLY as
-  # `Message.sender` attribution for builder narration (`TurnDriver.say`), never
-  # as a dispatch target, so a `:error` fallback to the legacy convention URI
-  # keeps generation working (and keeps the `/agent/` shape the customer SPA's
-  # sender styling expects) even if the builder isn't materialized yet.
+  # Generated-page narration is emitted by the session's front-desk agent. The
+  # builder is a Session action, not an independently materialized member.
   defp builder_uri(%URI{} = session_uri) do
-    case EzagentPluginHello.Members.role_uri(session_uri, "builder") do
+    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
       {:ok, uri} -> uri
       :error -> legacy_builder_uri(session_uri)
     end

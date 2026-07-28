@@ -60,3 +60,38 @@ and remains draft while the required CI gate is incomplete. It is rebased onto
   `site_seed_boot` remains enabled by default in dev/prod. Deployment must set
   the founder email or the seed behavior/config must be repaired before merge.
 default to `deepseek-v4-flash`.
+
+## 2026-07-28 follow-up — two-agent materialization
+
+Hello now materializes exactly two platform agents: `front-desk` (chat bridge)
+and `llm` (provider/credential holder). Page generation, read-only answer,
+sharing, publishing, and Kanban delegation are hosted as Session actions, so
+they retain their product behavior without adding role recipes or membership
+edges.
+
+### Browser E2E evidence
+
+- Logged into the isolated service on port `10042` with `agent-browser`.
+- Created `session://system/hello/hello-two-agent-e2e` through the World UI.
+- The live members panel showed three principals: Admin plus exactly the two
+  materialized agents, `front-desk` and `llm`.
+- Sent a real page-build request through the conversation composer. The
+  front-desk acknowledged and started generation, proving browser ingress →
+  front-desk → Hello Session action routing.
+- The request finished as `generation_failed`, as expected for this fresh
+  isolated environment without an LLM credential; this does not affect the
+  two-agent materialization or routing result.
+
+Artifacts:
+
+- `/tmp/hello-two-agent-e2e-members.png`
+- `/tmp/hello-two-agent-e2e-conversation.png`
+
+### Verification
+
+- `MIX_ENV=test mix test apps/ezagent_plugin_hello/test` — passed before the
+  browser run.
+- `MIX_ENV=test mix test apps/ezagent_plugin_hello/test/integration/hello_page_e2e_test.exs`
+  — 7 tests, 0 failures.
+- `mix precommit` remains in progress in the local environment; it has not
+  produced a final result and must not be treated as green yet.

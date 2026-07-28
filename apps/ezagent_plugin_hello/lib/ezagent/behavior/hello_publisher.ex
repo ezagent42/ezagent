@@ -31,6 +31,16 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   """
   def handle_publish(%{session_uri: session_str} = args, ctx)
       when is_binary(session_str) and session_str != "" do
+    _ = publish_from_session(args, ctx)
+    {:ok, %{}, []}
+  end
+
+  @doc false
+  def handle_publish(_args, _ctx), do: {:ok, %{}, []}
+
+  @doc false
+  def publish_from_session(%{session_uri: session_str} = args, ctx)
+      when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         caller_uri = Ezagent.Entity.User.admin_uri()
@@ -48,7 +58,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
             {:ok, "Template \"#{template_display_name(tmpl_uri)}\" published."}
           end
 
-        case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
+        case result_actor(session_uri) do
           {:ok, publisher_uri} ->
             case result do
               {:ok, text} ->
@@ -71,12 +81,10 @@ defmodule Ezagent.ActionSet.HelloPublisher do
       :error ->
         :ok
     end
-
-    {:ok, %{}, []}
   end
 
   @doc false
-  def handle_publish(_args, _ctx), do: {:ok, %{}, []}
+  def publish_from_session(_args, _ctx), do: :ok
 
   @doc false
   def handle_receive(_args, _ctx), do: {:ok, %{}, []}
@@ -113,7 +121,8 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   - Return ONLY the name or \"auto\". No punctuation, no extra text.
   """
 
-  defp extract_explicit_name(session_uri, instruction) when is_binary(instruction) and instruction != "" do
+  defp extract_explicit_name(session_uri, instruction)
+       when is_binary(instruction) and instruction != "" do
     case EzagentPluginHello.Generator.complete(session_uri, @name_prompt, instruction) do
       {:ok, %{content: content}} when is_binary(content) ->
         name =
@@ -168,5 +177,12 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   rescue
     ArgumentError -> :error
+  end
+
+  defp result_actor(session_uri) do
+    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
+      {:ok, uri} -> {:ok, uri}
+      :error -> EzagentPluginHello.Members.role_uri(session_uri, "publisher")
+    end
   end
 end

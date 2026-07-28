@@ -149,6 +149,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Ezagent.ActionSet.Turn in behaviors
     assert Ezagent.ActionSet.Surface in behaviors
     assert Ezagent.ActionSet.Publisher.SessionImpl in behaviors
+    assert Ezagent.ActionSet.HelloSessionActions in behaviors
   end
 
   test "a second validated prompt result changes the live anonymous page", ctx do

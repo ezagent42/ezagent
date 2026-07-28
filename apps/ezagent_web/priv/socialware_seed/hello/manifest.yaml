@@ -1,7 +1,7 @@
 name: hello
 version: "0.1.0"
 title: "Hello website builder"
-description: "Build and publish a website through a seven-role Hello team."
+description: "Build and publish a website through a two-agent Hello team."
 uses:
   - hello
 bases:
@@ -10,6 +10,7 @@ bases:
 shape:
   - Ezagent.ActionSet.Turn
   - Ezagent.ActionSet.Surface
+  - Ezagent.ActionSet.HelloSessionActions
 views:
   - hello_render
 roles:
@@ -17,14 +18,6 @@ roles:
     fill: agent
     recipe: hello.front-desk
     flavor: hello
-  - role_name: builder
-    fill: agent
-    recipe: hello.builder
-    flavor: native
-  - role_name: concierge
-    fill: agent
-    recipe: hello.concierge
-    flavor: native
   - role_name: llm
     fill: agent
     recipe: hello.llm
@@ -33,18 +26,6 @@ roles:
       provider: deepseek
       api_url: https://api.deepseek.com/chat/completions
       model: deepseek-v4-flash
-  - role_name: sharer
-    fill: agent
-    recipe: hello.sharer
-    flavor: native
-  - role_name: publisher
-    fill: agent
-    recipe: hello.publisher
-    flavor: native
-  - role_name: dispatcher
-    fill: agent
-    recipe: hello.dispatcher
-    flavor: native
 routing_rules:
   - matcher:
       type: always

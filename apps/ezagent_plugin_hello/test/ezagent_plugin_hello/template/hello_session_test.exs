@@ -69,8 +69,8 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         |> Enum.map(&(Map.get(&1, :role_name) || Map.get(&1, "role_name")))
 
       assert "front-desk" in declarations
-      assert "builder" in declarations
-      assert "concierge" in declarations
+      assert "llm" in declarations
+      assert length(declarations) == 2
 
       # `Workspace.create_session` fires this transaction once the owner-only
       # session is durable; drive it synchronously here.
@@ -78,8 +78,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, _llm_uri} = Members.role_uri(session_uri, "llm")
 
       assert match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)),
              "the orchestrator should be live"

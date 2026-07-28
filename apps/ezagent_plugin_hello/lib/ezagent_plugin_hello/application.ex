@@ -83,26 +83,18 @@ defmodule EzagentPluginHello.Application do
     ]
   end
 
-  # hello's two agents are ROLES on the unified `Entity.Agent` (hosted by the
-  # `native` flavor), NOT own Kinds (Principle 1: an agent type is a role × flavor,
-  # never its own Kind). The behaviors load PER-INSTANCE via the recipe (RF-1
-  # `BehaviorSet.resolve_action` on `Entity.Agent`); cold-restart revival re-reads
-  # the durable `:role` marker from the sandbox slice and re-composes — so no
-  # `agent_flavors`/own-Kind revival registration is needed. Not `passive`: the
-  # builder/concierge are chat principals (@-mentionable + joinable).
+  # Hello materializes only two platform agents: `front-desk` is the chat
+  # bridge, and `llm` owns the chosen provider flavor and credentials. The other
+  # product operations are Session actions (HelloSessionActions), so they do not
+  # create agent identities, recipe bindings, or membership edges.
   @impl Ezagent.Plugin
   def roles,
     do: [
       hello_front_desk_recipe(),
-      hello_builder_recipe(),
-      hello_concierge_recipe(),
-      hello_llm_recipe(),
-      hello_sharer_recipe(),
-      hello_publisher_recipe(),
-      hello_dispatcher_recipe()
+      hello_llm_recipe()
     ]
 
-  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
+  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches deterministic operations to Hello Session actions."
   @spec hello_front_desk_recipe() :: map()
   def hello_front_desk_recipe do
     %{
@@ -110,32 +102,6 @@ defmodule EzagentPluginHello.Application do
       behaviors: [Ezagent.ActionSet.HelloOrchestrator],
       requested_caps: [
         %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
-      ]
-    }
-  end
-
-  @doc "The `hello.builder` role — the page-generating agent (`Behavior.HelloBuilder`)."
-  @spec hello_builder_recipe() :: map()
-  def hello_builder_recipe do
-    %{
-      name: "hello.builder",
-      behaviors: [Ezagent.ActionSet.HelloBuilder],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive},
-        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :rebuild}
-      ]
-    }
-  end
-
-  @doc "The `hello.concierge` role — the read-only Q&A/navigation agent (`Behavior.HelloConcierge`)."
-  @spec hello_concierge_recipe() :: map()
-  def hello_concierge_recipe do
-    %{
-      name: "hello.concierge",
-      behaviors: [Ezagent.ActionSet.HelloConcierge],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive},
-        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :answer}
       ]
     }
   end
@@ -151,38 +117,6 @@ defmodule EzagentPluginHello.Application do
         credential_optional: true
       },
       requested_caps: []
-    }
-  end
-
-  @doc "The `hello.sharer` role — wraps 'create share link' as a dispatchable action (`Behavior.HelloSharer`)."
-  @spec hello_sharer_recipe() :: map()
-  def hello_sharer_recipe do
-    %{
-      name: "hello.sharer",
-      behaviors: [Ezagent.ActionSet.HelloSharer],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloSharer, action: :share}]
-    }
-  end
-
-  @doc "The `hello.publisher` role — wraps 'publish as template' as a dispatchable action (`Behavior.HelloPublisher`)."
-  @spec hello_publisher_recipe() :: map()
-  def hello_publisher_recipe do
-    %{
-      name: "hello.publisher",
-      behaviors: [Ezagent.ActionSet.HelloPublisher],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloPublisher, action: :publish}]
-    }
-  end
-
-  @doc "The `hello.dispatcher` role — delegates an authenticated hello instruction to the workspace Kanban."
-  @spec hello_dispatcher_recipe() :: map()
-  def hello_dispatcher_recipe do
-    %{
-      name: "hello.dispatcher",
-      behaviors: [Ezagent.ActionSet.HelloDispatcher],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloDispatcher, action: :delegate_to_kanban}
-      ]
     }
   end
 

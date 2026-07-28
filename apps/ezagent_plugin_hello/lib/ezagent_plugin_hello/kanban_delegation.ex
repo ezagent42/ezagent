@@ -228,7 +228,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
 
   defp report(session_uri, instruction, sender_uri) do
     actor =
-      case Members.role_uri(session_uri, "dispatcher") do
+      case Members.role_uri(session_uri, "front-desk") do
         {:ok, uri} -> uri
         _ -> sender_uri
       end
