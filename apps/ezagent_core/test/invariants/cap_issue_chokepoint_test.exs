@@ -155,6 +155,13 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # verified set and cannot mint or authorize a grant by itself.
     "apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex" => 1,
 
+    # #189 PR-1 — the unified identity-caps store writes its OWN `identity_caps`
+    # table column (a separate table from `users.caps_json`). In PR-1 it is a
+    # WRITE-SHADOW: reads are never store-authoritative, and it MIRRORS the
+    # verified set on every legacy write — it cannot mint, grant, or authorize
+    # by itself. codex adversarial review (5 rounds) covered the write paths.
+    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 8,
+
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
     # preserves authority rather than broadening it, and grants nothing new.
     "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex" => 1

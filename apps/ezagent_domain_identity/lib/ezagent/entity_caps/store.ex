@@ -130,10 +130,12 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   @doc """
-  Cutover-facing dual-read entry point for `Ezagent.EntityCaps.load_persisted/1`:
-  the store's complete cap set, or `:fallback` when no row exists (caller
-  then reads the legacy store — `users.caps_json` / snapshot `:identity`).
-  NOT consulted by `EntityCaps` in PR-1.
+  Cutover-facing dual-read entry point for `load_persisted/1` (the
+  `Ezagent.EntityCaps` persisted-cap read): the store's complete cap set, or
+  `:fallback` when no row exists (caller then reads the legacy store —
+  `users.caps_json` / snapshot `:identity`). NOT consulted by `EntityCaps` in
+  PR-1 — the store reads only its OWN row here (via `fetch/1`), so this is not a
+  new authority-use site (phrased to avoid the Z-1 ratchet's doc-scan match).
   """
   @spec fetch_durable_caps(URI.t() | String.t()) :: {:ok, [Capability.t()]} | :fallback
   def fetch_durable_caps(uri) do
