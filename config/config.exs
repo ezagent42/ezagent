@@ -34,6 +34,26 @@ config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
   socialware_manifest_boot_scan: config_env() in [:prod]
 
+# Role/reference plugin app lists for the generic CLI tasks, moved OUT of the
+# task modules' `@attribute` literals so a deployment can extend them without
+# editing infra code (and so infra tasks don't hardcode a specific plugin).
+#
+# `role_plugins` — apps `mix ezagent.agent.grant_recipe_caps` boots best-effort
+# so their `roles/0` recipes register into `RecipeRegistry` before the lookup.
+# `socialware_check_reference_apps` — apps `mix ezagent.socialware.check` boots
+# best-effort so a definition's referenced adapters/recipes/view render-caps
+# resolve. Both are atom-only, best-effort (a no-op if an app is absent from the
+# build). Defaults preserve the previous hardcoded lists.
+config :ezagent_domain_agent,
+  role_plugins: [:ezagent_plugin_kanban]
+
+config :ezagent_domain_session,
+  socialware_check_reference_apps: [
+    :ezagent_domain_socialware,
+    :ezagent_plugin_hello,
+    :ezagent_plugin_kanban
+  ]
+
 # `:home_workspace` — the SINGLE source of truth for the hello home workspace
 # (`EzagentPluginHello.home_workspace/0`). The boot 官网 seed, the #185
 # credential bridge destination, and the `/hello/<name>` serve side ALL read
