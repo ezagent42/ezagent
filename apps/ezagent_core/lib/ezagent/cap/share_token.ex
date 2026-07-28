@@ -23,6 +23,18 @@ defmodule Ezagent.Cap.ShareToken do
       `uploads` — plus the `behavior` (ActionSet) and `actions` (read / operate)
       the link grants, so the claim landing knows exactly which cap to mint.
 
+  ## Reusable by design (D3), not one-shot
+
+  A share link is INTENTIONALLY reusable: any holder may claim it (each getting
+  their own grantee-bound cap) until it expires — it is a pasteable link, not a
+  single-use ticket, so it carries no nonce / JTI / redemption state. This is
+  safe because authority is re-checked at EVERY claim, not frozen at mint:
+  `Ezagent.Socialware.Share.claim/2` re-verifies the token's MAC-bound `issuer`
+  is STILL the target's current `data_owner` before minting (M1), so a revoked or
+  transferred target invalidates all outstanding links immediately. If a future
+  business case needs a one-shot link, that is a per-share policy to add then
+  (with redemption state) — reuse is the default.
+
   ## Signing secret
 
   The MAC key is the application `secret_key_base`, read at runtime from
