@@ -11,16 +11,31 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
   `%Invocation{}`, `ctx.caps`, a GitHub token, or any caller-supplied
   credential (§3.2).
 
-  ## Provisional `term()` typing (deferred to Slice P4)
+  ## Why `typed_args`/`typed_result` stay `term()` (Slice P4a)
 
-  `authorized_task`, `action`, `typed_args`, and `typed_result` are all
-  `term()` today. Nothing constructs an `authorized_task` yet — the only
-  shipping implementation, `Unavailable`, never returns `{:ok, _}` — so
-  there is nothing to constrain. When a real backend first constructs an
-  authorized task (Slice P4), these types MUST be tightened to a closed,
-  credential-free shape (e.g. an opaque `%AuthorizedTask{}` with a
-  validating constructor) so the contract cannot silently widen to permit
-  a capability / `%Invocation{}` / token / raw-body leak through this seam.
+  `authorized_task` and `action` are now closed: the former is
+  `EzagentPluginGitWorkflow.AuthorizedTask`, a struct with exactly four
+  fields and no place to put a credential; the latter is the eight-action
+  vocabulary `Ezagent.Entity.GitTaskAccess` declares. Both are enforced at
+  runtime by `invoke/3`'s head, not merely documented in a typespec.
+
+  `typed_args` and `typed_result` remain `term()` deliberately. Their
+  per-action shape is already gated **structurally** downstream: the Git
+  task-access action set
+  (`apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`)
+  matches every incoming arg map against a per-action `@allowed_keys`
+  whitelist and rejects any key outside that action's list, and
+  `Ezagent.Entity.GitTaskAccess.validate_invocation/2` additionally rejects
+  any attempt to restate a policy-owned coordinate. Combined with
+  `%AuthorizedTask{}` having no credential field, there is no place in this
+  contract for a cap, an `%Invocation{}`, or a token to ride.
+
+  What is deliberately NOT added here is a seam-level blacklist of
+  forbidden arg-key spellings. A blacklist of names is exactly the kind of
+  guard this project has repeatedly found does not hold — the next leak
+  simply picks a name that is not on the list. The enforceable property is
+  the downstream whitelist plus the closed struct, so that is what this
+  seam relies on.
 
   ## Backend selection is compile-time, not runtime (hardwired)
 
@@ -53,11 +68,36 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
   a production build.
   """
 
+  alias EzagentPluginGitWorkflow.AuthorizedTask
   alias EzagentPluginGitWorkflow.TaskBinding
   alias EzagentPluginGitWorkflow.WorkflowRun
 
-  @type authorized_task :: term()
-  @type action :: atom()
+  # The exact vocabulary `Ezagent.Entity.GitTaskAccess` declares in its own
+  # `@actions`, and that its action set exposes. Restated here rather than read
+  # from that module because it is a compile-time guard list: `action in
+  # @actions` must be expanded at compile time, and a remote call cannot appear
+  # in a guard.
+  @actions [
+    :resolve_repository,
+    :create_change_request,
+    :read_change_request,
+    :list_checks,
+    :list_reviews,
+    :provision_workspace,
+    :cleanup_workspace,
+    :collect_workspace_changes
+  ]
+
+  @type authorized_task :: AuthorizedTask.t()
+  @type action ::
+          :resolve_repository
+          | :create_change_request
+          | :read_change_request
+          | :list_checks
+          | :list_reviews
+          | :provision_workspace
+          | :cleanup_workspace
+          | :collect_workspace_changes
   @type typed_args :: term()
   @type typed_result :: term()
 
@@ -98,4 +138,31 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
           | {:error, :authorization_unavailable}
           | {:error, :not_authorized}
   def authorize(run, binding), do: @backend.authorize(run, binding)
+
+  @doc """
+  Invokes `action` against an already-authorized task through the
+  compile-time-selected seam.
+
+  Like `authorize/2`, this is the single call site that dispatches to
+  `@backend`, so the dynamic-dispatch indirection stays concentrated in one
+  module instead of spreading to every stage.
+
+  Both parts of the head are load-bearing, not decoration:
+
+    * `%AuthorizedTask{}` — a raw map, a bare `%Ezagent.Entity.GitTaskAccess{}`
+      policy, or anything else a caller assembled by hand must never reach a
+      backend. Only the validating constructor produces this struct.
+    * `action in @actions` — the vocabulary is closed at the seam, so a
+      backend never has to decide what an unknown action means.
+
+  A call that matches neither raises `FunctionClauseError`. That is the
+  intended failure: it fails closed and LOUD. Returning `{:error, _}` would
+  let a runner log the tuple and carry on as if a legitimate refusal had
+  occurred, which is exactly how a malformed authorization slips through.
+  """
+  @spec invoke(AuthorizedTask.t(), action(), typed_args()) ::
+          {:ok, typed_result()} | {:error, term()}
+  def invoke(%AuthorizedTask{} = authorized_task, action, typed_args)
+      when action in @actions,
+      do: @backend.invoke(authorized_task, action, typed_args)
 end

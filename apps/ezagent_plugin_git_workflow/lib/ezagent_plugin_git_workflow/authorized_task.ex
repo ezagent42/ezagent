@@ -19,9 +19,10 @@ defmodule EzagentPluginGitWorkflow.AuthorizedTask do
   independently plausible values:
 
     * `policy` round-trips through `Ezagent.Entity.GitTaskAccess.revalidate/1`
-      — the same chokepoint `Ezagent.ActionSet.GitTaskAccess` runs before it
-      touches anything authority-sensitive. A policy that would be rejected
-      downstream is rejected here instead of travelling further;
+      — the same chokepoint the Git task-access action set
+      (`apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`) runs
+      before it touches anything authority-sensitive. A policy that would be
+      rejected downstream is rejected here instead of travelling further;
     * `task_uri` and `generation` must equal the policy's own;
     * `task_access_uri` must equal `GitTaskAccess.uri_from_args(policy)` — the
       content-addressed receiver URI derived from the whole policy.
@@ -67,9 +68,15 @@ defmodule EzagentPluginGitWorkflow.AuthorizedTask do
           | {:error, :unknown_fields}
           | {:error, {:missing_field, atom()}}
           | {:error, {:invalid_field, atom()}}
+  # `Map.fetch!/2` rather than `attrs.policy`, and a destructuring head on
+  # `validate_coordinates/2` rather than `attrs.task_uri` — `validate_keys/1`
+  # has already proven all four keys are present, and the plugin
+  # workspace-locality scanner cannot type-prove a dot-access receiver, so it
+  # would otherwise book four benign field reads as dynamic-receiver debt
+  # (same fix as `Authorization.authorize_run/2` took on this branch).
   def new(attrs) when is_map(attrs) do
     with :ok <- validate_keys(attrs),
-         {:ok, policy} <- validated_policy(attrs.policy),
+         {:ok, policy} <- validated_policy(Map.fetch!(attrs, :policy)),
          :ok <- validate_coordinates(attrs, policy) do
       {:ok, struct!(__MODULE__, Map.put(attrs, :policy, policy))}
     end
@@ -106,11 +113,14 @@ defmodule EzagentPluginGitWorkflow.AuthorizedTask do
 
   # `uri_from_args/1` is only ever reached with an already-revalidated policy,
   # so its "invalid policy" raise is unreachable from here.
-  defp validate_coordinates(attrs, policy) do
+  defp validate_coordinates(
+         %{task_uri: task_uri, generation: generation, task_access_uri: task_access_uri},
+         %GitTaskAccess{task_uri: policy_task_uri, generation: policy_generation} = policy
+       ) do
     checks = [
-      task_uri: attrs.task_uri == policy.task_uri,
-      generation: attrs.generation == policy.generation,
-      task_access_uri: attrs.task_access_uri == GitTaskAccess.uri_from_args(policy)
+      task_uri: task_uri == policy_task_uri,
+      generation: generation == policy_generation,
+      task_access_uri: task_access_uri == GitTaskAccess.uri_from_args(policy)
     ]
 
     case Enum.find(checks, fn {_field, consistent?} -> not consistent? end) do

@@ -550,6 +550,17 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     {"apps/ezagent_plugin_git_workflow/lib/ezagent_plugin_git_workflow/execution_seam.ex",
      {:authorize, 2}, :remote, "authorize/2",
      "4ca59c6e6def622a62e585463a9dee15bc837de4eb0872d9c133524bcca5f3d8"},
+    # Git Provider V1 Plan E Slice P4a — the seam's second (and last) callback,
+    # `invoke/3`, dispatching to the same compile-time `@backend` attribute the
+    # `authorize/2` entry above already covers. The scanner cannot distinguish a
+    # module attribute from a genuinely dynamic receiver; consolidating BOTH
+    # callbacks into `ExecutionSeam` keeps this class bounded to these two
+    # fingerprints instead of one per future stage caller. `{:when, 2}` (not
+    # `{:invoke, 3}`) is what the scanner reports because the clause carries an
+    # `action in @actions` guard.
+    {"apps/ezagent_plugin_git_workflow/lib/ezagent_plugin_git_workflow/execution_seam.ex",
+     {:when, 2}, :remote, "invoke/3",
+     "1ea60b3fc7b11e0b8b37069ac9b39da3b4590320d84136abed903ad61b3d836c"},
     {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex", {:advance_ref, 4},
      :remote, "external_id/0",
      "aeaaea930168eba204c55971004f4ba5e3685c2009c91ea1573620f8ab0bc791"},
