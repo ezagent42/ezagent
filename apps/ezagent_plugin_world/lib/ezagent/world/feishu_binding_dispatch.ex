@@ -3,16 +3,9 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   Thin dispatch adapter: the world Feishu bindings surface → the formal
   `EzagentPluginFeishu.Behavior.UserBinding` ActionSet dispatch.
 
-  Builds the `workspace://<target>?action=feishu_user_bindings.<action>` target
-  via `Ezagent.URI.with_action/3`. The label `feishu_user_bindings` is the
-  Behavior's `state_slice/0` value, used here as a literal (not read at
-  compile time — `ezagent_plugin_world` has no compile-time dependency on
-  `ezagent_plugin_feishu` per P1 plugin isolation). `behavior_action/1`
-  splits on `.` and only the action atom drives `BehaviorRegistry` resolution,
-  but keeping the label consistent with the Behavior's own `state_slice`
-  makes log entries, telemetry, and handoff-to-handoff tracing unambiguous.
-  This module wraps the target in a real `%Ezagent.Invocation{mode: :call,
-  origin: :authenticated_external}` carrying the CALLER's own identity/caps, and
+  Builds an `Ezagent.Cmd.authenticated_external/5` with a bare workspace
+  target and explicit action, carrying the presenter's own identity and
+  freshly loaded caps. It then delegates to `Ezagent.Router.dispatch/1` and
   normalizes every raw dispatch/handler reason into a small closed set of
   stable, redacted error codes. Callers of this module (`WorkspacePluginData`,
   `WorkspacePluginActions`) never see `inspect/1` output, a full open_id, a
@@ -21,7 +14,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   Every call runs synchronously in the calling process (no `Task`/spawn), so
   when the caller is already inside `Ezagent.Invocation.with_admin_operator/2`
   (world_live.ex wraps every `world:dispatch` handler in it), the
-  canonical-admin convenience auto-mint in `Invocation.dispatch/1` still
+  canonical-admin convenience auto-mint in the dispatch policy still
   applies transparently — this module does not need to (and must not)
   re-wrap it or fabricate an admin caller/caps for a non-canonical caller.
 
@@ -30,7 +23,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   `EzagentPluginFeishu.Behavior.UserBinding` and are proven by its own tests.
   """
 
-  alias Ezagent.Invocation
+  alias Ezagent.{Cmd, Invocation, Router}
 
   @type error_code ::
           :unauthorized
@@ -67,11 +60,6 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   """
   @spec list_for_initial_state(URI.t(), URI.t(), Enumerable.t()) ::
           {:ok, [map()]} | {:error, error_code()}
-  # DEFERRED B2-auth: the `with_admin_operator` convenience and the
-  # `canonical_admin?/1` predicate below are NOT a permanent authorization
-  # scheme — they are the existing sanctioned seam (`world_live.ex` already
-  # wraps every `world:dispatch` handler in it).  A later thin B2-auth
-  # slice will replace this with real operator-cap acquisition.
   def list_for_initial_state(%URI{scheme: "workspace"} = workspace_uri, %URI{} = caller_uri, caps) do
     if canonical_admin?(caller_uri) do
       Invocation.with_admin_operator(caller_uri, fn ->
@@ -128,21 +116,13 @@ defmodule Ezagent.World.FeishuBindingDispatch do
   # -- internals ------------------------------------------------------------
 
   defp call(%URI{} = workspace_uri, action, args, %URI{} = caller_uri, caps) do
-    target = Ezagent.URI.with_action(workspace_uri, :feishu_user_bindings, action)
-
-    %Invocation{
-      target: target,
-      mode: :call,
-      args: args,
-      origin: :authenticated_external,
-      ctx: %{
-        caller: caller_uri,
-        authenticated_principal: caller_uri,
-        caps: MapSet.new(caps),
-        reply: {:caller_inbox, self()}
-      }
-    }
-    |> Invocation.dispatch()
+    workspace_uri
+    |> Cmd.authenticated_external(action, args, caller_uri, %{
+      caps: MapSet.new(caps),
+      reply: {:caller_inbox, self()},
+      mode: :call
+    })
+    |> Router.dispatch()
     |> normalize()
   end
 
@@ -183,7 +163,7 @@ defmodule Ezagent.World.FeishuBindingDispatch do
 
   defp canonical_admin?(%URI{} = caller) do
     Ezagent.URI.stable_key(caller) ==
-      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
   end
 
   defp parse_uri(str) do

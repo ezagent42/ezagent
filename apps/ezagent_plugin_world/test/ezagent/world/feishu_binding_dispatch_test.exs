@@ -8,7 +8,7 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
   policy / rollback rules — those are covered exhaustively by
   `apps/ezagent_plugin_feishu/test/behavior/user_binding_test.exs`. It proves
   only the ADAPTER's job: real target/caller/caps wiring through
-  `Ezagent.Invocation.dispatch/1`, workspace-scoped reads, and stable/redacted
+  `Ezagent.Cmd` and `Ezagent.Router`, workspace-scoped reads, and stable/redacted
   error normalization (never `inspect/1`, a raw tuple, or a leaked open_id).
   """
   use EzagentCore.DataCase, async: false
@@ -57,6 +57,21 @@ defmodule Ezagent.World.FeishuBindingDispatchTest do
 
   defp restore_env(key, nil), do: Application.delete_env(:ezagent_plugin_feishu, key)
   defp restore_env(key, value), do: Application.put_env(:ezagent_plugin_feishu, key, value)
+
+  test "adapter uses the current authenticated-external Cmd/Router boundary" do
+    source =
+      File.read!(
+        Path.expand(
+          "../../../lib/ezagent/world/feishu_binding_dispatch.ex",
+          __DIR__
+        )
+      )
+
+    assert source =~ "Cmd.authenticated_external"
+    assert source =~ "Router.dispatch"
+    refute source =~ "%Invocation{"
+    refute source =~ "Invocation.dispatch"
+  end
 
   describe "list/3" do
     test "returns only the target workspace's bindings, JSON-safe" do
