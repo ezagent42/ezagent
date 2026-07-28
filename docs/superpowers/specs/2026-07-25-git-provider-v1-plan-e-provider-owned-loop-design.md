@@ -488,6 +488,35 @@ committer` 全部确定，commit sha 成为内容的纯函数，重试得到同�
 - 不 force push；
 - 发现多个匹配 PR 或 branch provenance 不一致时 fail closed。
 
+#### 6.2.1 未关闭：ref-at-base 的 provenance 缺口（订正 2026-07-28）
+
+`ezagent_plugin_github` 的 adapter 在 `github_adapter.ex` 记着一条 KNOWN
+LIMITATION：deterministic ref 已存在**但仍停在 base** 时，adapter 没有任何
+commit 可比对 provenance，因此分不清「这是我自己上次重试留下的」与「这是外部
+在同名位置 planted 的」，两者都被当作可安全 resume。
+
+**该缺口至今未关闭。** 此处订正一条此前的错误判断：Slice P4c 的实施计划与其
+合并说明称「provider 调用前先落 `deterministic_head_ref` 关闭了这个缺口」——
+不成立。P4e 在验收时查证：
+
+- 全仓 `deterministic_head_ref` 只有**一处写**（`stage_runner.ex`），
+  **零处读**用于判定；
+- 它是**无条件写**的，因此记录的是「这个 ref **名字**归本 run」，而不是
+  「这个 ref **是我创建的**」；
+- 而 ref 名字本就由 `DeterministicRef.derive(allowed_head_namespace, run.id)`
+  纯函数推导，两个输入都持久——**持久化它没有提供任何本来推导不出的信息**。
+
+P4c 真正交付的是**写序**：facts 在第一次 provider mutation 之前落库。那是关闭
+缺口的**必要条件**（没有它，恢复时连一个可查的锚点都没有），不是关闭本身。
+
+关闭它需要一个具备判别力的事实，例如「本 run 创建 ref 时它指向的 sha」或一条
+显式的 created-by-this-run 记录，并在 adapter 的 resume 分支上真正读取。那是
+provider owner 与 workflow owner 之间的一次契约变更，属独立决定，不在 P4 范围。
+
+P4e 留了一条明确标注的 characterization 测试（"a ref planted at base by someone
+else is resumed onto — the gap P4c did NOT close"），使得将来真正关闭它时会有
+测试变红，而不是悄无声息。
+
 ### 6.3 Observation
 
 PR 打开后，一个 observation tick：
@@ -667,7 +696,8 @@ PR-check-review snapshots / retry-error presentation / local E2E）在 2026-07-2
   `EXCLUDED` ⇒ 分阶段增量写会把前一阶段的事实清成 NULL → P4a；
 - `github_adapter.ex` KNOWN LIMITATION：ref 停在 base 时 adapter 无法区分
   「自己上次重试留下的」与「外部 planted 的」，指名要 workflow 的 durable
-  facts（§5.3）给身份 → 机制在 P4a，写序在 P4c。
+  facts（§5.3）给身份 → 机制在 P4a，写序在 P4c。**订正 2026-07-28：写序是
+  必要条件，不是关闭；该缺口至今未关闭，见 §6.2.1。**
 
 ## 10. Lead review gates
 
