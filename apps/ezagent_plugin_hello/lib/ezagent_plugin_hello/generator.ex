@@ -212,11 +212,16 @@ defmodule EzagentPluginHello.Generator do
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
 
         # G5 source 2 — structured error, no hand-written prose.
-        TurnDriver.say_error(session_uri, builder, {:generation_failed, reason})
+        TurnDriver.say_error(session_uri, builder, error_signal_reason(reason))
 
         err
     end
   end
+
+  @doc false
+  @spec error_signal_reason(term()) :: term()
+  def error_signal_reason({:no_api_key, _provider} = reason), do: reason
+  def error_signal_reason(reason), do: {:generation_failed, reason}
 
   # Emit ONE "<label>…" line, then run the slow work inline. The client renders a
   # LIVE ticking elapsed time next to that one line (no per-tick chat spam); the

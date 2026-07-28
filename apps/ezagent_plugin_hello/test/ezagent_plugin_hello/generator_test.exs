@@ -1,10 +1,24 @@
 defmodule EzagentPluginHello.GeneratorTest do
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
-
   alias EzagentPluginHello.Generator
 
+  describe "error_signal_reason/1" do
+    test "preserves a missing API key so World can render credential guidance" do
+      assert Generator.error_signal_reason({:no_api_key, "deepseek"}) ==
+               {:no_api_key, "deepseek"}
+    end
+
+    test "wraps an unclassified generation failure for Layer 3 handling" do
+      reason = {:http, 502, "bad gateway"}
+      assert Generator.error_signal_reason(reason) == {:generation_failed, reason}
+    end
+
+    test "wraps lookalike missing-key errors that are not the supported two-tuple" do
+      reason = {:no_api_key, "deepseek", :retryable}
+      assert Generator.error_signal_reason(reason) == {:generation_failed, reason}
+    end
+  end
 
   # The incremental-edit core: nodes are id-annotated (pre-order), the model emits
   # ops referencing those ids, and `apply_patch/2` applies them. These pin the
