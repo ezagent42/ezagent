@@ -28,7 +28,9 @@ defmodule Ezagent.EntityCaps.Store do
     * Dual-WRITE: every cap mutation writes BOTH the legacy store
       (`users.caps_json` for users / the snapshot `:identity` slice for
       other durable entities) AND this store. The write points are
-      `UserStore.update/2` (same transaction), the `Kind.Snapshot.save_now`
+      `UserStore.update/2` (mirror runs AFTER the `caps_json` commit, OUTSIDE
+      its transaction — a shadow failure can never roll it back), the
+      `Kind.Snapshot.save_now`
       chokepoint (init / post-init / commit / Writer flush / terminate),
       the `Kind.Server` commit hook (covers `:not_durable` commits), and
       `SnapshotStore.write/delete` — so this store mirrors each entity's
@@ -65,10 +67,10 @@ defmodule Ezagent.EntityCaps.Store do
 
   @primary_key {:uri, :string, autogenerate: false}
   schema "identity_caps" do
-    field :caps_json, :string
-    field :identity_status, :string, default: "active"
-    field :provisioning_receipt, :string
-    field :workspace_uri, :string
+    field(:caps_json, :string)
+    field(:identity_status, :string, default: "active")
+    field(:provisioning_receipt, :string)
+    field(:workspace_uri, :string)
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -378,7 +380,9 @@ defmodule Ezagent.EntityCaps.Store do
   provision; the receipt must be issued to that actor AND the actor must
   pass `Ezagent.Identity.AdminAuthority.admin?/1`.
   """
-  @spec provision(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t()),
+  @spec provision(
+          URI.t() | String.t(),
+          [Capability.t()] | MapSet.t(Capability.t()),
           ProvisioningReceipt.t(),
           keyword()
         ) :: :ok | {:error, term()}
@@ -399,7 +403,9 @@ defmodule Ezagent.EntityCaps.Store do
   (caller supplies the new complete cap set), activates, and records the
   fresh receipt. Required opts: `:actor` (see `provision/4`).
   """
-  @spec reprovision(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t()),
+  @spec reprovision(
+          URI.t() | String.t(),
+          [Capability.t()] | MapSet.t(Capability.t()),
           ProvisioningReceipt.t(),
           keyword()
         ) :: :ok | {:error, term()}
@@ -488,8 +494,8 @@ defmodule Ezagent.EntityCaps.Store do
                 {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
              :ok
            else
-            {:error, reason} -> Repo.rollback(reason)
-            nil -> Repo.rollback(:not_found)
+             {:error, reason} -> Repo.rollback(reason)
+             nil -> Repo.rollback(:not_found)
            end
          end) do
       {:ok, :ok} -> :ok

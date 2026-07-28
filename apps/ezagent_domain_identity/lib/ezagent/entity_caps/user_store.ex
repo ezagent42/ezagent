@@ -3,11 +3,13 @@ defmodule Ezagent.EntityCaps.UserStore do
   The legacy user cap store (`users.caps_json`).
 
   #189 PR-1 dual-write: every write here ALSO upserts the unified
-  identity-caps store (`Ezagent.EntityCaps.Store`) in the SAME transaction,
-  so the unified store mirrors `users.caps_json` exactly. In PR-1 the
-  mirror is a WRITE-SHADOW: `caps_json` stays authoritative, and a mirror
-  failure is logged at `:error` (never silently dropped) without failing
-  the authoritative write (codex review F1/F2).
+  identity-caps store (`Ezagent.EntityCaps.Store`). The authoritative
+  `caps_json` write commits FIRST in its own transaction; the store mirror
+  then runs OUTSIDE that transaction (a WRITE-SHADOW), so a shadow-write
+  failure — including a Postgres error that aborts a transaction — can NEVER
+  roll back the committed `caps_json` write. `caps_json` stays authoritative,
+  and a mirror failure is logged at `:error`, never silently dropped
+  (codex review F1/F2).
   """
 
   import Ecto.Query
