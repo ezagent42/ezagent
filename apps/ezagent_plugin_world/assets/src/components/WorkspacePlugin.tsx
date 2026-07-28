@@ -529,6 +529,15 @@ type RoleSlotChoice = {
 
 const FOUNDATION_SOCIALWARE_REFS = new Set(["chat", "orchestrator", "socialware"])
 const DEFAULT_TEMPLATE_INSTALLS = ["chat"]
+const HELLO_COMPLETION_FLAVORS = new Set([
+  "curl",
+  "cc-headless",
+  "cc-headless-custom",
+  "cc",
+  "codex",
+  "codex-remote",
+  "py",
+])
 
 function helloLlmDefaults(): Record<string, unknown> {
   return {
@@ -733,6 +742,7 @@ function TemplateBuilder({
                         key={String(socialware.name) + ":" + role.role_name}
                         role={role}
                         slotKey={roleDomId(socialware, role)}
+                        flavors={state.agent_flavors || []}
                         choice={roleChoices[roleChoiceKey(socialware, role)]}
                         onChange={(choice) =>
                           setRoleChoices((current) => ({...current, [roleChoiceKey(socialware, role)]: choice}))
@@ -790,7 +800,7 @@ function normalizeSocialwareRow(row: DataRow): SocialwareRow {
   }
 }
 
-function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
+export function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
   const roleSlots = configurableTemplateRoles(socialware)
     .filter((role) => role.fill === "agent")
     .map((role) => {
@@ -800,12 +810,15 @@ function installConfigForTemplate(socialware: SocialwareRow, choices: Record<str
         flavor: role.flavor || undefined,
       }
 
+      const flavor = choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined
+      const helloLlmRole = socialware.name === "hello" && role.role_name === "llm"
+
       return {
         role_name: role.role_name,
         mode: choice.mode,
-        flavor: choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined,
+        flavor,
         agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
-        config: choice.mode === "fresh" ? choice.config : undefined,
+        config: choice.mode === "fresh" && (!helloLlmRole || flavor === "curl") ? choice.config : undefined,
       }
     })
     .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
@@ -821,14 +834,16 @@ function roleDomId(socialware: SocialwareRow, role: SocialwareRole) {
   return roleChoiceKey(socialware, role).replace(/[^a-zA-Z0-9_-]+/g, "-")
 }
 
-function HelloLlmRoleSlot({
+export function HelloLlmRoleSlot({
   role,
   slotKey,
+  flavors,
   choice,
   onChange,
 }: {
   role: SocialwareRole
   slotKey: string
+  flavors: string[]
   choice?: RoleSlotChoice
   onChange: (choice: RoleSlotChoice) => void
 }) {
@@ -838,7 +853,11 @@ function HelloLlmRoleSlot({
     flavor: "curl",
     config: helloLlmDefaults(),
   }
+  const curlFlavor = current.flavor === "curl"
   const config = {...helloLlmDefaults(), ...(current.config || {})}
+  const completionFlavors = flavors.filter((flavor) => HELLO_COMPLETION_FLAVORS.has(flavor))
+  const updateFlavor = (flavor: string) =>
+    onChange(helloLlmChoiceForFlavor(current, flavor))
   const updateConfig = (key: string, value: string) =>
     onChange({...current, mode: "fresh", flavor: "curl", config: {...config, [key]: value}})
   const fieldId = (name: string) => "template-hello-" + name + "-" + slotKey
@@ -853,9 +872,25 @@ function HelloLlmRoleSlot({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        Flavor: <code className={codeClass}>curl</code>. Credentials are bound after creation through the workspace credential flow; this template never stores a key.
+        Credentials are bound after creation through the workspace credential flow; this template never stores a key.
       </p>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <label className={fieldLabelClass} htmlFor={fieldId("flavor")}>
+        <span>Flavor <RequiredMarker /></span>
+        <select
+          id={fieldId("flavor")}
+          className={selectClass}
+          value={current.flavor || ""}
+          onChange={(event) => updateFlavor(event.target.value)}
+          required
+          aria-required="true"
+        >
+          <option value="" disabled>Select a flavor</option>
+          {completionFlavors.map((flavor) => (
+            <option key={flavor} value={flavor}>{flavor}</option>
+          ))}
+        </select>
+      </label>
+      {curlFlavor && <div className="grid gap-3 sm:grid-cols-3">
         <label className={fieldLabelClass} htmlFor={fieldId("provider")}>
           <span>Provider <RequiredMarker /></span>
           <Input id={fieldId("provider")} value={String(config.provider || "")} onChange={(event) => updateConfig("provider", event.target.value)} required aria-required="true" />
@@ -868,9 +903,18 @@ function HelloLlmRoleSlot({
           <span>Model <RequiredMarker /></span>
           <Input id={fieldId("model")} value={String(config.model || "")} onChange={(event) => updateConfig("model", event.target.value)} required aria-required="true" />
         </label>
-      </div>
+      </div>}
     </div>
   )
+}
+
+function helloLlmChoiceForFlavor(current: RoleSlotChoice, flavor: string): RoleSlotChoice {
+  return {
+    ...current,
+    mode: "fresh",
+    flavor,
+    config: flavor === "curl" ? {...helloLlmDefaults(), ...(current.config || {})} : undefined,
+  }
 }
 
 export function TemplateAgentRoleSlot({
