@@ -42,13 +42,14 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
 
       case spawn_agent(uri) do
-        {:ok, :started, _pid, true} ->
+        {:ok, :started, _pid, true, created_witness} ->
           # #201-cred — mirrors the production plugin arms: the grant is
           # minted ONLY by the created-winner, from the pending descriptor the
           # domain cascade authorized + threaded in the cascade data, AFTER
-          # the spawn receipt. The mint receipt rides out in meta for the
-          # chokepoint's rollback.
-          case mint_pending_grant(uri, data) do
+          # the spawn receipt, using the created-winner WITNESS from that receipt
+          # (#201-cred codex r2 NEW-HIGH-3). The mint receipt rides out in meta
+          # for the chokepoint's rollback.
+          case mint_pending_grant(uri, data, created_witness) do
             {:ok, grant_incarnation_id} ->
               {:ok, [uri],
                %{fresh?: true, created?: true, grant_incarnation_id: grant_incarnation_id}}
@@ -58,10 +59,10 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
               {:error, reason}
           end
 
-        {:ok, :started, _pid, false} ->
+        {:ok, :started, _pid, false, _witness} ->
           {:ok, [uri], %{fresh?: true, created?: false}}
 
-        {:ok, :already_started, _pid, _created?} ->
+        {:ok, :already_started, _pid, _created?, _witness} ->
           {:ok, [uri], %{fresh?: false}}
 
         {:error, {:already_registered, _}} ->
@@ -72,13 +73,13 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       end
     end
 
-    defp mint_pending_grant(uri, data) do
+    defp mint_pending_grant(uri, data, created_witness) do
       case get_in(data, ["cascade", :pending_grant]) do
         nil ->
           {:ok, nil}
 
         %{} = pending ->
-          case Ezagent.Credential.GrantMint.mint(uri, pending) do
+          case Ezagent.Credential.GrantMint.mint(uri, pending, created_witness) do
             {:ok, grant} -> {:ok, grant.incarnation_id}
             {:error, reason} -> {:error, reason}
           end
@@ -96,9 +97,14 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
                uri: uri,
                behaviors: Ezagent.Entity.Agent.base_behaviors()
              }) do
-          {:ok, :started, pid, %{created?: created?}} -> {:ok, :started, pid, created?}
-          {:ok, :already_started, pid, _receipt} -> {:ok, :already_started, pid, false}
-          {:error, _} = err -> err
+          {:ok, :started, pid, %{created?: created?} = receipt} ->
+            {:ok, :started, pid, created?, Map.get(receipt, :created_witness)}
+
+          {:ok, :already_started, pid, _receipt} ->
+            {:ok, :already_started, pid, false, nil}
+
+          {:error, _} = err ->
+            err
         end
       end
     else
@@ -107,8 +113,8 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
                uri: uri,
                behaviors: Ezagent.Entity.Agent.base_behaviors()
              }) do
-          {:ok, pid} -> {:ok, :started, pid, true}
-          {:error, {:already_started, pid}} -> {:ok, :already_started, pid, false}
+          {:ok, pid} -> {:ok, :started, pid, true, nil}
+          {:error, {:already_started, pid}} -> {:ok, :already_started, pid, false, nil}
           {:error, _} = err -> err
         end
       end

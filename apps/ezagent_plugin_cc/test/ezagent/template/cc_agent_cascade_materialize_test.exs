@@ -358,4 +358,146 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
             {:cascade_materialize_failed, {:mandatory_control_missing, "hooks/required.sh"}}} =
              CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
   end
+
+  # #201-cred (codex r2 NEW-HIGH-1) — a RAISE in the post-mint materialization
+  # region (here: `source_dir_for`) must NOT leave the just-minted grant durable.
+  # The mint runs via the cascade `:pending_grant` (proven by the created-winner
+  # `:created_witness`); an exception AFTER the mint is caught, the minted
+  # incarnation CONFIRM-compensated, and the exception re-raised.
+  describe "NEW-HIGH-1: compensation on a post-mint raise" do
+    test "a raise during source resolution leaves NO durable grant (compensated)", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_raise-#{uniq()}")
+      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(fresh_agent)) end)
+
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # The pending grant the domain cascade would have authorized. No recorded
+      # authority generations → the generation guard is skipped (nil → :ok), so
+      # this needs no authority fixture; the mint just inserts the durable row.
+      pending = %{
+        kind: :authorized,
+        source: URI.new!(ctx.source_uri),
+        approved_by: URI.new!("entity://team-a/user/alice")
+      }
+
+      tmpl = %{
+        "config_dir" => base,
+        "allocated_config_dir" => CcAgent.agent_config_dir(fresh_agent),
+        "cascade" => %{
+          layer_dirs: [%{dir: base}],
+          # RAISE immediately AFTER the mint, while resolving the source dir.
+          source_dir_for: fn _ -> raise "boom-after-mint" end,
+          pending_grant: pending,
+          created_witness: Ezagent.Kind.CreatedWitness.new(fresh_agent)
+        }
+      }
+
+      # Sanity: the mint really happened (fresh agent had no prior grant).
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+
+      assert_raise RuntimeError, "boom-after-mint", fn ->
+        CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+      end
+
+      # Pre-fix: the raise skipped compensation and the minted grant stayed
+      # durable. Post-fix: the minted incarnation was CONFIRM-compensated.
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+
+      # No secret-bearing staging residue was left behind either.
+      assert CcAgent.agent_config_dir(fresh_agent)
+             |> Path.dirname()
+             |> File.ls!()
+             |> Enum.filter(&String.contains?(&1, ".staging-")) == []
+    end
+  end
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the created-winner witness BRIDGE: the
+  # plugin arm threads its receipt witness into the cascade map via
+  # `HomeRuntime.put_cascade_created_witness/2`, and the deferred mint reads it
+  # from `cascade[:created_witness]`. These exercise that exact helper (not a
+  # hand-written key) end-to-end through `create_agent_config_dir/2`'s mint.
+  describe "NEW-HIGH-3: created-winner witness bridge" do
+    setup do
+      # The pending grant the domain cascade would have authorized (no recorded
+      # generations → generation guard skipped, no authority fixture needed).
+      %{
+        pending: fn source_uri ->
+          %{
+            kind: :authorized,
+            source: URI.new!(source_uri),
+            approved_by: URI.new!("entity://team-a/user/alice")
+          }
+        end
+      }
+    end
+
+    defp witness_bridge_tmpl(ctx, base, target) do
+      %{
+        "config_dir" => base,
+        "allocated_config_dir" => target,
+        "cascade" => %{
+          layer_dirs: [%{dir: base}],
+          source_dir_for: fn _ -> {:ok, ctx.source_dir} end,
+          pending_grant: ctx.pending.(ctx.source_uri)
+        }
+      }
+    end
+
+    test "put_cascade_created_witness threads the witness so the deferred mint fires", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_bridge-#{uniq()}")
+      target = CcAgent.agent_config_dir(fresh_agent)
+      on_exit(fn -> File.rm_rf(target) end)
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # Inject the witness the EXACT way the created-winner arm does (via the
+      # helper), NOT a hand-written cascade key.
+      tmpl =
+        ctx
+        |> witness_bridge_tmpl(base, target)
+        |> Ezagent.Credential.HomeRuntime.put_cascade_created_witness(
+          Ezagent.Kind.CreatedWitness.new(fresh_agent)
+        )
+
+      assert {:ok, ^target, {:grant, _, incarnation, _}} =
+               CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+
+      assert is_binary(incarnation)
+      # the deferred mint inserted a durable grant + copied the secret.
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) != nil
+      assert File.read!(Path.join(target, ".credentials.json")) == "ALICE-TOKEN"
+    end
+
+    test "a pending-grant cascade WITHOUT the witness fail-closes the mint (no grant)", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_nowitness-#{uniq()}")
+      target = CcAgent.agent_config_dir(fresh_agent)
+      on_exit(fn -> File.rm_rf(target) end)
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # No `put_cascade_created_witness` — the arm never proved created-winner.
+      tmpl = witness_bridge_tmpl(ctx, base, target)
+
+      assert {:error, {:cascade_materialize_failed, :missing_created_winner_witness}} =
+               CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+    end
+
+    test "put_cascade_created_witness/2 unit: writes the key, no-ops on nil / no-cascade" do
+      w = Ezagent.Kind.CreatedWitness.new(URI.new!("entity://team-a/agent/x"))
+
+      assert %{"cascade" => %{created_witness: ^w}} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"cascade" => %{}}, w)
+
+      # nil witness → unchanged (a rehydrating winner never mints).
+      assert %{"cascade" => %{}} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"cascade" => %{}}, nil)
+
+      # no cascade map → unchanged (a non-cascade agent mints nothing).
+      assert %{"other" => 1} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"other" => 1}, w)
+    end
+  end
 end

@@ -211,4 +211,80 @@ defmodule Ezagent.Credential.GrantRowTest do
                GrantRow.delete_incarnation("entity://team-a/agent/ghost-inc", "nope")
     end
   end
+
+  # #201-cred (codex r2 NEW-MEDIUM-4) — a legacy grant minted before the
+  # incarnation column existed has `incarnation_id = NULL`; it must materialize
+  # WITHOUT the revalidation raising `FunctionClauseError` on the nil incarnation.
+  describe "legacy NULL-incarnation grant" do
+    defp make_legacy_null_grant(agent_uri, source) do
+      {:ok, _g} =
+        GrantRow.insert(%{
+          agent_uri: agent_uri,
+          credential_source_uri: source,
+          approved_by: "u",
+          approved_scope: source,
+          version: 1
+        })
+
+      # Simulate a pre-column row: NULL out the incarnation the insert minted.
+      {:ok, _} =
+        EzagentCore.Repo.query(
+          "UPDATE credential_grants SET incarnation_id = NULL WHERE id = $1",
+          [agent_uri]
+        )
+
+      GrantRow.get_for_agent(agent_uri)
+    end
+
+    test "fetch_for_materialize returns a nil incarnation for a legacy row" do
+      source = seed_source("entity://team-a/agent/legacy-src-a")
+      legacy = make_legacy_null_grant("entity://team-a/agent/legacy-a", source)
+      assert legacy.incarnation_id == nil
+
+      assert {:ok, ^source, 1, nil} = GrantRow.fetch_for_materialize(legacy.agent_uri)
+    end
+
+    test "revalidate_version! tolerates a nil incarnation (no FunctionClauseError)" do
+      source = seed_source("entity://team-a/agent/legacy-src-b")
+      legacy = make_legacy_null_grant("entity://team-a/agent/legacy-b", source)
+
+      # Pre-fix: the `is_binary(incarnation_id)` guard left `nil` unmatched and
+      # `revalidate_version!/3` raised `FunctionClauseError` mid-materialize.
+      # Post-fix: the legacy row revalidates on (version, not-revoked,
+      # generations-current) alone.
+      assert :ok = GrantRow.revalidate_version!(legacy.agent_uri, nil, legacy.version)
+
+      # A version mismatch on a legacy row is still a clean rejection, not a raise.
+      assert {:error, :grant_changed} =
+               GrantRow.revalidate_version!(legacy.agent_uri, nil, legacy.version + 5)
+    end
+
+    test "materialize_with_grant commits a legacy row without raising" do
+      source = seed_source("entity://team-a/agent/legacy-src-c")
+      legacy = make_legacy_null_grant("entity://team-a/agent/legacy-c", source)
+
+      staging =
+        Path.join(System.tmp_dir!(), "legacy-staging-#{System.unique_integer([:positive])}")
+
+      src_dir = Path.join(System.tmp_dir!(), "legacy-src-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(staging)
+      File.mkdir_p!(src_dir)
+
+      on_exit(fn ->
+        File.rm_rf(staging)
+        File.rm_rf(src_dir)
+      end)
+
+      # Pre-fix this raised FunctionClauseError at the revalidation step; now it
+      # runs the commit callback cleanly.
+      assert {:ok, :committed} =
+               Ezagent.Agent.Materializer.materialize_with_grant(%{
+                 agent_uri: legacy.agent_uri,
+                 staging: staging,
+                 secret_relpaths: [],
+                 source_dir_for: fn ^source -> {:ok, src_dir} end,
+                 commit: fn {_version, nil} -> {:ok, :committed} end
+               })
+    end
+  end
 end

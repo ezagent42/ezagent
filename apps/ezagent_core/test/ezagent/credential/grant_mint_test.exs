@@ -25,8 +25,14 @@ defmodule Ezagent.Credential.GrantMintTest do
   import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
 
   alias Ezagent.Credential.{GrantMint, GrantRow, Resolver}
+  alias Ezagent.Kind.CreatedWitness
 
   defp uniq, do: System.unique_integer([:positive])
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the structural created-winner witness a
+  # genuine `:started ∧ created?` spawn would mint. Tests that exercise a
+  # LEGITIMATE mint pass one bound to the agent under mint.
+  defp witness(%URI{} = agent_uri), do: CreatedWitness.new(agent_uri)
 
   defp grant_attrs(agent_name) do
     source = "entity://team-a/agent/src-#{uniq()}"
@@ -296,7 +302,7 @@ defmodule Ezagent.Credential.GrantMintTest do
       assert pending.holder_generation == 1
       assert pending.source_generation == 1
 
-      assert {:ok, grant} = GrantMint.mint(ctx.agent_uri, pending)
+      assert {:ok, grant} = GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
       assert grant.holder_generation == 1
       assert grant.source_generation == 1
     end
@@ -309,7 +315,7 @@ defmodule Ezagent.Credential.GrantMintTest do
       # Pre-fix the stale attempt inserted a durable grant minted after the
       # authorizing generation ceased to be current — undetectable forever.
       assert {:error, {:stale_authority_generation, stale}} =
-               GrantMint.mint(ctx.agent_uri, pending)
+               GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
 
       assert Ezagent.URI.stable_key(stale) == Ezagent.URI.stable_key(ctx.source_uri)
       assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) == nil
@@ -321,7 +327,7 @@ defmodule Ezagent.Credential.GrantMintTest do
       _ = regenesis(ctx.holder_uri, :user)
 
       assert {:error, {:stale_authority_generation, stale}} =
-               GrantMint.mint(ctx.agent_uri, pending)
+               GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
 
       assert Ezagent.URI.stable_key(stale) == Ezagent.URI.stable_key(ctx.holder_uri)
       assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) == nil
@@ -329,12 +335,90 @@ defmodule Ezagent.Credential.GrantMintTest do
 
     test "a regenesis AFTER the mint is detected at materialization fetch", ctx do
       assert {:ok, pending} = authorize(ctx)
-      assert {:ok, _grant} = GrantMint.mint(ctx.agent_uri, pending)
+      assert {:ok, _grant} = GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
 
       _ = regenesis(ctx.source_uri, :agent)
 
       assert {:error, :stale_authority_generation} =
                GrantRow.fetch_for_materialize(URI.to_string(ctx.agent_uri))
+    end
+
+    # #201-cred (codex r2 NEW-HIGH-2) — a regenesis that lands AFTER
+    # `fetch_for_materialize/1` but BEFORE the pre-commit / pre-launch
+    # revalidation must be caught by `revalidate_version!/3` too, not only by
+    # the fetch. The regenesis does NOT change the grant's incarnation or
+    # version, so the incarnation+version compare passes; the generation
+    # re-check is the crux.
+    test "NEW-HIGH-2: revalidate_version! rejects when authority regenerates after fetch", ctx do
+      assert {:ok, pending} = authorize(ctx)
+      assert {:ok, _grant} = GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
+
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+
+      # Materializer FETCHES under the current (gen-1) authority.
+      assert {:ok, _source, version, incarnation_id} =
+               GrantRow.fetch_for_materialize(agent_uri_str)
+
+      # Pre-commit revalidation while the authority is still current → :ok.
+      assert :ok = GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
+
+      # Source authority regenerates to gen 2 BETWEEN the fetch and the
+      # pre-commit / pre-launch revalidation. Incarnation + version are
+      # UNCHANGED, so a version/incarnation-only revalidation would still pass
+      # (the bug) — the secret authorized under retired gen 1 would commit and
+      # launch.
+      _ = regenesis(ctx.source_uri, :agent)
+
+      # Pre-fix: :ok (stale secret commits + launches). Post-fix: rejected.
+      assert {:error, :grant_changed} =
+               GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
+    end
+
+    # #201-cred (codex r2 NEW-HIGH-3) — minting is structurally confined to the
+    # created-winner arm: every mint path requires a `CreatedWitness` bound to
+    # the agent under mint. A caller with a valid descriptor but no witness (or
+    # a witness for a different agent) cannot insert a durable grant.
+    test "NEW-HIGH-3: mint WITHOUT a witness inserts no durable grant", ctx do
+      assert {:ok, pending} = authorize(ctx)
+
+      # nil witness — the exact bypass codex flagged (a valid descriptor, no
+      # `:started ∧ created?` proof).
+      assert {:error, :missing_created_winner_witness} =
+               GrantMint.mint(ctx.agent_uri, pending, nil)
+
+      assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) == nil
+    end
+
+    test "NEW-HIGH-3: mint with a witness bound to ANOTHER agent is rejected", ctx do
+      assert {:ok, pending} = authorize(ctx)
+
+      other = Ezagent.URI.agent("team-a", "not-the-mint-target-#{uniq()}")
+
+      assert {:error, :missing_created_winner_witness} =
+               GrantMint.mint(ctx.agent_uri, pending, witness(other))
+
+      assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) == nil
+    end
+
+    test "NEW-HIGH-3: exported authorize_and_mint_grant! is no longer a witness-free bypass",
+         ctx do
+      args = %{
+        agent_uri: ctx.agent_uri,
+        source: ctx.source_uri,
+        caller: ctx.holder_uri,
+        authenticated_principal: ctx.holder_uri,
+        caps: [ctx.cap]
+      }
+
+      # No witness → structurally rejected, NOTHING written.
+      assert {:error, :missing_created_winner_witness} =
+               Resolver.authorize_and_mint_grant!(args, nil)
+
+      assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) == nil
+
+      # With the created-winner witness the same call mints exactly once.
+      assert {:ok, _grant} = Resolver.authorize_and_mint_grant!(args, witness(ctx.agent_uri))
+      assert GrantRow.get_for_agent(URI.to_string(ctx.agent_uri)) != nil
     end
   end
 end
