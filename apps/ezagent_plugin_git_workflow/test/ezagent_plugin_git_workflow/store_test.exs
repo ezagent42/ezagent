@@ -538,6 +538,109 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert {:ok, ^established} = Store.read_facts("run_incr_unknown")
     end
 
+    # P4a shipped key/identity guards only, so a value that `WorkflowFacts.new/1`
+    # rejects still reached the column — writing a fact that cannot be read back
+    # into its own struct. Every optional column is checked against the value
+    # rule its own group carries, and a rejected write must leave the row
+    # BYTE-IDENTICAL: asserting the return alone would pass even if the SQL had
+    # already run.
+    for field <-
+          EzagentPluginGitWorkflow.WorkflowFacts.optional_fields() -- [
+            :checks_revision,
+            :reviews_revision,
+            :checks_observed_at,
+            :reviews_observed_at
+          ] do
+      test "rejects an empty string for #{field}, leaving the row unchanged" do
+        established = establish_facts!("run_val_empty_#{unquote(field)}")
+
+        assert {:error, {:invalid_field, unquote(field)}} =
+                 Store.update_facts(established.run_id, %{unquote(field) => ""})
+
+        assert {:ok, ^established} = Store.read_facts(established.run_id)
+      end
+    end
+
+    for field <- [:checks_revision, :reviews_revision] do
+      test "rejects a negative #{field}, leaving the row unchanged" do
+        established = establish_facts!("run_val_neg_#{unquote(field)}")
+
+        assert {:error, {:invalid_field, unquote(field)}} =
+                 Store.update_facts(established.run_id, %{unquote(field) => -1})
+
+        assert {:ok, ^established} = Store.read_facts(established.run_id)
+      end
+
+      test "rejects a non-integer #{field}, leaving the row unchanged" do
+        established = establish_facts!("run_val_str_#{unquote(field)}")
+
+        assert {:error, {:invalid_field, unquote(field)}} =
+                 Store.update_facts(established.run_id, %{unquote(field) => "1"})
+
+        assert {:ok, ^established} = Store.read_facts(established.run_id)
+      end
+    end
+
+    for field <- [:checks_observed_at, :reviews_observed_at] do
+      test "rejects a non-DateTime #{field}, leaving the row unchanged" do
+        established = establish_facts!("run_val_dt_#{unquote(field)}")
+
+        assert {:error, {:invalid_field, unquote(field)}} =
+                 Store.update_facts(established.run_id, %{
+                   unquote(field) => ~N[2026-07-28 09:30:00]
+                 })
+
+        assert {:ok, ^established} = Store.read_facts(established.run_id)
+      end
+    end
+
+    test "rejects a non-binary value in a string column" do
+      established = establish_facts!("run_val_pid")
+
+      assert {:error, {:invalid_field, :checks_summary}} =
+               Store.update_facts(established.run_id, %{checks_summary: self()})
+
+      assert {:ok, ^established} = Store.read_facts(established.run_id)
+    end
+
+    test "one bad value rejects the WHOLE update, not just its own column" do
+      established = establish_facts!("run_val_mixed")
+
+      assert {:error, {:invalid_field, :head_sha}} =
+               Store.update_facts(established.run_id, %{
+                 deterministic_head_ref: "task/p4c/run-good",
+                 head_sha: ""
+               })
+
+      assert {:ok, ^established} = Store.read_facts(established.run_id)
+    end
+
+    test "nil stays legal — it is 'not yet known', not a malformed value" do
+      established = establish_facts!("run_val_nil", %{head_sha: "abc"})
+
+      assert {:ok, %WorkflowFacts{head_sha: nil}} =
+               Store.update_facts(established.run_id, %{head_sha: nil})
+    end
+
+    test "anything update_facts/2 accepts can be read back into its own struct" do
+      established = establish_facts!("run_val_roundtrip")
+
+      accepted = %{
+        workspace_provision_id: "prov-1",
+        deterministic_head_ref: "task/p4c/run-abc",
+        checks_revision: 0,
+        checks_observed_at: ~U[2026-07-28 09:30:00.000000Z]
+      }
+
+      assert {:ok, _} = Store.update_facts(established.run_id, accepted)
+      assert {:ok, persisted} = Store.read_facts(established.run_id)
+
+      rebuildable = persisted |> Map.from_struct() |> Map.drop([:inserted_at, :updated_at])
+
+      assert {:ok, rebuilt} = WorkflowFacts.new(rebuildable)
+      assert Map.from_struct(rebuilt) |> Map.drop([:inserted_at, :updated_at]) == rebuildable
+    end
+
     test "rejects an empty map rather than emitting an empty SET clause" do
       establish_facts!("run_incr_empty")
 

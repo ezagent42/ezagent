@@ -275,6 +275,16 @@ defmodule EzagentPluginGitWorkflow.Store do
   reason the interpolated column names cannot be caller-chosen: every name
   reaching the SQL string came from that whitelist, never from the input.
 
+  VALUES are checked too, against `WorkflowFacts.validate_optional_value/2` —
+  the same rule `WorkflowFacts.new/1` applies to that field, not a second
+  copy of it. Without that, this function could persist a value the struct
+  rejects (`%{deterministic_head_ref: ""}` was the live example), producing a
+  fact that cannot be read back into its own struct. Rejection is total: ONE
+  bad value refuses the whole update, and the statement never runs, so the row
+  is left byte-identical rather than half-applied. Nothing is coerced — a
+  store that quietly repaired its input would hide the caller's bug and
+  persist something nobody wrote.
+
   The returned struct is built from `RETURNING *` via `row_to_facts/1`, never
   from the caller's input — same reason `upsert_facts/1` documents.
 
@@ -287,9 +297,11 @@ defmodule EzagentPluginGitWorkflow.Store do
           | {:error, :not_found}
           | {:error, :unknown_fields}
           | {:error, :empty_update}
+          | {:error, {:invalid_field, atom()}}
   def update_facts(run_id, updates) when is_binary(run_id) and is_map(updates) do
     with :ok <- validate_fact_columns(updates),
-         :ok <- reject_empty_update(updates) do
+         :ok <- reject_empty_update(updates),
+         :ok <- validate_fact_values(updates) do
       columns = Map.keys(updates)
       values = Enum.map(columns, &Map.fetch!(updates, &1))
       updated_at_position = length(columns) + 1
@@ -345,6 +357,18 @@ defmodule EzagentPluginGitWorkflow.Store do
   # quietly touch only the timestamp.
   defp reject_empty_update(updates) when map_size(updates) == 0, do: {:error, :empty_update}
   defp reject_empty_update(_updates), do: :ok
+
+  # Runs AFTER `validate_fact_columns/1`, so every key here is already a member
+  # of `WorkflowFacts.optional_fields/0` and `validate_optional_value/2`'s lack
+  # of a catch-all clause cannot be reached with an unknown field.
+  defp validate_fact_values(updates) do
+    Enum.reduce_while(updates, :ok, fn {field, value}, :ok ->
+      case WorkflowFacts.validate_optional_value(field, value) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
 
   # ---------------------------------------------------------------------------
   # Private: accept helpers
