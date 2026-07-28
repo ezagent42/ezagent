@@ -103,9 +103,12 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     #  re-anchored 733→742: #201-cred codex r2 NEW-HIGH-3 added the created-winner
     #  witness threading (`{:started, true, created_witness}` arm +
     #  `create_agent_config_dir_with_grant/3` + `ensure_agent_kind` receipt
-    #  capture) above the def — unchanged call, +9 line drift only)
+    #  capture) above the def — unchanged call, +9 line drift only;
+    #  re-anchored 742→759: #201-cred codex r3 NEW-HIGH-1 wrapped the sidecar
+    #  launch in `HomeRuntime.launch_under_grant_compensation/5` (grant compensation
+    #  on a launch raise) above the def — unchanged call, +17 line drift only)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 742,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 759,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
     # as the zip-unpack target for a plugin-package hot-load. The runtime

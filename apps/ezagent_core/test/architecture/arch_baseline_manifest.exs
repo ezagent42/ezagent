@@ -426,7 +426,13 @@
   #   via `HomeRuntime.put_cascade_created_witness/2` before the deferred mint, so
   #   `GrantMint` fail-closes off the created-winner arm. Security-fix wiring, not
   #   new surface. Measured 1822→1831.
-  cc_codex_template_class_combined_loc: 1831,
+  # arch-cap-bump: #201-cred (codex r3 NEW-HIGH-1) — codex_agent + codex_remote_agent
+  #   wrap their post-materialize sidecar launch in
+  #   `HomeRuntime.launch_under_grant_compensation/5` so a RAISE in the launch
+  #   (outside the mint's rescue) still CONFIRM-compensates the minted grant instead
+  #   of leaking it. Security-fix wiring (a rescue boundary + closure), not new
+  #   surface. Measured 1831→1851.
+  cc_codex_template_class_combined_loc: 1851,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
