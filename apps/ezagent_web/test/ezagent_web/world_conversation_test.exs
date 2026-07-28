@@ -69,6 +69,16 @@ defmodule EzagentWeb.WorldConversationTest do
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
 
+    # Barrier before broadcasting (as the cold-session sibling below does): the
+    # mount's async self-join floods the LiveView mailbox with telemetry-forwarded
+    # `world:inbound`/`world:state` events. Without this, the broadcast's
+    # `{:chat_message, ...}` queues BEHIND that backlog, and under the full-suite
+    # load draining it can exceed the 1_000ms `assert_push_event` window — the
+    # message IS delivered, just later than the assertion waits (a test-timing
+    # flake, not a delivery bug). `:sys.get_state` forces the backlog to drain
+    # first so the broadcast is processed against an idle LiveView.
+    drain_liveview_mailbox(view)
+
     msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "inbound-via-pubsub"})
 
     Phoenix.PubSub.broadcast(
