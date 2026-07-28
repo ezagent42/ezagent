@@ -16,7 +16,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
 
   import Ecto.Query
 
-  alias Ezagent.{LocalRuntime, WorkspaceRegistry}
+  alias Ezagent.LocalRuntime
   alias Ezagent.ExternalMirror.BindingRow
   alias EzagentCore.Repo
 
@@ -52,7 +52,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
     session_uri = Ezagent.URI.session(:system, "generic", name)
 
     with {:ok, _pid} <- LocalRuntime.ensure_started(session_uri),
-         :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri) do
+         :ok <- Ezagent.OwnerGatedWorkspace.bind(session_uri, workspace_uri) do
       Logger.info("ProtocolApi: stateless session #{Ezagent.URI.stable_key(session_uri)}")
       {:ok, session_uri}
     else
@@ -89,7 +89,7 @@ defmodule Ezagent.ProtocolApi.ConversationRegistry do
     session_uri = Ezagent.URI.session(:system, "generic", name)
 
     with {:ok, _pid} <- LocalRuntime.ensure_started(session_uri),
-         :ok <- WorkspaceRegistry.bind(session_uri, workspace_uri),
+         :ok <- Ezagent.OwnerGatedWorkspace.bind(session_uri, workspace_uri),
          {:ok, _row} <- insert_binding_row(conversation_id, session_uri, workspace_uri, bound_by) do
       Logger.info(
         "ProtocolApi: bound conversation_id=#{conversation_id} → " <>

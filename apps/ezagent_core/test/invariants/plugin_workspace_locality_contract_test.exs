@@ -27,108 +27,51 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
        "Do not call/cast workspace-bound Kind pids directly from plugins."}
   ]
 
-  @ownership_allowlist [
-    %{
-      path: "apps/ezagent_plugin_cc/lib/mix/tasks/ezagent.demo.seed_cc_agent.ex",
-      function: {:ensure_session_alive, 1},
-      module: Ezagent.WorkspaceRegistry,
-      call: {:bind, 2},
-      reason: "existing demo session rebind predates Plan C"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/app.ex",
-      function: {:bind_workspace, 2},
-      module: Ezagent.WorkspaceRegistry,
-      call: {:bind, 2},
-      reason: "existing hello session binding predates Plan C"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/credential_bridge.ex",
-      function: {:ensure_source_agent, 1},
-      module: Ezagent.AgentLineage,
-      call: {:record, 2},
-      reason:
-        "credential-bridge seeds the system source-credential agent and records its " <>
-          "admin-owned lineage on fresh spawn (declared `# derivation-edge: recorded-by " <>
-          "AgentLineage.record/2`); same class as hello bind_workspace — the seed path " <>
-          "has no owner-gated lineage-record facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      function: {:create_stateless, 2},
-      module: Ezagent.WorkspaceRegistry,
-      call: {:bind, 2},
-      reason: "existing protocol stateless session binding predates Plan C"
-    },
-    %{
-      path: "apps/ezagent_plugin_protocol_api/lib/ezagent/protocol_api/conversation_registry.ex",
-      function: {:create_and_bind, 3},
-      module: Ezagent.WorkspaceRegistry,
-      call: {:bind, 2},
-      reason: "existing protocol conversation session binding predates Plan C"
-    }
-  ]
-
-  @allowlist [
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/orchestrator/mcp_server.ex",
-      line: 428,
-      key: :genserver_to_pid,
-      line_substring:
-        "GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)",
-      reason: "existing SessionManager direct executor call; pending owner-gated executor facade"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 86,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason: "existing sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_cc/lib/ezagent/plugin_cc/sdk_sidecar.ex",
-      line: 100,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, {:query, text, session_id}, timeout)",
-      reason: "existing sidecar query call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/bridge_sidecar.ex",
-      line: 56,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason: "existing codex sidecar status call; sidecar has no workspace owner facade yet"
-    },
-    %{
-      path: "apps/ezagent_plugin_codex/lib/ezagent/plugin_codex/app_server.ex",
-      line: 61,
-      key: :genserver_to_pid,
-      line_substring: "GenServer.call(pid, :recent_output, 1_000)",
-      reason:
-        "existing codex app-server sidecar status call (per-agent AppServer GenServer, " <>
-          "same class as bridge_sidecar); sidecar has no workspace owner facade yet"
-    }
-  ]
-
-  test "plugin apps do not bypass workspace owner gate through local runtime APIs" do
+  # ── Concern (A): the enumerated owner-bypass debt — empty-allowlist enumerator ──
+  #
+  # The burn target. It runs the owner-bypass detection with NO suppression
+  # (empty allowlists passed explicitly), so any hit in the ENUMERATED debt
+  # classes is a violation and the failure output IS the enforced worklist.
+  # Scope — what this enforces (the `@forbidden_patterns` + concrete ownership
+  # calls), NOT "all owner-bypasses":
+  #   * `GenServer.call/cast(pid, …)` where the receiver is literally `pid`
+  #   * `(Ezagent.)KindRegistry.lookup` / `Registry.lookup(Ezagent.KindRegistry,…)`
+  #   * `(Ezagent.)SpawnRegistry.spawn(_detailed)`
+  #   * concrete calls to the ownership modules (WorkspaceRegistry.bind,
+  #     AgentLineage.record, CreationInventory, TaskWorkspace.*, LaunchAuthority…)
+  # It deliberately does NOT catch a `GenServer.call` on a differently-named
+  # receiver, nor `Ezagent.Kind.spawn/2` (a verified un-gated spawn path). Those
+  # are real but out-of-scope owner-bypass classes tracked in issue #1592
+  # (widen to AST-scan arbitrary receivers + gate Kind.spawn) — this gate is NOT
+  # a guarantee that all owner-bypasses are eliminated. All debt in the
+  # enumerated classes has been migrated onto owner-gated core facades → GREEN at 0:
+  #   * the pid-call sidecar/executor sites → `Ezagent.OwnerGatedExecutor.call/4`
+  #   * the bind / lineage-record sites →
+  #     `Ezagent.OwnerGatedWorkspace.{bind/2, record_lineage/2}`
+  # A new hit in the enumerated classes re-reddens it (the allowlist ledger was
+  # deleted with the burn; new enumerated debt is fixed, not allowlisted).
+  test "(A) plugin owner-bypass debt burns to zero (owner-gate worklist enumerator)" do
     root = repo_root()
 
-    violations =
+    worklist =
       root
       |> production_plugin_files()
       |> Enum.flat_map(fn path ->
-        violations_in_file(root, path) ++ ownership_violations_in_file(root, path)
+        violations_in_file(root, path, []) ++ ownership_violations_in_file(root, path, [])
       end)
+      |> Enum.sort()
 
-    assert violations == [],
+    assert worklist == [],
            """
-           Plugin workspace locality contract violations:
+           Owner-bypass worklist: #{length(worklist)} plugin site(s) still reach
+           workspace-bound runtime WITHOUT an owner-gated core facade. Each site
+           below must be migrated onto a facade (Phase 2); this enumerator turns
+           green only at zero:
 
-           #{format_violations(violations)}
+           #{format_violations(worklist)}
 
-           Workspace-bound plugin side effects must enter owner-gated core APIs.
-           Add a centralized allowlist entry only for system-global metadata or
-           code that is already owner-gated before this local runtime access.
+           Facade ① (executor call): GenServer.call(pid, …) sidecar/executor sites.
+           Facade ② (bind/record): WorkspaceRegistry.bind / AgentLineage.record sites.
            """
   end
 
@@ -192,7 +135,15 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     assert ownership_calls(safe_rebind) == []
   end
 
-  test "legacy dynamic receiver baseline is exact and changed-line ratcheted" do
+  # ── Concern (B): the benign-dominated AST dynamic-receiver census ─────────
+  #
+  # NOT the burn target. A set of `{path, fn, kind, accessor, sha256}`
+  # fingerprints for dynamic-receiver field reads the scanner cannot
+  # type-prove. The LINE NUMBER is intentionally excluded from the
+  # fingerprint so unrelated line shifts stop forcing re-anchors; the SHA
+  # still ratchets on real content edits. Identical-text repeated reads
+  # inside one function collapse to a single fingerprint (`Enum.uniq/1`).
+  test "(B) legacy dynamic receiver census is exact and content-ratcheted (line-number-independent)" do
     root = repo_root()
 
     actual =
@@ -207,83 +158,16 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
         |> Enum.filter(&(&1.module == :unknown_value))
         |> Enum.map(&legacy_site(path, &1))
       end)
+      |> Enum.uniq()
       |> Enum.sort()
 
     assert actual == Enum.sort(LegacyDynamicReceiverBaseline.sites())
 
+    # Ratchet: a fingerprint may not duplicate, and a SHA (element 4, after
+    # dropping the line number) edit must re-surface for review.
     [site | rest] = actual
     refute site in rest
-    refute put_elem(site, 1, elem(site, 1) + 1) in actual
-    refute put_elem(site, 5, String.duplicate("0", 64)) in actual
-  end
-
-  test "ownership allowlist is exact by file, enclosing function, module, and call" do
-    root = repo_root()
-
-    for entry <- @ownership_allowlist do
-      calls =
-        root
-        |> Path.join(entry.path)
-        |> File.read!()
-        |> ownership_calls()
-
-      assert Enum.any?(calls, fn call ->
-               call.function == entry.function and call.module == entry.module and
-                 call.call == entry.call
-             end),
-             "stale ownership allowlist entry: #{inspect(entry)}"
-
-      assert is_binary(entry.reason) and String.trim(entry.reason) != ""
-    end
-  end
-
-  test "allowlist entries remain exact and justified" do
-    root = repo_root()
-
-    for %{path: path, line: line, key: key, line_substring: snippet, reason: reason} <- @allowlist do
-      full_path = Path.join(root, path)
-      source_line = full_path |> File.read!() |> String.split("\n") |> Enum.at(line - 1, "")
-
-      assert is_binary(reason) and String.trim(reason) != "",
-             "allowlist entry #{path}:#{line} #{key} must have a reason"
-
-      assert String.contains?(source_line, snippet),
-             """
-             stale workspace locality allowlist entry:
-               #{path}:#{line} #{key}
-             expected line to contain:
-               #{snippet}
-             actual:
-               #{source_line}
-             """
-    end
-  end
-
-  test "allowlisted plugin locality debt is surfaced as warning text" do
-    warning = workspace_locality_debt_warning(@allowlist)
-
-    if @allowlist != [] do
-      IO.warn(warning)
-    end
-
-    assert warning =~ "workspace locality debt"
-    assert warning =~ "total=#{length(@allowlist)}"
-    assert warning =~ "kind_registry_lookup="
-    assert warning =~ "spawn_registry="
-    assert warning =~ "genserver_to_pid="
-    assert warning =~ "docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md"
-
-    assert workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "1"})
-    refute workspace_locality_debt_enforced?(%{"ENFORCE_WORKSPACE_LOCALITY_DEBT" => "0"})
-    refute workspace_locality_debt_enforced?(%{})
-
-    if @allowlist != [] and workspace_locality_debt_enforced?(System.get_env()) do
-      flunk("""
-      workspace locality debt enforcement is enabled, but allowlist entries remain.
-
-      #{warning}
-      """)
-    end
+    refute put_elem(site, 4, String.duplicate("0", 64)) in actual
   end
 
   defp production_plugin_files(root) do
@@ -298,14 +182,14 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     |> Enum.sort()
   end
 
-  defp ownership_violations_in_file(root, full_path) do
+  defp ownership_violations_in_file(root, full_path, ownership_allowlist) do
     path = Path.relative_to(full_path, root)
 
     full_path
     |> File.read!()
     |> ownership_calls()
     |> Enum.reject(&legacy_receiver_baseline?(path, &1))
-    |> Enum.reject(&ownership_allowlisted?(path, &1))
+    |> Enum.reject(&ownership_allowlisted?(ownership_allowlist, path, &1))
     |> Enum.map(fn call ->
       {path, call.line, :atomic_ownership_access,
        "#{inspect(call.module)}.#{elem(call.call, 0)}/#{elem(call.call, 1)} in #{inspect(call.function)}"}
@@ -337,7 +221,9 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp legacy_site(path, call) do
     {name, arity} = call.call
     kind = if name == :__dynamic_apply__, do: :apply, else: :remote
-    {path, call.line, call.function, kind, "#{name}/#{arity}", call.line_fingerprint}
+    # Line number deliberately excluded (concern-B de-pain): fingerprint is
+    # {path, fn, kind, accessor, sha} so unrelated line shifts don't re-anchor.
+    {path, call.function, kind, "#{name}/#{arity}", call.line_fingerprint}
   end
 
   defp sha256(value),
@@ -891,14 +777,14 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
   defp maybe_add_call(calls, nil), do: calls
   defp maybe_add_call(calls, call), do: [call | calls]
 
-  defp ownership_allowlisted?(path, call) do
-    Enum.any?(@ownership_allowlist, fn entry ->
+  defp ownership_allowlisted?(ownership_allowlist, path, call) do
+    Enum.any?(ownership_allowlist, fn entry ->
       entry.path == path and entry.function == call.function and entry.module == call.module and
         entry.call == call.call
     end)
   end
 
-  defp violations_in_file(root, full_path) do
+  defp violations_in_file(root, full_path, allowlist) do
     rel_path = Path.relative_to(full_path, root)
 
     full_path
@@ -910,7 +796,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
         []
       else
         Enum.flat_map(@forbidden_patterns, fn {key, {pattern, message}} ->
-          if Regex.match?(pattern, line) and not allowlisted?(rel_path, line_no, key, line) do
+          if Regex.match?(pattern, line) and
+               not allowlisted?(allowlist, rel_path, line_no, key, line) do
             [{rel_path, line_no, key, message}]
           else
             []
@@ -947,8 +834,8 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
     |> Enum.map(fn {line, line_no, _ignored?} -> {line, line_no} end)
   end
 
-  defp allowlisted?(rel_path, line_no, key, source_line) do
-    Enum.any?(@allowlist, fn entry ->
+  defp allowlisted?(allowlist, rel_path, line_no, key, source_line) do
+    Enum.any?(allowlist, fn entry ->
       entry.path == rel_path and entry.line == line_no and entry.key == key and
         String.contains?(source_line, entry.line_substring)
     end)
@@ -970,38 +857,6 @@ defmodule EzagentCore.Invariants.PluginWorkspaceLocalityContractTest do
       "  #{path}:#{line} #{key} - #{message}"
     end)
     |> Enum.join("\n")
-  end
-
-  defp workspace_locality_debt_warning(allowlist) do
-    counts = Enum.frequencies_by(allowlist, & &1.key)
-
-    pattern_summary =
-      @forbidden_patterns
-      |> Keyword.keys()
-      |> Enum.map(fn key -> "#{key}=#{Map.get(counts, key, 0)}" end)
-      |> Enum.join(", ")
-
-    entries =
-      allowlist
-      |> Enum.map(fn entry ->
-        "  #{entry.path}:#{entry.line} #{entry.key} - #{entry.reason}"
-      end)
-      |> Enum.join("\n")
-
-    """
-    workspace locality debt: total=#{length(allowlist)} existing plugin local runtime assumptions remain allowlisted.
-    This is not a clean pass; it is a visible migration backlog.
-    by_pattern: #{pattern_summary}
-    contract: docs/superpowers/specs/2026-06-24-workspace-locality-plugin-contract.md
-    registry: apps/ezagent_core/test/invariants/plugin_workspace_locality_contract_test.exs @allowlist
-    enforce: ENFORCE_WORKSPACE_LOCALITY_DEBT=1
-    entries:
-    #{entries}
-    """
-  end
-
-  defp workspace_locality_debt_enforced?(env) do
-    Map.get(env, "ENFORCE_WORKSPACE_LOCALITY_DEBT") in ["1", "true", "TRUE", "yes", "YES"]
   end
 
   defp list_ex_files(dir) do
