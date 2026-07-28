@@ -254,6 +254,71 @@ defmodule EzagentPluginGitWorkflow.Store do
     {:ok, Enum.zip(result_columns, result_row) |> Map.new() |> row_to_facts()}
   end
 
+  @doc """
+  Incrementally updates the facts row for `run_id` — the non-destructive
+  counterpart to `upsert_facts/1`.
+
+  `upsert_facts/1` establishes the row once (it is a full-row replace whose
+  `ON CONFLICT` sets EVERY column to `EXCLUDED`, including the ones the caller
+  left `nil`). Every stage after that writes through here instead: this
+  statement's `SET` names ONLY the columns the caller actually supplied, so a
+  later stage cannot null out an earlier stage's facts. That matters beyond
+  tidiness — design §5.3's `deterministic_head_ref` is what lets a resumed run
+  prove a ref sitting at base is its own retry rather than a foreign branch
+  (`github_adapter.ex`'s KNOWN LIMITATION), and a fact that a later stage can
+  erase cannot carry that proof.
+
+  Accepts only `WorkflowFacts.optional_fields/0` — the 16 nullable columns.
+  `id`, `run_id`, `workspace_uri`, `inserted_at`, `updated_at` and anything
+  unknown are rejected with `{:error, :unknown_fields}`. That is both an
+  identity guard (a fact write must never move a row's identity) and the
+  reason the interpolated column names cannot be caller-chosen: every name
+  reaching the SQL string came from that whitelist, never from the input.
+
+  The returned struct is built from `RETURNING *` via `row_to_facts/1`, never
+  from the caller's input — same reason `upsert_facts/1` documents.
+
+  A `run_id` with no row is `{:error, :not_found}`, not an insert: a stage
+  writing facts for a run that was never established is a runner bug and must
+  surface as one instead of leaving a half-populated row behind.
+  """
+  @spec update_facts(String.t(), map()) ::
+          {:ok, WorkflowFacts.t()}
+          | {:error, :not_found}
+          | {:error, :unknown_fields}
+          | {:error, :empty_update}
+  def update_facts(run_id, updates) when is_binary(run_id) and is_map(updates) do
+    with :ok <- validate_fact_columns(updates),
+         :ok <- reject_empty_update(updates) do
+      columns = Map.keys(updates)
+      values = Enum.map(columns, &Map.fetch!(updates, &1))
+      updated_at_position = length(columns) + 1
+
+      assignments =
+        columns
+        |> Enum.with_index(1)
+        |> Enum.map(fn {column, position} -> "#{column} = $#{position}" end)
+        |> Enum.join(", ")
+
+      result =
+        Repo.query!(
+          "UPDATE git_workflow_facts SET " <>
+            assignments <>
+            ", updated_at = $#{updated_at_position}" <>
+            " WHERE run_id = $#{updated_at_position + 1} RETURNING *",
+          values ++ [DateTime.utc_now(), run_id]
+        )
+
+      case result do
+        %Postgrex.Result{num_rows: 0} ->
+          {:error, :not_found}
+
+        %Postgrex.Result{columns: result_columns, rows: [result_row | _]} ->
+          {:ok, Enum.zip(result_columns, result_row) |> Map.new() |> row_to_facts()}
+      end
+    end
+  end
+
   @doc "Reads the facts row for a run id."
   @spec read_facts(String.t()) :: {:ok, WorkflowFacts.t()} | {:error, :not_found}
   def read_facts(run_id) when is_binary(run_id) do
@@ -265,6 +330,21 @@ defmodule EzagentPluginGitWorkflow.Store do
       [row | _] -> {:ok, Enum.zip(columns, row) |> Map.new() |> row_to_facts()}
     end
   end
+
+  # ---------------------------------------------------------------------------
+  # Private: facts helpers
+  # ---------------------------------------------------------------------------
+
+  defp validate_fact_columns(updates) do
+    if Map.keys(updates) -- WorkflowFacts.optional_fields() == [],
+      do: :ok,
+      else: {:error, :unknown_fields}
+  end
+
+  # An empty update would emit `SET  , updated_at = ...` — refuse rather than
+  # quietly touch only the timestamp.
+  defp reject_empty_update(updates) when map_size(updates) == 0, do: {:error, :empty_update}
+  defp reject_empty_update(_updates), do: :ok
 
   # ---------------------------------------------------------------------------
   # Private: accept helpers

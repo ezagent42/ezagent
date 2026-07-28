@@ -379,6 +379,145 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
     end
   end
 
+  defp establish_facts!(run_id, attrs \\ %{}) do
+    {:ok, facts} =
+      %{
+        id: "wf_#{run_id}",
+        run_id: run_id,
+        workspace_uri: Ezagent.URI.workspace("test-ws")
+      }
+      |> Map.merge(attrs)
+      |> WorkflowFacts.new()
+
+    {:ok, established} = Store.upsert_facts(facts)
+    established
+  end
+
+  # FINDING (P4a, pre-existing): `git_workflow_facts`' timestamp columns are
+  # `timestamp without time zone`, and `Store` reads them with raw
+  # `Repo.query!/2` (no Ecto casting), so they come back as `NaiveDateTime`
+  # even though `WorkflowFacts`'s typespec says `DateTime.t()` and
+  # `WorkflowFacts.new/1` REJECTS a `NaiveDateTime`. That predates this slice
+  # (P1's `row_to_facts/1`) and is reported rather than changed here.
+  # Normalizing keeps these tests about the WRITE path — they stay meaningful
+  # whichever representation the store settles on.
+  defp as_naive(%DateTime{} = value), do: DateTime.to_naive(value)
+  defp as_naive(%NaiveDateTime{} = value), do: value
+
+  describe "update_facts/2" do
+    # THE reason this function exists (plan gap ③, design §5.3). `upsert_facts/1`
+    # is a full-row replace: its ON CONFLICT sets EVERY column to EXCLUDED, so a
+    # later stage passing only its own fact nulls out every earlier stage's.
+    # Doing that to `deterministic_head_ref` is what would break the GitHub
+    # adapter's KNOWN LIMITATION fix — it could no longer prove a ref sitting at
+    # base is its own retry rather than a foreign branch.
+    test "a later stage's write does not erase an earlier stage's facts" do
+      establish_facts!("run_incr_1", %{workspace_provision_id: "prov-1"})
+
+      assert {:ok, %WorkflowFacts{}} =
+               Store.update_facts("run_incr_1", %{deterministic_head_ref: "task/run-incr-1"})
+
+      assert {:ok,
+              %WorkflowFacts{
+                workspace_provision_id: "prov-1",
+                deterministic_head_ref: "task/run-incr-1"
+              }} = Store.read_facts("run_incr_1")
+
+      # A third write must preserve BOTH of the first two, not just the latest.
+      assert {:ok, %WorkflowFacts{}} =
+               Store.update_facts("run_incr_1", %{expected_base_sha: "a" <> String.duplicate("0", 39)})
+
+      assert {:ok,
+              %WorkflowFacts{
+                workspace_provision_id: "prov-1",
+                deterministic_head_ref: "task/run-incr-1",
+                expected_base_sha: "a" <> _
+              }} = Store.read_facts("run_incr_1")
+    end
+
+    test "returns the row as persisted, built from RETURNING *" do
+      establish_facts!("run_incr_2")
+
+      assert {:ok, %WorkflowFacts{id: "wf_run_incr_2", run_id: "run_incr_2", head_sha: "abc"}} =
+               Store.update_facts("run_incr_2", %{head_sha: "abc"})
+    end
+
+    # Identity guard: a fact write must never move a row's identity, and the
+    # generated SQL must never be able to carry a caller-chosen column name.
+    for column <- [:id, :run_id, :workspace_uri, :inserted_at, :updated_at] do
+      test "rejects #{inspect(column)} — identity/bookkeeping columns are not facts" do
+        established = establish_facts!("run_reject_#{unquote(column)}")
+
+        assert {:error, :unknown_fields} =
+                 Store.update_facts(established.run_id, %{unquote(column) => "hijacked"})
+
+        assert {:ok, ^established} = Store.read_facts(established.run_id)
+      end
+    end
+
+    test "rejects an unknown column" do
+      established = establish_facts!("run_incr_unknown")
+
+      assert {:error, :unknown_fields} =
+               Store.update_facts("run_incr_unknown", %{drop_table: "x"})
+
+      assert {:ok, ^established} = Store.read_facts("run_incr_unknown")
+    end
+
+    test "rejects an empty map rather than emitting an empty SET clause" do
+      establish_facts!("run_incr_empty")
+
+      assert {:error, :empty_update} = Store.update_facts("run_incr_empty", %{})
+    end
+
+    test "an unknown run_id is not_found, and inserts nothing" do
+      assert {:error, :not_found} =
+               Store.update_facts("run_never_established", %{head_sha: "abc"})
+
+      assert {:error, :not_found} = Store.read_facts("run_never_established")
+
+      [[count]] =
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_facts WHERE run_id = $1", [
+          "run_never_established"
+        ]).rows
+
+      assert count == 0
+    end
+
+    test "advances updated_at while leaving id and inserted_at alone" do
+      established = establish_facts!("run_incr_ts")
+      # The store stamps inserted_at/updated_at from DateTime.utc_now/0, so a
+      # same-microsecond second write would make the comparison vacuous.
+      Process.sleep(5)
+
+      assert {:ok, updated} = Store.update_facts("run_incr_ts", %{head_sha: "abc"})
+
+      assert updated.id == established.id
+      assert updated.inserted_at == established.inserted_at
+
+      assert NaiveDateTime.compare(
+               as_naive(updated.updated_at),
+               as_naive(established.updated_at)
+             ) == :gt
+    end
+
+    test "round-trips datetime and integer columns, not only strings" do
+      establish_facts!("run_incr_types")
+      observed_at = ~U[2026-07-28 09:30:00.000000Z]
+
+      assert {:ok, _} =
+               Store.update_facts("run_incr_types", %{
+                 checks_revision: 7,
+                 checks_observed_at: observed_at
+               })
+
+      assert {:ok, %WorkflowFacts{checks_revision: 7} = facts} = Store.read_facts("run_incr_types")
+
+      assert NaiveDateTime.compare(as_naive(facts.checks_observed_at), as_naive(observed_at)) ==
+               :eq
+    end
+  end
+
   describe "register_binding/1" do
     test "inserts a valid binding" do
       {:ok, binding} = TaskBinding.new(%{@valid_binding_attrs | id: "bnd_reg"})
