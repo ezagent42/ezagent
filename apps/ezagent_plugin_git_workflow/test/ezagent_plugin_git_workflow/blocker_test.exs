@@ -133,11 +133,12 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
 
     # Pins the vocabulary itself: adding or removing a code without saying so
     # fails here, so a vocabulary change cannot land unreviewed.
-    test "the vocabulary is exactly the 15 design codes plus the 12 documented extensions" do
+    test "the vocabulary is exactly the 15 design codes plus the 13 documented extensions" do
       assert Enum.sort(Blocker.codes()) == [
                :authorization_unavailable,
                :base_ref_not_found,
                :base_sha_mismatch,
+               :change_digest_mismatch,
                :change_limit_exceeded,
                :change_request_conflict,
                :checks_unavailable,
@@ -174,6 +175,14 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
     # wrong: re-running the same generation yields the same empty diff.
     test "no_changes_collected is terminal, not retryable" do
       assert Blocker.classify(:no_changes_collected) == :terminal_blocker
+    end
+
+    # Slice P4c added it, so it needs its own reason on the record: a worktree
+    # that moved between `changes_ready` and the commit re-reads the same moved
+    # worktree on every retry, and committing a tree the run never recorded is
+    # exactly what design §6.2's same-sha-on-retry guarantee forbids.
+    test "change_digest_mismatch is terminal — the re-collected tree does not un-move" do
+      assert Blocker.classify(:change_digest_mismatch) == :terminal_blocker
     end
 
     test "internal_error is terminal — an unclassifiable failure is not a retry candidate" do

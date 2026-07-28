@@ -201,6 +201,43 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
+  @doc """
+  Records the stable blocker code for a run's most recent failure.
+
+  Deliberately separate from `transition/4` rather than an extra argument to
+  it: design §7.2 classifies a RETRYABLE failure as "leave the state alone" —
+  there is no transition to hang the code on, and the code still has to be
+  durable for an operator to see. Folding the two together would force a
+  retryable failure to either invent a state change or lose the code.
+
+  It does NOT touch `status` or `state_version`, so it can never be mistaken
+  for a state change and cannot race with the CAS: the two statements write
+  disjoint columns.
+
+  `code` is a free string here on purpose. The vocabulary lives in
+  `EzagentPluginGitWorkflow.Blocker` (which is total and has no catch-all), and
+  duplicating it as a second whitelist in the store is how the two copies drift
+  apart. What the store DOES enforce is the same shape `WorkflowRun.new/1`
+  accepts for the column: a non-empty binary, or `nil` to clear it.
+  """
+  @spec record_error_code(String.t(), String.t() | nil) ::
+          {:ok, WorkflowRun.t()} | {:error, :not_found} | {:error, :invalid_error_code}
+  def record_error_code(run_id, code)
+      when is_binary(run_id) and (is_nil(code) or (is_binary(code) and code != "")) do
+    result =
+      Repo.query!(
+        "UPDATE git_workflow_runs SET last_error_code = $1, updated_at = $2 WHERE id = $3",
+        [code, DateTime.utc_now(), run_id]
+      )
+
+    case result do
+      %Postgrex.Result{num_rows: 0} -> {:error, :not_found}
+      %Postgrex.Result{num_rows: 1} -> {:ok, fetch_run!(run_id)}
+    end
+  end
+
+  def record_error_code(run_id, _code) when is_binary(run_id), do: {:error, :invalid_error_code}
+
   # ---------------------------------------------------------------------------
   # Facts operations
   # ---------------------------------------------------------------------------
@@ -275,6 +312,16 @@ defmodule EzagentPluginGitWorkflow.Store do
   reason the interpolated column names cannot be caller-chosen: every name
   reaching the SQL string came from that whitelist, never from the input.
 
+  VALUES are checked too, against `WorkflowFacts.validate_optional_value/2` —
+  the same rule `WorkflowFacts.new/1` applies to that field, not a second
+  copy of it. Without that, this function could persist a value the struct
+  rejects (`%{deterministic_head_ref: ""}` was the live example), producing a
+  fact that cannot be read back into its own struct. Rejection is total: ONE
+  bad value refuses the whole update, and the statement never runs, so the row
+  is left byte-identical rather than half-applied. Nothing is coerced — a
+  store that quietly repaired its input would hide the caller's bug and
+  persist something nobody wrote.
+
   The returned struct is built from `RETURNING *` via `row_to_facts/1`, never
   from the caller's input — same reason `upsert_facts/1` documents.
 
@@ -287,9 +334,11 @@ defmodule EzagentPluginGitWorkflow.Store do
           | {:error, :not_found}
           | {:error, :unknown_fields}
           | {:error, :empty_update}
+          | {:error, {:invalid_field, atom()}}
   def update_facts(run_id, updates) when is_binary(run_id) and is_map(updates) do
     with :ok <- validate_fact_columns(updates),
-         :ok <- reject_empty_update(updates) do
+         :ok <- reject_empty_update(updates),
+         :ok <- validate_fact_values(updates) do
       columns = Map.keys(updates)
       values = Enum.map(columns, &Map.fetch!(updates, &1))
       updated_at_position = length(columns) + 1
@@ -345,6 +394,18 @@ defmodule EzagentPluginGitWorkflow.Store do
   # quietly touch only the timestamp.
   defp reject_empty_update(updates) when map_size(updates) == 0, do: {:error, :empty_update}
   defp reject_empty_update(_updates), do: :ok
+
+  # Runs AFTER `validate_fact_columns/1`, so every key here is already a member
+  # of `WorkflowFacts.optional_fields/0` and `validate_optional_value/2`'s lack
+  # of a catch-all clause cannot be reached with an unknown field.
+  defp validate_fact_values(updates) do
+    Enum.reduce_while(updates, :ok, fn {field, value}, :ok ->
+      case WorkflowFacts.validate_optional_value(field, value) do
+        :ok -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
 
   # ---------------------------------------------------------------------------
   # Private: accept helpers
@@ -662,8 +723,8 @@ defmodule EzagentPluginGitWorkflow.Store do
       visibility: parse_visibility(row["visibility"]),
       allowed_head_namespace: row["allowed_head_namespace"],
       enabled: row["enabled"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
@@ -681,8 +742,8 @@ defmodule EzagentPluginGitWorkflow.Store do
       source_revision: row["source_revision"],
       requested_head_ref: row["requested_head_ref"],
       last_error_code: row["last_error_code"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
@@ -713,17 +774,38 @@ defmodule EzagentPluginGitWorkflow.Store do
       change_request_base_ref: row["change_request_base_ref"],
       checks_revision: row["checks_revision"],
       checks_summary: row["checks_summary"],
-      checks_observed_at: row["checks_observed_at"],
+      checks_observed_at: parse_timestamp(row["checks_observed_at"]),
       reviews_revision: row["reviews_revision"],
       reviews_summary: row["reviews_summary"],
-      reviews_observed_at: row["reviews_observed_at"],
-      inserted_at: row["inserted_at"],
-      updated_at: row["updated_at"]
+      reviews_observed_at: parse_timestamp(row["reviews_observed_at"]),
+      inserted_at: parse_timestamp(row["inserted_at"]),
+      updated_at: parse_timestamp(row["updated_at"])
     })
   end
 
   defp parse_uri!(str) when is_binary(str), do: Ezagent.URI.new!(str)
   defp parse_uri!(nil), do: nil
+
+  # Every timestamp column here is declared `:utc_datetime_usec`, which Ecto
+  # stores in a `timestamp without time zone` column ALREADY IN UTC. This
+  # module reads with raw `Repo.query!/2`, which bypasses Ecto's load casting,
+  # so Postgrex hands back a `%NaiveDateTime{}` — a value the structs' own
+  # typespecs disagree with, and one that `WorkflowFacts.new/1` and
+  # `Ezagent.DomainGit.CreateChangeRequest.new/1` both REJECT.
+  #
+  # Design §6.1 makes that a broken path, not a cosmetic mismatch: the commit
+  # date an adapter stamps on the Git commit must be `git_workflow_runs.
+  # inserted_at`, read by the workflow from its own run row and passed into
+  # `CreateChangeRequest` — construction fails on the naive value.
+  #
+  # This is a load-side conversion only. The column type and the migration are
+  # correct as written and are deliberately not touched: the stored value is
+  # already UTC, so attaching the zone loses nothing and invents nothing.
+  # All THREE row mappers convert, not only the one that unblocked §6.1 — a
+  # mapper left raw is the identical trap for whichever slice reads it next.
+  defp parse_timestamp(nil), do: nil
+  defp parse_timestamp(%DateTime{} = value), do: value
+  defp parse_timestamp(%NaiveDateTime{} = value), do: DateTime.from_naive!(value, "Etc/UTC")
 
   defp parse_visibility("public"), do: :public
   defp parse_visibility("private"), do: :private

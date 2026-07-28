@@ -94,6 +94,36 @@ defmodule EzagentPluginGitWorkflow.WorkflowFacts do
   @spec optional_fields() :: [atom()]
   def optional_fields, do: @optional_fields
 
+  @doc """
+  Validates ONE optional fact value against exactly the rule `new/1` applies
+  to that field.
+
+  `Store.update_facts/2` writes single columns without ever building a struct,
+  so without this it could persist a value `new/1` would reject — a fact that
+  cannot be read back into its own struct (P4a shipped key/identity guards
+  only, so `%{deterministic_head_ref: ""}` reached the column). Exposing the
+  rule rather than restating it in the store keeps ONE definition of what a
+  legal fact value is; a second copy is the one that drifts and stops guarding.
+
+  There is deliberately NO catch-all clause. A field outside the three groups
+  is not an optional fact at all, and `Store.update_facts/2` has already
+  refused it by whitelist before reaching here — but if a future field group
+  is added to the struct without a rule, this must fail loudly rather than
+  wave the value through.
+  """
+  @spec validate_optional_value(atom(), term()) :: :ok | {:error, {:invalid_field, atom()}}
+  def validate_optional_value(field, value) when field in @optional_string_fields,
+    do: checked(field, nil_or_non_empty_binary?(value))
+
+  def validate_optional_value(field, value) when field in @optional_integer_fields,
+    do: checked(field, nil_or_non_negative_integer?(value))
+
+  def validate_optional_value(field, value) when field in @optional_datetime_fields,
+    do: checked(field, nil_or_datetime?(value))
+
+  defp checked(_field, true), do: :ok
+  defp checked(field, false), do: {:error, {:invalid_field, field}}
+
   @doc "Builds a validated WorkflowFacts record. Unknown fields are rejected."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
@@ -123,31 +153,26 @@ defmodule EzagentPluginGitWorkflow.WorkflowFacts do
   end
 
   defp validate_values(attrs) do
+    with :ok <- validate_identity_values(attrs) do
+      Enum.reduce_while(@optional_fields, :ok, fn field, :ok ->
+        case validate_optional_value(field, Map.get(attrs, field)) do
+          :ok -> {:cont, :ok}
+          {:error, _reason} = error -> {:halt, error}
+        end
+      end)
+    end
+  end
+
+  defp validate_identity_values(attrs) do
     id = Map.fetch!(attrs, :id)
     run_id = Map.fetch!(attrs, :run_id)
     workspace_uri = Map.fetch!(attrs, :workspace_uri)
 
-    string_checks =
-      Enum.map(@optional_string_fields, fn field ->
-        {field, nil_or_non_empty_binary?(Map.get(attrs, field))}
-      end)
-
-    integer_checks =
-      Enum.map(@optional_integer_fields, fn field ->
-        {field, nil_or_non_negative_integer?(Map.get(attrs, field))}
-      end)
-
-    datetime_checks =
-      Enum.map(@optional_datetime_fields, fn field ->
-        {field, nil_or_datetime?(Map.get(attrs, field))}
-      end)
-
-    checks =
-      [
-        {:id, is_binary(id) and byte_size(id) > 0},
-        {:run_id, is_binary(run_id) and byte_size(run_id) > 0},
-        {:workspace_uri, is_struct(workspace_uri, URI) and Ezagent.URI.canonical?(workspace_uri)}
-      ] ++ string_checks ++ integer_checks ++ datetime_checks
+    checks = [
+      {:id, is_binary(id) and byte_size(id) > 0},
+      {:run_id, is_binary(run_id) and byte_size(run_id) > 0},
+      {:workspace_uri, is_struct(workspace_uri, URI) and Ezagent.URI.canonical?(workspace_uri)}
+    ]
 
     case Enum.find(checks, fn {_field, valid?} -> not valid? end) do
       nil -> :ok
