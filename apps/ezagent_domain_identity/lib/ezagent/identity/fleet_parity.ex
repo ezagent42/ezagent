@@ -154,14 +154,14 @@ defmodule Ezagent.Identity.FleetParity do
   # holders (per `AuthenticatedHolders`) are excluded — they are not
   # snapshot-backed and carry no durable legacy source (codex F2 exemption).
   defp legacy_snapshot_holders do
-    Ezagent.Ecto.KindSnapshot.list_all()
+    Ezagent.Kind.list_durable_instances()
     # A user's durable source is `users.caps_json` (enumerated in
     # `legacy_users/0`), NEVER its snapshot — reject user snapshots so a user
     # is never double-counted.
-    |> Enum.reject(fn row -> user_uri?(row.uri) end)
-    |> Enum.reject(&ephemeral_holder_snapshot?/1)
-    |> Enum.flat_map(fn row ->
-      uri = to_uri(row.uri)
+    |> Enum.reject(fn {uri_str, _meta} -> user_uri?(uri_str) end)
+    |> Enum.reject(fn {_uri_str, meta} -> ephemeral_holder_meta?(meta) end)
+    |> Enum.flat_map(fn {uri_str, _meta} ->
+      uri = to_uri(uri_str)
 
       case snapshot_identity_caps(uri) do
         {:ok, caps} -> [holder(uri, caps)]
@@ -179,11 +179,11 @@ defmodule Ezagent.Identity.FleetParity do
     _ -> false
   end
 
-  defp ephemeral_holder_snapshot?(%{kind_type: kind_type}) when is_binary(kind_type) do
+  defp ephemeral_holder_meta?(%{kind_type: kind_type}) when is_binary(kind_type) do
     AuthenticatedHolders.ephemeral_holder?(safe_atom(kind_type))
   end
 
-  defp ephemeral_holder_snapshot?(_row), do: false
+  defp ephemeral_holder_meta?(_meta), do: false
 
   # `{:ok, caps}` when the durable `:identity` slice carries a caps set (the
   # entity IS store-mirrored), `:none` when there is no `:identity` slice (not

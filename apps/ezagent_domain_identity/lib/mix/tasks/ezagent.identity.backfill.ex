@@ -73,10 +73,10 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
   end
 
   defp backfill_snapshots(dry_run?) do
-    Ezagent.Ecto.KindSnapshot.list_all()
-    |> Enum.reject(fn row -> user_uri?(row.uri) end)
-    |> Enum.map(fn row ->
-      uri = Ezagent.URI.new!(row.uri)
+    Ezagent.Kind.list_durable_instances()
+    |> Enum.reject(fn {uri_str, _meta} -> user_uri?(uri_str) end)
+    |> Enum.map(fn {uri_str, _meta} ->
+      uri = Ezagent.URI.new!(uri_str)
 
       case Ezagent.Kind.read_durable(uri, :identity) do
         {:ok, identity, _meta} when is_map(identity) ->
@@ -85,7 +85,7 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
         _ ->
           # No `:identity` slice (template/session-without-caps/…) — nothing
           # to mirror; not a principal for the identity-caps store.
-          {row.uri, :no_identity}
+          {uri_str, :no_identity}
       end
     end)
   end

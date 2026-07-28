@@ -93,7 +93,14 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # home: G-3's principal-axis gate. EntityCaps.load(holder) validates
         # the holder's independently stored self-license against the current
         # holder authority before authorize/3 considers inline candidates.
-        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
+        # #189 PR-2: the identity-caps store's WRITE-boundary resurrection guard
+        # runs the SAME G-3 principal-axis check (`verify_against_current` of the
+        # mirrored self-license vs the holder's current generation) so a stale
+        # post-revocation license can never be written `active`. Reviewed, not an
+        # authz decision — reads stay legacy in PR-2; this only decides the
+        # durable row's status. Mirrors the entity_caps.ex home above.
+        "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex"
       ]
     },
     %{

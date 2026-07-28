@@ -112,10 +112,10 @@ defmodule Ezagent.Identity.FleetParityTest do
       Store.backfill(uri, Map.get(user, :caps) || [])
     end
 
-    for row <- Ezagent.Ecto.KindSnapshot.list_all(),
-        not user_uri?(row.uri),
-        not ephemeral_kind?(row.kind_type) do
-      uri = Ezagent.URI.new!(row.uri)
+    for {uri_str, meta} <- Ezagent.Kind.list_durable_instances(),
+        not user_uri?(uri_str),
+        not ephemeral_kind?(meta.kind_type) do
+      uri = Ezagent.URI.new!(uri_str)
 
       case snapshot_caps(uri) do
         {:ok, caps} -> Store.backfill(uri, caps)
