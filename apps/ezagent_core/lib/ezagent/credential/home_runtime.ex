@@ -16,10 +16,10 @@ defmodule Ezagent.Credential.HomeRuntime do
   # incarnation_id, version)`, so a delete+reinsert at the same version or
   # two reapprovals racing one version number can no longer pass a stale
   # materializer through.
-  @type grant_ctx :: {:grant, String.t(), String.t(), non_neg_integer()} | nil
+  @type grant_ctx :: {:grant, String.t(), String.t() | nil, non_neg_integer()} | nil
   @type create_result ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), String.t(), non_neg_integer()}}
+          | {:ok, String.t(), {:grant, String.t(), String.t() | nil, non_neg_integer()}}
           | {:error, term()}
 
   # #1201 A② — the SHARED host-login-home derivation for file-backed flavors
@@ -48,6 +48,25 @@ defmodule Ezagent.Credential.HomeRuntime do
 
   def put_agent_config_dir(tmpl, dir) when is_map(tmpl),
     do: Map.put(tmpl, "agent_config_dir", dir)
+
+  @doc """
+  #201-cred (codex r2 NEW-HIGH-3) — the plugin created-winner arm calls this to
+  thread its `:started ∧ created?` witness into the `tmpl`'s cascade map, so the
+  deferred mint in `materialize_cascade/6` can prove the mint is on the
+  created-winner arm (`GrantMint.maybe_mint/3` fail-closes without it). A no-op
+  when there is no cascade map (a non-cascade / no-credential-source agent mints
+  nothing) or no witness (a rehydrating winner never mints). NEVER call this off
+  the created-winner arm — a witness only exists there.
+  """
+  @spec put_cascade_created_witness(map(), Ezagent.Kind.CreatedWitness.t() | nil) :: map()
+  def put_cascade_created_witness(tmpl, nil) when is_map(tmpl), do: tmpl
+
+  def put_cascade_created_witness(tmpl, witness) when is_map(tmpl) do
+    case Map.get(tmpl, "cascade") do
+      %{} = cascade -> Map.put(tmpl, "cascade", Map.put(cascade, :created_witness, witness))
+      _ -> tmpl
+    end
+  end
 
   @doc false
   @spec resolve_config_home(URI.t(), map(), module(), keyword()) :: String.t() | nil
@@ -189,6 +208,14 @@ defmodule Ezagent.Credential.HomeRuntime do
   @spec compensate_grant_ctx(grant_ctx()) :: :ok | {:error, :grant_compensation_failed}
   def compensate_grant_ctx(nil), do: :ok
 
+  # #201-cred (codex r2 NEW-MEDIUM-4) — a legacy grant (minted before the
+  # incarnation column existed) materializes with a `nil` incarnation in its
+  # grant_ctx. THIS spawn did not mint that pre-existing grant, so there is
+  # nothing for it to compensate — and `GrantMint.compensate/3`'s
+  # `is_binary(incarnation_id)` guard would FunctionClauseError on `nil`. Treat
+  # it as a no-op (never delete a pre-existing legacy grant on a spawn failure).
+  def compensate_grant_ctx({:grant, _agent_uri_str, nil, _version}), do: :ok
+
   def compensate_grant_ctx({:grant, agent_uri_str, incarnation_id, _version}) do
     Ezagent.Credential.GrantMint.compensate(agent_uri_str, incarnation_id)
   end
@@ -318,38 +345,57 @@ defmodule Ezagent.Credential.HomeRuntime do
     source_dir_for = Map.fetch!(cascade, :source_dir_for)
 
     result =
-      with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
-           :ok <- materialize_sandbox_skills(staging, tmpl),
-           :ok <- materialize_plugin_manifest(staging, tmpl),
-           :ok <- File.chmod(staging, 0o700),
-           :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n"),
-           # #201-cred (codex r2 HIGH-1) — THE DEFERRED MINT. The cascade may
-           # carry a `:pending_grant` descriptor (authorized at domain
-           # resolution time); the durable grant is minted HERE — inside the
-           # created-winner's materialization boundary, after the `:started ∧
-           # created?` receipt — never earlier. Respawn/rehydrated cascades
-           # carry no pending grant and mint nothing.
-           {:ok, minted} <-
-             Ezagent.Credential.GrantMint.maybe_mint(
-               agent_uri,
-               Map.get(cascade, :pending_grant)
-             ),
-           {:ok, {^target, version, incarnation_id}} <-
-             materialize_and_compensate(agent_uri, minted, fn ->
-               Ezagent.Agent.Materializer.materialize_with_grant(%{
-                 agent_uri: URI.to_string(agent_uri),
-                 staging: staging,
-                 secret_relpaths: template_module.secret_relpaths(),
-                 source_dir_for: source_dir_for,
-                 commit: fn {version, incarnation_id} ->
-                   with :ok <- chmod_credential_files(staging, template_module, opts),
-                        :ok <- swap_into_place(staging, target) do
-                     {:ok, {target, version, incarnation_id}}
+      try do
+        with :ok <- Ezagent.Agent.Materializer.merge_layers(staging, layer_dirs),
+             :ok <- materialize_sandbox_skills(staging, tmpl),
+             :ok <- materialize_plugin_manifest(staging, tmpl),
+             :ok <- File.chmod(staging, 0o700),
+             :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n"),
+             # #201-cred (codex r2 HIGH-1 + NEW-HIGH-3) — THE DEFERRED MINT. The
+             # cascade may carry a `:pending_grant` descriptor (authorized at
+             # domain resolution time); the durable grant is minted HERE — inside
+             # the created-winner's materialization boundary — never earlier.
+             # `GrantMint.maybe_mint/3` REQUIRES the created-winner witness the
+             # plugin arm injected into the cascade map (`:created_witness`) from
+             # its `:started ∧ created?` spawn receipt; without it the mint
+             # fail-closes (`:missing_created_winner_witness`). Respawn/rehydrated
+             # cascades carry neither pending grant nor witness and mint nothing.
+             {:ok, minted} <-
+               Ezagent.Credential.GrantMint.maybe_mint(
+                 agent_uri,
+                 Map.get(cascade, :pending_grant),
+                 Map.get(cascade, :created_witness)
+               ),
+             {:ok, {^target, version, incarnation_id}} <-
+               materialize_and_compensate(agent_uri, minted, fn ->
+                 Ezagent.Agent.Materializer.materialize_with_grant(%{
+                   agent_uri: URI.to_string(agent_uri),
+                   staging: staging,
+                   secret_relpaths: template_module.secret_relpaths(),
+                   source_dir_for: source_dir_for,
+                   commit: fn {version, incarnation_id} ->
+                     with :ok <- chmod_credential_files(staging, template_module, opts),
+                          :ok <- swap_into_place(staging, target) do
+                       {:ok, {target, version, incarnation_id}}
+                     end
                    end
-                 end
-               })
-             end) do
-        {:ok, target, version, incarnation_id}
+                 })
+               end) do
+          {:ok, target, version, incarnation_id}
+        end
+      rescue
+        # #201-cred (codex r2 NEW-HIGH-1) — a raise in the post-mint region has
+        # already CONFIRM-compensated the minted grant (inside
+        # `materialize_and_compensate/3`); here we additionally clear the
+        # secret-bearing staging dir so no credential residue is left, then
+        # re-raise so `TemplateSpawn` finalizes the aborted spawn.
+        exception ->
+          _ = File.rm_rf(staging)
+          reraise exception, __STACKTRACE__
+      catch
+        kind, reason ->
+          _ = File.rm_rf(staging)
+          :erlang.raise(kind, reason, __STACKTRACE__)
       end
 
     case result do
@@ -362,35 +408,71 @@ defmodule Ezagent.Credential.HomeRuntime do
     end
   end
 
-  # #201-cred (codex r2 HIGH-2) — run the grant-leased materialization; if it
-  # fails AFTER this call minted, CONFIRM-compensate exactly the minted
-  # incarnation before returning the error. A compensation failure is
-  # surfaced COMPOSITE (`{:materialize_failed_and_grant_compensation_failed,
-  # ...}`) — never collapsed into the primary error (a silently leaked grant
-  # is a security-critical residue).
+  # #201-cred (codex r2 HIGH-2 + NEW-HIGH-1) — run the grant-leased
+  # materialization; if it fails AFTER this call minted, CONFIRM-compensate
+  # exactly the minted incarnation before returning/propagating the failure.
+  #
+  #   * A RETURNED `{:error, reason}` is compensated and surfaced COMPOSITE on a
+  #     compensation failure (`{:materialize_failed_and_grant_compensation_failed,
+  #     ...}`) — never collapsed into the primary error (a silently leaked grant
+  #     is a security-critical residue).
+  #
+  #   * A RAISE/THROW anywhere in the post-mint region — `fetch_for_materialize`,
+  #     `source_dir_for`, a secret read, or the commit — previously skipped
+  #     compensation ENTIRELY and left the just-minted grant durable while
+  #     `TemplateSpawn` re-raised (codex r2 NEW-HIGH-1). The rescue/catch below
+  #     CONFIRM-compensates the minted incarnation, THEN re-raises the ORIGINAL
+  #     exception (stacktrace preserved) so the spawn still aborts. We do NOT
+  #     build a composite through the exception: a compensation failure here is
+  #     already logged `:critical` by `GrantMint.compensate/3`, and masking the
+  #     primary exception would lose the abort. An exception-raising attempt
+  #     therefore truly never leaves a durable grant.
   defp materialize_and_compensate(agent_uri, minted, materialize_fun) do
-    case materialize_fun.() do
-      {:ok, _} = ok ->
-        ok
+    try do
+      case materialize_fun.() do
+        {:ok, _} = ok ->
+          ok
 
-      {:error, reason} ->
-        case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
-          nil ->
+        {:error, reason} ->
+          compensate_after_returned_failure(agent_uri, minted, reason)
+      end
+    rescue
+      exception ->
+        _ = compensate_minted_on_raise(agent_uri, minted)
+        reraise exception, __STACKTRACE__
+    catch
+      kind, reason ->
+        _ = compensate_minted_on_raise(agent_uri, minted)
+        :erlang.raise(kind, reason, __STACKTRACE__)
+    end
+  end
+
+  defp compensate_after_returned_failure(agent_uri, minted, reason) do
+    case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
+      nil ->
+        {:error, reason}
+
+      incarnation_id ->
+        case Ezagent.Credential.GrantMint.compensate(
+               URI.to_string(agent_uri),
+               incarnation_id
+             ) do
+          :ok ->
             {:error, reason}
 
-          incarnation_id ->
-            case Ezagent.Credential.GrantMint.compensate(
-                   URI.to_string(agent_uri),
-                   incarnation_id
-                 ) do
-              :ok ->
-                {:error, reason}
-
-              {:error, :grant_compensation_failed} ->
-                {:error,
-                 {:materialize_failed_and_grant_compensation_failed, reason, incarnation_id}}
-            end
+          {:error, :grant_compensation_failed} ->
+            {:error, {:materialize_failed_and_grant_compensation_failed, reason, incarnation_id}}
         end
+    end
+  end
+
+  defp compensate_minted_on_raise(agent_uri, minted) do
+    case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
+      nil ->
+        :ok
+
+      incarnation_id ->
+        Ezagent.Credential.GrantMint.compensate(URI.to_string(agent_uri), incarnation_id)
     end
   end
 

@@ -61,9 +61,28 @@ defmodule Ezagent.Credential.GrantMint do
   Returns `{:ok, %GrantRow{}}` carrying the freshly minted
   `incarnation_id` (the caller's compensation receipt), or `{:error, reason}`
   (the caller MUST abort the spawn — nothing was written).
+
+  #201-cred (codex r2 NEW-HIGH-3) — `witness` is the MANDATORY structural
+  created-winner proof (`Ezagent.Kind.CreatedWitness`), minted by
+  `Ezagent.Kind.spawn_receipt/3` and threaded from the plugin created-winner arm
+  (directly for curl, via the cascade map for file flavors). A caller that did
+  not just create `agent_uri` has no witness bound to it, so `mint/3`
+  fail-closes with `{:error, :missing_created_winner_witness}` and writes
+  NOTHING BEFORE evaluating the descriptor — grant-minting is structurally
+  confined to the created-winner arm; no exported path (resolver, curl, a future
+  plugin, a `curl`-driven RPC) can insert a durable grant without it.
   """
-  @spec mint(URI.t(), pending()) :: {:ok, GrantRow.t()} | {:error, term()}
-  def mint(%URI{} = agent_uri, %{kind: :authorized} = pending) do
+  @spec mint(URI.t(), pending(), Ezagent.Kind.CreatedWitness.t() | nil) ::
+          {:ok, GrantRow.t()} | {:error, term()}
+  def mint(%URI{} = agent_uri, pending, witness) do
+    if Ezagent.Kind.CreatedWitness.authorizes?(witness, agent_uri) do
+      do_mint(agent_uri, pending)
+    else
+      {:error, :missing_created_winner_witness}
+    end
+  end
+
+  defp do_mint(%URI{} = agent_uri, %{kind: :authorized} = pending) do
     %{source: %URI{} = source, approved_by: %URI{} = approved_by} = pending
 
     if Ezagent.Capability.workspace_of(agent_uri) == Ezagent.Capability.workspace_of(source) do
@@ -73,7 +92,7 @@ defmodule Ezagent.Credential.GrantMint do
     end
   end
 
-  def mint(%URI{} = agent_uri, %{kind: :workspace_shared} = pending) do
+  defp do_mint(%URI{} = agent_uri, %{kind: :workspace_shared} = pending) do
     %{
       workspace_uri: %URI{} = workspace_uri,
       flavor: flavor,
@@ -101,16 +120,21 @@ defmodule Ezagent.Credential.GrantMint do
     end
   end
 
-  def mint(%URI{}, pending), do: {:error, {:invalid_pending_grant, pending}}
+  defp do_mint(%URI{}, pending), do: {:error, {:invalid_pending_grant, pending}}
 
   @doc """
-  `maybe_mint/2` is the materialization-boundary entry point: a cascade that
+  `maybe_mint/3` is the materialization-boundary entry point: a cascade that
   carries no pending grant (no credential source resolved, or a rehydrated
-  respawn cascade — a respawn NEVER mints) is a `{:ok, nil}` no-op.
+  respawn cascade — a respawn NEVER mints) is a `{:ok, nil}` no-op, regardless
+  of the witness. When a pending grant IS present, the durable mint requires the
+  created-winner `witness` (#201-cred codex r2 NEW-HIGH-3) exactly as `mint/3`.
   """
-  @spec maybe_mint(URI.t(), pending() | nil) :: {:ok, GrantRow.t() | nil} | {:error, term()}
-  def maybe_mint(%URI{}, nil), do: {:ok, nil}
-  def maybe_mint(%URI{} = agent_uri, %{} = pending), do: mint(agent_uri, pending)
+  @spec maybe_mint(URI.t(), pending() | nil, Ezagent.Kind.CreatedWitness.t() | nil) ::
+          {:ok, GrantRow.t() | nil} | {:error, term()}
+  def maybe_mint(%URI{}, nil, _witness), do: {:ok, nil}
+
+  def maybe_mint(%URI{} = agent_uri, %{} = pending, witness),
+    do: mint(agent_uri, pending, witness)
 
   @doc """
   Confirmed, ABA-safe deletion of EXACTLY the incarnation `agent_uri_str`'s

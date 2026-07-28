@@ -182,7 +182,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           _ = ensure_subprocess_alive(agent_uri, tmpl)
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, false} ->
+        {:started, false, _witness} ->
           # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): a cold,
           # durably pre-existing agent. ZERO credential writes: NO grant-scoped
           # materialization; the Kind's own `Sandbox.post_init` self-heals the
@@ -190,8 +190,11 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           # meta → `record_sandbox_state` preserves the existing slice.
           {:ok, [agent_uri], %{fresh?: true, created?: false}}
 
-        {:started, true} ->
-          case create_agent_config_dir_with_grant(agent_uri, tmpl) do
+        {:started, true, created_witness} ->
+          # #201-cred (codex r2 NEW-HIGH-3) — thread the created-winner witness
+          # into the cascade map (inside the helper, AFTER the sandbox-content
+          # attach) so the deferred mint proves it is on this arm.
+          case create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir =
                 tmpl
@@ -243,9 +246,13 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   defp put_agent_config_dir(tmpl, dir),
     do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
 
-  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
     with {:ok, tmpl} <-
            Ezagent.PluginCc.Template.CcAgent.attach_role_sandbox_content(tmpl, agent_uri) do
+      # #201-cred (codex r2 NEW-HIGH-3) — inject the created-winner witness into
+      # the cascade map AFTER the attach so the deferred mint can prove this arm.
+      tmpl = Ezagent.Credential.HomeRuntime.put_cascade_created_witness(tmpl, created_witness)
+
       Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
         agent_uri,
         tmpl,
@@ -286,9 +293,14 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     # (`created?`), which the TemplateSpawn chokepoint gates create-only
     # writes on.
     case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
-      {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
-      {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
+      {:ok, :started, _pid, %{created?: created?} = receipt} ->
+        {:ok, {:started, created?, Map.get(receipt, :created_witness)}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, :already_started}
+
+      {:error, reason} ->
+        {:error, {:agent_spawn_failed, reason}}
     end
   end
 

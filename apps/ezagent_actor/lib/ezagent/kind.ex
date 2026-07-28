@@ -317,7 +317,11 @@ defmodule Ezagent.Kind do
   `spawn/3`.
   """
   @spec spawn_receipt(module(), map(), keyword()) ::
-          {:ok, :started | :already_started, pid(), %{created?: boolean()}}
+          {:ok, :started | :already_started, pid(),
+           %{
+             required(:created?) => boolean(),
+             optional(:created_witness) => Ezagent.Kind.CreatedWitness.t()
+           }}
           | {:error, term()}
   def spawn_receipt(kind_module, params, opts \\ [])
       when is_atom(kind_module) and is_map(params) and is_list(opts) do
@@ -327,7 +331,13 @@ defmodule Ezagent.Kind do
         # EXACT incarnation this call started (`pid`), so a supervisor
         # restart of a died-before-read winner can never overwrite the
         # winning incarnation's verdict with its own `:existed`.
-        {:ok, :started, pid, %{created?: params_create_freshness(params, pid) == :created}}
+        #
+        # #201-cred (codex r2 NEW-HIGH-3) — a genuine logical create ALSO mints
+        # the structural created-winner witness here, the ONLY place that holds
+        # proof of `:started ∧ created?`. The plugin created-winner arm threads
+        # it into `GrantMint.mint/3`, which refuses to mint a durable grant
+        # without it — so grant-minting is structurally confined to this arm.
+        {:ok, :started, pid, started_receipt(params, params_create_freshness(params, pid))}
 
       {:error, {:already_started, pid}} ->
         {:ok, :already_started, pid, %{created?: false}}
@@ -353,6 +363,15 @@ defmodule Ezagent.Kind do
 
   defp params_create_freshness(%{uri: %URI{} = uri}, pid), do: create_freshness(uri, pid)
   defp params_create_freshness(_params, _pid), do: :unknown
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the `:started` receipt map. A genuine
+  # logical create (`:created`) carries the structural created-winner witness
+  # bound to the started agent URI; a rehydrating winner (`:existed`) or an
+  # un-URI'd custom spawn carries no witness and cannot mint a grant.
+  defp started_receipt(%{uri: %URI{} = uri}, :created),
+    do: %{created?: true, created_witness: Ezagent.Kind.CreatedWitness.new(uri)}
+
+  defp started_receipt(_params, freshness), do: %{created?: freshness == :created}
 
   @doc """
   #201 PR-1 — read the create-vs-activate verdict recorded by the EXACT

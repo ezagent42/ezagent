@@ -213,14 +213,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, false} ->
+        {:started, false, _witness} ->
           # #201 PR-3 — rehydrating winner (`:started ∧ ¬created?`, a cold
           # pre-existing agent): ZERO credential writes — no grant-scoped
           # materialization; the Kind's own post_init self-heals the subprocess.
           {:ok, [agent_uri], %{fresh?: true, created?: false}}
 
-        {:started, true} ->
-          case create_agent_config_dir_with_grant(agent_uri, tmpl) do
+        {:started, true, created_witness} ->
+          case create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
 
@@ -272,7 +272,11 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
 
   # #17 cascade PR-2 (codex CRITICAL §5.1) — normalize the 2-tuple (non-cascade) and
   # 3-tuple (cascade, carrying the grant ctx) returns of create_agent_config_dir/2.
-  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+  # #201-cred (codex r2 NEW-HIGH-3) — inject the created-winner witness into the
+  # cascade map so the deferred mint proves this arm.
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
+    tmpl = Ezagent.Credential.HomeRuntime.put_cascade_created_witness(tmpl, created_witness)
+
     Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
       agent_uri,
       tmpl,
@@ -639,9 +643,14 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     # pre-written — ETS flavor row). Both codex flavors resolve to Entity.Agent;
     # the URI path passed the same single init arg — identical.
     case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
-      {:ok, :started, _pid, %{created?: created?}} -> {:ok, {:started, created?}}
-      {:ok, :already_started, _pid, _receipt} -> {:ok, :already_started}
-      {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
+      {:ok, :started, _pid, %{created?: created?} = receipt} ->
+        {:ok, {:started, created?, Map.get(receipt, :created_witness)}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, :already_started}
+
+      {:error, reason} ->
+        {:error, {:agent_spawn_failed, reason}}
     end
   end
 

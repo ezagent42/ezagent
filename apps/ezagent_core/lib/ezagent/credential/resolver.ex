@@ -228,21 +228,32 @@ defmodule Ezagent.Credential.Resolver do
   chosen credential `source`, then mint a durable `GrantRow` for the new agent.
 
   #201-cred (codex r2 HIGH-5) — this is now `authorize_grant/1` + an
-  IMMEDIATE generation-guarded `GrantMint.mint/2`: the recorded holder/source
+  IMMEDIATE generation-guarded `GrantMint.mint/3`: the recorded holder/source
   authority generations are persisted on the row (re-validated under lock at
   insertion and at every materialization fetch). The spawn path does NOT call
   this — it defers the mint to the created-winner via `authorize_grant/1` +
   the pending-grant descriptor; this entry point remains for callers that
   authorize+mint atomically in one step.
 
-  Returns `{:ok, %GrantRow{}}` | `{:error, :unauthorized | {:source_unauthorized, uri} |
-  :system_principal_forbidden | :authority_generation_unavailable |
-  {:stale_authority_generation, uri} | term()}`. No file ops; no materialization.
+  #201-cred (codex r2 NEW-HIGH-3) — this exported entry point is NO LONGER a
+  minting bypass: like every mint path it now requires the MANDATORY
+  created-winner `witness` (`Ezagent.Kind.CreatedWitness`, minted only by
+  `Ezagent.Kind.spawn_receipt/3`). A caller with a valid descriptor but no
+  witness for the target agent (the exact bypass codex flagged — inserting a
+  durable grant for any unused/existing agent URI with no `:started ∧ created?`
+  proof) fail-closes with `{:error, :missing_created_winner_witness}` and writes
+  nothing.
+
+  Returns `{:ok, %GrantRow{}}` | `{:error, :missing_created_winner_witness |
+  :unauthorized | {:source_unauthorized, uri} | :system_principal_forbidden |
+  :authority_generation_unavailable | {:stale_authority_generation, uri} |
+  term()}`. No file ops; no materialization.
   """
-  @spec authorize_and_mint_grant!(map()) :: {:ok, GrantRow.t()} | {:error, term()}
-  def authorize_and_mint_grant!(%{agent_uri: %URI{} = agent_uri} = args) do
+  @spec authorize_and_mint_grant!(map(), Ezagent.Kind.CreatedWitness.t() | nil) ::
+          {:ok, GrantRow.t()} | {:error, term()}
+  def authorize_and_mint_grant!(%{agent_uri: %URI{} = agent_uri} = args, witness) do
     with {:ok, pending} <- authorize_grant(args) do
-      GrantMint.mint(agent_uri, pending)
+      GrantMint.mint(agent_uri, pending, witness)
     end
   end
 

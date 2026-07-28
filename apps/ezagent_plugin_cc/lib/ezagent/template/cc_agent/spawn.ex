@@ -124,7 +124,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        {:started, false} ->
+        {:started, false, _witness} ->
           # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): this call
           # won the process start, but the agent was logically created BEFORE
           # (a cold, durably pre-existing agent — e.g. hit by a duplicate-create
@@ -140,7 +140,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # existing slice verbatim.
           {:ok, [agent_uri], %{fresh?: true, created?: false}}
 
-        {:started, true} ->
+        {:started, true, created_witness} ->
           # codex round-10 HIGH-2 + PR3 2026-05-24 cascade:
           # 1. Create per-agent config_dir BEFORE PTY launch (so the
           #    cc process gets `CLAUDE_CONFIG_DIR=<per-agent-dir>`
@@ -183,7 +183,14 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
           # the failure independent of caller wiring. The PTY itself MUST
           # still come up — only role-bootstrap is best-effort, the rest
           # (config_dir, PTY) stays load-bearing.
-          tmpl_for_materialization = materialization_template(tmpl, agent_uri)
+          # #201-cred (codex r2 NEW-HIGH-3) — inject the created-winner witness
+          # from THIS `:started ∧ created?` receipt into the cascade map so the
+          # deferred mint in `HomeRuntime.materialize_cascade/6` can prove it is
+          # on the created-winner arm (`GrantMint` fail-closes without it).
+          tmpl_for_materialization =
+            tmpl
+            |> materialization_template(agent_uri)
+            |> Ezagent.Credential.HomeRuntime.put_cascade_created_witness(created_witness)
 
           case create_agent_config_dir_with_grant(agent_uri, tmpl_for_materialization) do
             {:ok, materialized_config_dir, grant_ctx} ->
@@ -330,8 +337,11 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
 
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
     case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, :started, _pid, %{created?: created?}} ->
-        {:ok, {:started, created?}}
+      {:ok, :started, _pid, %{created?: created?} = receipt} ->
+        # #201-cred (codex r2 NEW-HIGH-3) — carry the created-winner witness out
+        # (nil for a rehydrating winner) so the `{:started, true}` arm can thread
+        # it into the deferred mint.
+        {:ok, {:started, created?, Map.get(receipt, :created_witness)}}
 
       {:ok, :already_started, _pid, _receipt} ->
         # Atomic dedup at KindRegistry / supervisor level — the Kind was
