@@ -134,6 +134,16 @@ defmodule EzagentPluginGitWorkflow.StubGitProvider do
   @spec set_observations(pid(), keyword()) :: :ok
   def set_observations(server, opts), do: GenServer.call(server, {:set_observations, opts})
 
+  @doc """
+  Points `ref` at an EXISTING commit without creating anything.
+
+  The one shape `plant_ref/3` cannot express: a ref sitting at the base
+  commit. There is no commit of its own to build, which is exactly why the
+  adapter has no provenance to check there (its KNOWN LIMITATION).
+  """
+  @spec set_ref(pid(), String.t(), String.t()) :: :ok
+  def set_ref(server, ref, sha), do: GenServer.call(server, {:set_ref, ref, sha})
+
   @doc "Requests that CHANGED provider state (or tried to), oldest first."
   @spec mutating(pid()) :: [map()]
   def mutating(server), do: Enum.filter(log(server), & &1.mutating)
@@ -206,6 +216,9 @@ defmodule EzagentPluginGitWorkflow.StubGitProvider do
 
     {:reply, :ok, %{state | faults: state.faults ++ [fault]}}
   end
+
+  def handle_call({:set_ref, ref, sha}, _from, state),
+    do: {:reply, :ok, %{state | refs: Map.put(state.refs, ref, sha)}}
 
   def handle_call({:plant_ref, ref, opts}, _from, state) do
     tree_sha = sha("tree", [Keyword.fetch!(opts, :marker)])
