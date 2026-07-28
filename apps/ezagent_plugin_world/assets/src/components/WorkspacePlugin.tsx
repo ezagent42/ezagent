@@ -548,6 +548,18 @@ function helloLlmDefaults(): Record<string, unknown> {
   }
 }
 
+function helloCompletionFlavors(flavors: string[]) {
+  return flavors.filter((flavor) => HELLO_COMPLETION_FLAVORS.has(flavor))
+}
+
+function defaultHelloLlmFlavor(flavors: string[]) {
+  return flavors.includes("curl") ? "curl" : flavors[0]
+}
+
+function registeredHelloLlmFlavor(flavor: string | undefined, flavors: string[]) {
+  return flavor && flavors.includes(flavor) ? flavor : defaultHelloLlmFlavor(flavors)
+}
+
 function configurableTemplateRoles(socialware: SocialwareRow) {
   const roles = socialware.roles || []
 
@@ -583,18 +595,23 @@ function TemplateBuilder({
         for (const role of configurableTemplateRoles(socialware)) {
           if (role.fill !== "agent") continue
           const key = roleChoiceKey(socialware, role)
+          const helloLlmRole = socialware.name === "hello" && role.role_name === "llm"
+          const flavor = helloLlmRole
+            ? defaultHelloLlmFlavor(helloCompletionFlavors(state.agent_flavors || []))
+            : role.flavor || undefined
+
           next[key] = current[key] || {
             role_name: role.role_name,
             mode: "fresh",
-            flavor: role.flavor || undefined,
-            config: socialware.name === "hello" && role.role_name === "llm" ? helloLlmDefaults() : undefined,
+            flavor,
+            config: helloLlmRole && flavor === "curl" ? helloLlmDefaults() : undefined,
           }
         }
       }
 
       return next
     })
-  }, [selectedSocialwares])
+  }, [selectedSocialwares, state.agent_flavors])
 
   return (
     <section
@@ -617,7 +634,7 @@ function TemplateBuilder({
 
           const installs = selectedSocialwares.flatMap((socialware) => {
             if (!socialware.name) return []
-            const config = installConfigForTemplate(socialware, roleChoices)
+            const config = installConfigForTemplate(socialware, roleChoices, state.agent_flavors || [])
             const install: Record<string, unknown> = {ref: socialware.name}
 
             if (config.role_slots.length > 0) install.config = config
@@ -800,7 +817,11 @@ function normalizeSocialwareRow(row: DataRow): SocialwareRow {
   }
 }
 
-export function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
+export function installConfigForTemplate(
+  socialware: SocialwareRow,
+  choices: Record<string, RoleSlotChoice>,
+  registeredFlavors: string[],
+) {
   const roleSlots = configurableTemplateRoles(socialware)
     .filter((role) => role.fill === "agent")
     .map((role) => {
@@ -810,8 +831,12 @@ export function installConfigForTemplate(socialware: SocialwareRow, choices: Rec
         flavor: role.flavor || undefined,
       }
 
-      const flavor = choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined
       const helloLlmRole = socialware.name === "hello" && role.role_name === "llm"
+      const flavor = choice.mode === "fresh"
+        ? helloLlmRole
+          ? registeredHelloLlmFlavor(choice.flavor || role.flavor || undefined, helloCompletionFlavors(registeredFlavors))
+          : choice.flavor || role.flavor || undefined
+        : undefined
 
       return {
         role_name: role.role_name,
@@ -847,15 +872,17 @@ export function HelloLlmRoleSlot({
   choice?: RoleSlotChoice
   onChange: (choice: RoleSlotChoice) => void
 }) {
+  const completionFlavors = helloCompletionFlavors(flavors)
+  const flavor = registeredHelloLlmFlavor(choice?.flavor, completionFlavors)
   const current = choice || {
     role_name: role.role_name,
     mode: "fresh" as const,
-    flavor: "curl",
-    config: helloLlmDefaults(),
+    flavor,
+    config: flavor === "curl" ? helloLlmDefaults() : undefined,
   }
-  const curlFlavor = current.flavor === "curl"
+  const selectedFlavor = registeredHelloLlmFlavor(current.flavor, completionFlavors)
+  const curlFlavor = selectedFlavor === "curl"
   const config = {...helloLlmDefaults(), ...(current.config || {})}
-  const completionFlavors = flavors.filter((flavor) => HELLO_COMPLETION_FLAVORS.has(flavor))
   const updateFlavor = (flavor: string) =>
     onChange(helloLlmChoiceForFlavor(current, flavor))
   const updateConfig = (key: string, value: string) =>
@@ -879,7 +906,7 @@ export function HelloLlmRoleSlot({
         <select
           id={fieldId("flavor")}
           className={selectClass}
-          value={current.flavor || ""}
+          value={selectedFlavor || ""}
           onChange={(event) => updateFlavor(event.target.value)}
           required
           aria-required="true"

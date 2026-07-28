@@ -68,6 +68,40 @@ describe("workspace template builder", () => {
     expect(html).toContain('template-hello-provider-hello-llm')
   })
 
+  it("uses a registered completion flavor instead of unregistered curl", () => {
+    const html = renderToStaticMarkup(
+      <HelloLlmRoleSlot
+        role={{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}}
+        slotKey="hello-llm"
+        flavors={["cc-headless"]}
+        onChange={() => undefined}
+      />,
+    )
+
+    expect(html).toContain('<option value="cc-headless" selected="">cc-headless</option>')
+    expect(html).not.toContain('template-hello-provider-hello-llm')
+
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "curl",
+          config: {provider: "deepseek", api_url: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash"},
+        },
+      },
+      ["cc-headless"],
+    )
+
+    expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "cc-headless"})
+    expect(config.role_slots[0].config).toBeUndefined()
+    expect(JSON.stringify(config)).not.toContain("deepseek")
+  })
+
   it("serializes a selected non-curl Hello flavor without curl configuration", () => {
     let choice: {
       role_name: string
@@ -97,6 +131,7 @@ describe("workspace template builder", () => {
         roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
       },
       {"hello:llm": choice || {role_name: "llm", mode: "fresh"}},
+      ["curl", "cc-headless"],
     )
 
     expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "cc-headless"})
