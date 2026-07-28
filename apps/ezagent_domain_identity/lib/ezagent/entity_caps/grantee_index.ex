@@ -11,9 +11,9 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
   Revocation needs no delete: each row stamps the `key_id` (generation) of the
   cap that produced it, and `grantees_of/2` filters to the target's **current**
   active authority `key_id`. A `revoke_all_to` generation bump changes the active
-  `key_id`, so every stale row drops out of reads automatically — mirroring
-  `Ezagent.Cap.Authority.verify_against_current/3`, introducing no new revocation
-  mechanism.
+  `key_id`, so every stale row drops out of reads automatically — the same
+  fresh active-generation read the dispatch cap verifier applies, introducing no
+  new revocation mechanism.
 
   This is the reverse half of `Ezagent.Cap.Visibility.caps_toward/2` (A2-1, the
   forward "what can I see" filter) and the seam a session's `:members` roster

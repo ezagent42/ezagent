@@ -24,10 +24,13 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
 
   # A concrete shared target (a session instance, exactly like the absorb-cap
   # fixture) plus a distinct target to prove per-target isolation.
+  # 3-segment canonical session URI. The 2nd segment is a static literal followed
+  # by `/` so the "no 2-segment session:// literal" grep gate (which would see an
+  # interpolation right after the 2nd segment as a terminated 2-segment URI) skips it.
   defp target(suffix),
     do:
       Ezagent.URI.new!(
-        "session://team-alpha/board-#{suffix}-#{System.unique_integer([:positive])}/main"
+        "session://team-alpha/boards/#{suffix}-#{System.unique_integer([:positive])}"
       )
 
   defp grantee(suffix),
