@@ -108,7 +108,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollector do
   # vocabulary. Normalize every one of them to the single stable blocker,
   # dropping the underlying reason rather than forwarding it.
   defp fetch_status(worktree_path) do
-    case runner().collect_status(%{worktree_path: worktree_path}) do
+    case GitRunner.configured().collect_status(%{worktree_path: worktree_path}) do
       {:ok, entries} -> {:ok, entries}
       {:error, _reason} -> {:error, :workspace_read_failed}
     end
@@ -281,11 +281,5 @@ defmodule Ezagent.Workspace.TaskWorkspace.ChangeCollector do
     if String.valid?(content) and not String.contains?(content, <<0>>),
       do: :ok,
       else: {:error, :binary_content}
-  end
-
-  defp runner do
-    if Mix.env() == :test,
-      do: Application.get_env(:ezagent_domain_workspace, :task_workspace_git_runner, GitRunner),
-      else: GitRunner
   end
 end

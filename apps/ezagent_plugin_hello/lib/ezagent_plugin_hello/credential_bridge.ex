@@ -198,8 +198,11 @@ defmodule EzagentPluginHello.CredentialBridge do
            behaviors: Ezagent.Entity.Agent.curl_behaviors()
          }) do
       {:ok, _pid} ->
-        :ok = Ezagent.AgentLineage.record(source_uri, User.admin_uri())
-        {:ok, source_uri}
+        # Fail-closed: :ok on the owner path yields {:ok, source_uri};
+        # {:error, violation} off-owner propagates (no MatchError crash).
+        with :ok <- Ezagent.OwnerGatedWorkspace.record_lineage(source_uri, User.admin_uri()) do
+          {:ok, source_uri}
+        end
 
       {:error, {:already_started, _pid}} ->
         {:ok, source_uri}

@@ -54,7 +54,21 @@ any of them exits with an `unknown option` / `Cannot combine` error.
    Killing at "0 writes so far" produces the FALSE impression it doesn't converge —
    it does. Poll the log for the `To resume this session:` marker (or a
    `KIMI_..._EXIT` sentinel you append), not for early writes.
-5. **cc gates the result**: codex adversarial review + cc final-check + merge — a
+5. **VERIFY it actually FINISHED — never assume "offline == done."** A COMPLETED
+   run exits *naturally*: the log ends with the `To resume this session:` marker /
+   your `KIMI_..._EXIT` sentinel + a final report. A run whose process just went away
+   (nonzero exit, ENOSPC/disk-full, crash, killed, API stream-disconnect) did **NOT**
+   finish — even if it left commits. Its committed diff is INTERMEDIATE, not the DoD:
+   it may have unresolved test failures it was still investigating and **uncommitted
+   work stashed** (`git stash list` in the worktree). Before treating it as done:
+   read the log tail for HOW it ended; inspect the worktree (`git status`,
+   `git stash list`, `git log`); and if it did NOT exit cleanly, **resume the session
+   (`kimi -r <session-id>`; kimi sessions live under `~/.kimi-code/sessions/wd_*`) and
+   let it run to a natural finish + DoD-green** before you review/merge. On any
+   coordinator restart, check running/interrupted sessions and RESUME them first.
+   (Learned the hard way — a C6 run died on disk-ENOSPC mid-verification with 8
+   unresolved failures + stashed fixes; its 3 commits were mistaken for "done.")
+6. **cc gates the result**: codex adversarial review + cc final-check + merge — a
    kimi PR merges through the same review gate as any other.
 
 ## Completeness for "migrate/gate ALL X" tasks

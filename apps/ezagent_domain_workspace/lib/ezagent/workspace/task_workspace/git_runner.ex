@@ -34,6 +34,21 @@ defmodule Ezagent.Workspace.TaskWorkspace.GitRunner do
           worktree_mode: String.t() | nil
         }
 
+  @doc """
+  The runner module to execute against: the configured double under `:test`,
+  this module otherwise.
+
+  Call sites that need the seam call this instead of carrying a private copy —
+  three such copies already exist here (`Reconciler`, `Provisioner`,
+  `PreStartVerifier`), and a fourth trips the FF-1 duplicate-body gate.
+  """
+  @spec configured() :: module()
+  def configured do
+    if @local_fixtures_enabled,
+      do: Application.get_env(:ezagent_domain_workspace, :task_workspace_git_runner, __MODULE__),
+      else: __MODULE__
+  end
+
   @doc false
   def maximum_provision_duration_ms, do: @default_deadline_ms * 11
 

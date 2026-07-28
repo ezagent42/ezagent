@@ -11,7 +11,7 @@ defmodule EzagentPluginHello.App do
   drives a generation turn.
   """
 
-  alias Ezagent.{Capability, WorkspaceRegistry}
+  alias Ezagent.Capability
   alias Ezagent.Entity.{Session, SessionTemplate, User}
   alias Ezagent.Socialware.{DefinitionRegistry, Installation}
   alias EzagentDomainInstanceMessage.SessionCreator
@@ -235,7 +235,7 @@ defmodule EzagentPluginHello.App do
     # :ok — re-instantiating an existing hello app re-binds harmlessly. (Earlier
     # this matched {:already_registered, _} error tuples the registry no longer
     # returns; those clauses were dead under the current API.)
-    WorkspaceRegistry.bind(session_uri, workspace)
+    Ezagent.OwnerGatedWorkspace.bind(session_uri, workspace)
   end
 
   defp spawn_kind(kind_module, args) do

@@ -425,7 +425,17 @@ defmodule Ezagent.Orchestrator.McpServer do
         # state (failed / duplicated MCP op). The outer transports bound the
         # latency (the Channel reply + the bridge's own 30s `call_beam` timeout),
         # so the executor call itself waits for the real result.
-        GenServer.call(pid, {:run_tool, tool, arguments, ctx.bridge_token}, :infinity)
+        #
+        # Owner-gated by orchestrator URI through `OwnerGatedExecutor` (the
+        # executor pid is workspace-bound): on the owner path this is the
+        # identical `GenServer.call(pid, …, :infinity)`; an enforced non-owner
+        # violation returns `{:error, :cross_workspace_denied}`.
+        Ezagent.OwnerGatedExecutor.call(
+          ctx.orchestrator_uri,
+          pid,
+          {:run_tool, tool, arguments, ctx.bridge_token},
+          :infinity
+        )
 
       [] ->
         {:error, :orchestrator_context_unavailable}

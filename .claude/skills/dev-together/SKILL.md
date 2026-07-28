@@ -156,6 +156,31 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
   hand-authored `board.html` means the step is incomplete. To change the look,
   edit `board2html.py`, never the daily file. (Requires `uv`; `pyyaml` is fetched
   by `--with`, no repo dep.)
+- **Per-card time-boxing & delay-driven decomposition.** Every card carries two
+  date fields — **`started`** and **`est_done`** (ISO `YYYY-MM-DD`). A task is
+  **sized to ≤1 day**, so a **new** card added to the board defaults to
+  `started == est_done == the day it's added` (a same-day estimate). Both fields
+  are optional and backward-compatible — a pre-field card renders unchanged.
+  - **Delay flag.** The board's *today* is `as_of:` (a top-level field the lead
+    sets when organizing the board on a later day; it falls back to the leading
+    date of `date:`). A card that is **not `done`** and whose **`est_done` is
+    strictly before `as_of`** is marked **延期 (DELAYED)** — `board2html.py`
+    renders a red `延期 Nd` rib and surfaces a decomposition hint. Delay is
+    computed deterministically from `as_of`, never the wall clock, so a
+    re-render is reproducible.
+  - **On delay → decompose, then daily-sequence by dependency.** When you
+    organize the board on a later day and a task came back DELAYED, **recommend
+    splitting it into smaller day-sized sub-modules** and set the sub-modules'
+    `started`/`est_done` **one-per-day in dependency order**. Worked example
+    (the canonical illustration): task **A** was added 07-24 with
+    `started = est_done = 07-24` (a same-day estimate), but actually ran
+    07-24→07-26 (3 days). So the **next** time a similarly-sized task **B**
+    appears, **pre-decompose** it into **B1 / B2 / B3** with
+    `started`/`est_done` = **07-27 / 07-28 / 07-29** respectively — sequential,
+    dependency-ordered (`B2` deps B1, `B3` deps B2), one day each. `plan` writes
+    these fields; `review` re-estimates on carryover. See the schema at
+    `scripts/render/board.example.yaml` (a same-day card, a delayed card, and a
+    commented B1/B2/B3 triplet).
 - **Efficiency stats are auto-computed with an up/down delta — never hand-typed.**
   `plan` runs `scripts/board_efficiency.py ezagent42/ezagent <prev_date>` (the
   board's yesterday), which measures that day's git-hours lower bound + merged-PR
