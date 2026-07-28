@@ -27,6 +27,9 @@ defmodule Ezagent.Socialware.CompositionConsent do
     field(:binding_id, :string)
     field(:target_uri, :string)
     field(:grantee_uri, :string)
+    # M3: the specific access this consent is bound to (URI-share rows).
+    field(:behavior, :string)
+    field(:actions_json, :string)
     field(:target_approval, Ecto.Enum, values: @states, default: :pending)
     field(:source_approval, Ecto.Enum, values: @states, default: :pending)
     field(:target_owner_uri, :string)
@@ -44,7 +47,8 @@ defmodule Ezagent.Socialware.CompositionConsent do
   @commands [:approve, :deny, :revoke]
 
   @fields ~w(
-    id workspace_uri binding_id target_uri grantee_uri target_approval source_approval
+    id workspace_uri binding_id target_uri grantee_uri behavior actions_json
+    target_approval source_approval
     target_owner_uri source_owner_uri target_approver_uri source_approver_uri
     target_decided_at source_decided_at
   )a
@@ -165,17 +169,25 @@ defmodule Ezagent.Socialware.CompositionConsent do
   # unchanged (it always sets `binding_id` + both sides).
 
   @doc """
-  Request URI-share owner consent for `grantee` to be elevated on `target_uri`
-  (access set = `behavior`'s). The looser case: no `CompositionBinding`, source
-  side auto-satisfied. Creates — idempotently by `(target, grantee)` — a pending
-  consent whose target owner = the target's `data_owner`. Fails closed
-  (`:consent_target_owner_unresolvable`) if the owner cannot resolve.
+  Request URI-share owner consent for `requester` to be elevated on `target_uri`
+  for `behavior`'s `actions`. The looser case: no `CompositionBinding`, source
+  side auto-satisfied (the requester IS the recipient).
+
+  **M3 — authenticated requester + bound access.** `requester` MUST be the
+  AUTHENTICATED caller (the transport passes its authenticated principal, never a
+  client-supplied grantee) — otherwise anyone could fabricate a "recipient
+  consents" attestation for a third party. The consent is bound to the exact
+  `(behavior, actions)` asked for, so an owner approval cannot later cover broader
+  authority than requested. Creates — idempotently by `(target, requester)` — a
+  pending consent whose target owner = the target's current `data_owner`. Fails
+  closed (`:consent_target_owner_unresolvable`) if the owner cannot resolve.
   """
-  @spec request(URI.t(), URI.t(), module()) :: {:ok, t()} | {:error, term()}
-  def request(%URI{} = target_uri, %URI{} = grantee, behavior) when is_atom(behavior) do
+  @spec request(URI.t(), URI.t(), module(), [atom()]) :: {:ok, t()} | {:error, term()}
+  def request(%URI{} = target_uri, %URI{} = requester, behavior, actions)
+      when is_atom(behavior) and is_list(actions) and actions != [] do
     case Ezagent.CapabilityRegistry.data_owner_of(behavior, Ezagent.URI.instance(target_uri)) do
       %URI{} = owner ->
-        id = share_consent_id(target_uri, grantee)
+        id = share_consent_id(target_uri, requester)
 
         case Repo.get(__MODULE__, id) do
           %__MODULE__{} = existing ->
@@ -189,13 +201,16 @@ defmodule Ezagent.Socialware.CompositionConsent do
               id: id,
               binding_id: nil,
               target_uri: uri_string(target_uri),
-              grantee_uri: uri_string(grantee),
+              grantee_uri: uri_string(requester),
+              behavior: behavior_string(behavior),
+              actions_json: encode_actions(actions),
               workspace_uri: uri_string(Ezagent.Capability.workspace_of(target_uri)),
               target_owner_uri: uri_string(owner),
-              # Source side auto-satisfied: the requester IS the recipient.
+              # Source side auto-satisfied: the AUTHENTICATED requester IS the
+              # recipient, so the source attestation is not forgeable.
               source_approval: :approved,
-              source_owner_uri: uri_string(grantee),
-              source_approver_uri: uri_string(grantee),
+              source_owner_uri: uri_string(requester),
+              source_approver_uri: uri_string(requester),
               source_decided_at: now
             })
             |> Repo.insert()
@@ -205,6 +220,8 @@ defmodule Ezagent.Socialware.CompositionConsent do
         {:error, :consent_target_owner_unresolvable}
     end
   end
+
+  def request(_target, _requester, _behavior, _actions), do: {:error, :invalid_consent_request}
 
   @doc """
   The target owner decides (`:approve` / `:deny`) a `request/3` (URI-share)
@@ -240,12 +257,11 @@ defmodule Ezagent.Socialware.CompositionConsent do
   defp apply_decide(id, decision, actor, idempotency_key) do
     with %__MODULE__{} = consent <-
            Repo.one(from(row in __MODULE__, where: row.id == ^id, lock: "FOR UPDATE")),
-         :ok <-
-           owner_match(
-             Ezagent.URI.new!(consent.target_owner_uri),
-             actor,
-             :consent_actor_not_target_owner
-           ),
+         # M3: authorize against the target's CURRENT data_owner, NOT the
+         # request-time `target_owner_uri` — a transferred/changed target must be
+         # decided by whoever owns it NOW, and a stale ex-owner cannot approve.
+         {:ok, current_owner} <- current_target_owner(consent),
+         :ok <- owner_match(current_owner, actor, :consent_actor_not_target_owner),
          {:ok, state} <- transition(consent.target_approval, decision) do
       now = DateTime.utc_now()
 
@@ -457,6 +473,33 @@ defmodule Ezagent.Socialware.CompositionConsent do
     # `binding_id` is NOT required — a URI-share consent has none (it names its
     # target/grantee directly). Composition rows still always set it.
     |> validate_required([:id, :workspace_uri, :target_approval, :source_approval])
+    |> validate_shape()
+    |> check_constraint(:binding_id,
+      name: :consent_binding_xor_uri_share,
+      message: "must be either a composition (binding_id) OR a URI-share (target+grantee) consent"
+    )
+  end
+
+  # M4: mirror the DB CHECK in the changeset so an ambiguous/malformed row fails
+  # loud BEFORE the insert — exactly one shape: composition (binding_id, no direct
+  # target/grantee) XOR URI-share (no binding, target+grantee both set).
+  defp validate_shape(changeset) do
+    binding = get_field(changeset, :binding_id)
+    target = get_field(changeset, :target_uri)
+    grantee = get_field(changeset, :grantee_uri)
+
+    composition? = not is_nil(binding) and is_nil(target) and is_nil(grantee)
+    uri_share? = is_nil(binding) and not is_nil(target) and not is_nil(grantee)
+
+    if composition? or uri_share? do
+      changeset
+    else
+      add_error(
+        changeset,
+        :binding_id,
+        "must be either a composition (binding_id) OR a URI-share (target+grantee) consent"
+      )
+    end
   end
 
   defp approval_field(:target), do: :target_approval
@@ -479,4 +522,29 @@ defmodule Ezagent.Socialware.CompositionConsent do
   end
 
   defp same_uri_string?(_value, _uri), do: false
+
+  # M3: re-resolve the target's CURRENT data_owner for a URI-share consent (has a
+  # stored behavior + target_uri). Composition rows (no direct behavior/target)
+  # fall back to the recorded owner — their owner authority rides the binding.
+  defp current_target_owner(%__MODULE__{behavior: b, target_uri: t})
+       when is_binary(b) and is_binary(t) do
+    case Ezagent.CapabilityRegistry.data_owner_of(
+           Module.concat([b]),
+           Ezagent.URI.instance(Ezagent.URI.new!(t))
+         ) do
+      %URI{} = owner -> {:ok, owner}
+      _ -> {:error, :consent_target_owner_unresolvable}
+    end
+  end
+
+  defp current_target_owner(%__MODULE__{target_owner_uri: stored}) when is_binary(stored),
+    do: {:ok, Ezagent.URI.new!(stored)}
+
+  defp current_target_owner(%__MODULE__{}), do: {:error, :consent_target_owner_unresolvable}
+
+  # Stored as `inspect(module)` (no `Elixir.` prefix) — `Module.concat/1` decodes.
+  defp behavior_string(behavior) when is_atom(behavior), do: inspect(behavior)
+
+  defp encode_actions(actions) when is_list(actions),
+    do: Jason.encode!(Enum.map(actions, &Atom.to_string/1))
 end

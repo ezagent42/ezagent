@@ -32,7 +32,22 @@ defmodule EzagentCore.Repo.Migrations.GeneralizeCompositionConsentUriShare do
       # Binding-less (URI-share) consents name their target/grantee directly.
       add :target_uri, :string
       add :grantee_uri, :string
+      # M3: an approval is bound to the specific access it grants (behavior +
+      # its actions), so one approval cannot cover broader authority than asked.
+      add :behavior, :string
+      add :actions_json, :string
     end
+
+    # M4: exactly-one-shape invariant — a row is EITHER a composition consent
+    # (binding_id set, no direct target/grantee) OR a URI-share consent (no
+    # binding, target+grantee set). Prevents a malformed/ambiguous hybrid row.
+    create constraint(
+             :socialware_composition_consents,
+             :consent_binding_xor_uri_share,
+             check:
+               "(binding_id IS NOT NULL AND target_uri IS NULL AND grantee_uri IS NULL) OR " <>
+                 "(binding_id IS NULL AND target_uri IS NOT NULL AND grantee_uri IS NOT NULL)"
+           )
 
     alter table(:socialware_composition_consent_commands) do
       # Binding-less commands reference their consent directly.
@@ -49,6 +64,7 @@ defmodule EzagentCore.Repo.Migrations.GeneralizeCompositionConsentUriShare do
   end
 
   def down do
+    drop constraint(:socialware_composition_consents, :consent_binding_xor_uri_share)
     drop index(:socialware_composition_consent_commands, [:consent_id])
     drop index(:socialware_composition_consents, [:target_uri, :grantee_uri])
 
@@ -57,6 +73,8 @@ defmodule EzagentCore.Repo.Migrations.GeneralizeCompositionConsentUriShare do
     end
 
     alter table(:socialware_composition_consents) do
+      remove :actions_json
+      remove :behavior
       remove :grantee_uri
       remove :target_uri
     end

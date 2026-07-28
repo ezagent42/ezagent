@@ -29,7 +29,7 @@ defmodule Ezagent.Socialware.CompositionConsentUriShareTest do
               target_approval: :pending,
               source_approval: :approved,
               target_owner_uri: owner_uri
-            }} = Consent.request(target, grantee, Target)
+            }} = Consent.request(target, grantee, Target, [:get_tree])
 
     assert owner_uri == URI.to_string(Ezagent.URI.instance(owner))
 
@@ -51,7 +51,7 @@ defmodule Ezagent.Socialware.CompositionConsentUriShareTest do
     grantee = live_agent("grantee2", owner, [Target])
     target = live_agent("target2", owner, [Target])
 
-    {:ok, %Consent{id: id}} = Consent.request(target, grantee, Target)
+    {:ok, %Consent{id: id}} = Consent.request(target, grantee, Target, [:get_tree])
 
     assert {:ok, %Consent{target_approval: :denied} = c} =
              Consent.decide(id, :deny, owner, "k-deny")
@@ -64,8 +64,8 @@ defmodule Ezagent.Socialware.CompositionConsentUriShareTest do
     grantee = live_agent("grantee3", owner, [Target])
     target = live_agent("target3", owner, [Target])
 
-    {:ok, %Consent{id: id1}} = Consent.request(target, grantee, Target)
-    {:ok, %Consent{id: id2}} = Consent.request(target, grantee, Target)
+    {:ok, %Consent{id: id1}} = Consent.request(target, grantee, Target, [:get_tree])
+    {:ok, %Consent{id: id2}} = Consent.request(target, grantee, Target, [:get_tree])
     assert id1 == id2
 
     {:ok, %Consent{target_approval: :approved}} = Consent.decide(id1, :approve, owner, "k-once")
@@ -77,7 +77,31 @@ defmodule Ezagent.Socialware.CompositionConsentUriShareTest do
   test "request fails closed when the target has no resolvable owner" do
     grantee = user_uri("g4")
     orphan = orphan_agent("ownerless-target", [Target])
-    assert {:error, :consent_target_owner_unresolvable} = Consent.request(orphan, grantee, Target)
+
+    assert {:error, :consent_target_owner_unresolvable} =
+             Consent.request(orphan, grantee, Target, [:get_tree])
+  end
+
+  test "M3: the consent is bound to the requested (behavior, actions), not just (target, grantee)" do
+    owner = user_uri("m3-owner")
+    grantee = live_agent("m3-grantee", owner, [Target])
+    target = live_agent("m3-target", owner, [Target])
+
+    assert {:ok, %Consent{behavior: behavior, actions_json: actions_json}} =
+             Consent.request(target, grantee, Target, [:get_tree, :add_node])
+
+    # The specific access is recorded on the row, so an owner approval cannot
+    # later be reinterpreted as broader authority than was asked for.
+    assert behavior == inspect(Target)
+    assert Jason.decode!(actions_json) == ["get_tree", "add_node"]
+  end
+
+  test "M3: an empty actions request is rejected (a consent must name its access)" do
+    owner = user_uri("m3e-owner")
+    grantee = live_agent("m3e-grantee", owner, [Target])
+    target = live_agent("m3e-target", owner, [Target])
+
+    assert {:error, :invalid_consent_request} = Consent.request(target, grantee, Target, [])
   end
 
   # --- fixture helpers (same CompositionGrantTargetBehavior fixture) ----------
