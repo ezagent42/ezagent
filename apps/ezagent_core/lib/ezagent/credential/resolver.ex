@@ -41,7 +41,7 @@ defmodule Ezagent.Credential.Resolver do
   """
 
   alias Ezagent.Capability
-  alias Ezagent.Credential.{GrantRow, UserDefaultSource}
+  alias Ezagent.Credential.{GrantMint, GrantRow, UserDefaultSource}
 
   @typedoc "A single layer descriptor in the ordered config cascade (spec §D2)."
   @type layer :: %{
@@ -227,23 +227,61 @@ defmodule Ezagent.Credential.Resolver do
   Spec §5.1 — at agent CREATE (human caller w/ caps): authorize `sandbox.read` on the
   chosen credential `source`, then mint a durable `GrantRow` for the new agent.
 
-  Required keys: `:agent_uri`, `:source` (the chosen credential source URI),
-  `:approved_by` (the principal URI minting the grant), `:caller` + `:caps` (the human
-  caller's authority to cap-check the source read against).
+  #201-cred (codex r2 HIGH-5) — this is now `authorize_grant/1` + an
+  IMMEDIATE generation-guarded `GrantMint.mint/3`: the recorded holder/source
+  authority generations are persisted on the row (re-validated under lock at
+  insertion and at every materialization fetch). The spawn path does NOT call
+  this — it defers the mint to the created-winner via `authorize_grant/1` +
+  the pending-grant descriptor; this entry point remains for callers that
+  authorize+mint atomically in one step.
+
+  #201-cred (codex r2 NEW-HIGH-3) — this exported entry point is NO LONGER a
+  minting bypass: like every mint path it now requires the MANDATORY
+  created-winner `witness` (`Ezagent.Kind.CreatedWitness`, minted only by
+  `Ezagent.Kind.spawn_receipt/3`). A caller with a valid descriptor but no
+  witness for the target agent (the exact bypass codex flagged — inserting a
+  durable grant for any unused/existing agent URI with no `:started ∧ created?`
+  proof) fail-closes with `{:error, :missing_created_winner_witness}` and writes
+  nothing.
+
+  Returns `{:ok, %GrantRow{}}` | `{:error, :missing_created_winner_witness |
+  :unauthorized | {:source_unauthorized, uri} | :system_principal_forbidden |
+  :authority_generation_unavailable | {:stale_authority_generation, uri} |
+  term()}`. No file ops; no materialization.
+  """
+  @spec authorize_and_mint_grant!(map(), Ezagent.Kind.CreatedWitness.t() | nil) ::
+          {:ok, GrantRow.t()} | {:error, term()}
+  def authorize_and_mint_grant!(%{agent_uri: %URI{} = agent_uri} = args, witness) do
+    with {:ok, pending} <- authorize_grant(args) do
+      GrantMint.mint(agent_uri, pending, witness)
+    end
+  end
+
+  @doc """
+  Spec §5.1 authorization WITHOUT the durable write (#201-cred, codex r2
+  HIGH-1/5): cap-check the chosen source's `sandbox.read` against the caller's
+  caps and return a plain-data **pending-grant descriptor** recording the
+  authorization — the chosen `source`, the `approved_by` principal, and the
+  CURRENT holder/source authority generations the authorization was verified
+  under. The descriptor is later executed by `Ezagent.Credential.GrantMint`
+  at the created-winner's materialization boundary, which re-validates the
+  generations under lock before inserting (a holder/source regenesis between
+  this call and the mint rejects the stale mint).
+
+  Fail-closed on generation availability: a holder or source WITHOUT a
+  current active authority row cannot have its regeneration detected, so the
+  authorization is refused with `:authority_generation_unavailable` (the
+  cap-verification itself already requires the source's current row, and an
+  accountable approver must have one).
 
   Cap-check: builds the needed `sandbox.read` cap for `source` the SAME way the dispatch
-  does (`Capability.cap_for_action(<AgentKind>, :read, source)`) and asserts at least one
-  of `caps` `matches?/2` it. **Refuses** to mint a grant when the caller is ANY `system://`
-  principal (codex H1 — no source read/grant under an ambient system-principal's caps; a
-  system principal is an authorizer, never an accountable approver entity, #154). On cap
-  success, persists `GrantRow` with `approved_scope == source` (so the PR-0
-  `fetch_for_materialize/1` scope-identity check holds) and `version: 1`.
-
-  Returns `{:ok, %GrantRow{}}` | `{:error, :unauthorized | {:source_unauthorized, uri} |
-  :system_principal_forbidden | term()}`. No file ops; no materialization.
+  does and asserts at least one of `caps` `matches?/2` it. **Refuses** when the caller is
+  ANY `system://` principal (codex H1 — no source read/grant under an ambient
+  system-principal's caps; a system principal is an authorizer, never an accountable
+  approver entity, #154).
   """
-  @spec authorize_and_mint_grant!(map()) :: {:ok, GrantRow.t()} | {:error, term()}
-  def authorize_and_mint_grant!(
+  @spec authorize_grant(map()) :: {:ok, GrantMint.pending()} | {:error, term()}
+  def authorize_grant(
         %{
           agent_uri: %URI{} = agent_uri,
           source: %URI{} = source,
@@ -282,13 +320,26 @@ defmodule Ezagent.Credential.Resolver do
         {:error, {:source_unauthorized, source}}
 
       true ->
-        GrantRow.insert(%{
-          agent_uri: URI.to_string(agent_uri),
-          credential_source_uri: URI.to_string(source),
-          approved_by: URI.to_string(holder),
-          approved_scope: URI.to_string(source),
-          version: 1
-        })
+        with {:ok, holder_generation} <- current_generation(holder),
+             {:ok, source_generation} <- current_generation(source) do
+          {:ok,
+           %{
+             kind: :authorized,
+             source: source,
+             approved_by: approved_by,
+             holder_generation: holder_generation,
+             source_generation: source_generation
+           }}
+        end
+    end
+  end
+
+  # The authorizing generations must be RECORDABLE for the mint to be
+  # regeneration-guarded; an authority row that cannot be read fails closed.
+  defp current_generation(%URI{} = uri) do
+    case Ezagent.Cap.Authority.current_generation(uri) do
+      {:ok, generation} -> {:ok, generation}
+      :error -> {:error, :authority_generation_unavailable}
     end
   end
 

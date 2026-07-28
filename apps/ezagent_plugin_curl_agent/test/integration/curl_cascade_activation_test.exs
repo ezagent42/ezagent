@@ -52,6 +52,64 @@ defmodule Ezagent.PluginCurlAgent.CurlCascadeActivationTest do
     Ezagent.Kind.terminate(target_uri)
   end
 
+  # #201-cred (codex r3 MEDIUM-5) — a NO-PENDING curl materialization (the
+  # cascade_resolution carries a source but NO `:pending_grant`) over a
+  # PRE-EXISTING grant must publish NO spawn-owned mint receipt: the fetched
+  # active-row incarnation is NOT this spawn's mint, so `grant_incarnation_id`
+  # must be nil (else the chokepoint's `Rollback.fresh_spawn` would schedule a
+  # delete of a grant this spawn merely read — the legacy-id ownership confusion).
+  test "a no-pending materialization over a PRE-EXISTING grant publishes NO mint receipt", %{
+    owner_uri: owner_uri
+  } do
+    source_uri = agent_uri("curl-medium5-source")
+    target_uri = agent_uri("curl-medium5-target")
+    target_str = URI.to_string(target_uri)
+
+    spawn_curl_source!(source_uri, "deepseek", "sk-source-key")
+
+    assert {:ok, _grant} =
+             GrantRow.insert(%{
+               agent_uri: target_str,
+               credential_source_uri: URI.to_string(source_uri),
+               approved_by: URI.to_string(owner_uri),
+               approved_scope: URI.to_string(source_uri),
+               version: 1
+             })
+
+    # Stamp a backfilled `legacy:<id>` incarnation so the row is unmistakably a
+    # PRE-EXISTING grant, not something this spawn minted (GrantRow.insert always
+    # mints a fresh UUID, so bypass the changeset to set the legacy value).
+    legacy_incarnation = "legacy:#{target_str}"
+
+    assert %{num_rows: 1} =
+             Ecto.Adapters.SQL.query!(
+               Repo,
+               "UPDATE credential_grants SET incarnation_id = $1 WHERE id = $2",
+               [legacy_incarnation, target_str]
+             )
+
+    assert {:ok, [^target_uri], meta} =
+             Template.instantiate(
+               Template.template_name(),
+               curl_template_data(target_uri, source_uri, owner_uri),
+               @workspace_uri
+             )
+
+    wait_for(fn -> Ezagent.ReadyGate.status(target_uri) == :ready end)
+
+    # THE ASSERTION: this spawn minted NOTHING (no :pending_grant), so it
+    # publishes NO mint receipt. Pre-fix the FETCHED (legacy) incarnation was
+    # returned as this spawn's `grant_incarnation_id`.
+    assert meta.grant_incarnation_id == nil
+    refute meta.grant_incarnation_id == legacy_incarnation
+
+    # The pre-existing grant is untouched — it was never this spawn's to own.
+    assert %GrantRow{incarnation_id: ^legacy_incarnation} = GrantRow.get_for_agent(target_str)
+
+    Ezagent.Kind.terminate(source_uri)
+    Ezagent.Kind.terminate(target_uri)
+  end
+
   test "curl Template fails loud when the selected source lacks the provider key", %{
     owner_uri: owner_uri
   } do

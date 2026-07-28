@@ -98,14 +98,15 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   defp instantiate_with_opts(uri_str, tmpl, workspace_uri, opts) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, __MODULE__) do
-      cond do
-        opts == [] and fully_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes` write was
+    # DELETED: the only flavor write is the spawn winner's post-ownership store
+    # in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+    cond do
+      opts == [] and fully_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          spawn_for_codex_remote(agent_uri, tmpl, workspace_uri, opts)
-      end
+      true ->
+        spawn_for_codex_remote(agent_uri, tmpl, workspace_uri, opts)
     end
   end
 
@@ -121,31 +122,61 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
           {:ok, [agent_uri], %{fresh?: false}}
 
-        :started ->
-          case create_agent_config_dir_with_grant(agent_uri, tmpl) do
+        {:started, false, _witness} ->
+          # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): a cold,
+          # durably pre-existing agent. ZERO credential writes: NO grant-scoped
+          # materialization; the Kind's own `Sandbox.post_init` self-heals the
+          # subprocess from the DURABLE respawn state. No `:config_dir_path` in
+          # meta → `record_sandbox_state` preserves the existing slice.
+          {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+        {:started, true, created_witness} ->
+          case create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir = put_agent_config_dir(tmpl, config_dir)
 
-              case revalidate_grant_before_launch(grant_ctx) do
-                :ok ->
-                  case ensure_remote_sidecars(agent_uri, tmpl_with_dir) do
-                    {:ok, meta} ->
-                      {:ok, [agent_uri],
-                       meta
-                       |> Map.put(:fresh?, true)
-                       |> Map.put(:config_dir_path, config_dir)
-                       |> Map.put(:respawn_template_data, tmpl_with_dir)}
+              # #201-cred (codex r3 NEW-HIGH-1) — the remote sidecar launch runs
+              # OUTSIDE the mint's rescue; a RAISE here would bypass grant
+              # compensation. Re-establish the boundary so a launch raise tears
+              # down + CONFIRM-compensates the minted grant before re-raising.
+              Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                agent_uri,
+                grant_ctx,
+                Ezagent.PluginCodex.Template.CodexAgent,
+                "codex-remote.agent",
+                fn ->
+                  case revalidate_grant_before_launch(grant_ctx) do
+                    :ok ->
+                      case ensure_remote_sidecars(agent_uri, tmpl_with_dir) do
+                        {:ok, meta} ->
+                          {:ok, [agent_uri],
+                           meta
+                           |> Map.put(:fresh?, true)
+                           # #201 PR-1 — core-issued logical-create verdict from the
+                           # spawn receipt, passed through for the chokepoint's
+                           # create-only write gates.
+                           |> Map.put(:created?, true)
+                           # #201-cred — the deferred-mint receipt for the
+                           # chokepoint's rollback (nil = no grant minted).
+                           |> Map.put(
+                             :grant_incarnation_id,
+                             Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx)
+                           )
+                           |> Map.put(:config_dir_path, config_dir)
+                           |> Map.put(:respawn_template_data, tmpl_with_dir)}
+
+                        {:error, reason} ->
+                          rollback_remote_sidecars(agent_uri)
+                          _ = Ezagent.Kind.terminate!(agent_uri)
+                          compensate_and_report(agent_uri, grant_ctx, reason)
+                      end
 
                     {:error, reason} ->
-                      rollback_remote_sidecars(agent_uri)
                       _ = Ezagent.Kind.terminate!(agent_uri)
-                      handle_spawn_failure(agent_uri, reason)
+                      compensate_and_report(agent_uri, grant_ctx, reason)
                   end
-
-                {:error, reason} ->
-                  _ = Ezagent.Kind.terminate!(agent_uri)
-                  handle_spawn_failure(agent_uri, reason)
-              end
+                end
+              )
 
             {:error, reason} ->
               _ = Ezagent.Kind.terminate!(agent_uri)
@@ -158,7 +189,11 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   defp put_agent_config_dir(tmpl, dir),
     do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
 
-  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+  # #201-cred (codex r2 NEW-HIGH-3) — inject the created-winner witness into the
+  # cascade map so the deferred mint proves this arm.
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
+    tmpl = Ezagent.Credential.HomeRuntime.put_cascade_created_witness(tmpl, created_witness)
+
     Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
       agent_uri,
       tmpl,
@@ -169,6 +204,19 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
 
   defp revalidate_grant_before_launch(grant_ctx),
     do: Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      Ezagent.PluginCodex.Template.CodexAgent,
+      "codex-remote.agent"
+    )
+  end
 
   # ---- Sidecars (AppServer + BridgeSidecar, NO PTY) -----------------------
 
@@ -367,9 +415,23 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   # ---- Agent Kind + ownership ---------------------------------------------
 
   defp ensure_agent_kind(agent_uri, opts) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(agent_uri, opts) do
-      {:ok, :started, _pid} -> {:ok, :started}
-      {:ok, :already_started, _pid} -> {:ok, :already_started}
+    # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
+    # (`:started` / `:already_started`) and the core logical-create verdict
+    # (`created?`), which the TemplateSpawn chokepoint gates create-only
+    # writes on.
+    #
+    # #201 PR-2 — spawn the Agent Kind DIRECTLY (cc/py precedent) instead of
+    # routing through the entity-scheme spawn fn's global flavor resolution
+    # (`AgentModuleResolver` reads the — now never pre-written — global ETS
+    # flavor row). This instantiate KNOWS its Kind in-process; the codex
+    # flavor declarations resolve to `Ezagent.Entity.Agent`, and the URI path
+    # passed `%{uri: agent_uri}` as the only init arg — identical here.
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
+      {:ok, :started, _pid, %{created?: created?} = receipt} ->
+        {:ok, {:started, created?, Map.get(receipt, :created_witness)}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, :already_started}
       {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
     end
   end

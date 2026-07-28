@@ -58,25 +58,157 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
   @impl Ezagent.Agent.CredentialSliceAdapter
   def materialize_credential_slice(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
-    case selected_credential_source(tmpl) do
-      :skip ->
-        :ok
-
-      {:ok, selected_source} ->
-        with {:ok, provider} <- selected_provider(tmpl),
-             {:ok, granted_source, version} <-
-               GrantRow.fetch_for_materialize(URI.to_string(agent_uri)),
-             :ok <- assert_grant_source(selected_source, granted_source),
-             {:ok, key} <- source_api_key(selected_source, provider),
-             :ok <- GrantRow.revalidate_version!(URI.to_string(agent_uri), version),
-             {:ok, _result} <- put_target_api_key(agent_uri, provider, key) do
-          :ok
-        end
+    # #201-cred (codex r2 NEW-HIGH-3) — the behaviour callback carries NO
+    # created-winner witness, so a pending grant here fail-closes at the mint.
+    # The genuine created-winner path is `instantiate/3`, which threads the
+    # witness from its `:started ∧ created?` receipt into
+    # `materialize_credential_slice_with_receipt/3`.
+    case materialize_credential_slice_with_receipt(agent_uri, tmpl, nil) do
+      {:ok, _receipt} -> :ok
+      {:error, _} = err -> err
     end
   end
 
   def materialize_credential_slice(_agent_uri, _tmpl),
     do: {:error, :invalid_curl_slice_materialize_args}
+
+  @doc false
+  # #201-cred (codex r2 HIGH-1/2/4) — the created-winner's slice
+  # materialization WITH the deferred-mint receipt:
+  #
+  #   1. MINT the pending grant descriptor (authorized at domain resolution
+  #      time) — the durable mint happens HERE, after the `:started ∧
+  #      created?` receipt, never earlier;
+  #   2. fetch the grant (returning its incarnation id), copy the secret,
+  #      revalidate `(agent_uri, incarnation_id, version)` immediately before
+  #      the slice write;
+  #   3. on ANY post-mint failure, CONFIRM-compensate exactly the minted
+  #      incarnation (a compensation failure surfaces COMPOSITE, never
+  #      swallowed);
+  #   4. on success return `{:ok, minted_incarnation | nil}` — the MINTED
+  #      incarnation THIS spawn produced (nil when it minted nothing), NOT the
+  #      fetched active-row incarnation (codex r3 MEDIUM-5). The instantiate arm
+  #      threads it into its meta for the chokepoint's rollback.
+  #
+  # #201-cred (codex r2 NEW-HIGH-3) — `witness` is the created-winner proof
+  # (`Ezagent.Kind.CreatedWitness`) the `instantiate/3` arm captured from its
+  # `:started ∧ created?` receipt; it is threaded to `GrantMint.mint/3`, which
+  # refuses to mint without it.
+  def materialize_credential_slice_with_receipt(%URI{} = agent_uri, tmpl, witness)
+      when is_map(tmpl) do
+    case selected_credential_source(tmpl) do
+      :skip ->
+        {:ok, nil}
+
+      {:ok, selected_source} ->
+        with {:ok, minted} <- mint_pending_grant(agent_uri, tmpl, witness) do
+          # #201-cred (codex r3 MEDIUM-5) — the receipt this arm PUBLISHES (→ the
+          # instantiate meta's `:grant_incarnation_id` → the chokepoint's
+          # `Rollback.fresh_spawn` compensation) MUST be the incarnation THIS spawn
+          # MINTED — `nil` when it minted nothing (a no-pending materialization over
+          # a PRE-EXISTING grant). It must NEVER be the FETCHED active-row
+          # incarnation `do_materialize_credential_slice/3` returns (that value is
+          # used INTERNALLY only, for the pre-write revalidation): a fetched
+          # pre-existing (e.g. backfilled `legacy:<id>`) incarnation is not a mint
+          # receipt of this spawn, and publishing it would schedule a rollback that
+          # deletes a grant this spawn merely read.
+          minted_incarnation = Ezagent.Credential.GrantMint.grant_incarnation(minted)
+
+          # #201-cred (codex r2 NEW-HIGH-1) — `do_materialize_credential_slice/3`
+          # returns `{:error, _}` on a clean failure, but a RAISE/THROW in the
+          # post-mint region (grant fetch, source-slice read, the slice-write
+          # dispatch) would skip `compensate_minted/3` and leak the just-minted
+          # grant. CONFIRM-compensate the minted incarnation on ANY exception,
+          # then re-raise the original so the spawn still aborts.
+          try do
+            case do_materialize_credential_slice(agent_uri, tmpl, selected_source) do
+              {:ok, _fetched_incarnation} ->
+                {:ok, minted_incarnation}
+
+              {:error, reason} ->
+                compensate_minted(agent_uri, minted, reason)
+            end
+          rescue
+            exception ->
+              Ezagent.Credential.GrantMint.reraise_compensating(
+                URI.to_string(agent_uri),
+                Ezagent.Credential.GrantMint.grant_incarnation(minted),
+                exception,
+                __STACKTRACE__
+              )
+          catch
+            kind, reason ->
+              Ezagent.Credential.GrantMint.raise_compensating(
+                URI.to_string(agent_uri),
+                Ezagent.Credential.GrantMint.grant_incarnation(minted),
+                kind,
+                reason,
+                __STACKTRACE__
+              )
+          end
+        end
+    end
+  end
+
+  def materialize_credential_slice_with_receipt(_agent_uri, _tmpl, _witness),
+    do: {:error, :invalid_curl_slice_materialize_args}
+
+  defp do_materialize_credential_slice(agent_uri, tmpl, selected_source) do
+    # TODO(path-b-hardening): #201-cred r3 HIGH-2 — authority-regen TOCTOU. The
+    # generation re-check inside `revalidate_version!/3` runs IMMEDIATELY before the
+    # slice write, but no authority-generation lease is held THROUGH the side
+    # effect, so a regenesis committing in the revalidate→`put_target_api_key`
+    # micro-interval would write the slice under the retired generation. It cannot
+    # be closed with a DB lock: `put_target_api_key/3` dispatches an Invocation to
+    # ANOTHER Kind's process (not a same-connection write). Full close (deferred,
+    # same-BEAM Path B): a short-lived generation-bound launch lease the target
+    # verifies at write time. cc to file the tracking issue.
+    with {:ok, provider} <- selected_provider(tmpl),
+         {:ok, granted_source, version, incarnation_id} <-
+           GrantRow.fetch_for_materialize(URI.to_string(agent_uri)),
+         :ok <- assert_grant_source(selected_source, granted_source),
+         {:ok, key} <- source_api_key(selected_source, provider),
+         :ok <- GrantRow.revalidate_version!(URI.to_string(agent_uri), incarnation_id, version),
+         {:ok, _result} <- put_target_api_key(agent_uri, provider, key) do
+      {:ok, incarnation_id}
+    end
+  end
+
+  # The pending grant descriptor rides the `cascade_resolution` (authorized at
+  # domain resolution time). Absent → nothing to mint (no credential source).
+  # #201-cred (codex r2 NEW-HIGH-3) — the mint requires the created-winner
+  # `witness`; `GrantMint.mint/3` fail-closes without it.
+  defp mint_pending_grant(%URI{} = agent_uri, tmpl, witness) do
+    case Map.get(tmpl, "cascade_resolution") || Map.get(tmpl, :cascade_resolution) do
+      %{} = resolution ->
+        case Map.get(resolution, "pending_grant") || Map.get(resolution, :pending_grant) do
+          %{} = pending -> Ezagent.Credential.GrantMint.mint(agent_uri, pending, witness)
+          _ -> {:ok, nil}
+        end
+
+      _ ->
+        {:ok, nil}
+    end
+  end
+
+  # Confirmed compensation of the minted incarnation on a post-mint failure.
+  # A compensation failure is COMPOSITE — never collapse it into the primary
+  # error (a silently leaked grant is a security-critical residue).
+  defp compensate_minted(agent_uri, minted, reason) do
+    case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
+      nil ->
+        {:error, reason}
+
+      incarnation_id ->
+        case Ezagent.Credential.GrantMint.compensate(
+               URI.to_string(agent_uri),
+               incarnation_id
+             ) do
+          :ok -> {:error, reason}
+          {:error, :grant_compensation_failed} -> {:error, {reason, :grant_compensation_failed}}
+        end
+    end
+  end
 
   # SPEC 2026-06-01-flavor-generic-template-data (approach B): curl's
   # template_data fields, so an orchestrator-spawned curl worker LEARNS
@@ -234,23 +366,44 @@ defmodule Ezagent.PluginCurlAgent.Template do
     # `{:error, {:already_started, pid}}` (it pre-existed). Thread that
     # ground truth out as `%{fresh?: _}` so `update_agent_template`'s
     # swap can refuse adopting a worker it did not create.
+    #
+    # #201 PR-3 — the spawn receipt ALSO carries the core logical-create
+    # verdict (`created?`). The `:api_keys` slice materialization is a
+    # create-only credential write: it runs ONLY on `:started ∧ created?`
+    # (a genuine first-ever create). A rehydrating winner
+    # (`:started ∧ ¬created?`) and an adopt (`:already_started`) write
+    # NOTHING into the live agent's slice (the adopt arm previously
+    # re-wrote THIS attempt's key into the adopted agent — a clobber).
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, _pid} ->
-        case materialize_credential_slice(agent_uri, tmpl) do
-          :ok ->
-            {:ok, [agent_uri], %{fresh?: true}}
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+      {:ok, :started, _pid, %{created?: true} = receipt} ->
+        # #201-cred (codex r2 NEW-HIGH-3) — thread the created-winner witness
+        # from THIS `:started ∧ created?` receipt into the slice mint.
+        case materialize_credential_slice_with_receipt(
+               agent_uri,
+               tmpl,
+               Map.get(receipt, :created_witness)
+             ) do
+          {:ok, grant_incarnation_id} ->
+            {:ok, [agent_uri],
+             %{
+               fresh?: true,
+               created?: true,
+               # #201-cred — the deferred-mint receipt for the chokepoint's
+               # rollback (nil = no grant minted).
+               grant_incarnation_id: grant_incarnation_id
+             }}
 
           {:error, reason} ->
             Ezagent.Kind.terminate!(agent_uri)
             {:error, reason}
         end
 
-      {:error, {:already_started, _pid}} ->
-        case materialize_credential_slice(agent_uri, tmpl) do
-          :ok -> {:ok, [agent_uri], %{fresh?: false}}
-          {:error, reason} -> {:error, reason}
-        end
+      {:ok, :started, _pid, %{created?: false}} ->
+        {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
       {:error, reason} ->
         Logger.warning(

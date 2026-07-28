@@ -42,7 +42,10 @@ defmodule EzagentActor.EtsOwner do
     # extend it ONLY via `Ezagent.SpawnRegistry.register/2` (which
     # co-registers). Moved here in the C5 ATOMIC scheme-registry commit —
     # module, table, and seed travel together (§3.2).
-    {Ezagent.URI.SchemeRegistry, :set}
+    {Ezagent.URI.SchemeRegistry, :set},
+    # #201 PR-1 — per-URI create-vs-activate verdict bridge (see
+    # `Ezagent.Kind.CreateFreshness`).
+    {Ezagent.Kind.CreateFreshness, :set}
   ]
 
   def start_link(_opts) do

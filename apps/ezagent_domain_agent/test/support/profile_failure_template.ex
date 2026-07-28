@@ -22,7 +22,7 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
     source_uri = Ezagent.URI.agent(workspace, "profile-failure-source")
 
     with :ok <- File.write(Path.join(config_dir, "materialized"), "profile failure fixture"),
-         {:ok, _grant} <-
+         {:ok, grant} <-
            Ezagent.Credential.GrantRow.insert(%{
              agent_uri: URI.to_string(agent_uri),
              credential_source_uri: URI.to_string(source_uri),
@@ -30,8 +30,11 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
              approved_scope: URI.to_string(source_uri),
              version: 1
            }),
-         {:ok, _pid} <-
-           Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+         # #201 PR-1/PR-3 — spawn through the receipt so the chokepoint gates
+         # this fixture's grant on the core logical-create verdict like any
+         # other credential-carrying Template Class.
+         {:ok, :started, _pid, %{created?: created?}} <-
+           Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
              uri: agent_uri,
              config_dir_path: config_dir,
              template_class: __MODULE__,
@@ -40,6 +43,11 @@ defmodule EzagentDomainAgent.TestSupport.ProfileFailureTemplate do
       {:ok, [agent_uri],
        %{
          fresh?: true,
+         created?: created?,
+         # #201-cred (codex r2 HIGH-3) — every credential writer returns its
+         # exact grant-incarnation receipt; the chokepoint's rollback
+         # compensates EXACTLY this incarnation (no URI-wide fallback).
+         grant_incarnation_id: grant.incarnation_id,
          config_dir_path: config_dir,
          respawn_template_data: data
        }}

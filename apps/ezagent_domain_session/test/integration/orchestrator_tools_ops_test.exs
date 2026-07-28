@@ -60,10 +60,21 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = Ezagent.URI.new!(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
-        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
-        {:error, _} = err -> err
+      # #201 PR-2 — spawn the Kind DIRECTLY (this template KNOWS its Kind
+      # in-process); the global flavor resolution can no longer see a
+      # speculatively pre-written flavor row (that write was deleted).
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+        {:ok, :started, _pid, %{created?: created?}} ->
+          {:ok, [agent_uri], %{fresh?: true, created?: created?}}
+
+        {:ok, :already_started, _pid, _receipt} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, _} = err ->
+          err
       end
     end
 

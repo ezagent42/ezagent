@@ -82,9 +82,13 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
     def instantiate(_tmpl_name, %{"agent_uri" => uri_str}, _workspace_uri) do
       agent_uri = Ezagent.URI.new!(uri_str)
 
-      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-        {:ok, :started, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
-        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
+      # #201 PR-2 — spawn the Kind DIRECTLY (this stub KNOWS its Kind
+      # in-process); the global flavor resolution can no longer see a
+      # speculatively pre-written flavor row (that write was deleted).
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+        {:ok, _pid} -> {:ok, [agent_uri], %{fresh?: true}}
+        {:error, {:already_started, _pid}} -> {:ok, [agent_uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [agent_uri], %{fresh?: false}}
         {:error, _} = err -> err
       end
     end

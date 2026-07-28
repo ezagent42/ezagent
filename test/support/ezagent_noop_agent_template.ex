@@ -24,10 +24,24 @@ defmodule Ezagent.TestSupport.NoopAgentTemplate do
     agent_uri = Ezagent.URI.new!(uri_str)
 
     with :ok <- validate(tmpl) do
-      case Ezagent.SpawnRegistry.spawn_detailed(agent_uri) do
-        {:ok, :started, _pid} -> {:ok, [agent_uri], meta(tmpl, true)}
-        {:ok, :already_started, _pid} -> {:ok, [agent_uri], %{fresh?: false}}
-        {:error, reason} -> {:error, reason}
+      # #201 PR-2 — spawn the Kind DIRECTLY. This template KNOWS its Kind
+      # in-process (Entity.Agent); the global flavor resolution
+      # (`AgentModuleResolver`) is a rehydrate-time concern for EXISTING
+      # agents and can no longer see a speculatively pre-written flavor row
+      # (that write was deleted). #201 PR-1 — through the receipt, so the
+      # chokepoint can gate create-only writes on the core `created?` verdict.
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}) do
+        {:ok, :started, _pid, %{created?: created?}} ->
+          {:ok, [agent_uri], meta(tmpl, true) |> Map.put(:created?, created?)}
+
+        {:ok, :already_started, _pid, _receipt} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [agent_uri], %{fresh?: false}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
   end

@@ -74,7 +74,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
     tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-    assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
 
     # whole-file-replace: user (higher) wins
@@ -204,13 +204,14 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       write!(base, "settings.json", "BASE")
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, _minted}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       assert agent_uri_str == URI.to_string(ctx.agent_uri)
-      # the captured version is the active grant's version (v1) — this is the value the
-      # pre-launch gate re-checks.
+      # the captured identity is the active grant's (v1 + its incarnation) — this is the
+      # value the pre-launch gate re-checks.
       assert version == 1
+      assert is_binary(incarnation_id)
       # the config dir IS materialized (the swap committed) — the threat is that the LATER
       # launch would proceed with this dir if the grant is revoked in between.
       assert File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
@@ -222,7 +223,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
       # 1. materialize commits the config_dir + captures the grant version.
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, _minted}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       # 2. grant revoked in the window BETWEEN materialize and the subprocess launch.
@@ -231,7 +232,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       # 3. the pre-launch re-validation (the exact GrantRow call spawn_for_local_pty's gate
       #    makes with the captured version) MUST abort the launch — no subprocess starts.
       assert {:error, :grant_changed} =
-               GrantRow.revalidate_version!(agent_uri_str, version)
+               GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
 
       # 4. on that abort, spawn_for_local_pty's `else` clause clears the just-materialized
       #    config_dir via rollback_agent_config_dir/1, which removes `agent_config_dir/1`.
@@ -279,7 +280,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-      assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the tombstone wins — the file must NOT be resurrected from the prior target.
       refute File.exists?(Path.join(target, "plugins/old.json"))
       refute File.exists?(Path.join(target, "plugins/old.json.tombstone"))
@@ -308,7 +309,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
         }
       }
 
-      assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the stale secret from the prior target must NOT survive — the merge tree has no
       # secret and the source supplied none, so the agent has no credential file.
       refute File.exists?(Path.join(target, ".credentials.json"))
@@ -331,7 +332,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     write!(base, "settings.json", "BASE")
     tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-    assert {:ok, target, {:grant, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
     # recovery consumed the orphan `.bak` (entry-point self-heal ran)
     refute File.exists?(bak)
@@ -356,5 +357,269 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     assert {:error,
             {:cascade_materialize_failed, {:mandatory_control_missing, "hooks/required.sh"}}} =
              CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+  end
+
+  # #201-cred (codex r2 NEW-HIGH-1) — a RAISE in the post-mint materialization
+  # region (here: `source_dir_for`) must NOT leave the just-minted grant durable.
+  # The mint runs via the cascade `:pending_grant` (proven by the created-winner
+  # `:created_witness`); an exception AFTER the mint is caught, the minted
+  # incarnation CONFIRM-compensated, and the exception re-raised.
+  describe "NEW-HIGH-1: compensation on a post-mint raise" do
+    test "a raise during source resolution leaves NO durable grant (compensated)", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_raise-#{uniq()}")
+      on_exit(fn -> File.rm_rf(CcAgent.agent_config_dir(fresh_agent)) end)
+
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # The pending grant the domain cascade would have authorized. No recorded
+      # authority generations → the generation guard is skipped (nil → :ok), so
+      # this needs no authority fixture; the mint just inserts the durable row.
+      pending = %{
+        kind: :authorized,
+        source: URI.new!(ctx.source_uri),
+        approved_by: URI.new!("entity://team-a/user/alice")
+      }
+
+      tmpl = %{
+        "config_dir" => base,
+        "allocated_config_dir" => CcAgent.agent_config_dir(fresh_agent),
+        "cascade" => %{
+          layer_dirs: [%{dir: base}],
+          # RAISE immediately AFTER the mint, while resolving the source dir.
+          source_dir_for: fn _ -> raise "boom-after-mint" end,
+          pending_grant: pending,
+          created_witness: Ezagent.Kind.CreatedWitness.new(fresh_agent)
+        }
+      }
+
+      # Sanity: the mint really happened (fresh agent had no prior grant).
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+
+      assert_raise RuntimeError, "boom-after-mint", fn ->
+        CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+      end
+
+      # Pre-fix: the raise skipped compensation and the minted grant stayed
+      # durable. Post-fix: the minted incarnation was CONFIRM-compensated.
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+
+      # No secret-bearing staging residue was left behind either.
+      assert CcAgent.agent_config_dir(fresh_agent)
+             |> Path.dirname()
+             |> File.ls!()
+             |> Enum.filter(&String.contains?(&1, ".staging-")) == []
+    end
+  end
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the created-winner witness BRIDGE: the
+  # plugin arm threads its receipt witness into the cascade map via
+  # `HomeRuntime.put_cascade_created_witness/2`, and the deferred mint reads it
+  # from `cascade[:created_witness]`. These exercise that exact helper (not a
+  # hand-written key) end-to-end through `create_agent_config_dir/2`'s mint.
+  describe "NEW-HIGH-3: created-winner witness bridge" do
+    setup do
+      # The pending grant the domain cascade would have authorized (no recorded
+      # generations → generation guard skipped, no authority fixture needed).
+      %{
+        pending: fn source_uri ->
+          %{
+            kind: :authorized,
+            source: URI.new!(source_uri),
+            approved_by: URI.new!("entity://team-a/user/alice")
+          }
+        end
+      }
+    end
+
+    defp witness_bridge_tmpl(ctx, base, target) do
+      %{
+        "config_dir" => base,
+        "allocated_config_dir" => target,
+        "cascade" => %{
+          layer_dirs: [%{dir: base}],
+          source_dir_for: fn _ -> {:ok, ctx.source_dir} end,
+          pending_grant: ctx.pending.(ctx.source_uri)
+        }
+      }
+    end
+
+    test "put_cascade_created_witness threads the witness so the deferred mint fires", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_bridge-#{uniq()}")
+      target = CcAgent.agent_config_dir(fresh_agent)
+      on_exit(fn -> File.rm_rf(target) end)
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # Inject the witness the EXACT way the created-winner arm does (via the
+      # helper), NOT a hand-written cascade key.
+      tmpl =
+        ctx
+        |> witness_bridge_tmpl(base, target)
+        |> Ezagent.Credential.HomeRuntime.put_cascade_created_witness(
+          Ezagent.Kind.CreatedWitness.new(fresh_agent)
+        )
+
+      assert {:ok, ^target, {:grant, _, incarnation, _, _}} =
+               CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+
+      assert is_binary(incarnation)
+      # the deferred mint inserted a durable grant + copied the secret.
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) != nil
+      assert File.read!(Path.join(target, ".credentials.json")) == "ALICE-TOKEN"
+    end
+
+    test "a pending-grant cascade WITHOUT the witness fail-closes the mint (no grant)", ctx do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_nowitness-#{uniq()}")
+      target = CcAgent.agent_config_dir(fresh_agent)
+      on_exit(fn -> File.rm_rf(target) end)
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+
+      # No `put_cascade_created_witness` — the arm never proved created-winner.
+      tmpl = witness_bridge_tmpl(ctx, base, target)
+
+      assert {:error, {:cascade_materialize_failed, :missing_created_winner_witness}} =
+               CcAgent.create_agent_config_dir(fresh_agent, tmpl)
+
+      assert GrantRow.get_for_agent(URI.to_string(fresh_agent)) == nil
+    end
+
+    test "put_cascade_created_witness/2 unit: writes the key, no-ops on nil / no-cascade" do
+      w = Ezagent.Kind.CreatedWitness.new(URI.new!("entity://team-a/agent/x"))
+
+      assert %{"cascade" => %{created_witness: ^w}} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"cascade" => %{}}, w)
+
+      # nil witness → unchanged (a rehydrating winner never mints).
+      assert %{"cascade" => %{}} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"cascade" => %{}}, nil)
+
+      # no cascade map → unchanged (a non-cascade agent mints nothing).
+      assert %{"other" => 1} =
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"other" => 1}, w)
+    end
+  end
+
+  # #201-cred (codex r3 NEW-HIGH-1) — the post-materialize LAUNCH (sidecar/PTY)
+  # runs OUTSIDE the mint's rescue. A RAISE there previously bypassed grant
+  # compensation entirely. `HomeRuntime.launch_under_grant_compensation/5` closes
+  # that boundary: a launch raise CONFIRM-compensates the minted grant, then
+  # re-raises. All four file-flavor arms (cc PTY, cc-headless, codex, codex-remote)
+  # route their launch through it.
+  describe "NEW-HIGH-1: a LAUNCH raise (outside the mint rescue) still compensates the minted grant" do
+    test "a raising launch COMPENSATES the minted grant and re-raises the original", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      # This spawn's minted receipt = the grant's incarnation (5th element).
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, g.incarnation_id}
+
+      assert_raise RuntimeError, "sidecar-launch-boom", fn ->
+        Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+          ctx.agent_uri,
+          grant_ctx,
+          CcAgent,
+          "cc.agent",
+          fn -> raise "sidecar-launch-boom" end
+        )
+      end
+
+      # the grant is gone even though the raise happened in the LAUNCH region
+      # (outside materialize_and_compensate). Pre-fix this leaked.
+      assert GrantRow.get_for_agent(agent_uri_str) == nil
+    end
+
+    test "a raising launch does NOT compensate a pre-existing grant (minted=nil)", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      # minted=nil: this spawn minted nothing (a no-pending winner over the
+      # pre-existing grant) — a launch raise must PRESERVE it (ties to MEDIUM-5).
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, nil}
+
+      assert_raise RuntimeError, "boom", fn ->
+        Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+          ctx.agent_uri,
+          grant_ctx,
+          CcAgent,
+          "cc.agent",
+          fn -> raise "boom" end
+        )
+      end
+
+      assert GrantRow.get_for_agent(agent_uri_str) != nil
+    end
+
+    test "a clean launch result passes through untouched (compensates nothing)", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, g.incarnation_id}
+
+      assert {:ok, :launched} =
+               Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                 ctx.agent_uri,
+                 grant_ctx,
+                 CcAgent,
+                 "cc.agent",
+                 fn -> {:ok, :launched} end
+               )
+
+      assert GrantRow.get_for_agent(agent_uri_str) != nil
+    end
+  end
+
+  # #201-cred (codex r3 MEDIUM-5) — a NO-PENDING materialization over a
+  # PRE-EXISTING (e.g. backfilled `legacy:<id>`) grant returns the FETCHED
+  # incarnation for the pre-launch revalidation, but that fetched id is NOT this
+  # spawn's mint receipt. A later launch failure must therefore compensate
+  # NOTHING (this spawn minted nothing) and PRESERVE the pre-existing grant.
+  describe "MEDIUM-5: a pre-existing grant is never compensated by a no-pending spawn" do
+    test "launch failure after a no-pending materialize PRESERVES the pre-existing grant", ctx do
+      # Turn the setup grant into a backfilled legacy row (a durable grant that
+      # long predates THIS spawn — a NULL incarnation the r3 MEDIUM-4 migration
+      # backfilled to `'legacy:' || id`).
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      legacy_incarnation = "legacy:#{agent_uri_str}"
+
+      assert %{num_rows: 1} =
+               Ecto.Adapters.SQL.query!(
+                 EzagentCore.Repo,
+                 "UPDATE credential_grants SET incarnation_id = $1 WHERE id = $2",
+                 [legacy_incarnation, agent_uri_str]
+               )
+
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+      # NO :pending_grant in the cascade — this spawn resolves no new source, so
+      # `maybe_mint` is a no-op and `minted` is nil (the pre-existing grant is
+      # merely READ during materialize).
+      tmpl = cascade_tmpl(ctx, [%{dir: base}])
+
+      assert {:ok, _target, grant_ctx} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
+      # The compensation receipt (the MINTED incarnation) is nil — this spawn
+      # minted nothing — even though the revalidation identity is the fetched
+      # legacy id.
+      assert Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx) == nil
+
+      # Sanity: the pre-existing grant is present with its legacy incarnation.
+      assert %GrantRow{incarnation_id: ^legacy_incarnation} =
+               GrantRow.get_for_agent(agent_uri_str)
+
+      # Simulate a post-materialize LAUNCH failure (the shared file-flavor path).
+      assert {:error, :launch_boom} =
+               Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+                 ctx.agent_uri,
+                 grant_ctx,
+                 :launch_boom,
+                 CcAgent,
+                 "cc"
+               )
+
+      # THE ASSERTION: the pre-existing grant SURVIVES — it was never this
+      # spawn's to delete. Pre-fix (fetched id used as the mint receipt) this
+      # DELETES the legacy grant.
+      assert %GrantRow{incarnation_id: ^legacy_incarnation} =
+               GrantRow.get_for_agent(agent_uri_str)
+    end
   end
 end

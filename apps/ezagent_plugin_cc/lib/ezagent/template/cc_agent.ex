@@ -441,6 +441,8 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # (`CcCustomAgent`) so the STORED launch flavor is the caller's (`cc` vs
   # `cc-custom`) while spawn/PTY/credential-cascade stays the single
   # `CcAgent.Spawn` chokepoint; the provider dimension rides in `tmpl`, not a fork.
+  # #201 PR-2 — no speculative flavor write here; the only write is the spawn
+  # winner's post-ownership store (from the content flavor).
   @doc false
   @spec instantiate_for_flavor(module(), String.t(), map(), URI.t(), keyword()) ::
           {:ok, [URI.t()], map()} | {:error, term()}
@@ -448,24 +450,22 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
-      # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the PtyServer
-      # are already alive we have nothing to do (each plugin re-running
-      # Workspace.Loader.load_all/0 hits this; first pass spawns, rest no-op).
-      # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
-      # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
-      cond do
-        opts == [] and agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # PR-D2 idempotency short-circuit: if BOTH the Agent Kind and the PtyServer
+    # are already alive we have nothing to do (each plugin re-running
+    # Workspace.Loader.load_all/0 hits this; first pass spawns, rest no-op).
+    # codex round-6 HIGH-1 — the short-circuit means the worker pre-existed, so
+    # the `{:ok, uris, %{fresh?: _}}` return is `fresh?: false`.
+    cond do
+      opts == [] and agent_kind_alive?(agent_uri) and pty_server_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          Ezagent.PluginCc.Template.CcAgent.Spawn.spawn_for_local_pty(
-            agent_uri,
-            tmpl,
-            workspace_uri,
-            opts
-          )
-      end
+      true ->
+        Ezagent.PluginCc.Template.CcAgent.Spawn.spawn_for_local_pty(
+          agent_uri,
+          tmpl,
+          workspace_uri,
+          opts
+        )
     end
   end
 
@@ -956,13 +956,17 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   # `Ezagent.Kind.Template.provision_and_instantiate/4`). The plugin no longer
   # computes the path; `agent_uri` is retained only for the legacy signature.
   # Return: `{:ok, dir}` / `{:ok, nil}` on the non-cascade path (backward-compatible), OR
-  # `{:ok, dir, {:grant, agent_uri_str, version}}` on the cascade path — the third element
-  # carries the grant version validated at materialize so `spawn_for_local_pty/3` can
-  # re-validate the grant IMMEDIATELY before the PTY launch (codex CRITICAL §5.1).
+  # `{:ok, dir, {:grant, agent_uri_str, incarnation_id, version, minted_incarnation_id}}`
+  # on the cascade path — the third element (opaque to the plugin) carries the
+  # grant identity validated at materialize so `spawn_for_local_pty/3` can
+  # re-validate the grant IMMEDIATELY before the PTY launch (codex CRITICAL §5.1;
+  # #201-cred — incarnation-bound; r3 MEDIUM-5 — a separate minted id gates
+  # compensation).
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), non_neg_integer()}}
+          | {:ok, String.t(),
+             {:grant, String.t(), String.t() | nil, non_neg_integer(), String.t() | nil}}
           | {:error, term()}
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     reject_stale_config_dir_data_key!(tmpl)

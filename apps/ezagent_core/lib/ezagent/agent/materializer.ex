@@ -487,18 +487,22 @@ defmodule Ezagent.Agent.Materializer do
       resolves the grant's credential source URI to its on-disk config_dir under the
       grant-scoped read (the §5.1 grant-scoped principal). Injected so core does no
       dispatch.
-    * `:commit` — `(version :: non_neg_integer() -> {:ok, term} | {:error, term})` the
+    * `:commit` — `({version, incarnation_id} -> {:ok, term} | {:error, term})` the
       FINAL config-swap step (atomic-replace). Called ONLY after the TOCTOU re-check
-      passes. Receives the grant `version` validated at materialize so the caller can
-      thread it to a SECOND re-validation immediately before the (later) subprocess launch
-      — the swap and the launch are separate boundaries (codex CRITICAL §5.1).
+      passes. Receives the grant `{version, incarnation_id}` validated at materialize so
+      the caller can thread it to a SECOND re-validation immediately before the (later)
+      subprocess launch — the swap and the launch are separate boundaries (codex
+      CRITICAL §5.1). #201-cred (codex r2 HIGH-4): the incarnation id travels WITH the
+      version — the revalidation is `(agent_uri, incarnation_id, version)`, immune to
+      delete+reinsert version resets and same-version reapproval races.
   """
   @type grant_inputs :: %{
           required(:agent_uri) => String.t(),
           required(:staging) => String.t(),
           required(:secret_relpaths) => [String.t()],
           required(:source_dir_for) => (String.t() -> {:ok, String.t()} | {:error, term()}),
-          required(:commit) => (non_neg_integer() -> {:ok, term()} | {:error, term()})
+          required(:commit) => ({non_neg_integer(), String.t()} ->
+                                  {:ok, term()} | {:error, term()})
         }
 
   @doc """
@@ -506,18 +510,21 @@ defmodule Ezagent.Agent.Materializer do
 
   Sequence (every step fail-loud):
 
-    1. `GrantRow.fetch_for_materialize(agent_uri)` → `{source_uri, version}` (active,
-       non-revoked, scope still matches, source exists). Any failure → abort (no
+    1. `GrantRow.fetch_for_materialize(agent_uri)` → `{source_uri, version,
+       incarnation_id}` (active, non-revoked, scope still matches, source exists,
+       recorded authority generations still current). Any failure → abort (no
        launch with stale/leaked creds).
     2. resolve `source_uri` → on-disk dir via `source_dir_for` (grant-scoped read).
     3. `copy_secret_relpaths` from that dir into `staging`.
-    4. `GrantRow.revalidate_version!(agent_uri, version)` — re-check the version
-       IMMEDIATELY before commit. If it changed (revoked mid-start) → `{:error,
-       :grant_changed}`, do NOT commit/exec.
-    5. `commit.(version)` — the atomic-replace config swap (NOT the subprocess launch). The
-       validated `version` is handed to the commit so the caller can thread it to a SECOND
-       `revalidate_version!/2` immediately before the LATER subprocess launch (the swap and
-       the launch are distinct boundaries — codex CRITICAL §5.1).
+    4. `GrantRow.revalidate_version!(agent_uri, incarnation_id, version)` — re-check
+       the exact grant INCARNATION immediately before commit. If it changed
+       (revoked/replaced mid-start — including a delete+reinsert at the same
+       version, codex r2 HIGH-4) → `{:error, :grant_changed}`, do NOT commit/exec.
+    5. `commit.({version, incarnation_id})` — the atomic-replace config swap (NOT the
+       subprocess launch). The validated identity is handed to the commit so the
+       caller can thread it to a SECOND `revalidate_version!/3` immediately before
+       the LATER subprocess launch (the swap and the launch are distinct boundaries —
+       codex CRITICAL §5.1).
 
   Returns the `commit` result `{:ok, term}` or `{:error, reason}`.
   """
@@ -529,11 +536,11 @@ defmodule Ezagent.Agent.Materializer do
     source_dir_for = Map.fetch!(inputs, :source_dir_for)
     commit = Map.fetch!(inputs, :commit)
 
-    with {:ok, source_uri, version} <- GrantRow.fetch_for_materialize(agent_uri),
+    with {:ok, source_uri, version, incarnation_id} <- GrantRow.fetch_for_materialize(agent_uri),
          {:ok, source_dir} <- source_dir_for.(source_uri),
          :ok <- copy_secret_relpaths(source_dir, staging, secret_relpaths),
-         :ok <- GrantRow.revalidate_version!(agent_uri, version),
-         {:ok, result} <- commit.(version) do
+         :ok <- GrantRow.revalidate_version!(agent_uri, incarnation_id, version),
+         {:ok, result} <- commit.({version, incarnation_id}) do
       {:ok, result}
     end
   end

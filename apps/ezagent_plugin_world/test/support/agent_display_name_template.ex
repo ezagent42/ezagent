@@ -16,30 +16,34 @@ defmodule Ezagent.World.AgentDisplayNameTemplate do
   def instantiate(_name, data, _workspace_uri) do
     agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
     config_dir = Map.fetch!(data, "allocated_config_dir")
-    {:ok, flavor} = Ezagent.AgentFlavorAttributes.get(agent_uri)
+    # #201 PR-2 — instantiate-time flavor reads come from the data map
+    # (authored by `AgentTemplate.to_template_data/2`), NEVER the global
+    # `AgentFlavorAttributes` ETS table.
+    flavor = Map.fetch!(data, "flavor")
 
     respawn_template_data =
       data
       |> Map.put("agent_config_dir", config_dir)
       |> Map.put("flavor", flavor)
 
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
            uri: agent_uri,
            config_dir_path: config_dir,
            template_class: __MODULE__,
            respawn_template_data: respawn_template_data
          }) do
-      {:ok, _pid} ->
+      {:ok, :started, _pid, %{created?: created?}} ->
         :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
 
         {:ok, [agent_uri],
          %{
            fresh?: true,
+           created?: created?,
            config_dir_path: config_dir,
            respawn_template_data: respawn_template_data
          }}
 
-      {:error, {:already_started, _pid}} ->
+      {:ok, :already_started, _pid, _receipt} ->
         {:ok, [agent_uri], %{fresh?: false}}
 
       {:error, {:already_registered, _}} ->

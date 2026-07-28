@@ -346,7 +346,14 @@
   #   `caller_caps: presenter_caps(socket)` while world's `session_view_ctx/1`
   #   still calls `PresenterCaps.load(socket)` — so the two bodies DIVERGE and the
   #   duplicate group is gone. Back to main's pre-extraction value.
-  cross_file_duplicate_fn_groups: 42,
+  # - arch-cap-bump: #201-cred (codex r2 NEW-HIGH-3) — the created-winner witness
+  #   threading makes codex_agent + codex_remote_agent's
+  #   `create_agent_config_dir_with_grant/3` bodies isomorphic (both prepend
+  #   `HomeRuntime.put_cascade_created_witness/2` then delegate to
+  #   `HomeRuntime.create_agent_config_dir_with_grant/4` under `__MODULE__`). Each
+  #   flavor's thin adapter must key `HomeRuntime` on its OWN module, so the fork
+  #   is forced across the plugin boundary. 42→43.
+  cross_file_duplicate_fn_groups: 43,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -401,7 +408,31 @@
   #   counted here). Measured 1766→1786.
   # arch-cap-bump: custom-backend templates now forward the Plan C launch receipt
   #   option through their shared CC instantiate boundary.
-  cc_codex_template_class_combined_loc: 1787,
+  # arch-cap-bump: #201 PR-1/PR-3 — the spawn-receipt arms. codex_agent gains the
+  #   `{:started, false}` rehydrating-winner arm (zero credential writes on
+  #   `:started ∧ ¬created?`) + the core-verdict meta threading; cc_agent's
+  #   instantiate_for_flavor documents the deleted speculative flavor write
+  #   (net-zero LOC). Measured 1787→1801.
+  # arch-cap-bump: #201-cred (codex r2 HIGH-1/2/4) — the deferred-mint receipt
+  #   threading (`:grant_incarnation_id` in the created-winner meta, so the
+  #   chokepoint rollback compensates the EXACT minted incarnation — the
+  #   ABA-unsafe URI-delete fallback is deleted) + the confirmed post-mint
+  #   grant compensation in the codex spawn arm (shared HomeRuntime path).
+  #   Security-fix wiring, not new surface. Measured 1801→1822.
+  # arch-cap-bump: #201-cred (codex r2 NEW-HIGH-3) — the structural created-winner
+  #   witness threading: codex_agent + codex_remote_agent capture the witness from
+  #   their `:started ∧ created?` receipt (`ensure_agent_kind` + the
+  #   `{:started, true, created_witness}` arm) and inject it into the cascade map
+  #   via `HomeRuntime.put_cascade_created_witness/2` before the deferred mint, so
+  #   `GrantMint` fail-closes off the created-winner arm. Security-fix wiring, not
+  #   new surface. Measured 1822→1831.
+  # arch-cap-bump: #201-cred (codex r3 NEW-HIGH-1) — codex_agent + codex_remote_agent
+  #   wrap their post-materialize sidecar launch in
+  #   `HomeRuntime.launch_under_grant_compensation/5` so a RAISE in the launch
+  #   (outside the mint's rescue) still CONFIRM-compensates the minted grant instead
+  #   of leaking it. Security-fix wiring (a rescue boundary + closure), not new
+  #   surface. Measured 1831→1851.
+  cc_codex_template_class_combined_loc: 1851,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
