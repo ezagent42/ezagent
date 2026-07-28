@@ -160,7 +160,14 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
            }
   end
 
-  test "spawn_from_template_content mints a grant for the resolved credential source" do
+  # #201 defer-writes — the domain RESOLVES + AUTHORIZES the credential source
+  # into a plain-data pending-grant descriptor and threads it to the Template
+  # Class, but does NOT itself MINT: the durable grant is minted ONLY by the
+  # created-winner arm inside the plugin (`GrantMint.mint/3`, after the `:started
+  # ∧ created?` receipt). `CaptureTemplate` is a capture-only fake with no such
+  # arm, so it correctly mints nothing. (A REAL plugin does mint from this exact
+  # descriptor — proven by `curl_cascade_activation_test`.)
+  test "spawn_from_template_content authorizes the credential source into a pending-grant descriptor but does NOT speculatively mint" do
     flavor = "cascade_grant_#{uniq()}"
 
     :ok =
@@ -194,9 +201,22 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
                caps: caps
              )
 
-    assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(agent_uri))
-    assert row.credential_source_uri == URI.to_string(@source_uri)
-    assert row.approved_by == URI.to_string(caller)
+    # The domain DID resolve + authorize the source: a pending-grant descriptor
+    # (source + approver) was threaded to the Template Class — the plain data a
+    # real plugin's created-winner arm mints from.
+    assert %{} = data = Process.get({CaptureTemplate, :received_template_data})
+
+    assert %{kind: :authorized, source: source, approved_by: approved_by} =
+             data["cascade"][:pending_grant]
+
+    assert Ezagent.URI.stable_key(source) == Ezagent.URI.stable_key(@source_uri)
+    assert Ezagent.URI.stable_key(approved_by) == Ezagent.URI.stable_key(caller)
+
+    # TEETH: NO durable grant was minted by the domain — minting is confined to
+    # the plugin created-winner arm, which `CaptureTemplate` does not have. This
+    # FAILS if the domain ever speculatively mints again.
+    refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
+           "the domain must NOT speculatively mint; the grant is deferred to the created-winner arm"
   end
 
   test "spawn_from_template_content builds default cascade inputs from source_template_uri" do
@@ -240,7 +260,16 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     assert %{} = data = Process.get({CaptureTemplate, :received_template_data})
     assert [%{dir: "/tmp/workspace-default"}] = data["cascade"].layer_dirs
     assert {:ok, "/tmp/source-default"} = data["cascade"].source_dir_for.(@source_uri)
-    assert %GrantRow{} = GrantRow.get_for_agent(URI.to_string(agent_uri))
+
+    # #201 defer-writes — the default cascade also resolves + authorizes the
+    # source into a pending-grant descriptor threaded to the Template Class, but
+    # the domain does NOT itself mint (deferred to the created-winner plugin arm).
+    assert %{kind: :authorized, source: source} = data["cascade"][:pending_grant]
+    assert Ezagent.URI.stable_key(source) == Ezagent.URI.stable_key(@source_uri)
+
+    # TEETH: no speculative domain mint (`CaptureTemplate` has no created-winner arm).
+    refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
+           "the domain must NOT speculatively mint; the grant is deferred to the created-winner arm"
   end
 
   test "default cascade is skipped for legacy source templates without config_dir" do
@@ -270,7 +299,12 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     refute GrantRow.get_for_agent(URI.to_string(agent_uri))
   end
 
-  test "workspace-shared approval mints a member grant when caller lacks source read cap" do
+  # #201 defer-writes — the no-cap workspace-shared fallback: the domain resolves
+  # the shared source into a `:workspace_shared` pending-grant descriptor (its
+  # `set_by` approver is re-resolved at mint time), but does NOT itself mint.
+  # `CaptureTemplate` has no created-winner arm, so no grant is minted here; a
+  # real plugin mints the member grant from this descriptor.
+  test "workspace-shared approval resolves a member-grant descriptor when caller lacks source read cap, without speculatively minting" do
     flavor = "cascade_ws_shared_#{uniq()}"
     template_uri = URI.new!("template://team-alpha/agent/ws-capture")
     admin_uri = URI.new!("entity://team-alpha/user/admin")
@@ -317,9 +351,16 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
                source_template_uri: template_uri
              )
 
-    assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(agent_uri))
-    assert row.credential_source_uri == URI.to_string(@source_uri)
-    assert row.approved_by == URI.to_string(admin_uri)
+    # The domain resolved the shared source into a `:workspace_shared` descriptor
+    # (the approver is re-resolved from the shared registration's `set_by` at MINT
+    # time inside the plugin), threaded to the Template Class.
+    assert %{} = data = Process.get({CaptureTemplate, :received_template_data})
+    assert %{kind: :workspace_shared, source: source} = data["cascade"][:pending_grant]
+    assert Ezagent.URI.stable_key(source) == Ezagent.URI.stable_key(@source_uri)
+
+    # TEETH: no speculative domain mint (`CaptureTemplate` has no created-winner arm).
+    refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
+           "the domain must NOT speculatively mint the member grant; it is deferred to the created-winner arm"
   end
 
   defmodule FailingInstantiateTemplate do
@@ -331,8 +372,13 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     @impl Ezagent.Kind.Template
     def validate(_), do: :ok
 
-    # Fail AFTER the cascade grant has already been minted upstream, so the
-    # compensating grant-delete is exercised.
+    # Instantiate FAILS immediately. Under #201 defer-writes the durable grant is
+    # minted ONLY by a created-winner plugin arm (which this fake does not
+    # implement) — the domain builds only a pending-grant descriptor and never
+    # mints — so no grant is minted upstream. These tests therefore assert the
+    # DOMAIN-level invariants: an instantiate failure leaves NO grant, and never
+    # deletes a PRE-EXISTING one. (The mint+compensation round-trip itself is a
+    # plugin concern, covered by the flavor cascade-materialize tests.)
     @impl Ezagent.Kind.Template
     def instantiate(_name, _data, _workspace_uri), do: {:error, :boom_after_grant}
 
@@ -347,7 +393,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     def auth_failure_signals, do: ["capture auth failed"]
   end
 
-  test "a spawn that mints a grant then fails at instantiate leaves NO orphaned grant (codex r5)" do
+  test "a spawn whose Template Class fails at instantiate leaves NO grant (no speculative domain mint, codex r5)" do
     flavor = "cascade_orphan_#{uniq()}"
 
     :ok =
@@ -374,7 +420,7 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-orphan-#{uniq()}")
     {caller, caps} = authorized_source_ctx()
 
-    # The spawn fails at instantiate (AFTER the grant was minted).
+    # The spawn fails at instantiate (before any created-winner mint arm runs).
     assert {:error, :boom_after_grant} =
              Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
                caller: caller,
@@ -382,16 +428,17 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
                caps: caps
              )
 
-    # The compensating cleanup HARD-deleted the grant — no orphan, so a retry's
-    # GrantRow.insert won't conflict.
+    # TEETH: no grant exists — the domain never speculatively minted (and this
+    # fake never reached a created-winner mint arm), so a retry's GrantRow.insert
+    # won't conflict. FAILS if the domain speculatively mints again.
     refute GrantRow.get_for_agent(URI.to_string(agent_uri)),
-           "a failed spawn must leave no orphaned credential grant"
+           "a failed spawn must leave no credential grant (no speculative domain mint)"
 
     assert :none = Ezagent.AgentFlavorAttributes.get(agent_uri),
            "a failed spawn must not leave a cross-candidate flavor attribute"
   end
 
-  test "a mint-conflict (concurrent duplicate) does NOT delete the winner's existing grant (codex r6)" do
+  test "a losing spawn (Template Class instantiate fails) does NOT delete a PRE-EXISTING grant for the same agent_uri (codex r6)" do
     flavor = "cascade_conflict_#{uniq()}"
 
     :ok =
@@ -405,7 +452,8 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     agent_uri = Ezagent.URI.agent("team-alpha", "cascade-conflict-#{uniq()}")
 
-    # Simulate the WINNER having already minted the grant for this agent_uri.
+    # A PRE-EXISTING grant for this agent_uri (e.g. a concurrent winner already
+    # minted it via its created-winner arm).
     {:ok, _winner} =
       GrantRow.insert(%{
         agent_uri: URI.to_string(agent_uri),
@@ -429,9 +477,9 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     {caller, caps} = authorized_source_ctx()
 
-    # The LOSER's spawn: its grant mint conflicts on the unique agent_uri (the
-    # winner already inserted), so resolve_cascade_content fails BEFORE
-    # spawn_after_cascade — the loser must NOT delete the winner's grant.
+    # The LOSER's spawn fails (its Template Class instantiate errors). Its
+    # failure/rollback must key off ITS OWN mint receipt only (nil here — it
+    # minted nothing) and must NOT touch the pre-existing grant.
     assert {:error, _} =
              Agent.spawn_from_template_content(content, agent_uri, caller, @workspace_uri,
                caller: caller,
@@ -439,7 +487,8 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
                caps: caps
              )
 
-    # The winner's grant survives the loser's failed spawn.
+    # TEETH: the pre-existing grant SURVIVES the loser's failed spawn — the loser
+    # never owned it. FAILS if a losing spawn deletes a grant it did not mint.
     assert %GrantRow{approved_by: approved_by} = GrantRow.get_for_agent(URI.to_string(agent_uri))
     assert approved_by == URI.to_string(@owner_uri)
   end
