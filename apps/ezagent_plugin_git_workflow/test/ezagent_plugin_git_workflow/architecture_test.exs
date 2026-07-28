@@ -19,7 +19,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
                    authorization.ex workflow_facts.ex authorized_task.ex blocker.ex
                    policy_derivation.ex execution_seam/cap_backed.ex stage_runner.ex
-                   observation_summary.ex run_failure.ex)
+                   observation_summary.ex run_failure.ex observation.ex)
 
   # Design §3.4 (gaga, 2026-07-28) opened exactly ONE door in this app: the
   # real seam backend mints an EXACT per-action capability through
