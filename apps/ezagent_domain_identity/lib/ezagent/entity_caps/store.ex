@@ -14,31 +14,39 @@ defmodule Ezagent.EntityCaps.Store do
       a non-active state requires an authenticated re-provision);
     * `provisioning_receipt` — the authenticated proof
       (`Ezagent.Identity.ProvisioningReceipt`) that the current `active`
-      state was created by genuine provision/re-provision, not a spawn race.
+      state was created by genuine provision/re-provision, not a spawn race;
+    * `workspace_uri` — the entity URI's workspace (per-tenant gate).
 
   `kind_cap_authorities` is unchanged (signing keys + generation). This store
   holds caps + status + receipt.
 
-  ## PR-1 contract (dual-write + dual-read; NOT yet authoritative)
+  ## PR-1 contract (codex review F1): WRITE-SHADOW ONLY
+
+  In PR-1 this store is a **write-shadow**, never an authoritative read
+  source:
 
     * Dual-WRITE: every cap mutation writes BOTH the legacy store
       (`users.caps_json` for users / the snapshot `:identity` slice for
       other durable entities) AND this store. The write points are
-      `UserStore.update/2` (same transaction), the `Kind.Server`
-      commit chokepoint, and `SnapshotStore.write/delete` — so this store
-      mirrors each entity's LEGACY authoritative source exactly.
-    * Dual-READ: durable reads (`EntityCaps.load_persisted/1`,
-      `Kind.read_durable/3` for `:identity`) prefer this store and fall back
-      to the legacy source when no row exists. Live-first reads are
-      unchanged in PR-1.
+      `UserStore.update/2` (same transaction), the `Kind.Snapshot.save_now`
+      chokepoint (init / post-init / commit / Writer flush / terminate),
+      the `Kind.Server` commit hook (covers `:not_durable` commits), and
+      `SnapshotStore.write/delete` — so this store mirrors each entity's
+      LEGACY authoritative source as closely as a shadow can.
+    * Reads: NO production read path consults this store in PR-1. Legacy
+      reads (`users.caps_json` / snapshot `:identity`) stay authoritative;
+      a divergent or missing shadow row can therefore NEVER change an
+      authorization outcome. The `fetch_durable_*` read APIs below exist
+      for the atomic cutover PR (which flips reads to the store only after
+      verifying parity fleet-wide) and are exercised by unit tests only.
+    * Mirror writes are best-effort but NEVER silent: every failure is
+      logged at `:error` (the legacy write still succeeds — shadow
+      divergence is observable and the migration PR reconciles).
     * Ephemeral/external-persistence Kinds are NOT mirrored in PR-1 (their
       identity durability arrives with the atomic cutover); users are
       mirrored via `users.caps_json` writes only.
-    * `Authority.open(:existed)` empty-history failure, tombstone-on-destroy
-      enforcement, and removing the legacy stores as authoritative are the
-      LATER cutover PR — not here.
 
-  The provisioning API (`provision/3`, `reprovision/3`,
+  The provisioning API (`provision/4`, `reprovision/4`,
   `revoke_provisioning/1`, `tombstone/1`) is additive in PR-1; nothing in
   the runtime calls it yet.
   """
@@ -60,12 +68,13 @@ defmodule Ezagent.EntityCaps.Store do
     field :caps_json, :string
     field :identity_status, :string, default: "active"
     field :provisioning_receipt, :string
+    field :workspace_uri, :string
 
     timestamps(type: :utc_datetime_usec)
   end
 
   # ====================================================================
-  # Reads
+  # Reads (cutover-facing — NOT wired into any authoritative read in PR-1)
   # ====================================================================
 
   @doc "Fetch the raw row for `uri` (`nil` when absent)."
@@ -78,16 +87,17 @@ defmodule Ezagent.EntityCaps.Store do
     _, _ -> nil
   end
 
-  @doc "Whether a store row exists for `uri` (the PR-1 existence signal)."
+  @doc "Whether a store row exists for `uri`."
   @spec has_row?(URI.t() | String.t()) :: boolean()
   def has_row?(uri), do: not is_nil(fetch(uri))
 
   @doc """
   The addendum §4 existence signal for the CapBAC read classifier: a store
   row proves the URI is a KNOWN entity even when no durable snapshot row
-  exists. USER URIs are excluded in PR-1 — their existence source remains
-  `users` / snapshots (a `users.caps_json` mirror write must not reclassify
-  a snapshot-less user from `:absent` to transient).
+  exists. USER URIs are excluded — their existence source remains `users` /
+  snapshots (a `users.caps_json` mirror write must not reclassify a
+  snapshot-less user from `:absent` to transient). Cutover-facing: NOT
+  consulted by the read classifier in PR-1.
   """
   @spec existence_signal?(URI.t() | String.t()) :: boolean()
   def existence_signal?(uri), do: not user_uri?(uri) and has_row?(uri)
@@ -107,7 +117,7 @@ defmodule Ezagent.EntityCaps.Store do
   A row in `revoked_unprovisioned` / `tombstoned` state yields `[]` (the URI
   is inert until re-provisioned), NEVER a fallback: a present non-active row
   is authoritative about the holder being empty. Absent row → `[]` as well;
-  callers that need dual-read fallback use `fetch_durable_caps/1`.
+  cutover dual-read fallback uses `fetch_durable_caps/1`.
   """
   @spec load(URI.t() | String.t()) :: [Capability.t()]
   def load(uri) do
@@ -118,9 +128,10 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   @doc """
-  Dual-read entry point for `Ezagent.EntityCaps.load_persisted/1`: the
-  store's complete cap set, or `:fallback` when no row exists (caller then
-  reads the legacy store — `users.caps_json` / snapshot `:identity`).
+  Cutover-facing dual-read entry point for `Ezagent.EntityCaps.load_persisted/1`:
+  the store's complete cap set, or `:fallback` when no row exists (caller
+  then reads the legacy store — `users.caps_json` / snapshot `:identity`).
+  NOT consulted by `EntityCaps` in PR-1.
   """
   @spec fetch_durable_caps(URI.t() | String.t()) :: {:ok, [Capability.t()]} | :fallback
   def fetch_durable_caps(uri) do
@@ -132,9 +143,10 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   @doc """
-  Dual-read entry point for the `Kind.read_durable/3` `:identity` projection
-  (actor seam, config-injected): the synthesized `:identity` slice
-  `%{caps: MapSet.t()}` plus `read_durable`-shaped meta, or `:fallback`.
+  Cutover-facing dual-read entry point for the `Kind.read_durable/3`
+  `:identity` projection (actor seam, config-injected): the synthesized
+  `:identity` slice `%{caps: MapSet.t()}` plus `read_durable`-shaped meta,
+  or `:fallback`. NOT consulted by `Kind.read_durable` in PR-1.
   """
   @spec fetch_durable_identity(URI.t() | String.t()) ::
           {:ok, %{caps: MapSet.t(Capability.t())}, %{version: 0, updated_at: DateTime.t() | nil}}
@@ -156,7 +168,7 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Batch variant of `fetch_durable_identity/1` for `Kind.read_durable_many/3`:
-  one query, returns only the URIs that have a store row.
+  one query, returns only the URIs that have a store row. Cutover-facing.
   """
   @spec fetch_durable_identities([URI.t() | String.t()]) :: %{
           optional(String.t()) =>
@@ -183,7 +195,7 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   # ====================================================================
-  # Dual-write mirror (PR-1 additive writes — preserve status + receipt)
+  # Dual-write mirror (PR-1 shadow writes — preserve status + receipt)
   # ====================================================================
 
   @doc """
@@ -199,11 +211,17 @@ defmodule Ezagent.EntityCaps.Store do
   def persist(uri, caps) when is_list(caps) or is_struct(caps, MapSet) do
     encoded = encode_caps(caps)
     now = now_usec()
+    workspace = workspace_key(uri)
 
     %__MODULE__{}
-    |> Ecto.Changeset.change(uri: key(uri), caps_json: encoded, identity_status: "active")
+    |> Ecto.Changeset.change(
+      uri: key(uri),
+      caps_json: encoded,
+      identity_status: "active",
+      workspace_uri: workspace
+    )
     |> Repo.insert(
-      on_conflict: [set: [caps_json: encoded, updated_at: now]],
+      on_conflict: [set: [caps_json: encoded, workspace_uri: workspace, updated_at: now]],
       conflict_target: :uri
     )
     |> case do
@@ -223,26 +241,25 @@ defmodule Ezagent.EntityCaps.Store do
                                         | {:error, term()})) ::
           :ok | {:error, term()}
   def update(uri, fun) when is_function(fun, 1) do
-    case Repo.transaction(fn -> update_locked(key(uri), fun) end) do
+    case Repo.transaction(fn -> update_locked(key(uri), workspace_key(uri), fun) end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp update_locked(uri_key, fun) do
-    :ok = ensure_row(uri_key)
-    row = Repo.one(from(r in __MODULE__, where: r.uri == ^uri_key, lock: "FOR UPDATE"))
-
-    with {:ok, caps} <- fun.(decode_caps(row.caps_json)),
+  defp update_locked(uri_key, workspace, fun) do
+    with :ok <- ensure_row(uri_key, workspace),
+         row when not is_nil(row) <- lock_row(uri_key),
+         {:ok, caps} <- fun.(decode_caps(row.caps_json)),
          {:ok, _row} <-
            row |> Ecto.Changeset.change(caps_json: encode_caps(caps)) |> Repo.update() do
       :ok
     end
   end
 
-  defp ensure_row(uri_key) do
+  defp ensure_row(uri_key, workspace) do
     %__MODULE__{}
-    |> Ecto.Changeset.change(uri: uri_key)
+    |> Ecto.Changeset.change(uri: uri_key, workspace_uri: workspace)
     |> Repo.insert(on_conflict: :nothing, conflict_target: :uri)
     |> case do
       {:ok, _row} -> :ok
@@ -250,13 +267,19 @@ defmodule Ezagent.EntityCaps.Store do
     end
   end
 
+  defp lock_row(uri_key) do
+    Repo.one(from(r in __MODULE__, where: r.uri == ^uri_key, lock: "FOR UPDATE"))
+  end
+
   # ====================================================================
-  # Actor seams (config-injected; NEVER raise — the legacy store remains
-  # authoritative in PR-1, so a mirror failure must not break a dispatch)
+  # Actor seams (config-injected; best-effort shadow, but NEVER silent —
+  # every mirror failure is logged at :error; the legacy write remains the
+  # authoritative outcome in PR-1)
   # ====================================================================
 
   @doc """
-  Dual-write hook for the snapshot commit / direct snapshot write paths.
+  Dual-write hook for the snapshot write paths (`Kind.Snapshot.save_now`,
+  the `Kind.Server` commit hook, and direct `SnapshotStore.write`).
 
   `slice` is the raw `:identity` slice (any shape: Lifecycle two-container,
   persisted single-key `%{state: _}`, or legacy flat). Skipped (returns
@@ -268,21 +291,35 @@ defmodule Ezagent.EntityCaps.Store do
       are deliberately NOT mirrored in PR-1 (`nil` kind_module, the direct
       `SnapshotStore.write/3` path, always mirrors: durable writers only);
     * the slice carries no caps set.
+
+  A mirror failure is logged at `:error` (observable shadow divergence),
+  never raised into the committing dispatch.
   """
   @spec sync_committed_identity(URI.t() | String.t(), module() | nil, term()) :: :ok
   def sync_committed_identity(uri, kind_module, slice) do
     with false <- user_uri?(uri),
          false <- skip_kind?(kind_module),
-         %MapSet{} = caps <- slice_caps(slice),
-         :ok <- persist(uri, caps) do
-      :ok
+         %MapSet{} = caps <- slice_caps(slice) do
+      case persist(uri, caps) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.error(
+            "EntityCaps.Store: identity shadow write FAILED for #{inspect(uri)} " <>
+              "(reason=#{inspect(reason)}) — legacy snapshot committed; " <>
+              "shadow row diverges until the next mirrored write or the migration backfill"
+          )
+
+          :ok
+      end
     else
       _ -> :ok
     end
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity mirror write failed for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity shadow write RAISED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
@@ -290,7 +327,7 @@ defmodule Ezagent.EntityCaps.Store do
   catch
     kind, reason ->
       Logger.error(
-        "EntityCaps.Store: identity mirror write failed for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity shadow write FAILED for #{inspect(uri)}: " <>
           "#{kind} #{inspect(reason)}"
       )
 
@@ -299,7 +336,7 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Dual-write hook for `SnapshotStore.delete/1`: the legacy durable copy is
-  gone, so the mirror row is deleted too (PR-1 keeps legacy destroy
+  gone, so the shadow row is deleted too (PR-1 keeps legacy destroy
   semantics; tombstone-on-destroy enforcement is the cutover PR).
   """
   @spec identity_snapshot_cleared(URI.t() | String.t()) :: :ok
@@ -311,13 +348,19 @@ defmodule Ezagent.EntityCaps.Store do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity mirror delete failed for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity shadow delete FAILED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
       :ok
   catch
-    _, _ -> :ok
+    kind, reason ->
+      Logger.error(
+        "EntityCaps.Store: identity shadow delete FAILED for #{inspect(uri)}: " <>
+          "#{kind} #{inspect(reason)}"
+      )
+
+      :ok
   end
 
   # ====================================================================
@@ -327,15 +370,23 @@ defmodule Ezagent.EntityCaps.Store do
   @doc """
   Genuine provision (the `:created`-with-receipt transition): activate
   `uri` with the complete cap set (incl. a freshly minted self-license) and
-  the authenticated receipt. Idempotent re-activation of an `active` row;
-  REJECTED when the URI is `tombstoned` (only `reprovision/3` passes that).
+  the authenticated receipt. Idempotent re-activation of an `active` row
+  (with a FRESH receipt — receipts are single-use); REJECTED when the URI
+  is `tombstoned` (only `reprovision/4` passes that).
+
+  Required opts: `:actor` — the authenticated operator performing the
+  provision; the receipt must be issued to that actor AND the actor must
+  pass `Ezagent.Identity.AdminAuthority.admin?/1`.
   """
   @spec provision(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t()),
-          ProvisioningReceipt.t()
+          ProvisioningReceipt.t(),
+          keyword()
         ) :: :ok | {:error, term()}
-  def provision(uri, caps, %ProvisioningReceipt{} = receipt) do
-    with :ok <- require_receipt(receipt, uri, :provision) do
-      transition_locked(uri, fn
+  def provision(uri, caps, %ProvisioningReceipt{} = receipt, opts) do
+    actor = Keyword.fetch!(opts, :actor)
+
+    with :ok <- require_receipt(receipt, uri, :provision, caps, actor) do
+      transition_locked(uri, receipt, fn
         %{identity_status: "tombstoned"} -> {:error, :tombstoned}
         _row -> {:ok, activate_changes(caps, receipt)}
       end)
@@ -346,14 +397,17 @@ defmodule Ezagent.EntityCaps.Store do
   Explicit re-provision (authenticated operator op): the ONLY transition out
   of `revoked_unprovisioned` / `tombstoned` — mints a new self-license
   (caller supplies the new complete cap set), activates, and records the
-  fresh receipt.
+  fresh receipt. Required opts: `:actor` (see `provision/4`).
   """
   @spec reprovision(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t()),
-          ProvisioningReceipt.t()
+          ProvisioningReceipt.t(),
+          keyword()
         ) :: :ok | {:error, term()}
-  def reprovision(uri, caps, %ProvisioningReceipt{} = receipt) do
-    with :ok <- require_receipt(receipt, uri, :reprovision) do
-      transition_locked(uri, fn
+  def reprovision(uri, caps, %ProvisioningReceipt{} = receipt, opts) do
+    actor = Keyword.fetch!(opts, :actor)
+
+    with :ok <- require_receipt(receipt, uri, :reprovision, caps, actor) do
+      transition_locked(uri, receipt, fn
         %{identity_status: "active"} -> {:error, :already_active}
         _row -> {:ok, activate_changes(caps, receipt)}
       end)
@@ -368,7 +422,7 @@ defmodule Ezagent.EntityCaps.Store do
   """
   @spec revoke_provisioning(URI.t() | String.t()) :: :ok | {:error, term()}
   def revoke_provisioning(uri) do
-    transition_locked(uri, fn
+    transition_locked(uri, nil, fn
       %{identity_status: "active"} -> {:ok, [identity_status: "revoked_unprovisioned"]}
       %{identity_status: "revoked_unprovisioned"} -> {:ok, []}
       %{identity_status: "tombstoned"} -> {:error, :tombstoned}
@@ -382,7 +436,7 @@ defmodule Ezagent.EntityCaps.Store do
   """
   @spec tombstone(URI.t() | String.t()) :: :ok | {:error, term()}
   def tombstone(uri) do
-    transition_locked(uri, fn
+    transition_locked(uri, nil, fn
       %{identity_status: "tombstoned"} -> {:ok, []}
       _row -> {:ok, [identity_status: "tombstoned", caps_json: "[]"]}
     end)
@@ -396,51 +450,74 @@ defmodule Ezagent.EntityCaps.Store do
     ]
   end
 
-  defp require_receipt(receipt, uri, transition) do
-    if ProvisioningReceipt.valid_for?(receipt, uri, transition) do
+  # F3: a receipt must (1) verify (signature + subject + transition + TTL),
+  # (2) be bound to THIS cap set (digest), (3) be issued to the
+  # authenticated actor, and (4) the actor must be an authorized operator
+  # (`AdminAuthority.admin?/1`, the same predicate the operator read-plane
+  # gates on — fail-closed).
+  defp require_receipt(receipt, uri, transition, caps, actor) do
+    with true <-
+           ProvisioningReceipt.valid_for?(receipt, uri, transition, caps) ||
+             {:error, :invalid_provisioning_receipt},
+         true <- actor_matches?(receipt, actor) || {:error, :unauthorized_actor},
+         true <- authorized_actor?(actor) || {:error, :unauthorized_actor} do
       :ok
-    else
-      {:error, :invalid_provisioning_receipt}
     end
   end
+
+  defp actor_matches?(receipt, %URI{} = actor), do: receipt.actor_uri == key(actor)
+  defp actor_matches?(_receipt, _actor), do: false
+
+  defp authorized_actor?(%URI{} = actor), do: Ezagent.Identity.AdminAuthority.admin?(actor)
+  defp authorized_actor?(_actor), do: false
 
   # Row-locked status transition. `fun` inspects the locked row (which the
   # `ensure_row` upsert guarantees exists) and returns `{:ok, changes}` or
-  # `{:error, reason}`.
-  defp transition_locked(uri, fun) do
+  # `{:error, reason}`. When a receipt is given it is CONSUMED (single-use)
+  # inside the same transaction — a replay or a failed update rolls the
+  # whole transition back.
+  defp transition_locked(uri, receipt, fun) do
     uri_key = key(uri)
+    workspace = workspace_key(uri)
 
     case Repo.transaction(fn ->
-           with :ok <- ensure_row(uri_key) do
-             row =
-               Repo.one(from(r in __MODULE__, where: r.uri == ^uri_key, lock: "FOR UPDATE"))
-
-             case fun.(row) do
-               {:ok, []} ->
-                 :ok
-
-               {:ok, changes} ->
-                 case row |> Ecto.Changeset.change(changes) |> Repo.update() do
-                   {:ok, _row} -> :ok
-                   {:error, changeset} -> {:error, changeset}
-                 end
-
-               {:error, reason} ->
-                 {:error, reason}
-             end
+           with :ok <- ensure_row(uri_key, workspace),
+                row when not is_nil(row) <- lock_row(uri_key),
+                {:ok, changes} <- fun.(row),
+                :ok <- maybe_consume(receipt),
+                {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+             :ok
+           else
+            {:error, reason} -> Repo.rollback(reason)
+            nil -> Repo.rollback(:not_found)
            end
          end) do
-      {:ok, result} -> result
+      {:ok, :ok} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
+
+  defp maybe_consume(nil), do: :ok
+  defp maybe_consume(%ProvisioningReceipt{} = receipt), do: ProvisioningReceipt.consume(receipt)
 
   # ====================================================================
   # Internals
   # ====================================================================
 
   defp key(%URI{} = uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
-  defp key(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance() |> URI.to_string()
+
+  defp key(uri) when is_binary(uri),
+    do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance() |> URI.to_string()
+
+  # Per-tenant column: the entity URI's own workspace. Cross-cutting URIs
+  # (`system://`, …) resolve to `:any` and land in the structural system
+  # sink (the `Kind.Snapshot.save_now` precedent, SPEC #324 rev 3).
+  defp workspace_key(%URI{} = uri), do: uri |> Ezagent.URI.workspace_of() |> workspace_to_string()
+  defp workspace_key(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> workspace_key()
+
+  defp workspace_to_string(%URI{} = workspace), do: URI.to_string(workspace)
+  defp workspace_to_string(:any), do: "workspace://system"
+  defp workspace_to_string(_other), do: "workspace://system"
 
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(uri) when is_binary(uri), do: user_uri?(Ezagent.URI.new!(uri))
@@ -458,7 +535,10 @@ defmodule Ezagent.EntityCaps.Store do
   # caps MapSet: Lifecycle two-container `%{state: _, transients: _}`,
   # persisted single-key `%{state: _}`, legacy flat `%{caps: _}`.
   defp slice_caps(%{state: state, transients: _}) when is_map(state), do: slice_caps(state)
-  defp slice_caps(%{state: state} = slice) when is_map(state) and map_size(slice) == 1, do: slice_caps(state)
+
+  defp slice_caps(%{state: state} = slice) when is_map(state) and map_size(slice) == 1,
+    do: slice_caps(state)
+
   defp slice_caps(%{caps: %MapSet{} = caps}), do: caps
   defp slice_caps(%{caps: caps}) when is_list(caps), do: MapSet.new(caps)
   defp slice_caps(_other), do: nil

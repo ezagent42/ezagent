@@ -743,50 +743,9 @@ defmodule Ezagent.Kind do
           {:ok, term(), %{version: integer(), updated_at: DateTime.t()}}
           | {:error, :not_created | term()}
   def read_durable(uri, slice_key, opts \\ []) when is_atom(slice_key) and is_list(opts) do
-    case identity_store_durable_read(uri, slice_key) do
-      {:ok, _value, _meta} = store_hit ->
-        store_hit
-
-      :fallback ->
-        case Ezagent.Ecto.KindSnapshot.get(uri_to_string(uri)) do
-          nil -> {:error, :not_created}
-          row -> project_durable_row(row, slice_key)
-        end
-    end
-  end
-
-  # #189 PR-1 dual-read (identity-plane cutover step 1, ADDITIVE): the
-  # synthesized `:identity` durable projection prefers the unified
-  # identity-caps store (config-injected via `:ezagent_actor,
-  # :identity_caps_store` — the actor layer holds no compile-time reference
-  # to the domain store) and falls back to the snapshot row when the store
-  # has no row for the URI. The legacy snapshot remains authoritative until
-  # the atomic cutover. Non-`:identity` slices are unaffected.
-  defp identity_store_durable_read(uri, :identity) do
-    case identity_caps_store() do
-      nil -> :fallback
-      store -> store.fetch_durable_identity(uri)
-    end
-  end
-
-  defp identity_store_durable_read(_uri, _slice_key), do: :fallback
-
-  defp identity_store_durable_reads(uris, :identity) do
-    case identity_caps_store() do
-      nil -> %{}
-      store -> store.fetch_durable_identities(uris)
-    end
-  end
-
-  defp identity_store_durable_reads(_uris, _slice_key), do: %{}
-
-  defp identity_caps_store do
-    case Application.get_env(:ezagent_actor, :identity_caps_store) do
-      nil ->
-        nil
-
-      store ->
-        if Code.ensure_loaded?(store), do: store, else: nil
+    case Ezagent.Ecto.KindSnapshot.get(uri_to_string(uri)) do
+      nil -> {:error, :not_created}
+      row -> project_durable_row(row, slice_key)
     end
   end
 
@@ -805,10 +764,6 @@ defmodule Ezagent.Kind do
           }
   def read_durable_many(uris, slice_key, opts \\ [])
       when is_list(uris) and is_atom(slice_key) and is_list(opts) do
-    # #189 PR-1 dual-read: store hits (keyed by URI string) win; URIs with
-    # no store row fall back to the snapshot projection below.
-    store_hits = identity_store_durable_reads(uris, slice_key)
-
     rows_by_uri =
       uris
       |> Enum.map(&uri_to_string/1)
@@ -817,15 +772,9 @@ defmodule Ezagent.Kind do
 
     Map.new(uris, fn uri ->
       result =
-        case Map.get(store_hits, uri_to_string(uri)) do
-          nil ->
-            case Map.get(rows_by_uri, uri_to_string(uri)) do
-              nil -> {:error, :not_created}
-              row -> project_durable_row(row, slice_key)
-            end
-
-          store_hit ->
-            store_hit
+        case Map.get(rows_by_uri, uri_to_string(uri)) do
+          nil -> {:error, :not_created}
+          row -> project_durable_row(row, slice_key)
         end
 
       {uri, result}

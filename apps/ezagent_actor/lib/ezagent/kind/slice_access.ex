@@ -256,27 +256,8 @@ defmodule Ezagent.Kind.SliceAccess do
   defp classify_not_found(entity_uri) do
     case durable_snapshot_exists?(entity_uri) do
       :yes -> {:transient, :cold_but_durable}
-      :no -> if(identity_store_exists?(entity_uri), do: {:transient, :cold_but_durable}, else: :absent)
+      :no -> :absent
       {:unknown, reason} -> {:transient, {:durability_unreadable, reason}}
-    end
-  end
-
-  # #189 PR-1 (identity-plane cutover step 1, ADDITIVE): a row in the
-  # unified identity-caps store is an EXISTENCE signal for the entity
-  # (addendum §4 — a rebuild-backed cold Kind has no snapshot row but IS
-  # known via the store). Config-injected (`:ezagent_actor,
-  # :identity_caps_store`); the domain store module scopes the signal
-  # (user URIs are excluded — their existence source stays `users` /
-  # snapshots in PR-1). In PR-1 the store mirrors durable snapshot commits,
-  # so this is structurally parity-neutral: a mirrored row implies a
-  # snapshot row already existed.
-  defp identity_store_exists?(entity_uri) do
-    case Application.get_env(:ezagent_actor, :identity_caps_store) do
-      nil ->
-        false
-
-      store ->
-        Code.ensure_loaded?(store) and store.existence_signal?(entity_uri)
     end
   end
 

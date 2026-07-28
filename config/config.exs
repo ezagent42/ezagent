@@ -190,8 +190,10 @@ config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
 config :ezagent_actor, :identity_caps_store, Ezagent.EntityCaps.Store
 
 # #189 PR-1 — HMAC secret for authenticated provisioning receipts
-# (`Ezagent.Identity.ProvisioningReceipt`). Dev default only; prod sets
-# EZAGENT_PROVISIONING_RECEIPT_SECRET (see config/runtime.exs).
+# (`Ezagent.Identity.ProvisioningReceipt`). Dev default only (>= 32 bytes);
+# production sets EZAGENT_PROVISIONING_RECEIPT_SECRET. Resolution is LAZY
+# (at receipt issue/verify, never a required boot var — codex F4): PR-1 has
+# no production provisioning path.
 config :ezagent_domain_identity,
        :provisioning_receipt_secret,
        System.get_env("EZAGENT_PROVISIONING_RECEIPT_SECRET") ||

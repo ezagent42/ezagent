@@ -152,7 +152,12 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     {Ezagent.ProviderConnection.Event, "provider_connection_events"},
     {Ezagent.ProviderConnection.AuthorizationBackendRecord,
      "provider_authorization_backend_records"},
-    {Ezagent.ProviderConnection.ProviderAuthorizationCommand, "provider_authorization_commands"}
+    {Ezagent.ProviderConnection.ProviderAuthorizationCommand, "provider_authorization_commands"},
+    # #189 PR-1 — the unified per-entity identity-caps store. Identity caps
+    # are tenant/entity data: each row carries the entity URI's workspace
+    # (`workspace_uri` NOT NULL, populated from `Ezagent.URI.workspace_of/1`
+    # on every write).
+    {Ezagent.EntityCaps.Store, "identity_caps"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
@@ -174,8 +179,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "System authority-use fence keyed by canonical principal URI; one offboarding cascade may span workspaces.",
     "kind_cap_authorities" =>
       "Framework authority rows are globally keyed by canonical Kind URI; the URI itself carries tenant identity and the admin anchor is system-scoped.",
-    "identity_caps" =>
-      "#189 PR-1 unified per-entity identity-caps store — globally keyed by canonical entity URI (the URI itself carries tenant identity), same identity-plane precedent as kind_cap_authorities.",
+    "provisioning_receipt_nonces" =>
+      "#189 PR-1 single-use nonce ledger for provisioning receipts — a global security dedupe keyed by opaque nonce (a nonce must be consumed exactly once regardless of which workspace's entity it provisions); no tenant-scoped queries exist.",
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",

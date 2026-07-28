@@ -4,11 +4,15 @@ defmodule Ezagent.EntityCaps.UserStore do
 
   #189 PR-1 dual-write: every write here ALSO upserts the unified
   identity-caps store (`Ezagent.EntityCaps.Store`) in the SAME transaction,
-  so the unified store mirrors `users.caps_json` exactly (it remains the
-  authoritative source for users until the atomic cutover).
+  so the unified store mirrors `users.caps_json` exactly. In PR-1 the
+  mirror is a WRITE-SHADOW: `caps_json` stays authoritative, and a mirror
+  failure is logged at `:error` (never silently dropped) without failing
+  the authoritative write (codex review F1/F2).
   """
 
   import Ecto.Query
+
+  require Logger
 
   alias EzagentCore.Repo
 
@@ -62,14 +66,39 @@ defmodule Ezagent.EntityCaps.UserStore do
         with {:ok, caps} <- fun.(decode_caps(row.caps_json)),
              encoded <- caps |> Enum.map(&Ezagent.Capability.to_map/1) |> Jason.encode!(),
              {:ok, _row} <-
-               row |> Ecto.Changeset.change(caps_json: encoded) |> Repo.update(),
-             # #189 PR-1 dual-write: mirror the complete user cap set into the
-             # unified identity-caps store (same transaction, status/receipt
-             # preserved).
-             :ok <- Ezagent.EntityCaps.Store.persist(uri, caps) do
-          :ok
+               row |> Ecto.Changeset.change(caps_json: encoded) |> Repo.update() do
+          # #189 PR-1 dual-write (write-shadow): mirror the complete user cap
+          # set into the unified identity-caps store (same transaction,
+          # status/receipt preserved). Best-effort but NEVER silent — a
+          # mirror failure is logged and the authoritative caps_json write
+          # still commits (codex F2).
+          mirror_identity_caps(uri, caps)
         end
     end
+  end
+
+  defp mirror_identity_caps(uri, caps) do
+    case Ezagent.EntityCaps.Store.persist(uri, caps) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "EntityCaps.UserStore: identity-caps shadow write FAILED for " <>
+            "#{URI.to_string(uri)} (reason=#{inspect(reason)}) — caps_json committed; " <>
+            "shadow row diverges until the next mirrored write or the migration backfill"
+        )
+
+        :ok
+    end
+  rescue
+    e ->
+      Logger.error(
+        "EntityCaps.UserStore: identity-caps shadow write RAISED for " <>
+          "#{URI.to_string(uri)}: #{Exception.message(e)}"
+      )
+
+      :ok
   end
 
   defp decode_caps(nil), do: []
