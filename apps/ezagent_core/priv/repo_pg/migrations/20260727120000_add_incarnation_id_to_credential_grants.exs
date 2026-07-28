@@ -12,19 +12,12 @@ defmodule EzagentCore.Repo.Migrations.AddIncarnationIdToCredentialGrants do
       add :incarnation_id, :string
     end
 
-    # #201-cred (codex r2 NEW-MEDIUM-4) — backfill existing rows so NO durable
-    # grant is left with a NULL incarnation. A NULL incarnation would flow out
-    # of `GrantRow.fetch_for_materialize/1` and raise `FunctionClauseError` in
-    # the materialize-time revalidation (`revalidate_version!/3`), interacting
-    # with the compensation-on-raise hole. The backfill value is DETERMINISTIC
-    # per row (`'legacy:' || id`, and `id` is the PK = agent_uri, so it is
-    # unique) and cannot collide with a freshly minted `Ecto.UUID` incarnation.
-    # The runtime `nil`-incarnation clause in `revalidate_version!/3` remains as
-    # the defensive safety net (rows the backfill could not reach on a dev DB
-    # that already ran this migration before the backfill was added).
-    execute(
-      "UPDATE credential_grants SET incarnation_id = 'legacy:' || id WHERE incarnation_id IS NULL",
-      "UPDATE credential_grants SET incarnation_id = NULL WHERE incarnation_id LIKE 'legacy:%'"
-    )
+    # #201-cred (codex r3 MEDIUM-4) — the NULL-incarnation BACKFILL is NOT here.
+    # This migration column-add was already applied on dev/upgraded databases
+    # (introduced round-1, PR-3) BEFORE the backfill existed, so a backfill added
+    # to THIS file would never run on those DBs (Ecto sees `20260727120000`
+    # already applied). The backfill therefore lives in its own later-timestamped
+    # migration (`20260728000000_backfill_credential_grant_incarnation_id.exs`),
+    # which every already-upgraded DB will run on its next `ecto.migrate`.
   end
 end
