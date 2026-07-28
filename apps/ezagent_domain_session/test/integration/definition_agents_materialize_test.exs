@@ -21,7 +21,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Entity.Session
   alias Ezagent.Identity.RecipeCapBinding
-  alias Ezagent.Cap.Delivery
   alias Ezagent.Socialware.CompositionBinding
   alias Ezagent.{Invocation, KindRegistry}
   alias EzagentCore.Repo
@@ -214,23 +213,23 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
-  defmodule NeverReadyTemplate do
+  defmodule ConvergenceTimeoutTemplate do
     @moduledoc false
     @behaviour Ezagent.Kind.Template
 
     @impl Ezagent.Kind.Template
-    def template_name, do: "definition_agents.never_ready"
+    def template_name, do: "definition_agents.convergence_timeout"
 
     @impl Ezagent.Kind.Template
     def validate(%{
-          "class" => "definition_agents.never_ready",
+          "class" => "definition_agents.convergence_timeout",
           "agent_uri" => agent_uri,
           "cwd" => cwd
         })
         when is_binary(agent_uri) and is_binary(cwd),
         do: :ok
 
-    def validate(_), do: {:error, :invalid_definition_agents_never_ready_template}
+    def validate(_), do: {:error, :invalid_definition_agents_convergence_timeout_template}
 
     @impl Ezagent.Kind.Template
     def instantiate(_name, data, _workspace_uri) do
@@ -376,14 +375,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor
   end
 
-  defp register_never_ready_flavor(n) do
-    flavor = "definition_agents_never_ready_#{n}"
+  defp register_convergence_timeout_flavor(n) do
+    flavor = "definition_agents_convergence_timeout_#{n}"
 
     :ok =
       Ezagent.AgentFlavorRegistry.register(%{
         flavor: flavor,
         kind: Ezagent.Entity.Agent,
-        template_class: NeverReadyTemplate
+        template_class: ConvergenceTimeoutTemplate
       })
 
     flavor
@@ -664,37 +663,20 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              CompositionBinding.for_session(session_uri)
   end
 
-  test "I3 install lane returns while a role agent never readies and keeps the session usable" do
+  test "a bridge-unavailable ready role converges into the roster before materialization succeeds" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe_with_behavior(n)
-    role_name = "never-ready-#{n}"
-    flavor = register_never_ready_flavor(n)
+    role_name = "bridge-unavailable-#{n}"
+    flavor = register_stub_flavor(n)
 
-    working_copy =
-      session_uri
-      |> Session.read_template_working_copy()
-      |> Map.put(:session_template_uri, Ezagent.URI.template(:system, :session, "default"))
-      |> Map.put(:member_declarations, [
-        %{fill: :agent, recipe: recipe_name, role_name: role_name, flavor: flavor}
-      ])
-
-    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
-
-    task =
-      Task.async(fn ->
-        receive do
-          :run_install ->
-            SessionCreator.install_session_socialware(session_uri, @workspace_uri)
-        end
-      end)
-
-    Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
-    send(task.pid, :run_install)
-
-    assert {:ok, result} = Task.yield(task, 5_000) || Task.shutdown(task, :brutal_kill)
-
-    assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
+             )
 
     planned =
       RecipeCapBinding
@@ -706,14 +688,15 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     on_exit(fn -> terminate(planned) end)
 
-    # A never-ready agent cannot absorb its tier-1 member cap, so cap-as-truth
-    # correctly keeps it out of the roster until readiness drains the delivery.
-    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+    assert eventually(fn ->
+             SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == planned
+           end)
 
     assert {:ok, session_pid} = KindRegistry.lookup(session_uri)
     assert Process.alive?(session_pid)
     assert Session.owner(session_uri) == {:ok, @owner_uri}
-    assert Ezagent.ReadyGate.status(planned) == :not_ready
+    assert Ezagent.ReadyGate.status(planned) == :ready
+    refute Ezagent.Agent.TransportReadiness.transport_joined?(planned)
 
     assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
 
@@ -727,11 +710,31 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert %Ezagent.Capability{granted_by: @owner_uri} = bound_cap
   end
 
-  test "I3 full orchestrator lane persists four scoped artifacts, stays nonblocking, and revokes the exact inverse" do
+  test "a non-convergent role is not satisfied" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "membership-timeout-#{n}"
+    flavor = register_convergence_timeout_flavor(n)
+
+    assert {:error,
+            {:agent_membership_convergence_failed, ^role_name, :membership_convergence_timeout},
+            %{satisfied: [], skipped: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [%{recipe: recipe_name, role_name: role_name, flavor: flavor}]
+             )
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+  end
+
+  test "I3 full orchestrator lane persists four scoped artifacts and revokes the exact inverse" do
     n = uniq()
     session_uri = live_session(n)
     role_name = "orchestrator"
-    flavor = register_never_ready_flavor(n)
+    flavor = register_stub_flavor(n)
     :ok = ensure_orchestrator_recipe()
 
     working_copy =
@@ -761,22 +764,18 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, orchestrator_uri} = Session.orchestrator_uri(session_uri)
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    assert {:ok, orchestrator_pid} = KindRegistry.lookup(orchestrator_uri)
+    assert {:ok, _orchestrator_pid} = KindRegistry.lookup(orchestrator_uri)
     assert {:ok, session_pid} = KindRegistry.lookup(session_uri)
     assert Process.alive?(session_pid)
     assert Session.owner(session_uri) == {:ok, @owner_uri}
     assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
-    assert Ezagent.ReadyGate.status(orchestrator_uri) == :not_ready
+    assert Ezagent.ReadyGate.status(orchestrator_uri) == :ready
 
-    pending = pending_absorb_artifacts(orchestrator_uri)
-    {membership_caps, delegated_caps} = Enum.split_with(pending, &tier1_membership_cap?/1)
+    stored = Ezagent.Identity.read_entity_caps(orchestrator_uri)
+    {membership_caps, delegated_caps} = Enum.split_with(stored, &tier1_membership_cap?/1)
     delegated_cap_identities = Enum.uniq_by(delegated_caps, &Ezagent.Capability.identity_key/1)
 
     assert [_membership_cap] = membership_caps
-    # Tier-2 participation settlement can race the full orchestrator handoff
-    # and enqueue duplicate :send/:leave artifacts while the never-ready target
-    # is buffering. Cap identity is the authority unit; the self-store and the
-    # rollback inverse are idempotent by that identity.
 
     {session_caps, non_session_caps} =
       Enum.split_with(delegated_cap_identities, &(&1.kind == :session))
@@ -793,20 +792,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                :write_session_templates
              ])
 
-    # The two agent-bootstrap self-caps (ConfigEvolve.reconcile_cascade +
-    # Sandbox.update_config) are the orchestrator's OWN caps, issued during its
-    # config-evolve boot reconcile. Whether they are still buffered (:pending) or
-    # already self-absorbed (:applied) depends on the transient :ready drain window
-    # during the orchestrator's own boot — a machine-timing race (fast CI buffers;
-    # a slow host absorbs). Assert the timing-independent invariant: the
-    # orchestrator HOLDS them either way (pending ∪ read_entity_caps). An empty
-    # union still fails (no masking); and since this is a superset of `pending`, it
-    # can only pass where the pending-only assertion passed, never less.
     held_bootstrap_caps =
       orchestrator_uri
       |> Ezagent.Identity.read_entity_caps()
       |> Enum.filter(
-        &(&1.behavior in [Ezagent.ActionSet.ConfigEvolve, Ezagent.ActionSet.Sandbox])
+        &({&1.behavior, Ezagent.Capability.action_of(&1)} in [
+            {Ezagent.ActionSet.ConfigEvolve, :reconcile_cascade},
+            {Ezagent.ActionSet.Sandbox, :update_config}
+          ])
       )
 
     assert MapSet.new(
@@ -831,15 +824,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              &scoped_orchestrator_cap?/1
            )
 
-    assert :ready =
-             Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
-               URI.to_string(orchestrator_uri),
-               orchestrator_pid
-             )
-
-    stored = Ezagent.Identity.read_entity_caps(orchestrator_uri)
-
-    assert Enum.all?(pending, fn expected ->
+    assert Enum.all?(membership_caps, fn expected ->
              Enum.any?(stored, fn held ->
                Ezagent.Capability.identity_key(held) ==
                  Ezagent.Capability.identity_key(expected)
@@ -1404,22 +1389,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
     |> Enum.reject(&(&1.behavior == Ezagent.ActionSet.Session and &1.action == :receive))
     |> length()
-  end
-
-  defp pending_absorb_artifacts(uri) do
-    from(delivery in Delivery,
-      where: delivery.target_uri == ^URI.to_string(uri),
-      where: delivery.op == :absorb_cap,
-      where: delivery.status == :pending,
-      order_by: [asc: delivery.id],
-      select: delivery.payload
-    )
-    |> Repo.all()
-    |> Enum.map(fn payload ->
-      %{op: :absorb_cap, cap: artifact} = :erlang.binary_to_term(payload, [:safe])
-
-      artifact
-    end)
   end
 
   defp eventually(fun, attempts \\ 100)

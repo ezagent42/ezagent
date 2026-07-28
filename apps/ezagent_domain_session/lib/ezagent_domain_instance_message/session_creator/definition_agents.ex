@@ -58,6 +58,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   @telemetry_prefix [:ezagent, :socialware, :definition_agents]
   @agent_description "socialware-declared agent materialized per-session (Definition.roles)"
+  @role_member_attempts 100
+  @role_member_poll_ms 10
 
   @doc """
   Materialize agent role slots into `session_uri`. `granted_by` is the session owner
@@ -366,7 +368,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         {:ok, binding} ->
           result =
             with :ok <- RecipeCapBinding.sync_live(planned_uri),
-                 :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe) do
+                 :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe),
+                 :ok <- maybe_await_role_member(session_uri, planned_uri, role_name, recipe) do
               :ok
             end
 
@@ -402,6 +405,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              session_uri: session_uri,
              in_session_template: true
            ),
+         :ok <- await_role_membership(session_uri, agent_uri, role_name),
          {:ok, _binding} <- bind_recipe_caps(agent_uri, recipe_name, recipe),
          :ok <- RecipeCapBinding.sync_live(agent_uri) do
       {:ok, agent_uri}
@@ -602,6 +606,39 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:error, reason} ->
         _ = terminate_worker(member_uri)
         {:error, {:agent_join_failed, role_name, reason}}
+    end
+  end
+
+  defp maybe_await_role_member(session_uri, member_uri, role_name, recipe)
+       when is_map(recipe) do
+    if passive_recipe?(recipe) do
+      :ok
+    else
+      await_role_membership(session_uri, member_uri, role_name)
+    end
+  end
+
+  defp await_role_membership(session_uri, planned_uri, role_name) do
+    case await_role_member(session_uri, planned_uri, role_name) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        {:error, {:agent_membership_convergence_failed, role_name, reason}}
+    end
+  end
+
+  defp await_role_member(session_uri, planned_uri, role_name, attempts \\ @role_member_attempts)
+
+  defp await_role_member(_session_uri, _planned_uri, _role_name, 0),
+    do: {:error, :membership_convergence_timeout}
+
+  defp await_role_member(session_uri, planned_uri, role_name, attempts) do
+    if Members.role_name_to_uri(read_members(session_uri), role_name) == planned_uri do
+      :ok
+    else
+      Process.sleep(@role_member_poll_ms)
+      await_role_member(session_uri, planned_uri, role_name, attempts - 1)
     end
   end
 
