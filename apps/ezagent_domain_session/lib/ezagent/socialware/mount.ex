@@ -22,10 +22,16 @@ defmodule Ezagent.Socialware.Mount do
   除会话挂载外,支持「人持钥匙」行:`mount_for_person/5` 不带 session 参数,落
   `scope=person` 的挂载行(自然键 `(target, grantee, behavior)`,session 轴为 NULL),
   钥匙机制与会话挂载完全同款(mint_cap 唯一 chokepoint,grantee 本就支持任意 URI ——
-  零 cap 机制改动)。**reconcile 归属**:`reconcile_session_mounts/1` 只扫 session 行
-  (person 行不挂在任何 session 的 activate 上);person 行由 `reconcile_person_mounts/1`
-  按 grantee 重发,供人侧 identity slice 重建/修复路调用。将来 mount 折
-  CompositionBinding 时 scope 维度随行平移。
+  零 cap 机制改动)。
+
+  ## 重启存活 = cap-as-truth,不再照表重发(reconcile 已删)
+
+  一把 mount 钥匙落在 grantee **自己**的 durable cap store(`users.caps_json` / agent
+  snapshot);session 或 grantee 冷重启时,slice 重建会**从 durable store 重新读回**这把
+  钥匙,故它靠自身存活,无需照 `MountRow` 重 mint。旧的 `reconcile_session_mounts/1` /
+  `reconcile_person_mounts/1`「照挂载表重发钥匙」是冗余的第二真理源扫描,已移除
+  (实证见 `MountCapSurvivesRespawnTest`:冷 terminate grantee 后钥匙仍在)。`MountRow`
+  保留为 mount 的记账/反查用途(backfill / unmount 取回 actions),不再是重发来源。
   """
 
   alias Ezagent.Socialware.{CompositionCaps, MountRow}
@@ -196,91 +202,6 @@ defmodule Ezagent.Socialware.Mount do
   end
 
   @doc """
-  重发 `session_uri` 名下所有挂载的钥匙 —— session 重启后的存活底座。
-
-  一个 mount 的钥匙落在 grantee 的 self-store cap slice;session 重启时该 slice 重建、
-  钥匙不会自动重发,但挂载表(`MountRow`,durable SoT)仍在。本函数读回
-  `MountRow.list_for_session/1` 的每条挂载行,对每条重跑 `mount/6`(= mint_cap 复用现成
-  issue+absorb chokepoint + upsert),使钥匙重现。
-
-  **幂等**:mint 走 composition 现成 issue+absorb chokepoint(重跑覆盖),`upsert` 在自然键
-  冲突时原地覆盖 —— 连跑两次挂载表仍 N 行、钥匙仍在。
-
-  **best-effort per row**:单条重发失败(如宿主已被删/无属主)只记 `:warning`、计入 `failed`,
-  不牵连其余行(与 `Session.Reconcile.reconcile_after_load/2` 的 fail-safe 姿态一致)。整体
-  永不 raise —— 挂在 `activate/2` 上时不能崩 Kind 重启。返回
-  `{:ok, %{reconciled: n, failed: m}}`。
-  """
-  @spec reconcile_session_mounts(URI.t()) ::
-          {:ok, %{reconciled: non_neg_integer(), failed: non_neg_integer()}}
-  def reconcile_session_mounts(%URI{} = session_uri) do
-    session_uri
-    |> MountRow.list_for_session()
-    |> Enum.reduce(%{reconciled: 0, failed: 0}, fn %MountRow{} = row, acc ->
-      case remint_row(session_uri, row) do
-        {:ok, _} ->
-          %{acc | reconciled: acc.reconciled + 1}
-
-        {:error, reason} ->
-          Logger.warning(
-            "Mount.reconcile_session_mounts/1: re-mint FAILED for target=" <>
-              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
-              "#{inspect(reason)} — skipping (other mounts unaffected)."
-          )
-
-          %{acc | failed: acc.failed + 1}
-      end
-    end)
-    |> then(&{:ok, &1})
-  rescue
-    error ->
-      Logger.warning(
-        "Mount.reconcile_session_mounts/1: mount scan failed for " <>
-          "#{URI.to_string(session_uri)}: #{inspect(error.__struct__)} — treated as no-op."
-      )
-
-      {:ok, %{reconciled: 0, failed: 0}}
-  end
-
-  @doc """
-  重发 `grantee_uri`(人)名下所有 person-scope 挂载的钥匙 —— person 行的 reconcile 路。
-
-  person 行不属于任何 session,不挂在 session activate 上;本函数按 grantee 扫
-  `MountRow.list_person_mounts_for_grantee/1` 逐行重跑 `mount_for_person/5`(幂等,
-  同 `reconcile_session_mounts/1` 的 best-effort per row 姿态,永不 raise)。
-  """
-  @spec reconcile_person_mounts(URI.t()) ::
-          {:ok, %{reconciled: non_neg_integer(), failed: non_neg_integer()}}
-  def reconcile_person_mounts(%URI{} = grantee_uri) do
-    grantee_uri
-    |> MountRow.list_person_mounts_for_grantee()
-    |> Enum.reduce(%{reconciled: 0, failed: 0}, fn %MountRow{} = row, acc ->
-      case remint_person_row(grantee_uri, row) do
-        {:ok, _} ->
-          %{acc | reconciled: acc.reconciled + 1}
-
-        {:error, reason} ->
-          Logger.warning(
-            "Mount.reconcile_person_mounts/1: re-mint FAILED for target=" <>
-              "#{row.target_uri} grantee=#{row.grantee_uri} behavior=#{row.behavior}: " <>
-              "#{inspect(reason)} — skipping (other mounts unaffected)."
-          )
-
-          %{acc | failed: acc.failed + 1}
-      end
-    end)
-    |> then(&{:ok, &1})
-  rescue
-    error ->
-      Logger.warning(
-        "Mount.reconcile_person_mounts/1: mount scan failed for " <>
-          "#{URI.to_string(grantee_uri)}: #{inspect(error.__struct__)} — treated as no-op."
-      )
-
-      {:ok, %{reconciled: 0, failed: 0}}
-  end
-
-  @doc """
   D1 join 补发(mount 半边):把 `session_uri` 挂载表里已有的 **`:operate`** 行
   的钥匙,补发给新成员 `member_uri`(为其新建同 target×behavior 的 operate
   挂载行 + person keys)。
@@ -362,28 +283,6 @@ defmodule Ezagent.Socialware.Mount do
     do: grantee_key(Ezagent.URI.new!(grantee))
 
   defp grantee_key(%URI{} = uri), do: Ezagent.URI.stable_key(Ezagent.URI.instance(uri))
-
-  # 从挂载行还原参数并重跑 mount/6。行里存的是字符串(URI/behavior/actions_json/access),
-  # 逐一反序列化回 mount/6 需要的类型。
-  defp remint_row(session_uri, %MountRow{} = row) do
-    target = Ezagent.URI.new!(row.target_uri)
-    grantee = Ezagent.URI.new!(row.grantee_uri)
-    behavior = decode_behavior(row.behavior)
-    actions = recorded_actions(row)
-    access = decode_access(row.access)
-
-    mount(session_uri, target, grantee, behavior, actions, access: access)
-  end
-
-  # person 行版 remint:无 session 轴,重跑 mount_for_person/5。
-  defp remint_person_row(grantee_uri, %MountRow{} = row) do
-    target = Ezagent.URI.new!(row.target_uri)
-    behavior = decode_behavior(row.behavior)
-    actions = recorded_actions(row)
-    access = decode_access(row.access)
-
-    mount_for_person(target, grantee_uri, behavior, actions, access: access)
-  end
 
   # behavior 存的是 `inspect(module)` —— 无 `Elixir.` 前缀(如
   # `"Ezagent.ActionSet.Kanban"`)。`Module.concat/1` 是其自然逆运算,自动补回前缀。
