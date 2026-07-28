@@ -109,18 +109,16 @@ defmodule EzagentPluginGitWorkflow.StageRunner do
 
   ## Failure handling
 
-  Every stage failure goes through `Blocker.from_error/1` then
-  `Blocker.classify/1` (§7.2):
+  Every stage failure goes through `EzagentPluginGitWorkflow.RunFailure`, which
+  owns design §7.2's protocol — normalize to a stable code, record it, then
+  either CAS to `blocked` (terminal) or leave the state ALONE and return
+  `{:retry, presentation}`. Bounded retry is the caller's policy; this module
+  never sleeps and never loops.
 
-    * `:terminal_blocker` → the code is recorded on the run, then a CAS to
-      `blocked`. Stop.
-    * `:retryable` → the code is recorded, the state is left ALONE, and the
-      caller gets `{:retry, presentation}`. Bounded retry is the caller's
-      policy; this module never sleeps and never loops.
-
-  The code is recorded BEFORE the CAS for the same reason facts are: a crash
-  between them retries the stage, whereas a run marked `blocked` with no code
-  is a dead end an operator cannot triage.
+  That protocol lives in its own module rather than here because Slice P4d's
+  observation tick needs the identical one, and the part that matters — the code
+  is recorded BEFORE the CAS — is the part two copies would eventually disagree
+  about.
 
   `failed` and `cancelled` are the only terminal states and the runner NEVER
   sets them — an operator does. `blocked → blocked` is a legal edge, and
@@ -138,10 +136,11 @@ defmodule EzagentPluginGitWorkflow.StageRunner do
   alias Ezagent.DomainGit.CreateChangeRequest
   alias Ezagent.DomainGit.FileChange
   alias Ezagent.Entity.GitTaskAccess
+  alias EzagentPluginGitWorkflow.Authorization
   alias EzagentPluginGitWorkflow.AuthorizedTask
-  alias EzagentPluginGitWorkflow.Blocker
   alias EzagentPluginGitWorkflow.DeterministicRef
   alias EzagentPluginGitWorkflow.ExecutionSeam
+  alias EzagentPluginGitWorkflow.RunFailure
   alias EzagentPluginGitWorkflow.Store
   alias EzagentPluginGitWorkflow.TaskBinding
   alias EzagentPluginGitWorkflow.WorkflowFacts
@@ -158,13 +157,7 @@ defmodule EzagentPluginGitWorkflow.StageRunner do
     "changes_ready" => :create_change_request
   }
 
-  @type presentation :: %{
-          code: Blocker.code(),
-          stage: atom(),
-          retryable: boolean(),
-          attempt: non_neg_integer(),
-          metadata: map()
-        }
+  @type presentation :: RunFailure.presentation()
 
   @type result ::
           {:ok, WorkflowRun.t()}
@@ -239,28 +232,14 @@ defmodule EzagentPluginGitWorkflow.StageRunner do
     end
   end
 
-  # `ExecutionSeam.authorize/2` is re-asked on every stage rather than cached
-  # from the `accepted → authorized` transition. It is pure and side-effect
-  # free by contract (§3.1), and re-deriving means a binding that was disabled
-  # or re-generated between stages denies the NEXT stage instead of the run
-  # continuing on a stale authorization.
-  defp authorized_stage(%WorkflowRun{binding_id: binding_id} = run, stage, attempt) do
-    with {:ok, binding} <- read_binding(binding_id),
-         {:ok, task} <- ExecutionSeam.authorize(run, binding) do
-      run_stage(stage, run, binding, task, attempt)
-    else
+  # `Authorization.authorized_task/1` re-asks the seam on every stage rather
+  # than caching from the `accepted → authorized` transition — see its own doc
+  # for why. A denial is recorded as a blocker on the run rather than returned
+  # as an opaque error, so an operator sees it where they look for it.
+  defp authorized_stage(run, stage, attempt) do
+    case Authorization.authorized_task(run) do
+      {:ok, binding, task} -> run_stage(stage, run, binding, task, attempt)
       {:error, reason} -> fail(run, stage, attempt, reason)
-    end
-  end
-
-  # A run whose binding row is gone cannot be authorized and cannot be repaired
-  # by retrying. It is recorded as a blocker on the run rather than returned as
-  # an opaque error, so an operator sees it where they look for it. The store's
-  # reason is dropped — it names a row, and the run already names the binding.
-  defp read_binding(binding_id) do
-    case Store.read_binding(binding_id) do
-      {:ok, binding} -> {:ok, binding}
-      {:error, _reason} -> {:error, :internal_error}
     end
   end
 
@@ -508,29 +487,5 @@ defmodule EzagentPluginGitWorkflow.StageRunner do
   defp transition(%WorkflowRun{id: id, state_version: version, status: status}, next_status),
     do: Store.transition(id, version, status, next_status)
 
-  defp fail(
-         %WorkflowRun{id: id, status: status, state_version: version},
-         stage,
-         attempt,
-         reason
-       ) do
-    code = Blocker.from_error(reason)
-    presentation = Blocker.present(code, stage, attempt, %{})
-
-    # Recorded before the CAS: a crash in between retries the stage, whereas a
-    # run sitting at `blocked` with no code cannot be triaged.
-    _ = Store.record_error_code(id, Atom.to_string(code))
-
-    case Blocker.classify(code) do
-      :terminal_blocker -> block(id, version, status, presentation)
-      :retryable -> {:retry, presentation}
-    end
-  end
-
-  defp block(id, version, status, presentation) do
-    case Store.transition(id, version, status, "blocked") do
-      {:ok, _run} -> {:blocked, presentation}
-      {:error, reason} -> {:error, {:block_failed, reason}}
-    end
-  end
+  defp fail(run, stage, attempt, reason), do: RunFailure.fail(run, stage, attempt, reason)
 end
