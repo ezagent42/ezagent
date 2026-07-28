@@ -231,6 +231,16 @@ defmodule Ezagent.EntityCaps.Store do
 
         uris ->
           if key(uri) in uris do
+            # Structural probe (codex round-4): record whether the shadow write
+            # is executing INSIDE a DB transaction. F2 moved the user mirror
+            # OUTSIDE the authoritative `caps_json` transaction, so this MUST be
+            # `false`; if the mirror were moved back inside `Repo.transaction/1`
+            # it flips to `true` and the regression's structural assertion goes
+            # red. A plain `{:error}` return (below) is caught + logged by
+            # `UserStore.mirror_identity_caps/2` and never poisons the enclosing
+            # txn, so the outcome assertions alone cannot distinguish the pre-F2
+            # layout — THIS probe is what actually proves F2.
+            Process.put(:p1_forced_shadow_failure_in_transaction?, Repo.in_transaction?())
             {:error, {:p1_forced_shadow_failure, key(uri)}}
           else
             do_persist(uri, caps)

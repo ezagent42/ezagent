@@ -468,8 +468,19 @@ defmodule Ezagent.EntityCaps.StoreTest do
         # The failure is logged at :error — never silently dropped.
         assert log =~ "identity-caps shadow write FAILED"
         assert log =~ "caps_json committed"
+
+        # STRUCTURAL invariant (codex round-4) — this is what actually PROVES
+        # F2. The shadow write ran OUTSIDE the authoritative `caps_json`
+        # transaction (`Repo.in_transaction?() == false` at mirror time). If the
+        # mirror were moved back inside `Repo.transaction/1` (the pre-F2 layout),
+        # this flips to `true` and the test goes red. Without it the outcome
+        # assertions below pass even in the pre-F2 layout, because a returned
+        # `{:error}` (vs a DB-statement error) never poisons the enclosing txn —
+        # so they alone do not distinguish the two layouts.
+        assert Process.get(:p1_forced_shadow_failure_in_transaction?) == false
       after
         Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris)
+        Process.delete(:p1_forced_shadow_failure_in_transaction?)
       end
 
       # The AUTHORITATIVE users.caps_json write committed despite the
