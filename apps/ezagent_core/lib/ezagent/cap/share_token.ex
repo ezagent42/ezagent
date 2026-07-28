@@ -91,7 +91,7 @@ defmodule Ezagent.Cap.ShareToken do
           ttl: ttl
         }
 
-        Phoenix.Token.sign(key_base(), @salt, payload)
+        Phoenix.Token.sign(Ezagent.Cap.TokenSecret.key_base!(__MODULE__), @salt, payload)
     end
   end
 
@@ -108,7 +108,9 @@ defmodule Ezagent.Cap.ShareToken do
   @doc "Like `verify_link/1` but evaluates expiry against `now` (a Unix second). Clock seam for tests."
   @spec verify_link_at(String.t(), integer()) :: {:ok, share_payload()} | {:error, term()}
   def verify_link_at(token, now) when is_binary(token) and is_integer(now) do
-    case Phoenix.Token.verify(key_base(), @salt, token, max_age: @max_ttl) do
+    case Phoenix.Token.verify(Ezagent.Cap.TokenSecret.key_base!(__MODULE__), @salt, token,
+           max_age: @max_ttl
+         ) do
       {:ok,
        %{target: target, behavior: behavior, actions: actions, issued_at: issued_at, ttl: ttl}}
       when is_binary(target) and is_binary(behavior) and is_list(actions) and
@@ -149,23 +151,5 @@ defmodule Ezagent.Cap.ShareToken do
     {:ok, Enum.map(strs, &String.to_existing_atom/1)}
   rescue
     ArgumentError -> {:error, :malformed_actions}
-  end
-
-  # The MAC key base — the application `secret_key_base`, owned by core config.
-  defp key_base do
-    case Application.get_env(:ezagent_core, __MODULE__, []) |> Keyword.get(:secret_key_base) do
-      base when is_binary(base) and byte_size(base) >= 20 ->
-        base
-
-      _ ->
-        raise """
-        no :secret_key_base configured for #{inspect(__MODULE__)}.
-
-        Add to config (wired to the same value as the web endpoint):
-
-            config :ezagent_core, #{inspect(__MODULE__)},
-              secret_key_base: System.fetch_env!("SECRET_KEY_BASE")
-        """
-    end
   end
 end
