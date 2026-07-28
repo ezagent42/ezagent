@@ -201,6 +201,43 @@ defmodule EzagentPluginGitWorkflow.Store do
     end
   end
 
+  @doc """
+  Records the stable blocker code for a run's most recent failure.
+
+  Deliberately separate from `transition/4` rather than an extra argument to
+  it: design §7.2 classifies a RETRYABLE failure as "leave the state alone" —
+  there is no transition to hang the code on, and the code still has to be
+  durable for an operator to see. Folding the two together would force a
+  retryable failure to either invent a state change or lose the code.
+
+  It does NOT touch `status` or `state_version`, so it can never be mistaken
+  for a state change and cannot race with the CAS: the two statements write
+  disjoint columns.
+
+  `code` is a free string here on purpose. The vocabulary lives in
+  `EzagentPluginGitWorkflow.Blocker` (which is total and has no catch-all), and
+  duplicating it as a second whitelist in the store is how the two copies drift
+  apart. What the store DOES enforce is the same shape `WorkflowRun.new/1`
+  accepts for the column: a non-empty binary, or `nil` to clear it.
+  """
+  @spec record_error_code(String.t(), String.t() | nil) ::
+          {:ok, WorkflowRun.t()} | {:error, :not_found} | {:error, :invalid_error_code}
+  def record_error_code(run_id, code)
+      when is_binary(run_id) and (is_nil(code) or (is_binary(code) and code != "")) do
+    result =
+      Repo.query!(
+        "UPDATE git_workflow_runs SET last_error_code = $1, updated_at = $2 WHERE id = $3",
+        [code, DateTime.utc_now(), run_id]
+      )
+
+    case result do
+      %Postgrex.Result{num_rows: 0} -> {:error, :not_found}
+      %Postgrex.Result{num_rows: 1} -> {:ok, fetch_run!(run_id)}
+    end
+  end
+
+  def record_error_code(run_id, _code) when is_binary(run_id), do: {:error, :invalid_error_code}
+
   # ---------------------------------------------------------------------------
   # Facts operations
   # ---------------------------------------------------------------------------

@@ -25,6 +25,8 @@ defmodule EzagentPluginGitWorkflow.Blocker do
       `:base_ref_not_found`, `:invalid_ref`, `:invalid_file_change`,
       `:checks_unavailable`, `:provider_account_not_connected`,
       `:credential_backend_unavailable`, `:private_checkout_not_supported`;
+    * `:change_digest_mismatch`, produced by the stage runner itself rather
+      than by a port (Slice P4c — see `@runner_codes` for why §6.2 needs it);
     * `:internal_error`, the catch-all `from_error/1` produces for a term
       nothing else matched.
 
@@ -92,6 +94,22 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :no_changes_collected
   ]
 
+  # Produced by the RUNNER itself, absent from §7.1's "至少" list (Slice P4c).
+  #
+  # `:change_digest_mismatch` is what design §6.2's first crash window needs on
+  # the workflow side. §6.1's 2026-07-27 correction makes the provider-side
+  # commit a pure function of `tree + parents + message + author + committer`
+  # so a retried create reproduces the SAME sha. The tree is the collected
+  # change list — which the workflow does NOT persist (§5.3 stores its DIGEST,
+  # never file contents), so a run resuming at `changes_ready` must re-collect
+  # it. If the worktree moved in between, the re-collected list is a different
+  # tree, the commit sha differs, and the idempotency §6.2 promises is gone —
+  # silently. Comparing the re-collected digest against the recorded fact is
+  # what turns that into a stop instead of a wrong commit. It is deterministic
+  # (re-running the same generation re-reads the same moved worktree), so it is
+  # terminal.
+  @runner_codes [:change_digest_mismatch]
+
   # Produced by the ports but absent from §7.1's "至少" list — see moduledoc.
   @port_codes [
     :workspace_read_failed,
@@ -107,7 +125,7 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :private_checkout_not_supported
   ]
 
-  @codes @spec_codes ++ @port_codes ++ [:internal_error]
+  @codes @spec_codes ++ @port_codes ++ @runner_codes ++ [:internal_error]
 
   # Deterministic validation/conflict — re-running the same generation against
   # the same inputs produces the same answer (§7.2 first bullet).
@@ -125,6 +143,7 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :private_checkout_not_supported,
     :invalid_change_limits_config,
     :no_changes_collected,
+    :change_digest_mismatch,
     # Not in §7.2's two examples, decided here (moduledoc "no code may be
     # unclassified"): a denied permission, a repository or base ref that is
     # not there, a provider account nobody connected, and a malformed
@@ -177,6 +196,7 @@ defmodule EzagentPluginGitWorkflow.Blocker do
           | :provider_account_not_connected
           | :credential_backend_unavailable
           | :private_checkout_not_supported
+          | :change_digest_mismatch
           | :internal_error
 
   @type classification :: :retryable | :terminal_blocker
