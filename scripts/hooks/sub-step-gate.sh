@@ -72,9 +72,16 @@ fi
 # a false gate. Bash commands cd into their target repo first, so if the first
 # `cd /abs/path` in the command resolves to a repo whose shared .git dir differs
 # from this project's, skip. Comparing git-common-dir (not toplevel) keeps
-# esr-ng's OWN worktrees gated. No `cd` → assume this project → gate as before.
+# esr-ng's OWN worktrees gated. No target → assume this project → gate as before.
+#
+# The commit target is `git -C /abs/path` when present (it overrides the process
+# cwd for that git invocation, so it wins over any `cd`), else the first
+# `cd /abs/path`. Relative/cwd-relative forms (`git -C ../x`, no leading `/`) are
+# not resolved here — same absolute-path-only scope as the original — and fall
+# back to CLAUDE_PROJECT_DIR, which is safe (gates the project root, not a guess).
 abs_common() { ( cd "$1" 2>/dev/null && cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P ); }
-_target_dir=$(printf '%s' "$input" | grep -oE 'cd[[:space:]]+/[^ "'\''&;|]+' | head -1 | sed -E 's/^cd[[:space:]]+//')
+_target_dir=$(printf '%s' "$input" | grep -oE 'git[[:space:]]+-C[[:space:]]+/[^ "'\''&;|]+' | head -1 | sed -E 's/^git[[:space:]]+-C[[:space:]]+//')
+[ -n "${_target_dir:-}" ] || _target_dir=$(printf '%s' "$input" | grep -oE 'cd[[:space:]]+/[^ "'\''&;|]+' | head -1 | sed -E 's/^cd[[:space:]]+//')
 if [ -n "${_target_dir:-}" ] && [ -d "$_target_dir" ]; then
   _tc=$(abs_common "$_target_dir")
   _pc=$(abs_common "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}")
