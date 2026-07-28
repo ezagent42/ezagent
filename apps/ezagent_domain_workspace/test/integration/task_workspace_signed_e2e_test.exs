@@ -281,7 +281,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: "access-#{suffix}",
-        task_id: "task",
+        task_uri: task_uri,
         generation: 1,
         workspace_uri: workspace_uri,
         credential_owner_uri: owner,
@@ -290,7 +290,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
         provider_adapter: :fixture,
         allowed_head_ref: "task/head",
         allowed_actions: [:provision_workspace, :cleanup_workspace],
-        idempotency_inputs: %{task_id: "task", generation: 1}
+        idempotency_inputs: %{task_uri: task_uri, generation: 1}
       })
 
     {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)

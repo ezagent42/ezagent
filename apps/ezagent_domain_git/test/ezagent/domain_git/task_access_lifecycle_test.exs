@@ -173,7 +173,7 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: id,
-        task_id: "task-17",
+        task_uri: Ezagent.URI.resource(workspace, "task", "task-17"),
         generation: 3,
         workspace_uri: Ezagent.URI.workspace(workspace),
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -182,7 +182,10 @@ defmodule Ezagent.DomainGit.TaskAccessLifecycleTest do
         provider_adapter: :fake_git,
         allowed_head_ref: "task/task-17-g3",
         allowed_actions: @actions,
-        idempotency_inputs: %{task_id: "task-17", generation: 3}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource(workspace, "task", "task-17"),
+          generation: 3
+        }
       })
 
     policy

@@ -30,7 +30,7 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
     Map.merge(
       %{
         id: "access-17",
-        task_id: "task-17",
+        task_uri: Ezagent.URI.resource("acme", "task", "task-17"),
         generation: 3,
         workspace_uri: workspace_uri,
         credential_owner_uri: Ezagent.URI.user("acme", "owner"),
@@ -39,7 +39,10 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
         provider_adapter: :fake_git,
         allowed_head_ref: "task/task-17-g3",
         allowed_actions: @actions,
-        idempotency_inputs: %{task_id: "task-17", generation: 3}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource("acme", "task", "task-17"),
+          generation: 3
+        }
       },
       overrides
     )
@@ -82,13 +85,16 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
 
   test "freezes the authoritative task, provider, repository, and branch policy" do
     assert {:ok, policy} = GitTaskAccess.new(policy_attrs())
-    assert policy.task_id == "task-17"
+    assert policy.task_uri == Ezagent.URI.resource("acme", "task", "task-17")
     assert policy.generation == 3
     assert policy.provider_adapter == :fake_git
     assert policy.repository.provider_adapter == :fake_git
     assert policy.allowed_head_ref == "task/task-17-g3"
     assert policy.allowed_actions == @actions
-    assert policy.idempotency_inputs == %{task_id: "task-17", generation: 3}
+    assert policy.idempotency_inputs == %{
+             task_uri: Ezagent.URI.resource("acme", "task", "task-17"),
+             generation: 3
+           }
 
     assert :ok = GitTaskAccess.validate_invocation(policy, %{action: :resolve_repository})
 
@@ -145,6 +151,59 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
 
     assert {:error, {:invalid_field, :provider_adapter}} =
              GitTaskAccess.new(policy_attrs(%{provider_adapter: :redirected_provider}))
+  end
+
+  test "accepts a workspace-scoped task URI of any Kind" do
+    # The spine is generic Git infrastructure: it stores the task coordinate as
+    # an opaque URI and never reconstructs it, so it must not care which Kind
+    # models the task. Any canonical per-tenant URI in the workspace is legal.
+    for uri <- [
+          Ezagent.URI.resource("acme", "issue", "t1"),
+          Ezagent.URI.resource("acme", "review-request", "t2"),
+          Ezagent.URI.entity("acme", "agent", "t3"),
+          Ezagent.URI.session("acme", "dev", "t4"),
+          Ezagent.URI.template("acme", "task", "t5")
+        ] do
+      assert {:ok, policy} = GitTaskAccess.new(task_attrs(uri))
+      assert policy.task_uri == uri
+      assert :ok = GitTaskAccess.validate_invocation(policy, task_args(uri))
+    end
+  end
+
+  test "rejects cross-workspace, action-bearing, and non-bare task URIs" do
+    action_uri =
+      Ezagent.URI.with_action(
+        Ezagent.URI.resource("acme", "task", "task-17"),
+        :git_task_access,
+        :provision_workspace
+      )
+
+    for uri <- [
+          Ezagent.URI.resource("other", "task", "task-17"),
+          action_uri,
+          URI.parse("resource://acme/task/task-17?forged=1"),
+          URI.parse("https://example.test/task-17"),
+          "resource://acme/task/task-17",
+          nil
+        ] do
+      assert {:error, {:invalid_field, :task_uri}} = GitTaskAccess.new(task_attrs(uri))
+    end
+  end
+
+  test "a task URI that is not the stored one is rejected without rebuilding it" do
+    assert {:ok, policy} = GitTaskAccess.new(task_attrs(policy_task_uri()))
+
+    assert {:error, :task_uri_mismatch} =
+             GitTaskAccess.validate_invocation(
+               policy,
+               task_args(Ezagent.URI.resource("acme", "task", "other-task"))
+             )
+
+    assert {:error, :task_generation_mismatch} =
+             GitTaskAccess.validate_invocation(
+               policy,
+               %{task_args(policy_task_uri()) | generation: 99}
+             )
   end
 
   test "the live entity slice retains policy and makes repeated spawn policy observable" do
@@ -221,4 +280,17 @@ defmodule Ezagent.Entity.GitTaskAccessTest do
                head_ref: policy.allowed_head_ref
              })
   end
+
+  defp policy_task_uri, do: Ezagent.URI.resource("acme", "task", "task-17")
+
+  defp task_attrs(task_uri) do
+    policy_attrs(%{
+      task_uri: task_uri,
+      idempotency_inputs: %{task_uri: task_uri, generation: 3},
+      allowed_actions: [:provision_workspace | @actions]
+    })
+  end
+
+  defp task_args(task_uri),
+    do: %{action: :provision_workspace, task_uri: task_uri, generation: 3}
 end
