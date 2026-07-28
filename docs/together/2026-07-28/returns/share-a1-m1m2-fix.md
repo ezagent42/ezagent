@@ -4,7 +4,7 @@
 > **Dev:** jjkysy (agent)
 > **returned_at:** 2026-07-28 21:20 +0800
 > **deadline_status:** on_time
-> **note:** D2b(anon 控制器物化)pending —— 撞 session-bound anon 机制的设计岔路,等 PO 选 A/B/C
+> **note:** D2 反转 —— 查实 anon 访问已有 `web_anon_access`(publish session)机制;share link 保持 person-only(person-cap),撤掉 D2a 的 allow_anon,anon 不进 share 路。见文末。
 
 ## 做了什么(codex M1 + M2 + D2a)
 

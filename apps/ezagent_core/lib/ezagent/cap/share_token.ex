@@ -47,8 +47,7 @@ defmodule Ezagent.Cap.ShareToken do
           target: URI.t(),
           behavior: module(),
           actions: [atom()],
-          issuer: URI.t(),
-          allow_anon: boolean()
+          issuer: URI.t()
         }
 
   @doc "The default share-link TTL in seconds (7 days)."
@@ -70,14 +69,9 @@ defmodule Ezagent.Cap.ShareToken do
   server-signed link mint authority its creator never held — so the issuer is
   REQUIRED and MAC-bound here.
 
-  Options:
-
-    * `:ttl_seconds` — defaults to `default_ttl/0`; must be in `1..#{2_592_000}`
-      (the 30-day ceiling; a non-positive or over-ceiling value raises).
-    * `:allow_anon` — per-share policy (default `false`): may a not-logged-in
-      visitor claim this link (the claim landing materializes a read-only anon
-      entity first)? The business declares it at mint time; the platform only
-      carries + enforces the flag. Secure default = logged-in only.
+  Options: `:ttl_seconds` — defaults to `default_ttl/0`; must be in
+  `1..#{2_592_000}` (the 30-day ceiling; a non-positive or over-ceiling value
+  raises).
 
   `actions` must be a non-empty list (a link with no intent is meaningless →
   raises). **The producer MUST verify `issuer` is authorized to delegate on
@@ -93,7 +87,6 @@ defmodule Ezagent.Cap.ShareToken do
     end
 
     ttl = Keyword.get(opts, :ttl_seconds, @default_ttl)
-    allow_anon = Keyword.get(opts, :allow_anon, false) == true
 
     cond do
       ttl > @max_ttl ->
@@ -107,7 +100,6 @@ defmodule Ezagent.Cap.ShareToken do
         payload = %{
           issuer: EzURI.stable_key(issuer),
           target: EzURI.stable_key(target),
-          allow_anon: allow_anon,
           behavior: Atom.to_string(behavior),
           actions: Enum.map(actions, &Atom.to_string/1),
           issued_at: System.system_time(:second),
@@ -139,17 +131,15 @@ defmodule Ezagent.Cap.ShareToken do
        %{
          issuer: issuer,
          target: target,
-         allow_anon: allow_anon,
          behavior: behavior,
          actions: actions,
          issued_at: issued_at,
          ttl: ttl
        }}
-      when is_binary(issuer) and is_binary(target) and is_boolean(allow_anon) and
-             is_binary(behavior) and is_list(actions) and
+      when is_binary(issuer) and is_binary(target) and is_binary(behavior) and is_list(actions) and
              is_integer(issued_at) and is_integer(ttl) ->
         if now <= issued_at + ttl do
-          decode(issuer, target, behavior, actions, allow_anon)
+          decode(issuer, target, behavior, actions)
         else
           {:error, :expired}
         end
@@ -162,7 +152,7 @@ defmodule Ezagent.Cap.ShareToken do
     end
   end
 
-  defp decode(issuer_key, target_key, behavior_str, action_strs, allow_anon) do
+  defp decode(issuer_key, target_key, behavior_str, action_strs) do
     with {:ok, issuer} <- decode_target(issuer_key),
          {:ok, target} <- decode_target(target_key),
          {:ok, actions} <- decode_actions(action_strs) do
@@ -173,8 +163,7 @@ defmodule Ezagent.Cap.ShareToken do
          issuer: issuer,
          target: target,
          behavior: Module.concat([behavior_str]),
-         actions: actions,
-         allow_anon: allow_anon
+         actions: actions
        }}
     end
   end
