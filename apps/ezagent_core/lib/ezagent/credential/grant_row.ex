@@ -216,19 +216,52 @@ defmodule Ezagent.Credential.GrantRow do
   TOCTOU re-check (codex H1' + #201-cred codex r2 HIGH-4): call immediately
   before subprocess exec / curl-slice write with the `{version,
   incarnation_id}` from `fetch_for_materialize/1`. Returns `:ok` iff the
-  grant is still present, not revoked, AND still the exact incarnation the
-  caller materialized from; else `{:error, :grant_changed}` — the caller MUST
-  abort the start (do NOT launch with the now-stale secret). The incarnation
-  compare closes the ABA hole URI+version left open (delete + reinsert at the
-  same version, or two reapprovals racing one version number).
+  grant is still present, not revoked, still the exact incarnation the caller
+  materialized from, AND its recorded holder/source authority generations are
+  STILL current; else `{:error, :grant_changed}` — the caller MUST abort the
+  start (do NOT launch with the now-stale secret). The incarnation compare
+  closes the ABA hole URI+version left open (delete + reinsert at the same
+  version, or two reapprovals racing one version number).
+
+  #201-cred (codex r2 NEW-HIGH-2) — the generation re-check is the crux of
+  this revalidation, not just a repeat of the incarnation compare: a holder
+  or source `regenesis` to N+1 that lands AFTER `fetch_for_materialize/1`
+  does NOT change the grant's incarnation or version, so an incarnation+version
+  compare alone would pass and a secret authorized under the now-RETIRED
+  authority N would still commit + launch. Re-running `generations_current?/1`
+  here (and thus at BOTH the pre-commit and pre-launch boundaries, which route
+  through this function) denies the stale start. The recorded generation on the
+  row is the stable anchor: it never moves, so current-vs-recorded catches any
+  post-fetch regenesis.
+
+  #201-cred (codex r2 NEW-MEDIUM-4) — a legacy grant minted before the
+  incarnation column existed carries `incarnation_id = nil`;
+  `fetch_for_materialize/1` then hands a `nil` incarnation to this function.
+  The `is_binary` guard on the primary clause would leave that unmatched and
+  raise `FunctionClauseError` mid-materialization. The explicit `nil` clause
+  below revalidates such a legacy row on `(version, not-revoked,
+  generations-current)` alone — there is no incarnation to compare.
   """
-  @spec revalidate_version!(String.t(), String.t(), non_neg_integer()) ::
+  @spec revalidate_version!(String.t(), String.t() | nil, non_neg_integer()) ::
           :ok | {:error, :grant_changed}
   def revalidate_version!(agent_uri, incarnation_id, version)
       when is_binary(incarnation_id) do
     case get_for_agent(agent_uri) do
-      %__MODULE__{revoked_at: nil, version: ^version, incarnation_id: ^incarnation_id} -> :ok
-      _ -> {:error, :grant_changed}
+      %__MODULE__{revoked_at: nil, version: ^version, incarnation_id: ^incarnation_id} = g ->
+        if generations_current?(g), do: :ok, else: {:error, :grant_changed}
+
+      _ ->
+        {:error, :grant_changed}
+    end
+  end
+
+  def revalidate_version!(agent_uri, nil, version) when is_binary(agent_uri) do
+    case get_for_agent(agent_uri) do
+      %__MODULE__{revoked_at: nil, version: ^version, incarnation_id: nil} = g ->
+        if generations_current?(g), do: :ok, else: {:error, :grant_changed}
+
+      _ ->
+        {:error, :grant_changed}
     end
   end
 
