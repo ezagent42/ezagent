@@ -17,7 +17,8 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   # file the scan does not read.
   @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
-                   authorization.ex workflow_facts.ex authorized_task.ex blocker.ex)
+                   authorization.ex workflow_facts.ex authorized_task.ex blocker.ex
+                   policy_derivation.ex)
 
   # The small, closed set of non-test config files that could theoretically
   # select the ExecutionSeam backend. config/test.exs is deliberately
