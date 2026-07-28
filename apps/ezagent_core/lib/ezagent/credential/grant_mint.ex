@@ -199,6 +199,79 @@ defmodule Ezagent.Credential.GrantMint do
   def grant_incarnation(nil), do: nil
   def grant_incarnation(%GrantRow{incarnation_id: inc}), do: inc
 
+  @doc """
+  #201-cred (codex r3 NEW-HIGH-1) — the SHARED on-raise boundary for EVERY
+  post-mint region (materialization AND launch). CONFIRM-compensate exactly the
+  minted `incarnation_id` (a `nil` id = this spawn minted nothing — a no-op), then
+  RE-RAISE the original `exception`.
+
+  Crucially it does NOT `_ =`-discard the compensation result: if compensation is
+  EXHAUSTED (`{:error, :grant_compensation_failed}`), it re-raises a
+  `GrantCompensationLeaked` WRAPPER (with the ORIGINAL stacktrace) so the abort
+  carries the durable-grant leak instead of silently dropping it. On success the
+  original exception is re-raised unchanged.
+  """
+  @spec reraise_compensating(
+          String.t(),
+          String.t() | nil,
+          Exception.t(),
+          Exception.stacktrace(),
+          keyword()
+        ) :: no_return()
+  def reraise_compensating(agent_uri_str, incarnation_id, exception, stacktrace, opts \\ [])
+      when is_binary(agent_uri_str) do
+    reraise compensated_or_leak(agent_uri_str, incarnation_id, exception, opts), stacktrace
+  end
+
+  @doc """
+  #201-cred (codex r3 NEW-HIGH-1) — the throw/exit sibling of
+  `reraise_compensating/4`. CONFIRM-compensate the minted `incarnation_id`, then
+  `:erlang.raise` the ORIGINAL `kind`/`reason` (stacktrace preserved) on
+  compensation success; on an EXHAUSTED compensation, re-raise a
+  `GrantCompensationLeaked` wrapper so the leak is surfaced, never discarded.
+  """
+  @spec raise_compensating(
+          String.t(),
+          String.t() | nil,
+          :error | :exit | :throw,
+          term(),
+          Exception.stacktrace(),
+          keyword()
+        ) :: no_return()
+  def raise_compensating(agent_uri_str, incarnation_id, kind, reason, stacktrace, opts \\ [])
+      when is_binary(agent_uri_str) do
+    case compensate_if_minted(agent_uri_str, incarnation_id, opts) do
+      :ok ->
+        :erlang.raise(kind, reason, stacktrace)
+
+      {:error, :grant_compensation_failed} ->
+        reraise Ezagent.Credential.GrantCompensationLeaked.wrap(
+                  agent_uri_str,
+                  incarnation_id,
+                  {kind, reason}
+                ),
+                stacktrace
+    end
+  end
+
+  defp compensated_or_leak(agent_uri_str, incarnation_id, exception, opts) do
+    case compensate_if_minted(agent_uri_str, incarnation_id, opts) do
+      :ok ->
+        exception
+
+      {:error, :grant_compensation_failed} ->
+        Ezagent.Credential.GrantCompensationLeaked.wrap(agent_uri_str, incarnation_id, exception)
+    end
+  end
+
+  # A `nil` incarnation = this spawn minted nothing (a no-pending created-winner
+  # over a pre-existing grant, or a respawn) — there is nothing to compensate, so
+  # the original error propagates unwrapped.
+  defp compensate_if_minted(_agent_uri_str, nil, _opts), do: :ok
+
+  defp compensate_if_minted(agent_uri_str, incarnation_id, opts) when is_binary(incarnation_id),
+    do: compensate(agent_uri_str, incarnation_id, opts)
+
   # Generation-guarded insert (codex r2 HIGH-5): re-read the authorizing
   # holder's and the source's CURRENT active authority generations under a
   # row lock inside the insert transaction; a generation that moved since

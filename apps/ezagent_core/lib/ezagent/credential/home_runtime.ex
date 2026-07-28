@@ -277,6 +277,82 @@ defmodule Ezagent.Credential.HomeRuntime do
     end
   end
 
+  @doc """
+  #201-cred (codex r3 NEW-HIGH-1) — run the post-materialize LAUNCH
+  (sidecar/PTY start) under the grant-compensation boundary.
+
+  The deferred mint runs INSIDE `create_agent_config_dir_with_grant/4`'s own
+  rescue, but the plugin launches the subprocess AFTERWARDS — OUTSIDE that rescue
+  and outside `materialize_and_compensate/3`. A RAISE in that launch (a `Port`
+  open, a file op, a match error in sidecar wiring) previously bypassed grant
+  compensation entirely: `TemplateSpawn` caught and re-raised while the minted
+  grant stayed durable.
+
+  This wraps `launch_fun`. A clean `{:ok, _}`/`{:error, _}` return passes through
+  untouched (the plugin handles a clean launch error via its own
+  `compensate_spawn_failure/5`). On a RAISE/THROW it best-effort tears down the
+  half-started Kind + the secret-bearing config dir, then CONFIRM-compensates
+  exactly the minted incarnation and re-raises — surfacing an exhausted
+  compensation as `GrantCompensationLeaked`, never discarding it. `grant_ctx`
+  carries the minted incarnation (nil = this spawn minted nothing → the grant
+  step is a no-op, so a rehydrating/no-pending winner never over-compensates).
+  """
+  @spec launch_under_grant_compensation(
+          URI.t(),
+          grant_ctx(),
+          module(),
+          String.t(),
+          (-> result)
+        ) :: result
+        when result: term()
+  def launch_under_grant_compensation(
+        %URI{} = agent_uri,
+        grant_ctx,
+        template_module,
+        log_prefix,
+        launch_fun
+      )
+      when is_atom(template_module) and is_binary(log_prefix) and is_function(launch_fun, 0) do
+    try do
+      launch_fun.()
+    rescue
+      exception ->
+        on_launch_raise(agent_uri, template_module, log_prefix)
+
+        Ezagent.Credential.GrantMint.reraise_compensating(
+          URI.to_string(agent_uri),
+          grant_ctx_incarnation(grant_ctx),
+          exception,
+          __STACKTRACE__
+        )
+    catch
+      kind, reason ->
+        on_launch_raise(agent_uri, template_module, log_prefix)
+
+        Ezagent.Credential.GrantMint.raise_compensating(
+          URI.to_string(agent_uri),
+          grant_ctx_incarnation(grant_ctx),
+          kind,
+          reason,
+          __STACKTRACE__
+        )
+    end
+  end
+
+  # Best-effort teardown of the half-started spawn on a LAUNCH raise: stop the
+  # Kind (so a partially-started agent does not linger) and remove the
+  # secret-bearing config dir (so no credential residue survives the abort). The
+  # MINTED grant is compensated separately by `GrantMint.reraise_compensating/4`.
+  defp on_launch_raise(%URI{} = agent_uri, template_module, log_prefix) do
+    _ = Ezagent.Kind.terminate!(agent_uri)
+    _ = rollback_agent_config_dir(agent_uri, template_module, log_prefix)
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
   @doc false
   @spec handle_spawn_failure(URI.t(), term(), module(), String.t()) :: {:error, term()}
   def handle_spawn_failure(
@@ -453,12 +529,12 @@ defmodule Ezagent.Credential.HomeRuntime do
   #     `source_dir_for`, a secret read, or the commit — previously skipped
   #     compensation ENTIRELY and left the just-minted grant durable while
   #     `TemplateSpawn` re-raised (codex r2 NEW-HIGH-1). The rescue/catch below
-  #     CONFIRM-compensates the minted incarnation, THEN re-raises the ORIGINAL
-  #     exception (stacktrace preserved) so the spawn still aborts. We do NOT
-  #     build a composite through the exception: a compensation failure here is
-  #     already logged `:critical` by `GrantMint.compensate/3`, and masking the
-  #     primary exception would lose the abort. An exception-raising attempt
-  #     therefore truly never leaves a durable grant.
+  #     routes through `GrantMint.reraise_compensating/4`: CONFIRM-compensate the
+  #     minted incarnation, THEN re-raise. #201-cred (codex r3 NEW-HIGH-1) — the
+  #     compensation result is NO LONGER `_ =`-discarded: an EXHAUSTED compensation
+  #     re-raises a `GrantCompensationLeaked` wrapper (original stacktrace
+  #     preserved) so the durable-grant leak is surfaced on the abort, never
+  #     silently dropped. On success the original exception propagates unchanged.
   defp materialize_and_compensate(agent_uri, minted, materialize_fun) do
     try do
       case materialize_fun.() do
@@ -470,12 +546,21 @@ defmodule Ezagent.Credential.HomeRuntime do
       end
     rescue
       exception ->
-        _ = compensate_minted_on_raise(agent_uri, minted)
-        reraise exception, __STACKTRACE__
+        Ezagent.Credential.GrantMint.reraise_compensating(
+          URI.to_string(agent_uri),
+          Ezagent.Credential.GrantMint.grant_incarnation(minted),
+          exception,
+          __STACKTRACE__
+        )
     catch
       kind, reason ->
-        _ = compensate_minted_on_raise(agent_uri, minted)
-        :erlang.raise(kind, reason, __STACKTRACE__)
+        Ezagent.Credential.GrantMint.raise_compensating(
+          URI.to_string(agent_uri),
+          Ezagent.Credential.GrantMint.grant_incarnation(minted),
+          kind,
+          reason,
+          __STACKTRACE__
+        )
     end
   end
 
@@ -495,16 +580,6 @@ defmodule Ezagent.Credential.HomeRuntime do
           {:error, :grant_compensation_failed} ->
             {:error, {:materialize_failed_and_grant_compensation_failed, reason, incarnation_id}}
         end
-    end
-  end
-
-  defp compensate_minted_on_raise(agent_uri, minted) do
-    case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
-      nil ->
-        :ok
-
-      incarnation_id ->
-        Ezagent.Credential.GrantMint.compensate(URI.to_string(agent_uri), incarnation_id)
     end
   end
 

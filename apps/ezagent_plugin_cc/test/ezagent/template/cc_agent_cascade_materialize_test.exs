@@ -501,6 +501,72 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     end
   end
 
+  # #201-cred (codex r3 NEW-HIGH-1) — the post-materialize LAUNCH (sidecar/PTY)
+  # runs OUTSIDE the mint's rescue. A RAISE there previously bypassed grant
+  # compensation entirely. `HomeRuntime.launch_under_grant_compensation/5` closes
+  # that boundary: a launch raise CONFIRM-compensates the minted grant, then
+  # re-raises. All four file-flavor arms (cc PTY, cc-headless, codex, codex-remote)
+  # route their launch through it.
+  describe "NEW-HIGH-1: a LAUNCH raise (outside the mint rescue) still compensates the minted grant" do
+    test "a raising launch COMPENSATES the minted grant and re-raises the original", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      # This spawn's minted receipt = the grant's incarnation (5th element).
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, g.incarnation_id}
+
+      assert_raise RuntimeError, "sidecar-launch-boom", fn ->
+        Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+          ctx.agent_uri,
+          grant_ctx,
+          CcAgent,
+          "cc.agent",
+          fn -> raise "sidecar-launch-boom" end
+        )
+      end
+
+      # the grant is gone even though the raise happened in the LAUNCH region
+      # (outside materialize_and_compensate). Pre-fix this leaked.
+      assert GrantRow.get_for_agent(agent_uri_str) == nil
+    end
+
+    test "a raising launch does NOT compensate a pre-existing grant (minted=nil)", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      # minted=nil: this spawn minted nothing (a no-pending winner over the
+      # pre-existing grant) — a launch raise must PRESERVE it (ties to MEDIUM-5).
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, nil}
+
+      assert_raise RuntimeError, "boom", fn ->
+        Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+          ctx.agent_uri,
+          grant_ctx,
+          CcAgent,
+          "cc.agent",
+          fn -> raise "boom" end
+        )
+      end
+
+      assert GrantRow.get_for_agent(agent_uri_str) != nil
+    end
+
+    test "a clean launch result passes through untouched (compensates nothing)", ctx do
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, g.incarnation_id}
+
+      assert {:ok, :launched} =
+               Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                 ctx.agent_uri,
+                 grant_ctx,
+                 CcAgent,
+                 "cc.agent",
+                 fn -> {:ok, :launched} end
+               )
+
+      assert GrantRow.get_for_agent(agent_uri_str) != nil
+    end
+  end
+
   # #201-cred (codex r3 MEDIUM-5) — a NO-PENDING materialization over a
   # PRE-EXISTING (e.g. backfilled `legacy:<id>`) grant returns the FETCHED
   # incarnation for the pre-launch revalidation, but that fetched id is NOT this

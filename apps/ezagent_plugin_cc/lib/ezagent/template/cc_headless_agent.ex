@@ -201,39 +201,51 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
                 |> put_agent_config_dir(config_dir)
                 |> Map.put("claude_session_id", claude_session_id)
 
-              case revalidate_grant_before_launch(grant_ctx) do
-                :ok ->
-                  case ensure_sdk_sidecar(agent_uri, tmpl_with_dir) do
+              # #201-cred (codex r3 NEW-HIGH-1) — the SDK-sidecar launch runs
+              # OUTSIDE the mint's rescue; a RAISE here would bypass grant
+              # compensation. Re-establish the boundary so a launch raise tears
+              # down + CONFIRM-compensates the minted grant before re-raising.
+              Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                agent_uri,
+                grant_ctx,
+                __MODULE__,
+                "cc-headless",
+                fn ->
+                  case revalidate_grant_before_launch(grant_ctx) do
                     :ok ->
-                      Logger.info(
-                        "cc-headless: agent #{URI.to_string(agent_uri)} " <>
-                          "spawned with SDK sidecar"
-                      )
+                      case ensure_sdk_sidecar(agent_uri, tmpl_with_dir) do
+                        :ok ->
+                          Logger.info(
+                            "cc-headless: agent #{URI.to_string(agent_uri)} " <>
+                              "spawned with SDK sidecar"
+                          )
 
-                      {:ok, [agent_uri],
-                       %{
-                         fresh?: true,
-                         # #201 PR-1 — core-issued logical-create verdict from
-                         # the spawn receipt, passed through for the chokepoint's
-                         # create-only write gates.
-                         created?: true,
-                         # #201-cred — the deferred-mint receipt for the
-                         # chokepoint's rollback (nil = no grant minted).
-                         grant_incarnation_id:
-                           Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx),
-                         config_dir_path: config_dir,
-                         respawn_template_data: tmpl_with_dir
-                       }}
+                          {:ok, [agent_uri],
+                           %{
+                             fresh?: true,
+                             # #201 PR-1 — core-issued logical-create verdict from
+                             # the spawn receipt, passed through for the chokepoint's
+                             # create-only write gates.
+                             created?: true,
+                             # #201-cred — the deferred-mint receipt for the
+                             # chokepoint's rollback (nil = no grant minted).
+                             grant_incarnation_id:
+                               Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx),
+                             config_dir_path: config_dir,
+                             respawn_template_data: tmpl_with_dir
+                           }}
+
+                        {:error, reason} ->
+                          rollback_runtime(agent_uri)
+                          compensate_and_report(agent_uri, grant_ctx, reason)
+                      end
 
                     {:error, reason} ->
                       rollback_runtime(agent_uri)
                       compensate_and_report(agent_uri, grant_ctx, reason)
                   end
-
-                {:error, reason} ->
-                  rollback_runtime(agent_uri)
-                  compensate_and_report(agent_uri, grant_ctx, reason)
-              end
+                end
+              )
 
             {:error, reason} ->
               rollback_runtime(agent_uri)

@@ -102,6 +102,110 @@ defmodule Ezagent.Credential.GrantMintTest do
     end
   end
 
+  # #201-cred (codex r3 NEW-HIGH-1) — the shared on-RAISE boundary. `compensate/3`
+  # already surfaces an exhausted compensation as `{:error,
+  # :grant_compensation_failed}` (F2 above); the pre-r3 raise sites then `_ =`
+  # -discarded that result and re-raised ONLY the original — a silent durable leak.
+  # `reraise_compensating/5` + `raise_compensating/6` now propagate the failure.
+  describe "NEW-HIGH-1 — post-mint raise propagates compensation failure (never discarded)" do
+    test "reraise_compensating re-raises the ORIGINAL and DELETES the minted grant on success" do
+      attrs = grant_attrs("reraise-ok")
+      {:ok, g} = GrantRow.insert(attrs)
+
+      assert_raise RuntimeError, "boom-after-mint", fn ->
+        try do
+          raise "boom-after-mint"
+        rescue
+          e -> GrantMint.reraise_compensating(g.agent_uri, g.incarnation_id, e, __STACKTRACE__)
+        end
+      end
+
+      # the minted grant was CONFIRM-compensated; the original propagated unchanged.
+      assert GrantRow.get_for_agent(g.agent_uri) == nil
+    end
+
+    test "reraise_compensating SURFACES an exhausted compensation as GrantCompensationLeaked" do
+      attrs = grant_attrs("reraise-leak")
+      {:ok, g} = GrantRow.insert(attrs)
+      failing = fn _uri, _inc -> {:error, :forced_db_failure} end
+
+      # Pre-fix: the raise path did `_ = compensate(...); reraise original`, so an
+      # exhausted compensation was DISCARDED and the ORIGINAL propagated while the
+      # grant leaked silently. Now the abort CARRIES the leak.
+      err =
+        assert_raise Ezagent.Credential.GrantCompensationLeaked, fn ->
+          try do
+            raise "boom-after-mint"
+          rescue
+            e ->
+              GrantMint.reraise_compensating(g.agent_uri, g.incarnation_id, e, __STACKTRACE__,
+                delete_fun: failing,
+                attempts: 2,
+                backoff_ms: 1
+              )
+          end
+        end
+
+      assert err.agent_uri == g.agent_uri
+      assert err.incarnation_id == g.incarnation_id
+      assert %RuntimeError{message: "boom-after-mint"} = err.original
+      # the delete genuinely failed → the row remains, but the abort SURFACED it.
+      assert GrantRow.get_for_agent(g.agent_uri) != nil
+
+      assert {:ok, :deleted} = GrantRow.delete_incarnation(g.agent_uri, g.incarnation_id)
+    end
+
+    test "reraise_compensating with a nil minted incarnation re-raises the ORIGINAL untouched" do
+      # A no-pending winner minted nothing (r3 MEDIUM-5) — nothing to compensate,
+      # so the original exception propagates UNWRAPPED (never GrantCompensationLeaked).
+      agent = "entity://team-a/agent/reraise-nil-#{uniq()}"
+
+      assert_raise RuntimeError, "boom", fn ->
+        try do
+          raise "boom"
+        rescue
+          e -> GrantMint.reraise_compensating(agent, nil, e, __STACKTRACE__)
+        end
+      end
+    end
+
+    test "raise_compensating re-raises a THROW after compensating; surfaces exhaustion" do
+      {:ok, g} = GrantRow.insert(grant_attrs("throw-ok"))
+
+      thrown =
+        catch_throw(
+          try do
+            throw(:launch_boom)
+          catch
+            kind, reason ->
+              GrantMint.raise_compensating(g.agent_uri, g.incarnation_id, kind, reason, __STACKTRACE__)
+          end
+        )
+
+      assert thrown == :launch_boom
+      assert GrantRow.get_for_agent(g.agent_uri) == nil
+
+      {:ok, g2} = GrantRow.insert(grant_attrs("throw-leak"))
+      failing = fn _u, _i -> {:error, :db_down} end
+
+      assert_raise Ezagent.Credential.GrantCompensationLeaked, fn ->
+        try do
+          throw(:launch_boom2)
+        catch
+          kind, reason ->
+            GrantMint.raise_compensating(g2.agent_uri, g2.incarnation_id, kind, reason, __STACKTRACE__,
+              delete_fun: failing,
+              attempts: 2,
+              backoff_ms: 1
+            )
+        end
+      end
+
+      assert GrantRow.get_for_agent(g2.agent_uri) != nil
+      assert {:ok, :deleted} = GrantRow.delete_incarnation(g2.agent_uri, g2.incarnation_id)
+    end
+  end
+
   describe "F3 — incarnation id is minted internally, unconditionally" do
     test "insert overwrites a caller-supplied incarnation_id" do
       attrs = Map.put(grant_attrs("inc-forge"), :incarnation_id, "caller-forged-id")

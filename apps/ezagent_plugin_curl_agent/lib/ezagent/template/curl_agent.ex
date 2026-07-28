@@ -116,12 +116,21 @@ defmodule Ezagent.PluginCurlAgent.Template do
             end
           rescue
             exception ->
-              _ = compensate_minted_on_raise(agent_uri, minted)
-              reraise exception, __STACKTRACE__
+              Ezagent.Credential.GrantMint.reraise_compensating(
+                URI.to_string(agent_uri),
+                Ezagent.Credential.GrantMint.grant_incarnation(minted),
+                exception,
+                __STACKTRACE__
+              )
           catch
             kind, reason ->
-              _ = compensate_minted_on_raise(agent_uri, minted)
-              :erlang.raise(kind, reason, __STACKTRACE__)
+              Ezagent.Credential.GrantMint.raise_compensating(
+                URI.to_string(agent_uri),
+                Ezagent.Credential.GrantMint.grant_incarnation(minted),
+                kind,
+                reason,
+                __STACKTRACE__
+              )
           end
         end
     end
@@ -156,20 +165,6 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
       _ ->
         {:ok, nil}
-    end
-  end
-
-  # #201-cred (codex r2 NEW-HIGH-1) — compensate the minted incarnation on a
-  # RAISE in the post-mint region, before the exception is re-raised. Best-effort
-  # by design: `GrantMint.compensate/3` already logs `:critical` on exhaustion,
-  # and we must not mask the primary exception with a composite.
-  defp compensate_minted_on_raise(agent_uri, minted) do
-    case Ezagent.Credential.GrantMint.grant_incarnation(minted) do
-      nil ->
-        :ok
-
-      incarnation_id ->
-        Ezagent.Credential.GrantMint.compensate(URI.to_string(agent_uri), incarnation_id)
     end
   end
 

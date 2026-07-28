@@ -229,35 +229,49 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
               # incarnation IMMEDIATELY before launch; on :grant_changed ABORT + clear the
               # just-materialized config_dir so it is not left usable for the revoked grant.
               # No-grant agents skip this (nil ctx).
-              case revalidate_grant_before_launch(grant_ctx) do
-                :ok ->
-                  case ensure_sidecars(agent_uri, tmpl_with_dir) do
-                    {:ok, meta} ->
-                      {:ok, [agent_uri],
-                       meta
-                       |> Map.put(:fresh?, true)
-                       # #201 PR-1 — core logical-create verdict from the
-                       # spawn receipt, for the chokepoint's create-only gates.
-                       |> Map.put(:created?, true)
-                       # #201-cred — the deferred-mint receipt for the
-                       # chokepoint's rollback (nil = no grant minted).
-                       |> Map.put(
-                         :grant_incarnation_id,
-                         Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx)
-                       )
-                       |> Map.put(:config_dir_path, config_dir)
-                       |> Map.put(:respawn_template_data, tmpl_with_dir)}
+              #
+              # #201-cred (codex r3 NEW-HIGH-1) — the launch runs OUTSIDE the mint's
+              # own rescue, so a RAISE in `ensure_sidecars` would bypass grant
+              # compensation. `launch_under_grant_compensation/5` re-establishes the
+              # boundary: a raise here tears down + CONFIRM-compensates the minted
+              # grant before re-raising (a clean `{:error, _}` is handled below).
+              Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                agent_uri,
+                grant_ctx,
+                __MODULE__,
+                "codex.agent",
+                fn ->
+                  case revalidate_grant_before_launch(grant_ctx) do
+                    :ok ->
+                      case ensure_sidecars(agent_uri, tmpl_with_dir) do
+                        {:ok, meta} ->
+                          {:ok, [agent_uri],
+                           meta
+                           |> Map.put(:fresh?, true)
+                           # #201 PR-1 — core logical-create verdict from the
+                           # spawn receipt, for the chokepoint's create-only gates.
+                           |> Map.put(:created?, true)
+                           # #201-cred — the deferred-mint receipt for the
+                           # chokepoint's rollback (nil = no grant minted).
+                           |> Map.put(
+                             :grant_incarnation_id,
+                             Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx)
+                           )
+                           |> Map.put(:config_dir_path, config_dir)
+                           |> Map.put(:respawn_template_data, tmpl_with_dir)}
+
+                        {:error, reason} ->
+                          rollback_sidecars(agent_uri)
+                          _ = Ezagent.Kind.terminate!(agent_uri)
+                          compensate_and_report(agent_uri, grant_ctx, reason)
+                      end
 
                     {:error, reason} ->
-                      rollback_sidecars(agent_uri)
                       _ = Ezagent.Kind.terminate!(agent_uri)
                       compensate_and_report(agent_uri, grant_ctx, reason)
                   end
-
-                {:error, reason} ->
-                  _ = Ezagent.Kind.terminate!(agent_uri)
-                  compensate_and_report(agent_uri, grant_ctx, reason)
-              end
+                end
+              )
 
             {:error, reason} ->
               _ = Ezagent.Kind.terminate!(agent_uri)
