@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MFU v0.15 · 机制信息图</title>
+  <style>
+    :root{
+      --ink:#5b4632;--ink-dark:#3d2e1f;--cream:#fdf6e0;--bg:#e9d6a4;--gold:#f5b301;
+      --school:#3f9e4d;--school-bg:#e2f3e4;--incu:#e07b1f;--incu-bg:#fdeeda;
+      --assoc:#2f6fc4;--assoc-bg:#e3edfb;--red:#d94f3d;--teal:#1d9e75;--purple:#7a4fc9;
+      --muted:#8a765a;--paper:#fffaf0;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:var(--ink-dark)}
+    body{
+      background-color:var(--bg);
+      background-image:linear-gradient(45deg,rgba(91,70,50,.045) 25%,transparent 25%,transparent 75%,rgba(91,70,50,.045) 75%),
+        linear-gradient(45deg,rgba(91,70,50,.045) 25%,transparent 25%,transparent 75%,rgba(91,70,50,.045) 75%);
+      background-position:0 0,10px 10px;background-size:20px 20px;padding:14px 18px;overflow:hidden;
+    }
+    button{font:inherit}
+    .toolbar{
+      max-width:1600px;margin:0 auto 14px;padding:8px;display:grid;gap:8px;
+      background:var(--cream);border:3px solid var(--ink);border-radius:10px;
+      box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;
+    }
+    .toolbar-top,.subnav{display:flex;gap:8px;align-items:center;overflow-x:auto;padding:1px 2px 4px}
+    .toolbar-top{border-bottom:2px dotted #d4c39b;padding-bottom:8px}
+    .toolbar strong{margin:0 8px;font-size:13px;letter-spacing:1px;white-space:nowrap}
+    .toolbar strong,.toolbar .btn{flex:0 0 auto}
+    .chapter-btn{background:#fff;font-size:13px;padding-inline:16px}
+    .chapter-btn[aria-pressed="true"]{background:var(--gold)}
+    .subnav::before{content:attr(data-label);min-width:92px;padding-left:8px;font-size:11px;font-weight:900;color:var(--muted);letter-spacing:1px}
+    .subnav[hidden]{display:none}
+    .btn{
+      border:3px solid var(--ink);border-radius:8px;background:#fff2cf;color:var(--ink-dark);
+      box-shadow:0 3px 0 var(--ink);cursor:pointer;padding:6px 12px;font-weight:800;font-size:12px;
+    }
+    .btn[aria-pressed="true"]{background:var(--gold)}
+    .btn:active{transform:translateY(3px);box-shadow:none}
+    .board{
+      width:min(1600px,calc(100vw - 36px),calc((100vh - 140px) * 16 / 9));aspect-ratio:16/9;margin:0 auto;overflow:hidden;position:relative;
+      background:var(--cream);border:4px solid var(--ink);border-radius:14px;padding:28px 32px 26px;
+      box-shadow:0 8px 0 rgba(91,70,50,.42),inset 0 0 0 3px #fff;
+    }
+    .board[hidden]{display:none}
+    .board::before{
+      content:"";position:absolute;inset:12px;border:2px dotted rgba(91,70,50,.2);border-radius:9px;pointer-events:none;
+    }
+    .mast{height:92px;display:flex;align-items:flex-start;justify-content:space-between;position:relative;z-index:1}
+    .eyebrow{font-size:13px;font-weight:800;letter-spacing:2px;color:var(--muted);margin-bottom:5px}
+    h1{font-size:34px;line-height:1.08;margin:0;letter-spacing:1px}
+    .promise{font-size:15px;font-weight:700;color:var(--muted);margin:7px 0 0}
+    .stamp{
+      width:126px;height:74px;display:grid;place-items:center;text-align:center;transform:rotate(3deg);
+      border:4px double var(--incu);border-radius:10px;color:var(--incu);font-size:14px;font-weight:800;line-height:1.35;
+      background:var(--incu-bg);
+    }
+    .content{height:calc(100% - 148px);position:relative;z-index:1}
+    .footer-note{position:absolute;right:34px;bottom:16px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.5px}
+    .card{
+      background:var(--paper);border:3px solid var(--ink);border-radius:10px;padding:14px;
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;
+    }
+    .card h2,.card h3{margin:0 0 7px}
+    .card h2{font-size:19px}.card h3{font-size:15px}
+    .micro{font-size:11px;color:var(--muted);font-weight:700;line-height:1.45}
+    .tag{
+      display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.5px;border:2px solid;border-radius:6px;
+      padding:2px 7px;background:#fff;margin:2px 3px 2px 0;
+    }
+    .tag.school{color:var(--school);background:var(--school-bg)}
+    .tag.incu{color:var(--incu);background:var(--incu-bg)}
+    .tag.assoc{color:var(--assoc);background:var(--assoc-bg)}
+    .tag.done{color:var(--teal);background:#e5f6ef}
+    .tag.gold{color:#805d00;background:#fff0ad}
+    .tag.purple{color:var(--purple);background:#f0e9ff}
+    .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:24px;align-items:stretch;margin-top:15px}
+    .flow .card{min-height:182px;position:relative}
+    .flow .card:not(:last-child)::after{
+      content:"→";position:absolute;right:-24px;top:74px;font-size:28px;font-weight:900;color:var(--ink);
+    }
+    .step-no{
+      width:34px;height:34px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:8px;
+      box-shadow:0 3px 0 var(--ink);font-weight:900;background:var(--gold);margin-bottom:11px;
+    }
+    .evidence{
+      margin-top:8px;padding:8px 9px;border:2px solid var(--ink);border-radius:7px;background:#fff;font-size:11px;font-weight:700;
+    }
+    .evidence::before{content:"📎 ";font-size:13px}
+    .cap-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin-top:18px}
+    .cap{
+      min-height:92px;border:3px solid var(--ink);border-radius:10px;background:#fff;padding:10px 8px;text-align:center;
+      box-shadow:0 3px 0 rgba(91,70,50,.35);font-weight:800;font-size:13px;
+    }
+    .cap b{display:block;font-size:22px;margin-bottom:5px}
+    .cap small{display:block;color:var(--muted);font-size:9.5px;line-height:1.35;margin-top:4px}
+    .cap.done{border-color:var(--teal);background:#e5f6ef}
+    .cap.progress{border-color:var(--gold);background:#fff7d6}
+    .loop-note{
+      margin-top:15px;border:3px dashed var(--teal);border-radius:10px;background:#e5f6ef;padding:10px 14px;
+      display:flex;align-items:center;justify-content:center;gap:12px;font-weight:800;font-size:13px;
+    }
+    .story{
+      height:100%;display:grid;grid-template-columns:38% 1fr;grid-template-rows:1fr auto;
+      column-gap:24px;row-gap:14px;align-items:stretch;
+    }
+    .story-hero{
+      grid-column:1;grid-row:1;position:relative;display:flex;flex-direction:column;justify-content:center;
+      align-self:center;gap:38px;padding:22px;
+      background:#fff7d6;border-color:var(--gold);
+    }
+    .story-hero::after{
+      content:"副业公司";position:absolute;right:13px;top:13px;padding:4px 8px;border:2px solid var(--ink);
+      border-radius:6px;background:var(--gold);font-size:11px;font-weight:900;transform:rotate(2deg);
+    }
+    .characters{display:flex;align-items:flex-end;justify-content:center;gap:22px;margin-top:8px}
+    .character{text-align:center;font-weight:900;font-size:14px}
+    .character .face{
+      width:112px;height:112px;display:grid;place-items:center;margin-bottom:7px;border:4px solid var(--ink);
+      border-radius:14px;background:var(--cream);box-shadow:0 5px 0 var(--ink);font-size:58px;
+    }
+    .character.ai .face{background:#f0e9ff;border-color:var(--purple);box-shadow:0 5px 0 var(--purple)}
+    .company-sign{
+      padding:13px;border:3px solid var(--ink);border-radius:9px;background:#fff;text-align:center;
+      box-shadow:0 3px 0 rgba(91,70,50,.35);font-size:19px;font-weight:900;
+    }
+    .company-sign small{display:block;margin-top:5px;color:var(--muted);font-size:11px}
+    .story-path{display:contents}
+    .task-sources{
+      display:flex;align-items:center;justify-content:center;gap:10px;padding:10px;border:3px dashed var(--school);
+      border-radius:10px;background:var(--school-bg);font-weight:900;font-size:13px;
+    }
+    .task-sources b{font-size:15px;margin-right:5px}
+    .action-row{grid-column:2;grid-row:1;display:grid;grid-template-columns:repeat(3,1fr);gap:26px;align-items:center}
+    .action{
+      min-height:190px;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      text-align:center;background:#fff;border:3px solid var(--ink);border-radius:10px;padding:14px;
+      box-shadow:0 4px 0 rgba(91,70,50,.35),inset 0 0 0 2px #fff;
+    }
+    .action:not(:last-child)::after{
+      content:"→";position:absolute;right:-27px;top:72px;font-size:31px;font-weight:900;color:var(--ink);
+    }
+    .action-icon{font-size:47px;line-height:1;margin-bottom:12px}
+    .action h2{font-size:22px;margin:0 0 7px}
+    .action p{font-size:12px;line-height:1.45;color:var(--muted);font-weight:800;margin:0}
+    .action-sources{
+      display:flex;flex-wrap:wrap;justify-content:center;gap:4px;margin-top:10px;padding-top:8px;
+      border-top:2px dotted #cbb98f;font-size:9.5px;font-weight:900;color:var(--muted);
+    }
+    .action-sources .tag{font-size:8.5px;padding:1px 4px;margin:0}
+    .opc-result{
+      grid-column:1/-1;grid-row:2;display:grid;grid-template-columns:auto 1fr auto;gap:15px;align-items:center;padding:13px 16px;
+      border:4px solid var(--teal);border-radius:11px;background:#e5f6ef;box-shadow:0 4px 0 rgba(29,158,117,.3);
+    }
+    .opc-result .unicorn{font-size:42px}
+    .opc-result strong{display:block;font-size:20px;margin-bottom:3px}
+    .opc-result span{font-size:12px;color:#28775f;font-weight:800}
+    .opc-result .grow{padding:7px 10px;border:2px solid var(--teal);border-radius:7px;background:#fff;font-weight:900;font-size:12px}
+    .growth-map{height:100%;display:grid;grid-template-rows:155px 52px 1fr 76px;gap:8px}
+    .task-scene{
+      width:520px;justify-self:center;display:grid;grid-template-columns:92px 1fr;gap:15px;align-items:center;
+      border:4px solid var(--ink);border-radius:12px;background:#fff7d6;padding:14px 18px;
+      box-shadow:0 5px 0 rgba(91,70,50,.35),inset 0 0 0 2px #fff;
+    }
+    .task-scene .task-icon{
+      width:80px;height:80px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:10px;
+      background:var(--gold);box-shadow:0 3px 0 var(--ink);font-size:42px;
+    }
+    .task-scene h2{font-size:23px;margin:0 0 5px}.task-scene p{font-size:12px;font-weight:800;color:var(--muted);margin:0}
+    .branch-line{position:relative;width:76%;height:52px;justify-self:center}
+    .branch-line::before{content:"";position:absolute;left:50%;top:-8px;height:30px;border-left:4px solid var(--ink)}
+    .branch-line::after{content:"";position:absolute;left:0;right:0;top:20px;border-top:4px solid var(--ink)}
+    .growth-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}
+    .growth-card{
+      position:relative;border:3px solid var(--ink);border-radius:10px;background:#fff;padding:13px 14px;
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;text-align:center;
+    }
+    .growth-card::before{content:"";position:absolute;left:50%;bottom:100%;height:40px;border-left:4px solid var(--ink)}
+    .growth-card .big-icon{font-size:38px;line-height:1;margin:2px 0 8px}
+    .growth-card h2{font-size:22px;margin:0 0 2px}.growth-card .plain{font-size:13px;font-weight:900;margin-bottom:8px}
+    .growth-card .rule{border-top:2px dotted #cbb98f;padding-top:8px;font-size:11px;font-weight:700;color:var(--muted);line-height:1.45}
+    .ui-sample{
+      height:92px;margin-top:9px;padding:8px;border:2px solid var(--ink);border-radius:8px;background:var(--cream);
+      box-shadow:0 2px 0 rgba(91,70,50,.28),inset 0 0 0 1px #fff;text-align:left;
+    }
+    .ui-caption{font-size:9.5px;font-weight:900;color:var(--muted);margin-bottom:5px}
+    .xp-row{display:grid;grid-template-columns:54px 1fr;gap:5px;align-items:center;font-size:9.5px;font-weight:800;margin:4px 0}
+    .xp-bar{height:13px;border:2px solid var(--ink);border-radius:5px;background:#efe3c2;overflow:hidden;position:relative}
+    .xp-bar i{display:block;height:100%;background:var(--gold)}
+    .xp-bar span{position:absolute;inset:-1px 0 0;text-align:center;font-size:8px;color:var(--ink-dark)}
+    .mini-tree{height:62px;display:block;width:100%}
+    .mini-tree line{stroke:var(--ink);stroke-width:3}
+    .mini-tree circle{stroke:var(--ink);stroke-width:3;fill:#efe3c2}
+    .mini-tree circle.on{fill:#e5f6ef;stroke:var(--teal)}
+    .mini-tree circle.next{fill:#fff0ad;stroke:var(--gold);stroke-dasharray:4 3}
+    .mini-tree text{font-size:9px;font-weight:900;fill:var(--ink-dark);text-anchor:middle}
+    .trust-stats{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px}
+    .trust-stat{border:2px solid var(--ink);border-radius:7px;background:#fff;padding:7px 4px;text-align:center;font-size:10px;font-weight:800}
+    .trust-stat b{display:block;font-size:17px;margin-top:2px;color:var(--incu)}
+    .badge-shelf{display:flex;gap:7px;align-items:flex-end;justify-content:center;border-bottom:3px solid var(--ink);padding:4px 2px 7px}
+    .mini-badge{width:44px;text-align:center;font-size:24px;line-height:1}
+    .mini-badge small{display:block;font-size:8px;font-weight:900;margin-top:4px;color:var(--ink-dark)}
+    .growth-card.exp{border-color:var(--gold);background:#fff9dd}.growth-card.skill{border-color:var(--teal);background:#e5f6ef}
+    .growth-card.trust{border-color:var(--incu);background:var(--incu-bg)}.growth-card.badge{border-color:var(--assoc);background:var(--assoc-bg)}
+    .growth-summary{
+      display:flex;align-items:center;justify-content:center;border:3px dashed var(--red);border-radius:10px;
+      background:#fdeaea;color:#913a30;font-size:15px;font-weight:900;text-align:center;padding:10px;
+    }
+    .mapping{display:grid;grid-template-columns:1fr 180px 1fr;gap:18px;align-items:center;height:100%}
+    .school-stack{display:grid;gap:13px}
+    .school-card{padding:13px 15px;border:3px solid var(--school);background:var(--school-bg);border-radius:10px;box-shadow:0 4px 0 rgba(63,158,77,.24)}
+    .school-card h3{font-size:17px;margin:0 0 8px}
+    .course{display:inline-block;padding:6px 8px;margin:3px;border:2px solid var(--ink);border-radius:7px;background:#fff;font-size:11px;font-weight:800}
+    .bridge{text-align:center}
+    .bridge .seal{
+      width:150px;height:150px;margin:auto;border:4px double var(--assoc);border-radius:50%;display:grid;place-items:center;
+      background:var(--assoc-bg);color:var(--assoc);font-weight:900;font-size:16px;line-height:1.35;
+    }
+    .bridge .arrow{font-size:31px;font-weight:900;margin:5px 0;color:var(--ink)}
+    .standard{height:100%;padding:18px}
+    .standard h2{font-size:23px}
+    .standard-row{display:grid;grid-template-columns:92px 1fr;gap:8px;margin:9px 0;align-items:center}
+    .standard-row b{font-size:11px;color:var(--muted)}
+    .standard-row span{border:2px solid var(--ink);border-radius:7px;padding:7px 9px;background:#fff;font-size:11px;font-weight:700}
+    .formula{margin-top:13px;padding:10px;border:3px dashed var(--assoc);border-radius:9px;background:var(--assoc-bg);font-size:13px;font-weight:800;text-align:center}
+    .screening{display:grid;grid-template-columns:1.04fr 72px .95fr 72px .95fr;gap:10px;align-items:stretch;height:100%}
+    .screening>.arrow{display:grid;place-items:center;font-size:35px;font-weight:900}
+    .profile{display:grid;grid-template-rows:auto auto 1fr;gap:10px}
+    .profile-head{display:flex;justify-content:space-between;align-items:center}
+    .mini-bars{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+    .mini-bar{font-size:10px;font-weight:800}
+    .bar{height:14px;border:2px solid var(--ink);border-radius:6px;background:#efe3c2;overflow:hidden;margin-top:3px}
+    .bar i{display:block;height:100%;background:var(--teal)}
+    .records{display:grid;gap:7px}
+    .record{padding:8px;border:2px solid var(--ink);border-radius:7px;background:#fff;font-size:11px;font-weight:700}
+    .record strong{display:block;margin-bottom:3px}
+    .challenge{background:var(--incu-bg);border-color:var(--incu)}
+    .challenge-list{display:grid;gap:9px;margin-top:12px}
+    .challenge-item{padding:10px;border:2px solid var(--incu);border-radius:8px;background:#fff;font-size:11px;font-weight:700}
+    .decision{display:flex;flex-direction:column;justify-content:space-between}
+    .invite{
+      border:4px double var(--incu);border-radius:10px;padding:14px;text-align:center;background:#fff;
+      color:var(--incu);font-weight:900;font-size:18px;transform:rotate(-1deg);
+    }
+    .no-score{padding:9px;border:3px dashed var(--red);border-radius:9px;background:#fdeaea;color:#913a30;font-size:11px;font-weight:800}
+    .compare{height:100%;display:grid;grid-template-columns:1fr 170px 1fr;gap:22px;align-items:center}
+    .student-card{height:100%;display:grid;grid-template-rows:auto 1fr auto;gap:12px;padding:20px}
+    .student-head{display:flex;align-items:center;gap:13px}.student-avatar{font-size:52px}
+    .student-head h2{font-size:24px;margin:0}.student-head p{font-size:11px;color:var(--muted);font-weight:800;margin:3px 0 0}
+    .big-metric{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-self:center}
+    .metric{padding:18px 10px;border:3px solid var(--ink);border-radius:10px;background:#fff;text-align:center;font-size:12px;font-weight:900}
+    .metric b{display:block;font-size:36px;line-height:1.1;margin:5px 0}.metric.exp b{color:#a77700}.metric.skill b{color:var(--teal)}
+    .compare-center{text-align:center;font-size:16px;font-weight:900}.compare-center b{display:block;font-size:54px;color:var(--red)}
+    .takeaway{padding:12px;border:3px dashed var(--teal);border-radius:9px;background:#e5f6ef;text-align:center;font-size:13px;font-weight:900}
+    .ownership{height:100%;display:grid;grid-template-rows:106px 1fr 82px;gap:14px}
+    .shared-work{
+      width:630px;justify-self:center;display:flex;align-items:center;justify-content:center;gap:15px;
+      border:4px solid var(--ink);border-radius:11px;background:#fff7d6;box-shadow:0 4px 0 rgba(91,70,50,.35);font-size:17px;font-weight:900;
+    }
+    .shared-work b{font-size:36px}.ownership-cards{display:grid;grid-template-columns:repeat(2,1fr);gap:22px}
+    .owner-card{padding:17px;text-align:center}.owner-icon{font-size:43px}.owner-card h2{font-size:22px;margin:5px 0}
+    .owner-card .who{font-size:12px;font-weight:900;margin-bottom:10px}
+    .owner-card .result{padding:10px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:11px;font-weight:800;line-height:1.45}
+    .owner-card.student{border-color:var(--gold);background:#fff9dd}.owner-card.agent{border-color:var(--purple);background:#f0e9ff}.owner-card.together{border-color:var(--teal);background:#e5f6ef}
+    .responsibility{display:flex;align-items:center;justify-content:center;border:3px dashed var(--ink);border-radius:10px;background:#fff;font-size:14px;font-weight:900}
+    .three-level{height:100%;display:grid;grid-template-columns:1fr 72px 1fr 72px 1fr;gap:10px;align-items:center}
+    .concept-card{height:82%;display:flex;flex-direction:column;justify-content:space-between;text-align:center;padding:20px}
+    .concept-card .concept-icon{font-size:56px}.concept-card h2{font-size:24px;margin:6px 0}.concept-card .question{font-size:14px;font-weight:900}
+    .concept-card .example{padding:11px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:11px;font-weight:800;line-height:1.5}
+    .concept-card.skill{border-color:var(--teal);background:#e5f6ef}.concept-card.cert{border-color:var(--assoc);background:var(--assoc-bg)}.concept-card.tool{border-color:var(--gold);background:#fff9dd}
+    .plus-arrow{font-size:32px;font-weight:900;text-align:center}
+    .simple-mapping{height:100%;display:grid;grid-template-columns:1fr 120px 1fr;gap:22px;align-items:center}
+    .school-pair{display:grid;gap:18px}.simple-school{padding:18px;border:3px solid var(--school);border-radius:10px;background:var(--school-bg);box-shadow:0 4px 0 rgba(63,158,77,.24)}
+    .simple-school h2{font-size:20px;margin:0 0 10px}.simple-school .course{font-size:12px}
+    .same-arrow{text-align:center;font-size:42px;font-weight:900}.same-arrow small{display:block;font-size:10px;color:var(--muted)}
+    .common-standard{height:76%;display:flex;flex-direction:column;justify-content:center;text-align:center;border-color:var(--assoc);background:var(--assoc-bg)}
+    .common-standard .seal-icon{font-size:58px}.common-standard h2{font-size:24px;margin:8px 0}.common-standard p{font-size:13px;font-weight:900;line-height:1.6}
+    .simple-screening{height:100%;display:grid;grid-template-columns:1fr 50px 1fr 50px 1fr 50px 1fr;gap:8px;align-items:center}
+    .screen-step{height:78%;display:flex;flex-direction:column;justify-content:center;text-align:center;padding:17px}
+    .screen-step .screen-icon{font-size:47px}.screen-step h2{font-size:20px;margin:8px 0}.screen-step p{font-size:11px;font-weight:800;color:var(--muted);line-height:1.5}
+    .screen-arrow{text-align:center;font-size:28px;font-weight:900}
+    .screen-step.profile-step{border-color:var(--assoc);background:var(--assoc-bg)}.screen-step.challenge-step{border-color:var(--incu);background:var(--incu-bg)}
+    .screen-step.human-step{border-color:var(--teal);background:#e5f6ef}.screen-step.offer-step{border-color:var(--gold);background:#fff9dd}
+
+    /* Pages 03–07: paper-card repairs */
+    .compare{
+      grid-template-columns:1fr 110px 1fr;grid-template-rows:1fr 70px;
+      grid-template-areas:"left sign right" "summary summary summary";
+    }
+    .compare .student-card:first-child{grid-area:left}.compare .student-card:nth-of-type(2){grid-area:right}
+    .student-card{
+      height:100%;display:grid;grid-template-columns:132px 1fr;grid-template-rows:auto auto 1fr;
+      gap:10px 16px;padding:18px;background:var(--paper);border:3px solid var(--ink);border-radius:11px;
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;
+    }
+    .student-card .character{grid-row:1/4;align-self:center}
+    .student-card .character .face{width:112px;height:112px;font-size:55px}
+    .student-card h2{font-size:23px;margin:0}
+    .student-card .big-metric{
+      display:flex;align-items:baseline;justify-content:center;gap:8px;padding:10px;
+      border:3px solid var(--ink);border-radius:9px;background:#fff7d6;color:#a77700;
+      font-size:46px;font-weight:900;line-height:1;
+    }
+    .student-card .big-metric small{font-size:11px;color:var(--muted)}
+    .student-card .metric{padding:9px 11px;text-align:left;font-size:11px;margin-top:6px}
+    .student-card .metric span{display:block;color:var(--muted);margin-bottom:3px}
+    .student-card .metric b{font-size:14px;margin:0;color:var(--ink-dark)}
+    .student-card p{grid-column:2;margin:0;color:var(--muted);font-size:11px;font-weight:800}
+    .not-equal{grid-area:sign;text-align:center;font-size:64px;font-weight:900;color:var(--red)}
+    .compare>.growth-summary{grid-area:summary}
+    .owner-card,.concept-card,.screen-step,.common-standard{
+      border:3px solid var(--ink);border-radius:11px;background:var(--paper);
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;
+    }
+    .ownership{grid-template-rows:98px 1fr 68px}
+    .shared-work{padding:12px 18px}
+    .shared-work h2{font-size:19px;margin:0 0 4px}.shared-work p{font-size:11px;margin:0;color:var(--muted)}
+    .owner-card{display:flex;flex-direction:column;justify-content:center;padding:16px;text-align:center}
+    .owner-card:nth-child(1){border-color:var(--gold);background:#fff9dd}
+    .owner-card:nth-child(2){border-color:var(--purple);background:#f0e9ff}
+    .owner-card .big-icon{font-size:42px}.owner-card h2{font-size:21px;margin:6px 0}
+    .owner-card p{font-size:11px;font-weight:800;color:var(--muted);line-height:1.5}
+    .owner-card .rule{padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:11px;line-height:1.45}
+    .three-level{grid-template-rows:1fr 66px}
+    .three-level .concept-card:nth-of-type(1){border-color:var(--teal);background:#e5f6ef}
+    .three-level .concept-card:nth-of-type(2){border-color:var(--assoc);background:var(--assoc-bg)}
+    .three-level .concept-card:nth-of-type(3){border-color:var(--gold);background:#fff9dd}
+    .three-level>.growth-summary{grid-column:1/-1}
+    .concept-card .big-icon{font-size:50px}.concept-card .company-sign{font-size:15px}
+    .simple-mapping{grid-template-rows:1fr 66px}
+    .school-paths{display:grid;gap:14px}
+    .simple-school{padding:14px;text-align:center}
+    .simple-school:nth-child(2){border-color:var(--purple);background:#f0e9ff}
+    .simple-school h2{font-size:16px;margin:5px}.simple-school .arrow{font-size:18px}
+    .common-standard{height:82%;padding:20px}
+    .common-standard .big-icon{font-size:50px}.common-standard .rule{padding:10px;border:2px solid var(--assoc);border-radius:8px;background:#fff;font-size:11px}
+    .simple-mapping>.growth-summary{grid-column:1/-1}
+    .simple-screening{grid-template-rows:1fr 46px 62px}
+    .screen-step{height:82%}
+    .screen-step:nth-of-type(1){border-color:var(--assoc);background:var(--assoc-bg)}
+    .screen-step:nth-of-type(2){border-color:var(--incu);background:var(--incu-bg)}
+    .screen-step:nth-of-type(3){border-color:var(--teal);background:#e5f6ef}
+    .screen-step:nth-of-type(4){border-color:var(--gold);background:#fff9dd}
+    .screen-step .big-icon{font-size:42px}
+    .simple-screening>.no-score{grid-column:1/-1;text-align:center;font-size:12px}
+    .simple-screening>.growth-summary{grid-column:1/-1}
+
+    /* Page 08: student goals */
+    .goal-overview{height:100%;display:grid;grid-template-rows:154px 1fr;gap:14px}
+    .goal-grid,.goal-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .goal-card{
+      display:grid;grid-template-columns:44px 1fr;gap:9px;align-items:center;padding:12px;
+      border:3px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 3px 0 rgba(91,70,50,.32);
+    }
+    .goal-card:nth-child(1){background:#fff9dd;border-color:var(--gold)}
+    .goal-card:nth-child(2){background:#e5f6ef;border-color:var(--teal)}
+    .goal-card:nth-child(3){background:var(--assoc-bg);border-color:var(--assoc)}
+    .goal-card:nth-child(4){background:var(--incu-bg);border-color:var(--incu)}
+    .goal-icon{font-size:34px;text-align:center}.goal-card h2{font-size:16px;margin:0 0 4px}
+    .goal-number{display:block;font-size:9px;letter-spacing:1px;color:var(--muted);margin-bottom:3px}
+    .goal-card p{font-size:9.5px;font-weight:800;color:var(--muted);margin:0;line-height:1.4}
+    .action-column{
+      min-width:0;padding:12px;border:3px solid var(--ink);border-radius:10px;background:var(--paper);
+      box-shadow:0 3px 0 rgba(91,70,50,.3),inset 0 0 0 2px #fff;
+    }
+    .action-column:nth-child(1){border-color:var(--gold);background:#fff9dd}
+    .action-column:nth-child(2){border-color:var(--teal);background:#e5f6ef}
+    .action-column:nth-child(3){border-color:var(--assoc);background:var(--assoc-bg)}
+    .action-column:nth-child(4){border-color:var(--incu);background:var(--incu-bg)}
+    .action-column h3{font-size:11px;letter-spacing:1px;color:var(--muted);margin:0 0 9px;text-align:center}
+    .verb-list{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+    .verb{
+      min-height:34px;display:grid;place-items:center;padding:6px;border:2px solid var(--ink);border-radius:7px;
+      background:#fff;text-align:center;font-size:10.5px;font-weight:900;line-height:1.25;
+      box-shadow:0 2px 0 rgba(91,70,50,.22);
+    }
+
+    /* Pages 09–15: one action, four kinds of consequences */
+    .action-mechanism{height:100%;display:grid;grid-template-columns:30% 1fr;gap:18px}
+    .action-focus{
+      display:flex;flex-direction:column;justify-content:center;text-align:center;padding:18px;border:4px solid var(--ink);
+      border-radius:12px;background:#fff7d6;box-shadow:0 5px 0 rgba(91,70,50,.36),inset 0 0 0 2px #fff;
+    }
+    .action-focus .action-icon{font-size:66px}.action-focus h2{font-size:25px;margin:6px 0}.action-focus p{font-size:12px;font-weight:800;color:var(--muted);line-height:1.55}
+    .action-results{display:grid;grid-template-rows:auto 1fr auto;gap:11px}
+    .mechanism-legend{display:flex;justify-content:center;gap:9px;font-size:9.5px;font-weight:900}
+    .legend-item{padding:4px 7px;border:2px solid var(--ink);border-radius:6px;background:#fff}
+    .legend-item.direct{border-style:solid}.legend-item.conditional{border-style:dashed}.legend-item.gated{border-style:double;border-width:4px}
+    .effect-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+    .effect-card{display:flex;flex-direction:column;justify-content:center;padding:13px;border:3px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 3px 0 rgba(91,70,50,.28)}
+    .effect-card.direct{border-color:var(--gold);background:#fff9dd}
+    .effect-card.conditional{border-style:dashed;border-color:var(--teal);background:#e5f6ef}
+    .effect-card.gated{border:5px double var(--assoc);background:var(--assoc-bg)}
+    .effect-icon{font-size:30px}.effect-card h3{font-size:15px;margin:5px 0}.effect-card p{font-size:10px;font-weight:800;color:var(--muted);line-height:1.45;margin:0}
+    .not-automatic{padding:9px 12px;border:3px dashed var(--red);border-radius:9px;background:#fdeaea;color:#913a30;font-size:11px;font-weight:900;text-align:center}
+    .action-flow-label{font-size:12px;font-weight:900;text-align:center;margin-top:3px}
+    .narrative{height:calc(100% - 124px);display:grid;grid-template-rows:1fr 92px;gap:14px}
+    .narrative-steps{display:grid;grid-template-columns:1fr 68px 1fr 68px 1fr;gap:10px;align-items:center}
+    .narrative-card{
+      height:270px;display:flex;flex-direction:column;justify-content:center;padding:18px;text-align:center;
+      border:4px solid var(--ink);border-radius:12px;background:#fff;
+      box-shadow:0 5px 0 rgba(91,70,50,.34),inset 0 0 0 2px #fff;
+    }
+    .narrative-card.org{border-color:var(--school);background:var(--school-bg)}
+    .narrative-card.delivery{border-color:var(--teal);background:#e5f6ef}
+    .narrative-card.market{border-color:var(--incu);background:var(--incu-bg)}
+    .narrative-icon{font-size:52px;line-height:1}.narrative-card .eyebrow{margin:10px 0 4px}
+    .narrative-card h2{font-size:24px;margin:0 0 8px}
+    .narrative-question{font-size:13px;font-weight:900;margin-bottom:12px}
+    .narrative-card p{font-size:11px;font-weight:800;color:var(--muted);line-height:1.55;margin:0}
+    .narrative-value{margin-top:13px;padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:11px;font-weight:900}
+    .narrative-arrow{display:grid;place-items:center;text-align:center;font-size:35px;font-weight:900}
+    .narrative-arrow small{display:block;font-size:9px;color:var(--muted);line-height:1.4}
+    .market-loop{
+      display:grid;grid-template-columns:repeat(5,1fr);align-items:center;gap:18px;padding:12px 18px;
+      border:4px double var(--assoc);border-radius:11px;background:var(--assoc-bg);position:relative;
+    }
+    .market-loop::after{content:"↺";position:absolute;right:12px;top:6px;color:var(--assoc);font-size:32px;font-weight:900}
+    .loop-step{position:relative;text-align:center;font-size:11px;font-weight:900}
+    .loop-step b{display:block;font-size:22px;margin-bottom:3px}
+    .loop-step:not(:last-child)::after{content:"→";position:absolute;right:-17px;top:14px;font-size:20px;color:var(--assoc)}
+    .content.compare,.content.ownership,.content.three-level,.content.simple-mapping,
+    .content.simple-screening,.content.goal-overview,.content.action-mechanism{height:calc(100% - 148px)}
+    .student-card{height:auto;grid-template-rows:auto auto auto auto 1fr}
+
+    @media(max-width:900px){
+      body{padding:8px;overflow:auto}.toolbar{overflow:auto}.board{width:100%;aspect-ratio:auto;min-height:900px;padding:22px}
+      .mast{height:auto;margin-bottom:20px}.stamp{display:none}.content{height:auto}
+      .flow,.cap-grid{grid-template-columns:1fr 1fr}.flow .card:not(:last-child)::after{display:none}
+      .story{grid-template-columns:1fr}.action-row{grid-template-columns:1fr}.action:not(:last-child)::after{display:none}
+      .growth-map{grid-template-rows:auto}.task-scene{width:100%}.branch-line{display:none}.growth-cards{grid-template-columns:1fr 1fr}
+      .growth-card::before{display:none}
+      .compare,.three-level,.simple-mapping,.simple-screening{grid-template-columns:1fr}.compare-center,.plus-arrow,.same-arrow,.screen-arrow{transform:rotate(90deg)}
+      .ownership-cards{grid-template-columns:1fr}.shared-work{width:100%}
+      .student-card{grid-template-columns:1fr}.student-card .character{grid-row:auto}.student-card p{grid-column:auto}
+      .action-mechanism{grid-template-columns:1fr}.goal-grid,.goal-actions,.effect-grid{grid-template-columns:1fr 1fr}
+      .mapping,.screening{grid-template-columns:1fr;height:auto}.bridge .arrow,.screening>.arrow{transform:rotate(90deg)}
+      .footer-note{position:static;margin-top:18px}
+    }
+    @media print{
+      body{padding:0;background:#fff}.toolbar{display:none}.board{width:1600px;height:900px;aspect-ratio:auto;border-radius:0;box-shadow:none;page-break-after:always}
+      .board[hidden]{display:block}.footer-note{bottom:12px}
+    }
+    @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+  <nav class="toolbar" aria-label="信息图切换">
+    <div class="toolbar-top">
+      <strong>MFU v0.15 机制信息图</strong>
+      <button class="btn chapter-btn" data-show="0" data-category="overview">总叙事</button>
+      <button class="btn chapter-btn" data-open-category="organization">01 新人才培养</button>
+      <button class="btn chapter-btn" data-open-category="delivery">02 新组织形式</button>
+      <button class="btn chapter-btn" data-open-category="market">03 新市场机制</button>
+    </div>
+    <div class="subnav" data-group="organization" data-label="新人才培养">
+      <button class="btn" data-show="1">人才培养</button>
+      <button class="btn" data-show="8">人才实践</button>
+      <button class="btn" data-show="12">人才评价</button>
+    </div>
+    <div class="subnav" data-group="delivery" data-label="新组织形式" hidden>
+      <button class="btn" data-show="4">人机分工</button>
+      <button class="btn" data-show="10">人：任务编排</button>
+      <button class="btn" data-show="11">人 + AI：负责交付</button>
+      <button class="btn" data-show="13">人 + AI：复盘改进</button>
+      <button class="btn" data-show="16">AI：企业大脑</button>
+    </div>
+    <div class="subnav" data-group="market" data-label="新市场机制" hidden>
+      <button class="btn" data-show="2">组织档案</button>
+      <button class="btn" data-show="9">任务匹配</button>
+      <button class="btn" data-show="17">评价与信任</button>
+      <button class="btn" data-show="14">合作机会</button>
+      <button class="btn" data-show="15">认证与机会</button>
+      <button class="btn" data-show="7">候选验证</button>
+      <button class="btn" data-show="18">订单与资本</button>
+    </div>
+  </nav>
+
+  <main>
+    <section class="board" id="board-0">
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 平台总叙事</div>
+          <h1>MFU 如何培育 OPC，并让能力进入真实市场</h1>
+          <p class="promise">新人才培养产生 OPC，人机协同形成新组织形式，新市场机制把能力变成订单、信任与资本。</p>
+        </div>
+        <div class="stamp">NEW TALENT<br>NEW ORG FORM<br>NEW MARKET</div>
+      </header>
+      <div class="content narrative">
+        <div class="narrative-steps">
+          <article class="narrative-card org">
+            <div class="narrative-icon">🧑‍🎓🦄</div>
+            <div class="eyebrow">01 · 新人才培养</div>
+            <h2>学生 + AI 小公司</h2>
+            <div class="narrative-question">新组织从哪里来？</div>
+          </article>
+          <div class="narrative-arrow">→<small>持续完成<br>真实任务</small></div>
+          <article class="narrative-card delivery">
+            <div class="narrative-icon">🧠⚙️</div>
+            <div class="eyebrow">02 · 新组织形式</div>
+            <h2>人机混合 + 企业大脑</h2>
+            <div class="narrative-question">新组织为什么更好？</div>
+          </article>
+          <div class="narrative-arrow">→<small>结果可评价<br>能力可验证</small></div>
+          <article class="narrative-card market">
+            <div class="narrative-icon">📦🤝🏭</div>
+            <div class="eyebrow">03 · 新市场机制</div>
+            <h2>灵活派单 + 训孵一体</h2>
+            <div class="narrative-question">这种优势如何形成闭环？</div>
+          </article>
+        </div>
+        <div class="market-loop" aria-label="平台闭环">
+          <div class="loop-step"><b>📮</b>真实需求与任务</div>
+          <div class="loop-step"><b>🧑‍🎓🦄</b>学生 OPC 交付</div>
+          <div class="loop-step"><b>📎</b>评价与成长证据</div>
+          <div class="loop-step"><b>⭐</b>信誉与市场信任</div>
+          <div class="loop-step"><b>💰</b>订单、机会与资本</div>
+        </div>
+      </div>
+      <div class="footer-note">新组织从哪里来 → 新组织为什么好 → 这种优势如何闭环与变现</div>
+    </section>
+
+    <section class="board" id="board-1" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 大学生创新创业实践平台 / 01</div>
+          <h1>学生如何通过人才培养成长为 OPC？</h1>
+          <p class="promise">学生和 AI 伙伴一起接任务、作决定、做交付，在经营中成长为 OPC。</p>
+        </div>
+        <div class="stamp">MY FIRST<br>UNICORN<br>我的第一家独角兽</div>
+      </header>
+      <div class="content">
+        <div class="story">
+          <article class="card story-hero">
+            <div class="characters" aria-label="学生和 AI 伙伴">
+              <div class="character"><div class="face">🧑‍🎓</div>学生</div>
+              <div class="character ai"><div class="face">🦄</div>AI 伙伴</div>
+            </div>
+            <div class="company-sign">🏢 像素小分队<small>学生在课余时间经营的 AI 小公司</small></div>
+          </article>
+          <div class="story-path">
+            <div class="action-row">
+              <article class="action">
+                <div class="action-icon">📥</div><h2>接任务</h2><p>发现一个真实问题</p>
+                <div class="action-sources">
+                  <span>任务来源</span>
+                  <span class="tag school">学校</span>
+                  <span class="tag">企业</span>
+                  <span class="tag incu">孵化器</span>
+                  <span class="tag purple">其他组织</span>
+                </div>
+              </article>
+              <article class="action"><div class="action-icon">🧭</div><h2>作决定</h2><p>决定自己做什么<br>AI 帮什么</p></article>
+              <article class="action"><div class="action-icon">📦</div><h2>做交付</h2><p>检查结果<br>为客户负责</p></article>
+            </div>
+            <div class="opc-result">
+              <div class="unicorn">🌱</div>
+              <div><strong>每完成一轮经营，离 OPC 更近一步</strong><span>不是只听创业课，而是真的练习如何经营一家公司。</span></div>
+              <div class="grow">副业 → 创业</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="footer-note">MFU v0.15 · 学生通过经营 AI-native 副业学习成为 OPC</div>
+    </section>
+
+    <section class="board" id="board-2" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 大学生创新创业实践平台 / 02</div>
+          <h1>平台用哪些记录理解一个组织？</h1>
+          <p class="promise">平台不看一个总分，而是分别查看经验、能力、信誉与认证。</p>
+        </div>
+        <div class="stamp">ONE ORG<br>FOUR RECORDS<br>一企四记</div>
+      </header>
+      <div class="content">
+        <div class="growth-map">
+          <article class="task-scene">
+            <div class="task-icon">📦</div>
+            <div>
+              <h2>一个组织的可验证档案</h2>
+              <p>不同记录回答不同问题，共同帮助市场理解这个组织。</p>
+            </div>
+          </article>
+          <div class="branch-line" aria-hidden="true"></div>
+          <div class="growth-cards">
+            <article class="growth-card exp">
+              <div class="big-icon">🧰</div>
+              <h2>经验</h2>
+              <div class="plain">做过多少</div>
+              <div class="rule">完成任务后<br>直接记入履历</div>
+              <div class="ui-sample">
+                <div class="ui-caption">个人档案 · 经验持续增长</div>
+                <div class="xp-row"><span>图文内容</span><div class="xp-bar"><i style="width:68%"></i><span>6.8</span></div></div>
+                <div class="xp-row"><span>客户沟通</span><div class="xp-bar"><i style="width:42%"></i><span>4.2</span></div></div>
+                <div class="xp-row"><span>任务路由</span><div class="xp-bar"><i style="width:81%"></i><span>8.1</span></div></div>
+              </div>
+            </article>
+            <article class="growth-card skill">
+              <div class="big-icon">🌱</div>
+              <h2>能力</h2>
+              <div class="plain">能做好什么</div>
+              <div class="rule">做得好并经过评价<br>才成为能力证据</div>
+              <div class="ui-sample">
+                <div class="ui-caption">成长树 · 达标后点亮节点</div>
+                <svg class="mini-tree" viewBox="0 0 210 64" aria-label="成长树示意">
+                  <line x1="105" y1="13" x2="52" y2="48"></line><line x1="105" y1="13" x2="158" y2="48"></line>
+                  <circle class="on" cx="105" cy="13" r="11"></circle>
+                  <circle class="on" cx="52" cy="48" r="12"></circle>
+                  <circle class="next" cx="158" cy="48" r="12"></circle>
+                  <text x="105" y="16">基础</text><text x="52" y="51">独立</text><text x="158" y="51">复杂</text>
+                </svg>
+              </div>
+            </article>
+            <article class="growth-card trust">
+              <div class="big-icon">🤝</div>
+              <h2>口碑</h2>
+              <div class="plain">是否值得信任</div>
+              <div class="rule">稳定履约、守信用<br>慢慢积累声望与信用</div>
+              <div class="ui-sample">
+                <div class="ui-caption">公司总览 · 市场记录</div>
+                <div class="trust-stats">
+                  <div class="trust-stat">⭐ 声望<b>42</b></div>
+                  <div class="trust-stat">🤝 信用<b>86</b></div>
+                </div>
+              </div>
+            </article>
+            <article class="growth-card badge">
+              <div class="big-icon">🏅</div>
+              <h2>徽章</h2>
+              <div class="plain">谁正式认可你</div>
+              <div class="rule">持续达到标准<br>再由机构正式确认</div>
+              <div class="ui-sample">
+                <div class="ui-caption">认证徽章架 · 来源可查看</div>
+                <div class="badge-shelf">
+                  <div class="mini-badge">🥈<small>白银信誉</small></div>
+                  <div class="mini-badge">🎯<small>判断力认证</small></div>
+                  <div class="mini-badge">📜<small>平台外证书</small></div>
+                </div>
+              </div>
+            </article>
+          </div>
+          <div class="growth-summary">这些记录共同描述组织，但不会被合并成一个 OPC 总分。</div>
+        </div>
+      </div>
+      <div class="footer-note">正式概念：经验履历 · 成长树 · 声望与信用 · 信誉/专业/角色认证</div>
+    </section>
+
+    <section class="board" id="board-4" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 大学生创新创业实践平台 / 04</div>
+          <h1>人负责什么，AI 负责什么？</h1>
+          <p class="promise">平台把一项共同交付拆开记录：学生做了什么，AI 伙伴做了什么。</p>
+        </div>
+        <div class="stamp">WHO DID WHAT<br>谁做了什么</div>
+      </header>
+      <div class="content ownership">
+        <article class="shared-work">
+          <div class="task-icon">📦</div>
+          <div><h2>同一个客户任务</h2><p>学生和 AI 伙伴一起完成，但合作方式可能不同。</p></div>
+        </article>
+        <div class="ownership-cards">
+          <article class="owner-card">
+            <div class="big-icon">🧑‍🎓</div>
+            <h2>学生主导</h2>
+            <p>学生理解需求、作关键决定、选择工具、检查质量，并对最终交付负责。</p>
+            <div class="rule">这些贡献可证明学生的<br><b>专业能力、资源编排与交付负责</b></div>
+          </article>
+          <article class="owner-card">
+            <div class="big-icon">🦄</div>
+            <h2>AI 伙伴主导</h2>
+            <p>AI 伙伴生成内容、执行具体步骤，并在任务中表现出自己的优势和不足。</p>
+            <div class="rule">这些贡献记录为<br><b>Agent 表现、训练资产与公司交付经验</b></div>
+          </article>
+        </div>
+        <div class="growth-summary">一项成果可以共同完成，但每一份贡献只归到真正完成它的主体。</div>
+      </div>
+      <div class="footer-note">MFU v0.15 · Agent 成长属于公司资产，不自动算作个人成长</div>
+    </section>
+
+    <section class="board" id="board-7" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 大学生创新创业实践平台 / 07</div>
+          <h1>孵化器如何发现并验证候选组织？</h1>
+          <p class="promise">先看真实成长记录，再用挑战验证，最后由真人作决定。</p>
+        </div>
+        <div class="stamp">DISCOVER<br>VERIFY · INVITE<br>发现 · 验证 · 邀请</div>
+      </header>
+      <div class="content simple-screening">
+        <article class="screen-step">
+          <div class="big-icon">🗂️</div>
+          <div class="eyebrow">01 · 发现</div>
+          <h2>查看候选档案</h2>
+          <p>经验履历、成长树、声望与信用、认证徽章。</p>
+        </article>
+        <div class="arrow">→</div>
+        <article class="screen-step">
+          <div class="big-icon">🧩</div>
+          <div class="eyebrow">02 · 验证</div>
+          <h2>发一个真实挑战</h2>
+          <p>只验证还不确定、但对孵化器很重要的能力。</p>
+        </article>
+        <div class="arrow">→</div>
+        <article class="screen-step">
+          <div class="big-icon">👀</div>
+          <div class="eyebrow">03 · 判断</div>
+          <h2>真人查看过程</h2>
+          <p>看学生如何选择、协作、交付和复盘。</p>
+        </article>
+        <div class="arrow">→</div>
+        <article class="screen-step">
+          <div class="big-icon">🏭</div>
+          <div class="eyebrow">04 · 邀请</div>
+          <h2>孵化器作决定</h2>
+          <p>适合自己的候选人，才收到正式邀请。</p>
+        </article>
+        <div class="no-score">没有一个「OPC 总分」自动决定谁能入选</div>
+        <div class="growth-summary">平台帮助发现和验证；孵化器保留最终选择权。</div>
+      </div>
+      <div class="footer-note">MFU v0.15 · 候选档案 → 验证任务 → 真人评估 → 入驻邀请</div>
+    </section>
+
+    <section class="board" id="board-8" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新人才培养 / 人才实践</div>
+          <h1>学生在经营中练习什么？</h1>
+          <p class="promise">学生不是只听创业课，而是在一次次任务中练习判断、协作、交付与复盘。</p>
+        </div>
+        <div class="stamp">LEARN BY DOING<br>IN ACTION<br>做中学</div>
+      </header>
+      <div class="content goal-overview">
+        <div class="goal-grid">
+          <article class="goal-card">
+            <div class="goal-icon">🧭</div><div><h2><span class="goal-number">练习 1</span>判断</h2><p>理解需求、识别约束，并决定下一步怎么做。</p></div>
+          </article>
+          <article class="goal-card">
+            <div class="goal-icon">🤝</div><div><h2><span class="goal-number">练习 2</span>协作</h2><p>安排自己、成员、AI 与外部伙伴共同完成任务。</p></div>
+          </article>
+          <article class="goal-card">
+            <div class="goal-icon">📦</div><div><h2><span class="goal-number">练习 3</span>交付</h2><p>检查质量、履行承诺，并为最终结果负责。</p></div>
+          </article>
+          <article class="goal-card">
+            <div class="goal-icon">🔍</div><div><h2><span class="goal-number">练习 4</span>复盘</h2><p>从结果中找到原因，改变方法并再次验证。</p></div>
+          </article>
+        </div>
+        <div class="goal-actions">
+          <article class="action-column">
+            <h3>判断发生在行动中</h3>
+            <div class="verb-list">
+              <div class="verb">理解客户需求</div>
+              <div class="verb">选择解决方案</div>
+              <div class="verb">判断任务风险</div>
+              <div class="verb">决定资源投入</div>
+            </div>
+          </article>
+          <article class="action-column">
+            <h3>协作发生在行动中</h3>
+            <div class="verb-list">
+              <div class="verb">路由任务</div>
+              <div class="verb">安排成员</div>
+              <div class="verb">安排 Agent</div>
+              <div class="verb">协调外部伙伴</div>
+            </div>
+          </article>
+          <article class="action-column">
+            <h3>交付发生在行动中</h3>
+            <div class="verb-list">
+              <div class="verb">检查作品质量</div>
+              <div class="verb">确认交付范围</div>
+              <div class="verb">按时提交成果</div>
+              <div class="verb">接受客户验收</div>
+            </div>
+          </article>
+          <article class="action-column">
+            <h3>复盘发生在行动后</h3>
+            <div class="verb-list">
+              <div class="verb">查看真实反馈</div>
+              <div class="verb">寻找失败原因</div>
+              <div class="verb">修改工作方法</div>
+              <div class="verb">再次验证改进</div>
+            </div>
+          </article>
+        </div>
+      </div>
+      <div class="footer-note">MFU v0.15 · 判断 → 协作 → 交付 → 复盘 → 再次行动</div>
+    </section>
+
+    <section class="board" id="board-9" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 任务匹配</div>
+          <h1>任务如何匹配给合适的组织？</h1>
+          <p class="promise">任务带着能力、信誉和风险要求进入市场，符合条件的组织才能看见、申请或承接。</p>
+        </div>
+        <div class="stamp">TASK<br>MEETS ORG<br>任务找到组织</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">📮</div><h2>一个任务进入市场</h2>
+          <p>学校、企业或孵化器说明任务目标、难度、预算和责任要求。</p>
+          <div class="action-flow-label">发布要求 → 匹配组织 → 双方选择</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend">
+            <span class="legend-item direct">任务侧：需要什么</span>
+            <span class="legend-item conditional">组织侧：证明过什么</span>
+            <span class="legend-item gated">双方：是否愿意合作</span>
+          </div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">🌳</div><h3>匹配能力要求</h3><p>任务需要哪些能力、达到什么水平，与组织成长树对应。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🤝</div><h3>匹配信誉要求</h3><p>信用、履约记录和风险状态决定任务是否愿意开放。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🏅</div><h3>匹配认证要求</h3><p>高责任任务可以要求专业认证、角色资质或会籍。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🧰</div><h3>参考相关经验</h3><p>经验帮助发布者判断熟练程度，但不会代替能力证明。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">📎</div><h3>查看真实证据</h3><p>发布者可以查看作品、评价和相似任务的交付结果。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">✅</div><h3>双方作出选择</h3><p>平台提供匹配建议；组织是否申请、发布者是否选择仍由双方决定。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：平台用一个 OPC 总分替发布者决定谁能接任务。</div>
+        </div>
+      </div>
+      <div class="footer-note">任务要求 × 组织档案 × 双方选择 → 合适的合作关系</div>
+    </section>
+
+    <section class="board" id="board-10" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新组织形式 / 人：任务编排</div>
+          <h1>任务如何安排给人和 AI？</h1>
+          <p class="promise">学生决定谁来做、为什么这样安排，并检查 AI 的结果。</p>
+        </div>
+        <div class="stamp">ROUTE THE WORK<br>HUMAN + AI<br>安排与负责</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🧭</div><h2>安排工作</h2>
+          <p>把设计、文案、增长等环节交给自己、AI 伙伴或其他成员，并说明判断理由。</p>
+          <div class="action-flow-label">看懂任务 → 选择执行者 → 检查结果</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：直接记录</span><span class="legend-item conditional">虚线：经过评价</span><span class="legend-item gated">双线门：达到认证标准</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">🎯</div><h3>路由判断次数增加</h3><p>平台记录学生作了多少次选择，以及结果是否合适。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🦄</div><h3>Agent 实战评价增加</h3><p>AI 伙伴做了什么、表现如何，记录在 Agent 档案中。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🏢</div><h3>公司协作经验增加</h3><p>这次人机协作属于公司的经营与交付过程。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>资源编排证据</h3><p>学生能解释选择并持续交付好结果，才证明资源编排能力。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">📦</div><h3>交付负责证据</h3><p>即使 AI 执行，学生检查质量并承担责任，才形成个人证据。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🏅</div><h3>判断力认证</h3><p>至少完成 5 次判断且达标率达到 60%，才获得认证。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：AI 做得好，就等于学生本人已经掌握这项专业能力。</div>
+        </div>
+      </div>
+      <div class="footer-note">学生贡献、Agent 表现与公司成果分别记录，不相互冒领</div>
+    </section>
+
+    <section class="board" id="board-11" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新组织形式 / 人 + AI：负责交付</div>
+          <h1>怎样完成一次负责任的交付？</h1>
+          <p class="promise">交付不只是按下“完成”：时间、质量和承诺会一起进入公司的真实记录。</p>
+        </div>
+        <div class="stamp">DELIVER<br>KEEP THE PROMISE<br>完成并负责</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">📦</div><h2>确认并完成交付</h2>
+          <p>学生检查所有环节，把结果交给客户，并对是否准时、是否符合要求负责。</p>
+          <div class="action-flow-label">检查质量 → 提交成果 → 客户验收</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：直接结算</span><span class="legend-item conditional">虚线：由结果决定</span><span class="legend-item gated">双线门：信誉与能力门槛</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📋</div><h3>订单经验增加</h3><p>订单状态、交付时间、客户和成果进入公司订单档案。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">💰</div><h3>获得收入或奖金</h3><p>验收完成后结算收入；比赛任务还可能按名次分配奖金。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🗂️</div><h3>作品集增加</h3><p>成果成为可以回看的作品，保留质量与来源信息。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🤝</div><h3>信用上升或下降</h3><p>守约有利于信用；超期、违约或逃避责任会扣减信用。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">⭐</div><h3>声望与能力证据</h3><p>公开的高质量结果可能提升声望，并进入成长树评价。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🛠️</div><h3>更高价值机会</h3><p>能力、信誉等级和风险状态达标后，更多任务或功能开放。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：交付一次就获得高信用；交付很多次就一定拥有高水平能力。</div>
+        </div>
+      </div>
+      <div class="footer-note">经验看做过多少 · 信用看是否守约 · 成长树看能否持续做好</div>
+    </section>
+
+    <section class="board" id="board-12" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新人才培养 / 人才评价</div>
+          <h1>真实反馈如何帮助学生成长？</h1>
+          <p class="promise">评价把一份普通作品，变成可以证明能力水平的证据。</p>
+        </div>
+        <div class="stamp">GET REVIEWED<br>PROVE THE LEVEL<br>评价形成证据</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🏁</div><h2>让成果接受比较</h2>
+          <p>老师、企业、专家或竞赛规则依据共同标准，评价作品和学生的过程表现。</p>
+          <div class="action-flow-label">提交成果 → 按标准评价 → 保留证据</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：保留评价记录</span><span class="legend-item conditional">虚线：达到质量门</span><span class="legend-item gated">双线门：满足认证规则</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📎</div><h3>评价记录增加</h3><p>评价人、标准、得分、作品和学生贡献一起保留。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🏁</div><h3>竞赛结果进入档案</h3><p>名次说明这次表现，但不会替代完整的能力判断。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🎓</div><h3>课程学分增加</h3><p>demo 中，班内竞赛进入前 50% 的课程作业才计学分。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>成长树可能达标</h3><p>足够可靠的证据组合达到标准后，对应节点才会点亮。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">⭐</div><h3>声望可能提升</h3><p>公开成绩、专家评价和竞赛表现可以带来市场认可。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🏅</div><h3>获得专业认证</h3><p>证据符合认证机构的标准后，认证才进入徽章架。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：只要参加评价或竞赛，就得到学分、能力达标或专业认证。</div>
+        </div>
+      </div>
+      <div class="footer-note">参与留下记录；达到质量标准，才形成学分、能力证据或认证结果</div>
+    </section>
+
+    <section class="board" id="board-13" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新组织形式 / 人 + AI：复盘改进</div>
+          <h1>怎样让下一次交付更好？</h1>
+          <p class="promise">失败只是素材；找到原因，并在下一次改变做法，才是真正的成长。</p>
+        </div>
+        <div class="stamp">REFLECT<br>CHANGE NEXT TIME<br>复盘改变下一次</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🔍</div><h2>回看一次失败或打回</h2>
+          <p>学生找出主要原因，调整自己的方法或 Agent 的规则，再到下一次任务中验证。</p>
+          <div class="action-flow-label">看结果 → 找原因 → 改方法 → 再验证</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：复盘后记录</span><span class="legend-item conditional">虚线：下次证明有效</span><span class="legend-item gated">双线门：形成稳定能力</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📝</div><h3>复盘经验增加</h3><p>问题、原因、决定和下一次行动进入个人复盘档案。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🦄</div><h3>Agent 训练资产增加</h3><p>对 AI 的新守则、范例和检查规则进入 Agent 资产。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🧭</div><h3>获得下一步建议</h3><p>平台根据薄弱环节推荐下一项练习或验证任务。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">📈</div><h3>形成改进证据</h3><p>下一次真的减少同类问题，才证明复盘产生了效果。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>推进复盘迭代能力</h3><p>多次“发现原因—改变行动—结果改善”才能达到标准。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🚀</div><h3>挑战更复杂任务</h3><p>基础能力稳定后，平台可以推荐更复杂的验证情境。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：失败一次，或者写一篇复盘，就直接获得“复盘迭代”能力。</div>
+        </div>
+      </div>
+      <div class="footer-note">失败 → 复盘素材；有效改进 + 再次验证 → 能力证据</div>
+    </section>
+
+    <section class="board" id="board-14" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 合作机会</div>
+          <h1>好组织如何获得更大的合作机会？</h1>
+          <p class="promise">认识更多人会带来连接；把不同资源组合成好结果，才证明协作能力。</p>
+        </div>
+        <div class="stamp">CONNECT<br>COLLABORATE<br>连接与合作</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🤝</div><h2>认识伙伴并共同做事</h2>
+          <p>学生可以认识客户、评审、同学和行业伙伴，也可以联合完成一个项目。</p>
+          <div class="action-flow-label">建立连接 → 形成合作 → 一起交付</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：连接和合作记录</span><span class="legend-item conditional">虚线：合作结果优秀</span><span class="legend-item gated">双线门：功能条件满足</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">🫱</div><h3>人脉经验增加</h3><p>新认识的角色、来源和互动进入个人联系记录。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">📬</div><h3>任务来源增加</h3><p>新的客户和组织可能带来更多任务、评价与学习机会。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🧩</div><h3>合作过程被记录</h3><p>谁贡献了什么、如何分工、最后怎样交付都可以追溯。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>协作与资源组合证据</h3><p>能够处理分工、冲突和共同责任，才证明协作能力。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">⭐</div><h3>声望可能提升</h3><p>合作伙伴的评价和公开成果可以形成市场认可。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🛠️</div><h3>联合竞标可用</h3><p>公司信誉、专业能力和风险状态达到规则后，功能才开放。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：认识很多人就拥有高信用；参加合作就证明自己会组织复杂协作。</div>
+        </div>
+      </div>
+      <div class="footer-note">人脉是经验；经过真实合作验证的结果，才可能成为能力证据</div>
+    </section>
+
+    <section class="board" id="board-15" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 认证与机会</div>
+          <h1>能力与信誉如何变成认证和机会？</h1>
+          <p class="promise">提交材料只是开始：达到标准、通过核验和获得正式批准是不同状态。</p>
+        </div>
+        <div class="stamp">APPLY<br>VERIFY · APPROVE<br>申请 · 核验 · 批准</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🏅</div><h2>提交认证或机会申请</h2>
+          <p>学生可以参加平台认证、录入平台外证书，或申请评审、教练和孵化器机会。</p>
+          <div class="action-flow-label">提交材料 → 核验标准 → 正式批准</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">实线：提交后留下状态</span><span class="legend-item conditional">虚线：核验通过</span><span class="legend-item gated">双线门：正式资格或机会</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📄</div><h3>申请记录增加</h3><p>平台显示已提交、核验中、通过或未通过，不把申请等同于获证。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">📜</div><h3>平台外材料进入档案</h3><p>证书先标注“平台外”和核验状态，再决定如何使用。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🏅</div><h3>认证进入徽章架</h3><p>达到专业标准并通过核验后，正式认证才会展示。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🎓</div><h3>获得角色资质</h3><p>能力、经验、信誉与人工审核同时满足，才能承担高责任角色。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🛠️</div><h3>平台功能开放</h3><p>公开评审、教练工作台等功能读取对应资质与风险状态。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🏭</div><h3>进入验证或邀请流程</h3><p>被关注不等于入驻；孵化器验证并由真人决定是否邀请。</p></article>
+          </div>
+          <div class="not-automatic">不会自动发生：上传一张证书就点亮成长树；达到一个数字就自动进入孵化器。</div>
+        </div>
+      </div>
+      <div class="footer-note">有资格申请 ≠ 已经申请 ≠ 正式获批；三个状态必须分开</div>
+    </section>
+
+    <section class="board" id="board-16" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新组织形式 / 企业大脑</div>
+          <h1>公司如何记住每一次交付？</h1>
+          <p class="promise">AI 不只执行当前任务，还帮助公司把作品、流程、客户知识和复盘沉淀为可复用资产。</p>
+        </div>
+        <div class="stamp">COMPANY BRAIN<br>REMEMBERS<br>企业大脑</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🧠</div><h2>每完成一项任务</h2>
+          <p>学生负责判断与确认，AI 帮助整理过程，把零散经验变成公司下一次可以调用的记忆。</p>
+          <div class="action-flow-label">完成 → 沉淀 → 复用 → 变得更好</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">输入：真实交付</span><span class="legend-item conditional">沉淀：可复用资产</span><span class="legend-item gated">结果：下一次更好</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">🗂️</div><h3>记住作品</h3><p>交付物、版本和质量评价进入公司的作品与案例库。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">📇</div><h3>记住客户</h3><p>需求、偏好、承诺和合作历史进入客户档案。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🧭</div><h3>记住流程</h3><p>任务拆解、路由选择和检查步骤进入工作手册。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🔍</div><h3>记住复盘</h3><p>失败原因和有效改进变成下一次可以调用的方法。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🦄</div><h3>训练 Agent</h3><p>范例、守则和实战评价沉淀为公司的 Agent 训练资产。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">📈</div><h3>下一次更好</h3><p>已有记忆帮助新任务更快启动、稳定交付并减少重复错误。</p></article>
+          </div>
+          <div class="not-automatic">企业大脑属于公司资产；它不会自动变成学生个人能力。</div>
+        </div>
+      </div>
+      <div class="footer-note">作品 + 客户 + 流程 + 复盘 + Agent 训练 → 可复用的公司记忆</div>
+    </section>
+
+    <section class="board" id="board-17" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 评价与信任</div>
+          <h1>交付如何形成评价与市场信任？</h1>
+          <p class="promise">市场不只看组织怎么介绍自己，而是查看它真正交付过什么、别人如何评价、承诺是否兑现。</p>
+        </div>
+        <div class="stamp">DELIVERY<br>BUILDS TRUST<br>交付建立信任</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">📦</div><h2>一次真实交付</h2>
+          <p>作品质量、交付时间、客户反馈和责任记录共同进入可追溯档案。</p>
+          <div class="action-flow-label">交付 → 评价 → 记录 → 信任</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">事实：发生过什么</span><span class="legend-item conditional">评价：做得怎么样</span><span class="legend-item gated">信任：是否愿意再合作</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📋</div><h3>履约记录</h3><p>是否按时、是否完成承诺、是否发生违约都可以追溯。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🗂️</div><h3>作品记录</h3><p>交付成果、版本和组织贡献进入作品与订单档案。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">⭐</div><h3>公开评价</h3><p>客户、企业、专家或竞赛依据标准评价结果质量。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>能力证据</h3><p>高质量且可靠的评价可以证明组织已经具备某项能力。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🤝</div><h3>声望与信用</h3><p>公开成绩形成声望；持续履约建立信用。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🔁</div><h3>再次合作</h3><p>发布者基于真实记录，决定是否提供更重要的任务。</p></article>
+          </div>
+          <div class="not-automatic">做过很多任务不等于值得信任；质量和履约必须分别被证明。</div>
+        </div>
+      </div>
+      <div class="footer-note">真实交付 → 可追溯评价 → 声望与信用 → 市场信任</div>
+    </section>
+
+    <section class="board" id="board-18" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 订单与资本</div>
+          <h1>好组织如何获得更大的订单与资本？</h1>
+          <p class="promise">稳定交付形成能力与信誉；市场再把更高价值的任务、合作资源和孵化支持交给经过验证的组织。</p>
+        </div>
+        <div class="stamp">PROOF<br>TO OPPORTUNITY<br>证明变成机会</div>
+      </header>
+      <div class="content action-mechanism">
+        <article class="action-focus">
+          <div class="action-icon">🏢</div><h2>一个经过验证的组织</h2>
+          <p>拥有相关能力、稳定履约、良好信誉，并能够展示真实作品与评价。</p>
+          <div class="action-flow-label">证明能力 → 建立信任 → 获得机会</div>
+        </article>
+        <div class="action-results">
+          <div class="mechanism-legend"><span class="legend-item direct">市场：更大需求</span><span class="legend-item conditional">组织：符合条件</span><span class="legend-item gated">双方/孵化器：真人决定</span></div>
+          <div class="effect-grid">
+            <article class="effect-card direct"><div class="effect-icon">📦</div><h3>更大订单</h3><p>更高预算、更复杂约束和更高责任的任务向合适组织开放。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🤝</div><h3>联合竞标</h3><p>多个能力互补的组织可以组合资源，共同承接项目。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🦄</div><h3>资产交易</h3><p>成熟 Agent 和训练资产可以出租或服务其他组织。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🏅</div><h3>认证与资质</h3><p>能力、经验和信誉符合标准后，可以申请更高责任角色。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">💰</div><h3>Grant 与桥贷</h3><p>孵化器可以依据组织证据提供资金、算力或资源支持。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">🏭</div><h3>入驻与投后支持</h3><p>通过验证任务和真人评估后，组织获得入驻及长期支持。</p></article>
+          </div>
+          <div class="not-automatic">能力和信誉带来被看见与申请资格；订单、资金和入驻仍由真实双方决定。</div>
+        </div>
+      </div>
+      <div class="footer-note">能力 + 履约 + 信誉 + 认证 → 订单、合作、资本与孵化机会</div>
+    </section>
+  </main>
+
+  <script>
+    const boards=[...document.querySelectorAll('.board')];
+    const buttons=[...document.querySelectorAll('[data-show]')];
+    const chapterButtons=[...document.querySelectorAll('[data-open-category]')];
+    const subnavs=[...document.querySelectorAll('[data-group]')];
+    const pageCategory={
+      '0':'overview',
+      '1':'organization','8':'organization','12':'organization',
+      '4':'delivery','10':'delivery','11':'delivery','13':'delivery','16':'delivery',
+      '2':'market','7':'market','9':'market','14':'market','15':'market','17':'market','18':'market'
+    };
+    function showCategory(category){
+      subnavs.forEach(nav=>{nav.hidden=nav.dataset.group!==category;});
+      chapterButtons.forEach(button=>button.setAttribute('aria-pressed',button.dataset.openCategory===category));
+    }
+    function showBoard(id){
+      boards.forEach(board=>{board.hidden=board.id!==`board-${id}`;});
+      buttons.forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.show)===String(id)));
+      showCategory(pageCategory[id]);
+      const url=new URL(location.href);url.searchParams.set('board',id);history.replaceState(null,'',url);
+    }
+    buttons.forEach(button=>button.addEventListener('click',()=>showBoard(button.dataset.show)));
+    chapterButtons.forEach(button=>button.addEventListener('click',()=>{
+      const firstPage={organization:'1',delivery:'4',market:'2'}[button.dataset.openCategory];
+      showBoard(firstPage);
+    }));
+    const initial=new URL(location.href).searchParams.get('board')||'0';
+    showBoard(['0','1','2','4','7','8','9','10','11','12','13','14','15','16','17','18'].includes(initial)?initial:'0');
+  </script>
+</body>
+</html>

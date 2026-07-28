@@ -1,7 +1,21 @@
-# MFU Design System Skill
+---
+name: mfu-design-system
+description: Apply the MFU (My First Unicorn) parchment-and-paper visual system to playable HTML demos, capability maps, infographics, stakeholder explainers, and related UI. Use whenever creating or modifying MFU visual artifacts, especially the single-file prototype and school/incubator-facing mechanism diagrams.
+---
+
+# MFU Design System
 
 > 提取自 `MFU-v0.13-可试玩原型.html` 的完整设计语言。
 > 任何对 MFU demo 的 UI 改动必须遵循此文件中的规则。
+
+## 工作流
+
+1. 先读取目标 artifact 的真实内容与现有组件，不用占位文案。
+2. 复用本文 token 与组件；新增样式必须能解释为 MFU 世界中的纸张、档案、印章、徽章或课程记录。
+3. 信息图与 demo 使用同一套组件语言，使信息图成为产品界面的放大解释，而不是另一套宣传模板。
+4. 优先用结构表达关系：学校绿、孵化器橙、协会蓝只标识真实角色；金色只表示当前重点或待达成目标。
+5. 完成后在目标尺寸与窄屏各检查一次；确认无溢出、正文不小于 9.5px、键盘焦点可见，并遵守 `prefers-reduced-motion`。
+6. 截图复核视觉层级和文字密度，至少删除一个不服务信息理解的装饰元素。
 
 ---
 
