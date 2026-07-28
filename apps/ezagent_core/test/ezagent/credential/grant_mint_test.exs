@@ -178,7 +178,13 @@ defmodule Ezagent.Credential.GrantMintTest do
             throw(:launch_boom)
           catch
             kind, reason ->
-              GrantMint.raise_compensating(g.agent_uri, g.incarnation_id, kind, reason, __STACKTRACE__)
+              GrantMint.raise_compensating(
+                g.agent_uri,
+                g.incarnation_id,
+                kind,
+                reason,
+                __STACKTRACE__
+              )
           end
         )
 
@@ -193,7 +199,12 @@ defmodule Ezagent.Credential.GrantMintTest do
           throw(:launch_boom2)
         catch
           kind, reason ->
-            GrantMint.raise_compensating(g2.agent_uri, g2.incarnation_id, kind, reason, __STACKTRACE__,
+            GrantMint.raise_compensating(
+              g2.agent_uri,
+              g2.incarnation_id,
+              kind,
+              reason,
+              __STACKTRACE__,
               delete_fun: failing,
               attempts: 2,
               backoff_ms: 1

@@ -289,6 +289,7 @@ defmodule Ezagent.Credential.HomeRuntime do
   """
   @spec grant_ctx_incarnation(grant_ctx()) :: String.t() | nil
   def grant_ctx_incarnation(nil), do: nil
+
   def grant_ctx_incarnation({:grant, _uri, _fetched_id, _version, minted_incarnation_id}),
     do: minted_incarnation_id
 

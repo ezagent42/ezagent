@@ -93,17 +93,15 @@ defmodule Ezagent.CredentialIncarnationBackfillMigrationTest do
       [agent_uri]
     )
 
-    assert scalar!(
-             "SELECT incarnation_id FROM credential_grants WHERE id = '#{agent_uri}'"
-           ) == nil
+    assert scalar!("SELECT incarnation_id FROM credential_grants WHERE id = '#{agent_uri}'") ==
+             nil
 
     # 3. Run the REMAINING migrations (the new later-timestamped backfill).
     Ecto.Migrator.run(MigrationRepo, migrations_path, :up, all: true, log: false)
 
     # 4. The new migration reached the pre-existing NULL row and backfilled it.
-    assert scalar!(
-             "SELECT incarnation_id FROM credential_grants WHERE id = '#{agent_uri}'"
-           ) == "legacy:#{agent_uri}"
+    assert scalar!("SELECT incarnation_id FROM credential_grants WHERE id = '#{agent_uri}'") ==
+             "legacy:#{agent_uri}"
   end
 
   defp scalar!(sql), do: query!(sql).rows |> hd() |> hd()
