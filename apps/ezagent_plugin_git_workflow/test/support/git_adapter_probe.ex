@@ -48,7 +48,12 @@ defmodule EzagentPluginGitWorkflow.GitAdapterProbe do
   @impl true
   def read_change_request(context, repository, change_request_id) do
     report(:read_change_request, context)
-    {:ok, %{change_request(repository, "task/p4b/read", 0) | external_id: change_request_id.external_id}}
+
+    {:ok,
+     %{
+       change_request(repository, "task/p4b/read", 0)
+       | external_id: change_request_id.external_id
+     }}
   end
 
   @impl true
