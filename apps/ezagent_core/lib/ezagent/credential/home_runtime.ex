@@ -201,7 +201,47 @@ defmodule Ezagent.Credential.HomeRuntime do
   @spec config_complete_marker() :: String.t()
   def config_complete_marker, do: @config_complete_marker
 
-  @doc false
+  @doc """
+  The pre-launch grant re-validation, called by every file-flavor arm IMMEDIATELY
+  before the irreversible launch side effect (sidecar/PTY `Port.open`; curl's
+  cross-actor api-key slice write at `curl_agent.ex:139`).
+
+  `GrantRow.revalidate_version!/3` re-reads the grant AND (codex r2 NEW-HIGH-2)
+  re-runs `generations_current?/1` against the FRESH active authority rows
+  (`Ezagent.Cap.Authority.current_generation/1` is a live `Repo.one`), so a holder
+  or source `regenesis` that COMMITTED before this call is DENIED
+  (`{:error, {:grant_changed_before_launch, _}}`) and the arm tears down the
+  secret-bearing config dir before anything launches.
+
+  ## #201-cred (codex r3 HIGH-2) — the residual TOCTOU window, precisely
+
+  A residual window remains and is STRUCTURALLY UNAVOIDABLE for an external
+  launch: a `regenesis` that commits in the micro-interval AFTER this call
+  returns `:ok` and BEFORE the irreversible op completes (the `Port.open`
+  syscall, or the `Invocation.dispatch` that writes curl's api-key slice in
+  ANOTHER Kind's process) would launch under the now-retired authority
+  generation. It cannot be closed by holding an authority-generation lease across
+  the side effect, because:
+
+    * the secret is ALREADY materialized to the on-disk config home before this
+      check (a denied launch tears the home down; it cannot un-read a byte a
+      subprocess is mid-read), and
+    * the irreversible op is an OS process exec / a cross-process actor dispatch —
+      NOT a same-connection DB write — so no `SELECT ... FOR UPDATE` on the active
+      authority row (the lock `GrantMint.insert_guarded/4` legitimately holds
+      across the MINT, a pure DB transaction) can be held across it without
+      pinning a DB connection for the subprocess's entire lifetime and serializing
+      all regenesis behind live agents.
+
+  The window is therefore MINIMIZED (this re-check is the LAST thing before the
+  launch) and BOUNDED to the check→exec micro-interval; the MINT itself is
+  lock-serialized against regenesis, and every subsequent MATERIALIZATION re-reads
+  generations, so a stale-generation grant can never be re-used after the fact —
+  only this one in-flight launch can slip the sub-interval. A future full closure
+  would require the launch to present a short-lived, generation-bound lease token
+  the target verifies at exec time (a `Cap.Authority`-style signing design) — out
+  of scope for this round.
+  """
   @spec revalidate_grant_before_launch(grant_ctx()) :: :ok | {:error, term()}
   def revalidate_grant_before_launch(nil), do: :ok
 

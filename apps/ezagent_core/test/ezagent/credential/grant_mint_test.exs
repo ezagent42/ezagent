@@ -478,6 +478,40 @@ defmodule Ezagent.Credential.GrantMintTest do
                GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
     end
 
+    # #201-cred (codex r3 HIGH-2) — LOCK-IN at the LAUNCH boundary. The plugin
+    # arms call `HomeRuntime.revalidate_grant_before_launch/1` (the wrapper),
+    # NOT `revalidate_version!/3` directly, immediately before the sidecar/PTY
+    # launch. A regenesis that COMMITTED before that call must DENY the launch.
+    # This is GREEN on the round-2 tree (the wrapper already routes through the
+    # generation-re-checking `revalidate_version!/3`); it locks the pre-launch
+    # generation re-check in place so a refactor cannot silently drop it. The
+    # remaining residual (a regenesis committing in the check→`Port.open`
+    # micro-interval) is structurally unavoidable — see the wrapper's docs.
+    test "HIGH-2 lock-in: revalidate_grant_before_launch denies a committed regenesis", ctx do
+      assert {:ok, pending} = authorize(ctx)
+      assert {:ok, _grant} = GrantMint.mint(ctx.agent_uri, pending, witness(ctx.agent_uri))
+
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+
+      assert {:ok, _source, version, incarnation_id} =
+               GrantRow.fetch_for_materialize(agent_uri_str)
+
+      # The grant_ctx the plugin threads to the pre-launch gate (5-tuple; the
+      # minted 5th element is irrelevant to revalidation).
+      grant_ctx = {:grant, agent_uri_str, incarnation_id, version, incarnation_id}
+
+      # Still current → the launch is permitted.
+      assert :ok = Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+
+      # Source authority regenerates (committed) between materialize and launch.
+      _ = regenesis(ctx.source_uri, :agent)
+
+      # The pre-launch gate DENIES the launch — no subprocess starts with the
+      # secret authorized under the now-retired generation.
+      assert {:error, {:grant_changed_before_launch, ^agent_uri_str}} =
+               Ezagent.Credential.HomeRuntime.revalidate_grant_before_launch(grant_ctx)
+    end
+
     # #201-cred (codex r2 NEW-HIGH-3) — minting is structurally confined to the
     # created-winner arm: every mint path requires a `CreatedWitness` bound to
     # the agent under mint. A caller with a valid descriptor but no witness (or
