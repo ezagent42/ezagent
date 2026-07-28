@@ -144,6 +144,14 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :invalid_change_limits_config,
     :no_changes_collected,
     :change_digest_mismatch,
+    # §7.2's last bullet DEFINES this code as the deadline outcome ("达到
+    # deadline:明确 `blocked: observation_incomplete`"), and it is produced at
+    # exactly one place — `Observation`'s spent-deadline branch. The condition
+    # the tick was waiting on may well clear later; that is not what
+    # `classify/1` answers. It answers "retry or stop", and a spent budget is
+    # a stop. Classifying it retryable forced the caller to bypass `classify/1`
+    # and produced a self-contradictory `{:blocked, %{retryable: true}}`.
+    :observation_incomplete,
     # Not in §7.2's two examples, decided here (moduledoc "no code may be
     # unclassified"): a denied permission, a repository or base ref that is
     # not there, a provider account nobody connected, and a malformed
@@ -165,8 +173,7 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :workspace_not_ready,
     :workspace_read_failed,
     :checks_unavailable,
-    :credential_backend_unavailable,
-    :observation_incomplete
+    :credential_backend_unavailable
   ]
 
   @type code ::

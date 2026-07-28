@@ -126,8 +126,7 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
 
   defp script(opts) do
     %{
-      read_change_request:
-        Keyword.get(opts, :read_change_request, {:ok, change_request(opts)}),
+      read_change_request: Keyword.get(opts, :read_change_request, {:ok, change_request(opts)}),
       list_checks: Keyword.get(opts, :list_checks, {:ok, [completed(:succeeded, "chk-1")]}),
       list_reviews: Keyword.get(opts, :list_reviews, {:ok, [review(:approved, "rev-1")]})
     }
@@ -391,7 +390,9 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
 
       :ok =
         ScriptedExecutionSeam.rescript(
-          script(list_checks: {:ok, [completed(:succeeded, "chk-1"), completed(:failed, "chk-2")]})
+          script(
+            list_checks: {:ok, [completed(:succeeded, "chk-1"), completed(:failed, "chk-2")]}
+          )
         )
 
       assert {:ok, _} = Observation.tick(run.id)
@@ -489,7 +490,13 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
       install()
       past = DateTime.add(DateTime.utc_now(), -60, :second)
 
-      assert {:blocked, %{code: :observation_incomplete, stage: :observation}} =
+      # `retryable: false` is asserted deliberately, not incidentally. §7.2's
+      # last bullet DEFINES this code as the deadline outcome, so `classify/1`
+      # must call it terminal — and a `{:blocked, ...}` carrying
+      # `retryable: true` would be a presentation that contradicts itself.
+      # A partial match on `code` alone passes under either classification,
+      # which is how the contradiction survived its first review.
+      assert {:blocked, %{code: :observation_incomplete, stage: :observation, retryable: false}} =
                Observation.tick(run.id, deadline: past)
 
       # THE point: a deadline checked after the round trip has already paid the
@@ -526,7 +533,9 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
       assert {:ok, %WorkflowRun{status: "observations_current"}} = Observation.tick(run.id)
 
       past = DateTime.add(DateTime.utc_now(), -1, :second)
-      assert {:blocked, %{code: :observation_incomplete}} = Observation.tick(run.id, deadline: past)
+
+      assert {:blocked, %{code: :observation_incomplete}} =
+               Observation.tick(run.id, deadline: past)
 
       assert {:ok, %WorkflowRun{status: "blocked"}} = Store.read_run(run.id)
     end
@@ -582,7 +591,9 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
                Store.read_run(run.id)
     end
 
-    test "a provider term carrying a secret leaks into neither the return nor any row", %{run: run} do
+    test "a provider term carrying a secret leaks into neither the return nor any row", %{
+      run: run
+    } do
       install(
         list_reviews:
           {:error, %{status: 403, body: "Bearer ghp_TOTALLY_SECRET", path: "/etc/shadow"}}

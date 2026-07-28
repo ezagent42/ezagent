@@ -58,22 +58,23 @@ defmodule EzagentPluginGitWorkflow.RunFailure do
     end
   end
 
-  @doc """
-  Records `code` and CASes the run to `blocked`, WITHOUT asking
-  `Blocker.classify/1`.
-
-  Use this only where the decision to stop belongs to the CALLER rather than to
-  the failure. V1 has exactly one such case: design §7.2's last bullet, "达到
-  deadline:明确 `blocked: observation_incomplete`". The observation tick's
-  caller owns the cadence and the budget, so when the budget is spent the run
-  stops — whether or not the condition it was waiting on is one that could still
-  clear on its own.
-
-  Everything a port or adapter reports must go through `fail/4` instead, so the
-  §7.2 classification stays the single authority on which failures stop a run.
-  """
+  # Records `code` and CASes the run to `blocked`. Private on purpose: there is
+  # no caller-override path. `Blocker.classify/1` is the single authority on
+  # which failures stop a run, and `fail/4` is the only way in.
+  #
+  # An earlier revision exposed this publicly so the observation deadline could
+  # block a code `classify/1` called retryable. That was the wrong repair: the
+  # misplacement was in the classification, not in the protocol — §7.2's last
+  # bullet DEFINES `:observation_incomplete` as the deadline outcome, so it is
+  # terminal, and `classify/1` now says so. Bypassing it had produced a
+  # self-contradictory `{:blocked, %{retryable: true}}`.
   @spec block(WorkflowRun.t(), atom(), non_neg_integer(), Blocker.code()) :: t()
-  def block(%WorkflowRun{id: id, status: status, state_version: version} = run, stage, attempt, code) do
+  defp block(
+         %WorkflowRun{id: id, status: status, state_version: version} = run,
+         stage,
+         attempt,
+         code
+       ) do
     presentation = record(run, stage, attempt, code)
 
     case Store.transition(id, version, status, "blocked") do

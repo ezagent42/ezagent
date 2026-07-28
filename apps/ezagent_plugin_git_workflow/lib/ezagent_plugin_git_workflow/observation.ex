@@ -174,7 +174,7 @@ defmodule EzagentPluginGitWorkflow.Observation do
   defp tick_run(%WorkflowRun{status: status} = run, attempt, deadline)
        when status in @observable do
     if spent?(deadline),
-      do: RunFailure.block(run, @stage, attempt, :observation_incomplete),
+      do: RunFailure.fail(run, @stage, attempt, :observation_incomplete),
       else: observe(run, attempt)
   end
 
@@ -214,8 +214,12 @@ defmodule EzagentPluginGitWorkflow.Observation do
   # `repository` is the policy's own copy rather than a caller-supplied one:
   # the action set compares the incoming repository against the policy and
   # refuses a mismatch, so passing anything else could only ever be a denial.
-  defp invoke(%AuthorizedTask{policy: %GitTaskAccess{repository: repository}} = task, action, args),
-    do: ExecutionSeam.invoke(task, action, Map.put(args, :repository, repository))
+  defp invoke(
+         %AuthorizedTask{policy: %GitTaskAccess{repository: repository}} = task,
+         action,
+         args
+       ),
+       do: ExecutionSeam.invoke(task, action, Map.put(args, :repository, repository))
 
   # The `^asked` pin is the identity guard: a change request that is not the one
   # this run owns must not have its state and checks written under this run's
