@@ -8,6 +8,12 @@
 
 date: "2026-07-16"
 prev_date: "07-15"
+# as_of: the board's 'today' for DELAY flags — deterministic, so a re-render is
+# reproducible (never the wall clock). Delay = a not-done card whose `est_done`
+# is strictly before `as_of`. Omit it and the renderer falls back to the leading
+# date of `date:`; set it when you refresh/organize the board on a LATER day
+# (e.g. date stays 07-16 but you re-open it on 07-17 → as_of: "2026-07-17").
+as_of: "2026-07-16"
 north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
 
 progress:
@@ -47,6 +53,19 @@ people:
   - {id: "allen", name: "Allen", track: "部署 + 统筹", color: "#2563eb"}
 
 # ===== TODAY (07-16) plan — status ∈ planned|wip|review|blocked. NO `done` here. =====
+#
+# Per-card time-boxing (every card carries two dates):
+#   started:  when work began (ISO YYYY-MM-DD).
+#   est_done: estimated finish (ISO YYYY-MM-DD).
+# A task is SIZED TO ≤1 day, so a NEW card added today defaults to
+#   started == est_done == today.  Both fields are OPTIONAL and backward-
+#   compatible — a card without them renders exactly as before.
+# DELAY: if a card is not `done` and est_done < as_of, the renderer flags it
+#   延期 Nd (red rib) and surfaces a decomposition hint.
+# ON DELAY → DECOMPOSE: next time a similarly-sized task appears, pre-split it
+#   into day-sized sub-modules in DEPENDENCY order, one per day (B1/B2/B3 with
+#   started/est_done = 07-27 / 07-28 / 07-29). See SKILL.md “Per-card
+#   time-boxing & delay-driven decomposition” for the full A→B1/B2/B3 rule.
 cards:
   - owner: "gaga"
     title: "Git provider provisioning（Plan A）"
@@ -54,6 +73,8 @@ cards:
     status: "wip"
     who: "gaga · agent 自举 · #1423 (draft)"
     pr: {num: 1423, state: "draft"}
+    started: "2026-07-16"      # new today → default same-day estimate
+    est_done: "2026-07-16"
     acceptance:
       - {text: "Plan A 输出明确 transport 决策 + 接口", done: false}
       - {text: "W29 最短路径原型：公共仓匿名 checkout + GitHub Git Data API", done: false}
@@ -86,11 +107,38 @@ cards:
     who: "ruihua · 产品化 · #1427"
     pr: {num: 1427, state: "open"}
     deps: ["依赖 cap-signing"]
+    started: "2026-07-14"      # carryover: est_done 07-15 < as_of 07-16 → 延期 1d
+    est_done: "2026-07-15"     # renderer flags 延期 + surfaces decomposition hint
     acceptance:
       - {text: "每条缺口 = 用户旅程 + 每步明确验收标准", done: false}
       - {text: "排出交付优先级与阶段", done: false}
       - {text: "G4 标为有依赖项 + 降级/占位方案", done: false}
     prompt: "接手 #1427：每条缺口写成用户旅程 + 每步验收标准，排优先级；G4 标依赖并给降级方案。"
+
+  # Canonical decomposition illustration (see SKILL.md): task "自助开通" above ran
+  # long (started 07-14, est_done 07-15, still not done 07-16 → 延期). So the NEXT
+  # similarly-sized task is PRE-SPLIT into day-sized sub-modules, one per day, in
+  # dependency order (B1 → B2 → B3). Uncomment to use as a template:
+  # - owner: "ruihua"
+  #   title: "机构 demo 数据管道 B1 — schema + seed 装载"
+  #   status: "planned"
+  #   started: "2026-07-27"
+  #   est_done: "2026-07-27"
+  #   acceptance: [{text: "seed schema 定稿 + 装载脚本", done: false}]
+  # - owner: "ruihua"
+  #   title: "机构 demo 数据管道 B2 — 展厅渲染（依赖 B1）"
+  #   status: "planned"
+  #   started: "2026-07-28"
+  #   est_done: "2026-07-28"
+  #   deps: ["依赖 B1"]
+  #   acceptance: [{text: "展厅从 seed 渲染", done: false}]
+  # - owner: "ruihua"
+  #   title: "机构 demo 数据管道 B3 — E2E 录证（依赖 B2）"
+  #   status: "planned"
+  #   started: "2026-07-29"
+  #   est_done: "2026-07-29"
+  #   deps: ["依赖 B2"]
+  #   acceptance: [{text: "Playwright 录进 CI", done: false}]
 
   - owner: "zhaomaota"
     title: "收口 #1425 产品缺口（主攻 1）"
