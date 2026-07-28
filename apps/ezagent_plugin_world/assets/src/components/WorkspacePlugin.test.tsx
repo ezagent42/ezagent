@@ -138,4 +138,40 @@ describe("workspace template builder", () => {
     expect(config.role_slots[0].config).toBeUndefined()
     expect(JSON.stringify(config)).not.toContain("deepseek")
   })
+
+  it("serializes only nonsecret curl configuration", () => {
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "curl",
+          config: {
+            provider: "deepseek",
+            api_url: "https://api.deepseek.com/chat/completions",
+            model: "deepseek-v4-flash",
+            credential_optional: true,
+            api_key: "injected-snake-case-secret",
+            apiKey: "injected-camel-case-secret",
+          },
+        },
+      },
+      ["curl"],
+    )
+
+    expect(config.role_slots[0].config).toEqual({
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      credential_optional: true,
+    })
+    expect(JSON.stringify(config)).not.toContain("api_key")
+    expect(JSON.stringify(config)).not.toContain("apiKey")
+    expect(JSON.stringify(config)).not.toContain("injected-snake-case-secret")
+    expect(JSON.stringify(config)).not.toContain("injected-camel-case-secret")
+  })
 })

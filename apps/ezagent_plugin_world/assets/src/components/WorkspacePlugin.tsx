@@ -548,6 +548,18 @@ function helloLlmDefaults(): Record<string, unknown> {
   }
 }
 
+function curlHelloLlmConfig(config: Record<string, unknown> | undefined) {
+  if (!config) return undefined
+
+  const allowed: Record<string, unknown> = {}
+
+  for (const key of ["provider", "api_url", "model", "credential_optional"]) {
+    if (config[key] !== undefined) allowed[key] = config[key]
+  }
+
+  return allowed
+}
+
 function helloCompletionFlavors(flavors: string[]) {
   return flavors.filter((flavor) => HELLO_COMPLETION_FLAVORS.has(flavor))
 }
@@ -843,7 +855,11 @@ export function installConfigForTemplate(
         mode: choice.mode,
         flavor,
         agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
-        config: choice.mode === "fresh" && (!helloLlmRole || flavor === "curl") ? choice.config : undefined,
+        config: choice.mode === "fresh" && helloLlmRole && flavor === "curl"
+          ? curlHelloLlmConfig(choice.config)
+          : choice.mode === "fresh" && !helloLlmRole
+            ? choice.config
+            : undefined,
       }
     })
     .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
