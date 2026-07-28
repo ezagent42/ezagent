@@ -77,6 +77,30 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     def validate(_), do: {:error, :invalid_deepseek_missing_stub_template}
 
     @impl Ezagent.Kind.Template
+    def template_data_extra(content) when is_map(content) do
+      case Ezagent.Kind.Template.content_field(content, :session_template_member) do
+        true -> %{"session_template_member" => true}
+        _ -> %{}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, %{"session_template_member" => member} = data, _workspace_uri)
+        when member in [true, "true"] do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+
     def instantiate(_name, data, _workspace_uri) do
       {:error, {:backend_api_key_missing, "deepseek", Ezagent.URI.new!(data["agent_uri"])}}
     end
