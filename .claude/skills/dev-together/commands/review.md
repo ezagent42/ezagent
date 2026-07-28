@@ -30,10 +30,13 @@ are unchanged.
    means the learning step was skipped, and that must be visible. Every
    close-review finding should name the **process rule (existing or new) that would
    have caught it**; a finding with no mapped rule is a signal to add one. Also
-   name its **recurrence-prevention proof** — the automated or mandatory check
-   that surfaces the same gap on its own next time, not just the one-off fix
-   (2026-07-21 system-closure retrospective: a Task-local fix with no such proof
-   is how the same class of gap comes back under a new name). This is
+   name its **recurrence-prevention proof** — point at the specific test, CI
+   gate, lint rule, or architecture invariant that would go red if the same
+   class of gap returned. A sentence promising it won't happen again is
+   **not** a recurrence-prevention proof; if no such check exists yet, say
+   what check needs to be added and who owns adding it (2026-07-21
+   system-closure retrospective: a Task-local fix with no such check is how
+   the same class of gap comes back under a new name). This is
    the *Act* phase of the loop: it updates the **method**, not just the roster.
 6. **Update the roster (single writer).** For each human dev, set their
    `current_track` and `latest_return` in `docs/together/team.md` to the next

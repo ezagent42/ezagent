@@ -41,10 +41,9 @@ else already landed or was dropped. It's small on purpose.
 
 ## 2. The one thing left — your call, your authorship
 
-**Branch:** `system-closure/dev-together-skill-updates` @ `c573fe826`
-**Diff:** 1 file, +5/-1 lines, `.claude/skills/dev-together/commands/review.md`
-only — adds one sentence to the existing (already-mandatory) Method-deltas
-requirement:
+**Branch:** `system-closure/dev-together-skill-updates` @ (latest, see `git log`)
+**Diff:** 1 file, `.claude/skills/dev-together/commands/review.md` only —
+adds to the existing (already-mandatory) Method-deltas requirement:
 
 ```diff
     close-review finding should name the **process rule (existing or new) that would
@@ -55,10 +54,13 @@ becomes
 ```diff
     close-review finding should name the **process rule (existing or new) that would
     have caught it**; a finding with no mapped rule is a signal to add one. Also
-    name its **recurrence-prevention proof** — the automated or mandatory check
-    that surfaces the same gap on its own next time, not just the one-off fix
-    (2026-07-21 system-closure retrospective: a Task-local fix with no such proof
-    is how the same class of gap comes back under a new name). This is
+    name its **recurrence-prevention proof** — point at the specific test, CI
+    gate, lint rule, or architecture invariant that would go red if the same
+    class of gap returned. A sentence promising it won't happen again is
+    **not** a recurrence-prevention proof; if no such check exists yet, say
+    what check needs to be added and who owns adding it (2026-07-21
+    system-closure retrospective: a Task-local fix with no such check is how
+    the same class of gap comes back under a new name). This is
     the *Act* phase of the loop: it updates the **method**, not just the roster.
 ```
 
@@ -66,6 +68,18 @@ No new terminology, no schema, no other file touched. This is the one idea
 from the original system-closure proposal that the current process didn't
 already have an equivalent for: forcing every method delta to name *how it
 would be caught again*, not just what was fixed.
+
+**Wording note (fixed before you saw it):** the first draft of this sentence
+just said "recurrence-prevention proof" without pinning down what "proof"
+means here. "Proof"/证明 both carry a "a document/argument attesting X is
+true" connotation strongly enough that a tired reviewer could satisfy the
+requirement with a narrative paragraph ("we've thought about it, it won't
+recur") instead of naming an actual checkable mechanism — which is exactly
+the failure mode the system-closure retrospective was about in the first
+place. Tightened to name concrete artifact types up front and explicitly
+rule out the narrative-only reading, with a stated fallback for "no check
+exists yet." If you still find a softer reading of the final wording, that's
+worth another pass before landing it.
 
 **Why it needs you specifically:** `protect-dev-together-skill.yml` keys off
 the PR-author/push-actor GitHub login (`OWNERS: allenwoods jjkysy`); this
