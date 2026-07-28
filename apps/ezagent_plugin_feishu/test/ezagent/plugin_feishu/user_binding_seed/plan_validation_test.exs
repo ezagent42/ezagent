@@ -111,8 +111,9 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
   end
 
   describe "gate: executor not configured → fail loud" do
-    test "seed_enabled but no executor → :seed_executor_not_configured" do
+    test "seed_enabled without an injected executor uses production port and fails closed without operator" do
       Application.delete_env(:ezagent_plugin_feishu, :seed_executor_port)
+      Application.delete_env(:ezagent_plugin_feishu, :seed_operator_uri)
 
       open_id = "ou_fake_nil_exec_#{System.unique_integer([:positive])}"
 
@@ -124,7 +125,9 @@ defmodule EzagentPluginFeishu.UserBindingSeed.PlanValidationTest do
 
       path = write_tmp_file!(yaml)
 
-      assert {:error, :seed_executor_not_configured} = UserBindingSeed.run(path)
+      assert {:error,
+              {:preflight_read_failed, "team-alpha", :seed_operator_not_configured}} =
+               UserBindingSeed.run(path)
     end
 
     test "seed not enabled → :seed_not_enabled" do

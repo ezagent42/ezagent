@@ -56,8 +56,8 @@ defmodule EzagentPluginFeishu.Integration.BootSeedWiringTest do
     end
   end
 
-  describe "Application.after_boot/0 configured seed without boot authorization" do
-    test "raises an explicit fail-closed executor/authorization error" do
+  describe "Application.after_boot/0 configured seed without an operator" do
+    test "raises an explicit fail-closed operator configuration error" do
       write_real_seed_file!("""
       bindings:
         - open_id: "ou_boot_auth_deferred"
@@ -65,8 +65,9 @@ defmodule EzagentPluginFeishu.Integration.BootSeedWiringTest do
       """)
 
       Application.delete_env(:ezagent_plugin_feishu, :seed_executor_port)
+      Application.delete_env(:ezagent_plugin_feishu, :seed_operator_uri)
 
-      assert_raise RuntimeError, ~r/seed executor\/boot authorization is not configured/, fn ->
+      assert_raise RuntimeError, ~r/seed operator is not configured/, fn ->
         EzagentPluginFeishu.Application.after_boot()
       end
     end

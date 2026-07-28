@@ -188,10 +188,16 @@ defmodule EzagentPluginFeishu.Application do
                 "but seed is not enabled. Set `config :ezagent_plugin_feishu, :seed_enabled, true` " <>
                 "after auth integration (deferred)."
 
-      {:error, :seed_executor_not_configured} ->
-        raise "Feishu plugin: initial user binding seed file is present, but seed " <>
-                "executor/boot authorization is not configured. The deferred B-layer " <>
-                "auth integration must be configured before enabling this seed."
+      {:error, {:preflight_read_failed, _workspace, :seed_operator_not_configured}} ->
+        raise "Feishu plugin: initial user binding seed operator is not configured. " <>
+                "Set EZAGENT_FEISHU_SEED_OPERATOR_URI from deployment secrets."
+
+      {:error, {:preflight_read_failed, _workspace, :invalid_seed_operator_uri}} ->
+        raise "Feishu plugin: initial user binding seed operator URI is invalid."
+
+      {:error, {:preflight_read_failed, _workspace, :unsupported_seed_operator}} ->
+        raise "Feishu plugin: initial user binding seed operator is not supported by " <>
+                "the current reviewed authorization seam."
 
       {:error, {:invalid_seed_executor_port, fields}} ->
         raise "Feishu plugin: initial user binding seed executor port is invalid for " <>

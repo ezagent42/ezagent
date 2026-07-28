@@ -1,12 +1,6 @@
 defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
   @moduledoc """
-  Deferred future B-layer boot-dispatch acceptance evidence.
-
-  This module records the acceptance requirements for a future runtime
-  operator/boot-authorization integration. It is intentionally skipped while
-  main authorization semantics are unsettled and is NOT current
-  permission-neutral B1 green evidence. The current B1 contract instead
-  requires configured seeds without that integration to fail closed.
+  Production B-layer boot-dispatch acceptance evidence.
 
   Mission checklist (handoff §4 Phase 0):
   1. UserBinding actions are registered              — asserted directly.
@@ -30,11 +24,10 @@ defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
 
   use EzagentCore.DataCase, async: false
 
-  @moduletag :skip
-
-  alias Ezagent.{Invocation, KindRegistry}
+  alias Ezagent.{Cmd, Invocation, KindRegistry, Router}
   alias EzagentPluginFeishu.Behavior.UserBinding, as: UserBindingBehavior
   alias EzagentPluginFeishu.UserBinding, as: UB
+  alias EzagentPluginFeishu.UserBindingSeed.DispatchAdapter
 
   @admin Ezagent.Entity.User.admin_uri()
 
@@ -67,18 +60,20 @@ defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
   end
 
   defp dispatch_bind(target, open_id, user_uri, caller, caps \\ MapSet.new()) do
-    Invocation.dispatch(%Invocation{
-      origin: :trusted_internal,
-      target: target,
-      mode: :call,
-      args: %{open_id: open_id, user_uri: user_uri},
-      ctx: %{
-        caller: caller,
+    target
+    |> Ezagent.URI.instance()
+    |> Cmd.trusted_internal(
+      :bind,
+      %{open_id: open_id, user_uri: user_uri},
+      caller,
+      %{
         authenticated_principal: caller,
         caps: caps,
-        reply: {:caller_inbox, self()}
+        reply: {:caller_inbox, self()},
+        mode: :call
       }
-    })
+    )
+    |> Router.dispatch()
   end
 
   test "mission check 1: UserBinding actions are registered on Workspace Kind" do
@@ -110,17 +105,21 @@ defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
              "(Ezagent.KindRegistry.lookup/1 inside materialize_admin_action_cap/1) " <>
              "would fail, and Phase 0 cannot proceed on this seam."
 
-    target = bind_target(ws_name)
+    previous = Application.get_env(:ezagent_plugin_feishu, :seed_operator_uri)
+    Application.put_env(:ezagent_plugin_feishu, :seed_operator_uri, URI.to_string(@admin))
 
-    # Mission check 3+4: empty ctx.caps + the canonical-admin operator seam.
-    # If this returns {:ok, _}, the framework materialized a concrete,
-    # target-signed :bind cap for `target` under `Ezagent.Cap.issue_for_action/3`
-    # (invocation.ex materialize_admin_action_cap/1) — we never construct or
-    # forge a capability ourselves.
-    result =
-      Invocation.with_admin_operator(@admin, fn ->
-        dispatch_bind(target, open_id, user_uri, @admin)
-      end)
+    on_exit(fn ->
+      if is_nil(previous) do
+        Application.delete_env(:ezagent_plugin_feishu, :seed_operator_uri)
+      else
+        Application.put_env(:ezagent_plugin_feishu, :seed_operator_uri, previous)
+      end
+    end)
+
+    # Mission check 3+4: the production adapter reads the runtime operator,
+    # enters the reviewed process-local scope, and dispatches a Cmd. The
+    # framework materializes the exact cap; the adapter constructs none.
+    result = DispatchAdapter.bind(ws_uri, open_id, user_uri)
 
     assert {:ok, %{open_id: ^open_id, user_uri: bound_uri_str}} = result
     assert bound_uri_str == URI.to_string(user_uri)
