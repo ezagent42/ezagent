@@ -759,6 +759,12 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp uri_to_str(other), do: inspect(other)
 
   defp persist_entity_caps(%URI{} = uri, caps) do
+    # Reverse cap index (URI-share A2-2): this is the single funnel every store
+    # path (absorb / grant / persist / store / remove) reaches with the full new
+    # cap set, so the derived `grantees_of` projection is kept current here for
+    # BOTH users and agents. Best-effort (never breaks cap storage).
+    :ok = Ezagent.EntityCaps.GranteeIndex.reindex(uri, caps)
+
     if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
       Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
     else

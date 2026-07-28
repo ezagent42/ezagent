@@ -120,6 +120,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # behavior)` records a mount of a data-host agent into a session; scoped to
     # the target's workspace (a mount in ws A must not be reconciled from ws B).
     {Ezagent.Socialware.MountRow, "socialware_mounts"},
+    # URI-share A2-2 — reverse cap index (`grantees_of`). A derived projection of
+    # "who holds a cap toward target T", scoped to the cap's workspace (a grant in
+    # ws A must not surface as a grantee under ws B).
+    {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.
