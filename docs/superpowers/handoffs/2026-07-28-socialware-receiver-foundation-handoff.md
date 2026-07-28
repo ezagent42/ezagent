@@ -9,6 +9,36 @@ inbound path (page → structured submit → session).
 kanban and hello consume). **Coordinator:** cc. **Reviewer gate:** codex (mandatory,
 pre-impl — see the bottom section; it touches the Cap axis).
 
+**Origin:** surfaced while adjudicating **PR #1267** (a stale 2026-07-09 "live-pages
+connection layer" proposal doc). #1267 was closed as superseded (its live-data/board/官网
+slice shipped the opposite way via the Hello–Kanban fusion line), but ONE slice — in-page
+structured input on socialware pages — was tracked nowhere else. It was salvaged as "P-α",
+then grilled with Allen (2026-07-28, grill-me-with-doc) and grew into this socialware
+foundation.
+
+**Framing — this is a PROTOCOL, not a feature (Allen's LSP / ACP analogy).** Design it the
+way LSP (Language Server Protocol) / ACP is designed:
+- The **session is the bus**; every interaction is a **typed message** (`event_type`) — like
+  LSP's JSON-RPC methods (`textDocument/didOpen`).
+- A **socialware is a protocol participant ("server")**: it DEFINES its typed events
+  (`kanban:new_task`), IMPLEMENTS their handlers (backend), and REGISTERS their renderers
+  (client) — like a language server declaring capabilities + methods, and the client
+  rendering per method.
+- The **core (ezagent) provides the GENERIC protocol machinery only** — the typed-message
+  envelope (`event_type` on Message = **F1**), dispatch/routing (the session message
+  pipeline), the registration seams (`SessionViewRegistry` for renderers = **F2**; the cap
+  mechanism for authz), and the transport endpoints (**F3** receiver = inbound; **F0** EM =
+  outbound). Core hardcodes NO socialware-specific type — exactly like LSP core knows no
+  specific language.
+- **Design consequences (borrow LSP's precedents):** (a) the `event_type` namespace is OPEN +
+  versionable (like method names); (b) a socialware declares what it handles + renders
+  (capability negotiation); (c) generic client dispatch by type WITH a graceful fallback (the
+  `registry[type] || __unknown` fallback already exists); (d) forward-compat — an unknown
+  `event_type` degrades gracefully (like an LSP client ignoring an unknown notification),
+  never crashes. **This is why the foundation unifies hello/kanban/autoservice:** they become
+  protocol participants speaking ONE typed-message protocol, instead of three bespoke apps —
+  which is exactly the inconsistency Allen flagged.
+
 ---
 
 ## The X problem (what this solves)
