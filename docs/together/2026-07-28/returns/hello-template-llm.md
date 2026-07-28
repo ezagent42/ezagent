@@ -30,14 +30,18 @@ The following records the delivery scope visible in the branch.
 | 1 | Hello accepts registered LLM flavors and passes the selected role flavor into the session template | implemented | `EzagentPluginHello.App` and registration/template tests updated |
 | 2 | Hello requests completions through the durable AgentBridge contract and correlates asynchronous replies | implemented | AgentBridge completion tests and Hello orchestration tests updated |
 | 3 | World initial mount does not synchronously block on the full caller/session/capability read | implemented | `WorldLive` bootstraps state asynchronously and has route/stream regression coverage |
-| 4 | Current worktree changes are formatted, tested, committed, and pushed | local verification passed; commit/push pending | `mix precommit` completed successfully before commit |
-| 5 | Required PR CI is green | pending at document creation | Updated from the CI run created by this push |
+| 4 | Current worktree changes are formatted, tested, committed, and pushed | committed and pushed; full local gate incomplete | implementation commit `097d9c90a`; see local verification note below |
+| 5 | Required PR CI is green | queued | [CI run 30326083150](https://github.com/ezagent42/ezagent/actions/runs/30326083150) for `097d9c90a` was queued when this return was updated |
 
 ## Verification and CI
 
-- Local gate: `mix precommit` — passed (compile with warnings-as-errors,
-  formatting, tests, and CC SDK worker checks).
-- PR CI: pending the push of this return and implementation commit.
+- Local gate: `mix precommit` — attempted. The initial test run could not
+  connect to the isolated PostgreSQL port; an isolated instance was then
+  started on `127.0.0.1:55432`, but the rerun did not produce a complete test
+  result in this environment. CI remains the required verification record.
+- PR CI: [run 30326083150](https://github.com/ezagent42/ezagent/actions/runs/30326083150)
+  is queued for implementation commit `097d9c90a`. This return-document update
+  will create a subsequent PR check; do not treat queued checks as a green gate.
 - Prior PR head had a failed deterministic gate; that result belongs to the
   previous remote head and must not be used as evidence for this update.
 
