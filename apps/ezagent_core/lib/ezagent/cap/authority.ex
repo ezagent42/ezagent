@@ -335,6 +335,17 @@ defmodule Ezagent.Cap.Authority do
 
     Repo.transaction(fn ->
       case KindCapAuthority.list(uri_string) do
+        [] when create_freshness == :existed ->
+          # #189 PR-2 fail-closed (codex spec-review F1): a URI that presents
+          # itself as ALREADY-EXISTING (`:existed` — an ordinary open / cold
+          # restart) but whose authority history is EMPTY must NOT have a
+          # generation minted at runtime. Silently inserting generation 1 here
+          # would birth signing authority for a principal whose creation was
+          # never authorized (or whose authority was intentionally purged) —
+          # exactly the regenesis-resurrection vector. Genesis stays reserved
+          # for genuine creation (`:created`) and the legacy `:unknown` open.
+          Repo.rollback(:no_authority_for_existing)
+
         [] ->
           unless same_uri?(uri, admin_uri()) do
             case KindCapAuthority.active(Ezagent.URI.stable_key(admin_uri())) do

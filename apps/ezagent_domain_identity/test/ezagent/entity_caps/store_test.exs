@@ -597,6 +597,90 @@ defmodule Ezagent.EntityCaps.StoreTest do
     end
   end
 
+  describe "write-boundary resurrection guard (#189 PR-2, codex F1)" do
+    test "a license-missing mirror write lands revoked_unprovisioned, never active" do
+      agent = agent_uri("guard-missing")
+      # A cap set with NO self-license (just an ordinary issued cap).
+      caps = [issued_cap(agent, :send)]
+
+      assert :ok = Store.persist(agent, caps)
+      assert Store.status(agent) == :revoked_unprovisioned
+      assert Store.load(agent) == []
+      # The row EXISTS (never left absent) — a later stale write can't recreate
+      # it active.
+      assert Store.has_row?(agent)
+    end
+
+    test "a current-valid self-license activates; a STALE (post-regenesis) one downgrades" do
+      agent = agent_uri("guard-stale")
+      # `licensed_caps/2` mints a CURRENT (gen-1) self-license.
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
+
+      assert :ok = Store.persist(agent, caps)
+      assert Store.status(agent) == :active
+      assert identity_keys(Store.load(agent)) == identity_keys(caps)
+
+      # Bump the authority generation — the minted self-license is now STALE
+      # (it verifies by PRESENCE but NOT `verify_against_current`).
+      assert {:ok, _bumped} = Ezagent.Cap.Authority.regenesis(agent, :agent)
+      assert Enum.any?(caps, &(Ezagent.Capability.action_of(&1) == :self_license))
+
+      # The same (now stale) caps mirrored again → DOWNGRADE to
+      # revoked_unprovisioned (the guard verifies against the current gen).
+      assert :ok = Store.persist(agent, caps)
+      assert Store.status(agent) == :revoked_unprovisioned
+      assert Store.load(agent) == []
+    end
+
+    test "a mirror write NEVER upgrades a revoked_unprovisioned row (only reprovision does)" do
+      agent = agent_uri("guard-no-upgrade")
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
+      receipt = ProvisioningReceipt.issue(agent, @system_actor, :provision, caps)
+
+      assert :ok = Store.provision(agent, caps, receipt, actor: @system_actor)
+      assert :ok = Store.revoke_provisioning(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+
+      # A shadow write with a fully current-valid license must NOT resurrect it.
+      assert :ok = Store.persist(agent, caps)
+      assert Store.status(agent) == :revoked_unprovisioned
+      assert Store.load(agent) == []
+    end
+
+    test "a mirror write never overwrites a tombstoned row" do
+      agent = agent_uri("guard-tombstone")
+      assert :ok = Store.tombstone(agent)
+      assert Store.status(agent) == :tombstoned
+
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert Store.status(agent) == :tombstoned
+      assert Store.load(agent) == []
+    end
+  end
+
+  describe "tombstone monotonicity across the snapshot-clear hook (#189 PR-2, codex F5)" do
+    test "identity_snapshot_cleared PRESERVES a tombstoned row" do
+      agent = agent_uri("tombstone-preserve")
+      assert :ok = Store.tombstone(agent)
+      assert Store.status(agent) == :tombstoned
+
+      # A routine snapshot clear must NOT delete the tombstone (that would let a
+      # later restart look like a genuine creation and resurrect the principal).
+      assert :ok = Store.identity_snapshot_cleared(agent)
+      assert Store.has_row?(agent)
+      assert Store.status(agent) == :tombstoned
+    end
+
+    test "identity_snapshot_cleared still clears a non-tombstoned (active) row" do
+      agent = agent_uri("clear-active")
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert Store.status(agent) == :active
+
+      assert :ok = Store.identity_snapshot_cleared(agent)
+      refute Store.has_row?(agent)
+    end
+  end
+
   # -------------------------------------------------------------------
   # Helpers (mirrors Ezagent.EntityCapsTest)
   # -------------------------------------------------------------------

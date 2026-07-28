@@ -23,10 +23,18 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # the `identity_caps` table. Its raw-cap accessors are the
                              # adapter's own storage seam (write-shadow in PR-1; reads
                              # never store-authoritative). codex-reviewed (5 rounds).
+                             #
+                             # #189 PR-2 (codex spec-review F1): the shadow writer's
+                             # `caps_json` write moved OUT of `do_persist/2` into the
+                             # status-deciding `persist_changes/3` (the write-boundary
+                             # resurrection guard — `active iff current-valid
+                             # self-license`). `do_persist/2` no longer touches the
+                             # column (it now delegates to the row-locked
+                             # `persist_locked/4` → `persist_changes/3`); the raw-cap
+                             # seam is `persist_changes/3` instead. Still the adapter's
+                             # own storage seam — no new external reader.
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :activate_changes, 2},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
-                              :do_persist, 2},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :fetch_durable_caps, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
@@ -36,13 +44,26 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :load, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :persist_changes, 3},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :tombstone, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :update_locked, 3},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-                              :migrate_users, 1}
+                              :migrate_users, 1},
+                             # #189 PR-2 — the backfill migration + the fleet-parity
+                             # barrier READ the legacy user cap set (read-only, via
+                             # `Ezagent.Users.list_all/0`) to MIRROR it into the
+                             # identity-caps store / verify store↔legacy parity. They
+                             # never write `users.caps_json` and change no authz
+                             # outcome (reads stay legacy in PR-2). Directly analogous
+                             # to `grant_migration.ex :migrate_users/1`.
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
+                              :legacy_users, 0},
+                             {"apps/ezagent_domain_identity/lib/mix/tasks/ezagent.identity.backfill.ex",
+                              :backfill_users, 1}
                            ])
 
   # `entity_caps.ex :snapshot_caps/1` is NO LONGER a raw-snapshot reader after

@@ -104,6 +104,21 @@ defmodule Ezagent.EntityCaps.Store do
   @spec existence_signal?(URI.t() | String.t()) :: boolean()
   def existence_signal?(uri), do: not user_uri?(uri) and has_row?(uri)
 
+  @doc """
+  The URI strings of every `active` store row — the fleet-parity barrier's
+  backward (store → legacy) enumeration (#189 PR-2). URI-only projection: it
+  never decodes `caps_json`, so it is not a raw-cap accessor.
+  """
+  @spec active_uris() :: [String.t()]
+  def active_uris do
+    from(row in __MODULE__, where: row.identity_status == "active", select: row.uri)
+    |> Repo.all()
+  rescue
+    _ -> []
+  catch
+    _, _ -> []
+  end
+
   @doc "The identity lifecycle status for `uri`, or `nil` when no row exists."
   @spec status(URI.t() | String.t()) :: status() | nil
   def status(uri) do
@@ -216,12 +231,35 @@ defmodule Ezagent.EntityCaps.Store do
   @p1_forced_shadow_failure_seam Mix.env() == :test
 
   @doc """
-  Upsert the complete cap set for `uri`, PRESERVING the existing
-  `identity_status` / `provisioning_receipt` (a fresh insert defaults to
-  `active` with no receipt — the dual-write mirror of a legacy write).
+  Upsert the complete cap set for `uri`, computing `identity_status` STRUCTURALLY
+  from the mirrored caps — the #189 PR-2 write-boundary resurrection guard
+  (codex spec-review F1: "securing only the backfill does not secure the
+  store").
 
-  This is the dual-write mirror operation: it MUST NOT change the lifecycle
-  state; only the provisioning API does.
+  The invariant this writer enforces: **an `active` row's caps carry a
+  current-valid `:self_license`** (verified fresh against the URI's current
+  authority generation via `Ezagent.Cap.Authority.verify_against_current/3` —
+  mere presence in the caps is not enough; a revocation bumps the generation
+  and leaves stale licenses behind). So no shadow / mirror write can ever
+  create OR keep an `active` row for a license-invalid principal:
+
+    * fresh row — `active` iff the caps carry a current-valid self-license,
+      else `revoked_unprovisioned` (the URI is inert until an authenticated
+      re-provision; NEVER left silently `active`);
+    * existing `active` row — mirror the caps, but DOWNGRADE to
+      `revoked_unprovisioned` when the mirrored set no longer carries a
+      current-valid self-license (a stale legacy write after a revocation);
+    * existing `revoked_unprovisioned` — mirror the caps for observability but
+      NEVER upgrade the status (only `reprovision/4` leaves that state);
+    * existing `tombstoned` — preserved untouched (a shadow write never
+      overwrites a tombstone).
+
+  This is still a mirror op: it does NOT consume a receipt and does NOT change
+  a `revoked`/`tombstoned` lifecycle back to `active`. An `active` row created
+  here carries `provisioning_receipt: nil` — legitimate under the store's
+  TWO-proof model (codex F5): an `active` row is proven either by a consumed
+  `ProvisioningReceipt` OR by a current-valid self-license in its caps
+  ("grandfathered" activation). The write-boundary guard enforces the latter.
   """
   @spec persist(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t())) ::
           :ok | {:error, term()}
@@ -256,25 +294,51 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   defp do_persist(uri, caps) do
-    encoded = encode_caps(caps)
-    now = now_usec()
+    uri_key = key(uri)
     workspace = workspace_key(uri)
+    caps_list = Enum.to_list(caps)
+    # Freshly verify the mirrored self-license against the URI's CURRENT
+    # authority generation BEFORE deciding the row status (codex F1). A row is
+    # never `active` unless this holds — enforced under the row lock so a
+    # concurrent stale write cannot race it back to `active`.
+    licensed? = has_current_self_license?(caps_list, uri)
+    encoded = encode_caps(caps_list)
 
-    %__MODULE__{}
-    |> Ecto.Changeset.change(
-      uri: key(uri),
-      caps_json: encoded,
-      identity_status: "active",
-      workspace_uri: workspace
-    )
-    |> Repo.insert(
-      on_conflict: [set: [caps_json: encoded, workspace_uri: workspace, updated_at: now]],
-      conflict_target: :uri
-    )
-    |> case do
-      {:ok, _row} -> :ok
-      {:error, changeset} -> {:error, changeset}
+    case Repo.transaction(fn -> persist_locked(uri_key, workspace, encoded, licensed?) end) do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp persist_locked(uri_key, workspace, encoded, licensed?) do
+    with :ok <- ensure_row(uri_key, workspace),
+         row when not is_nil(row) <- lock_row(uri_key),
+         changes <- persist_changes(row, encoded, licensed?),
+         {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+      :ok
+    else
+      nil -> Repo.rollback(:not_found)
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  # A `tombstoned` row is terminal — a mirror write never overwrites it.
+  defp persist_changes(%{identity_status: "tombstoned"}, _encoded, _licensed?),
+    do: [updated_at: now_usec()]
+
+  # A `revoked_unprovisioned` row is NEVER upgraded by a shadow write (only an
+  # authenticated `reprovision/4` restores it). Mirror the caps for
+  # observability; leave status + receipt untouched.
+  defp persist_changes(%{identity_status: "revoked_unprovisioned"}, encoded, _licensed?),
+    do: [caps_json: encoded, updated_at: now_usec()]
+
+  # An `active` row (including the just-inserted fresh default): mirror the
+  # caps, but the status is `active` ONLY while a current-valid self-license is
+  # present — otherwise DOWNGRADE to `revoked_unprovisioned` (fresh
+  # license-missing entity, or a stale post-revocation mirror).
+  defp persist_changes(%{identity_status: "active"}, encoded, licensed?) do
+    status = if licensed?, do: "active", else: "revoked_unprovisioned"
+    [caps_json: encoded, identity_status: status, updated_at: now_usec()]
   end
 
   @doc """
@@ -383,12 +447,22 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Dual-write hook for `SnapshotStore.delete/1`: the legacy durable copy is
-  gone, so the shadow row is deleted too (PR-1 keeps legacy destroy
-  semantics; tombstone-on-destroy enforcement is the cutover PR).
+  gone, so the shadow row is deleted too — EXCEPT a `tombstoned` row, which
+  is PRESERVED (#189 PR-2, codex spec-review F5 tombstone monotonicity).
+
+  A `tombstoned` row is the durable record that this URI was destroyed and is
+  not reprovisionable without a fresh authenticated receipt. Deleting it on a
+  routine snapshot clear would let a later restart look like a genuine
+  creation (`fresh_create?` sees no marker) and RESURRECT the principal — the
+  exact vector §2 names. So the delete is guarded to leave tombstones intact;
+  only `active` / `revoked_unprovisioned` rows are cleared (PR-1's legacy
+  destroy semantics for the non-tombstoned case are unchanged).
   """
   @spec identity_snapshot_cleared(URI.t() | String.t()) :: :ok
   def identity_snapshot_cleared(uri) do
-    from(row in __MODULE__, where: row.uri == ^key(uri))
+    from(row in __MODULE__,
+      where: row.uri == ^key(uri) and row.identity_status != "tombstoned"
+    )
     |> Repo.delete_all()
 
     :ok
@@ -408,6 +482,72 @@ defmodule Ezagent.EntityCaps.Store do
       )
 
       :ok
+  end
+
+  # ====================================================================
+  # Backfill (the #189 PR-2 D1 migration transition — codex spec-review F1)
+  # ====================================================================
+
+  @doc """
+  The DEDICATED, row-locked backfill transition for the explicit migration
+  (`mix ezagent.identity.backfill`) — NOT the generic `persist/2` mirror nor
+  `update/2`.
+
+  It reconciles the store row for `uri` from `legacy_caps` (the complete
+  cap set read from the LEGACY authoritative source — `users.caps_json` /
+  the snapshot `:identity` slice), enforcing the store's resurrection guard
+  under a `FOR UPDATE` lock:
+
+    * freshly verifies the self-license against the CURRENT authority
+      generation (`has_current_self_license?/2`) — presence in the legacy
+      caps is NOT enough (a revocation only bumps the generation and leaves
+      stale licenses behind);
+    * a license-valid principal → `active` (grandfathered activation, the
+      store's second legitimate `active` proof; `provisioning_receipt` stays
+      `nil`);
+    * a KNOWN principal with NO current-valid license → a durable
+      `revoked_unprovisioned` row, NEVER absent and NEVER `active` (leaving
+      it absent is unsafe — a later stale legacy mirror write could recreate
+      it `active`; codex F1);
+    * an existing `active` row that is no longer license-valid → DOWNGRADED
+      to `revoked_unprovisioned`;
+    * a `revoked_unprovisioned` / `tombstoned` row → NEVER upgraded (only an
+      authenticated `reprovision/4` restores it), tombstones preserved.
+
+  Idempotent: safe to re-run; re-running never upgrades a
+  `revoked_unprovisioned` / `tombstoned` row to `active`. Returns
+  `{:ok, resulting_status}` for per-URI operator reporting.
+  """
+  @spec backfill(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t())) ::
+          {:ok, status()} | {:error, term()}
+  def backfill(uri, caps) do
+    uri_key = key(uri)
+    workspace = workspace_key(uri)
+    caps_list = Enum.to_list(caps)
+    licensed? = has_current_self_license?(caps_list, uri)
+    encoded = encode_caps(caps_list)
+
+    case Repo.transaction(fn -> backfill_locked(uri_key, workspace, encoded, licensed?) end) do
+      {:ok, status} -> {:ok, status}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # Shares the `persist_changes/3` decision with the shadow `persist/2` so the
+  # "active iff current-valid self-license" invariant has ONE structural home
+  # (codex F1: a writer, backfill OR shadow, can never produce an active row
+  # for a license-invalid principal). The backfill is a DISTINCT entry point
+  # (its own transaction + status return) as the review requires.
+  defp backfill_locked(uri_key, workspace, encoded, licensed?) do
+    with :ok <- ensure_row(uri_key, workspace),
+         row when not is_nil(row) <- lock_row(uri_key),
+         changes <- persist_changes(row, encoded, licensed?),
+         {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+      String.to_existing_atom(updated.identity_status)
+    else
+      nil -> Repo.rollback(:not_found)
+      {:error, reason} -> Repo.rollback(reason)
+    end
   end
 
   # ====================================================================
@@ -611,4 +751,37 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   defp now_usec, do: DateTime.utc_now() |> DateTime.truncate(:microsecond)
+
+  # ====================================================================
+  # Self-license currency (the #189 PR-2 write-boundary + backfill guard)
+  # ====================================================================
+
+  @doc false
+  # Whether `caps` carries a `:self_license` for `uri` that verifies against the
+  # URI's CURRENT authority generation — the ONE predicate that distinguishes a
+  # genuinely-current holder from a revoked one whose stale license still sits
+  # in the legacy source. Mirrors the legacy reader gate
+  # (`EntityCaps.current_self_license?/2`) so the store never trusts a license
+  # the authorization plane would reject. Fail-closed on any error.
+  @spec has_current_self_license?([Capability.t()], URI.t() | String.t()) :: boolean()
+  def has_current_self_license?(caps, uri) when is_list(caps) do
+    entity = uri_struct(uri)
+    Enum.any?(caps, &current_self_license?(&1, entity))
+  rescue
+    _ -> false
+  catch
+    _, _ -> false
+  end
+
+  defp current_self_license?(%Capability{} = cap, %URI{} = uri) do
+    Capability.action_of(cap) == :self_license and
+      Ezagent.Cap.Authority.verify_against_current(cap, uri, uri)
+  end
+
+  defp current_self_license?(_cap, _uri), do: false
+
+  defp uri_struct(%URI{} = uri), do: Ezagent.URI.instance(uri)
+
+  defp uri_struct(uri) when is_binary(uri),
+    do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance()
 end
