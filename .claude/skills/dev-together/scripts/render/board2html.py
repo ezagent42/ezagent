@@ -12,7 +12,7 @@ Usage:  uv run --with pyyaml python board2html.py <board.yaml> [board.html]
 
 board.yaml schema — see scripts/render/board.example.yaml for a filled example.
 """
-import sys, html, json
+import sys, html, json, datetime
 
 try:
     import yaml
@@ -28,6 +28,37 @@ PR_STATE_PILL = {"merged": "pr-merged", "open": "pr-open", "draft": "pr-draft"}
 
 def e(x):
     return html.escape("" if x is None else str(x))
+
+def parse_date(s):
+    """Parse a leading YYYY-MM-DD out of a string; return datetime.date or None.
+    Tolerant of trailing text (e.g. '2026-07-27（刷新于 07-28）' -> 2026-07-27)."""
+    if not s:
+        return None
+    try:
+        return datetime.date.fromisoformat(str(s).strip()[:10])
+    except ValueError:
+        return None
+
+def board_today(b):
+    """The board's 'today' for delay computation — deterministic, NOT the wall
+    clock, so a re-render is reproducible. Priority: explicit `as_of:` field →
+    leading date of `date:` → system date (last-resort). `as_of` is the field
+    `plan`/`review` set when the board is organized on a later day."""
+    return (parse_date(b.get("as_of"))
+            or parse_date(b.get("date"))
+            or datetime.date.today())
+
+def card_delay(card, today):
+    """(delayed, overdue_days). A card is DELAYED when it is NOT done and its
+    `est_done` is strictly before `today`. Cards without `est_done` (or when
+    `today` is unresolvable) are never delayed — fully backward-compatible:
+    a board authored before this field renders byte-identically."""
+    if today is None or card.get("status") == "done":
+        return (False, 0)
+    ed = parse_date(card.get("est_done"))
+    if ed and ed < today:
+        return (True, (today - ed).days)
+    return (False, 0)
 
 def eff_delta_chip(delta):
     """Optional up/down delta chip rendered right next to an efficiency value.
@@ -95,6 +126,12 @@ CSS = """
   .card.done{background:#f6fefa;border-left-color:var(--green)}
   .card.done .t{color:#065f46}
   .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .late-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--red);border-radius:4px;padding:1px 6px;float:right}
+  .card.late{background:#fff8f8}
+  .sched{font-size:10.5px;color:#64748b;margin:1px 0 5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .sched .cal{filter:grayscale(.2)}
+  .sched.late{color:#b91c1c;font-weight:600}
+  .decomp{font-size:10px;color:#b91c1c;background:#fef2f2;border:1px dashed #fecaca;border-radius:6px;padding:3px 7px;margin:0 0 6px;line-height:1.45}
   .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
   .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
   .accm{font-size:11px;color:#475569;margin-bottom:6px}
@@ -151,8 +188,9 @@ JS = """
   document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
 """
 
-def render_card(card, pcolor, pname):
+def render_card(card, pcolor, pname, today=None):
     color = pcolor.get(card.get("owner"), "#2563eb")
+    delayed, overdue = card_delay(card, today)
     owner_tag = (f'<div class="owner"><span class="odot" style="background:{color}"></span>'
                  f'{e(pname.get(card.get("owner"), card.get("owner","")))}</div>')
     acc = card.get("acceptance", []) or []
@@ -185,15 +223,30 @@ def render_card(card, pcolor, pname):
     pills.append('<span class="pill more">详情</span>')
     # detail data
     acc_json = json.dumps([[("done" if a.get("done") else "todo"), a.get("text",""), a.get("evidence","")] for a in acc], ensure_ascii=False)
-    rib = '<span class="done-rib">DONE</span>' if is_done else ''
+    if is_done:
+        rib = '<span class="done-rib">DONE</span>'
+    elif delayed:
+        rib = f'<span class="late-rib">延期 {overdue}d</span>'
+    else:
+        rib = ''
     goal = f'<div class="g">{e(card.get("goal"))}</div>' if card.get("goal") else ''
     extra_note = f' · <span style="color:var(--red)">{e(card["flag"])}</span>' if card.get("flag") else ''
     if extra_note and accm:
         accm = accm[:-6] + extra_note + '</div>'
-    cls = "card done" if is_done else "card"
+    # schedule chip (started → est_done) + delay/decomposition surfacing.
+    # Absent both fields → renders nothing (byte-identical to a pre-field board).
+    started, est_done = card.get("started"), card.get("est_done")
+    sched = ''
+    if started or est_done:
+        scls = "sched late" if delayed else "sched"
+        sched = (f'<div class="{scls}"><span class="cal">🗓</span>'
+                 f'{e(started) if started else "?"} → {e(est_done) if est_done else "?"}</div>')
+    decomp = ('<div class="decomp">延期 → 建议按依赖拆成日粒度子模块 '
+              '(B1/B2/B3…), 每块 started/est_done 顺延一天</div>') if delayed else ''
+    cls = "card done" if is_done else ("card late" if delayed else "card")
     return (
         f'<div class="{cls}" style="--pc:{color}">{rib}{owner_tag}<div class="t">{e(card.get("title"))}</div>{goal}'
-        f'{accm}<div class="meta">{"".join(pills)}</div>'
+        f'{accm}{sched}{decomp}<div class="meta">{"".join(pills)}</div>'
         f'<div class="detail" data-title="{e(card.get("title"))}" data-who="{e(card.get("who",""))}" '
         f"data-acc='{html.escape(acc_json, quote=True)}' "
         f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt",""))}"></div></div>'
@@ -207,6 +260,7 @@ def main():
     with open(src, encoding="utf-8") as f:
         b = yaml.safe_load(f)
 
+    today = board_today(b)  # deterministic 'today' for delay flags (as_of > date)
     people = b.get("people", []) or []
     cards = b.get("cards", []) or []
     pcolor = {p["id"]: p.get("color", "#2563eb") for p in people}
@@ -243,7 +297,7 @@ def main():
             col_cards = [c for c in cards if c.get("status") == status
                          or (status == "wip" and c.get("status") == "blocked")]
         col_cards = sorted(col_cards, key=lambda c: order.get(c.get("owner"), 99))
-        inner = "".join(render_card(c, pcolor, pname) for c in col_cards)
+        inner = "".join(render_card(c, pcolor, pname, today) for c in col_cards)
         cols.append(f'<div class="colwrap"><div class="colhead {cls}">{label} '
                     f'<span class="cnt">{len(col_cards)}</span></div><div class="cell">{inner}</div></div>')
     board_html = "\n    ".join(cols)
