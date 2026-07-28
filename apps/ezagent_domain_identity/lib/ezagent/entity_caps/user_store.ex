@@ -44,9 +44,22 @@ defmodule Ezagent.EntityCaps.UserStore do
                            {:ok, [Ezagent.Capability.t()]} | {:error, term()})) ::
           :ok | {:error, term()}
   def update(%URI{} = uri, fun) when is_function(fun, 1) do
+    # Commit the AUTHORITATIVE `caps_json` write in its own transaction FIRST,
+    # then mirror to the write-shadow store OUTSIDE the transaction. A shadow
+    # DB error must NEVER abort/roll back the legacy write: Postgres aborts the
+    # whole transaction on any statement error, and an Elixir-layer rescue
+    # cannot recover an aborted transaction (codex F2). Reads are
+    # legacy-authoritative in PR-1, so a momentarily-stale shadow is harmless.
     case Repo.transaction(fn -> update_locked(uri, fun) end) do
-      {:ok, result} -> result
-      {:error, reason} -> {:error, reason}
+      {:ok, {:ok, caps}} ->
+        mirror_identity_caps(uri, caps)
+        :ok
+
+      {:ok, {:error, reason}} ->
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -67,12 +80,10 @@ defmodule Ezagent.EntityCaps.UserStore do
              encoded <- caps |> Enum.map(&Ezagent.Capability.to_map/1) |> Jason.encode!(),
              {:ok, _row} <-
                row |> Ecto.Changeset.change(caps_json: encoded) |> Repo.update() do
-          # #189 PR-1 dual-write (write-shadow): mirror the complete user cap
-          # set into the unified identity-caps store (same transaction,
-          # status/receipt preserved). Best-effort but NEVER silent — a
-          # mirror failure is logged and the authoritative caps_json write
-          # still commits (codex F2).
-          mirror_identity_caps(uri, caps)
+          # Return the committed cap set; the write-shadow mirror runs in
+          # `update/2` AFTER this transaction commits, so a shadow failure
+          # cannot roll back the authoritative `caps_json` write (codex F2).
+          {:ok, caps}
         end
     end
   end
