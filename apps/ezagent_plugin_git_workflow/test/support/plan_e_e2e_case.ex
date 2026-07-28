@@ -248,14 +248,86 @@ defmodule EzagentPluginGitWorkflow.PlanEE2ECase do
     }
   end
 
+  # Raises with the COMMAND and git's own output rather than letting a bare
+  # `{output, 0} = ...` MatchError hide both. A fixture repository that fails
+  # to build is the least interesting reason for this suite to be red, and it
+  # must not cost anyone a debugging session to find that out.
   defp git!(cd, args) do
-    {output, 0} = System.cmd("git", args, cd: cd, stderr_to_stdout: true)
-    output
+    case System.cmd("git", args, cd: cd, stderr_to_stdout: true) do
+      {output, 0} ->
+        output
+
+      {output, status} ->
+        raise "git #{Enum.join(args, " ")} (cd: #{cd}) exited #{status}:\n#{output}"
+    end
   end
 
   # ---------------------------------------------------------------------------
-  # Helpers the scenarios share
+  # The scenario, as steps every file in this slice shares
   # ---------------------------------------------------------------------------
+
+  @worker_file "notes.md"
+  @worker_content "written by the task worker\n"
+
+  @doc "The bounded UTF-8 content §8's step 4 has the worker write."
+  @spec worker_content() :: String.t()
+  def worker_content, do: @worker_content
+
+  @doc "Performs the ONE stage the run owes, asserting it succeeded."
+  @spec advance!(String.t()) :: EzagentPluginGitWorkflow.WorkflowRun.t()
+  def advance!(run_id) do
+    assert {:ok, run} = EzagentPluginGitWorkflow.StageRunner.advance(run_id)
+    run
+  end
+
+  @doc """
+  `accepted → authorized` through `Authorization.authorize_run/2` — the
+  production entry point §8's "authorize test task" names, and the one §3.1
+  requires to have zero side effects when it denies.
+  """
+  @spec authorize!(String.t(), EzagentPluginGitWorkflow.TaskBinding.t()) ::
+          EzagentPluginGitWorkflow.WorkflowRun.t()
+  def authorize!(run_id, binding) do
+    {:ok, run} = Store.read_run(run_id)
+
+    assert {:ok, %EzagentPluginGitWorkflow.WorkflowRun{status: "authorized"} = authorized} =
+             EzagentPluginGitWorkflow.Authorization.authorize_run(run, binding)
+
+    authorized
+  end
+
+  @doc """
+  Carries a fresh run to `changes_ready` with one bounded UTF-8 file written
+  into the provisioned worktree by a "worker" (a plain `File.write!/2`).
+
+  The write is what makes §8's step 4 real: the collected change comes from a
+  file that exists on disk, never from a hand-built `%FileChange{}`.
+  """
+  @spec to_changes_ready!(String.t(), EzagentPluginGitWorkflow.TaskBinding.t(), keyword()) :: :ok
+  def to_changes_ready!(run_id, binding, opts \\ []) do
+    authorize!(run_id, binding)
+    assert %{status: "workspace_ready"} = advance!(run_id)
+
+    write_worker_file!(
+      run_id,
+      Keyword.get(opts, :content, @worker_content),
+      Keyword.get(opts, :name, @worker_file)
+    )
+
+    assert %{status: "changes_ready"} = advance!(run_id)
+    :ok
+  end
+
+  @doc "Writes `content` into the run's provisioned worktree and returns the path."
+  @spec write_worker_file!(String.t(), iodata(), String.t()) :: String.t()
+  def write_worker_file!(run_id, content, name \\ @worker_file) do
+    {:ok, %EzagentPluginGitWorkflow.WorkflowFacts{workspace_provision_id: provision_id}} =
+      Store.read_facts(run_id)
+
+    path = Path.join(worktree_path!(provision_id), name)
+    File.write!(path, content)
+    path
+  end
 
   @doc """
   The worktree the provisioner really created for `provision_id`.

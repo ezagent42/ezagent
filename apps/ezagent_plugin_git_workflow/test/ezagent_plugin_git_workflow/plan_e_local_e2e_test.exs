@@ -24,64 +24,26 @@ defmodule EzagentPluginGitWorkflow.PlanELocalE2ETest do
 
   use EzagentPluginGitWorkflow.PlanEE2ECase
 
-  alias EzagentPluginGitWorkflow.Authorization, as: Authz
   alias EzagentPluginGitWorkflow.Observation
-  alias EzagentPluginGitWorkflow.StageRunner
   alias EzagentPluginGitWorkflow.StubGitProvider
   alias EzagentPluginGitWorkflow.Store
-  alias EzagentPluginGitWorkflow.WorkflowFacts
   alias EzagentPluginGitWorkflow.WorkflowRun
 
   @moduletag :plan_e_e2e
-
-  @worker_file "notes.md"
-  @worker_content "written by the task worker\n"
 
   # ---------------------------------------------------------------------------
   # The scenario, as one reusable pass
   # ---------------------------------------------------------------------------
 
-  defp advance!(run_id) do
-    assert {:ok, run} = StageRunner.advance(run_id)
-    run
-  end
-
-  # `accepted → authorized` is `Authorization.authorize_run/2` — the same
-  # production entry point §8's "authorize test task" names, and the one
-  # design §3.1 requires to have zero side effects when it denies.
-  defp authorize!(run_id, binding) do
-    {:ok, run} = Store.read_run(run_id)
-
-    assert {:ok, %WorkflowRun{status: "authorized"} = authorized} =
-             Authz.authorize_run(run, binding)
-
-    authorized
-  end
-
-  # §8's main scenario. `write_file` is what makes step 4 real: the collected
-  # change comes from a file a worker actually wrote into the provisioned
-  # worktree, never from a hand-built `%FileChange{}`.
-  defp run_pass!(run_id, binding, opts \\ []) do
-    authorize!(run_id, binding)
-    assert %WorkflowRun{status: "workspace_ready"} = advance!(run_id)
-
-    if Keyword.get(opts, :write_file, true) do
-      write_worker_file!(run_id, Keyword.get(opts, :content, @worker_content))
-    end
-
-    assert %WorkflowRun{status: "changes_ready"} = advance!(run_id)
+  # §8's main scenario, end to end. Every step is a shared helper from
+  # `PlanEE2ECase` so the fault-injection file exercises the identical path.
+  defp run_pass!(run_id, binding) do
+    :ok = to_changes_ready!(run_id, binding)
     assert %WorkflowRun{status: "pr_open"} = advance!(run_id)
     assert {:ok, %WorkflowRun{status: "observations_current"}} = Observation.tick(run_id)
 
     {:ok, facts} = Store.read_facts(run_id)
     facts
-  end
-
-  defp write_worker_file!(run_id, content, name \\ @worker_file) do
-    {:ok, %WorkflowFacts{workspace_provision_id: provision_id}} = Store.read_facts(run_id)
-    path = Path.join(worktree_path!(provision_id), name)
-    File.write!(path, content)
-    path
   end
 
   defp mutating_kinds(provider) do
@@ -318,7 +280,18 @@ defmodule EzagentPluginGitWorkflow.PlanELocalE2ETest do
              |> StubGitProvider.log()
              |> Enum.count(&(&1.authorization == :installation_token)) > 0
 
-      for value <- all_persisted_strings() do
+      # Positive controls: neither sweep is allowed to be vacuous. The row
+      # sweep really reads rows, and the log capture really would show the
+      # token if anything logged it.
+      persisted = all_persisted_strings()
+      assert run.id in persisted
+
+      assert ExUnit.CaptureLog.capture_log(fn ->
+               require Logger
+               Logger.error(token)
+             end) =~ token
+
+      for value <- persisted do
         refute String.contains?(value, token), "token reached a persisted column"
         refute String.contains?(value, "ghs-"), "a GitHub token shape reached a persisted column"
       end

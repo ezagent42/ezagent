@@ -123,6 +123,17 @@ defmodule EzagentPluginGitWorkflow.StubGitProvider do
   @spec plant_ref(pid(), String.t(), keyword()) :: {:ok, String.t()}
   def plant_ref(server, ref, opts), do: GenServer.call(server, {:plant_ref, ref, opts})
 
+  @doc """
+  Replaces what the observation reads answer with.
+
+  Two consecutive ticks that would return identical answers cannot show
+  whether a snapshot came from the earlier tick or the later one — which is
+  the exact question design §6.2's fifth crash window asks. Changing the
+  answer in between makes the two ticks distinguishable in the row.
+  """
+  @spec set_observations(pid(), keyword()) :: :ok
+  def set_observations(server, opts), do: GenServer.call(server, {:set_observations, opts})
+
   @doc "Requests that CHANGED provider state (or tried to), oldest first."
   @spec mutating(pid()) :: [map()]
   def mutating(server), do: Enum.filter(log(server), & &1.mutating)
@@ -173,6 +184,15 @@ defmodule EzagentPluginGitWorkflow.StubGitProvider do
   def handle_call(:state, _from, state) do
     snapshot = Map.take(state, [:refs, :commits, :trees, :blobs, :pulls])
     {:reply, snapshot, state}
+  end
+
+  def handle_call({:set_observations, opts}, _from, state) do
+    state =
+      state
+      |> Map.put(:checks, Keyword.get(opts, :checks, state.checks))
+      |> Map.put(:reviews, Keyword.get(opts, :reviews, state.reviews))
+
+    {:reply, :ok, state}
   end
 
   def handle_call({:fail_next, opts}, _from, state) do
