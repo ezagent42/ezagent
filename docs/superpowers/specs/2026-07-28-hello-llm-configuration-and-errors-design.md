@@ -30,39 +30,6 @@ Only the explicit `no_api_key` tuple is preserved as an actionable credential
 failure.  HTTP, transport, decode, model, and unrecognized failures remain
 generic until they have a stable, separately registered user-facing code.
 
-## Session membership before credential validation
-
-Every fresh agent declared by a template role slot is a session member once its
-agent process, capability binding, and session join succeed. Credential state
-MUST NOT prevent that membership. This applies to every flavor: `curl` agents
-need a reachable member surface to configure an API key, and file-backed
-interactive flavors need their PTY surface to complete login. Environment-backed
-flavors also remain members, but their provider configuration is repaired
-outside the PTY.
-
-`CredentialPrecondition` remains a diagnostic helper, but no longer gates
-template materialization. The materializer must remove both pre-spawn
-credential skips and the post-spawn credential check that terminates a fresh
-agent before its session join. It must also tell the credential cascade that a
-template-role spawn is allowed to have no source: otherwise a required
-slice-backed role is rejected inside the cascade even after the pre-check is
-removed. That permission is scoped to session-template role materialization;
-it does not relax ordinary explicit-agent creation or unrelated spawn paths.
-
-Host-login adoption is useful only as an optimization for copying an already
-available credential. It must not synchronously block or fail a role's create
-and join path. A timeout or adoption error is recorded for operators, while
-the agent is still created and joined without inherited credentials.
-
-Failed agent creation unrelated to credentials, capability binding, and
-session join remain hard materializer failures. An agent with unavailable
-credentials is instead a valid member that cannot yet generate. Runtime
-failures retain the flavor's existing structured signal where one exists (for
-example, `curl` returns `{:no_api_key, provider}`); adding a common PTY-login
-signal is deferred until the bridge exposes a stable, flavor-neutral readiness
-state. This avoids incorrectly presenting PTY login for environment-backed
-flavors such as `cc-custom`, whose remediation is provider configuration.
-
 ## Tests
 
 - A frontend component test verifies that Hello defaults to `curl`, exposes
@@ -72,10 +39,9 @@ flavors such as `cc-custom`, whose remediation is provider configuration.
   `no_api_key` error signal instead of a `generation_failed` wrapper.
 - Existing World error-card tests remain the authority that the preserved
   signal renders the credential-configuration card.
-- A definition-agent integration regression test proves a credential-less
-  template role is materialized and joined instead of being skipped or
-  terminated.
-- A cascade regression test proves a required slice-backed role also joins
-  without a credential source, rather than failing inside the cascade.
-- Existing runtime error-card coverage remains the authority for each flavor's
-  stable error signal; this change does not invent a misleading common signal.
+
+## Scope boundary
+
+This change is confined to the World template-authoring surface and the Hello
+generator's error-normalization boundary. It does not alter session-template
+agent materialization, credential cascade policy, agent readiness, or rollback.
