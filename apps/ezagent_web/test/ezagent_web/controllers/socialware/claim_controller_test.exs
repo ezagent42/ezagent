@@ -33,41 +33,37 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
   @tag :integration
   test "valid token → mints a grantee-bound cap for the clicker + 302 to world root",
        %{conn: conn, ws: ws} do
-    skip_if_no_entity_spawn(fn ->
-      owner = user(ws, "owner")
-      target = target_agent(ws, "shared", owner)
-      clicker = signed_in_user(ws, "clicker")
+    owner = user(ws, "owner")
+    target = target_agent(ws, "shared", owner)
+    clicker = signed_in_user(ws, "clicker")
 
-      token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
 
-      out =
-        conn
-        |> sign_in(ws, clicker)
-        |> get(~p"/socialware/claim?#{[token: token]}")
+    out =
+      conn
+      |> sign_in(ws, clicker)
+      |> get(~p"/socialware/claim?#{[token: token]}")
 
-      assert redirected_to(out) == "/"
+    assert redirected_to(out) == "/"
 
-      # cap-as-truth: the clicker now holds the shared read cap toward the target.
-      assert eventually(fn -> holds_cap?(clicker, target, :get_tree) end)
-      refute holds_cap?(clicker, target, :add_node)
-    end)
+    # cap-as-truth: the clicker now holds the shared read cap toward the target.
+    assert eventually(fn -> holds_cap?(clicker, target, :get_tree) end)
+    refute holds_cap?(clicker, target, :add_node)
   end
 
   @tag :integration
   test "tampered token → 403, mints nothing", %{conn: conn, ws: ws} do
-    skip_if_no_entity_spawn(fn ->
-      owner = user(ws, "owner2")
-      target = target_agent(ws, "shared2", owner)
-      clicker = signed_in_user(ws, "clicker2")
+    owner = user(ws, "owner2")
+    target = target_agent(ws, "shared2", owner)
+    clicker = signed_in_user(ws, "clicker2")
 
-      out =
-        conn
-        |> sign_in(ws, clicker)
-        |> get(~p"/socialware/claim?#{[token: "garbage"]}")
+    out =
+      conn
+      |> sign_in(ws, clicker)
+      |> get(~p"/socialware/claim?#{[token: "garbage"]}")
 
-      assert out.status == 403
-      refute holds_cap?(clicker, target, :get_tree)
-    end)
+    assert out.status == 403
+    refute holds_cap?(clicker, target, :get_tree)
   end
 
   @tag :integration
@@ -116,12 +112,10 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
     uri
   end
 
+  # The clicker principal already exists (created by `signed_in_user/2`), so this
+  # only seeds the auth session — no user-ensure case (that keeps it distinct from
+  # other controller tests' `sign_in`, and there is nothing to ensure here).
   defp sign_in(conn, ws, %URI{} = entity_uri) do
-    case Ezagent.Users.get_by_uri(entity_uri) do
-      nil -> {:ok, _} = Ezagent.Users.create(URI.to_string(entity_uri), nil, [])
-      _ -> :ok
-    end
-
     Plug.Test.init_test_session(conn, %{
       "current_entity_uri" => URI.to_string(entity_uri),
       "current_workspace_uri" => "workspace://#{ws}"
@@ -145,16 +139,6 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
     else
       Process.sleep(10)
       eventually(fun, attempts - 1)
-    end
-  end
-
-  defp skip_if_no_entity_spawn(body) do
-    if not function_exported?(Ezagent.SpawnRegistry, :registered_schemes, 0) or
-         "entity" not in Ezagent.SpawnRegistry.registered_schemes() do
-      IO.puts(:stderr, "SKIP: entity spawn fn not registered (test bootstrap incomplete)")
-      :ok
-    else
-      body.()
     end
   end
 end
