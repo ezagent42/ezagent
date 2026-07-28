@@ -86,6 +86,24 @@ defmodule EzagentPluginGitWorkflow.PlanEE2ECase do
     previous_home = System.get_env("EZAGENT_HOME")
     System.put_env("EZAGENT_HOME", root)
 
+    # Registered BEFORE anything can fail. `EZAGENT_HOME` and the three
+    # `:ezagent_plugin_github` keys are VM-GLOBAL: a setup that raises after
+    # setting them and before registering their restore leaks them into every
+    # test that follows, in this app and the next. Deleting a key that was
+    # never set is a no-op, so registering first costs nothing.
+    ExUnit.Callbacks.on_exit(fn ->
+      Application.delete_env(:ezagent_plugin_github, :adapter_req_opts)
+      Application.delete_env(:ezagent_plugin_github, :app_id)
+      Application.delete_env(:ezagent_plugin_github, :private_key)
+      Application.delete_env(:ezagent_domain_workspace, :task_workspace_remote_builder)
+
+      if is_nil(previous_home),
+        do: System.delete_env("EZAGENT_HOME"),
+        else: System.put_env("EZAGENT_HOME", previous_home)
+
+      File.rm_rf!(root)
+    end)
+
     origin = local_origin!(root)
 
     Application.put_env(:ezagent_domain_workspace, :task_workspace_remote_builder, fn _req,
@@ -166,20 +184,9 @@ defmodule EzagentPluginGitWorkflow.PlanEE2ECase do
 
     :ok = ExecutionSeamTestDelegate.put_backend(CapBacked)
 
-    ExUnit.Callbacks.on_exit(fn ->
-      ExecutionSeamTestDelegate.clear_backend()
-      TaskAccessSupervisor.teardown(task_access_uri)
-      Application.delete_env(:ezagent_plugin_github, :adapter_req_opts)
-      Application.delete_env(:ezagent_plugin_github, :app_id)
-      Application.delete_env(:ezagent_plugin_github, :private_key)
-      Application.delete_env(:ezagent_domain_workspace, :task_workspace_remote_builder)
-
-      if is_nil(previous_home),
-        do: System.delete_env("EZAGENT_HOME"),
-        else: System.put_env("EZAGENT_HOME", previous_home)
-
-      File.rm_rf!(root)
-    end)
+    # LIFO: this runs before the global-state restore above, so the Kind is
+    # gone while its policy's registry entries are still meaningful.
+    ExUnit.Callbacks.on_exit(fn -> TaskAccessSupervisor.teardown(task_access_uri) end)
 
     %{
       binding: binding,
