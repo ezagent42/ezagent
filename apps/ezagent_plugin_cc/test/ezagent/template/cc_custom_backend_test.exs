@@ -90,6 +90,19 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
     end
 
+    test "scoped session-template member omits a missing profile key" do
+      without_key()
+
+      tmpl = %{
+        "provider" => "deepseek",
+        "session_template_member" => true
+      }
+
+      assert {:ok, env} = Provider.provider_env(tmpl)
+      assert env["ANTHROPIC_BASE_URL"] == "https://api.deepseek.com/anthropic"
+      refute Map.has_key?(env, "ANTHROPIC_AUTH_TOKEN")
+    end
+
     test "empty-string key counts as missing (parity with unset)" do
       System.put_env("DEEPSEEK_API_KEY", "")
       assert Provider.profile_env("deepseek") == {:error, {:backend_api_key_missing, "deepseek"}}
@@ -204,6 +217,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       assert data["model"] == "x"
     end
 
+    test "preserves the persisted session-template-member flag" do
+      assert CcCustomAgent.template_data_extra(%{session_template_member: true})[
+               "session_template_member"
+             ] == true
+    end
+
     test "no provider in content → key absent (validate fails it later, fail closed)" do
       refute Map.has_key?(CcCustomAgent.template_data_extra(%{model: "x"}), "provider")
     end
@@ -281,6 +300,26 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       }
 
       assert {:error, {:backend_api_key_missing, "deepseek", %URI{}}} =
+               CcCustomAgent.instantiate("cc_custom.agent", tmpl, workspace_uri())
+    end
+
+    test "scoped session-template member bypasses the missing-key gate" do
+      without_key()
+
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cc_cu-template-member-#{System.unique_integer([:positive])}"
+        )
+
+      tmpl = %{
+        "class" => "cc_custom.agent",
+        "agent_uri" => URI.to_string(uri),
+        "cwd" => "/tmp",
+        "provider" => "deepseek",
+        "session_template_member" => true
+      }
+
+      assert {:ok, [^uri], %{fresh?: true}} =
                CcCustomAgent.instantiate("cc_custom.agent", tmpl, workspace_uri())
     end
   end
@@ -368,6 +407,7 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
     test "deepseek profile injects its block + the cc-custom bridge topic", ctx do
       with_key()
+
       uri =
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_cu-pty-#{System.unique_integer([:positive])}"
@@ -395,6 +435,7 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
     test "kimi profile injects its 9-var block (MOONSHOT_API_KEY)", ctx do
       System.put_env("MOONSHOT_API_KEY", "sk-kimi-test-xyz")
       on_exit(fn -> System.delete_env("MOONSHOT_API_KEY") end)
+
       uri =
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_cu-kimi-#{System.unique_integer([:positive])}"
@@ -429,6 +470,7 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
 
     test "default anthropic cc path UNCHANGED (no catalog var leaks)", ctx do
       with_key()
+
       uri =
         Ezagent.URI.new!(
           "entity://team-alpha/agent/cc_plain-pty2-#{System.unique_integer([:positive])}"
@@ -538,6 +580,12 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
              )
     end
 
+    test "template_data_extra/1 preserves the persisted session-template-member flag" do
+      assert CcHeadlessCustomAgent.template_data_extra(%{session_template_member: true})[
+               "session_template_member"
+             ] == true
+    end
+
     test "instantiate fail-fast on missing key" do
       without_key()
 
@@ -549,6 +597,30 @@ defmodule Ezagent.PluginCc.Template.CcCustomBackendTest do
       }
 
       assert {:error, {:backend_api_key_missing, "deepseek", %URI{}}} =
+               CcHeadlessCustomAgent.instantiate(
+                 "cc_headless_custom.agent",
+                 tmpl,
+                 workspace_uri()
+               )
+    end
+
+    test "scoped session-template member bypasses the missing-key gate" do
+      without_key()
+
+      uri =
+        Ezagent.URI.new!(
+          "entity://team-alpha/agent/cch_cu-template-member-#{System.unique_integer([:positive])}"
+        )
+
+      tmpl = %{
+        "class" => "cc_headless_custom.agent",
+        "agent_uri" => URI.to_string(uri),
+        "cwd" => "/tmp",
+        "provider" => "deepseek",
+        "session_template_member" => true
+      }
+
+      assert {:ok, [^uri], %{fresh?: true}} =
                CcHeadlessCustomAgent.instantiate(
                  "cc_headless_custom.agent",
                  tmpl,
