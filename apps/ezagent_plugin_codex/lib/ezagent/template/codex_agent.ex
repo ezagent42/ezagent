@@ -602,14 +602,17 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
   end
 
   # Return: `{:ok, dir}` / `{:ok, nil}` on the non-cascade path (backward-compatible), OR
-  # `{:ok, dir, {:grant, agent_uri_str, incarnation_id, version}}` on the cascade path —
-  # the third element carries the grant identity validated at materialize so
-  # `spawn_for_codex/3` can re-validate the grant IMMEDIATELY before the
-  # sidecar/PTY launch (codex CRITICAL §5.1; #201-cred — incarnation-bound).
+  # `{:ok, dir, {:grant, agent_uri_str, incarnation_id, version, minted_incarnation_id}}`
+  # on the cascade path — the third element (opaque to the plugin) carries the
+  # grant identity validated at materialize so `spawn_for_codex/3` can re-validate
+  # the grant IMMEDIATELY before the sidecar/PTY launch (codex CRITICAL §5.1;
+  # #201-cred — incarnation-bound; r3 MEDIUM-5 — a separate minted id gates
+  # compensation).
   @doc false
   @spec create_agent_config_dir(URI.t(), map()) ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), String.t(), non_neg_integer()}}
+          | {:ok, String.t(),
+             {:grant, String.t(), String.t() | nil, non_neg_integer(), String.t() | nil}}
           | {:error, term()}
   def create_agent_config_dir(%URI{} = agent_uri, tmpl) when is_map(tmpl) do
     Ezagent.Credential.HomeRuntime.create_agent_config_dir(

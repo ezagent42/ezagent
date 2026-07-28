@@ -10,16 +10,31 @@ defmodule Ezagent.Credential.HomeRuntime do
 
   @config_complete_marker ".ezagent-config-complete"
 
-  # #201-cred (codex r2 HIGH-4) — the grant context threads the grant's
-  # INCARNATION ID alongside the version: the pre-launch revalidation
-  # (`revalidate_grant_before_launch/1`) re-checks `(agent_uri,
-  # incarnation_id, version)`, so a delete+reinsert at the same version or
-  # two reapprovals racing one version number can no longer pass a stale
-  # materializer through.
-  @type grant_ctx :: {:grant, String.t(), String.t() | nil, non_neg_integer()} | nil
+  # #201-cred (codex r2 HIGH-4 / r3 MEDIUM-5) — the grant context threads TWO
+  # distinct incarnation ids:
+  #
+  #   `{:grant, agent_uri_str, fetched_incarnation_id, version,
+  #     minted_incarnation_id}`
+  #
+  #   * `fetched_incarnation_id` + `version` — the ACTIVE grant the launch will
+  #     use, read at materialization time. The pre-launch revalidation
+  #     (`revalidate_grant_before_launch/1`) re-checks `(agent_uri,
+  #     fetched_incarnation_id, version)`, so a delete+reinsert at the same
+  #     version or two reapprovals racing one version number can no longer pass a
+  #     stale materializer through. May be a PRE-EXISTING grant (a no-pending
+  #     created-winner over a durable row) — possibly `nil` for a legacy row.
+  #   * `minted_incarnation_id` — EXACTLY what THIS spawn minted, or `nil` if it
+  #     minted nothing (codex r3 MEDIUM-5). COMPENSATION keys off this, never the
+  #     fetched id: a launch failure must delete only the grant this spawn
+  #     created and must NEVER delete a pre-existing grant it merely read (whose
+  #     `fetched_incarnation_id` — e.g. a backfilled `"legacy:<id>"` — is not a
+  #     mint receipt of this spawn).
+  @type grant_ctx ::
+          {:grant, String.t(), String.t() | nil, non_neg_integer(), String.t() | nil} | nil
   @type create_result ::
           {:ok, String.t() | nil}
-          | {:ok, String.t(), {:grant, String.t(), String.t() | nil, non_neg_integer()}}
+          | {:ok, String.t(),
+             {:grant, String.t(), String.t() | nil, non_neg_integer(), String.t() | nil}}
           | {:error, term()}
 
   # #1201 A② — the SHARED host-login-home derivation for file-backed flavors
@@ -190,7 +205,7 @@ defmodule Ezagent.Credential.HomeRuntime do
   @spec revalidate_grant_before_launch(grant_ctx()) :: :ok | {:error, term()}
   def revalidate_grant_before_launch(nil), do: :ok
 
-  def revalidate_grant_before_launch({:grant, agent_uri_str, incarnation_id, version}) do
+  def revalidate_grant_before_launch({:grant, agent_uri_str, incarnation_id, version, _minted}) do
     case Ezagent.Credential.GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version) do
       :ok -> :ok
       {:error, :grant_changed} -> {:error, {:grant_changed_before_launch, agent_uri_str}}
@@ -208,22 +223,32 @@ defmodule Ezagent.Credential.HomeRuntime do
   @spec compensate_grant_ctx(grant_ctx()) :: :ok | {:error, :grant_compensation_failed}
   def compensate_grant_ctx(nil), do: :ok
 
-  # #201-cred (codex r2 NEW-MEDIUM-4) — a legacy grant (minted before the
-  # incarnation column existed) materializes with a `nil` incarnation in its
-  # grant_ctx. THIS spawn did not mint that pre-existing grant, so there is
-  # nothing for it to compensate — and `GrantMint.compensate/3`'s
-  # `is_binary(incarnation_id)` guard would FunctionClauseError on `nil`. Treat
-  # it as a no-op (never delete a pre-existing legacy grant on a spawn failure).
-  def compensate_grant_ctx({:grant, _agent_uri_str, nil, _version}), do: :ok
+  # #201-cred (codex r3 MEDIUM-5) — compensation keys off the MINTED incarnation
+  # (5th element), NEVER the fetched one. A `nil` minted id means THIS spawn
+  # minted nothing (a no-pending created-winner over a pre-existing grant, or a
+  # respawn) — there is nothing for it to compensate, and it must NEVER delete a
+  # pre-existing grant it merely read (whose fetched id — e.g. a backfilled
+  # `"legacy:<id>"` — is not a mint receipt of this spawn). `GrantMint.compensate/3`'s
+  # `is_binary` guard would also FunctionClauseError on `nil`.
+  def compensate_grant_ctx({:grant, _agent_uri_str, _fetched_id, _version, nil}), do: :ok
 
-  def compensate_grant_ctx({:grant, agent_uri_str, incarnation_id, _version}) do
-    Ezagent.Credential.GrantMint.compensate(agent_uri_str, incarnation_id)
+  def compensate_grant_ctx({:grant, agent_uri_str, _fetched_id, _version, minted_incarnation_id}) do
+    Ezagent.Credential.GrantMint.compensate(agent_uri_str, minted_incarnation_id)
   end
 
-  @doc "The minted grant's incarnation id from a grant_ctx (or nil)."
+  @doc """
+  The incarnation THIS spawn MINTED (5th element), or nil if it minted nothing.
+
+  This is the compensation receipt the plugin threads into its instantiate meta
+  as `:grant_incarnation_id`, which the chokepoint's `Rollback.fresh_spawn`
+  deletes on a post-spawn-obligation failure. #201-cred (codex r3 MEDIUM-5) — it
+  is the MINTED id, never the fetched one, so a rollback can never delete a
+  pre-existing grant this spawn only read.
+  """
   @spec grant_ctx_incarnation(grant_ctx()) :: String.t() | nil
   def grant_ctx_incarnation(nil), do: nil
-  def grant_ctx_incarnation({:grant, _uri, incarnation_id, _version}), do: incarnation_id
+  def grant_ctx_incarnation({:grant, _uri, _fetched_id, _version, minted_incarnation_id}),
+    do: minted_incarnation_id
 
   @doc """
   #201-cred (codex r2 HIGH-2) — the SHARED post-mint spawn-failure path for
@@ -381,7 +406,13 @@ defmodule Ezagent.Credential.HomeRuntime do
                    end
                  })
                end) do
-          {:ok, target, version, incarnation_id}
+          # #201-cred (codex r3 MEDIUM-5) — carry the MINTED incarnation (nil if
+          # this spawn minted nothing) SEPARATELY from the fetched
+          # `incarnation_id`. `version`/`incarnation_id` are the active grant the
+          # launch revalidates against (possibly a pre-existing row); the minted
+          # id is the ONLY thing a later spawn-failure may compensate.
+          {:ok, target, version, incarnation_id,
+           Ezagent.Credential.GrantMint.grant_incarnation(minted)}
         end
       rescue
         # #201-cred (codex r2 NEW-HIGH-1) — a raise in the post-mint region has
@@ -399,8 +430,9 @@ defmodule Ezagent.Credential.HomeRuntime do
       end
 
     case result do
-      {:ok, ^target, version, incarnation_id} ->
-        {:ok, target, {:grant, URI.to_string(agent_uri), incarnation_id, version}}
+      {:ok, ^target, version, incarnation_id, minted_incarnation_id} ->
+        {:ok, target,
+         {:grant, URI.to_string(agent_uri), incarnation_id, version, minted_incarnation_id}}
 
       {:error, reason} ->
         _ = File.rm_rf(staging)

@@ -74,7 +74,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
     tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-    assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
 
     # whole-file-replace: user (higher) wins
@@ -204,7 +204,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       write!(base, "settings.json", "BASE")
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, _minted}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       assert agent_uri_str == URI.to_string(ctx.agent_uri)
@@ -223,7 +223,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
       # 1. materialize commits the config_dir + captures the grant version.
-      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, _minted}} =
                CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
 
       # 2. grant revoked in the window BETWEEN materialize and the subprocess launch.
@@ -280,7 +280,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-      assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the tombstone wins — the file must NOT be resurrected from the prior target.
       refute File.exists?(Path.join(target, "plugins/old.json"))
       refute File.exists?(Path.join(target, "plugins/old.json.tombstone"))
@@ -309,7 +309,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
         }
       }
 
-      assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
       # the stale secret from the prior target must NOT survive — the merge tree has no
       # secret and the source supplied none, so the agent has no credential file.
       refute File.exists?(Path.join(target, ".credentials.json"))
@@ -332,7 +332,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     write!(base, "settings.json", "BASE")
     tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-    assert {:ok, target, {:grant, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
     assert target == ctx.target
     # recovery consumed the orphan `.bak` (entry-point self-heal ran)
     refute File.exists?(bak)
@@ -460,7 +460,7 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
           Ezagent.Kind.CreatedWitness.new(fresh_agent)
         )
 
-      assert {:ok, ^target, {:grant, _, incarnation, _}} =
+      assert {:ok, ^target, {:grant, _, incarnation, _, _}} =
                CcAgent.create_agent_config_dir(fresh_agent, tmpl)
 
       assert is_binary(incarnation)
@@ -498,6 +498,62 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       # no cascade map → unchanged (a non-cascade agent mints nothing).
       assert %{"other" => 1} =
                Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"other" => 1}, w)
+    end
+  end
+
+  # #201-cred (codex r3 MEDIUM-5) — a NO-PENDING materialization over a
+  # PRE-EXISTING (e.g. backfilled `legacy:<id>`) grant returns the FETCHED
+  # incarnation for the pre-launch revalidation, but that fetched id is NOT this
+  # spawn's mint receipt. A later launch failure must therefore compensate
+  # NOTHING (this spawn minted nothing) and PRESERVE the pre-existing grant.
+  describe "MEDIUM-5: a pre-existing grant is never compensated by a no-pending spawn" do
+    test "launch failure after a no-pending materialize PRESERVES the pre-existing grant", ctx do
+      # Turn the setup grant into a backfilled legacy row (a durable grant that
+      # long predates THIS spawn — a NULL incarnation the r3 MEDIUM-4 migration
+      # backfilled to `'legacy:' || id`).
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      legacy_incarnation = "legacy:#{agent_uri_str}"
+
+      assert %{num_rows: 1} =
+               Ecto.Adapters.SQL.query!(
+                 EzagentCore.Repo,
+                 "UPDATE credential_grants SET incarnation_id = $1 WHERE id = $2",
+                 [legacy_incarnation, agent_uri_str]
+               )
+
+      base = tmp("cc-base")
+      write!(base, "settings.json", "BASE")
+      # NO :pending_grant in the cascade — this spawn resolves no new source, so
+      # `maybe_mint` is a no-op and `minted` is nil (the pre-existing grant is
+      # merely READ during materialize).
+      tmpl = cascade_tmpl(ctx, [%{dir: base}])
+
+      assert {:ok, _target, grant_ctx} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
+      # The compensation receipt (the MINTED incarnation) is nil — this spawn
+      # minted nothing — even though the revalidation identity is the fetched
+      # legacy id.
+      assert Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx) == nil
+
+      # Sanity: the pre-existing grant is present with its legacy incarnation.
+      assert %GrantRow{incarnation_id: ^legacy_incarnation} =
+               GrantRow.get_for_agent(agent_uri_str)
+
+      # Simulate a post-materialize LAUNCH failure (the shared file-flavor path).
+      assert {:error, :launch_boom} =
+               Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+                 ctx.agent_uri,
+                 grant_ctx,
+                 :launch_boom,
+                 CcAgent,
+                 "cc"
+               )
+
+      # THE ASSERTION: the pre-existing grant SURVIVES — it was never this
+      # spawn's to delete. Pre-fix (fetched id used as the mint receipt) this
+      # DELETES the legacy grant.
+      assert %GrantRow{incarnation_id: ^legacy_incarnation} =
+               GrantRow.get_for_agent(agent_uri_str)
     end
   end
 end
