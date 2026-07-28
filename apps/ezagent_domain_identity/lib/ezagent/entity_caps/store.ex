@@ -200,6 +200,19 @@ defmodule Ezagent.EntityCaps.Store do
   # Dual-write mirror (PR-1 shadow writes — preserve status + receipt)
   # ====================================================================
 
+  # TEST-ONLY forced-failure seam (the `Kind.Snapshot`
+  # `@p2_5c_commit_failure_seam_enabled` precedent): compiled IN only for
+  # `MIX_ENV=test`, so in a dev/prod/release build `persist/2` is a direct
+  # `do_persist/2` call and the seam is provably unreachable. Consulted ONLY
+  # when the app env `:ezagent_domain_identity,
+  # :p1_forced_shadow_failure_uris` is set (a list of URI strings) — never
+  # set outside the one regression test — so this is a pure no-op off that
+  # test path. It lets the UserStore write-shadow regression
+  # deterministically fail the SHADOW write while the authoritative
+  # `caps_json` write succeeds, proving the shadow failure can neither roll
+  # back nor silently pass (codex round-3).
+  @p1_forced_shadow_failure_seam Mix.env() == :test
+
   @doc """
   Upsert the complete cap set for `uri`, PRESERVING the existing
   `identity_status` / `provisioning_receipt` (a fresh insert defaults to
@@ -210,7 +223,27 @@ defmodule Ezagent.EntityCaps.Store do
   """
   @spec persist(URI.t() | String.t(), [Capability.t()] | MapSet.t(Capability.t())) ::
           :ok | {:error, term()}
-  def persist(uri, caps) when is_list(caps) or is_struct(caps, MapSet) do
+  if @p1_forced_shadow_failure_seam do
+    def persist(uri, caps) when is_list(caps) or is_struct(caps, MapSet) do
+      case Application.get_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris) do
+        nil ->
+          do_persist(uri, caps)
+
+        uris ->
+          if key(uri) in uris do
+            {:error, {:p1_forced_shadow_failure, key(uri)}}
+          else
+            do_persist(uri, caps)
+          end
+      end
+    end
+  else
+    def persist(uri, caps) when is_list(caps) or is_struct(caps, MapSet) do
+      do_persist(uri, caps)
+    end
+  end
+
+  defp do_persist(uri, caps) do
     encoded = encode_caps(caps)
     now = now_usec()
     workspace = workspace_key(uri)

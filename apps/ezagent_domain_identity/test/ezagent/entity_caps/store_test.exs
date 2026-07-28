@@ -422,7 +422,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   describe "dual-write shadow (users)" do
-    test "UserStore writes mirror into the unified store in the same transaction" do
+    test "UserStore writes mirror into the unified store (write-shadow, outside the caps_json transaction)" do
       user = user_uri("parity-user")
       first = issued_cap(user, :send)
       second = issued_cap(user, :join)
@@ -442,6 +442,45 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       assert identity_keys(Store.load(user)) == identity_keys(UserStore.load(user))
       refute cap_present?(Store.load(user), first)
+    end
+
+    test "a shadow-write failure never rolls back the authoritative caps_json write (logged, not silent)" do
+      user = user_uri("shadow-failure")
+      first = issued_cap(user, :send)
+      second = issued_cap(user, :join)
+
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, licensed_caps(user, [first]))
+
+      # Force the SHADOW `Store.persist/2` to fail for this URI (the
+      # MIX_ENV=test-only `:p1_forced_shadow_failure_uris` seam, the
+      # `Kind.Snapshot` p2_5c precedent) while the legacy `caps_json`
+      # write succeeds normally.
+      Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [
+        URI.to_string(user)
+      ])
+
+      try do
+        log =
+          capture_log(fn ->
+            assert :ok = UserStore.persist(user, licensed_caps(user, [second]))
+          end)
+
+        # The failure is logged at :error — never silently dropped.
+        assert log =~ "identity-caps shadow write FAILED"
+        assert log =~ "caps_json committed"
+      after
+        Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris)
+      end
+
+      # The AUTHORITATIVE users.caps_json write committed despite the
+      # shadow failure…
+      assert cap_present?(UserStore.load(user), second)
+      refute cap_present?(UserStore.load(user), first)
+      # …and so did the authoritative EntityCaps read.
+      assert cap_present?(EntityCaps.load_persisted(user), second)
+
+      # The shadow diverged (its write failed) — observable, not silent.
+      refute Store.has_row?(user)
     end
   end
 
