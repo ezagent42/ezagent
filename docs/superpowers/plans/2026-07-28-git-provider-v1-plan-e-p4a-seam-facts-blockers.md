@@ -28,8 +28,15 @@ dispatches through the genuine `Ezagent.Invocation.dispatch/1` → Kind runtime 
 `Ezagent.ActionSet.GitTaskAccess` → adapter path, so §8's "主场景" is a true
 end-to-end run rather than a direct module call. **This slice does not build
 that backend** — it only defines the value (`%AuthorizedTask{}`) and the
-entrypoint (`invoke/3`) the backend will satisfy. The backend itself is P4d's
-test-support module.
+entrypoint (`invoke/3`) the backend will satisfy.
+
+**Production fail-closed default lifted (decision, 2026-07-28, design §3.4):**
+the real backend is now a **production** module, not a test double — it becomes
+the `Application.compile_env/3` DEFAULT, replacing `Unavailable` (which stays as
+the fallback, never deleted). That is slice **P4b**, which is reviewed on its own
+as the design's only authorization surface. It does not change anything P4a
+delivers: `%AuthorizedTask{}`'s four fields are exactly what the canonical main
+pattern needs as input either way.
 
 **Tech Stack:** Elixir/OTP, Postgrex (raw SQL, matching `Store`'s existing
 style — this app uses `Repo.query!/2` throughout, not Ecto changesets), ExUnit.
@@ -351,20 +358,32 @@ crashes the runner or leaks a raw provider reason into presentation.
 
 ---
 
-## Handoff to P4b
+## Handoff
 
 State explicitly in the completion report:
 
 - `%AuthorizedTask{}` exists and is closed, but **nothing constructs one yet** —
   `Unavailable` still returns `{:error, :authorization_unavailable}` from both
-  callbacks, so the seam remains a genuine production dead end. P4d builds the
-  test backend that constructs one and dispatches through
-  `Ezagent.Invocation.dispatch/1`.
-- `Store.update_facts/2` exists but nothing calls it. P4b owns the ordering
+  callbacks, so after this slice the seam is still a production dead end. **P4b**
+  builds the real backend that constructs one, mints an exact cap via
+  `Cap.issue_for_action({:admin, User.admin_uri()}, caller, action_target)`, and
+  dispatches through `Ezagent.Invocation.dispatch/1` — and becomes the
+  `compile_env` default (design §3.4.2).
+- `Store.update_facts/2` exists but nothing calls it. **P4c** owns the ordering
   contract the GitHub adapter's KNOWN LIMITATION depends on: **write
   `deterministic_head_ref` to facts before the first provider mutation call**,
   so a resumed run can prove a ref at base is its own.
-- `Blocker.classify/1` exists but no state transition consumes it. P4b maps
+- `Blocker.classify/1` exists but no state transition consumes it. **P4c** maps
   `:terminal_blocker` → the `blocked` state and `:retryable` → a bounded retry,
   using P1's `WorkflowRun` legal-edge table (`blocked → blocked` self-loop is
   already legal; `failed`/`cancelled` are the only terminal states).
+
+### A note P4b must not lose
+
+The cap P4b mints is **minted on demand by reviewed code**, so it does not mean
+"an operator granted this workflow access". Git Provider's real business
+authorization is the `GitTaskAccess` policy layer — `authorize_receiver`
+(`caller == policy.grantee_uri`) and `action_allowed`
+(`action in policy.allowed_actions`). Design §3.4.1 records the split. P4b's
+four negative assertions exist to prove **that** layer is live; a test suite that
+only proves "a cap was present" has tested nothing.

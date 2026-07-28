@@ -107,15 +107,17 @@ workflow 只依赖一个内部执行 seam：
 generation；不得包含 raw cap、`%Invocation{}`、`ctx.caps`、GitHub token 或任意
 caller-supplied credential。
 
-生产默认实现始终返回 `:authorization_unavailable`，并在 workspace、filesystem、
-provider 和 Agent side effect 之前 fail closed。
+~~生产默认实现始终返回 `:authorization_unavailable`~~
+**（2026-07-28 gaga 决定解除，见 §3.4）**：生产接线一个真实 backend，
+按 §3.2 的 main 规范模式取得授权；`Unavailable` 保留为 backend 缺失时的
+**兜底**，仍在 workspace、filesystem、provider 和 Agent side effect 之前
+fail closed。
 
-> **2026-07-28：本段的「默认」是否仍是「唯一」，已改为待定排期决定——见 §3.4。**
-> §3.3 更正后，原先支撑「恒 fail closed」的技术阻塞理由不再成立；
-> `Unavailable` 作为**缺省**实现与作为**唯一**实现是两件事。
+任何 backend——真实的或兜底的——在返回 `{:error, _}` 时都必须零副作用：
+不得已经建过 workspace、写过文件、发过 provider 请求或碰过 Agent。
 
-本地端到端测试注入显式 test-authorized backend。该 backend 只能通过依赖注入进入
-测试调用，不得由 runtime env、route、ActionSet、CLI 或 Agent 参数启用。
+本地端到端测试仍可注入显式 test backend。该注入只能通过依赖注入进入测试调用，
+不得由 runtime env、route、ActionSet、CLI 或 Agent 参数启用。
 
 ### 3.2 当前明确禁止
 
@@ -214,34 +216,54 @@ admin 仅作签发锚点**。`TaskBinding.credential_owner_uri` /
 迁移面；**不同点是 Git Provider 的授权接入不再有技术阻塞**。是否解除
 §3.1「生产默认恒 `authorization_unavailable`」是独立的排期决定，见 §3.4。
 
-### 3.4 待定：是否解除生产端的 fail-closed 默认
+### 3.4 已决：解除生产端的 fail-closed 默认（gaga 2026-07-28）
 
-**状态：未决（2026-07-28 提出）。** §3.3 拆掉了原来的技术阻塞理由，于是
-§3.1「生产默认实现始终返回 `:authorization_unavailable`」变成一个**排期选择**
-而非必然：
+§3.3 拆掉了原来的技术阻塞理由，于是「生产恒 `authorization_unavailable`」
+从必然变成排期选择。**决定：解除。**
 
-| | 保持 `Unavailable` 为唯一实现 | 增加真实 production backend |
+理由是目标一致性——本设计服务于 Git Provider 的端到端验收，而保持死路的方案
+恰好只能证明「**除授权之外**的一切」：
+
+| | 保持 `Unavailable` 为唯一实现 | **已选：增加真实 backend** |
 |---|---|---|
-| production | 真死路（compile-time 烘死，四条 runtime 翻转路径均有测试证否） | 按 §3.2 规范模式接线 |
-| V1 状态 | dormant，PR 标 `blocked: auth-convergence` | 可真实接线 |
-| P4d 的 E2E | 证明「**除授权之外**的一切」 | 真端到端 |
+| production | 真死路 | 按 §3.2 规范模式接线 |
+| E2E 覆盖 | 绕开 `authorize_receiver` / `allowed_actions` | 覆盖这两层 |
 | V2 迁移风险 | 无（届时一并实现） | 与 main 其余 62 站点同级，非额外风险 |
 
-对「Git Provider E2E 测试」这个目标而言，左列恰好证明不了授权那一段。
+#### 3.4.1 两层授权的分工（实施前必须理解）
 
-**无论选哪列，P4a 的交付物不变**：`%AuthorizedTask{}` 的四字段
-（policy / task_access_uri / task_uri / generation）正是 §3.2 规范模式所需的
-输入，`Unavailable` 从「唯一实现」降为「缺省实现」是增量而非重写。故此决定
-不阻塞 P4a，可在 P4b/P4d 之前任意时点作出。
+真实 backend 会用 `Cap.issue_for_action({:admin, …}, caller, action_target)`
+现铸 cap 再 dispatch——这是 main 62 处同形写法。**必须清楚它保证什么、不保证
+什么**，否则会高估这层的强度：
 
-**若选右列，必须同时满足：**
+| 层 | 回答的问题 | 把关处 |
+|---|---|---|
+| **cap** | 这是不是合法的框架内部流量？ | `Cap.Authorize.authorize/3` 三道门：principal 独立加载（吊销 → `:holder_revoked`）、对目标当前 authority row 现读验签名+generation、shape match |
+| **`GitTaskAccess` policy** | 这个 grantee 能不能对这个仓库做这个动作？ | `authorize_receiver`（`caller == policy.grantee_uri`，`behavior/git_task_access.ex:337-356`）+ `action_allowed`（`action in policy.allowed_actions`，`entity/git_task_access.ex:336`）+ `validate_task_coordinates` / `validate_requested_head` |
 
-- cap 五轴最小权限，禁止任何 `:any` 维度（§3.2）；
+cap 由代码现铸，因此**不**代表「operator 显式授权了这个 workflow」。Git
+Provider 真正的业务授权在下面那层，它是持久的、per-task 的、显式声明
+grantee + 允许动作 + 允许 head ref——解除之后，**这一层第一次被真正测到**。
+
+#### 3.4.2 解除的具体形态（约束）
+
+- **换的是 `Application.compile_env/3` 的缺省值**，不是让 prod config 指定
+  backend。`architecture_test.exs` 那条「非测试 config 不得设 `:execution_seam`」
+  的断言（含两种拼写）原样保留、必须继续通过；
+- `Unavailable` 保留为兜底实现，不删除；
 - principal 取自 `TaskBinding` / `WorkflowRun` 持久化行，不得推导（§3.2）；
-- 端到端测试须包含否定断言——wrong receiver / wrong workspace / wrong instance
-  / wrong action 均返回 `:missing_cap`，照抄
+- cap 五轴最小权限，禁止任何 `:any` 维度（§3.2）；
+- **强制否定断言**：wrong receiver / wrong workspace / wrong instance /
+  wrong action 均须被拒，照抄
   `apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs:106-146`
-  的四条。缺了这些，测试只证明「cap 存在即通过」，不证明 authz 生效。
+  的四条。缺了这些，测试只证明「cap 存在即通过」，不证明 authz 生效；
+- §10 的 operator gate **未解除**：真实 GitHub mutation / canary 仍需 operator
+  批准。本设计的验收全部走本地 `Req.Test`，不碰真实 GitHub。
+
+#### 3.4.3 对切片的影响
+
+真实 backend 是**授权面**，需要独立的对抗性评审和上述否定断言，因此单独成片
+（§9 的 P4b），不与 stage runner 混装。P4a 的交付物不受本决定影响。
 
 ## 4. 组件边界
 
@@ -623,13 +645,29 @@ Owner：`ezagent_plugin_git_workflow`
 
 依赖：P1、P2、P3 已由 lead 集成。
 
-交付：
+原文交付清单（durable stage runner / workspace-change-provider orchestration /
+PR-check-review snapshots / retry-error presentation / local E2E）在 2026-07-28
+按实际起点拆为五片。拆分依据是 P1–P3 在代码里**指名要 P4 关闭**的四个口子，
+外加 §3.4 决定新增的授权面：
 
-- durable stage runner；
-- workspace/change/provider orchestration；
-- PR/check/review snapshots；
-- retry/error presentation；
-- local end-to-end test。
+| 片 | 交付 | 依赖 |
+|---|---|---|
+| **P4a** 地基 | `%AuthorizedTask{}`（封闭无凭证）；`ExecutionSeam.invoke/3` dispatcher + 类型收紧；`Store.update_facts/2` 增量写；`Blocker` 全覆盖词汇 + 重试分类 + 无泄漏呈现 | 无。不跑任何东西 |
+| **P4b** 授权面 | 真实 seam backend（§3.4.2 全部约束）；四条否定断言 | P4a |
+| **P4c** stage runner | workspace → changes → provider 编排；逐阶段 facts + CAS；**provider 调用前先落 `deterministic_head_ref`**（补 §6.2 的 provenance 缺口） | P4b |
+| **P4d** observation | observation tick + 快照 | P4c |
+| **P4e** 本地 E2E | §8 全部主场景 + 8 项故障注入 | P4c、P4d |
+
+四个被指名的口子（均为 P1–P3 作者在代码里写下的原话）：
+
+- `execution_seam.ex` 声明了 `@callback invoke/3` 但从未接线 → P4a；
+- 同文件 moduledoc「Provisional `term()` typing (deferred to Slice P4)」：真实
+  backend 构造 authorized task 时必须把类型收紧成封闭无凭证形状 → P4a；
+- `store.ex` `facts_to_row/2` 输出全部字段含 nil + `ON CONFLICT` 全列
+  `EXCLUDED` ⇒ 分阶段增量写会把前一阶段的事实清成 NULL → P4a；
+- `github_adapter.ex` KNOWN LIMITATION：ref 停在 base 时 adapter 无法区分
+  「自己上次重试留下的」与「外部 planted 的」，指名要 workflow 的 durable
+  facts（§5.3）给身份 → 机制在 P4a，写序在 P4c。
 
 ## 10. Lead review gates
 
@@ -642,10 +680,15 @@ Lead 按顺序：
 P1
 → P2 + P3（可并行）
 → integration review
-→ P4
-→ local E2E
+→ P4a 地基
+→ P4b 授权面        ← 独立对抗性评审：四条否定断言必须真的会红
+→ P4c stage runner
+→ P4d observation
+→ P4e 本地 E2E
 → PR CI
 ```
+
+P4b 是本设计唯一的授权面切片，须单独评审，不与 P4c 合并验收。
 
 任何 worker 碰到以下事项必须停止：
 
