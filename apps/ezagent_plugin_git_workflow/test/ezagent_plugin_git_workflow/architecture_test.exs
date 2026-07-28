@@ -17,7 +17,28 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   # file the scan does not read.
   @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
-                   authorization.ex workflow_facts.ex authorized_task.ex blocker.ex)
+                   authorization.ex workflow_facts.ex authorized_task.ex blocker.ex
+                   policy_derivation.ex execution_seam/cap_backed.ex)
+
+  # Design §3.4 (gaga, 2026-07-28) opened exactly ONE door in this app: the
+  # real seam backend mints an EXACT per-action capability through
+  # `Ezagent.Cap.issue_for_action/3` — main's canonical pattern at ~62 lib
+  # sites — instead of production being a permanent dead end. §3.2's clarified
+  # reading is that the ban is on "建授权体系、改 CapBAC 内部、造通配 fixture",
+  # not on issuing an exact cap the canonical way.
+  #
+  # The door is per-FILE, and it is NARROWER than the gate it replaces, not
+  # wider: `Cap.issue/3` and `Capability.cap/5` (the two spellings through
+  # which an `:any` dimension COULD be introduced) are now refused in every
+  # file including this one, where before they were only refused by the same
+  # blanket `Cap.issue` substring that also caught `issue_for_action`.
+  @cap_minting_source "execution_seam/cap_backed.ex"
+
+  @forbidden_claim_path_modules ~w(
+    Kind.spawn Cap.issue Cap.store Ezagent.ActionSet.GitTaskAccess
+    EzagentPluginGithub EzagentPluginKanban WorkspaceProvision Agent.Sidecar
+    Req.get Req.post Req.put Req.delete Req.request
+  )
 
   # The small, closed set of non-test config files that could theoretically
   # select the ExecutionSeam backend. config/test.exs is deliberately
@@ -115,22 +136,25 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
   describe "claim path rejects forbidden modules" do
     test "no Kind/Cap/Agent/sidecar/Req in lib modules" do
-      forbidden = ~w(
-        Kind.spawn Cap.issue Cap.store Ezagent.ActionSet.GitTaskAccess
-        EzagentPluginGithub EzagentPluginKanban WorkspaceProvision Agent.Sidecar
-        Req.get Req.post Req.put Req.delete Req.request
-      )
-
-      for source <- @source_files do
+      for source <- @source_files, source != @cap_minting_source do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do
           content = File.read!(file)
 
-          for fb <- forbidden do
+          for fb <- @forbidden_claim_path_modules do
             refute content =~ ~r/#{fb}/, "#{source}: references #{fb}"
           end
         end
+      end
+    end
+
+    test "the seam backend is held to the SAME list minus the one opened door" do
+      content =
+        File.read!(Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{@cap_minting_source}"))
+
+      for fb <- @forbidden_claim_path_modules -- ["Cap.issue"] do
+        refute content =~ ~r/#{fb}/, "#{@cap_minting_source}: references #{fb}"
       end
     end
   end
@@ -281,8 +305,8 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   end
 
   describe "no CapBAC / authorization" do
-    test "no reference to Ezagent.Cap in lib modules" do
-      for source <- @source_files do
+    test "no reference to Ezagent.Cap outside the one seam backend" do
+      for source <- @source_files, source != @cap_minting_source do
         file = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{source}")
 
         if File.exists?(file) do
@@ -302,16 +326,47 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       end
     end
 
-    test "no wildcard/admin fixture patterns" do
+    test "no wildcard/admin fixture patterns, and no cap minting outside the seam backend" do
+      backend = Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{@cap_minting_source}")
       lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
 
       for file <- lib_files do
         content = File.read!(file)
         refute content =~ ~r/wildcard.*cap/i
         refute content =~ ~r/admin.*fixture/i
-        refute content =~ ~r/Cap\.issue/
         refute content =~ ~r/Cap\.store/
+
+        unless file == backend do
+          refute content =~ ~r/Cap\.issue/, "#{Path.basename(file)}: only the seam backend mints"
+        end
       end
+    end
+
+    test "the seam backend mints ONLY through Cap.issue_for_action/3" do
+      content =
+        File.read!(Path.join(@lib_dir, "ezagent_plugin_git_workflow/#{@cap_minting_source}"))
+
+      assert content =~ ~r/Ezagent\.Cap\.issue_for_action\(/,
+             "#{@cap_minting_source}: the canonical §3.2 minting call disappeared"
+
+      # `issue_for_action/3` derives the requested shape from the target Kind's
+      # own declaration, so a wildcard dimension cannot be passed in. The two
+      # spellings below hand that freedom back and are refused HERE too — this
+      # is the assertion that makes §3.4.2's "no `:any` dimension" structural
+      # rather than a comment.
+      refute content =~ ~r/Cap\.issue\(/,
+             "#{@cap_minting_source}: Cap.issue/3 takes a hand-built capability"
+
+      refute content =~ ~r/Capability\.cap\(/,
+             "#{@cap_minting_source}: Capability.cap/5 is the wildcard vector"
+
+      refute content =~ ~r/%(Ezagent\.)?Capability\{/,
+             "#{@cap_minting_source}: no hand-assembled capability struct"
+
+      # A bare `:any` scan is deliberately NOT added: the three refutations
+      # above already remove every route by which a dimension could be set at
+      # all, whereas an `:any` substring scan would also fire on the prose that
+      # explains the rule (and would be trivially spelled around).
     end
   end
 
@@ -344,7 +399,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
     # can change what implementation/0 resolves to") demonstrates the
     # in-process immutability directly, and the test below demonstrates the
     # compile-time resolution itself.
-    test "dev and prod compile-time config resolve :execution_seam to Unavailable (behavioral)" do
+    test "dev and prod compile-time config resolve :execution_seam to the compile-time default (behavioral)" do
       # Application.compile_env/3 only ever sees compile-time config
       # (config.exs plus the per-env file it `import_config`s at its
       # bottom) — config/runtime.exs is loaded AFTER compilation and
@@ -359,7 +414,14 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       # config resolves to, not a text scan, so it cannot be evaded by
       # spelling the key differently than expected.
       root_config_exs = Path.join(@app_dir, "../../config/config.exs") |> Path.expand()
-      default_backend = EzagentPluginGitWorkflow.ExecutionSeam.Unavailable
+
+      # Asked for, not hardcoded. What this test asserts is "no non-test config
+      # OVERRIDES the default" — an absence claim — so naming a specific module
+      # here would make the test misdescribe itself the moment the default
+      # changes, which is exactly what happened when §3.4 flipped it from
+      # `Unavailable` to `CapBacked`. The assertion's strength is unchanged:
+      # `Keyword.get/3` returns this value only when the key is ABSENT.
+      default_backend = EzagentPluginGitWorkflow.ExecutionSeam.default_implementation()
 
       for env <- [:dev, :prod] do
         resolved = Config.Reader.read!(root_config_exs, env: env)
@@ -368,7 +430,8 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
         assert resolved_backend == default_backend,
                "compile-time config for env=#{env} resolves :execution_seam to " <>
-                 "#{inspect(resolved_backend)}, not Unavailable"
+                 "#{inspect(resolved_backend)}, overriding the compile-time default " <>
+                 "#{inspect(default_backend)}"
       end
     end
   end

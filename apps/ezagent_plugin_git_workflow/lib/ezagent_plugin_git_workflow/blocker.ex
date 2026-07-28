@@ -28,6 +28,11 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     * `:internal_error`, the catch-all `from_error/1` produces for a term
       nothing else matched.
 
+  The Git task-access action set's two POLICY denials — `:unauthorized` and
+  `:action_not_allowed` — map by name onto `:not_authorized` rather than
+  getting codes of their own (Slice P4b, the first slice that dispatches into
+  that action set; see `from_error/1`).
+
   Four finer-grained reasons DO appear inside `ChangeCollector`
   (`:binary_content`, `:executable_mode`, `:not_regular_file`,
   `:path_escapes_worktree`) and are deliberately absent here: its `read_one/6`
@@ -216,6 +221,23 @@ defmodule EzagentPluginGitWorkflow.Blocker do
   def from_error(code)
       when code in [:repository_read_denied, :repository_write_denied, :authentication_rejected],
       do: :provider_permission_denied
+
+  # The Git task-access action set
+  # (`apps/ezagent_domain_git/lib/ezagent/behavior/git_task_access.ex`) is a
+  # port in exactly the sense this moduledoc means, and Slice P4b's seam
+  # backend is the first code that dispatches into it — so its two POLICY
+  # denials only became reachable now. `:unauthorized` (the presenter is not
+  # this policy's grantee) and `:action_not_allowed` (the action is outside
+  # `policy.allowed_actions`) are authorization ANSWERS, not transport
+  # failures, and both are deterministic for a given run, so they belong on
+  # §7.1's `:not_authorized` rather than on the `:internal_error` catch-all —
+  # which would report "unclassified bug" about a gate that worked.
+  #
+  # `:missing_cap` deliberately does NOT join them. Reaching it means the seam
+  # backend minted a capability that does not match the action it dispatched;
+  # that is a defect in this app, not a policy answer, and `:internal_error`
+  # is where a defect belongs.
+  def from_error(code) when code in [:unauthorized, :action_not_allowed], do: :not_authorized
 
   def from_error({:provider_request_failed, _operation, status}) when is_integer(status) do
     cond do

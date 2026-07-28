@@ -39,24 +39,38 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
 
   ## Backend selection is compile-time, not runtime (hardwired)
 
-  `implementation/0` resolves via `Application.compile_env/3`, captured
-  once into a module attribute when this module compiles. This is
-  deliberate and load-bearing: real authorization does not exist on the
-  project's main branch yet, so until it lands, this seam must be a
-  genuine dead end in production — not a value that release config,
-  `sys.config`, `Application.put_env/3`, `Application.put_all_env/2`,
-  `:application.set_env/3`, a remote IEx/RPC session, or any other
-  in-VM caller could flip to something permissive. Because the value is
-  baked in at compile time, none of those runtime mutation paths can
-  change what this function returns after the app compiles — see
-  `architecture_test.exs` (`ExecutionSeamTest` proves the same for the
-  in-process mutation vectors directly).
+  `implementation/0` resolves via `Application.compile_env/3`, captured once
+  into a module attribute when this module compiles.
+
+  The compile-time hardwiring is retained, but its PURPOSE changed with design
+  §3.4 (gaga, 2026-07-28). It used to make production a deliberate dead end,
+  because §3.3 believed there was no real authorization to connect to. §3.3
+  was corrected: the framework's single authorization chokepoint
+  (`apps/ezagent_core/lib/ezagent/cap/authorize.ex`, #1493) predates this
+  design. So production now compiles to a real backend, and the hardwiring's
+  job is narrower and permanent:
+
+  > **which backend a build runs is fixed when it is built, and nothing
+  > running can change it.** Not release config, not `sys.config`, not
+  > `Application.put_env/3` / `put_all_env/2` / `:application.set_env/3`, not
+  > a remote IEx or RPC session, not any other in-VM caller.
+
+  That matters more now than it did when the answer was always "dead end": a
+  runtime-swappable seam would be a way to substitute the authorization
+  surface itself on a live node. `ExecutionSeamTest` proves the in-process
+  mutation vectors are inert directly.
 
   Production and dev config never set `:execution_seam` (enforced by
-  `architecture_test.exs`), so both compile to
-  `EzagentPluginGitWorkflow.ExecutionSeam.Unavailable` — the fail-closed
-  backend that always returns `{:error, :authorization_unavailable}` and
-  performs zero workspace/filesystem/provider/Agent side effects.
+  `architecture_test.exs`), so both compile to `default_implementation/0` —
+  `EzagentPluginGitWorkflow.ExecutionSeam.CapBacked`, which obtains
+  authorization through main's canonical pattern and reaches the Git
+  task-access Kind through `Ezagent.Invocation.dispatch/1`.
+
+  `EzagentPluginGitWorkflow.ExecutionSeam.Unavailable` is NOT deleted. §3.1
+  keeps it as the fallback for a build with no backend, and it is what
+  `ExecutionSeamTestDelegate` answers with when a test installs none — so
+  "nothing configured" still means "fail closed before any
+  workspace/filesystem/provider/Agent side effect", not "unauthorized access".
 
   Only `config/test.exs` names a different module, and even then it names
   a **test-build-only delegator**
@@ -109,19 +123,37 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam do
   @callback invoke(authorized_task(), action(), typed_args()) ::
               {:ok, typed_result()} | {:error, term()}
 
+  # The backend a build with no `:execution_seam` config compiles to (design
+  # §3.4). Named separately from `@backend` so `default_implementation/0` can
+  # state it as a runtime fact: under `MIX_ENV=test` `implementation/0` is the
+  # delegator, so it cannot be the thing a test asserts the default flip
+  # against.
+  @default_backend __MODULE__.CapBacked
+
   # Compile-time only — see moduledoc. Production/dev config never set this
-  # key (architecture_test.exs enforces it), so both compile to Unavailable.
-  # A runtime Application.put_env/put_all_env/:application.set_env call
-  # AFTER this module compiles cannot change @backend — it is baked in.
+  # key (architecture_test.exs enforces it), so both compile to
+  # @default_backend. A runtime Application.put_env/put_all_env/
+  # :application.set_env call AFTER this module compiles cannot change
+  # @backend — it is baked in.
   @backend Application.compile_env(
              :ezagent_plugin_git_workflow,
              :execution_seam,
-             __MODULE__.Unavailable
+             @default_backend
            )
 
-  @doc "Resolves the compile-time-selected seam implementation. Defaults to the fail-closed backend."
+  @doc "Resolves the compile-time-selected seam implementation."
   @spec implementation() :: module()
   def implementation, do: @backend
+
+  @doc """
+  The backend a build with no `:execution_seam` config compiles to.
+
+  Reading it cannot change it: it is a compile-time constant, exposed so the
+  flip is assertable in a test build, where `implementation/0` is the test
+  delegator rather than this value.
+  """
+  @spec default_implementation() :: module()
+  def default_implementation, do: @default_backend
 
   @doc """
   Authorizes `run` against `binding` through the compile-time-selected seam.
