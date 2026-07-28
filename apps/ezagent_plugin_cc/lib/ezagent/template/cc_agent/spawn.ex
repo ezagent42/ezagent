@@ -36,17 +36,12 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   # correct. (codex final-review Q1.)
   @compile_env Mix.env()
 
-  # Phase 3 ③ T7h — transport-join gate timeout, now operator-configurable.
-  # The cc ReadyGate flips `:ready` only AFTER the claude sidecar JOINs the
-  # bridge (PTY → claude → esr-bridge MCP → channel bind, via
-  # `Ezagent.Agent.TransportReadiness`). On a loaded host claude cold-start to
-  # JOIN measured 50–85s, well past this default — so the gate fired
-  # `mark_failed` before readiness and rolled the spawn back. Keep the default
-  # at the historical 30s (no behavior change) but let operators / e2e raise it
-  # via `config :ezagent_plugin_cc, :transport_join_timeout_ms, <ms>`.
-  # SURFACE (Allen): 30s is generally tight for cc cold-start under load — a
-  # higher default (or a documented requirement to configure it) may be
-  # warranted; left to Allen's budget call. See t7b-evidence act4 发现 1.
+  # Transport-status record timeout, operator-configurable. The record tracks
+  # the real claude sidecar JOIN (PTY → claude → esr-bridge MCP → channel bind)
+  # for bridge observability; it does not delay or fail the Agent Kind's
+  # ReadyGate lifecycle. Keep the historical default while allowing operators
+  # and e2e to tune transport-status retention through
+  # `config :ezagent_plugin_cc, :transport_join_timeout_ms, <ms>`.
   @default_transport_join_timeout_ms 30_000
 
   # V1 fix Allen 2026-05-21: template instantiate PRODUCES the Kind.
@@ -601,7 +596,7 @@ defmodule Ezagent.PluginCc.Template.CcAgent.Spawn do
   end
 
   @doc """
-  Transport-join gate timeout in ms. Defaults to
+  Transport-status record timeout in ms. Defaults to
   #{@default_transport_join_timeout_ms}ms; override with
   `config :ezagent_plugin_cc, :transport_join_timeout_ms`.
   """
