@@ -78,23 +78,33 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
   end
 
   @doc """
-  Grantees who currently hold a valid cap toward `target`, optionally narrowed to
-  a `behavior` (`:any` = every behavior).
+  Grantees who currently hold a valid cap toward `target`, as seen by `caller`,
+  optionally narrowed to a `behavior` (`:any` = every behavior).
+
+  **H2 — caller-authorized:** only a caller that MANAGES `target`
+  (`Ezagent.Identity.Authority.manages?/2` — the target's data_owner, an admin,
+  or a workspace admin) may enumerate its grantees; any other caller gets `[]`
+  (fail-closed), so knowing a target URI is not enough to enumerate who it was
+  shared with.
 
   Filters to the target's current active authority generation, so stale rows from
   a revoked (generation-bumped) authority are excluded without being deleted.
   Returns each distinct grantee once. An unknown target (no active authority)
   yields `[]`.
   """
-  @spec grantees_of(URI.t(), module() | atom()) :: [URI.t()]
-  def grantees_of(%URI{} = target, behavior \\ :any) do
+  @spec grantees_of(URI.t(), URI.t(), module() | atom()) :: [URI.t()]
+  def grantees_of(%URI{} = target, %URI{} = caller, behavior \\ :any) do
     target_key = Ezagent.URI.stable_key(target)
 
-    case active_key_id(target_key) do
-      nil ->
+    cond do
+      not Ezagent.Identity.Authority.manages?(caller, target) ->
         []
 
-      active ->
+      active_key_id(target_key) == nil ->
+        []
+
+      true ->
+        active = active_key_id(target_key)
         base =
           from(r in __MODULE__,
             where: r.target_uri == ^target_key and r.key_id == ^active,

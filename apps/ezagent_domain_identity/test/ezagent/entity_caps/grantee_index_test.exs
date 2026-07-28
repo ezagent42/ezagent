@@ -21,6 +21,9 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
 
   @workspace URI.new!("workspace://team-alpha")
   @issuer URI.new!("entity://team-alpha/user/issuer")
+  # H2: grantees_of is caller-authorized. The canonical system admin manages any
+  # target, so it is the authorized caller for these enumeration assertions.
+  @admin Ezagent.URI.user(:system, :admin)
 
   # A concrete shared target (a session instance, exactly like the absorb-cap
   # fixture) plus a distinct target to prove per-target isolation.
@@ -80,10 +83,24 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     g = grantee("clicker")
     absorb!(t, g, :example, :send)
 
-    assert GranteeIndex.grantees_of(t) == [g]
-    assert GranteeIndex.grantees_of(t, :example) == [g]
+    assert GranteeIndex.grantees_of(t, @admin) == [g]
+    assert GranteeIndex.grantees_of(t, @admin, :example) == [g]
     # A behavior no cap points at → empty (behavior is a real match axis, not :any).
-    assert GranteeIndex.grantees_of(t, :other_behavior) == []
+    assert GranteeIndex.grantees_of(t, @admin, :other_behavior) == []
+  end
+
+  test "H2: a caller that does NOT manage the target enumerates nothing (fail-closed)" do
+    t = target("h2")
+    g = grantee("member")
+    absorb!(t, g, :example, :send)
+
+    # The admin (a manager) sees the grantee...
+    assert GranteeIndex.grantees_of(t, @admin) == [g]
+
+    # ...but a stranger who merely knows the target URI enumerates nothing —
+    # knowing a URI is not authority to see who it was shared with.
+    stranger = grantee("stranger")
+    assert GranteeIndex.grantees_of(t, stranger) == []
   end
 
   test "grantees_of is isolated per target — a cap toward T1 never leaks into T2" do
@@ -95,8 +112,8 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     # Open t2's authority so it is a live, valid target with zero grants.
     {:ok, _} = Ezagent.Cap.Authority.open(t2, :session)
 
-    assert GranteeIndex.grantees_of(t1) == [g]
-    assert GranteeIndex.grantees_of(t2) == []
+    assert GranteeIndex.grantees_of(t1, @admin) == [g]
+    assert GranteeIndex.grantees_of(t2, @admin) == []
   end
 
   test "a generation bump (revoke_all_to) auto-invalidates stale rows WITHOUT deleting them" do
@@ -104,26 +121,26 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     g = grantee("holder")
     absorb!(t, g, :example, :send)
 
-    assert GranteeIndex.grantees_of(t) == [g]
+    assert GranteeIndex.grantees_of(t, @admin) == [g]
 
     # Revocation-by-generation: bump the target's authority. The stored row keeps
     # its old key_id, which no longer matches the active generation → filtered out.
     assert {:ok, _authority} = Ezagent.Cap.Authority.regenesis(t, :session)
 
-    assert GranteeIndex.grantees_of(t) == []
+    assert GranteeIndex.grantees_of(t, @admin) == []
   end
 
   test "re-indexing a grantee reflects a removed cap (the store funnel drops it)" do
     t = target("removed")
     g = grantee("churn")
     absorb!(t, g, :example, :send)
-    assert GranteeIndex.grantees_of(t) == [g]
+    assert GranteeIndex.grantees_of(t, @admin) == [g]
 
     # A subsequent store of an empty set for the same grantee (mirrors the
     # remove_cap / EntityCaps.revoke funnel handing `persist_entity_caps` the new,
     # smaller set) drops the reverse row.
     :ok = GranteeIndex.reindex(g, MapSet.new())
-    assert GranteeIndex.grantees_of(t) == []
+    assert GranteeIndex.grantees_of(t, @admin) == []
   end
 
   test "distinct grantees toward one target are all listed, de-duplicated" do
@@ -141,6 +158,6 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     assert {:ok, _r, _e} =
              IdentityAdmin.handle_absorb_cap(%{artifact: c2}, ctx(g2, MapSet.new([c1])))
 
-    assert Enum.sort(GranteeIndex.grantees_of(t)) == Enum.sort([g1, g2])
+    assert Enum.sort(GranteeIndex.grantees_of(t, @admin)) == Enum.sort([g1, g2])
   end
 end
