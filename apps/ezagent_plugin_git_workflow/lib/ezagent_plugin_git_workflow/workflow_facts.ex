@@ -83,6 +83,17 @@ defmodule EzagentPluginGitWorkflow.WorkflowFacts do
           updated_at: DateTime.t() | nil
         }
 
+  @doc """
+  The nullable fact columns — everything except the `id`/`run_id`/`workspace_uri`
+  identity and the `inserted_at`/`updated_at` bookkeeping.
+
+  `Store.update_facts/2` derives its column whitelist from this rather than
+  re-typing the names: two hand-maintained copies of the same 16 names drift,
+  and the copy that drifts is the one that silently stops guarding.
+  """
+  @spec optional_fields() :: [atom()]
+  def optional_fields, do: @optional_fields
+
   @doc "Builds a validated WorkflowFacts record. Unknown fields are rejected."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do

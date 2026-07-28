@@ -9,9 +9,15 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
   # Single source of truth for the "scan every claim-path source file" checks
   # below (previously duplicated three times, which is how the atom-safety
   # scan missed deterministic_ref.ex).
+  # NOTE (P4a): this is a hand-maintained list, so a NEW lib module escapes
+  # every scan below until someone remembers to add it here. `authorized_task.ex`
+  # and `blocker.ex` are added with the modules themselves for that reason — the
+  # `Cap.issue`/`Cap.store` half of the forbidden-module scan is the design's
+  # §3.2 "the workflow never mints a cap" line, and it is worth nothing on a
+  # file the scan does not read.
   @source_files ~w(store.ex accept_intent.ex task_binding.ex workflow_run.ex
                    deterministic_ref.ex execution_seam.ex execution_seam/unavailable.ex
-                   authorization.ex workflow_facts.ex)
+                   authorization.ex workflow_facts.ex authorized_task.ex blocker.ex)
 
   # The small, closed set of non-test config files that could theoretically
   # select the ExecutionSeam backend. config/test.exs is deliberately
