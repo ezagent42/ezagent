@@ -81,8 +81,8 @@ defmodule Ezagent.Identity.ProvisioningReceipt do
   def issue(subject_uri, actor_uri, transition, caps, opts \\ [])
       when transition in @transitions and (is_list(caps) or is_struct(caps, MapSet)) do
     receipt = %__MODULE__{
-      subject_uri: uri_key(subject_uri),
-      actor_uri: uri_key(actor_uri),
+      subject_uri: uri_string(subject_uri),
+      actor_uri: uri_string(actor_uri),
       transition: transition,
       caps_digest: caps_digest(caps),
       issued_at:
@@ -143,7 +143,7 @@ defmodule Ezagent.Identity.ProvisioningReceipt do
   def valid_for?(%__MODULE__{} = receipt, uri, transition, caps)
       when transition in @transitions do
     receipt.transition == transition and
-      receipt.subject_uri == uri_key(uri) and
+      receipt.subject_uri == uri_string(uri) and
       fresh?(receipt) and
       :crypto.hash_equals(receipt.caps_digest, caps_digest(caps)) and
       verify(receipt)
@@ -197,8 +197,9 @@ defmodule Ezagent.Identity.ProvisioningReceipt do
          {:ok, issued_at, _} <- DateTime.from_iso8601(decoded["issued_at"] || ""),
          {:ok, caps_digest} <- decode_b64(decoded["caps_digest"]),
          {:ok, signature} <- decode_b64(decoded["signature"]),
-         true <- is_binary(decoded["subject_uri"]) and is_binary(decoded["actor_uri"]) and
-           is_binary(decoded["nonce"]) do
+         true <-
+           is_binary(decoded["subject_uri"]) and is_binary(decoded["actor_uri"]) and
+             is_binary(decoded["nonce"]) do
       {:ok,
        %__MODULE__{
          subject_uri: decoded["subject_uri"],
@@ -266,12 +267,13 @@ defmodule Ezagent.Identity.ProvisioningReceipt do
   end
 
   defp ttl_ms,
-    do: Application.get_env(:ezagent_domain_identity, :provisioning_receipt_ttl_ms, @default_ttl_ms)
+    do:
+      Application.get_env(:ezagent_domain_identity, :provisioning_receipt_ttl_ms, @default_ttl_ms)
 
   defp generate_nonce, do: :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
 
-  defp uri_key(%URI{} = uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
+  defp uri_string(%URI{} = uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
 
-  defp uri_key(uri) when is_binary(uri),
+  defp uri_string(uri) when is_binary(uri),
     do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance() |> URI.to_string()
 end

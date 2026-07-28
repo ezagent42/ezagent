@@ -565,8 +565,8 @@ defmodule Ezagent.EntityCaps.Store do
   defp workspace_key(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> workspace_key()
 
   defp workspace_to_string(%URI{} = workspace), do: URI.to_string(workspace)
-  defp workspace_to_string(:any), do: "workspace://system"
-  defp workspace_to_string(_other), do: "workspace://system"
+  defp workspace_to_string(:any), do: Ezagent.URI.workspace(:system) |> URI.to_string()
+  defp workspace_to_string(_other), do: Ezagent.URI.workspace(:system) |> URI.to_string()
 
   defp user_uri?(%URI{scheme: "entity"} = uri), do: Ezagent.URI.type?(uri, :user)
   defp user_uri?(uri) when is_binary(uri), do: user_uri?(Ezagent.URI.new!(uri))

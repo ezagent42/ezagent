@@ -98,7 +98,7 @@ defmodule Ezagent.EntityCaps.UserStore do
       {:error, reason} ->
         Logger.error(
           "EntityCaps.UserStore: identity-caps shadow write FAILED for " <>
-            "#{URI.to_string(uri)} (reason=#{inspect(reason)}) — caps_json committed; " <>
+            "#{inspect(uri)} (reason=#{inspect(reason)}) — caps_json committed; " <>
             "shadow row diverges until the next mirrored write or the migration backfill"
         )
 
@@ -108,7 +108,7 @@ defmodule Ezagent.EntityCaps.UserStore do
     e ->
       Logger.error(
         "EntityCaps.UserStore: identity-caps shadow write RAISED for " <>
-          "#{URI.to_string(uri)}: #{Exception.message(e)}"
+          "#{inspect(uri)}: #{Exception.message(e)}"
       )
 
       :ok
