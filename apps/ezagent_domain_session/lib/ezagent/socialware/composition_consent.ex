@@ -22,7 +22,11 @@ defmodule Ezagent.Socialware.CompositionConsent do
 
   schema "socialware_composition_consents" do
     field(:workspace_uri, :string)
+    # `binding_id` is set for composition consents; NULL for a binding-less
+    # URI-share consent, which names its target/grantee directly instead.
     field(:binding_id, :string)
+    field(:target_uri, :string)
+    field(:grantee_uri, :string)
     field(:target_approval, Ecto.Enum, values: @states, default: :pending)
     field(:source_approval, Ecto.Enum, values: @states, default: :pending)
     field(:target_owner_uri, :string)
@@ -40,7 +44,7 @@ defmodule Ezagent.Socialware.CompositionConsent do
   @commands [:approve, :deny, :revoke]
 
   @fields ~w(
-    id workspace_uri binding_id target_approval source_approval
+    id workspace_uri binding_id target_uri grantee_uri target_approval source_approval
     target_owner_uri source_owner_uri target_approver_uri source_approver_uri
     target_decided_at source_decided_at
   )a
@@ -149,6 +153,142 @@ defmodule Ezagent.Socialware.CompositionConsent do
 
   def command(_binding_id, _session_uri, _side, _command, _actor, _key),
     do: {:error, :invalid_consent_command}
+
+  # --- URI-share entry (A3): the LOOSER case of this same mechanism -----------
+  #
+  # composition consent = two-party (target ISSUE + source STORE) approval of a
+  # BINDING. URI-share consent is the relaxation: NO binding, and the SOURCE side
+  # is auto-satisfied (the requester IS the recipient, so its consent to receive
+  # is implicit). So it reuses this exact state machine + owner todo-box, keyed by
+  # `(target, grantee)` with `binding_id` NULL, authenticated against the consent
+  # row's own `target_owner_uri`. The composition `sync`/`command` path above is
+  # unchanged (it always sets `binding_id` + both sides).
+
+  @doc """
+  Request URI-share owner consent for `grantee` to be elevated on `target_uri`
+  (access set = `behavior`'s). The looser case: no `CompositionBinding`, source
+  side auto-satisfied. Creates — idempotently by `(target, grantee)` — a pending
+  consent whose target owner = the target's `data_owner`. Fails closed
+  (`:consent_target_owner_unresolvable`) if the owner cannot resolve.
+  """
+  @spec request(URI.t(), URI.t(), module()) :: {:ok, t()} | {:error, term()}
+  def request(%URI{} = target_uri, %URI{} = grantee, behavior) when is_atom(behavior) do
+    case Ezagent.CapabilityRegistry.data_owner_of(behavior, Ezagent.URI.instance(target_uri)) do
+      %URI{} = owner ->
+        id = share_consent_id(target_uri, grantee)
+
+        case Repo.get(__MODULE__, id) do
+          %__MODULE__{} = existing ->
+            {:ok, existing}
+
+          nil ->
+            now = DateTime.utc_now()
+
+            %__MODULE__{}
+            |> changeset(%{
+              id: id,
+              binding_id: nil,
+              target_uri: uri_string(target_uri),
+              grantee_uri: uri_string(grantee),
+              workspace_uri: uri_string(Ezagent.Capability.workspace_of(target_uri)),
+              target_owner_uri: uri_string(owner),
+              # Source side auto-satisfied: the requester IS the recipient.
+              source_approval: :approved,
+              source_owner_uri: uri_string(grantee),
+              source_approver_uri: uri_string(grantee),
+              source_decided_at: now
+            })
+            |> Repo.insert()
+        end
+
+      _ ->
+        {:error, :consent_target_owner_unresolvable}
+    end
+  end
+
+  @doc """
+  The target owner decides (`:approve` / `:deny`) a `request/3` (URI-share)
+  consent by its `id`. Authenticated against the consent row's stored
+  `target_owner_uri` (no `CompositionBinding` / session). Idempotent via
+  `idempotency_key`.
+  """
+  @spec decide(String.t(), :approve | :deny, URI.t(), String.t()) :: {:ok, t()} | {:error, term()}
+  def decide(id, decision, %URI{} = actor, idempotency_key)
+      when is_binary(id) and decision in [:approve, :deny] and
+             is_binary(idempotency_key) and idempotency_key != "" do
+    Repo.transaction(fn ->
+      case Repo.get(CompositionConsentCommand, idempotency_key) do
+        %CompositionConsentCommand{} = replay -> replay_decide(replay, id, decision, actor)
+        nil -> apply_decide(id, decision, actor, idempotency_key)
+      end
+    end)
+    |> case do
+      {:ok, {:ok, consent}} -> {:ok, consent}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def decide(_id, _decision, _actor, _key), do: {:error, :invalid_consent_command}
+
+  defp share_consent_id(%URI{} = target, %URI{} = grantee) do
+    "share:" <>
+      Ezagent.URI.stable_key(Ezagent.URI.instance(target)) <>
+      ":" <> Ezagent.URI.stable_key(Ezagent.URI.instance(grantee))
+  end
+
+  defp apply_decide(id, decision, actor, idempotency_key) do
+    with %__MODULE__{} = consent <-
+           Repo.one(from(row in __MODULE__, where: row.id == ^id, lock: "FOR UPDATE")),
+         :ok <-
+           owner_match(
+             Ezagent.URI.new!(consent.target_owner_uri),
+             actor,
+             :consent_actor_not_target_owner
+           ),
+         {:ok, state} <- transition(consent.target_approval, decision) do
+      now = DateTime.utc_now()
+
+      updated =
+        consent
+        |> changeset(%{
+          target_approval: state,
+          target_approver_uri: uri_string(actor),
+          target_decided_at: now
+        })
+        |> Repo.update!()
+
+      %CompositionConsentCommand{}
+      |> CompositionConsentCommand.changeset(%{
+        idempotency_key: idempotency_key,
+        workspace_uri: consent.workspace_uri,
+        consent_id: id,
+        side: :target,
+        command: decision,
+        actor_uri: uri_string(actor),
+        result_state: state,
+        inserted_at: now
+      })
+      |> Repo.insert!()
+
+      {:ok, updated}
+    else
+      nil -> {:error, :consent_request_not_found}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp replay_decide(replay, id, decision, actor) do
+    if replay.consent_id == id and replay.side == :target and
+         replay.command == decision and replay.actor_uri == uri_string(actor) do
+      case Repo.get(__MODULE__, id) do
+        %__MODULE__{} = consent -> {:ok, consent}
+        _ -> {:error, :consent_request_not_found}
+      end
+    else
+      {:error, :consent_idempotency_conflict}
+    end
+  end
 
   @doc false
   @spec supersede_inactive(URI.t()) :: :ok
@@ -314,7 +454,9 @@ defmodule Ezagent.Socialware.CompositionConsent do
   defp changeset(consent, attrs) do
     consent
     |> cast(attrs, @fields)
-    |> validate_required([:id, :workspace_uri, :binding_id, :target_approval, :source_approval])
+    # `binding_id` is NOT required — a URI-share consent has none (it names its
+    # target/grantee directly). Composition rows still always set it.
+    |> validate_required([:id, :workspace_uri, :target_approval, :source_approval])
   end
 
   defp approval_field(:target), do: :target_approval
