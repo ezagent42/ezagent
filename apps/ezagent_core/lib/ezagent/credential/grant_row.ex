@@ -56,6 +56,15 @@ defmodule Ezagent.Credential.GrantRow do
   caller can reuse a previous incarnation's identity (which would weaken the
   ABA-safe compare in `delete_incarnation/2` and the materialize-time
   `(agent_uri, incarnation_id, version)` revalidation).
+
+  TODO(path-b-hardening): #201-cred r3 HIGH-3 — this durable-grant WRITER is
+  PUBLIC, so a caller can bypass `GrantMint.mint/3` (and its created-winner
+  witness check) and insert a grant directly. The prod census shows only
+  `GrantMint` calls it, so this is defense-in-depth against a FUTURE writer, not
+  a live hole. Full close (deferred, same-BEAM Path B): confine minting so the
+  durable insert is reachable ONLY from `GrantMint.mint/3` — e.g. a
+  mint-scoped process-authorization token this insert checks — routing the ~9
+  fixture call sites through one shared test seam. cc to file the tracking issue.
   """
   @spec insert(map()) :: {:ok, t()} | {:error, term()}
   def insert(attrs) do

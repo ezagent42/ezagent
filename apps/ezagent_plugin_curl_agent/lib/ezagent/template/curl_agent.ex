@@ -140,6 +140,15 @@ defmodule Ezagent.PluginCurlAgent.Template do
     do: {:error, :invalid_curl_slice_materialize_args}
 
   defp do_materialize_credential_slice(agent_uri, tmpl, selected_source) do
+    # TODO(path-b-hardening): #201-cred r3 HIGH-2 — authority-regen TOCTOU. The
+    # generation re-check inside `revalidate_version!/3` runs IMMEDIATELY before the
+    # slice write, but no authority-generation lease is held THROUGH the side
+    # effect, so a regenesis committing in the revalidate→`put_target_api_key`
+    # micro-interval would write the slice under the retired generation. It cannot
+    # be closed with a DB lock: `put_target_api_key/3` dispatches an Invocation to
+    # ANOTHER Kind's process (not a same-connection write). Full close (deferred,
+    # same-BEAM Path B): a short-lived generation-bound launch lease the target
+    # verifies at write time. cc to file the tracking issue.
     with {:ok, provider} <- selected_provider(tmpl),
          {:ok, granted_source, version, incarnation_id} <-
            GrantRow.fetch_for_materialize(URI.to_string(agent_uri)),

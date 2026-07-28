@@ -30,6 +30,21 @@ defmodule Ezagent.Kind.CreatedWitness do
 
   @opaque t :: %__MODULE__{agent_uri: URI.t()}
 
+  # TODO(path-b-hardening): #201-cred r3 HIGH-3 — this witness is FORGEABLE and
+  # REPLAYABLE (Path-B / same-BEAM structural hardening, officially deferred):
+  #   * `new/1` is public and the struct is literally constructible (`@opaque` /
+  #     `@doc false` are review signals, not enforcement), so reviewed code (or a
+  #     hand-written `%CreatedWitness{}`) can fabricate a create-winner proof;
+  #   * a genuine witness has NO nonce / pid-incarnation binding / expiry /
+  #     one-shot consumption, so a real receipt is replayable indefinitely.
+  # Full close (deferred; cc to file a tracking issue): bind the witness to the
+  # STARTED pid + a one-shot nonce recorded in a framework ETS table, and have
+  # `GrantMint.mint/3` verify it DIRECTLY against the Kind's durable `:started ∧
+  # created?` state (`Ezagent.Kind.create_freshness(uri, pid) == :created`) AND
+  # atomically consume the nonce (`:ets.take`) so a forged/replayed witness
+  # fails. Per the same-BEAM threat model (`Ezagent.Cap.Authority`), code already
+  # executing maliciously inside the BEAM is out of scope; this hole is that
+  # Path-B boundary.
   @doc false
   # FRAMEWORK-ONLY constructor. ONLY `Ezagent.Kind.spawn_receipt/3` may call
   # this — it is the single place that holds proof of a genuine `:started ∧

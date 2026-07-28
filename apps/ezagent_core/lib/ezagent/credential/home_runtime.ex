@@ -237,10 +237,12 @@ defmodule Ezagent.Credential.HomeRuntime do
   launch) and BOUNDED to the check→exec micro-interval; the MINT itself is
   lock-serialized against regenesis, and every subsequent MATERIALIZATION re-reads
   generations, so a stale-generation grant can never be re-used after the fact —
-  only this one in-flight launch can slip the sub-interval. A future full closure
-  would require the launch to present a short-lived, generation-bound lease token
-  the target verifies at exec time (a `Cap.Authority`-style signing design) — out
-  of scope for this round.
+  only this one in-flight launch can slip the sub-interval.
+
+  TODO(path-b-hardening): #201-cred r3 HIGH-2 — a full closure requires the launch
+  to present a short-lived, generation-bound lease token the target verifies at
+  exec time (a `Cap.Authority`-style signing design). Deferred (same-BEAM Path B);
+  cc to file the tracking issue for this residual check→exec window.
   """
   @spec revalidate_grant_before_launch(grant_ctx()) :: :ok | {:error, term()}
   def revalidate_grant_before_launch(nil), do: :ok

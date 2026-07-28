@@ -75,6 +75,13 @@ defmodule Ezagent.Credential.GrantMint do
   @spec mint(URI.t(), pending(), Ezagent.Kind.CreatedWitness.t() | nil) ::
           {:ok, GrantRow.t()} | {:error, term()}
   def mint(%URI{} = agent_uri, pending, witness) do
+    # TODO(path-b-hardening): #201-cred r3 HIGH-3 — `authorizes?/2` only checks the
+    # witness→agent BINDING (stable-key), which a forged/replayed `%CreatedWitness{}`
+    # passes (see `Ezagent.Kind.CreatedWitness`). Full close (deferred, same-BEAM
+    # Path B): replace with a Kind-state-verifying ONE-SHOT consume —
+    # `create_freshness(agent_uri, witness.pid) == :created` (the durable truth, so a
+    # forged pid fails) AND an atomic nonce `:ets.take` (so a replay fails). cc to
+    # file the tracking issue.
     if Ezagent.Kind.CreatedWitness.authorizes?(witness, agent_uri) do
       do_mint(agent_uri, pending)
     else
