@@ -164,7 +164,7 @@ jobs:
         # Keep in sync with the shard names in `ci_shards.exs` + the `static`
         # gate shard; `mix ci.shard.verify` fails if the aliases and manifest
         # drift, and each name here maps 1:1 to a `mix ci.shard.<name>` alias.
-        shard: [static, e2e, actor, core, session, web, plugin, domain]
+        shard: [static, e2e, actor, core, session, web, plugin_world, plugin, domain_provider_connection_lifecycle, domain_git_lifecycle, domain_workspace_lifecycle, domain]
     # Same self-hosted macOS runner label as deploy.yml. Runs the full
     # concurrent suite on the green-reliable OS, gated behind `gate`.
     runs-on: [self-hosted, macOS, ARM64]
