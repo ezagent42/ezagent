@@ -27,6 +27,24 @@ if map_size(pat_peppers) > 0 or config_env() == :prod do
     peppers: pat_peppers
 end
 
+feishu_seed_enabled =
+  case System.get_env("EZAGENT_FEISHU_SEED_ENABLED") do
+    nil -> false
+    value when value in ["0", "false", "FALSE"] -> false
+    value when value in ["1", "true", "TRUE"] -> true
+    _other -> raise "EZAGENT_FEISHU_SEED_ENABLED must be one of: 0, 1, false, true"
+  end
+
+config :ezagent_plugin_feishu, :seed_enabled, feishu_seed_enabled
+
+case System.get_env("EZAGENT_FEISHU_SEED_OPERATOR_URI") do
+  value when is_binary(value) and value != "" ->
+    config :ezagent_plugin_feishu, :seed_operator_uri, value
+
+  _missing ->
+    :ok
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

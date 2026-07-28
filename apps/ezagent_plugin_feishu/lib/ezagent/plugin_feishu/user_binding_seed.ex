@@ -25,21 +25,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
 
   ## Executor injection
 
-  The executor port is `Application.get_env(:ezagent_plugin_feishu,
-  :seed_executor_port)` (default nil → fail loud). It must be a map with
-  `list_current` arity 1 and `bind` arity 3 functions. Tests inject the
-  test-only port constructed by `FakeExecutor` to record planned operations.
-  `DispatchAdapter.port/0` is a B-layer placeholder whose captured operations
-  raise on any call.
-  No default executor exists in production.
-
-  ## B-layer (deferred)
-
-  `DispatchAdapter` is not integrated with a runtime operator or boot
-  authorization source yet. It deliberately fails closed on every call.
-  A later thin integration must supply its operator identity and action
-  authorization from runtime dispatch/configuration; this A-layer neither
-  assumes nor creates that authority.
+  The executor port may be overridden through
+  `Application.get_env(:ezagent_plugin_feishu, :seed_executor_port)` for
+  tests. Production defaults to `DispatchAdapter.port/0`, which obtains its
+  operator identity from runtime configuration and uses formal synchronous
+  dispatch. Both ports expose `list_current` arity 1 and `bind` arity 3.
 
   ## Known limitation: same-workspace race window
 
@@ -103,9 +93,14 @@ defmodule EzagentPluginFeishu.UserBindingSeed do
           {:ok, executor_port()}
           | {:error, :seed_executor_not_configured | {:invalid_seed_executor_port, [atom()]}}
   defp executor_port do
-    :ezagent_plugin_feishu
-    |> Application.get_env(:seed_executor_port)
-    |> validate_executor_port()
+    configured =
+      Application.get_env(
+        :ezagent_plugin_feishu,
+        :seed_executor_port,
+        EzagentPluginFeishu.UserBindingSeed.DispatchAdapter.port()
+      )
+
+    validate_executor_port(configured)
   end
 
   defp validate_executor_port(nil), do: {:error, :seed_executor_not_configured}
