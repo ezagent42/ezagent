@@ -30,7 +30,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
   ]
   @fields [
     :id,
-    :task_id,
+    :task_uri,
     :generation,
     :workspace_uri,
     :credential_owner_uri,
@@ -52,13 +52,16 @@ defmodule Ezagent.Entity.GitTaskAccess do
     :idempotency_inputs,
     :operation_context
   ]
+  # SPEC v3 §3.6 per-tenant schemes. A task is whatever Kind the calling domain
+  # models it as; this spine only requires a workspace-scoped, action-free URI.
+  @task_uri_schemes ~w(entity session template resource)
 
   @enforce_keys @fields
   defstruct @fields
 
   @type t :: %__MODULE__{
           id: String.t(),
-          task_id: String.t(),
+          task_uri: URI.t(),
           generation: pos_integer(),
           workspace_uri: URI.t(),
           credential_owner_uri: URI.t(),
@@ -67,7 +70,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
           provider_adapter: atom(),
           allowed_head_ref: String.t(),
           allowed_actions: [atom()],
-          idempotency_inputs: %{task_id: String.t(), generation: pos_integer()}
+          idempotency_inputs: %{task_uri: URI.t(), generation: pos_integer()}
         }
 
   @impl Ezagent.Kind
@@ -179,7 +182,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
   defp validate_policy(attrs) do
     with {:ok, workspace} <- exact_workspace(attrs.workspace_uri),
          :ok <- valid_identifier(:id, attrs.id),
-         :ok <- valid_identifier(:task_id, attrs.task_id),
+         :ok <- task_in_workspace(attrs.task_uri, workspace),
          :ok <- positive_generation(attrs.generation),
          :ok <- entity_in_workspace(:credential_owner_uri, attrs.credential_owner_uri, workspace),
          :ok <- agent_in_workspace(attrs.grantee_uri, workspace),
@@ -187,7 +190,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
            repository_binding(attrs.repository, attrs.provider_adapter, workspace),
          :ok <- allowed_head_ref(attrs.allowed_head_ref),
          :ok <- allowed_actions(attrs.allowed_actions),
-         :ok <- idempotency_inputs(attrs.idempotency_inputs, attrs.task_id, attrs.generation) do
+         :ok <- idempotency_inputs(attrs.idempotency_inputs, attrs.task_uri, attrs.generation) do
       {:ok, repository}
     end
   end
@@ -218,6 +221,39 @@ defmodule Ezagent.Entity.GitTaskAccess do
 
   defp positive_generation(value) when is_integer(value) and value > 0, do: :ok
   defp positive_generation(_value), do: {:error, {:invalid_field, :generation}}
+
+  # The Git spine addresses a task only by URI. It stores the exact task URI and
+  # later compares it verbatim, so it never needs — and must not assume — which
+  # Kind the task is: any canonical per-tenant URI in this workspace is accepted.
+  # Requiring equality with the canonical rebuild rejects action-bearing,
+  # query-bearing and otherwise non-bare URIs.
+  defp task_in_workspace(%URI{scheme: scheme} = uri, workspace)
+       when scheme in @task_uri_schemes do
+    with {:ok, ^workspace} <- Ezagent.URI.workspace_name(uri),
+         {:ok, type} <- Ezagent.URI.type(uri),
+         {:ok, name} <- Ezagent.URI.name(uri),
+         true <- uri == canonical_task_uri(scheme, workspace, type, name) do
+      :ok
+    else
+      _ -> {:error, {:invalid_field, :task_uri}}
+    end
+  rescue
+    _ -> {:error, {:invalid_field, :task_uri}}
+  end
+
+  defp task_in_workspace(_uri, _workspace), do: {:error, {:invalid_field, :task_uri}}
+
+  defp canonical_task_uri("entity", workspace, type, name),
+    do: Ezagent.URI.entity(workspace, type, name)
+
+  defp canonical_task_uri("session", workspace, template, name),
+    do: Ezagent.URI.session(workspace, template, name)
+
+  defp canonical_task_uri("template", workspace, type, name),
+    do: Ezagent.URI.template(workspace, type, name)
+
+  defp canonical_task_uri("resource", workspace, type, name),
+    do: Ezagent.URI.resource(workspace, type, name)
 
   defp entity_in_workspace(field, %URI{} = uri, workspace) do
     if Ezagent.URI.bare_principal?(uri) and Ezagent.URI.workspace_name(uri) == {:ok, workspace},
@@ -272,14 +308,14 @@ defmodule Ezagent.Entity.GitTaskAccess do
   defp allowed_actions(_actions), do: {:error, {:invalid_field, :allowed_actions}}
 
   defp idempotency_inputs(
-         %{task_id: task_id, generation: generation} = inputs,
-         task_id,
+         %{task_uri: task_uri, generation: generation} = inputs,
+         task_uri,
          generation
        )
        when map_size(inputs) == 2,
        do: :ok
 
-  defp idempotency_inputs(_inputs, _task_id, _generation),
+  defp idempotency_inputs(_inputs, _task_uri, _generation),
     do: {:error, {:invalid_field, :idempotency_inputs}}
 
   defp provided?(args, field),
@@ -331,13 +367,11 @@ defmodule Ezagent.Entity.GitTaskAccess do
       else: {:error, :task_uri_mismatch}
   end
 
-  defp exact_task_uri?(%URI{scheme: "resource"} = task_uri, policy) do
-    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
-
-    task_uri == Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
-  rescue
-    _ -> false
-  end
+  # The stored task URI is already the authoritative coordinate (validated as
+  # canonical and workspace-scoped at initialization), so the check is a verbatim
+  # comparison. Rebuilding it from parts would force this generic spine to know
+  # the task's Kind — the coupling this deliberately avoids.
+  defp exact_task_uri?(%URI{} = task_uri, policy), do: task_uri == policy.task_uri
 
   defp exact_task_uri?(_task_uri, _policy), do: false
 

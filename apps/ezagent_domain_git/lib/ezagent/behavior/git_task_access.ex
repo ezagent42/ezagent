@@ -321,7 +321,8 @@ defmodule Ezagent.ActionSet.GitTaskAccess do
       caller_uri: Map.fetch!(ctx, :caller),
       grantee_uri: policy.grantee_uri,
       idempotency_key:
-        "#{policy.idempotency_inputs.task_id}:#{policy.idempotency_inputs.generation}:#{action}"
+        "#{URI.to_string(policy.idempotency_inputs.task_uri)}:" <>
+          "#{policy.idempotency_inputs.generation}:#{action}"
     })
   end
 

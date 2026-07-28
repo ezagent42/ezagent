@@ -1,11 +1,11 @@
 defmodule EzagentDomainGit.Architecture.DependencyBoundaryTest do
   use ExUnit.Case, async: true
 
-  # :ezagent_actor was added by the C4-C7 actor-framework extraction (#1579),
-  # which moved Ezagent.URI into that app. Every app using it declares the dep
-  # directly rather than reaching it transitively through ezagent_core. That PR
-  # updated the mix.exs files but not this approved list, leaving this test red
-  # on main. The dep is inward and framework-tier, so it belongs here.
+  # `:ezagent_actor` is the runtime framework (Ezagent.Kind/KindRegistry),
+  # extracted from core in #1579 (actor-framework extraction, via ports). domain_git
+  # calls Ezagent.Kind directly to operate its task-workspace Kinds, so actor is a
+  # legitimate foundation dep alongside :ezagent_core — not an upward/lateral leak
+  # (those stay covered by @forbidden_dependency_fragments below).
   @approved_umbrella_dependencies [:ezagent_actor, :ezagent_core]
   @forbidden_dependency_fragments [
     "ezagent_plugin_",

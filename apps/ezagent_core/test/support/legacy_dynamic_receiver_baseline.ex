@@ -2088,6 +2088,17 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
      "fddb236494dfb8322ed6c97cd41a96c9a8ef0f613b0dbc0ed08b02959fdf8241"}
   ]
 
+  # PR #1582 (fix-world-add-agent-api-key-deletion) added the agent API-key delete
+  # dispatch path. `dispatch_api_key_delete/3` is the delete-api-key sibling of
+  # `dispatch_api_key_put/3` (world_live.ex line ~830): it reads current_entity_uri
+  # to set the caller and routes through the owner-gated
+  # Invocation.dispatch(:identity, :delete_api_key) behind with_admin_operator.
+  # Benign new dynamic-receiver debt entry, reviewer-approved 2026-07-27.
+  @pr1582_new_sites [
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", 863, {:when, 2}, :remote,
+     "current_entity_uri/0", "6483356cbde631f3737ff0c8724c784a3fa6a934cc2b3a53c233eee3c28aa9e6"}
+  ]
+
   # Git Provider V1 Plan E Slice P1 — ExecutionSeam.authorize/2 dispatches to
   # `@backend` (a compile-time module attribute, see
   # EzagentPluginGitWorkflow.ExecutionSeam moduledoc "Backend selection is
@@ -2104,8 +2115,44 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
 
   @doc "Returns the audited dynamic receiver sites used by plugin production code."
   def sites do
-    Enum.map(@sites, &migrate_pr1497_site/1) ++ @pr1497_new_sites ++ @git_workflow_new_sites
+    base = Enum.map(@sites, &migrate_pr1497_site/1) ++ @pr1497_new_sites
+
+    Enum.map(base, &migrate_pr1582_site/1) ++ @pr1582_new_sites ++ @git_workflow_new_sites
   end
+
+  defp migrate_pr1582_site({path, line, function, kind, call, fingerprint}) do
+    {path, migrate_pr1582_line(path, line), function, kind, call, fingerprint}
+  end
+
+  # PR #1582 shifted every world_live.ex dynamic-receiver site below its three
+  # insertion points downward (pure line moves; content/SHA identical). Applied on
+  # top of the pr1497 migration so recorded lines track the current source.
+  # Boundaries are the #1582 insertion hunks in world_live.ex:
+  #   +12 after the api_key.delete handle_event clause (line >= 482),
+  #   +17 after the layout-dispatch ctx reformat        (line >= 774),
+  #   +48 after the dispatch_api_key_delete/3 body       (line >= 842).
+  defp migrate_pr1582_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 842,
+       do: line + 48
+
+  defp migrate_pr1582_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 774,
+       do: line + 17
+
+  defp migrate_pr1582_line(
+         "apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
+         line
+       )
+       when line >= 482,
+       do: line + 12
+
+  defp migrate_pr1582_line(_path, line), do: line
 
   defp migrate_pr1497_site({path, line, function, kind, call, fingerprint}) do
     {path, migrate_pr1497_line(path, line), function, kind, call, fingerprint}

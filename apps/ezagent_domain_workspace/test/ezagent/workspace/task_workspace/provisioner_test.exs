@@ -374,6 +374,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     workspace = "provisioner-#{suffix}-#{System.unique_integer([:positive])}"
     workspace_uri = Ezagent.URI.workspace(workspace)
     task_id = "task-#{suffix}"
+    task_uri = Ezagent.URI.resource(workspace, "kanban-task", task_id)
 
     {:ok, repository} =
       RepositoryRef.new(%{
@@ -389,7 +390,7 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: id,
-        task_id: task_id,
+        task_uri: task_uri,
         generation: 1,
         workspace_uri: workspace_uri,
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -398,14 +399,12 @@ defmodule Ezagent.Workspace.TaskWorkspace.ProvisionerTest do
         provider_adapter: :fixture,
         allowed_head_ref: "task/#{task_id}",
         allowed_actions: [:provision_workspace, :cleanup_workspace],
-        idempotency_inputs: %{task_id: task_id, generation: 1}
+        idempotency_inputs: %{task_uri: task_uri, generation: 1}
       })
 
     task_access_uri = GitTaskAccess.uri_from_args(policy)
     assert {:ok, _pid} = Ezagent.DomainGit.TaskAccessSupervisor.ensure_started(policy)
     on_exit(fn -> Ezagent.DomainGit.TaskAccessSupervisor.teardown(task_access_uri) end)
-
-    task_uri = Ezagent.URI.resource(workspace, "kanban-task", task_id)
 
     {:ok, request} =
       Request.new_authorized(

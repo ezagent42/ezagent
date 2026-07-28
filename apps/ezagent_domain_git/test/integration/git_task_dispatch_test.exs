@@ -175,10 +175,38 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
       assert operation_context.caller_uri == fixture.grantee_uri
       assert operation_context.grantee_uri == fixture.grantee_uri
 
+      assert operation_context.idempotency_key ==
+               "#{URI.to_string(policy.task_uri)}:#{policy.generation}:resolve_repository"
+
       other_label = if label == "sync-a", do: "sync-b", else: "sync-a"
       refute_received {:task11_adapter_call, ^other_label, _, _}
       assert :ok = TaskAccessSupervisor.teardown(fixture.task_access_uri)
     end)
+  end
+
+  test "identical task names in two workspaces get distinct provider idempotency keys" do
+    # Same task name, same generation, same action, different workspaces. The key
+    # is built from the full task URI, which carries the workspace, so the two
+    # logical operations cannot collapse into one provider idempotency key. The
+    # pre-URI key was "<task_id>:<generation>:<action>" and did collide here.
+    keys =
+      for workspace_suffix <- ["ws-one", "ws-two"] do
+        {fixture, policy} =
+          started_fixture_in(workspace_suffix, :resolve_repository, :"task11-sync-a")
+
+        invocation = %{fixture.invocation | args: %{repository: policy.repository}}
+        assert {:ok, %RepositoryRef{}} = Ezagent.Invocation.dispatch(invocation)
+        assert_receive {:task11_adapter_call, "sync-a", :resolve_repository, operation_context}
+
+        assert operation_context.idempotency_key ==
+                 "#{URI.to_string(policy.task_uri)}:#{policy.generation}:resolve_repository"
+
+        assert :ok = TaskAccessSupervisor.teardown(fixture.task_access_uri)
+        operation_context.idempotency_key
+      end
+
+    assert [key_one, key_two] = keys
+    assert key_one != key_two
   end
 
   test "missing cap leaves registry, resource state, and both providers unchanged" do
@@ -295,7 +323,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     {:ok, policy} =
       GitTaskAccess.new(%{
         id: List.last(String.split(fixture.task_access_uri.path, "/")),
-        task_id: "owner-#{owner_id(self())}",
+        task_uri: Ezagent.URI.resource(workspace, "task", "owner-#{owner_id(self())}"),
         generation: 1,
         workspace_uri: fixture.workspace_uri,
         credential_owner_uri: Ezagent.URI.user(workspace, "owner"),
@@ -309,14 +337,31 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
           :provision_workspace,
           :cleanup_workspace
         ],
-        idempotency_inputs: %{task_id: "owner-#{owner_id(self())}", generation: 1}
+        idempotency_inputs: %{
+          task_uri: Ezagent.URI.resource(workspace, "task", "owner-#{owner_id(self())}"),
+          generation: 1
+        }
       })
 
     policy
   end
 
-  defp started_fixture(action, provider) do
-    coordinates = fixture_coordinates()
+  defp started_fixture_in(workspace_suffix, action, provider) do
+    id = owner_id(self())
+
+    coordinates =
+      GitCapFixture.coordinates(
+        workspace_name: "git-task11-#{workspace_suffix}-#{id}",
+        task_access_id: "task11-#{id}"
+      )
+
+    start_fixture(coordinates, action, provider)
+  end
+
+  defp started_fixture(action, provider),
+    do: start_fixture(fixture_coordinates(), action, provider)
+
+  defp start_fixture(coordinates, action, provider) do
     policy = policy(coordinates, provider)
     coordinates = GitCapFixture.bind_policy(coordinates, policy)
     assert {:ok, _pid} = TaskAccessSupervisor.ensure_started(policy)
@@ -370,10 +415,7 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     artifact
   end
 
-  defp task_uri(policy) do
-    workspace = Ezagent.URI.workspace_name!(policy.workspace_uri)
-    Ezagent.URI.resource(workspace, "kanban-task", policy.task_id)
-  end
+  defp task_uri(policy), do: policy.task_uri
 
   defp owner_id(pid) do
     pid
