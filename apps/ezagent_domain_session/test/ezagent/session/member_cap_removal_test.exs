@@ -82,6 +82,28 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
     end
   end
 
+  # The roster (`:members`) is written by the holder-driven `add_self` action,
+  # NOT by `do_join` ("`add_self` is the sole roster writer" — Session.Membership).
+  # `add_self` is triggered by the member-cap ABSORB, so it lands STRICTLY AFTER
+  # the cap: `wait_member_cap/3` returning does not imply the roster is written.
+  # Poll the derived projection too, so the removal tests start from a fully
+  # settled membership instead of racing the add_self cast. Bounded — if the
+  # roster genuinely never converges (a real regression), this flunks rather than
+  # masking it.
+  defp wait_member_in_roster(session_uri, member_uri, retries \\ 200) do
+    cond do
+      Map.has_key?(read_members(session_uri), member_uri) ->
+        :ok
+
+      retries > 0 ->
+        Process.sleep(10)
+        wait_member_in_roster(session_uri, member_uri, retries - 1)
+
+      true ->
+        flunk("member never landed in the roster for #{URI.to_string(member_uri)}")
+    end
+  end
+
   defp read_members(session_uri) do
     case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: %{members: m}}} when is_map(m) -> m
@@ -109,6 +131,7 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
     member = confirmed_user(prefix)
     _ = dispatch_join(session_uri, member)
     :ok = wait_member_cap(member, session_uri)
+    :ok = wait_member_in_roster(session_uri, member)
     member
   end
 
