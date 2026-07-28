@@ -399,7 +399,7 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
     # can change what implementation/0 resolves to") demonstrates the
     # in-process immutability directly, and the test below demonstrates the
     # compile-time resolution itself.
-    test "dev and prod compile-time config resolve :execution_seam to Unavailable (behavioral)" do
+    test "dev and prod compile-time config resolve :execution_seam to the compile-time default (behavioral)" do
       # Application.compile_env/3 only ever sees compile-time config
       # (config.exs plus the per-env file it `import_config`s at its
       # bottom) — config/runtime.exs is loaded AFTER compilation and
@@ -414,7 +414,14 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       # config resolves to, not a text scan, so it cannot be evaded by
       # spelling the key differently than expected.
       root_config_exs = Path.join(@app_dir, "../../config/config.exs") |> Path.expand()
-      default_backend = EzagentPluginGitWorkflow.ExecutionSeam.Unavailable
+
+      # Asked for, not hardcoded. What this test asserts is "no non-test config
+      # OVERRIDES the default" — an absence claim — so naming a specific module
+      # here would make the test misdescribe itself the moment the default
+      # changes, which is exactly what happened when §3.4 flipped it from
+      # `Unavailable` to `CapBacked`. The assertion's strength is unchanged:
+      # `Keyword.get/3` returns this value only when the key is ABSENT.
+      default_backend = EzagentPluginGitWorkflow.ExecutionSeam.default_implementation()
 
       for env <- [:dev, :prod] do
         resolved = Config.Reader.read!(root_config_exs, env: env)
@@ -423,7 +430,8 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
 
         assert resolved_backend == default_backend,
                "compile-time config for env=#{env} resolves :execution_seam to " <>
-                 "#{inspect(resolved_backend)}, not Unavailable"
+                 "#{inspect(resolved_backend)}, overriding the compile-time default " <>
+                 "#{inspect(default_backend)}"
       end
     end
   end
