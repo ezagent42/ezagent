@@ -44,6 +44,23 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeamTest do
     assert ExecutionSeam.implementation() == ExecutionSeamTestDelegate
   end
 
+  test "a build with no :execution_seam config compiles to the real cap-backed backend" do
+    # Design §3.4 lifted the permanent `:authorization_unavailable` default.
+    # Prod and dev set no `:execution_seam` key (architecture_test.exs
+    # enforces that), so this IS what they compile to.
+    assert ExecutionSeam.default_implementation() ==
+             EzagentPluginGitWorkflow.ExecutionSeam.CapBacked
+  end
+
+  test "Unavailable is retained as the fallback, not deleted" do
+    # §3.1 keeps it for a build with no backend, and the test delegator
+    # answers with it when nothing is installed — so "nothing configured"
+    # still means fail-closed rather than unauthorized access.
+    assert Code.ensure_loaded?(Unavailable)
+    assert function_exported?(Unavailable, :authorize, 2)
+    assert function_exported?(Unavailable, :invoke, 3)
+  end
+
   test "with no per-process backend installed, the configured implementation fails closed" do
     ExecutionSeamTestDelegate.clear_backend()
 
