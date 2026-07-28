@@ -1,0 +1,1943 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MFU v0.15 · My First Unicorn — 从订单到组织</title>
+<style>
+:root{
+  --ink:#5b4632; --ink-dark:#3d2e1f;
+  --cream:#fdf6e0; --bg:#e9d6a4;
+  --school:#3f9e4d; --school-bg:#e2f3e4;
+  --incu:#e07b1f; --incu-bg:#fdeeda;
+  --assoc:#2f6fc4; --assoc-bg:#e3edfb;
+  --gold:#f5b301; --red:#d94f3d; --teal:#1d9e75; --purple:#7a4fc9;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{
+  font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
+  background:var(--bg);
+  background-image:linear-gradient(45deg,rgba(255,255,255,.12) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.12) 75%),linear-gradient(45deg,rgba(255,255,255,.12) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.12) 75%);
+  background-size:28px 28px;background-position:0 0,14px 14px;
+  color:var(--ink-dark);padding:12px;min-height:100vh;
+}
+.wrap{max-width:1220px;margin:0 auto;}
+.panel{background:var(--cream);border:3px solid var(--ink);border-radius:10px;box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;padding:11px;}
+.panel h3{font-size:13.5px;letter-spacing:2px;margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.btn{font-family:inherit;font-weight:700;font-size:12.5px;letter-spacing:1px;border:3px solid var(--ink);border-radius:8px;cursor:pointer;padding:6px 12px;background:#fff2cf;color:var(--ink-dark);box-shadow:0 3px 0 var(--ink);transition:transform .05s;user-select:none;}
+.btn:hover{filter:brightness(1.05);}
+.btn:active{transform:translateY(3px);box-shadow:0 0 0 var(--ink);}
+.btn:disabled{opacity:.45;cursor:not-allowed;box-shadow:0 3px 0 rgba(91,70,50,.4);transform:none;}
+.btn-primary{background:var(--gold);}
+.btn-green{background:#8fd694;}
+.btn-small{font-size:11.5px;padding:3px 8px;box-shadow:0 2px 0 var(--ink);}
+.btn-small:active{transform:translateY(2px);}
+.tag{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.5px;border:2px solid;border-radius:6px;padding:1px 6px;vertical-align:middle;}
+.tag-school{color:var(--school);border-color:var(--school);background:var(--school-bg);}
+.tag-incu{color:var(--incu);border-color:var(--incu);background:var(--incu-bg);}
+.tag-assoc{color:var(--assoc);border-color:var(--assoc);background:var(--assoc-bg);}
+.tag-gray{color:#7a6c58;border-color:#a8977d;background:#f3ecd9;}
+.tag-purple{color:var(--purple);border-color:var(--purple);background:#efe7fb;}
+.tag-quirk{color:#a3266e;border-color:#d05a9e;background:#fbe8f3;}
+.bar{height:14px;border:2px solid var(--ink);border-radius:6px;background:#efe3c2;overflow:hidden;position:relative;}
+.bar>i{display:block;height:100%;transition:width .4s;}
+.bar span{position:absolute;inset:0;font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;color:#3d2e1f;text-shadow:0 0 3px rgba(255,255,255,.9);}
+header.panel{display:flex;flex-wrap:wrap;align-items:center;gap:7px 10px;margin-bottom:10px;background:linear-gradient(#fff8e4,#f6e9c2);}
+.logo{display:flex;flex-direction:column;line-height:1.1;margin-right:2px;}
+.logo b{font-size:16px;letter-spacing:2px;}
+.logo small{font-size:9px;letter-spacing:1.5px;color:#8a765a;}
+.stat{display:flex;align-items:center;gap:4px;font-weight:700;font-size:12.5px;background:#fff;border:2px solid var(--ink);border-radius:8px;padding:3px 8px;}
+.stat small{font-size:9.5px;color:#8a765a;font-weight:700;}
+.rank-badge{font-weight:800;letter-spacing:1px;font-size:12px;padding:4px 10px;border:3px solid var(--ink);border-radius:8px;background:#e8c9a0;}
+header .spacer{flex:1;}
+#weekBtn{font-size:14px;padding:8px 16px;}
+.pips{display:flex;gap:3px;align-items:center;}
+.pip{width:11px;height:11px;border:2px solid var(--ink);border-radius:3px;background:#efe3c2;}
+.pip.on{background:var(--gold);}
+.main{display:grid;grid-template-columns:1.22fr 1fr;gap:10px;}
+@media (max-width:940px){.main{grid-template-columns:1fr;}}
+.col{display:flex;flex-direction:column;gap:10px;min-width:0;}
+#office{background:linear-gradient(var(--cream) 0 70%,#dcc98f 70% 100%);}
+.office-floor{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:9px;margin-top:6px;}
+.agent-card{background:#fffaf0;border:3px solid var(--ink);border-radius:10px;padding:7px 6px 6px;text-align:center;position:relative;box-shadow:0 3px 0 rgba(91,70,50,.4);}
+.agent-sprite{width:46px;height:46px;margin:0 auto 3px;border:3px solid var(--ink);border-radius:10px;background:linear-gradient(#dff0ff,#b9d9f5);font-size:24px;display:flex;align-items:center;justify-content:center;}
+.agent-card.working .agent-sprite{animation:bob .7s ease-in-out infinite;background:linear-gradient(#fff3cf,#ffe08d);}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.agent-card .nm{font-size:11.5px;font-weight:800;}
+.agent-card .lv{font-size:10.5px;color:#8a765a;font-weight:700;}
+.agent-card .st{font-size:9.5px;font-weight:700;margin-top:2px;min-height:12px;}
+.agent-card .st.busy{color:var(--incu);}.agent-card .st.idle{color:#9a8a6f;}
+.hire-slot{border:3px dashed #a8977d;border-radius:10px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:128px;color:#8a765a;font-size:11.5px;font-weight:700;cursor:pointer;background:rgba(255,255,255,.4);}
+.hire-slot:hover{background:rgba(255,255,255,.8);}
+.power-row{display:flex;align-items:center;gap:7px;margin-top:4px;}
+.power-row .bar{flex:1;}
+.order-card{border:3px solid var(--ink);border-radius:10px;background:#fffaf0;padding:8px 9px;margin-bottom:8px;box-shadow:0 3px 0 rgba(91,70,50,.35);}
+.order-card.locked{opacity:.6;background:#f1e9d3;}
+.order-top{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.order-top b{font-size:12.5px;}
+.order-meta{font-size:10.5px;color:#7a6c58;font-weight:700;margin:3px 0 5px;letter-spacing:.3px;line-height:1.6;}
+.proj{border:3px solid var(--ink);border-radius:10px;background:#fffef7;padding:8px 9px;margin-bottom:8px;}
+.stage-row{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;border-top:2px dotted #e0d2ab;padding:4px 0;}
+.stage-row:first-of-type{border-top:none;}
+.stage-row .who{margin-left:auto;font-size:10px;}
+.stage-row .bar{width:76px;}
+.stage-done{color:var(--teal);}
+.loglist{font-size:11.5px;line-height:1.65;font-weight:600;}
+.loglist p{border-bottom:2px dotted #e0d2ab;padding:2px 2px;}
+.loglist p:first-child{background:#fff6d8;}
+.loglist .w{color:#a08c68;margin-right:4px;font-size:9.5px;}
+#board table{width:100%;border-collapse:collapse;font-size:11.5px;}
+#board td{padding:3px 5px;border-bottom:2px dotted #cbb98f;font-weight:700;}
+#board tr.me{background:#fff1bf;outline:2px solid var(--gold);}
+.shop-item{display:flex;align-items:center;gap:8px;border:2px solid var(--ink);border-radius:8px;background:#fff;padding:5px 8px;margin-bottom:6px;font-size:11.5px;font-weight:700;}
+.shop-item .d{flex:1;line-height:1.5;}
+.shop-item small{display:block;color:#8a765a;font-size:10px;}
+#views{display:flex;flex-wrap:wrap;gap:7px;align-items:center;}
+.view-btn.on{outline:3px solid var(--gold);transform:translateY(1px);}
+#viewBanner{display:none;margin-top:7px;font-size:12px;font-weight:700;line-height:1.6;border:3px solid var(--ink);border-radius:8px;padding:7px 9px;background:#fff;}
+body[data-view] [data-party]{transition:opacity .25s,box-shadow .25s;}
+body[data-view="school"] [data-party]:not([data-party~="school"]),
+body[data-view="incu"] [data-party]:not([data-party~="incu"]),
+body[data-view="assoc"] [data-party]:not([data-party~="assoc"]){opacity:.28;filter:grayscale(.7);}
+body[data-view="school"] [data-party~="school"]{box-shadow:0 0 0 4px var(--school),0 4px 0 rgba(91,70,50,.45);}
+body[data-view="incu"] [data-party~="incu"]{box-shadow:0 0 0 4px var(--incu),0 4px 0 rgba(91,70,50,.45);}
+body[data-view="assoc"] [data-party~="assoc"]{box-shadow:0 0 0 4px var(--assoc),0 4px 0 rgba(91,70,50,.45);}
+.overlay{position:fixed;inset:0;background:rgba(61,46,31,.55);display:none;align-items:center;justify-content:center;z-index:50;padding:14px;}
+.overlay.show{display:flex;}
+.modal{width:min(520px,100%);max-height:90vh;overflow-y:auto;background:var(--cream);border:4px solid var(--ink);border-radius:14px;box-shadow:0 8px 0 rgba(0,0,0,.35);padding:16px;animation:pop .18s ease-out;}
+@keyframes pop{from{transform:scale(.85);opacity:0}}
+.modal h2{font-size:16px;letter-spacing:2px;margin-bottom:9px;}
+.modal .actions{display:flex;gap:9px;justify-content:flex-end;margin-top:13px;flex-wrap:wrap;}
+.crew-pick{display:flex;flex-direction:column;gap:6px;margin:9px 0;}
+.crew-pick label,.choice{display:flex;align-items:center;gap:8px;border:2px solid var(--ink);border-radius:8px;background:#fff;padding:6px 9px;font-size:12.5px;font-weight:700;cursor:pointer;line-height:1.5;}
+.choice:hover{background:#fff6d8;}
+.choice.sel{outline:3px solid var(--gold);background:#fff6d8;}
+.choice.right{outline:3px solid var(--teal);background:#e5f6ef;}
+.choice.wrong{outline:3px solid var(--red);background:#fdeaea;}
+.route-stage{border:2px solid var(--ink);border-radius:9px;background:#fff;padding:7px 9px;margin-bottom:8px;}
+.route-stage .sname{font-size:12.5px;font-weight:800;margin-bottom:5px;}
+.route-opts{display:flex;flex-wrap:wrap;gap:6px;}
+.ropt{border:2px solid var(--ink);border-radius:7px;background:#faf3df;padding:4px 8px;font-size:11px;font-weight:700;cursor:pointer;line-height:1.5;}
+.ropt.sel{outline:3px solid var(--gold);background:#fff2cf;}
+.ropt.dis{opacity:.4;cursor:not-allowed;}
+.ropt small{display:block;font-size:9.5px;color:#8a765a;}
+.stars{color:var(--gold);letter-spacing:1px;}
+.stamp{display:inline-block;font-size:40px;font-weight:900;letter-spacing:3px;border:5px solid;border-radius:12px;padding:2px 14px;transform:rotate(-8deg);animation:stampin .3s cubic-bezier(.2,2,.4,1);}
+@keyframes stampin{from{transform:rotate(-8deg) scale(2.2);opacity:0}}
+.stamp-S{color:var(--gold);border-color:var(--gold);}
+.stamp-A{color:var(--red);border-color:var(--red);}
+.stamp-B{color:var(--assoc);border-color:var(--assoc);}
+.stamp-C{color:#7a6c58;border-color:#7a6c58;}
+.asset-pop{position:fixed;font-size:13px;font-weight:900;color:var(--teal);z-index:99;pointer-events:none;animation:rise 1.1s ease-out forwards;text-shadow:0 0 4px #fff;}
+@keyframes rise{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-46px)}}
+.talk{font-size:11px;font-weight:700;background:#fff;border:2px solid var(--ink);border-radius:8px;padding:5px 8px;margin-top:6px;line-height:1.6;}
+.footer-note{margin-top:10px;font-size:10.5px;color:#8a765a;font-weight:700;text-align:center;letter-spacing:1px;line-height:1.7;}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;font-size:11px;font-weight:700;margin-top:5px;}
+.profile-grid>div{background:#fff;border:2px solid var(--ink);border-radius:7px;padding:4px 7px;}
+@media (prefers-reduced-motion:reduce){.agent-card.working .agent-sprite,.asset-pop{animation:none;}}
+
+.avatar{width:44px;height:44px;border:3px solid var(--ink);border-radius:10px;background:linear-gradient(#ffe9d4,#ffd0a8);font-size:22px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 3px 0 var(--ink);padding:0;}
+.avatar:active{transform:translateY(2px);box-shadow:0 1px 0 var(--ink);}
+.clk{cursor:pointer;border-bottom:2px dotted #b49a6d;}
+.clk:active{transform:translateY(1px);}
+.ticker{font-size:11px;font-weight:700;background:#fff6d8;border:3px solid var(--ink);border-radius:8px;padding:4px 9px;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-shadow:0 3px 0 rgba(91,70,50,.35);}
+.tabs{position:sticky;top:6px;z-index:30;display:flex;gap:6px;flex-wrap:wrap;background:var(--cream);border:3px solid var(--ink);border-radius:10px;padding:6px;margin-bottom:10px;box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;}
+.tabbtn{position:relative;flex:1;min-width:74px;font-family:inherit;font-weight:800;font-size:12px;letter-spacing:1px;border:3px solid var(--ink);border-radius:8px;cursor:pointer;padding:6px 4px;background:#f3e8c8;box-shadow:0 2px 0 var(--ink);}
+.tabbtn.on{background:var(--gold);transform:translateY(1px);box-shadow:0 1px 0 var(--ink);}
+.bdg{position:absolute;top:-7px;right:-5px;min-width:17px;height:17px;border:2px solid var(--ink);border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-weight:800;display:none;align-items:center;justify-content:center;padding:0 3px;}
+.bdg.show{display:inline-flex;}
+.tabsec{display:none;}
+.tabsec.on{display:block;}
+.duo{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start;}
+@media (max-width:900px){.duo{grid-template-columns:1fr;}}
+.duo .panel{margin-bottom:0;}
+.tabsec>.panel{margin-bottom:10px;}
+#paBubble{position:fixed;right:16px;bottom:16px;z-index:60;width:58px;height:58px;border:4px solid var(--ink);border-radius:16px;background:linear-gradient(#fff3cf,#ffd95e);font-size:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 5px 0 var(--ink);}
+#paBubble:active{transform:translateY(3px);box-shadow:0 2px 0 var(--ink);}
+#paDot{position:absolute;top:-5px;right:-5px;width:16px;height:16px;border:2px solid var(--ink);border-radius:8px;background:var(--red);display:none;}
+#paDot.show{display:block;}
+#paDrawer{position:fixed;right:16px;bottom:84px;z-index:60;width:min(360px,calc(100vw - 32px));max-height:70vh;display:none;flex-direction:column;background:var(--cream);border:4px solid var(--ink);border-radius:14px;box-shadow:0 8px 0 rgba(0,0,0,.3);overflow:hidden;}
+#paDrawer.show{display:flex;}
+#paHead{background:linear-gradient(#fff8e4,#f6e9c2);border-bottom:3px solid var(--ink);padding:8px 12px;font-weight:800;font-size:13px;display:flex;align-items:center;gap:7px;}
+#paMsgs{flex:1;overflow-y:auto;padding:10px;display:flex;flex-direction:column;gap:7px;}
+.pam{max-width:88%;border:2px solid var(--ink);border-radius:10px;padding:6px 9px;font-size:12px;font-weight:600;line-height:1.6;}
+.pam.ai{background:#fff;align-self:flex-start;}
+.pam.me{background:#fff2cf;align-self:flex-end;}
+#paQuick{display:flex;flex-wrap:wrap;gap:5px;padding:7px 10px;border-top:2px dotted #cbb98f;}
+#paInputRow{display:flex;gap:6px;padding:8px 10px;border-top:3px solid var(--ink);background:#fdf6e0;}
+#paInput{flex:1;font-family:inherit;font-weight:700;font-size:12.5px;padding:6px 8px;border:2px solid var(--ink);border-radius:8px;}
+.chip{flex-shrink:0;border:2px solid var(--ink);border-radius:8px;background:#fff;padding:3px 8px;font-size:11px;font-weight:800;cursor:pointer;}
+.chip.on{background:var(--gold);}
+
+/* ---- 科技树面板 (MFU 风格 · 径向网) ---- */
+.tree-panel{background:var(--cream);border:3px solid var(--ink);border-radius:10px;
+  box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;padding:11px;margin-bottom:0;}
+.tree-panel .tp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:6px;}
+.tree-panel .tp-head .tp-title{font-size:13.5px;font-weight:800;letter-spacing:2px;color:var(--ink-dark);}
+.tree-panel .tp-head .tp-meta{display:flex;align-items:center;gap:8px;}
+.tree-panel .tp-head .tp-count{font-size:10.5px;font-weight:700;color:#8a765a;
+  background:#fff;border:2px solid var(--ink);border-radius:6px;padding:2px 8px;}
+.tree-svg-wrap{width:100%;max-width:680px;height:480px;margin:0 auto;overflow:hidden;position:relative;cursor:grab;touch-action:none;border:2px solid var(--ink);border-radius:8px;background:linear-gradient(#fefcf5,#f6eed8);}
+.tree-svg-wrap.panning{cursor:grabbing;}
+.tree-svg-wrap svg{width:100%;height:auto;display:block;user-select:none;pointer-events:none;}
+.tree-svg-wrap svg circle.tnode{pointer-events:auto;}
+/* 节点 */
+.tnode{stroke-width:2.5;cursor:pointer;transition:all .1s;}
+.tnode.unlocked{fill:#fff;stroke:var(--teal);}
+.tnode.available{fill:#fff6d8;stroke:var(--gold);stroke-dasharray:3 2;animation:tnPulse 1.2s ease-in-out infinite;}
+@keyframes tnPulse{0%,100%{stroke-opacity:1}50%{stroke-opacity:.35}}
+.tnode.locked{fill:#f3ecd9;stroke:#a8977d;cursor:default;}
+.tnode-label{font-family:"PingFang SC","Microsoft YaHei",sans-serif;font-size:9px;font-weight:800;
+  fill:var(--ink-dark);text-anchor:middle;dominant-baseline:central;pointer-events:none;user-select:none;}
+.tnode.locked+.tnode-label,.tnode.locked~.tnode-label-for-this{fill:#a8977d;}
+/* 连线 */
+.tline{stroke:#cbb98f;stroke-width:3;fill:none;stroke-linejoin:round;stroke-linecap:round;}
+.tline.unlocked{stroke:var(--teal);stroke-opacity:.6;}
+.tline.available{stroke:var(--gold);stroke-dasharray:6 4;stroke-opacity:.6;}
+/* 背景环 */
+.tree-ring{fill:none;stroke:#dcc98f;stroke-width:1;stroke-dasharray:6 4;opacity:.5;}
+
+/* 节点详情弹窗 (MFU 风格) */
+.tdetail-overlay{position:fixed;inset:0;background:rgba(61,46,31,.55);
+  z-index:70;display:flex;align-items:center;justify-content:center;padding:14px;
+  animation:tdFadeIn .12s ease-out;}
+@keyframes tdFadeIn{from{opacity:0}}
+.tdetail-card{width:min(380px,92vw);max-height:88vh;overflow-y:auto;
+  background:var(--cream);border:4px solid var(--ink);border-radius:14px;
+  box-shadow:0 8px 0 rgba(0,0,0,.35);padding:18px 16px 14px;
+  animation:pop .18s ease-out;text-align:center;}
+.tdetail-card .td-close{position:absolute;top:10px;right:12px;
+  font-family:inherit;font-weight:800;font-size:14px;cursor:pointer;
+  background:var(--cream);border:2px solid var(--ink);border-radius:8px;
+  padding:2px 8px;box-shadow:0 2px 0 var(--ink);color:var(--ink-dark);}
+.tdetail-card .td-close:active{transform:translateY(2px);box-shadow:0 0 0 var(--ink);}
+.tdetail-card .td-icon{font-size:38px;margin-bottom:6px;}
+.tdetail-card .td-id{font-size:10px;font-weight:800;letter-spacing:1.5px;color:#8a765a;}
+.tdetail-card .td-name{font-size:16px;font-weight:800;color:var(--ink-dark);margin:4px 0;letter-spacing:1px;}
+.tdetail-card .td-verb{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.5px;
+  border:2px solid var(--teal);border-radius:6px;padding:1px 7px;color:var(--teal);
+  background:#e5f6ef;margin-bottom:10px;}
+.tdetail-card .td-verb.locked{border-color:#a8977d;color:#a8977d;background:#f3ecd9;}
+.tdetail-card .td-level{display:flex;align-items:center;gap:8px;justify-content:center;margin:10px 0;}
+.tdetail-card .td-level .bar{width:130px;}
+.tdetail-card .td-cond{font-size:11.5px;font-weight:700;color:#7a6c58;line-height:1.5;margin-bottom:8px;}
+.tdetail-card .td-desc{font-size:11px;font-weight:600;color:#8a765a;line-height:1.7;
+  background:#fffef7;border:2px solid var(--ink);border-radius:8px;padding:9px 11px;}
+/* 底部操作 */
+.tdetail-actions{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;}
+.tdetail-footer{font-size:9.5px;color:#a8977d;font-weight:700;margin-top:8px;}
+.roleflow-modal{width:min(1080px,96vw);max-height:92vh;}
+.rf-head{display:flex;align-items:flex-start;gap:10px;padding-bottom:9px;border-bottom:3px dotted #cbb98f;}
+.rf-head .ico{font-size:34px;line-height:1}.rf-head h2{margin:0 0 3px;font-size:17px}.rf-head p{font-size:11px;color:#7a6c58;font-weight:700;line-height:1.6}.rf-head .tag{margin-left:auto;white-space:nowrap}
+.rf-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.rf-card{border:3px solid var(--ink);border-radius:9px;background:#fffaf0;padding:9px;box-shadow:0 3px 0 rgba(91,70,50,.3)}.rf-card h3{font-size:13px;margin-bottom:6px}.rf-card p,.rf-card li{font-size:11px;font-weight:700;line-height:1.65}.rf-card ul{padding-left:17px}
+.rf-mission{margin-top:9px;padding:7px 9px;border:3px dashed var(--assoc);border-radius:8px;background:var(--assoc-bg);font-size:11px;font-weight:800;line-height:1.6}
+.rf-topology{display:flex;align-items:center;justify-content:center;gap:7px;margin:9px 0;flex-wrap:wrap}.rf-node{min-width:115px;border:3px solid var(--ink);border-radius:8px;background:#f2ead6;padding:7px;text-align:center;font-size:10px;font-weight:800}.rf-node.mine{background:#fff0ad;border-color:var(--gold);outline:3px solid rgba(245,179,1,.25)}.rf-arrow{font-size:18px;font-weight:900}
+.rf-chat{max-height:160px;overflow:auto;display:flex;flex-direction:column;gap:5px;margin:6px 0}.rf-msg{border:2px solid var(--ink);border-radius:8px;background:#fff;padding:5px 7px;font-size:10.5px;font-weight:700}.rf-msg.me{align-self:flex-end;background:#fff2cf}.rf-send{display:flex;gap:6px}.rf-send input{flex:1;min-width:0;border:2px solid var(--ink);border-radius:7px;padding:5px 7px;font-size:11px;font-weight:700}
+.rf-person{display:flex;align-items:center;gap:7px;border:2px solid var(--ink);border-radius:8px;background:#fff;padding:6px;margin-bottom:6px}.rf-person b{font-size:11.5px}.rf-person small{display:block;font-size:9.5px;color:#8a765a;font-weight:700}.rf-person .btn{margin-left:auto}
+@media(max-width:800px){.rf-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="panel">
+  <button class="avatar" id="avatarBtn" onclick="openBiz('me')" title="主理人档案(人)">🧑‍💼</button>
+  <button class="avatar" id="coBtn" onclick="gate()&&openBiz('ov')" title="公司系统 ERP(组织)" style="background:linear-gradient(#efe7fb,#d9c6f5)">🏢</button>
+  <div class="logo"><b>🦄 MFU</b><small>MY FIRST UNICORN · <span id="stCo">—</span> · 第 <span id="stWeek">1</span> 周</small></div>
+  <div class="stat clk" onclick="openBiz('fin')" title="点开现金流量">💰<span id="stCash">6000</span></div>
+  <div class="stat clk" onclick="openBiz('crm')" title="点开客户簿">⭐<small>声望</small><span id="stRep">0</span></div>
+  <div class="stat clk" onclick="openBiz('ord')" title="点开订单档案">🤝<small>信用</small><span id="stCred">80</span></div>
+  <div class="rank-badge" id="stRank" style="font-size:11px;">🥉 青铜认证</div>
+  <div class="stat" title="主理人时间:每周 6 个半天(正式版映射日历)"><small>时间</small><span class="pips" id="apPips"></span></div>
+  <div class="stat clk" onclick="setTab('office')" title="算力详情在办公室">⚡<span id="pwrMini">100</span></div>
+  <div class="spacer"></div>
+  <button class="btn btn-small" id="incuViewBtn" onclick="openRoleFlow('incubator')" title="切换到孵化器筛选视角">🏭 孵化器视角</button>
+  <a class="btn btn-small" id="gddBtn" href="gdd.html" target="_blank" rel="noopener" title="打开设计策划案 GDD(新标签页)" style="text-decoration:none;">📖 策划案</a>
+  <button class="avatar" id="worldBtn" onclick="setTab('world')" title="🌍 世界(公开层,随时可看)" style="background:linear-gradient(#dff0ff,#b9d9f5)">🌍</button>
+  <button class="btn btn-primary" id="weekBtn" title="演示替身:正式版为 MMO 世界统一时钟(服务器驱动),任何人不可加速;可加速的只有私人推演器">▶ 下一周</button>
+</header>
+
+<div class="ticker clk" id="ticker" onclick="openBiz('log')" title="点击查看完整日志" style="cursor:pointer">📜 欢迎来到创业物语——顶栏的每个数字都点得开。</div>
+
+<nav class="tabs">
+  <button class="tabbtn on" data-tab="office" onclick="setTab('office')">🏢 办公室</button>
+  <button class="tabbtn" data-tab="orders" onclick="setTab('orders')">📋 订单<span class="bdg" id="bOrders"></span></button>
+  <button class="tabbtn" data-tab="market" onclick="setTab('market')">🛒 市场<span class="bdg" id="bMarket"></span></button>
+  <button class="tabbtn" data-tab="eco" onclick="setTab('eco')">🏆 生态</button>
+</nav>
+
+<section class="tabsec on" id="tab-office">
+  <div class="panel" id="office" data-party="school">
+    <h3>🏢 我的办公室 <span id="officeLv" class="tag tag-gray">宿舍书桌</span></h3>
+    <div class="power-row" data-party="school">
+      <span class="tag tag-school">🏫 算力</span>
+      <div class="bar"><i id="powerFill" style="background:linear-gradient(#7fd68a,#3f9e4d)"></i><span id="powerTxt"></span></div>
+      <span class="tag tag-purple" id="baseTag">基座:校园版</span>
+    </div>
+    <div class="office-floor" id="floor"></div>
+  </div>
+  <div class="panel" data-party="school">
+    <h3>🎓 创业教练 <span class="tag tag-school">学校时长:<span id="coachHours">2</span>/周</span></h3>
+    <div id="coachTip" class="talk">教练小柯:欢迎!先接练习单,把 AP 花在刀刃上。</div>
+    <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+      <button class="btn btn-small" id="coachBuy">加购时长 ¥400</button>
+      <button class="btn btn-small" id="socialBtn">🍵 商务社交(1 半天)</button>
+    </div>
+  </div>
+</section>
+
+<section class="tabsec" id="tab-orders">
+  <div class="duo">
+    <div class="panel">
+      <h3>📋 订单板 <span class="tag tag-gray">竞赛制 · 同题对抗</span> <span class="tag tag-gray">正式版:世界统一时钟 · 加速仅限私人推演器</span></h3>
+      <div id="orderList"></div>
+    </div>
+    <div class="panel">
+      <h3>🔨 进行中的项目</h3>
+      <div id="projList"></div>
+      <div id="projEmpty" style="font-size:11.5px;color:#9a8a6f;font-weight:700;">还没有项目 —— 去左边接一单吧!</div>
+    </div>
+  </div>
+</section>
+
+<section class="tabsec" id="tab-market">
+  <div class="duo">
+    <div class="panel">
+      <h3>🛒 商店 <span class="tag tag-gray">基座与能力接入</span></h3>
+      <div id="shopList"></div>
+    </div>
+    <div class="panel">
+      <h3>💼 打工市场 <span class="tag tag-gray">主理人也是可被雇佣的人</span></h3>
+      <div id="gigList"></div>
+      <div style="font-size:10px;font-weight:700;color:#8a765a;margin-top:4px;">规则:同题竞业回避 —— 竞争期内不可受雇于同池对手(联机版强制检测)</div>
+    </div>
+  </div>
+</section>
+
+<section class="tabsec" id="tab-eco">
+  <div class="duo">
+    <div class="panel">
+      <h3>🎪 会籍(公会)<span class="tag tag-gray">生态按能力打包,不按身份</span></h3>
+      <div id="guildList"></div>
+    </div>
+    <div class="panel">
+      <h3>🧩 能力来源矩阵 <span class="tag tag-gray">同一能力可多源</span></h3>
+      <div id="capMatrix" style="font-size:11px;font-weight:700;"></div>
+    </div>
+    <div class="panel" id="board" data-party="incu">
+      <h3>🏆 班级排行榜 <span class="tag tag-incu">🏭 孵化器关注中</span></h3>
+      <table id="boardTbl"></table>
+    </div>
+  </div>
+</section>
+
+<section class="tabsec" id="tab-world">
+  <div class="panel">
+    <h3>🌍 组织黄页 <span class="tag tag-gray">公开层 · 游客也能看</span></h3>
+    <div id="worldOrgs"></div>
+  </div>
+  <div class="panel">
+    <h3>🏠 公司官网(公开)<span class="tag tag-gray">发单方由此了解每家公司</span></h3>
+    <div id="worldSites"></div>
+  </div>
+</section>
+
+<div id="log" class="loglist" style="display:none"></div>
+
+<div class="footer-note">MFU v0.15 · My First Unicorn · 拟像未来 Hyprial —— 从订单到猎人，再到协作组织</div>
+</div>
+
+<button id="paBubble" onclick="togglePA()" title="小 H · 你的个人助理(0 号 Agent,属于你,不属于公司)">🤵<span id="paDot"></span></button>
+<div id="paDrawer">
+  <div id="paHead"><span id="paTitle">🤵 小 H · 个人助理</span><span class="tag tag-gray">消息中心</span><span style="flex:1"></span><button class="btn btn-small" onclick="togglePA()">✕</button></div>
+  <div id="paContacts" style="display:flex;gap:5px;overflow-x:auto;padding:6px 8px;border-bottom:2px dotted #cbb98f;background:#faf3df;"></div>
+  <div id="paMsgs"></div>
+  <div id="paQuick"></div>
+  <div id="paInputRow">
+    <input id="paInput" placeholder="问我任何经营状态…" onkeydown="if(event.key==='Enter')paSend()">
+    <button class="btn btn-small btn-primary" onclick="paSend()">发送</button>
+  </div>
+</div>
+
+<div class="overlay show" id="mStart"><div class="modal">
+  <h2>🦄 MFU · 开学第一天</h2>
+  <p style="font-size:12.5px;font-weight:600;line-height:1.8;">
+    你将经营一家<b>人机协同</b>的一人公司:把订单环节<b>路由</b>给最合适的人或 AI、像带徒弟一样<b>调教</b>你的 Agent、
+    在<b>同题竞赛</b>中击败班级对手 —— 表现好,真实孵化器会来敲门;经营砸了,公司会破产,但你的档案不清零。
+  </p>
+  <div style="margin:8px 0;">
+    <label style="font-size:11.5px;font-weight:800;">公司名:</label>
+    <input id="coName" value="像素小分队" maxlength="10" style="width:100%;margin-top:5px;font-family:inherit;font-size:14px;font-weight:800;padding:7px;border:3px solid var(--ink);border-radius:8px;background:#fff;">
+  </div>
+  <p style="font-size:11.5px;font-weight:700;line-height:1.9;">
+    <span class="tag tag-school">🏫 学校</span> 算力 + 教练时长 + 题库 &nbsp;
+    <span class="tag tag-incu">🏭 孵化器</span> 真单 + 资金 + 入驻邀请 &nbsp;
+    <span class="tag tag-assoc">🤝 协会</span> 真单 + 评审 + 认证
+  </p>
+  <div class="actions">
+    <button class="btn" id="guestBtn">🌍 先逛逛(游客模式)</button>
+    <button class="btn btn-primary" id="startBtn">🚀 开始创业!</button>
+  </div>
+</div></div>
+
+<div class="overlay" id="mHire"><div class="modal">
+  <h2>🤖 雇佣 AI 员工</h2>
+  <div id="hireList" class="crew-pick"></div>
+  <div class="actions"><button class="btn" data-close="mHire">关闭</button></div>
+</div></div>
+
+<div class="overlay" id="mRoute"><div class="modal">
+  <h2 id="rtTitle">路由决策</h2>
+  <p id="rtDesc" style="font-size:11px;font-weight:700;color:#7a6c58;line-height:1.7;margin-bottom:8px;"></p>
+  <div id="rtStages"></div>
+  <p id="rtCost" style="font-size:11px;font-weight:700;color:#8a765a;"></p>
+  <div class="actions">
+    <button class="btn btn-small" id="rtCoach">🎓 教练诊断(1时长)</button>
+    <button class="btn" data-close="mRoute">取消</button>
+    <button class="btn btn-primary" id="rtGo">开工!</button>
+  </div>
+</div></div>
+
+<div class="overlay" id="mTrain"><div class="modal">
+  <h2 id="trTitle">🧑‍🏫 训练室</h2>
+  <div id="trBody"></div>
+  <div class="actions"><button class="btn" data-close="mTrain">关闭</button></div>
+</div></div>
+
+<div class="overlay" id="mDeliver"><div class="modal" style="text-align:center;">
+  <h2 id="dvTitle">交付确认</h2>
+  <p id="dvSub" style="font-size:11.5px;font-weight:700;color:#7a6c58;margin-bottom:10px;line-height:1.7;"></p>
+  <div id="dvStamp" style="min-height:60px;display:flex;align-items:center;justify-content:center;"></div>
+  <div id="dvDetail" style="font-size:12px;font-weight:700;margin-top:10px;line-height:1.8;text-align:left;"></div>
+  <div class="actions" style="justify-content:center;" id="dvActions"></div>
+</div></div>
+
+<div class="overlay" id="mCrisis"><div class="modal">
+  <h2>💸 现金危机!</h2>
+  <p id="crText" style="font-size:12.5px;font-weight:700;line-height:1.8;"></p>
+  <div id="crOptions" class="crew-pick"></div>
+</div></div>
+
+<div class="overlay" id="mBiz"><div class="modal" style="width:min(600px,100%);">
+  <h2 id="bizTitle">企业面板</h2>
+  <div id="bizNav" style="display:none;gap:5px;flex-wrap:wrap;margin-bottom:8px;"></div>
+  <div id="bizBody" style="font-size:11.5px;font-weight:700;line-height:1.7;"></div>
+  <div class="actions"><button class="btn" data-close="mBiz">关闭</button></div>
+</div></div>
+
+<div class="overlay" id="mPost"><div class="modal">
+  <h2>📢 发布命题(你是发单方)</h2>
+  <p style="font-size:11.5px;font-weight:700;color:#7a6c58;line-height:1.7;">任何组织都可以发单——这是所有面板共有的能力。奖金池将托管扣除;两周后收到提交,由你评价并发放。</p>
+  <div class="crew-pick">
+    <label>类型:
+      <select id="poType" style="font-family:inherit;font-weight:700;padding:4px;border:2px solid var(--ink);border-radius:6px;">
+        <option value="design">公司官网视觉升级(设计)</option>
+        <option value="copy">品牌介绍文案(文案)</option>
+        <option value="growth">开学季获客方案(增长)</option>
+      </select></label>
+    <label>奖金池:¥<input id="poPool" type="number" value="2000" min="800" step="200" style="width:100px;font-family:inherit;font-weight:700;padding:4px;border:2px solid var(--ink);border-radius:6px;"></label>
+    <label>希望解决的问题:<textarea id="poGoal" style="flex:1;min-height:54px;font-family:inherit;font-weight:700;padding:5px;border:2px solid var(--ink);border-radius:6px;">在真实场景中获得一份可以执行、可以验证效果的成果。</textarea></label>
+    <label>截止时间:
+      <select id="poDue" style="font-family:inherit;font-weight:700;padding:4px;border:2px solid var(--ink);border-radius:6px;"><option>两周后</option><option>四周后</option><option>本学期末</option></select>
+    </label>
+    <label>完整验收标准:<textarea id="poCriteria" style="flex:1;min-height:54px;font-family:inherit;font-weight:700;padding:5px;border:2px solid var(--ink);border-radius:6px;">成果能够直接使用；过程与数据可追溯；明确说明下一步建议。</textarea></label>
+  </div>
+  <div class="actions">
+    <button class="btn" data-close="mPost">取消</button>
+    <button class="btn btn-primary" id="poGo">托管并发布</button>
+  </div>
+</div></div>
+
+<div class="overlay" id="mRoleFlow"><div class="modal roleflow-modal">
+  <div id="roleFlowBody"></div>
+</div></div>
+
+<div class="overlay" id="mEnd"><div class="modal">
+  <h2>🏭 孵化器入驻邀请!</h2>
+  <p style="font-size:12.5px;font-weight:700;line-height:1.9;">
+    恭喜!<b id="endCo"></b> 拿下黄金认证并稳定赢下真实订单。<br><br>
+    <span class="tag tag-incu">🏭 DHS 产业孵化器</span> 发来正式邀请:老厂房园区的独立办公间已备好——注册真实公司、获得首笔孵化资金。<br><br>
+    你的 Agent 训练资产、经营数据、主理人档案<b>原样保留</b>:关掉教学包装层,同一套系统,继续真实经营。
+  </p>
+  <div class="actions">
+    <button class="btn" data-close="mEnd">继续经营</button>
+    <button class="btn btn-primary" onclick="location.reload()">🔄 重新开始</button>
+  </div>
+</div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const ri=(a,b)=>Math.floor(rnd(a,b+1));
+const yuan=n=>'¥'+Math.round(n).toLocaleString();
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const pick=arr=>arr[ri(0,arr.length-1)];
+
+const DOM={strategy:'策略拆解',design:'设计执行',copy:'文案执行',growth:'增长执行',comm:'客户沟通',perform:'出镜表演'};
+const TYPES={
+  design:{name:'设计 Agent',emoji:'🎨',cost:2200,domain:'design'},
+  copy:{name:'文案 Agent',emoji:'✍️',cost:1800,domain:'copy'},
+  growth:{name:'增长 Agent',emoji:'📈',cost:2600,domain:'growth'}
+};
+const QUIRKS=[
+  {k:'perf',n:'完美主义',d:'质量+4,偶尔拖周期'},
+  {k:'juan',n:'卷王',d:'干得快,算力+3'},
+  {k:'night',n:'夜猫子',d:'随机灵感爆发+4'},
+  {k:'talk',n:'话痨',d:'台词特别多'},
+  {k:'zen',n:'佛系',d:'发挥稳定,波动小'}
+];
+const TALKS={
+  train_ok:['老板,这个我记住了!','原来如此……下次我自己就能判断!','感觉能力条又长了一截!'],
+  train_no:['呜,我再想想……','原来我理解错了,谢谢老板!'],
+  win:['老板我们赢了!这单我练过!','盖章的声音真好听!'],
+  lose:['下次一定……我去复盘!','对手好强,但我们的资产更厚了。']
+};
+const RANKS=[{n:'🥉 青铜认证',need:0},{n:'🥈 白银认证',need:30},{n:'🥇 黄金认证',need:85}];
+
+const ORDER_POOL={
+  practice:[
+    {name:'社团招新海报',stages:['strategy','design','comm'],diff:1,pool:1200},
+    {name:'课程宣传推文',stages:['strategy','copy','comm'],diff:1,pool:1000},
+    {name:'校园活动引流方案',stages:['strategy','growth','comm'],diff:2,pool:1600},
+    {name:'食堂新品菜单设计',stages:['strategy','design','comm'],diff:1,pool:1100}
+  ],
+  incu:[
+    {name:'乒乓球出海 DTC 海报套件',stages:['strategy','design','comm'],diff:3,pool:9000},
+    {name:'颜料品牌电商详情页',stages:['strategy','design','comm'],diff:3,pool:8000},
+    {name:'老厂房园区导视设计',stages:['strategy','design','comm'],diff:4,pool:11000},
+    {name:'新品出海增长投放方案',stages:['strategy','growth','comm'],diff:3,pool:8500}
+  ],
+  assoc:[
+    {name:'行业年会主视觉',stages:['strategy','design','comm'],diff:3,pool:7000},
+    {name:'行业白皮书文案',stages:['strategy','copy','comm'],diff:3,pool:6500}
+  ],
+  mcn:[
+    {name:'品牌数字人直播首秀',stages:['strategy','perform','comm'],diff:3,pool:9500,needConn:'dh'},
+    {name:'数字人短视频带货月包',stages:['strategy','perform','comm'],diff:4,pool:12000,needConn:'dh'}
+  ]
+};
+
+const EXAMS={
+  design:[
+    {q:'大促海报主视觉,哪个更对?',a:'巨大价格数字 + 倒计时',b:'品牌 logo 居中 + 大量留白',c:0,why:'促销场景,信息钩子优先于品牌调性。'},
+    {q:'高端护肤详情页首屏?',a:'成分表格密密排满',b:'质感大图 + 一句核心卖点',c:1,why:'高端品先建立质感,参数放后面。'},
+    {q:'线下展会易拉宝?',a:'三米外可读的大标题',b:'完整产品参数列表',c:0,why:'易拉宝的战场在三米之外。'}
+  ],
+  copy:[
+    {q:'DTC 出海促销海报文案?',a:'"$9.9 Today Only"',b:'"Crafted with love"',c:0,why:'转化文案要具体钩子,不要抽象情怀。'},
+    {q:'行业白皮书标题?',a:'"2026 行业十大趋势:数据全景"',b:'"我们眼中的未来"',c:0,why:'白皮书读者要信息密度承诺。'},
+    {q:'私域召回短信?',a:'"亲,好久不见~"',b:'"您的 50 元券 3 天后过期"',c:1,why:'召回靠损失厌恶,不靠寒暄。'}
+  ],
+  growth:[
+    {q:'冷启动投放预算怎么花?',a:'全押一个头部 KOL',b:'小额多组素材 A/B 测试',c:1,why:'冷启动先买信息,再买流量。'},
+    {q:'落地页先看什么指标?',a:'转化率',b:'PV',c:0,why:'流量再大,不转化都是成本。'},
+    {q:'投放时段怎么定?',a:'按后台数据高峰投',b:'按老板作息投',c:0,why:'数据说话,老板也得听数据的。'}
+  ]
+};
+const RULES=[
+  {sc:'客户说"再改改",但没说改哪里',opts:['先问清最不满意的一处','整体重做一版','按自己感觉改'],best:0},
+  {sc:'接到大促海报需求,第一步?',opts:['先要卖点与价格钩子','先挑配色','先做三版再说'],best:0},
+  {sc:'交付前 10 分钟,应该?',opts:['按验收标准逐条自查','直接发出去','问一下老板今天心情'],best:0}
+];
+const REVIEW_REASONS={
+  design:{ok:'信息层级混乱,主卖点不突出',no:['配色数量不够多','字体种类太少']},
+  copy:{ok:'缺少具体钩子,全是抽象形容词',no:['字数不够多','没用感叹号']},
+  growth:{ok:'预算没做分组测试,单点押注',no:['投放时间太早','素材不够华丽']},
+  strategy:{ok:'没对齐验收标准就开工',no:['开会次数太少','PPT 页数不够']},
+  comm:{ok:'客户关键反馈没有确认复述',no:['表情包用得少','回复太快显得急']},
+  perform:{ok:'脚本节奏拖沓,前 5 秒没有钩子',no:['背景灯光偏冷','服装颜色不亮']}
+};
+const EXTS={
+  strategy:{n:'外部顾问',cost:800,fit:2},
+  design:{n:'设计外包',cost:1200,fit:2},
+  copy:{n:'文案外包',cost:1000,fit:2},
+  growth:{n:'投放代理',cost:1200,fit:2},
+  comm:{n:'客服代理',cost:600,fit:1},
+  perform:{n:'数字人',cost:800,fit:3,needConn:'dh'}
+};
+
+let uid=1;
+const S={
+  started:false,co:'像素小分队',week:1,cash:6000,rep:0,cred:80,rank:0,
+  ap:6,apMax:6,power:100,powerMax:100,base:0,
+  coachH:2,bridgeUsed:false,grantGiven:false,endShown:false,
+  conns:{dh:false,img:false},
+  agents:[],orders:[],projects:[],reviews:[],
+  members:[],tx:[],archive:[],gigs:[],
+  guilds:{school:true,incu:false,assoc:false},cool:{incu:0,assoc:0},myOrders:[],
+  orderChats:{},collaborators:[],roleDraft:null,
+  lines:{design:0,copy:0,growth:0,perform:0},premiumAdded:false,
+  credits:{design:0,copy:0,growth:0,strategy:0,comm:0},
+  treeNodes:{},
+  profile:{judgeG:0,judgeT:0,net:0,portfolio:0,gigs:0,guildHist:{},certs:{},skill:{strategy:2,comm:2,design:.5,copy:.5,growth:.5,perform:.2}},
+  realQ:[],realN:0,
+  rivals:['隔壁宿舍工作室','元气满满小组','肝帝三人组','摸鱼但认真队','咖啡因驱动社','学霸联合体','极客车库'].map(n=>({name:n,rep:ri(2,18)}))
+};
+
+/* ---- 科技树 数据 ---- */
+const TREE_NODES=[
+  {id:'N-00',tier:0,name:'公司注册',verb:'注册',icon:'🏢',group:'base',scope:'company',deps:[],
+   cond:'进入游戏即解锁',condFn:()=>S.started,level:{cur:0,max:1}},
+  // Tier 1 — 专精分叉
+  {id:'N-01',tier:1,name:'设计专精',verb:'调教',icon:'🎨',group:'specialty',scope:'company',deps:['N-00'],
+   cond:'设计课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.design>=5,level:{cur:0,max:1}},
+  {id:'N-02',tier:1,name:'文案专精',verb:'编写',icon:'✍️',group:'specialty',scope:'company',deps:['N-00'],
+   cond:'文案课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.copy>=5,level:{cur:0,max:1}},
+  {id:'N-03',tier:1,name:'增长专精',verb:'投放',icon:'📈',group:'specialty',scope:'company',deps:['N-00'],
+   cond:'增长课程作业 ≥ 5（竞赛前 50% 才计）',condFn:()=>S.credits.growth>=5,level:{cur:0,max:1}},
+  // Tier 2 — 深化
+  {id:'N-04',tier:2,name:'设计提案',verb:'提案',icon:'📋',group:'deepen',scope:'company',deps:['N-01'],
+   cond:'设计专精 + 真单≥3',condFn:()=>S.lines.design>=3,level:{cur:0,max:1}},
+  {id:'N-05',tier:2,name:'品牌模板',verb:'复用',icon:'📄',group:'deepen',scope:'company',deps:['N-02'],
+   cond:'文案专精 + 真单≥3',condFn:()=>S.lines.copy>=3,level:{cur:0,max:1}},
+  {id:'N-06',tier:2,name:'A/B实验',verb:'实验',icon:'🧪',group:'deepen',scope:'company',deps:['N-03'],
+   cond:'增长专精 + 真单≥3',condFn:()=>S.lines.growth>=3,level:{cur:0,max:1}},
+  // Tier 2.5 — 资质门
+  {id:'N-07',tier:2.5,name:'白银认证',verb:'入会',icon:'🥈',group:'gate',scope:'company',deps:[],
+   cond:'声望≥30 + 信用≥70',condFn:()=>S.rep>=30&&S.cred>=70,level:{cur:0,max:1}},
+  // Tier 3 — 跨专精
+  {id:'N-08',tier:3,name:'联合竞标',verb:'联合',icon:'🤝',group:'cross',scope:'company',deps:['N-07'],
+   cond:'白银 + ≥2条T1线',condFn:()=>{const t1=['N-01','N-02','N-03'];return t1.filter(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked).length>=2;},level:{cur:0,max:1}},
+  {id:'N-09',tier:3,name:'资产出租',verb:'出租',icon:'🏷️',group:'cross',scope:'company',deps:['N-07'],
+   cond:'白银 + 任一T2',condFn:()=>['N-04','N-05','N-06'].some(id=>S.treeNodes[id]&&S.treeNodes[id].unlocked),level:{cur:0,max:1}},
+  {id:'N-10',tier:3,name:'公开评审',verb:'评审',icon:'🔍',group:'cross',scope:'company',deps:['N-07'],
+   cond:'白银 + 作品集≥10',condFn:()=>S.profile.portfolio>=10,level:{cur:0,max:1}},
+  // Tier 3.5 — 角色分叉
+  {id:'N-11',tier:3.5,name:'黄金认证',verb:'入驻',icon:'🥇',group:'role',scope:'company',deps:['N-07'],
+   cond:'声望≥85 + 均分≥74',condFn:()=>S.rank>=2&&S.realN>=2&&(S.realQ.length?S.realQ.reduce((a,b)=>a+b,0)/S.realQ.length:0)>=74,level:{cur:0,max:1}},
+  {id:'N-12',tier:3.5,name:'教练认证',verb:'带教',icon:'🎓',group:'role',scope:'company',deps:['N-07'],
+   cond:'联机版：带队≥5家 · 单机版待定',condFn:()=>false,level:{cur:0,max:1}},
+  {id:'N-13',tier:3.5,name:'孵化认证',verb:'孵化',icon:'🏭',group:'role',scope:'company',deps:['N-07'],
+   cond:'外部资质（孵化平台授予）',condFn:()=>false,level:{cur:0,max:1}},
+  // ezagent 专属
+  {id:'N-14',tier:3.5,name:'平台运营',verb:'治理',icon:'🦄',group:'ezagent',scope:'company',deps:['N-07'],
+   cond:'ezagent团队内部资质',condFn:()=>false,level:{cur:0,max:1}},
+  // ---- 个人成长树节点 (scope:'personal') ----
+  {id:'P-00',tier:0,name:'跨组织从业',verb:'连接',icon:'🔗',group:'base',scope:'personal',deps:[],
+   cond:'完成打工 ≥ 1 次',condFn:()=>S.profile.gigs>=1,level:{cur:0,max:1}},
+  {id:'P-01',tier:1,name:'作品积累',verb:'归档',icon:'🗂️',group:'specialty',scope:'personal',deps:['P-00'],
+   cond:'作品集 ≥ 3',condFn:()=>S.profile.portfolio>=3,level:{cur:0,max:1}},
+  {id:'P-02',tier:1,name:'人脉经营',verb:'拓展',icon:'🤝',group:'specialty',scope:'personal',deps:['P-00'],
+   cond:'人脉 ≥ 3',condFn:()=>S.profile.net>=3,level:{cur:0,max:1}},
+  {id:'P-03',tier:2,name:'复盘沉淀',verb:'反思',icon:'📝',group:'deepen',scope:'personal',deps:['P-01'],
+   cond:'复盘素材 ≥ 5',condFn:()=>S.reviews.length>=5,level:{cur:0,max:1}},
+  {id:'P-04',tier:2.5,name:'判断力认证',verb:'认证',icon:'🎯',group:'gate',scope:'personal',deps:['P-02'],
+   cond:'判断力 ≥ 60%（至少5次判断）',condFn:()=>{const jt=S.profile.judgeT;return jt>=5&&S.profile.judgeG/jt>=0.6;},level:{cur:0,max:1}},
+  {id:'P-05',tier:3,name:'孵化器背书',verb:'背书',icon:'🏭',group:'cross',scope:'personal',deps:['P-04'],
+   cond:'加入孵化器预备营',condFn:()=>S.profile.guildHist.incu===true,level:{cur:0,max:1}},
+  {id:'P-06',tier:3.5,name:'创业导师',verb:'带教',icon:'🎓',group:'role',scope:'personal',deps:['P-05'],
+   cond:'黄金认证（声望≥85）',condFn:()=>S.profile.certs.gold===true,level:{cur:0,max:1}},
+];
+
+
+function initTreeNodes(){
+  TREE_NODES.forEach(n=>{S.treeNodes[n.id]={unlocked:n.condFn()};});
+}
+function nodeAvail(n){
+  return n.deps.every(d=>{const ds=S.treeNodes[d];return ds&&ds.unlocked;})&&n.condFn();
+}
+function checkTreeNodes(){
+  let newly=[];
+  TREE_NODES.forEach(n=>{
+    if(!S.treeNodes[n.id].unlocked&&nodeAvail(n)){
+      S.treeNodes[n.id].unlocked=true;newly.push(n);
+    }
+  });
+  return newly;
+}
+const BASES=[{n:'校园版',mult:1.0,cost:0},{n:'进阶版',mult:1.12,cost:600},{n:'旗舰版',mult:1.25,cost:1400}];
+
+function newAgent(type){
+  const q=pick(QUIRKS);
+  return {id:uid++,type,quirk:q,assets:1,wins:0,evals:[],busy:null,name:TYPES[type].name};
+}
+function cap(a){return clamp(2+a.assets*0.7+Math.min(a.wins,10)*0.18,1,10);}
+function makeOrder(src){
+  const t=pick(ORDER_POOL[src]);
+  const o={id:uid++,name:t.name,src,stages:t.stages.slice(),diff:t.diff,pool:t.pool,
+    weeks:t.diff+2,needConn:t.needConn||null,
+    needRep:src==='practice'?0:30,needCred:src==='practice'?0:70,
+    rivalsN:src==='practice'?3:4};
+  return o;
+}
+function fillBoard(){
+  while(S.orders.filter(o=>o.src==='practice').length<2) S.orders.push(makeOrder('practice'));
+  const realN=S.orders.filter(o=>o.src!=='practice').length;
+  const srcs=['incu','assoc'].concat(S.conns.dh?['mcn']:[]);
+  for(let i=realN;i<3;i++){
+    const o=makeOrder(pick(srcs));
+    S.orders.push(o);
+    if(S.rank>=1) log((o.src==='incu'?'🏭 DHS 孵化器':o.src==='mcn'?'🏭 孵化器(MCN 专项)':'🤝 行业协会')+' 发布竞赛命题:《'+o.name+'》,奖金池 '+yuan(o.pool));
+  }
+}
+let paCur='pa';S.chats=S.chats||{};S.pendingRule=null;
+function contacts(){
+  const list=[{id:'pa',label:'🤵 小 H'}];
+  S.agents.forEach(a=>list.push({id:'a'+a.id,label:TYPES[a.type].emoji+' '+a.name.replace(' Agent','')}));
+  list.push({id:'coach',label:'🎓 小柯(学校)'});
+  return list;
+}
+function renderContacts(){
+  $('paContacts').innerHTML=contacts().map(c=>'<span class="chip'+(c.id===paCur?' on':'')+'" onclick="switchChat(\''+c.id+'\')">'+c.label+'</span>').join('');
+  const titles={pa:'🤵 小 H · 个人助理(属于你)',coach:'🎓 教练小柯(学校提供)'};
+  let title=titles[paCur];
+  if(!title){const a=S.agents.find(x=>'a'+x.id===paCur);title=a?TYPES[a.type].emoji+' '+a.name+'('+a.quirk.n+' · 资产 '+a.assets+')':'?';}
+  $('paTitle').textContent=title;
+  const q=$('paQuick');
+  if(paCur==='pa')q.innerHTML='<button class="btn btn-small" onclick="paAsk(\'today\')">今天能做什么</button><button class="btn btn-small" onclick="paAsk(\'cash\')">现金流</button><button class="btn btn-small" onclick="paAsk(\'due\')">待交付/截止</button><button class="btn btn-small" onclick="paAsk(\'res\')">时间/算力</button>';
+  else if(paCur==='coach')q.innerHTML='<button class="btn btn-small" onclick="quickSend(\'本周有什么建议?\')">本周建议</button>';
+  else q.innerHTML='<button class="btn btn-small" onclick="quickSend(\'在忙什么?\')">在忙什么</button><button class="btn btn-small" onclick="quickSend(\'你的思路和积累?\')">你的积累</button>';
+}
+function renderChat(){
+  const msgs=S.chats[paCur]||[];
+  $('paMsgs').innerHTML=msgs.map(m=>'<div class="pam '+m.who+'">'+m.txt+'</div>').join('');
+  $('paMsgs').scrollTop=$('paMsgs').scrollHeight;
+}
+function paMsg(who,txt){
+  (S.chats[paCur]=S.chats[paCur]||[]).push({who,txt});
+  renderChat();
+}
+window.switchChat=id=>{
+  paCur=id;renderContacts();
+  if(!(S.chats[id]||[]).length){
+    if(id==='coach')paMsg('ai','我是小柯,学校派来的教练。问我建议,或在接单窗口点"教练诊断"看路由推荐。');
+    else if(id!=='pa'){const a=S.agents.find(x=>'a'+x.id===id);
+      paMsg('ai',(a?TYPES[a.type].emoji:'')+' 老板好!有活尽管派。想教我东西,直接说"以后遇到……应该……",我会问您要不要立为守则。');}
+  }
+  renderChat();
+}
+window.quickSend=txt=>{$('paInput').value=txt;paSend();};
+window.openChat=aid=>{
+  if(!$('paDrawer').classList.contains('show'))togglePA();
+  switchChat('a'+aid);
+};
+window.togglePA=()=>{
+  const dr=$('paDrawer');
+  const opening=!dr.classList.contains('show');
+  dr.classList.toggle('show');
+  if(opening){$('paDot').classList.remove('show');renderContacts();
+    if(!(S.chats.pa||[]).length){paCur='pa';renderContacts();paBrief(true);}
+    renderChat();}
+};
+function paAnswer(kind){
+  if(!S.started)return '您还没注册公司——先逛逛世界(右上角 🌍),想动手时我带您注册。我属于您本人,不属于任何公司:以后开几家公司、甚至公司破产,我都跟着您。';
+  if(kind==='today'){
+    const acts=[];
+    const rdy=S.projects.filter(p=>p.ready).length;
+    if(rdy)acts.push('📦 有 '+rdy+' 个项目待您交付确认(订单页)');
+    if(S.reviews.length&&S.ap>=1)acts.push('🔍 有 '+S.reviews.length+' 份复盘素材,调教收益最高');
+    if(S.gigs.length&&S.ap>=2)acts.push('💼 打工市场有 '+S.gigs.length+' 单活儿,最高 '+yuan(Math.max(...S.gigs.map(g=>g.wage))));
+    if(S.rep>=30&&!S.guilds.incu)acts.push('🎪 您已达 DHS 预备营准入,建议去生态页加入(+40 算力)');
+    if(S.ap>=1&&S.agents.some(a=>a.assets<4))acts.push('🍱 有 Agent 资产偏薄,喂两个范例吧');
+    return acts.length?('今天可做:<br>'+acts.join('<br>')):'暂时没有紧急事项——接个新单,或去推演器试试新路由方案?';
+  }
+  if(kind==='cash'){
+    const net4=S.tx.filter(x=>x.w>S.week-4).reduce((a,x)=>a+x.v,0);
+    return '现金 <b>'+yuan(S.cash)+'</b>,近 4 周净流 '+(net4>=0?'+':'')+Math.round(net4).toLocaleString()+
+      (net4<0?'。按此速度约 '+Math.max(0,Math.floor(S.cash/(-net4/4)))+' 周见底——考虑打工回血或收缩会费。':',现金流健康。')+' 明细在 🏢→财务。';
+  }
+  if(kind==='due'){
+    if(!S.projects.length)return '当前没有进行中的项目。订单板上有 '+S.orders.length+' 道命题可接。';
+    return S.projects.map(p=>{
+      const left=p.order.weeks-(S.week-p.week0);
+      return '· 《'+p.order.name+'》'+(p.ready?'<b>✅ 待您确认交付</b>':'剩 '+left+' 周'+(left<=1?' ⚠️ 临近违约!':''));
+    }).join('<br>');
+  }
+  if(kind==='res')return '本周时间还剩 <b>'+S.ap+'</b> 个半天;算力 '+S.power+'/'+S.powerMax+(S.guilds.incu?'(含预备营 +40)':'')+';教练时长 '+S.coachH+'。时间是您最稀缺的资产——别让它周末清零。';
+  return '这个我还在学。您可以点下面的快捷问题,或者以后调教我——您教我的报告偏好会一起迁移到 ezagent 正式版。';
+}
+function paBrief(hello){
+  if(hello)paMsg('ai',S.started?'老板好,我是小 H,您的 0 号 Agent——我属于您本人,公司来来去去,我一直在。':'您好!我是小 H。整个世界对游客公开——要我带您逛逛,还是直接注册开公司?');
+  paMsg('ai',paAnswer('today'));
+}
+window.paAsk=k=>{
+  const label={today:'今天能做什么?',cash:'现金流怎么样?',due:'有什么要截止的?',res:'时间和算力还剩多少?'}[k];
+  paMsg('me',label);paMsg('ai',paAnswer(k));
+};
+function agentReply(a,v){
+  if(/以后|记住|应该|守则/.test(v)&&v.length>=6){
+    S.pendingRule={aid:a.id,text:v};
+    return '收到!要把这句立为我的守则吗?会消耗您半天时间,但会永久成为我的资产。<br><button class="btn btn-small btn-primary" onclick="confirmChatRule()">✍️ 立为守则(半天)</button>';
+  }
+  if(/在忙|在干|进度|忙什么/.test(v)){
+    const p=S.projects.find(x=>x.id===a.busy);
+    if(!p)return '现在待机中,'+(a.quirk.k==='juan'?'手痒得很,快派活!':'顺便复习了下守则~')+'(能力 '+cap(a).toFixed(1)+')';
+    const st=p.stages.find(s=>s.agentId===a.id&&s.rem>0);
+    const part=st?('的'+DOM[st.domain]+'环节,预计还需 '+st.rem+' 周'):',我的环节已完成,等队友和您确认';
+    return '正在做《'+p.order.name+'》'+part+'。'+(a.quirk.k==='perf'?'我想再抠抠细节。':'');
+  }
+  if(/思路|积累|方案|怎么做/.test(v)){
+    return '我的工作手册里有 <b>'+a.assets+'</b> 条积累(范例判断、守则、复盘规则),实战 '+a.evals.length+' 单。擅长'+DOM[TYPES[a.type].domain]+'(★★★),策略和沟通只能打下手(★)。想让我更强,来训练室或直接在这儿教我。';
+  }
+  return pick(['嗯嗯,'+(a.quirk.k==='talk'?'老板您说得对!顺便我今天学了个新配色理论!是这样的……(略)':'记下了!'),'想教我东西,说"以后遇到……应该……"就行。']);
+}
+window.confirmChatRule=()=>{
+  const pr=S.pendingRule;if(!pr)return;
+  if(S.ap<1){paMsg('ai','⚠️ 您本周的半天块用完了——下周再立吧,我先记在小本本上。');return;}
+  const a=S.agents.find(x=>x.id===pr.aid);if(!a)return;
+  S.ap--;a.assets++;S.pendingRule=null;
+  popAsset('训练资产 +1');
+  paMsg('ai','✅ 已立为守则:"'+pr.text.slice(0,40)+'"。这条资产会一直跟着我——哪怕被转卖(呜)。');
+  talk(a,'train_ok');render();
+};
+function coachReply(v){
+  const jd=S.profile.judgeT?Math.round(S.profile.judgeG/S.profile.judgeT*100):0;
+  const tips=[];
+  if(S.reviews.length)tips.push('先把 '+S.reviews.length+' 份复盘素材用掉,复盘的资产收益最高。');
+  if(S.rep>=30&&!S.guilds.incu)tips.push('达标白银了,加入 DHS 预备营,+40 算力还免费。');
+  if(S.profile.judgeT>=5)tips.push('你的路由结果 '+jd+'% 跑赢基准——'+(jd>=70?'手感不错,试试更难的单。':'多参考适配星级,别硬扛。'));
+  if(!tips.length)tips.push('稳扎稳打。真单的 QA 门槛是 62,交付前记得看质量预估。');
+  return pick(tips)+'(想要具体某单的路由诊断,在接单窗口点"教练诊断"。)';
+}
+window.paSend=()=>{
+  const v=$('paInput').value.trim();if(!v)return;
+  $('paInput').value='';paMsg('me',v);
+  if(paCur==='pa'){
+    const k=/钱|现金|流水|财务/.test(v)?'cash':/交付|截止|订单|项目/.test(v)?'due':/时间|算力|半天|AP/i.test(v)?'res':/今天|做什么|待办/.test(v)?'today':null;
+    paMsg('ai',k?paAnswer(k):paAnswer('unknown'));
+  }else if(paCur==='coach'){
+    paMsg('ai',coachReply(v));
+  }else{
+    const a=S.agents.find(x=>'a'+x.id===paCur);
+    paMsg('ai',a?agentReply(a,v):'……(它已不在公司)');
+  }
+};
+window.gate=()=>{
+  if(!S.started){$('mStart').classList.add('show');return false;}
+  return true;
+};
+window.setTab=name=>{
+  document.querySelectorAll('.tabsec').forEach(s=>s.classList.toggle('on',s.id==='tab-'+name));
+  document.querySelectorAll('.tabbtn').forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
+};
+function log(msg){
+  $('ticker').innerHTML='📜 W'+S.week+' · '+msg;
+  const p=document.createElement('p');
+  p.innerHTML='<span class="w">W'+S.week+'</span>'+msg;
+  $('log').prepend(p);
+  while($('log').children.length>46) $('log').lastChild.remove();
+}
+function earn(v,cat){S.cash+=v;S.tx.unshift({w:S.week,v:Math.round(v),cat});}
+function pay(v,cat){S.cash-=v;S.tx.unshift({w:S.week,v:-Math.round(v),cat});}
+const MEMBER_NAMES=['阿哲','小雨','大帅','琳琳','老宋','阿May'];
+function makeGigs(){
+  S.gigs=[];
+  for(let i=0;i<2;i++){
+    const dm=pick(['strategy','design','copy','growth','comm']);
+    const wage=Math.round(400+S.profile.skill[dm]*110+Math.min(S.rep,100)*2);
+    S.gigs.push({id:uid++,co:pick(S.rivals).name,dm,wage});
+  }
+}
+function newMember(){
+  const spec=pick(['design','copy','growth','comm','strategy']);
+  return {id:uid++,name:pick(MEMBER_NAMES)+'(同学)',spec,skill:rnd(2.5,4),wage:800,busy:null};
+}
+function popAsset(txt){
+  const d=document.createElement('div');
+  d.className='asset-pop';d.textContent=txt;
+  d.style.left=(window.innerWidth/2-40+ri(-60,60))+'px';
+  d.style.top=(window.innerHeight/2)+'px';
+  document.body.appendChild(d);setTimeout(()=>d.remove(),1100);
+}
+function talk(a,kind){
+  const line=pick(TALKS[kind]);
+  const n=a.quirk.k==='talk'?line+' '+pick(TALKS[kind]):line;
+  log('💬 '+TYPES[a.type].emoji+' '+a.name+':"'+n+'"');
+}
+
+/* ---- fit & quality ---- */
+function fitOf(domain,kind,agent){
+  if(kind==='self'){
+    if(domain==='strategy'||domain==='comm')return 3;
+    if(domain==='perform')return 0;
+    return 1;
+  }
+  if(kind==='agent'){
+    if(TYPES[agent.type].domain===domain)return 3;
+    if(domain==='strategy'||domain==='comm')return 1;
+    return 0;
+  }
+  if(kind==='member'){
+    if(agent.spec===domain)return 3;
+    if(domain==='strategy'||domain==='comm')return 2;
+    if(domain==='perform')return 0;
+    return 1;
+  }
+  return EXTS[domain].fit;
+}
+function stageQ(st,order){
+  let q;
+  if(st.kind==='agent'){
+    const a=S.agents.find(x=>x.id===st.agentId);
+    q=34+cap(a)*5.5*BASES[S.base].mult+st.fit*6+rnd(-4,6);
+    if(a.quirk.k==='perf')q+=4;
+    if(a.quirk.k==='night'&&Math.random()<.35)q+=4;
+    if(a.quirk.k==='zen')q=34+cap(a)*5.5*BASES[S.base].mult+st.fit*6+rnd(-1,3);
+    if(S.conns.img&&st.domain==='design')q+=4;
+  }else if(st.kind==='member'){
+    const m=S.members.find(x=>x.id===st.memberId);
+    q=42+(m?m.skill:3)*6+st.fit*6+rnd(-4,6);
+    if(m)m.skill=clamp(m.skill+0.3,0,8);
+  }else if(st.kind==='self'){
+    q=38+S.profile.skill[st.domain]*6+st.fit*6+rnd(-4,6);
+    S.profile.skill[st.domain]=clamp(S.profile.skill[st.domain]+0.5,0,8);
+  }else{
+    q=60+st.fit*5+rnd(-3,6);
+  }
+  return clamp(q,10,99);
+}
+
+/* ---- render ---- */
+function render(){
+  $('stCo').textContent=S.co;$('stWeek').textContent=S.week;
+  $('stCash').textContent=Math.round(S.cash).toLocaleString();
+  $('stRep').textContent=Math.round(S.rep);$('stCred').textContent=Math.round(S.cred);
+  $('stRank').textContent=RANKS[S.rank].n;
+  $('coachHours').textContent=S.coachH;
+  $('baseTag').textContent='基座:'+BASES[S.base].n+(S.base?'(×'+BASES[S.base].mult+')':'');
+  $('officeLv').textContent=S.rep>=85?'老厂房独立间':S.rep>=30?'共享工位':'宿舍书桌';
+  const ap=$('apPips');ap.innerHTML='';
+  for(let i=0;i<S.apMax;i++){const p=document.createElement('span');p.className='pip'+(i<S.ap?' on':'');ap.appendChild(p);}
+  const pct=Math.round(S.power/S.powerMax*100);
+  $('powerFill').style.width=pct+'%';
+  $('powerTxt').textContent=S.power+'/'+S.powerMax;
+  $('pwrMini').textContent=S.power;
+  const rdy=S.projects.filter(p=>p.ready).length;
+  $('bOrders').textContent=rdy;$('bOrders').classList.toggle('show',rdy>0);
+  $('bMarket').textContent=S.gigs.length;$('bMarket').classList.toggle('show',S.gigs.length>0&&S.ap>=2);
+
+  const fl=$('floor');fl.innerHTML='';
+  S.agents.forEach(a=>{
+    const t=TYPES[a.type];const busy=!!a.busy;
+    const d=document.createElement('div');
+    d.className='agent-card'+(busy?' working':'');
+    d.innerHTML='<div class="agent-sprite">'+t.emoji+'</div>'+
+      '<div class="nm">'+a.name+'</div>'+
+      '<div class="lv">能力 '+cap(a).toFixed(1)+' · 资产 '+a.assets+'</div>'+
+      '<span class="tag tag-quirk">'+a.quirk.n+'</span>'+
+      '<div class="st '+(busy?'busy':'idle')+'">'+(busy?'打工中':'待机中')+'</div>'+
+      '<div style="display:flex;gap:4px;justify-content:center;margin-top:3px;"><button class="btn btn-small" onclick="openTrain('+a.id+')">🧑‍🏫 调教</button><button class="btn btn-small" onclick="openChat('+a.id+')">💬</button></div>';
+    fl.appendChild(d);
+  });
+  S.members.forEach(m=>{
+    const busy=!!m.busy;
+    const d=document.createElement('div');
+    d.className='agent-card'+(busy?' working':'');
+    d.innerHTML='<div class="agent-sprite" style="background:linear-gradient(#ffe9d4,#ffd0a8)">🧑‍🎓</div>'+
+      '<div class="nm">'+m.name+'</div>'+
+      '<div class="lv">'+DOM[m.spec]+' '+m.skill.toFixed(1)+'</div>'+
+      '<span class="tag tag-gray">工资 ¥800/周</span>'+
+      '<div class="st '+(busy?'busy':'idle')+'">'+(busy?'工作中':'待机中')+'</div>'+
+      (busy?'':'<button class="btn btn-small" style="margin-top:3px" onclick="fireMember('+m.id+')">👋 解雇</button>');
+    fl.appendChild(d);
+  });
+  const hs=document.createElement('div');
+  hs.className='hire-slot';hs.onclick=openHire;
+  hs.innerHTML='<span style="font-size:20px">➕</span>雇佣 AI 员工';
+  fl.appendChild(hs);
+
+  const ol=$('orderList');ol.innerHTML='';
+  S.orders.forEach(o=>{
+    const needGuild=(o.src==='incu'||o.src==='mcn')?'incu':o.src==='assoc'?'assoc':null;
+    const lockGuild=needGuild&&!S.guilds[needGuild];
+    const lockConn=o.needConn&&!S.conns[o.needConn];
+    const locked=lockGuild||lockConn;
+    const d=document.createElement('div');
+    d.className='order-card'+(locked?' locked':'');
+    d.dataset.party=(o.src==='incu'||o.src==='mcn')?'incu':o.src==='assoc'?'assoc':'school';
+    const srcTag=o.src==='practice'?'<span class="tag tag-school">练习 · 班内对抗</span>':
+      (o.src==='assoc'?'<span class="tag tag-assoc">🤝 协会 · 真单</span>':'<span class="tag tag-incu">🏭 孵化器 · 真单</span>');
+    d.innerHTML='<div class="order-top"><b>《'+o.name+'》</b>'+srcTag+'</div>'+
+      '<div class="order-meta">难度 '+'🔥'.repeat(o.diff)+' · 奖金池 '+yuan(o.pool)+' · '+(o.rivalsN)+' 队同题竞争 · 限 '+o.weeks+' 周<br>'+
+      '环节:'+o.stages.map(s=>DOM[s]).join(' → ')+
+      (o.src!=='practice'?'<br>准入(发单方设定):'+(needGuild==='incu'?'DHS 预备营会籍':'协会会员会籍')+(o.needConn?' + 数字人引擎':''):'')+'</div>'+
+      (locked?'<span class="tag tag-gray">🔒 '+(lockConn?'需接入数字人引擎':'需会籍(去生态页加入)')+'</span>'
+        :'<button class="btn btn-small btn-green" onclick="openRoleFlow(\'match\','+o.id+')">查看匹配步骤</button>');
+    ol.appendChild(d);
+  });
+
+  const pl=$('projList');pl.innerHTML='';
+  $('projEmpty').style.display=S.projects.length?'none':'block';
+  S.projects.forEach(p=>{
+    const d=document.createElement('div');d.className='proj';
+    const left=p.order.weeks-(S.week-p.week0);
+    let rows=p.stages.map(st=>{
+      const done=st.rem<=0;
+      const who=routeWho(st);
+      return '<div class="stage-row'+(done?' stage-done':'')+'">'+
+        (done?'✔':'⏳')+' '+DOM[st.domain]+
+        (done?' <small>(质量 '+Math.round(st.q)+')</small>':'')+
+        '<span class="who">'+who+'</span></div>';
+    }).join('');
+    d.innerHTML='<div class="order-top"><b>《'+p.order.name+'》</b>'+
+      (p.rework?'<span class="tag tag-purple">QA 打回返工中</span>':'')+
+      '<span class="tag tag-gray">还剩 '+left+' 周</span></div>'+rows+
+      '<div style="margin-top:6px;text-align:right"><button class="btn btn-small" onclick="openRoleFlow(\'hunter\','+p.id+')">🏹 协作工作台</button> '+
+      (p.ready?'<button class="btn btn-small btn-primary" onclick="openDeliver('+p.id+')">📦 交付确认</button>':'')+'</div>';
+    pl.appendChild(d);
+  });
+
+  const rows=[...S.rivals.map(r=>({name:r.name,rep:r.rep,me:false})),{name:S.co,rep:S.rep,me:true}].sort((a,b)=>b.rep-a.rep);
+  $('boardTbl').innerHTML=rows.map((r,i)=>'<tr class="'+(r.me?'me':'')+'"><td style="width:26px;text-align:center">'+
+    (i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1))+'</td><td>'+r.name+(r.me?' <span class="tag tag-gray">你</span>':'')+'</td><td style="text-align:right;color:#8a765a">⭐'+Math.round(r.rep)+'</td></tr>').join('');
+
+  const gl=$('gigList');gl.innerHTML='';
+  if(!S.gigs.length)gl.innerHTML='<div style="font-size:11px;color:#9a8a6f;font-weight:700;">本周暂无活儿,下周再看。</div>';
+  S.gigs.forEach(g=>{
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">'+g.co+' 请你做「'+DOM[g.dm]+'」<small>报酬 '+yuan(g.wage)+' · 技能 +0.3 · 你的技能 '+S.profile.skill[g.dm].toFixed(1)+'</small></div>'+
+      '<button class="btn btn-small'+(S.ap<2?'" disabled="1':'')+'" onclick="takeGig('+g.id+')">接活(2 个半天)</button>';
+    gl.appendChild(d);
+  });
+  const glist=$('guildList');glist.innerHTML='';
+  Object.entries(GUILDS).forEach(([k,g])=>{
+    const inG=S.guilds[k];
+    const cooling=S.week<S.cool[k];
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">'+g.n+(inG?' <span class="tag tag-purple">已加入</span>':'')+
+      '<small>'+g.give+(g.fee?' · 会费 '+yuan(g.fee)+'/周':' · 免费')+' · 准入:'+g.admTxt+'</small></div>'+
+      (g.fixed?'<span class="tag tag-gray">学籍固定</span>':
+        inG?'<button class="btn btn-small" onclick="leaveGuild(\''+k+'\')">退出</button>':
+        cooling?'<span class="tag tag-gray">冷却至 W'+S.cool[k]+'</span>':
+        '<button class="btn btn-small btn-green" onclick="joinGuild(\''+k+'\')">加入</button>');
+    glist.appendChild(d);
+  });
+  const cm=$('capMatrix');
+  const row=(cap,src,mine)=>'<tr style="border-top:2px dotted #cbb98f"><td style="padding:3px 4px">'+cap+'</td><td style="padding:3px 4px;color:#7a6c58">'+src+'</td><td style="padding:3px 4px">'+mine+'</td></tr>';
+  cm.innerHTML='<table style="width:100%;border-collapse:collapse">'+
+    '<tr style="color:#8a765a"><td>能力</td><td>提供方(可多源)</td><td>你的来源</td></tr>'+
+    row('⚡ 算力','学校 100 · 孵化器 +40',(S.guilds.incu?'140':'100')+'/周')+
+    row('💰 资金','孵化器 grant/桥贷 · 订单奖金',S.guilds.incu?'✓ 有资格':'仅奖金')+
+    row('📋 订单','孵化器 · 协会 · 学校练习 · 打工',(S.guilds.incu?'孵+':'')+(S.guilds.assoc?'协+':'')+'校+工')+
+    row('🎖️ 认证/评审','协会',S.rank>0?RANKS[S.rank].n:'青铜')+
+    row('🎓 教练','学校 2 时长 · 市场加购',S.coachH+' 时长')+
+    row('🧠 题库','学校+协会出题 · 真实案例回灌',S.guilds.assoc?'双源':'学校')+
+    '</table><p style="margin-top:5px;color:#8a765a">组织=能力的打包配置;身份只是当前世界的三种常见配置。</p>';
+  const wo=$('worldOrgs');wo.innerHTML='';
+  [['🏫 学校','会籍:算力/教练/题库','在读学生公司 '+(S.rivals.length+1)+' 家'],
+   ['🏭 DHS 孵化器','会籍:算力+40/真单/资金 · 顶级会籍=老厂房入驻','活跃命题 '+S.orders.filter(o=>o.src==='incu'||o.src==='mcn').length+' 道'],
+   ['🤝 行业协会','会籍:真单/案例库 · 评审与认证','活跃命题 '+S.orders.filter(o=>o.src==='assoc').length+' 道'],
+   ['🦄 Ezagent 平台团队','拥有 N-14 平台运营 · 科技树完整可见','公开目标: world.cup · 可接单/发单']
+  ].forEach(([n,d1,d2])=>{
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">'+n+'<small>'+d1+' · '+d2+'</small></div><span class="tag tag-gray">组织</span>';
+    wo.appendChild(d);
+  });
+  const ws=$('worldSites');ws.innerHTML='';
+  const sites=[...(S.started?[{n:S.co,rep:S.rep,me:true}]:[]),...S.rivals.map(r=>({n:r.name,rep:r.rep}))].sort((a,b)=>b.rep-a.rep);
+  sites.forEach(s=>{
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">'+s.n+(s.me?' <span class="tag tag-gray">你</span>':'')+'<small>⭐'+Math.round(s.rep)+'</small></div>'+
+      '<button class="btn btn-small" onclick="viewSite(\''+s.n+'\')">访问官网</button>';
+    ws.appendChild(d);
+  });
+  const sl=$('shopList');sl.innerHTML='';
+  BASES.forEach((b,i)=>{
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">🧠 基座 · '+b.n+'<small>质量 ×'+b.mult+(b.cost?' · '+yuan(b.cost)+'/周(租用,停付即降级)':' · 学校免费')+'</small></div>'+
+      (S.base===i?'<span class="tag tag-purple">使用中</span>':'<button class="btn btn-small" onclick="setBase('+i+')">切换</button>');
+    sl.appendChild(d);
+  });
+  [['dh','🎭 数字人引擎','接入费 ¥2,500 + ¥250/周 · 解锁 MCN 真单,出镜环节适配 ★★★'],
+   ['img','🖼️ 图像生成 Pro','一次性 ¥1,500 · 设计环节质量 +4']].forEach(([k,n,desc])=>{
+    const d=document.createElement('div');d.className='shop-item';
+    d.innerHTML='<div class="d">'+n+'<small>'+desc+'</small></div>'+
+      (S.conns[k]?'<span class="tag tag-purple">已接入</span>':'<button class="btn btn-small" onclick="buyConn(\''+k+'\')">接入</button>');
+    sl.appendChild(d);
+  });
+}
+
+/* ---- hire ---- */
+function openHire(){
+  if(!gate())return;
+  const hl=$('hireList');hl.innerHTML='';
+  Object.entries(TYPES).forEach(([k,t])=>{
+    const lab=document.createElement('label');
+    const ok=S.cash>=t.cost;if(!ok)lab.className='off';
+    lab.innerHTML='<span style="font-size:19px">'+t.emoji+'</span><span style="flex:1">'+t.name+'<small style="display:block;color:#8a765a;font-size:10px">灵兽型伙伴:不占编制 · 不会离职 · 闲置即休眠 · 资产永续 · 托管 ¥250/周</small></span><b>'+yuan(t.cost)+'</b>';
+    lab.onclick=()=>{if(!ok)return;pay(t.cost,'Agent 接入费');
+      const a=newAgent(k);S.agents.push(a);
+      log('🤖 '+a.name+' 入职!性格:'+a.quirk.n+'('+a.quirk.d+')');
+      closeM('mHire');render();};
+    hl.appendChild(lab);
+  });
+  const ml=document.createElement('label');
+  const mok=S.cash>=1200;if(!mok)ml.className='off';
+  ml.innerHTML='<span style="font-size:19px">🧑‍🎓</span><span style="flex:1">兼职同学(人类成员)<small style="display:block;color:#8a765a;font-size:10px">随机专长 · 工资 ¥800/周 · 可解雇/会离开 —— 联机版中此处为邀请真实同学加入(合伙/分成)</small></span><b>¥1,200</b>';
+  ml.onclick=()=>{if(!mok)return;pay(1200,'成员招募');
+    const m=newMember();S.members.push(m);
+    log('🧑‍🎓 '+m.name+' 加入!专长:'+DOM[m.spec]+'。人类成员有工资、有退出权 —— 和灵兽型 Agent 是两种存在。');
+    closeM('mHire');render();};
+  hl.appendChild(ml);
+  $('mHire').classList.add('show');
+}
+window.takeGig=id=>{
+  if(!gate())return;
+  const g=S.gigs.find(x=>x.id===id);
+  if(!g||S.ap<2)return;
+  S.ap-=2;earn(g.wage,'打工收入');
+  S.profile.skill[g.dm]=clamp(S.profile.skill[g.dm]+0.3,0,8);S.profile.net++;S.profile.gigs++;
+  S.gigs=S.gigs.filter(x=>x!==g);
+  log('💼 你为 '+g.co+' 完成了一单「'+DOM[g.dm]+'」,+'+yuan(g.wage)+'。对方主理人负责确认担责 —— 确认权跟着角色走。');
+  render();
+};
+window.fireMember=id=>{
+  const m=S.members.find(x=>x.id===id);
+  if(!m||m.busy)return;
+  S.members=S.members.filter(x=>x!==m);
+  log('👋 '+m.name+' 离开了公司。人类的合作关系可以结束 —— 这是与 Agent 最大的不同。');
+  render();
+};
+window.setBase=i=>{S.base=i;log('🧠 基座切换为 '+BASES[i].n+(BASES[i].cost?',每周 '+yuan(BASES[i].cost)+'(租用)':''));render();};
+window.buyConn=k=>{
+  const cost=k==='dh'?2500:1500;
+  if(S.cash<cost){log('💸 现金不足,无法接入。');return;}
+  pay(cost,'能力接入');S.conns[k]=true;
+  log('🔌 能力接入:'+(k==='dh'?'数字人引擎(MCN 业务线解锁!)':'图像生成 Pro'));
+  render();
+};
+
+/* ---- v0.15 订单 → 猎人 → 组织：角色工作台 ---- */
+let rfMode=null,rfId=null;
+function rfOrder(id){
+  return S.orders.find(o=>o.id===id)||S.myOrders.find(o=>o.id===id)||(S.projects.find(p=>p.id===id)||{}).order;
+}
+function rfChatKey(id){return 'order-'+id;}
+function rfMsgs(id){
+  const k=rfChatKey(id);
+  if(!S.orderChats[k])S.orderChats[k]=[
+    {who:'拆单方 · 林老师',txt:'同一订单的协作者都在这里。有接口问题直接沟通。'},
+    {who:'纸飞机 · 视觉猎人',txt:'主视觉和三种尺寸模板已上传，大家可以直接使用。'}
+  ];
+  return S.orderChats[k];
+}
+window.openRoleFlow=(mode,id)=>{
+  rfMode=mode;rfId=id;
+  const B=$('roleFlowBody');
+  if(mode==='match'){
+    const o=rfOrder(id);if(!o)return;
+    B.innerHTML='<div class="rf-head"><div class="ico">🏹</div><div><h2>平台为你匹配了一个订单步骤</h2><p>先看完整结构和自己的位置，再决定是否承接。所有同单协作者都可以互相看到并进入订单聊天室。</p></div><span class="tag tag-school">等待确认</span></div>'+
+      '<div class="rf-mission">《'+o.name+'》· 你收到的是其中一个步骤；你只需要为自己承接的步骤负责。</div>'+
+      '<div class="rf-topology">'+o.stages.map((dm,i)=>'<div class="rf-node '+(i===Math.min(2,o.stages.length-1)?'mine':'')+'">'+(i+1)+'. '+DOM[dm]+'<br><small>'+(i===Math.min(2,o.stages.length-1)?'我 · 小满':['阿青','纸飞机','长尾巴','北辰'][i%4])+'</small></div>'+(i<o.stages.length-1?'<span class="rf-arrow">→</span>':'')).join('')+'</div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>我的步骤</h3><p>输入：上游步骤的已交付成果<br>输出：可被下一步骤直接使用的结果<br>截止：'+o.weeks+' 周内</p></div><div class="rf-card"><h3>同单协作</h3><p>承接后可以在订单聊天室中与其他猎人讨论接口、素材和交付状态。</p></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">暂不承接</button><button class="btn btn-green" onclick="acceptMatchedStep('+o.id+')">确认承接并安排工作</button></div>';
+  }else if(mode==='decompose'){
+    const o=S.myOrders.find(x=>x.id===id);if(!o)return;
+    const stages=o.steps||['strategy','design','copy','growth'];
+    B.innerHTML='<div class="rf-head"><div class="ico">🧩</div><div><h2>拆单方：设计步骤拓扑</h2><p>正式版可以拖动步骤，并新增、删除或改接步骤连线；本 demo 先操作步骤内容和顺序。</p></div><span class="tag tag-assoc">'+(o.decomposed?'已发布':'编辑中')+'</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>完整订单《'+o.name+'》</h3><p>目标：'+(o.goal||'完成一次能够真实使用的交付')+'<br>预算：'+yuan(o.pool)+' · '+(o.due||'两周后')+'<br>验收：'+(o.criteria||'成果可以执行并可追溯')+'</p></div><div class="rf-card"><h3>拆单检查</h3><p>☑ 每一步都有明确输出<br>☑ 上下游输入能够衔接<br>☑ 不同猎人可以独立完成</p></div></div>'+
+      '<div class="rf-topology">'+stages.map((dm,i)=>'<div class="rf-node" contenteditable="true">'+(i+1)+'. '+DOM[dm]+'<br><small>点击修改</small></div>'+(i<stages.length-1?'<span class="rf-arrow">→</span>':'')).join('')+'</div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">保存草稿</button><button class="btn btn-primary" onclick="publishTopology('+o.id+')">确认拓扑并进入匹配</button></div>';
+  }else if(mode==='hunter'){
+    const p=S.projects.find(x=>x.id===id);if(!p)return;
+    const msgs=rfMsgs(p.order.id);
+    B.innerHTML='<div class="rf-head"><div class="ico">🏹</div><div><h2>猎人工作台：《'+p.order.name+'》</h2><p>每个环节可以交给本人、AI、团队成员、外部服务或其他猎人；你仍对整步交付负责。</p></div><span class="tag tag-school">'+(p.ready?'可交付':'进行中')+'</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>任务内路由</h3>'+p.stages.map((st,i)=>'<div class="stage-row '+(st.rem<=0?'stage-done':'')+'">'+(st.rem<=0?'✔':'⏳')+' '+DOM[st.domain]+'<span class="who">'+routeWho(st)+'</span></div>').join('')+
+      '<div class="actions"><button class="btn btn-small btn-green" onclick="openSubcontract('+p.id+')">📮 外包一个子任务</button></div></div>'+
+      '<div class="rf-card"><h3>💬 订单聊天室</h3><div class="rf-chat">'+msgs.map(m=>'<div class="rf-msg '+(m.who==='我 · 小满'?'me':'')+'"><small>'+m.who+'</small><br>'+m.txt+'</div>').join('')+'</div><div class="rf-send"><input id="rfChatInput" placeholder="和同单协作者沟通"><button class="btn btn-small" onclick="sendOrderChat('+p.order.id+')">发送</button></div></div></div>'+
+      '<div class="rf-mission">外包会产生一轮新的“拆分 → 平台匹配 → 猎人完成”小循环；外包成果必须由你检查后才能汇入本步骤。</div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">返回订单页</button>'+(p.ready?'<button class="btn btn-primary" onclick="closeM(\'mRoleFlow\');openDeliver('+p.id+')">检查并提交整步</button>':'<button class="btn btn-primary" onclick="closeM(\'mRoleFlow\');tick()">推进一周</button>')+'</div>';
+  }else if(mode==='network'){
+    B.innerHTML='<div class="rf-head"><div class="ico">🤝</div><div><h2>交付完成：认识本次上下游伙伴</h2><p>一次协作不会自动生成公司。由人类猎人主动邀请，对方接受后才能成为长期成员。</p></div><span class="tag tag-purple">新联系人</span></div>'+
+      '<div class="rf-mission">你的小公司目前是“你 + AI”。邀请真实协作者加入后，它会成长为“多人 + 多个 AI”的组织。</div>'+
+      '<div class="rf-grid">'+['纸飞机 · 视觉猎人','长尾巴 · 内容猎人','北辰 · 整合猎人'].map((n,i)=>'<div class="rf-person"><span style="font-size:24px">'+['🎨','✍️','📦'][i]+'</span><div><b>'+n+'</b><small>刚刚与你完成同一订单 · 按时率 '+(92+i*3)+'%</small></div><button class="btn btn-small btn-green" onclick="inviteCollaborator(\''+n+'\')">邀请加入</button></div>').join('')+'</div>'+
+      '<div class="actions"><button class="btn btn-primary" onclick="closeM(\'mRoleFlow\')">回到公司</button></div>';
+  }else if(mode==='reviewMy'){
+    const o=S.myOrders.find(x=>x.id===id);if(!o||!o.subs)return;
+    B.innerHTML='<div class="rf-head"><div class="ico">📦</div><div><h2>拆单方：汇总步骤并进行初验</h2><p>先检查每份局部成果是否满足接口和验收要求，再把完整结果交给发单方评价。</p></div><span class="tag tag-assoc">待初验</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>步骤提交看板</h3>'+o.subs.map((s,i)=>'<div class="stage-row stage-done">✔ 步骤 '+(i+1)+' · '+s.co+'<span class="who">质量预估 '+Math.round(s.q)+'</span></div>').join('')+'</div><div class="rf-card"><h3>初验清单</h3><p>☑ 每一步都有可用交付物<br>☑ 上下游接口能够衔接<br>☑ 数据与过程可以追溯<br>☑ 已汇总成完整成果</p></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">稍后处理</button><button class="btn btn-primary" onclick="approveInitialReview('+o.id+')">通过初验，交给发单方</button></div>';
+  }else if(mode==='incubator'){
+    const evidence=S.archive.filter(x=>x.status.includes('交付')).length;
+    B.innerHTML='<div class="rf-head"><div class="ico">🏭</div><div><h2>孵化器视角：发现候选组织</h2><p>平台提供真实交付、协作和人机贡献证据；孵化器保留最终筛选权。</p></div><span class="tag tag-incu">真人筛选</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>🏢 '+S.co+'</h3><p>人类成员：'+(1+S.members.length)+' · AI 伙伴：'+S.agents.length+'<br>真实交付：'+evidence+' 单 · 声望：'+Math.round(S.rep)+' · 信用：'+S.cred+'</p><ul><li>作品与客户评价可追溯</li><li>订单聊天室和协作记录可查</li><li>人与 AI 的路由记录可查</li></ul></div><div class="rf-card"><h3>孵化判断</h3><p>不要用一个总分替代真人判断。可以追加更复杂的验证订单，或邀请进入预备营。</p><div class="actions"><button class="btn" onclick="incuDecision(\'追加验证任务\')">发验证任务</button><button class="btn btn-primary" onclick="incuDecision(\'邀请进入预备营\')">发出邀请</button></div></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">退出孵化器视角</button></div>';
+  }
+  $('mRoleFlow').classList.add('show');
+};
+window.acceptMatchedStep=oid=>{closeM('mRoleFlow');openRoute(oid);};
+window.publishTopology=oid=>{const o=S.myOrders.find(x=>x.id===oid);if(o)o.decomposed=true;log('🧩 《'+o.name+'》步骤拓扑已发布,平台开始匹配猎人。');closeM('mRoleFlow');render();};
+function routeWho(st){
+  if(st.kind==='self')return '👤 本人';
+  if(st.kind==='ext')return '🔌 '+EXTS[st.domain].n;
+  if(st.kind==='hunter')return '🏹 '+(st.hunterName||'协作猎人');
+  if(st.kind==='member')return '🧑‍🎓 '+((S.members.find(m=>m.id===st.memberId)||{}).name||'成员');
+  return '🤖 '+((S.agents.find(a=>a.id===st.agentId)||{}).name||'Agent');
+}
+window.sendOrderChat=oid=>{const I=$('rfChatInput');if(!I||!I.value.trim())return;rfMsgs(oid).push({who:'我 · 小满',txt:I.value.trim()});openRoleFlow('hunter',S.projects.find(p=>p.order.id===oid).id);};
+window.openSubcontract=pid=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const B=$('roleFlowBody');
+  B.innerHTML='<div class="rf-head"><div class="ico">📮</div><div><h2>发布一个外包子任务</h2><p>从自己的步骤中切出一项工作，平台将匹配其他猎人。</p></div><span class="tag tag-incu">子任务</span></div>'+
+    '<div class="rf-grid"><div class="rf-card"><h3>需要外包什么？</h3><label class="choice">子任务 <select id="subDm">'+p.stages.map(st=>'<option value="'+st.domain+'">'+DOM[st.domain]+'的一部分</option>').join('')+'</select></label><label class="choice">奖金 ¥<input id="subPay" type="number" value="400" style="width:90px"></label><label class="choice">交付要求 <input id="subNeed" value="结果可以直接并入我的步骤" style="flex:1"></label></div><div class="rf-card"><h3>匹配到的猎人</h3><div class="rf-person"><span style="font-size:22px">🧪</span><div><b>阿策 · 增长猎人</b><small>相关交付 8 次 · 按时率 94%</small></div><button class="btn btn-small btn-green" onclick="confirmSubcontract('+pid+',\'阿策\')">选择</button></div><div class="rf-person"><span style="font-size:22px">📊</span><div><b>小数点 · 数据猎人</b><small>相关交付 5 次 · 按时率 100%</small></div><button class="btn btn-small" onclick="confirmSubcontract('+pid+',\'小数点\')">选择</button></div></div></div>'+
+    '<div class="actions"><button class="btn" onclick="openRoleFlow(\'hunter\','+pid+')">取消</button></div>';
+};
+window.confirmSubcontract=(pid,name)=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const dm=$('subDm').value,payN=Math.max(100,+$('subPay').value||400);
+  if(S.cash<payN){log('💸 现金不足,无法发布外包子任务。');return;}
+  pay(payN,'外包猎人');p.stages.push({domain:dm,kind:'hunter',hunterName:name,fit:2,rem:1,q:0,subtask:true});
+  rfMsgs(p.order.id).push({who:name+' · 外包协作者',txt:'我已承接子任务,会把成果发回订单聊天室。'});
+  log('📮 你把《'+p.order.name+'》中的'+DOM[dm]+'子任务外包给猎人 '+name+'。');
+  openRoleFlow('hunter',pid);render();
+};
+window.inviteCollaborator=name=>{
+  if(S.collaborators.includes(name)){log('🤝 '+name+' 已经在你的长期协作网络中。');return;}
+  S.collaborators.push(name);
+  const spec=name.includes('视觉')?'design':name.includes('内容')?'copy':'strategy';
+  S.members.push({id:uid++,name:name.split(' · ')[0],spec,skill:3.2,busy:null});
+  S.profile.net++;log('🤝 '+name+' 接受邀请,你的公司从“你 + AI”成长为多人协作组织。');render();openRoleFlow('network');
+};
+window.approveInitialReview=oid=>{const o=S.myOrders.find(x=>x.id===oid);if(!o)return;o.initialReviewed=true;log('📦 《'+o.name+'》已完成步骤汇总与初验,等待发单方最终评价。');closeM('mRoleFlow');render();openBiz('sup');};
+window.incuDecision=decision=>{log('🏭 孵化器决定:'+decision+'。');if(decision.includes('邀请'))S.profile.guildHist.incu=true;closeM('mRoleFlow');render();};
+
+/* ---- routing ---- */
+let pendO=null,routeSel=[];
+window.openRoute=oid=>{
+  if(!gate())return;
+  pendO=S.orders.find(o=>o.id===oid);if(!pendO)return;
+  routeSel=pendO.stages.map(()=>null);
+  $('rtTitle').textContent='路由:《'+pendO.name+'》';
+  $('rtDesc').innerHTML='每个环节选择"谁来干"。★=<b>预估适配</b>(来自历史数据与教练经验,不是真值——好不好,交付结果说了算);路由给本人扣 2 个半天(承诺你本周的时间);外部资源花现金。执行在系统外发生,系统只看承诺与交付。';
+  buildRoute();$('mRoute').classList.add('show');
+};
+function buildRoute(hint){
+  const box=$('rtStages');box.innerHTML='';
+  pendO.stages.forEach((dm,i)=>{
+    const wrap=document.createElement('div');wrap.className='route-stage';
+    let opts='';
+    const options=[];
+    options.push({kind:'self',label:'👤 本人',fit:fitOf(dm,'self'),sub:'2AP · 系统外亲自干'});
+    S.agents.forEach(a=>{
+      if(!a.busy)options.push({kind:'agent',agentId:a.id,label:'🤖 '+a.name,fit:fitOf(dm,'agent',a),sub:'算力 12/周 · '+a.quirk.n});
+    });
+    S.members.forEach(m=>{
+      if(!m.busy)options.push({kind:'member',memberId:m.id,label:'🧑‍🎓 '+m.name,fit:fitOf(dm,'member',m),sub:'专长:'+DOM[m.spec]+' · 工资制'});
+    });
+    options.push({kind:'hunter',hunterName:'平台匹配猎人',label:'🏹 外包猎人',fit:2,sub:'奖金 ¥400 · 进入同单聊天室'});
+    const ex=EXTS[dm];
+    const exOk=!ex.needConn||S.conns[ex.needConn];
+    options.push({kind:'ext',label:'🔌 '+ex.n,fit:ex.fit,sub:yuan(ex.cost)+(exOk?'':' · 需数字人引擎'),dis:!exOk});
+    const best=Math.max(...options.filter(o=>!o.dis).map(o=>o.fit));
+    options.forEach((op,j)=>{
+      const sel=routeSel[i]&&routeSel[i]._j===j;
+      opts+='<span class="ropt'+(sel?' sel':'')+(op.dis?' dis':'')+'" onclick="pickRoute('+i+','+j+')">'+op.label+
+        ' <span class="stars">'+'★'.repeat(op.fit)+'☆'.repeat(3-op.fit)+'</span>'+
+        (hint&&op.fit===best&&!op.dis?' <b style="color:var(--school)">👍教练推荐</b>':'')+
+        '<small>'+op.sub+'</small></span>';
+      op._j=j;
+    });
+    wrap.innerHTML='<div class="sname">'+(i+1)+'. '+DOM[dm]+'</div><div class="route-opts">'+opts+'</div>';
+    wrap.dataset.opts=JSON.stringify(options.map(o=>({kind:o.kind,agentId:o.agentId||null,memberId:o.memberId||null,hunterName:o.hunterName||null,fit:o.fit,dis:!!o.dis})));
+    box.appendChild(wrap);
+  });
+  updRouteCost();
+}
+window.pickRoute=(i,j)=>{
+  const wrap=$('rtStages').children[i];
+  const opts=JSON.parse(wrap.dataset.opts);
+  if(opts[j].dis)return;
+  routeSel[i]={...opts[j],_j:j,domain:pendO.stages[i]};
+  buildRoute();
+};
+function updRouteCost(){
+  let ap=0,cash=0;
+  routeSel.forEach(r=>{if(!r)return;if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;if(r.kind==='hunter')cash+=400;});
+  $('rtCost').textContent='本次路由:时间 -'+ap+' 个半天(本周剩 '+S.ap+') · 外部费用 '+yuan(cash)+'(现金 '+yuan(S.cash)+')';
+}
+$('rtCoach').onclick=()=>{
+  if(S.coachH<1){$('rtCost').textContent='⚠️ 教练时长不足(学校每周 2,可加购)。';return;}
+  S.coachH--;buildRoute(true);
+  $('rtCost').textContent='🎓 教练小柯圈出了每个环节的最优适配。剩余时长 '+S.coachH;
+  render();
+};
+$('rtGo').onclick=()=>{
+  if(routeSel.some(r=>!r)){$('rtCost').textContent='⚠️ 每个环节都要选人!';return;}
+  let ap=0,cash=0;
+  routeSel.forEach(r=>{if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;if(r.kind==='hunter')cash+=400;});
+  if(ap>S.ap){$('rtCost').textContent='⚠️ 本周时间不够,承诺不了这么多亲自干的环节!';return;}
+  if(cash>S.cash){$('rtCost').textContent='⚠️ 现金不够付外部资源!';return;}
+  S.ap-=ap;if(cash>0)pay(cash,'外部资源');
+  const agentsUsed=new Set(),membersUsed=new Set();
+  const stages=routeSel.map(r=>{
+    const wrap={domain:r.domain,kind:r.kind,agentId:r.agentId,memberId:r.memberId,hunterName:r.hunterName,fit:r.fit,rem:1,q:0};
+    if(r.kind==='agent'){
+      const a=S.agents.find(x=>x.id===r.agentId);
+      wrap.rem=(pendO.diff>=3&&cap(a)<6)?2:1;
+      if(a.quirk.k==='juan')wrap.rem=1;
+      agentsUsed.add(a.id);
+    }
+    if(r.kind==='member')membersUsed.add(r.memberId);
+    return wrap;
+  });
+  const p={id:uid++,order:pendO,stages,week0:S.week,ready:false,rework:false,polished:false};
+  agentsUsed.forEach(id=>S.agents.find(a=>a.id===id).busy=p.id);
+  membersUsed.forEach(id=>{const m=S.members.find(x=>x.id===id);if(m)m.busy=p.id;});
+  S.projects.push(p);
+  S.orders=S.orders.filter(o=>o.id!==pendO.id);
+  log('📝 接下《'+p.order.name+'》并完成路由:'+stages.map(st=>st.kind==='self'?'本人':st.kind==='ext'?'外部服务':st.kind==='hunter'?'其他猎人':st.kind==='member'?'团队成员':'Agent').join('/'));
+  closeM('mRoute');render();
+};
+
+/* ---- training ---- */
+let trAgent=null;
+window.openTrain=id=>{
+  if(!gate())return;
+  trAgent=S.agents.find(a=>a.id===id);if(!trAgent)return;
+  $('trTitle').textContent='🧑‍🏫 训练室 · '+trAgent.name+'(资产 '+trAgent.assets+' · 能力 '+cap(trAgent).toFixed(1)+')';
+  trainMenu();$('mTrain').classList.add('show');
+};
+function trainMenu(msg){
+  $('trBody').innerHTML=(msg?'<div class="talk">'+msg+'</div>':'')+
+    '<div class="crew-pick" style="margin-top:8px">'+
+    '<div class="choice" onclick="trExam()">🍱 喂范例(半天)<small style="color:#8a765a">二选一鉴别,教出品味</small></div>'+
+    '<div class="choice" onclick="trRule()">📏 写守则(半天)<small style="color:#8a765a">立下工作规矩</small></div>'+
+    '<div class="choice'+(S.reviews.length?'':' off')+'" onclick="trReview()">🔍 复盘(半天 · 素材 '+S.reviews.length+')<small style="color:#8a765a">从打回与落选中学习,收益最大</small></div>'+
+    '</div>';
+}
+function needAP(){if(S.ap<1){trainMenu('⚠️ 本周的半天块用完了——调教也是主理人时间的投资。');return false;}return true;}
+window.trExam=()=>{
+  if(!needAP())return;
+  const dom=TYPES[trAgent.type].domain;
+  const ex=pick(EXAMS[dom]);
+  $('trBody').innerHTML='<p style="font-size:12.5px;font-weight:800;margin-bottom:8px;">'+ex.q+'</p>'+
+    '<div class="crew-pick">'+
+    '<div class="choice" id="exA" onclick="exPick(0)">'+ex.a+'</div>'+
+    '<div class="choice" id="exB" onclick="exPick(1)">'+ex.b+'</div></div>';
+  window.exPick=i=>{
+    S.ap--;
+    const right=i===ex.c;
+    if(ex.c===0)$('exA').classList.add('right');else if(i===0)$('exA').classList.add('wrong');
+    if(ex.c===1)$('exB').classList.add('right');else if(i===1)$('exB').classList.add('wrong');
+    $('exA').onclick=$('exB').onclick=null;
+    if(right){trAgent.assets++;popAsset('训练资产 +1');talk(trAgent,'train_ok');}
+    else{talk(trAgent,'train_no');}
+    setTimeout(()=>trainMenu((right?'✅ 判断正确!':'❌ 更好的是另一个。')+' '+ex.why+(right?'':'(答错不加资产,但 Agent 记住了讲解)')),900);
+    render();
+  };
+};
+window.trRule=()=>{
+  if(!needAP())return;
+  const r=pick(RULES);
+  $('trBody').innerHTML='<p style="font-size:12.5px;font-weight:800;margin-bottom:8px;">场景:'+r.sc+'<br>给 '+trAgent.name+' 立一条守则:</p>'+
+    '<div class="crew-pick">'+r.opts.map((o,i)=>'<div class="choice" onclick="rulePick('+i+')">'+o+'</div>').join('')+'</div>';
+  window.rulePick=i=>{
+    S.ap--;trAgent.assets++;popAsset('训练资产 +1');
+    if(i===r.best){trAgent.wins++;popAsset('守则质量高!');}
+    talk(trAgent,'train_ok');
+    trainMenu(i===r.best?'✅ 这条守则质量很高,写进了 Agent 的工作手册。':'📏 守则已记录。更稳的做法是:"'+r.opts[r.best]+'"');
+    render();
+  };
+};
+window.trReview=()=>{
+  if(!S.reviews.length){trainMenu('暂无复盘素材——打回和落选会产生素材。');return;}
+  if(!needAP())return;
+  const rv=S.reviews[0];
+  const rs=REVIEW_REASONS[rv.domain];
+  const opts=[{t:rs.ok,ok:true},{t:rs.no[0]},{t:rs.no[1]}].sort(()=>Math.random()-.5);
+  $('trBody').innerHTML='<p style="font-size:12.5px;font-weight:800;margin-bottom:8px;">复盘《'+rv.name+'》('+DOM[rv.domain]+' 环节'+(rv.kind==='落选'?'落选':'被 QA 打回')+')<br>你认为主因是?</p>'+
+    '<div class="crew-pick">'+opts.map((o,i)=>'<div class="choice" onclick="rvPick('+i+','+(o.ok?1:0)+')">'+o.t+'</div>').join('')+'</div>';
+  window.rvPick=(i,ok)=>{
+    S.ap--;S.reviews.shift();
+    if(ok){trAgent.assets+=2;trAgent.wins++;popAsset('训练资产 +2');talk(trAgent,'train_ok');
+      trainMenu('✅ 复盘到位!失败被转化为最厚的资产。');}
+    else{trAgent.assets++;popAsset('训练资产 +1');
+      trainMenu('🔍 记录了,但真正的主因是:"'+REVIEW_REASONS[rvDomainLast].ok+'"');}
+    render();
+  };
+  var rvDomainLast=rv.domain;
+};
+
+function clientOf(src){return src==='practice'?'学校(课程练习)':src==='assoc'?'行业协会':'DHS 孵化器';}
+/* ---- deliver & contest ---- */
+window.openDeliver=pid=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const overall=p.stages.reduce((s,x)=>s+x.q,0)/p.stages.length+(p.polished?4:0);
+  $('dvTitle').textContent='交付确认:《'+p.order.name+'》';
+  $('dvSub').innerHTML='确认与担责永远在人 —— 这是全游戏唯一不可路由的环节。';
+  $('dvStamp').innerHTML='';
+  $('dvDetail').innerHTML=p.stages.map(st=>'· '+DOM[st.domain]+':质量 '+Math.round(st.q)).join('<br>')+
+    '<br><b>综合质量:'+Math.round(overall)+'</b>'+(p.order.src!=='practice'?'(真单 QA 门槛 62)':'');
+  $('dvActions').innerHTML=
+    (!p.polished?'<button class="btn btn-small" onclick="polish('+pid+')">🪄 再打磨(半天,+4)</button>':'')+
+    '<button class="btn btn-primary" onclick="submitP('+pid+')">✍️ 确认并提交评审</button>'+
+    '<button class="btn" data-close="mDeliver" onclick="closeM(\'mDeliver\')">先等等</button>';
+  $('mDeliver').classList.add('show');
+};
+window.polish=pid=>{
+  const p=S.projects.find(x=>x.id===pid);
+  if(S.ap<1||p.polished)return;
+  S.ap--;p.polished=true;openDeliver(pid);render();
+};
+window.submitP=pid=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const overall=p.stages.reduce((s,x)=>s+x.q,0)/p.stages.length+(p.polished?4:0);
+  if(p.order.src!=='practice'&&overall<62&&!p.rework){
+    p.rework=true;p.ready=false;
+    let worst=p.stages.reduce((m,x)=>x.q<m.q?x:m,p.stages[0]);
+    worst.rem=1;worst.q=0;worst.boost=12;
+    if(worst.kind==='agent'){const a=S.agents.find(x=>x.id===worst.agentId);if(a)a.busy=p.id;}
+    S.reviews.push({name:p.order.name,domain:worst.domain,kind:'打回'});
+    log('🛡️ QA 确认层:《'+p.order.name+'》质量 '+Math.round(overall)+' 未达标,打回返工(最弱环节:'+DOM[worst.domain]+')。复盘素材 +1。');
+    closeM('mDeliver');render();return;
+  }
+  finishContest(p,overall);
+};
+function finishContest(p,overall){
+  S.projects=S.projects.filter(x=>x!==p);
+  p.stages.forEach(st=>{
+    if(st.kind==='agent'){const a=S.agents.find(x=>x.id===st.agentId);if(a&&a.busy===p.id)a.busy=null;}
+    if(st.kind==='member'){const m=S.members.find(x=>x.id===st.memberId);if(m&&m.busy===p.id)m.busy=null;}
+  });
+  const o=p.order;
+  const isReal=o.src!=='practice';
+  const rq=[];for(let i=0;i<o.rivalsN;i++)rq.push(clamp((isReal?59+o.diff*4:50+o.diff*3)+rnd(-9,9),20,97));
+  const all=[{me:true,q:overall},...rq.map(q=>({me:false,q}))].sort((a,b)=>b.q-a.q);
+  const rank=all.findIndex(x=>x.me)+1;
+  if(!isReal&&rank<=2){o.stages.forEach(dm=>{if(S.credits[dm]!==undefined)S.credits[dm]++;});}
+  const n=all.length;
+  const share=rank===1?0.55:rank===2?0.25:0.20/(n-2);
+  const prize=o.pool*share;
+  earn(prize,'竞赛奖金');
+  let repGain,grade='';
+  if(isReal){
+    grade=overall>=86?'S':overall>=74?'A':overall>=62?'B':'C';
+    repGain={S:25,A:18,B:10,C:4}[grade]+(rank===1?8:rank===2?4:0);
+    S.realQ.push(overall);S.realN++;S.profile.portfolio++;
+    const execDm=p.stages[1]?p.stages[1].domain:p.stages[0].domain;
+    if(S.lines[execDm]!==undefined)S.lines[execDm]++;
+    p.stages.forEach(st=>{if(st.kind==='agent'){const a=S.agents.find(x=>x.id===st.agentId);if(a){a.evals.push(overall);if(rank<=2)a.wins++;}}});
+  }else{
+    repGain=rank===1?9:rank===2?6:4;
+  }
+  S.rep+=repGain;
+  if(rank>=3){
+    const worst=p.stages.reduce((m,x)=>x.q<m.q?x:m,p.stages[0]);
+    S.reviews.push({name:o.name,domain:worst.domain,kind:'落选'});
+  }
+  const winA=p.stages.find(st=>st.kind==='agent');
+  if(winA){const a=S.agents.find(x=>x.id===winA.agentId);if(a)talk(a,rank<=2?'win':'lose');}
+  $('dvTitle').textContent='🏁 竞赛结果:《'+o.name+'》';
+  $('dvSub').innerHTML=n+' 队同题竞争 · '+(isReal?'🤝 协会评审团盖章':'班内评比');
+  $('dvStamp').innerHTML=isReal?'<span class="stamp stamp-'+grade+'">'+grade+'</span>':'<span class="stamp stamp-B" style="font-size:26px">第 '+rank+' 名</span>';
+  $('dvDetail').innerHTML='综合质量 '+Math.round(overall)+' · <b>名次 '+rank+'/'+n+'</b><br>奖金 <b>'+yuan(prize)+'</b>('+Math.round(share*100)+'% 池)· 声望 +'+repGain+
+    (rank>=3?'<br>🧰 落选交付物进入题库:复盘素材 +1,作品集不清零':'')+
+    (isReal&&grade==='S'?'<br>🤝 协会将把这份案例推荐给更多命题方!':'');
+  $('dvActions').innerHTML='<button class="btn" onclick="closeM(\'mDeliver\')">收下</button>'+
+    '<button class="btn btn-primary" onclick="closeM(\'mDeliver\');openRoleFlow(\'network\')">🤝 查看本次上下游伙伴</button>';
+  $('mDeliver').classList.add('show');
+  S.archive.unshift({w:S.week,name:o.name,client:clientOf(o.src),grade:isReal?grade:'—',rank:rank+'/'+n,q:Math.round(overall),prize:Math.round(prize),status:'✔ 已交付'});
+  log((isReal?'🤝 协会盖章 '+grade+'!':'🏫 班内评比:')+'《'+o.name+'》第 '+rank+'/'+n+' 名,+'+yuan(prize));
+  render();checkEnd();
+}
+
+/* ---- weekly tick ---- */
+function tick(){
+  if(!S.started)return;
+  S.week++;
+  S.ap=S.apMax;
+  S.powerMax=100+(S.guilds.incu?40:0);
+  S.power=S.powerMax;S.coachH=2;
+  if(S.guilds.assoc){
+    pay(400,'协会会费');
+    if(S.reviews.length<6){S.reviews.push({name:'协会案例库月选',domain:pick(['design','copy','growth']),kind:'落选'});}
+  }
+  if(S.agents.length)pay(S.agents.length*250,'Agent 托管费');
+  if(S.members.length)pay(S.members.length*800,'成员工资');
+  if(BASES[S.base].cost)pay(BASES[S.base].cost,'基座租用');
+  if(S.conns.dh)pay(250,'数字人引擎维护');
+
+  S.projects.forEach(p=>{
+    p.stages.forEach(st=>{
+      if(st.rem<=0)return;
+      if(st.kind==='agent'){
+        const a=S.agents.find(x=>x.id===st.agentId);
+        const need=a.quirk.k==='juan'?15:12;
+        if(S.power>=need){S.power-=need;st.rem--;}
+        else log('⚠️ 学校算力耗尽,'+a.name+' 的《'+p.order.name+'》环节停摆一周。');
+      }else{st.rem--;}
+      if(st.rem<=0){st.q=stageQ(st,p.order)+(st.boost||0);
+        S.profile.judgeT++;if(st.q>=58+p.order.diff*3)S.profile.judgeG++;
+        if(st.kind==='self')log('👤 你在系统外完成了《'+p.order.name+'》的'+DOM[st.domain]+'环节,已提交回系统。');}
+    });
+    if(p.stages.every(st=>st.rem<=0))p.ready=true;
+    const left=p.order.weeks-(S.week-p.week0);
+    if(left<0){
+      S.projects=S.projects.filter(x=>x!==p);
+      p.stages.forEach(st=>{
+        if(st.kind==='agent'){const a=S.agents.find(x=>x.id===st.agentId);if(a&&a.busy===p.id)a.busy=null;}
+        if(st.kind==='member'){const m=S.members.find(x=>x.id===st.memberId);if(m&&m.busy===p.id)m.busy=null;}
+      });
+      S.cred-=5;
+      S.archive.unshift({w:S.week,name:p.order.name,client:clientOf(p.order.src),grade:'—',rank:'—',q:'—',prize:0,status:'⛔ 违约'});
+      log('⛔ 《'+p.order.name+'》超期违约!承诺未兑现,信用 -5(现 '+S.cred+')。');
+    }
+  });
+
+  S.rivals.forEach(r=>r.rep+=ri(0,3)+(Math.random()<.15?ri(2,6):0));
+  if(Math.random()<.3)log('📣 '+pick(S.rivals).name+' 刚提交了一份新方案!');
+  if(Math.random()<.2){S.power+=15;log('🏫 学校本周加发了 15 算力(机房空闲)。');}
+
+  const oldRank=S.rank;
+  while(S.rank<RANKS.length-1&&S.rep>=RANKS[S.rank+1].need)S.rank++;
+  if(S.rank>oldRank){
+    if(S.rank>=2)S.profile.certs.gold=true;
+    log('🎖️ 协会颁发新认证:'+RANKS[S.rank].n+'!');
+    if(S.rank===1)log('🏭 白银达成!DHS 预备营与协会会员的准入已解锁 —— 去生态页加入会籍。');
+  }
+  S.myOrders.forEach(o=>{
+    if(!o.subs&&S.week>=o.week0+2){
+      o.subs=[];for(let i=0;i<3;i++)o.subs.push({co:pick(S.rivals).name,q:clamp(55+rnd(-10,18),25,95)});
+      log('📨 你发布的《'+o.name+'》收到 '+o.subs.length+' 份提交——去 ERP·供给页开奖。');
+    }
+  });
+  if(!S.premiumAdded&&S.conns.img&&S.lines.design>=4){
+    S.premiumAdded=true;
+    ORDER_POOL.incu.push({name:'高端品牌视觉全案',stages:['strategy','design','comm'],diff:4,pool:15000});
+    log('🌳 业务树解锁:高端设计线!孵化器开始向你开放高客单命题(奖金池 ¥15,000 级)。');
+  }
+  fillBoard();makeGigs();
+  const newly=checkTreeNodes();
+  if(newly.length)log('🌳 科技树解锁 '+newly.length+' 个节点：'+newly.map(n=>n.icon+' <b>'+n.name+'</b>').join(' · '));
+  coachWeekly();
+  $('paDot').classList.add('show');
+  if($('paDrawer').classList.contains('show'))paBrief(false);
+  render();
+  if(S.cash<0)openCrisis();
+  checkEnd();
+  log('📅 第 '+S.week+' 周结算完成 · 新命题已发布 · 排行榜更新 · 科技树状态刷新');
+}
+function coachWeekly(){
+  const tips=[];
+  if(S.cash<1500)tips.push('现金紧张?主理人的时间也能卖 —— 打工市场接一单回血,比桥贷体面。');
+  if(S.rep>=30&&!S.guilds.incu)tips.push('白银了还没加入 DHS 预备营?+40 算力、真单准入、grant 资格,免费的。');
+  if(S.reviews.length)tips.push('你有 '+S.reviews.length+' 份复盘素材没用——复盘是资产收益最高的调教。');
+  if(S.agents.some(a=>a.assets<3))tips.push('有 Agent 资产还很薄,接真单前先喂几个范例。');
+  if(S.ap===S.apMax)tips.push('上周 AP 没花完——主理人的时间也是要投资的。');
+  const jd=S.profile.judgeT?Math.round(S.profile.judgeG/S.profile.judgeT*100):0;
+  if(S.profile.judgeT>=3&&jd<60)tips.push('路由判断率 '+jd+'%——多看适配星级,别什么都自己扛。');
+  if(!tips.length)tips.push('节奏不错。想冲黄金认证,稳定拿 A 以上的真单是关键。');
+  $('coachTip').innerHTML='教练小柯:'+pick(tips);
+}
+$('coachBuy').onclick=()=>{if(S.cash<400)return;pay(400,'教练时长');S.coachH++;log('🎓 加购教练时长 ×1。');render();};
+$('socialBtn').onclick=()=>{
+  if(!S.started||S.ap<1)return;
+  S.ap--;S.profile.net++;S.rep+=1;
+  log('🍵 商务社交:结识了一位评审,人脉 +1;听说下周有新命题要发布。');
+  render();
+};
+
+/* ---- crisis ---- */
+function openCrisis(){
+  $('crText').innerHTML='现金 '+yuan(S.cash)+'。破产也是真实经营的一部分——但主理人档案永远不清零。选择你的出路:';
+  const box=$('crOptions');box.innerHTML='';
+  if(!S.bridgeUsed&&S.guilds.incu){
+    const d=document.createElement('div');d.className='choice';
+    d.innerHTML='🌉 孵化器桥贷:+¥4,000(声望 -8,仅一次)';
+    d.onclick=()=>{S.bridgeUsed=true;earn(4000,'孵化器桥贷');S.rep-=8;log('🌉 孵化器评估后发放桥贷 ¥4,000。');closeM('mCrisis');render();};
+    box.appendChild(d);
+  }
+  S.agents.forEach(a=>{
+    const price=600+a.assets*350;
+    const d=document.createElement('div');d.className='choice';
+    d.innerHTML='🏷️ 出售 '+a.name+' 的资产包(资产 '+a.assets+')→ '+yuan(price)+'<small style="color:#8a765a">资产市场成交,Agent 离职</small>';
+    d.onclick=()=>{earn(price,'资产市场出售');S.agents=S.agents.filter(x=>x!==a);
+      S.projects.forEach(p=>p.stages.forEach(st=>{if(st.agentId===a.id&&st.rem>0){st.kind='self';st.fit=fitOf(st.domain,'self');}}));
+      log('🏷️ '+a.name+' 的资产包在资产市场成交('+yuan(price)+')。');
+      closeM('mCrisis');render();if(S.cash<0)openCrisis();};
+    box.appendChild(d);
+  });
+  const d=document.createElement('div');d.className='choice';
+  d.innerHTML='♻️ 清算重开:公司关闭,主理人档案(判断力/人脉/作品集)保留,信用 -10';
+  d.onclick=()=>{
+    S.cash=5000;S.tx.unshift({w:S.week,v:5000,cat:'清算重启注资'});
+    S.cred-=10;S.projects=[];S.reviews=[];S.rep=Math.max(0,S.rep-15);
+    S.agents=[newAgent('design')];S.members=[];S.base=0;
+    log('♻️ 公司清算重开。档案带着走:判断力 '+(S.profile.judgeT?Math.round(S.profile.judgeG/S.profile.judgeT*100):0)+'%、人脉 '+S.profile.net+'、作品集 '+S.profile.portfolio+'。二次创业,孵化器反而更感兴趣。');
+    closeM('mCrisis');render();
+  };
+  box.appendChild(d);
+  $('mCrisis').classList.add('show');
+}
+
+/* ---- ending / views / plumbing ---- */
+function checkEnd(){
+  if(S.endShown)return;
+  const n11=TREE_NODES.find(n=>n.id==='N-11');
+  if(n11&&n11.condFn()){
+    S.endShown=true;$('endCo').textContent=S.co;
+    setTimeout(()=>$('mEnd').classList.add('show'),700);
+  }
+}
+const ERP_TABS=[['ov','📊 概览'],['crm','📇 客户'],['ord','📁 订单'],['fin','💹 财务'],['ast','🧬 资产'],['sup','📡 供给'],['tree','🌳 成长树'],['log','📜 日志'],['site','🏠 官网']];
+window.openBiz=tab=>{
+  const B=$('bizBody');
+  const nav=$('bizNav');
+  if(tab==='me'){nav.style.display='none';}
+  else{
+    nav.style.display='flex';
+    nav.innerHTML=ERP_TABS.map(([k,n])=>'<button class="btn btn-small'+(k===tab?' btn-primary':'')+'" onclick="openBiz(\''+k+'\')">'+n+'</button>').join('');
+  }
+  if(tab==='ov'){
+    $('bizTitle').textContent='🏢 '+S.co+' · 公司系统(ERP)';
+    const net4=S.tx.filter(x=>x.w>S.week-4).reduce((a,x)=>a+x.v,0);
+    const astV=S.agents.reduce((a,x)=>a+600+x.assets*350,0);
+    B.innerHTML='<div class="profile-grid">'+
+      '<div>💰 现金 '+yuan(S.cash)+'</div>'+
+      '<div>📈 近4周净流 '+(net4>=0?'+':'')+Math.round(net4).toLocaleString()+'</div>'+
+      '<div>⭐ 声望 '+Math.round(S.rep)+' · '+RANKS[S.rank].n+'</div>'+
+      '<div>🤝 信用 '+S.cred+'</div>'+
+      '<div>🤖 Agent '+S.agents.length+' · 🧑‍🎓 成员 '+S.members.length+'</div>'+
+      '<div>🧬 Agent 资产估值 '+yuan(astV)+'</div>'+
+      '<div>🔨 进行中 '+S.projects.length+' 单</div>'+
+      '<div>📁 累计交付 '+S.archive.filter(r=>r.status.includes('交付')).length+' 单</div></div>'+
+      '<p style="margin-top:8px;color:#8a765a">这是"关掉包装层"后的样子:同一套数据,正式版即 ezagent 的组织总览。</p>';
+    $('mBiz').classList.add('show');return;
+  }
+  if(tab==='ast'){
+    $('bizTitle').textContent='🧬 资产清单';
+    B.innerHTML=(S.agents.length?S.agents.map(a=>'· '+TYPES[a.type].emoji+' '+a.name+'('+a.quirk.n+'):训练资产 '+a.assets+' 项 · 实战 '+a.evals.length+' 单 · <b>估值 '+yuan(600+a.assets*350)+'</b>').join('<br>'):'暂无 Agent 资产')+
+      '<br><br>· 🧠 基座:'+BASES[S.base].n+'(租用,不计入自有资产)'+
+      (S.conns.dh?'<br>· 🎭 数字人引擎(已接入)':'')+(S.conns.img?'<br>· 🖼️ 图像生成 Pro(已接入)':'')+
+      '<p style="margin-top:8px;color:#8a765a">自有资产可迁移、可在资产市场交易;租用基座停付即降级 —— 租的是底子,养的是本事。</p>';
+    $('mBiz').classList.add('show');return;
+  }
+  if(tab==='tree'){
+              $('bizTitle').textContent='🌳 成长树 · '+S.co;
+            const coNodes=TREE_NODES.filter(n=>(n.scope||'company')==='company');
+            const unlocked=coNodes.filter(n=>S.treeNodes[n.id]&&S.treeNodes[n.id].unlocked).length;
+            B.innerHTML='<div class="tree-panel">'+
+        '<div class="tp-head">'+
+          '<span class="tp-title">🌳 成长树</span>'+
+          '<span class="tp-count">已解锁 '+unlocked+'/'+coNodes.length+'</span>'+
+        '</div>'+
+        '<div class="tree-svg-wrap" id="treePanWrap">'+renderRadialTree('company')+'</div>'+
+        '<div style="text-align:center;margin-top:6px;font-size:10.5px;color:#8a765a;font-weight:700;">'+
+          '纪律：无技能点，解锁只来自真实积累。树不标「最优路径」——分支价值由命题市场决定。拖拽可平移 · 点击节点查看详情。</div>'+
+      '</div>';
+    $('mBiz').classList.add('show');setTimeout(function(){initTreePan('treePanWrap');},100);return;
+  }
+  if(tab==='log'){
+    $('bizTitle').textContent='📜 事件日志(组织运营记录)';
+    B.innerHTML='<div class="loglist" style="max-height:55vh;overflow-y:auto">'+($('log').innerHTML||'<p>还没有事件。</p>')+'</div>';
+    $('mBiz').classList.add('show');return;
+  }
+  if(tab==='sup'){
+    $('bizTitle').textContent='📡 能力供给(所有组织同一张面板)';
+    const lock=(n,need)=>'<div class="shop-item" style="opacity:.55"><div class="d">'+n+'<small>🔒 '+need+'</small></div><span class="tag tag-gray">锁定</span></div>';
+    let mine='';
+    if(S.myOrders.length){
+      mine='<p style="margin:6px 0 3px;color:#8a765a">我发布的命题:</p>'+S.myOrders.map(o=>{
+        const st=o.subs?(o.initialReviewed?'<button class="btn btn-small btn-primary" onclick="judgeMy('+o.id+')">最终评价</button>':'<button class="btn btn-small" onclick="closeM(\'mBiz\');openRoleFlow(\'reviewMy\','+o.id+')">汇总初验</button>'):
+          (!o.decomposed?'<button class="btn btn-small" onclick="closeM(\'mBiz\');openRoleFlow(\'decompose\','+o.id+')">继续拆单</button>':'<span class="tag tag-gray">匹配中 / 征集中</span>');
+        return '<div class="shop-item"><div class="d">《'+o.name+'》<small>奖金池 '+yuan(o.pool)+' · '+(o.subs?o.subs.length+' 份提交':'等待提交')+'</small></div>'+st+'</div>';
+      }).join('');
+    }
+    B.innerHTML='<div class="shop-item"><div class="d">📢 发布命题(发单)<small>任何组织可用 · 奖金池托管制</small></div><button class="btn btn-small btn-green" onclick="gate()&&openPost()">发布</button></div>'+
+      mine+
+      lock('⚡ 提供算力','需算力接入资质(学校 / 云服务商)')+
+      lock('💰 提供资金 grant / 桥贷','需资金托管资质(孵化器 / 基金)')+
+      lock('🎖️ 颁发认证','需行业协会授权')+
+      lock('🎪 开设公会会籍','需组织认证 · 成员 ≥ 10')+
+      lock('🎓 提供教练服务','需带队记录 ≥ 20 单(带队指数公开)')+
+      '<p style="margin-top:8px;color:#8a765a">所有组织看到同一张面板,差异只在资质与禀赋。DHS 孵化器登录时,这里的锁会打开 —— 组织成长树对所有人公开。</p>';
+    $('mBiz').classList.add('show');return;
+  }
+  if(tab==='site'){
+    $('bizTitle').textContent='🏠 '+S.co+' · 公司官网(对外公开)';
+    B.innerHTML=siteHTML(S.co,true);
+    $('mBiz').classList.add('show');return;
+  }
+  if(tab==='me'){
+    $('bizTitle').textContent='👤 主理人档案(属于人,不属于公司)';
+    const jd=S.profile.judgeT?Math.round(S.profile.judgeG/S.profile.judgeT*100):0;
+    const skills=Object.entries(DOM).map(([k,n])=>{
+      const v=S.profile.skill[k]||0;const pc=Math.round(v/8*100);
+      return '<div style="display:flex;align-items:center;gap:6px;margin:3px 0">'+
+        '<span style="width:70px">'+n+'</span>'+
+        '<div class="bar" style="flex:1"><i style="width:'+pc+'%;background:linear-gradient(#ffd95e,#e0a11f)"></i><span>'+v.toFixed(1)+'</span></div></div>';
+    }).join('');
+    B.innerHTML='<div class="profile-grid">'+
+      '<div>🧭 判断力 '+jd+'%<small style="color:#8a765a">('+S.profile.judgeG+'/'+S.profile.judgeT+' 个环节跑赢基准)</small></div>'+
+      '<div>🗂️ 作品集 '+S.profile.portfolio+'</div>'+
+      '<div>🫱 人脉 '+S.profile.net+'</div>'+
+      '<div>🧰 待复盘素材 '+S.reviews.length+'</div>'+
+      '<div>🤝 信用 '+S.cred+'</div>'+
+      '<div>💼 打工收入 '+yuan(S.tx.filter(function(x){return x.cat==='打工收入';}).reduce(function(a,x){return a+x.v;},0))+'</div></div>'+
+      '<p style="margin:8px 0 2px;color:#8a765a">个人技能（打工与亲自干会成长）· 学分（推进科技树）:</p>'+skills+
+      '<div style="font-size:10px;color:#8a765a;margin:2px 0 6px;">学分（课程作业达标 · 竞赛前 50% 才计）：设计 '+S.credits.design+' · 文案 '+S.credits.copy+' · 增长 '+S.credits.growth+'</div>'+
+      '<details style="font-size:10px;color:#8a765a;margin:2px 0 6px;"><summary style="cursor:pointer;">未开启：策略 / 沟通线（数据已在积累，开线后可用）</summary>策略 '+S.credits.strategy+' · 沟通 '+S.credits.comm+'</details>'+
+      (function(){const pn=TREE_NODES.filter(function(n){return n.scope==='personal';});const pu=pn.filter(function(n){return S.treeNodes[n.id]&&S.treeNodes[n.id].unlocked;}).length;return '<div class="tree-panel" style="margin-top:8px">'+
+        '<div class="tp-head"><span class="tp-title">🌱 个人成长树</span><span class="tp-count">已解锁 '+pu+'/'+pn.length+'</span></div>'+
+        '<div class="tree-svg-wrap" id="personalTreePanWrap" style="height:320px">'+renderRadialTree('personal')+'</div>'+
+        '<div style="text-align:center;margin-top:6px;font-size:10.5px;color:#8a765a;font-weight:700;">个人树不受公司破产影响。拖拽可平移 · 点击节点查看详情。</div></div>';})()+
+      '<p style="margin-top:8px;color:#8a765a">公司可以破产,这份档案永远跟着你 —— 二次创业者的档案对孵化器反而更有吸引力。🏢→🌳 查看完整科技树。</p>';
+    $('mBiz').classList.add('show');setTimeout(function(){initTreePan('personalTreePanWrap');},100);return;
+  }
+  if(tab==='crm'){
+    $('bizTitle').textContent='📇 客户簿(CRM)';
+    const cs={};
+    S.archive.forEach(r=>{
+      cs[r.client]=cs[r.client]||{n:0,win:0,qs:[],bad:0};
+      const c=cs[r.client];c.n++;
+      if(r.status.includes('违约'))c.bad++;
+      else{if(typeof r.q==='number')c.qs.push(r.q);if((''+r.rank).startsWith('1')||(''+r.rank).startsWith('2'))c.win++;}
+    });
+    const keys=Object.keys(cs);
+    B.innerHTML=keys.length?'<table style="width:100%;border-collapse:collapse">'+
+      '<tr style="color:#8a765a"><td>客户</td><td>合作单数</td><td>前二名次</td><td>平均质量</td><td>违约</td><td>关系</td></tr>'+
+      keys.map(k=>{const c=cs[k];const avg=c.qs.length?Math.round(c.qs.reduce((a,b)=>a+b,0)/c.qs.length):0;
+        const rel=c.bad?'⚠️ 受损':avg>=74?'💚 满意':avg>=62?'🙂 一般':'😐 观察中';
+        return '<tr style="border-top:2px dotted #cbb98f"><td>'+k+'</td><td>'+c.n+'</td><td>'+c.win+'</td><td>'+(avg||'—')+'</td><td>'+c.bad+'</td><td>'+rel+'</td></tr>';}).join('')+'</table>'
+      +'<p style="margin-top:8px;color:#8a765a">客户关系由真实履约生成 —— 正式版中,这里就是 ezagent 的 CRM 模块。</p>'
+      :'还没有客户记录 —— 交付第一单后,客户簿会自动生成。';
+  }
+  if(tab==='ord'){
+    $('bizTitle').textContent='📁 订单档案(履约与合同记录)';
+    B.innerHTML=S.archive.length?'<table style="width:100%;border-collapse:collapse">'+
+      '<tr style="color:#8a765a"><td>周</td><td>订单</td><td>客户</td><td>名次</td><td>评级</td><td>质量</td><td>奖金</td><td>状态</td></tr>'+
+      S.archive.slice(0,20).map(r=>'<tr style="border-top:2px dotted #cbb98f"><td>W'+r.w+'</td><td>《'+r.name+'》</td><td>'+r.client+'</td><td>'+r.rank+'</td><td>'+r.grade+'</td><td>'+r.q+'</td><td>'+yuan(r.prize)+'</td><td>'+r.status+'</td></tr>').join('')+'</table>'
+      +'<p style="margin-top:8px;color:#8a765a">每条记录都是可举证的履约档案:接单条款、交付结果、评审盖章 —— 正式版中即合同与法务留痕。</p>'
+      :'还没有订单档案。';
+  }
+  if(tab==='fin'){
+    $('bizTitle').textContent='💹 现金流量';
+    const cats={};let inSum=0,outSum=0;
+    S.tx.forEach(x=>{cats[x.cat]=(cats[x.cat]||0)+x.v;if(x.v>0)inSum+=x.v;else outSum-=x.v;});
+    const recent=S.tx.filter(x=>x.w>S.week-4);
+    const net4=recent.reduce((a,x)=>a+x.v,0);
+    const weekly=net4/Math.min(4,Math.max(1,S.week-1));
+    const runway=weekly<0?Math.floor(S.cash/(-weekly)):null;
+    B.innerHTML='<p>现金:<b>'+yuan(S.cash)+'</b> · 累计流入 '+yuan(inSum)+' · 累计流出 '+yuan(outSum)+
+      '<br>近 4 周净现金流:<b style="color:'+(net4>=0?'var(--teal)':'var(--red)')+'">'+(net4>=0?'+':'')+yuan(net4).replace('¥','¥')+'</b>'+
+      (runway!==null?' · <b style="color:var(--red)">按当前烧钱速度,runway 约 '+runway+' 周</b>':' · 现金流健康')+'</p>'+
+      '<p style="margin:6px 0;color:#8a765a">分类合计:</p>'+
+      Object.entries(cats).sort((a,b)=>a[1]-b[1]).map(([k,v])=>'· '+k+':<b style="color:'+(v>=0?'var(--teal)':'var(--red)')+'">'+(v>=0?'+':'')+Math.round(v).toLocaleString()+'</b>').join('<br>')+
+      '<p style="margin:8px 0 4px;color:#8a765a">最近流水:</p>'+
+      S.tx.slice(0,12).map(x=>'· W'+x.w+' '+x.cat+' <b style="color:'+(x.v>=0?'var(--teal)':'var(--red)')+'">'+(x.v>=0?'+':'')+x.v.toLocaleString()+'</b>').join('<br>');
+  }
+  $('mBiz').classList.add('show');
+};
+window.openPost=()=>{closeM('mBiz');$('mPost').classList.add('show');};
+$('poGo').onclick=()=>{
+  const dm=$('poType').value;
+  const pool=Math.max(800,+$('poPool').value||2000);
+  if(S.cash<pool){log('💸 现金不足以托管奖金池。');return;}
+  pay(pool,'发单奖金池托管');
+  const names={design:'公司官网视觉升级',copy:'品牌介绍文案',growth:'开学季获客方案'};
+  const mine={id:uid++,name:names[dm],dm,pool,week0:S.week,subs:null,
+    goal:$('poGoal').value.trim(),due:$('poDue').value,criteria:$('poCriteria').value.trim(),
+    steps:['strategy',dm,dm==='growth'?'copy':'growth','comm'],decomposed:false};
+  S.myOrders.push(mine);
+  log('📢 你以发单方身份发布命题《'+names[dm]+'》,奖金池 '+yuan(pool)+' 已托管——角色对称:今天你也是甲方。');
+  closeM('mPost');render();openRoleFlow('decompose',mine.id);
+};
+window.judgeMy=oid=>{
+  const o=S.myOrders.find(x=>x.id===oid);
+  if(!o||!o.subs)return;
+  const ranked=[...o.subs].sort((a,b)=>b.q-a.q);
+  S.myOrders=S.myOrders.filter(x=>x!==o);
+  S.rep+=4;
+  $('dvTitle').textContent='🏁 开奖:《'+o.name+'》(你是评审)';
+  $('dvSub').innerHTML='作为发单方,评价与发放由你确认——评价也是一种能力。';
+  $('dvStamp').innerHTML='<span class="stamp stamp-A" style="font-size:26px">已发放</span>';
+  $('dvDetail').innerHTML=ranked.map((s,i)=>(i===0?'🥇':i===1?'🥈':'🥉')+' '+s.co+' · 质量 '+Math.round(s.q)+' · 获 '+yuan(o.pool*(i===0?0.55:i===1?0.25:0.20))).join('<br>')+
+    '<br><br>你获得交付物《'+o.name+'》· 发单方信誉 +4';
+  $('dvActions').innerHTML='<button class="btn btn-primary" onclick="closeM(\'mDeliver\')">完成</button>';
+  $('mDeliver').classList.add('show');
+  log('🏁 你为《'+o.name+'》开奖发放,'+ranked[0].co+' 夺冠。发单方信誉 +4。');
+  render();
+};
+function siteHTML(name,self){
+  if(self){
+    const doms=[...new Set(S.archive.filter(r=>r.status.includes('交付')).map(r=>r.name))];
+    const tops=S.archive.filter(r=>typeof r.q==='number').sort((a,b)=>b.q-a.q).slice(0,3);
+    const grades=S.archive.filter(r=>r.grade&&r.grade!=='—').map(r=>r.grade);
+    return '<p><b style="font-size:14px">'+name+'</b> · '+RANKS[S.rank].n+' · ⭐'+Math.round(S.rep)+'</p>'+
+      (tops.length?'<p style="margin:6px 0 2px;color:#8a765a">精选作品:</p>'+tops.map(r=>'· 《'+r.name+'》(质量 '+r.q+(r.grade!=='—'?' · 协会评级 '+r.grade:'')+')').join('<br>'):'<p style="color:#8a765a">官网还很空 —— 交付的作品会自动上架。</p>')+
+      (grades.length?'<p style="margin:6px 0 2px;color:#8a765a">客户评级记录:'+grades.join(' / ')+'</p>':'')+
+      '<p style="margin-top:8px;color:#8a765a">此页对全世界公开:发单方、同学、游客都能看到。内部数据(财务/调教/路由)不公开。</p>';
+  }
+  return '<p><b style="font-size:14px">'+name+'</b></p><p style="color:#8a765a">对外展示作品 '+ri(2,9)+' 项 · 承接:设计 / 文案 / 增长(公开页示意)</p>';
+}
+window.viewSite=name=>{
+  $('bizTitle').textContent='🏠 '+name+' · 公司官网(公开页)';
+  $('bizBody').innerHTML=siteHTML(name,name===S.co);
+  $('mBiz').classList.add('show');
+};
+const GUILDS={
+  school:{n:'🏫 城南学院(学籍)',give:'算力 100/周 · 教练 2 时长 · 调教题库',fee:0,fixed:true,adm:()=>true,admTxt:'课程默认'},
+  incu:{n:'🏭 DHS 孵化器 · 预备营',give:'算力 +40/周 · 孵化器真单准入 · grant/桥贷资格',fee:0,adm:()=>S.rep>=30&&S.cred>=70,admTxt:'白银认证 + 信用 ≥ 70'},
+  assoc:{n:'🤝 行业协会 · 会员',give:'协会真单准入 · 每周 +1 复盘素材(案例库)',fee:400,adm:()=>S.rep>=30,admTxt:'白银认证 · 会费 ¥400/周'}
+};
+window.joinGuild=k=>{
+  if(!gate())return;
+  const g=GUILDS[k];
+  if(S.guilds[k]||g.fixed)return;
+  if(S.week<S.cool[k]){log('⏳ '+g.n+' 冷却中,第 '+S.cool[k]+' 周后可再加入。');return;}
+  if(!g.adm()){log('🔒 未达 '+g.n+' 准入:'+g.admTxt);return;}
+  S.guilds[k]=true;S.profile.guildHist[k]=true;
+  if(k==='incu'&&!S.grantGiven){S.grantGiven=true;earn(3000,'孵化器 grant');log('🏭 加入预备营!孵化器发放 grant ¥3,000。');}
+  log('🎪 加入 '+g.n+' —— 资源流已接通:'+g.give);
+  render();
+};
+window.leaveGuild=k=>{
+  const g=GUILDS[k];
+  if(!S.guilds[k]||g.fixed)return;
+  S.guilds[k]=false;S.cool[k]=S.week+3;
+  log('👋 退出 '+g.n+'。资源流断开;3 周冷却后可转回(转会有代价,是真实规则)。');
+  render();
+};
+/* ---- 径向技能树渲染 (MFU 风格) ---- */
+const TREE_RINGS=[0,1,2,2.5,3,3.5];
+
+function renderRadialTree(scope){
+  scope=scope||'company';
+  checkTreeNodes();
+  const nodes=TREE_NODES.filter(function(n){return (n.scope||'company')===scope;});
+  const isCompact=scope==='personal';
+  const W=isCompact?620:720,H=isCompact?500:740,cx=W/2,cy=isCompact?265:390;
+  const radii=isCompact?{0:0,1:48,2:95,2.5:138,3:180,3.5:225}:{0:0,1:78,2:150,2.5:220,3:285,3.5:350};
+  var svg='<svg viewBox="0 0 '+W+' '+H+'" xmlns="http://www.w3.org/2000/svg">';
+  // 背景环
+  [0,1,2,2.5,3,3.5].forEach(function(r){
+    if(r===0)return;
+    svg+='<circle cx="'+cx+'" cy="'+cy+'" r="'+radii[r]+'" class="tree-ring"/>';
+  });
+  // 连线
+  nodes.forEach(function(n){
+    n.deps.forEach(function(did){
+      const pn=nodes.find(function(x){return x.id===did;});if(!pn)return;
+      const pa=nodeAngle(pn,scope),na=nodeAngle(n,scope);
+      const pr=radii[pn.tier],nr=radii[n.tier];
+      const childUnlocked=S.treeNodes[n.id]&&S.treeNodes[n.id].unlocked;
+      const parentUnlocked=S.treeNodes[pn.id]&&S.treeNodes[pn.id].unlocked;
+      const cls=childUnlocked?'unlocked':(parentUnlocked?'available':'');
+              const px=cx+Math.cos(pa)*pr,py=cy-Math.sin(pa)*pr;const nx=cx+Math.cos(na)*nr,ny=cy-Math.sin(na)*nr;const my=py+(ny-py)*0.55;svg+='<path d="M'+px+' '+py+' L'+px+' '+my+' L'+nx+' '+my+' L'+nx+' '+ny+'" class="tline '+cls+'"/>';
+    });
+  });
+  // 节点
+  nodes.forEach(function(n){
+    const a=nodeAngle(n,scope);const r=radii[n.tier];
+    const nx=cx+Math.cos(a)*r,ny=cy-Math.sin(a)*r;
+    const st=S.treeNodes[n.id];if(!st)return;
+    const cls=st.unlocked?'unlocked':(nodeAvail(n)?'available':'locked');
+    const rr=isCompact?12:(n.tier===0?20:16);
+    svg+='<circle cx="'+nx+'" cy="'+ny+'" r="'+rr+'" class="tnode '+cls+'" data-nid="'+n.id+'" onclick="openNodeDetail(\''+n.id+'\')"/>';
+    svg+='<text x="'+nx+'" y="'+(ny+rr+11)+'" class="tnode-label">'+n.name+'</text>';
+  });
+  svg+='</svg>';
+  return svg;
+}
+function nodeAngle(n,scope){
+  scope=scope||'company';
+  const peers=TREE_NODES.filter(function(x){return x.tier===n.tier&&(x.scope||'company')===scope;});
+  const idx=peers.indexOf(n);const total=peers.length;
+  if(total===1)return Math.PI/2;
+  const startAngle=Math.PI*0.12,endAngle=Math.PI*0.88;
+  return startAngle+(endAngle-startAngle)*idx/Math.max(1,total-1);
+}
+function openNodeDetail(nid){
+  const node=TREE_NODES.find(n=>n.id===nid);if(!node)return;
+  const st=S.treeNodes[nid];if(!st)return;
+  const un=st.unlocked;
+  const lv=node.level;const pct=un?100:0;
+  // 依赖节点状态
+  const depInfo=node.deps.map(did=>{
+    const dn=TREE_NODES.find(x=>x.id===did);
+    const ds=S.treeNodes[did];
+    const ok=ds&&ds.unlocked;
+    return (ok?'✅ ':'❌ ')+(dn?dn.name:did);
+  }).join(' · ');
+  let html='<div class="tdetail-overlay" id="tdOverlay" onclick="if(event.target===this)closeNodeDetail()">';
+  html+='<div class="tdetail-card">';
+  html+='<button class="td-close" onclick="closeNodeDetail()">✕</button>';
+  html+='<div class="td-icon">'+node.icon+'</div>';
+  html+='<div class="td-id">节点 '+node.id+'</div>';
+  html+='<div class="td-name">'+node.name+'</div>';
+  html+='<span class="td-verb'+(un?'':' locked')+'">verb: '+node.verb+'</span>';
+  html+='<div class="td-level"><span style="font-size:10.5px;font-weight:700;color:#8a765a;">等级 '+lv.cur+'/'+lv.max+'</span>';
+  html+='<div class="bar"><i style="width:'+pct+'%;background:linear-gradient(#7fd68a,#3f9e4d)"></i><span>'+lv.cur+'/'+lv.max+'</span></div></div>';
+  html+='<div class="td-cond">'+(un?'✅ 已解锁':'🔒 解锁条件：'+node.cond)+'</div>';
+  if(node.deps.length){
+    html+='<div class="td-desc"><b>依赖节点</b><br>'+depInfo+'</div>';
+  }
+  html+='<div class="tdetail-footer">'+(node.scope==='personal'?'🌱 个人成长树 · 节点状态跟随主理人档案跨公司保留':'🏢→🌳 企业科技树 · 点击其他节点切换 · 分支价值由市场决定')+'</div>';
+  html+='</div></div>';
+  const overlay=document.createElement('div');overlay.innerHTML=html;
+  document.body.appendChild(overlay.firstElementChild);
+}
+function closeNodeDetail(){const el=document.getElementById('tdOverlay');if(el)el.remove();}
+/* ---- 成长树平移拖拽 ---- */
+function initTreePan(wrapId){
+  wrapId=wrapId||'treePanWrap';
+  const wrap=document.getElementById(wrapId);
+  if(!wrap)return;
+  const svg=wrap.querySelector('svg');
+  if(!svg)return;
+  let panning=false,startX=0,startY=0,tX=0,tY=0;
+  wrap.addEventListener('mousedown',e=>{
+    panning=true;startX=e.clientX-tX;startY=e.clientY-tY;
+    wrap.classList.add('panning');e.preventDefault();
+  });
+  window.addEventListener('mousemove',e=>{
+    if(!panning)return;
+    tX=e.clientX-startX;tY=e.clientY-startY;
+    svg.style.transform='translate('+tX+'px,'+tY+'px)';
+  });
+  window.addEventListener('mouseup',()=>{
+    if(!panning)return;
+    panning=false;wrap.classList.remove('panning');
+  });
+  // Touch support
+  wrap.addEventListener('touchstart',e=>{
+    if(e.touches.length===1){
+      panning=true;startX=e.touches[0].clientX-tX;startY=e.touches[0].clientY-tY;
+      wrap.classList.add('panning');
+    }
+  },{passive:false});
+  wrap.addEventListener('touchmove',e=>{
+    if(!panning||e.touches.length!==1)return;
+    tX=e.touches[0].clientX-startX;tY=e.touches[0].clientY-startY;
+    svg.style.transform='translate('+tX+'px,'+tY+'px)';
+    e.preventDefault();
+  },{passive:false});
+  wrap.addEventListener('touchend',()=>{
+    panning=false;wrap.classList.remove('panning');
+  });
+}
+
+
+function closeM(id){$(id).classList.remove('show');}
+window.closeM=closeM;
+document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>closeM(b.dataset.close));
+$('guestBtn').onclick=()=>{
+  closeM('mStart');setTab('world');
+  $('weekBtn').disabled=true;$('weekBtn').textContent='注册公司后开始';
+  $('ticker').innerHTML='🌍 游客模式:世界是公开的——逛黄页、看官网;想动手时点任意操作即可注册。';
+  render();
+};
+$('startBtn').onclick=()=>{
+  S.co=($('coName').value.trim()||'像素小分队').slice(0,10);
+  S.started=true;
+  $('weekBtn').disabled=false;$('weekBtn').textContent='▶ 下一周';
+  S.agents.push(newAgent('design'));
+  initTreeNodes();
+  closeM('mStart');
+  log('🚀 '+S.co+' 开张!学校已接入算力与教练时长,第一名 AI 员工到岗。');
+  log('🎓 教练小柯:先接练习单,注意每个环节的适配星级——路由判断力会进你的档案。');
+  fillBoard();makeGigs();render();
+};
+$('weekBtn').onclick=tick;
+fillBoard();render();
+const rolePreview=new URLSearchParams(location.search).get('role');
+if(rolePreview){
+  $('startBtn').click();
+  setTab('orders');
+  if(rolePreview==='match'&&S.orders[0])openRoleFlow('match',S.orders[0].id);
+  if(rolePreview==='incubator')openRoleFlow('incubator');
+}
+
+</script>
+</body>
+</html>

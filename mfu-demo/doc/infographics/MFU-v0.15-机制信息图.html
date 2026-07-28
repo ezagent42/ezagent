@@ -372,10 +372,12 @@
     .action-column h3{font-size:11px;letter-spacing:1px;color:var(--muted);margin:0 0 9px;text-align:center}
     .verb-list{display:grid;grid-template-columns:1fr 1fr;gap:7px}
     .verb{
-      min-height:34px;display:grid;place-items:center;padding:6px;border:2px solid var(--ink);border-radius:7px;
-      background:#fff;text-align:center;font-size:10.5px;font-weight:900;line-height:1.25;
+      min-height:96px;display:grid;grid-template-rows:56px 1fr;gap:4px;place-items:center;padding:5px;border:2px solid var(--ink);border-radius:7px;
+      background:#fff;text-align:center;font-size:9.5px;font-weight:900;line-height:1.2;
       box-shadow:0 2px 0 rgba(91,70,50,.22);
     }
+    .action-shot{width:100%;height:56px;padding:0;border:0;background:transparent;cursor:zoom-in}
+    .action-shot img{display:block;width:100%;height:100%;object-fit:cover;object-position:center;border:1.5px solid var(--ink);border-radius:5px;background:#f4ead2}
 
     /* Pages 09–15: one action, four kinds of consequences */
     .action-mechanism{height:100%;display:grid;grid-template-columns:30% 1fr;gap:18px}
@@ -421,8 +423,99 @@
     .loop-step{position:relative;text-align:center;font-size:11px;font-weight:900}
     .loop-step b{display:block;font-size:22px;margin-bottom:3px}
     .loop-step:not(:last-child)::after{content:"→";position:absolute;right:-17px;top:14px;font-size:20px;color:var(--assoc)}
+    .training-overview{display:grid;grid-template-rows:92px 1fr 74px;gap:16px}
+    .training-thesis{
+      display:grid;place-items:center;padding:14px 28px;text-align:center;border:4px solid var(--school);
+      border-radius:11px;background:var(--school-bg);box-shadow:0 4px 0 rgba(63,158,77,.28);
+      font-size:19px;font-weight:900;line-height:1.5;
+    }
+    .training-loop{display:grid;grid-template-columns:repeat(5,1fr);gap:28px;align-items:center}
+    .training-step{
+      min-height:190px;position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;
+      padding:14px;text-align:center;border:3px solid var(--ink);border-radius:10px;background:var(--paper);
+      box-shadow:0 4px 0 rgba(91,70,50,.3),inset 0 0 0 2px #fff;
+    }
+    .training-step:not(:last-child)::after{
+      content:"→";position:absolute;right:-29px;top:78px;font-size:28px;font-weight:900;color:var(--ink);
+    }
+    .training-step .step-icon{font-size:42px;line-height:1;margin-bottom:10px}
+    .training-step h2{font-size:18px;margin:0 0 6px}
+    .training-step p{font-size:10.5px;font-weight:800;color:var(--muted);line-height:1.45;margin:0}
+    .training-step:nth-child(1){border-color:var(--school);background:var(--school-bg)}
+    .training-step:nth-child(2){border-color:var(--gold);background:#fff9dd}
+    .training-step:nth-child(3){border-color:var(--purple);background:#f0e9ff}
+    .training-step:nth-child(4){border-color:var(--teal);background:#e5f6ef}
+    .training-step:nth-child(5){border-color:var(--incu);background:var(--incu-bg)}
+    .training-support{
+      display:flex;align-items:center;justify-content:center;gap:18px;padding:10px 16px;border:3px dashed var(--assoc);
+      border-radius:10px;background:var(--assoc-bg);font-size:11px;font-weight:900;text-align:center;
+    }
+    .training-support span{white-space:nowrap}
+    .venture-learning{display:grid;grid-template-rows:1fr 112px;gap:14px}
+    .venture-stages{display:grid;grid-template-columns:repeat(5,1fr);gap:24px;align-items:center}
+    .venture-stage{
+      height:270px;position:relative;display:flex;flex-direction:column;justify-content:center;padding:16px;
+      border:3px solid var(--ink);border-radius:10px;background:var(--paper);
+      box-shadow:0 4px 0 rgba(91,70,50,.3),inset 0 0 0 2px #fff;
+    }
+    .venture-stage:not(:last-child)::after{
+      content:"→";position:absolute;right:-25px;top:112px;font-size:27px;font-weight:900;color:var(--ink);
+    }
+    .venture-stage .stage-icon{font-size:38px;line-height:1;margin-bottom:10px}
+    .venture-stage .stage-no{font-size:9px;font-weight:900;letter-spacing:1px;color:var(--muted)}
+    .venture-stage h2{font-size:17px;margin:5px 0 8px}
+    .venture-stage .cite{font-size:9px;color:var(--assoc);vertical-align:top;letter-spacing:0}
+    .venture-stage p{font-size:10.5px;font-weight:800;color:var(--muted);line-height:1.5;margin:0}
+    .venture-stage .mfu-action{margin-top:12px;padding:7px;border:2px solid var(--ink);border-radius:7px;background:#fff;font-size:10px;font-weight:900}
+    .venture-stage:nth-child(1){border-color:var(--school);background:var(--school-bg)}
+    .venture-stage:nth-child(2){border-color:var(--gold);background:#fff9dd}
+    .venture-stage:nth-child(3){border-color:var(--purple);background:#f0e9ff}
+    .venture-stage:nth-child(4){border-color:var(--teal);background:#e5f6ef}
+    .venture-stage:nth-child(5){border-color:var(--incu);background:var(--incu-bg)}
+    .source-strip{
+      display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:10px;border:3px double var(--assoc);
+      border-radius:10px;background:var(--assoc-bg);
+    }
+    .source-item{padding:7px 9px;border:2px solid var(--assoc);border-radius:7px;background:#fff;font-size:9.5px;font-weight:800;line-height:1.35}
+    .source-item b{display:block;color:var(--assoc);font-size:10px;margin-bottom:2px}
+    .source-item a{color:inherit;text-decoration:none;border-bottom:1px dotted var(--assoc)}
+    .chapter-overview{display:grid;grid-template-rows:1fr 88px;gap:14px}
+    .chapter-flow{display:grid;grid-template-columns:repeat(6,1fr);gap:24px;align-items:center}
+    .chapter-step{
+      min-height:218px;position:relative;display:flex;flex-direction:column;justify-content:center;text-align:center;
+      padding:14px;border:3px solid var(--ink);border-radius:10px;background:var(--paper);
+      box-shadow:0 4px 0 rgba(91,70,50,.3),inset 0 0 0 2px #fff;
+    }
+    .chapter-step:not(:last-child)::after{content:"→";position:absolute;right:-25px;top:88px;font-size:26px;font-weight:900}
+    .chapter-step b{font-size:38px;line-height:1;margin-bottom:10px}.chapter-step h2{font-size:16px;margin:0 0 7px}
+    .chapter-step p{font-size:10px;font-weight:800;color:var(--muted);line-height:1.45;margin:0}
+    .chapter-step:nth-child(1),.chapter-step:nth-child(4){border-color:var(--gold);background:#fff9dd}
+    .chapter-step:nth-child(2),.chapter-step:nth-child(5){border-color:var(--teal);background:#e5f6ef}
+    .chapter-step:nth-child(3),.chapter-step:nth-child(6){border-color:var(--purple);background:#f0e9ff}
+    .chapter-summary{display:grid;place-items:center;border:3px dashed var(--teal);border-radius:10px;background:#e5f6ef;font-size:14px;font-weight:900}
+    .market-swimlane{display:grid;grid-template-columns:130px repeat(8,1fr);grid-auto-rows:72px;gap:7px}
+    .lane-label,.lane-cell{border:2px solid var(--ink);border-radius:8px;padding:8px;background:#fff;display:flex;align-items:center;justify-content:center;text-align:center;font-size:9.5px;font-weight:900;line-height:1.3}
+    .lane-label{font-size:11px;background:#efe3c2}.lane-cell.muted{opacity:.28}.lane-cell.school{border-color:var(--school);background:var(--school-bg)}
+    .lane-cell.platform{border-color:var(--assoc);background:var(--assoc-bg)}.lane-cell.hunter{border-color:var(--gold);background:#fff9dd}
+    .lane-cell.org{border-color:var(--incu);background:var(--incu-bg)}.lane-cell.done{border-color:var(--teal);background:#e5f6ef}
+    .swim-head{font-size:9px;color:var(--muted);font-weight:900;text-align:center;align-self:end}
+    .scenario-key{display:flex;justify-content:center;gap:10px;margin-top:8px;font-size:10px;font-weight:900}
+    .feature-shot{
+      position:absolute;right:34px;bottom:42px;width:310px;height:122px;z-index:4;padding:7px;
+      border:3px solid var(--assoc);border-radius:10px;background:var(--assoc-bg);
+      box-shadow:0 4px 0 rgba(47,111,196,.25);cursor:zoom-in;
+    }
+    .feature-shot img{display:block;width:100%;height:82px;object-fit:cover;object-position:center;border:2px solid var(--ink);border-radius:6px;background:#fff}
+    .feature-shot span{display:block;margin-top:4px;text-align:center;font-size:9px;font-weight:900;color:var(--assoc)}
+    .board.has-evidence .content{transform:scale(.81);transform-origin:top left;width:123.45%}
+    .board.has-evidence .footer-note{bottom:14px}
+    .shot-lightbox{position:fixed;inset:0;z-index:100;display:none;align-items:center;justify-content:center;padding:28px;background:rgba(61,46,31,.78)}
+    .shot-lightbox.show{display:flex}.shot-dialog{position:relative;width:min(1180px,96vw);max-height:92vh;padding:12px;border:4px solid var(--ink);border-radius:12px;background:var(--paper);box-shadow:0 8px 0 rgba(0,0,0,.35)}
+    .shot-dialog img{display:block;max-width:100%;max-height:78vh;margin:auto;border:2px solid var(--ink);border-radius:7px;background:#fff}
+    .shot-dialog p{margin:8px 38px 0 0;font-size:11px;font-weight:900;color:var(--muted)}.shot-close{position:absolute;right:9px;top:8px;width:30px;height:30px;border:3px solid var(--ink);border-radius:8px;background:var(--gold);font-weight:900;cursor:pointer}
     .content.compare,.content.ownership,.content.three-level,.content.simple-mapping,
-    .content.simple-screening,.content.goal-overview,.content.action-mechanism{height:calc(100% - 148px)}
+    .content.simple-screening,.content.goal-overview,.content.action-mechanism,
+    .content.training-overview,.content.venture-learning,.content.chapter-overview{height:calc(100% - 148px)}
     .student-card{height:auto;grid-template-rows:auto auto auto auto 1fr}
 
     @media(max-width:900px){
@@ -456,11 +549,13 @@
       <button class="btn chapter-btn" data-open-category="market">03 新市场机制</button>
     </div>
     <div class="subnav" data-group="organization" data-label="新人才培养">
-      <button class="btn" data-show="1">人才培养</button>
+      <button class="btn" data-show="1">总览</button>
+      <button class="btn" data-show="19">人才培养</button>
       <button class="btn" data-show="8">人才实践</button>
       <button class="btn" data-show="12">人才评价</button>
     </div>
     <div class="subnav" data-group="delivery" data-label="新组织形式" hidden>
+      <button class="btn" data-show="20">总览</button>
       <button class="btn" data-show="4">人机分工</button>
       <button class="btn" data-show="10">人：任务编排</button>
       <button class="btn" data-show="11">人 + AI：负责交付</button>
@@ -468,10 +563,13 @@
       <button class="btn" data-show="16">AI：企业大脑</button>
     </div>
     <div class="subnav" data-group="market" data-label="新市场机制" hidden>
+      <button class="btn" data-show="21">总览</button>
+      <button class="btn" data-show="22">订单拆解</button>
+      <button class="btn" data-show="9">猎人匹配</button>
+      <button class="btn" data-show="23">步骤交付</button>
+      <button class="btn" data-show="14">组织形成</button>
       <button class="btn" data-show="2">组织档案</button>
-      <button class="btn" data-show="9">任务匹配</button>
       <button class="btn" data-show="17">评价与信任</button>
-      <button class="btn" data-show="14">合作机会</button>
       <button class="btn" data-show="15">认证与机会</button>
       <button class="btn" data-show="7">候选验证</button>
       <button class="btn" data-show="18">订单与资本</button>
@@ -525,45 +623,87 @@
     <section class="board" id="board-1" hidden>
       <header class="mast">
         <div>
-          <div class="eyebrow">MFU · 大学生创新创业实践平台 / 01</div>
-          <h1>学生如何通过人才培养成长为 OPC？</h1>
-          <p class="promise">学生和 AI 伙伴一起接任务、作决定、做交付，在经营中成长为 OPC。</p>
+          <div class="eyebrow">MFU · 新人才培养 / 总览</div>
+          <h1>MFU 如何培养创业人才？</h1>
+          <p class="promise">把创业教育从“知道一些知识”，变成“反复完成真实行动”。</p>
         </div>
-        <div class="stamp">MY FIRST<br>UNICORN<br>我的第一家独角兽</div>
+        <div class="stamp">LEARN<br>BY BUILDING<br>在经营中学习</div>
       </header>
-      <div class="content">
-        <div class="story">
-          <article class="card story-hero">
-            <div class="characters" aria-label="学生和 AI 伙伴">
-              <div class="character"><div class="face">🧑‍🎓</div>学生</div>
-              <div class="character ai"><div class="face">🦄</div>AI 伙伴</div>
-            </div>
-            <div class="company-sign">🏢 像素小分队<small>学生在课余时间经营的 AI 小公司</small></div>
+      <div class="content training-overview">
+        <div class="training-thesis">学生不是先把创业知识学完，再去创业；而是在课余经营一家 AI 小公司的过程中学习创业。</div>
+        <div class="training-loop" aria-label="MFU 人才培养循环">
+          <article class="training-step">
+            <div class="step-icon">📮</div><h2>接触真实问题</h2><p>学校、企业和孵化器提供任务，也可以从市场中发现需求。</p>
           </article>
-          <div class="story-path">
-            <div class="action-row">
-              <article class="action">
-                <div class="action-icon">📥</div><h2>接任务</h2><p>发现一个真实问题</p>
-                <div class="action-sources">
-                  <span>任务来源</span>
-                  <span class="tag school">学校</span>
-                  <span class="tag">企业</span>
-                  <span class="tag incu">孵化器</span>
-                  <span class="tag purple">其他组织</span>
-                </div>
-              </article>
-              <article class="action"><div class="action-icon">🧭</div><h2>作决定</h2><p>决定自己做什么<br>AI 帮什么</p></article>
-              <article class="action"><div class="action-icon">📦</div><h2>做交付</h2><p>检查结果<br>为客户负责</p></article>
-            </div>
-            <div class="opc-result">
-              <div class="unicorn">🌱</div>
-              <div><strong>每完成一轮经营，离 OPC 更近一步</strong><span>不是只听创业课，而是真的练习如何经营一家公司。</span></div>
-              <div class="grow">副业 → 创业</div>
-            </div>
-          </div>
+          <article class="training-step">
+            <div class="step-icon">🏢</div><h2>经营 AI 小公司</h2><p>学生组成公司，带着 AI 伙伴在课余时间开展实践。</p>
+          </article>
+          <article class="training-step">
+            <div class="step-icon">🧭</div><h2>判断并行动</h2><p>理解用户、选择方案，并安排自己和 AI 完成工作。</p>
+          </article>
+          <article class="training-step">
+            <div class="step-icon">📦</div><h2>面对真实结果</h2><p>交付成果，接受客户、企业、学校或专家的评价。</p>
+          </article>
+          <article class="training-step">
+            <div class="step-icon">🔁</div><h2>改进后再试</h2><p>把作品、流程和复盘留下来，在下一项任务中继续验证。</p>
+          </article>
+        </div>
+        <div class="training-support">
+          <span>🟢 学校：组织培养</span>
+          <span>📦 企业：提供真实问题与反馈</span>
+          <span>🟠 孵化器：提供挑战、导师与机会</span>
+          <span>🌱 平台：记录行动与成长证据</span>
         </div>
       </div>
-      <div class="footer-note">MFU v0.15 · 学生通过经营 AI-native 副业学习成为 OPC</div>
+      <div class="footer-note">真实问题 → 经营行动 → 真实反馈 → 调整改进 → 再次行动</div>
+    </section>
+
+    <section class="board" id="board-19" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新人才培养 / 人才培养</div>
+          <h1>学生具体学习哪些创业过程？</h1>
+          <p class="promise">MFU 把成熟创业教育中的行动路径，变成学生可以在平台内反复练习的经营过程。</p>
+        </div>
+        <div class="stamp">FROM PROBLEM<br>TO BUSINESS<br>从问题到经营</div>
+      </header>
+      <div class="content venture-learning">
+        <div class="venture-stages">
+          <article class="venture-stage">
+            <div class="stage-icon">🔎</div><div class="stage-no">过程 1</div><h2>发现问题 <span class="cite">[1][2][4][5]</span></h2>
+            <p>从真实任务和生活场景中，找到值得解决的问题，而不是先假设一个答案。</p>
+            <div class="mfu-action">MFU：查看任务 · 识别机会</div>
+          </article>
+          <article class="venture-stage">
+            <div class="stage-icon">🗣️</div><div class="stage-no">过程 2</div><h2>理解用户 <span class="cite">[1][2][5]</span></h2>
+            <p>用同理心理解用户过去遇到的困难，澄清目标、约束和真正需要的结果。</p>
+            <div class="mfu-action">MFU：客户沟通 · 澄清需求</div>
+          </article>
+          <article class="venture-stage">
+            <div class="stage-icon">🧪</div><div class="stage-no">过程 3</div><h2>验证方案 <span class="cite">[1][2][3][5]</span></h2>
+            <p>用快速、低成本的实验测试关键假设，根据真实反应判断方案是否有效。</p>
+            <div class="mfu-action">MFU：制作方案 · 低成本实验</div>
+          </article>
+          <article class="venture-stage">
+            <div class="stage-icon">🧑‍🎓🦄</div><div class="stage-no">过程 4</div><h2>组织交付 <span class="cite">[4][5]</span></h2>
+            <p>在跨专业协作中安排学生与 AI 各自承担工作，检查质量，并为最终结果负责。</p>
+            <div class="mfu-action">MFU：任务编排 · 完成交付</div>
+          </article>
+          <article class="venture-stage">
+            <div class="stage-icon">💰</div><div class="stage-no">过程 5</div><h2>持续经营 <span class="cite">[1][3][5]</span></h2>
+            <p>获得客户、收入和反馈，再根据结果调整产品、方法与下一步行动。</p>
+            <div class="mfu-action">MFU：客户验收 · 复盘改进</div>
+          </article>
+        </div>
+        <div class="source-strip" aria-label="创业人才培养参考文献">
+          <div class="source-item"><b>[1] Y Combinator · Startup School</b><a href="https://www.ycombinator.com/blog/startup-school-videos">Talk to Users、MVP、First Customers</a></div>
+          <div class="source-item"><b>[2] Stanford GSB · Startup Garage</b><a href="https://www.gsb.stanford.edu/experience/learning/entrepreneurship/courses/startup-garage">发现需求、设计并测试产品、建立商业模式</a></div>
+          <div class="source-item"><b>[3] Babson · ET&amp;A</b><a href="https://www.babson.edu/about/our-approach/entrepreneurial-thought-and-action/">行动 → 反馈 → 提问 → 调整，再次行动</a></div>
+          <div class="source-item"><b>[4] UC Berkeley · Challenge Labs</b><a href="https://scet.berkeley.edu/challenge-labs/">团队解决企业或社会提出的真实挑战</a></div>
+          <div class="source-item"><b>[5] Rice · Liu Idea Lab</b><a href="https://entrepreneurship.rice.edu/undergraduate-courses">同理心、跨学科协作，并在不确定中快速低成本验证</a></div>
+        </div>
+      </div>
+      <div class="footer-note">参考来源用于提炼培养方法；MFU 将其转化为学生课余可持续进行的 AI 公司经营实践</div>
     </section>
 
     <section class="board" id="board-2" hidden>
@@ -646,6 +786,29 @@
         </div>
       </div>
       <div class="footer-note">正式概念：经验履历 · 成长树 · 声望与信用 · 信誉/专业/角色认证</div>
+    </section>
+
+    <section class="board" id="board-20" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新组织形式 / 总览</div>
+          <h1>独立猎人如何变成一个更强的组织？</h1>
+          <p class="promise">人和 AI 不只是临时拼在一起，而是把协作、责任和经验沉淀为可以反复使用的组织能力。</p>
+        </div>
+        <div class="stamp">HUNTERS<br>BECOME AN ORG<br>猎人成为组织</div>
+      </header>
+      <div class="content chapter-overview">
+        <div class="chapter-flow">
+          <article class="chapter-step"><b>🧑‍🎓🦄</b><h2>人机分工</h2><p>记录人和 AI 各自真正完成了什么。</p></article>
+          <article class="chapter-step"><b>🧭</b><h2>任务编排</h2><p>组织决定每一步由谁执行，并检查结果。</p></article>
+          <article class="chapter-step"><b>📦</b><h2>负责交付</h2><p>把分散成果合成完整结果，对客户负责。</p></article>
+          <article class="chapter-step"><b>🔍</b><h2>复盘改进</h2><p>找到问题，改变下一次的工作方法。</p></article>
+          <article class="chapter-step"><b>🧠</b><h2>企业大脑</h2><p>作品、流程和规则成为公司的长期资产。</p></article>
+          <article class="chapter-step"><b>🏢</b><h2>稳定组织</h2><p>不依赖某次临时合作，也能重复做好交付。</p></article>
+        </div>
+        <div class="chapter-summary">个人和 Agent 提供能力；组织把这些能力编排成可重复、可负责的完整交付。</div>
+      </div>
+      <div class="footer-note">人机分工 → 任务编排 → 负责交付 → 复盘改进 → 企业大脑 → 组织能力</div>
     </section>
 
     <section class="board" id="board-4" hidden>
@@ -790,39 +953,120 @@
       <div class="footer-note">MFU v0.15 · 判断 → 协作 → 交付 → 复盘 → 再次行动</div>
     </section>
 
+    <section class="board" id="board-21" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 总览</div>
+          <h1>一个订单如何让猎人逐渐形成组织？</h1>
+          <p class="promise">先把完整订单拆成步骤，再把步骤交给独立猎人；交付后的上下游关系，成为新组织的种子。</p>
+        </div>
+        <div class="stamp">ORDER<br>HUNTERS · ORGS<br>订单到组织</div>
+      </header>
+      <div class="content">
+        <div class="market-swimlane" aria-label="订单到组织的角色泳道">
+          <div></div>
+          <div class="swim-head">1 订单进入</div><div class="swim-head">2 拆成步骤</div><div class="swim-head">3 平台匹配</div><div class="swim-head">4 猎人完成</div>
+          <div class="swim-head">5 汇总初验</div><div class="swim-head">6 最终评价</div><div class="swim-head">7 联系上下游</div><div class="swim-head">8 形成组织</div>
+          <div class="lane-label">📮 发单方</div>
+          <div class="lane-cell school">课程作业 / 企业订单</div><div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell muted"></div>
+          <div class="lane-cell muted"></div><div class="lane-cell done">验收完整结果</div><div class="lane-cell muted"></div><div class="lane-cell muted"></div>
+          <div class="lane-label">🧩 拆单方</div>
+          <div class="lane-cell muted"></div><div class="lane-cell platform">老师团队 / 孵化器、协会、平台</div><div class="lane-cell muted"></div><div class="lane-cell muted"></div>
+          <div class="lane-cell platform">汇总步骤并初验</div><div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell muted"></div>
+          <div class="lane-label">🦄 平台</div>
+          <div class="lane-cell muted"></div><div class="lane-cell platform">展示步骤拓扑</div><div class="lane-cell platform">黑箱匹配步骤</div><div class="lane-cell platform">记录状态</div>
+          <div class="lane-cell muted"></div><div class="lane-cell platform">保存评价证据</div><div class="lane-cell platform">解锁相邻名片</div><div class="lane-cell platform">建立组织档案</div>
+          <div class="lane-label">🏹 猎人</div>
+          <div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell hunter">收到一个步骤</div><div class="lane-cell hunter">只完成自己的步骤</div>
+          <div class="lane-cell muted"></div><div class="lane-cell done">获得真实反馈</div><div class="lane-cell hunter">人类猎人发邀请</div><div class="lane-cell muted"></div>
+          <div class="lane-label">🏢 组织 / 孵化器</div>
+          <div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell muted"></div>
+          <div class="lane-cell muted"></div><div class="lane-cell muted"></div><div class="lane-cell org">接受合作邀请</div><div class="lane-cell org">组织承接更多订单</div>
+        </div>
+        <div class="scenario-key"><span class="tag school">在校：老师 → 学生 / 学生 Agent → 学生组织</span><span class="tag incu">社会：企业 → 孵化器/协会/平台 → freelancer / Agent → OPC</span></div>
+      </div>
+      <div class="footer-note">订单 → 步骤拓扑 → 猎人 → 评价与连接 → 组织 → 更多订单</div>
+    </section>
+
+    <section class="board" id="board-22" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 订单拆解</div>
+          <h1>一个完整订单如何变成可协作的步骤拓扑？</h1>
+          <p class="promise">拆单方定义每一步的交付物和依赖关系，让不同专业的猎人能够分别完成工作。</p>
+        </div>
+        <div class="stamp">BREAK DOWN<br>THE ORDER<br>拆成步骤</div>
+      </header>
+      <div class="content chapter-overview">
+        <div class="chapter-flow">
+          <article class="chapter-step"><b>📮</b><h2>完整订单</h2><p>发单方提出目标、预算、截止时间和最终验收标准。</p></article>
+          <article class="chapter-step"><b>👩‍🏫👨‍🏫</b><h2>多人共同拆单</h2><p>在校由多专业老师设计；社会由孵化器、协会或平台负责。</p></article>
+          <article class="chapter-step"><b>🧠</b><h2>策略与约束</h2><p>先确定哪些判断必须共享，哪些步骤可以独立完成。</p></article>
+          <article class="chapter-step"><b>🕸️</b><h2>步骤拓扑</h2><p>步骤可以串联、并行和汇合，不只是简单待办清单。</p></article>
+          <article class="chapter-step"><b>📏</b><h2>步骤验收</h2><p>每一步都有输入、输出、截止时间和清晰的完成标准。</p></article>
+          <article class="chapter-step"><b>✅</b><h2>确认发布</h2><p>拆单方确认后，平台才开始把步骤匹配给猎人。</p></article>
+        </div>
+        <div class="chapter-summary">拆单方仍对完整结构负责；猎人只需要为分配给自己的步骤负责。</div>
+      </div>
+      <div class="footer-note">完整订单 → 多专业拆解 → 步骤依赖 → 局部验收标准 → 进入匹配</div>
+    </section>
+
     <section class="board" id="board-9" hidden>
       <header class="mast">
         <div>
-          <div class="eyebrow">MFU · 新市场机制 / 任务匹配</div>
-          <h1>任务如何匹配给合适的组织？</h1>
-          <p class="promise">任务带着能力、信誉和风险要求进入市场，符合条件的组织才能看见、申请或承接。</p>
+          <div class="eyebrow">MFU · 新市场机制 / 猎人匹配</div>
+          <h1>每个步骤如何匹配给合适的猎人？</h1>
+          <p class="promise">平台把步骤交给一名学生、freelancer 或其 Agent；本版只展示结果，不公开匹配算法。</p>
         </div>
-        <div class="stamp">TASK<br>MEETS ORG<br>任务找到组织</div>
+        <div class="stamp">STEP<br>MEETS HUNTER<br>步骤找到猎人</div>
       </header>
       <div class="content action-mechanism">
         <article class="action-focus">
-          <div class="action-icon">📮</div><h2>一个任务进入市场</h2>
-          <p>学校、企业或孵化器说明任务目标、难度、预算和责任要求。</p>
-          <div class="action-flow-label">发布要求 → 匹配组织 → 双方选择</div>
+          <div class="action-icon">🧩</div><h2>一个步骤等待执行</h2>
+          <p>步骤带着输入、输出、依赖关系、截止时间和验收标准进入匹配。</p>
+          <div class="action-flow-label">步骤进入 → 黑箱匹配 → 猎人确认</div>
         </article>
         <div class="action-results">
           <div class="mechanism-legend">
-            <span class="legend-item direct">任务侧：需要什么</span>
-            <span class="legend-item conditional">组织侧：证明过什么</span>
-            <span class="legend-item gated">双方：是否愿意合作</span>
+            <span class="legend-item direct">步骤：需要什么</span>
+            <span class="legend-item conditional">猎人：可以完成什么</span>
+            <span class="legend-item gated">平台：只展示匹配结果</span>
           </div>
           <div class="effect-grid">
-            <article class="effect-card direct"><div class="effect-icon">🌳</div><h3>匹配能力要求</h3><p>任务需要哪些能力、达到什么水平，与组织成长树对应。</p></article>
-            <article class="effect-card direct"><div class="effect-icon">🤝</div><h3>匹配信誉要求</h3><p>信用、履约记录和风险状态决定任务是否愿意开放。</p></article>
-            <article class="effect-card direct"><div class="effect-icon">🏅</div><h3>匹配认证要求</h3><p>高责任任务可以要求专业认证、角色资质或会籍。</p></article>
-            <article class="effect-card conditional"><div class="effect-icon">🧰</div><h3>参考相关经验</h3><p>经验帮助发布者判断熟练程度，但不会代替能力证明。</p></article>
-            <article class="effect-card conditional"><div class="effect-icon">📎</div><h3>查看真实证据</h3><p>发布者可以查看作品、评价和相似任务的交付结果。</p></article>
-            <article class="effect-card gated"><div class="effect-icon">✅</div><h3>双方作出选择</h3><p>平台提供匹配建议；组织是否申请、发布者是否选择仍由双方决定。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🌳</div><h3>步骤要求</h3><p>平台读取步骤所需专业、难度和责任边界。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🏹</div><h3>猎人类型</h3><p>候选执行者可以是人，也可以是归属于人的 Agent。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🕸️</div><h3>拓扑位置</h3><p>匹配结果同时说明它位于整单的哪个位置。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">📎</div><h3>参考历史证据</h3><p>平台可以参考经验与作品，但不展示一套总分公式。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🙈</div><h3>隐藏其他身份</h3><p>执行期间只看步骤和状态，不提前公开其他猎人。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">✅</div><h3>确认承接</h3><p>猎人确认后只对自己的步骤负责，不承担整单汇总。</p></article>
           </div>
-          <div class="not-automatic">不会自动发生：平台用一个 OPC 总分替发布者决定谁能接任务。</div>
+          <div class="not-automatic">暂时保持黑箱：平台不在 v0.15 解释匹配算法，也不展示猎人总分。</div>
         </div>
       </div>
-      <div class="footer-note">任务要求 × 组织档案 × 双方选择 → 合适的合作关系</div>
+      <div class="footer-note">步骤要求 × 猎人证据 × 拓扑位置 → 一个匹配结果</div>
+    </section>
+
+    <section class="board" id="board-23" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 新市场机制 / 步骤交付</div>
+          <h1>猎人如何只完成自己的步骤，又理解整单位置？</h1>
+          <p class="promise">猎人看得见整单结构和进度，但只收到自己的输入、输出和验收要求。</p>
+        </div>
+        <div class="stamp">OWN ONE STEP<br>SEE THE WHOLE<br>完成局部看见整体</div>
+      </header>
+      <div class="content chapter-overview">
+        <div class="chapter-flow">
+          <article class="chapter-step"><b>📥</b><h2>收到上游输入</h2><p>只获得完成本步骤所需的材料和约束。</p></article>
+          <article class="chapter-step"><b>📍</b><h2>看见拓扑位置</h2><p>自己的节点高亮，其他节点只显示步骤和状态。</p></article>
+          <article class="chapter-step"><b>🧑‍💻 / 🤖</b><h2>完成步骤</h2><p>人或 Agent 执行；Agent 的结果归入其所属人的资产。</p></article>
+          <article class="chapter-step"><b>📏</b><h2>局部检查</h2><p>依据本步骤标准自查，不替拆单方完成整单验收。</p></article>
+          <article class="chapter-step"><b>📤</b><h2>提交给下游</h2><p>输出回到步骤拓扑，供下游或汇总环节继续使用。</p></article>
+          <article class="chapter-step"><b>🔓</b><h2>解锁相邻名片</h2><p>完成后才看见直接上下游的公开身份与合作入口。</p></article>
+        </div>
+        <div class="chapter-summary">知道自己在整体中的位置，不等于需要承担整单；局部责任和全局可见可以同时成立。</div>
+      </div>
+      <div class="footer-note">看见拓扑 → 完成一步 → 局部验收 → 回传结果 → 解锁上下游</div>
     </section>
 
     <section class="board" id="board-10" hidden>
@@ -952,32 +1196,32 @@
     <section class="board" id="board-14" hidden>
       <header class="mast">
         <div>
-          <div class="eyebrow">MFU · 新市场机制 / 合作机会</div>
-          <h1>好组织如何获得更大的合作机会？</h1>
-          <p class="promise">认识更多人会带来连接；把不同资源组合成好结果，才证明协作能力。</p>
+          <div class="eyebrow">MFU · 新市场机制 / 组织形成</div>
+          <h1>完成一步之后，猎人如何找到长期伙伴？</h1>
+          <p class="promise">平台只解锁直接上下游；人类猎人主动邀请，对方接受后，临时协作才变成持续组织。</p>
         </div>
-        <div class="stamp">CONNECT<br>COLLABORATE<br>连接与合作</div>
+        <div class="stamp">CONNECT<br>FORM AN ORG<br>连接并组建组织</div>
       </header>
       <div class="content action-mechanism">
         <article class="action-focus">
-          <div class="action-icon">🤝</div><h2>认识伙伴并共同做事</h2>
-          <p>学生可以认识客户、评审、同学和行业伙伴，也可以联合完成一个项目。</p>
-          <div class="action-flow-label">建立连接 → 形成合作 → 一起交付</div>
+          <div class="action-icon">🔓</div><h2>解锁直接上下游</h2>
+          <p>猎人完成步骤后，才能查看相邻猎人的公开名片，并决定是否继续合作。</p>
+          <div class="action-flow-label">完成步骤 → 解锁名片 → 发出邀请 → 建立组织</div>
         </article>
         <div class="action-results">
-          <div class="mechanism-legend"><span class="legend-item direct">实线：连接和合作记录</span><span class="legend-item conditional">虚线：合作结果优秀</span><span class="legend-item gated">双线门：功能条件满足</span></div>
+          <div class="mechanism-legend"><span class="legend-item direct">实线：步骤已完成</span><span class="legend-item conditional">虚线：双方同意合作</span><span class="legend-item gated">双线门：人类发起组织</span></div>
           <div class="effect-grid">
-            <article class="effect-card direct"><div class="effect-icon">🫱</div><h3>人脉经验增加</h3><p>新认识的角色、来源和互动进入个人联系记录。</p></article>
-            <article class="effect-card direct"><div class="effect-icon">📬</div><h3>任务来源增加</h3><p>新的客户和组织可能带来更多任务、评价与学习机会。</p></article>
-            <article class="effect-card direct"><div class="effect-icon">🧩</div><h3>合作过程被记录</h3><p>谁贡献了什么、如何分工、最后怎样交付都可以追溯。</p></article>
-            <article class="effect-card conditional"><div class="effect-icon">🌳</div><h3>协作与资源组合证据</h3><p>能够处理分工、冲突和共同责任，才证明协作能力。</p></article>
-            <article class="effect-card conditional"><div class="effect-icon">⭐</div><h3>声望可能提升</h3><p>合作伙伴的评价和公开成果可以形成市场认可。</p></article>
-            <article class="effect-card gated"><div class="effect-icon">🛠️</div><h3>联合竞标可用</h3><p>公司信誉、专业能力和风险状态达到规则后，功能才开放。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">📍</div><h3>只显示相邻伙伴</h3><p>平台不把整单参与者全部变成通讯录，只开放直接上下游。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🫱</div><h3>人类猎人发出邀请</h3><p>学生或 freelancer 主动选择合作对象，并说明想一起做什么。</p></article>
+            <article class="effect-card direct"><div class="effect-icon">🦄</div><h3>Agent 只能被邀请</h3><p>Agent 可以加入组织，但不能自己联系伙伴或发起组织。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">✅</div><h3>对方接受关系</h3><p>邀请只有被接受后，才进入双方持续保留的合作网络。</p></article>
+            <article class="effect-card conditional"><div class="effect-icon">🏢</div><h3>形成组织档案</h3><p>组织记录成员、Agent、共同作品、责任和可承接的订单类型。</p></article>
+            <article class="effect-card gated"><div class="effect-icon">📦</div><h3>承接完整订单</h3><p>组织可以接更多类似整单，再由内部任务编排完成交付。</p></article>
           </div>
-          <div class="not-automatic">不会自动发生：认识很多人就拥有高信用；参加合作就证明自己会组织复杂协作。</div>
+          <div class="not-automatic">不会自动发生：一次随机组队结束后，所有猎人自动成为同一家公司。</div>
         </div>
       </div>
-      <div class="footer-note">人脉是经验；经过真实合作验证的结果，才可能成为能力证据</div>
+      <div class="footer-note">完成步骤 → 解锁相邻猎人 → 双向邀请 → 形成组织 → 承接完整订单</div>
     </section>
 
     <section class="board" id="board-15" hidden>
@@ -1105,6 +1349,14 @@
     </section>
   </main>
 
+  <div class="shot-lightbox" id="shotLightbox" role="dialog" aria-modal="true" aria-label="Demo 局部截图">
+    <div class="shot-dialog">
+      <button class="shot-close" id="shotClose" aria-label="关闭">×</button>
+      <img id="shotLarge" alt="">
+      <p id="shotCaption"></p>
+    </div>
+  </div>
+
   <script>
     const boards=[...document.querySelectorAll('.board')];
     const buttons=[...document.querySelectorAll('[data-show]')];
@@ -1112,10 +1364,79 @@
     const subnavs=[...document.querySelectorAll('[data-group]')];
     const pageCategory={
       '0':'overview',
-      '1':'organization','8':'organization','12':'organization',
-      '4':'delivery','10':'delivery','11':'delivery','13':'delivery','16':'delivery',
-      '2':'market','7':'market','9':'market','14':'market','15':'market','17':'market','18':'market'
+      '1':'organization','8':'organization','12':'organization','19':'organization',
+      '4':'delivery','10':'delivery','11':'delivery','13':'delivery','16':'delivery','20':'delivery',
+      '2':'market','7':'market','9':'market','14':'market','15':'market','17':'market','18':'market','21':'market','22':'market','23':'market'
     };
+    const cropBase='assets/demo-v0.15-crops/';
+    const actionShots=[
+      ['action-understand-demand.png','理解客户需求 · 发布命题中的问题与目标'],
+      ['action-choose-solution.png','选择解决方案 · 路由一个具体环节'],
+      ['feature-matching.png','判断任务风险 · 查看匹配步骤与完整结构'],
+      ['feature-routing.png','决定资源投入 · 时间、算力和外包费用'],
+      ['action-route-task.png','路由任务 · 为每个环节选择执行者'],
+      ['action-arrange-member.png','安排成员 · 查看成员与其他执行方式'],
+      ['action-arrange-agent.png','安排 Agent · 根据能力和算力作出选择'],
+      ['action-outsource.png','协调外部伙伴 · 发布外包子任务并匹配猎人'],
+      ['action-check-quality.png','检查作品质量 · 交付前查看各环节质量'],
+      ['action-confirm-scope.png','确认交付范围 · 写下完整验收标准'],
+      ['feature-delivery.png','按时提交成果 · 由人确认并承担交付责任'],
+      ['action-accept-review.png','接受客户验收 · 拆单方汇总与初验'],
+      ['action-real-feedback.png','查看真实反馈 · 竞赛或客户评价结果'],
+      ['action-find-reason.png','寻找失败原因 · 查看复盘素材与经营结果'],
+      ['action-change-method.png','修改工作方法 · 把决定写入经营记录'],
+      ['action-verify-again.png','再次验证改进 · 回到成长树和下一轮任务']
+    ];
+    document.querySelectorAll('#board-8 .verb').forEach((verb,index)=>{
+      const shot=actionShots[index];if(!shot)return;
+      const label=verb.textContent.trim();
+      verb.textContent='';
+      const button=document.createElement('button');
+      button.className='action-shot';button.type='button';
+      button.dataset.shot=cropBase+shot[0];button.dataset.caption=shot[1];
+      button.innerHTML=`<img src="${cropBase+shot[0]}" alt="${shot[1]}">`;
+      verb.append(button,document.createTextNode(label));
+    });
+    const featureShots={
+      '2':['feature-organization-profile.png','组织档案 · 公司数据与成长证据'],
+      '4':['feature-hunter-workbench.png','人机贡献 · 工作台记录任务由谁完成'],
+      '7':['feature-incubator.png','孵化器筛选 · 查看证据后由真人决定'],
+      '9':['feature-matching.png','猎人匹配 · 查看步骤位置并确认承接'],
+      '10':['feature-routing.png','任务编排 · 本人、AI、成员或外包猎人'],
+      '11':['feature-delivery.png','负责交付 · 人检查质量并确认提交'],
+      '12':['feature-evaluation.png','人才评价 · 在真实交付中获得反馈'],
+      '13':['action-find-reason.png','复盘改进 · 从经营结果中寻找原因'],
+      '14':['feature-form-organization.png','组织形成 · 邀请真实协作者加入公司'],
+      '15':['feature-certification.png','认证与机会 · 在主理人档案中分别记录'],
+      '16':['feature-company-brain.png','企业大脑 · Agent、流程与经营资产'],
+      '17':['feature-evaluation.png','评价与信任 · 评价进入可追溯记录'],
+      '18':['feature-opportunities.png','订单与资本 · 生态页中的任务和资源入口'],
+      '22':['feature-decompose.png','订单拆解 · 把完整订单设计成步骤拓扑'],
+      '23':['feature-hunter-workbench.png','步骤交付 · 猎人工作台与订单聊天室']
+    };
+    Object.entries(featureShots).forEach(([id,shot])=>{
+      const board=document.querySelector(`#board-${id}`);if(!board)return;
+      board.classList.add('has-evidence');
+      const button=document.createElement('button');
+      button.className='feature-shot';button.type='button';
+      button.dataset.shot=cropBase+shot[0];button.dataset.caption=shot[1];
+      button.innerHTML=`<img src="${cropBase+shot[0]}" alt="${shot[1]}"><span>点击查看 Demo 局部界面</span>`;
+      board.append(button);
+    });
+    const lightbox=document.querySelector('#shotLightbox');
+    function openShot(button){
+      document.querySelector('#shotLarge').src=button.dataset.shot;
+      document.querySelector('#shotLarge').alt=button.dataset.caption;
+      document.querySelector('#shotCaption').textContent=button.dataset.caption;
+      lightbox.classList.add('show');
+    }
+    document.addEventListener('click',event=>{
+      const button=event.target.closest('[data-shot]');if(button)openShot(button);
+    });
+    function closeShot(){lightbox.classList.remove('show')}
+    document.querySelector('#shotClose').addEventListener('click',closeShot);
+    lightbox.addEventListener('click',event=>{if(event.target===lightbox)closeShot()});
+    document.addEventListener('keydown',event=>{if(event.key==='Escape')closeShot()});
     function showCategory(category){
       subnavs.forEach(nav=>{nav.hidden=nav.dataset.group!==category;});
       chapterButtons.forEach(button=>button.setAttribute('aria-pressed',button.dataset.openCategory===category));
@@ -1128,11 +1449,11 @@
     }
     buttons.forEach(button=>button.addEventListener('click',()=>showBoard(button.dataset.show)));
     chapterButtons.forEach(button=>button.addEventListener('click',()=>{
-      const firstPage={organization:'1',delivery:'4',market:'2'}[button.dataset.openCategory];
+      const firstPage={organization:'1',delivery:'20',market:'21'}[button.dataset.openCategory];
       showBoard(firstPage);
     }));
     const initial=new URL(location.href).searchParams.get('board')||'0';
-    showBoard(['0','1','2','4','7','8','9','10','11','12','13','14','15','16','17','18'].includes(initial)?initial:'0');
+    showBoard(['0','1','2','4','7','8','9','10','11','12','13','14','15','16','17','18','19','20','21','22','23'].includes(initial)?initial:'0');
   </script>
 </body>
 </html>
