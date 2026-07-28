@@ -85,8 +85,10 @@ defmodule Ezagent.PluginCurlAgent.Template do
   #   3. on ANY post-mint failure, CONFIRM-compensate exactly the minted
   #      incarnation (a compensation failure surfaces COMPOSITE, never
   #      swallowed);
-  #   4. on success return `{:ok, incarnation_id | nil}` — the instantiate
-  #      arm threads the receipt into its meta for the chokepoint's rollback.
+  #   4. on success return `{:ok, minted_incarnation | nil}` — the MINTED
+  #      incarnation THIS spawn produced (nil when it minted nothing), NOT the
+  #      fetched active-row incarnation (codex r3 MEDIUM-5). The instantiate arm
+  #      threads it into its meta for the chokepoint's rollback.
   #
   # #201-cred (codex r2 NEW-HIGH-3) — `witness` is the created-winner proof
   # (`Ezagent.Kind.CreatedWitness`) the `instantiate/3` arm captured from its
@@ -100,6 +102,18 @@ defmodule Ezagent.PluginCurlAgent.Template do
 
       {:ok, selected_source} ->
         with {:ok, minted} <- mint_pending_grant(agent_uri, tmpl, witness) do
+          # #201-cred (codex r3 MEDIUM-5) — the receipt this arm PUBLISHES (→ the
+          # instantiate meta's `:grant_incarnation_id` → the chokepoint's
+          # `Rollback.fresh_spawn` compensation) MUST be the incarnation THIS spawn
+          # MINTED — `nil` when it minted nothing (a no-pending materialization over
+          # a PRE-EXISTING grant). It must NEVER be the FETCHED active-row
+          # incarnation `do_materialize_credential_slice/3` returns (that value is
+          # used INTERNALLY only, for the pre-write revalidation): a fetched
+          # pre-existing (e.g. backfilled `legacy:<id>`) incarnation is not a mint
+          # receipt of this spawn, and publishing it would schedule a rollback that
+          # deletes a grant this spawn merely read.
+          minted_incarnation = Ezagent.Credential.GrantMint.grant_incarnation(minted)
+
           # #201-cred (codex r2 NEW-HIGH-1) — `do_materialize_credential_slice/3`
           # returns `{:error, _}` on a clean failure, but a RAISE/THROW in the
           # post-mint region (grant fetch, source-slice read, the slice-write
@@ -108,8 +122,8 @@ defmodule Ezagent.PluginCurlAgent.Template do
           # then re-raise the original so the spawn still aborts.
           try do
             case do_materialize_credential_slice(agent_uri, tmpl, selected_source) do
-              {:ok, incarnation_id} ->
-                {:ok, incarnation_id}
+              {:ok, _fetched_incarnation} ->
+                {:ok, minted_incarnation}
 
               {:error, reason} ->
                 compensate_minted(agent_uri, minted, reason)
