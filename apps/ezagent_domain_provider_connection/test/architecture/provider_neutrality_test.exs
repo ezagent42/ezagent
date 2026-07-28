@@ -41,7 +41,7 @@ defmodule Ezagent.ProviderConnection.ProviderNeutralityTest do
     assert violations == []
   end
 
-  test "common app depends inward only on core and identity" do
+  test "common app depends inward only on the actor/core foundation and identity" do
     dependencies = EzagentDomainProviderConnection.MixProject.project()[:deps]
 
     umbrella =
@@ -49,7 +49,11 @@ defmodule Ezagent.ProviderConnection.ProviderNeutralityTest do
           is_list(options) and options[:in_umbrella],
           do: name
 
-    assert umbrella == [:ezagent_core, :ezagent_domain_identity]
+    # `:ezagent_actor` is the framework foundation (Signal/Invocation transport +
+    # framework tables), NOT an outward provider dependency — the same inward
+    # foundation dep the dependency_boundary gate approved in #1595. Neutrality is
+    # preserved: the forbidden set stays git/workspace/plugin_* (asserted above).
+    assert umbrella == [:ezagent_actor, :ezagent_core, :ezagent_domain_identity]
   end
 
   test "detector catches brands, protocol paths, and provider dependencies" do

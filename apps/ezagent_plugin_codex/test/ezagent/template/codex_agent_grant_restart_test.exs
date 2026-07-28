@@ -159,25 +159,32 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
     end
 
     test "create_agent_config_dir returns the materialize-time grant version", ctx do
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, minted_incarnation_id}} =
                CodexAgent.create_agent_config_dir(ctx.agent_uri, ctx.tmpl)
 
       assert agent_uri_str == URI.to_string(ctx.agent_uri)
       assert version == 1
+      assert is_binary(incarnation_id)
+      # #201-cred (codex r3 MEDIUM-5) — this cascade carries NO :pending_grant; it
+      # materializes over the PRE-EXISTING grant (setup-inserted). This spawn
+      # therefore minted NOTHING, so the compensation receipt is nil even though
+      # the revalidation identity is the fetched incarnation. A later launch
+      # failure must NOT delete this pre-existing grant.
+      assert minted_incarnation_id == nil
       assert File.exists?(Path.join(ctx.target, ".ezagent-config-complete"))
       # §D6: secret pulled from the source
       assert File.read!(Path.join(ctx.target, "auth.json")) == "BOB-TOKEN"
     end
 
     test "the pre-launch gate aborts when the grant is revoked after materialize", ctx do
-      assert {:ok, _target, {:grant, agent_uri_str, version}} =
+      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, _minted}} =
                CodexAgent.create_agent_config_dir(ctx.agent_uri, ctx.tmpl)
 
       {:ok, _} = GrantRow.revoke(agent_uri_str)
 
       # the exact GrantRow call spawn_for_codex's pre-launch gate makes with the captured
       # version → aborts the sidecar/PTY launch (nothing launches with the revoked secret).
-      assert {:error, :grant_changed} = GrantRow.revalidate_version!(agent_uri_str, version)
+      assert {:error, :grant_changed} = GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
 
       # the abort path clears the just-materialized config_dir (rollback_agent_config_dir
       # removes agent_config_dir/1) — prove that targets the materialized dir.

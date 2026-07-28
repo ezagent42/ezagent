@@ -32,19 +32,24 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
         |> Map.put("agent_config_dir", config_dir)
         |> Map.put("flavor", "preinit-sandbox")
 
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
              uri: agent_uri,
              config_dir_path: config_dir,
              template_class: __MODULE__,
              respawn_template_data: respawn_data
            }) do
-        {:ok, _pid} ->
+        {:ok, :started, _pid, %{created?: created?}} ->
           :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
 
           {:ok, [agent_uri],
-           %{fresh?: true, config_dir_path: config_dir, respawn_template_data: respawn_data}}
+           %{
+             fresh?: true,
+             created?: created?,
+             config_dir_path: config_dir,
+             respawn_template_data: respawn_data
+           }}
 
-        {:error, {:already_started, _pid}} ->
+        {:ok, :already_started, _pid, _receipt} ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         {:error, {:already_registered, _}} ->
@@ -85,14 +90,22 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       # No `config_dir_path`/`respawn_template_data` in spawn args → the
       # `:sandbox` slice stays empty → the post-spawn write goes through the
       # fallback dispatch (mirrors the py/np role-agent path).
-      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri, template_class: __MODULE__}) do
-        {:ok, _pid} ->
+      case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{
+             uri: agent_uri,
+             template_class: __MODULE__
+           }) do
+        {:ok, :started, _pid, %{created?: created?}} ->
           :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
 
           {:ok, [agent_uri],
-           %{fresh?: true, config_dir_path: config_dir, respawn_template_data: respawn_data}}
+           %{
+             fresh?: true,
+             created?: created?,
+             config_dir_path: config_dir,
+             respawn_template_data: respawn_data
+           }}
 
-        {:error, {:already_started, _pid}} ->
+        {:ok, :already_started, _pid, _receipt} ->
           {:ok, [agent_uri], %{fresh?: false}}
 
         {:error, {:already_registered, _}} ->
@@ -656,7 +669,9 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
                version: 1
              })
 
-    assert {:ok, original_sandbox_slice} = Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
+    assert {:ok, original_sandbox_slice} =
+             Ezagent.Kind.read(instance_uri, :sandbox, spawn: :never)
+
     original_sandbox = Ezagent.Kind.normalize_slice_view(original_sandbox_slice)
 
     on_exit(fn ->
@@ -901,11 +916,16 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       :ok = Ezagent.AgentFlavorAttributes.put(fixture.instance_uri, "preexisting-flavor")
 
       assert {:error, :agent_uri_already_live} = spawn_with_reference(fixture)
-      assert_receive {:flavor_during_instantiate, {:ok, "preexisting-flavor"}}
+      # #201 PR-2 — the instantiate-time flavor read is the attempt's OWN
+      # data flavor (authored by to_template_data), never the global ETS row…
+      assert_receive {:flavor_during_instantiate, {:ok, flavor}}
+      assert flavor == fixture.content.flavor
       assert_receive {:instantiate_called, data}
       assert data["cwd"] == "/safe/task"
       refute Map.has_key?(fixture.content, :pre_start_ref)
       refute Map.has_key?(data, "pre_start_ref")
+      # …while the PRE-EXISTING global row is left exactly as it was: a
+      # losing/adopt attempt performs ZERO creation-state mutations.
       assert {:ok, "preexisting-flavor"} = Ezagent.AgentFlavorAttributes.get(fixture.instance_uri)
 
       assert_receive {:pre_start_complete, "claim-one", {:error, :agent_uri_already_live}}

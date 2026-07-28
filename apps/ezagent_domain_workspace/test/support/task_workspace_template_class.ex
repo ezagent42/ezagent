@@ -40,8 +40,8 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
         {:ok, [agent_uri], %{fresh?: false}}
 
       :error ->
-        case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
-          {:ok, _pid} ->
+        case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, %{uri: agent_uri}, opts) do
+          {:ok, :started, _pid, %{created?: created?}} ->
             if Application.get_env(:ezagent_domain_workspace, :atomic_sidecar_failure, false) do
               send(Application.fetch_env!(:ezagent_domain_workspace, :sidecar_gate_test_owner), {
                 :sidecar_failed_after_receipt,
@@ -50,10 +50,10 @@ defmodule EzagentDomainWorkspace.TestSupport.TaskWorkspaceTemplateClass do
 
               {:error, :injected_sidecar_failure}
             else
-              {:ok, [agent_uri], %{fresh?: true}}
+              {:ok, [agent_uri], %{fresh?: true, created?: created?}}
             end
 
-          {:error, {:already_started, _pid}} ->
+          {:ok, :already_started, _pid, _receipt} ->
             {:ok, [agent_uri], %{fresh?: false}}
 
           {:error, {:already_registered, _pid}} ->

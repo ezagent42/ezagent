@@ -22,6 +22,20 @@ defmodule Ezagent.Agent.TestTemplateSpawn do
         send(owner, {:template_spawn_after_display_profile, completion, result})
         {:error, :injected_post_profile_failure}
 
+      {:after_display_profile, {:fail_after_display_profile_gated, owner}} ->
+        # #201-cred (codex r2 HIGH-3) — pause INSIDE the post-spawn
+        # obligations (display profile inserted, failure not yet returned, so
+        # rollback has NOT run) until the test releases the gate. The test
+        # uses the pause to land a concurrent grant reapproval before the
+        # rollback's credential-cleanup step.
+        send(owner, {:template_spawn_after_display_profile_gated, completion, result, self()})
+
+        receive do
+          :release_display_profile_gate -> :ok
+        end
+
+        {:error, :injected_post_profile_failure}
+
       _ ->
         :ok
     end

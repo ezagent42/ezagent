@@ -447,14 +447,16 @@ defmodule Ezagent.Agent.MaterializerTest do
           staging: ctx.staging,
           secret_relpaths: [".credentials.json"],
           source_dir_for: fn _uri -> {:ok, ctx.source_dir} end,
-          commit: fn version ->
+          commit: fn {version, incarnation_id} ->
             :counters.add(committed, 1, 1)
-            {:ok, {:launched, version}}
+            {:ok, {:launched, version, incarnation_id}}
           end
         })
 
-      # commit receives the validated grant version (threaded to the later launch re-check)
-      assert {:ok, {:launched, 1}} = result
+      # commit receives the validated grant identity (version + incarnation,
+      # threaded to the later launch re-check)
+      assert {:ok, {:launched, 1, incarnation}} = result
+      assert is_binary(incarnation)
       assert :counters.get(committed, 1) == 1
       assert {:ok, "TOKEN"} = File.read(Path.join(ctx.staging, ".credentials.json"))
     end

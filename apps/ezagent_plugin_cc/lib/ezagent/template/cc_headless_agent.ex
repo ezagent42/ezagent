@@ -123,16 +123,17 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
       when is_atom(flavor_class) and is_binary(uri_str) and is_map(tmpl) do
     agent_uri = Ezagent.URI.new!(uri_str)
 
-    with :ok <- Ezagent.AgentFlavorAttributes.put_from_template_class(agent_uri, flavor_class) do
-      cond do
-        opts == [] and agent_kind_alive?(agent_uri) ->
-          {:ok, [agent_uri], %{fresh?: false}}
+    # #201 PR-2 — the speculative pre-spawn `AgentFlavorAttributes` write was
+    # DELETED: the only flavor write is the spawn winner's post-ownership store
+    # in `TemplateSpawn.complete_spawn_obligations` (from the content flavor).
+    cond do
+      opts == [] and agent_kind_alive?(agent_uri) ->
+        {:ok, [agent_uri], %{fresh?: false}}
 
-        true ->
-          with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
-            spawn_for_headless(agent_uri, tmpl, workspace_uri, opts)
-          end
-      end
+      true ->
+        with {:ok, tmpl} <- ensure_config_home(agent_uri, tmpl) do
+          spawn_for_headless(agent_uri, tmpl, workspace_uri, opts)
+        end
     end
   end
 
@@ -181,39 +182,70 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
           _ = ensure_subprocess_alive(agent_uri, tmpl)
           {:ok, [agent_uri], %{fresh?: false}}
 
-        :started ->
-          case create_agent_config_dir_with_grant(agent_uri, tmpl) do
+        {:started, false, _witness} ->
+          # #201 PR-3 — REHYDRATING winner (`:started ∧ ¬created?`): a cold,
+          # durably pre-existing agent. ZERO credential writes: NO grant-scoped
+          # materialization; the Kind's own `Sandbox.post_init` self-heals the
+          # subprocess from the DURABLE respawn state. No `:config_dir_path` in
+          # meta → `record_sandbox_state` preserves the existing slice.
+          {:ok, [agent_uri], %{fresh?: true, created?: false}}
+
+        {:started, true, created_witness} ->
+          # #201-cred (codex r2 NEW-HIGH-3) — thread the created-winner witness
+          # into the cascade map (inside the helper, AFTER the sandbox-content
+          # attach) so the deferred mint proves it is on this arm.
+          case create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
             {:ok, config_dir, grant_ctx} ->
               tmpl_with_dir =
                 tmpl
                 |> put_agent_config_dir(config_dir)
                 |> Map.put("claude_session_id", claude_session_id)
 
-              case revalidate_grant_before_launch(grant_ctx) do
-                :ok ->
-                  case ensure_sdk_sidecar(agent_uri, tmpl_with_dir) do
+              # #201-cred (codex r3 NEW-HIGH-1) — the SDK-sidecar launch runs
+              # OUTSIDE the mint's rescue; a RAISE here would bypass grant
+              # compensation. Re-establish the boundary so a launch raise tears
+              # down + CONFIRM-compensates the minted grant before re-raising.
+              Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+                agent_uri,
+                grant_ctx,
+                __MODULE__,
+                "cc-headless",
+                fn ->
+                  case revalidate_grant_before_launch(grant_ctx) do
                     :ok ->
-                      Logger.info(
-                        "cc-headless: agent #{URI.to_string(agent_uri)} " <>
-                          "spawned with SDK sidecar"
-                      )
+                      case ensure_sdk_sidecar(agent_uri, tmpl_with_dir) do
+                        :ok ->
+                          Logger.info(
+                            "cc-headless: agent #{URI.to_string(agent_uri)} " <>
+                              "spawned with SDK sidecar"
+                          )
 
-                      {:ok, [agent_uri],
-                       %{
-                         fresh?: true,
-                         config_dir_path: config_dir,
-                         respawn_template_data: tmpl_with_dir
-                       }}
+                          {:ok, [agent_uri],
+                           %{
+                             fresh?: true,
+                             # #201 PR-1 — core-issued logical-create verdict from
+                             # the spawn receipt, passed through for the chokepoint's
+                             # create-only write gates.
+                             created?: true,
+                             # #201-cred — the deferred-mint receipt for the
+                             # chokepoint's rollback (nil = no grant minted).
+                             grant_incarnation_id:
+                               Ezagent.Credential.HomeRuntime.grant_ctx_incarnation(grant_ctx),
+                             config_dir_path: config_dir,
+                             respawn_template_data: tmpl_with_dir
+                           }}
+
+                        {:error, reason} ->
+                          rollback_runtime(agent_uri)
+                          compensate_and_report(agent_uri, grant_ctx, reason)
+                      end
 
                     {:error, reason} ->
                       rollback_runtime(agent_uri)
-                      handle_spawn_failure(agent_uri, reason)
+                      compensate_and_report(agent_uri, grant_ctx, reason)
                   end
-
-                {:error, reason} ->
-                  rollback_runtime(agent_uri)
-                  handle_spawn_failure(agent_uri, reason)
-              end
+                end
+              )
 
             {:error, reason} ->
               rollback_runtime(agent_uri)
@@ -226,9 +258,13 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   defp put_agent_config_dir(tmpl, dir),
     do: Ezagent.Credential.HomeRuntime.put_agent_config_dir(tmpl, dir)
 
-  defp create_agent_config_dir_with_grant(agent_uri, tmpl) do
+  defp create_agent_config_dir_with_grant(agent_uri, tmpl, created_witness) do
     with {:ok, tmpl} <-
            Ezagent.PluginCc.Template.CcAgent.attach_role_sandbox_content(tmpl, agent_uri) do
+      # #201-cred (codex r2 NEW-HIGH-3) — inject the created-winner witness into
+      # the cascade map AFTER the attach so the deferred mint can prove this arm.
+      tmpl = Ezagent.Credential.HomeRuntime.put_cascade_created_witness(tmpl, created_witness)
+
       Ezagent.Credential.HomeRuntime.create_agent_config_dir_with_grant(
         agent_uri,
         tmpl,
@@ -264,10 +300,19 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     }
 
     # derivation-edge: template-post-obligation TemplateSpawn records fresh workers
-    case Ezagent.Kind.spawn(Ezagent.Entity.Agent, init_args, opts) do
-      {:ok, _pid} -> {:ok, :started}
-      {:error, {:already_started, _pid}} -> {:ok, :already_started}
-      {:error, reason} -> {:error, {:agent_spawn_failed, reason}}
+    # #201 PR-1 — the spawn receipt surfaces BOTH the atomic winner verdict
+    # (`:started` / `:already_started`) and the core logical-create verdict
+    # (`created?`), which the TemplateSpawn chokepoint gates create-only
+    # writes on.
+    case Ezagent.Kind.spawn_receipt(Ezagent.Entity.Agent, init_args, opts) do
+      {:ok, :started, _pid, %{created?: created?} = receipt} ->
+        {:ok, {:started, created?, Map.get(receipt, :created_witness)}}
+
+      {:ok, :already_started, _pid, _receipt} ->
+        {:ok, :already_started}
+
+      {:error, reason} ->
+        {:error, {:agent_spawn_failed, reason}}
     end
   end
 
@@ -276,6 +321,19 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   end
 
   # ---- Failure handling ---------------------------------------------------
+
+  # #201-cred (codex r2 HIGH-2) — post-mint spawn failure: CONFIRM-compensate
+  # exactly the minted grant incarnation, then the config-dir teardown (the
+  # shared HomeRuntime path).
+  defp compensate_and_report(agent_uri, grant_ctx, reason) do
+    Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+      agent_uri,
+      grant_ctx,
+      reason,
+      __MODULE__,
+      "cc-headless.agent"
+    )
+  end
 
   defp handle_spawn_failure(agent_uri, reason) do
     Ezagent.PluginCc.Template.CcAgent.handle_spawn_failure(agent_uri, reason)

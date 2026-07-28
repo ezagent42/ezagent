@@ -293,6 +293,7 @@ defmodule Ezagent.Entity.AgentTemplate do
     # owned by their plugins. (Pre-fix this dropped curl/codex fields, so
     # orchestrator-spawned curl/codex workers had nil provider/model.)
     with {:ok, tc} <- resolve_template_class(content),
+         {:ok, flavor} <- fetch_flavor(content),
          {:ok, cwd} <- fetch_project_cwd(content),
          {:ok, config_dir} <- fetch_config_dir(content),
          {:ok, cascade} <- fetch_cascade(content),
@@ -305,7 +306,12 @@ defmodule Ezagent.Entity.AgentTemplate do
         %{
           "class" => tc.template_name(),
           "agent_uri" => Ezagent.URI.stable_key(instance_agent_uri),
-          "cwd" => cwd
+          "cwd" => cwd,
+          # #201 PR-2 — the AUTHORITATIVE instantiate-time flavor. The global
+          # `AgentFlavorAttributes` ETS row is no longer written before the
+          # spawn winner is known, so an `instantiate/3` that needs its flavor
+          # reads it HERE (in-process data), never from the global table.
+          "flavor" => flavor
         }
         |> put_config_dir(config_dir)
         # #17 cascade PR-3 — activate the PR-2 materializer by threading the
@@ -345,8 +351,10 @@ defmodule Ezagent.Entity.AgentTemplate do
 
   # Reserved universal keys core owns — a flavor's template_data_extra/1
   # must never override these. `config_dir` is universal (Allen
-  # 2026-06-03), so a flavor extra can't shadow it either.
-  @reserved_template_data_keys ~w(class agent_uri cwd config_dir cascade cascade_resolution)
+  # 2026-06-03), so a flavor extra can't shadow it either. `flavor` is the
+  # #201 PR-2 authoritative instantiate-time flavor, so an extra can't
+  # shadow THAT either.
+  @reserved_template_data_keys ~w(class agent_uri cwd config_dir cascade cascade_resolution flavor)
 
   # config_dir promotion (Allen 2026-06-03): validate the universal config
   # home dir.
@@ -535,6 +543,15 @@ defmodule Ezagent.Entity.AgentTemplate do
 
       _ ->
         {:error, :missing_flavor}
+    end
+  end
+
+  # #201 PR-2 — extract the raw content flavor for the authoritative
+  # `"flavor"` data key (same shape rules as `resolve_template_class/1`).
+  defp fetch_flavor(content) when is_map(content) do
+    case content_get(content, :flavor) do
+      flavor when is_binary(flavor) and flavor != "" -> {:ok, flavor}
+      _ -> {:error, :missing_flavor}
     end
   end
 

@@ -289,6 +289,117 @@ defmodule Ezagent.Kind do
     end
   end
 
+  @doc """
+  #201 PR-1 — like `spawn/3`, but surfaces BOTH ownership signals as a
+  core-issued creation receipt:
+
+      {:ok, :started, pid, %{created?: created?}}
+      {:ok, :already_started, pid, %{created?: false}}
+      {:error, term()}
+
+  `:started` / `:already_started` is the atomic `DynamicSupervisor`
+  winner verdict (exactly one concurrent caller wins `:started`).
+  `created?` is the Lifecycle-owned logical-create verdict
+  (`Ezagent.Lifecycle.fresh_create?/1`, durable `ever_created` marker),
+  recorded by the fresh Kind's own `init/1` (before the marker write) and
+  read back SYNCHRONOUSLY by the sole `:started` winner from this calling
+  process — no message round-trip to the fresh Kind, no two-both-read
+  race. The two signals are deliberately distinct: a cold rehydrate of a
+  durably pre-existing Kind wins `:started` with `created?: false` (a
+  duplicate-create attempt against it must NOT re-run create-only side
+  effects like credential-grant minting).
+
+  `created?` is meaningful only on `:started`; on `:already_started`
+  this call did not create anything and `created?` is pinned `false`.
+
+  The receipt is a plain synchronous return value — nothing is threaded
+  through invocation/signal. Callers that only need the pid keep using
+  `spawn/3`.
+  """
+  @spec spawn_receipt(module(), map(), keyword()) ::
+          {:ok, :started | :already_started, pid(),
+           %{
+             required(:created?) => boolean(),
+             optional(:created_witness) => Ezagent.Kind.CreatedWitness.t()
+           }}
+          | {:error, term()}
+  def spawn_receipt(kind_module, params, opts \\ [])
+      when is_atom(kind_module) and is_map(params) and is_list(opts) do
+    case spawn(kind_module, params, opts) do
+      {:ok, pid} ->
+        # #201-cred (codex r2 MEDIUM-6) — the verdict is read bound to the
+        # EXACT incarnation this call started (`pid`), so a supervisor
+        # restart of a died-before-read winner can never overwrite the
+        # winning incarnation's verdict with its own `:existed`.
+        #
+        # #201-cred (codex r2 NEW-HIGH-3) — a genuine logical create ALSO mints
+        # the structural created-winner witness here, the ONLY place that holds
+        # proof of `:started ∧ created?`. The plugin created-winner arm threads
+        # it into `GrantMint.mint/3`, which refuses to mint a durable grant
+        # without it — so grant-minting is structurally confined to this arm.
+        {:ok, :started, pid, started_receipt(params, params_create_freshness(params, pid))}
+
+      {:error, {:already_started, pid}} ->
+        {:ok, :already_started, pid, %{created?: false}}
+
+      {:error, {:already_registered, _}} = err ->
+        # Registry-dedup inside the loser's init (`ReadyTransition` /
+        # `KindRegistry` collision): a live Kind already holds this URI, so
+        # THIS call did not win the start. Resolve the live pid to report
+        # the adoption; if the holder died in the race window, return the
+        # original error (the caller retries).
+        case existing_pid(params) do
+          {:ok, pid} -> {:ok, :already_started, pid, %{created?: false}}
+          :error -> err
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp existing_pid(%{uri: %URI{} = uri}), do: Ezagent.KindRegistry.lookup(uri)
+  defp existing_pid(_params), do: :error
+
+  defp params_create_freshness(%{uri: %URI{} = uri}, pid), do: create_freshness(uri, pid)
+  defp params_create_freshness(_params, _pid), do: :unknown
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the `:started` receipt map. A genuine
+  # logical create (`:created`) carries the structural created-winner witness
+  # bound to the started agent URI; a rehydrating winner (`:existed`) or an
+  # un-URI'd custom spawn carries no witness and cannot mint a grant.
+  defp started_receipt(%{uri: %URI{} = uri}, :created),
+    do: %{created?: true, created_witness: Ezagent.Kind.CreatedWitness.new(uri)}
+
+  defp started_receipt(_params, freshness), do: %{created?: freshness == :created}
+
+  @doc """
+  #201 PR-1 — read the create-vs-activate verdict recorded by the EXACT
+  process incarnation `pid` of the Kind at `uri` (`:created` = that
+  incarnation's init saw no durable `ever_created` marker — a genuine
+  logical create; `:existed` = rehydrate/activate of a durably pre-existing
+  Kind; `:unknown` = never spawned this BEAM, already terminated, or the
+  verdict could not be read).
+
+  This is an ETS read in the CALLING process, not a message to the Kind —
+  see `Ezagent.Kind.CreateFreshness` for the happens-before argument. It is
+  meaningful ONLY for the sole `:started` winner reading back the verdict of
+  the incarnation IT just started (`pid` from its own winning
+  `DynamicSupervisor.start_child`); #201-cred (codex r2 MEDIUM-6) binds the
+  verdict to that pid so a supervisor-restarted incarnation cannot overwrite
+  the winning incarnation's verdict.
+
+  Fail-CONSERVATIVE: an unknown/unreadable verdict is `:unknown` (never
+  `:created`), so a caller gating create-only side effects on
+  `create_freshness(uri, pid) == :created` cannot be tricked into running
+  them.
+  """
+  @spec create_freshness(URI.t() | String.t(), pid()) :: :created | :existed | :unknown
+  def create_freshness(%URI{} = uri, pid), do: Ezagent.Kind.CreateFreshness.lookup(URI.to_string(uri), pid)
+
+  def create_freshness(uri_str, pid) when is_binary(uri_str) and is_pid(pid),
+    do: Ezagent.Kind.CreateFreshness.lookup(uri_str, pid)
+
   defp start_child(kind_module, params, {:standard, supervisor}) do
     DynamicSupervisor.start_child(supervisor, {Ezagent.Kind.Server, {kind_module, params}})
   end

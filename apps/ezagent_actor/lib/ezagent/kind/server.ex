@@ -108,6 +108,11 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
     create_freshness = create_freshness(kind_module, uri)
+    # #201 PR-1 — publish the verdict BEFORE any later init step can fail and
+    # BEFORE the initial persist writes the `ever_created` marker, so the
+    # atomic spawn winner reads THIS incarnation's verdict back from the
+    # spawning process (no GenServer.call queued behind post_init/activate).
+    :ok = Ezagent.Kind.CreateFreshness.record(uri_str, create_freshness)
     args = Map.put(args, :create_freshness, create_freshness)
 
     # main's before-start hook: `LaunchContextInit.prepare` may transform
@@ -1160,6 +1165,11 @@ defmodule Ezagent.Kind.Server do
 
   @impl true
   def terminate(reason, %{kind: kind_module, uri: uri, state: slice_state} = _state) do
+    # #201-cred (codex r2 MEDIUM-6) — free THIS incarnation's pid-bound
+    # freshness verdict row. Best-effort: a leaked row is never consulted
+    # (its pid never recurs).
+    :ok = Ezagent.Kind.CreateFreshness.delete(URI.to_string(uri), self())
+
     # Phase 4-completion: :on_terminate strategy writes on graceful
     # shutdown. Use try/rescue so a failing save never prevents the
     # Kind from going down.

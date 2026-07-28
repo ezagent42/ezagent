@@ -12,9 +12,16 @@ defmodule Ezagent.Credential.ResolverDbTest do
   @moduletag :umbrella_only
 
   alias Ezagent.Credential.{Adopt, GrantCap, GrantRow, Resolver}
+  alias Ezagent.Kind.CreatedWitness
   alias Ezagent.Users
 
   @ws "team-a"
+
+  # #201-cred (codex r2 NEW-HIGH-3) — the created-winner witness a genuine spawn
+  # would mint. `authorize_and_mint_grant!/2` now requires one; the authz-failure
+  # tests below fail at `authorize_grant/1` BEFORE the mint, so their witness is
+  # inert (present only to satisfy the arity).
+  defp witness(%URI{} = agent_uri), do: CreatedWitness.new(agent_uri)
 
   defp seed_agent(uri_str, owner, flavor) do
     {:ok, _} = Ezagent.SnapshotStore.write(uri_str, %{}, kind_type: :agent)
@@ -179,14 +186,17 @@ defmodule Ezagent.Credential.ResolverDbTest do
     on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
 
     assert {:ok, grant} =
-             Resolver.authorize_and_mint_grant!(%{
-               agent_uri: agent,
-               source: source,
-               approved_by: ctx.owner_uri,
-               caller: ctx.owner_uri,
-               authenticated_principal: ctx.owner_uri,
-               caps: [good_cap]
-             })
+             Resolver.authorize_and_mint_grant!(
+               %{
+                 agent_uri: agent,
+                 source: source,
+                 approved_by: ctx.owner_uri,
+                 caller: ctx.owner_uri,
+                 authenticated_principal: ctx.owner_uri,
+                 caps: [good_cap]
+               },
+               witness(agent)
+             )
 
     assert grant.credential_source_uri == ctx.base
     # approved_scope == source so PR-0 fetch_for_materialize scope-identity check holds
@@ -203,14 +213,17 @@ defmodule Ezagent.Credential.ResolverDbTest do
     wrong_cap = GrantCap.read_cap_for(Ezagent.URI.new!("entity://#{@ws}/agent/other"))
 
     assert {:error, {:source_unauthorized, ^source}} =
-             Resolver.authorize_and_mint_grant!(%{
-               agent_uri: agent,
-               source: source,
-               approved_by: ctx.owner_uri,
-               caller: ctx.owner_uri,
-               authenticated_principal: ctx.owner_uri,
-               caps: [wrong_cap]
-             })
+             Resolver.authorize_and_mint_grant!(
+               %{
+                 agent_uri: agent,
+                 source: source,
+                 approved_by: ctx.owner_uri,
+                 caller: ctx.owner_uri,
+                 authenticated_principal: ctx.owner_uri,
+                 caps: [wrong_cap]
+               },
+               witness(agent)
+             )
 
     refute GrantRow.active?(ctx.new_agent)
   end
@@ -227,14 +240,17 @@ defmodule Ezagent.Credential.ResolverDbTest do
     good_cap = GrantCap.read_cap_for(source)
 
     assert {:error, :system_principal_forbidden} =
-             Resolver.authorize_and_mint_grant!(%{
-               agent_uri: agent,
-               source: source,
-               approved_by: system_caller,
-               caller: system_caller,
-               authenticated_principal: system_caller,
-               caps: [good_cap]
-             })
+             Resolver.authorize_and_mint_grant!(
+               %{
+                 agent_uri: agent,
+                 source: source,
+                 approved_by: system_caller,
+                 caller: system_caller,
+                 authenticated_principal: system_caller,
+                 caps: [good_cap]
+               },
+               witness(agent)
+             )
 
     refute GrantRow.active?(ctx.new_agent)
   end
@@ -246,14 +262,17 @@ defmodule Ezagent.Credential.ResolverDbTest do
     good_cap = GrantCap.read_cap_for(source)
 
     assert {:error, :approver_must_be_caller} =
-             Resolver.authorize_and_mint_grant!(%{
-               agent_uri: agent,
-               source: source,
-               approved_by: Ezagent.URI.new!("entity://#{@ws}/user/someone-else"),
-               caller: ctx.owner_uri,
-               authenticated_principal: ctx.owner_uri,
-               caps: [good_cap]
-             })
+             Resolver.authorize_and_mint_grant!(
+               %{
+                 agent_uri: agent,
+                 source: source,
+                 approved_by: Ezagent.URI.new!("entity://#{@ws}/user/someone-else"),
+                 caller: ctx.owner_uri,
+                 authenticated_principal: ctx.owner_uri,
+                 caps: [good_cap]
+               },
+               witness(agent)
+             )
 
     refute GrantRow.active?(ctx.new_agent)
   end
@@ -265,14 +284,17 @@ defmodule Ezagent.Credential.ResolverDbTest do
     good_cap = GrantCap.read_cap_for(source)
 
     assert {:error, :agent_source_workspace_mismatch} =
-             Resolver.authorize_and_mint_grant!(%{
-               agent_uri: foreign_agent,
-               source: source,
-               approved_by: ctx.owner_uri,
-               caller: ctx.owner_uri,
-               authenticated_principal: ctx.owner_uri,
-               caps: [good_cap]
-             })
+             Resolver.authorize_and_mint_grant!(
+               %{
+                 agent_uri: foreign_agent,
+                 source: source,
+                 approved_by: ctx.owner_uri,
+                 caller: ctx.owner_uri,
+                 authenticated_principal: ctx.owner_uri,
+                 caps: [good_cap]
+               },
+               witness(foreign_agent)
+             )
 
     refute GrantRow.active?("entity://other-ws/agent/x")
   end

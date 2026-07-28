@@ -3,7 +3,7 @@ defmodule Ezagent.PluginPy.Template.PyAgentLaunchContextTest do
 
   alias Ezagent.Template.PyAgent
 
-  test "instantiate/4 forwards the identical launch context to Kind.spawn/3" do
+  test "instantiate/4 forwards the identical launch context to Kind.spawn_receipt/3" do
     launch_context = make_ref()
     config_dir = Path.join(System.tmp_dir!(), "py-launch-#{System.unique_integer([:positive])}")
     File.mkdir_p!(config_dir)
@@ -16,14 +16,14 @@ defmodule Ezagent.PluginPy.Template.PyAgentLaunchContextTest do
       "script" => "def handle(message):\n    return message\n"
     }
 
-    Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn, 3, fn ->
+    Ezagent.Agent.TemplateLaunchTrace.trace_call(Ezagent.Kind, :spawn_receipt, 3, fn ->
       assert {:error, _reason} =
                PyAgent.instantiate("py.agent", tmpl, URI.new!("workspace://test"),
                  launch_context: launch_context
                )
 
       assert_receive {:trace, _, :call,
-                      {Ezagent.Kind, :spawn,
+                      {Ezagent.Kind, :spawn_receipt,
                        [Ezagent.Entity.Agent, _, [launch_context: ^launch_context]]}}
     end)
   end

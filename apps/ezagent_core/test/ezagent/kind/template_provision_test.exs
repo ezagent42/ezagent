@@ -14,9 +14,7 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
   @moduletag :umbrella_only
 
   alias Ezagent.Kind.Template
-  alias Ezagent.Kind.Template.AttributeHook
   alias Ezagent.Sandbox.ConfigDir
-  alias Ezagent.TestSupport.TemplateFlavorHookProbe
 
   defmodule FakeClass do
     def template_name, do: "cc.agent"
@@ -72,31 +70,20 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
     refute Map.has_key?(received, "allocated_config_dir")
   end
 
-  test "stores agent flavor attributes through the registered template hook" do
-    TemplateFlavorHookProbe.attach(self())
-    on_exit(fn -> TemplateFlavorHookProbe.detach() end)
-    :ok = AttributeHook.register(TemplateFlavorHookProbe)
+  # #201 PR-2 — the pre-instantiate speculative flavor store (and its hook
+  # machinery) was DELETED. The only flavor write is the spawn winner's
+  # post-ownership store in TemplateSpawn; instantiate-time flavor reads come
+  # from the data map. These tests pin the absence of the old write.
+  test "no speculative flavor store on the success path" do
+    uri = Ezagent.URI.new!("entity://myws/agent/cc_nostore")
+    :ok = Ezagent.AgentFlavorAttributes.delete(uri)
 
-    uri = Ezagent.URI.new!("entity://myws/agent/cc_hooked")
     data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
 
     assert {:ok, _uris, _meta} =
              Template.provision_and_instantiate(FakeClass, "cc.agent", data, ws())
 
-    assert_receive {:store_flavor_attrs, ^uri, FakeClass}
-  end
-
-  test "template flavor hook is a safe no-op when no implementation is registered" do
-    hooks_key = {AttributeHook, :hooks}
-    previous_hooks = :persistent_term.get(hooks_key, [])
-
-    :persistent_term.erase(hooks_key)
-    on_exit(fn -> :persistent_term.put(hooks_key, previous_hooks) end)
-
-    uri = Ezagent.URI.new!("entity://myws/agent/no_hook")
-
-    assert :ok = AttributeHook.store(uri, FakeClass)
-    assert :ok = AttributeHook.delete(uri)
+    assert :none = Ezagent.AgentFlavorAttributes.get(uri)
   end
 
   test "a config_dir reference without an agent_uri fails loud (no silent skip)" do
@@ -125,20 +112,5 @@ defmodule Ezagent.Kind.TemplateProvisionTest do
              Template.provision_and_instantiate(FailingClass, "failing.agent", data, ws())
 
     assert :none = Ezagent.AgentFlavorAttributes.get(uri)
-  end
-
-  test "deletes agent flavor attributes through the registered template hook when instantiate fails" do
-    TemplateFlavorHookProbe.attach(self())
-    on_exit(fn -> TemplateFlavorHookProbe.detach() end)
-    :ok = AttributeHook.register(TemplateFlavorHookProbe)
-
-    uri = Ezagent.URI.new!("entity://myws/agent/failing-hook")
-    data = %{"agent_uri" => URI.to_string(uri), "cwd" => "/tmp"}
-
-    assert {:error, :boom} =
-             Template.provision_and_instantiate(FailingClass, "failing.agent", data, ws())
-
-    assert_receive {:store_flavor_attrs, ^uri, FailingClass}
-    assert_receive {:delete_flavor_attrs, ^uri}
   end
 end

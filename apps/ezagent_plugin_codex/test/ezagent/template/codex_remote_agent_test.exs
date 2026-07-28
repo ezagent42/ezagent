@@ -3,7 +3,7 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
 
   alias Ezagent.PluginCodex.Template.CodexRemoteAgent
 
-  test "instantiate/4 forwards the identical launch context to LocalRuntime" do
+  test "instantiate/4 forwards the identical launch context to Kind.spawn_receipt/3" do
     launch_context = make_ref()
     suffix = System.unique_integer([:positive])
 
@@ -14,9 +14,9 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
     }
 
     Ezagent.Agent.TemplateLaunchTrace.trace_call(
-      Ezagent.LocalRuntime,
-      :ensure_started_detailed,
-      2,
+      Ezagent.Kind,
+      :spawn_receipt,
+      3,
       fn ->
         assert {:error, _reason} =
                  CodexRemoteAgent.instantiate("test", tmpl, URI.new!("workspace://test"),
@@ -24,8 +24,8 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgentTest do
                  )
 
         assert_receive {:trace, _, :call,
-                        {Ezagent.LocalRuntime, :ensure_started_detailed,
-                         [_, [launch_context: ^launch_context]]}}
+                        {Ezagent.Kind, :spawn_receipt,
+                         [Ezagent.Entity.Agent, _, [launch_context: ^launch_context]]}}
       end
     )
   end
