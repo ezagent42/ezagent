@@ -286,6 +286,58 @@ defmodule EzagentPluginGitWorkflow.StoreTest do
       assert final.state_version == 3
       assert final.status == "failed"
     end
+
+    # P1 made `blocked → blocked` a legal edge; nothing exercised it as a real
+    # RE-BLOCK (the test above only proves the exact-retry short circuit, which
+    # returns without a CAS). A second blocking failure must record rather than
+    # answer `{:illegal_transition, ...}`.
+    test "re-blocking an already-blocked run is a legal transition, not an error", %{run: run} do
+      {:ok, blocked} = Store.transition(run.id, 1, "accepted", "blocked")
+      assert blocked.state_version == 2
+
+      assert {:ok, %WorkflowRun{status: "blocked", state_version: 3}} =
+               Store.transition(run.id, 2, "blocked", "blocked")
+    end
+  end
+
+  describe "record_error_code/2" do
+    setup do
+      {:ok, run} = Store.accept(build_intent(%{external_task_id: "task-error-code"}))
+      %{run: run}
+    end
+
+    test "persists the code without touching status or state_version", %{run: run} do
+      assert {:ok, updated} = Store.record_error_code(run.id, "provider_rate_limited")
+
+      assert updated.last_error_code == "provider_rate_limited"
+      assert updated.status == run.status
+      assert updated.state_version == run.state_version
+
+      assert {:ok, %WorkflowRun{last_error_code: "provider_rate_limited"}} =
+               Store.read_run(run.id)
+    end
+
+    test "nil clears it — a run that recovered must not keep reporting a stale code", %{run: run} do
+      {:ok, _} = Store.record_error_code(run.id, "provider_unavailable")
+
+      assert {:ok, %WorkflowRun{last_error_code: nil}} = Store.record_error_code(run.id, nil)
+    end
+
+    test "rejects a shape WorkflowRun.new/1 would not accept, and writes nothing", %{run: run} do
+      assert {:error, :invalid_error_code} = Store.record_error_code(run.id, "")
+      assert {:error, :invalid_error_code} = Store.record_error_code(run.id, :an_atom)
+
+      assert {:ok, %WorkflowRun{last_error_code: nil}} = Store.read_run(run.id)
+    end
+
+    test "an unknown run id is not_found, and inserts nothing" do
+      assert {:error, :not_found} = Store.record_error_code("run_never_accepted", "internal_error")
+
+      [[count]] =
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_runs WHERE id = $1", ["run_never_accepted"]).rows
+
+      assert count == 0
+    end
   end
 
   describe "read_run/1" do

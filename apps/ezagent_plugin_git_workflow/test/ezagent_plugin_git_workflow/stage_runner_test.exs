@@ -409,6 +409,262 @@ defmodule EzagentPluginGitWorkflow.StageRunnerTest do
   end
 
   # ---------------------------------------------------------------------------
+  # Idempotency (design §6.2)
+  # ---------------------------------------------------------------------------
+
+  describe "idempotency" do
+    # P3's adapter is idempotent by design; the runner defeats that the moment
+    # it hands it different inputs. The seam is where the inputs are
+    # observable, so this is where the claim can actually be made — comparing
+    # the two arg maps in full covers `commit_date`, `head_ref`, `changes` and
+    # `repository` at once, and would catch a `DateTime.utc_now/0` sneaking
+    # into `commit_date`.
+    test "a replayed create sends BYTE-IDENTICAL args", %{run: run, policy: policy} do
+      drive_to(run.id, policy, "pr_open")
+      assert_receive {:seam_invoke, :create_change_request, first_args}
+
+      rewind_to!(run.id, "changes_ready")
+      assert {:ok, %WorkflowRun{status: "pr_open"}} = StageRunner.advance(run.id)
+      assert_receive {:seam_invoke, :create_change_request, second_args}
+
+      assert second_args == first_args
+    end
+
+    test "replaying the whole sequence produces one of everything", %{run: run, policy: policy} do
+      drive_to(run.id, policy, "pr_open")
+      {:ok, first_pass} = Store.read_facts(run.id)
+
+      rewind_to!(run.id, "authorized")
+      drive(run.id, "pr_open")
+
+      {:ok, second_pass} = Store.read_facts(run.id)
+
+      assert second_pass.id == first_pass.id
+      assert second_pass.inserted_at == first_pass.inserted_at
+      assert second_pass.workspace_provision_id == first_pass.workspace_provision_id
+      assert second_pass.expected_base_sha == first_pass.expected_base_sha
+      assert second_pass.change_digest == first_pass.change_digest
+      assert second_pass.deterministic_head_ref == first_pass.deterministic_head_ref
+      assert second_pass.change_request_id == first_pass.change_request_id
+      assert second_pass.head_sha == first_pass.head_sha
+
+      %{rows: [[count]]} =
+        Repo.query!("SELECT COUNT(*) FROM git_workflow_facts WHERE run_id = $1", [run.id])
+
+      assert count == 1
+    end
+
+    test "commit_date is run.inserted_at on both passes, not a fresh clock read", %{
+      run: run,
+      policy: policy
+    } do
+      drive_to(run.id, policy, "pr_open")
+      assert_receive {:seam_invoke, :create_change_request, first_args}
+
+      # A wall-clock read would differ by more than this sleep; an
+      # `inserted_at` read cannot differ at all.
+      Process.sleep(5)
+      rewind_to!(run.id, "changes_ready")
+      assert {:ok, _} = StageRunner.advance(run.id)
+      assert_receive {:seam_invoke, :create_change_request, second_args}
+
+      {:ok, persisted} = Store.read_run(run.id)
+      assert first_args.request.commit_date == persisted.inserted_at
+      assert second_args.request.commit_date == persisted.inserted_at
+    end
+
+    test "resuming from each intermediate state reaches pr_open", %{run: run, policy: policy} do
+      for resume_from <- ["workspace_ready", "changes_ready"] do
+        rewind_to!(run.id, "authorized")
+        Store.update_facts(run.id, %{change_digest: nil, deterministic_head_ref: nil})
+
+        reached = drive_to(run.id, policy, resume_from)
+        assert reached.status == resume_from
+
+        assert %WorkflowRun{status: "pr_open"} = drive(run.id, "pr_open")
+      end
+    end
+  end
+
+  defp rewind_to!(run_id, status) do
+    # A completed run is rewound by an operator, not by the runner — done here
+    # directly so the SAME run (and the SAME facts row) replays.
+    Repo.query!("UPDATE git_workflow_runs SET status = $1 WHERE id = $2", [status, run_id])
+    :ok
+  end
+
+  # ---------------------------------------------------------------------------
+  # Failure handling (design §7.1, §7.2)
+  # ---------------------------------------------------------------------------
+
+  describe "no_changes_collected" do
+    # Design §7.1's 2026-07-26 amendment: an empty diff is a normal outcome
+    # and V1 creates no change request for it. The claim under test is an
+    # ABSENCE — asserting only the final state would pass just as well for a
+    # runner that created a PR and blocked afterwards.
+    test "stops at blocked and NEVER invokes :create_change_request", %{
+      run: run,
+      policy: policy
+    } do
+      drive_to(run.id, policy, "workspace_ready")
+
+      :ok =
+        ScriptedExecutionSeam.rescript(
+          happy_script(policy, collect_workspace_changes: {:error, :no_changes_collected})
+        )
+
+      assert {:blocked, %{code: :no_changes_collected, retryable: false}} =
+               StageRunner.advance(run.id)
+
+      refute_receive {:seam_invoke, :create_change_request, _args}
+
+      assert {:ok, %WorkflowRun{status: "blocked", last_error_code: "no_changes_collected"}} =
+               Store.read_run(run.id)
+
+      assert {:ok, %WorkflowFacts{change_digest: nil}} = Store.read_facts(run.id)
+    end
+
+    test "an empty list is also no_changes_collected, not an empty success", %{
+      run: run,
+      policy: policy
+    } do
+      drive_to(run.id, policy, "workspace_ready")
+
+      :ok =
+        ScriptedExecutionSeam.rescript(happy_script(policy, collect_workspace_changes: {:ok, []}))
+
+      assert {:blocked, %{code: :no_changes_collected}} = StageRunner.advance(run.id)
+      refute_receive {:seam_invoke, :create_change_request, _args}
+    end
+  end
+
+  describe "terminal vs retryable" do
+    test "a terminal blocker CASes to blocked and persists the code", %{run: run, policy: policy} do
+      :ok =
+        ScriptedExecutionSeam.install(
+          happy_script(policy, provision_workspace: {:error, :workspace_identity_mismatch})
+        )
+
+      assert {:blocked, %{code: :workspace_identity_mismatch, stage: :provision_workspace}} =
+               StageRunner.advance(run.id)
+
+      assert {:ok,
+              %WorkflowRun{status: "blocked", last_error_code: "workspace_identity_mismatch"}} =
+               Store.read_run(run.id)
+    end
+
+    test "a retryable failure leaves the status ALONE and still persists the code", %{
+      run: run,
+      policy: policy
+    } do
+      :ok =
+        ScriptedExecutionSeam.install(
+          happy_script(policy, provision_workspace: {:error, :provider_rate_limited})
+        )
+
+      assert {:retry, %{code: :provider_rate_limited, retryable: true, attempt: 0}} =
+               StageRunner.advance(run.id)
+
+      assert {:ok,
+              %WorkflowRun{
+                status: "authorized",
+                state_version: version,
+                last_error_code: "provider_rate_limited"
+              }} = Store.read_run(run.id)
+
+      # The CAS must not have run at all — a bumped version would mean a state
+      # change nobody asked for.
+      assert version == run.state_version
+    end
+
+    test "the runner does not loop or sleep — the same retryable failure just recurs", %{
+      run: run,
+      policy: policy
+    } do
+      :ok =
+        ScriptedExecutionSeam.install(
+          happy_script(policy, provision_workspace: {:error, :provider_unavailable})
+        )
+
+      assert {:retry, _} = StageRunner.advance(run.id)
+      assert {:retry, %{attempt: 4}} = StageRunner.advance(run.id, attempt: 4)
+
+      # Two calls, two invocations: the runner retried nothing on its own.
+      assert_receive {:seam_invoke, :provision_workspace, _first}
+      assert_receive {:seam_invoke, :provision_workspace, _second}
+      refute_receive {:seam_invoke, :provision_workspace, _third}
+    end
+
+    test "the runner never sets failed or cancelled, whatever the failure", %{
+      run: run,
+      policy: policy
+    } do
+      for reason <- [
+            :not_authorized,
+            :provider_permission_denied,
+            :head_ref_conflict,
+            :provider_rate_limited,
+            {:provider_request_failed, :create_ref, 500},
+            :something_nobody_classified
+          ] do
+        Repo.query!("UPDATE git_workflow_runs SET status = 'authorized' WHERE id = $1", [run.id])
+        :ok = ScriptedExecutionSeam.install(happy_script(policy, provision_workspace: {:error, reason}))
+
+        StageRunner.advance(run.id)
+
+        assert {:ok, %WorkflowRun{status: status}} = Store.read_run(run.id)
+        assert status in ["authorized", "blocked"], "#{inspect(reason)} produced #{status}"
+      end
+    end
+  end
+
+  describe "error presentation" do
+    test "a provider term carrying a secret leaks into neither the return nor the row", %{
+      run: run,
+      policy: policy
+    } do
+      :ok =
+        ScriptedExecutionSeam.install(
+          happy_script(policy,
+            provision_workspace:
+              {:error, %{status: 403, body: "Bearer ghp_TOTALLY_SECRET", path: "/etc/shadow"}}
+          )
+        )
+
+      assert {:blocked, presentation} = StageRunner.advance(run.id)
+
+      assert presentation == %{
+               code: :internal_error,
+               stage: :provision_workspace,
+               retryable: false,
+               attempt: 0,
+               metadata: %{}
+             }
+
+      assert {:ok, %WorkflowRun{last_error_code: "internal_error"}} = Store.read_run(run.id)
+
+      %{rows: [row]} = Repo.query!("SELECT * FROM git_workflow_runs WHERE id = $1", [run.id])
+
+      refute Enum.any?(row, fn value ->
+               is_binary(value) and
+                 (String.contains?(value, "ghp_") or String.contains?(value, "/etc/shadow"))
+             end)
+    end
+
+    test "presentation carries exactly the five fields §7.1 permits", %{run: run, policy: policy} do
+      :ok =
+        ScriptedExecutionSeam.install(
+          happy_script(policy, provision_workspace: {:error, :provider_unavailable})
+        )
+
+      assert {:retry, presentation} = StageRunner.advance(run.id)
+
+      assert presentation |> Map.keys() |> Enum.sort() ==
+               [:attempt, :code, :metadata, :retryable, :stage]
+    end
+  end
+
+  # ---------------------------------------------------------------------------
   # Wrong-state discipline
   # ---------------------------------------------------------------------------
 
