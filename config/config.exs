@@ -32,7 +32,10 @@ config :ezagent_core, Ezagent.Authentication,
 # still install orchestrator socialware.
 config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
-  socialware_manifest_boot_scan: config_env() in [:prod]
+  # Dev must publish shipped socialware manifests during boot so the world
+  # session-create picker can resolve installs (notably `hello`) without an
+  # out-of-band import step. Test overrides this to false.
+  socialware_manifest_boot_scan: config_env() in [:dev, :prod]
 
 # Role/reference plugin app lists for the generic CLI tasks, moved OUT of the
 # task modules' `@attribute` literals so a deployment can extend them without

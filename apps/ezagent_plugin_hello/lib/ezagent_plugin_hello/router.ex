@@ -34,6 +34,20 @@ defmodule EzagentPluginHello.Router do
   """
   @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()} | :ignored
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
+    route(session_uri, user_text, sender, nil)
+  end
+
+  @doc false
+  def route(%URI{} = session_uri, user_text, %URI{} = sender, ref_id)
+      when is_binary(user_text) do
+    if completion_reply?(ref_id) do
+      deliver_completion(ref_id, user_text)
+    else
+      route_user_message(session_uri, user_text, sender)
+    end
+  end
+
+  defp route_user_message(%URI{} = session_uri, user_text, %URI{} = sender) do
     if should_route?(session_uri, sender) do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
         action = classify(user_text, owner?(session_uri, sender), session_uri)
@@ -46,6 +60,20 @@ defmodule EzagentPluginHello.Router do
       end)
     else
       :ignored
+    end
+  end
+
+  defp completion_reply?(ref_id),
+    do: is_binary(ref_id) and String.starts_with?(ref_id, "hello-completion-")
+
+  defp deliver_completion(ref_id, text) do
+    case Registry.lookup(EzagentPluginHello.CompletionRegistry, ref_id) do
+      [{pid, _}] when is_pid(pid) ->
+        send(pid, {:hello_completion, ref_id, text})
+        :ok
+
+      _ ->
+        :ignored
     end
   end
 

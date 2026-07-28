@@ -205,6 +205,10 @@ defmodule Ezagent.World.ConversationActions do
     if String.trim(text) == "" and attachments == [] do
       {:noreply, assign(socket, :last_dispatch_status, "error:empty_message")}
     else
+      # A session can be cold after the asynchronous Hello socialware install
+      # (or after a service restart). Reuse the authenticated self-join path to
+      # hydrate it before dispatching, rather than sending to a dead actor.
+      socket = self_join(socket, session_uri)
       msg = ConversationData.build_message(caller, text, session_uri, attachments)
       target = Ezagent.URI.with_action(session_uri, :session, :send)
 

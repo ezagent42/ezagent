@@ -35,9 +35,18 @@ defmodule EzagentPluginHello.BridgeAdapter do
   def transport_class, do: :in_process_sync
 
   @impl Ezagent.AgentBridge.Adapter
-  def deliver(%Payload{session_uri: %URI{} = session_uri, sender_uri: sender, text: text}, _ref)
+  def deliver(
+        %Payload{session_uri: %URI{} = session_uri, sender_uri: sender, text: text, meta: meta},
+        _ref
+      )
       when is_binary(text) and text != "" do
-    {:ok, %{session_uri: session_uri, sender: sender, text: text}}
+    {:ok,
+     %{
+       session_uri: session_uri,
+       sender: sender,
+       text: text,
+       ref_id: Map.get(meta, "ref_id")
+     }}
   end
 
   # Blank text / missing session → nothing to route (the behaviour no-ops on it).

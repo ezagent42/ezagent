@@ -68,7 +68,7 @@ defmodule EzagentPluginHello.App do
   def create_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Capability.workspace_of(session_uri)
-    content = %{name: "hello", installs: ["hello"]}
+    content = hello_template_content(opts)
 
     # hello-A — the session OWNER is the caller principal: the home workspace's
     # founder for the boot 官网 seed (`OfficialSiteSeed`), the dispatch caller on
@@ -161,14 +161,34 @@ defmodule EzagentPluginHello.App do
 
   # --- internals --------------------------------------------------------
 
-
   defp validate_llm_template(opts) do
-    case Keyword.get(opts, :llm_flavor, "curl") do
-      "curl" -> :ok
-      flavor -> {:error, {:hello_llm_completion_unsupported, flavor}}
+    flavor = Keyword.get(opts, :llm_flavor, "curl")
+
+    if flavor in llm_flavors() do
+      :ok
+    else
+      {:error, {:hello_llm_completion_unsupported, flavor}}
     end
   end
 
+  @doc "Flavors whose registered AgentBridge can supply an LLM completion."
+  @spec llm_flavors() :: [String.t()]
+  def llm_flavors, do: ~w(curl cc-headless cc-headless-custom cc codex codex-remote py)
+
+  defp hello_template_content(opts) do
+    case Keyword.get(opts, :llm_flavor) do
+      flavor when is_binary(flavor) ->
+        %{
+          name: "hello",
+          installs: [
+            %{ref: "hello", config: %{role_slots: [%{role_name: "llm", flavor: flavor}]}}
+          ]
+        }
+
+      _ ->
+        %{name: "hello", installs: ["hello"]}
+    end
+  end
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the
   # Template Class create path) hits an already-bound session; that is success,

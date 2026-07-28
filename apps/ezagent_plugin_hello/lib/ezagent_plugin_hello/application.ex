@@ -140,17 +140,14 @@ defmodule EzagentPluginHello.Application do
     }
   end
 
-  @doc "The `hello.llm` role — a curl LLM agent hello delegates HTTP-backend generation to (credential-optional so it keyless-spawns; key comes from the platform credential cascade)."
+  @doc "The `hello.llm` role — a flavor-selected platform agent Hello delegates generation to (credential-optional so the platform credential cascade decides readiness)."
   @spec hello_llm_recipe() :: map()
   def hello_llm_recipe do
     %{
       name: "hello.llm",
-      # curl behaviors come from the "curl" flavor's instance_behaviors, NOT here
-      # (Definition.roles materialize drops recipe.behaviors).
+      # The selected flavor supplies its own instance behaviors; this recipe
+      # supplies only generic role configuration.
       config: %{
-        provider: "deepseek",
-        api_url: "https://api.deepseek.com/chat/completions",
-        model: "deepseek-v4-flash",
         credential_optional: true
       },
       requested_caps: []
@@ -221,7 +218,10 @@ defmodule EzagentPluginHello.Application do
   # default).
   @impl Ezagent.Plugin
   def children do
-    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
+    [
+      {Registry, keys: :unique, name: EzagentPluginHello.CompletionRegistry},
+      {Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}
+    ] ++
       official_site_children() ++ demo_seed_children() ++ migrate_children()
   end
 

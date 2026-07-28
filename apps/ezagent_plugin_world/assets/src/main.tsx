@@ -258,7 +258,19 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         const merged = {...current, ...next}
         return clearSessionCreatePending ? {...merged, session_create_pending: false} : merged
       })
-      if (next.layout) setCurrentLayout(next.layout)
+      if (next.layout) {
+        setCurrentLayout(next.layout)
+      } else if (next.component === "conversation") {
+        // `session.switch` intentionally updates the conversation in place and
+        // only pushes the state payload. Keep the island's layout in sync so a
+        // session selected from the sessions table renders the conversation
+        // surface instead of leaving the old table layout mounted.
+        setCurrentLayout({
+          version: 1,
+          scope: next.workspace_uri || "workspace://system",
+          components: [{id: "conversation", type: "conversation", placement: {x: 0, y: 0, w: 12, h: 8}}],
+        })
+      }
 
       if (pendingDispatch.current) {
         // 本次 world:state 跟随岛内发起的 dispatch:以 dataset 里的最新
@@ -409,7 +421,7 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                 pushEvent,
                 onJoin: (sessionUri) => {
                   sendEvent("world:dispatch", {
-                    action: "sessions.join",
+                    action: "session.switch",
                     args: {session_uri: sessionUri},
                   })
                 },

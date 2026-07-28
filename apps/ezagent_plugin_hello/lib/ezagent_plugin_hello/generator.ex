@@ -474,23 +474,56 @@ defmodule EzagentPluginHello.Generator do
 
   defp call_llm(session_uri, system, user_text) do
     case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
-      {:ok, curl_uri} ->
-        case Ezagent.Entity.Agent.complete(
-               Ezagent.Entity.User.admin_uri(),
-               curl_uri,
-               compose_prompt(system, user_text)
-             ) do
-          {:ok, content} -> {:ok, %{content: content}}
-          {:error, _} = err -> err
-        end
+      {:ok, llm_uri} ->
+        request_id = "hello-completion-" <> Integer.to_string(System.unique_integer([:positive]))
+        {:ok, _} = Registry.register(EzagentPluginHello.CompletionRegistry, request_id, [])
+
+        result =
+          Ezagent.Entity.Agent.request_completion(
+            Ezagent.Entity.User.admin_uri(),
+            llm_uri,
+            session_uri,
+            compose_prompt(system, user_text),
+            request_id
+          )
+
+        await_completion(result, request_id)
 
       :error ->
         {:error, :no_llm_agent}
     end
   end
 
-  # curl's completion is a single prompt; fold hello's per-call system prompt into
-  # the user turn (the llm member's own system_prompt config is left generic/empty).
+  defp await_completion({:ok, content}, request_id) when is_binary(content) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    {:ok, %{content: content}}
+  end
+
+  defp await_completion({:pending, request_id}, request_id) do
+    receive do
+      {:hello_completion, ^request_id, content} when is_binary(content) ->
+        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+        {:ok, %{content: content}}
+    after
+      120_000 ->
+        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+        {:error, :llm_completion_timeout}
+    end
+  end
+
+  defp await_completion({:error, _} = err, request_id) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    err
+  end
+
+  defp await_completion(other, request_id) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    {:error, {:unexpected_llm_result, other}}
+  end
+
+  # The platform completion contract accepts one prompt; fold Hello's per-call
+  # system prompt into the user turn. Provider and credential handling remain
+  # inside the selected agent flavor.
   defp compose_prompt(system, user_text), do: system <> "\n\n" <> user_text
 
   # Land the page (page-only turn — NO turn-chat) then announce completion via a

@@ -61,6 +61,7 @@ defmodule Ezagent.ActionSet.Agent.Delivery do
     base_meta = %{
       "sender" => Ezagent.URI.stable_key(msg.sender),
       "message_id" => msg.id,
+      "ref_id" => msg.ref_id,
       "session" => source_session,
       # PR-6 — the recipient agent's OWN URI, so an `:in_process_sync`
       # adapter (curl) can read the agent's persisted slices from the

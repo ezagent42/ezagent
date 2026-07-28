@@ -117,5 +117,30 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       assert {:error, {:invalid_template, _}} =
                HelloSession.instantiate("session.hello", %{}, workspace_uri)
     end
+
+    test "persists the selected llm flavor on the template role" do
+      ws = "hello-tmpl-flavor-#{System.unique_integer([:positive])}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+
+      tmpl = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "cc-headless"
+      }
+
+      assert {:ok, [session_uri], _} =
+               HelloSession.instantiate("session.hello", tmpl, workspace_uri)
+
+      declarations =
+        session_uri
+        |> Ezagent.Entity.Session.read_template_working_copy()
+        |> Map.get(:member_declarations, [])
+
+      assert %{role_name: "llm", flavor: "cc-headless"} =
+               Enum.find(declarations, fn role ->
+                 (Map.get(role, :role_name) || Map.get(role, "role_name")) == "llm"
+               end)
+    end
   end
 end

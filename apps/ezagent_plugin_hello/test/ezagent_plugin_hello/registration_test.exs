@@ -19,6 +19,7 @@ defmodule EzagentPluginHello.RegistrationTest do
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.{HelloBuilder, HelloConcierge, HelloDispatcher, HelloOrchestrator}
+  alias EzagentPluginHello.App
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
@@ -56,12 +57,18 @@ defmodule EzagentPluginHello.RegistrationTest do
     refute Map.has_key?(cap, :kind)
   end
 
-  test "hello.llm curl recipe carries provider/model + credential_optional in config" do
+  test "hello.llm recipe delegates provider and model configuration to the platform" do
     recipe = EzagentPluginHello.Application.hello_llm_recipe()
     assert recipe.name == "hello.llm"
-    assert recipe.config.provider == "deepseek"
-    assert recipe.config.model == "deepseek-v4-flash"
+    refute Map.has_key?(recipe.config, :provider)
+    refute Map.has_key?(recipe.config, :api_url)
+    refute Map.has_key?(recipe.config, :model)
     assert recipe.config.credential_optional == true
+  end
+
+  test "hello accepts every platform completion flavor" do
+    assert App.llm_flavors() ==
+             ~w(curl cc-headless cc-headless-custom cc codex codex-remote py)
   end
 
   test "hello.orchestrator recipe — behaviors + caps + non-passive (combined gate)" do

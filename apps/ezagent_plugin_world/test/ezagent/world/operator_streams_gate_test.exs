@@ -89,6 +89,41 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
       }
     end
 
+    test "connected mount defers the expensive world bootstrap" do
+      {:ok, socket} = WorldLive.mount(%{}, %{}, connected_socket(@non_operator))
+
+      assert socket.assigns.world_bootstrap_ready? == false
+      assert_receive :load_world_state, 200
+    end
+
+    test "the first connected session route initializes the active session before bootstrap" do
+      session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
+
+      {:ok, socket} = WorldLive.mount(%{}, %{}, connected_socket(@non_operator))
+
+      {:noreply, socket} =
+        WorldLive.handle_params(
+          %{"session" => URI.encode_www_form(URI.to_string(session_uri))},
+          "https://example.com/sessions",
+          socket
+        )
+
+      assert socket.assigns.current_route.component == "conversation"
+      assert socket.assigns.current_route.session_uri == session_uri
+      refute socket.assigns.current_session_uri
+      assert socket.assigns.world_component == "conversation"
+      assert_receive :load_world_state, 200
+
+      {:noreply, socket} =
+        WorldLive.handle_info(
+          {:world_bootstrap_ready, socket.assigns.current_route, %{},
+           %{"component" => "conversation"}, %{}, []},
+          socket
+        )
+
+      assert socket.assigns.current_session_uri == session_uri
+    end
+
     test "a non-operator mount subscribes to NEITHER operator topic" do
       {:ok, _socket} = WorldLive.mount(%{}, %{}, connected_socket(@non_operator))
 

@@ -29,6 +29,10 @@ roles:
     fill: agent
     recipe: hello.llm
     flavor: curl
+    config:
+      provider: deepseek
+      api_url: https://api.deepseek.com/chat/completions
+      model: deepseek-v4-flash
   - role_name: sharer
     fill: agent
     recipe: hello.sharer
