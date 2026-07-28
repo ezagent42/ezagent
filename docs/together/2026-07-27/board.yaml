@@ -137,17 +137,6 @@ cards:
     pr: {num: 1576, state: "draft"}
     acceptance:
       - {text: "hello 模板的 LLM 生成流恢复, PR 出 draft 进评审", done: false}
-  - owner: "zyli"
-    title: "实时刷新两通用信号接手(view_changed / caps_changed)"
-    goal: "承接 #1496 剥离出的两个通用刷新信号, 落到前端"
-    status: "wip"
-    started: "2026-07-25"
-    est_done: "2026-07-28"
-    who: "zyli 轨道 · 承 jjkysy #1496 handoff · 待落 PR"
-    carryover: true
-    deps: ["承接自 jjkysy #1496"]
-    acceptance:
-      - {text: "view_changed / caps_changed 两通用信号落前端实时刷新, 开出 PR", done: false}
   # ---- jjkysy ----
   - owner: "jjkysy"
     title: "#1474 kanban 协作改版二轮"
@@ -365,6 +354,15 @@ done_prev:
     pr: {num: 1570, state: "merged"}
     acceptance:
       - {text: "world agent 显示名持久化合入 main; 引出的 reject-double-spawn 契约由统筹 #1575 做幂等收尾", done: true, evidence: "#1570 merged 07-25 (author zyli)"}
+  - owner: "zyli"
+    title: "实时刷新两通用信号(view_changed / caps_changed)"
+    goal: "承接 #1496 剥离出的两个通用刷新信号, 落到前端 world 插件"
+    status: "done"
+    who: "zyli 轨道 · #1497 · 承 jjkysy #1496 handoff"
+    pr: {num: 1497, state: "merged"}
+    flag: "✅ 板面订正 —— 07-23 即由 #1497 交付(早于本板 07-25→07-28 周期), 之前误挂 wip; #1496 handoff 已 CLOSED"
+    acceptance:
+      - {text: "view_changed + caps_changed 两通用信号落 world 前端实时刷新(main.tsx + world_live + refresh_surface_registry + slice-change refresh 不变量门)", done: true, evidence: "#1497 merged 07-23 · 5f8cab162 · 两信号均在 diff · #1496 CLOSED"}
   # ---- jjkysy ----
   - owner: "jjkysy"
     title: "#1531 world 甩掉 kanban + #1569 通用链接 unfurl"
@@ -417,14 +415,15 @@ review:
     - "🔴 C8 use 侧(feat/v5-use-side-mailbox)codex 复评审推翻早前「SOUND」结论 —— 发现 signing-oracle + publish-authz(绑 worker 非 session-current)2 CRITICAL + 2 HIGH + 1 MEDIUM(= #189 真 bug ②); opus subagent 修复中, 分支合 main 前必须重评审通过。"
     - "🟡 #1577 的 flavor-defer 改动在未覆盖的插件目录暴露回归 → 当日 #1578 回退恢复 pre-#1577 flavor pre-store(修复本体保留); 已归因为验证面不足, 非方向错误。"
     - "⚪ jjkysy #1470(挂载宿主退场清理)已关闭(未合入); provisioning-deadline 半边 main 上三处全无, 已并入 W31 目标二步骤(需新小 PR 走 maybe_put_deadline_ms 管道)。"
+    - "⚪ 板面订正: zyli「实时刷新两通用信号(view_changed/caps_changed)」card 之前误挂 wip, 实际早已由 #1497(merged 07-23, author zyli)交付、#1496 handoff 已 CLOSED —— 属交付早于本板周期(07-25→07-28)的陈旧标记, 现移入完成列归属 zyli(不计入本板 07-25→07-28 效能窗口, 因 07-23 落地在上一板窗口)。"
   delivery:
     - {owner: "Allen 轨道(统筹+结构)", delivered: "【结构】C0–C7 抽取收口 #1550/#1561/#1564/#1579 + #1595 actor foundation-dep 清 2 arch 红 + #1593 owner-bypass 债清零 + C8 双分支推送(obtain 侧 genserver_to_pid=0 / use 侧 sealed mailbox) / 【#189】#1585 cause③ P10 harness + #1589 cap-gate 回归 + 根因化 2/3(#1577/#1578) / 会话幂等 + CI 硬化(#1575/#1573/#1574/#1571) / 【docs】#1572/#1465/#1580(含 W31 立档) + #1469 对账关闭。【统筹·非交付】评审/合入队友 PR · 看板", acceptance_result: "actor C0–C7 抽取完成 + 07-27/28 配套(#1595/#1593/#1585/#1589)落 main; C8 obtain 侧待合, use 侧被 codex 复评审的 bug ② 阻; #189 收敛到 bug ①(#1590 复评审中)+ bug ②(修复中)+ 4 test-defects(排查中)", carryover: "bug ①(#1590)复评审 → 落 main · bug ②(ExternalMirror authz)修复重评审 · 4 test-defects · A2 census-freeze → reconcile → C8 双分支合 main · 发布闸 → hello-A PR-4"}
-    - {owner: "zyli", delivered: "#1582 agent API key 删除能力(合入) · #1570 显示名持久化(合入, 上一板已计) · #1576 hello 模板 LLM 生成流(draft 在飞)", acceptance_result: "#1582 塌进 main(07-27); #1589 cap-gate 回归由 Allen 覆盖", carryover: "#1576 出 draft 进评审 · 实时刷新两信号(view_changed/caps_changed)落 PR"}
-    - {owner: "jjkysy", delivered: "#1531 world 甩掉 kanban(合入, 上一板已计) · #1569 通用链接 unfurl(合入) · #1474 二轮周末持续推进(07-26 更新) · #1301 dealscout 推进", acceptance_result: "world 去硬编码/通用能力交付塌进 main; #1470 关闭(未合入)", carryover: "#1474/#1301 推 mergeable · #1496 handoff 待 zyli 落地 · #1376 契约留用"}
+    - {owner: "zyli", delivered: "#1582 agent API key 删除能力(合入) · #1570 显示名持久化(合入, 上一板已计) · #1497 实时刷新两通用信号 view_changed/caps_changed(合入 07-23, 板面订正归位) · #1576 hello 模板 LLM 生成流(draft 在飞)", acceptance_result: "#1582 塌进 main(07-27); #1497 早于本板周期已交付、订正归入完成; #1589 cap-gate 回归由 Allen 覆盖", carryover: "#1576 出 draft 进评审"}
+    - {owner: "jjkysy", delivered: "#1531 world 甩掉 kanban(合入, 上一板已计) · #1569 通用链接 unfurl(合入) · #1474 二轮周末持续推进(07-26 更新) · #1301 dealscout 推进", acceptance_result: "world 去硬编码/通用能力交付塌进 main; #1470 关闭(未合入)", carryover: "#1474/#1301 推 mergeable · #1496 handoff 已由 zyli #1497 落地(完成) · #1376 契约留用"}
     - {owner: "gaga", delivered: "#1588 domain_git URI-decouple(合入) · #1567 TransientRetry(合入, 上一板已计) · #1501 rework 中 · B1 #1568 / B2 #1547 在飞 · #1498 draft", acceptance_result: "#1588 塌进 main(07-27); #1501 仍在补评审缺口", carryover: "#1501 重评审 · B1/B2 评审合入 · #1498"}
     - {owner: "瑞华 (ruihua)", delivered: "#1543 MFU v0.13 + GDD + 3 篇分析(合入) · #1436 自助开通产品化 docs(合入) · #1534 CIIA seed docs(合入) · #1533 Signature 原型(draft)", acceptance_result: "三项文档/demo 塌进 main(07-27); Signature 原型仍 draft", carryover: "#1533 原型草案定稿"}
   next_day:
     - "★ #189 复绿链: bug ①(#201/#1590)codex 复评审通过 → 落 main; bug ②(ExternalMirror authz)codex 2 CRITICAL 修复 + 重评审; 4 test-defects A/E/F + CLI(D)修复 → main full-suite 复绿 → 发布闸重开 → hello-A PR-4 部署迁移。"
     - "★ C8 收口链: bug ② 修复后 → A2 census-freeze → cross-track reconcile → feat/v5-pid-closure + feat/v5-use-side-mailbox 双分支合入 main。"
-    - "gaga: #1501 rework 重评审 + B1(#1568)/B2(#1547) 评审合入; zyli: #1576 进评审 + 实时刷新两信号落 PR; jjkysy: #1474/#1301 推 mergeable; ruihua: #1533 原型定稿。"
+    - "gaga: #1501 rework 重评审 + B1(#1568)/B2(#1547) 评审合入; zyli: #1576 进评审; jjkysy: #1474/#1301 推 mergeable; ruihua: #1533 原型定稿。"
     - "W31 周目标已立档(#1580, docs/together/2026-W31/weekly-goals.md), plan→weekly-goal 挂钩已恢复; 里程碑跟踪随 #189 复绿 + 部署 + 企业自助 E2E 推进勾选。"
