@@ -46,7 +46,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   require Logger
 
-  alias Ezagent.Agent.CredentialPrecondition
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
@@ -67,18 +66,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   Returns `{:ok, summary}` where `summary` is
   `%{satisfied: [role_name], skipped: [%{role_name:, reason:}]}`.
 
-  ## Skip vs fail (chain C, Allen 2026-07-10)
-
-  A role slot whose flavor **cannot be given credentials for this installer** is
-  SKIPPED, not fatal: it is logged, emitted as telemetry, recorded on the
-  session, and the rest of the batch continues. Creating it anyway produces an
-  agent that boots "Not logged in", never joins its transport bridge, and hangs
-  at `:not_ready` forever — a silent zombie member (see
-  `Ezagent.Agent.CredentialPrecondition`).
-
-  Every OTHER failure still halts the batch (`{:error, reason}`): a duplicate
-  role name, an unknown recipe, a failed join. Those are bugs, not environment,
-  and must not be swallowed as "skipped".
+  Credential setup is deliberately outside this materialization path. Every
+  materialization failure halts the batch (`{:error, reason}`): duplicate role
+  names, unknown recipes, failed spawns, and failed joins are all surfaced to
+  the caller.
   """
   @type summary :: %{
           satisfied: [String.t()],
@@ -142,13 +133,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                  {:ok, seen, [role_name | installed], skipped,
                   Map.put(role_members, role_name, agent_uri)}}
 
-              {:skip, reason} ->
-                report_skip(session_uri, role_name, reason)
-
-                {:cont,
-                 {:ok, seen, installed, [%{role_name: role_name, reason: reason} | skipped],
-                  role_members}}
-
               {:error, reason} ->
                 partial = %{
                   satisfied: Enum.reverse(installed),
@@ -181,24 +165,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:error, _} = err ->
         err
     end
-  end
-
-  # LOUD, but not fatal. The durable, user-facing record is written by
-  # `SessionCreator.install_session_socialware/1` from the returned summary — a
-  # server log alone would be a silent drop at a user-facing surface (#9).
-  defp report_skip(session_uri, role_name, reason) do
-    Logger.error(
-      "socialware role slot #{inspect(role_name)} SKIPPED on " <>
-        "#{URI.to_string(session_uri)}: #{inspect(reason)} — the agent would boot " <>
-        "without credentials, never join its transport bridge, and hang at :not_ready. " <>
-        "The session is alive without this role."
-    )
-
-    :telemetry.execute(
-      @telemetry_prefix ++ [:skipped],
-      %{count: 1},
-      %{session_uri: session_uri, role_name: role_name, reason: reason}
-    )
   end
 
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
@@ -261,9 +227,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
               :ok -> {:ok, agent_uri}
               {:error, _reason} = error -> error
             end
-
-          {:skip, _reason} = skip ->
-            skip
 
           {:error, _reason} = error ->
             error
@@ -344,7 +307,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp spawn_fresh_at_planned_uri(
          session_uri,
-         workspace_uri,
+         _workspace_uri,
          granted_by,
          _agent,
          recipe,
@@ -354,31 +317,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          provider,
          planned_uri
        ) do
-    # #1201 A② — installer host-login inheritance. BEFORE the spawn (whose
-    # #17 cascade resolves the installer's user-default source), ensure the
-    # INSTALLER's host login is adopted as that source. No-ops for
-    # credential-less flavors (py/curl), for flavors/nodes without a host
-    # login, and for non-host-operator installers; the spawn below then
-    # inherits through the UNCHANGED cascade (no ad-hoc copy here).
     with :ok <-
-           Ezagent.Agent.HostLoginAdopt.ensure_installer_source(
-             granted_by,
-             workspace_uri,
-             flavor
-           ),
-         # Chain C — the adopt above NO-OPS for a non-admin installer (#161 /
-         # DoD 6). Without a credential source this agent can only boot "Not
-         # logged in": skip the slot rather than join a silent zombie. The role
-         # slot's `provider` (cc-custom) names the backend profile whose env key
-         # gates this check; plain-cc/legacy slots carry none (opt NOT passed).
-         # #185 — the recipe's declared `credential_optional` (hello.llm) rides
-         # down too, so a SLICE-backed (curl) role that intends keyless is NOT
-         # pre-skipped while a required-credential curl role is.
-         # NOTE (cap-signing): the durable Cap.issue binding is NOT committed here.
-         # This branch spawns FIRST, then binds + `sync_live`s the born-signed caps
-         # into the live agent (see `spawn_bound_agent/8` below).
-         :ok <- check_credential_source(granted_by, workspace_uri, flavor, provider, recipe),
-         :ok <-
            spawn_bound_agent(
              session_uri,
              granted_by,
@@ -392,39 +331,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:ok, planned_uri}
     end
   end
-
-  # The cc-custom seam: only a non-empty role-slot `provider` passes the
-  # `backend_profile` opt down — plain-cc/legacy slots carry no provider, so
-  # `opts` stays `[]` and the legacy `check_source/3` behavior is unchanged.
-  # #185 — the recipe's `credential_optional` config (the hello.llm shape,
-  # the SAME flag that lands in the AgentTemplate content for the cascade)
-  # rides down as the slice-backed flavor's opt-out of the precondition.
-  defp check_credential_source(installer, workspace_uri, flavor, provider, recipe) do
-    opts =
-      case provider do
-        p when is_binary(p) and p != "" -> [backend_profile: p]
-        _ -> []
-      end
-
-    opts =
-      if recipe_credential_optional?(recipe),
-        do: [{:credential_optional, true} | opts],
-        else: opts
-
-    CredentialPrecondition.check_source(installer, workspace_uri, flavor, opts)
-  end
-
-  # `credential_optional` is authored under recipe.config (see the hello.llm
-  # recipe) and lands in the AgentTemplate content. Read tolerantly across the
-  # `%Recipe{}` struct / plain-map shapes and atom / string keys.
-  defp recipe_credential_optional?(recipe) when is_map(recipe) do
-    case map_field(recipe, :config) do
-      config when is_map(config) -> map_field(config, :credential_optional) in [true, "true"]
-      _ -> false
-    end
-  end
-
-  defp recipe_credential_optional?(_recipe), do: false
 
   defp map_field(map, key) when is_atom(key) do
     case Map.fetch(map, key) do
@@ -460,10 +366,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         {:ok, binding} ->
           result =
             with :ok <- RecipeCapBinding.sync_live(planned_uri),
-                 # Safety net for the class the pre-flight cannot see (#1311).
-                 # This agent was just spawned by us — if it has no credentials,
-                 # terminate it (it was never joined). REUSE path leaves its agent.
-                 :ok <- verify_credentials_on_fresh(planned_uri, flavor),
                  :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe) do
               :ok
             end
@@ -471,10 +373,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
           case result do
             :ok ->
               :ok
-
-            {:skip, _reason} = skip ->
-              compensate_recipe_binding(planned_uri, binding)
-              skip
 
             {:error, _reason} = error ->
               _ = terminate_worker(planned_uri)
@@ -489,35 +387,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  # For the FRESH path only: the agent was just spawned by us, so a credential
-  # skip tears it down. The REUSE path must NEVER terminate the pre-existing agent
-  # (it belongs to someone else — CRITICAL, codex r2).
-  defp verify_credentials_on_fresh(%URI{} = agent_uri, flavor) do
-    case CredentialPrecondition.check_materialized(agent_uri, flavor) do
-      :ok ->
-        :ok
-
-      {:skip, _reason} = skip ->
-        _ = terminate_worker(agent_uri)
-        skip
-    end
-  end
-
-  # For the REUSE path: skip the reuse but leave the existing agent alive.
-  defp verify_credentials_on_reuse(%URI{} = agent_uri, flavor) do
-    case CredentialPrecondition.check_materialized(agent_uri, flavor) do
-      :ok -> :ok
-      {:skip, _reason} = skip -> skip
-    end
-  end
-
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
          :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
-         # Chain C — a reused agent may be a legacy zombie. Verify its config
-         # home before joining it; on skip, LEAVE the agent alive (it is not ours
-         # to destroy — CRITICAL, codex r2).
-         :ok <- verify_credentials_on_reuse(agent_uri, flavor_of(agent)),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
@@ -535,7 +407,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
-      {:skip, _reason} = skip -> skip
       {:error, _} = error -> error
       other -> {:error, {:reuse_agent_join_failed, role_name, other}}
     end
@@ -661,8 +532,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   # --- spawn + join ---------------------------------------------------------
 
-  # Spawn ONLY. The join moved out so `verify_credentials/2` can run between the
-  # two — a credential-less agent must never become a session member.
+  # Spawn only. Binding and joining follow after the target has materialized.
   defp spawn_agent(
          workspace_uri,
          granted_by,
@@ -687,7 +557,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       authenticated_principal: granted_by,
       caps: SessionCreator.list_caps_for_materialization(granted_by),
       source_template_uri: source_template_uri,
-      description: @agent_description
+      description: @agent_description,
+      template_content_overrides: %{
+        credential_optional: true,
+        session_template_member: true
+      }
     }
 
     # The cc-custom seam: the role slot's selected backend profile rides into
@@ -704,37 +578,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         :ok
 
       {:error, reason} ->
-        # SKIP vs FAIL (chain C contract, §"Skip vs fail"): a spawn that
-        # fails BECAUSE the flavor has no credential in this environment is the
-        # SAME "credential-less role → SKIP, not fatal" class the pre-flight
-        # `CredentialPrecondition.check_source/3` catches — it just surfaces one
-        # layer later, at spawn, for flavors whose credential is an ENV VAR
-        # (the selected catalog profile's API-key var) rather than a config-home
-        # FILE, so `check_source`
-        # (file-based `credential_bearing?/1`) waves them through. Without this,
-        # a keyless env (every CI without the profile's key) turns the
-        # orchestrator slot into a HARD `{:agent_spawn_failed, …}` that halts the
-        # whole batch (and, via the unhandled 3-tuple, CRASHED the install
-        # transaction) — so a co-declared credential-less role (e.g. the py
-        # helper) was never materialized. Classify it as a skip so the batch
-        # continues and the durable `unfilled_agent_role_slots` record is written,
-        # exactly as a file-credential-missing role already is.
-        if credential_missing_spawn_reason?(reason) do
-          {:skip, {:no_credential_source, flavor}}
-        else
-          {:error, {:agent_spawn_failed, role_name, reason}}
-        end
+        {:error, {:agent_spawn_failed, role_name, reason}}
     end
   end
-
-  # NARROW by design: only a KNOWN missing-credential spawn reason reclassifies
-  # to a skip. Every other spawn failure stays a hard error (a bug, not the
-  # environment — §"Skip vs fail"). Env-var-credential flavors (the cc-custom
-  # catalog profiles) fail this way; file-credential
-  # flavors are already pre-skipped by `CredentialPrecondition.check_source/3`.
-  defp credential_missing_spawn_reason?({:backend_api_key_missing, _, _}), do: true
-  defp credential_missing_spawn_reason?({:backend_api_key_missing, _}), do: true
-  defp credential_missing_spawn_reason?(_), do: false
 
   # Faceted `session.join` carrying the `%{role_name: name}` facet. On failure,
   # terminate the worker we just spawned (the add_managed_member cleanup
@@ -970,6 +816,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       _ -> nil
     end
   end
+
   defp role_config(agent) do
     case map_field(agent, :config) do
       config when is_map(config) -> config
@@ -986,5 +833,4 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
     Map.put(recipe, :config, Map.merge(base, config))
   end
-
 end

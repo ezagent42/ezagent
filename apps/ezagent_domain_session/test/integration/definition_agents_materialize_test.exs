@@ -1031,7 +1031,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert binding.parent_template_uri == expected_parent_template_uri
   end
 
-  test "ensure_orchestrator skips a bare Agent Kind without credentials (chain C)" do
+  test "ensure_orchestrator adopts a bare Agent Kind without credentials" do
     n = uniq()
     session_uri = live_session(n)
 
@@ -1051,10 +1051,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(orchestrator_uri, "orchestrator")
     on_exit(fn -> terminate(orchestrator_uri) end)
 
-    # Chain C: the bare Agent Kind spawned above has no credential source and no
-    # materialized config home, so the reuse path skips it. `ensure_orchestrator`
-    # correctly reports the adoption failure.
-    assert {:error, {:orchestrator_adoption_failed, :member_not_joined}} =
+    assert {:ok, ^orchestrator_uri, :already_present} =
              Ezagent.Entity.Session.Orchestrator.ensure_orchestrator(
                session_uri,
                @workspace_uri,
@@ -1062,23 +1059,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
   end
 
-  test "reuse install choice skips a credential-less agent (chain C) instead of joining a zombie" do
+  test "reuse install choice joins a credential-less existing agent" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-advisor-#{n}"
     reusable = live_agent(n, recipe_name)
 
-    # Chain C: a bare-bones Agent Kind spawned for testing has no credential
-    # source and no materialized config home. Before the fix it was reused
-    # silently; now it's skipped.
-    assert {:ok,
-            %{
-              satisfied: [],
-              skipped: [
-                %{role_name: ^role_name, reason: {:config_home_without_credentials, "cc"}}
-              ]
-            }} =
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -1094,7 +1082,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
 
     members = members_of(session_uri)
-    assert SessionBehavior.role_name_to_uri(members, role_name) == nil
+    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
   end
 
   test "reuse install choice rejects an agent from a different recipe" do
@@ -1191,17 +1179,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
              )
   end
 
-  # Regression (WorldConversationTest PR-6 / O-1 flake): a role whose spawn fails
-  # with a MISSING-CREDENTIAL reason (`{:backend_api_key_missing, _, _}`, the
-  # keyless-CI
-  # condition for the cc-custom orchestrator) must be classified as a SKIP, not
-  # a hard error — so the batch CONTINUES and a co-declared credential-less role
-  # (the py helper) still materializes. Pre-fix, the credential-missing role
-  # returned `{:agent_spawn_failed, …}` → the `reduce_while` HALTED with an
-  # unhandled 3-tuple → the following role was never materialized AND the install
-  # transaction CRASHED with `CaseClauseError`. Ordered credential-missing FIRST
-  # so the "batch continues" guarantee is what's under test.
-  test "a missing-credential (env-var) spawn failure skips the role and the batch continues" do
+  test "a credentialless env-backed role materializes with its co-declared role" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1222,22 +1200,15 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                ]
              )
 
-    # The credential-missing role is SKIPPED (not a hard error) with the
-    # `:no_credential_source` reason the durable `unfilled_agent_role_slots`
-    # record renders.
-    assert [%{role_name: ^cred_missing_role, reason: {:no_credential_source, ^missing_flavor}}] =
-             summary.skipped
-
-    # The batch CONTINUED: the role declared AFTER the skipped one materialized
-    # and joined as a live member (the exact "py never materialized" bug).
-    assert summary.satisfied == [ok_role]
+    assert summary.skipped == []
+    assert summary.satisfied == [cred_missing_role, ok_role]
 
     members = members_of(session_uri)
+    assert %URI{} = SessionBehavior.role_name_to_uri(members, cred_missing_role)
     assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
-    assert SessionBehavior.role_name_to_uri(members, cred_missing_role) == nil
   end
 
-  test "a role slot's provider threads into the credential precondition (the cc-custom seam)" do
+  test "a role slot's provider does not gate materialization" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1254,9 +1225,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     role = "kimi-role-#{n}"
 
-    # Profile key UNSET: the selected profile's credential is unavailable → the
-    # slot is skipped loudly (never a silent zombie), with the
-    # `:credential_unavailable` reason from the environment branch.
     assert {:ok, summary} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
@@ -1272,13 +1240,13 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                ]
              )
 
-    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
-             summary.skipped
+    assert summary.skipped == []
+    assert summary.satisfied == [role]
 
-    assert summary.satisfied == []
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
+    on_exit(fn -> terminate(member) end)
 
-    # Profile key SET: the SAME slot materializes and joins — the provider was
-    # threaded, not hardcoded.
     System.put_env("MOONSHOT_API_KEY", "test-only-key")
 
     assert {:ok, summary2} =
@@ -1298,13 +1266,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert summary2.skipped == []
     assert summary2.satisfied == [role]
-
-    members = members_of(session_uri)
-    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
-    on_exit(fn -> terminate(member) end)
   end
 
-  test "a role slot with NO provider on an env-credential flavor fails closed (skip)" do
+  test "an env-credential flavor without a provider still materializes" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1319,21 +1283,15 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [%{recipe: recipe_name, role_name: role, flavor: env_flavor}]
              )
 
-    assert [%{role_name: ^role, reason: {:credential_unavailable, ^env_flavor}}] =
-             summary.skipped
+    assert summary.skipped == []
+    assert summary.satisfied == [role]
 
-    assert summary.satisfied == []
+    members = members_of(session_uri)
+    assert %URI{} = member = SessionBehavior.role_name_to_uri(members, role)
+    on_exit(fn -> terminate(member) end)
   end
 
-  # #185 — a SLICE-backed (curl-style) flavor whose recipe marks the credential
-  # REQUIRED must fail LOUD at provisioning: the slot is skipped with the
-  # `:no_credential_source` reason (the durable `unfilled_agent_role_slots`
-  # record renders it), the batch CONTINUES, and no keyless agent ever joins.
-  # Pre-#185 the precondition waved slice flavors through, the cascade's
-  # `:no_credential_source` surfaced at spawn as a hard `{:agent_spawn_failed,
-  # …}`, and the whole batch halted — a co-declared credential-less role was
-  # never materialized.
-  test "a required slice-credential role with no source is skipped loud and the batch continues" do
+  test "a credentialless slice-backed role materializes with its co-declared role" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1354,16 +1312,12 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                ]
              )
 
-    assert [%{role_name: ^cred_role, reason: {:no_credential_source, ^slice_flavor}}] =
-             summary.skipped
-
-    # The batch CONTINUED: the role declared AFTER the skipped one materialized
-    # and joined as a live member.
-    assert summary.satisfied == [ok_role]
+    assert summary.skipped == []
+    assert summary.satisfied == [cred_role, ok_role]
 
     members = members_of(session_uri)
+    assert %URI{} = SessionBehavior.role_name_to_uri(members, cred_role)
     assert %URI{} = SessionBehavior.role_name_to_uri(members, ok_role)
-    assert SessionBehavior.role_name_to_uri(members, cred_role) == nil
   end
 
   # #185 — the SAME slice-backed flavor with the recipe's `credential_optional`
