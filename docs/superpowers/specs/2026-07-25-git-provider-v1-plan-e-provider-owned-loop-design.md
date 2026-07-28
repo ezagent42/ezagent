@@ -110,50 +110,138 @@ caller-supplied credential。
 生产默认实现始终返回 `:authorization_unavailable`，并在 workspace、filesystem、
 provider 和 Agent side effect 之前 fail closed。
 
+> **2026-07-28：本段的「默认」是否仍是「唯一」，已改为待定排期决定——见 §3.4。**
+> §3.3 更正后，原先支撑「恒 fail closed」的技术阻塞理由不再成立；
+> `Unavailable` 作为**缺省**实现与作为**唯一**实现是两件事。
+
 本地端到端测试注入显式 test-authorized backend。该 backend 只能通过依赖注入进入
 测试调用，不得由 runtime env、route、ActionSet、CLI 或 Agent 参数启用。
 
 ### 3.2 当前明确禁止
 
-- 新增 `Cap.issue/store` 或 cap materialization；
-- 推导 caller/authenticated principal；
+**口径澄清（gaga 2026-07-28 确认）。** 本节原文继承自
+`2026-07-24-git-provider-v1-plan-e-permission-neutral-pivot.md` §1 的
+「不直接 issue/store cap」。按字面读，该禁令会让 main 上 **62 个 lib 文件**
+以及 `.claude/skills/ezagent-developer/references/capbac.md` §10「我要授一个
+capability」的标准 5 步清单全部违规——因此它显然不是字面意思。确认口径为：
+
+> 禁的是**建授权体系、改 CapBAC 内部、造通配 fixture**；
+> 不禁按 main 既有规范模式签发 **exact** cap。
+
+据此，当前明确禁止：
+
+- **建立第二套授权体系**：新的签发路径、新的 cap 存储、新的验证逻辑，或任何
+  绕开 `Ezagent.Cap.Authorize.authorize/3` 的判定；
+- **通配 cap**：任何 `instance: :any` / `behavior: :any` 维度。cap 必须五轴
+  最小权限（concrete instance + workspace + 具体 action），否则 authz 变成
+  空转、测试绿而什么都没验证；
+- **凭空推导 principal**：caller/authenticated principal 必须来自持久化记录
+  （`TaskBinding` / `WorkflowRun` 行），不得在执行时由代码构造或猜测。
+  `{:admin, User.admin_uri()}` 只能作为**签发锚点**出现，永远不是 principal；
+- **新建 `system://` principal**：`SystemPrincipal` 的北极星是 GENESIS-ONLY
+  （`system_principal.ex` moduledoc：非 genesis principal 已全部消除，
+  `system://bootstrap` 是仅存入口）。`capbac.md` §10.5 明写 "If you reach for a
+  new `system://` principal, **stop** — that's a Decision-#154 review surface"；
 - 修改 `EntityCaps`、`PresenterCaps` 或 CapBAC 内部；
-- 在 workflow 中构造或扩散 `%Invocation{}`、`ctx.caps`；
+- 把 `ctx.caps` 扩散出 seam backend：candidate set 只在 backend 内部组装并随
+  单次 dispatch 消亡，不得进入 workflow 其它模块、持久化行、事件或日志
+  （backend 内部构造 `%Invocation{}` 是 main 62 个站点的规范做法，不在禁列）；
 - public route、controller、ActionSet registration、CLI、Mix task 或 agent tool；
 - workflow 直接依赖 GitHub plugin；
 - token、authorization header、private key、installation id 或 raw provider body
   进入 workflow rows、events、logs、errors、workspace 或 Agent。
 
-最终 production authorization backend 等 V1/V2 sanctioned contract 后接入；替换
-backend 不得改变 workflow state、idempotency key 或 provider facts schema。
+**main 的规范模式**（`retirement_sweeper.ex:99-118` 等 62 处同形）：
+
+```elixir
+admin  = Ezagent.Entity.User.admin_uri()          # 签发锚点，非 principal
+caller = <从持久化记录读出的 principal URI>        # 绝不推导
+{:ok, cap} = Ezagent.Cap.issue_for_action({:admin, admin}, caller, action_target)
+Invocation.dispatch(%Invocation{
+  ctx: %{caller: caller, authenticated_principal: caller,
+         caps: MapSet.new([cap]), ...},
+  origin: :trusted_internal
+})
+```
+
+替换 backend 不得改变 workflow state、idempotency key 或 provider facts schema。
 
 ### 3.3 与 main 权限收敛的关系
 
 §3.1 seam 生产默认 `authorization_unavailable`，不是权宜绕过，而是 main 上真正的
 cap 收敛链路尚未到达可接入点。
 
-现状（读自 `docs/superpowers/specs/2026-07-24-ezagent-actor-convergence-design.md`
-v3，`origin/main@846265571` 时点）：
+**本节 2026-07-28 重写。** 原文有三处事实错误，逐条更正如下（复核基线
+`origin/main@4c8b654f0`）。
 
-- 真实 seam 的目标形态是该文档 §3「V2 — caps-resolution convergence」：
-  `EzAgentActor.call(uri, cmd, args, CALLER_IDENTITY)`，第四参数是已认证 principal
-  `%URI{}`，caps 在 chokepoint 现读现验，调用方不得自带 caps list。
-- `ezagent_actor` 抽取 C0–C3 已合（#1546/#1548/#1550+#1562/#1561），**C4–C7 待迁**。
-- V2 明确依赖 C5 的 port contract，且明确要求「coordinate w/ #195 owner」。V2 落地
-  前，不存在可接入的真实 authorization 语义。
+**① 授权判定链路已经存在，不是「尚未到达可接入点」。**
+`Ezagent.Cap.Authorize.authorize/3`（#1493，**2026-07-21**，即本设计写成之前）
+已是单一授权 chokepoint，三道门：
 
-`ezagent_plugin_git_workflow` 与 Feishu 绑定（B1 #1568 / B2 #1547）处境相同：代码、
-测试、CI 均可独立做绿，但在主线权限稳定 + identity-in/fresh-authz 薄接入完成前，
-功能保持 dormant、PR 标 `blocked: auth-convergence`，不接入可调用路径，不合入 main
-的 boot 链。
+1. **Principal gate** — holder 的 caps 由 `AuthorityLoader` 独立加载，
+   **绝不取自 candidate_caps**；空集 → `{:error, :holder_revoked}`，fail closed；
+2. **Target gate** — 每个候选对目标**当前 active authority row** 现读验证
+   （`Authority.verify_against_current/3`，签名 + generation）；未签名、被篡改、
+   被改指向、旧 generation 的候选一律丢弃；
+3. **Shape match**。
 
-**CALLER_IDENTITY 假设（未验证，供 V2 落地后核对）：** 真实 `ExecutionSeam.authorize/2`
-大概率以 `TaskBinding.credential_owner_uri` 或 `Entity.GitTaskAccess.grantee_uri`
-作为 V2 的 `CALLER_IDENTITY`，调用 `EzAgentActor`/`GitTaskAccess` action surface。
-V2 落地后须先验证这条假设成立，再切换 `ExecutionSeam` 的 backend 实现；若不成立，
-需要补一个「workflow run 的 identity 从哪来」的独立设计，但不影响 P1–P4 已实现的
-workflow/branch/commit/PR/facts 逻辑——这正是 seam 模式把返工面限制在单一模块的
-设计意图。
+cap 签名机制 #1457 更早（2026-07-18）。因此 `ctx.caps` 是**候选集**而非权限来源：
+自带一个未真实签发、或库中已失效的 cap 授权不了。原文「V2 落地前不存在可接入的
+真实 authorization 语义」判断过强。
+
+**② C4–C7 已合。** #1579（**2026-07-26**）完成 actor-framework 抽取，
+`Invocation`/`Cmd`/`Kind.Runtime` 已物理迁入 `apps/ezagent_actor`。原文的
+「C4–C7 待迁」在本设计写成次日即失效。
+
+**③ CALLER_IDENTITY 不再是未验证假设。** main 的规范模式（§3.2 末尾代码块，
+`retirement_sweeper.ex:99-118` 等 62 处同形）就是：**principal 从持久化记录读出，
+admin 仅作签发锚点**。`TaskBinding.credential_owner_uri` /
+`Entity.GitTaskAccess.grantee_uri` 正是这个角色，与既有实践一致，无需另做设计。
+
+**仍然未落地的是 V1/V2 本身**（`EzAgentActor.call/4` 在 main 上不存在）。V2 的
+改动面是**候选集从哪来**，不是判定逻辑——convergence design §3 原文：
+"V2 changes where the CANDIDATES come from, not the decision logic"。
+
+**因此 seam 的存续理由改写：**
+
+- ~~旧理由~~：main 上不存在可接入的真实授权语义，故生产恒 fail closed。**已作废。**
+- **新理由**：V2 落地时，今天按 main 规范模式接线的 workflow 需要与其余 62 个
+  站点**一起**迁移候选集来源。seam 把这个迁移面收敛在单一模块内。这是**降低
+  迁移成本**，与「等待可用性」是两回事——后者会得出「V1 必须 dormant」，前者
+  不会。
+
+与 Feishu 绑定（B1 #1568 / B2 #1547）的类比据此收窄：相同点是都用 seam 收敛
+迁移面；**不同点是 Git Provider 的授权接入不再有技术阻塞**。是否解除
+§3.1「生产默认恒 `authorization_unavailable`」是独立的排期决定，见 §3.4。
+
+### 3.4 待定：是否解除生产端的 fail-closed 默认
+
+**状态：未决（2026-07-28 提出）。** §3.3 拆掉了原来的技术阻塞理由，于是
+§3.1「生产默认实现始终返回 `:authorization_unavailable`」变成一个**排期选择**
+而非必然：
+
+| | 保持 `Unavailable` 为唯一实现 | 增加真实 production backend |
+|---|---|---|
+| production | 真死路（compile-time 烘死，四条 runtime 翻转路径均有测试证否） | 按 §3.2 规范模式接线 |
+| V1 状态 | dormant，PR 标 `blocked: auth-convergence` | 可真实接线 |
+| P4d 的 E2E | 证明「**除授权之外**的一切」 | 真端到端 |
+| V2 迁移风险 | 无（届时一并实现） | 与 main 其余 62 站点同级，非额外风险 |
+
+对「Git Provider E2E 测试」这个目标而言，左列恰好证明不了授权那一段。
+
+**无论选哪列，P4a 的交付物不变**：`%AuthorizedTask{}` 的四字段
+（policy / task_access_uri / task_uri / generation）正是 §3.2 规范模式所需的
+输入，`Unavailable` 从「唯一实现」降为「缺省实现」是增量而非重写。故此决定
+不阻塞 P4a，可在 P4b/P4d 之前任意时点作出。
+
+**若选右列，必须同时满足：**
+
+- cap 五轴最小权限，禁止任何 `:any` 维度（§3.2）；
+- principal 取自 `TaskBinding` / `WorkflowRun` 持久化行，不得推导（§3.2）；
+- 端到端测试须包含否定断言——wrong receiver / wrong workspace / wrong instance
+  / wrong action 均返回 `:missing_cap`，照抄
+  `apps/ezagent_domain_git/test/integration/git_task_dispatch_test.exs:106-146`
+  的四条。缺了这些，测试只证明「cap 存在即通过」，不证明 authz 生效。
 
 ## 4. 组件边界
 
@@ -561,7 +649,9 @@ P1
 
 任何 worker 碰到以下事项必须停止：
 
-- 需要新增 cap、推导 principal 或读取 `ctx.caps`；
+- 需要**通配 cap**（任何 `:any` 维度）、需要**凭空推导 principal**、需要新建
+  `system://` principal，或需要把 `ctx.caps` 带出 seam backend；
+  （2026-07-28 口径更新：按 §3.2 规范模式签发 **exact** cap **不**触发停止条件）
 - 需要把 token 交给 git/Agent/workspace；
 - 需要修改 provider-neutral DomainGit action vocabulary；
 - 需要 public ingress；
