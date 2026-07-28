@@ -5,10 +5,47 @@
 # a `git commit` or `git tag`, runs the sub-step gate before allowing it:
 #
 #   Phase 0:  mix format --check-formatted  +  mix test
-#   Phase 1:  + mix ezagent.check_invariants  (this commit)
+#   Phase 1:  + mix ezagent.check_invariants
+#   2026-07-28: the test step is `mix ci.fast`, and the gate runs in the
+#               worktree being committed to — see "What changed" below.
 #
 # Gate red  → exit 2 (blocks the tool call; stderr is shown to Claude).
 # Not git   → exit 0 immediately (no-op for the vast majority of Bash calls).
+#
+# What changed 2026-07-28, and why
+# --------------------------------
+# Two of this hook's assumptions (written at 5199f3699, phase 0) no longer
+# hold everywhere. Neither was a regression anyone introduced.
+#
+#   1. "the commit targets the checkout at CLAUDE_PROJECT_DIR". True when you
+#      work directly in the project root — still the case for many, and their
+#      behaviour is unchanged by this commit. NOT true when you commit from a
+#      `git worktree` linked checkout, which some of us use to keep one task
+#      per branch: the hook cd'd to CLAUDE_PROJECT_DIR unconditionally, so it
+#      gated whatever that checkout happened to be on rather than the branch
+#      being committed. It could pass while the commit was broken, or fail for
+#      reasons the commit had nothing to do with. #1523 already computed the
+#      target worktree in order to SKIP foreign repos, and its own comment
+#      says "keeps esr-ng's OWN worktrees gated" — that intent is only
+#      actually delivered by running the gate there.
+#   2. "the full suite is green and fast". The green half is a team-wide fact
+#      today, not a local quirk: #189 tracks `mix test` as a systemic red on
+#      `main` itself, rooted in 2 real bugs plus 4 test defects and blocking
+#      the release chain; #1599 greened two of them, the rest are open. So the
+#      gate currently cannot pass for anyone touching Elixir, on any machine.
+#      (The "fast" half varies: on at least one dev machine the suite does not
+#      finish at all, but that is a local symptom, not a claim about yours.)
+#      A gate nobody can pass teaches people to bypass it, which costs more
+#      than a narrower gate that holds. The test step is therefore
+#      `mix ci.fast` — the repo's own documented fast deterministic gate, and
+#      the exact set CI's `gate` job runs. This is a deliberate NARROWING: the
+#      full suite is no longer run pre-commit, and stays the job of CI and of
+#      explicit local runs. When #189 closes, whether to widen this back is
+#      worth revisiting.
+#
+# Not changed, but worth knowing: the gate inherits the caller's environment,
+# so a machine whose Postgres is not on the default port sets POSTGRES_PORT
+# once in the session env and the mix commands below pick it up.
 #
 # This is a *backstop*, not the primary mechanism — the primary mechanism is
 # agent discipline (/goal prompt + CLAUDE.md 贯穿条款). Each subsequent phase's
@@ -46,10 +83,27 @@ if [ -n "${_target_dir:-}" ] && [ -d "$_target_dir" ]; then
   fi
 fi
 
-cd "${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}" || {
-  echo "[sub-step-gate] cannot cd to repo root" >&2
+# Run the gate in the worktree the commit actually targets. `_target_dir` was
+# computed above from the command's own `cd`, and the check above already
+# established it belongs to this repo (same git-common-dir).
+#
+# Resolve it to that worktree's ROOT, not the cd'd path itself: `cd
+# apps/ezagent_core && git commit` is an ordinary shape, and the mix commands
+# below must run at the umbrella root to mean anything. Falling back to
+# CLAUDE_PROJECT_DIR keeps the previous behaviour for commands with no `cd`,
+# and a `cd` that cannot be resolved falls back too rather than guessing.
+_gate_dir=""
+if [ -n "${_target_dir:-}" ] && [ -d "$_target_dir" ]; then
+  _gate_dir=$( cd "$_target_dir" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null )
+fi
+[ -n "$_gate_dir" ] && [ -d "$_gate_dir" ] || _gate_dir="${CLAUDE_PROJECT_DIR:-$(dirname "$0")/../..}"
+
+cd "$_gate_dir" || {
+  echo "[sub-step-gate] cannot cd to gate dir: $_gate_dir" >&2
   exit 2
 }
+
+echo "[sub-step-gate] gating: $(pwd -P) ($(git branch --show-current 2>/dev/null || echo 'detached'))" >&2
 
 # Short-circuit: the three gate checks (mix format / mix test /
 # mix ezagent.check_invariants) only act on Elixir code. If the
@@ -78,12 +132,12 @@ if [ $? -ne 0 ]; then
   exit 2
 fi
 
-echo "[sub-step-gate] → mix test" >&2
-TEST_OUTPUT=$(mix test 2>&1)
+echo "[sub-step-gate] → mix ci.fast" >&2
+TEST_OUTPUT=$(mix ci.fast 2>&1)
 TEST_EXIT=$?
 if [ $TEST_EXIT -ne 0 ]; then
   echo "$TEST_OUTPUT" | tail -30 >&2
-  echo "[sub-step-gate] BLOCKED: mix test failed (exit=$TEST_EXIT, tail above)" >&2
+  echo "[sub-step-gate] BLOCKED: mix ci.fast failed (exit=$TEST_EXIT, tail above)" >&2
   exit 2
 fi
 
