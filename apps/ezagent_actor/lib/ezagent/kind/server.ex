@@ -975,6 +975,7 @@ defmodule Ezagent.Kind.Server do
       Ezagent.Kind.Snapshot.commit(state.uri, state.kind, state.state, new_slice_state)
 
     if slice_change_event && commit_result in [:ok, :not_durable] do
+      maybe_dual_write_identity_caps(state, slice_change_event)
       Ezagent.SliceChange.emit(slice_change_event)
       # Membership-cap B.3 (spec §10/K3): cascade hook — enqueues a self-message.
       Ezagent.Kind.CascadeHook.maybe_enqueue(slice_change_event)
@@ -982,6 +983,30 @@ defmodule Ezagent.Kind.Server do
 
     commit_result
   end
+
+  # #189 PR-1 dual-write (identity-plane cutover step 1, ADDITIVE): every
+  # committed `:identity` slice change is ALSO mirrored into the unified
+  # identity-caps store (config-injected via `:ezagent_actor,
+  # :identity_caps_store` — no compile-time reference from the actor layer
+  # to the domain store). The domain store module decides what to skip
+  # (user URIs mirror via `users.caps_json`; ephemeral/external Kinds are
+  # not mirrored in PR-1) and never raises — the snapshot remains
+  # authoritative until the atomic cutover.
+  defp maybe_dual_write_identity_caps(state, %{slice_key: :identity, new_slice: new_slice}) do
+    case Application.get_env(:ezagent_actor, :identity_caps_store) do
+      nil ->
+        :ok
+
+      store ->
+        if Code.ensure_loaded?(store) do
+          store.sync_committed_identity(state.uri, state.kind, new_slice)
+        else
+          :ok
+        end
+    end
+  end
+
+  defp maybe_dual_write_identity_caps(_state, _slice_change_event), do: :ok
 
   # Behavior mailbox forwarding receives the raw message, its slice, and
   # `%{kind_module:, self_uri:}`; `:ignore` preserves that slice. Deferred

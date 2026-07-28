@@ -245,6 +245,8 @@ defmodule Ezagent.SnapshotStore do
           %{uri: uri_str, kind_type: kind_type_str, version: version}
         )
 
+        maybe_dual_write_identity_caps(uri_str, state)
+
         {:ok, %{version: version}}
 
       {:error, reason} ->
@@ -266,9 +268,47 @@ defmodule Ezagent.SnapshotStore do
   """
   @spec delete(URI.t() | String.t()) :: :ok
   def delete(uri) do
-    uri
-    |> uri_to_str()
-    |> KindSnapshot.clear_state_preserving_marker()
+    result =
+      uri
+      |> uri_to_str()
+      |> KindSnapshot.clear_state_preserving_marker()
+
+    maybe_clear_identity_caps_store(uri)
+
+    result
+  end
+
+  # #189 PR-1 dual-write (identity-plane cutover step 1, ADDITIVE): direct
+  # snapshot writes/deletes mirror their `:identity` slice into the unified
+  # identity-caps store (config-injected via `:ezagent_actor,
+  # :identity_caps_store` — no compile-time reference from the actor layer
+  # to the domain store), keeping the store an exact mirror of the durable
+  # snapshot plane even for writers that bypass `Kind.Server` commits. The
+  # domain store module never raises and decides what to skip (user URIs
+  # mirror via `users.caps_json`; slices without a caps set are ignored).
+  defp maybe_dual_write_identity_caps(uri_str, state) do
+    with %{identity: identity_slice} <- state,
+         store when not is_nil(store) <-
+           Application.get_env(:ezagent_actor, :identity_caps_store),
+         true <- Code.ensure_loaded?(store) do
+      store.sync_committed_identity(uri_str, nil, identity_slice)
+    else
+      _ -> :ok
+    end
+  end
+
+  defp maybe_clear_identity_caps_store(uri) do
+    case Application.get_env(:ezagent_actor, :identity_caps_store) do
+      nil ->
+        :ok
+
+      store ->
+        if Code.ensure_loaded?(store) do
+          store.identity_snapshot_cleared(uri)
+        else
+          :ok
+        end
+    end
   end
 
   @doc """

@@ -353,7 +353,13 @@
   #   `HomeRuntime.create_agent_config_dir_with_grant/4` under `__MODULE__`). Each
   #   flavor's thin adapter must key `HomeRuntime` on its OWN module, so the fork
   #   is forced across the plugin boundary. 42→43.
-  cross_file_duplicate_fn_groups: 43,
+  # arch-cap-bump: #189 PR-1 — two new cross-file duplicate-body groups: (1)
+  #   `Store.key/1` ↔ `ProvisioningReceipt.uri_string/1` (canonical URI
+  #   normalization `uri |> Ezagent.URI.instance() |> URI.to_string()`), and (2)
+  #   the identical config-injected `maybe_dual_write_identity_caps/2` mirror hooks
+  #   in `Kind.Snapshot` ↔ `SnapshotStore`. Both intentional per-module (not shared,
+  #   to avoid coupling the actor mirror seam / the domain key helper). 43→45.
+  cross_file_duplicate_fn_groups: 45,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3
@@ -624,7 +630,11 @@
   #   sibling undocumented `session_creator`/`materializer` internals already in
   #   the baseline. 402→404 (headroom that fit on the pre-rebase base was consumed
   #   by #1361 landing first; reconciled additively on rebase onto main).
-  undocumented_public_defs: 404,
+  # arch-cap-bump: #189 PR-1 — the +1 is `Store.persist/2`: it HAS an `@doc`, but its
+  #   two `def` heads sit inside a compile-time `if @p1_forced_shadow_failure_seam`
+  #   (the test-only forced-failure seam) which the source doc-scanner does not
+  #   associate with the preceding doc. Function is documented; scanner miscounts. 404→405.
+  undocumented_public_defs: 405,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new

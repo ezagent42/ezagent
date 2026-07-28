@@ -18,6 +18,27 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :load, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
+                             # #189 PR-1 — the unified identity-caps store is a NEW
+                             # physical cap adapter (parallel to `user_store.ex`) for
+                             # the `identity_caps` table. Its raw-cap accessors are the
+                             # adapter's own storage seam (write-shadow in PR-1; reads
+                             # never store-authoritative). codex-reviewed (5 rounds).
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :activate_changes, 2},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :do_persist, 2},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :fetch_durable_caps, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :fetch_durable_identities, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :fetch_durable_identity, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :load, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :tombstone, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :update_locked, 3},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",

@@ -7,6 +7,16 @@ defmodule Ezagent.EntityCaps do
   slice. Callers use this module so that split cannot leak into authorization,
   UI, or orchestration code.
 
+  #189 PR-1 (ADDITIVE): the unified per-entity identity-caps store
+  (`Ezagent.EntityCaps.Store`) is populated as a WRITE-SHADOW of BOTH legacy
+  stores via dual-write (`users.caps_json` writes, the Kind snapshot write
+  chokepoints, and direct `SnapshotStore` writes). In PR-1 the shadow is
+  NEVER consulted for an authoritative read — all reads keep returning the
+  legacy value below (codex review F1: a best-effort shadow write must not
+  be able to override the authoritative legacy store on read). The
+  store-preferred read + parity verification arrive with the atomic
+  cutover PR.
+
   `load/1` is receiver-aware and live-first. It reads a live Identity slice when
   one exists, then falls back to the durable store selected by the entity type.
   `load_persisted/1` deliberately skips the live process for non-blocking reads
