@@ -59,3 +59,16 @@ ubuntu runner — so a green local run does not *guarantee* green CI; see
 **local ubuntu-CI docker harness** — `make ci.docker` runs the *same* CI chain in a
 CPU-constrained linux container, and `make ci.repro` hunts the timing race that
 `mix ci.local` is green on. See [`docs/guide/ci-docker-local.md`](docs/guide/ci-docker-local.md).
+
+### Debugging process-spawning code (erlexec / PTY / sidecars)
+
+If you're iterating on code that forks or spawns OS processes — erlexec,
+PTY servers, cc/codex/python sidecars — and want a safety net against a
+runaway process tree taking down the box (see the 2026-07-21 incident:
+[`docs/notes/2026-07-21-git-provider-system-closure-retrospective.md`](docs/notes/2026-07-21-git-provider-system-closure-retrospective.md)),
+run the invocation through `scripts/guarded_mix.sh` instead of bare `mix` —
+it bounds the whole process tree in a memory-capped cgroup and kills it
+cleanly on breach instead of the runaway starving the host. See
+[`docs/runbook/guarded-mix-execution.md`](docs/runbook/guarded-mix-execution.md).
+This is a targeted tool for that specific risk, not a routine replacement
+for `mix test` / `mix ci.local`.
