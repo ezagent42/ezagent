@@ -19,7 +19,7 @@ defmodule Ezagent.Socialware.ShareTest do
     clicker = live_agent("clicker", owner, Ezagent.Entity.Agent.base_behaviors())
     target = live_agent("shared-board", owner, [Target])
 
-    token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
 
     assert {:ok, %{target: claimed, grantee: ^clicker}} = Share.claim(token, clicker)
     assert Ezagent.URI.instance(claimed) == Ezagent.URI.instance(target)
@@ -36,7 +36,7 @@ defmodule Ezagent.Socialware.ShareTest do
     clicker = live_agent("clicker-op", owner, Ezagent.Entity.Agent.base_behaviors())
     target = live_agent("shared-board-op", owner, [Target])
 
-    token = ShareToken.mint_link!(target, Target, [:add_node, :get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(owner, target, Target, [:add_node, :get_tree], ttl_seconds: 60)
 
     assert {:ok, _} = Share.claim(token, clicker)
     assert eventually(fn -> holds_cap?(clicker, target, :add_node) end)
@@ -48,7 +48,7 @@ defmodule Ezagent.Socialware.ShareTest do
     clicker = live_agent("clicker-2", owner, Ezagent.Entity.Agent.base_behaviors())
     target = live_agent("shared-board-2", owner, [Target])
 
-    token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
 
     assert {:error, _} = Share.claim(token <> "x", clicker)
     refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
@@ -59,9 +59,50 @@ defmodule Ezagent.Socialware.ShareTest do
     clicker = live_agent("clicker-3", owner, Ezagent.Entity.Agent.base_behaviors())
     target = orphan_agent("ownerless-shared", [Target])
 
-    token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
 
-    assert {:error, {:operate_target_ownerless, _, Target}} = Share.claim(token, clicker)
+    assert {:error, {:share_target_ownerless, _}} = Share.claim(token, clicker)
+    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
+  end
+
+  test "M1: a link whose issuer is NOT the target's data_owner mints NOTHING (no privilege escalation)" do
+    owner = user_uri("m1-owner")
+    attacker = user_uri("m1-attacker")
+    clicker = live_agent("m1-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("m1-board", owner, [Target])
+
+    # A server-signed link forged with a non-owner issuer — the classic
+    # "valid token grants authority its creator never held" attack.
+    token = ShareToken.mint_link!(attacker, target, Target, [:get_tree], ttl_seconds: 60)
+
+    assert {:error, {:share_issuer_not_data_owner, _issuer, _owner}} = Share.claim(token, clicker)
+    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
+  end
+
+  test "M1: the sanctioned producer Share.mint_link/4 refuses to sign for a non-owner issuer" do
+    owner = user_uri("m1p-owner")
+    attacker = user_uri("m1p-attacker")
+    target = live_agent("m1p-board", owner, [Target])
+
+    assert {:error, {:share_issuer_not_data_owner, _, _}} =
+             Share.mint_link(attacker, target, Target, [:get_tree])
+
+    assert {:ok, token} = Share.mint_link(owner, target, Target, [:get_tree])
+    assert is_binary(token)
+  end
+
+  test "M2: a link for a behavior the target does NOT carry is refused (conformance)" do
+    owner = user_uri("m2-owner")
+    clicker = live_agent("m2-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
+    # A target WITHOUT the Target behavior — the token names Target, but the
+    # instance can't handle it, so mint fails closed rather than issue a dead cap.
+    target = live_agent("m2-plain-board", owner, [])
+
+    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
+
+    assert {:error, {:share_target_not_conformant, _, Target, :get_tree, _}} =
+             Share.claim(token, clicker)
+
     refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
   end
 

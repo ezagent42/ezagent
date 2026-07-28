@@ -143,12 +143,18 @@ defmodule Ezagent.Socialware.CompositionCaps do
     target_instance = Ezagent.URI.instance(target_uri)
     workspace_uri = Ezagent.Capability.workspace_of(target_uri)
 
-    with {:ok, owner} <- assert_target_owner(behavior, target_uri),
+    # M2: the cap's `kind` axis must match the target URI's kind — a `:agent`
+    # cap toward a `session://`/`resource://` target verifies but never matches
+    # at dispatch (kind is one of the 5 match axes), i.e. a silently non-
+    # authorizing cap. Derive kind from the target URI so the mint is
+    # URI-kind-agnostic as promised.
+    with {:ok, kind} <- target_kind(target_uri),
+         {:ok, owner} <- assert_target_owner(behavior, target_uri),
          :ok <- ensure_target_owner_authority(owner, target_uri) do
       actions
       |> Enum.reduce_while({:ok, []}, fn action, {:ok, artifacts} ->
         cap =
-          Ezagent.Capability.cap(:agent, behavior, action, target_instance, workspace_uri)
+          Ezagent.Capability.cap(kind, behavior, action, target_instance, workspace_uri)
 
         # Minimal item: for a same-owner grant `issue_item/2` takes the direct
         # `{:ok, artifact}` branch (Cap.issue caller == data_owner), so consent /
@@ -481,6 +487,24 @@ defmodule Ezagent.Socialware.CompositionCaps do
 
     CompositionConsent.approved?(consent, :target, item.target_owner) and
       CompositionConsent.approved?(consent, :source, item.source_owner)
+  end
+
+  # M2: derive the cap `kind` atom from the target URI's per-tenant type segment
+  # (`entity://…/agent/…` → `:agent`, `session://…` → `:session`, `resource://…`
+  # → `:resource`), so the minted cap's kind axis matches the target Kind. An
+  # untyped or unknown-kind target fails closed (no silently non-authorizing cap).
+  defp target_kind(%URI{} = target_uri) do
+    case Ezagent.URI.type(target_uri) do
+      {:ok, type} ->
+        try do
+          {:ok, String.to_existing_atom(type)}
+        rescue
+          ArgumentError -> {:error, {:unknown_target_kind, type}}
+        end
+
+      :error ->
+        {:error, {:untyped_target, target_uri}}
+    end
   end
 
   defp assert_target_owner(behavior, target_uri) do

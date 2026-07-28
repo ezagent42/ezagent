@@ -37,7 +37,7 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
     target = target_agent(ws, "shared", owner)
     clicker = signed_in_user(ws, "clicker")
 
-    token = ShareToken.mint_link!(target, Target, [:get_tree], ttl_seconds: 60)
+    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
 
     out =
       conn
