@@ -174,6 +174,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "System authority-use fence keyed by canonical principal URI; one offboarding cascade may span workspaces.",
     "kind_cap_authorities" =>
       "Framework authority rows are globally keyed by canonical Kind URI; the URI itself carries tenant identity and the admin anchor is system-scoped.",
+    "identity_caps" =>
+      "#189 PR-1 unified per-entity identity-caps store — globally keyed by canonical entity URI (the URI itself carries tenant identity), same identity-plane precedent as kind_cap_authorities.",
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",

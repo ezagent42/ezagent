@@ -1,5 +1,12 @@
 defmodule Ezagent.EntityCaps.UserStore do
-  @moduledoc false
+  @moduledoc """
+  The legacy user cap store (`users.caps_json`).
+
+  #189 PR-1 dual-write: every write here ALSO upserts the unified
+  identity-caps store (`Ezagent.EntityCaps.Store`) in the SAME transaction,
+  so the unified store mirrors `users.caps_json` exactly (it remains the
+  authoritative source for users until the atomic cutover).
+  """
 
   import Ecto.Query
 
@@ -55,7 +62,11 @@ defmodule Ezagent.EntityCaps.UserStore do
         with {:ok, caps} <- fun.(decode_caps(row.caps_json)),
              encoded <- caps |> Enum.map(&Ezagent.Capability.to_map/1) |> Jason.encode!(),
              {:ok, _row} <-
-               row |> Ecto.Changeset.change(caps_json: encoded) |> Repo.update() do
+               row |> Ecto.Changeset.change(caps_json: encoded) |> Repo.update(),
+             # #189 PR-1 dual-write: mirror the complete user cap set into the
+             # unified identity-caps store (same transaction, status/receipt
+             # preserved).
+             :ok <- Ezagent.EntityCaps.Store.persist(uri, caps) do
           :ok
         end
     end

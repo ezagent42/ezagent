@@ -95,6 +95,16 @@ if config_env() == :prod do
       You can generate one by calling: mix phx.gen.secret
       """
 
+  # #189 PR-1 — provisioning-receipt HMAC secret (REQUIRED in prod: the
+  # compile-time config.exs value is a dev-only default).
+  config :ezagent_domain_identity,
+         :provisioning_receipt_secret,
+         System.get_env("EZAGENT_PROVISIONING_RECEIPT_SECRET") ||
+           raise("""
+           environment variable EZAGENT_PROVISIONING_RECEIPT_SECRET is missing.
+           You can generate one by calling: mix phx.gen.secret
+           """)
+
   # PR #123 hardening: when the public Cloudflare tunnel fronts the
   # phx endpoint, WS upgrades come from app.ezagent.chat (the tunnel
   # rewrites Origin). Lock check_origin to the public hostname +

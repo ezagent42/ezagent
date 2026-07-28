@@ -7,6 +7,14 @@ defmodule Ezagent.EntityCaps do
   slice. Callers use this module so that split cannot leak into authorization,
   UI, or orchestration code.
 
+  #189 PR-1 (ADDITIVE): the unified per-entity identity-caps store
+  (`Ezagent.EntityCaps.Store`) now mirrors BOTH legacy stores via dual-write
+  (`users.caps_json` writes, the Kind commit chokepoint, and direct
+  `SnapshotStore` writes). Durable reads (`load_persisted/1`, and the
+  `:not_live` fallback of `load/1`) prefer the unified store and fall back
+  to the legacy store when no row exists — the legacy stores remain
+  authoritative until the atomic cutover.
+
   `load/1` is receiver-aware and live-first. It reads a live Identity slice when
   one exists, then falls back to the durable store selected by the entity type.
   `load_persisted/1` deliberately skips the live process for non-blocking reads
@@ -35,7 +43,7 @@ defmodule Ezagent.EntityCaps do
     SpawnRegistry
   }
 
-  alias Ezagent.EntityCaps.UserStore
+  alias Ezagent.EntityCaps.{Store, UserStore}
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
 
@@ -89,14 +97,27 @@ defmodule Ezagent.EntityCaps do
   end
 
   defp do_load_persisted(uri) do
+    # #189 PR-1 dual-read: the unified identity-caps store is preferred; a
+    # URI with no store row falls back to the legacy store (users.caps_json
+    # for users, the snapshot `:identity` slice otherwise), which remains
+    # authoritative until the atomic cutover. A present NON-active row is
+    # authoritative about the holder being empty (`Store.fetch_durable_caps/1`
+    # returns `{:ok, []}`), never a fallback.
     caps =
-      if user_uri?(uri) do
-        UserStore.load(uri)
-      else
-        snapshot_caps(uri)
+      case Store.fetch_durable_caps(uri) do
+        {:ok, store_caps} -> store_caps
+        :fallback -> legacy_persisted_caps(uri)
       end
 
     verified(caps, uri)
+  end
+
+  defp legacy_persisted_caps(uri) do
+    if user_uri?(uri) do
+      UserStore.load(uri)
+    else
+      snapshot_caps(uri)
+    end
   end
 
   defp fenced?(uri), do: Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri)
