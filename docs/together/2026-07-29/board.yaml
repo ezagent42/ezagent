@@ -1,0 +1,138 @@
+# dev-together board.yaml — DISPLAY page for 2026-07-29.
+# Model: board for day N = PLAN(N) + DONE(N-1) + REVIEW(N-1).
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# Note: no prior-day board since 2026-07-21, so this is a PLAN-only board
+#       (DONE column empty; PR-1's landing lives in the #189 card acceptance).
+
+date: "2026-07-29"
+prev_date: "07-28"
+as_of: "2026-07-29"
+north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "身份平面 #189 → main 全绿(canary 阻塞根因)", pct: 75, value: "冷启动自派发 :holder_revoked 根因(ephemeral ExternalMirrorWorker + Session 缺持久 self-license)。PR-1 统一 EntityCaps.Store + dual-write 入 main;写平面(原子 active-transition + backfill + fleet-parity barrier)分支完成;cutover(读翻转 store-authoritative + durable-identity mint + gen-gated 重读 + tombstone-guard)实施中 → 完成后 9 个 holder_revoked 红转绿。"}
+  - {label: "Group-A URI 通用分享(jjkysy, 正交)", pct: 55, value: "URI 无关 bearer 分享令牌(#1594) + caps_toward 正向可见性(#1596) + grantees_of 反向索引(#1606) + CompositionConsent 超集(#1597) 四 PR 在飞;按 handoff 修 → 复审 → cc gate+merge。A4/#1611 + share-config/#1612 接续。"}
+  - {label: "MFU demo v0.15(ruihua)", pct: 70, value: "成长树修复包 + 技能/经验框架落地 #1586 已入 main(仅 demo/docs/skill 无 core 改动);landing package(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)继续中。"}
+  - {label: "Feishu 绑定修复 B1/B2(gaga)", pct: 40, value: "permission-neutral binding seed readiness(#1568) + 迁移到正式 UserBinding dispatch(#1547) 两 PR 在飞;待 gaga 推进。"}
+  - {label: "C8 v5 use-side Kind-mailbox seal(暂缓)", pct: 30, value: "spec 收敛 + codex 评审 + 修订完成;DEV 暂缓至 #189 落地。非 EM-authz(那是折入身份平面的独立 G-6 计划)。"}
+
+efficiency:
+  - {value: "PR-1 入 main", label: "#1615 统一 EntityCaps.Store + dual-write(additive), 验证 zero-new-reds —— main bc1b9fb74"}
+  - {value: "写平面分支完成", label: "原子 active-transition(active⇔当前有效 self-license) + backfill + fleet-parity barrier + open(:existed) fail-closed —— fix/189-identity-plane-p2 @ 87e21fc35"}
+efficiency_source: "#189 身份平面是当前唯一在跑的关键整合线 —— 目标把 main full-suite 从 9 个 holder_revoked 系统性红翻到真绿, 从而打通 canary 自动放行(Allen 授权)。分三段 additive-then-cutover 落: PR-1 统一 store + dual-write 已入 main(向后兼容、zero-new-reds);写平面原子 active-transition + backfill + fleet-parity barrier 在分支完成并过 gate.arch;cutover 读翻转 + ephemeral durable-identity mint 实施中, 完成后整包一次 codex 过审、一次合入。其余车道(URI 分享 / MFU demo / Feishu 绑定)与 #189 正交并行, 不进关键路径。"
+
+deploy:
+  - {env: "canary", state: "⏳ 待 #189 cutover 合入 main 全绿后自动放行(Allen 授权)。当前 main=bc1b9fb74(PR-1 已入,写平面在 fix/189-identity-plane-p2 分支)。"}
+  - {env: "beta", state: "⏳ 待 canary 通过后推进(deploy 流单独推 pointer,不由 dev-together 合入)。"}
+  - {env: "stable", state: "⏳ 待 canary 通过后推进。"}
+
+risks:
+  - "🔴 #189 是 canary 阻塞根因: main full-suite 9 个 holder_revoked 红(冷启动自派发缺持久 self-license)。cutover 合入 + 整包一次 codex 全量过审前, canary 不能自动放行。收口路径: 完整 #189 一次合入 → main 真绿 → 自动放行 canary。"
+  - "🟡 C8/v5 use-side Kind-mailbox seal DEV 暂缓至 #189 落地, 避免与身份平面并发改 use 侧 mailbox/pid 面导致返工。spec 已收敛 + codex 评审 + 修订, 待 #189 合入后启动。"
+  - "🟢 Group-A URI 通用分享正交非阻塞: 需复审通过 + rebase main 后由 cc gate+merge, 不进 #189 关键路径。"
+  - "🟢 MFU demo v0.15 仅 demo/docs/skill、无 core 改动, 风险低; 合入需与 Allen 敲定。"
+
+people:
+  - {id: "allen", name: "Allen 轨道", track: "身份平面 #189 → main 全绿 + 部署闸", color: "#2563eb"}
+  - {id: "jjkysy", name: "jjkysy", track: "Group-A URI 通用分享(正交)", color: "#65a30d"}
+  - {id: "gaga", name: "gaga", track: "Feishu 绑定修复 B1/B2", color: "#7c3aed"}
+  - {id: "ruihua", name: "ruihua", track: "MFU demo v0.15", color: "#db2777"}
+
+# ===== YESTERDAY (07-28, 含跨夜) done — git 实证 =====
+done_prev:
+  - owner: "allen"
+    title: "#189 前置三连 + 身份平面 PR-1 入 main"
+    goal: "把 #189 的三个已确认成因逐个落地, 并为身份平面 cutover 打好 additive 地基"
+    status: "done"
+    who: "Allen 轨道 · #189 · 全部 squash 入 main"
+    acceptance:
+      - {text: "#1604 — #201 成因① credential/flavor adopt-clobber 结构性 defer-writes", done: true, evidence: "merged 07-28"}
+      - {text: "#1599 — 两个 full-suite 时序 flake 转绿(member_cap roster sync + world LiveView mailbox barrier)", done: true, evidence: "merged 07-28"}
+      - {text: "#1610 — node-global-teardown 侵略者拆独立 CI leg(消 ~510 分片级联) + enumerator gate", done: true, evidence: "merged 07-28"}
+      - {text: "#1615 — 身份平面 PR-1: 统一 EntityCaps.Store + dual-write(additive), 全套验证 zero-new-reds", done: true, evidence: "merged(跨夜, 今晨 CST 03:07), main bc1b9fb74"}
+  - owner: "allen"
+    title: "插件 owner-bypass 债务清零"
+    goal: "枚举出的 plugin owner-bypass 全部烧到 0"
+    status: "done"
+    who: "Allen 轨道 · CapBAC 债务"
+    acceptance:
+      - {text: "#1593 — owner-gated executor + workspace facades, 枚举债务→0", done: true, evidence: "merged 07-28"}
+  - owner: "gaga"
+    title: "hooks sub-step-gate 修复"
+    goal: "sub-step-gate 应 gate 被提交的 worktree; 测试步骤收窄 ci.fast"
+    status: "done"
+    who: "gaga 轨道 · dev-loop hooks"
+    acceptance:
+      - {text: "#1601 — sub-step-gate 修复(gaga)", done: true, evidence: "merged 07-28"}
+      - {text: "#1603/#1605 — cc 折入 review 修复(git -C 提交目标解析 + pre-push 跳过 deps-missing worktree)", done: true, evidence: "merged 07-28"}
+  - owner: "allen"
+    title: "socialware-receiver handoff 文档"
+    goal: "typed-message + event-renderer + receiver 地基 handoff + LSP/ACP 协议框架"
+    status: "done"
+    who: "Allen 轨道 · handoff"
+    acceptance:
+      - {text: "#1607 + #1609 — socialware-receiver foundation + origin/协议框架 handoff", done: true, evidence: "merged 07-28"}
+
+# ===== TODAY (07-29) plan — status ∈ planned|wip|review|blocked =====
+cards:
+  - owner: "allen"
+    title: "身份平面切换 #189 → main 全绿"
+    goal: "冷启动自派发 :holder_revoked 根因 → 三段身份平面一次性 cutover → main 真绿 → 自动放行 canary"
+    status: "wip"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · #189 canary 阻塞根因 · 三段身份平面 (additive → 写平面 → cutover)"
+    branch: "fix/189-identity-plane-p2"
+    pr: {num: 1615, state: "merged"}
+    acceptance:
+      - {text: "PR-1 统一 EntityCaps.Store + dual-write(additive, 向后兼容)入 main", done: true, evidence: "main bc1b9fb74 / #1615, 验证 zero-new-reds"}
+      - {text: "写平面: 原子 active-transition(active⇔当前有效 self-license) + backfill + fleet-parity barrier + open(:existed) fail-closed —— 分支完成并验证", done: true, evidence: "fix/189-identity-plane-p2 @ 87e21fc35, gate.arch 684/0"}
+      - {text: "Cutover: 读翻转到 store-authoritative + ephemeral durable-identity mint + gen-gated 重读 + tombstone-guard → 9 个 holder_revoked 红转绿", done: false, evidence: "cutover 实施中"}
+      - {text: "完整 #189 一次 codex 过审 → 一次合入 → main 全绿 → 自动放行 canary(Allen 授权)", done: false}
+  - owner: "allen"
+    title: "C8 v5 use-side Kind-mailbox seal / pid 纪律"
+    goal: "use 侧 Kind-mailbox 封口 + pid 纪律"
+    status: "planned"
+    who: "Allen 轨道 · v5 use 侧 · 暂缓至 #189 落地"
+    branch: "feat/v5-use-side-mailbox"
+    flag: "DEV 暂缓至 #189 落地"
+    review_note: "非 EM-authz —— 那是一条独立、尚未实施的 G-6 计划, 已折入身份平面。本卡是 use 侧 mailbox 封口 + pid 纪律, spec 已收敛 + codex 评审 + 修订。"
+    acceptance:
+      - {text: "spec 收敛 + codex 对抗评审 + 修订", done: true}
+      - {text: "DEV 启动(待 #189 合入后, 避免并发改 use 侧返工)", done: false, evidence: "暂缓中"}
+  - owner: "jjkysy"
+    title: "Group-A URI 通用分享"
+    goal: "URI 无关 bearer 分享令牌 + 通用可见性/consent —— 按 handoff 修 → 复审 → cc gate+merge(正交非阻塞)"
+    status: "review"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "jjkysy 轨道 · socialware URI-share · 复审 + gate+merge"
+    review_note: "接续: A4/#1611(删 Mount reconcile 重发 trap, cap-as-truth 实证) + share-config/#1612。修 → 复审 → rebase main → cc gate+merge; 正交不进 #189 关键路径。"
+    acceptance:
+      - {text: "#1594 share-A1: URI 无关 bearer 分享令牌 + 通用 /socialware/claim", done: false, evidence: "open, 待复审"}
+      - {text: "#1596 share-A2-1: Capability.caps_toward/2 通用正向可见性派生", done: false, evidence: "open"}
+      - {text: "#1606 share-A2-2: grantees_of 反向索引(cap→行派生只读)", done: false, evidence: "open"}
+      - {text: "#1597 share-A3: 泛化 CompositionConsent 成 URI-share 宽松超集", done: false, evidence: "open"}
+  - owner: "gaga"
+    title: "Feishu 绑定修复 B1/B2"
+    goal: "绑定 seed readiness + 迁移到正式 UserBinding dispatch"
+    status: "wip"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "gaga 轨道 · Feishu 绑定 · 待 gaga 推进"
+    flag: "待 gaga 推进"
+    acceptance:
+      - {text: "#1568 permission-neutral binding seed readiness (B1)", done: false, evidence: "open"}
+      - {text: "#1547 迁移 Feishu 绑定到正式 UserBinding dispatch", done: false, evidence: "open"}
+  - owner: "ruihua"
+    title: "MFU demo v0.15 —— 成长树修复 + 技能/经验框架"
+    goal: "成长树修复包 + 技能/经验框架落地; 仅 demo/docs/skill 无 core 改动"
+    status: "wip"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "ruihua 轨道 · MFU demo · landing package 继续中"
+    branch: "mfu-demo-tree"
+    pr: {num: 1586, state: "merged"}
+    acceptance:
+      - {text: "成长树修复包 + 技能/经验框架落地(#1586)", done: true, evidence: "#1586 已 squash 入 main; demo/docs/skill 无 core 改动"}
+      - {text: "v0.15 landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)", done: false}
