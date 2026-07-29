@@ -50,6 +50,15 @@
     {"e2e", ["/test/e2e/"]},
     {"actor", ["apps/ezagent_actor/test/"]},
     {"core", ["apps/ezagent_core/test/"]},
+    # Isolated ONE-file leg for the tag-excluded real-boot-seed regression: it
+    # `regenesis`-es the VM-GLOBAL genesis-admin singleton and spawns a durable
+    # SessionTemplate Kind whose async persist escapes the sandbox — corrupting
+    # sibling session tests. Carved BEFORE `session` (first-match-wins) so it runs
+    # ALONE (own BEAM + DB partition), and `run_shard_tests` passes
+    # `--include real_boot_seed_path` so its `@moduletag :real_boot_seed_path`
+    # (excluded by default in the session test_helper) actually RUNS here.
+    {"session_boot_seed",
+     ["apps/ezagent_domain_session/test/integration/stale_admin_pre_epoch_seed_test.exs"]},
     {"session", ["apps/ezagent_domain_session/test/"]},
     {"web", ["apps/ezagent_web/test/", "apps/ezagent_cli/test/"]},
     {"plugin_world", ["apps/ezagent_plugin_world/test/"]},

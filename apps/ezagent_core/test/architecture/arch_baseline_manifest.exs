@@ -120,7 +120,19 @@
   #   would fragment that guarantee mid-cutover. Burn-down: extract the
   #   provisioning-receipt API (`provision`/`reprovision`/`revoke_provisioning`/
   #   `tombstone` + `activate_locked`) into a sibling once the cutover lands. 9→10.
-  oversized_modules_gt_1000: 10,
+  # arch-cap-bump: +1 canary boot regression (deploy 30456630379) — `behavior/
+  #   identity.ex` was 994 LOC. The PRE-EPOCH gen-reboot self-license re-mint's
+  #   eligibility/lock orchestration is EXTRACTED to the sibling
+  #   `Ezagent.Identity.PreEpochRemint` (codex MINOR-7); what remains in identity.ex
+  #   is only the sanctioned `mint_self_license` CONSTRUCTOR (made public so the
+  #   sibling calls it) + the `activate/2` delegation. The constructor CANNOT move
+  #   out — the Z-1 self-license-construction ratchet asserts EXACTLY the two files
+  #   identity.ex + self_license.ex, and a third constructor would trip it — so it
+  #   pushes identity.ex 994 → 1013 (13 over; pre-extraction it was 1081), crossing
+  #   >1000 as the eleventh oversized module. ACCEPTED documented debt. Burn-down:
+  #   fold the read-only `IdentityAdmin` action-handler block (second module in this
+  #   file) into a sibling once its callers migrate → identity.ex back under 1000. 10→11.
+  oversized_modules_gt_1000: 11,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
