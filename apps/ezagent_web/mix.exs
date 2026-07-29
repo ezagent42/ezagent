@@ -102,6 +102,7 @@ defmodule EzagentWeb.MixProject do
       # EzagentPluginGithub.GitHubCallbackPlug — needed at compile time
       # so the router macro resolves the module atom.
       {:ezagent_plugin_github, in_umbrella: true},
+      {:ezagent_plugin_forgejo, in_umbrella: true},
       # Phase 6 PR 4: CC channel v2 WS Socket is mounted in
       # EzagentWeb.Endpoint. The plugin compiles first so the Socket
       # module is loadable when the endpoint boots.

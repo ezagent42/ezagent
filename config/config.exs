@@ -263,6 +263,31 @@ config :ezagent_domain_provider_connection,
       %{{"github", "oauth_user"} => "pair-github-v1"}
     )
 
+# Forgejo provider plugin (design
+# docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md, slice F1).
+#
+# Only the credential backend is registered. Unlike GitHub there is no driver
+# and no callback-redirect pair: Forgejo V1 authenticates with a personal
+# access token, not an OAuth user flow, so there is no authorization redirect
+# to declare. How a PAT is first placed into this backend is NOT yet specified
+# by the design — see the F1 handoff note; F2 cannot run end-to-end until it is.
+config :ezagent_domain_provider_connection,
+  credential_backend_implementations:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :credential_backend_implementations,
+        %{}
+      ),
+      %{"forgejo-credential-v1" => EzagentPluginForgejo.ForgejoCredentialBackend}
+    )
+
+# `token_encryption_key` has no default: the module-load fallback in
+# ForgejoCredentialBackend is per-VM-session, so a real deployment that leaves
+# this unset orphans every stored credential on restart.
+config :ezagent_plugin_forgejo,
+  token_encryption_key: {:system, "FORGEJO_TOKEN_ENCRYPTION_KEY"}
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
