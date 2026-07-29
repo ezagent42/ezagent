@@ -10,60 +10,73 @@ for (const id of ["app", "scene-title", "scene-content", "primary-action"]) {
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
 }
 
-for (const phrase of ["大项目中的一步", "主动连接", "正式平台需真人确认"]) {
-  assert.ok(html.includes(phrase), `missing copy: ${phrase}`);
+for (const phrase of [
+  "输入你的昵称",
+  "准备好了，开始闯关",
+  "教学关卡不限时",
+  "正式订单与现实世界时间同步",
+  "公司现金",
+  "调教 Agent",
+  "Form 工具",
+  "购买并安装 Form · ¥80",
+  "缺少必要信息时，先用 Form 向我确认",
+  "你的成果已交付",
+  "完整订单仍在进行",
+  "完整订单已完成",
+  "领取第一份自由订单",
+  "这是你现在可以编排的角色",
+  "把角色卡牌拖到任务的某一个环节",
+  "创业教练提示",
+  "🍱 喂范例",
+  "📏 写守则",
+  "🔍 复盘",
+  "🧰 安装工具"
+]) {
+  assert.ok(html.includes(phrase), `missing v0.3 copy: ${phrase}`);
 }
 
 for (const token of [
   "data-card",
   "data-slot",
-  "data-relation",
   "assignCard",
   "selectCard",
-  "setRelation",
   "getEstimate",
-  "runArray",
   "saveDraft",
   "clearAssignments",
   "removeAssignment",
-  "startExecution",
-  "executionProgress",
-  "resumeExecution",
-  "renderRunning",
-  "retryActOne",
-  "upgradeAgent",
-  "chooseAmbiguity",
-  "buildResultOne",
-  "inviteHunter",
-  "simulateAcceptance"
+  "saveNickname",
+  "spendResource",
+  "startFirstRun",
+  "completeFirstRun",
+  "submitFeedback",
+  "purchaseFormTool",
+  "saveAgentRule",
+  "submitClarificationForm",
+  "startSecondRun",
+  "completePlayerStep",
+  "completeWholeOrder",
+  "renderOrderResources",
+  "renderTour",
+  "acknowledgeRoleTour",
+  "dismissDragGhost",
+  "coachAdvice",
+  "selectTrainingMethod"
 ]) {
-  assert.ok(html.includes(token), `missing interaction token: ${token}`);
+  assert.ok(html.includes(token), `missing v0.3 interaction: ${token}`);
 }
 
-for (const phrase of [
+for (const removed of [
+  "第二幕：用连接组成一个新组织",
+  "邀请长期合作",
   "让 Agent 自行继续",
-  "由本人确认",
   "询问上游猎人",
-  "上一单，你完成了大项目中的一步",
-  "这一单，你连接了三个人",
-  "纸飞机",
-  "长尾巴",
-  "小角",
-  "旧书换新主人",
-  "校园群首轮点击率",
-  "客户可直接使用",
-  "准备好了，开始闯关",
-  "暂存编排",
-  "清空编排",
-  "教学订单，不消耗真实信用",
-  "确认编排，让 Agent 开始执行",
-  "可以暂时离开",
-  "需求不清时暂停并提醒主人",
-  "串行",
-  "并行",
-  "检查"
+  "你当前拥有的角色卡牌",
+  "当前目标",
+  "分工评价",
+  "资源评价",
+  "改进评价"
 ]) {
-  assert.ok(html.includes(phrase), `missing final copy: ${phrase}`);
+  assert.ok(!html.includes(removed), `removed first-tutorial content remains: ${removed}`);
 }
 
 assert.ok(!html.includes("总战力"), "must not expose total power");
@@ -71,4 +84,4 @@ assert.ok(!html.includes("总战力"), "must not expose total power");
 const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
 assert.equal(inlineScripts.length, 1, "prototype must contain exactly one inline script");
 
-console.log("MFU card-array v0.1 static contract passed");
+console.log("MFU hunter tutorial v0.3 static contract passed");

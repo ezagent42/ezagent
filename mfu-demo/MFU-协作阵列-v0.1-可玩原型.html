@@ -3,584 +3,95 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>MFU · 协作卡牌阵列 v0.1</title>
+  <title>MFU · 首个猎人教学订单 v0.3</title>
   <style>
-    :root{
-      --ink:#5b4632;--ink-dark:#3d2e1f;--cream:#fdf6e0;--bg:#e9d6a4;
-      --gold:#f5b301;--school:#3f9e4d;--school-bg:#e2f3e4;
-      --incu:#e07b1f;--incu-bg:#fdeeda;--assoc:#2f6fc4;--assoc-bg:#e3edfb;
-      --red:#d94f3d;--teal:#1d9e75;--purple:#7a4fc9;--muted:#8a765a;
-    }
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{
-      min-height:100vh;padding:12px;color:var(--ink-dark);
-      font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;
-      background-color:var(--bg);
-      background-image:
-        linear-gradient(45deg,rgba(255,255,255,.13) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.13) 75%),
-        linear-gradient(45deg,rgba(255,255,255,.13) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.13) 75%);
-      background-size:28px 28px;background-position:0 0,14px 14px;
-    }
-    button{font:inherit;color:inherit}
-    button:focus-visible,[tabindex]:focus-visible{outline:4px solid var(--assoc);outline-offset:3px}
-    .app-shell{width:min(1220px,100%);margin:0 auto}
-    .paper{
-      background:var(--cream);border:3px solid var(--ink);border-radius:11px;
-      box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;
-    }
-    .topbar{display:flex;align-items:center;gap:12px;padding:9px 12px;margin-bottom:10px;background:linear-gradient(#fff9e8,#f5e7bd)}
-    .brand b{font-size:16px;letter-spacing:2px}.brand small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px;font-weight:700}
-    .spacer{flex:1}.act-label{font-size:10.5px;font-weight:900;padding:4px 8px;border:2px solid var(--ink);border-radius:7px;background:#fff}
-    .btn{
-      border:3px solid var(--ink);border-radius:8px;background:#fff2cf;color:var(--ink-dark);
-      box-shadow:0 3px 0 var(--ink);padding:7px 13px;font-size:12px;font-weight:800;cursor:pointer;
-    }
-    .btn:hover{filter:brightness(1.04)}.btn:active{transform:translateY(3px);box-shadow:none}
-    .btn.primary{background:var(--gold)}.btn.good{background:#8fd694}.btn.small{padding:3px 8px;font-size:10.5px;box-shadow:0 2px 0 var(--ink)}
-    .btn:disabled{opacity:.4;cursor:not-allowed;transform:none}.btn.selected{outline:4px solid var(--gold)}
-    .progress{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px}
-    .progress-step{padding:7px;border:2px solid var(--ink);border-radius:8px;background:#f3e8cc;box-shadow:0 2px 0 rgba(91,70,50,.45);font-size:10.5px;font-weight:900;text-align:center}
-    .progress-step.on{background:var(--gold)}.progress-step.done{background:#dff3e9;color:#176d54}
-    .stage{min-height:730px;padding:16px;display:flex;flex-direction:column}
-    .scene-head{display:flex;align-items:flex-start;gap:12px;padding-bottom:11px;border-bottom:3px dotted #cbb98f}
-    .scene-icon{font-size:40px;line-height:1}.scene-copy{flex:1}
-    #scene-title{font-size:23px;letter-spacing:1px}
-    .scene-subtitle{margin-top:4px;color:var(--muted);font-size:11.5px;font-weight:700;line-height:1.6}
-    .scene-count{padding:4px 8px;border:2px solid var(--ink);border-radius:7px;background:#fff0ad;font-size:10px;font-weight:900;white-space:nowrap}
-    #scene-content{flex:1}.primary-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px;padding-top:12px;border-top:3px dotted #cbb98f}
-    .primary-hint{font-size:10.5px;font-weight:800;color:var(--muted)}
-    .mission{margin:12px 0;padding:10px 12px;border:3px dashed var(--assoc);border-radius:9px;background:var(--assoc-bg);font-size:12px;font-weight:800;line-height:1.65}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid.three{grid-template-columns:repeat(3,1fr)}
-    .card-panel{padding:11px;border:3px solid var(--ink);border-radius:10px;background:#fffaf0;box-shadow:0 3px 0 rgba(91,70,50,.32)}
-    .card-panel h2{font-size:14px;margin-bottom:7px;letter-spacing:.5px}.card-panel h3{font-size:12px;margin-bottom:5px}
-    .card-panel p,.card-panel li{font-size:11px;font-weight:700;line-height:1.65}.card-panel ul{padding-left:18px}
-    .tag{display:inline-block;padding:2px 7px;border:2px solid;border-radius:6px;font-size:9.5px;font-weight:900}
-    .tag.school{color:var(--school);background:var(--school-bg)}.tag.assoc{color:var(--assoc);background:var(--assoc-bg)}
-    .tag.incu{color:var(--incu);background:var(--incu-bg)}.tag.done{color:var(--teal);background:#e5f6ef}
-    .tag.gold{color:#8b6100;background:#fff0ad}.tag.gray{color:#786a56;background:#f2ead6}
-    .big-line{margin:28px auto 12px;display:flex;align-items:stretch;justify-content:center;gap:7px;max-width:1050px}
-    .project-node{position:relative;width:170px;min-height:112px;padding:10px;border:3px solid var(--ink);border-radius:10px;background:#f2ead6;text-align:center;box-shadow:0 3px 0 rgba(91,70,50,.32)}
-    .project-node.mine{background:#fff0ad;outline:5px solid rgba(245,179,1,.28)}
-    .project-node.done{background:#e5f6ef}.project-node b{display:block;font-size:12px;margin:5px 0}.project-node small{display:block;font-size:9.5px;font-weight:700;color:var(--muted);line-height:1.4}
-    .arrow{align-self:center;font-size:25px;font-weight:900;color:var(--ink)}
-    .you-are-here{position:absolute;top:-17px;left:50%;transform:translateX(-50%);padding:2px 7px;border:2px solid var(--ink);border-radius:6px;background:var(--gold);font-size:9px;font-weight:900;white-space:nowrap}
-    .explain-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:12px}
-    .explain-item{padding:10px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:10.5px;font-weight:800;line-height:1.55}
-    .explain-item b{display:block;margin-bottom:3px;color:var(--assoc)}
-    .briefing{display:grid;grid-template-columns:1.05fr .95fr;gap:12px;margin-top:14px}
-    .brief-copy{padding:18px;border:4px solid var(--ink);border-radius:12px;background:#fffaf0;box-shadow:0 5px 0 rgba(91,70,50,.35)}
-    .brief-copy .eyebrow{font-size:10px;font-weight:900;color:var(--assoc);letter-spacing:1px}.brief-copy h2{margin-top:7px;font-size:25px;line-height:1.25}
-    .brief-copy>p{margin-top:8px;font-size:12px;font-weight:700;line-height:1.75}
-    .brief-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.brief-fact{padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff}
-    .brief-fact b{display:block;font-size:10px;color:var(--muted);margin-bottom:3px}.brief-fact span{font-size:11px;font-weight:800;line-height:1.45}
-    .brief-order{padding:16px;border:4px solid var(--ink);border-radius:12px;background:#f6e9c5;box-shadow:0 5px 0 rgba(91,70,50,.35)}
-    .brief-order h2{font-size:15px}.brief-order p{font-size:10.5px;font-weight:700;line-height:1.6;margin-top:5px}
-    .brief-chain{display:flex;flex-direction:column;gap:6px;margin-top:11px}.brief-step{display:grid;grid-template-columns:32px 1fr auto;gap:8px;align-items:center;padding:7px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:10px;font-weight:800}
-    .brief-step.mine{background:#fff0ad;outline:3px solid var(--gold)}.brief-step small{font-size:8.5px;color:var(--muted)}
-
-    .workspace{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:10px;margin-top:11px}
-    .board-panel{padding:11px;border:3px solid var(--ink);border-radius:10px;background:#fffaf0;box-shadow:0 3px 0 rgba(91,70,50,.32)}
-    .board-head{display:flex;align-items:flex-start;gap:10px;margin-bottom:9px}.board-head h2{font-size:14px}.board-head p{font-size:10px;font-weight:700;color:var(--muted);margin-top:3px}
-    .resource-pills{margin-left:auto;display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-    .task-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;position:relative}
-    .task-slot{position:relative;min-height:195px;padding:9px;border:3px dashed #a8977d;border-radius:10px;background:#f4ecd8;transition:.15s}
-    .task-slot:nth-child(1){border-color:var(--school);background:var(--school-bg)}
-    .task-slot:nth-child(2){border-color:var(--assoc);background:var(--assoc-bg)}
-    .task-slot:nth-child(3){border-color:var(--incu);background:var(--incu-bg)}
-    .task-slot.drop-ready{outline:5px solid rgba(245,179,1,.35);transform:translateY(-2px)}
-    .task-slot h3{font-size:12px}.task-slot .slot-meta{display:block;margin-top:3px;color:var(--muted);font-size:9px;font-weight:700;line-height:1.45}
-    .slot-empty{height:104px;margin-top:9px;display:grid;place-items:center;border:2px dashed rgba(91,70,50,.45);border-radius:8px;color:var(--muted);font-size:10px;font-weight:800;text-align:center;padding:8px;cursor:pointer}
-    .slot-card{margin-top:9px}
-    .slot-card-wrap{position:relative}.remove-card{position:absolute;right:-5px;top:-5px;z-index:8;width:23px;height:23px;border:2px solid var(--ink);border-radius:50%;background:#f6b5ab;font-size:11px;font-weight:900;cursor:pointer}
-    .connection{position:absolute;top:104px;right:-25px;width:22px;border-top:4px solid var(--ink);z-index:5}
-    .connection:after{content:"";position:absolute;right:-1px;top:-7px;border-left:8px solid var(--ink);border-top:5px solid transparent;border-bottom:5px solid transparent}
-    .task-slot:last-child .connection{display:none}
-    .task-board.parallel .connection{border-top-style:double;border-top-width:6px}
-    .task-board.review .task-slot:nth-child(3):before{content:"检查";position:absolute;left:-27px;top:82px;padding:2px 4px;border:2px solid var(--ink);border-radius:5px;background:#fff0ad;font-size:8px;font-weight:900;z-index:6}
-    .relation-bar{display:flex;align-items:center;gap:6px;margin-top:9px;padding:8px;border:2px solid var(--ink);border-radius:8px;background:#fff}
-    .relation-bar strong{font-size:10px;margin-right:3px}.relation-btn{padding:4px 8px;border:2px solid var(--ink);border-radius:7px;background:#f3e8cc;font-size:9.5px;font-weight:900;cursor:pointer}
-    .relation-btn.on{background:var(--gold);outline:2px solid var(--gold)}
-    .side-panel{display:flex;flex-direction:column;gap:9px}
-    .estimate{padding:11px;border:3px solid var(--ink);border-radius:10px;background:#fff6d8;box-shadow:0 3px 0 rgba(91,70,50,.32)}
-    .estimate h2{font-size:13px;margin-bottom:7px}.estimate-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:2px dotted #d8c69a;font-size:10.5px;font-weight:800}
-    .risk-list{margin-top:7px;display:flex;flex-direction:column;gap:5px}.risk{padding:6px;border:2px solid var(--incu);border-radius:7px;background:var(--incu-bg);font-size:9.5px;font-weight:800;line-height:1.45}
-    .risk.ok{border-color:var(--teal);background:#e5f6ef}
-    .hand{margin-top:10px;padding:10px;border:3px solid var(--ink);border-radius:10px;background:#f6e9c5}
-    .hand-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}.hand-head h2{font-size:13px}.hand-head p{font-size:9.5px;color:var(--muted);font-weight:700}
-    .cards{display:flex;gap:9px;flex-wrap:wrap}
-    .play-card{width:178px;min-height:126px;padding:9px;border:3px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 4px 0 var(--ink);cursor:grab;text-align:left}
-    .play-card:hover{transform:translateY(-2px)}.play-card.selected{outline:5px solid var(--gold);transform:translateY(-3px)}
-    .play-card.human{background:linear-gradient(#fff,#e9f6eb)}.play-card.agent{background:linear-gradient(#fff,#e7effb)}
-    .play-card.external{background:linear-gradient(#fff,#fff0dc)}.play-card.compact{width:100%;min-height:116px;cursor:pointer}
-    .card-top{display:flex;align-items:center;gap:7px}.portrait{width:36px;height:36px;border:2px solid var(--ink);border-radius:8px;background:#fff6d8;display:grid;place-items:center;font-size:20px}
-    .card-name b{display:block;font-size:11.5px}.card-name small{font-size:8.5px;font-weight:800;color:var(--muted)}
-    .skill-row{display:flex;gap:4px;flex-wrap:wrap;margin-top:7px}.skill{padding:2px 5px;border:1.5px solid var(--assoc);border-radius:5px;background:var(--assoc-bg);font-size:8.5px;font-weight:800}
-    .card-foot{display:flex;justify-content:space-between;gap:4px;margin-top:7px;padding-top:6px;border-top:2px dotted #d8c69a;font-size:8.5px;font-weight:800;color:var(--muted)}
-    .accept-note{margin-top:6px;padding:4px;border:2px solid var(--incu);border-radius:6px;background:var(--incu-bg);font-size:8.5px;font-weight:900;color:#9a4e0c}
-    .board-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:8px}
-    .tutorial-safe{margin-top:7px;color:var(--teal);font-size:9.5px;font-weight:900}
-    .running-box{max-width:820px;margin:28px auto 0;padding:18px;border:4px solid var(--ink);border-radius:14px;background:#fffaf0;box-shadow:0 7px 0 rgba(91,70,50,.35)}
-    .running-head{display:flex;align-items:center;gap:12px}.running-agent{width:58px;height:58px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:12px;background:var(--assoc-bg);font-size:32px;animation:bob .7s infinite alternate}
-    @keyframes bob{to{transform:translateY(-4px)}}.running-head h2{font-size:18px}.running-head p{margin-top:4px;font-size:10.5px;font-weight:700;color:var(--muted)}
-    .run-meter{height:24px;margin-top:16px;border:3px solid var(--ink);border-radius:8px;background:#efe3c2;overflow:hidden;position:relative}.run-meter i{display:block;height:100%;background:var(--teal);transition:width .4s}.run-meter span{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:900}
-    .run-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:10px}.run-stat{padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff;text-align:center}.run-stat b{display:block;font-size:13px}.run-stat small{font-size:8.5px;font-weight:800;color:var(--muted)}
-    .leave-note{margin-top:11px;padding:10px;border:3px dashed var(--assoc);border-radius:8px;background:var(--assoc-bg);font-size:10.5px;font-weight:900;text-align:center}
-
-    .event-box{max-width:780px;margin:38px auto 0;padding:18px;border:4px solid var(--ink);border-radius:14px;background:#fffaf0;box-shadow:0 7px 0 rgba(91,70,50,.35)}
-    .event-box h2{font-size:19px}.event-box>p{margin-top:7px;font-size:12px;font-weight:700;line-height:1.7}
-    .choices{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:15px}
-    .choice{padding:12px;border:3px solid var(--ink);border-radius:10px;background:#fff2cf;box-shadow:0 3px 0 var(--ink);cursor:pointer;text-align:left}
-    .choice:hover{background:#fff0ad}.choice b{display:block;font-size:12px;margin-bottom:5px}.choice small{font-size:9.5px;font-weight:700;color:var(--muted);line-height:1.45}
-    .result-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:10px;margin-top:11px}
-    .artifact{min-height:310px;padding:14px;border:4px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 5px 0 rgba(91,70,50,.35)}
-    .artifact-cover{height:190px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:3px solid var(--teal);border-radius:9px;background:linear-gradient(145deg,#e2f3e4,#fff0ad);text-align:center}
-    .artifact-cover .book{font-size:50px}.artifact-cover b{font-size:21px;letter-spacing:2px}.artifact-cover small{margin-top:7px;font-size:10px;font-weight:800}
-    .artifact h2{font-size:15px;margin:10px 0 5px}.artifact p{font-size:10.5px;font-weight:700;line-height:1.6}
-    .delivery-pack{display:grid;grid-template-columns:1.35fr .65fr;gap:8px;min-height:264px}
-    .campaign-poster{position:relative;overflow:hidden;padding:14px;border:3px solid var(--ink);border-radius:9px;background:linear-gradient(150deg,#f9d85a 0 48%,#e2f3e4 48% 100%)}
-    .campaign-poster:after{content:"";position:absolute;width:160px;height:160px;right:-52px;bottom:-75px;border:16px solid rgba(47,111,196,.2);border-radius:50%}
-    .poster-brand{font-size:8.5px;font-weight:900;letter-spacing:2px}.poster-kicker{display:inline-block;margin-top:12px;padding:2px 6px;border:2px solid var(--ink);border-radius:5px;background:#fff;font-size:8.5px;font-weight:900}
-    .poster-title{position:relative;z-index:1;margin-top:9px;font-size:29px;font-weight:900;line-height:1.04;letter-spacing:2px}.poster-title span{color:var(--assoc)}
-    .poster-books{position:absolute;right:18px;top:45px;font-size:49px;transform:rotate(7deg)}
-    .poster-copy{position:relative;z-index:1;width:68%;margin-top:9px;font-size:9.5px;font-weight:800;line-height:1.55}
-    .poster-meta{position:absolute;left:14px;right:14px;bottom:13px;display:flex;align-items:end;justify-content:space-between;gap:8px;font-size:8.5px;font-weight:900}
-    .poster-cta{padding:4px 8px;border:2px solid var(--ink);border-radius:6px;background:var(--assoc);color:#fff;box-shadow:0 2px 0 var(--ink)}
-    .deliverable-side{display:grid;grid-template-rows:1fr 1fr;gap:8px}
-    .social-preview,.experiment-preview{position:relative;padding:10px;border:3px solid var(--ink);border-radius:9px;background:#fff}
-    .social-preview b,.experiment-preview b{display:block;font-size:10.5px}.social-preview p,.experiment-preview p{margin-top:4px;font-size:8.5px;font-weight:700;line-height:1.45}
-    .social-visual{height:51px;margin-top:6px;display:grid;place-items:center;border:2px solid var(--school);border-radius:6px;background:linear-gradient(135deg,#e2f3e4,#fff0ad);font-size:25px}
-    .metric{display:flex;align-items:end;gap:5px;margin-top:8px}.metric strong{font-size:24px;color:var(--teal);line-height:1}.metric span{font-size:8px;font-weight:800;color:var(--muted)}
-    .ready-ribbon{position:absolute;right:-5px;top:9px;padding:3px 7px;border:2px solid var(--teal);border-radius:5px 0 0 5px;background:#e5f6ef;color:var(--teal);font-size:8px;font-weight:900;transform:rotate(2deg)}
-    .result-list{display:flex;flex-direction:column;gap:7px}.result-row{display:grid;grid-template-columns:88px 1fr;gap:7px;padding:8px;border:2px solid var(--ink);border-radius:8px;background:#fff}
-    .result-row b{font-size:10px;color:var(--muted)}.result-row span{font-size:10.5px;font-weight:800;line-height:1.5}
-    .feedback{margin-top:9px;padding:10px;border:3px solid var(--assoc);border-radius:9px;background:var(--assoc-bg);font-size:11px;font-weight:800;line-height:1.65}
-    .invite-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
-    .hunter-card{padding:13px;border:3px solid var(--ink);border-radius:10px;background:#fffaf0;box-shadow:0 3px 0 rgba(91,70,50,.32)}
-    .hunter-card.accepted{outline:4px solid var(--teal);background:#e8f7f1}.hunter-main{display:flex;align-items:center;gap:9px}
-    .hunter-main .portrait{width:48px;height:48px;font-size:26px}.hunter-main b{font-size:13px}.hunter-main small{display:block;margin-top:3px;font-size:9.5px;font-weight:700;color:var(--muted)}
-    .hunter-card p{margin-top:8px;font-size:10.5px;font-weight:700;line-height:1.6}.hunter-card .btn{width:100%;margin-top:9px}
-    .notice{margin-top:10px;padding:9px;border:3px dashed var(--incu);border-radius:8px;background:var(--incu-bg);font-size:10.5px;font-weight:900;text-align:center}
-    .final-message{margin-top:11px;padding:18px;border:4px solid var(--teal);border-radius:12px;background:#e5f6ef;text-align:center;box-shadow:0 5px 0 rgba(29,158,117,.35)}
-    .final-message b{display:block;font-size:20px;line-height:1.5}.final-message p{margin-top:6px;font-size:11px;font-weight:700;color:var(--muted)}
-    .upgrade-box{max-width:850px;margin:24px auto 0}.upgrade-compare{display:grid;grid-template-columns:1fr 42px 1fr;gap:9px;align-items:stretch}
-    .upgrade-card{padding:15px;border:4px solid var(--ink);border-radius:12px;background:#fff;box-shadow:0 4px 0 rgba(91,70,50,.35)}.upgrade-card.after{background:#e5f6ef;border-color:var(--teal)}
-    .upgrade-card h2{font-size:15px}.upgrade-card p{margin-top:8px;font-size:11px;font-weight:700;line-height:1.65}.upgrade-arrow{display:grid;place-items:center;font-size:28px;font-weight:900}
-    .new-rule{margin-top:11px;padding:10px;border:3px solid var(--teal);border-radius:8px;background:#fff;font-size:12px;font-weight:900;text-align:center}
-    .contribution{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-top:9px}.contribution div{padding:8px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:9.5px;font-weight:800;line-height:1.5}
-    .stamp{display:inline-block;padding:4px 12px;border:4px solid var(--teal);border-radius:10px;color:var(--teal);font-size:19px;font-weight:900;transform:rotate(-5deg);animation:stamp .3s ease-out}
-    @keyframes stamp{from{transform:rotate(-5deg) scale(2);opacity:0}}
-    @media(max-width:1050px){.workspace{grid-template-columns:1fr}.side-panel{display:grid;grid-template-columns:1fr 1fr}.project-node{width:145px}}
-    @media(max-width:820px){.big-line{transform:scale(.8);transform-origin:left center;width:125%}.stage{min-height:auto}.task-board{gap:12px}.connection{right:-13px;width:11px}.cards{justify-content:center}}
-    @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}
+    :root{--ink:#5b4632;--dark:#3d2e1f;--cream:#fdf6e0;--bg:#e9d6a4;--gold:#f5b301;--green:#3f9e4d;--green-bg:#e2f3e4;--blue:#2f6fc4;--blue-bg:#e3edfb;--orange:#e07b1f;--orange-bg:#fdeeda;--red:#d94f3d;--teal:#1d9e75;--muted:#8a765a}
+    *{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;padding:12px;color:var(--dark);font-family:"PingFang SC","Microsoft YaHei",sans-serif;background-color:var(--bg);background-image:linear-gradient(45deg,rgba(255,255,255,.13) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.13) 75%),linear-gradient(45deg,rgba(255,255,255,.13) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.13) 75%);background-size:28px 28px;background-position:0 0,14px 14px}
+    button,input,select,textarea{font:inherit;color:inherit}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[tabindex]:focus-visible{outline:4px solid var(--blue);outline-offset:3px}.app-shell{width:min(1220px,100%);margin:auto}.paper{background:var(--cream);border:3px solid var(--ink);border-radius:11px;box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff}.topbar{display:flex;align-items:center;gap:12px;padding:9px 12px;margin-bottom:10px;background:linear-gradient(#fff9e8,#f5e7bd)}.brand b{font-size:16px;letter-spacing:2px}.brand small{display:block;margin-top:3px;color:var(--muted);font-size:9.5px;font-weight:700}.spacer{flex:1}.act-label{font-size:10.5px;font-weight:900;padding:4px 8px;border:2px solid var(--ink);border-radius:7px;background:#fff}.btn{border:3px solid var(--ink);border-radius:8px;background:#fff2cf;box-shadow:0 3px 0 var(--ink);padding:8px 14px;font-size:12px;font-weight:900;cursor:pointer}.btn:hover{filter:brightness(1.04)}.btn:active{transform:translateY(3px);box-shadow:none}.btn.primary{background:var(--gold)}.btn.good{background:#8fd694}.btn.small{padding:4px 9px;font-size:10.5px;box-shadow:0 2px 0 var(--ink)}.btn:disabled{opacity:.42;cursor:not-allowed;transform:none}.progress{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-bottom:10px}.progress-step{padding:7px;border:2px solid var(--ink);border-radius:8px;background:#f3e8cc;box-shadow:0 2px 0 rgba(91,70,50,.45);font-size:10px;font-weight:900;text-align:center}.progress-step.on{background:var(--gold)}.progress-step.done{background:#dff3e9;color:#176d54}.stage{min-height:730px;padding:16px;display:flex;flex-direction:column}.scene-head{display:flex;gap:12px;align-items:flex-start;padding-bottom:11px;border-bottom:3px dotted #cbb98f}.scene-icon{font-size:40px}.scene-copy{flex:1}#scene-title{font-size:23px;letter-spacing:1px}.scene-subtitle{margin-top:4px;color:var(--muted);font-size:11.5px;font-weight:700;line-height:1.6}.scene-count{padding:4px 8px;border:2px solid var(--ink);border-radius:7px;background:#fff0ad;font-size:10px;font-weight:900;white-space:nowrap}#scene-content{flex:1}.primary-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:13px;padding-top:12px;border-top:3px dotted #cbb98f}.primary-row.centered{justify-content:center}.primary-row.centered .primary-hint{display:none}.primary-row.centered .btn{font-size:16px;padding:12px 28px}.primary-hint{font-size:10.5px;font-weight:800;color:var(--muted)}
+    .tag{display:inline-block;padding:2px 7px;border:2px solid;border-radius:6px;font-size:9.5px;font-weight:900}.tag.blue{color:var(--blue);background:var(--blue-bg)}.tag.orange{color:var(--orange);background:var(--orange-bg)}.tag.green{color:var(--teal);background:#e5f6ef}.tag.gold{color:#8b6100;background:#fff0ad}.tag.gray{color:#786a56;background:#f2ead6}.panel{padding:13px;border:3px solid var(--ink);border-radius:10px;background:#fffaf0;box-shadow:0 3px 0 rgba(91,70,50,.32)}.panel h2{font-size:15px;margin-bottom:7px}.panel p{font-size:11px;font-weight:700;line-height:1.65}.mission{margin:12px 0;padding:10px 12px;border:3px dashed var(--blue);border-radius:9px;background:var(--blue-bg);font-size:11px;font-weight:800;line-height:1.65}
+    .welcome{max-width:720px;margin:42px auto;text-align:center}.welcome .unicorn{font-size:76px}.welcome h2{font-size:28px;margin-top:8px}.welcome p{margin:9px auto 18px;max-width:520px;color:var(--muted);font-size:12px;font-weight:700;line-height:1.7}.nickname-form{max-width:420px;margin:auto;padding:18px;border:4px solid var(--ink);border-radius:13px;background:#fff;box-shadow:0 5px 0 rgba(91,70,50,.35);text-align:left}.nickname-form label{display:block;font-size:13px;font-weight:900;margin-bottom:7px}.nickname-form input,.text-field,select{width:100%;padding:10px;border:3px solid var(--ink);border-radius:8px;background:#fffdf6;font-size:12px;font-weight:700}.nickname-form .btn{width:100%;margin-top:10px}.field-error{min-height:18px;margin-top:5px;color:var(--red);font-size:10px;font-weight:900}
+    .briefing{display:grid;grid-template-columns:1.05fr .95fr;gap:12px;margin-top:14px}.brief-copy,.brief-order{padding:18px;border:4px solid var(--ink);border-radius:12px;background:#fffaf0;box-shadow:0 5px 0 rgba(91,70,50,.35)}.brief-order{background:#f6e9c5}.eyebrow{font-size:10px;font-weight:900;color:var(--blue);letter-spacing:1px}.brief-copy h2{margin-top:7px;font-size:25px;line-height:1.25}.brief-copy>p,.brief-order>p{margin-top:8px;font-size:11px;font-weight:700;line-height:1.7}.brief-facts{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px}.brief-fact{padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff}.brief-fact b{display:block;font-size:9px;color:var(--muted);margin-bottom:3px}.brief-fact span{font-size:11px;font-weight:800}.brief-chain{display:flex;flex-direction:column;gap:6px;margin-top:11px}.brief-step{display:grid;grid-template-columns:32px 1fr auto;gap:8px;align-items:center;padding:7px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:10px;font-weight:800}.brief-step.mine{background:#fff0ad;outline:3px solid var(--gold)}.brief-step small{font-size:8.5px;color:var(--muted)}
+    .order-resources{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:11px 0;padding:10px;border:3px solid var(--ink);border-radius:10px;background:#f6e9c5}.resource{padding:8px;border:2px solid var(--ink);border-radius:8px;background:#fff;text-align:center}.resource small{display:block;font-size:8.5px;font-weight:900;color:var(--muted)}.resource b{display:block;margin-top:3px;font-size:12px}.order-resources p{grid-column:1/-1;padding-top:7px;border-top:2px dotted #cbb98f;color:var(--blue);font-size:9.5px;font-weight:900;text-align:center}.workspace{display:grid;grid-template-columns:minmax(0,1fr) 245px;gap:10px}.board-panel{padding:11px;border:3px solid var(--ink);border-radius:10px;background:#fffaf0;box-shadow:0 3px 0 rgba(91,70,50,.32)}.board-head h2{font-size:14px}.board-head p{font-size:10px;font-weight:700;color:var(--muted);margin-top:3px}.task-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:26px;margin-top:9px}.task-slot{position:relative;min-height:195px;padding:9px;border:3px dashed #a8977d;border-radius:10px;background:#f4ecd8}.task-slot:nth-child(1){border-color:var(--green);background:var(--green-bg)}.task-slot:nth-child(2){border-color:var(--blue);background:var(--blue-bg)}.task-slot:nth-child(3){border-color:var(--orange);background:var(--orange-bg)}.task-slot.drop-ready{outline:5px solid rgba(245,179,1,.4)}.task-slot h3{font-size:12px}.slot-meta{display:block;margin-top:3px;color:var(--muted);font-size:9px;font-weight:700}.slot-empty{height:104px;margin-top:9px;display:grid;place-items:center;border:2px dashed rgba(91,70,50,.45);border-radius:8px;color:var(--muted);font-size:10px;font-weight:800;text-align:center;padding:8px}.connection{position:absolute;top:104px;right:-25px;width:22px;border-top:4px solid var(--ink)}.connection:after{content:"";position:absolute;right:-1px;top:-7px;border-left:8px solid var(--ink);border-top:5px solid transparent;border-bottom:5px solid transparent}.task-slot:last-child .connection{display:none}.remove-card{position:absolute;right:-5px;top:-5px;z-index:4;width:23px;height:23px;border:2px solid var(--ink);border-radius:50%;background:#f6b5ab;font-weight:900;cursor:pointer}.hand{margin-top:10px;padding:10px;border:3px solid var(--ink);border-radius:10px;background:#f6e9c5}.hand h2{font-size:13px}.cards{display:flex;gap:9px;margin-top:8px;flex-wrap:wrap}.play-card{width:180px;min-height:126px;padding:9px;border:3px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 4px 0 var(--ink);cursor:grab;text-align:left}.play-card.human{background:linear-gradient(#fff,#e9f6eb)}.play-card.agent{background:linear-gradient(#fff,#e7effb)}.play-card.selected{outline:5px solid var(--gold)}.play-card.compact{width:100%;min-height:105px;box-shadow:none}.card-top{display:flex;align-items:center;gap:7px}.portrait{width:36px;height:36px;border:2px solid var(--ink);border-radius:8px;background:#fff6d8;display:grid;place-items:center;font-size:20px}.card-name b{display:block;font-size:11.5px}.card-name small{font-size:8.5px;font-weight:800;color:var(--muted)}.skills{margin-top:7px;font-size:9px;font-weight:800;color:var(--blue)}.card-foot{margin-top:7px;padding-top:6px;border-top:2px dotted #d8c69a;font-size:8.5px;font-weight:800;color:var(--muted)}.board-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:8px}.side-panel{display:flex;flex-direction:column;gap:9px}.estimate-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:2px dotted #d8c69a;font-size:10px;font-weight:800}.risk{margin-top:8px;padding:7px;border:2px solid var(--orange);border-radius:7px;background:var(--orange-bg);font-size:9.5px;font-weight:800;line-height:1.5}
+    .hand.role-tour-target{position:relative;z-index:31;outline:7px solid var(--gold);box-shadow:0 0 0 9999px rgba(61,46,31,.28),0 3px 0 rgba(91,70,50,.32)}.role-tour{position:relative;z-index:32;margin-top:11px;padding:10px 12px;border:3px solid var(--ink);border-radius:9px;background:#fffaf0;font-size:10.5px;font-weight:800;line-height:1.55}.role-tour .btn{margin-left:8px}.drag-ghost{position:relative;margin:9px 0;padding:9px 12px 9px 58px;border:3px dashed var(--gold);border-radius:9px;background:#fff8d7;font-size:10.5px;font-weight:900;line-height:1.5}.drag-ghost-card{position:fixed;z-index:25;left:var(--ghost-x);top:var(--ghost-y);width:108px;height:72px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:9px;background:rgba(255,255,255,.68);box-shadow:0 4px 0 rgba(91,70,50,.45);font-size:26px;pointer-events:none;animation:ghost-drag 2.2s ease-in-out infinite}.ghost-target{animation:ghost-pulse 2.2s ease-in-out infinite}@keyframes ghost-drag{0%,16%{transform:translate(0,0) scale(.9);opacity:.3}63%,82%{transform:translate(var(--ghost-dx),var(--ghost-dy)) scale(.72);opacity:.72}100%{transform:translate(var(--ghost-dx),var(--ghost-dy)) scale(.72);opacity:0}}@keyframes ghost-pulse{55%,80%{box-shadow:0 0 0 8px rgba(245,179,1,.28)}}.coach-advice{font-size:10px;font-weight:800;line-height:1.55}.training-stage{margin-top:13px;padding:17px;border:4px solid var(--ink);border-radius:13px;background:#f6e9c5;box-shadow:0 5px 0 rgba(91,70,50,.35)}.training-agent{display:flex;justify-content:center}.training-agent .play-card{width:230px;cursor:default}.training-status{margin:10px auto 0;max-width:600px;display:flex;justify-content:center;gap:8px;flex-wrap:wrap;font-size:9.5px;font-weight:900}.training-methods{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:16px}.training-method{min-height:100px;padding:10px;border:3px solid var(--ink);border-radius:10px;background:#fff;box-shadow:0 3px 0 var(--ink);cursor:pointer;text-align:left}.training-method b{display:block;font-size:12px}.training-method span{display:block;margin-top:6px;font-size:9.5px;font-weight:800;line-height:1.45}.training-method small{display:block;margin-top:7px;color:var(--orange);font-size:9px;font-weight:900}.training-method.on{background:#fff0ad;outline:4px solid var(--gold)}.training-method:disabled{opacity:.65;cursor:not-allowed}.training-detail{margin-top:12px;padding:14px;border:3px solid var(--blue);border-radius:10px;background:var(--blue-bg)}.training-detail h2{font-size:16px}.training-detail p{margin-top:6px;font-size:10.5px;font-weight:800;line-height:1.6}
+    .running-box{max-width:820px;margin:26px auto 0;padding:18px;border:4px solid var(--ink);border-radius:14px;background:#fffaf0;box-shadow:0 7px 0 rgba(91,70,50,.35)}.running-head{display:flex;align-items:center;gap:12px}.running-agent{width:58px;height:58px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:12px;background:var(--blue-bg);font-size:32px;animation:bob .7s infinite alternate}@keyframes bob{to{transform:translateY(-4px)}}.running-head h2{font-size:18px}.running-head p{margin-top:4px;font-size:10.5px;font-weight:700;color:var(--muted)}.run-meter{height:25px;margin-top:16px;border:3px solid var(--ink);border-radius:8px;background:#efe3c2;overflow:hidden;position:relative}.run-meter i{display:block;height:100%;background:var(--teal);transition:width .25s}.run-meter span{position:absolute;inset:0;display:grid;place-items:center;font-size:10px;font-weight:900}
+    .compare{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:12px}.draft-poster{min-height:280px;padding:18px;border:4px solid var(--ink);border-radius:11px;box-shadow:0 5px 0 rgba(91,70,50,.35)}.draft-poster--wrong{background:linear-gradient(145deg,#f9d85a,#fde2dc);border-color:var(--red)}.draft-poster--correct{background:linear-gradient(145deg,#f9d85a,#dff3e9);border-color:var(--teal)}.poster-label{font-size:9px;font-weight:900;letter-spacing:2px}.draft-poster h2{margin-top:46px;font-size:30px;line-height:1.15}.draft-poster p{margin-top:12px;font-size:11px;font-weight:800;line-height:1.65}.requirement-list{display:flex;flex-direction:column;gap:7px}.requirement{padding:9px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:10px;font-weight:800;line-height:1.5}.requirement.bad{border-color:var(--red);background:#fde7e3}.form-box{margin-top:11px;padding:13px;border:3px solid var(--ink);border-radius:10px;background:#fff}.form-box label{display:block;margin:8px 0 5px;font-size:10.5px;font-weight:900}.form-box textarea{min-height:82px;resize:vertical}.form-box .btn{margin-top:9px}.tool-grid{display:grid;grid-template-columns:.85fr 1.15fr;gap:11px;margin-top:12px}.tool-card{padding:16px;border:4px solid var(--ink);border-radius:12px;background:#fff;box-shadow:0 4px 0 rgba(91,70,50,.35)}.tool-icon{font-size:45px}.tool-card h2{font-size:18px;margin-top:6px}.tool-card p{font-size:10.5px;font-weight:700;line-height:1.65;margin:7px 0}.tool-price{font-size:22px;font-weight:900;color:var(--orange)}.rule-note{padding:8px;border:2px dashed var(--blue);border-radius:8px;background:var(--blue-bg);font-size:9.5px;font-weight:800;line-height:1.5}.tool-form{max-width:680px;margin:20px auto;padding:18px;border:4px solid var(--blue);border-radius:13px;background:#f7fbff;box-shadow:0 6px 0 rgba(47,111,196,.28)}.tool-form h2{margin:8px 0;font-size:18px}.tool-form label{display:block;margin:10px 0 5px;font-size:11px;font-weight:900}.tool-form .btn{margin-top:12px}.order-route{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:12px}.route-node{padding:10px 6px;border:3px solid var(--ink);border-radius:9px;background:#eee4cf;text-align:center;font-size:9.5px;font-weight:900}.route-node.done{background:#dff3e9;border-color:var(--teal)}.route-node.mine{background:#fff0ad;border-color:var(--gold)}.route-node.working{background:var(--blue-bg);border-color:var(--blue)}.route-node.waiting{opacity:.65}.route-node b{display:block;margin-top:4px}.settlement{display:grid;grid-template-columns:1.1fr .9fr;gap:11px;margin-top:12px}.delivery-pack{padding:16px;border:4px solid var(--teal);border-radius:12px;background:linear-gradient(145deg,#fff0ad,#dff3e9);box-shadow:0 5px 0 rgba(29,158,117,.32)}.delivery-pack h2{font-size:25px;margin-top:20px}.delivery-pack p{margin-top:8px;font-size:11px;font-weight:800;line-height:1.6}.delivery-visual{height:165px;margin-top:12px;display:grid;place-items:center;border:3px solid var(--ink);border-radius:10px;background:#fff;font-size:55px}.settlement-sheet{display:flex;flex-direction:column;gap:7px}.settlement-row{display:grid;grid-template-columns:105px 1fr;gap:8px;padding:8px;border:2px solid var(--ink);border-radius:8px;background:#fff;font-size:10px;font-weight:800}.settlement-row b{color:var(--muted)}
+    @media(max-width:1050px){.workspace,.settlement{grid-template-columns:1fr}.side-panel{display:grid;grid-template-columns:1fr 1fr}.stage{min-height:auto}}@media(max-width:820px){.briefing,.compare,.tool-grid{grid-template-columns:1fr}.training-methods{grid-template-columns:1fr 1fr}.task-board{gap:12px}.connection{right:-13px;width:11px}.order-resources{grid-template-columns:1fr 1fr}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}.drag-ghost-card{position:static;width:42px;height:32px;margin-left:-46px;display:inline-grid;font-size:18px}}
   </style>
 </head>
 <body>
   <main id="app" class="app-shell">
-    <header class="topbar paper">
-      <div class="brand"><b>🦄 MFU · 协作卡牌阵列</b><small>一个任务，一套你能真正连接起来的人与 AI</small></div>
-      <span class="act-label" id="actLabel">第一幕 · 被动连接</span>
-      <div class="spacer"></div>
-      <button class="btn small" type="button" onclick="resetDemo()">↺ 重新开始</button>
-    </header>
+    <header class="topbar paper"><div class="brand"><b>🦄 MFU · 首个猎人教学订单</b><small>面对一个任务，编排你和 AI，完成真实交付</small></div><span class="act-label" id="actLabel">教学关卡 · 不限时</span><div class="spacer"></div><button class="btn small" type="button" onclick="resetDemo()">↺ 重新开始</button></header>
     <nav class="progress" id="progress"></nav>
-    <section class="stage paper">
-      <header class="scene-head">
-        <div class="scene-icon" id="sceneIcon">🏹</div>
-        <div class="scene-copy">
-          <h1 id="scene-title"></h1>
-          <p class="scene-subtitle" id="sceneSubtitle"></p>
-        </div>
-        <span class="scene-count" id="sceneCount"></span>
-      </header>
-      <div id="scene-content"></div>
-      <div class="primary-row" id="primaryRow">
-        <p class="primary-hint" id="primaryHint"></p>
-        <button id="primary-action" class="btn primary" type="button"></button>
-      </div>
-    </section>
+    <section class="stage paper"><header class="scene-head"><div class="scene-icon" id="sceneIcon">🏹</div><div class="scene-copy"><h1 id="scene-title"></h1><p class="scene-subtitle" id="sceneSubtitle"></p></div><span class="scene-count" id="sceneCount"></span></header><div id="scene-content"></div><div class="primary-row" id="primaryRow"><p class="primary-hint" id="primaryHint"></p><button id="primary-action" class="btn primary" type="button"></button></div></section>
   </main>
-
   <script>
-    const SCENES=["briefing","build1","running","event","result1","upgrade","invite","build2","result2"];
+    const STORAGE_KEY="mfu-card-array-v03";
+    const SCENES=["welcome","briefing","build","firstRun","inspect","tune","clarify","secondRun","stepDelivered","settlement"];
     const queryScene=new URL(location.href).searchParams.get("scene");
-    const state={
-      scene:SCENES.includes(queryScene)?queryScene:"briefing",
-      act:1,selectedCard:null,
-      assignments:{act1:{},act2:{}},
-      relations:{act1:"serial",act2:"serial"},
-      ambiguityChoice:null,invited:[],accepted:[],
-      execution:null,agentUpgraded:false,reviewUnlocked:false
-    };
-    const actOneSlots=[
-      {id:"understand",title:"理解实验目标",needs:"需要判断",output:"清晰的实验目标"},
-      {id:"make",title:"制作实验素材",needs:"需要执行",output:"三版可投放素材"},
-      {id:"check",title:"检查并提交",needs:"需要判断",output:"可交付版本"}
-    ];
-    const actTwoSlots=[
-      {id:"visual",title:"视觉表达",needs:"专业制作",output:"主视觉与模板"},
-      {id:"content",title:"内容表达",needs:"内容判断",output:"完整内容素材包"},
-      {id:"validate",title:"增长验证与总负责",needs:"客户判断",output:"完整增长方案"}
-    ];
-    const cards={
-      player:{id:"player",name:"小满",kind:"本人",emoji:"🏹",time:1,compute:0,skills:["客户理解","最终判断"],evidence:"刚完成增长验证步骤"},
-      agent:{id:"agent",name:"小角",kind:"Agent",emoji:"🤖",time:0,compute:12,skills:["快速制作","版本整理"],evidence:"已积累 3 项训练资产"},
-      paper:{id:"paper",name:"纸飞机",kind:"真人猎人",emoji:"🎨",time:1,compute:0,skills:["视觉表达","版式设计"],evidence:"视觉交付 6 次 · 按时率 92%",external:true},
-      tail:{id:"tail",name:"长尾巴",kind:"真人猎人",emoji:"✍️",time:1,compute:0,skills:["内容表达","故事设计"],evidence:"内容交付 9 次 · 好评 7 次",external:true}
-    };
-    const hunters={paper:cards.paper,tail:cards.tail};
-    const relations={
-      serial:{label:"串行",detail:"先做，再交给下一位"},
-      parallel:{label:"并行",detail:"同时开始，最后汇总"},
-      review:{label:"检查",detail:"执行完成后，由下一位检查"}
-    };
-    const ambiguityChoices={
-      agent:{label:"让 Agent 自行继续",effect:"更快，但可能偏离客户目标"},
-      self:{label:"由本人确认",effect:"消耗 1 时间，避免方向错误"},
-      upstream:{label:"询问上游猎人",effect:"等待回复，获得完整背景"}
-    };
-    const sceneMeta={
-      briefing:["📜","第一关：旧书店的开学难题","先了解客户和完整订单。准备好以后，再进入卡牌编排。","教学订单 · 背景"],
-      build1:["🃏","为自己的步骤组成小阵列","你已被匹配到旧书店项目的“增长验证”。现在直接安排本人和 Agent。","教学订单 · 1 / 4"],
-      running:["⚙️","阵列正在真实时间中执行","Agent 会继续工作。你可以离开，系统会在需要判断时等你回来。","教学订单 · 执行中"],
-      event:["⚠️","阵列运行中：出现一个需要判断的问题","AI 可以继续执行，但方向和最终责任仍需要人来判断。","教学订单 · 2 / 4"],
-      result1:["📋","你的小价值进入了完整项目","这不是一个总分。请看清卡牌、连接和判断分别造成了什么。","教学订单 · 3 / 4"],
-      upgrade:["🛠️","把一次问题变成小角的新能力","复盘不是加一个抽象等级，而是让 Agent 下一次工作得更可靠。","教学订单 · 升级"],
-      invite:["🤝","把一次协作变成长期连接","你已经认识了上下游。现在可以邀请他们一起承担更大的完整价值。","教学订单 · 4 / 4"],
-      build2:["🏢","第二幕：用连接组成一个新组织","这一次，你不只是大项目中的一张卡，而是三张真人卡的组织者。","新订单"],
-      result2:["🦄","从一小步，到一份完整交付","你连接的人、AI 和工作关系，已经形成一套可以再次使用的组织能力。","完成"]
-    };
-
-    function esc(value=""){
-      return String(value).replace(/[&<>"']/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
-    }
-    function persist(){
-      localStorage.setItem("mfu-card-array-v01",JSON.stringify({
-        scene:state.scene,assignments:state.assignments,relations:state.relations,
-        ambiguityChoice:state.ambiguityChoice,invited:state.invited,accepted:state.accepted,
-        execution:state.execution,agentUpgraded:state.agentUpgraded,reviewUnlocked:state.reviewUnlocked
-      }));
-    }
-    function restoreState(){
-      try{
-        const saved=JSON.parse(localStorage.getItem("mfu-card-array-v01")||"null");
-        if(saved){
-          Object.assign(state,saved);
-          state.assignments={act1:{},act2:{},...(saved.assignments||{})};
-          state.relations={act1:"serial",act2:"serial",...(saved.relations||{})};
-        }
-        if(queryScene)state.scene=queryScene;
-        else if(state.execution?.status==="running")state.scene="running";
-        else if(state.execution?.status==="waiting-human")state.scene="event";
-      }catch{}
-    }
-    function resetDemo(){
-      localStorage.removeItem("mfu-card-array-v01");
-      location.href=location.pathname;
-    }
-    function seedForScene(){
-      const index=SCENES.indexOf(state.scene);
-      if(index>=2&&!Object.keys(state.assignments.act1).length){
-        state.assignments.act1={understand:"player",make:"agent",check:"player"};
-        state.relations.act1="review";
-      }
-      if(index>=2&&!state.execution){
-        state.execution={startedAt:Date.now()-1000,durationMs:12000,decisionAtMs:3500,status:index>=3?"waiting-human":"running"};
-      }
-      if(index>=4&&!state.ambiguityChoice)state.ambiguityChoice="self";
-      if(index>=6&&!state.agentUpgraded)state.agentUpgraded=true;
-      if(index>=7&&!state.accepted.length){
-        state.invited=["paper","tail"];state.accepted=["paper","tail"];
-      }
-      if(index>=8&&!Object.keys(state.assignments.act2).length){
-        state.assignments.act2={visual:"paper",content:"tail",validate:"player"};
-        state.relations.act2="review";
-      }
-    }
-    function setScene(sceneName){
-      state.scene=sceneName;
-      const url=new URL(location.href);url.searchParams.set("scene",sceneName);history.replaceState(null,"",url);
-      persist();
-      render();
-    }
-    function actKey(){return state.scene==="build2"||state.scene==="result2"?"act2":"act1"}
-    function currentSlots(){return actKey()==="act2"?actTwoSlots:actOneSlots}
-    function currentAssignments(){return state.assignments[actKey()]}
-    function selectCard(cardId){state.selectedCard=state.selectedCard===cardId?null:cardId;render()}
-    function assignCard(cardId,slotId){
-      if(!cards[cardId]||!currentSlots().some(slot=>slot.id===slotId))return;
-      currentAssignments()[slotId]=cardId;state.selectedCard=null;persist();render();
-    }
-    function removeAssignment(slotId){
-      delete currentAssignments()[slotId];state.selectedCard=null;persist();render();
-    }
-    function clearAssignments(){
-      state.assignments[actKey()]={};state.selectedCard=null;persist();render();
-    }
-    function saveDraft(){
-      persist();
-      document.querySelector("#primaryHint").textContent="✓ 编排已保存在本浏览器，可以稍后回来继续。";
-    }
-    function setRelation(relation){
-      if(!relations[relation])return;
-      state.relations[actKey()]=relation;persist();render();
-    }
-    function getEstimate(){
-      const assignments=currentAssignments();
-      const chosen=Object.values(assignments).map(id=>cards[id]).filter(Boolean);
-      const uniqueTime={};
-      chosen.forEach(card=>{uniqueTime[card.id]=(uniqueTime[card.id]||0)+card.time});
-      let time=Object.values(uniqueTime).reduce((sum,n)=>sum+n,0);
-      const compute=chosen.reduce((sum,card)=>sum+card.compute,0);
-      const relation=state.relations[actKey()];
-      if(relation==="parallel")time=Math.max(1,time-1);
-      if(relation==="review")time+=1;
-      const risk=[];
-      currentSlots().forEach(slot=>{
-        const card=cards[assignments[slot.id]];
-        if(!card)return risk.push(`${slot.title}还没有负责人`);
-        if(slot.needs.includes("判断")&&card.kind==="Agent")risk.push(`${slot.title}缺少人工判断`);
-      });
-      if(relation==="parallel")risk.push("并行更快，但接口不清可能返工");
-      if(relation==="serial")risk.push("顺序清楚，但整体用时更长");
-      if(relation==="review")risk.push("增加人工检查，质量更稳但多用 1 时间");
-      if(actKey()==="act1"&&time>2)risk.unshift("本人只有 2 时间，当前编排无法按计划完成");
-      if(compute>24)risk.unshift("Agent 算力不足，需要减少任务或租用算力");
-      return {time,compute,risk};
-    }
-    function cardMarkup(cardId,compact=false){
-      const card=cards[cardId];if(!card)return "";
-      const selected=state.selectedCard===cardId?" selected":"";
-      return `<button type="button" class="play-card ${card.external?"external":card.kind==="Agent"?"agent":"human"}${compact?" compact":""}${selected}" draggable="${compact?"false":"true"}" data-card="${card.id}" onclick="${compact?"selectCard('"+card.id+"')":"selectCard('"+card.id+"')"}">
-        <span class="card-top"><span class="portrait">${card.emoji}</span><span class="card-name"><b>${card.name}</b><small>${card.kind}</small></span></span>
-        <span class="skill-row">${card.skills.map(skill=>`<span class="skill">${skill}</span>`).join("")}</span>
-        <span class="card-foot"><span>${card.time?`⏳ ${card.time} 时间`:`⚡ ${card.compute} 算力`}</span><span>${card.evidence}</span></span>
-        ${card.external?'<span class="accept-note">放入阵列前，需要本人接受邀请</span>':""}
-        ${card.id==="agent"&&state.agentUpgraded?'<span class="accept-note" style="border-color:var(--teal);background:#e5f6ef;color:var(--teal)">新守则：需求不清时暂停并提醒主人</span>':""}
-      </button>`;
-    }
-    function boardMarkup(act){
-      const slots=act===2?actTwoSlots:actOneSlots;
-      const key=act===2?"act2":"act1";
-      const assignments=state.assignments[key];
-      const relation=state.relations[key];
-      const available=act===2?["paper","tail","player"]:["player","agent"];
-      const estimate=getEstimate();
-      const visibleRelations=act===2?["serial","parallel","review"]:state.reviewUnlocked?["serial","review"]:["serial"];
-      return `<div class="workspace">
-        <div>
-          <section class="board-panel">
-            <div class="board-head"><div><h2>${act===1?"我的步骤：增长验证":"新组织的完整订单阵列"}</h2><p>${act===1?"把自己的小步骤拆成三个位置":"让三名真人猎人共同完成一个完整结果"}</p></div>
-              <div class="resource-pills">${act===1?'<span class="tag incu">⏰ 截止剩 4</span><span class="tag gold">👤 本人可用 2</span>':'<span class="tag gold">⏳ 截止剩 5</span>'}<span class="tag assoc">⚡ Agent 算力 24</span></div>
-            </div>
-            <div class="task-board ${relation}">
-              ${slots.map((slot,index)=>`<div class="task-slot" tabindex="0" data-slot="${slot.id}" onclick="slotClick('${slot.id}')">
-                <h3>${index+1}. ${slot.title}</h3><span class="slot-meta">${slot.needs}<br>输出：${slot.output}</span>
-                ${assignments[slot.id]?`<div class="slot-card-wrap"><button type="button" class="remove-card" aria-label="拿回${slot.title}中的卡牌" onclick="event.stopPropagation();removeAssignment('${slot.id}')">×</button><div class="slot-card">${cardMarkup(assignments[slot.id],true)}</div></div>`:`<div class="slot-empty">把卡牌拖到这里<br>或先点卡牌，再点此处</div>`}
-                <i class="connection"></i>
-              </div>`).join("")}
-            </div>
-            <div class="relation-bar"><strong>连接方式</strong>${visibleRelations.map(id=>`<button type="button" class="relation-btn ${relation===id?"on":""}" data-relation="${id}" onclick="setRelation('${id}')">${relations[id].label} · ${relations[id].detail}</button>`).join("")}${act===1&&!state.reviewUnlocked?'<span class="tag gray">完成第一次复盘后解锁更多连接</span>':""}</div>
-          </section>
-          <section class="hand"><div class="hand-head"><h2>你现在能操作的卡牌</h2><p>真人伙伴已经接受邀请后，才会出现在这里。</p></div><div class="cards">${available.map(id=>cardMarkup(id)).join("")}</div></section>
-          ${act===1?'<div class="board-actions"><button type="button" class="btn small" onclick="clearAssignments()">清空编排</button><button type="button" class="btn small" onclick="saveDraft()">暂存编排</button></div><p class="tutorial-safe">教学订单，不消耗真实信用 · 可以随时重试</p>':""}
-        </div>
-        <aside class="side-panel">
-          <section class="estimate"><h2>阵列预估</h2>
-            <div class="estimate-row"><span>预计用时</span><b>${estimate.time} 时间</b></div>
-            <div class="estimate-row"><span>预计算力</span><b>${estimate.compute} / ${act===1?24:24}</b></div>
-            <div class="estimate-row"><span>已安排</span><b>${Object.keys(assignments).length} / ${slots.length}</b></div>
-            <div class="risk-list">${estimate.risk.map(text=>`<div class="risk ${text.includes("还没有")?"":"ok"}">${text}</div>`).join("")}</div>
-          </section>
-          <section class="card-panel"><h2>${act===1?"你仍是负责人":"小满的内部安排"}</h2><p>${act===1?"Agent 可以执行，但你需要理解问题、处理歧义并确认最终提交。":"小满负责客户判断与最终交付；小角在内部整理版本、汇总数据。第二层阵列在本原型中折叠显示。"}</p></section>
-        </aside>
-      </div>`;
-    }
-    function bindBoard(){
-      document.querySelectorAll("[data-card]").forEach(card=>{
-        card.addEventListener("dragstart",event=>event.dataTransfer.setData("text/card-id",card.dataset.card));
-      });
-      document.querySelectorAll("[data-slot]").forEach(slot=>{
-        slot.addEventListener("dragover",event=>{event.preventDefault();slot.classList.add("drop-ready")});
-        slot.addEventListener("dragleave",()=>slot.classList.remove("drop-ready"));
-        slot.addEventListener("drop",event=>{
-          event.preventDefault();slot.classList.remove("drop-ready");
-          assignCard(event.dataTransfer.getData("text/card-id"),slot.dataset.slot);
-        });
-        slot.addEventListener("keydown",event=>{if((event.key==="Enter"||event.key===" ")&&state.selectedCard){event.preventDefault();assignCard(state.selectedCard,slot.dataset.slot)}});
-      });
-    }
-    function slotClick(slotId){if(state.selectedCard)assignCard(state.selectedCard,slotId)}
-    function runArray(){
-      if(Object.keys(currentAssignments()).length<currentSlots().length)return;
-      setScene(state.scene==="build2"?"result2":"running");
-    }
-    function startExecution(){
-      if(Object.keys(state.assignments.act1).length<actOneSlots.length)return;
-      state.execution={startedAt:Date.now(),durationMs:12000,decisionAtMs:3500,status:"running"};
-      persist();setScene("running");
-    }
-    function executionProgress(now=Date.now()){
-      if(!state.execution)return {elapsed:0,percent:0,untilDecision:0};
-      const elapsed=Math.max(0,now-state.execution.startedAt);
-      return {
-        elapsed,
-        percent:Math.min(45,Math.round(elapsed/state.execution.decisionAtMs*45)),
-        untilDecision:Math.max(0,state.execution.decisionAtMs-elapsed)
-      };
-    }
-    let runningTimer=null;
-    function resumeExecution(){
-      if(!state.execution)return setScene("build1");
-      const progress=executionProgress();
-      if(progress.untilDecision<=0){
-        state.execution.status="waiting-human";persist();setScene("event");return;
-      }
-      clearTimeout(runningTimer);
-      runningTimer=setTimeout(()=>{if(state.scene==="running")render()},500);
-    }
-    function chooseAmbiguity(choice){
-      if(!ambiguityChoices[choice])return;
-      state.ambiguityChoice=choice;
-      if(state.execution)state.execution.status="completed";
-      persist();setScene("result1");
-    }
-    function retryActOne(){
-      state.reviewUnlocked=true;state.ambiguityChoice=null;state.execution=null;
-      state.assignments.act1={};state.relations.act1="serial";persist();setScene("build1");
-    }
-    function upgradeAgent(){
-      state.agentUpgraded=true;state.reviewUnlocked=true;persist();setScene("invite");
-    }
-    function renderBriefing(){
-      return `<div class="briefing"><section class="brief-copy"><span class="eyebrow">📮 来自社区旧书店的订单</span><h2>开学了，但新生不知道<br>校园旁边还有一家旧书店。</h2><p>店主希望在两周内让更多大学生发现旧书循环服务，并完成第一次购买。这个订单需要不同能力的人一起完成。</p>
-        <div class="brief-facts"><div class="brief-fact"><b>完整订单</b><span>设计并验证一套开学季推广活动</span></div><div class="brief-fact"><b>截止时间</b><span>4 个时间单位后</span></div><div class="brief-fact"><b>你的任务</b><span>完成“增长验证”这一步</span></div><div class="brief-fact"><b>教学保护</b><span>不消耗真实信用，可以重试</span></div></div></section>
-        <section class="brief-order"><h2>完整订单由 5 个人共同完成</h2><p>你不用独自完成整个项目，只要把分配给你的黄色步骤做好。</p><div class="brief-chain">
-          ${[["🔎","用户洞察","阿青"],["🎨","视觉方案","纸飞机"],["✍️","内容表达","长尾巴"],["🧪","增长验证","你 · 小满"],["📦","整合交付","北辰"]].map((step,index)=>`<div class="brief-step ${index===3?"mine":""}"><span>${step[0]}</span><b>${index+1}. ${step[1]}</b><small>${index===3?"你负责":step[2]}</small></div>`).join("")}
-        </div></section></div>`;
-    }
-    function renderRunning(){
-      const progress=executionProgress();
-      const seconds=Math.max(1,Math.ceil(progress.untilDecision/1000));
-      return `<div class="running-box"><div class="running-head"><div class="running-agent">🤖</div><div><span class="tag assoc">小角正在执行</span><h2>制作三版渠道实验素材</h2><p>正式平台中这一步可能持续数小时或数天；Demo 用几十秒模拟真实时间。</p></div></div>
-        <div class="run-meter"><i style="width:${progress.percent}%"></i><span>${progress.percent}% · 正在整理视觉与内容版本</span></div>
-        <div class="run-stats"><div class="run-stat"><b>${seconds} 秒</b><small>预计下次需要你</small></div><div class="run-stat"><b>${Math.min(6,Math.max(1,Math.round(progress.percent/8)))} / 24</b><small>已使用算力</small></div><div class="run-stat"><b>小满待命</b><small>本人时间尚未消耗</small></div></div>
-        <div class="leave-note">💤 Agent 会继续执行，你可以暂时离开或关闭页面。需要理解和判断时，任务会停下来等你。</div></div>`;
-    }
-    function renderUpgrade(){
-      return `<div class="upgrade-box"><div class="mission">本次复盘发现：小角制作很快，但遇到含糊需求时缺少明确的暂停规则。把这次问题写成一条可复用守则。</div>
-        <div class="upgrade-compare"><section class="upgrade-card"><span class="tag gray">升级前</span><h2 style="margin-top:8px">🤖 小角 · 快速制作</h2><p>能够快速生成和整理多个版本。<br><br>⚠️ 需求含糊时，可能根据已有信息自行猜测。</p></section><div class="upgrade-arrow">→</div><section class="upgrade-card after"><span class="tag done">升级后</span><h2 style="margin-top:8px">🤖 小角 · 会主动暂停</h2><p>保持相同制作速度和算力成本。<br><br>✓ 遇到含糊需求时，暂停并请求主人判断。</p></section></div>
-        <div class="new-rule">新增 Agent 守则：需求不清时暂停并提醒主人</div></div>`;
-    }
-    function buildResultOne(){
-      const choice=state.ambiguityChoice||"self";
-      const relation=state.relations.act1;
-      const outcomes={
-        agent:{goal:"部分解决",timing:"提前半天",rework:"整合前返工 1 次",responsibility:"小满承担最终责任",explanation:"Agent 自行猜测了目标用户，速度更快，但素材方向偏向全校而不是新生。",feedback:"拆单方：素材制作很快，但客户范围没有确认，需要重做标题和渠道。"},
-        self:{goal:"解决客户目标",timing:"晚 1 天",rework:"无方向返工",responsibility:"小满完成关键确认",explanation:"小满暂停执行并确认目标，避免了方向错误；人工检查增加了用时。",feedback:"拆单方：方向准确、依据清楚。下一次可以更早确认目标，减少等待。"},
-        upstream:{goal:"解决客户目标",timing:"按时",rework:"等待上游回复 1 次",responsibility:"小满发起沟通并确认",explanation:"询问上游获得了完整访谈背景，连接带来更准确的判断，但依赖协作者及时回复。",feedback:"拆单方：上下游衔接很好，实验结论可以直接进入整合交付。"}
-      };
-      return {artifact:"校园旧书推广实验包",resource:`${relation==="review"?"3":"2"} 时间 · 12 算力`,...outcomes[choice]};
-    }
-    function inviteHunter(hunterId){
-      if(!hunters[hunterId]||state.invited.includes(hunterId))return;
-      state.invited.push(hunterId);persist();render();
-      setTimeout(()=>simulateAcceptance(hunterId),650);
-    }
-    function simulateAcceptance(hunterId){
-      if(!state.accepted.includes(hunterId))state.accepted.push(hunterId);
-      persist();render();
-    }
-    function renderEvent(){
-      return `<div class="event-box"><span class="tag incu">执行到 45%</span><h2 style="margin-top:8px">客户说的“校园用户”，到底是谁？</h2><p>小角已经快速生成三版实验素材，但客户没有说明目标是“新生”还是“全校学生”。这会影响标题、渠道和视觉重点。</p>
-        <div class="choices">${Object.entries(ambiguityChoices).map(([id,item])=>`<button type="button" class="choice" onclick="chooseAmbiguity('${id}')"><b>${item.label}</b><small>${item.effect}</small></button>`).join("")}</div></div>`;
-    }
-    function resultRows(result){
-      return [["客户目标",result.goal],["时间",result.timing],["资源",result.resource],["返工",result.rework],["责任",result.responsibility],["为什么",result.explanation]].map(([label,value])=>`<div class="result-row"><b>${label}</b><span>${value}</span></div>`).join("");
-    }
-    function renderResultOne(){
-      const result=buildResultOne();
-      return `<div class="result-grid"><section class="artifact"><div class="artifact-cover"><span class="book">📚</span><b>旧书换新主人</b><small>校园旧书推广实验 · 三版素材 + 渠道结论</small></div><h2>${result.artifact}</h2><p>你的局部交付已经进入北辰负责的整合环节，并成为完整增长计划中的真实验证依据。</p></section>
-        <section><div class="result-list">${resultRows(result)}</div><div class="feedback">💬 ${result.feedback}</div><div class="board-actions"><button type="button" class="btn small" onclick="retryActOne()">调整阵列，再试一次</button></div></section></div>`;
-    }
-    function renderInvite(){
-      return `<div class="mission">完成订单后，你可以向真实合作过的上下游发出长期邀请。把卡放入阵列只是邀请；只有对方本人接受，连接才会生效。</div>
-        <div class="invite-grid">${Object.entries(hunters).map(([id,hunter])=>{
-          const invited=state.invited.includes(id),accepted=state.accepted.includes(id);
-          return `<article class="hunter-card ${accepted?"accepted":""}"><div class="hunter-main"><span class="portrait">${hunter.emoji}</span><div><b>${hunter.name} · ${hunter.kind}</b><small>${hunter.skills.join(" · ")}</small></div><span class="tag ${accepted?"done":invited?"gold":"gray"}">${accepted?"已接受":invited?"等待本人接受":"可邀请"}</span></div>
-            <p>${hunter.evidence}<br>你们刚刚在同一个订单中形成了真实上下游关系。</p><button type="button" class="btn ${accepted?"good":"primary"}" onclick="inviteHunter('${id}')" ${invited?"disabled":""}>${accepted?"✓ 已成为长期伙伴":invited?"邀请已发送":"邀请长期合作"}</button></article>`;
-        }).join("")}</div>
-        <div class="notice">⚠️ Demo 中由系统模拟接受；正式平台需真人确认。对方接受前，你不能直接调用这张真人卡。</div>`;
-    }
-    function buildResultTwo(){
-      return {
-        artifact:"旧书店开学季完整增长方案",
-        goal:"解决客户目标",
-        timing:state.relations.act2==="parallel"?"提前半天":"按时完成",
-        resource:"4 时间 · 12 算力",
-        rework:state.relations.act2==="review"?"无；小满完成最终检查":"汇总时调整 1 次接口",
-        responsibility:"三名真人分工，小满对最终交付负责",
-        explanation:"纸飞机负责视觉、长尾巴负责内容、小满负责验证和总交付；小角在小满内部整理版本与数据。",
-        feedback:"客户：这次不是三份零散素材，而是一套能够直接执行和验证的完整方案。"
-      };
-    }
-    function renderResultTwo(){
-      const result=buildResultTwo();
-      return `<div class="result-grid"><section class="artifact"><div class="delivery-pack">
-          <div class="campaign-poster"><div class="poster-brand">CORNER BOOKS · 社区旧书店</div><span class="poster-kicker">开学季旧书循环计划</span><div class="poster-title">旧书换<br><span>新主人</span></div><div class="poster-books">📚</div><p class="poster-copy">带一本读完的书来，换走下一段故事。让旧书在校园里继续旅行。</p><div class="poster-meta"><span>9.05—9.20<br>大学生活动中心</span><span class="poster-cta">扫码参加 →</span></div></div>
-          <div class="deliverable-side"><div class="social-preview"><span class="ready-ribbon">客户可直接使用</span><b>📱 社交图文</b><div class="social-visual">📖 ↔️ 📗</div><p>三条校园群文案<br>#我的旧书故事</p></div><div class="experiment-preview"><b>🧪 渠道实验卡</b><p>校园群首轮点击率</p><div class="metric"><strong>8.4%</strong><span>高于海报二维码<br>+3.1%</span></div></div></div>
-        </div><h2>${result.artifact}　<span class="stamp">完整交付</span></h2>
-        <div class="contribution"><div>🎨 纸飞机<br>主视觉与三种模板</div><div>✍️ 长尾巴<br>故事与内容素材包</div><div>🏹 小满 + 🤖 小角<br>增长验证与最终负责</div></div></section>
-        <section><div class="result-list">${resultRows(result)}</div><div class="feedback">💬 ${result.feedback}</div></section></div>
-        <div class="final-message"><b>上一单，你完成了大项目中的一步；<br>这一单，你连接了三个人，共同完成了一份完整订单。</b><p>这次交付会留下三类记录：每张卡完成过什么、这套连接是否有效、哪些真人愿意继续合作。经验、成长树与认证会在需要时读取这些证据。</p></div>`;
-    }
-    function configurePrimary(){
-      const button=document.querySelector("#primary-action");
-      const row=document.querySelector("#primaryRow");
-      const hint=document.querySelector("#primaryHint");
-      row.style.display=state.scene==="running"||state.scene==="event"||state.scene==="result2"?"none":"flex";
-      const config={
-        briefing:["准备好了，开始闯关",()=>setScene("build1"),false,"下一页才会出现可操作卡牌和资源编排。"],
-        build1:["确认编排，让 Agent 开始执行",startExecution,Object.keys(state.assignments.act1).length<3,"填满三个任务位置后即可执行；也可以先暂存离开。"],
-        result1:["复盘并升级小角",()=>setScene("upgrade"),false,"把这次遇到的问题变成 Agent 下一次会遵守的工作规则。"],
-        upgrade:["写入新守则，继续连接",upgradeAgent,false,"升级只属于小角；真人伙伴需要通过自己的实践成长。"],
-        invite:["用新伙伴承接完整订单",()=>setScene("build2"),state.accepted.length<2,"两名真人猎人都接受后，才能组成新阵列。"],
-        build2:["开始执行新组织阵列",runArray,Object.keys(state.assignments.act2).length<3,"把三名真人猎人都放入合适位置。"]
-      }[state.scene];
-      if(!config)return;
-      button.textContent=config[0];button.onclick=config[1];button.disabled=config[2];hint.textContent=config[3];
-    }
-    function renderProgress(){
-      const groups=[
-        {label:"1 了解关卡",until:0},
-        {label:"2 编排与执行",until:4},
-        {label:"3 升级与连接",until:6},
-        {label:"4 完整交付",until:8}
-      ];
-      const index=SCENES.indexOf(state.scene);
-      document.querySelector("#progress").innerHTML=groups.map((group,i)=>{
-        const start=i?groups[i-1].until+1:0;
-        return `<div class="progress-step ${index>group.until?"done":index>=start&&index<=group.until?"on":""}">${index>group.until?"✓ ":""}${group.label}</div>`;
-      }).join("");
-    }
-    function render(){
-      seedForScene();
-      const meta=sceneMeta[state.scene];
-      document.querySelector("#sceneIcon").textContent=meta[0];
-      document.querySelector("#scene-title").textContent=meta[1];
-      document.querySelector("#sceneSubtitle").textContent=meta[2];
-      document.querySelector("#sceneCount").textContent=meta[3];
-      document.querySelector("#actLabel").textContent=SCENES.indexOf(state.scene)<7?"第一幕 · 被动连接":"第二幕 · 主动连接";
-      const views={
-        briefing:renderBriefing,build1:()=>boardMarkup(1),running:renderRunning,event:renderEvent,result1:renderResultOne,upgrade:renderUpgrade,
-        invite:renderInvite,build2:()=>boardMarkup(2),result2:renderResultTwo
-      };
-      document.querySelector("#scene-content").innerHTML=views[state.scene]();
-      renderProgress();configurePrimary();
-      if(state.scene==="build1"||state.scene==="build2")bindBoard();
-      if(state.scene==="running")resumeExecution();
-    }
-    restoreState();
-    render();
+    const initialState={scene:"welcome",nickname:"",selectedCard:null,assignments:{},relation:"serial",resources:{personalHours:2,compute:24,cash:200},tour:{active:true,step:"roles",skipped:false},tutorial:{roleTourSeen:false,dragGhostDismissed:false},trainingMethod:null,agent:{formInstalled:false,rule:"",ruleVerified:false},firstRun:null,feedback:"",formAnswers:{audience:"",action:""},secondRun:null,playerStepStatus:"not-started",wholeOrderStatus:"in-progress"};
+    const state=structuredClone(initialState);
+    const slots=[{id:"understand",title:"理解实验目标",needs:"需要人判断",output:"清晰的实验目标"},{id:"make",title:"制作实验素材",needs:"适合 Agent 执行",output:"三版推广素材"},{id:"check",title:"检查并提交",needs:"需要人负责",output:"可交付版本"}];
+    const cards={player:{id:"player",kind:"本人",emoji:"🏹",skills:"客户理解 · 最终判断"},agent:{id:"agent",name:"小角",kind:"Agent",emoji:"🤖",skills:"快速制作 · 版本整理"}};
+    const meta={welcome:["🦄","欢迎来到 MFU","先告诉我们怎样称呼你。","开始"],briefing:["📜","第一关：旧书店的开学难题","先看懂完整订单，以及你负责的那一步。","关卡背景"],build:["🃏","为自己的步骤组成小阵列","把本人和 Agent 放到合适的任务位置。","编排"],firstRun:["⚙️","小角正在执行","Agent 会根据现有信息制作第一版成果。","首次执行"],inspect:["🔎","检查 Agent 的成果","真实交付中，问题通常是在看到成果后才暴露。","检查成果"],tune:["🛠️","调教 Agent","花现金安装工具，花本人时间写下工作守则。","调教"],clarify:["📋","小角调用了 Form","新工具和守则正在真实工作。","确认信息"],secondRun:["⚙️","小角重新执行","这一次，小角已经获得了必要信息。","重新执行"],stepDelivered:["📦","你的成果已交付","你的步骤已经完成，但完整订单仍在进行。","步骤完成"],settlement:["🎉","完整订单已完成","现在查看你的成果怎样进入最终交付。","订单结算"]};
+    let timer=null;
+    function esc(v=""){return String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+    function persist(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}
+    function restoreState(){try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");if(saved&&saved.resources&&typeof saved.nickname==="string")Object.assign(state,initialState,saved,{resources:{...initialState.resources,...saved.resources},tour:{...initialState.tour,...saved.tour},tutorial:{...initialState.tutorial,...saved.tutorial},agent:{...initialState.agent,...saved.agent},formAnswers:{...initialState.formAnswers,...saved.formAnswers}})}catch{}if(queryScene){state.scene=queryScene;seedForScene(queryScene)}}
+    function seedForScene(scene){const i=SCENES.indexOf(scene);if(i>0&&!state.nickname)state.nickname="测试玩家";if(i>2){state.tutorial.roleTourSeen=true;state.tutorial.dragGhostDismissed=true}if(i>=3&&!Object.keys(state.assignments).length)state.assignments={understand:"player",make:"agent",check:"player"};if(i>=4&&!state.firstRun){state.firstRun={status:"completed-with-mismatch"};state.resources.compute=18}if(i>=5){state.feedback=state.feedback||"目标人群应为刚入学的新生，请先确认必要信息。"}if(i>=6){state.agent.formInstalled=true;state.agent.rule="缺少必要信息时，先用 Form 向我确认";state.resources.cash=120;state.resources.personalHours=1}if(i>=7&&!state.formAnswers.audience)state.formAnswers={audience:"freshmen",action:"到店完成第一次购买"};if(i>=8){state.secondRun={status:"completed"};state.resources.compute=12;state.playerStepStatus="delivered";state.agent.ruleVerified=true}if(i>=9)state.wholeOrderStatus="completed"}
+    function setScene(scene){clearTimeout(timer);state.scene=scene;const u=new URL(location.href);u.searchParams.set("scene",scene);history.replaceState(null,"",u);persist();render()}
+    function resetDemo(){localStorage.removeItem(STORAGE_KEY);location.href=location.pathname}
+    function saveNickname(nickname){const clean=String(nickname||"").trim().slice(0,20);if(!clean)return false;state.nickname=clean;persist();setScene("briefing");return true}
+    function spendResource(kind,amount){if(!(kind in state.resources)||state.resources[kind]<amount)return false;state.resources[kind]-=amount;persist();return true}
+    function playerName(){return state.nickname||"你"}
+    function cardMarkup(id,compact=false){const c=cards[id];const name=id==="player"?playerName():c.name;return `<button type="button" class="play-card ${c.kind==="Agent"?"agent":"human"} ${compact?"compact":""} ${state.selectedCard===id?"selected":""}" draggable="${!compact}" data-card="${id}" onclick="selectCard('${id}')"><span class="card-top"><span class="portrait">${c.emoji}</span><span class="card-name"><b>${esc(name)}</b><small>${c.kind}</small></span></span><div class="skills">${c.skills}</div><div class="card-foot">${id==="player"?`${state.resources.personalHours} 小时可投入`:`${state.resources.compute} 点剩余算力`}</div></button>`}
+    function dismissDragGhost(){if(state.tutorial.dragGhostDismissed)return;state.tutorial.dragGhostDismissed=true;persist()}
+    function acknowledgeRoleTour(){state.tutorial.roleTourSeen=true;state.tour.active=false;persist();render()}
+    function selectCard(id){dismissDragGhost();state.selectedCard=state.selectedCard===id?null:id;render()}
+    function assignCard(cardId,slotId){if(!cards[cardId]||!slots.some(s=>s.id===slotId))return;dismissDragGhost();state.assignments[slotId]=cardId;state.selectedCard=null;persist();render()}
+    function removeAssignment(slotId){delete state.assignments[slotId];persist();render()}
+    function clearAssignments(){state.assignments={};persist();render()}
+    function saveDraft(){persist();document.querySelector("#primaryHint").textContent="✓ 编排已保存在本浏览器，可以稍后回来继续。"}
+    function coachAdvice(assignments){const values=Object.values(assignments),missing=slots.filter(s=>!assignments[s.id]);if(missing.length)return `还要给“${missing[0].title}”安排一个角色。`;if(assignments.check!=="player")return "当前没有安排本人检查。小角可能误解需求；你可以调整，也可以承担风险继续执行。";if(values.every(id=>id==="player"))return "全部由本人完成，质量比较可控，但会占用更多本人时间。";return "这个分工比较稳妥：本人负责关键判断和检查，小角负责快速制作。"}
+    function getEstimate(){return {assigned:Object.keys(state.assignments).length,advice:coachAdvice(state.assignments)}}
+    function advanceTour(){}
+    function skipTour(){state.tour.active=false;state.tour.skipped=true;persist();render()}
+    function renderOrderResources(){return `<section id="order-resources" class="order-resources" aria-label="本单资源"><div class="resource"><small>截止时间</small><b>教学关卡不限时</b></div><div class="resource"><small>本人可投入</small><b>${state.resources.personalHours} 小时</b></div><div class="resource"><small>Agent 算力</small><b>${state.resources.compute} 点</b></div><div class="resource"><small>公司现金</small><b>¥${state.resources.cash}</b></div><p>正式订单与现实世界时间同步。离开平台后，订单和 Agent 仍会继续推进。</p></section>`}
+    function renderTour(){if(state.tutorial.roleTourSeen)return "";return `<div id="role-tour" class="role-tour">这是你现在可以编排的角色：你自己，以及你的第一个 Agent 小角。<button id="acknowledge-role-tour" class="btn small" type="button" onclick="acknowledgeRoleTour()">知道了</button></div>`}
+    function renderDragGhost(){if(!state.tutorial.roleTourSeen||state.tutorial.dragGhostDismissed)return "";return `<div id="drag-ghost" class="drag-ghost"><span class="drag-ghost-card">🏹</span>把角色卡牌拖到任务的某一个环节，决定由谁来完成这部分工作。</div>`}
+    function boardMarkup(){const e=getEstimate(),tour=!state.tutorial.roleTourSeen;return `${renderOrderResources()}${renderDragGhost()}<div class="workspace"><div><section class="board-panel"><div class="board-head"><h2>我的步骤：增长验证</h2><p>把自己的步骤拆成三个位置。你可以自由决定本人和小角怎样分工。</p></div><div class="task-board">${slots.map((s,i)=>`<div class="task-slot ${!tour&&!state.tutorial.dragGhostDismissed&&i===0?"ghost-target":""}" data-slot="${s.id}" tabindex="0" onclick="slotClick('${s.id}')"><h3>${i+1}. ${s.title}</h3><span class="slot-meta">${s.needs}<br>输出：${s.output}</span>${state.assignments[s.id]?`<button class="remove-card" onclick="event.stopPropagation();removeAssignment('${s.id}')">×</button><div style="margin-top:9px">${cardMarkup(state.assignments[s.id],true)}</div>`:`<div class="slot-empty">把卡牌拖到这里<br>或先点卡牌，再点此处</div>`}<i class="connection"></i></div>`).join("")}</div></section><section class="hand ${tour?"role-tour-target":""}"><h2>你可以编排的角色</h2><div class="cards"><div>${cardMarkup("player")}</div><div>${cardMarkup("agent")}</div></div>${renderTour()}</section><div class="board-actions"><button class="btn small" onclick="clearAssignments()">清空编排</button><button class="btn small" onclick="saveDraft()">暂存编排</button></div></div><aside class="side-panel"><section id="coach-tip" class="panel"><h2>🎓 创业教练提示</h2><p class="coach-advice">${e.advice}</p></section><section class="panel"><h2>你仍是负责人</h2><p>Agent 可以执行，但你需要检查成果、提供反馈并确认最终提交。</p></section></aside></div>`}
+    function positionDragGhost(){const ghost=document.querySelector(".drag-ghost-card"),source=document.querySelector('.hand [data-card="player"]'),target=document.querySelector('[data-slot="understand"]');if(!ghost||!source||!target)return;const a=source.getBoundingClientRect(),b=target.getBoundingClientRect(),x=a.left+(a.width-108)/2,y=a.top+(a.height-72)/2,tx=b.left+(b.width-78)/2,ty=b.top+(b.height-52)/2;ghost.style.setProperty("--ghost-x",`${x}px`);ghost.style.setProperty("--ghost-y",`${y}px`);ghost.style.setProperty("--ghost-dx",`${tx-x}px`);ghost.style.setProperty("--ghost-dy",`${ty-y}px`)}
+    function bindBoard(){document.querySelectorAll("[data-card]").forEach(c=>c.addEventListener("dragstart",e=>{dismissDragGhost();e.dataTransfer.setData("text/card-id",c.dataset.card)}));document.querySelectorAll("[data-slot]").forEach(s=>{s.addEventListener("dragover",e=>{e.preventDefault();s.classList.add("drop-ready")});s.addEventListener("dragleave",()=>s.classList.remove("drop-ready"));s.addEventListener("drop",e=>{e.preventDefault();s.classList.remove("drop-ready");assignCard(e.dataTransfer.getData("text/card-id"),s.dataset.slot)});s.addEventListener("keydown",e=>{if((e.key==="Enter"||e.key===" ")&&state.selectedCard){e.preventDefault();assignCard(state.selectedCard,s.dataset.slot)}})});positionDragGhost()}
+    function slotClick(id){if(state.selectedCard)assignCard(state.selectedCard,id)}
+    function saveNicknameFromForm(e){e.preventDefault();if(!saveNickname(document.querySelector("#nickname-input").value))document.querySelector("#nickname-error").textContent="请先输入昵称。"}
+    function renderWelcome(){return `<div class="welcome"><div class="unicorn">🦄</div><h2>学生 + AI，经营你的第一家公司</h2><p>你将作为一名猎人，完成大项目中的一个步骤。先告诉我们怎样称呼你。</p><form id="nickname-form" class="nickname-form" onsubmit="saveNicknameFromForm(event)"><label for="nickname-input">输入你的昵称</label><input id="nickname-input" maxlength="20" placeholder="例如：小满" autocomplete="nickname"><div id="nickname-error" class="field-error"></div><button class="btn primary" type="submit">进入教学订单</button></form></div>`}
+    function routeMarkup(doneAll=false){const data=doneAll?[["用户洞察","✓","done"],["视觉方案","✓","done"],["内容表达","✓","done"],["你的增长验证","✓","mine"],["整合交付","✓","done"]]:[["用户洞察","✓","done"],["视觉方案","✓","done"],["内容表达","进行中","working"],["你的增长验证","✓","mine"],["整合交付","等待中","waiting"]];return `<div id="whole-order-route" class="order-route">${data.map(([a,b,c])=>`<div class="route-node ${c}">${a}<b>${b}</b></div>`).join("")}</div>`}
+    function renderBriefing(){const people=[["🔎","用户洞察","阿青"],["🎨","视觉方案","纸飞机"],["✍️","内容表达","长尾巴"],["🧪","增长验证",`你 · ${esc(playerName())}`],["📦","整合交付","北辰"]];return `<div class="briefing"><section class="brief-copy"><span class="eyebrow">📮 来自社区旧书店的订单</span><h2>开学了，但新生不知道<br>校园旁边还有一家旧书店。</h2><p>店主希望让刚入学的新生发现旧书循环服务，并完成第一次购买。这个订单需要不同能力的人共同完成。</p><div class="brief-facts"><div class="brief-fact"><b>完整订单</b><span>设计并验证一套开学季推广活动</span></div><div class="brief-fact"><b>截止时间</b><span>教学关卡不限时</span></div><div class="brief-fact"><b>你的任务</b><span>完成“增长验证”这一步</span></div><div class="brief-fact"><b>你的身份</b><span>你 · ${esc(playerName())}</span></div></div></section><section class="brief-order"><h2>完整订单由 5 名猎人共同完成</h2><p>你不用独自完成整个项目，只要把黄色步骤做好。</p><div class="brief-chain">${people.map((x,i)=>`<div class="brief-step ${i===3?"mine":""}"><span>${x[0]}</span><b>${i+1}. ${x[1]}</b><small>${x[2]}</small></div>`).join("")}</div></section></div>`}
+    function startFirstRun(){if(Object.keys(state.assignments).length<3)return false;if(!state.firstRun&&!spendResource("compute",6))return false;state.firstRun={status:"running",startedAt:Date.now()};persist();setScene("firstRun");return true}
+    function completeFirstRun(){state.firstRun.status="completed-with-mismatch";persist();setScene("inspect")}
+    function renderRun(second=false){const started=second?state.secondRun:state.firstRun;const elapsed=Math.max(0,Date.now()-(started?.startedAt||Date.now()));const pct=Math.min(100,Math.round(elapsed/12));clearTimeout(timer);if(pct>=100){timer=setTimeout(second?completePlayerStep:completeFirstRun,80)}else timer=setTimeout(render,180);return `${renderOrderResources()}<div class="running-box"><div class="running-head"><div class="running-agent">🤖</div><div><span class="tag blue">小角正在执行</span><h2>${second?"根据 Form 答案重新制作":"制作三版渠道实验素材"}</h2><p>${second?"目标人群和行动已经明确。":"小角正在根据现有信息快速生成第一版。"}</p></div></div><div class="run-meter"><i style="width:${pct}%"></i><span>${pct}% · ${second?"正在修正标题与渠道":"正在生成素材"}</span></div></div>`}
+    function feedbackFromForm(e){e.preventDefault();submitFeedback(document.querySelector("#feedback-input").value)}
+    function submitFeedback(text){const clean=String(text||"").trim().slice(0,240);if(!clean)return false;state.feedback=clean;persist();setScene("tune");return true}
+    function wrongPoster(){return `<article class="draft-poster draft-poster--wrong"><div class="poster-label">CORNER BOOKS · 第一版</div><h2>全校同学<br>都来淘旧书</h2><p>覆盖全校社群与所有年级<br>旧书循环 · 人人参加</p></article>`}
+    function renderInspect(){return `${renderOrderResources()}<div class="compare">${wrongPoster()}<section><div class="requirement-list"><div class="requirement"><b>订单要求</b><br>目标人群：刚入学的新生</div><div class="requirement bad"><b>Agent 实际成果</b><br>目标人群：全校所有年级</div><div class="requirement"><b>资源影响</b><br>已消耗 6 点算力；若直接提交，下游会继续沿错误方向制作。</div></div><form id="feedback-form" class="form-box" onsubmit="feedbackFromForm(event)"><label for="feedback-input">给小角反馈</label><textarea id="feedback-input" class="text-field">目标人群应为刚入学的新生，请先确认必要信息。</textarea><button class="btn primary" type="submit">发送反馈，开始调教</button></form></section></div>`}
+    function purchaseFormTool(){if(state.agent.formInstalled)return true;if(!spendResource("cash",80))return false;state.agent.formInstalled=true;persist();render();return true}
+    function ruleFromForm(e){e.preventDefault();saveAgentRule(document.querySelector("#agent-rule-input").value)}
+    function saveAgentRule(rule){const clean=String(rule||"").trim().slice(0,160);if(!state.agent.formInstalled||!clean)return false;if(!state.agent.rule&&!spendResource("personalHours",1))return false;state.agent.rule=clean;persist();setScene("clarify");return true}
+    function selectTrainingMethod(method){if(!["examples","rule","review","tool"].includes(method))return;state.trainingMethod=method;persist();render()}
+    function trainingDetail(){if(state.trainingMethod==="examples")return `<h2>🍱 喂范例</h2><p>让小角做二选一鉴别，逐渐教出你的品味。成本：半天。本关先认识这种方式，不需要完成。</p>`;if(state.trainingMethod==="review")return `<h2>🔍 复盘</h2><p>从打回与落选中寻找真正原因，训练收益最大。成本：半天 + 复盘素材。当前复盘素材 0，完成真实失败后才会获得。</p>`;if(state.trainingMethod==="tool")return `<h2>🧰 安装工具</h2><p>工具让小角获得新的执行方式。Form 工具可以在缺少必要信息时向你提问。</p><div class="tool-price">¥80</div><button id="buy-form-tool" class="btn ${state.agent.formInstalled?"good":"primary"}" onclick="purchaseFormTool()" ${state.agent.formInstalled?"disabled":""}>${state.agent.formInstalled?"✓ Form 已安装":"购买并安装 Form · ¥80"}</button>`;if(state.trainingMethod==="rule")return `<h2>📏 写守则</h2><p>安装工具不等于小角知道什么时候使用。请立下一条工作规矩。</p><form id="agent-rule-form" onsubmit="ruleFromForm(event)"><label for="agent-rule-input" style="display:block;font-size:10px;font-weight:900;margin:9px 0 5px">小角的守则</label><textarea id="agent-rule-input" class="text-field">${esc(state.agent.rule||"缺少必要信息时，先用 Form 向我确认")}</textarea><div class="rule-note">成本：半天本人时间。经过任务验证后，守则才会成为可靠能力。</div><button class="btn primary" type="submit" ${state.agent.formInstalled?"":"disabled"}>${state.agent.formInstalled?"保存守则并重新执行":"请先安装 Form"}</button></form>`;return `<h2>选择一种调教方式</h2><p>本关需要先安装 Form，再写守则。你也可以查看另外两种升级方式。</p>`}
+    function renderTune(){const methods=[["examples","🍱 喂范例","二选一鉴别，教出品味","半天"],["rule","📏 写守则","立下工作规矩","半天"],["review","🔍 复盘","从打回与落选中学习，收益最大","半天 · 素材 0"],["tool","🧰 安装工具","获得 Form 等可调用工具","现金"]];return `${renderOrderResources()}<section class="training-stage"><div class="training-agent" id="agent-training-card">${cardMarkup("agent")}</div><div class="training-status"><span class="tag blue">算力 ${state.resources.compute} 点</span><span class="tag ${state.agent.formInstalled?"green":"gray"}">Form ${state.agent.formInstalled?"已安装":"未安装"}</span><span class="tag ${state.agent.rule?"green":"gray"}">守则 ${state.agent.rule?"1 条":"0 条"}</span></div><div id="training-methods" class="training-methods">${methods.map(([id,name,effect,cost])=>`<button type="button" data-training-method="${id}" class="training-method ${state.trainingMethod===id?"on":""}" onclick="selectTrainingMethod('${id}')"><b>${name}</b><span>${effect}</span><small>成本：${cost}</small></button>`).join("")}</div><div id="training-detail" class="training-detail">${trainingDetail()}</div></section>`}
+    function clarificationFromForm(e){e.preventDefault();const f=new FormData(e.currentTarget);submitClarificationForm({audience:f.get("audience"),action:f.get("action")})}
+    function submitClarificationForm(a){const audience=String(a.audience||"");const action=String(a.action||"").trim().slice(0,120);if(!audience||!action)return false;state.formAnswers={audience,action};persist();return startSecondRun()}
+    function renderClarify(){return `${renderOrderResources()}<form id="clarification-form" class="tool-form" onsubmit="clarificationFromForm(event)"><span class="tag blue">小角调用了 Form</span><h2>开始制作前，请补充必要信息</h2><p class="rule-note">触发守则：${esc(state.agent.rule)}</p><label for="audience">本次推广首先面向谁？</label><select id="audience" name="audience"><option value="">请选择</option><option value="freshmen">刚入学的新生</option><option value="all">全校所有年级</option></select><label for="action">最希望用户采取什么行动？</label><input id="action" class="text-field" name="action" placeholder="例如：到店完成第一次购买"><button class="btn primary" type="submit">提交给小角</button></form>`}
+    function startSecondRun(){if(!state.agent.formInstalled||!state.agent.rule||!state.formAnswers.audience)return false;if(!state.secondRun&&!spendResource("compute",6))return false;state.secondRun={status:"running",startedAt:Date.now()};persist();setScene("secondRun");return true}
+    function completePlayerStep(){state.secondRun.status="completed";state.agent.ruleVerified=true;state.playerStepStatus="delivered";persist();setScene("stepDelivered")}
+    function correctPoster(){return `<article class="draft-poster draft-poster--correct"><div class="poster-label">CORNER BOOKS · 修正版</div><h2>新生的第一本<br>校园旧书</h2><p>带一本读完的书来，换走下一段故事。<br>${esc(state.formAnswers.action||"到店完成第一次购买")}</p></article>`}
+    function renderStepDelivered(){return `${renderOrderResources()}<div class="compare">${correctPoster()}<section class="panel"><span class="tag green">你的步骤 ✓</span><h2 style="margin-top:8px">增长验证成果已经交给整合者</h2><p>目标人群已经从“全校所有年级”修正为“刚入学的新生”。Form 与新守则成功避免了同类误解。</p><div class="mission">你的成果已交付，但完整订单仍在进行。其他猎人还在完成内容表达和最终整合。</div></section></div>${routeMarkup(false)}`}
+    function completeWholeOrder(){state.wholeOrderStatus="completed";persist();setScene("settlement")}
+    function renderSettlement(){return `<div class="settlement"><section class="delivery-pack"><span class="tag green">客户已验收</span><h2>旧书店开学季<br>完整推广包</h2><p>新生主题海报、社群图文、渠道实验卡和旧书循环活动说明已经合并为完整交付。</p><div class="delivery-visual">📚 ＋ 📱 ＋ 🧪</div>${routeMarkup(true)}</section><section class="settlement-sheet">${[["完整订单","旧书店开学推广 ✓"],["你的贡献","增长验证素材与目标人群确认"],["客户反馈","目标清楚，成果已进入最终推广包"],["本人时间","使用 1 / 2 小时"],["Agent 算力","使用 12 / 24 点"],["公司现金","购买 Form，剩余 ¥120"],["小角新增工具","Form"],["小角新增守则",esc(state.agent.rule)],["验证结果","经过本次重试验证，已避免同类误解"]].map(([a,b])=>`<div class="settlement-row"><b>${a}</b><span>${b}</span></div>`).join("")}</section></div>`}
+    function renderProgress(){const groups=[["1 进入关卡",1],["2 编排阵列",2],["3 检查成果",4],["4 调教重试",7],["5 交付结算",9]],i=SCENES.indexOf(state.scene);document.querySelector("#progress").innerHTML=groups.map((g,n)=>{const start=n?groups[n-1][1]+1:0;return `<div class="progress-step ${i>g[1]?"done":i>=start&&i<=g[1]?"on":""}">${i>g[1]?"✓ ":""}${g[0]}</div>`}).join("")}
+    function configurePrimary(){const b=document.querySelector("#primary-action"),row=document.querySelector("#primaryRow"),hint=document.querySelector("#primaryHint");row.classList.toggle("centered",state.scene==="briefing");const config={briefing:["准备好了，开始闯关",()=>setScene("build"),false,""],build:["确认编排，让小角开始执行",startFirstRun,Object.keys(state.assignments).length<3,"填满三个位置后即可开始。"],stepDelivered:["查看完整订单结果",completeWholeOrder,false,"完整订单的其他步骤将完成并进入统一结算。"],settlement:["领取第一份自由订单",()=>alert("下一阶段：第一份自由订单"),false,"教学完成。你也可以点击右上角重新体验。"]}[state.scene];if(!config){row.style.display="none";return}row.style.display="flex";b.textContent=config[0];b.onclick=config[1];b.disabled=config[2];hint.textContent=config[3]}
+    function render(){clearTimeout(timer);const m=meta[state.scene];document.querySelector("#sceneIcon").textContent=m[0];document.querySelector("#scene-title").textContent=m[1];document.querySelector("#sceneSubtitle").textContent=m[2];document.querySelector("#sceneCount").textContent=m[3];const views={welcome:renderWelcome,briefing:renderBriefing,build:boardMarkup,firstRun:()=>renderRun(false),inspect:renderInspect,tune:renderTune,clarify:renderClarify,secondRun:()=>renderRun(true),stepDelivered:renderStepDelivered,settlement:renderSettlement};document.querySelector("#scene-content").innerHTML=views[state.scene]();renderProgress();configurePrimary();if(state.scene==="build")bindBoard()}
+    restoreState();render();
   </script>
 </body>
 </html>
