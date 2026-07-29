@@ -20,6 +20,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .brand{line-height:1.05}.brand b{font-size:17px;letter-spacing:2px}.brand small{display:block;margin-top:3px;font-size:9.5px;color:var(--muted);letter-spacing:1px}
 .topbar .spacer{flex:1}.scene{display:flex;gap:6px}
 .btn{border:3px solid var(--ink);border-radius:8px;background:#fff2cf;box-shadow:0 3px 0 var(--ink);padding:6px 12px;font-weight:800;font-size:12px;cursor:pointer}
+.demo-back{display:inline-flex;align-items:center;color:inherit;text-decoration:none}
 .btn:hover{filter:brightness(1.04)}.btn:active{transform:translateY(3px);box-shadow:none}.btn.primary{background:var(--gold)}.btn.good{background:#8fd694}.btn.danger{background:#f6b5ab}.btn.small{padding:3px 8px;font-size:10.5px;box-shadow:0 2px 0 var(--ink)}.btn:disabled{opacity:.42;cursor:not-allowed;transform:none}
 .tag{display:inline-block;padding:2px 7px;border:2px solid;border-radius:6px;font-size:10px;font-weight:800}.tag.school{color:var(--school);background:var(--school-bg)}.tag.incu{color:var(--incu);background:var(--incu-bg)}.tag.assoc{color:var(--assoc);background:var(--assoc-bg)}.tag.done{color:var(--teal);background:#e5f6ef}.tag.gray{color:#786a56;background:#f2ead6}.tag.gold{color:#8b6100;background:#fff0ad}
 .progress{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;margin-bottom:10px}

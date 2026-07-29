@@ -59,7 +59,7 @@ function shell(){
         <div class="brand"><b>🦄 MFU · 角色操作台</b><small>一个订单 → 一群猎人 → 一些组织</small></div>
         <span class="tag ${state.scene==='school'?'school':'incu'}">${sceneName()}</span>
         <div class="spacer"></div>
-        <div class="scene"><button class="btn small ${state.scene==='school'?'primary':''}" data-scene="school">🏫 在校</button><button class="btn small ${state.scene==='society'?'primary':''}" data-scene="society">🏙️ 社会</button><button class="btn small" id="reset">↺ 重置</button></div>
+        <div class="scene"><a class="btn small demo-back" href="../MFU-v0.15-可试玩原型.html">← 返回可玩 Demo</a><button class="btn small ${state.scene==='school'?'primary':''}" data-scene="school">🏫 在校</button><button class="btn small ${state.scene==='society'?'primary':''}" data-scene="society">🏙️ 社会</button><button class="btn small" id="reset">↺ 重置</button></div>
       </header>
       <nav class="progress">${PAGE_META.map((x,i)=>`<a href="${PAGE_FILE[x[0]]}" class="${x[0]===page?'current':i<state.phase-1?'complete':''}">${x[1]}</a>`).join('')}</nav>
       <div class="layout">
@@ -70,7 +70,7 @@ function shell(){
         </aside>
         <main class="paper main" id="screen"></main>
       </div>
-      <p class="footer">独立角色页原型 · 当前状态保存在本浏览器 · 下一步再接入 MFU v0.15 主游戏</p>
+      <p class="footer">订单全生命周期原型 · 当前状态保存在本浏览器 · 可随时返回 MFU v0.15 继续经营</p>
     </div>`;
   document.querySelectorAll('[data-scene]').forEach(b=>b.onclick=()=>setScene(b.dataset.scene));
   document.querySelector('#reset').onclick=reset;
@@ -88,7 +88,7 @@ function issuer(){
   <div class="grid"><section class="card"><h2>订单内容</h2>
     <div class="field"><label>订单名称</label><input id="orderTitle" value="${h(state.order.title)}"></div>
     <div class="field"><label>希望解决什么问题？</label><textarea id="orderGoal">${h(state.order.goal)}</textarea></div>
-    <div class="grid"><div class="field"><label>奖金池</label><input id="orderBudget" type="number" value="${state.order.budget}"></div><div class="field"><label>截止时间</label><select id="orderDue"><option>两周后</option><option>四周后</option><option>本学期末</option></select></div></div>
+    <div class="grid"><div class="field"><label>奖金池</label><input id="orderBudget" type="number" value="${state.order.budget}"></div><div class="field"><label>截止时间</label><select id="orderDue">${['两周后','四周后','本学期末'].map(d=>`<option ${state.order.due===d?'selected':''}>${d}</option>`).join('')}</select></div></div>
     <div class="field"><label>完整结果的验收标准</label><textarea id="orderCriteria">${h(state.order.criteria)}</textarea></div>
   </section><section class="stack">
     <div class="card"><h2>${roleContext('🏫 教学设置','🏙️ 商业设置')}</h2><div class="checklist">
@@ -113,7 +113,12 @@ function decomposer(){
 }
 function bindDecomposer(){
   addStep.onclick=()=>toast('v0.15 示例保持 5 个步骤；正式版可继续增加');
-  publishTopology.onclick=()=>{if([...document.querySelectorAll('.topoCheck')].some(x=>!x.checked))return toast('请先完成三项拆单检查');document.querySelectorAll('[data-step-name]').forEach(el=>state.steps[+el.dataset.stepName].name=el.textContent.trim());save();complete('topologyPublished','matching','步骤拓扑已发布，平台开始匹配')};
+  publishTopology.onclick=()=>{
+    if([...document.querySelectorAll('.topoCheck')].some(x=>!x.checked))return toast('请先完成三项拆单检查');
+    document.querySelectorAll('[data-step-name]').forEach(el=>state.steps[+el.dataset.stepName].name=el.textContent.trim());
+    document.querySelectorAll('[data-step-output]').forEach(el=>state.steps[+el.dataset.stepOutput].output=el.textContent.replace(/^输出[：:]\s*/,'').trim());
+    save();complete('topologyPublished','matching','步骤拓扑已发布，平台开始匹配')
+  };
 }
 function matching(){
   return head('🦄','平台匹配：猎人收到一个步骤','平台自动完成匹配；真人只需要确认是否承接。平台暂不解释算法，也不显示总分。',state.matched?'已承接':'等待确认')+
