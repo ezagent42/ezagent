@@ -53,16 +53,8 @@ defmodule EzagentPluginGithub.GitHubClient do
   @spec get(path :: String.t(), token :: String.t(), opts :: Keyword.t()) ::
           {:ok, map() | list()} | {:error, atom()}
   def get(path, token, opts \\ []) when is_binary(path) and is_binary(token) do
-    base_opts = [
-      headers: [
-        {"authorization", "Bearer #{token}"},
-        {"accept", "application/vnd.github+json"},
-        {"user-agent", "ezagent-github-plugin"}
-      ]
-    ]
-
     (@base_url <> path)
-    |> Req.get(Keyword.merge(base_opts, opts))
+    |> Req.get(Keyword.merge(base_opts(token), opts))
     |> handle_response()
   end
 
@@ -78,17 +70,8 @@ defmodule EzagentPluginGithub.GitHubClient do
           {:ok, map()} | {:error, atom()}
   def post(path, token, body, opts \\ [])
       when is_binary(path) and is_binary(token) and is_map(body) do
-    base_opts = [
-      json: body,
-      headers: [
-        {"authorization", "Bearer #{token}"},
-        {"accept", "application/vnd.github+json"},
-        {"user-agent", "ezagent-github-plugin"}
-      ]
-    ]
-
     (@base_url <> path)
-    |> Req.post(Keyword.merge(base_opts, opts))
+    |> Req.post(Keyword.merge([json: body] ++ base_opts(token), opts))
     |> handle_response()
   end
 
@@ -104,18 +87,40 @@ defmodule EzagentPluginGithub.GitHubClient do
           {:ok, map()} | {:error, atom()}
   def patch(path, token, body, opts \\ [])
       when is_binary(path) and is_binary(token) and is_map(body) do
-    base_opts = [
-      json: body,
+    (@base_url <> path)
+    |> Req.patch(Keyword.merge([json: body] ++ base_opts(token), opts))
+    |> handle_response()
+  end
+
+  # ONE place where the transport-level policy lives, so "does this client
+  # retry?" has a single answer instead of three.
+  #
+  # `retry: false` is the load-bearing part (#1613). Req 0.6's default is
+  # `:safe_transient`, which retries 408/429/500/502/503/504 three times with
+  # 1s/2s/4s backoff. That default is wrong here for three reasons:
+  #
+  #   * **429.** GitHub's rate-limit response means "stop", not "try three more
+  #     times". Retrying into a limit deepens it.
+  #   * **It is invisible to the layer that owns retry.** The workflow's §7.2
+  #     policy counts attempts and records stable blocker codes; underneath it,
+  #     one "attempt" was silently four requests. A bounded budget that is
+  #     off by 4x is not bounded.
+  #   * **It sleeps inside the adapter callback**, which is holding an
+  #     operation-scoped installation token and a Kind lifecycle for the
+  #     duration.
+  #
+  # Callers keep the escape hatch: `opts` is merged LAST, so a call site with a
+  # genuine transport-retry need passes its own `retry:` explicitly — which is
+  # a reviewable decision at that site rather than a silent default everywhere.
+  defp base_opts(token) do
+    [
+      retry: false,
       headers: [
         {"authorization", "Bearer #{token}"},
         {"accept", "application/vnd.github+json"},
         {"user-agent", "ezagent-github-plugin"}
       ]
     ]
-
-    (@base_url <> path)
-    |> Req.patch(Keyword.merge(base_opts, opts))
-    |> handle_response()
   end
 
   # ── error mapping ────────────────────────────────────────────────────
