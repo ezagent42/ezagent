@@ -1,8 +1,12 @@
 # C8 — v5 use-side Kind-mailbox seal / pid 纪律（暂缓至 #189 落地）
 
+- **id**: `c8-mailbox-seal`
 - **owner**: Allen 轨道
+- **status**: planned(暂缓至 #189)
+- **历史**: started - · est_done - · actual —
+- **关联**: branch feat/v5-use-side-mailbox(+32/−23) · codex spec: NEEDS-REVISION→已修订待 re-review
+
 - **branch**: `feat/v5-use-side-mailbox`（+32/−23 vs main）
-- **status**: planned / DEV 暂缓（Allen 2026-07-29：spec 先行评审，#189 落地后开工）
 - **依赖**: #189 一次合入 main
 
 ## 目标

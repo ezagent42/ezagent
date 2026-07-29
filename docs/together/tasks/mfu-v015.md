@@ -1,7 +1,11 @@
 # MFU demo v0.15 — landing package 续作
 
+- **id**: `mfu-v015`
 - **owner**: ruihua
-- **status**: wip（#1586 已入 main；landing package 续作）
+- **status**: wip
+- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual —
+- **关联**: PR #1586(merged 2026-07-29) · 续作 landing package
+
 - **branch**: 新分支（mfu-demo-tree 的 #1586 检查点已合，续作另开）
 
 ## 目标

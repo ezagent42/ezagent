@@ -1,5 +1,11 @@
 # Handoff → jjkysy: Group A (URI-share) — codex FIX-NEEDED, fixes + Allen decisions
 
+- **id**: `group-a-uri-share`
+- **owner**: jjkysy
+- **status**: review
+- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —
+- **关联**: PR #1594/#1596/#1606/#1597(open) · codex: FIX-NEEDED(见 handoff 附录 findings)
+
 codex adversarial review of the 4 merged PRs (#1594 A1 / #1596 A2-1 / #1606 A2-2 / #1597 A3) =
 **FIX-NEEDED, merge blocked.** Compile + compose are clean; the blockers are Cap-security. Fix
 the must-fixes + apply Allen's design decisions, then it goes back to codex → cc gates + merges.

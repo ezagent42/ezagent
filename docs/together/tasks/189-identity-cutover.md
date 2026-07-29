@@ -1,8 +1,12 @@
 # #189 身份平面 cutover — 读翻转 + ephemeral 持久身份 → 9 红转绿
 
-- **owner**: Allen 轨道（cc 协调，agent 实施）
+- **id**: `189-identity-cutover`
+- **owner**: Allen 轨道(cc 协调)
+- **status**: wip
+- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual —
+- **关联**: PR #1615(PR-1, merged bc1b9fb74) · branch fix/189-identity-plane-p2 @ 写平面 87e21fc35 · codex: PR-1 六轮 MERGE-OK+SOUND; PR-2 写平面 impl FIX-NEEDED→已修; 整包一次 codex 待 cutover 完
+
 - **branch**: `fix/189-identity-plane-p2`（基于 main `bc1b9fb74` = PR-1 已入 + 写平面 `87e21fc35`）
-- **status**: 实施中（今日 time-box 07-29）
 - **依赖**: 写平面已完成并验证（原子 active-transition 闸 / backfill / fleet-parity barrier / open(:existed) fail-closed，Allen 已确认 A：门保持）
 
 ## 目标

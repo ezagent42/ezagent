@@ -1,7 +1,11 @@
 # Feishu 绑定修复 B1/B2
 
+- **id**: `feishu-binding-b1b2`
 - **owner**: gaga
-- **status**: wip（待 gaga 推进）
+- **status**: wip
+- **历史**: started 2026-07-25 · est_done 2026-07-29 · actual —
+- **关联**: PR #1568/#1547(open)
+
 - **PR**: #1568（permission-neutral binding seed readiness）+ #1547（迁移到正式 UserBinding dispatch）
 
 ## 目标

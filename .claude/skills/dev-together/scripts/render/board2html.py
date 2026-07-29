@@ -12,7 +12,7 @@ Usage:  uv run --with pyyaml python board2html.py <board.yaml> [board.html]
 
 board.yaml schema — see scripts/render/board.example.yaml for a filled example.
 """
-import sys, html, json, datetime
+import sys, html, json, datetime, os, re
 
 try:
     import yaml
@@ -188,6 +188,27 @@ JS = """
   document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
 """
 
+# ---- cross-day task files (docs/together/tasks/<task-id>.md) ----
+# A card is a THIN projection of its task file: `task: <id>` references the
+# flat, cross-day record. The task file's "## Handoff prompt" section feeds the
+# card's 开工-prompt modal (so a done card's prompt stays viewable). Handoffs
+# are written ONCE at task creation; boards never regenerate them.
+BOARD_DIR = "."
+
+
+def task_prompt(card):
+    tid = card.get("task")
+    if not tid:
+        return ""
+    path = os.path.join(BOARD_DIR, "..", "tasks", f"{tid}.md")
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as f:
+        txt = f.read()
+    m = re.search(r"##\s*Handoff prompt[^\n]*\n(.*?)(?=\n## |\Z)", txt, re.S)
+    return (m.group(1) if m else txt).strip()
+
+
 def render_card(card, pcolor, pname, today=None):
     color = pcolor.get(card.get("owner"), "#2563eb")
     delayed, overdue = card_delay(card, today)
@@ -220,6 +241,8 @@ def render_card(card, pcolor, pname, today=None):
         pills.append('<span class="pill carry">结转昨日</span>')
     if card.get("status") == "blocked":
         pills.append('<span class="pill blocked">阻塞</span>')
+    if card.get("task"):
+        pills.append(f'<span class="pill dep">task:{e(card["task"])}</span>')
     pills.append('<span class="pill more">详情</span>')
     # detail data
     acc_json = json.dumps([[("done" if a.get("done") else "todo"), a.get("text",""), a.get("evidence","")] for a in acc], ensure_ascii=False)
@@ -249,7 +272,7 @@ def render_card(card, pcolor, pname, today=None):
         f'{accm}{sched}{decomp}<div class="meta">{"".join(pills)}</div>'
         f'<div class="detail" data-title="{e(card.get("title"))}" data-who="{e(card.get("who",""))}" '
         f"data-acc='{html.escape(acc_json, quote=True)}' "
-        f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt",""))}"></div></div>'
+        f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt") or task_prompt(card))}"></div></div>'
     )
 
 def main():
@@ -257,6 +280,9 @@ def main():
         sys.exit("usage: board2html.py <board.yaml> [board.html]")
     src = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else (src[:-5] + ".html" if src.endswith(".yaml") else src + ".html")
+    # cross-day task files resolve relative to the board's dated dir (../tasks/)
+    global BOARD_DIR
+    BOARD_DIR = os.path.dirname(os.path.abspath(src))
     with open(src, encoding="utf-8") as f:
         b = yaml.safe_load(f)
 
