@@ -262,6 +262,26 @@ defmodule Ezagent.Cap.Authority do
     :ok
   end
 
+  @doc """
+  Whether `uri` has ANY `kind_cap_authorities` history — an active OR retired
+  generation row (#189 PR-3 FIX 3). `regenesis/2` RETIRES the active row
+  (`retire_active/1`, an `UPDATE ... SET active=false`) and INSERTS a new
+  generation; it never DELETES, so a revoked / rotated principal keeps its
+  history. This is therefore the durable "this URI's authority was ever opened"
+  witness that survives a store-row deletion — the fact the ephemeral
+  ever-created signal uses to deny a re-mint on an absent store row. Fail-closed
+  (a read error resolves to `true`: an unreadable history must never be read as
+  "never created" and license a fresh genesis).
+  """
+  @spec has_authority_history?(URI.t()) :: boolean()
+  def has_authority_history?(%URI{} = uri) do
+    uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() != []
+  rescue
+    _ -> true
+  catch
+    _, _ -> true
+  end
+
   defp current_key_id(%URI{} = target) do
     target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
 

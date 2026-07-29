@@ -121,6 +121,12 @@ defmodule EzagentDomainIdentity.Application do
         # the spawn itself.
         :ok = maybe_seed_admin_kind_for_tests()
 
+        # #189 PR-3 FIX 5 — prime the identity-plane cutover epoch cache at boot
+        # so the steady-state authorization read is a single `:persistent_term`
+        # hit. Fail-safe: a no-op when pt caching is disabled (test) or the epoch
+        # is not yet active / unreadable (fail-closed — nothing to cache).
+        :ok = Ezagent.Identity.Cutover.prime()
+
         {:ok, sup_pid}
 
       other ->

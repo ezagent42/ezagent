@@ -139,11 +139,14 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert cap_present?(Store.load(licensed), Enum.at(licensed_set, 1))
     end
 
-    test "fetch_durable_caps falls back only when no row exists (cutover-facing)" do
+    test "fetch_durable_caps is :absent only when no row exists (cutover-facing)" do
       agent = agent_uri("dual-read-shape")
       caps = licensed_caps(agent, [issued_cap(agent, :send)])
 
-      assert Store.fetch_durable_caps(agent) == :fallback
+      # FIX 2: a SUCCESSFUL absent read is `:absent` (fallback-eligible), NOT a
+      # collapsed `nil`/error. A present row is `{:ok, _}`; a read failure is
+      # `{:error, _}` (covered by the dedicated read-error regression below).
+      assert Store.fetch_durable_caps(agent) == :absent
 
       assert :ok = Store.persist(agent, caps)
       assert {:ok, store_caps} = Store.fetch_durable_caps(agent)

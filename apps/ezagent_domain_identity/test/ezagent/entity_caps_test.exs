@@ -571,6 +571,46 @@ defmodule Ezagent.EntityCapsTest do
     end
   end
 
+  describe "#189 PR-3 FIX 2 (post-epoch: a store READ ERROR denies, never falls back)" do
+    test "a forced store read error denies even with a valid legacy self-license present" do
+      agent = agent_uri("read-error-deny")
+      license = self_license(agent)
+      legacy_cap = issued_cap(agent, :send)
+
+      # LEGACY (the durable snapshot) carries a CURRENT-valid self-license + cap,
+      # so the legacy fallback, if taken, WOULD authorize. (Writing the snapshot
+      # also PR-1 dual-writes an `active` store row — that is expected.)
+      assert {:ok, _snap} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([license, legacy_cap])}}},
+                 kind_type: :agent
+               )
+
+      # CONTROL (non-vacuous): PRE-EPOCH the read is legacy-authoritative and the
+      # valid legacy license AUTHORIZES (non-empty). This proves the read-error
+      # DENY below is the discriminator — the legacy source really would grant.
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
+      refute EntityCaps.load_persisted(agent) == []
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+
+      # Now the AUTHORITATIVE store row is non-active (a store-only provisioning
+      # revocation): a successful post-epoch read denies via status.
+      assert :ok = Ezagent.EntityCaps.Store.revoke_provisioning(agent)
+      assert Ezagent.EntityCaps.Store.status(agent) == :revoked_unprovisioned
+      assert EntityCaps.load_persisted(agent) == []
+
+      # DISCRIMINATOR — force the store read to ERROR. Pre-FIX-2 the error
+      # collapsed to `:absent` and fell back to the VALID legacy license,
+      # authorizing the revoked principal. Post-FIX-2 `{:error, _}` DENIES.
+      Application.put_env(:ezagent_domain_identity, :p2_forced_read_error_uris, [store_key(agent)])
+      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris) end)
+
+      assert {:error, _} = Ezagent.EntityCaps.Store.fetch_durable_caps(agent)
+      assert EntityCaps.load_persisted(agent) == []
+    end
+  end
+
   defp with_signature_enforced(fun) do
     previous = Application.get_env(:ezagent_core, Cap)
     cap_config = previous || []
@@ -643,6 +683,11 @@ defmodule Ezagent.EntityCapsTest do
 
   defp worker_uri(suffix),
     do: URI.new!("entity://entity-caps/worker/#{suffix}-#{System.unique_integer([:positive])}")
+
+  # The store's canonical URI-string key form (`instance |> to_string`) — matches
+  # `Ezagent.EntityCaps.Store`'s `key/1` so the forced-read-error URI list keys
+  # align with the store's row keys.
+  defp store_key(uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
 
   defp identity_keys(caps) do
     caps

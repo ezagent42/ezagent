@@ -14,10 +14,14 @@ defmodule Ezagent.EntityCaps do
 
   #189 PR-3 (read-cutover): `load_persisted/1` — the COLD durable read behind
   the principal-axis authorization gate (`Cap.Authorize.principal_current?` →
-  `Identity.read_held_caps/1`) — now consults the store as AUTHORITATIVE
-  (`Store.fetch_durable_caps/1`), with a legacy fallback ONLY for an ABSENT row.
-  A PRESENT non-active store row is authoritative-empty (no fallback). The
-  live-first `load/1` slice read is unchanged (self-dispatch routes through
+  `Identity.read_held_caps/1`) — consults the store as AUTHORITATIVE
+  (`Store.fetch_durable_caps/1`) ONLY once the cutover epoch is active
+  (`Ezagent.Identity.Cutover.active?/0`; FIX 5). A legacy fallback applies ONLY
+  to a SUCCESSFULLY-ABSENT row; a PRESENT non-active store row is authoritative-
+  empty (no fallback); a store READ ERROR DENIES (`[]`), never falls back (FIX
+  2). Before the epoch — and on any unreadable epoch (fail-closed) — the read is
+  PR-1 legacy-authoritative and never consults the store. The live-first
+  `load/1` slice read is unchanged (self-dispatch routes through
   `load_persisted/1`; both remain gen-gated by `verified/2`).
 
   `load/1` is receiver-aware and live-first. It reads a live Identity slice when
@@ -101,27 +105,38 @@ defmodule Ezagent.EntityCaps do
     if fenced?(uri), do: [], else: do_load_persisted(uri)
   end
 
-  # #189 PR-3 read-cutover: the unified `Ezagent.EntityCaps.Store` is now the
-  # AUTHORITATIVE durable holder source for the principal-axis cap read
-  # (`Cap.Authorize.principal_current?` → `Identity.read_held_caps/1` →
-  # `EntityCaps.load/1` → this cold path on self-dispatch). Store-preferred with a
-  # legacy fallback ONLY for an ABSENT row (`:fallback`): a PRESENT non-active row
-  # is authoritative-empty (`{:ok, []}`) and NEVER falls back — the store's
-  # guarded active-ness (§2, active iff a current-valid self-license) is the
-  # source of truth. `verified/2` ALWAYS gen-gates the result regardless of source
-  # (store OR legacy fallback), so a stale/rotated license — a store-active row
-  # left behind by a `regenesis` that only bumped the generation, or a stale
-  # legacy license — still loads EMPTY. A store read error resolves to `:fallback`
-  # (the legacy read, itself gen-gated) — safe because the gate is on `verified/2`,
-  # never on the source.
+  # #189 PR-3 read-cutover, EPOCH-GATED (FIX 5): the unified
+  # `Ezagent.EntityCaps.Store` becomes the AUTHORITATIVE durable holder source
+  # for the principal-axis cap read (`Cap.Authorize.principal_current?` →
+  # `Identity.read_held_caps/1` → `EntityCaps.load/1` → this cold path on
+  # self-dispatch) ONLY once the cutover epoch is active
+  # (`Ezagent.Identity.Cutover.active?/0`). Before the epoch — and on any
+  # UNREADABLE epoch (fail-closed) — this reads the PR-1 legacy-authoritative
+  # source and NEVER consults the store, so merging PR-3 flips no production read
+  # until the operator activates the epoch after the fenced backfill + barrier.
   defp do_load_persisted(uri) do
-    caps =
-      case Store.fetch_durable_caps(uri) do
-        {:ok, store_caps} -> store_caps
-        :fallback -> legacy_persisted_caps(uri)
-      end
+    if Ezagent.Identity.Cutover.active?() do
+      do_load_persisted_cutover(uri)
+    else
+      verified(legacy_persisted_caps(uri), uri)
+    end
+  end
 
-    verified(caps, uri)
+  # POST-EPOCH: store-authoritative. Store-preferred with a legacy fallback ONLY
+  # for a SUCCESSFULLY-ABSENT row (`:absent`): a PRESENT non-active row is
+  # authoritative-empty (`{:ok, []}`) and NEVER falls back — the store's guarded
+  # active-ness (§2, active iff a current-valid self-license) is the source of
+  # truth. A store READ ERROR (`{:error, _}`) DENIES (`[]`) — it is NEVER a
+  # legacy fallback (FIX 2: read failure is not absence). `verified/2` ALWAYS
+  # gen-gates the result regardless of source, so a stale/rotated license — a
+  # store-active row left behind by a `regenesis` that only bumped the
+  # generation, or a stale legacy license — still loads EMPTY.
+  defp do_load_persisted_cutover(uri) do
+    case Store.fetch_durable_caps(uri) do
+      {:ok, store_caps} -> verified(store_caps, uri)
+      :absent -> verified(legacy_persisted_caps(uri), uri)
+      {:error, _reason} -> []
+    end
   end
 
   defp legacy_persisted_caps(uri) do

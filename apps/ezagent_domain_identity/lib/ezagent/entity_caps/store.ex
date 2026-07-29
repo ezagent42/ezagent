@@ -123,22 +123,62 @@ defmodule Ezagent.EntityCaps.Store do
   """
   @spec ever_created_signal?(URI.t() | String.t()) :: boolean()
   def ever_created_signal?(uri) do
-    if user_uri?(uri) do
-      false
-    else
-      case fetch_result(uri) do
-        {:ok, nil} -> false
-        {:ok, %__MODULE__{}} -> true
-        :error -> true
-      end
+    cond do
+      # EPOCH-GATED (FIX 5): before the cutover epoch — and on any unreadable
+      # epoch (fail-closed) — the store is NOT consulted for the ephemeral
+      # freshness decision. `false` ⇒ the caller keeps the PR-1 legacy freshness
+      # semantics (the snapshot `ever_created` marker alone; for an ephemeral
+      # Kind that is unconditionally `:created`). The store becomes the
+      # ever-created authority ONLY post-epoch.
+      not Ezagent.Identity.Cutover.active?() ->
+        false
+
+      user_uri?(uri) ->
+        false
+
+      true ->
+        case fetch_result(uri) do
+          # A SUCCESSFUL absent read is NOT sufficient for `:created` when the
+          # URI already has AUTHORITY HISTORY (`kind_cap_authorities` rows —
+          # preserved across `regenesis`, which retires+inserts, never deletes):
+          # that combination is a previously-created principal whose store row
+          # was cleared/never-mirrored, so it reports ever-created (⇒ `:existed`,
+          # no re-mint) — the FIX 3 anti-resurrection property. Only a genuine
+          # first creation (no row AND no authority history) reports `false`.
+          {:ok, nil} -> Ezagent.Cap.Authority.has_authority_history?(uri_struct(uri))
+          {:ok, %__MODULE__{}} -> true
+          :error -> true
+        end
     end
   end
 
+  # TEST-ONLY forced-read-error seam (the `@p1_forced_shadow_failure_seam`
+  # precedent): compiled IN only for `MIX_ENV=test`, provably unreachable in a
+  # dev/prod/release build. Consulted ONLY when the app env
+  # `:ezagent_domain_identity, :p2_forced_read_error_uris` is set (a list of URI
+  # strings) — never set outside the FIX 2 read-error regression. It lets the
+  # regression force `fetch_result/1` to `:error` for a target so
+  # `fetch_durable_caps/1` returns `{:error, _}` and the read-error-DENIES path
+  # is exercised deterministically (a real DB error is not reproducible in the
+  # sandbox).
+  @p2_forced_read_error_seam Mix.env() == :test
+
   # Like `fetch/1` but DISTINGUISHES a successful "no row" (`{:ok, nil}`) from a
   # read error (`:error`) — `fetch/1` collapses both to `nil`, which would make
-  # `ever_created_signal?` fail OPEN. Do not route `ever_created_signal?` through
-  # `fetch/1`.
-  defp fetch_result(uri) do
+  # `ever_created_signal?` fail OPEN and `fetch_durable_caps` fall back to legacy
+  # on error (FIX 2). Do not route those through `fetch/1`.
+  if @p2_forced_read_error_seam do
+    defp fetch_result(uri) do
+      case Application.get_env(:ezagent_domain_identity, :p2_forced_read_error_uris) do
+        nil -> real_fetch_result(uri)
+        uris -> if key(uri) in uris, do: :error, else: real_fetch_result(uri)
+      end
+    end
+  else
+    defp fetch_result(uri), do: real_fetch_result(uri)
+  end
+
+  defp real_fetch_result(uri) do
     {:ok, Repo.get(__MODULE__, key(uri))}
   rescue
     _ -> :error
@@ -188,18 +228,31 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Cutover-facing dual-read entry point for `load_persisted/1` (the
-  `Ezagent.EntityCaps` persisted-cap read): the store's complete cap set, or
-  `:fallback` when no row exists (caller then reads the legacy store —
-  `users.caps_json` / snapshot `:identity`). NOT consulted by `EntityCaps` in
-  PR-1 — the store reads only its OWN row here (via `fetch/1`), so this is not a
-  new authority-use site (phrased to avoid the Z-1 ratchet's doc-scan match).
+  `Ezagent.EntityCaps` persisted-cap read). Three DISTINCT outcomes (FIX 2 —
+  read failure is not absence):
+
+    * `{:ok, caps}` — a PRESENT row: the complete cap set for an `active` row,
+      or `[]` for a `revoked_unprovisioned` / `tombstoned` row (authoritative-
+      empty, NEVER a fallback — a present non-active row is the source of truth
+      about the holder being inert);
+    * `:absent` — a SUCCESSFUL read that found NO row (the caller may fall back
+      to the legacy store — `users.caps_json` / snapshot `:identity`);
+    * `{:error, reason}` — the store read itself FAILED. The caller MUST DENY
+      (`[]`), NEVER fall back: a DB error must not be interpreted as "no row"
+      and let a legacy self-license authorize a principal the authoritative
+      store would deny (e.g. a store-only provisioning revocation).
+
+  Routes through `fetch_result/1` (which distinguishes `{:ok, nil}` from
+  `:error`), NOT `fetch/1` (which collapses both to `nil`).
   """
-  @spec fetch_durable_caps(URI.t() | String.t()) :: {:ok, [Capability.t()]} | :fallback
+  @spec fetch_durable_caps(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | :absent | {:error, term()}
   def fetch_durable_caps(uri) do
-    case fetch(uri) do
-      nil -> :fallback
-      %{identity_status: "active", caps_json: caps_json} -> {:ok, decode_caps(caps_json)}
-      %{identity_status: _non_active} -> {:ok, []}
+    case fetch_result(uri) do
+      {:ok, nil} -> :absent
+      {:ok, %__MODULE__{identity_status: "active", caps_json: caps_json}} -> {:ok, decode_caps(caps_json)}
+      {:ok, %__MODULE__{}} -> {:ok, []}
+      :error -> {:error, :store_read_failed}
     end
   end
 

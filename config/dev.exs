@@ -11,6 +11,13 @@ config :ezagent_domain_identity,
        :provisioning_receipt_secret,
        "dev-only-insecure-provisioning-receipt-secret"
 
+# #189 PR-3 FIX 5 — dev runs the identity-plane cutover EPOCH forced ACTIVE so
+# the local node behaves like the post-cutover plane (preserving how this branch
+# behaved before the epoch gate landed). Production sets NOTHING here: `active?/0`
+# is DB-backed and stays PRE-EPOCH (legacy-authoritative) until an operator runs
+# the fenced `mix ezagent.identity.cutover`.
+config :ezagent_domain_identity, :identity_cutover_active_override, true
+
 # Show debug info in the branded 500 error page when it renders (in dev,
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true
