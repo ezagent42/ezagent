@@ -85,7 +85,15 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # framework-internal row-level rewrite that runs Repo-only (NOT through
         # the domain dispatch/commit path, which would cold-load the very rows it
         # repairs against the deleted standalone curl Kind).
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex"
+        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
+        # #189 PR-3 FIX 4 one-shot GOVERNED migration: augments an EXISTING
+        # pre-carrier session snapshot's `:kind_base` with SelfLicense and mints
+        # its `:identity` self-license in place. Same direct-`upsert` rationale as
+        # the other one-shot migrations (it repairs the very rows a dispatch/
+        # commit path would cold-load, and cold-load without the carrier is the
+        # exact bug it fixes); it lives in the session domain because it
+        # references `ActionSet.SelfLicense`, which core/actor cannot.
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
       ],
       guidance:
         "Domain/Behavior/plugin state persists via the normal dispatch → " <>

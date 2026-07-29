@@ -403,17 +403,20 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
     assert cap =~ "instance: %URI{}"
   end
 
-  test "Z-1: self-license construction is confined to the two create-gated minters, and ordinary grants reject it" do
+  test "Z-1: self-license construction is confined to the sanctioned gated minters, and ordinary grants reject it" do
     constructor_hits =
       Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(&self_license_cap_constructors/1)
 
-    # #189 PR-3: exactly TWO sanctioned self-license minters — the Identity
-    # behavior (User/Agent) and the minimal `ActionSet.SelfLicense` carrier (the
-    # Session, which carries no Identity behavior). Both mint ONLY at genuine
-    # creation (`create_freshness: :created`) and sign via the authority
-    # (`issue_self_license_current`); no path mints a self-license at ordinary
-    # runtime. Any THIRD constructor, or an un-gated one, fails this ratchet.
+    # #189 PR-3: exactly THREE sanctioned self-license minters —
+    #   1. `ActionSet.Identity` (User/Agent) — create-gated;
+    #   2. `ActionSet.SelfLicense` carrier (the Session) — create-gated;
+    #   3. `SessionSelfLicenseMigration` — the GOVERNED FIX-4 migration that
+    #      adopts pre-carrier Session INSTANCES. It is NOT create-gated (it mints
+    #      during the cutover, not at creation) but it carries its OWN
+    #      anti-resurrection gate: it mints ONLY for a real, un-migrated,
+    #      NEVER-REVOKED session (marker-only/destroyed and regenesis'd sessions
+    #      are refused). Any FOURTH constructor, or an un-gated one, fails this.
     constructor_files =
       constructor_hits
       |> Enum.map(&(&1 |> String.split(":") |> hd()))
@@ -422,19 +425,35 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
     assert constructor_files == [
              "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex",
-             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex"
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex",
+             "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
            ]
+
+    # Z-1 TIGHTENING (#189 PR-3, disposition item): assert the EXACT HIT COUNT,
+    # not just the deduplicated file set. The previous filename-dedup check would
+    # have passed a SECOND (hidden) constructor added to an already-approved file
+    # — exactly one create-gated `Capability.cap(_, _, :self_license, _, _)` in
+    # each of the three files ⇒ three hits.
+    assert length(constructor_hits) == 3
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
+    migration =
+      source("apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex")
+
     cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
     grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")
 
-    # Both minters are create-gated — never an arbitrary runtime mint.
+    # Minters 1+2 are create-gated — never an arbitrary runtime mint.
     assert identity =~
              "maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri})"
 
     assert self_license =~ "def create(%{create_freshness: :created, uri: %URI{} = uri})"
+
+    # Minter 3 (the governed migration) is anti-resurrection-gated: it refuses a
+    # marker-only (destroyed) session and a previously-revoked (regenesis'd) one.
+    assert migration =~ "marker_only?"
+    assert migration =~ "Cap.Authority.generation_count(uri) > 1"
 
     assert cap =~ "%Capability{action: :self_license}"
     assert cap =~ "do: {:error, :reserved_action}"

@@ -89,9 +89,10 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
   end
 
   @doc false
-  # The single per-row decision. Public for the pre-cutover fixture test.
-  @spec migrate_row(%KindSnapshot{}, boolean()) :: {:ok, outcome()} | {:error, term()}
-  def migrate_row(%KindSnapshot{} = row, dry_run?) do
+  # The single per-row decision (`row` is a `KindSnapshot` struct). Public for
+  # the pre-cutover fixture test.
+  @spec migrate_row(map(), boolean()) :: {:ok, outcome()} | {:error, term()}
+  def migrate_row(row, dry_run?) do
     case decode(row) do
       {:ok, state} ->
         migrate_decoded(row, state, dry_run?)
@@ -188,25 +189,13 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
     end
   end
 
-  @doc false
-  # A session snapshot is a principal that MUST carry identity iff it has REAL
-  # durable session state (a non-marker-only row). The barrier reuses this so a
-  # destroyed (marker-only) session is not flagged as a discrepancy forever.
-  @spec principal_session_row?(%KindSnapshot{}) :: boolean()
-  def principal_session_row?(%KindSnapshot{kind_type: @session_kind_type} = row) do
-    case decode(row) do
-      {:ok, state} -> not marker_only?(row, state) and real_session_state?(state)
-      _ -> false
-    end
-  end
-
-  def principal_session_row?(_row), do: false
-
   # --- predicates ------------------------------------------------------------
 
-  # A destroyed session: `SnapshotStore.delete/1` cleared the state but kept the
-  # `ever_created` marker (the KindBaseBackfill `marker_only_clear?` precedent).
-  defp marker_only?(%KindSnapshot{ever_created: true}, state), do: state == %{}
+  # A destroyed session: `SnapshotStore.delete/1` cleared the state (to an empty
+  # map) but kept the `ever_created` marker (the KindBaseBackfill
+  # `marker_only_clear?` precedent). `%{ever_created: true}` matches the
+  # `KindSnapshot` struct without naming it (fewer actor-boundary reach-ins).
+  defp marker_only?(%{ever_created: true}, state), do: state == %{}
   defp marker_only?(_row, _state), do: false
 
   # Slice keys that mark a real (non-empty) session — sourced from the session

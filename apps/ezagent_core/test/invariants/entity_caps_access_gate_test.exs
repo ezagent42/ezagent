@@ -103,7 +103,16 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                       {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                                        :rewrite_identity_caps, 1},
                                       {"apps/ezagent_actor/lib/ezagent/kind/snapshot.ex",
-                                       :verify_snapshot_caps, 2}
+                                       :verify_snapshot_caps, 2},
+                                      # #189 PR-3 FIX 4 — the Session self-license
+                                      # migration writes the minted license into the
+                                      # snapshot `:identity` slice (in place). A
+                                      # governed one-shot migration row-rewrite,
+                                      # analogous to `grant_migration.ex
+                                      # :rewrite_identity_caps` — it materializes
+                                      # (never authorizes) the caps.
+                                      {"apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+                                       :rewrite_state, 2}
                                     ])
 
   @persisted_only_allowlist MapSet.new([

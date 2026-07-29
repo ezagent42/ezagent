@@ -44,7 +44,15 @@ defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
                # core-only `SnapshotFixtures` support module (cross-app), and it
                # IS exercising the low-level migration primitive (same rationale
                # as the slice_migration / kind_base_backfill round-trip tests).
-               "apps/ezagent_plugin_curl_agent/test/ezagent/plugin_curl_agent/curl_snapshot_migration_test.exs"
+               "apps/ezagent_plugin_curl_agent/test/ezagent/plugin_curl_agent/curl_snapshot_migration_test.exs",
+               # #189 PR-3 FIX 4 — the Session self-license migration test SEEDS
+               # pre-cutover session snapshot fixtures via the low-level
+               # `KindSnapshot.upsert/6` (it must control `mark_ever_created` +
+               # the exact `:kind_base`/`:identity`/marker-only shapes the
+               # migration classifies). It lives in the session domain, which
+               # cannot reach the core-only `SnapshotFixtures` support module —
+               # same rationale as the kind_base_backfill / curl migration tests.
+               "apps/ezagent_domain_session/test/ezagent/socialware/session_self_license_migration_test.exs"
              ])
 
   test "ordinary tests use SnapshotFixtures for direct snapshot fixture writes" do
