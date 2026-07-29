@@ -31,6 +31,12 @@ config :ezagent_domain_identity, Ezagent.Entity.Token,
   current_version: 1,
   peppers: %{1 => "test-only-pat-pepper-v1-32-bytes-minimum"}
 
+# #189 PR-1 — fixed test-only provisioning-receipt HMAC secret so receipt
+# issue/verify is deterministic across the suite.
+config :ezagent_domain_identity,
+       :provisioning_receipt_secret,
+       "test-only-provisioning-receipt-secret"
+
 # Keep TEST host routing aligned with local development: world routes are still
 # scoped to world.localhost/world.* unless a test deliberately overrides it.
 config :ezagent_web, :world_host_scope, "world."

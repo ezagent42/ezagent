@@ -180,6 +180,23 @@ config :swoosh, :api_client, false
 # identity domain supplies its existing live + durable held-cap loader.
 config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
 
+# #189 PR-1 (identity-plane cutover step 1, ADDITIVE) — the unified
+# per-entity identity-caps store. Config-injected into the ACTOR layer
+# (which must not compile-depend on the domain layer): the Kind commit
+# chokepoint + SnapshotStore write/delete dual-write every `:identity`
+# mutation into the store (a WRITE-SHADOW). Reads stay LEGACY-authoritative
+# in PR-1 — the store is NEVER consulted for an authz read; the
+# store-preferred read + parity check + atomic writes land at the cutover PR.
+config :ezagent_actor, :identity_caps_store, Ezagent.EntityCaps.Store
+
+# #189 PR-1 — HMAC secret for authenticated provisioning receipts
+# (`Ezagent.Identity.ProvisioningReceipt`). The dev/test default is set ONLY in
+# `dev.exs` / `test.exs`. Base config deliberately sets NOTHING so that in
+# PRODUCTION the app env is unset and `secret!/0` reads + validates the runtime
+# `EZAGENT_PROVISIONING_RECEIPT_SECRET` at actual provision time. Baking a
+# default here would shadow the runtime var and ship a known insecure secret
+# (codex F4). Resolution is LAZY — PR-1 has no production provisioning path.
+
 # Durable capability delivery retries. `require_sync_ack` is a policy seam for
 # a future external/adversarial deployment; the current implementation never
 # waits for an outbox row to become applied.

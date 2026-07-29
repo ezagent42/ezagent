@@ -3,6 +3,14 @@ import Config
 config :ezagent_domain_provider_connection, Ezagent.ProviderConnection.AuthorizationKeyRing,
   source: :runtime_env
 
+# #189 PR-1 — dev default for the provisioning-receipt HMAC secret (>= 32 bytes).
+# Base config sets NOTHING so that in production the runtime
+# `EZAGENT_PROVISIONING_RECEIPT_SECRET` is authoritative (codex F4); dev/test set
+# a local default here / in test.exs.
+config :ezagent_domain_identity,
+       :provisioning_receipt_secret,
+       "dev-only-insecure-provisioning-receipt-secret"
+
 # Show debug info in the branded 500 error page when it renders (in dev,
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true

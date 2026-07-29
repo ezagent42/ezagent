@@ -496,6 +496,8 @@ defmodule Ezagent.Kind.Snapshot do
           %{uri: uri_str, kind_type: kind_type_str, version: version}
         )
 
+        maybe_dual_write_identity_caps(uri_str, state)
+
         :ok
 
       {:error, reason} ->
@@ -508,6 +510,26 @@ defmodule Ezagent.Kind.Snapshot do
         )
 
         {:error, reason}
+    end
+  end
+
+  # #189 PR-1 dual-write (identity-plane cutover step 1, ADDITIVE): every
+  # durable snapshot write through THIS chokepoint (init persist, post-init
+  # commit, on-change dispatch commit, Writer flush, terminate) mirrors its
+  # `:identity` slice into the unified identity-caps store (config-injected
+  # via `:ezagent_actor, :identity_caps_store` — no compile-time reference
+  # from the actor layer to the domain store). The domain store module
+  # never raises (best-effort write-shadow; failures are logged at :error
+  # there) and decides what to skip (user URIs mirror via `users.caps_json`;
+  # slices without a caps set are ignored).
+  defp maybe_dual_write_identity_caps(uri_str, state) do
+    with %{identity: identity_slice} <- state,
+         store when not is_nil(store) <-
+           Application.get_env(:ezagent_actor, :identity_caps_store),
+         true <- Code.ensure_loaded?(store) do
+      store.sync_committed_identity(uri_str, nil, identity_slice)
+    else
+      _ -> :ok
     end
   end
 
