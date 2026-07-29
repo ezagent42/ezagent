@@ -514,6 +514,25 @@ defmodule Ezagent.LifecycleTest do
           "workspace://system",
           mark_ever_created: true
         )
+
+      # #1621 anti-resurrection alignment (mirrors #1622's curl-migration
+      # fixture fix — that curl fixture/module was itself folded away in
+      # #1623's curl-as-flavor cleanup, so it no longer exists to point at):
+      # this helper fabricates a legacy snapshot row directly via
+      # `KindSnapshot.upsert`, bypassing live creation — so the fabricated
+      # principal has NO authority history, a state no production row can be
+      # in (#1457 mints `kind_cap_authorities` at live creation for every
+      # durable principal). Post-#1621 the cold load correctly refuses a
+      # history-less `ever_created` row (`{:error, {:authority_load_failed,
+      # :no_authority_for_existing}}`) — mint the `:created` authority
+      # history here so the fixture matches what every real pre-migration row
+      # carries.
+      {:ok, _authority} =
+        Ezagent.Cap.Authority.open(
+          Ezagent.URI.instance(Ezagent.URI.new!(uri_str)),
+          LifecycleFixtureKind.type_name(),
+          :created
+        )
     end
 
     test "a flat legacy row loads into a converted Kind under :state without crashing" do

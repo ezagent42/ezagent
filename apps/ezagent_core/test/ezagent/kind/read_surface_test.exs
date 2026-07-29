@@ -261,6 +261,17 @@ defmodule Ezagent.Kind.ReadSurfaceTest do
               Process.sleep(:infinity)
             end)
 
+          # This helper sleeps forever BY DESIGN (proving read/3's
+          # timeout-propagation path) and stays registered in the GLOBAL
+          # `Ezagent.KindRegistry`. Left alive past this test, it never
+          # answers a `GenServer.call` again — every LATER
+          # `EzagentCore.DataCase` teardown's `flush_live_kinds` then pays a
+          # full 5s timeout against it, compounding across the rest of the
+          # suite into a many-minutes stall (the mac full-suite core-shard
+          # hang traced to this leak). Kill it when this test ends, mirroring
+          # the sibling "self-safe" test above.
+          on_exit(fn -> Process.exit(pid, :kill) end)
+
           receive do
             :registered -> :ok
           after

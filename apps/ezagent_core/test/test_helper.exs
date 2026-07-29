@@ -21,9 +21,25 @@
 # `:uv`-exclusion precedent in ezagent_domain_python/test/test_helper.exs.
 standalone? = not Code.ensure_loaded?(Ezagent.Users)
 
-exclude = if standalone?, do: [exclude: [:umbrella_only]], else: []
+# native-mac full-suite unblock — `:security_probe` platform gate.
+#
+# `Ezagent.Security.OsProcessSecretIsolationProbeTest` "same-uid child
+# environment is visible through proc" reads `/proc/<pid>/environ` to prove a
+# same-uid child's env is visible via procfs. That is Linux-only kernel
+# surface — macOS has no `/proc`, so the probe deterministically fails there
+# with `cat: /proc/<pid>/environ: No such file or directory` (exit 256). This
+# is the FIRST native-mac execution of this suite (the dockerized CI gate
+# runs Linux, where the probe genuinely exercises procfs and passes); a
+# mac-equivalent probe (e.g. via `vmmap`/`ps eww`) is out of scope here — the
+# reproduction value of this probe is specifically the Linux `/proc`
+# semantics, and a mac substitute would prove nothing about that boundary. So
+# rather than fake the semantics on a platform that doesn't have them, skip
+# the tag outright on any non-Linux host and document why.
+exclude_tags =
+  if(standalone?, do: [:umbrella_only], else: []) ++
+    if match?({:unix, :linux}, :os.type()), do: [], else: [:security_probe]
 
-ExUnit.start(exclude)
+ExUnit.start(exclude: exclude_tags)
 Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, :manual)
 
 # Flake-hardening (2026-07-03): pre-warm the architecture-scan cache ONCE,
