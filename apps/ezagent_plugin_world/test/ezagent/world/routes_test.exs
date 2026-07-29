@@ -51,6 +51,44 @@ defmodule Ezagent.World.RoutesTest do
     assert route.title == "Chat"
   end
 
+  # P2 test-supplement (priority #3) — hostile `?session=` query values must
+  # degrade to the sessions_table fallback, never crash `route_for/2`.
+  describe "malformed ?session= query param falls back cleanly (no crash)" do
+    test "garbage (not a URI at all)" do
+      route =
+        Routes.route_for(%{"session" => "not-a-uri"}, "https://example.com/sessions")
+
+      assert route.component == "sessions_table"
+      refute Map.has_key?(route, :session_uri)
+    end
+
+    test "well-formed URI with the WRONG scheme (entity://)" do
+      wrong_scheme = URI.encode_www_form("entity://system/user/admin")
+
+      route =
+        Routes.route_for(%{"session" => wrong_scheme}, "https://example.com/sessions")
+
+      assert route.component == "sessions_table"
+      refute Map.has_key?(route, :session_uri)
+    end
+
+    test "empty string" do
+      route = Routes.route_for(%{"session" => ""}, "https://example.com/sessions")
+
+      assert route.component == "sessions_table"
+    end
+
+    test "non-string session param (e.g. a decoded list from a repeated query key)" do
+      route =
+        Routes.route_for(
+          %{"session" => ["session://acme/default/a", "session://acme/default/b"]},
+          "https://example.com/sessions"
+        )
+
+      assert route.component == "sessions_table"
+    end
+  end
+
   test "workspace template creation route resolves to the focused new-template surface" do
     route = Routes.route_for(%{}, "https://example.com/workspaces/team-alpha/templates/new")
 

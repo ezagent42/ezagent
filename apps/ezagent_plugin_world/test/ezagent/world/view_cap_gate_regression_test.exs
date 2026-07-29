@@ -12,7 +12,15 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
     (b) same for an anon (nil) caller;
     (c) `switch_view/3` to a view id the caller can't see → `error:bad_view`
         (whitelist is same-source with tab visibility — not switchable either);
-    (d) a caller HOLDING the render cap sees the tab AND can switch to it.
+    (d) a caller HOLDING the render cap sees the tab AND can switch to it;
+    (e) P2 test-supplement — the REVOKE transition: a caller who held the
+        render cap and lost it (`Ezagent.EntityCaps.revoke/2`, the same
+        mutation a real membership/role change drives) loses the tab on the
+        VERY NEXT read — `authorize_view/3` re-derives the caller's caps LIVE
+        (`Ezagent.Identity.list_caps_for/1` → `EntityCaps.load/1`) rather than
+        trusting a cached/mount-time snapshot, so there is no stale-grant
+        window. Driven through the SAME public read surface as (a)-(d)
+        (`ConversationData.state_for/2`), not the registry internals.
 
   If anyone ever rewires world's enumeration off `applicable_views/2` (or the
   switch whitelist off `session_view_ids/2`), (a)–(c) go red. Do not delete.
@@ -171,5 +179,35 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
              )
 
     assert socket.assigns.world_state["active_view"] == "test_locked"
+  end
+
+  test "(e) a caller who holds the cap then has it REVOKED loses the tab on the next read",
+       %{session: session} do
+    caller = live_user([])
+    cap = render_cap(session, caller)
+
+    # Before the grant: no tab (same as (a)).
+    refute "test_locked" in view_ids_in_state(session, caller)
+
+    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    assert "test_locked" in view_ids_in_state(session, caller),
+           "setup failed: the grant did not surface the tab"
+
+    :ok = Ezagent.EntityCaps.revoke(caller, cap)
+
+    refute "test_locked" in view_ids_in_state(session, caller),
+           "a revoked render cap must drop the tab on the very next read — " <>
+             "authorize_view/3 must not be trusting a cached/mount-time cap snapshot"
+
+    # switch_view is the SAME whitelist source — the revoked caller can no
+    # longer switch to it either.
+    assert {:noreply, socket} =
+             ConversationActions.switch_view(
+               build_socket(current_entity_uri: caller),
+               session,
+               "test_locked"
+             )
+
+    assert socket.assigns.last_dispatch_status == "error:bad_view"
   end
 end
