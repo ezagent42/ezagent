@@ -59,12 +59,32 @@ defmodule EzagentCore.Repo.Migrations.GeneralizeCompositionConsentUriShare do
           )
     end
 
+    # M4 (command side): the same exactly-one-shape invariant on the command
+    # ledger — a command is EITHER a composition command (binding_id set) OR a
+    # URI-share command (consent_id set), never both and never neither. Mirrors
+    # the consents-table `consent_binding_xor_uri_share` CHECK so a malformed
+    # command row can't be replayed as an idempotency record for a shape it
+    # doesn't match.
+    create constraint(
+             :socialware_composition_consent_commands,
+             :consent_command_binding_xor_consent,
+             check:
+               "(binding_id IS NOT NULL AND consent_id IS NULL) OR " <>
+                 "(binding_id IS NULL AND consent_id IS NOT NULL)"
+           )
+
     create index(:socialware_composition_consents, [:target_uri, :grantee_uri])
     create index(:socialware_composition_consent_commands, [:consent_id])
   end
 
   def down do
     drop constraint(:socialware_composition_consents, :consent_binding_xor_uri_share)
+
+    drop constraint(
+           :socialware_composition_consent_commands,
+           :consent_command_binding_xor_consent
+         )
+
     drop index(:socialware_composition_consent_commands, [:consent_id])
     drop index(:socialware_composition_consents, [:target_uri, :grantee_uri])
 

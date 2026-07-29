@@ -30,5 +30,31 @@ defmodule Ezagent.Socialware.CompositionConsentCommand do
     command
     |> cast(attrs, @fields)
     |> validate_required(@required)
+    |> validate_shape()
+    |> check_constraint(:binding_id,
+      name: :consent_command_binding_xor_consent,
+      message: "must reference either a binding (composition) OR a consent (URI-share)"
+    )
+  end
+
+  # M4 (command side): exactly one of `binding_id` / `consent_id` is set — a
+  # command is a composition command XOR a URI-share command. Mirror the DB CHECK
+  # in the changeset so a malformed idempotency record fails loud before insert.
+  defp validate_shape(changeset) do
+    binding = get_field(changeset, :binding_id)
+    consent = get_field(changeset, :consent_id)
+
+    composition? = not is_nil(binding) and is_nil(consent)
+    uri_share? = is_nil(binding) and not is_nil(consent)
+
+    if composition? or uri_share? do
+      changeset
+    else
+      add_error(
+        changeset,
+        :binding_id,
+        "must reference either a binding (composition) OR a consent (URI-share)"
+      )
+    end
   end
 end
