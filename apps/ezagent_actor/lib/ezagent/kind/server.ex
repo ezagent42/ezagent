@@ -335,6 +335,24 @@ defmodule Ezagent.Kind.Server do
   # Only genuine creation (`:created`) mints — and only a genuine mint has a
   # self-license to make durable. On `:existed` the store row already exists (it
   # is the very signal that produced `:existed`), so there is nothing to write.
+  #
+  # MINT-ONCE (#189 PR-3, codex disposition C). The self-license mint (in
+  # `create/1`, BEFORE this store write) fires at most once per ephemeral
+  # principal, guaranteed by THREE independent gates — not by a separate
+  # creation-lease:
+  #   1. LOCAL — the ExternalMirror `PerBindingSupervisor` is Registry-named by
+  #      `binding_uri`, so two concurrent spawns of the same worker collide and
+  #      the loser gets `{:error, {:already_started, _}}` (never a second init).
+  #   2. CROSS-NODE — `:created` runs `Cap.Authority.open(:created)` genesis,
+  #      which inserts a `kind_cap_authorities` row under the
+  #      `kind_cap_authorities_one_active_per_uri` UNIQUE constraint. A second
+  #      concurrent `:created` genesis on any node fails that constraint, so its
+  #      init `{:stop, ...}`s — the DB-backed first-creation claim already exists
+  #      in the authority plane; a duplicate self-license mint cannot commit.
+  #   3. RETRY — a crash BETWEEN the mint and this store write leaves authority
+  #      history but NO store row; post-epoch `ever_created_signal?` then reports
+  #      ever-created (FIX 3: absent row + authority history ⇒ `:existed`), so the
+  #      re-spawn is `:existed` and re-reads (empty) rather than re-minting.
   defp persist_ephemeral_identity(uri, slice_state, :created) do
     case Application.get_env(:ezagent_actor, :identity_caps_store) do
       nil ->
