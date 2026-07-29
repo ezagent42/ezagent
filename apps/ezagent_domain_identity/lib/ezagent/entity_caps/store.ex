@@ -655,8 +655,8 @@ defmodule Ezagent.EntityCaps.Store do
   successful write, the Kind loads that stale snapshot and unconditionally mirrors
   it back through `persist/2` (`save_now`), which would OVERWRITE the committed
   authoritative mutation — rolling back a grant, or RESURRECTING a revoked cap —
-  and the live slice cross-Kind authorization reads (`EntityCaps.load/1`) would be
-  stale too.
+  and the live slice cross-Kind authorization reads (the principal-axis cap-load
+  path) would be stale too.
 
   This closes that hole. On a COLD reload (`:existed`) of a durable, NON-user
   identity principal POST-epoch, when a durable Store row EXISTS, REPLACE the
