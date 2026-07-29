@@ -204,7 +204,12 @@ defmodule EzagentCore.EtsOwner do
   @impl true
   def handle_call(:recreate_capability_tables_for_test, _from, state) do
     if Mix.env() == :test do
-      recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
+      # `recreate_table/1` lives on `EzagentActor.EtsOwner` (this app already
+      # depends on it) so the two sibling `EtsOwner`s share ONE copy of the
+      # body instead of a byte-identical duplicate — see the moduledoc there.
+      # Calling it here still runs `:ets.new` from THIS process, so ETS
+      # ownership of `Subjects.table()` correctly stays with this GenServer.
+      EzagentActor.EtsOwner.recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
 
       :ok = EzagentCore.EtsReadiness.ready(self())
 
@@ -212,10 +217,5 @@ defmodule EzagentCore.EtsOwner do
     else
       {:reply, {:error, :test_only}, state}
     end
-  end
-
-  defp recreate_table(table) do
-    if :ets.whereis(table) != :undefined, do: :ets.delete(table)
-    :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
   end
 end

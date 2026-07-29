@@ -95,7 +95,15 @@ defmodule EzagentActor.EtsOwner do
     end
   end
 
-  defp recreate_table(table) do
+  @doc false
+  # Shared with `EzagentCore.EtsOwner` (which depends on this app, never the
+  # reverse) so the two sibling `EtsOwner`s don't carry a byte-identical
+  # copy of this body — `mix ci.shard.arch`'s cross-file duplicate-fn-body
+  # fitness function flags exactly that. Safe to share: ETS ownership is
+  # determined by which PROCESS calls `:ets.new`, not which MODULE defines
+  # the function text, so each owner still recreates a table only when
+  # called from within its own `handle_call` (its own process).
+  def recreate_table(table) do
     if :ets.whereis(table) != :undefined, do: :ets.delete(table)
     :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
   end

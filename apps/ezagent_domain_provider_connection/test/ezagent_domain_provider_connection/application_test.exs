@@ -69,6 +69,53 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     true = :ets.insert(Ezagent.BehaviorRegistry.table(), behaviors)
   end
 
+  # Regression test for the provider-connection suite-health P0 root cause:
+  # `EzagentCore.EtsOwner.recreate_capability_tables_for_test/0` used to
+  # `:ets.new` `Ezagent.BehaviorRegistry`'s table (owned by
+  # `EzagentActor.EtsOwner`) FROM ITS OWN PROCESS — silently reassigning
+  # the table's real ETS ownership to `EzagentCore.EtsOwner`. A later
+  # genuine `EzagentCore.EtsOwner` crash then destroyed BehaviorRegistry's
+  # table too, permanently (it isn't in core's `@tables` list, so restart
+  # never recreates it), crash-looping `RegistryOwner` until the whole
+  # domain Application died. This test pins BOTH halves of the fix: the
+  # test-helper no longer reassigns ownership, and a real core-owner crash
+  # never destroys a table it doesn't own.
+  test "a real EzagentCore.EtsOwner crash never destroys BehaviorRegistry's table" do
+    actor_ets_owner = Process.whereis(EzagentActor.EtsOwner)
+    behavior_table = Ezagent.BehaviorRegistry.table()
+    assert :ets.info(behavior_table, :owner) == actor_ets_owner
+
+    core_ets_owner = Process.whereis(EzagentCore.EtsOwner)
+    backups = backup_core_tables(core_ets_owner)
+
+    # Exercise the test-helper path first (this alone reproduced the bug
+    # on unfixed code: ownership flipped to `core_ets_owner` right here).
+    :ok = EzagentActor.EtsOwner.recreate_capability_tables_for_test()
+    :ok = EzagentCore.EtsOwner.recreate_capability_tables_for_test()
+    assert :ets.info(behavior_table, :owner) == actor_ets_owner
+
+    {:ok, ^core_ets_owner, helper_generation} = EzagentCore.EtsReadiness.subscribe()
+    # Settle the helper-triggered reconcile BEFORE introducing more churn —
+    # killing the owner while a reconcile is still in flight against the
+    # table it just recreated is a self-inflicted race, not a product bug.
+    :ok = Ezagent.ProviderConnection.RegistryOwner.await_generation(helper_generation)
+    assert declarations_ready?()
+
+    # Then a REAL crash of the core owner — must never touch a table it
+    # doesn't own.
+    Process.exit(core_ets_owner, :kill)
+    assert_receive {:ets_owner_ready, new_owner, generation}, 5_000
+    assert new_owner != core_ets_owner
+    assert generation > helper_generation
+
+    assert :ets.whereis(behavior_table) != :undefined
+    assert :ets.info(behavior_table, :owner) == actor_ets_owner
+
+    restore_core_tables(backups)
+    :ok = Ezagent.ProviderConnection.RegistryOwner.await_generation(generation)
+    assert declarations_ready?()
+  end
+
   test "registry owner follows actual EtsOwner restarts with one live monitor" do
     registry_owner = Process.whereis(Ezagent.ProviderConnection.RegistryOwner)
     old_ets_owner = Process.whereis(EzagentCore.EtsOwner)
