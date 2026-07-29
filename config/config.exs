@@ -299,7 +299,15 @@ config :ezagent_domain_provider_connection,
 # ForgejoCredentialBackend is per-VM-session, so a real deployment that leaves
 # this unset orphans every stored credential on restart.
 config :ezagent_plugin_forgejo,
-  token_encryption_key: {:system, "FORGEJO_TOKEN_ENCRYPTION_KEY"}
+  token_encryption_key:
+    if(config_env() == :prod,
+      do: {:system, "FORGEJO_TOKEN_ENCRYPTION_KEY"},
+      # dev/test get an explicit, non-secret, STABLE key. A `{:system, ...}`
+      # tuple here would raise in every local run (the variable is unset), and
+      # letting it fall back to an ephemeral key instead would make stored
+      # credentials silently unreadable after a rebuild.
+      else: "ZXphZ2VudC1mb3JnZWpvLWRldi10ZXN0LWtleS0zMmI="
+    )
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

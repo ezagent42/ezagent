@@ -145,16 +145,24 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
 
   defp handle_token_response({:ok, %{status: status, body: body}})
        when status in 200..299 and is_map(body) do
+    # All three fields are required, not best-effort. A credential without a
+    # refresh token cannot be renewed and dies silently after an hour; one
+    # without a positive `expires_in` gets recorded as non-expiring despite the
+    # measured 1h lifetime, so nothing ever tries to renew it. Both produce a
+    # connection that LOOKS active and fails later, which is worse than
+    # refusing the exchange now.
     case body do
-      %{"access_token" => access} when is_binary(access) and access != "" ->
+      %{"access_token" => access, "refresh_token" => refresh, "expires_in" => seconds}
+      when is_binary(access) and access != "" and is_binary(refresh) and refresh != "" and
+             is_integer(seconds) and seconds > 0 ->
         {:ok,
          %{
            access_token: access,
-           refresh_token: nullable_string(body["refresh_token"]),
-           expires_at: expires_at(body["expires_in"])
+           refresh_token: refresh,
+           expires_at: DateTime.add(DateTime.utc_now(), seconds, :second)
          }}
 
-      _no_token ->
+      _incomplete ->
         # A 2xx carrying `{"error": ...}` instead of a token is still a failed
         # exchange; treating it as success would store an empty credential.
         {:error, :provider_protocol_failed}
@@ -167,16 +175,6 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
   # remote state is unknown — the code may already have been consumed — while
   # a refusal means it definitively was not accepted.
   defp handle_token_response({:error, _exception}), do: {:error, :provider_unreachable}
-
-  # The domain persists an absolute instant; a relative lifetime that never
-  # gets anchored is a credential that expires without anyone noticing.
-  defp expires_at(seconds) when is_integer(seconds) and seconds > 0,
-    do: DateTime.utc_now() |> DateTime.add(seconds, :second)
-
-  defp expires_at(_seconds), do: nil
-
-  defp nullable_string(value) when is_binary(value) and value != "", do: value
-  defp nullable_string(_value), do: nil
 
   defp s256_challenge(verifier),
     do: :crypto.hash(:sha256, verifier) |> Base.url_encode64(padding: false)

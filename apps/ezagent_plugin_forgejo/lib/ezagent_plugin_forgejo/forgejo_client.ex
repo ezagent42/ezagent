@@ -76,7 +76,11 @@ defmodule EzagentPluginForgejo.ForgejoClient do
   defp handle_response({:ok, %{status: 423}}), do: {:error, :repository_archived}
   defp handle_response({:ok, %{status: 429}}), do: {:error, :provider_rate_limited}
   defp handle_response({:ok, %{status: 422, body: body}}), do: {:error, classify_422(body)}
-  defp handle_response({:ok, _response}), do: {:error, :provider_unavailable}
+  # Design §8.3 requires the ACTUAL status to survive: the adapter maps a 5xx
+  # to `{:provider_request_failed, op, status}`, and collapsing 500/502/503
+  # into one atom here would make that impossible downstream. Transport
+  # failure stays separately identifiable below.
+  defp handle_response({:ok, %{status: status}}), do: {:error, {:provider_status, status}}
 
   # A transport failure and a 5xx are NOT the same event, and the write path's
   # recovery turns on telling them apart (design §8.3): a 5xx means the request

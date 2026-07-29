@@ -11,6 +11,7 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
   use ExUnit.Case, async: false
 
   alias Ezagent.ProviderConnection.CredentialBackend.RefreshUse
+  alias Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority
   alias EzagentPluginForgejo.ForgejoCredentialBackend, as: Backend
 
   @credential Jason.encode!(%{
@@ -76,10 +77,47 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
     end
   end
 
+  # The domain starts a ScopeAuthority, has the backend build a RefreshUse
+  # against it, then CLAIMS it and passes the claimed value on
+  # (`credential_refresh_exchange.ex:97-110`). Reproducing that here is what
+  # makes these tests exercise the real custody path -- passing the unclaimed
+  # value, as an earlier version did, meant the backend's claim check was
+  # never executed by any test.
+  defp claimed_use(ref) do
+    digest = :crypto.hash(:sha256, "binding")
+    {:ok, authority} = ScopeAuthority.start(self(), digest)
+    {:ok, token} = ScopeAuthority.open(authority)
+
+    {:ok, use} =
+      Backend.begin_refresh_exchange(
+        begin_command(ref, %{
+          scope_authority: authority,
+          scope_token: token,
+          scope_binding_digest: digest
+        })
+      )
+
+    {:ok, proof} = ScopeAuthority.claim(authority, token, digest)
+    RefreshUse.claimed(use, proof)
+  end
+
   describe "consume_refresh_exchange/1" do
     setup %{ref: ref} do
-      {:ok, use} = Backend.begin_refresh_exchange(begin_command(ref))
-      {:ok, use: use}
+      {:ok, use: claimed_use(ref)}
+    end
+
+    # The claim is what binds a decryption to ONE invocation. An unclaimed
+    # RefreshUse reaching the backend means something bypassed the domain
+    # facade; handing it the refresh token anyway would defeat the custody
+    # boundary the scope authority exists to enforce.
+    test "an unclaimed RefreshUse is refused", %{ref: ref} do
+      {:ok, unclaimed} = Backend.begin_refresh_exchange(begin_command(ref))
+
+      assert {:error, :correlation_conflict} =
+               Backend.consume_refresh_exchange(%{
+                 refresh_use: unclaimed,
+                 provider_exchange: fn _frame -> {:ok, :not_completed} end
+               })
     end
 
     # The whole point: the driver needs the REFRESH token to call the provider.
@@ -161,6 +199,66 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
                  refresh_use: use,
                  provider_exchange: fn _frame -> {:ok, %{provider_result_ref: "only-this"}} end
                })
+    end
+
+    # The defect this closes: an earlier version minted a handoff REFERENCE
+    # without parking anything behind it, so the domain's follow-up
+    # `replace/1` -- which carries only that reference -- had nothing to
+    # resolve. Testing seal and replace separately kept both halves green
+    # while the join between them was broken. This walks the whole path.
+    test "the rotated credential survives the handoff into replace/1", %{ref: ref, use: use} do
+      rotated = Jason.encode!(%{"access_token" => "at-new", "refresh_token" => "rt-new"})
+
+      assert {:ok, sealed} =
+               Backend.consume_refresh_exchange(%{
+                 refresh_use: use,
+                 provider_exchange: fn _frame ->
+                   {:ok,
+                    %{
+                      provider_result_ref: "forgejo-refresh-1",
+                      replacement_credential: {:write_only_handoff, rotated},
+                      granted_permissions_digest: "requested:write:repository",
+                      expires_at: DateTime.utc_now(),
+                      provider_metadata: %{}
+                    }}
+                 end
+               })
+
+      # Exactly the command `refresh.ex:449` sends: the handoff reference and
+      # a version, with NO credential_ref.
+      assert {:ok, %{credential_ref: ^ref, credential_version: 2}} =
+               Backend.replace(%{
+                 credential_material: sealed.credential_material,
+                 expected_credential_version: 1
+               })
+
+      assert {:ok, %{credential: leased}} = Backend.lease_for_operation(%{credential_ref: ref})
+
+      assert {:ok, %{"access_token" => "at-new", "refresh_token" => "rt-new"}} =
+               Jason.decode(leased)
+    end
+
+    # One-use: a replayed replace must not re-apply a rotation.
+    test "a handoff cannot be redeemed twice", %{use: use} do
+      {:ok, sealed} =
+        Backend.consume_refresh_exchange(%{
+          refresh_use: use,
+          provider_exchange: fn _frame ->
+            {:ok,
+             %{
+               provider_result_ref: "forgejo-refresh-2",
+               replacement_credential: {:write_only_handoff, "{}"},
+               granted_permissions_digest: "d",
+               expires_at: nil,
+               provider_metadata: %{}
+             }}
+          end
+        })
+
+      command = %{credential_material: sealed.credential_material, expected_credential_version: 1}
+
+      assert {:ok, _} = Backend.replace(command)
+      assert {:error, :credential_conflict} = Backend.replace(command)
     end
 
     test "a RefreshUse belonging to another backend is refused", %{ref: ref} do

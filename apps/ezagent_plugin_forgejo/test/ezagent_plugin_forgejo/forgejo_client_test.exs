@@ -57,10 +57,10 @@ defmodule EzagentPluginForgejo.ForgejoClientTest do
           {413, :quota_exceeded},
           {423, :repository_archived},
           {429, :provider_rate_limited},
-          {500, :provider_unavailable},
-          {502, :provider_unavailable}
+          {500, {:provider_status, 500}},
+          {502, {:provider_status, 502}}
         ] do
-      test "maps #{status} to #{expected}" do
+      test "maps #{status} to #{inspect(expected)}" do
         opts = stub(fn conn -> Plug.Conn.resp(conn, unquote(status), ~s({"message":"x"})) end)
 
         assert {:error, unquote(expected)} =

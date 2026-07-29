@@ -46,6 +46,7 @@ defmodule EzagentPluginForgejo.Normalize do
       when is_binary(url) do
     attrs = %{
       external_id: to_string(number),
+      # uri-canonical-allow: html_url is the provider's own web link to the pull request — an external http(s) URL, not an Ezagent-scheme URI.
       url: URI.parse(url),
       head_ref: head_ref,
       head_sha: head_sha,
@@ -186,6 +187,7 @@ defmodule EzagentPluginForgejo.Normalize do
   # accepts nil, so an empty or malformed value becomes nil rather than
   # failing the whole normalization over a cosmetic link.
   defp web_uri(value) when is_binary(value) and value != "" do
+    # uri-canonical-allow: target_url is a CI provider's external result link — an http(s) URL, not an Ezagent-scheme URI.
     uri = URI.parse(value)
     if ChangeRequest.web_uri?(uri), do: uri, else: nil
   end

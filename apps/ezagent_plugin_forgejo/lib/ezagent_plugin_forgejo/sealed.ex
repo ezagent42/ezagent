@@ -62,13 +62,29 @@ defmodule EzagentPluginForgejo.Sealed do
 
   defp key do
     case Application.get_env(:ezagent_plugin_forgejo, :token_encryption_key) do
-      nil -> @fallback_key
-      {:system, var} -> var |> System.get_env() |> decode_key()
-      value when is_binary(value) -> decode_key(value)
+      nil ->
+        @fallback_key
+
+      # A configured `{:system, VAR}` whose VAR is unset is a misconfiguration,
+      # not a licence to invent a key: falling back would encrypt real
+      # credentials under a compile-time value that changes on the next build,
+      # silently orphaning every stored secret. Only an ABSENT config key
+      # (dev/test) gets the fallback.
+      {:system, var} ->
+        case System.get_env(var) do
+          nil ->
+            raise "#{var} is not set. :ezagent_plugin_forgejo is configured to read its " <>
+                    "token encryption key from that variable; refusing to fall back to an " <>
+                    "ephemeral key that would orphan every stored credential on restart."
+
+          value ->
+            decode_key(value)
+        end
+
+      value when is_binary(value) ->
+        decode_key(value)
     end
   end
-
-  defp decode_key(nil), do: @fallback_key
 
   defp decode_key(value) do
     case Base.decode64(value) do

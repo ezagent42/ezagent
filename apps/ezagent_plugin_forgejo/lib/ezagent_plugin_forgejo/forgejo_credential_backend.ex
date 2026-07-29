@@ -44,9 +44,11 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   @behaviour Ezagent.ProviderConnection.CredentialBackend
 
   alias Ezagent.ProviderConnection.CredentialBackend.RefreshUse
+  alias Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority
   alias EzagentPluginForgejo.Sealed
 
   @table_name :forgejo_credential_tokens
+  @handoff_table :forgejo_credential_handoffs
 
   @doc false
   def child_spec(opts) do
@@ -66,6 +68,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
     Agent.start_link(
       fn ->
         :ets.new(@table_name, [:set, :public, :named_table, read_concurrency: true])
+        :ets.new(@handoff_table, [:set, :public, :named_table, read_concurrency: true])
         :ok
       end,
       name: name
@@ -82,16 +85,60 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
     {:ok, %{credential_ref: ref, credential_version: 1}}
   end
 
+  # The domain calls `replace/1` in TWO shapes, and NEITHER carries a
+  # `credential_ref`:
+  #
+  #   * after a refresh (`refresh.ex:449`) — `credential_material` is the
+  #     one-use handoff reference this module minted in `seal_result/1`, plus
+  #     `expected_credential_version`. The rotated tokens themselves never
+  #     cross the domain; they wait in this module's handoff vault.
+  #   * after a reauthorization (`exchange.ex:589` via `credential_command/3`)
+  #     — real material from the driver, with `prior_credential_ref` naming the
+  #     record being replaced.
+  #
+  # An earlier version of this module matched on `credential_ref`, which no
+  # caller sends: `replace/1` raised `FunctionClauseError` on every real
+  # refresh, and its tests passed only because they invented that shape.
+
+  # This clause MUST come first. The refresh shape's head (credential_material
+  # + expected_credential_version) also matches a reauthorization command,
+  # which merely carries `prior_credential_ref` in addition -- put the handoff
+  # clause first and every reauthorization is misread as a refresh and looked
+  # up in an empty vault.
   @impl true
   def replace(%{
-        credential_ref: ref,
-        expected_credential_version: expected_version,
-        credential_material: {:write_only_handoff, new_token}
-      }) do
+        credential_material: {:write_only_handoff, new_token},
+        prior_credential_ref: prior_ref,
+        expected_credential_version: expected_version
+      })
+      when is_binary(prior_ref) do
+    swap(prior_ref, Sealed.seal(new_token), expected_version)
+  end
+
+  @impl true
+  def replace(%{
+        credential_material: {:write_only_handoff, handoff_ref},
+        expected_credential_version: expected_version
+      })
+      when is_binary(handoff_ref) do
+    case :ets.take(@handoff_table, handoff_ref) do
+      [{^handoff_ref, sealed_replacement, target_ref}] ->
+        # `:ets.take/2` is the one-use guarantee: a replayed replace finds
+        # nothing and conflicts rather than re-applying a rotation.
+        swap(target_ref, sealed_replacement, expected_version)
+
+      [] ->
+        {:error, :credential_conflict}
+    end
+  end
+
+  def replace(_command), do: {:error, :credential_conflict}
+
+  defp swap(ref, sealed, expected_version) do
     case :ets.lookup(@table_name, ref) do
       [{^ref, {_encrypted, version}}] when is_integer(version) and version == expected_version ->
         new_version = version + 1
-        :ets.insert(@table_name, {ref, {Sealed.seal(new_token), new_version}})
+        :ets.insert(@table_name, {ref, {sealed, new_version}})
         {:ok, %{credential_ref: ref, credential_version: new_version}}
 
       [{^ref, {_encrypted, _version}}] ->
@@ -164,7 +211,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
         # The sealed credential is carried rather than the plaintext so an
         # exchange that is begun but never consumed leaves no decrypted token
         # sitting in a struct.
-        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{sealed: sealed})}
+        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{sealed: sealed, ref: ref})}
 
       [] ->
         {:error, :credential_conflict}
@@ -177,12 +224,13 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   def consume_refresh_exchange(%{refresh_use: %RefreshUse{} = use, provider_exchange: exchange})
       when is_function(exchange, 1) do
     with __MODULE__ <- RefreshUse.backend(use),
-         %{sealed: sealed} <- RefreshUse.private(use),
+         :ok <- consume_claim(use),
+         %{sealed: sealed, ref: ref} <- RefreshUse.private(use),
          {:ok, credential} <- Sealed.open(sealed),
          {:ok, refresh_token} <- refresh_token(credential) do
       case exchange.(%{current_credential: refresh_token}) do
         {:ok, :not_completed} -> {:ok, :not_completed}
-        {:ok, result} when is_map(result) -> seal_result(result)
+        {:ok, result} when is_map(result) -> seal_result(result, ref)
         {:error, reason} -> {:error, reason}
         _unexpected -> {:error, :provider_protocol_failed}
       end
@@ -193,6 +241,27 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   end
 
   def consume_refresh_exchange(_command), do: {:error, :correlation_conflict}
+
+  # The domain claims the scoped authority before handing this module a
+  # `claimed_use` (`credential_refresh_exchange.ex:97-110`). Consuming that
+  # claim is what binds this decryption to THIS invocation: without it the
+  # backend would hand the refresh token to any closure presenting a
+  # structurally-valid RefreshUse, including a stale one from an earlier
+  # exchange.
+  defp consume_claim(use) do
+    case RefreshUse.claim_proof(use) do
+      proof when is_reference(proof) ->
+        ScopeAuthority.consume_claim(
+          RefreshUse.authority(use),
+          RefreshUse.token(use),
+          RefreshUse.binding_digest(use),
+          proof
+        )
+
+      _unclaimed ->
+        {:error, :correlation_conflict}
+    end
+  end
 
   # The provider renews against the REFRESH token. Handing over the access
   # token instead is the obvious slip and would make every renewal fail with
@@ -221,33 +290,46 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
            granted_permissions_digest: digest,
            expires_at: expires_at,
            provider_metadata: metadata
-         } = result
+         } = result,
+         target_ref
        )
        when map_size(result) == 5 and is_map(metadata) do
     with true <- nonempty?(provider_result_ref),
          true <- nonempty?(digest),
-         true <- is_nil(expires_at) or is_struct(expires_at, DateTime) do
+         true <- is_nil(expires_at) or is_struct(expires_at, DateTime),
+         {:write_only_handoff, material} <- replacement,
+         true <- nonempty?(material) do
       {:ok,
        result
        |> Map.delete(:replacement_credential)
-       |> Map.put(:credential_material, handoff(provider_result_ref, replacement))}
+       |> Map.put(
+         :credential_material,
+         park_handoff(provider_result_ref, material, target_ref)
+       )}
     else
       _invalid -> {:error, :provider_protocol_failed}
     end
   end
 
-  defp seal_result(_result), do: {:error, :provider_protocol_failed}
+  defp seal_result(_result, _target_ref), do: {:error, :provider_protocol_failed}
 
-  # The handoff is a reference to the replacement, not the replacement itself:
-  # the sealed result crosses back through the domain and the driver, and the
-  # new token has no business travelling that path in the clear.
-  defp handoff(provider_result_ref, replacement) do
+  # The handoff is a REFERENCE to the replacement, not the replacement itself:
+  # the sealed result travels back through the domain and the driver, and the
+  # rotated tokens have no business on that path in the clear.
+  #
+  # The replacement is parked here, sealed, under that reference, together with
+  # the credential it replaces — because the domain's follow-up `replace/1`
+  # carries ONLY the reference (`refresh.ex:449`). Minting a reference without
+  # parking anything behind it, as an earlier version did, made every rotation
+  # unrecoverable: the reference itself was stored as if it were the token.
+  defp park_handoff(provider_result_ref, material, target_ref) do
     reference =
-      {__MODULE__, provider_result_ref, replacement}
+      {__MODULE__, provider_result_ref, material}
       |> :erlang.term_to_binary([:deterministic])
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.url_encode64(padding: false)
 
+    :ets.insert(@handoff_table, {reference, Sealed.seal(material), target_ref})
     {:write_only_handoff, reference}
   end
 
