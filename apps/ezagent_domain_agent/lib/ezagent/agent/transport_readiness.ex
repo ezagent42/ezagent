@@ -261,10 +261,14 @@ defmodule Ezagent.Agent.TransportReadiness do
   end
 
   defp current_incarnation(%URI{} = agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, pid} when is_pid(pid) -> pid
-      _ -> :unregistered
-    end
+    agent_uri
+    |> URI.to_string()
+    |> then(fn agent_uri_string ->
+      Enum.find_value(Ezagent.Kind.list_instances(), :unregistered, fn
+        {^agent_uri_string, %{pid: pid}} when is_pid(pid) -> pid
+        _instance -> nil
+      end)
+    end)
   end
 
   defp incarnation_matches?(:legacy, _current), do: true

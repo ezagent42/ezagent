@@ -926,7 +926,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor = register_convergence_timeout_flavor(n)
     blocker = live_agent("join-blocker-#{n}", recipe_name)
 
-    assert {:error, {:agent_join_failed, ^role_name, _reason}, %{satisfied: [], skipped: []}} =
+    assert {:error, {:agent_join_failed, ^role_name, _reason},
+            %{satisfied: [], skipped: [%{role_name: ^role_name}]}} =
              with_failure_mode({:join, session_uri, blocker, role_name}, fn ->
                DefinitionAgents.materialize_definition_agents(
                  session_uri,
@@ -1445,7 +1446,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     {:ok, active_binding} = activate_recipe_binding(reusable, recipe_name)
     :ok = Ezagent.AgentPassiveAttributes.put(reusable, true)
 
-    assert {:error, {:passive_actor_cannot_join, ^reusable}, %{satisfied: [], skipped: []}} =
+    assert {:error, {:passive_actor_cannot_join, ^reusable},
+            %{satisfied: [], skipped: [%{role_name: ^role_name}]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
