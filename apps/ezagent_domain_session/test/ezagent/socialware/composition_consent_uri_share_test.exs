@@ -152,6 +152,26 @@ defmodule Ezagent.Socialware.CompositionConsentUriShareTest do
     refute read_id in pending_ids
   end
 
+  test "scope digest does not collide: [\"read,write\"] atom vs [:read, :write] list" do
+    owner = user_uri("digest-owner")
+    grantee = live_agent("digest-grantee", owner, [Target])
+    target = live_agent("digest-target", owner, [Target])
+
+    # Pre-fix, `scope_digest/2` comma-JOINED sorted action-name strings before
+    # hashing: `Enum.join([:"read,write"], ",")` and
+    # `Enum.join(Enum.sort([:read, :write]), ",")` both produce the literal
+    # string "read,write", so these two structurally different scopes hashed
+    # to the SAME digest — a single-atom scope masquerading as (and reusable
+    # as approval for) a two-action scope. They must now be distinct consents.
+    assert {:ok, %Consent{id: combined_id}} =
+             Consent.request(target, grantee, Target, [:"read,write"], grantee)
+
+    assert {:ok, %Consent{id: separate_id}} =
+             Consent.request(target, grantee, Target, [:read, :write], grantee)
+
+    assert combined_id != separate_id
+  end
+
   test "M4 (command side): the DB CHECK rejects a command with neither binding nor consent" do
     # The production paths (apply_command / apply_decide) always set exactly one
     # of binding_id/consent_id via the changeset guard — assert that guard first.

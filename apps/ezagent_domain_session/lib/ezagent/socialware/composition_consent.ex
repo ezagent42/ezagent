@@ -186,6 +186,26 @@ defmodule Ezagent.Socialware.CompositionConsent do
   by that scoped key — a pending consent whose target owner = the target's current
   `data_owner`. Fails closed (`:consent_target_owner_unresolvable`) if the owner
   cannot resolve.
+
+  **Codex round-3 — `authenticated_principal` is a plain argument, not yet a real
+  boundary.** There are ZERO production call sites of this function today — every
+  caller is a test that supplies both `requester` and `authenticated_principal`
+  itself (pinned by
+  `test/invariants/composition_consent_request_no_production_callers_test.exs`,
+  which goes RED the moment a non-test call site appears). The `requester ==
+  authenticated_principal` check above is necessary but not sufficient: it only
+  defends against forgery if `authenticated_principal` itself was fixed by a
+  verified transport, which nothing enforces while this function is unreachable
+  from production. **Before wiring the FIRST production caller** — the A3 plan's
+  deferred Group B (kanban rule-8's hand-rolled approval migrating onto this
+  entry) or any future URI-share dispatch action — that caller MUST derive
+  `authenticated_principal` from the dispatch/Kind runtime's authenticated
+  context (`ctx.caller` / `ctx.authenticated_principal` — the same fields
+  `Ezagent.Cmd.authenticated_external/5` fixes at the auth boundary, and that
+  `handle_composition_consent/2` already threads `ctx.caller` into `command/6`
+  for the composition two-party approval path), never a value read out of
+  `args` or otherwise caller-controlled. Reopen security review before merging
+  that caller; do not just delete the invariant test to make it pass.
   """
   @spec request(URI.t(), URI.t(), module(), [atom()], URI.t()) ::
           {:ok, t()} | {:error, term()}
@@ -287,12 +307,21 @@ defmodule Ezagent.Socialware.CompositionConsent do
   # A stable, order-independent digest of the granted scope. Actions are sorted
   # so `[:a, :b]` and `[:b, :a]` collapse to one consent; behavior is included so
   # two behaviors' same-named actions never collide.
+  #
+  # Codex round-3: hashing a comma-JOINED string of action names is ambiguous —
+  # `[:"read,write"]` and `[:read, :write]` both sort/join to the literal string
+  # `"read,write"`, so they hashed identically (a distinct-scope collision this
+  # module's own doc promises can't happen). `:erlang.term_to_binary/1` encodes
+  # the `{behavior, actions}` tuple in Erlang's self-describing external term
+  # format — every atom is length-prefixed, so no encoding of one term can ever
+  # equal the encoding of a structurally different term. That kills the whole
+  # collision class, not just this one instance.
   defp scope_digest(behavior, actions) do
-    canonical =
-      behavior_string(behavior) <>
-        "|" <> (actions |> Enum.map(&Atom.to_string/1) |> Enum.sort() |> Enum.join(","))
-
-    :crypto.hash(:sha256, canonical) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+    {behavior, Enum.sort(actions)}
+    |> :erlang.term_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+    |> binary_part(0, 16)
   end
 
   defp apply_decide(id, decision, actor, idempotency_key) do
