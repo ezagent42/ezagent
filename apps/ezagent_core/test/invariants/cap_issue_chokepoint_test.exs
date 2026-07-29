@@ -153,15 +153,35 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
 
     # EntityCaps is the sole post-create storage facade. It replaces the full
     # verified set and cannot mint or authorize a grant by itself.
-    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex" => 1,
+    #
+    # #189 PR-3 FIX 1: 1 → 2. Post-epoch the store is authoritative, so
+    # `update/2` becomes Store-FIRST and `caps_json` is a best-effort follow-on
+    # PROJECTION of the already-authoritative store caps (`write_caps_json_locked/2`
+    # adds the second `caps_json:` write form). It mirrors the store's verified
+    # set — it cannot mint, grant, or authorize by itself, and a projection
+    # failure never changes an authz outcome (reads are store-authoritative).
+    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex" => 2,
 
     # #189 PR-1 — the unified identity-caps store writes its OWN `identity_caps`
     # table column (a separate table from `users.caps_json`). In PR-1 it is a
     # WRITE-SHADOW: reads are never store-authoritative, and it MIRRORS the
     # verified set on every legacy write — it cannot mint, grant, or authorize by
-    # itself. (`=> 8` = 5 `caps_json` write forms + 3 `%{caps_json: ...}` read-pattern
+    # itself. (`=> 7` = 4 `caps_json` write forms + 3 `%{caps_json: ...}` read-pattern
     # matches; the scanner counts every AST map key, not distinct writers.) codex
     # adversarial review (6 rounds) confirmed no hidden authority path.
+    #
+    # #189 PR-2 (codex IMPL-review finding 1): the count dropped 8 → 7 (5 → 4
+    # write forms) because `update_locked` no longer writes `caps_json:` directly
+    # — it now routes the transformed set through the shared `persist_changes/3`
+    # resurrection guard (closing the `update/2` bypass). One FEWER independent
+    # write site, all active-transitions funneled through the guard — strictly
+    # safer, no new authority path.
+    #
+    # #189 PR-3 FIX 3: 7 → 8. `adopt_absent_authority_history/1` adds ONE
+    # `caps_json: "[]"` write form — it materializes an EMPTY, `revoked_unprovisioned`
+    # (non-active) row for an authority-history URI that has no store row. It writes
+    # NO caps (the literal `"[]"`), so it grants nothing and cannot authorize; it is
+    # strictly absent-only (never touches an existing row).
     "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 8,
 
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It

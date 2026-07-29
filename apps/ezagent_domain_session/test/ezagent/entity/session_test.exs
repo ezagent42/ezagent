@@ -14,7 +14,10 @@ defmodule Ezagent.Entity.SessionTest do
       # via the `:kind_base` set threaded at spawn (`chat_behaviors/0` vs
       # `socialware_behaviors/0`); the P1 per-instance denial keeps a chat
       # instance from invoking the socialware-only Turn/Surface actions.
+      # #189 PR-3 — every Session carries the minimal `ActionSet.SelfLicense`
+      # carrier (durable principal self-license); it heads every set.
       assert Session.behaviors() == [
+               Ezagent.ActionSet.SelfLicense,
                Ezagent.ActionSet.Session,
                Ezagent.ActionSet.Publisher.SessionImpl,
                Ezagent.ActionSet.ExternalMirror,
@@ -24,12 +27,14 @@ defmodule Ezagent.Entity.SessionTest do
              ]
 
       assert Session.chat_behaviors() == [
+               Ezagent.ActionSet.SelfLicense,
                Ezagent.ActionSet.Session,
                Ezagent.ActionSet.Publisher.SessionImpl,
                Ezagent.ActionSet.ExternalMirror
              ]
 
       assert Session.socialware_behaviors() == [
+               Ezagent.ActionSet.SelfLicense,
                Ezagent.ActionSet.Session,
                Ezagent.ActionSet.Turn,
                Ezagent.ActionSet.Surface,

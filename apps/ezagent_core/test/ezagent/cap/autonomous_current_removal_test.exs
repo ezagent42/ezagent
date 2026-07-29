@@ -239,7 +239,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
 
       # (a) the self-license reaches durable storage via the fail-closed initial
       #     snapshot persist, which STOPS the boot on error (never reaches ready).
-      assert server =~ "persist_initial_snapshot(uri, kind_module, slice_state)"
+      assert server =~ "persist_initial_snapshot(uri, kind_module, slice_state, create_freshness)"
       assert server =~ "{:stop, {:persistence_failed, reason}}"
 
       # (b) `persist_initial_snapshot/3` runs in `init/1` BEFORE the

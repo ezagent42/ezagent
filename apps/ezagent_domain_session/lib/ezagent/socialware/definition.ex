@@ -131,11 +131,18 @@ defmodule Ezagent.Socialware.Definition do
   @spec behaviors(t()) :: [module()]
   def behaviors(%__MODULE__{bases: bases, shape: shape, views: views}) do
     session = Ezagent.ActionSet.Session
+    # #189 PR-3 — every Session is a durable principal (URI == identity), so the
+    # minimal non-dispatchable self-license carrier is a MANDATORY base of every
+    # resolved session behavior set, prepended here (the single chokepoint that
+    # builds every session's set) alongside `Session`. Auto-covers persisted
+    # definitions whose stored `bases`/`shape` predate the carrier — no migration.
+    self_license = Ezagent.ActionSet.SelfLicense
+    mandatory = [self_license, session]
 
     # views are render ActionSets (each declares a UNIQUE `<sw>_render` cap-only
     # read action) — they MUST enter the spawned behavior set so the render cap
     # is registered on the Session Kind and `authorize_view` can check it.
-    ([session] ++ views ++ shape ++ Enum.reject(bases, &(&1 == session)))
+    (mandatory ++ views ++ shape ++ Enum.reject(bases, &(&1 in mandatory)))
     |> Enum.uniq()
   end
 

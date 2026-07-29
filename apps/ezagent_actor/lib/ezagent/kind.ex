@@ -862,6 +862,22 @@ defmodule Ezagent.Kind do
     end)
   end
 
+  @doc """
+  List every DURABLE (snapshot-backed) Kind instance as `{uri_string, meta}`
+  (§2.2 — the operator plane; the sole sanctioned `KindSnapshot.list_all/0`
+  wrapper). Unlike `list_instances/0` (live processes only), this enumerates
+  cold-but-created entities from the durable snapshot plane. `meta` carries the
+  registered `kind_type` string. Used by the #189 identity-caps backfill +
+  fleet-parity barrier to enumerate the durable principal worklist without
+  reaching into the actor-internal `Ezagent.Ecto.KindSnapshot` from the domain.
+  """
+  @spec list_durable_instances() :: [{String.t(), %{kind_type: String.t() | nil}}]
+  def list_durable_instances do
+    Enum.map(Ezagent.Ecto.KindSnapshot.list_all(), fn row ->
+      {row.uri, %{kind_type: row.kind_type}}
+    end)
+  end
+
   defp to_uri(%URI{} = uri), do: uri
   defp to_uri(uri) when is_binary(uri), do: Ezagent.URI.new!(uri)
 

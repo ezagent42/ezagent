@@ -108,7 +108,19 @@
   #   burn-down is a module split (extract the §2.2 read surface into a sibling
   #   `Ezagent.Kind.Read` once callers have migrated), tracked for a later chunk.
   #   8→9.
-  oversized_modules_gt_1000: 9,
+  # arch-cap-bump: +1 #189 PR-3 cutover — `entity_caps/store.ex` was 984 LOC and
+  #   the security-critical cutover additions (FIX 1 epoch-aware authoritative
+  #   `sync_committed_identity`/`identity_snapshot_cleared`, FIX 2 three-way
+  #   `fetch_durable_caps` + `fetch_result` error-distinction seam, FIX 3
+  #   `adopt_absent_authority_history` + the authority-history ever-created
+  #   branch) pushed it 984 → ~1104, crossing >1000 as the tenth oversized
+  #   module. ACCEPTED documented debt: the store IS the single home of the
+  #   identity-caps write/read/backfill/provisioning invariants (one structural
+  #   place for "active iff current-valid self-license"), so splitting it now
+  #   would fragment that guarantee mid-cutover. Burn-down: extract the
+  #   provisioning-receipt API (`provision`/`reprovision`/`revoke_provisioning`/
+  #   `tombstone` + `activate_locked`) into a sibling once the cutover lands. 9→10.
+  oversized_modules_gt_1000: 10,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the

@@ -55,6 +55,10 @@ defmodule Ezagent.Entity.Session do
   # socialware-subset instance (a chat instance's `:kind_base` excludes them).
   def behaviors,
     do: [
+      # #189 PR-3 — a Session is a durable principal (URI == identity): it carries
+      # a minimal, non-dispatchable self-license carrier so its recovery/restart
+      # self-dispatch (e.g. Turn settlement recovery) passes the principal gate.
+      Ezagent.ActionSet.SelfLicense,
       Ezagent.ActionSet.Session,
       Ezagent.ActionSet.Publisher.SessionImpl,
       Ezagent.ActionSet.ExternalMirror,
@@ -72,6 +76,7 @@ defmodule Ezagent.Entity.Session do
   @spec chat_behaviors() :: [module()]
   def chat_behaviors,
     do: [
+      Ezagent.ActionSet.SelfLicense,
       Ezagent.ActionSet.Session,
       Ezagent.ActionSet.Publisher.SessionImpl,
       Ezagent.ActionSet.ExternalMirror
@@ -87,6 +92,7 @@ defmodule Ezagent.Entity.Session do
   @spec socialware_behaviors() :: [module()]
   def socialware_behaviors,
     do: [
+      Ezagent.ActionSet.SelfLicense,
       Ezagent.ActionSet.Session,
       Ezagent.ActionSet.Turn,
       Ezagent.ActionSet.Surface,

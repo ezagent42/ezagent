@@ -269,8 +269,10 @@ defmodule Ezagent.Socialware.DefinitionTest do
       behaviors = Definition.behaviors(d)
       assert Ezagent.ActionSet.Session in behaviors
       assert @view_mod in behaviors
-      # Session is first; the view precedes remaining shape/bases.
-      assert hd(behaviors) == Ezagent.ActionSet.Session
+      # #189 PR-3: the SelfLicense carrier heads every set, then Session; the
+      # view still precedes remaining shape/bases.
+      assert hd(behaviors) == Ezagent.ActionSet.SelfLicense
+      assert Enum.at(behaviors, 1) == Ezagent.ActionSet.Session
     end
 
     test "rejects a non-loaded / non-behavior view module" do

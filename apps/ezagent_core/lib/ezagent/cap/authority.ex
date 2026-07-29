@@ -243,6 +243,69 @@ defmodule Ezagent.Cap.Authority do
 
   def verify_against_current(%Capability{}, %URI{}, %URI{}), do: false
 
+  @doc """
+  Row-lock the TARGET's current active authority generation inside the caller's
+  OPEN transaction, so a concurrent `regenesis/2` cannot rotate the generation
+  between a `verify_against_current/3` check and the caller's dependent write
+  (#189 PR-2, codex impl-review finding 1 — the verify/write race).
+
+  The lock is keyed byte-identically to `current_key_id/1` (`instance |>
+  stable_key`), so it serializes exactly the row `verify_against_current/3`
+  reads. Returns `:ok` whether or not an active row exists — a target with no
+  active row has nothing to lock and its self-license verification fails closed
+  anyway. MUST be called inside a `Repo.transaction/1`; outside one a `FOR
+  SHARE` locks nothing.
+  """
+  @spec lock_current_generation(URI.t()) :: :ok
+  def lock_current_generation(%URI{} = target) do
+    target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.lock_active()
+    :ok
+  end
+
+  @doc """
+  Whether `uri` has ANY `kind_cap_authorities` history — an active OR retired
+  generation row (#189 PR-3 FIX 3). `regenesis/2` RETIRES the active row
+  (`retire_active/1`, an `UPDATE ... SET active=false`) and INSERTS a new
+  generation; it never DELETES, so a revoked / rotated principal keeps its
+  history. This is therefore the durable "this URI's authority was ever opened"
+  witness that survives a store-row deletion — the fact the ephemeral
+  ever-created signal uses to deny a re-mint on an absent store row. Fail-closed
+  (a read error resolves to `true`: an unreadable history must never be read as
+  "never created" and license a fresh genesis).
+  """
+  @spec has_authority_history?(URI.t()) :: boolean()
+  def has_authority_history?(%URI{} = uri) do
+    uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() != []
+  rescue
+    _ -> true
+  catch
+    _, _ -> true
+  end
+
+  @doc """
+  The number of authority GENERATIONS `uri` has ever held (active + retired).
+  `> 1` means the authority was `regenesis/2`'d at least once — i.e. the
+  principal was REVOKED (a revocation retires the active row and inserts a new
+  generation). #189 PR-3 FIX 4 uses this so the Session self-license migration
+  refuses to mint an `active` self-license for a previously-revoked session
+  (minting under the current generation would pass `verified/2` by construction,
+  so gen-gating cannot catch it — the gate must be at the mint). Fail-closed:
+  a read error returns a sentinel `> 1` so an unreadable history is never read
+  as "never revoked".
+  """
+  @spec generation_count(URI.t()) :: non_neg_integer()
+  def generation_count(%URI{} = uri) do
+    uri
+    |> Ezagent.URI.instance()
+    |> Ezagent.URI.stable_key()
+    |> KindCapAuthority.list()
+    |> length()
+  rescue
+    _ -> 2
+  catch
+    _, _ -> 2
+  end
+
   defp current_key_id(%URI{} = target) do
     target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
 
@@ -335,6 +398,28 @@ defmodule Ezagent.Cap.Authority do
 
     Repo.transaction(fn ->
       case KindCapAuthority.list(uri_string) do
+        [] when create_freshness == :existed ->
+          # #189 PR-2 fail-closed (codex spec-review F1): a URI that presents
+          # itself as ALREADY-EXISTING (`:existed` — an ordinary open / cold
+          # restart) but whose authority history is EMPTY must NOT have a
+          # generation minted at runtime. Silently inserting generation 1 here
+          # would birth signing authority for a principal whose creation was
+          # never authorized (or whose authority was intentionally purged) —
+          # exactly the regenesis-resurrection vector. Genesis stays reserved
+          # for genuine creation (`:created`) and the legacy `:unknown` open.
+          #
+          # DEPLOY PRECONDITION (codex impl-review finding 2 — FLAGGED, unresolved
+          # here): this guard REGRESSES a pre-authority durable entity
+          # (`ever_created` snapshot, NO `kind_cap_authorities` row — created
+          # before the #1457 cap-signing rollout and not re-opened since): its
+          # cold restart hits this rollback and the Kind terminates. It is safe
+          # to deploy ONLY if every durable Lifecycle entity in the target DB has
+          # already acquired an authority row (opened once since #1457). If that
+          # cannot be evidenced, a GOVERNED authority-history adoption is required
+          # first, or this guard must land with PR-3's cutover instead. See
+          # docs/superpowers/plans/2026-07-29-189-pr2-migration.md → "FIX 3".
+          Repo.rollback(:no_authority_for_existing)
+
         [] ->
           unless same_uri?(uri, admin_uri()) do
             case KindCapAuthority.active(Ezagent.URI.stable_key(admin_uri())) do

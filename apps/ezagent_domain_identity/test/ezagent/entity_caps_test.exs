@@ -535,6 +535,164 @@ defmodule Ezagent.EntityCapsTest do
     end
   end
 
+  describe "#189 PR-3 anti-resurrection (regenesis → gen-gated denial; restart ≠ re-creation)" do
+    test "a regenesis'd ephemeral principal's durable store row is gen-gated to [] on the persisted read" do
+      worker = worker_uri("regenesis-no-resurrection")
+
+      # Genuine creation: mint a CURRENT-generation self-license and make it
+      # DURABLE in the store (`active`) — the cutover state after a genuine
+      # `:created` spawn of an ephemeral worker.
+      license = self_license(worker)
+      assert :ok = Ezagent.EntityCaps.Store.persist(worker, [license])
+      assert Ezagent.EntityCaps.Store.status(worker) == :active
+
+      # Read-flip: the store is now the AUTHORITATIVE durable holder source, so the
+      # cold/self persisted read — what the self-dispatch principal gate consults —
+      # is non-empty. DISCRIMINATOR: on the pre-cutover read plane this is EMPTY
+      # (`load_persisted` read the ephemeral snapshot, NOT the store), so this step
+      # proves the fix — it is NOT a trivial "revoked → denied" that passes anyway.
+      refute EntityCaps.load_persisted(worker) == []
+
+      # Revoke by rotating the signing-authority generation. This touches ONLY the
+      # authority; the store row is left `active` with the now stale-generation
+      # self-license (regenesis never writes the store).
+      assert {:ok, _new_authority} = Ezagent.Cap.Authority.regenesis(worker, :worker)
+      assert Ezagent.EntityCaps.Store.status(worker) == :active
+
+      # ...yet the durable persisted read is EMPTY: `EntityCaps.verified/2`
+      # gen-gates the stale-generation self-license. The denial comes SOLELY from
+      # the READ result, never the (misleadingly still-`active`) status.
+      assert EntityCaps.load_persisted(worker) == []
+
+      # The durable row remains the ever-created signal, so a cold restart is
+      # classified `:existed` (not `:created`) → the principal RE-READS the stale
+      # license and is NOT re-minted a fresh-generation one. Restart ≠ re-creation.
+      assert Ezagent.EntityCaps.Store.ever_created_signal?(worker)
+    end
+  end
+
+  describe "#189 PR-3 FIX 2 (post-epoch: a store READ ERROR denies, never falls back)" do
+    test "a forced store read error denies even with a valid legacy self-license present" do
+      agent = agent_uri("read-error-deny")
+      license = self_license(agent)
+      legacy_cap = issued_cap(agent, :send)
+
+      # LEGACY (the durable snapshot) carries a CURRENT-valid self-license + cap,
+      # so the legacy fallback, if taken, WOULD authorize. (Writing the snapshot
+      # also PR-1 dual-writes an `active` store row — that is expected.)
+      assert {:ok, _snap} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([license, legacy_cap])}}},
+                 kind_type: :agent
+               )
+
+      # CONTROL (non-vacuous): PRE-EPOCH the read is legacy-authoritative and the
+      # valid legacy license AUTHORIZES (non-empty). This proves the read-error
+      # DENY below is the discriminator — the legacy source really would grant.
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
+      refute EntityCaps.load_persisted(agent) == []
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+
+      # Now the AUTHORITATIVE store row is non-active (a store-only provisioning
+      # revocation): a successful post-epoch read denies via status.
+      assert :ok = Ezagent.EntityCaps.Store.revoke_provisioning(agent)
+      assert Ezagent.EntityCaps.Store.status(agent) == :revoked_unprovisioned
+      assert EntityCaps.load_persisted(agent) == []
+
+      # DISCRIMINATOR — force the store read to ERROR. Pre-FIX-2 the error
+      # collapsed to `:absent` and fell back to the VALID legacy license,
+      # authorizing the revoked principal. Post-FIX-2 `{:error, _}` DENIES.
+      Application.put_env(:ezagent_domain_identity, :p2_forced_read_error_uris, [store_key(agent)])
+      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris) end)
+
+      assert {:error, _} = Ezagent.EntityCaps.Store.fetch_durable_caps(agent)
+      assert EntityCaps.load_persisted(agent) == []
+    end
+  end
+
+  describe "#189 PR-3 FINAL ITEM 3 (an UNREADABLE epoch fails CLOSED, never to legacy)" do
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :identity_cutover_force_read_error)
+        # Restore the suite-wide active override the rest of the suite relies on.
+        Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+      end)
+
+      :ok
+    end
+
+    test "a fresh node with an UNREADABLE epoch DENIES reads — never the legacy fallback" do
+      agent = agent_uri("epoch-unknown-read")
+      license = self_license(agent)
+      legacy_cap = issued_cap(agent, :send)
+
+      # LEGACY (the durable snapshot) carries a CURRENT-valid self-license + cap,
+      # so the legacy fallback, if taken, WOULD authorize.
+      assert {:ok, _snap} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([license, legacy_cap])}}},
+                 kind_type: :agent
+               )
+
+      # CONTROL (non-vacuous): a DEFINITIVE pre-cutover `:inactive` reads
+      # legacy-authoritative, so the valid legacy license AUTHORIZES. This proves
+      # the DENY below is the discriminator — the legacy source really would grant.
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
+      refute EntityCaps.load_persisted(agent) == []
+
+      # DISCRIMINATOR — a FRESH post-cutover node (no cached sticky `true`) whose
+      # epoch read ERRORS: clearing the override forces the DB-backed `status/0`,
+      # the forced read error resolves it to `:unknown`, and the read DENIES
+      # rather than falling back to the still-valid legacy license. Pre-ITEM-3
+      # this fell through `active?/0 == false` to the legacy plane and RE-AUTHORIZED.
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+
+      assert Ezagent.Identity.Cutover.status() == :unknown
+      assert EntityCaps.load_persisted(agent) == []
+    end
+
+    test "a fresh node with an UNREADABLE epoch REJECTS identity mutations — never a legacy write" do
+      user = user_uri("epoch-unknown-mutate")
+      base = licensed_caps(user, [issued_cap(user, :send)])
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, base)
+
+      # CONTROL (non-vacuous): a DEFINITIVE `:inactive` performs the
+      # legacy-authoritative write (`:ok`).
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
+      assert :ok = Ezagent.EntityCaps.UserStore.persist(user, base)
+
+      # DISCRIMINATOR — an unreadable epoch REJECTS the mutation with an explicit
+      # reason: neither the legacy plane nor the store is written on `:unknown`.
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+
+      assert Ezagent.Identity.Cutover.status() == :unknown
+      assert {:error, :identity_epoch_unreadable} = Ezagent.EntityCaps.UserStore.persist(user, base)
+    end
+
+    test "a fresh node with an UNREADABLE epoch reports ever-created TRUE — no re-mint / resurrection" do
+      agent = agent_uri("epoch-unknown-evercreated")
+      # No store row, no authority history — under a definitive epoch this is a
+      # genuine first-creation candidate (`ever_created_signal? == false`).
+      refute Ezagent.EntityCaps.Store.has_row?(agent)
+
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+
+      assert Ezagent.Identity.Cutover.status() == :unknown
+
+      # Fail-CLOSED: an UNREADABLE epoch reports ever-created TRUE (⇒ `:existed`,
+      # NO re-mint), so an ephemeral principal is never resurrected on an
+      # unreadable epoch. Pre-ITEM-3 the `not active?()` gate returned `false`
+      # here (⇒ `:created`), a fail-OPEN re-mint that bumps the authority
+      # generation — resurrecting a revoked ephemeral.
+      assert Ezagent.EntityCaps.Store.ever_created_signal?(agent)
+    end
+  end
+
   defp with_signature_enforced(fun) do
     previous = Application.get_env(:ezagent_core, Cap)
     cap_config = previous || []
@@ -604,6 +762,14 @@ defmodule Ezagent.EntityCapsTest do
 
   defp agent_uri(suffix),
     do: URI.new!("entity://entity-caps/agent/#{suffix}-#{System.unique_integer([:positive])}")
+
+  defp worker_uri(suffix),
+    do: URI.new!("entity://entity-caps/worker/#{suffix}-#{System.unique_integer([:positive])}")
+
+  # The store's canonical URI-string key form (`instance |> to_string`) — matches
+  # `Ezagent.EntityCaps.Store`'s `key/1` so the forced-read-error URI list keys
+  # align with the store's row keys.
+  defp store_key(uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
 
   defp identity_keys(caps) do
     caps
