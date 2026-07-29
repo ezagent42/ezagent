@@ -6,16 +6,17 @@ defmodule EzagentPluginForgejo.Application do
   plugin for Git operations, per
   `docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md`.
 
-  ## Slice F1 scope
+  ## What is wired
 
-  This slice delivers the plugin skeleton only: instance URL derivation, the
-  HTTP client, and credential storage. It deliberately registers **no**
-  `Ezagent.DomainGit.AdapterRegistry` entry — `AdapterRegistry.register/2`
-  validates that the module implements all five `DomainGit.Adapter` callbacks,
-  and `ForgejoAdapter` does not exist until F2/F3. Registering a stub that
-  answered every callback with an error would be a fake, not a skeleton; the
-  adapter declaration is added in F2 alongside the read path it can honestly
-  serve.
+  Credential custody (`ForgejoCredentialBackend`), the OAuth2 acquisition path
+  (driver + backend pair, slice F0), and the `DomainGit` adapter (slice F2).
+
+  The adapter declaration was deliberately absent through F1/F0:
+  `AdapterRegistry.register/2` validates that all five `DomainGit.Adapter`
+  callbacks exist, and declaring a stub that answered each with an error would
+  have been a fake rather than a skeleton. It lands with F2, the slice whose
+  read path it can honestly serve; `create_change_request/4` still refuses
+  until F3, visibly, rather than silently succeeding.
 
   ## Plugin authoring contract
 
@@ -57,11 +58,14 @@ defmodule EzagentPluginForgejo.Application do
       # source (contract SPEC §3.2 — the `:ezagent_plugin_check` grep gate
       # rejects it).
       #
-      # No `Ezagent.DomainGit.AdapterDeclarationOwner` yet: `AdapterRegistry`
-      # validates all five `DomainGit.Adapter` callbacks and `ForgejoAdapter`
-      # arrives in slice F2, so declaring one here could only point at a stub.
       {Ezagent.ProviderConnection.DeclarationOwner,
-       owner: :forgejo_plugin, drivers: [driver_declaration()], backend_pairs: [backend_pair()]}
+       owner: :forgejo_plugin, drivers: [driver_declaration()], backend_pairs: [backend_pair()]},
+      # The DomainGit adapter must be declared HERE, in the plugin's lifecycle,
+      # not via domain_git's config-driven boot registration: `AdapterRegistry`
+      # validates `:code.is_loaded/1` and domain_git boots BEFORE this plugin,
+      # so only here is `ForgejoAdapter` guaranteed loaded.
+      {Ezagent.DomainGit.AdapterDeclarationOwner,
+       owner: :forgejo_plugin, adapters: [{"forgejo", EzagentPluginForgejo.ForgejoAdapter}]}
     ]
 
   @doc """
