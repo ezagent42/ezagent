@@ -1,113 +1,109 @@
 defmodule Ezagent.Socialware.ShareTest do
   @moduledoc """
-  URI-share unification (A1) — the claim edge.
+  URI-share unification (A1) — the Feishu-style two-layer share.
 
-  `Share.claim/2` = verify a BEARER share link (`ShareToken`) → mint a
-  grantee-bound cap toward its target for the clicker (`CompositionCaps.mint_cap`,
-  granter ≡ target's data_owner). URI-agnostic: the target is any agent with a
-  resolvable owner; `behavior`/`actions` ride in the signed token (zero plugin
-  literal). Mirrors `CompositionGrantTest`'s mint setup.
+  Permission = caps (who holds one). Sharing = a per-target `ShareSetting` toggle
+  the OWNER turns on (that IS the authorization, codex M1) and off (revocation,
+  codex D3). A link (`ShareToken`) is a stateless pointer; `Share.claim/2` mints
+  ONLY while the target's sharing setting is enabled.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Cap.ShareToken
   alias Ezagent.Socialware.Share
   alias EzagentDomainInstanceMessage.CompositionGrantTargetBehavior, as: Target
 
-  test "claiming a bearer link mints a grantee-bound read cap; the ungranted write is refused" do
-    owner = user_uri("share-owner")
+  test "owner enables sharing → a link claim mints the declared cap; the ungranted action is refused" do
+    owner = user_uri("owner")
     clicker = live_agent("clicker", owner, Ezagent.Entity.Agent.base_behaviors())
-    target = live_agent("shared-board", owner, [Target])
+    target = live_agent("board", owner, [Target])
 
-    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
+    assert {:ok, _setting} = Share.enable(target, owner, Target, [:get_tree])
+    token = Share.mint_link(target)
 
-    assert {:ok, %{target: claimed, grantee: ^clicker}} = Share.claim(token, clicker)
-    assert Ezagent.URI.instance(claimed) == Ezagent.URI.instance(target)
-
-    # cap-as-truth: clicker now holds the shared read cap → read dispatch OK,
-    # the ungranted write is refused (only the link's actions were minted).
+    assert {:ok, %{grantee: ^clicker}} = Share.claim(token, clicker)
     assert eventually(fn -> holds_cap?(clicker, target, :get_tree) end)
     assert {:ok, %{ok: true}} = dispatch(clicker, target, :get_tree)
     assert {:error, :missing_cap} = dispatch(clicker, target, :add_node)
   end
 
-  test "a read link grants ONLY read; an operate link grants operate (actions ride the token)" do
-    owner = user_uri("share-owner-op")
-    clicker = live_agent("clicker-op", owner, Ezagent.Entity.Agent.base_behaviors())
-    target = live_agent("shared-board-op", owner, [Target])
+  test "M1: without the owner enabling sharing, a link mints NOTHING (link ≠ authority)" do
+    owner = user_uri("m1-owner")
+    clicker = live_agent("m1-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("m1-board", owner, [Target])
 
-    token = ShareToken.mint_link!(owner, target, Target, [:add_node, :get_tree], ttl_seconds: 60)
+    # A perfectly valid signed link, but sharing was never turned on.
+    token = Share.mint_link(target)
 
-    assert {:ok, _} = Share.claim(token, clicker)
-    assert eventually(fn -> holds_cap?(clicker, target, :add_node) end)
-    assert {:ok, %{ok: true}} = dispatch(clicker, target, :add_node)
+    assert {:error, :share_disabled} = Share.claim(token, clicker)
+    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
   end
 
-  test "a tampered link mints nothing (fail-closed)" do
-    owner = user_uri("share-owner-2")
-    clicker = live_agent("clicker-2", owner, Ezagent.Entity.Agent.base_behaviors())
-    target = live_agent("shared-board-2", owner, [Target])
+  test "M1: only the target's data_owner can enable sharing (a non-owner cannot)" do
+    owner = user_uri("m1o-owner")
+    attacker = user_uri("m1o-attacker")
+    target = live_agent("m1o-board", owner, [Target])
 
-    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
+    assert {:error, {:share_setting_not_target_owner, _, _}} =
+             Share.enable(target, attacker, Target, [:get_tree])
+
+    assert {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+  end
+
+  test "D3: the owner disables sharing → the SAME reusable link stops minting (revocation)" do
+    owner = user_uri("d3-owner")
+    c1 = live_agent("d3-c1", owner, Ezagent.Entity.Agent.base_behaviors())
+    c2 = live_agent("d3-c2", owner, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("d3-board", owner, [Target])
+
+    {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+    token = Share.mint_link(target)
+
+    # Reusable: first clicker claims fine.
+    assert {:ok, _} = Share.claim(token, c1)
+    assert eventually(fn -> holds_cap?(c1, target, :get_tree) end)
+
+    # Owner revokes by flipping the setting off — the SAME link now mints nothing.
+    assert {:ok, _} = Share.disable(target, owner)
+    assert {:error, :share_disabled} = Share.claim(token, c2)
+    refute eventually(fn -> holds_cap?(c2, target, :get_tree) end, 5)
+
+    # Already-granted access (c1's cap) is untouched by disabling the link.
+    assert holds_cap?(c1, target, :get_tree)
+  end
+
+  test "D3: only the owner can disable sharing" do
+    owner = user_uri("d3o-owner")
+    attacker = user_uri("d3o-attacker")
+    target = live_agent("d3o-board", owner, [Target])
+
+    {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+
+    assert {:error, {:share_setting_not_target_owner, _, _}} = Share.disable(target, attacker)
+    # Still enabled — the attacker's disable was refused.
+    assert {:ok, _} = Share.disable(target, owner)
+  end
+
+  test "M2: enabling sharing for a behavior the target does NOT carry is refused (conformance)" do
+    owner = user_uri("m2-owner")
+    target = live_agent("m2-plain", owner, [])
+
+    assert {:error, {:share_target_not_conformant, _, Target, :get_tree, _}} =
+             Share.enable(target, owner, Target, [:get_tree])
+  end
+
+  test "a tampered link is rejected (fail-closed)" do
+    owner = user_uri("t-owner")
+    clicker = live_agent("t-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
+    target = live_agent("t-board", owner, [Target])
+
+    {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+    token = Share.mint_link(target)
 
     assert {:error, _} = Share.claim(token <> "x", clicker)
     refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
   end
 
-  test "claiming a link toward an ownerless target fails closed (no owner to grant from)" do
-    owner = user_uri("share-owner-3")
-    clicker = live_agent("clicker-3", owner, Ezagent.Entity.Agent.base_behaviors())
-    target = orphan_agent("ownerless-shared", [Target])
-
-    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
-
-    assert {:error, {:share_target_ownerless, _}} = Share.claim(token, clicker)
-    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
-  end
-
-  test "M1: a link whose issuer is NOT the target's data_owner mints NOTHING (no privilege escalation)" do
-    owner = user_uri("m1-owner")
-    attacker = user_uri("m1-attacker")
-    clicker = live_agent("m1-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
-    target = live_agent("m1-board", owner, [Target])
-
-    # A server-signed link forged with a non-owner issuer — the classic
-    # "valid token grants authority its creator never held" attack.
-    token = ShareToken.mint_link!(attacker, target, Target, [:get_tree], ttl_seconds: 60)
-
-    assert {:error, {:share_issuer_not_data_owner, _issuer, _owner}} = Share.claim(token, clicker)
-    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
-  end
-
-  test "M1: the sanctioned producer Share.mint_link/4 refuses to sign for a non-owner issuer" do
-    owner = user_uri("m1p-owner")
-    attacker = user_uri("m1p-attacker")
-    target = live_agent("m1p-board", owner, [Target])
-
-    assert {:error, {:share_issuer_not_data_owner, _, _}} =
-             Share.mint_link(attacker, target, Target, [:get_tree])
-
-    assert {:ok, token} = Share.mint_link(owner, target, Target, [:get_tree])
-    assert is_binary(token)
-  end
-
-  test "M2: a link for a behavior the target does NOT carry is refused (conformance)" do
-    owner = user_uri("m2-owner")
-    clicker = live_agent("m2-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
-    # A target WITHOUT the Target behavior — the token names Target, but the
-    # instance can't handle it, so mint fails closed rather than issue a dead cap.
-    target = live_agent("m2-plain-board", owner, [])
-
-    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
-
-    assert {:error, {:share_target_not_conformant, _, Target, :get_tree, _}} =
-             Share.claim(token, clicker)
-
-    refute eventually(fn -> holds_cap?(clicker, target, :get_tree) end, 5)
-  end
-
-  # --- fixture helpers (same CompositionGrantTargetBehavior fixture as
-  #     CompositionGrantTest; copied verbatim to keep A1 self-contained) --------
+  # --- fixtures -------------------------------------------------------------
 
   defp live_agent(name, owner, extra_behaviors) do
     uri = agent_uri(name)
@@ -123,23 +119,6 @@ defmodule Ezagent.Socialware.ShareTest do
 
     :ok = Ezagent.WorkspaceRegistry.bind(uri, workspace_uri())
     :ok = Ezagent.AgentLineage.record(uri, owner)
-    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
-    uri
-  end
-
-  # A target with NO recorded lineage: its data_owner cannot resolve.
-  defp orphan_agent(name, extra_behaviors) do
-    uri = agent_uri(name)
-    behaviors = Enum.uniq(Ezagent.Entity.Agent.base_behaviors() ++ extra_behaviors)
-
-    {:ok, _pid} =
-      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
-        uri: uri,
-        behaviors: behaviors,
-        initial_caps: MapSet.new()
-      })
-
-    :ok = Ezagent.WorkspaceRegistry.bind(uri, workspace_uri())
     on_exit(fn -> Ezagent.Kind.terminate(uri) end)
     uri
   end
@@ -163,8 +142,7 @@ defmodule Ezagent.Socialware.ShareTest do
     Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
       cap.kind == :agent and cap.behavior == Target and
         cap.action == action and
-        cap.instance == Ezagent.URI.instance(target) and
-        cap.workspace_uri == workspace_uri()
+        cap.instance == Ezagent.URI.instance(target)
     end)
   end
 

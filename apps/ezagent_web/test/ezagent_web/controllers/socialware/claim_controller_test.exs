@@ -13,7 +13,7 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
   """
   use EzagentWeb.ConnCase, async: false
 
-  alias Ezagent.Cap.ShareToken
+  alias Ezagent.Socialware.Share
   alias Ezagent.Entity.User
   alias EzagentDomainInstanceMessage.CompositionGrantTargetBehavior, as: Target
 
@@ -37,7 +37,9 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
     target = target_agent(ws, "shared", owner)
     clicker = signed_in_user(ws, "clicker")
 
-    token = ShareToken.mint_link!(owner, target, Target, [:get_tree], ttl_seconds: 60)
+    # Owner turns sharing ON (the authorization), then a stateless link is minted.
+    {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+    token = Share.mint_link(target, ttl_seconds: 60)
 
     out =
       conn

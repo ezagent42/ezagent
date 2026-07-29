@@ -120,6 +120,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # behavior)` records a mount of a data-host agent into a session; scoped to
     # the target's workspace (a mount in ws A must not be reconciled from ws B).
     {Ezagent.Socialware.MountRow, "socialware_mounts"},
+    # URI-share A1 — per-target sharing setting (the owner-controlled link
+    # on/off toggle). Scoped to the target's workspace.
+    {Ezagent.Socialware.ShareSetting, "socialware_share_settings"},
     # Socialware P9 — named workspace responsibility assignments are scoped to
     # one workspace; the same holder URI cannot receive a responsibility across
     # tenants without a separate row in that tenant.
