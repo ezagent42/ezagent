@@ -403,24 +403,38 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
     assert cap =~ "instance: %URI{}"
   end
 
-  test "Z-1: self-license construction remains unique and ordinary grants reject it" do
+  test "Z-1: self-license construction is confined to the two create-gated minters, and ordinary grants reject it" do
     constructor_hits =
       Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(&self_license_cap_constructors/1)
 
-    assert [constructor_hit] = constructor_hits
+    # #189 PR-3: exactly TWO sanctioned self-license minters — the Identity
+    # behavior (User/Agent) and the minimal `ActionSet.SelfLicense` carrier (the
+    # Session, which carries no Identity behavior). Both mint ONLY at genuine
+    # creation (`create_freshness: :created`) and sign via the authority
+    # (`issue_self_license_current`); no path mints a self-license at ordinary
+    # runtime. Any THIRD constructor, or an un-gated one, fails this ratchet.
+    constructor_files =
+      constructor_hits
+      |> Enum.map(&(&1 |> String.split(":") |> hd()))
+      |> Enum.sort()
+      |> Enum.uniq()
 
-    assert String.starts_with?(
-             constructor_hit,
-             "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex:"
-           )
+    assert constructor_files == [
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex",
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex"
+           ]
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
+    self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
     cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
     grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")
 
+    # Both minters are create-gated — never an arbitrary runtime mint.
     assert identity =~
              "maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri})"
+
+    assert self_license =~ "def create(%{create_freshness: :created, uri: %URI{} = uri})"
 
     assert cap =~ "%Capability{action: :self_license}"
     assert cap =~ "do: {:error, :reserved_action}"

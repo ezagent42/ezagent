@@ -535,6 +535,42 @@ defmodule Ezagent.EntityCapsTest do
     end
   end
 
+  describe "#189 PR-3 anti-resurrection (regenesis → gen-gated denial; restart ≠ re-creation)" do
+    test "a regenesis'd ephemeral principal's durable store row is gen-gated to [] on the persisted read" do
+      worker = worker_uri("regenesis-no-resurrection")
+
+      # Genuine creation: mint a CURRENT-generation self-license and make it
+      # DURABLE in the store (`active`) — the cutover state after a genuine
+      # `:created` spawn of an ephemeral worker.
+      license = self_license(worker)
+      assert :ok = Ezagent.EntityCaps.Store.persist(worker, [license])
+      assert Ezagent.EntityCaps.Store.status(worker) == :active
+
+      # Read-flip: the store is now the AUTHORITATIVE durable holder source, so the
+      # cold/self persisted read — what the self-dispatch principal gate consults —
+      # is non-empty. DISCRIMINATOR: on the pre-cutover read plane this is EMPTY
+      # (`load_persisted` read the ephemeral snapshot, NOT the store), so this step
+      # proves the fix — it is NOT a trivial "revoked → denied" that passes anyway.
+      refute EntityCaps.load_persisted(worker) == []
+
+      # Revoke by rotating the signing-authority generation. This touches ONLY the
+      # authority; the store row is left `active` with the now stale-generation
+      # self-license (regenesis never writes the store).
+      assert {:ok, _new_authority} = Ezagent.Cap.Authority.regenesis(worker, :worker)
+      assert Ezagent.EntityCaps.Store.status(worker) == :active
+
+      # ...yet the durable persisted read is EMPTY: `EntityCaps.verified/2`
+      # gen-gates the stale-generation self-license. The denial comes SOLELY from
+      # the READ result, never the (misleadingly still-`active`) status.
+      assert EntityCaps.load_persisted(worker) == []
+
+      # The durable row remains the ever-created signal, so a cold restart is
+      # classified `:existed` (not `:created`) → the principal RE-READS the stale
+      # license and is NOT re-minted a fresh-generation one. Restart ≠ re-creation.
+      assert Ezagent.EntityCaps.Store.ever_created_signal?(worker)
+    end
+  end
+
   defp with_signature_enforced(fun) do
     previous = Application.get_env(:ezagent_core, Cap)
     cap_config = previous || []
@@ -604,6 +640,9 @@ defmodule Ezagent.EntityCapsTest do
 
   defp agent_uri(suffix),
     do: URI.new!("entity://entity-caps/agent/#{suffix}-#{System.unique_integer([:positive])}")
+
+  defp worker_uri(suffix),
+    do: URI.new!("entity://entity-caps/worker/#{suffix}-#{System.unique_integer([:positive])}")
 
   defp identity_keys(caps) do
     caps

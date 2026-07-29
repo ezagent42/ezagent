@@ -27,7 +27,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
 
   alias Ezagent.ActionSet.{Surface, Turn}
   alias Ezagent.ActionSet.Publisher.SessionImpl
-  alias Ezagent.ActionSet.{ExternalMirror, Session, KindBase}
+  alias Ezagent.ActionSet.{ExternalMirror, Session, KindBase, SelfLicense}
   alias Ezagent.Entity.Session, as: SessionKind
   alias Ezagent.Entity.User
   alias Ezagent.Invocation
@@ -77,6 +77,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
 
   test "Entity.Session.behaviors/0 is the chat+socialware UNION" do
     assert SessionKind.behaviors() == [
+             SelfLicense,
              Session,
              SessionImpl,
              ExternalMirror,
@@ -87,9 +88,10 @@ defmodule EzagentDomainInstanceMessage.Integration.SessionUnionKindDenialTest do
   end
 
   test "chat_behaviors/0 excludes Turn/Surface; socialware_behaviors/0 excludes ExternalMirror" do
-    assert SessionKind.chat_behaviors() == [Session, SessionImpl, ExternalMirror]
+    assert SessionKind.chat_behaviors() == [SelfLicense, Session, SessionImpl, ExternalMirror]
 
     assert SessionKind.socialware_behaviors() == [
+             SelfLicense,
              Session,
              Turn,
              Surface,
