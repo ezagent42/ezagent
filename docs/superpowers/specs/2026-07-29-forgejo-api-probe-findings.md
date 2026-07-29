@@ -236,7 +236,54 @@ commit 的 sha（写入后未刷新）。**分支头应以 `GET /branches/{branc
 
 ---
 
-## 6. 复现方式
+## 6. 读路径补采（`list_checks` / `list_reviews`）
+
+五个 adapter callback 里的两个读路径在 Forgejo 上模型不同，补采如下。
+
+### 6.1 没有 Checks API，只有 commit status
+
+Forgejo 无 GitHub Checks API 对应物，只有较老的 commit status 模型：
+
+```
+GET /repos/{o}/{r}/commits/{ref}/statuses   全量历史
+GET /repos/{o}/{r}/commits/{ref}/status     合并（CombinedStatus）
+```
+
+同一个 head sha（Codeberg `forgejo/forgejo` PR #13674，head `d3a085ee`）实测：
+
+| 端点 | 条数 | 不同 context 数 | 每 context 唯一？ |
+|---|---|---|---|
+| `/statuses` | **56** | 17 | **否** —— 同 context 最多重复 **7** 次 |
+| `/status` | **17** | 17 | **是** |
+
+`/statuses` 返回的是**重跑历史**。用它会让同一个 check 名字产出 7 条结论互相
+矛盾的记录。**必须用 `/status` 合并端点。**
+
+### 6.2 枚举取值只能采样，swagger 没有
+
+`CommitStatusState` 与 `ReviewStateType` 在 swagger 里都是**无 `enum` 约束的
+string**（go 侧类型未导出取值），只能从真实数据采。
+
+- **`CommitStatusState` 采到：** `pending`、`success`、`failure`、`skipped`。
+  （`error`、`warning` 未采到，属 Gitea 词表的合理外推，实施时须实测。）
+- **`ReviewStateType` 采到：** `APPROVED`、`REQUEST_REVIEW`。
+  （`REQUEST_CHANGES`、`COMMENT`、`PENDING` 未采到。）
+
+### 6.3 reviews 里混着 review **请求**
+
+`GET /pulls/{n}/reviews` 返回的条目里有 `state: "REQUEST_REVIEW"`
+（Codeberg PR #13674、#13659 实采）—— 那是「**向某人请求了 review**」，
+**不是一条已提交的 review**，不属于 `DomainGit.Review.state` 封闭词表的任何一个。
+
+**adapter 必须过滤掉它**，否则「有人被请求 review」会被记成一条 review 事实。
+
+另：`dismissed` 是与 `state` **并列的独立布尔字段**（实采 `dismissed=False`
+与 `state=APPROVED` 同时出现），不是 state 的一个取值。映射时先看 `dismissed`
+再看 `state` —— 写反会让被撤销的 approval 仍算作批准。
+
+---
+
+## 7. 复现方式
 
 ```bash
 # schema（无需凭证）
