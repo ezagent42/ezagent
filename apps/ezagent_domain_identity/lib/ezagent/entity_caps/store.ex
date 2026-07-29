@@ -508,9 +508,9 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   # ====================================================================
-  # Actor seams (config-injected; best-effort shadow, but NEVER silent —
-  # every mirror failure is logged at :error; the legacy write remains the
-  # authoritative outcome in PR-1)
+  # Actor seams (config-injected; EPOCH-AWARE — pre-epoch a best-effort shadow
+  # that never fails the committing dispatch; post-epoch AUTHORITATIVE, so a
+  # failed identity write fails the caller — FIX 1. Every failure is logged.)
   # ====================================================================
 
   @doc """
@@ -524,14 +524,22 @@ defmodule Ezagent.EntityCaps.Store do
     * `uri` is a USER — user rows mirror `users.caps_json` via
       `UserStore.update/2` instead (the legacy authoritative user source);
     * `kind_module` is `:ephemeral`/`:external` persistence — those Kinds
-      are deliberately NOT mirrored in PR-1 (`nil` kind_module, the direct
+      are deliberately NOT mirrored (`nil` kind_module, the direct
       `SnapshotStore.write/3` path, always mirrors: durable writers only);
     * the slice carries no caps set.
 
-  A mirror failure is logged at `:error` (observable shadow divergence),
-  never raised into the committing dispatch.
+  ## Epoch-aware outcome (FIX 1)
+
+    * **Pre-epoch** (`Cutover.active?/0` false): a best-effort shadow. Any
+      failure is logged and SWALLOWED (`:ok`) — legacy is authoritative, so the
+      committing snapshot must not be failed by a shadow-write error.
+    * **Post-epoch**: the store is AUTHORITATIVE. A failure returns
+      `{:error, reason}` so the caller (`save_now/4`, called Store-FIRST) aborts
+      the snapshot commit — a cap mutation must not report success, and a revoke
+      must not leave a stale cap in the authoritative store.
   """
-  @spec sync_committed_identity(URI.t() | String.t(), module() | nil, term()) :: :ok
+  @spec sync_committed_identity(URI.t() | String.t(), module() | nil, term()) ::
+          :ok | {:error, term()}
   def sync_committed_identity(uri, kind_module, slice) do
     with false <- user_uri?(uri),
          false <- skip_kind?(kind_module),
@@ -542,12 +550,11 @@ defmodule Ezagent.EntityCaps.Store do
 
         {:error, reason} ->
           Logger.error(
-            "EntityCaps.Store: identity shadow write FAILED for #{inspect(uri)} " <>
-              "(reason=#{inspect(reason)}) — legacy snapshot committed; " <>
-              "shadow row diverges until the next mirrored write or the migration backfill"
+            "EntityCaps.Store: identity write FAILED for #{inspect(uri)} " <>
+              "(reason=#{inspect(reason)})"
           )
 
-          :ok
+          swallow_pre_epoch({:error, reason})
       end
     else
       _ -> :ok
@@ -555,19 +562,27 @@ defmodule Ezagent.EntityCaps.Store do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity shadow write RAISED for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity write RAISED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
-      :ok
+      swallow_pre_epoch({:error, {:raised, Exception.message(e)}})
   catch
     kind, reason ->
       Logger.error(
-        "EntityCaps.Store: identity shadow write FAILED for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity write FAILED for #{inspect(uri)}: " <>
           "#{kind} #{inspect(reason)}"
       )
 
-      :ok
+      swallow_pre_epoch({:error, {kind, reason}})
+  end
+
+  # Pre-epoch (or unreadable epoch, fail-closed to pre-epoch) the store is a
+  # best-effort shadow: swallow the failure to `:ok` so a shadow error never
+  # fails the legacy-authoritative commit. Post-epoch the store is authoritative:
+  # propagate the `{:error, _}` so the caller aborts.
+  defp swallow_pre_epoch(error) do
+    if Ezagent.Identity.Cutover.active?(), do: error, else: :ok
   end
 
   @doc """
@@ -585,7 +600,7 @@ defmodule Ezagent.EntityCaps.Store do
   is cleared here (the live-principal legacy destroy semantics are unchanged);
   the anti-resurrection creation evidence is never deleted.
   """
-  @spec identity_snapshot_cleared(URI.t() | String.t()) :: :ok
+  @spec identity_snapshot_cleared(URI.t() | String.t()) :: :ok | {:error, term()}
   def identity_snapshot_cleared(uri) do
     from(row in __MODULE__,
       where: row.uri == ^key(uri) and row.identity_status == "active"
@@ -596,19 +611,21 @@ defmodule Ezagent.EntityCaps.Store do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity shadow delete FAILED for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
-      :ok
+      # Epoch-aware (FIX 1): pre-epoch a best-effort shadow (swallow); post-epoch
+      # authoritative — a failed clear propagates so the destroy caller sees it.
+      swallow_pre_epoch({:error, {:raised, Exception.message(e)}})
   catch
     kind, reason ->
       Logger.error(
-        "EntityCaps.Store: identity shadow delete FAILED for #{inspect(uri)}: " <>
+        "EntityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
           "#{kind} #{inspect(reason)}"
       )
 
-      :ok
+      swallow_pre_epoch({:error, {kind, reason}})
   end
 
   @doc """

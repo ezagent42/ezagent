@@ -481,27 +481,49 @@ defmodule Ezagent.Kind.Snapshot do
         _ -> []
       end
 
-    case KindSnapshot.upsert(
-           uri_str,
-           kind_type_str,
-           binary,
-           version,
-           workspace_uri_str,
-           upsert_opts
-         ) do
-      {:ok, _row} ->
-        :telemetry.execute(
-          [:ezagent, :persistence, :written],
-          %{bytes: byte_size(binary)},
-          %{uri: uri_str, kind_type: kind_type_str, version: version}
-        )
+    # #189 PR-3 FIX 1 — the identity `:identity`-slice write is AUTHORITATIVE
+    # post-epoch, so it runs FIRST (Store-first) and GATES the snapshot upsert.
+    # A post-epoch store failure aborts the whole commit BEFORE the legacy
+    # snapshot is touched, so a cap mutation never reports success on a failed
+    # store write and a revoke never leaves a stale cap in the authoritative
+    # store. Pre-epoch the store returns `:ok` (best-effort shadow) and this is a
+    # no-op gate that preserves the PR-1 ordering-independent behavior.
+    case maybe_dual_write_identity_caps(uri_str, state) do
+      :ok ->
+        case KindSnapshot.upsert(
+               uri_str,
+               kind_type_str,
+               binary,
+               version,
+               workspace_uri_str,
+               upsert_opts
+             ) do
+          {:ok, _row} ->
+            :telemetry.execute(
+              [:ezagent, :persistence, :written],
+              %{bytes: byte_size(binary)},
+              %{uri: uri_str, kind_type: kind_type_str, version: version}
+            )
 
-        maybe_dual_write_identity_caps(uri_str, state)
+            :ok
 
-        :ok
+          {:error, reason} ->
+            Logger.warning("Ezagent.Kind.Snapshot: save failed for #{uri_str}: #{inspect(reason)}")
+
+            :telemetry.execute(
+              [:ezagent, :persistence, :failed],
+              %{},
+              %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
+            )
+
+            {:error, reason}
+        end
 
       {:error, reason} ->
-        Logger.warning("Ezagent.Kind.Snapshot: save failed for #{uri_str}: #{inspect(reason)}")
+        Logger.warning(
+          "Ezagent.Kind.Snapshot: authoritative identity store write failed for " <>
+            "#{uri_str}: #{inspect(reason)}"
+        )
 
         :telemetry.execute(
           [:ezagent, :persistence, :failed],
@@ -509,7 +531,7 @@ defmodule Ezagent.Kind.Snapshot do
           %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
         )
 
-        {:error, reason}
+        {:error, {:identity_store_write_failed, reason}}
     end
   end
 

@@ -49,6 +49,23 @@ defmodule Ezagent.ExternalMirror.WorkerContractTest do
       assert Ezagent.Entity.ExternalMirrorWorker.terminate_strategy() ==
                {:custom, Ezagent.ExternalMirror.WorkerSpawn, :terminate_by_pid}
     end
+
+    # #189 PR-3 FIX 1 (ephemeral post-create mutation gap) — STRUCTURAL
+    # prohibition: the ephemeral worker's `:identity` slice is minted ONCE at
+    # `:created` (via `ActionSet.Identity.create/1`) and can NEVER be mutated
+    # post-create, because the worker carries NO `Ezagent.ActionSet.IdentityAdmin`
+    # (the behavior that owns the write actions `grant_cap`/`revoke_cap`/
+    # `persist_caps`/`store_cap`/`remove_cap`). There is therefore no dispatch
+    # path that could mutate an ephemeral principal's identity and be silently
+    # lost by the ephemeral snapshot-skip. This is the un-forgeable witness for
+    # codex's "structurally prohibit post-create ephemeral identity mutation".
+    test "carries NO IdentityAdmin — post-create identity mutation is structurally impossible" do
+      behaviors = Ezagent.Entity.ExternalMirrorWorker.behaviors()
+      refute Ezagent.ActionSet.IdentityAdmin in behaviors
+      # It DOES carry the read-only Identity behavior (self-license carrier +
+      # list_caps/has_cap?), so this is a prohibition on WRITES, not on identity.
+      assert Ezagent.ActionSet.Identity in behaviors
+    end
   end
 
   describe "ExternalMirrorWorker Behavior shape" do

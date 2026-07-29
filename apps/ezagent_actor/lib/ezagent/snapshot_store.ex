@@ -237,20 +237,38 @@ defmodule Ezagent.SnapshotStore do
         :error -> next_version(uri_str)
       end
 
-    case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
-      {:ok, _row} ->
-        :telemetry.execute(
-          [:ezagent, :snapshot_store, :written],
-          %{bytes: byte_size(binary)},
-          %{uri: uri_str, kind_type: kind_type_str, version: version}
-        )
+    # #189 PR-3 FIX 1 — Store-FIRST authoritative identity write (see
+    # `Ezagent.Kind.Snapshot.save_now/4`). Post-epoch a store failure aborts the
+    # snapshot write; pre-epoch it is a best-effort shadow (`:ok`) gate.
+    case maybe_dual_write_identity_caps(uri_str, state) do
+      :ok ->
+        case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
+          {:ok, _row} ->
+            :telemetry.execute(
+              [:ezagent, :snapshot_store, :written],
+              %{bytes: byte_size(binary)},
+              %{uri: uri_str, kind_type: kind_type_str, version: version}
+            )
 
-        maybe_dual_write_identity_caps(uri_str, state)
+            {:ok, %{version: version}}
 
-        {:ok, %{version: version}}
+          {:error, reason} ->
+            Logger.warning("Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}")
+
+            :telemetry.execute(
+              [:ezagent, :snapshot_store, :failed],
+              %{},
+              %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
+            )
+
+            {:error, reason}
+        end
 
       {:error, reason} ->
-        Logger.warning("Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}")
+        Logger.warning(
+          "Ezagent.SnapshotStore: authoritative identity store write failed for " <>
+            "#{uri_str}: #{inspect(reason)}"
+        )
 
         :telemetry.execute(
           [:ezagent, :snapshot_store, :failed],
@@ -258,24 +276,30 @@ defmodule Ezagent.SnapshotStore do
           %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
         )
 
-        {:error, reason}
+        {:error, {:identity_store_write_failed, reason}}
     end
   end
 
   @doc """
   Delete the snapshot row for `uri`. Idempotent — returns `:ok`
   whether or not a row existed.
+
+  #189 PR-3 FIX 1 — the identity store clear is AUTHORITATIVE post-epoch: a
+  post-epoch clear FAILURE is surfaced as `{:error, reason}` so the destroy
+  caller sees it (a successful clear — the normal case — still returns the
+  marker-clear `:ok`). Pre-epoch the clear is a best-effort shadow (`:ok`).
   """
-  @spec delete(URI.t() | String.t()) :: :ok
+  @spec delete(URI.t() | String.t()) :: :ok | {:error, term()}
   def delete(uri) do
     result =
       uri
       |> uri_to_str()
       |> KindSnapshot.clear_state_preserving_marker()
 
-    maybe_clear_identity_caps_store(uri)
-
-    result
+    case maybe_clear_identity_caps_store(uri) do
+      :ok -> result
+      {:error, _reason} = error -> error
+    end
   end
 
   # #189 PR-1 dual-write (identity-plane cutover step 1, ADDITIVE): direct

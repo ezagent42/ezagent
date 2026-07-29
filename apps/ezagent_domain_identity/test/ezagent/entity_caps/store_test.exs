@@ -220,7 +220,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert EntityCaps.load_persisted(user) == []
     end
 
-    test "a mirror-write failure is logged at :error and never changes an authz read" do
+    test "POST-epoch a mirror-write failure is authoritative ({:error}), logged, and never changes an authz read" do
       agent = agent_uri("mirror-failure")
       cap = issued_cap(agent, :send)
 
@@ -233,14 +233,16 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       log =
         capture_log(fn ->
-          # A caps set that cannot be encoded forces the mirror write to
-          # fail inside the shadow hook.
-          assert :ok = Store.sync_committed_identity(agent, nil, %{caps: MapSet.new([:bogus])})
+          # A caps set that cannot be encoded forces the identity write to fail.
+          # POST-epoch the store is AUTHORITATIVE (FIX 1), so the failure is
+          # PROPAGATED as `{:error, _}` (never swallowed to `:ok`).
+          assert {:error, _} =
+                   Store.sync_committed_identity(agent, nil, %{caps: MapSet.new([:bogus])})
         end)
 
-      assert log =~ "shadow write"
+      assert log =~ "identity write"
 
-      # The authoritative read is untouched.
+      # The failed write changed nothing — the authoritative read is untouched.
       assert cap_present?(EntityCaps.load_persisted(agent), cap)
     end
   end
@@ -482,7 +484,14 @@ defmodule Ezagent.EntityCaps.StoreTest do
       refute cap_present?(Store.load(user), first)
     end
 
-    test "a shadow-write failure never rolls back the authoritative caps_json write (logged, not silent)" do
+    test "PRE-EPOCH a shadow-write failure never rolls back the authoritative caps_json write (logged, not silent)" do
+      # This is the PR-1 F2 (PRE-cutover) contract: caps_json is authoritative and
+      # a shadow-store failure must not fail it. Post-epoch the contract INVERTS
+      # (store-authoritative — covered by the FIX 1 regressions below), so force
+      # PRE-epoch here (the suite otherwise forces the epoch active).
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
+      on_exit(fn -> Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true) end)
+
       user = user_uri("shadow-failure")
       first = issued_cap(user, :send)
       second = issued_cap(user, :join)
@@ -530,6 +539,87 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       # The shadow diverged (its write failed) — observable, not silent.
       refute Store.has_row?(user)
+    end
+  end
+
+  describe "#189 PR-3 FIX 1 (post-epoch: the identity store write is AUTHORITATIVE)" do
+    setup do
+      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris) end)
+    end
+
+    test "a forced store failure FAILS a user GRANT from a present row — no silent success" do
+      user = user_uri("fix1-user-grant")
+      base = licensed_caps(user, [issued_cap(user, :send)])
+      extra = issued_cap(user, :join)
+
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, base)
+      assert :ok = UserStore.persist(user, base)
+      assert Store.status(user) == :active
+      before = identity_keys(Store.load(user))
+
+      Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [
+        URI.to_string(user)
+      ])
+
+      # The grant cannot reach the AUTHORITATIVE store, so the mutation FAILS —
+      # the caller must not receive `:ok`.
+      assert {:error, _} = UserStore.persist(user, base ++ [extra])
+
+      # The authoritative store is UNCHANGED (the grant did not take).
+      assert identity_keys(Store.load(user)) == before
+      refute cap_present?(Store.load(user), extra)
+    end
+
+    test "a forced store failure FAILS a user REMOVAL from a present row — cap not silently gone" do
+      user = user_uri("fix1-user-remove")
+      keep = issued_cap(user, :send)
+      drop = issued_cap(user, :join)
+      base = licensed_caps(user, [keep, drop])
+
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, base)
+      assert :ok = UserStore.persist(user, base)
+      assert cap_present?(Store.load(user), drop)
+
+      Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [
+        URI.to_string(user)
+      ])
+
+      # A MISSED removal must not report success — and the cap must STILL be
+      # present in the authoritative store (no silent divergence where the caller
+      # thinks it removed a cap that the authoritative plane still holds).
+      assert {:error, _} = UserStore.persist(user, licensed_caps(user, [keep]))
+      assert cap_present?(Store.load(user), drop)
+    end
+
+    test "a forced store failure FAILS the snapshot commit (Store-first gates the upsert)" do
+      agent = agent_uri("fix1-snapshot")
+      base = licensed_caps(agent, [issued_cap(agent, :send)])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(base)}}},
+                 kind_type: :agent
+               )
+
+      assert Store.status(agent) == :active
+
+      Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [
+        URI.to_string(agent)
+      ])
+
+      # Store-first: the authoritative identity write is attempted BEFORE the
+      # snapshot upsert, so a store failure aborts the whole commit.
+      assert {:error, {:identity_store_write_failed, _}} =
+               SnapshotStore.write(
+                 agent,
+                 %{
+                   identity: %{
+                     state: %{caps: MapSet.new(base ++ [issued_cap(agent, :publish)])}
+                   }
+                 },
+                 kind_type: :agent
+               )
     end
   end
 
