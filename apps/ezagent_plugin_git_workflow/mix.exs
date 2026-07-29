@@ -46,7 +46,15 @@ defmodule EzagentPluginGitWorkflow.MixProject do
       # integration branch, so the dep is added here instead.
       {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
-      {:ezagent_domain_git, in_umbrella: true}
+      {:ezagent_domain_git, in_umbrella: true},
+
+      # 仅测试：真实 GitHub e2e（test/e2e/github_live_*.exs）需要直接问 GitHub
+      # 「远端现在到底是什么状态」，那是断言的锚点，不能经被测代码转手。
+      #
+      # 这不给 lib 开口子：architecture_test 的 @forbidden_claim_path_modules 仍然
+      # 在每个 lib 源文件里拒绝 Req.get/post/put/delete/request，且本依赖 only: :test
+      # 时根本不进生产构建。
+      {:req, "~> 0.5", only: :test}
     ]
   end
 end
