@@ -282,6 +282,26 @@ defmodule Ezagent.Cap.Authority do
     _, _ -> true
   end
 
+  @doc """
+  The number of authority GENERATIONS `uri` has ever held (active + retired).
+  `> 1` means the authority was `regenesis/2`'d at least once — i.e. the
+  principal was REVOKED (a revocation retires the active row and inserts a new
+  generation). #189 PR-3 FIX 4 uses this so the Session self-license migration
+  refuses to mint an `active` self-license for a previously-revoked session
+  (minting under the current generation would pass `verified/2` by construction,
+  so gen-gating cannot catch it — the gate must be at the mint). Fail-closed:
+  a read error returns a sentinel `> 1` so an unreadable history is never read
+  as "never revoked".
+  """
+  @spec generation_count(URI.t()) :: non_neg_integer()
+  def generation_count(%URI{} = uri) do
+    uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() |> length()
+  rescue
+    _ -> 2
+  catch
+    _, _ -> 2
+  end
+
   defp current_key_id(%URI{} = target) do
     target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
 

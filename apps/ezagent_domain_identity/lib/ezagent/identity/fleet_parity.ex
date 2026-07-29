@@ -80,13 +80,59 @@ defmodule Ezagent.Identity.FleetParity do
     # comparison and let the barrier claim complete.
     read_error_discrepancies = Enum.map(read_errors, fn {uri_str, _reason} -> {:legacy_read_error, uri_str} end)
 
-    discrepancies = forward ++ backward ++ read_error_discrepancies
+    discrepancies = forward ++ backward ++ read_error_discrepancies ++ session_identity_gaps()
 
     %{
       complete: discrepancies == [],
       checked: length(holders),
       discrepancies: discrepancies
     }
+  end
+
+  # ------------------------------------------------------------------
+  # Session principal gaps (#189 PR-3 FIX 4)
+  # ------------------------------------------------------------------
+
+  # Every REAL (non-marker-only) Session must be a principal. A pre-carrier
+  # Session persisted its `:kind_base` WITHOUT SelfLicense and so has no
+  # `:identity` self-license and NO store row — an un-migrated principal, which
+  # the barrier MUST flag so the cutover refuses until the Session self-license
+  # migration (FIX 4) has run. The gap is scoped to REAL sessions with NO store
+  # row: a DESTROYED (marker-only) session legitimately has no identity (codex's
+  # "every session" is over-broad — a buried session must not wedge the barrier),
+  # and an already-processed session carries an `active` (migrated) or
+  # `revoked_unprovisioned`/`tombstoned` (adopted) row, so neither is flagged.
+  defp session_identity_gaps do
+    Ezagent.Ecto.KindSnapshot.list_all()
+    |> Enum.filter(&(&1.kind_type == "session"))
+    |> Enum.flat_map(&session_gap/1)
+  end
+
+  defp session_gap(row) do
+    case Ezagent.Ecto.KindSnapshot.decode_state(row) do
+      {:ok, state} ->
+        uri = to_uri(row.uri)
+
+        if real_session_row?(row, state) and is_nil(Store.status(uri)) do
+          [{:session_missing_identity, store_uri_str(uri)}]
+        else
+          []
+        end
+
+      _ ->
+        # Undecodable rows are surfaced by the general read-error path.
+        []
+    end
+  end
+
+  # Marker-only (destroyed: `ever_created` + empty state) is NOT a real session.
+  defp real_session_row?(%{ever_created: true}, state) when map_size(state) == 0, do: false
+
+  defp real_session_row?(_row, state) when is_map(state) do
+    Enum.any?(
+      [:session, :publisher, :chat, :turns, :surface, :external_mirror],
+      &Map.has_key?(state, &1)
+    )
   end
 
   @doc "Convenience boolean form of `check/0`."

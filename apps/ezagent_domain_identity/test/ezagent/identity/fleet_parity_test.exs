@@ -163,6 +163,24 @@ defmodule Ezagent.Identity.FleetParityTest do
       end
     end
 
+    # #189 PR-3 FIX 4 — the full cutover ALSO runs the Session self-license
+    # migration (`SessionSelfLicenseMigration`, which lives in the session domain
+    # and is unreachable from here). Mirror its outcome for exactly the session
+    # gaps the barrier reports: write a minted self-license into the snapshot's
+    # `:identity` slice (`SnapshotStore.write` post-epoch dual-writes the `active`
+    # store row too), so the session becomes a licensed legacy holder — no
+    # `session_missing_identity` gap AND no backward `phantom_active`. Marker-only
+    # sessions are never flagged, so never touched (no resurrection).
+    FleetParity.check().discrepancies
+    |> Enum.filter(fn {kind, _uri} -> kind == :session_missing_identity end)
+    |> Enum.each(fn {_kind, uri_str} ->
+      uri = Ezagent.URI.new!(uri_str)
+      {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(uri)
+      license = self_license(uri)
+      new_state = Map.put(state, :identity, %{state: %{caps: MapSet.new([license])}})
+      {:ok, _} = Ezagent.SnapshotStore.write(uri, new_state, kind_type: :session)
+    end)
+
     :ok
   end
 

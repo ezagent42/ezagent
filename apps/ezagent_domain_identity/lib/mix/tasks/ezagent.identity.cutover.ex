@@ -13,7 +13,8 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
     1. **Backfill** — `mix ezagent.identity.backfill`: mirror every legacy
        durable principal into the store (license-valid ⇒ `active`; known but
        license-invalid ⇒ `revoked_unprovisioned`, NEVER `active`; tombstones
-       preserved).
+       preserved). Then **`mix ezagent.session.self_license_migration`** (FIX 4)
+       — augment pre-carrier Session instances into principals.
     2. **Fleet-parity barrier** — `Ezagent.Identity.FleetParity.check/0`: the
        store must be a complete, bidirectionally parity-correct mirror of the
        legacy self-license set.
@@ -70,11 +71,21 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
   defp run_backfill(true) do
     Mix.shell().info("Step 1/2 — backfill (--dry-run)…")
     Mix.Task.rerun("ezagent.identity.backfill", ["--dry-run"])
+    run_session_migration(["--dry-run"])
   end
 
   defp run_backfill(false) do
     Mix.shell().info("Step 1/2 — backfill…")
     Mix.Task.rerun("ezagent.identity.backfill", [])
+    run_session_migration([])
+  end
+
+  # FIX 4 — the Session self-license migration lives in the session domain
+  # (it references `Ezagent.ActionSet.SelfLicense`); invoke it as a mix task
+  # (a runtime string, so NO identity→session compile dependency is created).
+  defp run_session_migration(args) do
+    Mix.shell().info("Step 1b — session self-license migration…")
+    Mix.Task.rerun("ezagent.session.self_license_migration", args)
   end
 
   defp activate! do
