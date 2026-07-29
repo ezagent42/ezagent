@@ -26,7 +26,8 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
     :list_checks,
     :list_reviews,
     :provision_workspace,
-    :cleanup_workspace
+    :cleanup_workspace,
+    :collect_workspace_changes
   ]
   @providers [
     {:"task11-sync-a", "task11-sync-a", SynchronizedGitAdapterA, "sync-a"},
@@ -376,7 +377,8 @@ defmodule Ezagent.DomainGit.Integration.GitTaskDispatchTest do
         title: "Task 11",
         body: "integration proof",
         head_ref: policy.allowed_head_ref,
-        expected_base_sha: %CommitSha{value: expected_base_sha}
+        expected_base_sha: %CommitSha{value: expected_base_sha},
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     %{repository: policy.repository, changes: [change], request: request}

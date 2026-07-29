@@ -13,7 +13,8 @@ defmodule Ezagent.DomainGit.BootRegistration do
     :list_checks,
     :list_reviews,
     :provision_workspace,
-    :cleanup_workspace
+    :cleanup_workspace,
+    :collect_workspace_changes
   ]
   @action_set Ezagent.ActionSet.GitTaskAccess
 

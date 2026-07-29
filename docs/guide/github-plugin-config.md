@@ -137,3 +137,97 @@ If the plugin did not boot, check for:
 - Malformed `GITHUB_APP_PRIVATE_KEY` PEM (fail-loud)
 - `BackendPairRegistry` declaration drift (raises at boot)
 - `DriverRegistry` declaration drift (raises at boot)
+
+---
+
+## Verifying the credential chain end to end
+
+Everything the Git provider does runs through one chain. When something is
+misconfigured the symptom usually appears several links downstream of the cause,
+so verify it link by link. Each step below tells you which permission or setting
+is wrong when it is the one that fails.
+
+```
+private key ──sign──▶ App JWT
+   │
+   ├─ GET /app                                   → is the App reachable at all?
+   ├─ GET /repos/{owner}/{repo}/installation     → is the App INSTALLED on that repo?
+   ├─ POST /app/installations/{id}/access_tokens → can it mint an operation token?
+   └─ POST /repos/{owner}/{repo}/git/blobs       → does the token actually have Contents: write?
+```
+
+| Failure | What it means |
+|---|---|
+| `GET /app` → 401 | The private key does not match the App, or `GITHUB_APP_ID` is wrong |
+| `GET …/installation` → 404 | The App is **not installed** on that repository (settings alone are not enough — see step 8 above) |
+| `POST …/access_tokens` → 403 | The installation is suspended |
+| `POST …/git/blobs` → 403 `Resource not accessible by integration` | The installation does not have **Contents: write** — see the next section |
+
+The blob write is the recommended write probe: it creates a **dangling blob**
+(no ref, no commit, no PR, nothing visible in the repository UI, garbage-collected
+by GitHub), so it is the smallest action that can distinguish "has write access"
+from "does not".
+
+### Permission changes need a SECOND approval
+
+This is the one that most often looks like "I already set it".
+
+An App's *declared* permissions and an installation's *accepted* permissions are
+two different things. Editing **Permissions & events** on the App updates what it
+**requests**; every existing installation keeps its old grant until the account
+that installed it **approves the new permissions**. Tokens are minted from the
+installation's grant, so until then nothing changes.
+
+Diagnose it by comparing the two — they disagree exactly when an approval is pending:
+
+```elixir
+{:ok, %{body: app}}  = Req.get("https://api.github.com/app", headers: jwt_headers)
+{:ok, %{body: inst}} = Req.get("https://api.github.com/repos/#{owner}/#{repo}/installation",
+                               headers: jwt_headers)
+
+app["permissions"]   # => %{"contents" => "write", "metadata" => "read", ...}   ← requested
+inst["permissions"]  # => %{"metadata" => "read", ...}                          ← granted
+```
+
+To approve: `https://github.com/settings/installations/<installation_id>` →
+**Configure** → accept the requested permissions. If no banner appears,
+uninstalling and reinstalling the App grants the currently-declared set in one step.
+
+### What each permission is for
+
+| Permission | Level | Used by |
+|---|---|---|
+| **Contents** | Read and write | blob / tree / commit / ref creation — the provider-owned commit |
+| **Pull requests** | Read and write | PR find-or-create, PR fresh-read |
+| **Metadata** | Read | repository resolution (mandatory for every App) |
+| **Checks** | Read | `list_checks` during observation |
+
+A **public** repository will answer reads with any valid installation token, so
+read probes can pass while `Contents: write` is still missing. Only the write
+probe distinguishes them — do not conclude from green reads that the grant is
+complete.
+
+## Networks that require an HTTP proxy
+
+Two independent things need proxy configuration, and neither picks it up from the
+usual environment variables:
+
+**1. Req (the plugin's HTTP client) ignores `HTTP_PROXY`/`HTTPS_PROXY`.** Finch
+needs it passed explicitly. Every `GitHubClient` verb merges caller `opts` last,
+and `GitHubAdapter` reads `:adapter_req_opts`, so a proxied environment configures
+it there rather than by patching the client:
+
+```elixir
+config :ezagent_plugin_github,
+  adapter_req_opts: [connect_options: [proxy: {:http, "127.0.0.1", 7890, []}]]
+```
+
+Symptom without it: `%Req.TransportError{reason: :timeout}`, which the client maps
+to `:provider_unavailable` — indistinguishable from GitHub actually being down.
+
+**2. `GitRunner` spawns git with a CLEARED environment** (`clear_env: true`, only
+`GIT_CONFIG_NOSYSTEM` and `GIT_TERMINAL_PROMPT` survive). That is deliberate — no
+ambient credential helper or user gitconfig may influence a task workspace — but
+it also means `https_proxy` does not reach git. On such a machine a task workspace
+cannot clone from a remote that requires the proxy; provision from a local mirror
+instead.

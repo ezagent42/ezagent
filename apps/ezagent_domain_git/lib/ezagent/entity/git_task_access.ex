@@ -25,7 +25,8 @@ defmodule Ezagent.Entity.GitTaskAccess do
     :list_checks,
     :list_reviews,
     :provision_workspace,
-    :cleanup_workspace
+    :cleanup_workspace,
+    :collect_workspace_changes
   ]
   @fields [
     :id,
@@ -346,7 +347,7 @@ defmodule Ezagent.Entity.GitTaskAccess do
   end
 
   defp validate_task_coordinates(action, args, policy)
-       when action in [:provision_workspace, :cleanup_workspace] do
+       when action in [:provision_workspace, :cleanup_workspace, :collect_workspace_changes] do
     with {:ok, task_uri} <- Map.fetch(args, :task_uri),
          true <- exact_task_uri?(task_uri, policy),
          {:ok, generation} <- Map.fetch(args, :generation),

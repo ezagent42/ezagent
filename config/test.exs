@@ -17,6 +17,16 @@ config :ezagent_domain_provider_connection,
 config :ezagent_domain_agent,
   launch_post_commit_publisher: Ezagent.Agent.TestLaunchPostCommitPublisher
 
+# Git Provider V1 Plan E — the fail-closed ExecutionSeam is hardwired via
+# Application.compile_env/3 (see EzagentPluginGitWorkflow.ExecutionSeam).
+# This is the ONLY non-Unavailable value any config file may name, and it
+# is itself not a real backend: it is a test-build-only delegator
+# (test/support/execution_seam_test_delegate.ex, compiled only under
+# MIX_ENV=test) that resolves the actual per-test fake from process-local
+# state. architecture_test.exs enforces both halves of this.
+config :ezagent_plugin_git_workflow,
+  execution_seam: EzagentPluginGitWorkflow.ExecutionSeamTestDelegate
+
 config :ezagent_domain_identity, Ezagent.Entity.Token,
   current_version: 1,
   peppers: %{1 => "test-only-pat-pepper-v1-32-bytes-minimum"}

@@ -80,6 +80,11 @@ defmodule EzagentDomainWorkspace.Application do
         Ezagent.Workspace.TaskWorkspace.Provisioner
       )
 
+    :ok =
+      Ezagent.DomainGit.WorkspaceChangeRegistry.register(
+        Ezagent.Workspace.TaskWorkspace.ChangeCollector
+      )
+
     :ok
   end
 

@@ -15,6 +15,7 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     GitEffectProbe,
     ProbeGitAdapterA,
     ProbeGitAdapterB,
+    WorkspaceChangeProbe,
     WorkspaceProvisionProbe
   }
 
@@ -27,12 +28,17 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
     :list_checks,
     :list_reviews
   ]
-  @actions @provider_actions ++ [:provision_workspace, :cleanup_workspace]
+  @actions @provider_actions ++
+             [:provision_workspace, :cleanup_workspace, :collect_workspace_changes]
 
   setup_all do
     registry = Ezagent.DomainGit.WorkspaceProvisionRegistry
     original = registry.implementation()
     :ok = registry.replace_for_test(WorkspaceProvisionProbe)
+
+    change_registry = Ezagent.DomainGit.WorkspaceChangeRegistry
+    original_change_collector = change_registry.implementation()
+    :ok = change_registry.replace_for_test(WorkspaceChangeProbe)
 
     on_exit(fn ->
       case original do
@@ -42,6 +48,15 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
         {:error, :workspace_provisioner_not_registered} ->
           :ok = Supervisor.terminate_child(EzagentDomainGit.Application, registry)
           {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, registry)
+      end
+
+      case original_change_collector do
+        {:ok, implementation} ->
+          :ok = change_registry.replace_for_test(implementation)
+
+        {:error, :workspace_change_collector_not_registered} ->
+          :ok = Supervisor.terminate_child(EzagentDomainGit.Application, change_registry)
+          {:ok, _pid} = Supervisor.restart_child(EzagentDomainGit.Application, change_registry)
       end
     end)
 
@@ -131,6 +146,68 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
 
     assert_receive {:workspace_effect, :cleanup,
                     %{task_uri: ^task_uri, generation: 1, operation: :cleanup}}
+  end
+
+  test "authorized exact task generation collects through the registered change port", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    task_uri = task_uri(policy)
+
+    invocation =
+      workspace_invocation(fixture, :collect_workspace_changes, task_uri, policy.generation)
+
+    assert {:ok, [%Ezagent.DomainGit.FileChange{path: "probe.txt"}]} =
+             Ezagent.Invocation.dispatch(invocation)
+
+    assert_receive {:workspace_effect, :collect, %{task_uri: ^task_uri, generation: 1}}
+  end
+
+  test "wrong generation and unknown arguments stop before change collection effects", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    task_uri = task_uri(policy)
+
+    assert {:error, :task_generation_mismatch} =
+             fixture
+             |> workspace_invocation(:collect_workspace_changes, task_uri, policy.generation + 1)
+             |> Ezagent.Invocation.dispatch()
+
+    refute_receive {:workspace_effect, _, _}
+
+    invocation =
+      fixture
+      |> workspace_invocation(:collect_workspace_changes, task_uri, policy.generation)
+      |> Map.update!(:args, &Map.put(&1, :local_path, "/tmp/forged"))
+
+    assert {:error, {:unknown_invocation_keys, [:local_path]}} =
+             Ezagent.Invocation.dispatch(invocation)
+
+    refute_receive {:workspace_effect, _, _}
+  end
+
+  test "provision capability cannot invoke collect_workspace_changes", %{
+    fixture: fixture,
+    policy: policy
+  } do
+    collect_invocation =
+      workspace_invocation(
+        fixture,
+        :collect_workspace_changes,
+        task_uri(policy),
+        policy.generation
+      )
+
+    provision_only = workspace_artifact(fixture, :provision_workspace, fixture.grantee_uri)
+
+    invocation = %{
+      collect_invocation
+      | ctx: %{collect_invocation.ctx | caps: MapSet.new([provision_only])}
+    }
+
+    assert {:error, :missing_cap} = Ezagent.Invocation.dispatch(invocation)
+    refute_receive {:workspace_effect, _, _}
   end
 
   test "authorization and generation failures do not consult the provision registry", %{
@@ -431,7 +508,8 @@ defmodule Ezagent.ActionSet.GitTaskAccessTest do
         title: "Task 8",
         body: "body",
         head_ref: policy.allowed_head_ref,
-        expected_base_sha: %CommitSha{value: String.duplicate("a", 40)}
+        expected_base_sha: %CommitSha{value: String.duplicate("a", 40)},
+        commit_date: ~U[2026-06-15 09:30:00Z]
       })
 
     %{

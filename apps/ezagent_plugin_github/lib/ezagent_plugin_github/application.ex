@@ -54,7 +54,9 @@ defmodule EzagentPluginGithub.Application do
   def children,
     do: [
       EzagentPluginGithub.GitHubCredentialBackend,
-      EzagentPluginGithub.GitHubInstallation,
+      # EzagentPluginGithub.GitHubInstallation is NOT a supervised child: it mints
+      # operation-scoped installation tokens on demand (no cache, no process, no
+      # ETS) — see its moduledoc. Nothing to supervise.
       # All registration is DECLARATIVE, via supervised owners started in THIS
       # plugin's lifecycle — the plugin never calls a `*Registry` API from its
       # own source (contract SPEC §3.2); each `.register` happens inside the

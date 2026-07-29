@@ -20,7 +20,8 @@ defmodule EzagentDomainGit.Application do
       case Supervisor.start_link(
              [
                {Ezagent.DomainGit.AdapterRegistry, []},
-               {Ezagent.DomainGit.WorkspaceProvisionRegistry, []}
+               {Ezagent.DomainGit.WorkspaceProvisionRegistry, []},
+               {Ezagent.DomainGit.WorkspaceChangeRegistry, []}
              ],
              strategy: :one_for_one,
              name: __MODULE__
