@@ -36,8 +36,8 @@ standalone? = not Code.ensure_loaded?(Ezagent.Users)
 # rather than fake the semantics on a platform that doesn't have them, skip
 # the tag outright on any non-Linux host and document why.
 exclude_tags =
-  (if standalone?, do: [:umbrella_only], else: []) ++
-    (if match?({:unix, :linux}, :os.type()), do: [], else: [:security_probe])
+  if(standalone?, do: [:umbrella_only], else: []) ++
+    if match?({:unix, :linux}, :os.type()), do: [], else: [:security_probe]
 
 ExUnit.start(exclude: exclude_tags)
 Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, :manual)
