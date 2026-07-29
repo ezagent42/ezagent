@@ -1,0 +1,4 @@
+interface:
+  display_name: "MFU Design System"
+  short_description: "Build MFU demos and infographics in its paper style"
+  default_prompt: "Use $mfu-design-system to design an MFU demo or infographic with the established parchment-paper visual system."

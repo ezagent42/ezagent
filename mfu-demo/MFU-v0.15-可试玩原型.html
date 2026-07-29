@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MFU v0.14 · My First Unicorn — 拟像未来 Hyprial</title>
+<title>MFU v0.15 · My First Unicorn — 从订单到组织</title>
 <style>
 :root{
   --ink:#5b4632; --ink-dark:#3d2e1f;
@@ -226,6 +226,15 @@ body[data-view="assoc"] [data-party~="assoc"]{box-shadow:0 0 0 4px var(--assoc),
 /* 底部操作 */
 .tdetail-actions{display:flex;gap:8px;justify-content:center;margin-top:10px;flex-wrap:wrap;}
 .tdetail-footer{font-size:9.5px;color:#a8977d;font-weight:700;margin-top:8px;}
+.roleflow-modal{width:min(1080px,96vw);max-height:92vh;}
+.rf-head{display:flex;align-items:flex-start;gap:10px;padding-bottom:9px;border-bottom:3px dotted #cbb98f;}
+.rf-head .ico{font-size:34px;line-height:1}.rf-head h2{margin:0 0 3px;font-size:17px}.rf-head p{font-size:11px;color:#7a6c58;font-weight:700;line-height:1.6}.rf-head .tag{margin-left:auto;white-space:nowrap}
+.rf-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-top:10px}.rf-card{border:3px solid var(--ink);border-radius:9px;background:#fffaf0;padding:9px;box-shadow:0 3px 0 rgba(91,70,50,.3)}.rf-card h3{font-size:13px;margin-bottom:6px}.rf-card p,.rf-card li{font-size:11px;font-weight:700;line-height:1.65}.rf-card ul{padding-left:17px}
+.rf-mission{margin-top:9px;padding:7px 9px;border:3px dashed var(--assoc);border-radius:8px;background:var(--assoc-bg);font-size:11px;font-weight:800;line-height:1.6}
+.rf-topology{display:flex;align-items:center;justify-content:center;gap:7px;margin:9px 0;flex-wrap:wrap}.rf-node{min-width:115px;border:3px solid var(--ink);border-radius:8px;background:#f2ead6;padding:7px;text-align:center;font-size:10px;font-weight:800}.rf-node.mine{background:#fff0ad;border-color:var(--gold);outline:3px solid rgba(245,179,1,.25)}.rf-arrow{font-size:18px;font-weight:900}
+.rf-chat{max-height:160px;overflow:auto;display:flex;flex-direction:column;gap:5px;margin:6px 0}.rf-msg{border:2px solid var(--ink);border-radius:8px;background:#fff;padding:5px 7px;font-size:10.5px;font-weight:700}.rf-msg.me{align-self:flex-end;background:#fff2cf}.rf-send{display:flex;gap:6px}.rf-send input{flex:1;min-width:0;border:2px solid var(--ink);border-radius:7px;padding:5px 7px;font-size:11px;font-weight:700}
+.rf-person{display:flex;align-items:center;gap:7px;border:2px solid var(--ink);border-radius:8px;background:#fff;padding:6px;margin-bottom:6px}.rf-person b{font-size:11.5px}.rf-person small{display:block;font-size:9.5px;color:#8a765a;font-weight:700}.rf-person .btn{margin-left:auto}
+@media(max-width:800px){.rf-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -242,6 +251,7 @@ body[data-view="assoc"] [data-party~="assoc"]{box-shadow:0 0 0 4px var(--assoc),
   <div class="stat" title="主理人时间:每周 6 个半天(正式版映射日历)"><small>时间</small><span class="pips" id="apPips"></span></div>
   <div class="stat clk" onclick="setTab('office')" title="算力详情在办公室">⚡<span id="pwrMini">100</span></div>
   <div class="spacer"></div>
+  <button class="btn btn-small" id="incuViewBtn" onclick="openRoleFlow('incubator')" title="切换到孵化器筛选视角">🏭 孵化器视角</button>
   <a class="btn btn-small" id="gddBtn" href="gdd.html" target="_blank" rel="noopener" title="打开设计策划案 GDD(新标签页)" style="text-decoration:none;">📖 策划案</a>
   <button class="avatar" id="worldBtn" onclick="setTab('world')" title="🌍 世界(公开层,随时可看)" style="background:linear-gradient(#dff0ff,#b9d9f5)">🌍</button>
   <button class="btn btn-primary" id="weekBtn" title="演示替身:正式版为 MMO 世界统一时钟(服务器驱动),任何人不可加速;可加速的只有私人推演器">▶ 下一周</button>
@@ -334,7 +344,7 @@ body[data-view="assoc"] [data-party~="assoc"]{box-shadow:0 0 0 4px var(--assoc),
 
 <div id="log" class="loglist" style="display:none"></div>
 
-<div class="footer-note">MFU v0.14 · My First Unicorn · 拟像未来 Hyprial —— 科技树 · 路由 · 调教 · 竞赛 · 承诺 · 资产 · 破产不清零</div>
+<div class="footer-note">MFU v0.15 · My First Unicorn · 拟像未来 Hyprial —— 从订单到猎人，再到协作组织</div>
 </div>
 
 <button id="paBubble" onclick="togglePA()" title="小 H · 你的个人助理(0 号 Agent,属于你,不属于公司)">🤵<span id="paDot"></span></button>
@@ -426,11 +436,20 @@ body[data-view="assoc"] [data-party~="assoc"]{box-shadow:0 0 0 4px var(--assoc),
         <option value="growth">开学季获客方案(增长)</option>
       </select></label>
     <label>奖金池:¥<input id="poPool" type="number" value="2000" min="800" step="200" style="width:100px;font-family:inherit;font-weight:700;padding:4px;border:2px solid var(--ink);border-radius:6px;"></label>
+    <label>希望解决的问题:<textarea id="poGoal" style="flex:1;min-height:54px;font-family:inherit;font-weight:700;padding:5px;border:2px solid var(--ink);border-radius:6px;">在真实场景中获得一份可以执行、可以验证效果的成果。</textarea></label>
+    <label>截止时间:
+      <select id="poDue" style="font-family:inherit;font-weight:700;padding:4px;border:2px solid var(--ink);border-radius:6px;"><option>两周后</option><option>四周后</option><option>本学期末</option></select>
+    </label>
+    <label>完整验收标准:<textarea id="poCriteria" style="flex:1;min-height:54px;font-family:inherit;font-weight:700;padding:5px;border:2px solid var(--ink);border-radius:6px;">成果能够直接使用；过程与数据可追溯；明确说明下一步建议。</textarea></label>
   </div>
   <div class="actions">
     <button class="btn" data-close="mPost">取消</button>
     <button class="btn btn-primary" id="poGo">托管并发布</button>
   </div>
+</div></div>
+
+<div class="overlay" id="mRoleFlow"><div class="modal roleflow-modal">
+  <div id="roleFlowBody"></div>
 </div></div>
 
 <div class="overlay" id="mEnd"><div class="modal">
@@ -546,6 +565,7 @@ const S={
   agents:[],orders:[],projects:[],reviews:[],
   members:[],tx:[],archive:[],gigs:[],
   guilds:{school:true,incu:false,assoc:false},cool:{incu:0,assoc:0},myOrders:[],
+  orderChats:{},collaborators:[],roleDraft:null,
   lines:{design:0,copy:0,growth:0,perform:0},premiumAdded:false,
   credits:{design:0,copy:0,growth:0,strategy:0,comm:0},
   treeNodes:{},
@@ -932,7 +952,7 @@ function render(){
       '环节:'+o.stages.map(s=>DOM[s]).join(' → ')+
       (o.src!=='practice'?'<br>准入(发单方设定):'+(needGuild==='incu'?'DHS 预备营会籍':'协会会员会籍')+(o.needConn?' + 数字人引擎':''):'')+'</div>'+
       (locked?'<span class="tag tag-gray">🔒 '+(lockConn?'需接入数字人引擎':'需会籍(去生态页加入)')+'</span>'
-        :'<button class="btn btn-small btn-green" onclick="openRoute('+o.id+')">接单 · 路由</button>');
+        :'<button class="btn btn-small btn-green" onclick="openRoleFlow(\'match\','+o.id+')">查看匹配步骤</button>');
     ol.appendChild(d);
   });
 
@@ -943,8 +963,7 @@ function render(){
     const left=p.order.weeks-(S.week-p.week0);
     let rows=p.stages.map(st=>{
       const done=st.rem<=0;
-      const who=st.kind==='self'?'👤 本人':st.kind==='ext'?'🔌 '+EXTS[st.domain].n:
-        '🤖 '+(S.agents.find(a=>a.id===st.agentId)||{name:'?'}).name;
+      const who=routeWho(st);
       return '<div class="stage-row'+(done?' stage-done':'')+'">'+
         (done?'✔':'⏳')+' '+DOM[st.domain]+
         (done?' <small>(质量 '+Math.round(st.q)+')</small>':'')+
@@ -953,7 +972,8 @@ function render(){
     d.innerHTML='<div class="order-top"><b>《'+p.order.name+'》</b>'+
       (p.rework?'<span class="tag tag-purple">QA 打回返工中</span>':'')+
       '<span class="tag tag-gray">还剩 '+left+' 周</span></div>'+rows+
-      (p.ready?'<div style="margin-top:6px;text-align:right"><button class="btn btn-small btn-primary" onclick="openDeliver('+p.id+')">📦 交付确认</button></div>':'');
+      '<div style="margin-top:6px;text-align:right"><button class="btn btn-small" onclick="openRoleFlow(\'hunter\','+p.id+')">🏹 协作工作台</button> '+
+      (p.ready?'<button class="btn btn-small btn-primary" onclick="openDeliver('+p.id+')">📦 交付确认</button>':'')+'</div>';
     pl.appendChild(d);
   });
 
@@ -1077,6 +1097,100 @@ window.buyConn=k=>{
   render();
 };
 
+/* ---- v0.15 订单 → 猎人 → 组织：角色工作台 ---- */
+let rfMode=null,rfId=null;
+function rfOrder(id){
+  return S.orders.find(o=>o.id===id)||S.myOrders.find(o=>o.id===id)||(S.projects.find(p=>p.id===id)||{}).order;
+}
+function rfChatKey(id){return 'order-'+id;}
+function rfMsgs(id){
+  const k=rfChatKey(id);
+  if(!S.orderChats[k])S.orderChats[k]=[
+    {who:'拆单方 · 林老师',txt:'同一订单的协作者都在这里。有接口问题直接沟通。'},
+    {who:'纸飞机 · 视觉猎人',txt:'主视觉和三种尺寸模板已上传，大家可以直接使用。'}
+  ];
+  return S.orderChats[k];
+}
+window.openRoleFlow=(mode,id)=>{
+  rfMode=mode;rfId=id;
+  const B=$('roleFlowBody');
+  if(mode==='match'){
+    const o=rfOrder(id);if(!o)return;
+    B.innerHTML='<div class="rf-head"><div class="ico">🏹</div><div><h2>平台为你匹配了一个订单步骤</h2><p>先看完整结构和自己的位置，再决定是否承接。所有同单协作者都可以互相看到并进入订单聊天室。</p></div><span class="tag tag-school">等待确认</span></div>'+
+      '<div class="rf-mission">《'+o.name+'》· 你收到的是其中一个步骤；你只需要为自己承接的步骤负责。</div>'+
+      '<div class="rf-topology">'+o.stages.map((dm,i)=>'<div class="rf-node '+(i===Math.min(2,o.stages.length-1)?'mine':'')+'">'+(i+1)+'. '+DOM[dm]+'<br><small>'+(i===Math.min(2,o.stages.length-1)?'我 · 小满':['阿青','纸飞机','长尾巴','北辰'][i%4])+'</small></div>'+(i<o.stages.length-1?'<span class="rf-arrow">→</span>':'')).join('')+'</div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>我的步骤</h3><p>输入：上游步骤的已交付成果<br>输出：可被下一步骤直接使用的结果<br>截止：'+o.weeks+' 周内</p></div><div class="rf-card"><h3>同单协作</h3><p>承接后可以在订单聊天室中与其他猎人讨论接口、素材和交付状态。</p></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">暂不承接</button><button class="btn btn-green" onclick="acceptMatchedStep('+o.id+')">确认承接并安排工作</button></div>';
+  }else if(mode==='decompose'){
+    const o=S.myOrders.find(x=>x.id===id);if(!o)return;
+    const stages=o.steps||['strategy','design','copy','growth'];
+    B.innerHTML='<div class="rf-head"><div class="ico">🧩</div><div><h2>拆单方：设计步骤拓扑</h2><p>正式版可以拖动步骤，并新增、删除或改接步骤连线；本 demo 先操作步骤内容和顺序。</p></div><span class="tag tag-assoc">'+(o.decomposed?'已发布':'编辑中')+'</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>完整订单《'+o.name+'》</h3><p>目标：'+(o.goal||'完成一次能够真实使用的交付')+'<br>预算：'+yuan(o.pool)+' · '+(o.due||'两周后')+'<br>验收：'+(o.criteria||'成果可以执行并可追溯')+'</p></div><div class="rf-card"><h3>拆单检查</h3><p>☑ 每一步都有明确输出<br>☑ 上下游输入能够衔接<br>☑ 不同猎人可以独立完成</p></div></div>'+
+      '<div class="rf-topology">'+stages.map((dm,i)=>'<div class="rf-node" contenteditable="true">'+(i+1)+'. '+DOM[dm]+'<br><small>点击修改</small></div>'+(i<stages.length-1?'<span class="rf-arrow">→</span>':'')).join('')+'</div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">保存草稿</button><button class="btn btn-primary" onclick="publishTopology('+o.id+')">确认拓扑并进入匹配</button></div>';
+  }else if(mode==='hunter'){
+    const p=S.projects.find(x=>x.id===id);if(!p)return;
+    const msgs=rfMsgs(p.order.id);
+    B.innerHTML='<div class="rf-head"><div class="ico">🏹</div><div><h2>猎人工作台：《'+p.order.name+'》</h2><p>每个环节可以交给本人、AI、团队成员、外部服务或其他猎人；你仍对整步交付负责。</p></div><span class="tag tag-school">'+(p.ready?'可交付':'进行中')+'</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>任务内路由</h3>'+p.stages.map((st,i)=>'<div class="stage-row '+(st.rem<=0?'stage-done':'')+'">'+(st.rem<=0?'✔':'⏳')+' '+DOM[st.domain]+'<span class="who">'+routeWho(st)+'</span></div>').join('')+
+      '<div class="actions"><button class="btn btn-small btn-green" onclick="openSubcontract('+p.id+')">📮 外包一个子任务</button></div></div>'+
+      '<div class="rf-card"><h3>💬 订单聊天室</h3><div class="rf-chat">'+msgs.map(m=>'<div class="rf-msg '+(m.who==='我 · 小满'?'me':'')+'"><small>'+m.who+'</small><br>'+m.txt+'</div>').join('')+'</div><div class="rf-send"><input id="rfChatInput" placeholder="和同单协作者沟通"><button class="btn btn-small" onclick="sendOrderChat('+p.order.id+')">发送</button></div></div></div>'+
+      '<div class="rf-mission">外包会产生一轮新的“拆分 → 平台匹配 → 猎人完成”小循环；外包成果必须由你检查后才能汇入本步骤。</div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">返回订单页</button>'+(p.ready?'<button class="btn btn-primary" onclick="closeM(\'mRoleFlow\');openDeliver('+p.id+')">检查并提交整步</button>':'<button class="btn btn-primary" onclick="closeM(\'mRoleFlow\');tick()">推进一周</button>')+'</div>';
+  }else if(mode==='network'){
+    B.innerHTML='<div class="rf-head"><div class="ico">🤝</div><div><h2>交付完成：认识本次上下游伙伴</h2><p>一次协作不会自动生成公司。由人类猎人主动邀请，对方接受后才能成为长期成员。</p></div><span class="tag tag-purple">新联系人</span></div>'+
+      '<div class="rf-mission">你的小公司目前是“你 + AI”。邀请真实协作者加入后，它会成长为“多人 + 多个 AI”的组织。</div>'+
+      '<div class="rf-grid">'+['纸飞机 · 视觉猎人','长尾巴 · 内容猎人','北辰 · 整合猎人'].map((n,i)=>'<div class="rf-person"><span style="font-size:24px">'+['🎨','✍️','📦'][i]+'</span><div><b>'+n+'</b><small>刚刚与你完成同一订单 · 按时率 '+(92+i*3)+'%</small></div><button class="btn btn-small btn-green" onclick="inviteCollaborator(\''+n+'\')">邀请加入</button></div>').join('')+'</div>'+
+      '<div class="actions"><button class="btn btn-primary" onclick="closeM(\'mRoleFlow\')">回到公司</button></div>';
+  }else if(mode==='reviewMy'){
+    const o=S.myOrders.find(x=>x.id===id);if(!o||!o.subs)return;
+    B.innerHTML='<div class="rf-head"><div class="ico">📦</div><div><h2>拆单方：汇总步骤并进行初验</h2><p>先检查每份局部成果是否满足接口和验收要求，再把完整结果交给发单方评价。</p></div><span class="tag tag-assoc">待初验</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>步骤提交看板</h3>'+o.subs.map((s,i)=>'<div class="stage-row stage-done">✔ 步骤 '+(i+1)+' · '+s.co+'<span class="who">质量预估 '+Math.round(s.q)+'</span></div>').join('')+'</div><div class="rf-card"><h3>初验清单</h3><p>☑ 每一步都有可用交付物<br>☑ 上下游接口能够衔接<br>☑ 数据与过程可以追溯<br>☑ 已汇总成完整成果</p></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">稍后处理</button><button class="btn btn-primary" onclick="approveInitialReview('+o.id+')">通过初验，交给发单方</button></div>';
+  }else if(mode==='incubator'){
+    const evidence=S.archive.filter(x=>x.status.includes('交付')).length;
+    B.innerHTML='<div class="rf-head"><div class="ico">🏭</div><div><h2>孵化器视角：发现候选组织</h2><p>平台提供真实交付、协作和人机贡献证据；孵化器保留最终筛选权。</p></div><span class="tag tag-incu">真人筛选</span></div>'+
+      '<div class="rf-grid"><div class="rf-card"><h3>🏢 '+S.co+'</h3><p>人类成员：'+(1+S.members.length)+' · AI 伙伴：'+S.agents.length+'<br>真实交付：'+evidence+' 单 · 声望：'+Math.round(S.rep)+' · 信用：'+S.cred+'</p><ul><li>作品与客户评价可追溯</li><li>订单聊天室和协作记录可查</li><li>人与 AI 的路由记录可查</li></ul></div><div class="rf-card"><h3>孵化判断</h3><p>不要用一个总分替代真人判断。可以追加更复杂的验证订单，或邀请进入预备营。</p><div class="actions"><button class="btn" onclick="incuDecision(\'追加验证任务\')">发验证任务</button><button class="btn btn-primary" onclick="incuDecision(\'邀请进入预备营\')">发出邀请</button></div></div></div>'+
+      '<div class="actions"><button class="btn" onclick="closeM(\'mRoleFlow\')">退出孵化器视角</button></div>';
+  }
+  $('mRoleFlow').classList.add('show');
+};
+window.acceptMatchedStep=oid=>{closeM('mRoleFlow');openRoute(oid);};
+window.publishTopology=oid=>{const o=S.myOrders.find(x=>x.id===oid);if(o)o.decomposed=true;log('🧩 《'+o.name+'》步骤拓扑已发布,平台开始匹配猎人。');closeM('mRoleFlow');render();};
+function routeWho(st){
+  if(st.kind==='self')return '👤 本人';
+  if(st.kind==='ext')return '🔌 '+EXTS[st.domain].n;
+  if(st.kind==='hunter')return '🏹 '+(st.hunterName||'协作猎人');
+  if(st.kind==='member')return '🧑‍🎓 '+((S.members.find(m=>m.id===st.memberId)||{}).name||'成员');
+  return '🤖 '+((S.agents.find(a=>a.id===st.agentId)||{}).name||'Agent');
+}
+window.sendOrderChat=oid=>{const I=$('rfChatInput');if(!I||!I.value.trim())return;rfMsgs(oid).push({who:'我 · 小满',txt:I.value.trim()});openRoleFlow('hunter',S.projects.find(p=>p.order.id===oid).id);};
+window.openSubcontract=pid=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const B=$('roleFlowBody');
+  B.innerHTML='<div class="rf-head"><div class="ico">📮</div><div><h2>发布一个外包子任务</h2><p>从自己的步骤中切出一项工作，平台将匹配其他猎人。</p></div><span class="tag tag-incu">子任务</span></div>'+
+    '<div class="rf-grid"><div class="rf-card"><h3>需要外包什么？</h3><label class="choice">子任务 <select id="subDm">'+p.stages.map(st=>'<option value="'+st.domain+'">'+DOM[st.domain]+'的一部分</option>').join('')+'</select></label><label class="choice">奖金 ¥<input id="subPay" type="number" value="400" style="width:90px"></label><label class="choice">交付要求 <input id="subNeed" value="结果可以直接并入我的步骤" style="flex:1"></label></div><div class="rf-card"><h3>匹配到的猎人</h3><div class="rf-person"><span style="font-size:22px">🧪</span><div><b>阿策 · 增长猎人</b><small>相关交付 8 次 · 按时率 94%</small></div><button class="btn btn-small btn-green" onclick="confirmSubcontract('+pid+',\'阿策\')">选择</button></div><div class="rf-person"><span style="font-size:22px">📊</span><div><b>小数点 · 数据猎人</b><small>相关交付 5 次 · 按时率 100%</small></div><button class="btn btn-small" onclick="confirmSubcontract('+pid+',\'小数点\')">选择</button></div></div></div>'+
+    '<div class="actions"><button class="btn" onclick="openRoleFlow(\'hunter\','+pid+')">取消</button></div>';
+};
+window.confirmSubcontract=(pid,name)=>{
+  const p=S.projects.find(x=>x.id===pid);if(!p)return;
+  const dm=$('subDm').value,payN=Math.max(100,+$('subPay').value||400);
+  if(S.cash<payN){log('💸 现金不足,无法发布外包子任务。');return;}
+  pay(payN,'外包猎人');p.stages.push({domain:dm,kind:'hunter',hunterName:name,fit:2,rem:1,q:0,subtask:true});
+  rfMsgs(p.order.id).push({who:name+' · 外包协作者',txt:'我已承接子任务,会把成果发回订单聊天室。'});
+  log('📮 你把《'+p.order.name+'》中的'+DOM[dm]+'子任务外包给猎人 '+name+'。');
+  openRoleFlow('hunter',pid);render();
+};
+window.inviteCollaborator=name=>{
+  if(S.collaborators.includes(name)){log('🤝 '+name+' 已经在你的长期协作网络中。');return;}
+  S.collaborators.push(name);
+  const spec=name.includes('视觉')?'design':name.includes('内容')?'copy':'strategy';
+  S.members.push({id:uid++,name:name.split(' · ')[0],spec,skill:3.2,busy:null});
+  S.profile.net++;log('🤝 '+name+' 接受邀请,你的公司从“你 + AI”成长为多人协作组织。');render();openRoleFlow('network');
+};
+window.approveInitialReview=oid=>{const o=S.myOrders.find(x=>x.id===oid);if(!o)return;o.initialReviewed=true;log('📦 《'+o.name+'》已完成步骤汇总与初验,等待发单方最终评价。');closeM('mRoleFlow');render();openBiz('sup');};
+window.incuDecision=decision=>{log('🏭 孵化器决定:'+decision+'。');if(decision.includes('邀请'))S.profile.guildHist.incu=true;closeM('mRoleFlow');render();};
+
 /* ---- routing ---- */
 let pendO=null,routeSel=[];
 window.openRoute=oid=>{
@@ -1100,6 +1214,7 @@ function buildRoute(hint){
     S.members.forEach(m=>{
       if(!m.busy)options.push({kind:'member',memberId:m.id,label:'🧑‍🎓 '+m.name,fit:fitOf(dm,'member',m),sub:'专长:'+DOM[m.spec]+' · 工资制'});
     });
+    options.push({kind:'hunter',hunterName:'平台匹配猎人',label:'🏹 外包猎人',fit:2,sub:'奖金 ¥400 · 进入同单聊天室'});
     const ex=EXTS[dm];
     const exOk=!ex.needConn||S.conns[ex.needConn];
     options.push({kind:'ext',label:'🔌 '+ex.n,fit:ex.fit,sub:yuan(ex.cost)+(exOk?'':' · 需数字人引擎'),dis:!exOk});
@@ -1113,7 +1228,7 @@ function buildRoute(hint){
       op._j=j;
     });
     wrap.innerHTML='<div class="sname">'+(i+1)+'. '+DOM[dm]+'</div><div class="route-opts">'+opts+'</div>';
-    wrap.dataset.opts=JSON.stringify(options.map(o=>({kind:o.kind,agentId:o.agentId||null,memberId:o.memberId||null,fit:o.fit,dis:!!o.dis})));
+    wrap.dataset.opts=JSON.stringify(options.map(o=>({kind:o.kind,agentId:o.agentId||null,memberId:o.memberId||null,hunterName:o.hunterName||null,fit:o.fit,dis:!!o.dis})));
     box.appendChild(wrap);
   });
   updRouteCost();
@@ -1127,7 +1242,7 @@ window.pickRoute=(i,j)=>{
 };
 function updRouteCost(){
   let ap=0,cash=0;
-  routeSel.forEach(r=>{if(!r)return;if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;});
+  routeSel.forEach(r=>{if(!r)return;if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;if(r.kind==='hunter')cash+=400;});
   $('rtCost').textContent='本次路由:时间 -'+ap+' 个半天(本周剩 '+S.ap+') · 外部费用 '+yuan(cash)+'(现金 '+yuan(S.cash)+')';
 }
 $('rtCoach').onclick=()=>{
@@ -1139,13 +1254,13 @@ $('rtCoach').onclick=()=>{
 $('rtGo').onclick=()=>{
   if(routeSel.some(r=>!r)){$('rtCost').textContent='⚠️ 每个环节都要选人!';return;}
   let ap=0,cash=0;
-  routeSel.forEach(r=>{if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;});
+  routeSel.forEach(r=>{if(r.kind==='self')ap+=2;if(r.kind==='ext')cash+=EXTS[r.domain].cost;if(r.kind==='hunter')cash+=400;});
   if(ap>S.ap){$('rtCost').textContent='⚠️ 本周时间不够,承诺不了这么多亲自干的环节!';return;}
   if(cash>S.cash){$('rtCost').textContent='⚠️ 现金不够付外部资源!';return;}
   S.ap-=ap;if(cash>0)pay(cash,'外部资源');
   const agentsUsed=new Set(),membersUsed=new Set();
   const stages=routeSel.map(r=>{
-    const wrap={domain:r.domain,kind:r.kind,agentId:r.agentId,memberId:r.memberId,fit:r.fit,rem:1,q:0};
+    const wrap={domain:r.domain,kind:r.kind,agentId:r.agentId,memberId:r.memberId,hunterName:r.hunterName,fit:r.fit,rem:1,q:0};
     if(r.kind==='agent'){
       const a=S.agents.find(x=>x.id===r.agentId);
       wrap.rem=(pendO.diff>=3&&cap(a)<6)?2:1;
@@ -1160,7 +1275,7 @@ $('rtGo').onclick=()=>{
   membersUsed.forEach(id=>{const m=S.members.find(x=>x.id===id);if(m)m.busy=p.id;});
   S.projects.push(p);
   S.orders=S.orders.filter(o=>o.id!==pendO.id);
-  log('📝 接下《'+p.order.name+'》并完成路由:'+stages.map(st=>st.kind==='self'?'本人':st.kind==='ext'?'外部':'Agent').join('/'));
+  log('📝 接下《'+p.order.name+'》并完成路由:'+stages.map(st=>st.kind==='self'?'本人':st.kind==='ext'?'外部服务':st.kind==='hunter'?'其他猎人':st.kind==='member'?'团队成员':'Agent').join('/'));
   closeM('mRoute');render();
 };
 
@@ -1308,7 +1423,8 @@ function finishContest(p,overall){
   $('dvDetail').innerHTML='综合质量 '+Math.round(overall)+' · <b>名次 '+rank+'/'+n+'</b><br>奖金 <b>'+yuan(prize)+'</b>('+Math.round(share*100)+'% 池)· 声望 +'+repGain+
     (rank>=3?'<br>🧰 落选交付物进入题库:复盘素材 +1,作品集不清零':'')+
     (isReal&&grade==='S'?'<br>🤝 协会将把这份案例推荐给更多命题方!':'');
-  $('dvActions').innerHTML='<button class="btn btn-primary" onclick="closeM(\'mDeliver\')">收下!</button>';
+  $('dvActions').innerHTML='<button class="btn" onclick="closeM(\'mDeliver\')">收下</button>'+
+    '<button class="btn btn-primary" onclick="closeM(\'mDeliver\');openRoleFlow(\'network\')">🤝 查看本次上下游伙伴</button>';
   $('mDeliver').classList.add('show');
   S.archive.unshift({w:S.week,name:o.name,client:clientOf(o.src),grade:isReal?grade:'—',rank:rank+'/'+n,q:Math.round(overall),prize:Math.round(prize),status:'✔ 已交付'});
   log((isReal?'🤝 协会盖章 '+grade+'!':'🏫 班内评比:')+'《'+o.name+'》第 '+rank+'/'+n+' 名,+'+yuan(prize));
@@ -1512,7 +1628,8 @@ window.openBiz=tab=>{
     let mine='';
     if(S.myOrders.length){
       mine='<p style="margin:6px 0 3px;color:#8a765a">我发布的命题:</p>'+S.myOrders.map(o=>{
-        const st=o.subs?'<button class="btn btn-small btn-primary" onclick="judgeMy('+o.id+')">开奖评价</button>':'<span class="tag tag-gray">征集中(W'+(o.week0+2)+' 截止)</span>';
+        const st=o.subs?(o.initialReviewed?'<button class="btn btn-small btn-primary" onclick="judgeMy('+o.id+')">最终评价</button>':'<button class="btn btn-small" onclick="closeM(\'mBiz\');openRoleFlow(\'reviewMy\','+o.id+')">汇总初验</button>'):
+          (!o.decomposed?'<button class="btn btn-small" onclick="closeM(\'mBiz\');openRoleFlow(\'decompose\','+o.id+')">继续拆单</button>':'<span class="tag tag-gray">匹配中 / 征集中</span>');
         return '<div class="shop-item"><div class="d">《'+o.name+'》<small>奖金池 '+yuan(o.pool)+' · '+(o.subs?o.subs.length+' 份提交':'等待提交')+'</small></div>'+st+'</div>';
       }).join('');
     }
@@ -1608,9 +1725,12 @@ $('poGo').onclick=()=>{
   if(S.cash<pool){log('💸 现金不足以托管奖金池。');return;}
   pay(pool,'发单奖金池托管');
   const names={design:'公司官网视觉升级',copy:'品牌介绍文案',growth:'开学季获客方案'};
-  S.myOrders.push({id:uid++,name:names[dm],dm,pool,week0:S.week,subs:null});
+  const mine={id:uid++,name:names[dm],dm,pool,week0:S.week,subs:null,
+    goal:$('poGoal').value.trim(),due:$('poDue').value,criteria:$('poCriteria').value.trim(),
+    steps:['strategy',dm,dm==='growth'?'copy':'growth','comm'],decomposed:false};
+  S.myOrders.push(mine);
   log('📢 你以发单方身份发布命题《'+names[dm]+'》,奖金池 '+yuan(pool)+' 已托管——角色对称:今天你也是甲方。');
-  closeM('mPost');render();
+  closeM('mPost');render();openRoleFlow('decompose',mine.id);
 };
 window.judgeMy=oid=>{
   const o=S.myOrders.find(x=>x.id===oid);
@@ -1810,6 +1930,13 @@ $('startBtn').onclick=()=>{
 };
 $('weekBtn').onclick=tick;
 fillBoard();render();
+const rolePreview=new URLSearchParams(location.search).get('role');
+if(rolePreview){
+  $('startBtn').click();
+  setTab('orders');
+  if(rolePreview==='match'&&S.orders[0])openRoleFlow('match',S.orders[0].id);
+  if(rolePreview==='incubator')openRoleFlow('incubator');
+}
 
 </script>
 </body>
