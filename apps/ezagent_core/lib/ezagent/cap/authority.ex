@@ -295,7 +295,11 @@ defmodule Ezagent.Cap.Authority do
   """
   @spec generation_count(URI.t()) :: non_neg_integer()
   def generation_count(%URI{} = uri) do
-    uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() |> length()
+    uri
+    |> Ezagent.URI.instance()
+    |> Ezagent.URI.stable_key()
+    |> KindCapAuthority.list()
+    |> length()
   rescue
     _ -> 2
   catch

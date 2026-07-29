@@ -437,8 +437,11 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
+
     migration =
-      source("apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex")
+      source(
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
+      )
 
     cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
     grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")

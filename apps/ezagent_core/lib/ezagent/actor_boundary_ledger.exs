@@ -916,46 +916,58 @@
     # references `ActionSet.SelfLicense`). +7 sites (see the LifecyclePersistence /
     # ActorInternals allowlists + arch_baseline_manifest bump).
     %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+      path:
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
-      note: "#189 PR-3 FIX 4 — governed Session self-license migration (alias; low-level snapshot enumerate/rewrite/persist, no §2.2 write surface)"
+      note:
+        "#189 PR-3 FIX 4 — governed Session self-license migration (alias; low-level snapshot enumerate/rewrite/persist, no §2.2 write surface)"
     },
     %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+      path:
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
       target: "Ezagent.Kind.Snapshot",
       sha: "4247f9f0eb2d5e552782e7de1ec801400c2a7d4a75e7d68d8b65bc8ba03e9f8c",
-      note: "#189 PR-3 FIX 4 — governed Session self-license migration (strip_transients before the durable upsert)"
+      note:
+        "#189 PR-3 FIX 4 — governed Session self-license migration (strip_transients before the durable upsert)"
     },
     %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+      path:
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "90314de9d4604d50f621e6af9ce513872c0527c217e22aed74156e92ba9675f1",
-      note: "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.upsert persist)"
+      note:
+        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.upsert persist)"
     },
     %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+      path:
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "cd3ab850bea1a46baa29d3646d30d25166923870f533a82d06f2fe05a552d83a",
-      note: "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.list_all enumerate)"
+      note:
+        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.list_all enumerate)"
     },
     %{
-      path: "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
+      path:
+        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "a1efcb105ca1a58f57a701fe3259fc52e9f8f06efdf9231b9b16188345624e0e",
-      note: "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.decode_state)"
+      note:
+        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.decode_state)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "fece7ad67f512dca90895a843b51543445a6081ced6d3d8cdb8bae770e661e91",
-      note: "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.list_all; marker-only detection has no §2.2 equivalent)"
+      note:
+        "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.list_all; marker-only detection has no §2.2 equivalent)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "1567ebd2fdeb22340fea9aadf7bea91cf7f54d91d2e18439b8c772074fbac2b5",
-      note: "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.decode_state raw state emptiness)"
+      note:
+        "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.decode_state raw state emptiness)"
     }
   ],
   # §4.2 fixed process-generation consumers that SURVIVE C4 (cap.ex, entity/token.ex).
