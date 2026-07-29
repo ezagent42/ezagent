@@ -21,7 +21,7 @@ already-authorized task intake
 → isolated task workspace
 → deterministic head branch
 → collect bounded text changes
-→ Forgejo PAT（帐号级，见 §4）
+→ Forgejo OAuth2 access token（1h，refresh 轮换，见 §4）
 → provider-owned Git commit
 → create-or-reconcile PR
 → fresh-read PR, statuses, reviews
@@ -31,8 +31,9 @@ already-authorized task intake
 幂等目标与 Plan E §1 完全一致（同 run / 同 branch / 同 commit / 同 PR，
 observation 只刷新 facts 不制造 mutation）。
 
-**范围内：** 新 plugin `ezagent_plugin_forgejo`，实现既有的 5 个 adapter callback。
-**范围外：** webhook 接入、OAuth2 用户流、merge action、canary、任何 workflow 侧改动。
+**范围内：** 新 plugin `ezagent_plugin_forgejo` —— 既有的 5 个 adapter callback，
+外加 OAuth2 凭证接入（§11 的 F0；2026-07-29 决定提前，见 §4.1）。
+**范围外：** webhook 接入、merge action、canary、任何 workflow 侧改动。
 
 **一个 adapter 同时服务 Forgejo 与 Gitea。** 版本串 `15.0.5+gitea-1.22.0` 直接内嵌
 Gitea 版本，API 层至今兼容。但**必须做版本探测并记录**，不假设永远兼容（§13.3）。
@@ -106,20 +107,60 @@ Forgejo 侧落到 `ChangeFilesOptions.dates.{author,committer}` +
 
 ## 4. 权限边界 —— 与 Plan E 的**实质**差异
 
-### 4.1 认证模型没有对应物
+### 4.1 认证模型（2026-07-29 实证订正）
 
-| | GitHub（Plan E） | Forgejo |
-|---|---|---|
-| 模型 | App JWT → installation token | PAT（或 OAuth2） |
-| 粒度 | **每次 callback 铸一个最小权限、短期 token** | **帐号级、长期、按类别** |
-| 档位 | `InstallationPermissions.for!(:checks_read)` 等四档 | 无 |
-| 作用域 | 精确到单仓库 | **该帐号可见的全部仓库** |
+**V1 采用 OAuth2 授权码流程，不是 PAT**（决定：gaga 2026-07-29）。
 
-Plan E §6.1 步骤 1「mint exact repository + `change_request_write` token」与
-步骤 9「callback 返回前丢弃 token」中，**步骤 1 在 Forgejo 上无对应物**。
+本节初稿把 PAT 与 OAuth2 并列成一档「帐号级、长期」。**实测推翻了「长期」**
+（findings §8）：
 
-实测确认（findings §1）：`repository` 类别的 write scope 一旦勾选，即覆盖该
-帐号名下所有仓库；无法只授给一个仓库。
+| | GitHub（Plan E） | Forgejo **OAuth2** | Forgejo PAT |
+|---|---|---|---|
+| 模型 | App JWT → installation token | 授权码 + PKCE(S256) | 静态令牌 |
+| access token 时效 | 1 小时 | **1 小时（`expires_in: 3600`，实测）** | 永不过期 |
+| 续期 | 重新铸 | **refresh token，且每次轮换**（实测） | 无 |
+| 粒度 | 每次操作一个最小权限 token | 类别级 `<read\|write>:<category>` | 同左 |
+| 档位 | `InstallationPermissions.for!/1` 四档 | 无 | 无 |
+| 作用域 | 精确到单仓库 | 见 §4.1.1 | 见 §4.1.1 |
+
+Plan E §6.1 步骤 1「mint exact repository + `change_request_write` token」
+在 Forgejo 上仍无对应物；但步骤 9「callback 返回前丢弃 token」照常成立，
+且凭证**本身**已是短期的。
+
+#### 4.1.1 per-repo 收窄拿不到 —— 结构性推断，未实证
+
+Forgejo 的 scope 词表形如 `<read|write>:<category>`（`repository` / `user` /
+`issue` …），**语法里没有仓库选择器**，因此「只授一个仓库」无从表达。
+
+**这条是从 scope 语法推断的，没有直接实测。** 尝试过的实测不成立：探针帐号
+名下只有一个仓库，OAuth token 列出 1 个仓库这个结果，无法区分「作用域被收窄」
+与「帐号里就这一个」。
+
+将来该帐号有第二个仓库时，一次 `GET /user/repos`（带 OAuth token）即可坐实：
+能看见第二个 → 帐号级确证。**在那之前不得把它当已验事实引用。**
+
+#### 4.1.2 已实证的 scope 行为
+
+- scope **按类别强制**，且拒绝时**点名缺哪个**：
+  `token does not have at least one of required scope(s): [read:user]`；
+- token 响应**不回显**已授予的 scope —— 拿不到「实际授予了什么」的回执，
+  只能靠调用失败时的点名反推；
+- 认证头 `Bearer` 与 `token` **两种写法都接受**（同一 OAuth token 打 `/user`
+  均 200）。因此 `ForgejoClient` 现有的 `token` 方案对 PAT 与 OAuth 通用，
+  **无需按凭证类型分支**。
+
+#### 4.1.3 OAuth 应用只能由租户管理员在 web UI 注册
+
+`POST /user/applications/oauth2` 存在，但实测需要 **`write:user`** scope——
+那个 scope 能修改帐号设置，比仓库写权限更宽。**为省一次手工注册而让 Ezagent
+常驻一个可改帐号的凭证，不划算。**
+
+且它有先有鸡先有蛋问题：调这个 API 本身要一个已存在的凭证。
+
+**结论：每个 Forgejo 实例由该租户的管理员在 web UI 注册一次 OAuth 应用**，
+`client_id` / `client_secret` 录入 Ezagent。这是 per-instance 一次性成本，
+摊给该实例下的整个用户群 —— 与 GitHub「一个 App 服务所有人」同形，
+只是 Forgejo 自托管所以实例有 N 个。
 
 ### 4.2 保住什么，保不住什么
 
@@ -138,26 +179,31 @@ Plan E §6.1 步骤 1「mint exact repository + `change_request_write` token」�
 > **形状保留、强度下降**——测试名必须如实反映后者，不得沿用暗示铸造的名字。
 > （交接文档 §6.1：一条名字承诺得比实际多的测试，比没有这条更糟。）
 
-**保不住 —— 最小权限 + 短期。** 这是**安全姿态的实质差异，不是实现细节**：
+**短期 —— 走 OAuth 后保住了**（订正 2026-07-29）。access token 1 小时过期、
+refresh 轮换，与 GitHub installation token 时效同级。本节初稿称「无自动过期」，
+那是 PAT 的属性，被误当成 Forgejo 的属性。
 
-- 泄露/误用一个 Forgejo PAT 的爆炸半径 = 该帐号的全部仓库，而非一个仓库一次操作；
-- 无自动过期（GitHub installation token 1 小时）；
-- 无按操作降权（读操作也持有写权限）。
+**保不住 —— per-repo 最小权限。** 这是剩下的唯一实质差异：
 
-### 4.3 隔离单元 = 帐号（**待人类确认**）
+- 一个凭证的爆炸半径是该帐号在 `repository` 类别下的全部权限，而非一个仓库
+  一次操作（§4.1.1，结构性推断）；
+- 无按操作降权（读路径的凭证同样持写权限）。
 
-既然 token 无法按仓库收窄，唯一可用的隔离边界是**帐号**：
+### 4.3 隔离单元 = 授权用户本人（2026-07-29 定，取代初稿的 bot 帐号方案）
 
-- 每个 workspace / tenant 绑定一个专用 bot 帐号，其可见仓库即该 binding 的
-  最大爆炸半径；
-- `TaskBinding.credential_owner_uri` 已存在，正是承载这层绑定的字段，无需新设计。
+初稿提议「每个 workspace 绑一个专用 bot 帐号」，并标为待人类拍板，理由是它把
+安全属性从机制保证降级为运维约定。**改用 OAuth 后这个提议作废，问题也随之消解。**
 
-**这条需要 gaga / Allen 拍板**，因为它把一个安全属性从「机制保证」降级为
-「运维约定」。按 CLAUDE.md 的开发期安全姿态，此类非「防漂移 / caps 正确性」
-动机的机制**加之前先与人类开发者确认**——本文提出，不自行实施。
+每个用户**用自己的 Forgejo 帐号**走授权码流程，于是：
 
-若不接受帐号级隔离，替代方案只有「Forgejo 侧不做写路径，只做只读 provider」，
-那会砍掉本设计的主要价值。**建议接受，并把它写进 Forgejo 的运维文档。**
+- 凭证的爆炸半径天然被**该用户本人已有的权限**封住 —— 系统无法授出用户自己
+  没有的访问权，这是机制保证，不是运维约定；
+- 不存在一个聚合了多人权限的共享 bot 帐号；
+- commit 的 author/committer 是真实发起人，PR 归属清晰；
+- `TaskBinding.credential_owner_uri` 已存在，正是承载「这条 binding 用谁的
+  凭证」的字段，无需新设计。
+
+因此**初稿那条「需要 gaga / Allen 拍板」的条目关闭**——不再需要引入运维约定。
 
 ### 4.4 授权层不变
 
@@ -180,11 +226,31 @@ Forgejo 不改变任何一层——provider 换了，业务授权没换。
 | `ForgejoAdapter` | 5 个 callback；ref/commit/PR 的 create-or-reconcile；响应 → DomainGit typed values | `GitHubAdapter`（重写） |
 | `ForgejoClient` | 薄 Req 封装；`Authorization: token <PAT>`；HTTP → 封闭错误码映射 | `GitHubClient`（形状可抄） |
 | `ForgejoCredentialBackend` | PAT 存取，加密同 `GitHubTokenStore` 形状 | `GitHubCredentialBackend` |
-| `Config` | **`base_url` 必须可配**（见 §5.2） | `EzagentPluginGithub.Config`（大幅简化） |
-| `Application` | 声明式注册 `{"forgejo", ForgejoAdapter}` + backend pair | `ezagent_plugin_github/application.ex` |
+| `Instance` | 每 binding 从 `provider_host` 推导 API base（见 §5.2；实现时由 `Config` 更名，`Config` 只留真正的应用配置） | — |
+| `OAuthApp` | 每租户 OAuth 应用记录：`{workspace_uri, governed_host} → client_id + 加密 client_secret + redirect_uri`。**per-tenant 表，按不变式 14 必须 `workspace_uri NOT NULL`** | 无对应物（GitHub 全局一个 App，读 config 即可） |
+| `ForgejoOAuth` | authorize URL / code 换 token / refresh。**端点按 `governed_host` 拼，不是模块常量** | `GitHubOAuth`（形状可抄，端点与 scope 处理不同） |
+| `ForgejoDriver` | 8 个 `ProviderConnection.Driver` callback。**`refresh` / `reconcile_refresh` 有实义**（GitHub 侧无） | `GitHubDriver` |
+| `ForgejoCallbackPlug` | OAuth 回调入口 | `GitHubCallbackPlug` |
+| `Application` | 声明式注册 driver + backend pair + `{"forgejo", ForgejoAdapter}` | `ezagent_plugin_github/application.ex` |
 
-**不移植：** `GitHubAppJwt`、`GitHubInstallation`、`InstallationPermissions`、
-`GitHubOAuth`、`GitHubWebhookPlug`/`Verifier`（V1 无 webhook）。
+**不移植：** `GitHubAppJwt`、`GitHubInstallation`、`InstallationPermissions`
+（Forgejo 无 App→installation 模型）、`GitHubWebhookPlug`/`Verifier`（V1 无 webhook）。
+
+#### 5.1.1 per-instance OAuth 装得进既有 domain（已查证，无需改 domain）
+
+`provider_connections` 表已有 `workspace_uri` / `owner_uri` / `provider_id` /
+**`governed_host`**，且 `governed_host` 在 `@immutable` 中——**连接身份本就是
+「哪个租户的哪个用户、连到 provider X 的哪台主机」**。
+
+driver 侧拿得到它：`local_authorization_backend/exchange.ex` 的 `invoke_driver/7`
+把 `governed_host: row.governed_host` 放进 `private_frame`，driver 经 `exchange`
+闭包读取（`GitHubDriver.begin_authorization/1` 正是这个形状）。
+
+因此：**一个** Driver 声明 `{"forgejo", "oauth_user"}`，实例差异由 per-connection
+的 `governed_host` 承载。§12 的「需要改 domain → 停止报告」**未触发**。
+
+domain 未覆盖的只有 per-tenant 的 `client_id`/`client_secret`——它是 Forgejo
+特有数据，由上表的 `OAuthApp` 归 plugin 自己存。
 
 注册**必须走声明式 owner**（`Ezagent.DomainGit.AdapterDeclarationOwner`），
 plugin 源码不得自己调 registry 的 register API——`:ezagent_plugin_check`
@@ -527,15 +593,20 @@ step，请求飞向真实 provider **之前**抄一份 `{method, path}` 给测�
 
 ## 11. 实施切片
 
-| 片 | Owner | 交付 | 依赖 |
+| 片 | 状态 | 交付 | 依赖 |
 |---|---|---|---|
-| **F1** 骨架 | `ezagent_plugin_forgejo` | mix 项目；`Config`（**base_url 从 `provider_host` 推导**）；`ForgejoClient`（认证头 + §8.1 映射 + §8.3 传输区分）；`ForgejoCredentialBackend`；声明式注册。**不含任何 provider 逻辑** | 无 |
-| **F2** 读路径 | 同上 | `resolve_repository` / `read_change_request` / `list_checks`（§9.1-9.2）/ `list_reviews`（§9.3）。纯读，无 reconciliation | F1 |
-| **F3** 写路径 | 同上 | `create_change_request` 全序列（§7.1）；read-before-write；upsert 映射；PR find-or-create；§10.1 全部故障注入 | F2 |
-| **F4** 本地 E2E | 同上 | §10.1 主场景 + Plan E §8 八项 + Forgejo 七项 | F3 |
-| **F5** 真实 E2E | 同上 | §10.2 | F4 |
+| **F1** 骨架 | **已完成**（`1e976fbc1`） | mix 项目；`Instance`（base_url 从 `provider_host` 推导）；`ForgejoClient`（认证头 + §8.1 映射 + §8.3 传输区分）；`ForgejoCredentialBackend` | 无 |
+| **F0** OAuth 接入 | 待做 | `OAuthApp` 存储 + migration；`ForgejoOAuth`；`ForgejoDriver` 8 callback；`ForgejoCallbackPlug` + 路由；driver/backend-pair 声明；**把 `ForgejoCredentialBackend` 的两个 refresh callback 从 `:backend_unavailable` 换成真实现** | F1 |
+| **F2** 读路径 | 待做 | `resolve_repository` / `read_change_request` / `list_checks`（§9.1-9.2）/ `list_reviews`（§9.3）。纯读，无 reconciliation | F0 |
+| **F3** 写路径 | 待做 | `create_change_request` 全序列（§7.1）；read-before-write；upsert 映射；PR find-or-create；§10.1 全部故障注入 | F2 |
+| **F4** 本地 E2E | 待做 | §10.1 主场景 + Plan E §8 八项 + Forgejo 七项 | F3 |
+| **F5** 真实 E2E | 待做 | §10.2 | F4 |
 
-F1–F3 严格串行（F2 的错误映射依赖 F1 的 client，F3 的 reconciliation 依赖 F2 的读）。
+**F0 编号在 F1 之后但排在 F2 之前**：F1 已经合入，而 F0 是 2026-07-29 决定
+提前的（初稿把 OAuth 列为范围外，靠手工塞 PAT，会让 F2 无法端到端验证）。
+保留 F1 原编号以免既有 commit 与文档交叉引用失效。
+
+F0–F3 严格串行（F2 的凭证来自 F0，F3 的 reconciliation 依赖 F2 的读）。
 
 **每片都不得修改 `ezagent_plugin_git_workflow` / `ezagent_domain_git` /
 `ezagent_domain_workspace`。** 出现此需求 → 停止报告（§12）。
@@ -564,16 +635,25 @@ worktree；不改 main worktree、不自行 merge main、不碰 canary。
 
 ## 13. 未决 / 待人类决定
 
-1. **§4.3 帐号级隔离** —— 把「最小权限」从机制保证降级为运维约定，
-   需 gaga / Allen 拍板。**F1 之前必须闭合。**
-2. **§8.3 是否回头统一 `GitHubClient` 的传输/5xx 区分** —— 跨 owner 改动，
+1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户
+   用自己的帐号授权，爆炸半径由用户本人已有权限封住，是机制保证而非运维约定，
+   不再需要人类拍板。
+2. **§4.1.1 per-repo 收窄拿不到 —— 仍是结构性推断，未实证。** 探针帐号只有
+   一个仓库，无法区分「作用域收窄」与「帐号里就这一个」。该帐号有第二个仓库时，
+   带 OAuth token 打一次 `GET /user/repos` 即可坐实。**在那之前不得当已验事实引用。**
+3. **§8.3 是否回头统一 `GitHubClient` 的传输/5xx 区分** —— 跨 owner 改动，
    本设计不做，建议单独一片。
-3. **版本探测策略** —— 一个 adapter 服务 Forgejo + Gitea，探测到什么程度、
-   不兼容时如何降级，本设计未定。建议 F1 先记录版本到 telemetry，不做行为分支。
-4. **§9.2 / §9.3 的 ⚠️ 取值** —— `error` / `warning` / `REQUEST_CHANGES` /
+4. **`redirect_uri` 匹配规则**（精确 / 前缀 / 是否允许 http+localhost）未测。
+   只影响给租户管理员的注册说明，不影响代码结构；F0 实施时顺带验。
+5. **OAuth 请求哪些 scope** —— 已知需要 `repository` 类别的写权限；`read:user`
+   用于识别授权者身份。token 响应**不回显**已授予 scope（§4.1.2），所以最终集合
+   要靠 F2/F3 的真实调用反推：缺 scope 时 Forgejo 会点名。
+6. **版本探测策略** —— 一个 adapter 服务 Forgejo + Gitea，探测到什么程度、
+   不兼容时如何降级，本设计未定。建议先记录版本到 telemetry，不做行为分支。
+7. **§9.2 / §9.3 的 ⚠️ 取值** —— `error` / `warning` / `REQUEST_CHANGES` /
    `COMMENT` / `PENDING` 未在采样中观察到，实施时实测确认；无论如何未知值
    必须走 `:other` / 丢弃，不得崩溃。
-5. **§2.2 的 PR 端点行为待在目标实例复核** —— 现有结论采自 Codeberg
+8. **§2.2 的 PR 端点行为待在目标实例复核** —— 现有结论采自 Codeberg
    16.0.0-dev，目标实例是 15.0.5。结论不变则 §7.4 直接落地；即使不同，
    §7.4 仍是安全选择。
 

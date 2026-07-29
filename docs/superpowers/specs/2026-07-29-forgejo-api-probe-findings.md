@@ -283,7 +283,62 @@ string**（go 侧类型未导出取值），只能从真实数据采。
 
 ---
 
-## 7. 复现方式
+## 7. OAuth2 实证（2026-07-29 补，目标实例）
+
+走了一次完整的授权码流程：web UI 注册应用 → 浏览器授权 → code 换 token → refresh。
+
+### 7.1 已证成
+
+| 项 | 结果 |
+|---|---|
+| 授权码 + **PKCE S256** | 支持 |
+| `expires_in` | **3600（1 小时）** |
+| `refresh_token` | **签发；`grant_type=refresh_token` 换新 token 时一并轮换**（返回新的 access + 新的 refresh） |
+| `token_type` | `bearer` |
+| 认证头 | **`Bearer` 与 `token` 两种写法都接受** —— 同一 OAuth token 打 `/user` 均 200 |
+| token 响应是否回显 scope | **否** —— 拿不到「实际授予了什么」的回执 |
+
+**对设计的影响：** access token 时效与 GitHub installation token 同级（都是 1 小时），
+所以「短期凭证」这条在 Forgejo 上**保得住**——前提是走 OAuth 而非 PAT。
+`Bearer`/`token` 都接受意味着 `ForgejoClient` 不必按凭证类型分支。
+
+### 7.2 scope 行为
+
+- **按类别强制，拒绝时点名缺哪个**，例如：
+  `{"message":"token does not have at least one of required scope(s): [read:user]"}`；
+- 词表形如 `<read|write>:<category>`（`repository` / `user` / `issue` …），
+  **语法中无仓库选择器**；
+- 注册 OAuth 应用（`POST /user/applications/oauth2`）需要 **`write:user`** ——
+  该 scope 可修改帐号设置。因此「Ezagent 自助注册 OAuth 应用」不可取：
+  为省一次手工注册而常驻一个可改帐号的凭证不划算，且调该 API 本身需要一个
+  已存在的凭证（先有鸡先有蛋）。**租户管理员在 web UI 注册是唯一合理路径。**
+
+### 7.3 未证成：per-repo 收窄
+
+OAuth token `GET /user/repos` 只返回 1 个仓库，**但该帐号本就只有 1 个仓库**
+（用户确认），因此该结果**无法区分**「作用域被收窄到单仓库」与「帐号里就这一个」。
+
+PAT 对照组不成立：PAT 只持 `repository` 档，缺 `read:user`，调 `/user/repos` 直接 403。
+
+**结论只能是结构性推断**（scope 语法无仓库选择器），不是实测。
+该帐号出现第二个仓库时，带 OAuth token 打一次 `GET /user/repos` 即可坐实。
+
+### 7.4 操作坑：Cloudflare 按 User-Agent 拦截
+
+`code.hyprial.com` 在 Cloudflare 后面。用 python `urllib` 打 token 端点得到：
+
+```
+403  Error 1010: Access denied — browser_signature_banned
+"The site owner has blocked access based on your browser's signature."
+```
+
+请求**根本没到达 Forgejo**（所以授权码未被消费，换 curl 重打即成功）。
+`curl` 一路正常。**探针一律用 curl，不要用 python 的 http 客户端。**
+这条同样适用于将来的 live E2E：Req/Finch 的默认 UA 是否被拦需要实测。
+
+---
+
+## 8. 复现方式
 
 ```bash
 # schema（无需凭证）

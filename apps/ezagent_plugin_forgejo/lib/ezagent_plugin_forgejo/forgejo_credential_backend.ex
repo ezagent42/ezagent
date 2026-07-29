@@ -6,21 +6,35 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   under a key from `:ezagent_plugin_forgejo, :token_encryption_key`. The table
   is owned by this module's supervised process.
 
-  ## Why there is no refresh exchange
+  ## Refresh exchange is stubbed, pending slice F0
 
-  A Forgejo personal access token does not refresh — there is no refresh-token
-  flow to drive, so `begin_refresh_exchange/1` and `consume_refresh_exchange/1`
-  answer `{:error, :backend_unavailable}`. That is the honest answer, not a
-  gap: pretending to succeed would let a caller believe a rotation happened.
+  `begin_refresh_exchange/1` and `consume_refresh_exchange/1` currently answer
+  `{:error, :backend_unavailable}`. **That is a stub with a scheduled owner,
+  not a statement about Forgejo.**
+
+  A personal access token genuinely has nothing to refresh. But V1 authenticates
+  with OAuth2, not a PAT (design §4.1, decided 2026-07-29), and Forgejo's OAuth2
+  *does* issue refresh tokens — measured: `expires_in: 3600`, and
+  `grant_type=refresh_token` returns a new access token **and a new refresh
+  token** (rotation). So both callbacks become real in F0, and the stored
+  credential gains a rotating refresh token beside the access token.
+
+  Until then these answer unavailable rather than pretending to succeed: a
+  caller that believed a rotation happened would keep using a token that
+  expires in an hour.
 
   ## Security posture (design §4.2)
 
   This backend preserves "the credential never leaves the plugin": the
-  plaintext PAT exists only between `lease_for_operation/1` and the HTTP call
-  in `EzagentPluginForgejo.ForgejoClient`. What it CANNOT preserve is GitHub's
-  "least privilege + short lived" — a Forgejo PAT is account-scoped and
-  long-lived, with no per-operation minting to sit behind. See design §4 for
-  what that costs and §4.3 for the isolation unit that compensates.
+  plaintext token exists only between `lease_for_operation/1` and the HTTP call
+  in `EzagentPluginForgejo.ForgejoClient`.
+
+  With OAuth2 the credential is also genuinely **short-lived** (1h + rotation),
+  which is parity with a GitHub installation token. What is still not available
+  is GitHub's **per-repository** scoping: Forgejo's scope grammar is
+  `<read|write>:<category>` with no repository selector. Note that last point is
+  a structural inference from the grammar, **not** something measured — see
+  design §4.1.1 for what would settle it.
 
   The AES-GCM helpers are private here rather than a public sibling module
   (as `EzagentPluginGithub.GitHubTokenStore` is): they are an implementation
