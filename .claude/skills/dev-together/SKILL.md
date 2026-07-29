@@ -107,7 +107,13 @@ handoff into the card (collapsed), so a `done` card's 开工 prompt stays
 viewable forever. A board whose cards lack task files is incomplete. (Same
 pattern as URI-opaque: store once, reference by id, never re-derive. When a
 task has no formal prompt yet — external-party track, gated work — the file
-still exists and says so explicitly.)
+still exists and says so explicitly. **The renderer HARD-GATES both rules
+(2026-07-29): `board2html.py` refuses to render unless every card (incl.
+done_prev) has its task file with a non-empty `## Handoff prompt`, AND every
+not-done card of the previous board is carried or listed under
+`carryover_resolved:` with a reason — so a sent board.html PROVES the
+prev-board and tasks checks ran (`--no-check` bypass only with a reason in
+the commit).**)
 **`board.yaml` replaces the old plan.md/plan.html/review.md/review.html four-file
 model.** It is one living kanban for the day: `plan` writes the cards with their
 acceptance checklists into status columns at start-of-day (the board *is* the
