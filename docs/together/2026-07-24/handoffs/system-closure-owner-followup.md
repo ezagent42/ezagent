@@ -1,9 +1,9 @@
-# Handoff: #1498 system-closure — owner follow-up (post-evaluation, minimized)
+# Handoff: #1498 (Git Provider D1 retrospective + guarded Mix runner) — owner follow-up
 
-> **Date:** 2026-07-24 (worked 2026-07-24, re-verified against `origin/main` @ `9a0cc8874`, 2026-07-27-era)
+> **Date:** 2026-07-24 (worked 2026-07-24, re-verified against current `origin/main`)
 > **From:** gaga track (agent-executed) · **To:** Allen (dev-together skill owner)
-> **Tracking:** PR #1498 (sibling, already merge-ready) · this branch: `system-closure/dev-together-skill-updates` @ `c573fe826`
-> **Status:** evaluated, minimized, ready for your authorship — this is a 1-file, 5-line diff, not the original schema proposal
+> **Tracking:** PR #1498 "docs: Git Provider D1 retrospective + guarded Mix execution runner" (sibling, already merge-ready) · this branch: `system-closure/dev-together-skill-updates`
+> **Status:** evaluated, minimized, ready for your authorship — this is a 1-file, small diff, not the original "system-closure" schema proposal (renamed away from that term — see §0)
 
 ## 0. Mission
 
@@ -14,12 +14,21 @@ process (not just against the original incident) and cut down hard. This
 handoff is the **only piece left that needs your authorship** — everything
 else already landed or was dropped. It's small on purpose.
 
+Also renamed: "system-closure" only made sense to people who lived through
+the Git Provider D1 incident — the PR title/description no longer use it as
+a headline term; it now reads "Git Provider D1 retrospective + guarded Mix
+execution runner." The branch names (`docs/system-closure-method-...`,
+`system-closure/...`) and the archived file paths still say
+"system-closure" — those are left as-is (internal identifiers / dated
+historical records, not something a reader needs to parse).
+
 ## 1. What already happened (no action needed from you)
 
-- **PR #1498** (`docs/system-closure-method-productization`) is rebased on
+- **PR #1498** ("Git Provider D1 retrospective + guarded Mix execution
+  runner," branch `docs/system-closure-method-productization`) is rebased on
   current `main`, CI green (including `Only repo owner may edit dev-together
   skill` — it touches nothing under `.claude/skills/dev-together/**`),
-  and ready to merge as-is. It carries: the bilingual system-closure
+  and ready to merge as-is. It carries: the bilingual Git Provider D1
   retrospective + runbook, `scripts/guarded_mix.sh` + its 11-case contract
   test, and — new this round — **one pointer paragraph in `CONTRIBUTING.md`**
   telling anyone debugging process-spawning code (erlexec/PTY/sidecars) to
