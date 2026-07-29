@@ -71,6 +71,45 @@ defmodule Ezagent.Identity.Cutover.RunbookTest do
     refute Cutover.activated?()
   end
 
+  test "REFUSE on forced session-migration error — aborts BEFORE the parity barrier" do
+    # Reuse the EXISTING `p1_forced_shadow_failure_uris` seam
+    # (`Ezagent.EntityCaps.Store.persist/2`, already exercised cross-domain by
+    # `Ezagent.Socialware.SessionSelfLicenseMigrationTest`'s "RETRYABLE" test)
+    # rather than adding a new seam: it forces the session migration's
+    # AUTHORITATIVE store write to fail for one URI, which surfaces as a
+    # per-row `{:error, reason}` in `SessionSelfLicenseMigration.run/1`'s
+    # result — exactly the shape the Runbook's `run_session_migration/3` must
+    # abort on, the same way `abort_on_backfill_errors/2` aborts on a backfill
+    # error.
+    session = session_uri("session-migration-failure")
+    write_pre_cutover_session(session)
+
+    store_key = session |> Ezagent.URI.instance() |> URI.to_string()
+    Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [store_key])
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris)
+    end)
+
+    io =
+      ExUnit.CaptureIO.capture_io(:stderr, fn ->
+        assert {:refused, {:session_migration_errors, errors}} =
+                 Runbook.run(dry_run: false, io: fn _ -> :ok end)
+
+        assert [{session_uri_str, {:p1_forced_shadow_failure, ^store_key}}] = errors
+        assert session_uri_str == URI.to_string(session)
+      end)
+
+    # The abort is the SESSION-MIGRATION step (its exact, unique message) …
+    assert io =~ "session(s) FAILED to migrate"
+
+    # … and the parity barrier was NEVER reached (its refuse message is
+    # absent) — the `with` chain short-circuited BEFORE `FleetParity.check/0`.
+    refute io =~ "the store is NOT a parity-correct mirror"
+
+    refute Cutover.activated?()
+  end
+
   test "DRY-RUN does not activate even when parity is already complete" do
     user = user_uri("dry-run-complete")
     caps = licensed_caps(user, [])

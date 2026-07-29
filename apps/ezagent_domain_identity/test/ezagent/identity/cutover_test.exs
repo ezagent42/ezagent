@@ -5,6 +5,8 @@ defmodule Ezagent.Identity.CutoverTest do
   # suite (which relies on the override being force-active).
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Cap
+  alias Ezagent.Capability
   alias Ezagent.Identity.Cutover
 
   setup do
@@ -131,5 +133,65 @@ defmodule Ezagent.Identity.CutoverTest do
       # The epoch is LEFT ABSENT.
       refute Cutover.activated?()
     end
+
+    test "the REAL cutover task ACTIVATES on complete — pins the NEW 3-step CLI messages" do
+      # #189 release-runnable extraction (Ezagent.Identity.Cutover.Runbook) made
+      # the previously-undocumented session self-license migration step a real,
+      # printed step: the labels changed from "Step 1/2" / "Step 1b" / "Step 2/2"
+      # to "Step 1/3" / "Step 2/3" / "Step 3/3" (there really are three steps
+      # now — backfill, session migration, activate). This is a DELIBERATE,
+      # documented CLI output contract change (see PR #1625), NOT a silent
+      # regression — pin the new messages here so they carry the same
+      # protection the old ones would have.
+      user = user_uri("cutover-cli-activate")
+      caps = licensed_caps(user, [])
+      assert {:ok, _} = Ezagent.Users.create(user, nil, caps)
+
+      refute Cutover.activated?()
+
+      io =
+        ExUnit.CaptureIO.capture_io(fn ->
+          assert :ok = Task.run([])
+        end)
+
+      assert io =~ "=== #189 identity-plane cutover ==="
+      assert io =~ "Step 1/3 — backfill"
+      assert io =~ "Step 2/3 — session self-license migration"
+      assert io =~ "Step 3/3 — COMPLETE. Activating the cutover epoch"
+      assert io =~ "EPOCH ACTIVE — the store is now authoritative for identity reads."
+
+      assert Cutover.activated?()
+    end
+  end
+
+  # ---- helpers (mirror Ezagent.Identity.Cutover.RunbookTest) ---------------
+
+  defp user_uri(suffix),
+    do: URI.new!("entity://cutover-cli/user/#{suffix}-#{System.unique_integer([:positive])}")
+
+  defp licensed_caps(receiver, caps), do: [self_license(receiver) | caps]
+
+  defp self_license(receiver) do
+    {:ok, type} = Ezagent.URI.type(receiver)
+    kind = String.to_existing_atom(type)
+    {:ok, authority} = Cap.Authority.open(receiver, kind)
+
+    requested =
+      Capability.cap(
+        kind,
+        Ezagent.ActionSet.Identity,
+        :self_license,
+        receiver,
+        Ezagent.URI.workspace_of(receiver)
+      )
+
+    intent = Ezagent.Cap.Grant.freeze(receiver, receiver, receiver, requested)
+
+    {:ok, license} =
+      Cap.Authority.with_current(authority, fn ->
+        Cap.Authority.issue_self_license_current(intent)
+      end)
+
+    license
   end
 end
