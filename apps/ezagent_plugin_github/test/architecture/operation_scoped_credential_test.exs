@@ -187,6 +187,7 @@ defmodule EzagentPluginGithub.Architecture.OperationScopedCredentialTest do
         task_access_uri: Ezagent.URI.worker(workspace, "gta_#{hash}"),
         caller_uri: Ezagent.URI.entity(workspace, "agent", "caller"),
         grantee_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
+        credential_owner_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
         idempotency_key: "arch-sentinel-idem-1"
       })
 
@@ -303,6 +304,7 @@ defmodule EzagentPluginGithub.Architecture.OperationScopedCredentialTest do
         task_access_uri: Ezagent.URI.worker(workspace, "gta_#{hash}"),
         caller_uri: Ezagent.URI.entity(workspace, "agent", "caller"),
         grantee_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
+        credential_owner_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
         idempotency_key: "ccr-arch-sentinel-idem-1"
       })
 

@@ -248,6 +248,31 @@ Forgejo 不改变任何一层——provider 换了，业务授权没换。
 **不移植：** `GitHubAppJwt`、`GitHubInstallation`、`InstallationPermissions`
 （Forgejo 无 App→installation 模型）、`GitHubWebhookPlug`/`Verifier`（V1 无 webhook）。
 
+#### 5.1.0 唯一的 domain_git 改动：`OperationContext.credential_owner_uri`
+
+adapter 要拿凭证必须先解析一条已存储的连接，而解析需要「用谁的凭证」。
+`Entity.GitTaskAccess` policy 里本来就有 `credential_owner_uri`（与 `grantee_uri`
+是两个不同角色：谁可调用 vs 用谁的凭证），但 ActionSet 构造 `OperationContext`
+时没有往下传。
+
+**决定（gaga 2026-07-29，codex 独立复核）：给 `OperationContext` 加这一个
+provider-neutral 必填字段**，由 ActionSet 从 policy 填。
+
+- 不违反 Plan E §4.3 的冻结 —— 那冻结的是 adapter **callback 集合**，不是
+  DomainGit 值形状；`CreateChangeRequest.commit_date` 是同一先例。
+- **不加 `execution_identity`**。它不是 provider 账号 ID（那是
+  `external_account_id`），而是类别字符串；本 driver 恒产出 `"connected_user"`，
+  由 adapter 自己供给即可，provider 侧概念不进中性类型。
+- 必填无默认，理由同 `commit_date`：静默缺失会在很晚才表现为「凭证解析不出来」。
+- 顺带补了它的 workspace 一致性校验 —— 原先跨 workspace 的凭证持有者会被接受。
+
+**为什么不是「ActionSet 解析连接后把凭证句柄交给 adapter」**：那会让明文凭证
+流经 domain 代码，违反 §4.2 的「凭证不出 plugin」；且会给 provider-neutral 的
+Git domain 引入 provider-connection 的知识与依赖。
+
+**泛化**：GitHub 才是特例（App 每次操作现铸），Forgejo / Gitea / GitLab / 各种
+自托管都是「凭证是存下来的」，这个字段服务的是普遍情况。
+
 #### 5.1.1 per-instance OAuth 装得进既有 domain（已查证，无需改 domain）
 
 `provider_connections` 表已有 `workspace_uri` / `owner_uri` / `provider_id` /
@@ -642,6 +667,20 @@ worktree；不改 main worktree、不自行 merge main、不碰 canary。
 - 需要扩展 `DomainGit.Error` 封闭类型；
 - 需要新增 adapter callback；
 - **§4.3 的帐号级隔离未获人类确认**（这是 F1 之前就要闭合的前置）。
+
+---
+
+## 12.1 已知限制（gaga 2026-07-29 决定：记录，不在本线修）
+
+**凭证只存在 ETS，进程或 VM 重启后全部消失。** 而 `provider_connections` 行是
+durable 的，仍带着 `credential_backend_ref` / `credential_version` —— 重启后会
+留下一批「看起来 active」却指向不存在凭证的连接。
+
+`EzagentPluginGithub.GitHubCredentialBackend` 是**同样的性质**，所以这是既有
+模式而非本线引入。修它应当统一两家（持久化加密托管 + 启动重建），属独立一片；
+只修 Forgejo 会制造两家不一致。
+
+不阻塞 F2–F5 的验证：一次测试或一次运行内凭证是在的。
 
 ---
 

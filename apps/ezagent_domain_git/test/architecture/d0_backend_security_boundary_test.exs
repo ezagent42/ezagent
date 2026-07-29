@@ -43,6 +43,7 @@ defmodule Ezagent.DomainGit.D0BackendSecurityBoundaryTest do
              Enum.sort([
                :__struct__,
                :caller_uri,
+               :credential_owner_uri,
                :grantee_uri,
                :idempotency_key,
                :task_access_uri

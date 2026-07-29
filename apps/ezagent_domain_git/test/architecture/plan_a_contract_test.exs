@@ -24,6 +24,7 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
       :task_access_uri,
       :caller_uri,
       :grantee_uri,
+      :credential_owner_uri,
       :idempotency_key
     ],
     Ezagent.DomainGit.CreateChangeRequest => [

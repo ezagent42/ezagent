@@ -175,6 +175,7 @@ defmodule EzagentDomainGit.AdapterContractTest do
           ),
         caller_uri: Ezagent.URI.entity(workspace, "agent", "caller"),
         grantee_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
+        credential_owner_uri: Ezagent.URI.entity(workspace, "agent", "grantee"),
         idempotency_key: "success"
       })
 
