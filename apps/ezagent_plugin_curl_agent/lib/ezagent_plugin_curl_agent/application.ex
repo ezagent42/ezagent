@@ -27,8 +27,10 @@ defmodule EzagentPluginCurlAgent.Application do
     Kind and DELETED the standalone curl Kind + its legacy
     `:receive` / `:reset_conversation` / `:configure` shim bindings — the
     unified Agent Kind is the SOLE curl path (no back-compat window). The
-    `curl_agent` snapshot migration (`mix ezagent.curl.migrate`) rewrites
-    every pre-fold row onto `Entity.Agent` before a new-code node serves it.
+    `curl_agent` snapshot migration that rewrote pre-fold rows onto
+    `Entity.Agent` (`mix ezagent.curl.migrate`) has itself since been deleted
+    (chore/retire-dead-kind-migrations) — the system never reached production,
+    so no pre-fold `curl_agent` row ever needed migrating.
   - `template_classes/0` — the `curl.agent` Template Class, so
     workspaces can declare curl agents via the standard add-template UI.
   - `agent_flavors/0` — flavor `"curl"` → `{Ezagent.Entity.Agent,
@@ -93,11 +95,12 @@ defmodule EzagentPluginCurlAgent.Application do
     #
     # The standalone curl Kind + its legacy `:receive` /
     # `:reset_conversation` / `:configure` shim bindings are DELETED (PR-7, no
-    # rollback window — Allen). The `curl_agent` snapshot migration
-    # (`mix ezagent.curl.migrate`) rewrites every pre-fold row onto
-    # `Entity.Agent` (`:curl_agent → :agent` cap axis, `flavor: "curl"` slice,
-    # curl behaviors into `:kind_base`) BEFORE a new-code node serves it.
-    # `:api_keys` is already bound on `Entity.Agent` by
+    # rollback window — Allen). The `curl_agent` snapshot migration that
+    # rewrote pre-fold rows onto `Entity.Agent` (`:curl_agent → :agent` cap
+    # axis, `flavor: "curl"` slice, curl behaviors into `:kind_base`) has
+    # itself since been deleted (chore/retire-dead-kind-migrations) — the
+    # system never reached production, so there was no pre-fold row left to
+    # migrate. `:api_keys` is already bound on `Entity.Agent` by
     # `EzagentDomainIdentity.Application` — no re-binding here.
     for action <- CurlAgentBehavior.actions(), do: {AgentKind, action, CurlAgentBehavior}
   end

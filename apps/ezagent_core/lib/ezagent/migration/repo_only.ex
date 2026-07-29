@@ -12,10 +12,12 @@ defmodule Ezagent.Migration.RepoOnly do
   crash on the un-migrated durable state. `Ecto.Migrator.with_repo/2` starts
   ONLY the repo (and its Ecto adapter deps), runs the work, then stops it.
 
-  Both `mix ezagent.session.migrate_slice` and `mix ezagent.curl.migrate` need
-  the identical Repo-only boot. Extracted here (PR-6+7 curl-as-flavor) so the
-  pattern lives in one place instead of being copy-pasted per task — a single
-  sanctioned chokepoint for the ordered-cutover discipline.
+  `mix ezagent.session.migrate_slice` needs this Repo-only boot (originally
+  extracted in PR-6+7 curl-as-flavor, shared with the now-deleted
+  `mix ezagent.curl.migrate` — the retired standalone curl Kind's snapshot
+  migration; see chore/retire-dead-kind-migrations). Kept here as the single
+  sanctioned chokepoint for the ordered-cutover discipline so a future one-shot
+  snapshot migration task can reuse it instead of copy-pasting the pattern.
 
   > **TEST / sandbox DB only** for the migrations driven through this. As a
   > production cutover step they run under the ordered-cutover discipline

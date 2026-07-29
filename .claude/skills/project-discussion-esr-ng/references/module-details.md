@@ -260,7 +260,7 @@
 
 - **entry**：`apps/ezagent_plugin_curl_agent/lib/ezagent_plugin_curl_agent/application.ex:70`。**本轮无 lib 变化**。
 - **职责**：连 OpenAI-compatible `/chat/completions` 的 HTTP-API agent；curl-as-flavor fold 后无独立 Kind，flavor `"curl"` WIRING 到统一 `Entity.Agent`（STATE Behavior `Ezagent.ActionSet.CurlAgent` 在 domain_agent）。**hello 的 `hello.llm` 角色宿主 flavor**——`Entity.Agent.complete/3` 同步补全走 curl member。
-- `ApiClient`（`:httpc`，`body_format: :binary` 防 CJK 乱码）；`BridgeAdapter`（`:in_process_sync`，stateless，读 SNAPSHOT slice 避 self-deadlock）；`Template`（CredentialSliceAdapter `:api_keys`）；`CurlSnapshotMigration` + mix task。
+- `ApiClient`（`:httpc`，`body_format: :binary` 防 CJK 乱码）；`BridgeAdapter`（`:in_process_sync`，stateless，读 SNAPSHOT slice 避 self-deadlock）；`Template`（CredentialSliceAdapter `:api_keys`）。**`CurlSnapshotMigration` + mix task 已删除**（chore/retire-dead-kind-migrations，2026-07-29：系统未正式进入生产，pre-fold `curl_agent` 行从未存在，one-shot migration 无需保留）。
 - **测试**：12 个。
 
 ### ezagent_plugin_email（plugin）

@@ -5,10 +5,9 @@ defmodule Ezagent.Socialware.ConfigKeyRename do
 
   This is the testable logic the Ecto migration
   `EzagentCore.Repo.Migrations.RenameAdvisorBehaviorToAgentSoul` is a thin
-  caller of — mirroring the house pattern (`Ezagent.Identity.GrantMigration`,
-  `Ezagent.PluginCurlAgent.CurlSnapshotMigration`): the rewrite SQL lives in a
-  plain module tested in `EzagentCore.DataCase`, while the migration `up/0` /
-  `down/0` just call `run/0` / `rollback/0`.
+  caller of — mirroring the house pattern (`Ezagent.Identity.GrantMigration`):
+  the rewrite SQL lives in a plain module tested in `EzagentCore.DataCase`,
+  while the migration `up/0` / `down/0` just call `run/0` / `rollback/0`.
 
   ## What is rewritten
 

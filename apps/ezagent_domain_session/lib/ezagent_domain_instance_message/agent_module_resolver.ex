@@ -124,13 +124,15 @@ defmodule EzagentDomainInstanceMessage.AgentModuleResolver do
   #
   # PR-6+7 (curl-as-flavor) — the `"curl_agent"` → standalone-curl-Kind branch
   # is DELETED with that Kind (forward-only, no rollback alias — Allen).
-  # Every pre-fold `curl_agent` snapshot row is rewritten to `kind_type "agent"`
-  # by `mix ezagent.curl.migrate` BEFORE a new-code node serves it, so it
-  # resolves here as `Entity.Agent` (the unified Kind) with a `curl` flavor
-  # slice. With no back-compat the cutover is total — an un-migrated
-  # `curl_agent` row does not exist by the time new code serves rows (Allen
-  # 2026-06-13), so `"curl_agent"` is simply a dead kind_type that falls through
-  # to the unknown-kind `nil` like any other.
+  # Every pre-fold `curl_agent` snapshot row was rewritten to `kind_type "agent"`
+  # by the (since-deleted, chore/retire-dead-kind-migrations) `mix
+  # ezagent.curl.migrate` before any new-code node served it, so it resolves
+  # here as `Entity.Agent` (the unified Kind) with a `curl` flavor slice. With
+  # no back-compat the cutover is total — an un-migrated `curl_agent` row does
+  # not exist by the time new code serves rows (Allen 2026-06-13), so
+  # `"curl_agent"` is simply a dead kind_type that falls through to the
+  # unknown-kind `nil` like any other. The migration itself was deleted (no
+  # live production data ever existed to migrate).
   defp kind_module_from_kind_type("agent"), do: Ezagent.Entity.Agent
 
   # Fall back to the AgentFlavorRegistry: a bespoke agent Kind (e.g. a hello

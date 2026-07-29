@@ -128,11 +128,15 @@ defmodule Ezagent.ActionSet.CurlAgent do
 
   # PR-6+7 — the reparented Behavior lives on the unified `Ezagent.Entity.Agent`
   # Kind (type_name :agent), so its cap subjects key on the `:agent` axis. The
-  # old standalone curl Kind (keyed on `:curl_agent`) is DELETED;
-  # the `:curl_agent → :agent` cap-axis migration for EXISTING agents runs in
-  # `mix ezagent.curl.migrate` (forward-only, no rollback window). Manually
-  # exported to override the macro's `:any` default, mirroring how other
-  # agent-flavor behaviors pin their kind axis.
+  # old standalone curl Kind (keyed on `:curl_agent`) is DELETED; the
+  # `:curl_agent → :agent` cap-axis migration for pre-fold agents ran (once,
+  # forward-only, no rollback window) via the now-deleted
+  # `mix ezagent.curl.migrate` / `Ezagent.PluginCurlAgent.CurlSnapshotMigration`
+  # — retired with the rest of that one-shot's machinery since the system never
+  # reached production and there was no live `curl_agent` row left to migrate
+  # (chore/retire-dead-kind-migrations). Manually exported to override the
+  # macro's `:any` default, mirroring how other agent-flavor behaviors pin
+  # their kind axis.
   def required_caps do
     %{
       reset_conversation: Ezagent.Capability.cap(:agent, __MODULE__, :reset_conversation),

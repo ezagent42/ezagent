@@ -37,14 +37,6 @@ defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
                "apps/ezagent_core/test/invariants/no_silent_workspace_in_writers_test.exs",
                "apps/ezagent_core/test/invariants/lifecycle_persistence_access_test.exs",
                "apps/ezagent_core/test/invariants/test_snapshot_fixture_access_test.exs",
-               # PR-6+7 (curl-as-flavor) — the curl_agent snapshot migration test
-               # SEEDS pre-fold `curl_agent` rows via the low-level
-               # `KindSnapshot.upsert/6` and asserts on the migrated binary
-               # directly. It lives in the curl PLUGIN, which cannot reach the
-               # core-only `SnapshotFixtures` support module (cross-app), and it
-               # IS exercising the low-level migration primitive (same rationale
-               # as the slice_migration / kind_base_backfill round-trip tests).
-               "apps/ezagent_plugin_curl_agent/test/ezagent/plugin_curl_agent/curl_snapshot_migration_test.exs",
                # #189 PR-3 FIX 4 — the Session self-license migration test SEEDS
                # pre-cutover session snapshot fixtures via the low-level
                # `KindSnapshot.upsert/6` (it must control `mark_ever_created` +
