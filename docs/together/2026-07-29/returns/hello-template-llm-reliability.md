@@ -46,8 +46,8 @@ PR is opened.
 ## Proofs and gates
 
 - Initial rebase base: `c4ec7b478c4d4c40f3a52f060ad8746718fc5193`.
-  Follow-up rebase on 2026-07-29 updated the branch to remote `main`
-  `9854423e1` before the lease-protected push.
+  Follow-up rebases on 2026-07-29 updated the branch to remote `main`
+  `9854423e1` and then `1b90c204d` before lease-protected pushes.
 - Local targeted Elixir verification:
   `POSTGRES_PORT=55442 mix test apps/ezagent_core/test/invariants/recipe_cap_binding_invariant_test.exs apps/ezagent_domain_agent/test/ezagent/agent/recipe_materializer_test.exs apps/ezagent_domain_agent_bridge/test/ezagent/agent_bridge/socket_channel_test.exs apps/ezagent_domain_session/test/ezagent/socialware/installation_test.exs apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs apps/ezagent_plugin_codex/test/ezagent/template/codex_agent_home_isolation_test.exs apps/ezagent_plugin_hello/test/ezagent_plugin_hello/router_test.exs apps/ezagent_cli/test/ezagent_cli/session_socialware_facade_test.exs`.
 - Local World verification: Vitest `WorkspacePlugin` + `Conversation` source
@@ -91,4 +91,4 @@ PR is opened.
 ## Merge request
 
 PR #1576 targets `main` from `codex/hello-template-llm`. It is rebased on
-`9854423e1`; rebase again if `main` advances before merge.
+`1b90c204d`; rebase again if `main` advances before merge.
