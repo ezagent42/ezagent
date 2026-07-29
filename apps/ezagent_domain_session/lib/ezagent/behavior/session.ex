@@ -540,14 +540,12 @@ defmodule Ezagent.ActionSet.Session do
     reconciled_members =
       case ctx do
         %{self_uri: %URI{} = session_uri} ->
-          # Runtime-mount survival (socialware): a mount's key lives in the
-          # grantee's self-store cap slice, which is rebuilt on restart WITHOUT
-          # re-minting — so on every (re)start we re-issue the keys for every
-          # durable `MountRow` of this session. Best-effort + never raises (it
-          # rescues internally and returns `{:ok, _}`), so it cannot crash the
-          # Kind boot; a dead/ownerless target degrades that one mount only.
-          Ezagent.Socialware.Mount.reconcile_session_mounts(session_uri)
-
+          # Runtime-mount survival needs no re-mint on restart: a mount cap lives
+          # in the grantee's OWN durable store (users.caps_json / agent snapshot),
+          # which a cold rebuild re-reads, so the cap outlives a session restart on
+          # its own (cap-as-truth; proven by `MountCapSurvivesRespawnTest`). The old
+          # `Mount.reconcile_session_mounts/1` re-mint from the `MountRow` ledger was
+          # a redundant second-truth-source pass and has been removed.
           Ezagent.ActionSet.Session.Reconcile.reconcile_after_load(
             session_uri,
             persisted_members
