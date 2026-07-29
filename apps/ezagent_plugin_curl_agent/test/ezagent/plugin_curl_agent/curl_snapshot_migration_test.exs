@@ -86,6 +86,19 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     {:ok, _row} =
       KindSnapshot.upsert(uri_str, "curl_agent", binary, 0, @workspace, mark_ever_created: true)
 
+    # Every REAL pre-migration curl agent has authority history — #1457 mints
+    # `kind_cap_authorities` at live creation for every durable principal. A
+    # fabricated snapshot row without it is a state no production migration
+    # source can be in, and (post-#1621) cold-loading it correctly trips the
+    # anti-resurrection guard (`:no_authority_for_existing`). Mint the history
+    # the fixture row would have had in production.
+    {:ok, _authority} =
+      Ezagent.Cap.Authority.open(
+        Ezagent.URI.instance(Ezagent.URI.new!(uri_str)),
+        :agent,
+        :created
+      )
+
     uri_str
   end
 
