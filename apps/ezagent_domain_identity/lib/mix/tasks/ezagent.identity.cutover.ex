@@ -54,19 +54,30 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
     result = FleetParity.check()
     Mix.shell().info("Fleet parity — #{result.checked} durable holder(s) checked.")
 
-    cond do
-      not result.complete ->
+    case decide(result, dry_run?) do
+      :refuse ->
         report_incomplete(result)
         Mix.shell().error("REFUSED: the store is NOT a parity-correct mirror. Epoch NOT activated.")
         exit({:shutdown, 1})
 
-      dry_run? ->
+      :dry_run ->
         Mix.shell().info("COMPLETE — parity holds. (--dry-run: epoch NOT activated.)")
 
-      true ->
+      :activate ->
         activate!()
     end
   end
+
+  @doc """
+  The operator SAFETY INTERLOCK, extracted PURE for test coverage: the epoch is
+  activated ONLY when parity is `complete` and this is not a `--dry-run`. An
+  INCOMPLETE barrier ALWAYS `:refuse`s — the epoch is never activated on
+  divergence. (`activate/0` itself is exercised by `Ezagent.Identity.CutoverTest`.)
+  """
+  @spec decide(%{complete: boolean()}, boolean()) :: :refuse | :dry_run | :activate
+  def decide(%{complete: false}, _dry_run?), do: :refuse
+  def decide(%{complete: true}, true), do: :dry_run
+  def decide(%{complete: true}, false), do: :activate
 
   defp run_backfill(true) do
     Mix.shell().info("Step 1/2 — backfill (--dry-run)…")

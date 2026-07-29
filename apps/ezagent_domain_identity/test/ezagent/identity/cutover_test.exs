@@ -65,4 +65,20 @@ defmodule Ezagent.Identity.CutoverTest do
     Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
     refute Cutover.active?()
   end
+
+  describe "cutover task INTERLOCK (refuse-unless-complete)" do
+    alias Mix.Tasks.Ezagent.Identity.Cutover, as: Task
+
+    test "an INCOMPLETE barrier ALWAYS refuses — the epoch is never activated on divergence" do
+      # The one operator safety interlock: no matter the dry-run flag, an
+      # incomplete parity result must NOT activate.
+      assert Task.decide(%{complete: false}, false) == :refuse
+      assert Task.decide(%{complete: false}, true) == :refuse
+    end
+
+    test "a COMPLETE barrier activates (live) or reports (dry-run), never the reverse" do
+      assert Task.decide(%{complete: true}, false) == :activate
+      assert Task.decide(%{complete: true}, true) == :dry_run
+    end
+  end
 end
