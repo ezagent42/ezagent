@@ -299,6 +299,25 @@ Then refresh the browser. If you want this to apply automatically on the next de
 
 ---
 
+## Symptom: `npm install` / `pnpm install` (or `mix assets.build`'s tailwind/esbuild binary download) hangs or fails to resolve hosts
+
+**Cause:** some dev boxes reach the public internet through a filtering proxy (GFW-style), so plain outbound HTTPS to the npm registry, GitHub releases (tailwind/esbuild download their platform binary from `github.com/tailwindlabs/...` / `github.com/evanw/esbuild` on first use), etc. times out or resets.
+
+**Fix:** export a proxy before running any of `npm install`, `pnpm install`, `mix tailwind`, `mix esbuild`, or `mix assets.build`/`mix assets.setup` in `apps/ezagent_web`, `apps/ezagent_plugin_world`, `apps/ezagent_plugin_hello`:
+
+```bash
+export HTTPS_PROXY=http://127.0.0.1:7896
+export HTTP_PROXY=http://127.0.0.1:7896
+```
+
+(matches the proxy already documented for the dockerized CI build in `docs/guide/ci-docker-local.md`, port 7896 — same box, same proxy, non-docker case). `mix tailwind`/`mix esbuild` print `Using HTTPS_PROXY: ...` in their download log when this is picked up.
+
+**Note:** you should rarely need this for `mix test apps/ezagent_web/test` itself — that command no longer builds assets as a side effect (see `apps/ezagent_web/test/test_helper.exs`); it skips the one test that needs a real compiled bundle (`@describetag :requires_built_assets` in `demo_smoke_test.exs`) when `priv/static/assets/css/app.css` is absent. You only need the proxy + an explicit `mix assets.build` (from `apps/ezagent_web`) when you want that test to actually run locally, or when doing real frontend dev (`mix phx.server`, `mix assets.setup`).
+
+**CI gate:** N/A locally; in CI, `mix ci.local`/`mix ci.shard.web` (see `mix.exs` `pnpm_install_assets/1` + `build_web_assets/1`) and the `frontend` GitHub Actions job (`.github/workflows/frontend-ci.yml`) build the real assets — those runners are not behind this proxy.
+
+---
+
 ## When this runbook doesn't have your symptom
 
 In order:
