@@ -127,17 +127,29 @@ Plan E §6.1 步骤 1「mint exact repository + `change_request_write` token」
 在 Forgejo 上仍无对应物；但步骤 9「callback 返回前丢弃 token」照常成立，
 且凭证**本身**已是短期的。
 
-#### 4.1.1 per-repo 收窄拿不到 —— 结构性推断，未实证
+#### 4.1.1 per-repo 收窄拿不到 —— **已实证**（2026-07-29）
 
 Forgejo 的 scope 词表形如 `<read|write>:<category>`（`repository` / `user` /
 `issue` …），**语法里没有仓库选择器**，因此「只授一个仓库」无从表达。
 
-**这条是从 scope 语法推断的，没有直接实测。** 尝试过的实测不成立：探针帐号
-名下只有一个仓库，OAuth token 列出 1 个仓库这个结果，无法区分「作用域被收窄」
-与「帐号里就这一个」。
+**实测坐实**（findings §7.3）：一个以 `write:repository read:user` 授出的
+OAuth token，`GET /user/repos` 返回该帐号下**全部**仓库，且 `permissions.push`
+均为 `true`。
 
-将来该帐号有第二个仓库时，一次 `GET /user/repos`（带 OAuth token）即可坐实：
-能看见第二个 → 帐号级确证。**在那之前不得把它当已验事实引用。**
+关键在时序 —— 第二个仓库是在**该 token 签发之后**创建的，token 照样看得见：
+
+```
+token 签发           ~17:xx
+gagameow/ezagent-forgejo-test   created 16:14   ← 授权前已存在
+gagameow/test-2                 created 18:02   ← 授权后才创建，仍可见
+```
+
+因此这个授权**不是签发时刻的仓库快照，而是持续跟随帐号**。
+一个凭证的爆炸半径 = 该帐号在 `repository` 类别下的全部权限，
+**与它是为哪个 binding 取得的无关**。
+
+（保留一处未测：`permissions.push: true` 是服务端对该 token 的权限声明，
+未做实际写入验证。结论不因此改变。）
 
 #### 4.1.2 已实证的 scope 行为
 
@@ -638,9 +650,9 @@ worktree；不改 main worktree、不自行 merge main、不碰 canary。
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户
    用自己的帐号授权，爆炸半径由用户本人已有权限封住，是机制保证而非运维约定，
    不再需要人类拍板。
-2. **§4.1.1 per-repo 收窄拿不到 —— 仍是结构性推断，未实证。** 探针帐号只有
-   一个仓库，无法区分「作用域收窄」与「帐号里就这一个」。该帐号有第二个仓库时，
-   带 OAuth token 打一次 `GET /user/repos` 即可坐实。**在那之前不得当已验事实引用。**
+2. ~~**§4.1.1 per-repo 收窄未实证**~~ —— **已关闭**（2026-07-29）。帐号新建第二个
+   仓库后复测坐实：签发在前的 OAuth token 看得见创建在后的仓库，授权持续跟随
+   帐号而非签发时快照。见 §4.1.1 与 findings §7.3。
 3. **§8.3 是否回头统一 `GitHubClient` 的传输/5xx 区分** —— 跨 owner 改动，
    本设计不做，建议单独一片。
 4. **`redirect_uri` 匹配规则**（精确 / 前缀 / 是否允许 http+localhost）未测。

@@ -313,15 +313,29 @@ string**（go 侧类型未导出取值），只能从真实数据采。
   为省一次手工注册而常驻一个可改帐号的凭证不划算，且调该 API 本身需要一个
   已存在的凭证（先有鸡先有蛋）。**租户管理员在 web UI 注册是唯一合理路径。**
 
-### 7.3 未证成：per-repo 收窄
+### 7.3 per-repo 收窄拿不到 —— **已实证**
 
-OAuth token `GET /user/repos` 只返回 1 个仓库，**但该帐号本就只有 1 个仓库**
-（用户确认），因此该结果**无法区分**「作用域被收窄到单仓库」与「帐号里就这一个」。
+第一轮不成立：当时 OAuth token `GET /user/repos` 只返回 1 个仓库，但该帐号
+本就只有 1 个，无法区分「作用域被收窄」与「帐号里就这一个」。PAT 对照组同样
+不成立（PAT 只持 `repository` 档，缺 `read:user`，调 `/user/repos` 直接 403）。
 
-PAT 对照组不成立：PAT 只持 `repository` 档，缺 `read:user`，调 `/user/repos` 直接 403。
+**帐号新建第二个仓库后复测，坐实了**：
 
-**结论只能是结构性推断**（scope 语法无仓库选择器），不是实测。
-该帐号出现第二个仓库时，带 OAuth token 打一次 `GET /user/repos` 即可坐实。
+```
+GET /user/repos  (Authorization: Bearer <同一个 OAuth token>)
+→ 2 个
+   gagameow/ezagent-forgejo-test   push=true   created 2026-07-29T16:14:03
+   gagameow/test-2                 push=true   created 2026-07-29T18:02:32
+```
+
+**决定性的是时序**：`test-2` 创建于 18:02，晚于该 token 的签发时刻，token
+仍然看得见它。所以授权**不是签发时刻的仓库快照，而是持续跟随帐号** ——
+per-repo 收窄不存在，且新增仓库自动落入既有凭证的半径内。
+
+刷新后的 access token（rotation 产物）返回同样结果。
+
+未测的一点：`permissions.push: true` 是服务端对该 token 的权限声明，未做实际
+写入验证。不影响上述结论。
 
 ### 7.4 操作坑：Cloudflare 按 User-Agent 拦截
 
