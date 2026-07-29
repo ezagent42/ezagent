@@ -132,6 +132,32 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam.CapBacked do
     )
   end
 
+  # A `:call` dispatch whose ctx carries no `:deadline_ms` gets
+  # `Ezagent.Invocation`'s 5-second default (`invocation.ex:440`). That budget
+  # is wrong for this seam and it was found by the first live GitHub run:
+  # ONE `create_change_request` is ~6 sequential provider round trips (blob →
+  # tree → commit → ref → PR search → PR create), which exceeds 5s routinely
+  # over a normal internet path and always over a proxied one.
+  #
+  # The failure mode is what makes it worth a named constant rather than a
+  # bigger number: `GenServer.call/3` **exits** on timeout, so the caller's
+  # `with` chain never sees an error tuple — the run process dies, no stable
+  # blocker code is recorded, and §7.2's retry policy never runs. A stub
+  # provider answers in microseconds and can never surface this.
+  #
+  # 30s matches `GitRunner`'s own `@default_deadline_ms` for the same reason:
+  # it is a real-network budget, not a local-call one. Overridable for
+  # deployments whose provider path is slower still.
+  @default_dispatch_deadline_ms 30_000
+
+  defp dispatch_deadline_ms do
+    Application.get_env(
+      :ezagent_plugin_git_workflow,
+      :dispatch_deadline_ms,
+      @default_dispatch_deadline_ms
+    )
+  end
+
   defp dispatch(action_target, grantee_uri, cap, typed_args) do
     %Invocation{
       target: action_target,
@@ -141,12 +167,23 @@ defmodule EzagentPluginGitWorkflow.ExecutionSeam.CapBacked do
         caller: grantee_uri,
         authenticated_principal: grantee_uri,
         caps: MapSet.new([cap]),
+        deadline_ms: dispatch_deadline_ms(),
         reply: {:caller_inbox, self()}
       },
       origin: :trusted_internal
     }
-    |> Invocation.dispatch()
+    |> dispatch_catching_exit()
     |> normalize()
+  end
+
+  # Even with a realistic budget the deadline can be reached, and when it is,
+  # `:provider_unavailable` is the honest answer: retryable under §7.2, with a
+  # stable code the run records — rather than an exit that takes the caller
+  # down and leaves the row saying nothing at all.
+  defp dispatch_catching_exit(invocation) do
+    Invocation.dispatch(invocation)
+  catch
+    :exit, {:timeout, _call} -> {:error, :provider_unavailable}
   end
 
   defp normalize({:ok, result}), do: {:ok, result}

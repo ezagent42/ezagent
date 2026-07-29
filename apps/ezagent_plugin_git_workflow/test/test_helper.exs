@@ -1,4 +1,6 @@
-ExUnit.start()
+# 真实 GitHub 往返（test/e2e/github_live_test.exs）默认不跑：需要凭证 + 网络。
+# 跑法见该文件 moduledoc 与 docs/guide/github-plugin-config.md。
+ExUnit.start(exclude: [:live_github])
 Ecto.Adapters.SQL.Sandbox.mode(EzagentCore.Repo, :manual)
 
 # Slice P4b — the authorization-surface suite dispatches real, signed
