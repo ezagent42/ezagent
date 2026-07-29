@@ -68,6 +68,58 @@ defmodule EzagentPluginFeishu.WebhookAttachmentsTest do
     assert att.duration == 42
   end
 
+  test "media (video) message → video attachment with duration" do
+    body =
+      build(%{
+        "message_type" => "media",
+        "content" => ~s({"file_key":"media_key","duration":99}),
+        "message_id" => "om_test_media_001"
+      })
+
+    assert body.text == ""
+    assert [att] = body.attachments
+    assert att.type == :video
+    assert att.duration == 99
+  end
+
+  # P1 test-supplement (security triage) — malformed-input rejection at
+  # the EventDecoder boundary. `content` is attacker/Feishu-controlled;
+  # it must never crash the webhook, only degrade gracefully.
+  test "content that is not valid JSON degrades to an empty content map (no crash)" do
+    body =
+      build(%{
+        "message_type" => "text",
+        "content" => "{not valid json",
+        "message_id" => "om_test_badjson_001"
+      })
+
+    assert body.text == ""
+    assert body.attachments == []
+  end
+
+  test "content that is not even a string (e.g. already a map) degrades to an empty content map (no crash)" do
+    body =
+      build(%{
+        "message_type" => "text",
+        "content" => %{"text" => "already-a-map-not-a-json-string"},
+        "message_id" => "om_test_maptype_001"
+      })
+
+    assert body.text == ""
+    assert body.attachments == []
+  end
+
+  test "missing message_type entirely defaults to \"unknown\" → text breadcrumb, no crash" do
+    body =
+      build(%{
+        "content" => ~s({"foo":"bar"}),
+        "message_id" => "om_test_notype_001"
+      })
+
+    assert String.contains?(body.text, "message_type=unknown")
+    assert body.attachments == []
+  end
+
   test "unknown message_type → text breadcrumb (so CC sees the attempt)" do
     body =
       build(%{
