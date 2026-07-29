@@ -9,7 +9,10 @@ defmodule Ezagent.Socialware.CompositionConsentCommand do
 
   schema "socialware_composition_consent_commands" do
     field(:workspace_uri, :string)
+    # A composition command references its binding; a URI-share command
+    # references its consent directly. Exactly one is set.
     field(:binding_id, :string)
+    field(:consent_id, :string)
     field(:side, Ecto.Enum, values: [:target, :source])
     field(:command, Ecto.Enum, values: [:approve, :deny, :revoke])
     field(:actor_uri, :string)
@@ -17,12 +20,41 @@ defmodule Ezagent.Socialware.CompositionConsentCommand do
     field(:inserted_at, :utc_datetime_usec)
   end
 
-  @fields ~w(idempotency_key workspace_uri binding_id side command actor_uri result_state inserted_at)a
+  @fields ~w(idempotency_key workspace_uri binding_id consent_id side command actor_uri result_state inserted_at)a
+  # `binding_id`/`consent_id` are contextual (composition vs URI-share) — not
+  # required here; the caller sets exactly one.
+  @required ~w(idempotency_key workspace_uri side command actor_uri result_state inserted_at)a
 
   @doc false
   def changeset(command, attrs) do
     command
     |> cast(attrs, @fields)
-    |> validate_required(@fields)
+    |> validate_required(@required)
+    |> validate_shape()
+    |> check_constraint(:binding_id,
+      name: :consent_command_binding_xor_consent,
+      message: "must reference either a binding (composition) OR a consent (URI-share)"
+    )
+  end
+
+  # M4 (command side): exactly one of `binding_id` / `consent_id` is set — a
+  # command is a composition command XOR a URI-share command. Mirror the DB CHECK
+  # in the changeset so a malformed idempotency record fails loud before insert.
+  defp validate_shape(changeset) do
+    binding = get_field(changeset, :binding_id)
+    consent = get_field(changeset, :consent_id)
+
+    composition? = not is_nil(binding) and is_nil(consent)
+    uri_share? = is_nil(binding) and not is_nil(consent)
+
+    if composition? or uri_share? do
+      changeset
+    else
+      add_error(
+        changeset,
+        :binding_id,
+        "must reference either a binding (composition) OR a consent (URI-share)"
+      )
+    end
   end
 end
