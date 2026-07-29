@@ -91,7 +91,13 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # to `grant_migration.ex :migrate_users/1`.
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
                               :legacy_users, 0},
-                             {"apps/ezagent_domain_identity/lib/mix/tasks/ezagent.identity.backfill.ex",
+                             # #189 release-runnable cutover extraction — moved from
+                             # the (now thin-shell) mix task
+                             # `lib/mix/tasks/ezagent.identity.backfill.ex` into the
+                             # plain lib module `Ezagent.Identity.Backfill`, so the
+                             # backfill WORK runs from a Mix-less release node too.
+                             # Same read-only access, same site, new file.
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity/backfill.ex",
                               :backfill_users, 1}
                            ])
 
