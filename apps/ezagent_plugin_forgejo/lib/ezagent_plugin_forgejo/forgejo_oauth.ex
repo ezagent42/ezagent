@@ -64,14 +64,18 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
   logs. The caller keeps the verifier to present at `exchange_code/4`.
   """
   @spec authorize_url(app(), String.t(), String.t()) :: {:ok, String.t()} | {:error, error()}
-  def authorize_url(app, state, code_verifier)
+  def authorize_url(
+        %{client_id: client_id, redirect_uri: redirect_uri} = app,
+        state,
+        code_verifier
+      )
       when is_binary(state) and is_binary(code_verifier) do
     with {:ok, base} <- web_base(app) do
       query =
         URI.encode_query(%{
           "response_type" => "code",
-          "client_id" => app.client_id,
-          "redirect_uri" => app.redirect_uri,
+          "client_id" => client_id,
+          "redirect_uri" => redirect_uri,
           "state" => state,
           "code_challenge" => s256_challenge(code_verifier),
           "code_challenge_method" => "S256",
@@ -85,7 +89,7 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
   @doc "Exchanges an authorization code for tokens, proving possession of the PKCE verifier."
   @spec exchange_code(app(), String.t(), String.t(), keyword()) ::
           {:ok, tokens()} | {:error, error()}
-  def exchange_code(app, code, code_verifier, opts \\ [])
+  def exchange_code(%{redirect_uri: redirect_uri} = app, code, code_verifier, opts \\ [])
       when is_binary(code) and is_binary(code_verifier) do
     post_token(
       app,
@@ -93,7 +97,7 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
         "grant_type" => "authorization_code",
         "code" => code,
         "code_verifier" => code_verifier,
-        "redirect_uri" => app.redirect_uri
+        "redirect_uri" => redirect_uri
       },
       opts
     )
@@ -117,13 +121,9 @@ defmodule EzagentPluginForgejo.ForgejoOAuth do
 
   # ── internals ────────────────────────────────────────────────────────
 
-  defp post_token(app, params, opts) do
+  defp post_token(%{client_id: client_id, client_secret: client_secret} = app, params, opts) do
     with {:ok, base} <- web_base(app) do
-      form =
-        Map.merge(params, %{
-          "client_id" => app.client_id,
-          "client_secret" => app.client_secret
-        })
+      form = Map.merge(params, %{"client_id" => client_id, "client_secret" => client_secret})
 
       (base <> "/login/oauth/access_token")
       |> Req.post(

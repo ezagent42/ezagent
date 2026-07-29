@@ -31,6 +31,8 @@ defmodule EzagentPluginForgejo.MixProject do
   defp deps do
     [
       {:ezagent_core, in_umbrella: true},
+      # Ezagent.URI lives in ezagent_actor; OAuthApp validates workspace URIs with it.
+      {:ezagent_actor, in_umbrella: true},
       {:ezagent_domain_git, in_umbrella: true},
       {:ezagent_domain_provider_connection, in_umbrella: true},
       {:req, "~> 0.5"},

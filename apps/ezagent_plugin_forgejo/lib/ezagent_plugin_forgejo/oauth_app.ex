@@ -25,8 +25,6 @@ defmodule EzagentPluginForgejo.OAuthApp do
   `EzagentPluginForgejo.ForgejoOAuth`.
   """
 
-  import Ecto.Query, only: [from: 2]
-
   alias EzagentCore.Repo
   alias EzagentPluginForgejo.{Instance, Sealed}
 
@@ -113,24 +111,25 @@ defmodule EzagentPluginForgejo.OAuthApp do
   @spec fetch(String.t(), String.t()) :: {:ok, app()} | {:error, error()}
   def fetch(workspace_uri, governed_host)
       when is_binary(workspace_uri) and is_binary(governed_host) do
-    query =
-      from(r in Record,
-        where: r.workspace_uri == ^workspace_uri and r.governed_host == ^governed_host
-      )
-
-    case Repo.one(query) do
+    case Repo.get_by(Record, workspace_uri: workspace_uri, governed_host: governed_host) do
       nil ->
         {:error, :oauth_app_not_registered}
 
-      record ->
-        case Sealed.open({record.client_secret_nonce, record.client_secret_ciphertext}) do
+      %Record{
+        governed_host: host,
+        client_id: client_id,
+        client_secret_nonce: nonce,
+        client_secret_ciphertext: ciphertext,
+        redirect_uri: redirect_uri
+      } ->
+        case Sealed.open({nonce, ciphertext}) do
           {:ok, secret} ->
             {:ok,
              %{
-               host: record.governed_host,
-               client_id: record.client_id,
+               host: host,
+               client_id: client_id,
                client_secret: secret,
-               redirect_uri: record.redirect_uri
+               redirect_uri: redirect_uri
              }}
 
           {:error, reason} ->
@@ -141,14 +140,22 @@ defmodule EzagentPluginForgejo.OAuthApp do
 
   # ── validation ───────────────────────────────────────────────────────
 
+  # `Ezagent.URI.new!/1` rather than stdlib `URI.parse/1`: this is an Ezagent
+  # scheme, and only the canonical parser rejects the near-misses that
+  # `URI.parse/1` happily accepts (SPEC 2026-05-27-uri-canonicalization §3).
+  # It raises on malformed input, so a non-URI string becomes a closed
+  # `{:error, :invalid_workspace_uri}` here rather than an exception escaping
+  # into a caller that expected a tagged tuple.
   defp validate_workspace(value) when is_binary(value) do
-    uri = URI.parse(value)
+    uri = Ezagent.URI.new!(value)
 
-    if uri.scheme == "workspace" and is_binary(uri.host) and uri.host != "" do
+    if Ezagent.URI.scheme?(uri, "workspace") and Ezagent.URI.canonical?(uri) do
       {:ok, value}
     else
       {:error, :invalid_workspace_uri}
     end
+  rescue
+    _error -> {:error, :invalid_workspace_uri}
   end
 
   defp validate_workspace(_value), do: {:error, :invalid_workspace_uri}
@@ -166,12 +173,13 @@ defmodule EzagentPluginForgejo.OAuthApp do
   defp validate_present(_value, error), do: {:error, error}
 
   defp validate_redirect_uri(value) when is_binary(value) do
-    uri = URI.parse(value)
+    # uri-canonical-allow: an OAuth redirect_uri is an external http(s) URL handed to a third-party provider, not an Ezagent-scheme URI — Ezagent.URI.new!/1 would reject every valid value.
+    case URI.parse(value) do
+      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) ->
+        if host == "", do: {:error, :invalid_redirect_uri}, else: {:ok, value}
 
-    if uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != "" do
-      {:ok, value}
-    else
-      {:error, :invalid_redirect_uri}
+      _other ->
+        {:error, :invalid_redirect_uri}
     end
   end
 
