@@ -1,17 +1,21 @@
 # Forgejo API 实证结论 —— Plan E 移植的可行性边界
 
 > **日期：** 2026-07-29 · **前置：** `docs/superpowers/handoffs/2026-07-29-forgejo-provider-handoff.md`
-> **状态：** 关闭交接文档 §3 的未知 #2；未知 #1 收敛为「API 形状已判定、待实写确认」
+> **状态：** 交接文档 §3 的两个未知**均已关闭**（实写探针已跑，目标实例 `code.hyprial.com`）
 > **本文是后续 Forgejo 设计文档的 §2 素材，不是设计文档本身。**
 
 ---
 
 ## 0. 一句话
 
-交接文档 §2.3 的判断「§6.1 确定性 commit 保得住，已确认没问题」**需要订正**：
-`dates` 让 commit **内容**确定，但 `POST /contents` **没有 parent 钉选**，
-所以**操作本身不幂等**。而 §3 未知 #2（PR 精确过滤）现已实证关闭，
-**答案是「有专用端点，但它不能用」** —— 用了会静默返回已关闭的旧 PR。
+两条结论都跟交接文档的预判不同，且**方向相反**：
+
+- **§6.1 的确定性 commit —— 保住了，而且是实证的**：同内容同 base 的两次独立调用
+  产出逐字节相同的 commit sha。
+- **`POST /contents` —— 不幂等，实证**：内容完全没变，它照样建一个新的空 commit
+  并推进分支。必须 read-before-write。
+
+另外 §3 未知 #2（PR 精确过滤）的答案是**「有专用端点，但它是个陷阱」**。
 
 ---
 
@@ -19,13 +23,15 @@
 
 | 来源 | 版本 | 用途 | 凭证 |
 |---|---|---|---|
-| `code.hyprial.com/swagger.v1.json` | `15.0.5+gitea-1.22.0` | schema / 端点存在性 | 无需（公开可读，828KB） |
-| `codeberg.org` 活体 API | `16.0.0-dev-626+gitea-1.22.0` | **行为**实证（匿名读公开仓库） | 无需 |
+| `code.hyprial.com/swagger.v1.json` | `15.0.5+gitea-1.22.0` | schema / 端点存在性 | 无需（公开可读） |
+| `code.hyprial.com` **实写探针** | 同上 | **§3 全部行为结论** | PAT（`repository:write`），仓库 `gagameow/ezagent-forgejo-test` |
+| `codeberg.org` 活体 API | `16.0.0-dev-626+gitea-1.22.0` | §2 的 PR 端点行为 | 无需（匿名读公开仓库） |
 
-**口径说明：** 行为实证跑在 Codeberg 而非目标实例 —— 目标实例
-`GET /api/v1/version` 返回 403，匿名打不了。两者同为 `gitea-1.22.0` 基座，
-但**大版本不同（16.0.0-dev vs 15.0.5）**。下列行为结论在拿到目标实例 token 后
-应各复跑一次；端点存在性结论直接来自目标实例自己的 swagger，无此风险。
+**口径说明：** §3 的结论跑在**目标实例本身**，无版本外推风险。§2 的 PR 端点行为跑在
+Codeberg（目标实例 `GET /version` 返回 403，匿名打不了，而该实例上没有可用的
+历史 PR 语料）。两者同为 `gitea-1.22.0` 基座但大版本不同
+（16.0.0-dev vs 15.0.5）—— **§2.2 的行为结论应在目标实例上补一次复核**，
+方法见 §6。端点存在性来自目标实例自己的 swagger，无此风险。
 
 ---
 
@@ -39,9 +45,8 @@
 state, sort, milestone, labels, poster, page, limit
 ```
 
-**没有 `head`，没有 `base`。** GitHub 的
-`?head=owner:ref&base=main&state=open`（`github_adapter.ex:497-501`）在列表端点上
-无对应物。
+**没有 `head`，没有 `base`。** GitHub 的 `?head=owner:ref&base=main&state=open`
+（`github_adapter.ex:497-501`）在列表端点上无对应物。
 
 ### 2.2 存在专用端点 —— 但语义不满足 Plan E
 
@@ -62,13 +67,6 @@ GET /repos/{owner}/{repo}/pulls/{base}/{head}    "Get a pull request by base and
 `#4484` 与 `#13674` 经单独取回逐字段比对，`base.ref` / `head.ref` / `head.repo.full_name`
 三者完全相同 —— 不是「pair 不同所以选了别的」，是**同一个 pair 下端点忽略 state 选了最老的那个**。
 
-**顺带确认（原本担心会一票否决）：路径段可以承载带斜杠的 ref。**
-`/pulls/forgejo/renovate/forgejo-webpack-5.x`（原始斜杠）与 `%2F` 编码两种写法
-都返回 200 且结果一致。`DeterministicRef.derive/2` 产出的 `task/p4e/run-<24hex>`
-这类形状**不会因为路由而不可用** —— 全仓生产形态的 namespace 实测值都含斜杠
-（`feature/`、`task/p4b/`、`task/p4e/`、`task/live/`；另有 `"a"`、`""`、`"feature/../"`
-等纯边界校验用例），这一条曾是最大的未知，已排除。
-
 ### 2.3 为什么不能用它
 
 `github_adapter.ex:489-508` 的 reconcile 依赖三条属性，该端点各缺一条：
@@ -81,8 +79,8 @@ GET /repos/{owner}/{repo}/pulls/{base}/{head}    "Get a pull request by base and
 
 GitHub adapter 的注释明写：「a closed/merged PR with the same head+base does not
 block creating a new one」。用该端点会**反过来**：一个早已关闭的同 pair PR 会被
-当作本 run 的当前 change request 返回，且**没有任何错误** —— 这是静默错误，
-不是失败，比 fail closed 糟得多。
+当作本 run 的当前 change request 返回，且**没有任何错误** —— 静默错误，
+比 fail closed 糟得多。
 
 ### 2.4 结论：改用列表 + 客户端精确匹配
 
@@ -92,98 +90,173 @@ GET /repos/{o}/{r}/pulls?state=open&page=N&limit=50   （分页至尽）
 → 0 个 → 创建；恰好 1 个 → 规范化返回；≥2 个 → :change_request_conflict
 ```
 
-三条属性全部保住，与 GitHub 路径语义一致。代价是**分页遍历所有 open PR**，
-而非一次带过滤的调用。对 bot 自有仓库 open PR 数有界，可接受；
-需要在设计文档里写明这是**已知的成本差异**，并给出上限保护
-（超过 N 页仍未穷尽 → 失败而非截断，见交接文档 §6.3「别从截断的操作下结论」）。
+三条属性全部保住。代价是**分页遍历所有 open PR**，而非一次带过滤的调用；
+对 bot 自有仓库 open PR 数有界，可接受。需在设计文档写明这是**已知成本差异**，
+并给分页设上限保护（超过 N 页仍未穷尽 → 失败而非截断）。
 
-`/pulls/{base}/{head}` **可作为快路径**，但其结果必须经 state 复核，
-且不能用作「不存在」的判据（它的 404 语义未验：是「无任何 PR」还是别的）。
-**建议 V1 不用它** —— 少一条需要单独验证的语义。
+**建议 V1 不用 `/pulls/{base}/{head}`** —— 少一条需要单独验证的语义。
+
+### 2.5 附带排除：带斜杠的 ref 可用
+
+Forgejo 把 head 放在 **path segment**，而 `DeterministicRef.derive/2` 产出
+`task/p4e/run-<24hex>` 这类带斜杠的名字（全仓生产形态 namespace 实测都含斜杠：
+`feature/`、`task/p4b/`、`task/p4e/`、`task/live/`；另有 `"a"`、`""`、`"feature/../"`
+等纯边界校验用例）。
+
+实测**原始斜杠与 `%2F` 编码两种写法都返回 200 且结果一致**；目标实例上
+`GET /branches/task/probe/run-dates01` 亦正确路由并给出精确 404。
+**这条曾是最大的未知，已排除。**
 
 ---
 
-## 3. 【收敛未闭】未知 #1 —— `POST /contents` 幂等性
+## 3. 【已关闭】未知 #1 —— `POST /contents` 幂等性
 
-### 3.1 API 形状已判定：不幂等
+全部跑在目标实例 `gagameow/ezagent-forgejo-test`，base = `103a5569…`。
 
-`ChangeFilesOptions` 的全部字段：
+### 3.1 `dates` 真的生效（地基成立）
+
+传 `dates: {author, committer} = 2020-01-02T03:04:05Z` + 显式 `author`/`committer` Identity：
 
 ```
-author, branch, committer, dates, files, message, new_branch, signoff
+POST /contents → 201
+  commit.sha = 64c9857471e1ea9d30295c90fc0e58085377fa2b
+  parents    = [103a5569…]              ← 正是 base
+GET /git/commits/64c98574…  （权威读回，非响应回显）
+  author.date    = 2020-01-02T03:04:05Z | Ezagent Probe
+  committer.date = 2020-01-02T03:04:05Z | Ezagent Probe
 ```
 
-**没有任何 parent / base_sha 字段。** `branch` 是分支**名**，不是 sha。
-因此 commit 的父提交 = 「服务端执行那一刻该分支的头」，隐式且不可钉选。
+schema 声明与实现一致。**这是 §3.2 全部推理的地基，已实测，不是推断。**
 
-推论：`dates + author + committer + message + files` 全部固定 ⇒ commit **内容**确定；
-但父提交不固定 ⇒
-- 分支停在 base 时重试 → 父 = base → **同一个 sha**（幂等）；
-- 上一次已成功但 receipt 丢失（分支已前进）时重试 → 父 = 上次的 commit →
-  **不同 sha，且叠一个新 commit 上去**（不幂等）。
+### 3.2 commit sha 确定性成立（实证）
 
-这与 GitHub 的窗口 1 是**同一个问题的不同形状**。GitHub 靠 blob/tree/commit 内容寻址
-+ 显式 parent + non-force ref update 天然消解；Forgejo 消解不了，**必须靠 read-before-write**：
-调 `POST /contents` 前先读 deterministic 分支，判定它停在 base（可写）还是已前进
-（须先确认是本 run 的产物，然后跳过写）。
+同 files / message / author / committer / dates、同 base，**只改 `new_branch` 名字**
+再调一次：
 
-### 3.2 订正交接文档 §2.3
+```
+第一次 sha = 64c9857471e1ea9d30295c90fc0e58085377fa2b
+第二次 sha = 64c9857471e1ea9d30295c90fc0e58085377fa2b   ← 完全独立的第二次调用
+```
 
-交接文档写「`dates` 存在 → §6.1 的确定性 commit 保得住 —— 这是当时最担心会崩掉
-整个设计的一条，**已确认没问题**」。
+**§6.1「重试产出同一个 commit sha」的前提在 Forgejo 上成立。**
+交接文档 §2.3 的乐观判断得到证实 —— 但见 §3.3，它**不蕴含操作幂等**。
 
-**订正为：** 确定性 commit **sha 可复现**这一条保住了（`dates` 确实给了 GitHub
-显式 author/committer date 的等价物）；但**「重试幂等」不是 sha 可复现的推论**，
-它在 GitHub 上额外依赖「parent 显式指定」，而 Forgejo 不提供该能力。
-设计文档必须把这两件事分开写，否则会照抄一个不成立的前提。
+### 3.3 `POST /contents` 不幂等 —— 内容没变也会建空 commit
 
-### 3.3 有利的一面（同样来自 schema，未实测）
+`ChangeFilesOptions` 无任何 parent / base_sha 字段（`branch` 是名不是 sha），
+父提交 = 服务端执行那刻的分支头，隐式不可钉。实测后果：
 
-- `CreateBranchRepoOption.old_ref_name` = 「Name of the old branch/tag/**commit** to
-  create from」→ **建分支可精确钉在 expected base sha**，§6.1 步骤 2 的 base 校验保得住；
-- `POST /branches` 的 **409 = 「branch with the same name already exists」** —— 干净无歧义的
-  存在信号，比 GitHub 的 422 好（GitHub adapter 为消歧 422 专门写了一段，
-  `github_adapter.ex:226-268`）；
-- `ChangeFileOperation.sha` = 「SHA for the file that already exists, required for
-  update or delete」→ **每文件的乐观并发令牌**，可作为二次防线；
-- `FilesResponse.commit` 回传结果 commit → 可落 provenance；
-- `POST /contents` 一次调用同时建 commit 并推进分支（`new_branch` 还能顺带建分支）
-  ⇒ **GitHub 的窗口 1「commit 建了、ref 没推进」在 Forgejo 上不存在**，
+| 场景 | 请求 | 结果 | 副作用 |
+|---|---|---|---|
+| 原样重发（`new_branch` 指向已存在分支） | 与首次逐字节相同 | **422** `branch already exists` | **无**，分支头未动 ✓ |
+| `operation: create`，文件已存在 | — | **422** `repository file already exists` | 无 |
+| `operation: update`，不带 `sha` | — | **422** `a SHA or commit ID must be provided` | 无 |
+| **`operation: update` + 正确 sha + 内容逐字节相同** | — | **201** | ⚠️ **分支头 `64c98574` → `344f8c6e`** |
+
+最后一行是关键。新 commit `344f8c6e` 的形状：
+
+```
+parents = [64c9857471e1…]          ← 叠在前一个之上
+message / author.date / committer.date  与前一个完全相同
+```
+
+且两个 commit 的 tree 逐条目相同（用 `/git/trees?recursive=true` 实读，
+**未用 `tree.sha` 字段** —— 见 §5 的数据质量瑕疵）：
+
+```
+64c98574 → README.md:cdb8d0e6  probe:b90a8adf  probe/a.txt:06dd187c
+344f8c6e → README.md:cdb8d0e6  probe:b90a8adf  probe/a.txt:06dd187c
+```
+
+**同一棵树，两个 commit。这是一个纯空提交。**
+
+结论：**`ChangeFileOperation.sha` 不是 no-op 守卫，是 CAS 令牌** ——
+传当前 sha 会成功，并制造一个内容无变化的新 commit。任何「重试就重发写请求」
+的 adapter 都会**每重试一次叠一个空 commit**。
+
+### 3.4 因此：`:upsert` 无法直接映射，且必须 read-before-write
+
+- Forgejo 没有 upsert 语义。`create` 与 `update` 是两个互斥操作，选哪个取决于
+  文件当前是否存在，且 `update` 还必须带上该文件当前的 blob sha
+  ⇒ **每个文件写前都要一次读**（或「先试 create、422 再读 sha 转 update」，
+  同样是 ≥2 次往返）。
+- 写分支前必须先读该分支：停在 base → 可写；已前进 → **不得重发**，
+  须先判定是否本 run 产物。
+
+### 3.5 有利的一面（均已实测，非仅 schema）
+
+- **`POST /branches` 的 `old_ref_name` 收 commit sha** → 实测 201，
+  分支头精确等于所给 sha。**§6.1 步骤 2 的 base 校验保得住**；
+- **`POST /branches` 同名重建 → 409** `The branch already exists.`
+  （注意与 `POST /contents` 的 `new_branch` 冲突码 **422** 不同 —— 两个端点
+  两个码，映射表别写混）；
+- **原样重发是 fail-closed 且零副作用**，比预想好：危险路径只有一条，
+  即「分支已建、再往已存在分支写」；
+- **GitHub 的窗口 1「commit 建了、ref 没推进」在 Forgejo 上不存在** ——
+  `POST /contents` 一次调用同时建 commit 并推进分支，二者原子。
   取而代之的是「写成功、响应丢失」这一个窗口。
 
-### 3.4 仍需实写确认的（要一个能写的 token）
+---
 
-1. 分支已前进时重复 `POST /contents`（同 files/message/dates）→ 叠新 commit？报错？
-2. `:upsert` 映射：文件已存在时用 `operation: "create"` → 422/409？
-   用 `"update"` 缺 `sha` → 拒绝？（决定 upsert 要不要先读文件 sha）
-3. `new_branch` 指向已存在分支 → 409 还是静默复用？
-4. `dates` 是否真的进入 commit 对象（swagger 声明 ≠ 实现生效）—— 这条是 §3.1
-   全部推理的地基，**必须实测**，不能只信 schema。
+## 4. 对交接文档 §8.1（provenance 缺口）的影响 —— 订正本文前一版
+
+本文 2026-07-29 首版（commit `fd690bcde`）在此处写过：
+
+> commit 由服务端构造、父提交隐式，**sha 相等性不再是可依赖的 provenance 判据**，
+> 缺口在 Forgejo 上**更严重**。
+
+**该判断错误，据 §3.2 撤回。** commit sha 是 `(parent, tree, message, author,
+committer, dates)` 的纯函数，实测可复现 —— sha 相等性**是**可依赖的判据。
+
+修正后的实际状况：Forgejo 与 GitHub **处境相同，不是更差**。
+
+- adapter 无法**本地计算**期望 sha（那要自己实现 Git 对象哈希），但它在重试时
+  手上有全部输入，因此可以**逐字段比对**已前进分支的 head commit
+  （`parent == base` ∧ message ∧ author/committer 的 name/email/date ∧ 文件内容）。
+  由确定性，字段全等 ⟹ sha 必等，故字段比对是**充分**判据。
+- 仍未关闭的是同一条老缺口：**ref 停在 base 时**没有任何 commit 可比对，
+  分不清「自己上次留下的」与「外部 planted 的」。这与 GitHub 侧
+  `github_adapter.ex` 记的 KNOWN LIMITATION 是同一条，不因 provider 而恶化。
+
+设计文档应把它作为**继承自 GitHub 线的既有缺口**处理，与 §6.2.1 同一条轨，
+不必为 Forgejo 单开议题。
 
 ---
 
-## 4. 对交接文档 §8.1（ref-at-base provenance 缺口）的影响
+## 5. 数据质量瑕疵（adapter 需绕开）
 
-**在 Forgejo 上更严重。** GitHub 侧至少可以用「commit sha 是内容的纯函数」
-做一次弱比对；Forgejo 侧 commit 由服务端构造、父提交隐式，
-**sha 相等性不再是可依赖的 provenance 判据**。
+`GET /git/commits/{sha}` 回传的 `commit.tree.sha` **等于 commit 自身的 sha**，
+显然不是 tree 对象的 sha。若 adapter 想用 tree sha 做内容比对，**该字段不可信**；
+应改用 `GET /git/trees/{sha}?recursive=true` 实读条目
+（本文 §3.3 的 tree 对比即如此取得）。
 
-因此 §6.2.1 说的「需要一个有判别力的事实（例如本 run 创建 ref 时它指向的 sha）」
-在 Forgejo 线上**不是可选优化，而是接近必需** —— read-before-write 的
-「已前进的分支是不是我的」这一问，没有该事实就答不了。
-
-设计文档应把它作为**显式议题**提出，而不是继承 GitHub 侧「已知未关闭」的默认。
+同样地，`POST /contents` 成功响应里 `files[].last_commit_sha` 观察到仍是**前一个**
+commit 的 sha（写入后未刷新）。**分支头应以 `GET /branches/{branch}` 为准**，
+不要信写响应里的这个字段。
 
 ---
 
-## 5. 复现方式
+## 6. 复现方式
 
 ```bash
 # schema（无需凭证）
 curl -sS https://code.hyprial.com/swagger.v1.json -o forgejo-swagger.json
 
-# 行为（无需凭证，需代理）
+# §2 的 PR 端点行为（无需凭证，需代理）
 A=https://codeberg.org/api/v1/repos/forgejo/forgejo
 curl -sS -x http://127.0.0.1:7890 "$A/pulls/forgejo/renovate/forgejo-webpack-5.x"   # → #4484 closed
-curl -sS -x http://127.0.0.1:7890 "$A/pulls?state=open&limit=50"                     # → 其中含 #13674 open，同 pair
+curl -sS -x http://127.0.0.1:7890 "$A/pulls?state=open&limit=50"                     # → 含 #13674 open，同 pair
+
+# §3 的实写探针（需 PAT，本机直连不用代理）
+#   凭证：/home/huangjiajia/ezagent/forgejo-token.txt（已入 .git/info/exclude，不入库）
+#   认证头是 "Authorization: token <TOKEN>"，不是 GitHub 的 Bearer
+#   探针脚本与逐步结果见 session 记录；探针仓库残留状态：
+#     main                     103a5569  （base，未动）
+#     task/probe/run-dates01   344f8c6e  （首次提交 64c98574 + 一个空提交）
+#     task/probe/run-dates02   64c98574  （确定性检验的第二次提交）
+#     task/probe/pin01         103a5569  （sha 钉选检验）
 ```
+
+**§2.2 待补：** 在目标实例上造两个同 base+head 的 PR（一 closed 一 open），
+复核 `/pulls/{base}/{head}` 在 15.0.5 上是否同样返回 closed 的那个。
+结论不变则 §2.4 直接落地；若 15.0.5 行为不同，§2.4 仍是安全选择，只是不再必需。
