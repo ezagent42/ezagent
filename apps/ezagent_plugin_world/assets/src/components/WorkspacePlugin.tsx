@@ -856,7 +856,7 @@ export function installConfigForTemplate(
         flavor,
         agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
         config: choice.mode === "fresh" && helloLlmRole && flavor === "curl"
-          ? curlHelloLlmConfig(choice.config)
+          ? curlHelloLlmConfig({...helloLlmDefaults(), ...(choice.config || {})})
           : choice.mode === "fresh" && !helloLlmRole
             ? choice.config
             : undefined,

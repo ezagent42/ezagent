@@ -139,6 +139,36 @@ describe("workspace template builder", () => {
     expect(JSON.stringify(config)).not.toContain("deepseek")
   })
 
+  it("restores sanitized curl defaults when an unavailable selection falls back to curl", () => {
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "cc-headless",
+          config: {api_key: "stale-snake-case-secret", apiKey: "stale-camel-case-secret"},
+        },
+      },
+      ["curl"],
+    )
+
+    expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "curl"})
+    expect(config.role_slots[0].config).toEqual({
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      credential_optional: true,
+    })
+    expect(JSON.stringify(config)).not.toContain("api_key")
+    expect(JSON.stringify(config)).not.toContain("apiKey")
+    expect(JSON.stringify(config)).not.toContain("stale-snake-case-secret")
+    expect(JSON.stringify(config)).not.toContain("stale-camel-case-secret")
+  })
+
   it("serializes only nonsecret curl configuration", () => {
     const config = installConfigForTemplate(
       {
