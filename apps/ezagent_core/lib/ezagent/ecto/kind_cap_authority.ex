@@ -73,6 +73,17 @@ defmodule Ezagent.Ecto.KindCapAuthority do
   end
 
   @doc false
+  # #189 PR-3 FIX 3 — the DISTINCT set of every URI that has authority history
+  # (any generation, active OR retired). The cutover backfill enumerates this to
+  # adopt an absent-store-row authority-history URI as `revoked_unprovisioned`
+  # (the durable ever-created witness that survives a store-row deletion).
+  @spec all_uris() :: [String.t()]
+  def all_uris do
+    from(row in __MODULE__, select: row.uri, distinct: true)
+    |> Repo.all()
+  end
+
+  @doc false
   @spec with_key_id(String.t()) :: %__MODULE__{} | nil
   def with_key_id(key_id) when is_binary(key_id) do
     from(row in __MODULE__, where: row.key_id == ^key_id)

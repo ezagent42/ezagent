@@ -762,6 +762,107 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert :ok = Store.identity_snapshot_cleared(agent)
       refute Store.has_row?(agent)
     end
+
+    test "identity_snapshot_cleared PRESERVES a revoked_unprovisioned row (FIX 3 creation evidence)" do
+      agent = agent_uri("clear-revoked")
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert :ok = Store.revoke_provisioning(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+
+      # A routine snapshot clear must NOT delete the revoked_unprovisioned row:
+      # it is durable creation+revocation evidence. Deleting it would leave the
+      # URI absent, and a later restart WITHOUT authority history would then look
+      # like a genuine creation and resurrect the principal.
+      assert :ok = Store.identity_snapshot_cleared(agent)
+      assert Store.has_row?(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+    end
+  end
+
+  describe "#189 PR-3 FIX 3 (cold-restart 5-state matrix — no state re-mints)" do
+    # `ever_created_signal?/1` is the SOLE determinant of `:created` vs `:existed`
+    # for an ephemeral principal at cold restart (`Kind.Server.create_freshness`).
+    # `true` ⇒ `:existed` ⇒ the principal re-reads (never re-mints). Only a
+    # genuine first creation (no store row AND no authority history) is `false`.
+    test "active-current row ⇒ ever-created (existed)" do
+      agent = agent_uri("state-active-current")
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert Store.status(agent) == :active
+      assert Store.ever_created_signal?(agent)
+    end
+
+    test "active-but-stale-generation row ⇒ ever-created (existed), not re-created" do
+      agent = agent_uri("state-active-stale")
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      # Rotate the signing generation: the store row stays `active` with a now
+      # stale license; the restart must still classify `:existed`.
+      assert {:ok, _authority} = Ezagent.Cap.Authority.regenesis(agent, :agent)
+      assert Store.status(agent) == :active
+      assert Store.ever_created_signal?(agent)
+    end
+
+    test "revoked_unprovisioned row ⇒ ever-created (existed)" do
+      agent = agent_uri("state-revoked")
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert :ok = Store.revoke_provisioning(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+      assert Store.ever_created_signal?(agent)
+    end
+
+    test "tombstoned row ⇒ ever-created (existed)" do
+      agent = agent_uri("state-tombstoned")
+      assert :ok = Store.tombstone(agent)
+      assert Store.status(agent) == :tombstoned
+      assert Store.ever_created_signal?(agent)
+    end
+
+    test "absent store row WITH authority history ⇒ ever-created (existed) — no resurrection" do
+      agent = agent_uri("state-absent-authority")
+      # Opening a self-license mints authority history (`kind_cap_authorities`)
+      # but writes NO store row. This is the revoked-then-cleared ephemeral
+      # worker: the durable creation fact survives ONLY in the authority history.
+      _license = self_license(agent)
+      refute Store.has_row?(agent)
+      assert Ezagent.Cap.Authority.has_authority_history?(agent)
+
+      # FIX 3: absence is NOT sufficient for `:created` when authority history
+      # exists — it reports ever-created (`:existed`), so the restart re-reads and
+      # is NOT re-minted a fresh generation.
+      assert Store.ever_created_signal?(agent)
+    end
+
+    test "genuine first creation (no row, no authority history) ⇒ NOT ever-created (:created)" do
+      agent = agent_uri("state-genuine-creation")
+      refute Store.has_row?(agent)
+      refute Ezagent.Cap.Authority.has_authority_history?(agent)
+      refute Store.ever_created_signal?(agent)
+    end
+
+    test "adopt_absent_authority_history materializes an absent authority URI as revoked_unprovisioned" do
+      agent = agent_uri("adopt-absent")
+      _license = self_license(agent)
+      refute Store.has_row?(agent)
+
+      assert {:ok, :adopted} = Store.adopt_absent_authority_history(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+      assert Store.load(agent) == []
+
+      # Idempotent — never re-adopts, never upgrades.
+      assert {:ok, :present} = Store.adopt_absent_authority_history(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+    end
+
+    test "adopt_absent_authority_history NEVER clobbers an existing active row" do
+      agent = agent_uri("adopt-noclobber")
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
+      assert :ok = Store.persist(agent, caps)
+      assert Store.status(agent) == :active
+
+      assert {:ok, :present} = Store.adopt_absent_authority_history(agent)
+      # The live, valid principal is left exactly as it was — never downgraded.
+      assert Store.status(agent) == :active
+      assert cap_present?(Store.load(agent), Enum.at(caps, 1))
+    end
   end
 
   # -------------------------------------------------------------------

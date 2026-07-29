@@ -572,21 +572,23 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Dual-write hook for `SnapshotStore.delete/1`: the legacy durable copy is
-  gone, so the shadow row is deleted too — EXCEPT a `tombstoned` row, which
-  is PRESERVED (#189 PR-2, codex spec-review F5 tombstone monotonicity).
+  gone, so the shadow row is deleted too — EXCEPT a NON-ACTIVE row
+  (`revoked_unprovisioned` / `tombstoned`), which is PRESERVED as durable
+  creation/revocation evidence (#189 PR-3 FIX 3; extends the PR-2 tombstone
+  monotonicity — codex spec-review F5 — to `revoked_unprovisioned`).
 
-  A `tombstoned` row is the durable record that this URI was destroyed and is
-  not reprovisionable without a fresh authenticated receipt. Deleting it on a
-  routine snapshot clear would let a later restart look like a genuine
-  creation (`fresh_create?` sees no marker) and RESURRECT the principal — the
-  exact vector §2 names. So the delete is guarded to leave tombstones intact;
-  only `active` / `revoked_unprovisioned` rows are cleared (PR-1's legacy
-  destroy semantics for the non-tombstoned case are unchanged).
+  Both a `tombstoned` AND a `revoked_unprovisioned` row are durable records that
+  this URI was CREATED (and, for the latter, revoked). Deleting either on a
+  routine snapshot clear would erase the creation evidence: a later restart
+  would then find no store row AND — if authority history were also absent —
+  look like a genuine creation and RESURRECT the principal. Only an `active` row
+  is cleared here (the live-principal legacy destroy semantics are unchanged);
+  the anti-resurrection creation evidence is never deleted.
   """
   @spec identity_snapshot_cleared(URI.t() | String.t()) :: :ok
   def identity_snapshot_cleared(uri) do
     from(row in __MODULE__,
-      where: row.uri == ^key(uri) and row.identity_status != "tombstoned"
+      where: row.uri == ^key(uri) and row.identity_status == "active"
     )
     |> Repo.delete_all()
 
@@ -721,6 +723,54 @@ defmodule Ezagent.EntityCaps.Store do
     else
       nil -> Repo.rollback(:not_found)
       {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  @doc """
+  #189 PR-3 FIX 3 — materialize a durable `revoked_unprovisioned` row for a URI
+  that has AUTHORITY HISTORY but NO store row (a pre-cutover ephemeral principal
+  — created, then revoked/cleared — whose durable creation fact survives only in
+  `kind_cap_authorities`). The cutover backfill enumerates authority-history
+  URIs and adopts the absent ones so the store carries an explicit ever-created,
+  non-active row for them (NEVER `active`: it carries no license and stays inert
+  until an authenticated re-provision).
+
+  STRICTLY absent-only and idempotent: it takes a `FOR UPDATE` lock and writes
+  ONLY when no row exists — it NEVER touches (never downgrades, never clobbers)
+  an EXISTING row, so a currently-`active` valid principal or a `tombstoned`
+  record is left exactly as it was. Returns `{:ok, :adopted}` (wrote a fresh
+  `revoked_unprovisioned` row) or `{:ok, :present}` (a row already existed —
+  nothing done).
+  """
+  @spec adopt_absent_authority_history(URI.t() | String.t()) ::
+          {:ok, :adopted | :present} | {:error, term()}
+  def adopt_absent_authority_history(uri) do
+    uri_key = key(uri)
+    workspace = workspace_key(uri)
+
+    Repo.transaction(fn ->
+      case lock_row(uri_key) do
+        nil ->
+          %__MODULE__{}
+          |> Ecto.Changeset.change(
+            uri: uri_key,
+            workspace_uri: workspace,
+            identity_status: "revoked_unprovisioned",
+            caps_json: "[]"
+          )
+          |> Repo.insert()
+          |> case do
+            {:ok, _row} -> :adopted
+            {:error, reason} -> Repo.rollback(reason)
+          end
+
+        _existing ->
+          :present
+      end
+    end)
+    |> case do
+      {:ok, outcome} -> {:ok, outcome}
+      {:error, reason} -> {:error, reason}
     end
   end
 

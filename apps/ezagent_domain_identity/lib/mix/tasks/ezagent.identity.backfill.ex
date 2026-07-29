@@ -57,8 +57,14 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
 
     dry_run? = "--dry-run" in args
 
+    # Order matters: users + snapshots FIRST (valid principals acquire their
+    # `active` rows), THEN authority-history adoption LAST (only genuinely
+    # uncovered authority-history URIs remain absent, so they get an explicit
+    # `revoked_unprovisioned` ever-created row — never an `active` one).
     results =
-      backfill_users(dry_run?) ++ backfill_snapshots(dry_run?)
+      backfill_users(dry_run?) ++
+        backfill_snapshots(dry_run?) ++
+        backfill_authority_history(dry_run?)
 
     report(results, dry_run?)
   end
@@ -117,6 +123,35 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
     e -> {:error, {:raised, Exception.message(e)}}
   catch
     kind, reason -> {:error, {kind, reason}}
+  end
+
+  # #189 PR-3 FIX 3 — adopt every AUTHORITY-HISTORY URI (`kind_cap_authorities`
+  # rows, active OR retired) that has NO store row as an explicit ever-created
+  # `revoked_unprovisioned` row. Runs LAST, so a URI still absent here was NOT
+  # covered by the users/snapshots backfill (a pre-cutover ephemeral principal
+  # whose durable creation fact survives only in the authority history). Never
+  # touches an existing row (`Store.adopt_absent_authority_history/1` is
+  # strictly absent-only), so a valid `active` principal is left intact.
+  defp backfill_authority_history(dry_run?) do
+    Ezagent.Ecto.KindCapAuthority.all_uris()
+    |> Enum.map(fn uri_str ->
+      uri = to_uri(uri_str)
+      adopt_authority_history(uri, dry_run?)
+    end)
+  end
+
+  defp adopt_authority_history(uri, true) do
+    classification =
+      if Store.has_row?(uri), do: :present, else: :would_adopt_revoked_unprovisioned
+
+    {URI.to_string(uri), classification}
+  end
+
+  defp adopt_authority_history(uri, false) do
+    case Store.adopt_absent_authority_history(uri) do
+      {:ok, outcome} -> {URI.to_string(uri), outcome}
+      {:error, reason} -> {URI.to_string(uri), {:error, {:adopt_failed, reason}}}
+    end
   end
 
   # In `--dry-run` mode compute ONLY the would-be classification (does the
