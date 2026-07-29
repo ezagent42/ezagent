@@ -6,7 +6,7 @@
 >
 > 适用范围：MFU 学生 / OPC 体验、可玩 Demo、平台能力建设与 Pitch 表达
 >
-> 规则：学生 / OPC 的完整体验阶段、核心玩法或产品演进顺序发生变化时，必须修改本文。具体概念以 [`platform-concept-model.md`](platform-concept-model.md) 为准；核心玩法以 [`core-gameplay-card-array.md`](core-gameplay-card-array.md) 为准；成长规则以 [`tree/skill-tree.md`](tree/skill-tree.md) 为准。
+> 规则：学生 / OPC 的完整体验阶段、核心玩法或产品演进顺序发生变化时，必须修改本文。具体概念以 [`platform-concept-model.md`](platform-concept-model.md) 为准；核心玩法以 [`core-gameplay-card-array.md`](core-gameplay-card-array.md) 为准；成长规则以 [`skill-tree.md`](skill-tree.md) 为准。
 
 ---
 
@@ -161,9 +161,9 @@
 ### 4.4 已有材料
 
 - 订单、步骤、拓扑、猎人与组织：[`platform-concept-model.md`](platform-concept-model.md) §1.2–§2
-- 学生从首次接单到重复实践的早期设想：[`happy-paths-v0.13.md`](happy-paths-v0.13.md) §1 Phase 1–2
+- 学生从首次接单到重复实践的早期设想：[`v0.13/happy-paths-v0.13.md`](v0.13/happy-paths-v0.13.md) §1 Phase 1–2
 - 一个订单的完整流程与角色页面原型：[`role-pages/`](../role-pages/)
-- 宏观机制和订单泳道图：[`infographics/MFU-v0.15-机制信息图.html`](infographics/MFU-v0.15-机制信息图.html)
+- 宏观机制和订单泳道图：[`v0.15/infographics/MFU-v0.15-机制信息图.html`](v0.15/infographics/MFU-v0.15-机制信息图.html)
 
 ### 4.5 进入下一阶段前要验证
 
@@ -212,9 +212,9 @@
 ### 5.4 已有材料
 
 - 全部概念、归属和关系：[`platform-concept-model.md`](platform-concept-model.md) §3–§8
-- 成长树规则与历史迁移：[`tree/skill-tree.md`](tree/skill-tree.md)
-- v0.15 能力、课程映射、证据归属和功能开放：[`MFU-策划案-GDD-v0.15.md`](MFU-策划案-GDD-v0.15.md) §5.10–§5.14
-- 四种成长的视觉解释：[`infographics/MFU-v0.15-机制信息图.html`](infographics/MFU-v0.15-机制信息图.html)
+- 成长树规则与历史迁移：[`skill-tree.md`](skill-tree.md)
+- v0.15 能力、课程映射、证据归属和功能开放：[`v0.15/MFU-策划案-GDD-v0.15.md`](v0.15/MFU-策划案-GDD-v0.15.md) §5.10–§5.14
+- 四种成长的视觉解释：[`v0.15/infographics/MFU-v0.15-机制信息图.html`](v0.15/infographics/MFU-v0.15-机制信息图.html)
 - 当前概念 Demo：[`../MFU-v0.15-可试玩原型.html`](../MFU-v0.15-可试玩原型.html)
 
 ### 5.5 进入下一阶段前要验证
@@ -363,9 +363,9 @@
 
 - 经验、能力、信誉、认证、资质与功能的边界：[`platform-concept-model.md`](platform-concept-model.md) §4
 - 功能开放规则：[`platform-concept-model.md`](platform-concept-model.md) §4.11–§4.12
-- 平台功能与成长树分离：[`tree/skill-tree.md`](tree/skill-tree.md) §3–§4、§8.1
-- 五方市场行为：[`happy-paths-v0.13.md`](happy-paths-v0.13.md)
-- 市场闭环信息图：[`infographics/MFU-v0.15-机制信息图.html`](infographics/MFU-v0.15-机制信息图.html)
+- 平台功能与成长树分离：[`skill-tree.md`](skill-tree.md) §3–§4、§8.1
+- 五方市场行为：[`v0.13/happy-paths-v0.13.md`](v0.13/happy-paths-v0.13.md)
+- 市场闭环信息图：[`v0.15/infographics/MFU-v0.15-机制信息图.html`](v0.15/infographics/MFU-v0.15-机制信息图.html)
 
 ### 8.5 进入下一阶段前要验证
 
@@ -413,9 +413,9 @@
 ### 9.4 已有材料
 
 - 候选档案与孵化筛选：[`platform-concept-model.md`](platform-concept-model.md) §9
-- 孵化器完整 Happy Path：[`happy-paths-v0.13.md`](happy-paths-v0.13.md) §4
-- 孵化器角色成长树与工作台方向：[`tree/skill-tree.md`](tree/skill-tree.md) §8.2
-- GDD v0.15 候选档案：[`MFU-策划案-GDD-v0.15.md`](MFU-策划案-GDD-v0.15.md) §5.14
+- 孵化器完整 Happy Path：[`v0.13/happy-paths-v0.13.md`](v0.13/happy-paths-v0.13.md) §4
+- 孵化器角色成长树与工作台方向：[`skill-tree.md`](skill-tree.md) §8.2
+- GDD v0.15 候选档案：[`v0.15/MFU-策划案-GDD-v0.15.md`](v0.15/MFU-策划案-GDD-v0.15.md) §5.14
 
 ### 9.5 继续演进前要验证
 
@@ -454,7 +454,7 @@
 
 - 竞标对战方向：[`core-gameplay-card-array.md`](core-gameplay-card-array.md) §9
 - 联合竞标、资产出租、公开评审的概念边界：[`platform-concept-model.md`](platform-concept-model.md) §4.11–§4.12
-- 旧成长树中的历史节点与迁移台账：[`tree/skill-tree.md`](tree/skill-tree.md) §3.0、§4.1
+- 旧成长树中的历史节点与迁移台账：[`skill-tree.md`](skill-tree.md) §3.0、§4.1
 
 ### 10.4 开始这一阶段的前提
 
@@ -535,11 +535,11 @@ Later 中的具体顺序可以根据学校、企业或孵化器试点调整，�
 |---|---|---|
 | [`platform-concept-model.md`](platform-concept-model.md) | **概念单一事实源** | 定义经验、能力、信誉、认证、资质、会籍、功能、角色和订单关系 |
 | [`core-gameplay-card-array.md`](core-gameplay-card-array.md) | **核心玩法 living doc** | 定义玩家反复做什么、被动 / 主动连接、阵列与卡牌 |
-| [`tree/skill-tree.md`](tree/skill-tree.md) | **成长规则 living doc** | 定义个人、公司和角色成长树及历史迁移 |
+| [`skill-tree.md`](skill-tree.md) | **成长规则 living doc** | 定义个人、公司和角色成长树及历史迁移 |
 | 本文 | **生命周期与演进路线 living doc** | 规定何时向学生展示哪些机制，以及产品能力的建议演进顺序 |
-| [`MFU-策划案-GDD-v0.15.md`](MFU-策划案-GDD-v0.15.md) | 版本快照 | 记录 v0.15 时点的正式设计 |
-| [`happy-paths-v0.13.md`](happy-paths-v0.13.md) | 历史体验快照 | 提供学生、学校、老师、孵化器、协会五方完整流程参考 |
-| [`infographics/MFU-v0.15-机制信息图.html`](infographics/MFU-v0.15-机制信息图.html) | Pitch 快照 | 向外部观众解释人才培养、组织形式和市场机制 |
+| [`v0.15/MFU-策划案-GDD-v0.15.md`](v0.15/MFU-策划案-GDD-v0.15.md) | 版本快照 | 记录 v0.15 时点的正式设计 |
+| [`v0.13/happy-paths-v0.13.md`](v0.13/happy-paths-v0.13.md) | 历史体验快照 | 提供学生、学校、老师、孵化器、协会五方完整流程参考 |
+| [`v0.15/infographics/MFU-v0.15-机制信息图.html`](v0.15/infographics/MFU-v0.15-机制信息图.html) | Pitch 快照 | 向外部观众解释人才培养、组织形式和市场机制 |
 | [`../MFU-协作阵列-v0.1-可玩原型.html`](../MFU-协作阵列-v0.1-可玩原型.html) | 当前核心玩法原型 | 验证阶段 1，并模拟阶段 4 的第一次主动连接 |
 | [`../role-pages/`](../role-pages/) | 流程页面原型 | 验证订单全生命周期中各角色需要的操作页面 |
 | `docs/superpowers/plans/` | 实施记录 | 说明某个版本如何被实现，不代替产品概念和路线 |
@@ -548,7 +548,7 @@ Later 中的具体顺序可以根据学校、企业或孵化器试点调整，�
 
 1. 改变平台概念或概念关系，先改 `platform-concept-model.md`；
 2. 改变核心反复玩法，先改 `core-gameplay-card-array.md`；
-3. 改变成长树，先改 `tree/skill-tree.md`；
+3. 改变成长树，先改 `skill-tree.md`；
 4. 改变学生 / OPC 阶段或产品演进顺序，改本文；
 5. GDD、infographic 和实施计划是快照，不因后续变化回改；
 6. 新版本开始时，在对应阶段补充链接、验证结果和下一阶段判断。

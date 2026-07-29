@@ -3,7 +3,7 @@
 > 状态：v0.2 首个教学订单已实现，待团队试玩
 > 建立：2026-07-29
 > 适用范围：MFU 核心玩法、可玩 Demo 与 Pitch 表达
-> 与其他文档的关系：本文集中讨论“游戏反复让玩家做什么”。平台概念仍以 [`platform-concept-model.md`](platform-concept-model.md) 为单一事实源；成长规则仍以 [`tree/skill-tree.md`](tree/skill-tree.md) 为准。待本文方向确认后，再同步修改这些 living docs。
+> 与其他文档的关系：本文集中讨论“游戏反复让玩家做什么”。平台概念仍以 [`platform-concept-model.md`](platform-concept-model.md) 为单一事实源；成长规则仍以 [`skill-tree.md`](skill-tree.md) 为准。待本文方向确认后，再同步修改这些 living docs。
 
 > v0.1 原型：[`../MFU-协作阵列-v0.1-可玩原型.html`](../MFU-协作阵列-v0.1-可玩原型.html)
 > 验证：`node mfu-demo/test-card-array-v01.mjs`；浏览器流程见 `mfu-demo/card-array-v01.browser.cjs`

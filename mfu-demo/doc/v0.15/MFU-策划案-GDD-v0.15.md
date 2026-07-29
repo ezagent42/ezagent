@@ -33,8 +33,8 @@ v0.14 是科技树方案的历史快照，不回改。本版修订其 §5.10：�
 
 持续迭代来源：
 
-- 平台概念：[`platform-concept-model.md`](platform-concept-model.md)
-- 成长树：[`tree/skill-tree.md`](tree/skill-tree.md)
+- 平台概念：[`../platform-concept-model.md`](../platform-concept-model.md)
+- 成长树：[`../skill-tree.md`](../skill-tree.md)
 
 ---
 

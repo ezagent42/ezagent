@@ -58,7 +58,7 @@
 
 ## 5.10 科技树系统（新增）
 
-> 📖 本节内容的持续迭代见 `doc/tree/skill-tree.md`（living doc，成长树单一事实源）。本节为 v0.14 版本快照，不再回改。
+> 📖 本节内容的持续迭代见 [`../skill-tree.md`](../skill-tree.md)（living doc，成长树单一事实源）。本节为 v0.14 版本快照，不再回改。
 > 设计原则来源：GDKeys「7 Keys to Meaningful Skill Trees」——Committing Choice / Self-Expression / Gameplay Transformation / Balanced Size / Respec at Cost / Post-Game Completion / Innovation。
 > 核心判定工具：The Verb Rule —— 每个节点的描述中放一个独特动词。如果动词在整棵树上只出现一次，大概率是好节点。
 > 过程原则来源：Medium「Game Design Is Easy」——先做廉价草稿再迭代、匹配游戏特征（MFU：异步、回合制、可仔细阅读）、用 sprint 驱动。
