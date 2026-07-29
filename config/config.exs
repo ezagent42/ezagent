@@ -266,11 +266,10 @@ config :ezagent_domain_provider_connection,
 # Forgejo provider plugin (design
 # docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md, slice F1).
 #
-# Only the credential backend is registered. Unlike GitHub there is no driver
-# and no callback-redirect pair: Forgejo V1 authenticates with a personal
-# access token, not an OAuth user flow, so there is no authorization redirect
-# to declare. How a PAT is first placed into this backend is NOT yet specified
-# by the design — see the F1 handoff note; F2 cannot run end-to-end until it is.
+# Slice F0 wires the full OAuth2 acquisition path: the credential backend, the
+# `forgejo-oauth` callback redirect (consumed by ForgejoCallbackPlug), and the
+# {provider, acquisition_method} -> pair mapping. The driver and backend pair
+# themselves are declared in the plugin's supervision tree, not here.
 config :ezagent_domain_provider_connection,
   credential_backend_implementations:
     Map.merge(
@@ -280,6 +279,20 @@ config :ezagent_domain_provider_connection,
         %{}
       ),
       %{"forgejo-credential-v1" => EzagentPluginForgejo.ForgejoCredentialBackend}
+    ),
+  callback_redirect_pairs:
+    Map.merge(
+      Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
+      %{"forgejo-oauth" => "pair-forgejo-v1"}
+    ),
+  local_authorization_backend_pairs:
+    Map.merge(
+      Application.get_env(
+        :ezagent_domain_provider_connection,
+        :local_authorization_backend_pairs,
+        %{}
+      ),
+      %{{"forgejo", "oauth_user"} => "pair-forgejo-v1"}
     )
 
 # `token_encryption_key` has no default: the module-load fallback in

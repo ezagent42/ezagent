@@ -48,5 +48,64 @@ defmodule EzagentPluginForgejo.Application do
   end
 
   @impl Ezagent.Plugin
-  def children, do: [EzagentPluginForgejo.ForgejoCredentialBackend]
+  def children,
+    do: [
+      EzagentPluginForgejo.ForgejoCredentialBackend,
+      # Registration is DECLARATIVE: the driver and backend pair are reconciled
+      # into `DriverRegistry` / `BackendPairRegistry` by a supervised owner that
+      # lives in domain code, so no `.register` call appears in this plugin's
+      # source (contract SPEC §3.2 — the `:ezagent_plugin_check` grep gate
+      # rejects it).
+      #
+      # No `Ezagent.DomainGit.AdapterDeclarationOwner` yet: `AdapterRegistry`
+      # validates all five `DomainGit.Adapter` callbacks and `ForgejoAdapter`
+      # arrives in slice F2, so declaring one here could only point at a stub.
+      {Ezagent.ProviderConnection.DeclarationOwner,
+       owner: :forgejo_plugin, drivers: [driver_declaration()], backend_pairs: [backend_pair()]}
+    ]
+
+  @doc """
+  Returns the `BackendPair` declaration for the Forgejo plugin.
+
+  Pairs the shared local authorization backend with this plugin's credential
+  backend, which is what makes the domain route Forgejo credential custody —
+  including renewal — through `EzagentPluginForgejo.ForgejoCredentialBackend`.
+  """
+  def backend_pair do
+    Ezagent.ProviderConnection.BackendPair.new!(%{
+      pair_id: "pair-forgejo-v1",
+      authorization_backend: %{id: "local-authorization-v1", fingerprint: "local-v1"},
+      credential_backend: %{id: "forgejo-credential-v1", fingerprint: "forgejo-cred-v1"}
+    })
+  end
+
+  @doc """
+  Returns the `Driver` declaration for the Forgejo plugin.
+
+  **One declaration serves every Forgejo instance.** A declaration is
+  process-wide and holds only stable, non-secret data, which is exactly why no
+  `client_id` appears here: those are per-instance and per-tenant, and live in
+  `EzagentPluginForgejo.OAuthApp` keyed by `{workspace_uri, governed_host}`.
+  The connection's `governed_host` selects the right one at authorization time.
+  """
+  def driver_declaration do
+    Ezagent.ProviderConnection.Driver.new!(%{
+      provider_id: "forgejo",
+      acquisition_method: "oauth_user",
+      provider_fingerprint: "forgejo-driver-v1",
+      implementation: EzagentPluginForgejo.ForgejoDriver,
+      backend_pair_ids: ["pair-forgejo-v1"],
+      metadata: %{
+        authorization_redirect_schema: %{
+          type: :map,
+          fields: %{
+            "authorization_uri" => %{type: :string},
+            "state" => %{type: :string},
+            "pkce_digest" => %{type: :string}
+          }
+        },
+        provider_metadata_schema: %{type: :map, fields: %{}}
+      }
+    })
+  end
 end

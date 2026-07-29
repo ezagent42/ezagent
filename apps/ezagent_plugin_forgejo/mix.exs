@@ -35,6 +35,7 @@ defmodule EzagentPluginForgejo.MixProject do
       {:ezagent_actor, in_umbrella: true},
       {:ezagent_domain_git, in_umbrella: true},
       {:ezagent_domain_provider_connection, in_umbrella: true},
+      {:plug, "~> 1.18"},
       {:req, "~> 0.5"},
       {:jason, "~> 1.2"}
     ]
