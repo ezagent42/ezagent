@@ -12,6 +12,8 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   alias Ezagent.Agent.DefaultAgentSeed
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeBehaviorFold
+  alias Ezagent.Entity.Agent.TemplateSpawn.Rollback
+  alias Ezagent.Identity.RecipeCapBinding
 
   @type build_opts :: %{
           required(:recipe_name) => String.t(),
@@ -72,7 +74,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
 
       {:ok,
        base
-       |> Map.merge(recipe_config(recipe))
+       |> Map.merge(recipe_config_for_flavor(recipe, flavor))
        |> maybe_put(:desired_skills, recipe_field(recipe, :skills), &non_empty_list?/1)
        |> maybe_put(:plugins, recipe_field(recipe, :plugins), &non_empty_list?/1)
        |> maybe_put(:prompt, recipe_field(recipe, :prompt), &is_binary/1)
@@ -87,7 +89,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   Spawn a live agent from a recipe/flavor pair and record launch attributes.
   """
   @spec create_agent_from_recipe(spawn_opts()) ::
-          {:ok, :created | :already_present} | {:error, term()}
+          {:ok, {:created, Rollback.fresh_receipt()} | :already_present} | {:error, term()}
   def create_agent_from_recipe(
         %{
           recipe: recipe,
@@ -105,6 +107,7 @@ defmodule Ezagent.Agent.RecipeMaterializer do
     with {:ok, %Recipe{} = recipe} <- normalize_recipe(recipe),
          {:ok, materialized} <- RecipeBehaviorFold.fold(recipe, flavor),
          {:ok, content} <- materializer_content(%{opts | recipe: recipe}),
+         :ok <- ensure_project_cwd(content),
          {:ok, outcome} <-
            spawn_from_content(
              content,
@@ -127,9 +130,28 @@ defmodule Ezagent.Agent.RecipeMaterializer do
 
   def create_agent_from_recipe(opts), do: {:error, {:invalid_recipe_materializer_opts, opts}}
 
+  # A recipe's project_cwd is where interactive flavors start their PTY. The
+  # role defaults intentionally point at a per-role directory under ~/.ezagent;
+  # create it before spawning so a fresh Codex/CC login terminal cannot exit
+  # immediately because its working directory does not exist.
+  @doc false
+  @spec ensure_project_cwd(map()) :: :ok | {:error, term()}
+  def ensure_project_cwd(content) when is_map(content) do
+    case Map.get(content, :project_cwd) || Map.get(content, "project_cwd") do
+      cwd when is_binary(cwd) and cwd != "" ->
+        case File.mkdir_p(cwd) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:project_cwd_create_failed, cwd, reason}}
+        end
+
+      _ ->
+        {:error, :missing_project_cwd}
+    end
+  end
+
   @doc false
   @spec spawn_from_template_content(map(), URI.t(), URI.t(), URI.t(), keyword()) ::
-          {:ok, :created | :already_present} | {:error, term()}
+          {:ok, {:created, Rollback.fresh_receipt()} | :already_present} | {:error, term()}
   def spawn_from_template_content(
         content,
         %URI{} = agent_uri,
@@ -167,9 +189,35 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   def spawn_from_template_content(_content, _agent_uri, _owner_uri, _workspace_uri, _opts),
     do: {:error, :invalid_template_content_spawn}
 
-  defp materializer_content(%{template_content: content}) when is_map(content), do: {:ok, content}
+  @doc """
+  Retire a fresh recipe materialization using the opaque receipt returned by
+  `create_agent_from_recipe/1`.
 
-  defp materializer_content(opts) do
+  A positive binding version is tombstoned before spawn ownership is released,
+  so a concurrent newer binding prevents compensation from terminating its
+  agent. `nil` is accepted only for the pre-binding failure path and is checked
+  against the absence of an active binding.
+  """
+  @spec rollback_fresh_agent(Rollback.fresh_receipt(), nil | pos_integer()) ::
+          {:ok, :retired} | {:error, term()}
+  def rollback_fresh_agent(receipt, binding_version)
+      when is_nil(binding_version) or
+             (is_integer(binding_version) and binding_version > 0) do
+    with {:ok, agent_uri} <- Rollback.instance_uri(receipt),
+         :ok <- rollback_recipe_binding(agent_uri, binding_version),
+         {:ok, :retired} <- Rollback.fresh_spawn(receipt) do
+      {:ok, :retired}
+    end
+  end
+
+  def rollback_fresh_agent(_receipt, _binding_version),
+    do: {:error, :invalid_fresh_agent_rollback}
+
+  @doc false
+  @spec materializer_content(map()) :: {:ok, map()} | {:error, term()}
+  def materializer_content(%{template_content: content}) when is_map(content), do: {:ok, content}
+
+  def materializer_content(opts) when is_map(opts) do
     with {:ok, content} <-
            template_content(Map.fetch!(opts, :recipe), %{
              recipe_name: Map.fetch!(opts, :recipe_name),
@@ -180,11 +228,16 @@ defmodule Ezagent.Agent.RecipeMaterializer do
              provider: Map.get(opts, :provider)
            }) do
       case Map.get(opts, :template_content_overrides, %{}) do
-        overrides when is_map(overrides) -> {:ok, Map.merge(content, overrides)}
-        other -> {:error, {:invalid_template_content_overrides, other}}
+        overrides when is_map(overrides) ->
+          {:ok, Map.merge(content, config_for_flavor(overrides, Map.fetch!(opts, :flavor)))}
+
+        other ->
+          {:error, {:invalid_template_content_overrides, other}}
       end
     end
   end
+
+  def materializer_content(_opts), do: {:error, :invalid_template_content_materializer_opts}
 
   defp spawn_from_content(
          content,
@@ -210,10 +263,31 @@ defmodule Ezagent.Agent.RecipeMaterializer do
            workspace_uri,
            opts
          ) do
-      {:ok, %{fresh?: true}} -> {:ok, :created}
+      {:ok, %{fresh?: true, rollback_receipt: receipt}} -> {:ok, {:created, receipt}}
+      {:ok, %{fresh?: true}} -> {:error, :fresh_spawn_receipt_missing}
       {:ok, %{fresh?: false}} -> {:ok, :already_present}
       {:ok, %{}} -> {:ok, :already_present}
       {:error, _} = err -> err
+    end
+  end
+
+  defp rollback_recipe_binding(agent_uri, nil) do
+    case RecipeCapBinding.fetch(agent_uri) do
+      :not_found -> :ok
+      {:ok, binding} -> {:error, {:unexpected_active_recipe_binding, binding.version}}
+    end
+  end
+
+  defp rollback_recipe_binding(agent_uri, version) do
+    case RecipeCapBinding.tombstone_if_version(agent_uri, version) do
+      :ok ->
+        :ok
+
+      {:error, :version_mismatch} ->
+        case RecipeCapBinding.fetch(agent_uri) do
+          :not_found -> :ok
+          {:ok, binding} -> {:error, {:recipe_binding_version_changed, version, binding.version}}
+        end
     end
   end
 
@@ -257,6 +331,20 @@ defmodule Ezagent.Agent.RecipeMaterializer do
   end
 
   defp recipe_config(recipe), do: recipe_field(recipe, :config) || %{}
+
+  # The Hello recipe's provider/model fields describe its curl implementation.
+  # A session may materialize that same recipe under another flavor, where
+  # passing DeepSeek's model into Codex/CC would override the account default
+  # (and can be rejected by the CLI). Keep the recipe's transport defaults only
+  # for curl; other flavors add their own explicit template data separately.
+  defp recipe_config_for_flavor(recipe, flavor),
+    do: config_for_flavor(recipe_config(recipe), flavor)
+
+  defp config_for_flavor(config, "curl"), do: config
+
+  defp config_for_flavor(config, _flavor) do
+    Map.drop(config, [:provider, "provider", :api_url, "api_url", :model, "model"])
+  end
 
   defp recipe_field(recipe, key) when is_atom(key) do
     case Map.fetch(recipe, key) do

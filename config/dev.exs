@@ -80,11 +80,11 @@ config :ezagent_web, EzagentWeb.Endpoint,
   ]
 
 config :ezagent_plugin_world,
-  # In development the World renderer is served by the Vite dev server. The
-  # production bundle under /assets/world is not present until `vite build`,
-  # which otherwise leaves the LiveView shell stuck on its loading skeleton.
-  world_module_url: "http://localhost:5174/src/main.tsx",
-  world_css_url: "http://localhost:5174/src/styles.css"
+  # Serve the checked-in World bundle from the same Phoenix origin in dev.
+  # This works for localhost, LAN, and tailnet clients alike; a browser on
+  # another machine must never be asked to fetch a Vite URL on `localhost`.
+  world_module_url: "/assets/world/main.js",
+  world_css_url: "/assets/world/world.css"
 
 # Resource-unification P2 — upload download-token signing secret (core-owned
 # config key). Wired to the same value as the web endpoint's secret_key_base so

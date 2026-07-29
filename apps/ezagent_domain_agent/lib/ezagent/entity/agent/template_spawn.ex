@@ -1,6 +1,8 @@
 defmodule Ezagent.Entity.Agent.TemplateSpawn do
   @moduledoc false
 
+  alias Ezagent.Entity.Agent.TemplateSpawn.Rollback
+
   @doc """
   Phase 7 completion PR-1 (SPEC §1.6a) — spawn a worker agent from an
   AgentTemplate's `:template` slice CONTENT, delegating the launch to
@@ -125,6 +127,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
            %{
              :workers => [URI.t()],
              :fresh? => true,
+             :rollback_receipt => Rollback.fresh_receipt(),
              optional(:role_degraded) => boolean(),
              optional(:role_degraded_reason) => term()
            }}
@@ -233,6 +236,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
            %{
              :workers => [URI.t()],
              :fresh? => true,
+             :rollback_receipt => Rollback.fresh_receipt(),
              optional(:role_degraded) => boolean(),
              optional(:role_degraded_reason) => term()
            }}
@@ -273,12 +277,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     with {:ok, template_class} <-
            Ezagent.Entity.AgentTemplate.resolve_template_class(template_content_map),
          {:ok, flavor} <- template_content_flavor(template_content_map),
-         # #201-cred (codex r2 HIGH-1) — `resolve_cascade_content` RESOLVES +
-         # AUTHORIZES the credential source but NEVER mints: the durable grant
-         # is deferred to the created-winner's materialization boundary
-         # (after the immutable `:started ∧ created?` receipt), so NO path
-         # below — loser, adopter, rehydrating winner, exception — can leave
-         # or need to compensate a grant.
+         # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
+         # (incl. a unique-constraint insert conflict from a concurrent duplicate
+         # create — where the WINNER owns the row, not this call) must NOT trigger
+         # the grant cleanup below: this call did not successfully mint, so deleting
+         # would erase the winner's grant (codex r6 HIGH — race). So it stays in the
+         # OUTER `with`, whose `else` returns the error WITHOUT deleting any grant.
          {:ok, template_content_map} <-
            resolve_cascade_content(
              template_content_map,
@@ -289,6 +293,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              flavor,
              opts
            ),
+         # Past the mint boundary: from here, ANY failure is owned by THIS call
+         # (this call minted the grant, if any), so the grant cleanup is safe. The
+         # nested `with` scopes the grant-delete to exactly these post-mint steps.
          {:ok, result} <-
            spawn_after_cascade(
              template_class,
@@ -372,15 +379,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end)
   end
 
-  # Post-cascade spawn steps. #201-cred (codex r2 HIGH-1) — no credential grant
-  # exists yet at ANY point below (the mint is deferred to the created-winner's
-  # materialization boundary inside the plugin Template Class), so a loser /
-  # error / raise here has NOTHING to compensate. The only grant cleanup left
-  # anywhere is (a) the plugin's own post-mint failure (it deletes exactly the
-  # incarnation it minted — confirmed, never best-effort) and (b) a post-spawn
-  # obligation failure rolling back a SUCCESSFUL created-winner instantiate —
-  # compensated by `Rollback.fresh_spawn` from the `:grant_incarnation_id`
-  # receipt the plugin returns in its instantiate meta.
+  # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
+  # was just minted by this call's `resolve_cascade_content`), so on failure we
+  # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
+  # This is the ONLY grant-cleanup site (the pre-mint outer `with` must not delete).
   defp spawn_after_cascade(
          template_class,
          template_content_map,
@@ -395,7 +397,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri) do
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
         {:ok, _workers, false, _instantiate_meta, pre_start_completion} ->
-          # The loser (`:already_started`) keeps NOTHING — it minted nothing.
           finalize_pre_start(pre_start_completion, {:error, :agent_uri_already_live})
 
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
@@ -415,9 +416,13 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           end)
 
         {:error, reason, pre_start_completion} ->
+          revoke_cascade_grant_best_effort(instance_uri)
+          delete_agent_flavor_unless_pre_start(instance_uri, pre_start_completion)
           finalize_pre_start(pre_start_completion, {:error, reason})
 
         {:error, reason} ->
+          revoke_cascade_grant_best_effort(instance_uri)
+          Ezagent.AgentFlavorAttributes.delete(instance_uri)
           {:error, reason}
 
         {:raised, kind, reason, stacktrace, pre_start_completion} ->
@@ -428,6 +433,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       end
     else
       {:error, _reason} = err ->
+        revoke_cascade_grant_best_effort(instance_uri)
+        delete_agent_flavor_unless_pre_start(instance_uri, pre_start_ref)
         err
     end
   end
@@ -445,15 +452,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          instantiate_meta
        ) do
     instantiate_meta = put_respawn_flavor(instantiate_meta, template_content_map)
-
-    # #201 PR-1/PR-3 — the core-issued logical-create verdict, threaded by the
-    # plugin Template Class from its spawn receipt (NEVER plugin-derived).
-    # Fail-CLOSED: no receipt ⇒ NOT-created, so a create-only side effect
-    # (credential grant mint / materialization) cannot leak through a legacy
-    # reporter. #201-cred — the verdict no longer gates a grant DELETE here:
-    # a `:started ∧ ¬created?` (rehydrating winner) attempt never minted, so
-    # there is nothing to compensate.
-    created? = Map.get(instantiate_meta, :created?, false) == true
 
     # codex PR #408 review HIGH-3 — surface role-bootstrap degradation
     # from the plugin Template Class's instantiate meta. The plugin
@@ -528,11 +526,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              workers,
              spawned_by_uri,
              workspace_uri,
-             Map.get(instantiate_meta, :creation_attempt_id),
-             # #201 PR-3 — the durable creation-inventory write follows the
-             # receipt: :replace_stale for a genuine create (destroy→recreate
-             # N→N+1), :skip for a rehydrating winner.
-             if(created?, do: :replace_stale, else: :skip)
+             Map.get(instantiate_meta, :creation_attempt_id)
            ) do
         {:ok, ownership_receipts} ->
           case establish_fresh_spawn_obligations(
@@ -544,42 +538,51 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
                  template_content_map,
                  ownership_receipts
                ) do
-            {:ok, _receipts} ->
-              # #201 PR-1/PR-2 — THE only flavor write on the creation path,
-              # gated on the `:started` winner signal. Flavor needs ONLY
-              # `:started`: a cold rehydrate re-writes the SAME flavor
-              # idempotently — a benign self-heal, not a clobber.
+            {:ok, receipts} ->
               :ok = Ezagent.AgentFlavorAttributes.put(instance_uri, flavor)
-              {:ok, Map.merge(%{workers: workers, fresh?: fresh?}, role_degraded_passthrough)}
 
-            {:error, reason, receipts} ->
-              rollback_result =
-                Ezagent.Entity.Agent.TemplateSpawn.Rollback.fresh_spawn(
+              rollback_receipt =
+                fresh_rollback_receipt(
                   workers,
                   receipts,
                   template_class,
                   instance_uri,
-                  Map.get(instantiate_meta, :pre_start_claim?, false),
-                  # #201-cred — the created-winner's mint receipt, returned by the
-                  # plugin Template Class in its instantiate meta. Rollback
-                  # deletes EXACTLY that incarnation (confirmed); a missing
-                  # receipt means NOTHING was minted (no URI-wide fallback).
-                  Map.get(instantiate_meta, :grant_incarnation_id)
+                  workspace_uri,
+                  instantiate_meta
                 )
+
+              {:ok,
+               Map.merge(
+                 %{workers: workers, fresh?: fresh?, rollback_receipt: rollback_receipt},
+                 role_degraded_passthrough
+               )}
+
+            {:error, reason, receipts} ->
+              rollback_result =
+                workers
+                |> fresh_rollback_receipt(
+                  receipts,
+                  template_class,
+                  instance_uri,
+                  workspace_uri,
+                  instantiate_meta
+                )
+                |> Rollback.fresh_spawn()
 
               rollback_error(reason, rollback_result)
           end
 
         {:error, reason, ownership_receipts} ->
           rollback_result =
-            Ezagent.Entity.Agent.TemplateSpawn.Rollback.fresh_spawn(
-              workers,
+            workers
+            |> fresh_rollback_receipt(
               ownership_receipts,
               template_class,
               instance_uri,
-              Map.get(instantiate_meta, :pre_start_claim?, false),
-              Map.get(instantiate_meta, :grant_incarnation_id)
+              workspace_uri,
+              instantiate_meta
             )
+            |> Rollback.fresh_spawn()
 
           rollback_error(reason, rollback_result)
       end
@@ -588,13 +591,27 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
-  # #201-cred (codex r2 HIGH-2) — a grant-compensation failure during rollback
-  # is surfaced COMPOSITE, never collapsed into the primary error: the minted
-  # incarnation could not be confirmed absent, so the caller must see both.
-  defp rollback_error(reason, :ok), do: {:error, reason}
+  defp rollback_error(reason, {:ok, :retired}), do: {:error, reason}
+  defp rollback_error(reason, {:error, rollback_reason}), do: {:error, {reason, rollback_reason}}
 
-  defp rollback_error(reason, {:error, :grant_compensation_failed}),
-    do: {:error, {reason, :grant_compensation_failed}}
+  defp fresh_rollback_receipt(
+         workers,
+         ownership_receipts,
+         template_class,
+         instance_uri,
+         workspace_uri,
+         instantiate_meta
+       ) do
+    Rollback.fresh_receipt(
+      workers,
+      ownership_receipts,
+      template_class,
+      instance_uri,
+      workspace_uri,
+      instantiate_meta,
+      Map.get(instantiate_meta, :pre_start_claim?, false)
+    )
+  end
 
   defp establish_fresh_spawn_obligations(
          workers,
@@ -605,20 +622,18 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          template_content_map,
          ownership_receipts
        ) do
-    with :ok <-
-           Ezagent.Entity.Agent.TemplateSpawn.SandboxState.record_sandbox_state(
-             workers,
-             instantiate_meta,
-             template_class
-           ),
+    with :ok <- record_sandbox_state(workers, instantiate_meta, template_class),
          :ok <-
            Ezagent.Entity.Agent.TemplateSpawn.BehaviorOverlay.mount(workers, behavior_overlay),
          {:ok, profile_status} <- persist_display_name(instance_uri, template_content_map) do
       receipts = add_display_profile_receipt(ownership_receipts, instance_uri, profile_status)
 
-      case test_hook_after_display_profile(instance_uri, profile_status) do
-        :ok -> {:ok, receipts}
-        {:error, reason} -> {:error, reason, receipts}
+      hook_result = test_hook_after_display_profile(instance_uri, profile_status)
+
+      if hook_result == :ok do
+        {:ok, receipts}
+      else
+        {:error, hook_result, receipts}
       end
     else
       {:error, reason} -> {:error, reason, ownership_receipts}
@@ -675,16 +690,20 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
 
     defp test_hook_after_display_profile(_agent_uri, :skipped), do: :ok
   else
-    # Non-test env: no injection point, always `:ok`. Read through `Process.get/2`
-    # (typed `term()`; the key is never set so it always yields `:ok`) so the
-    # compiler does NOT narrow this fn's return to the `:ok` singleton — otherwise
-    # the caller's env-conditional `{:error, _}` branch in
-    # `establish_fresh_spawn_obligations/7` (live in test env, where the hook
-    # forwards `TestTemplateSpawn.hook/3`) is flagged "clause will never match"
-    # under `--warnings-as-errors`. The `@spec` union above does not suppress the
-    # Elixir 1.18 set-theoretic inference for a private fn.
-    defp test_hook_after_display_profile(_agent_uri, _status),
-      do: Process.get(:"$ezagent_template_spawn_no_hook", :ok)
+    defp test_hook_after_display_profile(_agent_uri, _status), do: :ok
+  end
+
+  # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
+  # agent whose fresh spawn failed after the grant was minted. Delete (not soft
+  # `revoke`) so the unique `agent_uri` key is freed and a later retry's
+  # `GrantRow.insert/1` does not conflict (the agent never came up — no row should
+  # survive). Idempotent: a no-op when no grant exists (e.g. no credential source
+  # was resolved).
+  defp revoke_cascade_grant_best_effort(%URI{} = agent_uri) do
+    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+    :ok
+  rescue
+    _ -> :ok
   end
 
   defp template_content_flavor(template_content_map) when is_map(template_content_map) do
@@ -854,6 +873,11 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end
   end
 
+  defp delete_agent_flavor_unless_pre_start(instance_uri, nil),
+    do: Ezagent.AgentFlavorAttributes.delete(instance_uri)
+
+  defp delete_agent_flavor_unless_pre_start(_instance_uri, _pre_start), do: :ok
+
   defp finalize_pre_start(nil, result), do: result
 
   defp finalize_pre_start(%{claim: claim}, {:ok, %{workers: workers, fresh?: fresh?}} = result) do
@@ -870,6 +894,154 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     case Ezagent.Kind.Template.PreStart.complete(claim, {:error, reason}) do
       :ok -> result
       {:error, _reason} = error -> error
+    end
+  end
+
+  # PR3 2026-05-24 — dispatch `sandbox.update_config` on each worker URI
+  # so the agent's `:sandbox` slice carries the per-agent
+  # `config_dir_path` + `template_class`. Both fields are needed by
+  # `Sandbox.invoke(:destroy, ...)` to invoke the right cleanup callback
+  # with the right path.
+  #
+  # Codex PR3 round-2 HIGH-1 — SKIP dispatch entirely when meta lacks
+  # `:config_dir_path`. The :already_started loser path returns no
+  # config_dir_path; if we still dispatched, we'd write `nil` into the
+  # slice and CLOBBER the live state the :started winner just populated.
+  # The result would be a slice with no path → destroy_config_dir would
+  # never run → credential dir leaks.
+  #
+  # When meta carries :config_dir_path = nil EXPLICITLY (a plugin that
+  # opted out of per-agent dirs, e.g. echo template returning
+  # %{config_dir_path: nil}), we DO dispatch — recording that the
+  # template_class manages no dir is a meaningful state. The "missing
+  # key" vs "explicit nil" distinction is the gate.
+  defp record_sandbox_state(workers, meta, template_class) do
+    if Map.has_key?(meta, :config_dir_path) do
+      do_record_sandbox_state(
+        workers,
+        Map.get(meta, :config_dir_path),
+        template_class,
+        # PTY-orphan-restart 2026-05-26 — the plugin Template Class
+        # may also emit `:respawn_template_data` in meta (cc does;
+        # echo doesn't). Passed through to `sandbox.update_config` so
+        # the slice carries enough state for `Sandbox.post_init/2` to
+        # respawn the subprocess on a phx restart. Absent in meta →
+        # `nil` here → not written into the slice.
+        Map.get(meta, :respawn_template_data)
+      )
+    else
+      # Loser/short-circuit path: meta has no :config_dir_path → don't
+      # touch the slice (it was populated by the winner OR was already
+      # in the right state). No-op = safe.
+      :ok
+    end
+  end
+
+  defp do_record_sandbox_state(workers, config_dir, template_class, respawn_data) do
+    Enum.reduce_while(workers, :ok, fn worker_uri, :ok ->
+      target = Ezagent.URI.new!("#{URI.to_string(worker_uri)}?action=sandbox.update_config")
+
+      if sandbox_state_matches?(worker_uri, config_dir, template_class, respawn_data) do
+        {:cont, :ok}
+      else
+        # codex E2E fix v2 Bug A (2026-05-29) — the Agent Kind was just
+        # spawned by `template_class.instantiate/3`. `Kind.Server.init/1`
+        # registers `:not_ready` synchronously and returns
+        # `{:continue, :announce_ready}`; the `:ready` flip happens
+        # asynchronously in `handle_continue` after the post-init Behavior
+        # chain runs. The orchestrator-spawn path
+        # (`Session.ensure_orchestrator` → `spawn_from_template_content` →
+        # `record_sandbox_state`) hits this dispatch microseconds after
+        # `start_link` returns — typically before the GenServer's
+        # `handle_continue(:announce_ready, ...)` message has been
+        # processed. A `:call` dispatch in that window fails fast with
+        # `{:error, :not_ready}` (hard invariant #3, so the synchronous
+        # caller doesn't block on `deadline_ms`), and the Sandbox slice's
+        # `respawn_template_data` never gets written — which means
+        # `Sandbox.post_init/2` cannot re-spawn the PTY subprocess on the
+        # next phx restart. Allen e2e symptom 2026-05-28 was
+        # `{:sandbox_update_config_failed, %URI{cc_orchestrator-main},
+        # :not_ready}`.
+        #
+        # Bridge-backed cc agents are spawned with this sandbox state in their
+        # Kind init args before transport readiness can hold ReadyGate at
+        # `:not_ready`. The slice-match check above covers that case without
+        # adding a core dispatch bypass; this fallback remains the normal
+        # post-spawn write path for templates that do not initialize sandbox in
+        # spawn args.
+        #
+        # FIRE-AND-FORGET (go-live 2026-07-06): do NOT block the spawning
+        # caller on the agent reaching `:ready`. This shared spawn machinery
+        # was tuned for the SYNCHRONOUS cc-orchestrator spawn (the 5s
+        # `ReadyGate.await` above), but the socialware-install path reuses it
+        # for role-slot agents of ANY flavor. A cold agent whose `activate`
+        # provisions a heavy subprocess — e.g. the `np` recipe's first
+        # `uv run` per container downloading numpy/sympy, measured ~9.6s —
+        # would hold the await past the `create_session` dispatch budget
+        # (`deadline_ms || 5000`), the observed "first socialware install per
+        # boot times out at 5s" (install completed server-side regardless).
+        #
+        # Switch to `:cast`: a cast to a not-ready target is BUFFERED via
+        # `PendingDelivery` (`invocation.ex` `{:not_ready, :cast}`) and
+        # delivered once the agent flips `:ready`; a ready target gets it
+        # immediately. Either way the spawning caller returns without
+        # blocking — so we drop the `ReadyGate.await`. The `:sandbox` slice
+        # write only feeds respawn-on-restart (`Sandbox.post_init/2`), which
+        # ALSO self-heals via `ensure_subprocess_alive`/CascadeRuntime, so a
+        # late (or, on a dead agent, dropped) write never corrupts a running
+        # agent — hence no rollback-on-write-failure anymore.
+        #
+        # Self-authority (#154): `caller: worker_uri` dispatching to
+        # `worker_uri?action=sandbox.update_config` IS the agent acting on
+        # its OWN `:sandbox` slice (capbac.md §7 actor-self). The agent's own
+        # `sandbox.update_config` cap is carried INLINE in `ctx.caps` (the
+        # step-5.5 `granted_via_ctx_caps?` authorizer), scoped to this
+        # specific agent; `granted_by` = the agent itself, never persisted
+        # through `Ezagent.Identity.Grant`.
+        admin = Ezagent.Entity.User.admin_uri()
+
+        case Ezagent.Cap.issue_for_action({:admin, admin}, worker_uri, target) do
+          {:ok, cap} ->
+            _ =
+              Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+                target: target,
+                mode: :cast,
+                args: %{
+                  config_dir_path: config_dir,
+                  template_class: template_class,
+                  respawn_template_data: respawn_data
+                },
+                ctx: %{
+                  caller: worker_uri,
+                  authenticated_principal: worker_uri,
+                  caps: [cap],
+                  # `:ignore` — nobody awaits this write. `Kind.Server.handle_cast`
+                  # unconditionally calls `Invocation.reply(inv.ctx, ...)`, which
+                  # requires a `:reply` key (an absent key raises FunctionClause);
+                  # `:ignore` is the no-op reply target for fire-and-forget.
+                  reply: :ignore
+                },
+                origin: :trusted_internal
+              })
+
+            {:cont, :ok}
+
+          {:error, reason} ->
+            {:halt, {:error, {:sandbox_update_config_cap_issue_failed, worker_uri, reason}}}
+        end
+      end
+    end)
+  end
+
+  defp sandbox_state_matches?(%URI{} = worker_uri, config_dir, template_class, respawn_data) do
+    case Ezagent.Kind.read(worker_uri, :sandbox, spawn: :never) do
+      {:ok, state} when is_map(state) ->
+        Map.get(state, :config_dir_path) == config_dir and
+          Map.get(state, :template_class) == template_class and
+          Map.get(state, :respawn_template_data) == respawn_data
+
+      _ ->
+        false
     end
   end
 end

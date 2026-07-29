@@ -124,10 +124,10 @@ defmodule EzagentPluginHello.Router do
   end
 
   @doc """
-  Loop + multi-agent guard. Route a message unless it was emitted by the
-  front-desk itself. The deterministic Hello operations are Session actions,
-  so they have no worker-agent sender identities to inspect. Every other sender
-  — a user OR an external agent — is routed.
+  Loop + multi-agent guard. Route a message unless it was emitted by one of
+  Hello's own platform agents. The deterministic Hello operations are Session
+  actions, so the front-desk and LLM are the only worker-agent identities to
+  inspect. Every other sender — a user OR an external agent — is routed.
 
   Fails CLOSED: if the `:session` members slice cannot be read AT ALL (no live
   Kind / a read miss), we cannot identify our own workers and therefore cannot
@@ -137,8 +137,8 @@ defmodule EzagentPluginHello.Router do
   """
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
-    case Members.role_uri(session_uri, "front-desk") do
-      {:ok, front_desk_uri} -> not same_uri?(front_desk_uri, sender)
+    case Members.role_uris(session_uri, ["front-desk", "llm"]) do
+      {:ok, own_agent_uris} -> Enum.all?(own_agent_uris, &(not same_uri?(&1, sender)))
       :error -> false
     end
   end

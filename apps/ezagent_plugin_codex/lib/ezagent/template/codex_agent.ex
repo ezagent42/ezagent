@@ -243,7 +243,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
                 fn ->
                   case revalidate_grant_before_launch(grant_ctx) do
                     :ok ->
-                      case ensure_sidecars(agent_uri, tmpl_with_dir) do
+                      case ensure_initial_runtime(agent_uri, tmpl_with_dir) do
                         {:ok, meta} ->
                           {:ok, [agent_uri],
                            meta
@@ -353,6 +353,45 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
     end
   end
 
+  # An empty per-agent CODEX_HOME is a valid first-login state. Start the
+  # native TUI in that state; a bridge thread cannot be created until login.
+  defp ensure_initial_runtime(agent_uri, tmpl) do
+    test_mode = Application.get_env(:ezagent_plugin_codex, :test_mode, @compile_env == :test)
+
+    if test_mode or authenticated_config_home?(agent_uri, tmpl) do
+      ensure_sidecars(agent_uri, tmpl)
+    else
+      cwd = Map.fetch!(tmpl, "cwd")
+      codex_path = Map.get(tmpl, "codex_path")
+
+      with :ok <- ensure_initial_tui(agent_uri, cwd, tmpl, codex_path, test_mode) do
+        {:ok, %{authentication: :pending_login}}
+      end
+    end
+  end
+
+  defp authenticated_config_home?(agent_uri, tmpl) do
+    case credential_status(resolve_config_home(agent_uri, tmpl)) do
+      %{status: :authenticated} -> true
+      _ -> false
+    end
+  end
+
+  defp ensure_initial_tui(agent_uri, cwd, tmpl, codex_path, test_mode) do
+    if Ezagent.Domain.Pty.alive?(agent_uri) do
+      :ok
+    else
+      with {:ok, params} <-
+             build_initial_tui_params_for_env(cwd, tmpl, codex_path, test_env(test_mode)) do
+        case Ezagent.Domain.Pty.start(agent_uri, params) do
+          {:ok, _pid} -> :ok
+          {:error, {:already_started, _pid}} -> :ok
+          {:error, reason} -> {:error, {:codex_initial_tui_start_failed, reason}}
+        end
+      end
+    end
+  end
+
   defp ensure_app_server(agent_uri, cwd, socket_path, codex_path, test_mode, tmpl) do
     if EzagentPluginCodex.AppServer.alive?(agent_uri) do
       ensure_app_server_ready(agent_uri, socket_path, test_mode)
@@ -372,6 +411,25 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
       end
     end
   end
+
+  @doc false
+  def build_initial_tui_params_for_env(cwd, _tmpl, _codex_path, :test),
+    do: {:ok, %{cwd: cwd, test_mode: true}}
+
+  def build_initial_tui_params_for_env(cwd, tmpl, codex_path, _env) do
+    with {:ok, codex} <- codex_executable(codex_path) do
+      {:ok,
+       %{
+         cwd: cwd,
+         cmd_override: [codex],
+         cmd_env: codex_home_env(tmpl),
+         auth_observers: credential_auth_observers()
+       }}
+    end
+  end
+
+  defp test_env(true), do: :test
+  defp test_env(false), do: :dev
 
   # Shared by CodexRemoteAgent (via defdelegate) — same app-server readiness
   # wait, so it lives here once rather than being copied into the remote flavor.
@@ -700,7 +758,7 @@ defmodule Ezagent.PluginCodex.Template.CodexAgent do
             true ->
               case Map.fetch(respawn_data, "cwd") do
                 {:ok, cwd} when is_binary(cwd) and cwd != "" ->
-                  case ensure_sidecars(agent_uri, respawn_data) do
+                  case ensure_initial_runtime(agent_uri, respawn_data) do
                     {:ok, _meta} ->
                       Logger.info(
                         "codex.agent.ensure_subprocess_alive: respawned sidecars for " <>

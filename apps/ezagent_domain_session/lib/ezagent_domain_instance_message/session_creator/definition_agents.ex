@@ -24,8 +24,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        through its `K.grant`, atomically upsert the signed artifacts, and
        version-reconcile them into the live Identity slice.
     5. **join + cleanup** — faceted `session.join` carrying `%{role_name: name}`;
-       on a definitive spawn/join failure terminate the worker and conditionally
-       tombstone the exact binding version.
+       on a bind/sync/join/convergence failure, conditionally tombstone the exact
+       binding version and retire the fresh worker through its opaque spawn
+       receipt. Retirement calls the Kind lifecycle directly and does not depend
+       on the failed worker becoming dispatch-ready.
     6. **no cold-target signing bypass** — recipe artifacts can only be minted
        after the target authority exists. Cold restart hydrates the durable
        binding; live materialization uses a fixed VM-internal sync action, not a
@@ -34,8 +36,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   Authority is SYSTEM-MEDIATED materialization (mirrors
   `Materializer.join_session_members`):
   the spawn runs under the session owner (`granted_by`) with
-  `list_caps_for_materialization/1`, and the join/cleanup dispatch under the
-  genesis admin entity with an inline least-priv cap.
+  `list_caps_for_materialization/1`, and the join dispatch under the genesis
+  admin entity with an inline least-priv cap.
 
   > **Rebase note (T1, reconciled):** T1's structured `recipe:<name>` subject has
   > landed. Role `recipe` accepts EITHER a plain recipe name (`guide`) or the
@@ -44,14 +46,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   > (which itself takes a plain name and re-derives the subject).
   """
 
-  require Logger
-
+  alias Ezagent.Agent.RecipeMaterializer
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
   alias Ezagent.Entity.Session.Orchestrator, as: SessionOrchestrator
   alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.Invocation
   alias Ezagent.Orchestrator.Tools.Participants
+  alias Ezagent.Session.Participants, as: SessionParticipants
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.Materializer
   alias Mix.Tasks.Ezagent.Agent.GrantRecipeCaps
@@ -138,7 +140,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
               {:error, reason} ->
                 partial = %{
                   satisfied: Enum.reverse(installed),
-                  skipped: Enum.reverse(skipped)
+                  skipped:
+                    Enum.reverse([
+                      %{role_name: role_name, reason: reason} | skipped
+                    ])
                 }
 
                 {:halt, {:error, reason, partial}}
@@ -353,7 +358,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
        ) do
     workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
 
-    with :ok <-
+    with {:ok, fresh_receipt} <-
            spawn_agent(
              workspace_uri,
              granted_by,
@@ -368,6 +373,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         {:ok, binding} ->
           result =
             with :ok <- RecipeCapBinding.sync_live(planned_uri),
+                 # Session admission checks whether the caller manages the
+                 # credential-bearing agent. This must exist before `join`;
+                 # granting it afterwards turns a valid fresh role into a
+                 # pending admission and aborts the whole template roster.
+                 :ok <-
+                   Ezagent.Workspace.grant_creator_manage_cap(
+                     :agent,
+                     planned_uri,
+                     workspace_uri,
+                     granted_by
+                   ),
                  :ok <- join_or_cleanup(session_uri, planned_uri, role_name, recipe),
                  :ok <- maybe_await_role_member(session_uri, planned_uri, role_name, recipe) do
               :ok
@@ -378,14 +394,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
               :ok
 
             {:error, _reason} = error ->
-              _ = terminate_worker(planned_uri)
-              compensate_recipe_binding(planned_uri, binding)
-              error
+              rollback_failed_fresh(
+                error,
+                session_uri,
+                planned_uri,
+                fresh_receipt,
+                binding.version
+              )
           end
 
         {:error, _reason} = error ->
-          _ = terminate_worker(planned_uri)
-          error
+          rollback_failed_fresh(error, session_uri, planned_uri, fresh_receipt, nil)
       end
     end
   end
@@ -417,6 +436,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp maybe_after_materialize(session_uri, workspace_uri, granted_by, agent, agent_uri) do
+    # Session role agents are created on behalf of the session owner,
+    # not through Workspace.AgentCreate. Grant the same instance-scoped
+    # Manage authority that a direct creator receives: it authorizes the
+    # owner to read and type in the agent's PTY, including an initial
+    # `codex login` / `claude /login` before credentials exist.
     with :ok <-
            Materializer.grant_owner_participant_teardown_cap(
              agent_uri,
@@ -577,34 +601,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         _ -> spawn_opts
       end
 
-    case Ezagent.Agent.RecipeMaterializer.create_agent_from_recipe(spawn_opts) do
-      {:ok, _outcome} ->
-        :ok
+    case RecipeMaterializer.create_agent_from_recipe(spawn_opts) do
+      {:ok, {:created, fresh_receipt}} ->
+        {:ok, fresh_receipt}
+
+      {:ok, :already_present} ->
+        {:error, {:agent_spawn_failed, role_name, :agent_uri_already_live}}
 
       {:error, reason} ->
         {:error, {:agent_spawn_failed, role_name, reason}}
     end
   end
 
-  # Faceted `session.join` carrying the `%{role_name: name}` facet. On failure,
-  # terminate the worker we just spawned (the add_managed_member cleanup
-  # envelope) so a denied/failed join never leaves an orphan.
+  # Faceted `session.join` carrying the `%{role_name: name}` facet. The caller
+  # owns receipt-based compensation for every failure after a fresh spawn.
   defp join_or_cleanup(session_uri, %URI{} = member_uri, role_name, recipe)
        when is_map(recipe) do
     if passive_recipe?(recipe) do
       :ok
     else
-      do_join_or_cleanup(session_uri, member_uri, role_name)
+      do_join(session_uri, member_uri, role_name)
     end
   end
 
-  defp do_join_or_cleanup(session_uri, %URI{} = member_uri, role_name) do
+  defp do_join(session_uri, %URI{} = member_uri, role_name) do
     case join_member(session_uri, member_uri, role_name) do
       :ok ->
         :ok
 
       {:error, reason} ->
-        _ = terminate_worker(member_uri)
         {:error, {:agent_join_failed, role_name, reason}}
     end
   end
@@ -679,29 +704,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp terminate_worker(%URI{} = member_uri) do
-    target = Ezagent.URI.new!("#{URI.to_string(member_uri)}?action=sandbox.destroy")
-    admin = Ezagent.Entity.User.admin_uri()
-
-    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
-      _ =
-        Invocation.dispatch(%Invocation{
-          target: target,
-          mode: :call,
-          args: %{},
-          ctx: %{
-            caller: admin,
-            authenticated_principal: admin,
-            caps: MapSet.new([cap]),
-            reply: {:caller_inbox, self()}
-          },
-          origin: :trusted_internal
-        })
-    end
-
-    :ok
-  end
-
   # --- durable recipe-cap binding -------------------------------------------
 
   defp refresh_existing_binding(workspace_uri, agent_uri, recipe_name, role_name) do
@@ -727,18 +729,39 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp compensate_recipe_binding(%URI{} = agent_uri, %{version: version}) do
-    case RecipeCapBinding.tombstone_if_version(agent_uri, version) do
-      :ok ->
-        :ok
+  defp rollback_failed_fresh(
+         {:error, reason} = original_error,
+         session_uri,
+         agent_uri,
+         fresh_receipt,
+         binding_version
+       ) do
+    with {:ok, :retired} <-
+           RecipeMaterializer.rollback_fresh_agent(fresh_receipt, binding_version),
+         :ok <- remove_fresh_member(session_uri, agent_uri) do
+      original_error
+    else
+      {:error, rollback_reason} ->
+        {:error, {reason, {:rollback_failed, rollback_reason}}}
+    end
+  end
 
-      {:error, reason} ->
-        Logger.error(
-          "recipe-cap binding compensation FAILED for #{inspect(agent_uri)} " <>
-            "version=#{version}: #{inspect(reason)} — tombstone GC must retry"
-        )
+  defp remove_fresh_member(%URI{} = session_uri, %URI{} = agent_uri) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
 
-        :ok
+    with {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target),
+         {:ok, result} <-
+           SessionParticipants.remove_participant(session_uri, agent_uri, %{
+             caller: admin,
+             authenticated_principal: admin,
+             caps: MapSet.new([cap])
+           }) do
+      case result do
+        :already_removed -> :ok
+        %{status: :removed} -> :ok
+        other -> {:error, {:unexpected_failed_member_removal, other}}
+      end
     end
   end
 

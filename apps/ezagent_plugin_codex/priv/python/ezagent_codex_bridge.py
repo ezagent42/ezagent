@@ -290,6 +290,7 @@ class CodexClient:
                 return {
                     "text": text,
                     "session_uris": [state["session_uri"]] if state.get("session_uri") else [],
+                    "ref": state.get("message_id"),
                 }
 
     async def call(self, method: str, params: dict[str, Any]) -> dict[str, Any]:

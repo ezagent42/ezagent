@@ -47,7 +47,13 @@ defmodule Ezagent.Socialware.SessionInstaller do
                 {:ok, summary}
               end
 
-            {:error, reason, _partial} = error ->
+            {:error, reason, partial} = error ->
+              _ =
+                SessionCreator.record_unfilled_role_slots(
+                  session_uri,
+                  Map.get(partial, :skipped, [])
+                )
+
               _ = Materializer.tombstone_orchestrator_binding(session_uri, reason)
               error
 

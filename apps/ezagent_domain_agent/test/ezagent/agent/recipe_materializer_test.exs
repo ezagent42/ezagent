@@ -83,4 +83,83 @@ defmodule Ezagent.Agent.RecipeMaterializerTest do
       refute Map.has_key?(content, "provider")
     end
   end
+
+  describe "template_content/2 flavor-owned defaults" do
+    test "keeps the Hello DeepSeek defaults for curl" do
+      recipe = %{
+        name: "hello.llm",
+        config: %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-v4-flash"
+        }
+      }
+
+      assert {:ok, content} = RecipeMaterializer.template_content(recipe, opts("curl", []))
+
+      assert content["provider"] == "deepseek"
+      assert content["api_url"] == "https://api.deepseek.com/chat/completions"
+      assert content["model"] == "deepseek-v4-flash"
+    end
+
+    test "does not leak curl DeepSeek defaults into a non-curl flavor", %{flavor: flavor} do
+      recipe = %{
+        name: "hello.llm",
+        config: %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-v4-flash"
+        }
+      }
+
+      assert {:ok, content} = RecipeMaterializer.template_content(recipe, opts(flavor, []))
+
+      refute Map.has_key?(content, "provider")
+      refute Map.has_key?(content, "api_url")
+      refute Map.has_key?(content, "model")
+    end
+  end
+
+  test "does not let a non-curl role override restore curl provider defaults", %{flavor: flavor} do
+    recipe = %{
+      name: "hello.llm",
+      config: %{"project_cwd" => System.tmp_dir!()}
+    }
+
+    opts = %{
+      recipe: recipe,
+      recipe_name: "hello.llm",
+      role_name: "llm",
+      flavor: flavor,
+      agent_uri: Ezagent.URI.new!("entity://team-alpha/agent/cc_x"),
+      workspace_uri: Ezagent.URI.new!("workspace://team-alpha"),
+      owner_uri: Ezagent.URI.new!("entity://team-alpha/user/owner"),
+      caller: Ezagent.URI.new!("entity://team-alpha/user/owner"),
+      template_content_overrides: %{
+        "provider" => "deepseek",
+        "api_url" => "https://api.deepseek.com/chat/completions",
+        "model" => "deepseek-v4-flash"
+      }
+    }
+
+    assert {:ok, content} = RecipeMaterializer.materializer_content(opts)
+
+    refute Map.has_key?(content, "provider")
+    refute Map.has_key?(content, "api_url")
+    refute Map.has_key?(content, "model")
+  end
+
+  test "creates a missing project working directory before an interactive spawn" do
+    cwd =
+      Path.join(
+        System.tmp_dir!(),
+        "ezagent-materializer-cwd-#{System.unique_integer([:positive])}"
+      )
+
+    refute File.exists?(cwd)
+    on_exit(fn -> File.rm_rf(cwd) end)
+
+    assert :ok = RecipeMaterializer.ensure_project_cwd(%{project_cwd: cwd})
+    assert File.dir?(cwd)
+  end
 end

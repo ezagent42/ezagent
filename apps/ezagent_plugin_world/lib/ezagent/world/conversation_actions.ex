@@ -640,8 +640,19 @@ defmodule Ezagent.World.ConversationActions do
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
         if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
-          subscribe_pty(agent_uri)
-          push_pty_view(socket, agent_uri)
+          # A session can retain an agent membership across a node restart while
+          # the agent's subprocess is cold. Opening an authorized terminal is
+          # the demand boundary: revive the Agent first so Sandbox.activate/2
+          # restores its PTY (or the unauthenticated Codex login PTY) before we
+          # subscribe and render the terminal surface.
+          case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
+            {:ok, _status} ->
+              subscribe_pty(agent_uri)
+              push_pty_view(socket, agent_uri)
+
+            {:error, _reason} ->
+              {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
+          end
         else
           {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
         end
@@ -661,8 +672,22 @@ defmodule Ezagent.World.ConversationActions do
          "/identities/agents/#{URI.encode_www_form(URI.to_string(agent_uri))}",
        "agent_status" => jsonable(Ezagent.Domain.Agent.lifecycle_status(agent_uri)),
        "pty_alive" => Ezagent.Domain.Pty.alive?(agent_uri),
-       "pty_phase" => pty_phase(agent_uri)
+       "pty_phase" => pty_phase(agent_uri),
+       # The process may have emitted its first screen before the browser's
+       # PubSub subscription is installed (notably `codex login`).  Replay the
+       # bounded server buffer in the state update so mounting the terminal
+       # cannot lose that initial output.
+       "pty_initial_buffer" => pty_initial_buffer(agent_uri)
      })}
+  end
+
+  defp pty_initial_buffer(%URI{} = agent_uri) do
+    case Ezagent.Domain.Pty.Server.snapshot_buffer(agent_uri) do
+      {:ok, buffer} when is_binary(buffer) -> buffer
+      _ -> ""
+    end
+  rescue
+    _ -> ""
   end
 
   @doc """

@@ -36,39 +36,48 @@ defmodule Mix.Tasks.Ezagent.Session.ReinstallSocialware do
             :any -> Mix.raise("cannot derive workspace from #{URI.to_string(session_uri)}")
           end
 
-        owner =
-          case Ezagent.Entity.Session.owner(session_uri) do
-            {:ok, %URI{} = owner} -> owner
-            other -> Mix.raise("cannot resolve session owner: #{inspect(other)}")
+        # `Session.owner/1` deliberately reads only a live Kind. A Mix task
+        # starts in a fresh VM, so restore the persisted Session before asking
+        # it for the owner rather than treating a cold (but valid) Session as
+        # missing.
+        with {:ok, _pid} <- Ezagent.SpawnRegistry.ensure_live(session_uri) do
+          owner =
+            case Ezagent.Entity.Session.owner(session_uri) do
+              {:ok, %URI{} = owner} -> owner
+              other -> Mix.raise("cannot resolve session owner: #{inspect(other)}")
+            end
+
+          before =
+            EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri)
+
+          case EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
+                 session_uri,
+                 {workspace_uri, owner}
+               ) do
+            {:ok, %{satisfied: satisfied, skipped: skipped}} ->
+              Mix.shell().info("reinstall of #{URI.to_string(session_uri)}:")
+
+              Mix.shell().info(
+                "  previously unfilled: #{inspect(Enum.map(before, & &1.role_name))}"
+              )
+
+              Mix.shell().info("  satisfied now:       #{inspect(satisfied)}")
+
+              Enum.each(skipped, fn %{role_name: role, reason: reason} ->
+                Mix.shell().info("  still skipped:       #{role} — #{inspect(reason)}")
+              end)
+
+              :ok
+
+            {:error, reason} ->
+              Mix.raise("reinstall failed: #{inspect(reason)}")
+
+            {:error, reason, partial} ->
+              Mix.raise("reinstall failed: #{inspect(reason)} (partial: #{inspect(partial)})")
           end
-
-        before =
-          EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri)
-
-        case EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
-               session_uri,
-               {workspace_uri, owner}
-             ) do
-          {:ok, %{satisfied: satisfied, skipped: skipped}} ->
-            Mix.shell().info("reinstall of #{URI.to_string(session_uri)}:")
-
-            Mix.shell().info(
-              "  previously unfilled: #{inspect(Enum.map(before, & &1.role_name))}"
-            )
-
-            Mix.shell().info("  satisfied now:       #{inspect(satisfied)}")
-
-            Enum.each(skipped, fn %{role_name: role, reason: reason} ->
-              Mix.shell().info("  still skipped:       #{role} — #{inspect(reason)}")
-            end)
-
-            :ok
-
+        else
           {:error, reason} ->
-            Mix.raise("reinstall failed: #{inspect(reason)}")
-
-          {:error, reason, partial} ->
-            Mix.raise("reinstall failed: #{inspect(reason)} (partial: #{inspect(partial)})")
+            Mix.raise("cannot restore session: #{inspect(reason)}")
         end
 
       _ ->

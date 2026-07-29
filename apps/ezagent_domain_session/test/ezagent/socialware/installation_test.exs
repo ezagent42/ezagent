@@ -167,6 +167,54 @@ defmodule Ezagent.Socialware.InstallationTest do
            end)
   end
 
+  test "pin_installs_from_session restores the frozen role-slot configuration" do
+    definition_name = "frozen-role-slot-config-#{System.unique_integer([:positive])}"
+
+    session_uri =
+      Ezagent.URI.session(
+        :system,
+        :socialware,
+        "frozen-config-#{System.unique_integer([:positive])}"
+      )
+
+    {:ok, definition} =
+      Definition.new(%{
+        name: definition_name,
+        bases: [Ezagent.ActionSet.Session],
+        roles: [%{role_name: "llm", fill: :agent, recipe: "llm", flavor: "curl"}]
+      })
+
+    assert {:ok, _object} =
+             DefinitionRegistry.write_definition(definition,
+               workspace_uri: @workspace_uri,
+               caller_workspace_uri: @workspace_uri,
+               actor_uri: @actor_uri
+             )
+
+    template_content = %{
+      installs: [
+        %{
+          ref: definition_name,
+          config: %{role_slots: [%{role_name: "llm", mode: "fresh", flavor: "codex"}]}
+        }
+      ]
+    }
+
+    assert :ok =
+             Installation.install_template_installs(
+               session_uri,
+               @workspace_uri,
+               template_content,
+               @actor_uri
+             )
+
+    pinned_content =
+      Installation.pin_installs_from_session(session_uri, %{installs: [definition_name]})
+
+    assert {:ok, %{roles: [%{role_name: "llm", flavor: "codex"}]}} =
+             DefinitionEditor.config_for_template(pinned_content, @workspace_uri)
+  end
+
   test "retract_session_installs makes an installed ref absent and allows fresh re-seed" do
     name = "install-retract-#{System.unique_integer([:positive])}"
     session_uri = Ezagent.URI.session(:system, :socialware, "retract-#{name}")

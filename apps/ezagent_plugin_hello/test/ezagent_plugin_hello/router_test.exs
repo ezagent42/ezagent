@@ -7,7 +7,7 @@ defmodule EzagentPluginHello.RouterTest do
 
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Workspace
-  alias EzagentPluginHello.{App, Generator, Router}
+  alias EzagentPluginHello.{App, Generator, Members, Router}
   alias EzagentPluginHello.Application, as: HelloApp
 
   describe "classify/3 — identity is the security boundary" do
@@ -61,6 +61,11 @@ defmodule EzagentPluginHello.RouterTest do
       refute Router.should_route?(ctx.session, ctx.front_desk)
     end
 
+    test "ignores an LLM member's ordinary output", %{session: session} do
+      assert {:ok, llm_uri} = Members.role_uri(session, "llm")
+      refute Router.should_route?(session, llm_uri)
+    end
+
     test "routes a user message", %{session: session} do
       assert Router.should_route?(session, Ezagent.URI.user("system", "admin"))
     end
@@ -68,6 +73,12 @@ defmodule EzagentPluginHello.RouterTest do
     test "routes an external agent message", %{session: session} do
       external = Ezagent.URI.entity("system", :agent, "some-other-agent")
       assert Router.should_route?(session, external)
+    end
+
+    test "routes a user message after the session Kind is rehydrated", %{session: session} do
+      :ok = Ezagent.Kind.terminate(session)
+
+      assert Router.should_route?(session, Ezagent.URI.user("system", "admin"))
     end
   end
 

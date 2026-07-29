@@ -34,7 +34,7 @@ export default defineConfig({
     strictPort: true,
     cors: true,
     hmr: {
-      host: "localhost",
+      host: process.env.WORLD_VITE_HMR_HOST || "localhost",
       protocol: "ws",
     },
   },

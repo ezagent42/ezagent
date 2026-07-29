@@ -193,6 +193,30 @@ defmodule Ezagent.AgentBridge.Channel do
   end
 
   defp resolve_flavor(%URI{} = agent_uri) do
+    # A bridge joins while its agent may still be activating. Do not resolve
+    # flavor by synchronously reading that live Kind: activation can be waiting
+    # for this very join, which creates a timeout cycle. The sandbox's persisted
+    # respawn flavor is available from the shared snapshot store during cold
+    # start; UriQuery remains the fallback for agents without that durable field.
+    case durable_respawn_flavor(agent_uri) do
+      {:ok, flavor} -> flavor
+      :none -> resolve_flavor_via_uri_query(agent_uri)
+    end
+  end
+
+  defp durable_respawn_flavor(%URI{} = agent_uri) do
+    with {:ok, %{state: state}} when is_map(state) <- Ezagent.SnapshotStore.latest(agent_uri),
+         sandbox <- Ezagent.Kind.normalize_slice_view(Map.get(state, :sandbox, %{})),
+         respawn_data when is_map(respawn_data) <- Map.get(sandbox, :respawn_template_data),
+         flavor when is_binary(flavor) and flavor != "" <-
+           Map.get(respawn_data, :flavor) || Map.get(respawn_data, "flavor") do
+      {:ok, flavor}
+    else
+      _ -> :none
+    end
+  end
+
+  defp resolve_flavor_via_uri_query(%URI{} = agent_uri) do
     case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
       {:ok, flavor} when is_binary(flavor) and flavor != "" -> flavor
       :none -> nil

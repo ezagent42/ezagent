@@ -289,7 +289,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   FULLY INTACT — a loud error, never a silent partial). Placed by the caller AFTER
   every rejecting check (teardown authority + routing prune) has passed, so a
   rejected removal never reaches it and cap + roster stay intact (preserves test
-  11). A NOT-LIVE member (`:no_such_actor` / `:not_ready`) has no live cap to
+  11). A NOT-LIVE member (`:no_such_actor` / `:not_ready` / `:failed`) has no live cap to
   revoke, so the removal PROCEEDS (mirrors the teardown's idempotent handling;
   reconcile/migration are the backstop for any persisted snapshot cap).
   """
@@ -299,7 +299,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
       :ok ->
         :ok
 
-      {:error, reason} when reason in [:no_such_actor, :not_ready] ->
+      {:error, reason} when reason in [:no_such_actor, :not_ready, :failed] ->
         Logger.warning(
           "Session.MemberCap.remove_participant: member-cap revoke skipped for " <>
             "member=#{URI.to_string(member_uri)} on session=" <>

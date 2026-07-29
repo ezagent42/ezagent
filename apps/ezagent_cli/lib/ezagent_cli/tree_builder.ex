@@ -12,7 +12,7 @@ defmodule EzagentCli.TreeBuilder do
   to compile order.
   """
 
-  alias EzagentCli.{Coercion, FacadeRegistry, SessionConfigFacade}
+  alias EzagentCli.{Coercion, FacadeRegistry, SessionConfigFacade, SessionSocialwareFacade}
 
   @doc """
   Build the Optimus root spec. `behavior_triples` is
@@ -25,6 +25,7 @@ defmodule EzagentCli.TreeBuilder do
     # projection on every CLI tree construction so commands are reachable even
     # when EzagentCli.Application.start/2 was intentionally never invoked.
     :ok = SessionConfigFacade.register_all()
+    :ok = SessionSocialwareFacade.register_all()
 
     # Filter stale entries — when test suites register fake Kind
     # modules per-test, those modules may no longer be loadable when
@@ -162,14 +163,12 @@ defmodule EzagentCli.TreeBuilder do
     # action subcommand uniformly — Optimus rejects conditional-by-
     # scheme options at the spec level.
     instance_class_opt =
-      {:instance_class,
-       [long: "instance-class", value_name: "CLASS", parser: :string]}
+      {:instance_class, [long: "instance-class", value_name: "CLASS", parser: :string]}
 
     [
       name: to_string(action),
       about: action_about(behavior_module, action),
-      options:
-        [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
+      options: [instance_opt | arg_options] ++ [as_opt, deadline_opt, instance_class_opt],
       flags: cast_flag ++ json_flag
     ]
   end
@@ -192,7 +191,8 @@ defmodule EzagentCli.TreeBuilder do
     args_keyword =
       Map.get(spec, :args, [])
       |> Enum.map(fn {name, type} ->
-        {name, [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
+        {name,
+         [value_name: String.upcase(to_string(name)), parser: parser_for(type), required: true]}
       end)
 
     opts_keyword =
