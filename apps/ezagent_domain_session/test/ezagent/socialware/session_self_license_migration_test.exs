@@ -111,6 +111,45 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
     refute SelfLicense in captured_behaviors(uri)
   end
 
+  test "RETRYABLE (ITEM 4): a Store failure leaves NO licensed snapshot to skip — a re-run converges" do
+    uri = session_uri("retryable")
+
+    write_snapshot(
+      uri,
+      %{kind_base: %{state: %{behaviors: @pre_cutover_behaviors}}, chat: %{messages: []}},
+      ever_created: true
+    )
+
+    # Force the AUTHORITATIVE Store write to fail. Store-FIRST (ITEM 4) means the
+    # snapshot is NOT rewritten with a license, so the session stays un-migrated
+    # and a re-run re-attempts it. Pre-fix (snapshot-first) wrote the licensed
+    # snapshot BEFORE the store failed, so `already_principal?` then wrongly
+    # SKIPPED it on re-run — a failed migration that could never complete.
+    store_key = uri |> Ezagent.URI.instance() |> URI.to_string()
+    Application.put_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris, [store_key])
+    on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris) end)
+
+    assert {:error, _} = Migration.migrate_row(fetch(uri), false)
+
+    # DISCRIMINATOR — no licensed-snapshot residue: the session is NOT
+    # already_principal (pre-fix `identity_caps/1` would be `[license]` here).
+    assert identity_caps(uri) == []
+    refute SelfLicense in captured_behaviors(uri)
+    refute Store.has_row?(uri)
+
+    # Clear the forced failure and RE-RUN — it now converges to `:migrated`
+    # (pre-fix this returned `:already_principal` on the residue, leaving the
+    # store row permanently absent).
+    Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris)
+
+    assert {:ok, :migrated} = Migration.migrate_row(fetch(uri), false)
+    assert SelfLicense in captured_behaviors(uri)
+    assert [license] = identity_caps(uri)
+    assert Capability.action_of(license) == :self_license
+    assert Store.status(uri) == :active
+    refute EntityCaps.load_persisted(uri) == []
+  end
+
   # ---- helpers --------------------------------------------------------------
 
   defp session_uri(suffix),

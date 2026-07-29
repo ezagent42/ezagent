@@ -623,6 +623,84 @@ defmodule Ezagent.EntityCaps.StoreTest do
     end
   end
 
+  describe "#189 PR-3 FINAL ITEM 1 (post-epoch second-write hole: store commits, snapshot FAILS)" do
+    # The Store-first order closes the REVOKE hole (a store failure aborts before
+    # the snapshot). But the SECOND write — the snapshot projection — can still
+    # fail AFTER the authoritative store already committed. Pre-fix the writer
+    # returned `{:error}` there, so the caller reported `persistence_failed` and
+    # kept stale live state WHILE the authoritative store (which self-authz reads)
+    # already held the mutation — a divergence between the reported outcome and the
+    # authoritative plane. The fix: an authoritative store commit means the
+    # mutation IS committed, so a snapshot-projection failure is reported as
+    # SUCCESS (the projection converges on the next write / cold-load reconcile).
+    setup do
+      on_exit(fn -> Application.delete_env(:ezagent_actor, :p3_forced_snapshot_failure_uris) end)
+    end
+
+    test "GRANT: store commits + snapshot projection fails => caller sees :ok AND the store reflects the grant" do
+      agent = agent_uri("item1-grant")
+      base = licensed_caps(agent, [issued_cap(agent, :send)])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(base)}}},
+                 kind_type: :agent
+               )
+
+      assert Store.status(agent) == :active
+      added = issued_cap(agent, :publish)
+
+      # Force ONLY the snapshot upsert to fail; the Store-first authoritative
+      # write still commits.
+      Application.put_env(:ezagent_actor, :p3_forced_snapshot_failure_uris, [URI.to_string(agent)])
+
+      # No divergence: the authoritative store committed the grant, so the writer
+      # MUST report success — never `{:error}` while the store holds the mutation.
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(base ++ [added])}}},
+                 kind_type: :agent
+               )
+
+      # The reported success matches the authoritative plane the self-authz read
+      # (post-epoch, store-authoritative) consults.
+      assert cap_present?(Store.load(agent), added)
+      assert cap_present?(EntityCaps.load_persisted(agent), added)
+    end
+
+    test "REMOVAL: store commits + snapshot projection fails => caller sees :ok AND the store reflects the removal" do
+      agent = agent_uri("item1-remove")
+      keep = issued_cap(agent, :send)
+      drop = issued_cap(agent, :publish)
+      base = licensed_caps(agent, [keep, drop])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(base)}}},
+                 kind_type: :agent
+               )
+
+      assert cap_present?(Store.load(agent), drop)
+
+      Application.put_env(:ezagent_actor, :p3_forced_snapshot_failure_uris, [URI.to_string(agent)])
+
+      # The revoke reaches the authoritative store FIRST; a snapshot failure must
+      # not make the caller believe the removal failed while the store dropped it.
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(licensed_caps(agent, [keep]))}}},
+                 kind_type: :agent
+               )
+
+      refute cap_present?(Store.load(agent), drop)
+      refute cap_present?(EntityCaps.load_persisted(agent), drop)
+    end
+  end
+
   describe "dual-write shadow (snapshot plane)" do
     test "direct SnapshotStore writes mirror into the unified store" do
       agent = agent_uri("parity-snapshot")
@@ -701,8 +779,12 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       refute Store.has_row?(agent)
 
-      # The same slice on the direct-write path (nil kind_module) mirrors.
-      assert :ok =
+      # The same slice on the direct-write path (nil kind_module) mirrors. Under
+      # the test-env active epoch this is the AUTHORITATIVE post-epoch commit, so
+      # the hook returns `{:ok, :authoritative}` (#189 PR-3 FINAL ITEM 1) — the
+      # signal the actor-layer snapshot writer uses to keep a snapshot-projection
+      # failure from being reported as a mutation failure.
+      assert {:ok, :authoritative} =
                Store.sync_committed_identity(agent, nil, %{
                  state: %{caps: MapSet.new(licensed_caps(agent, [issued_cap(agent, :send)]))}
                })

@@ -408,15 +408,15 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(&self_license_cap_constructors/1)
 
-    # #189 PR-3: exactly THREE sanctioned self-license minters —
+    # #189 PR-3 FINAL (ITEM 4): exactly TWO sanctioned self-license minters —
     #   1. `ActionSet.Identity` (User/Agent) — create-gated;
-    #   2. `ActionSet.SelfLicense` carrier (the Session) — create-gated;
-    #   3. `SessionSelfLicenseMigration` — the GOVERNED FIX-4 migration that
-    #      adopts pre-carrier Session INSTANCES. It is NOT create-gated (it mints
-    #      during the cutover, not at creation) but it carries its OWN
-    #      anti-resurrection gate: it mints ONLY for a real, un-migrated,
-    #      NEVER-REVOKED session (marker-only/destroyed and regenesis'd sessions
-    #      are refused). Any FOURTH constructor, or an un-gated one, fails this.
+    #   2. `ActionSet.SelfLicense` carrier (the Session) — create-gated.
+    # The GOVERNED FIX-4 `SessionSelfLicenseMigration` adopts pre-carrier Session
+    # INSTANCES during the cutover, but it mints THROUGH minter #2
+    # (`SelfLicense.create/1`) — it is NOT a third construction site. A partial
+    # earlier revision allowlisted it as a third file; routing through the
+    # existing minter restores the ratchet to exactly two constructors. Any THIRD
+    # constructor, or an un-gated one, fails this.
     constructor_files =
       constructor_hits
       |> Enum.map(&(&1 |> String.split(":") |> hd()))
@@ -425,16 +425,15 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
     assert constructor_files == [
              "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex",
-             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex",
-             "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex"
            ]
 
     # Z-1 TIGHTENING (#189 PR-3, disposition item): assert the EXACT HIT COUNT,
     # not just the deduplicated file set. The previous filename-dedup check would
     # have passed a SECOND (hidden) constructor added to an already-approved file
     # — exactly one create-gated `Capability.cap(_, _, :self_license, _, _)` in
-    # each of the three files ⇒ three hits.
-    assert length(constructor_hits) == 3
+    # each of the TWO files ⇒ two hits.
+    assert length(constructor_hits) == 2
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
@@ -450,8 +449,11 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
     assert self_license =~ "def create(%{create_freshness: :created, uri: %URI{} = uri})"
 
-    # Minter 3 (the governed migration) is anti-resurrection-gated: it refuses a
-    # marker-only (destroyed) session and a previously-revoked (regenesis'd) one.
+    # The governed migration mints THROUGH minter #2 (`SelfLicense.create/1`) — no
+    # third construction site — and keeps its OWN anti-resurrection gate: it
+    # refuses a marker-only (destroyed) session and a previously-revoked
+    # (regenesis'd) one.
+    assert migration =~ "SelfLicense.create(%{create_freshness: :created, uri: uri})"
     assert migration =~ "marker_only?"
     assert migration =~ "Cap.Authority.generation_count(uri) > 1"
 

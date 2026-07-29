@@ -52,10 +52,15 @@ defmodule Ezagent.EntityCaps.UserStore do
           :ok | {:error, term()}
   def update(%URI{} = uri, fun) when is_function(fun, 1) do
     # #189 PR-3 FIX 1 — the identity store is AUTHORITATIVE only POST-epoch.
-    if Ezagent.Identity.Cutover.active?() do
-      update_store_authoritative(uri, fun)
-    else
-      update_legacy_authoritative(uri, fun)
+    # #189 PR-3 FINAL — an UNREADABLE epoch (`:unknown`) REJECTS the mutation
+    # (fail-closed): a post-cutover node whose epoch read errors must not perform
+    # a legacy-authoritative write that a subsequent definitive-epoch read would
+    # treat as a stale projection. Only a DEFINITIVE `:inactive` takes the legacy
+    # path.
+    case Ezagent.Identity.Cutover.status() do
+      :active -> update_store_authoritative(uri, fun)
+      :inactive -> update_legacy_authoritative(uri, fun)
+      :unknown -> {:error, :identity_epoch_unreadable}
     end
   end
 

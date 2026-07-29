@@ -124,17 +124,26 @@ defmodule Ezagent.EntityCaps.Store do
   @spec ever_created_signal?(URI.t() | String.t()) :: boolean()
   def ever_created_signal?(uri) do
     cond do
-      # EPOCH-GATED (FIX 5): before the cutover epoch — and on any unreadable
-      # epoch (fail-closed) — the store is NOT consulted for the ephemeral
-      # freshness decision. `false` ⇒ the caller keeps the PR-1 legacy freshness
-      # semantics (the snapshot `ever_created` marker alone; for an ephemeral
-      # Kind that is unconditionally `:created`). The store becomes the
-      # ever-created authority ONLY post-epoch.
-      not Ezagent.Identity.Cutover.active?() ->
+      # EPOCH-GATED (FIX 5): before the cutover epoch (a DEFINITIVE `:inactive`)
+      # the store is NOT consulted for the ephemeral freshness decision. `false`
+      # ⇒ the caller keeps the PR-1 legacy freshness semantics (the snapshot
+      # `ever_created` marker alone; for an ephemeral Kind that is
+      # unconditionally `:created`). The store becomes the ever-created authority
+      # ONLY post-epoch.
+      Ezagent.Identity.Cutover.status() == :inactive ->
         false
 
       user_uri?(uri) ->
         false
+
+      # #189 PR-3 FINAL — an UNREADABLE epoch (`:unknown`) FAILS CLOSED to
+      # `true` (⇒ `:existed`, NO re-mint), mirroring the `:error` read-result
+      # contract below: on a post-cutover node with an unreadable epoch, a wrong
+      # `:created` would re-mint the self-license AND bump the authority
+      # generation (resurrecting a revoked ephemeral principal). Deny re-mint
+      # until the epoch reads definitively.
+      Ezagent.Identity.Cutover.status() == :unknown ->
+        true
 
       true ->
         case fetch_result(uri) do
@@ -528,25 +537,34 @@ defmodule Ezagent.EntityCaps.Store do
       `SnapshotStore.write/3` path, always mirrors: durable writers only);
     * the slice carries no caps set.
 
-  ## Epoch-aware outcome (FIX 1)
+  ## Epoch-aware outcome (FIX 1 + #189 PR-3 FINAL ITEM 1)
 
-    * **Pre-epoch** (`Cutover.active?/0` false): a best-effort shadow. Any
-      failure is logged and SWALLOWED (`:ok`) — legacy is authoritative, so the
-      committing snapshot must not be failed by a shadow-write error.
-    * **Post-epoch**: the store is AUTHORITATIVE. A failure returns
-      `{:error, reason}` so the caller (`save_now/4`, called Store-FIRST) aborts
-      the snapshot commit — a cap mutation must not report success, and a revoke
-      must not leave a stale cap in the authoritative store.
+    * **Pre-epoch** (`Cutover.status/0` `:inactive`) / skipped / `:unknown`
+      no-commit: a best-effort shadow. On success returns a bare `:ok`; the
+      snapshot remains authoritative, so the actor writer treats a subsequent
+      snapshot failure as a REAL failure. Any store failure is logged and
+      SWALLOWED (`:ok`) pre-epoch so it never fails the legacy-authoritative
+      commit (post-epoch / `:unknown` it PROPAGATES — see `swallow_pre_epoch/1`).
+    * **Post-epoch** (`:active`) SUCCESS: returns `{:ok, :authoritative}` — the
+      mutation is COMMITTED the instant the store row lands. The actor writer
+      (`save_now/4` / `SnapshotStore.write/3`, both Store-FIRST) uses this to
+      keep the reported outcome consistent with the authoritative plane: a
+      subsequent snapshot PROJECTION failure must NOT be reported as a mutation
+      failure (the self-authz read consults the persisted store, so reporting
+      failure while the store holds the mutation is the ITEM-1 divergence).
+    * **Post-epoch FAILURE**: returns `{:error, reason}` so the caller aborts the
+      snapshot commit — a cap mutation must not report success, and a revoke must
+      not leave a stale cap in the authoritative store.
   """
   @spec sync_committed_identity(URI.t() | String.t(), module() | nil, term()) ::
-          :ok | {:error, term()}
+          :ok | {:ok, :authoritative} | {:error, term()}
   def sync_committed_identity(uri, kind_module, slice) do
     with false <- user_uri?(uri),
          false <- skip_kind?(kind_module),
          %MapSet{} = caps <- slice_caps(slice) do
       case persist(uri, caps) do
         :ok ->
-          :ok
+          committed_signal()
 
         {:error, reason} ->
           Logger.error(
@@ -577,12 +595,34 @@ defmodule Ezagent.EntityCaps.Store do
       swallow_pre_epoch({:error, {kind, reason}})
   end
 
-  # Pre-epoch (or unreadable epoch, fail-closed to pre-epoch) the store is a
-  # best-effort shadow: swallow the failure to `:ok` so a shadow error never
-  # fails the legacy-authoritative commit. Post-epoch the store is authoritative:
-  # propagate the `{:error, _}` so the caller aborts.
+  # Pre-epoch (a DEFINITIVE `:inactive`) the store is a best-effort shadow:
+  # swallow the failure to `:ok` so a shadow error never fails the
+  # legacy-authoritative commit. Post-epoch (`:active`) the store is
+  # authoritative: propagate the `{:error, _}` so the caller aborts. #189 PR-3
+  # FINAL — an UNREADABLE epoch (`:unknown`) also PROPAGATES the error
+  # (fail-closed): we cannot prove the store is a mere shadow, so a failed write
+  # must not be silently swallowed.
   defp swallow_pre_epoch(error) do
-    if Ezagent.Identity.Cutover.active?(), do: error, else: :ok
+    case Ezagent.Identity.Cutover.status() do
+      :inactive -> :ok
+      _ -> error
+    end
+  end
+
+  # #189 PR-3 FINAL (ITEM 1) — the success signal `sync_committed_identity/3`
+  # hands back to the actor-layer snapshot writer. POST-epoch (`:active`) the
+  # store row IS the committed mutation, so `{:ok, :authoritative}` tells the
+  # writer "already committed authoritatively — a snapshot projection failure
+  # must not be reported as a mutation failure". Pre-epoch (`:inactive`) or an
+  # unreadable epoch (`:unknown`) the store is NOT the authority for this write,
+  # so a bare `:ok` preserves the snapshot-authoritative semantics (a snapshot
+  # failure IS a real failure). The actor cannot ask the epoch itself (it lives
+  # below the domain), so the authoritative-ness must flow back through here.
+  defp committed_signal do
+    case Ezagent.Identity.Cutover.status() do
+      :active -> {:ok, :authoritative}
+      _ -> :ok
+    end
   end
 
   @doc """

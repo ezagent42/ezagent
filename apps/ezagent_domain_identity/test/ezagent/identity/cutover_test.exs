@@ -54,15 +54,24 @@ defmodule Ezagent.Identity.CutoverTest do
     assert Cutover.active?()
   end
 
-  test "FAILS CLOSED — an UNREADABLE epoch resolves to inactive (pre-epoch legacy)" do
+  test "FAILS CLOSED — an UNREADABLE epoch resolves to :unknown, DISTINCT from pre-epoch :inactive" do
     assert :ok = Cutover.activate()
     assert Cutover.active?()
+    assert Cutover.status() == :active
 
-    # An unreadable epoch (DB error / missing table on a half-migrated node) must
-    # NEVER be read as active: `active?/0` denies even though a row exists. New
-    # store-authoritative code therefore never authorizes from the store on an
-    # unreadable epoch.
+    # #189 PR-3 FINAL (ITEM 3) — an unreadable epoch (DB error / missing table on
+    # a half-migrated node) resolves to `:unknown`, NOT the definitive `:inactive`
+    # a genuine pre-cutover node reports. The distinction is the whole point:
+    # `:inactive` selects the legacy plane, `:unknown` must fail CLOSED (deny
+    # reads / reject mutations). `active?/0` denies even though a row exists.
     Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+    assert Cutover.status() == :unknown
+    refute Cutover.active?()
+  end
+
+  test "a DEFINITIVE pre-cutover node (no row, DB reachable) is :inactive, not :unknown" do
+    refute Cutover.activated?()
+    assert Cutover.status() == :inactive
     refute Cutover.active?()
   end
 
@@ -79,6 +88,48 @@ defmodule Ezagent.Identity.CutoverTest do
     test "a COMPLETE barrier activates (live) or reports (dry-run), never the reverse" do
       assert Task.decide(%{complete: true}, false) == :activate
       assert Task.decide(%{complete: true}, true) == :dry_run
+    end
+
+    test "the REAL cutover task ABORTS AT THE BACKFILL STEP on a failing backfill, before parity (ITEM 2)" do
+      # A fresh node: no epoch row yet. (`activated?/0` reads the real DB row —
+      # the suite's `active?` override never writes one.)
+      refute Cutover.activated?()
+
+      # Force a deterministic backfill error — the real-world case is a failed
+      # authority-history adoption, which pre-fix only PRINTED and returned
+      # normally, letting the interlock proceed to the parity barrier + activation.
+      Application.put_env(
+        :ezagent_domain_identity,
+        :backfill_force_error_uri,
+        "entity://forced/agent/backfill-failure"
+      )
+
+      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :backfill_force_error_uri) end)
+
+      # Run the REAL task (not the pure `decide/2`) and capture its diagnostics.
+      # NON-VACUOUS DISCRIMINATOR: in a fresh sandbox the parity barrier would
+      # ALSO refuse (the store is not a full legacy mirror), so `activated? ==
+      # false` alone proves nothing. Instead we pin the abort to the BACKFILL
+      # STEP: the interlock consumes the failing backfill result and aborts
+      # BEFORE `FleetParity.check/0` ever runs. Pre-fix the backfill result was
+      # ignored, the task fell through to parity, and the epoch's fate hung on
+      # the parity outcome — so the interlock-specific messages below are absent
+      # and the parity-refuse message is present.
+      io =
+        ExUnit.CaptureIO.capture_io(:stderr, fn ->
+          assert {:shutdown, 1} = catch_exit(Task.run([]))
+        end)
+
+      # The abort is the BACKFILL interlock (its exact, unique messages) …
+      assert io =~ "BACKFILL FAILED"
+      assert io =~ "the backfill is INCOMPLETE"
+      assert io =~ "forced/agent/backfill-failure"
+
+      # … and the parity barrier was NEVER reached (its refuse message is absent).
+      refute io =~ "the store is NOT a parity-correct mirror"
+
+      # The epoch is LEFT ABSENT.
+      refute Cutover.activated?()
     end
   end
 end

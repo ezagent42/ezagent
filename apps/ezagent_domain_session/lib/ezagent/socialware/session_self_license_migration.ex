@@ -12,11 +12,13 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
   migration adopts each such instance:
 
     1. adds `Ezagent.ActionSet.SelfLicense` to the captured `:kind_base` set;
-    2. mints ONE current-generation self-license (matching `SelfLicense.create/1`
-       — `behavior: SelfLicense`, `kind: current_kind_type`) into the `:identity`
-       slice;
-    3. persists BOTH the rewritten snapshot AND the durable identity-caps store
-       row (`active`).
+    2. mints ONE current-generation self-license VIA the existing sanctioned
+       create-gated minter `Ezagent.ActionSet.SelfLicense.create/1` (the Session's
+       own carrier) — NOT a fresh `Capability.cap(_, _, :self_license, _, _)`
+       construction site — into the `:identity` slice;
+    3. persists the durable identity-caps store row (`active`) FIRST, then the
+       rewritten snapshot (Store-FIRST, so a partial failure leaves no licensed
+       snapshot to skip — the migration is retryable).
 
   ## Anti-resurrection (the FIX-3 boundary — do NOT mint for a buried session)
 
@@ -44,7 +46,6 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
 
   alias Ezagent.ActionSet.{KindBase, SelfLicense}
   alias Ezagent.Cap
-  alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
   alias Ezagent.EntityCaps.Store
 
@@ -136,28 +137,43 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
     end
   end
 
+  # #189 PR-3 FINAL (ITEM 4) — Store-FIRST (authoritative), THEN the snapshot
+  # projection. A `Store.persist` failure now aborts BEFORE the snapshot is
+  # rewritten, so a partial failure NEVER leaves a licensed snapshot that
+  # `already_principal?` would then skip — a re-run re-attempts the
+  # never-completed migration instead of treating it as done. (Mirrors the FIX-1
+  # Store-first order in `Ezagent.Kind.Snapshot.save_now/4`.)
   defp migrate(row, state, uri) do
     with {:ok, license} <- mint_self_license(uri),
          new_state <- rewrite_state(state, license),
-         :ok <- persist_snapshot(row, new_state),
-         :ok <- Store.persist(uri, [license]) do
+         :ok <- Store.persist(uri, [license]),
+         :ok <- persist_snapshot(row, new_state) do
       {:ok, :migrated}
     end
   end
 
-  # Mint ONE current-generation self-license under the session's authority,
-  # byte-shaped exactly like `SelfLicense.create/1` (behavior: SelfLicense,
-  # kind: the current Kind authority type — :session — NOT `URI.type/1`, which
-  # is the template axis).
+  # #189 PR-3 FINAL (ITEM 4) — mint via the EXISTING sanctioned create-gated
+  # minter `Ezagent.ActionSet.SelfLicense.create/1` rather than a fresh
+  # `Capability.cap(_, _, :self_license, _, _)` construction site here. This
+  # keeps the self-license constructor count at exactly TWO (Identity +
+  # SelfLicense): the migration ADOPTS existing instances but introduces no third
+  # constructor (Z-1 ratchet). The authority context (`open` + `with_current`)
+  # is established here because the migration runs standalone (outside a live
+  # Kind's init); inside it `SelfLicense.create/1` reads `current_kind_type/0`
+  # and issues under the current generation exactly as it does at genuine session
+  # creation — a byte-identical license.
   defp mint_self_license(uri) do
     with {:ok, authority} <- Cap.Authority.open(uri, :session) do
       Cap.Authority.with_current(authority, fn ->
-        with {:ok, kind_type} <- Cap.Authority.current_kind_type() do
-          requested =
-            Capability.cap(kind_type, SelfLicense, :self_license, uri, Ezagent.URI.workspace_of(uri))
+        case SelfLicense.create(%{create_freshness: :created, uri: uri}) do
+          {:ok, %{caps: caps}} ->
+            case MapSet.to_list(caps) do
+              [license] -> {:ok, license}
+              other -> {:error, {:unexpected_self_license_shape, other}}
+            end
 
-          intent = Cap.Grant.freeze(uri, uri, uri, requested)
-          Cap.Authority.issue_self_license_current(intent)
+          {:error, reason} ->
+            {:error, reason}
         end
       end)
     end

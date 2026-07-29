@@ -240,29 +240,17 @@ defmodule Ezagent.SnapshotStore do
     # #189 PR-3 FIX 1 — Store-FIRST authoritative identity write (see
     # `Ezagent.Kind.Snapshot.save_now/4`). Post-epoch a store failure aborts the
     # snapshot write; pre-epoch it is a best-effort shadow (`:ok`) gate.
+    #
+    # #189 PR-3 FINAL (ITEM 1) — `{:ok, :authoritative}` means the store confirmed
+    # a post-epoch authoritative commit; a SECOND-WRITE snapshot failure then must
+    # NOT be reported as a mutation failure (the mutation is already committed in
+    # the store-authoritative plane). See `commit_snapshot/6`.
     case maybe_dual_write_identity_caps(uri_str, state) do
       :ok ->
-        case KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str) do
-          {:ok, _row} ->
-            :telemetry.execute(
-              [:ezagent, :snapshot_store, :written],
-              %{bytes: byte_size(binary)},
-              %{uri: uri_str, kind_type: kind_type_str, version: version}
-            )
+        commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, false)
 
-            {:ok, %{version: version}}
-
-          {:error, reason} ->
-            Logger.warning("Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}")
-
-            :telemetry.execute(
-              [:ezagent, :snapshot_store, :failed],
-              %{},
-              %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
-            )
-
-            {:error, reason}
-        end
+      {:ok, :authoritative} ->
+        commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, true)
 
       {:error, reason} ->
         Logger.warning(
@@ -278,6 +266,79 @@ defmodule Ezagent.SnapshotStore do
 
         {:error, {:identity_store_write_failed, reason}}
     end
+  end
+
+  # #189 PR-3 FINAL (ITEM 1) — persist the snapshot projection AFTER the
+  # Store-first authoritative identity write. When `authoritative?` and the
+  # upsert fails, the mutation is ALREADY committed in the store-authoritative
+  # plane, so report SUCCESS (`{:ok, %{version: version}}`) — the projection
+  # converges on the next write / cold-load reconcile. Pre-epoch/shadow the
+  # snapshot IS the durable authority, so a failure is real (`{:error}`).
+  defp commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, authoritative?) do
+    upsert_result =
+      case forced_snapshot_failure(uri_str) do
+        :proceed ->
+          KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str)
+
+        {:error, _} = forced ->
+          forced
+      end
+
+    case upsert_result do
+      {:ok, _row} ->
+        :telemetry.execute(
+          [:ezagent, :snapshot_store, :written],
+          %{bytes: byte_size(binary)},
+          %{uri: uri_str, kind_type: kind_type_str, version: version}
+        )
+
+        {:ok, %{version: version}}
+
+      {:error, reason} when authoritative? ->
+        Logger.warning(
+          "Ezagent.SnapshotStore: identity committed authoritatively but snapshot " <>
+            "PROJECTION failed for #{uri_str}: #{inspect(reason)} — store row is " <>
+            "authoritative; projection converges on the next write / cold-load reconcile"
+        )
+
+        :telemetry.execute(
+          [:ezagent, :snapshot_store, :projection_diverged],
+          %{},
+          %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
+        )
+
+        {:ok, %{version: version}}
+
+      {:error, reason} ->
+        Logger.warning("Ezagent.SnapshotStore: write failed for #{uri_str}: #{inspect(reason)}")
+
+        :telemetry.execute(
+          [:ezagent, :snapshot_store, :failed],
+          %{},
+          %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
+        )
+
+        {:error, reason}
+    end
+  end
+
+  # TEST-ONLY forced-snapshot-failure seam (the `Ezagent.Kind.Snapshot`
+  # `@p3_forced_snapshot_failure_seam` precedent): compiled IN only for
+  # `MIX_ENV=test`. Consulted ONLY when `:ezagent_actor,
+  # :p3_forced_snapshot_failure_uris` is set — never outside the ITEM-1 "store
+  # commits, snapshot fails" regression — so the regression can force the SNAPSHOT
+  # upsert to fail AFTER the authoritative store write succeeded.
+  @p3_forced_snapshot_failure_seam Mix.env() == :test
+
+  if @p3_forced_snapshot_failure_seam do
+    defp forced_snapshot_failure(uri_str) do
+      case Application.get_env(:ezagent_actor, :p3_forced_snapshot_failure_uris) do
+        nil -> :proceed
+        uris -> if uri_str in uris, do: {:error, {:p3_forced_snapshot_failure, uri_str}}, else: :proceed
+      end
+    end
+  else
+    defp forced_snapshot_failure(_uri_str), do: :proceed
   end
 
   @doc """

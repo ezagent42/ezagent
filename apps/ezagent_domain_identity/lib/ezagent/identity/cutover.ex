@@ -20,13 +20,21 @@ defmodule Ezagent.Identity.Cutover do
       store-authoritative reads + the store-driven ephemeral ever-created signal
       switch on.
 
-  ## Fail-CLOSED on an unreadable epoch
+  ## Fail-CLOSED on an unreadable epoch — TRI-STATE (`:active | :inactive | :unknown`)
 
-  `active?/0` resolves an unreadable epoch (DB error, missing table on a
-  half-migrated node) to `false` — i.e. PRE-EPOCH legacy semantics. New code
-  must NEVER authorize from the store on an unreadable epoch: an epoch we cannot
-  prove is active is treated as inactive. The unreadable result is NOT cached,
-  so a later read retries.
+  #189 PR-3 FINAL — an unreadable epoch (DB error, missing table on a
+  half-migrated node) resolves to `:unknown`, DISTINCT from a definitive
+  `:inactive` (`{:ok, nil}` — the DB is reachable and there is genuinely no
+  epoch row, a true pre-cutover node). Conflating the two fails OPEN: a freshly
+  started POST-cutover node whose epoch read momentarily errors would revert to
+  PRE-epoch legacy semantics and RE-AUTHORIZE a cap whose best-effort legacy
+  projection lagged a post-epoch revoke. So `status/0` reports `:unknown` on an
+  unreadable read, and every authorization-relevant consumer treats `:unknown`
+  FAIL-CLOSED — deny authorization reads, reject identity mutations, never
+  re-mint — until a DEFINITIVE read (`:active` or `:inactive`) succeeds. The
+  `:unknown` result is NOT cached, so a later read retries. `active?/0` stays the
+  "definitely active" predicate (`:unknown` is not active); only `:inactive`
+  runs the legacy-authoritative path.
 
   ## Runtime cost
 
@@ -73,36 +81,52 @@ defmodule Ezagent.Identity.Cutover do
   a fail-closed DB read.
   """
   @spec active?() :: boolean()
-  def active? do
+  def active?, do: status() == :active
+
+  @doc """
+  The TRI-STATE cutover epoch resolution — `:active | :inactive | :unknown`.
+
+  Resolution order: the `:identity_cutover_active_override` app-env flag (test /
+  dev escape) wins when set (`true` ⇒ `:active`, `false` ⇒ `:inactive`);
+  otherwise the sticky `:persistent_term` cache (only ever holds the monotone
+  `true` ⇒ `:active`); then a fail-closed DB read.
+
+  An UNREADABLE epoch resolves to `:unknown` (NOT `:inactive`) — see the
+  moduledoc "Fail-CLOSED on an unreadable epoch". Every authorization-relevant
+  consumer must treat `:unknown` fail-closed (deny / reject / no re-mint), never
+  as the legacy fallback that `:inactive` selects.
+  """
+  @spec status() :: :active | :inactive | :unknown
+  def status do
     case Application.get_env(:ezagent_domain_identity, :identity_cutover_active_override, :unset) do
-      true -> true
-      false -> false
-      :unset -> runtime_active?()
+      true -> :active
+      false -> :inactive
+      :unset -> runtime_status()
     end
   end
 
-  defp runtime_active? do
+  defp runtime_status do
     case :persistent_term.get(@pt_key, :unknown) do
-      true -> true
-      _ -> db_active?()
+      true -> :active
+      _ -> db_status()
     end
   end
 
-  # Fail-CLOSED: an unreadable epoch (`:error`) resolves to `false` (pre-epoch
-  # legacy) and is NOT cached, so a later read retries. A definitive `active`
-  # result is promoted to the sticky `:persistent_term` cache (the epoch is
-  # monotone) when pt caching is enabled.
-  defp db_active? do
+  # `{:ok, row}` ⇒ `:active` (promotes the sticky monotone cache). `{:ok, nil}`
+  # ⇒ a DEFINITIVE `:inactive` (DB reachable, genuinely no epoch row — a true
+  # pre-cutover node). `:error` ⇒ `:unknown` (unreadable) and is NOT cached, so
+  # a later read retries — the fail-closed contract every gated consumer honors.
+  defp db_status do
     case fetch_row() do
       {:ok, %__MODULE__{}} ->
         maybe_promote()
-        true
+        :active
 
       {:ok, nil} ->
-        false
+        :inactive
 
       :error ->
-        false
+        :unknown
     end
   end
 
@@ -154,7 +178,7 @@ defmodule Ezagent.Identity.Cutover do
   """
   @spec prime() :: :ok
   def prime do
-    if pt_cache_enabled?(), do: _ = db_active?()
+    if pt_cache_enabled?(), do: _ = db_status()
     :ok
   end
 

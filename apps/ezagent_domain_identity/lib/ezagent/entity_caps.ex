@@ -110,15 +110,21 @@ defmodule Ezagent.EntityCaps do
   # for the principal-axis cap read (`Cap.Authorize.principal_current?` →
   # `Identity.read_held_caps/1` → `EntityCaps.load/1` → this cold path on
   # self-dispatch) ONLY once the cutover epoch is active
-  # (`Ezagent.Identity.Cutover.active?/0`). Before the epoch — and on any
-  # UNREADABLE epoch (fail-closed) — this reads the PR-1 legacy-authoritative
-  # source and NEVER consults the store, so merging PR-3 flips no production read
-  # until the operator activates the epoch after the fenced backfill + barrier.
+  # (`Ezagent.Identity.Cutover.status/0`). Only a DEFINITIVE `:inactive` epoch
+  # (a genuine pre-cutover node) reads the PR-1 legacy-authoritative source, so
+  # merging PR-3 flips no production read until the operator activates the epoch
+  # after the fenced backfill + barrier.
+  #
+  # #189 PR-3 FINAL — an UNREADABLE epoch (`:unknown`) DENIES (`[]`), it does NOT
+  # fall back to legacy: a freshly started post-cutover node whose epoch read
+  # errors must never re-authorize a cap whose lagging legacy projection missed
+  # a post-epoch revoke. Only `:inactive` (DB reachable, definitively no epoch
+  # row) takes the legacy path.
   defp do_load_persisted(uri) do
-    if Ezagent.Identity.Cutover.active?() do
-      do_load_persisted_cutover(uri)
-    else
-      verified(legacy_persisted_caps(uri), uri)
+    case Ezagent.Identity.Cutover.status() do
+      :active -> do_load_persisted_cutover(uri)
+      :inactive -> verified(legacy_persisted_caps(uri), uri)
+      :unknown -> []
     end
   end
 

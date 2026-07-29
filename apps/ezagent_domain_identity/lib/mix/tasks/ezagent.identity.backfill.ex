@@ -52,6 +52,12 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
   alias Ezagent.EntityCaps.Store
 
   @impl Mix.Task
+  # Returns `{:ok, results}` where `results` is the per-URI `{uri, outcome}` list
+  # (outcome is `{:error, reason}` for a failed principal). #189 PR-3 FINAL
+  # (ITEM 2) — the cutover interlock CONSUMES this result and aborts on ANY
+  # error, so a failed authority-history adoption can never be followed by
+  # `complete: true` + epoch activation. Standalone (`mix ezagent.identity.backfill`)
+  # the return is discarded by Mix; the printed report is unchanged.
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
 
@@ -62,11 +68,33 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
     # uncovered authority-history URIs remain absent, so they get an explicit
     # `revoked_unprovisioned` ever-created row — never an `active` one).
     results =
-      backfill_users(dry_run?) ++
-        backfill_snapshots(dry_run?) ++
-        backfill_authority_history(dry_run?)
+      (backfill_users(dry_run?) ++
+         backfill_snapshots(dry_run?) ++
+         backfill_authority_history(dry_run?))
+      |> maybe_inject_forced_error()
 
     report(results, dry_run?)
+
+    {:ok, results}
+  end
+
+  # TEST-ONLY forced-error seam (the p1/p2 seam precedent): compiled IN only for
+  # `MIX_ENV=test`. Consulted ONLY when `:ezagent_domain_identity,
+  # :backfill_force_error_uri` is set — never outside the ITEM-2 interlock
+  # regression — so the "REAL cutover task aborts + leaves the epoch ABSENT on a
+  # failing backfill" test can force a deterministic backfill error (a real
+  # adoption/DB failure is not reproducible in the sandbox).
+  @backfill_force_error_seam Mix.env() == :test
+
+  if @backfill_force_error_seam do
+    defp maybe_inject_forced_error(results) do
+      case Application.get_env(:ezagent_domain_identity, :backfill_force_error_uri) do
+        nil -> results
+        uri_str -> results ++ [{uri_str, {:error, :forced_backfill_error}}]
+      end
+    end
+  else
+    defp maybe_inject_forced_error(results), do: results
   end
 
   defp backfill_users(dry_run?) do

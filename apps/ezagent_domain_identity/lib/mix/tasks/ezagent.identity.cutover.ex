@@ -79,16 +79,51 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
   def decide(%{complete: true}, true), do: :dry_run
   def decide(%{complete: true}, false), do: :activate
 
-  defp run_backfill(true) do
-    Mix.shell().info("Step 1/2 — backfill (--dry-run)…")
-    Mix.Task.rerun("ezagent.identity.backfill", ["--dry-run"])
-    run_session_migration(["--dry-run"])
+  defp run_backfill(dry_run?) do
+    args = if dry_run?, do: ["--dry-run"], else: []
+    Mix.shell().info("Step 1/2 — backfill#{if dry_run?, do: " (--dry-run)", else: ""}…")
+
+    # #189 PR-3 FINAL (ITEM 2) — CONSUME the backfill result. Any per-URI error
+    # (a failed user/snapshot backfill OR authority-history adoption) is FATAL to
+    # the cutover: abort BEFORE the parity barrier + activation so the epoch is
+    # never activated on an incomplete backfill. Pre-fix the backfill only
+    # PRINTED its errors and returned normally, and this interlock ignored the
+    # result — a failed adoption could still be followed by `complete: true`.
+    case Mix.Task.rerun("ezagent.identity.backfill", args) do
+      {:ok, results} ->
+        abort_on_backfill_errors(results)
+
+      unexpected ->
+        Mix.shell().error(
+          "REFUSED: backfill returned an unexpected result (#{inspect(unexpected)}) — " <>
+            "cannot confirm completeness. Epoch NOT activated."
+        )
+
+        exit({:shutdown, 1})
+    end
+
+    # The session self-license migration is fatal on its own errors (its mix task
+    # `exit({:shutdown, 1})`s), which likewise aborts this task before activation.
+    run_session_migration(args)
   end
 
-  defp run_backfill(false) do
-    Mix.shell().info("Step 1/2 — backfill…")
-    Mix.Task.rerun("ezagent.identity.backfill", [])
-    run_session_migration([])
+  # ITEM 2 — every backfill error aborts the cutover before the barrier.
+  defp abort_on_backfill_errors(results) do
+    case for {uri, {:error, reason}} <- results, do: {uri, reason} do
+      [] ->
+        :ok
+
+      errors ->
+        Mix.shell().error("\nBACKFILL FAILED — #{length(errors)} principal(s) did not migrate:")
+        Enum.each(errors, fn {uri, reason} -> Mix.shell().error("  #{uri}: #{inspect(reason)}") end)
+
+        Mix.shell().error(
+          "REFUSED: the backfill is INCOMPLETE. Epoch NOT activated — re-run the " <>
+            "cutover after resolving the failure(s)."
+        )
+
+        exit({:shutdown, 1})
+    end
   end
 
   # FIX 4 — the Session self-license migration lives in the session domain
