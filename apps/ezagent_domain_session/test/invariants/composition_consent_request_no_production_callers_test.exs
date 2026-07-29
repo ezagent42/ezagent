@@ -27,7 +27,6 @@ defmodule Ezagent.Invariants.CompositionConsentRequestNoProductionCallersTest do
   use ExUnit.Case, async: true
 
   @callee_module :"Elixir.Ezagent.Socialware.CompositionConsent"
-  @callee_mfa {@callee_module, :request, 5}
 
   test "CompositionConsent.request/5 has no production (non-test) call sites yet (BEAM xref)" do
     # `:xref` lives in OTP's `:tools` app, which Elixir's code-path pruning
@@ -57,9 +56,15 @@ defmodule Ezagent.Invariants.CompositionConsentRequestNoProductionCallersTest do
                "#{inspect(@callee_module)} at all — the caller enumeration is broken, " <>
                "so the request/5 pin below cannot be trusted"
 
+      # Match ANY arity of `:request` — not just /5. Xref records a static
+      # `apply(CompositionConsent, :request, args)` with a VARIABLE arg list
+      # as arity -1 (codex round-5), and an exact-/5 filter would drop that
+      # edge. `request` exists only as /5, so any-arity is exactly the pin.
       request_callers =
         module_callers
-        |> Enum.filter(fn {_caller, callee} -> callee == @callee_mfa end)
+        |> Enum.filter(fn {_caller, {mod, fun, _arity}} ->
+          mod == @callee_module and fun == :request
+        end)
 
       assert request_callers == [],
              "request/5 gained a production call site outside of tests: " <>
