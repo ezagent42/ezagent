@@ -701,6 +701,229 @@ defmodule Ezagent.EntityCaps.StoreTest do
     end
   end
 
+  describe "#189 PR-3 FINAL ITEM 1 (cold-restart reconcile: a stale snapshot must NOT roll back the authoritative Store)" do
+    # The second-write fix reports a post-epoch cap mutation as SUCCESS the instant
+    # the authoritative Store row lands, even when the SNAPSHOT projection fails —
+    # leaving a STALE snapshot on disk (the exact ITEM-1 seam,
+    # `SnapshotStore.write` under `:p3_forced_snapshot_failure`, Store ahead of the
+    # snapshot). This is the dangerous sequel: a COLD RELOAD before another
+    # successful write loads that stale snapshot and — through the actor's initial
+    # `save_now` — mirrors it back into `Store.persist`. WITHOUT the cold-load
+    # reconcile, that mirror-back OVERWRITES the committed mutation (rolling back a
+    # grant / RESURRECTING a revoked cap) and leaves the live slice cross-Kind authz
+    # reads stale. The reconcile replaces the rehydrated slice's caps with the
+    # store's authoritative set BEFORE the initial persist, so the Store, the live
+    # slice, the persisted read, AND authorization all retain the committed result.
+    #
+    # We construct the divergence deterministically (graceful terminate → the
+    # ITEM-1 `SnapshotStore.write` seam → cold re-spawn) rather than by a
+    # brutal-kill mid-mutation: the init reconcile is the SAME code path either way
+    # (Identity's `deactivate/2` is `:ok`-only, so a graceful stop and a brutal kill
+    # leave the identical on-disk snapshot), and a mid-query brutal kill tears the
+    # DataCase shared-sandbox connection. The existing ITEM-1 tests exercise the
+    # forced snapshot failure but NEVER cold-reload the Kind, so they cannot catch
+    # this.
+    setup do
+      on_exit(fn -> Application.delete_env(:ezagent_actor, :p3_forced_snapshot_failure_uris) end)
+    end
+
+    test "GRANT survives a cold reload — the store commit is not rolled back by the stale snapshot" do
+      agent = agent_uri("item1-reload-grant")
+      keep = issued_cap(agent, :send)
+      added = issued_cap(agent, :publish)
+
+      # 1. Live-create the principal, then bring it down GRACEFULLY: the marker +
+      #    snapshot {license, keep} + the store row are all durably written.
+      {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [keep]})
+      wait_until_ready(agent)
+      assert Store.status(agent) == :active
+      assert cap_present?(Store.load(agent), keep)
+      refute cap_present?(Store.load(agent), added)
+      :ok = Ezagent.Kind.terminate(agent)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
+
+      # 2. Reproduce the ITEM-1 second-write hole while the Kind is DOWN: the
+      #    authoritative store commits `added` (Store-first), the snapshot upsert is
+      #    forced to fail. The store is now AHEAD of a STALE on-disk snapshot.
+      Application.put_env(:ezagent_actor, :p3_forced_snapshot_failure_uris, [URI.to_string(agent)])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([keep, added, self_license(agent)])}}},
+                 kind_type: :agent
+               )
+
+      assert cap_present?(Store.load(agent), added)
+      Application.delete_env(:ezagent_actor, :p3_forced_snapshot_failure_uris)
+
+      # 3. Cold reload from the STALE snapshot (no live mutation in between).
+      {:ok, _pid2} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent})
+      wait_until_ready(agent)
+
+      # The reload was `:existed` (the marker survived) — NOT a re-created principal
+      # (which would skip the reconcile and make this vacuous).
+      assert Ezagent.Ecto.KindSnapshot.ever_created?(URI.to_string(agent))
+
+      # WITHOUT the reconcile the stale snapshot mirrors back and DROPS `added`. All
+      # four planes must retain the committed grant.
+      # 1. Store (authoritative durable holder).
+      assert cap_present?(Store.load(agent), added)
+      # 2. Live slice (what cross-Kind authz reads live).
+      {:ok, %{state: live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+      assert cap_present?(MapSet.to_list(live.caps), added)
+      # 3. Persisted read (post-epoch store-authoritative).
+      assert cap_present?(EntityCaps.load_persisted(agent), added)
+      # 4. Authorization (live-first, verified/2).
+      assert cap_present?(EntityCaps.load(agent), added)
+      # Non-vacuous: the base cap (and the self-license) are still present.
+      assert cap_present?(Store.load(agent), keep)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "REVOKE survives a cold reload — the stale snapshot does not resurrect the revoked cap" do
+      agent = agent_uri("item1-reload-revoke")
+      keep = issued_cap(agent, :send)
+      drop = issued_cap(agent, :publish)
+
+      # 1. Live-create with {license, keep, drop}, then graceful stop: marker +
+      #    snapshot {license, keep, drop} + store row are durable.
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [keep, drop]})
+
+      wait_until_ready(agent)
+      assert Store.status(agent) == :active
+      assert cap_present?(Store.load(agent), drop)
+      :ok = Ezagent.Kind.terminate(agent)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
+
+      # 2. Reproduce the ITEM-1 second-write hole for a REVOKE while DOWN: the store
+      #    DROPS `drop` (Store-first authoritative), the snapshot upsert is forced to
+      #    fail → the on-disk snapshot STALE-ly still holds `drop`.
+      Application.put_env(:ezagent_actor, :p3_forced_snapshot_failure_uris, [URI.to_string(agent)])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([keep, self_license(agent)])}}},
+                 kind_type: :agent
+               )
+
+      refute cap_present?(Store.load(agent), drop)
+      Application.delete_env(:ezagent_actor, :p3_forced_snapshot_failure_uris)
+
+      # 3. Cold reload from the STALE snapshot (which still holds `drop`).
+      {:ok, _pid2} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent})
+      wait_until_ready(agent)
+
+      assert Ezagent.Ecto.KindSnapshot.ever_created?(URI.to_string(agent))
+
+      # WITHOUT the reconcile the stale snapshot mirrors back and RESURRECTS `drop`.
+      # All four planes must retain the committed removal.
+      refute cap_present?(Store.load(agent), drop)
+      {:ok, %{state: live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+      refute cap_present?(MapSet.to_list(live.caps), drop)
+      refute cap_present?(EntityCaps.load_persisted(agent), drop)
+      refute cap_present?(EntityCaps.load(agent), drop)
+      # Non-vacuous: the kept cap survived the reload.
+      assert cap_present?(Store.load(agent), keep)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+  end
+
+  describe "#189 PR-3 FINAL ITEM 2 (an UNREADABLE epoch REJECTS non-user durable mutations)" do
+    # The USER path already rejects `:unknown` (`UserStore.update/2`). The non-user
+    # durable path (`sync_committed_identity/3`, the snapshot dual-write chokepoint)
+    # must be symmetric: on an unreadable epoch a durable identity mutation is
+    # REFUSED — the Store, the snapshot, AND the live slice all stay unchanged —
+    # rather than advancing state (and the authoritative Store row) under an epoch
+    # we cannot read.
+    setup do
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :identity_cutover_force_read_error)
+        # Restore the suite-wide active override the rest of the suite relies on.
+        Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+      end)
+
+      :ok
+    end
+
+    test "a live GRANT under an unreadable epoch is refused; Store, snapshot, and live slice are unchanged" do
+      agent = agent_uri("item2-grant-unknown")
+      base = issued_cap(agent, :send)
+      added = issued_cap(agent, :publish)
+
+      {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [base]})
+      wait_until_ready(agent)
+      assert Store.status(agent) == :active
+      before_store = identity_keys(Store.load(agent))
+      {:ok, %{state: before_live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+
+      # A FRESH post-cutover node whose epoch read ERRORS resolves to `:unknown`.
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+      assert Ezagent.Identity.Cutover.status() == :unknown
+
+      # The mutation is REFUSED (the durable identity write fails closed) — never
+      # reported as success.
+      assert {:error, _} = EntityCaps.grant(agent, added)
+
+      # 1. Store unchanged — no row write under `:unknown` (epoch resolved BEFORE
+      #    `persist/2`).
+      assert identity_keys(Store.load(agent)) == before_store
+      refute cap_present?(Store.load(agent), added)
+      # 2. Live slice UN-ADVANCED (the commit failed → the actor kept the old slice).
+      {:ok, %{state: after_live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+      assert after_live.caps == before_live.caps
+      # 3. Snapshot unchanged — the write aborts BEFORE the snapshot upsert.
+      {:ok, snapshot, _meta} = Ezagent.Kind.read_durable(agent, :identity)
+      refute cap_present?(MapSet.to_list(snapshot.caps), added)
+
+      # Restore the active epoch before teardown so the terminate/drain path is not
+      # driven under a forced-unreadable epoch.
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_force_read_error)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "a live REVOKE under an unreadable epoch is refused; Store, snapshot, and live slice keep the cap" do
+      agent = agent_uri("item2-revoke-unknown")
+      keep = issued_cap(agent, :send)
+      target = issued_cap(agent, :publish)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [keep, target]})
+
+      wait_until_ready(agent)
+      assert cap_present?(Store.load(agent), target)
+      before_store = identity_keys(Store.load(agent))
+      {:ok, %{state: before_live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+      assert Ezagent.Identity.Cutover.status() == :unknown
+
+      assert {:error, _} = EntityCaps.revoke(agent, target)
+
+      # The cap is STILL present on all three planes — the revoke was refused.
+      # 1. Store unchanged.
+      assert identity_keys(Store.load(agent)) == before_store
+      assert cap_present?(Store.load(agent), target)
+      # 2. Live slice UN-ADVANCED.
+      {:ok, %{state: after_live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
+      assert after_live.caps == before_live.caps
+      # 3. Snapshot unchanged.
+      {:ok, snapshot, _meta} = Ezagent.Kind.read_durable(agent, :identity)
+      assert cap_present?(MapSet.to_list(snapshot.caps), target)
+
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_force_read_error)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+  end
+
   describe "dual-write shadow (snapshot plane)" do
     test "direct SnapshotStore writes mirror into the unified store" do
       agent = agent_uri("parity-snapshot")

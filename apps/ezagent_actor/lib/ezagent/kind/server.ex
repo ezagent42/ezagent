@@ -171,6 +171,20 @@ defmodule Ezagent.Kind.Server do
         {:stop, {:snapshot_load_failed, reason}}
 
       {:ok, slice_state} ->
+        # #189 PR-3 FINAL (ITEM 1) — cold-load reconcile: BEFORE the initial
+        # persist (`save_now`) mirrors this slice back into the AUTHORITATIVE
+        # identity store, replace a rehydrated `:identity` slice's caps with the
+        # store's authoritative set when the store is AHEAD of a stale snapshot (a
+        # post-epoch mutation whose snapshot projection failed). Rebinding
+        # `slice_state` here applies the reconciled slice to BOTH the live actor
+        # state AND `persist_initial_snapshot/4` below, so the mirror-back cannot
+        # roll back the committed mutation and the live slice cross-Kind authz
+        # reads is correct. Config-injected store seam (no compile-time
+        # actor→domain dependency); a no-op pre-epoch / for users / ephemeral /
+        # fresh creation. See `EntityCaps.Store.reconcile_cold_load_identity/3`.
+        slice_state =
+          maybe_reconcile_cold_load_identity(uri, kind_module, create_freshness, slice_state)
+
         with {:ok, authority} <- authority_result do
           # PR-EM-CORE: collect post_init/2 continuations in behaviors/0
           # declaration order. `post_init/2` is OPTIONAL — Behaviors that
@@ -264,6 +278,44 @@ defmodule Ezagent.Kind.Server do
       nil -> false
       store -> store.ever_created_signal?(uri)
     end
+  end
+
+  # #189 PR-3 FINAL (ITEM 1) — see `EntityCaps.Store.reconcile_cold_load_identity/3`.
+  # Only durable snapshot-backed Kinds mirror their `:identity` slice back through
+  # `save_now`, so the reconcile is scoped to them (ephemeral/external re-read
+  # their durable identity in `ActionSet.Identity.create/1` and are EXCLUDED here,
+  # so this never disturbs the ephemeral re-read path). The store decides the rest
+  # (post-epoch, non-user, cold `:existed`, a durable row present). Config-injected
+  # (`:identity_caps_store`) — no compile-time reference from the actor layer to
+  # the domain store; on ANY failure the ORIGINAL slice_state is returned
+  # unchanged (the reconcile is a safety net, never a new init failure mode — a
+  # genuinely-erroring store fails closed via the epoch-gated mirror-back below).
+  defp maybe_reconcile_cold_load_identity(uri, kind_module, create_freshness, slice_state) do
+    with true <- durable_snapshot_kind?(kind_module),
+         %{identity: identity_slice} <- slice_state,
+         store when not is_nil(store) <-
+           Application.get_env(:ezagent_actor, :identity_caps_store),
+         true <- Code.ensure_loaded?(store),
+         {:replace, reconciled} <-
+           store.reconcile_cold_load_identity(
+             URI.to_string(uri),
+             create_freshness,
+             identity_slice
+           ) do
+      Map.put(slice_state, :identity, reconciled)
+    else
+      _ -> slice_state
+    end
+  rescue
+    _ -> slice_state
+  catch
+    :exit, _ -> slice_state
+  end
+
+  defp durable_snapshot_kind?(kind_module) do
+    Ezagent.Kind.persistence_of(kind_module) not in [:ephemeral, :external]
+  rescue
+    _ -> false
   end
 
   # Issue #342 r1 (Allen 2026-05-25 — let-it-crash). Previously this

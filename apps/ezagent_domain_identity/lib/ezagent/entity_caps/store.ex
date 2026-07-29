@@ -562,17 +562,35 @@ defmodule Ezagent.EntityCaps.Store do
     with false <- user_uri?(uri),
          false <- skip_kind?(kind_module),
          %MapSet{} = caps <- slice_caps(slice) do
-      case persist(uri, caps) do
-        :ok ->
-          committed_signal()
-
-        {:error, reason} ->
+      # #189 PR-3 FINAL (ITEM 2) — resolve `Cutover.status/0` BEFORE the Store
+      # write. An UNREADABLE epoch (`:unknown`) must REJECT a durable non-user
+      # mutation, SYMMETRIC with the user path (`UserStore.update/2`): persisting
+      # under an epoch we cannot read would advance the authoritative Store row
+      # (and, via the caller, live state) under semantics a later DEFINITIVE read
+      # might contradict. Fail-closed with an explicit reason and write NEITHER
+      # the Store nor (because the caller aborts on `{:error, _}`) the snapshot.
+      case Ezagent.Identity.Cutover.status() do
+        :unknown ->
           Logger.error(
-            "EntityCaps.Store: identity write FAILED for #{inspect(uri)} " <>
-              "(reason=#{inspect(reason)})"
+            "EntityCaps.Store: identity write REFUSED for #{inspect(uri)} — " <>
+              "identity epoch unreadable (:unknown)"
           )
 
-          swallow_pre_epoch({:error, reason})
+          {:error, :identity_epoch_unreadable}
+
+        _status ->
+          case persist(uri, caps) do
+            :ok ->
+              committed_signal()
+
+            {:error, reason} ->
+              Logger.error(
+                "EntityCaps.Store: identity write FAILED for #{inspect(uri)} " <>
+                  "(reason=#{inspect(reason)})"
+              )
+
+              swallow_pre_epoch({:error, reason})
+          end
       end
     else
       _ -> :ok
@@ -624,6 +642,82 @@ defmodule Ezagent.EntityCaps.Store do
       _ -> :ok
     end
   end
+
+  @doc """
+  #189 PR-3 FINAL (ITEM 1) — the cold-load reconcile of the durable Store INTO a
+  rehydrated live `:identity` slice, run by the actor BEFORE its initial
+  `save_now` mirror-back.
+
+  The "Store-committed ⇒ committed" projection contract (`committed_signal/0` +
+  `Kind.Snapshot.commit_snapshot`) lets a post-epoch cap mutation report success
+  the instant the authoritative Store row lands — even if the SNAPSHOT projection
+  then fails, leaving a STALE snapshot on disk. On a cold restart BEFORE another
+  successful write, the Kind loads that stale snapshot and unconditionally mirrors
+  it back through `persist/2` (`save_now`), which would OVERWRITE the committed
+  authoritative mutation — rolling back a grant, or RESURRECTING a revoked cap —
+  and the live slice cross-Kind authorization reads (`EntityCaps.load/1`) would be
+  stale too.
+
+  This closes that hole. On a COLD reload (`:existed`) of a durable, NON-user
+  identity principal POST-epoch, when a durable Store row EXISTS, REPLACE the
+  rehydrated slice's caps with the Store's authoritative set (a REPLACE, never a
+  union — the Store is the source of truth for the committed mutation). The actor
+  applies the result to BOTH the live slice and the about-to-run initial
+  `save_now`, so the mirror-back writes the correct set and the live slice is
+  correct. `verified/2` stays the read gate — a stale-generation Store license
+  still loads EMPTY on read — so this never resurrects a gen-revoked holder, and
+  the mirror-back's own `persist/2` license guard re-decides `active`-ness.
+
+  Returns `{:replace, reconciled_slice}` (the caller swaps the `:identity` slice)
+  or `:keep` (do nothing) — the latter pre-epoch or on an unreadable epoch (don't
+  disturb pre-epoch semantics), for a user URI (users reconcile `users.caps_json`
+  via `Identity.activate/2`), on a fresh `:created` boot (the minted slice is
+  authoritative — there is no prior committed mutation to reconcile), when no
+  Store row exists (`:absent` — first creation / un-backfilled), for a slice
+  carrying no caps, or on a Store READ ERROR (`:keep` — the subsequent
+  epoch-gated mirror-back itself fails closed on an unreadable/erroring store, so
+  a transient read error never silently commits a stale slice).
+  """
+  @spec reconcile_cold_load_identity(URI.t() | String.t(), atom(), term()) ::
+          {:replace, term()} | :keep
+  def reconcile_cold_load_identity(uri, create_freshness, identity_slice) do
+    with :existed <- create_freshness,
+         :active <- Ezagent.Identity.Cutover.status(),
+         false <- user_uri?(uri),
+         %MapSet{} <- slice_caps(identity_slice) do
+      case fetch_durable_caps(uri) do
+        {:ok, store_caps} ->
+          {:replace, put_slice_caps(identity_slice, MapSet.new(store_caps))}
+
+        :absent ->
+          :keep
+
+        {:error, _reason} ->
+          :keep
+      end
+    else
+      _ -> :keep
+    end
+  rescue
+    _ -> :keep
+  catch
+    _, _ -> :keep
+  end
+
+  # Replace the caps set inside an `:identity` slice, PRESERVING its container
+  # shape (the exact shapes `slice_caps/1` reads): Lifecycle two-container
+  # `%{state: _, transients: _}`, persisted single-key `%{state: _}`, or legacy
+  # flat `%{caps: _}`. Any other shape passes through untouched.
+  defp put_slice_caps(%{state: state, transients: transients}, caps) when is_map(state),
+    do: %{state: Map.put(state, :caps, caps), transients: transients}
+
+  defp put_slice_caps(%{state: state} = slice, caps)
+       when is_map(state) and map_size(slice) == 1,
+       do: %{state: Map.put(state, :caps, caps)}
+
+  defp put_slice_caps(%{caps: _} = slice, caps), do: Map.put(slice, :caps, caps)
+
+  defp put_slice_caps(other, _caps), do: other
 
   @doc """
   Dual-write hook for `SnapshotStore.delete/1`: the legacy durable copy is
