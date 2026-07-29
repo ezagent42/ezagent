@@ -113,15 +113,8 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
     end
   end
 
-  describe "refresh exchange" do
-    # Forgejo PATs do not refresh -- there is no refresh-token flow to drive.
-    # These answer unavailable rather than pretending to succeed.
-    test "begin_refresh_exchange is unavailable" do
-      assert {:error, :backend_unavailable} = Backend.begin_refresh_exchange(%{})
-    end
-
-    test "consume_refresh_exchange is unavailable" do
-      assert {:error, :backend_unavailable} = Backend.consume_refresh_exchange(%{})
-    end
-  end
+  # The refresh-exchange callbacks are exercised in
+  # `EzagentPluginForgejo.CredentialRefreshTest`. Two tests here previously
+  # asserted they answered `:backend_unavailable`; renewal landing turned them
+  # red, which is exactly what they were for.
 end

@@ -18,39 +18,28 @@ defmodule EzagentPluginForgejo.ForgejoDriver do
   credential that stored only the access token could never be refreshed — it
   would simply stop working an hour later.
 
-  ## `refresh/1` and `reconcile_refresh/1` are NOT implemented — deliberately
+  ## Renewal
 
-  Forgejo's OAuth2 does issue refresh tokens (measured: `expires_in: 3600`,
-  and a refresh returns a rotated pair), and
-  `EzagentPluginForgejo.ForgejoOAuth.refresh/3` implements the provider half.
-  What is missing is the **backend** half of the domain's refresh-exchange
-  protocol.
+  A Forgejo access token expires in an hour and IS the repository credential,
+  so renewal is load-bearing — unlike GitHub, where a fresh installation token
+  is minted per operation and the stored user-to-server token is identity-only
+  (which is why that plugin's refresh path is a no-op without consequence).
 
-  That protocol — `begin_refresh_exchange/1` building a `RefreshUse` with a
-  scope-authority claim, `consume_refresh_exchange/1` validating the claim and
-  fences and sealing the result — has **no public helper in the domain**:
-  every `Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority`
-  function is `@doc false`, there is no `use` macro, and no shared
-  `seal_result`. The only working implementation lives in the domain's *test
-  support*
-  (`apps/ezagent_domain_provider_connection/test/support/refresh_exchange_backend_support.ex`),
-  and **no production plugin implements it** — the GitHub backend returns
-  `{:error, :backend_unavailable}` for both callbacks too.
+  `refresh/1` and `reconcile_refresh/1` delegate to the domain's exchange
+  facade, which owns the scope authority and routes the provider closure
+  through the credential backend. `renew/2` is the Forgejo-specific half and
+  is public for exactly that reason: it is the part worth testing on its own,
+  given the current refresh token and nothing else.
 
-  Copying ~200 lines of that protocol into this plugin would mean a plugin
-  depending on domain internals marked private; promoting it into the domain
-  as a public helper is a domain change, which this design's §12 says to stop
-  and report rather than do inline. So both callbacks answer
-  `{:error, :provider_protocol_failed}` for now, and this is recorded as an
-  open item rather than faked.
-
-  **Consequence, stated plainly:** an access token expires after an hour and
-  cannot currently be renewed — the connection must be re-authorized. That is
-  a real limitation of the current slice, not a property of Forgejo.
+  Forgejo **rotates** refresh tokens, so a renewal returns a new pair and the
+  previous refresh token stops working; `renew/2` therefore hands back both
+  tokens as the replacement credential, never just the access token.
   """
 
   @behaviour Ezagent.ProviderConnection.Driver
 
+  alias Ezagent.ProviderConnection.CredentialBackend.RefreshUse
+  alias Ezagent.ProviderConnection.CredentialRefreshExchange
   alias EzagentPluginForgejo.{ForgejoClient, ForgejoOAuth, Instance, OAuthApp}
 
   @impl true
@@ -104,15 +93,62 @@ defmodule EzagentPluginForgejo.ForgejoDriver do
 
   def reconcile_callback(_context), do: {:ok, :not_completed}
 
-  # See the moduledoc: the provider half exists (`ForgejoOAuth.refresh/3`), the
-  # backend half of the domain's refresh-exchange protocol has no public API to
-  # build on. Failing is honest; a fake success would leave a caller believing
-  # a rotation happened while the token keeps expiring.
   @impl true
+  def refresh(%{refresh_use: %RefreshUse{} = use} = context) do
+    CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: use,
+      provider_exchange: &renew(context, &1)
+    })
+  end
+
   def refresh(_context), do: {:error, :provider_protocol_failed}
 
+  # A renewal that lost its response left no provider-side handle to look the
+  # outcome up by, and the refresh token may already have been rotated away by
+  # the attempt that was lost. Reporting `:not_completed` lets the domain
+  # decide (retry the refresh, or fall back to re-authorization) instead of
+  # this driver guessing which token is now live.
   @impl true
+  def reconcile_refresh(%{refresh_use: %RefreshUse{} = use}) do
+    CredentialRefreshExchange.consume_refresh_exchange(%{
+      refresh_use: use,
+      provider_exchange: fn _frame -> {:ok, :not_completed} end
+    })
+  end
+
   def reconcile_refresh(_context), do: {:error, :provider_protocol_failed}
+
+  @doc """
+  Renews a connection's credential against the tenant's Forgejo instance.
+
+  This is the provider half of `refresh/1`: the domain's exchange facade calls
+  it with the current refresh token, sourced from the credential backend. It is
+  public because it is the Forgejo-specific logic — `refresh/1` around it is
+  delegation the domain already tests.
+
+  Returns the five-key shape the domain seals, carrying **both** rotated tokens:
+  Forgejo invalidates the previous refresh token on use, so a replacement that
+  held only the access token could never be renewed again.
+  """
+  @spec renew(map(), map()) :: {:ok, map()} | {:error, atom()}
+  def renew(context, %{current_credential: refresh_token}) when is_binary(refresh_token) do
+    with {:ok, app} <- tenant_app(context, %{}),
+         {:ok, %{expires_at: expires_at} = tokens} <-
+           ForgejoOAuth.refresh(app, refresh_token, req_opts()) do
+      {:ok,
+       %{
+         provider_result_ref: "forgejo-refresh-#{Map.get(context, :correlation_id, "unknown")}",
+         replacement_credential: {:write_only_handoff, encode_credential(tokens)},
+         granted_permissions_digest: permissions_digest(),
+         expires_at: expires_at,
+         provider_metadata: %{}
+       }}
+    else
+      {:error, _reason} -> {:error, :provider_protocol_failed}
+    end
+  end
+
+  def renew(_context, _frame), do: {:error, :provider_protocol_failed}
 
   @impl true
   def discard_callback_result(_context), do: :ok

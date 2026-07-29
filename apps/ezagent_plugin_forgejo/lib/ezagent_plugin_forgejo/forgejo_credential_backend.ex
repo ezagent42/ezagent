@@ -6,22 +6,20 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   under a key from `:ezagent_plugin_forgejo, :token_encryption_key`. The table
   is owned by this module's supervised process.
 
-  ## Refresh exchange is stubbed, pending slice F0
+  ## Renewal
 
-  `begin_refresh_exchange/1` and `consume_refresh_exchange/1` currently answer
-  `{:error, :backend_unavailable}`. **That is a stub with a scheduled owner,
-  not a statement about Forgejo.**
+  Forgejo access tokens expire in an hour and the access token IS the
+  repository credential, so renewal is load-bearing. `begin_refresh_exchange/1`
+  and `consume_refresh_exchange/1` implement the custody half of the domain's
+  refresh-exchange protocol; `EzagentPluginForgejo.ForgejoDriver.refresh/1`
+  implements the provider half.
 
-  A personal access token genuinely has nothing to refresh. But V1 authenticates
-  with OAuth2, not a PAT (design §4.1, decided 2026-07-29), and Forgejo's OAuth2
-  *does* issue refresh tokens — measured: `expires_in: 3600`, and
-  `grant_type=refresh_token` returns a new access token **and a new refresh
-  token** (rotation). So both callbacks become real in F0, and the stored
-  credential gains a rotating refresh token beside the access token.
-
-  Until then these answer unavailable rather than pretending to succeed: a
-  caller that believed a rotation happened would keep using a token that
-  expires in an hour.
+  The asymmetry with GitHub is worth stating: a GitHub App mints a fresh
+  installation token per operation, so its stored user-to-server token is
+  identity-only and never needs renewing — which is why that plugin's
+  equivalent callbacks answer `:backend_unavailable` without consequence.
+  Copying that answer here would have left every Forgejo connection dead after
+  an hour.
 
   ## Security posture (design §4.2)
 
@@ -45,6 +43,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
 
   @behaviour Ezagent.ProviderConnection.CredentialBackend
 
+  alias Ezagent.ProviderConnection.CredentialBackend.RefreshUse
   alias EzagentPluginForgejo.Sealed
 
   @table_name :forgejo_credential_tokens
@@ -131,11 +130,128 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   @impl true
   def consume_lease(_command), do: :ok
 
-  @impl true
-  def begin_refresh_exchange(_command), do: {:error, :backend_unavailable}
+  # ── Refresh exchange ───────────────────────────────────────────────────
+  #
+  # The custody half of renewal. The domain
+  # (`Ezagent.ProviderConnection.CredentialRefreshExchange`) owns the
+  # orchestration: it resolves the bindings, starts the scope authority,
+  # calls `begin_refresh_exchange/1`, then runs the driver, then checks that
+  # what the driver returned is byte-identical to what this module sealed.
+  # This module owns exactly two things the domain cannot know:
+  #
+  #   * which part of the stored credential the provider needs in order to
+  #     renew (for Forgejo: the REFRESH token, not the access token), and
+  #   * that the result the driver produced is well-formed before it is
+  #     recorded as this backend's sealed result.
+  #
+  # Renewal matters here in a way it does not for GitHub: a GitHub App mints
+  # a fresh installation token per operation, so its stored user-to-server
+  # token is identity-only and never needs refreshing. A Forgejo access token
+  # IS the repository credential and expires in an hour (measured), so without
+  # this the connection simply dies and must be re-authorized.
 
   @impl true
-  def consume_refresh_exchange(_command), do: {:error, :backend_unavailable}
+  def begin_refresh_exchange(%{
+        current_credential_ref: ref,
+        scope_authority: authority,
+        scope_token: token,
+        scope_binding_digest: digest
+      }) do
+    case :ets.lookup(@table_name, ref) do
+      [{^ref, {sealed, _version}}] ->
+        # `private` is backend-owned and never leaves this module: the domain
+        # treats the RefreshUse as opaque and its Inspect impl is redacted.
+        # The sealed credential is carried rather than the plaintext so an
+        # exchange that is begun but never consumed leaves no decrypted token
+        # sitting in a struct.
+        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{sealed: sealed})}
+
+      [] ->
+        {:error, :credential_conflict}
+    end
+  end
+
+  def begin_refresh_exchange(_command), do: {:error, :correlation_conflict}
+
+  @impl true
+  def consume_refresh_exchange(%{refresh_use: %RefreshUse{} = use, provider_exchange: exchange})
+      when is_function(exchange, 1) do
+    with __MODULE__ <- RefreshUse.backend(use),
+         %{sealed: sealed} <- RefreshUse.private(use),
+         {:ok, credential} <- Sealed.open(sealed),
+         {:ok, refresh_token} <- refresh_token(credential) do
+      case exchange.(%{current_credential: refresh_token}) do
+        {:ok, :not_completed} -> {:ok, :not_completed}
+        {:ok, result} when is_map(result) -> seal_result(result)
+        {:error, reason} -> {:error, reason}
+        _unexpected -> {:error, :provider_protocol_failed}
+      end
+    else
+      {:error, reason} when is_atom(reason) -> {:error, reason}
+      _mismatch -> {:error, :correlation_conflict}
+    end
+  end
+
+  def consume_refresh_exchange(_command), do: {:error, :correlation_conflict}
+
+  # The provider renews against the REFRESH token. Handing over the access
+  # token instead is the obvious slip and would make every renewal fail with
+  # `invalid_grant`.
+  defp refresh_token(credential) do
+    case Jason.decode(credential) do
+      {:ok, %{"refresh_token" => token}} when is_binary(token) and token != "" ->
+        {:ok, token}
+
+      _no_refresh_token ->
+        # A credential stored without a refresh token cannot be renewed. Saying
+        # so beats calling the provider with something that is not a refresh
+        # token and reporting its rejection as a provider fault.
+        {:error, :credential_conflict}
+    end
+  end
+
+  # `validate_result/2` in the domain requires exactly these five keys, with
+  # `replacement_credential` already converted into a `credential_material`
+  # handoff. Checking the shape here keeps a malformed provider result from
+  # being recorded as this backend's sealed result.
+  defp seal_result(
+         %{
+           provider_result_ref: provider_result_ref,
+           replacement_credential: {:write_only_handoff, _material} = replacement,
+           granted_permissions_digest: digest,
+           expires_at: expires_at,
+           provider_metadata: metadata
+         } = result
+       )
+       when map_size(result) == 5 and is_map(metadata) do
+    with true <- nonempty?(provider_result_ref),
+         true <- nonempty?(digest),
+         true <- is_nil(expires_at) or is_struct(expires_at, DateTime) do
+      {:ok,
+       result
+       |> Map.delete(:replacement_credential)
+       |> Map.put(:credential_material, handoff(provider_result_ref, replacement))}
+    else
+      _invalid -> {:error, :provider_protocol_failed}
+    end
+  end
+
+  defp seal_result(_result), do: {:error, :provider_protocol_failed}
+
+  # The handoff is a reference to the replacement, not the replacement itself:
+  # the sealed result crosses back through the domain and the driver, and the
+  # new token has no business travelling that path in the clear.
+  defp handoff(provider_result_ref, replacement) do
+    reference =
+      {__MODULE__, provider_result_ref, replacement}
+      |> :erlang.term_to_binary([:deterministic])
+      |> then(&:crypto.hash(:sha256, &1))
+      |> Base.url_encode64(padding: false)
+
+    {:write_only_handoff, reference}
+  end
+
+  defp nonempty?(value), do: is_binary(value) and value != ""
 
   # Deleting an absent key is already a no-op in ETS, so an exact retry of the
   # same `idempotency_key` applies the same single logical effect.

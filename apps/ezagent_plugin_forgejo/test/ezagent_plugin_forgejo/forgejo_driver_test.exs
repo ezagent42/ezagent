@@ -50,6 +50,7 @@ defmodule EzagentPluginForgejo.ForgejoDriverTest do
   # `:adapter_req_opts`, the same key live E2E uses to pass a proxy — rather
   # than a test-only key smuggled through the driver context. On_exit restores
   # it so one test cannot silently stub another.
+
   defp stub(fun) do
     Req.Test.stub(@stub_name, fun)
     previous = Application.get_env(:ezagent_plugin_forgejo, :adapter_req_opts)
@@ -200,18 +201,82 @@ defmodule EzagentPluginForgejo.ForgejoDriverTest do
     end
   end
 
-  # Characterization, not approval. Forgejo DOES issue rotating refresh tokens
-  # and `ForgejoOAuth.refresh/3` implements the provider half; what is missing
-  # is the backend half of the domain's refresh-exchange protocol, which has no
-  # public API to build on (see the driver's moduledoc). These pin the current
-  # deliberate stub so that implementing it turns them red instead of leaving
-  # the gap documented only in prose.
-  describe "refresh is not implemented yet (known gap)" do
-    test "refresh fails rather than faking a rotation" do
+  # `refresh/1` itself is a two-line delegation to the domain's exchange facade
+  # (which owns the scope authority and routes the closure through the credential
+  # backend). The provider half -- the part specific to Forgejo -- is `renew/2`,
+  # so that is what these exercise: given the current refresh token, call the
+  # instance and shape the rotated pair into the result the domain requires.
+  describe "renew/2 (the provider half of refresh)" do
+    setup do
+      stub(fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        form = URI.decode_query(body)
+
+        assert form["grant_type"] == "refresh_token"
+        assert form["refresh_token"] == "rt-old"
+        assert form["client_id"] == "client-abc"
+
+        Req.Test.json(conn, %{
+          "access_token" => "at-new",
+          "refresh_token" => "rt-new",
+          "expires_in" => 3600
+        })
+      end)
+    end
+
+    test "renews against the current refresh token and returns the rotated pair" do
+      assert {:ok, result} =
+               ForgejoDriver.renew(context(frame()), %{current_credential: "rt-old"})
+
+      assert {:write_only_handoff, material} = result.replacement_credential
+      assert {:ok, decoded} = Jason.decode(material)
+      assert decoded["access_token"] == "at-new"
+      assert decoded["refresh_token"] == "rt-new"
+    end
+
+    test "reports the renewed token's expiry so the connection is not marked eternal" do
+      assert {:ok, %{expires_at: %DateTime{} = expires_at}} =
+               ForgejoDriver.renew(context(frame()), %{current_credential: "rt-old"})
+
+      assert DateTime.diff(expires_at, DateTime.utc_now()) > 3500
+    end
+
+    test "produces exactly the five keys the domain seals" do
+      assert {:ok, result} =
+               ForgejoDriver.renew(context(frame()), %{current_credential: "rt-old"})
+
+      assert Enum.sort(Map.keys(result)) == [
+               :expires_at,
+               :granted_permissions_digest,
+               :provider_metadata,
+               :provider_result_ref,
+               :replacement_credential
+             ]
+    end
+
+    test "an unregistered instance cannot renew" do
+      ctx = context(frame(), %{governed_host: "nope.test"})
+
+      assert {:error, :provider_protocol_failed} =
+               ForgejoDriver.renew(ctx, %{current_credential: "rt-old"})
+    end
+  end
+
+  describe "renew/2 failures" do
+    test "a rejected refresh token is a protocol failure" do
+      stub(fn conn -> Plug.Conn.resp(conn, 400, ~s({"error":"invalid_grant"})) end)
+
+      assert {:error, :provider_protocol_failed} =
+               ForgejoDriver.renew(context(frame()), %{current_credential: "rt-old"})
+    end
+  end
+
+  describe "refresh/1 delegation" do
+    test "without a refresh_use it is a protocol failure" do
       assert {:error, :provider_protocol_failed} = ForgejoDriver.refresh(%{})
     end
 
-    test "reconcile_refresh fails rather than faking a rotation" do
+    test "reconcile_refresh without a refresh_use is a protocol failure" do
       assert {:error, :provider_protocol_failed} = ForgejoDriver.reconcile_refresh(%{})
     end
   end
