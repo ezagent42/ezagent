@@ -256,12 +256,15 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
     "Ecto" => [{:changeset, 2}],
     "Lifecycle" => [{:create, 1}, {:activate, 2}, {:deactivate, 2}, {:destroy, 1}],
     "ActionSet" => [{:required_caps, 0}],
-    # `use Mix.Task` obligates `run/1` (the `@impl Mix.Task` callback). Two
-    # one-shot snapshot-migration tasks sharing the SAME thin `run/1` dispatch
-    # skeleton (parse switches → `cond` → `Ezagent.Migration.RepoOnly.run/1`) is
-    # a callback contract, not a copy-paste fork — exempt it, scoped to modules
-    # that actually `use Mix.Task`. (PR-6+7 curl-as-flavor: closes the gap so
-    # `ezagent.curl.migrate` + `ezagent.session.migrate_slice` aren't a fork.)
+    # `use Mix.Task` obligates `run/1` (the `@impl Mix.Task` callback). One-shot
+    # snapshot-migration tasks sharing the SAME thin `run/1` dispatch skeleton
+    # (parse switches → `cond` → `Ezagent.Migration.RepoOnly.run/1`) is a
+    # callback contract, not a copy-paste fork — exempt it, scoped to modules
+    # that actually `use Mix.Task`. (Originally closed by PR-6+7 curl-as-flavor
+    # for `ezagent.curl.migrate` + `ezagent.session.migrate_slice`; the curl
+    # task was deleted with the retired curl_agent Kind migration machinery —
+    # chore/retire-dead-kind-migrations — but the general `use Mix.Task` exemption
+    # still applies to every task in this shape, e.g. `ezagent.session.migrate_slice`.)
     "Task" => [{:run, 1}]
   }
 

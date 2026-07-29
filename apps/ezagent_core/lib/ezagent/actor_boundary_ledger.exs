@@ -839,62 +839,6 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "1948de8ee9600c7d9f9d77aaefa565a0dfb2fa9198c3f8acae46da6fde763080",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "7ce204061293af1264724c62211cac61ed66d041eec4dc66f62e5d83163b6430",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "8e09468e04e2297903ebdcdfdbc5791561d8ed6376cc07080975df7940701826",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "8ff0738a810fdecdf5f70b27154fefd56ea8bf86b30bb48f4e2960388fa678af",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "a1efcb105ca1a58f57a701fe3259fc52e9f8f06efdf9231b9b16188345624e0e",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "f842893c649c9c2db7e396890833d3d959e65d948261347179ab8b51ff00bda8",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path:
-        "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
-      target: "Ezagent.Kind.Snapshot",
-      sha: "4247f9f0eb2d5e552782e7de1ec801400c2a7d4a75e7d68d8b65bc8ba03e9f8c",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
       path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/credential_bridge.ex",
       target: "Ezagent.SnapshotStore",
       sha: "89c27fb8c26f5ad0a792cef83abed1d6b9ef58d21cf6cf72a3a9bb3ed915ccd4",
