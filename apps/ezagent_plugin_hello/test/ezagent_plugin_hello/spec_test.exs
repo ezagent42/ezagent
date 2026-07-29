@@ -141,5 +141,25 @@ defmodule EzagentPluginHello.SpecTest do
     test "errors on non-JSON" do
       assert {:error, _} = Spec.extract("not json at all")
     end
+
+    test "recovers a response that is missing only terminal JSON delimiters" do
+      json =
+        String.duplicate(~s({"type":"Stack","props":{},"children":[), 6) <>
+          ~s({"type":"Text","props":{"text":"ready"},"children":[]}) <>
+          String.duplicate("]}", 6)
+
+      truncated = binary_part(json, 0, byte_size(json) - 6)
+
+      assert {:ok, %{"type" => "Stack"}} = Spec.extract(truncated)
+    end
+
+    test "does not recover a response truncated inside a JSON string" do
+      assert {:error, _} =
+               Spec.extract(~s({"type":"Text","props":{"text":"unterminated))
+    end
+
+    test "does not recover a response that ends before a JSON value closes" do
+      assert {:error, _} = Spec.extract(~s({"type":"Stack","props":{},"children":[))
+    end
   end
 end

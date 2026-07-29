@@ -20,6 +20,36 @@ defmodule EzagentPluginHello.GeneratorTest do
     end
   end
 
+  describe "decode_page_spec_with_retry/2" do
+    test "retries an unrecoverable JSON response exactly once" do
+      retry = fn ->
+        send(self(), :retried)
+
+        {:ok,
+         Jason.encode!(%{
+           "type" => "Text",
+           "props" => %{"text" => "recovered"},
+           "children" => []
+         })}
+      end
+
+      assert {:ok, %{"props" => %{"text" => "recovered"}}} =
+               Generator.decode_page_spec_with_retry("{not json", retry)
+
+      assert_received :retried
+      refute_received :retried
+    end
+
+    test "does not retry a valid response" do
+      valid = Jason.encode!(%{"type" => "Text", "props" => %{"text" => "ok"}, "children" => []})
+
+      assert {:ok, %{"props" => %{"text" => "ok"}}} =
+               Generator.decode_page_spec_with_retry(valid, fn ->
+                 flunk("valid JSON must not retry")
+               end)
+    end
+  end
+
   # The incremental-edit core: nodes are id-annotated (pre-order), the model emits
   # ops referencing those ids, and `apply_patch/2` applies them. These pin the
   # patch semantics so "change one button's text" stays a one-op edit, not a full

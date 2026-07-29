@@ -277,6 +277,12 @@ class CodexClient:
                 self.active_turns[turn_id]["text"].append(params.get("delta") or "")
                 continue
 
+            if method == "item/completed" and params.get("turnId") == turn_id:
+                item = params.get("item") or {}
+                if item.get("type") == "agentMessage":
+                    self.active_turns[turn_id]["final_text"] = item.get("text") or ""
+                continue
+
             if method == "turn/completed":
                 turn = params.get("turn") or {}
                 completed_turn_id = turn.get("id")
@@ -284,9 +290,9 @@ class CodexClient:
                     continue
 
                 state = self.active_turns.pop(turn_id, {})
-                text = "".join(state.get("text") or []).strip()
-                if not text:
-                    text = extract_agent_message_text(turn).strip()
+                text = canonical_completion_text(
+                    state.get("text") or [], turn, state.get("final_text")
+                )
                 return {
                     "text": text,
                     "session_uris": [state["session_uri"]] if state.get("session_uri") else [],
@@ -433,6 +439,20 @@ def extract_agent_message_text(turn: dict[str, Any]) -> str:
         if isinstance(item, dict) and item.get("type") == "agentMessage"
     ]
     return "".join(texts)
+
+
+def canonical_completion_text(
+    deltas: list[str], turn: dict[str, Any], completed_text: str | None = None
+) -> str:
+    """Prefer the terminal agent message over optimistic streamed deltas."""
+    if completed_text:
+        return completed_text.strip()
+
+    final_text = extract_agent_message_text(turn).strip()
+    if final_text:
+        return final_text
+
+    return "".join(deltas).strip()
 
 
 async def heartbeat_loop(bridge: "PhoenixBridge") -> None:

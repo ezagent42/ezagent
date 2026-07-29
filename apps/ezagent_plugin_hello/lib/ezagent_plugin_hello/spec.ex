@@ -85,7 +85,9 @@ defmodule EzagentPluginHello.Spec do
   Extract a spec map from a raw LLM `content` string. Accepts a bare JSON
   object or one wrapped in a ```json … ``` (or ``` … ```) fence. Returns
   `{:ok, spec}` | `{:error, reason}`. Does NOT validate the catalog — call
-  `validate/1` on the result.
+  `validate/1` on the result. For a completion that stops immediately after a
+  structural delimiter, it can append only the matching closing delimiters;
+  it never repairs an open string or an incomplete JSON value.
   """
   @spec extract(String.t()) :: {:ok, map()} | {:error, term()}
   def extract(content) when is_binary(content) do
@@ -98,11 +100,73 @@ defmodule EzagentPluginHello.Spec do
     case Jason.decode(json) do
       {:ok, %{} = spec} -> {:ok, spec}
       {:ok, other} -> {:error, {:not_an_object, other}}
-      {:error, reason} -> {:error, {:json, reason}}
+      {:error, reason} -> recover_terminal_delimiters(json, reason)
     end
   end
 
   def extract(_), do: {:error, :not_a_string}
+
+  # A streamed completion can finish after emitting every semantic JSON token
+  # but before its final structural delimiters arrive. Recover only that narrow
+  # shape: no open string, no mismatched delimiter, and an append-only suffix of
+  # `]`/`}`. Any other malformed JSON keeps its original parse failure.
+  defp recover_terminal_delimiters(json, original_reason) do
+    with true <- terminal_delimiter?(json),
+         {:ok, [_ | _] = opens} <- delimiter_stack(json),
+         suffix <- Enum.map_join(opens, &closing_delimiter/1),
+         {:ok, %{} = spec} <- Jason.decode(json <> suffix) do
+      {:ok, spec}
+    else
+      {:ok, []} -> {:error, {:json, original_reason}}
+      _ -> {:error, {:json, original_reason}}
+    end
+  end
+
+  defp terminal_delimiter?(json) do
+    trimmed = String.trim_trailing(json)
+    String.ends_with?(trimmed, "}") or String.ends_with?(trimmed, "]")
+  end
+
+  defp delimiter_stack(json) when is_binary(json), do: scan_delimiters(json, [], false, false)
+
+  defp scan_delimiters(<<>>, opens, false, false), do: {:ok, opens}
+  defp scan_delimiters(<<>>, _opens, true, _escaped?), do: :unterminated_string
+
+  defp scan_delimiters(<<"\\", rest::binary>>, opens, true, false),
+    do: scan_delimiters(rest, opens, true, true)
+
+  defp scan_delimiters(<<_codepoint::utf8, rest::binary>>, opens, true, true),
+    do: scan_delimiters(rest, opens, true, false)
+
+  defp scan_delimiters(<<"\"", rest::binary>>, opens, true, false),
+    do: scan_delimiters(rest, opens, false, false)
+
+  defp scan_delimiters(<<_codepoint::utf8, rest::binary>>, opens, true, false),
+    do: scan_delimiters(rest, opens, true, false)
+
+  defp scan_delimiters(<<"\"", rest::binary>>, opens, false, false),
+    do: scan_delimiters(rest, opens, true, false)
+
+  defp scan_delimiters(<<"{", rest::binary>>, opens, false, false),
+    do: scan_delimiters(rest, [:object | opens], false, false)
+
+  defp scan_delimiters(<<"[", rest::binary>>, opens, false, false),
+    do: scan_delimiters(rest, [:array | opens], false, false)
+
+  defp scan_delimiters(<<"}", rest::binary>>, [:object | opens], false, false),
+    do: scan_delimiters(rest, opens, false, false)
+
+  defp scan_delimiters(<<"]", rest::binary>>, [:array | opens], false, false),
+    do: scan_delimiters(rest, opens, false, false)
+
+  defp scan_delimiters(<<"}", _rest::binary>>, _opens, false, false), do: :mismatched_delimiter
+  defp scan_delimiters(<<"]", _rest::binary>>, _opens, false, false), do: :mismatched_delimiter
+
+  defp scan_delimiters(<<_codepoint::utf8, rest::binary>>, opens, false, false),
+    do: scan_delimiters(rest, opens, false, false)
+
+  defp closing_delimiter(:object), do: "}"
+  defp closing_delimiter(:array), do: "]"
 
   @doc """
   Validate that `spec` is a tree using ONLY catalog node types. Returns

@@ -45,8 +45,9 @@ PR is opened.
 
 ## Proofs and gates
 
-- Rebase base: `c4ec7b478c4d4c40f3a52f060ad8746718fc5193` (remote `main`,
-  rebased before push).
+- Initial rebase base: `c4ec7b478c4d4c40f3a52f060ad8746718fc5193`.
+  Follow-up rebase on 2026-07-29 updated the branch to remote `main`
+  `9854423e1` before the lease-protected push.
 - Local targeted Elixir verification:
   `POSTGRES_PORT=55442 mix test apps/ezagent_core/test/invariants/recipe_cap_binding_invariant_test.exs apps/ezagent_domain_agent/test/ezagent/agent/recipe_materializer_test.exs apps/ezagent_domain_agent_bridge/test/ezagent/agent_bridge/socket_channel_test.exs apps/ezagent_domain_session/test/ezagent/socialware/installation_test.exs apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs apps/ezagent_plugin_codex/test/ezagent/template/codex_agent_home_isolation_test.exs apps/ezagent_plugin_hello/test/ezagent_plugin_hello/router_test.exs apps/ezagent_cli/test/ezagent_cli/session_socialware_facade_test.exs`.
 - Local World verification: Vitest `WorkspacePlugin` + `Conversation` source
@@ -61,6 +62,27 @@ PR is opened.
 
 ## Follow-up notes
 
+- **2026-07-29 generation failure hardening:** Investigation of
+  `session://system/codex-template/codex-hello-1` found two completed Codex
+  turns whose final agent message itself ended before the final JSON structural
+  delimiters. This was not an API-token-limit response and was already present
+  in the Codex app-server completion, before the bridge stored it.
+  - The Codex bridge now uses the authoritative terminal `item/completed`
+    agent message ahead of optimistic streamed deltas.
+  - Hello recovers only a JSON response that ends on `]` or `}` and is missing
+    matching terminal structural delimiters. It rejects open strings and
+    incomplete values rather than inventing content.
+  - An unrecoverable JSON response receives one compact, bounded regeneration
+    request; valid responses never retry and retry failures are returned
+    normally.
+  - Fresh focused evidence: Hello extraction/generation tests: **28 tests,
+    0 failures**; Codex bridge Python regression: **1 test, OK**; touched-file
+    formatting and `git diff --check`: passed.
+  - A full `mix precommit` was started after this change but remained in the
+    repository-wide test phase for 16 minutes with sustained multi-core CPU
+    use and no terminal result. It was stopped to avoid degrading the running
+    local World service; it is not recorded as a passing gate.
+
 - Verification of the public preview minted anonymous user
   `entity://system/user/anon-R-OIwVPQgx7kIdDZos9OGA` in `codex-1`. It has not
   been removed because no deletion authorization was given.
@@ -68,5 +90,5 @@ PR is opened.
 
 ## Merge request
 
-PR #1576 targets `main` from `codex/hello-template-llm`. It is rebased on the
-recorded remote `main`; rebase again if `main` advances before merge.
+PR #1576 targets `main` from `codex/hello-template-llm`. It is rebased on
+`9854423e1`; rebase again if `main` advances before merge.

@@ -286,11 +286,54 @@ defmodule EzagentPluginHello.Generator do
 
   defp fresh_spec(session_uri, prompt_text) do
     with {:ok, %{content: content}} <-
-           call_llm(session_uri, Prompts.page_gen_system(), prompt_text),
-         {:ok, raw_spec} <- Spec.extract(content),
+           call_llm(session_uri, Prompts.page_gen_system(), prompt_text) do
+      decode_page_spec_with_retry(content, fn ->
+        with {:ok, %{content: retry_content}} <-
+               call_llm(
+                 session_uri,
+                 Prompts.page_gen_system(),
+                 compact_regeneration_prompt(prompt_text)
+               ) do
+          {:ok, retry_content}
+        end
+      end)
+    end
+  end
+
+  @doc false
+  @spec decode_page_spec_with_retry(String.t(), (-> {:ok, String.t()} | {:error, term()})) ::
+          {:ok, map()} | {:error, term()}
+  def decode_page_spec_with_retry(content, retry)
+      when is_binary(content) and is_function(retry, 0) do
+    case decode_page_spec(content) do
+      {:error, {:json, _reason}} ->
+        with {:ok, retry_content} <- retry.() do
+          decode_page_spec(retry_content)
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp decode_page_spec(content) do
+    with {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
       {:ok, spec}
     end
+  end
+
+  defp compact_regeneration_prompt(prompt_text) do
+    """
+    Your previous response could not be parsed as a complete JSON object.
+    Generate a compact replacement for the original request below. Use at most
+    twelve component nodes, concise copy, and return exactly one complete valid
+    JSON object with every array and object closed.
+
+    Original request:
+
+    #{prompt_text}
+    """
   end
 
   @doc """
