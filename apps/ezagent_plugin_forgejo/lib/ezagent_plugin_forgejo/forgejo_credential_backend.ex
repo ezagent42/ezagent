@@ -36,23 +36,18 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   a structural inference from the grammar, **not** something measured — see
   design §4.1.1 for what would settle it.
 
-  The AES-GCM helpers are private here rather than a public sibling module
-  (as `EzagentPluginGithub.GitHubTokenStore` is): they are an implementation
-  detail of storage, covered through this module's round-trip and
-  no-plaintext-at-rest tests. If a third provider plugin needs the same
-  primitives, promoting them to shared domain code beats a third copy.
+  Sealing lives in `EzagentPluginForgejo.Sealed`. It began as private
+  functions here, with a note that a second caller should trigger promotion
+  rather than a copy; `EzagentPluginForgejo.OAuthApp` became that caller in
+  slice F0, so it was promoted. This module's round-trip and
+  no-plaintext-at-rest tests still cover the path.
   """
 
   @behaviour Ezagent.ProviderConnection.CredentialBackend
 
-  @table_name :forgejo_credential_tokens
-  @key_size 32
-  @nonce_size 12
-  @tag_size 16
+  alias EzagentPluginForgejo.Sealed
 
-  # Only usable within a single VM session. Real deployments MUST configure a
-  # stable key, or every restart orphans every stored credential.
-  @fallback_key :crypto.strong_rand_bytes(@key_size)
+  @table_name :forgejo_credential_tokens
 
   @doc false
   def child_spec(opts) do
@@ -84,7 +79,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   def store(%{credential_material: {:write_only_handoff, token}}) do
     ref = "forgejo-credential-" <> (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
 
-    :ets.insert(@table_name, {ref, {encrypt(token), 1}})
+    :ets.insert(@table_name, {ref, {Sealed.seal(token), 1}})
     {:ok, %{credential_ref: ref, credential_version: 1}}
   end
 
@@ -97,7 +92,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
     case :ets.lookup(@table_name, ref) do
       [{^ref, {_encrypted, version}}] when is_integer(version) and version == expected_version ->
         new_version = version + 1
-        :ets.insert(@table_name, {ref, {encrypt(new_token), new_version}})
+        :ets.insert(@table_name, {ref, {Sealed.seal(new_token), new_version}})
         {:ok, %{credential_ref: ref, credential_version: new_version}}
 
       [{^ref, {_encrypted, _version}}] ->
@@ -123,7 +118,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   def lease_for_operation(%{credential_ref: ref}) do
     case :ets.lookup(@table_name, ref) do
       [{^ref, {sealed, _version}}] ->
-        case decrypt(sealed) do
+        case Sealed.open(sealed) do
           {:ok, token} -> {:ok, %{credential: token, credential_ref: ref, expires_at: nil}}
           {:error, reason} -> {:error, reason}
         end
@@ -148,62 +143,5 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   def revoke(%{credential_ref: ref}) do
     :ets.delete(@table_name, ref)
     :ok
-  end
-
-  # ── Encryption at rest ─────────────────────────────────────────────────
-
-  defp encrypt(plaintext) do
-    key = encryption_key()
-    nonce = :crypto.strong_rand_bytes(@nonce_size)
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(:aes_256_gcm, key, nonce, plaintext, "", true)
-
-    {nonce, ciphertext <> tag}
-  end
-
-  defp decrypt({nonce, ciphertext_with_tag}) do
-    ciphertext_size = byte_size(ciphertext_with_tag) - @tag_size
-
-    <<ciphertext::binary-size(ciphertext_size), tag::binary-size(@tag_size)>> =
-      ciphertext_with_tag
-
-    case :crypto.crypto_one_time_aead(
-           :aes_256_gcm,
-           encryption_key(),
-           nonce,
-           ciphertext,
-           "",
-           tag,
-           false
-         ) do
-      plaintext when is_binary(plaintext) -> {:ok, plaintext}
-      _ -> {:error, :authentication_failed}
-    end
-  end
-
-  defp encryption_key do
-    case Application.get_env(:ezagent_plugin_forgejo, :token_encryption_key) do
-      nil ->
-        @fallback_key
-
-      {:system, var} ->
-        var |> System.get_env() |> decode_key()
-
-      value when is_binary(value) ->
-        decode_key(value)
-    end
-  end
-
-  defp decode_key(nil), do: @fallback_key
-
-  defp decode_key(value) do
-    case Base.decode64(value) do
-      {:ok, key} when byte_size(key) == @key_size ->
-        key
-
-      _ ->
-        raise "Invalid :ezagent_plugin_forgejo token_encryption_key: expected a base64-encoded 32-byte key"
-    end
   end
 end
