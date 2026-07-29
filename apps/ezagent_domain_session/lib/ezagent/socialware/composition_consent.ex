@@ -6,6 +6,17 @@ defmodule Ezagent.Socialware.CompositionConsent do
   independently authorizes STORE onto the current source owner. Approval
   commands never issue or absorb capabilities; re-materialization remains the
   only mint path and consumes these states after rechecking owner currency.
+
+  ## `request/5` has NO production callers yet (pinned contract)
+
+  `request/5`'s `authenticated_principal` is a plain argument, not yet wired
+  from a verified transport boundary. It is deliberately UNREACHABLE from
+  production code today — pinned by the BEAM-xref invariant test
+  `test/invariants/composition_consent_request_no_production_callers_test.exs`,
+  which reds on the first non-test call edge. The FIRST production caller must
+  derive `authenticated_principal` from the dispatch runtime's authenticated
+  context (`ctx.caller` / `ctx.authenticated_principal`) and reopen security
+  review — see the full contract on `request/5`'s doc.
   """
 
   use Ecto.Schema

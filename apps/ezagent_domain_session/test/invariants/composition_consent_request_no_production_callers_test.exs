@@ -9,41 +9,91 @@ defmodule Ezagent.Invariants.CompositionConsentRequestNoProductionCallersTest do
 
   This is a PIN, not a fix for the underlying gap: it fails the instant a
   production (non-test) call site appears, forcing whoever adds it to first
-  read the `request/5` moduledoc contract and derive `authenticated_principal`
-  from the dispatch/Kind runtime's authenticated context (`ctx.caller` /
+  read the contract on `request/5` and derive `authenticated_principal` from
+  the dispatch/Kind runtime's authenticated context (`ctx.caller` /
   `ctx.authenticated_principal`) rather than a free argument — i.e. it forces
   reopening security review instead of letting the wiring land silently.
-  Modeled on the same-BEAM producer enumeration in
-  `apps/ezagent_core/test/invariants/cap_absorb_reachability_test.exs`.
+
+  Codex round-4: the pin enumerates callers from COMPILED BEAM code via
+  `:xref` (every remote-call edge in the umbrella's `_build` ebins), not from
+  a source-text regex — so aliasing (`alias ... as: C`), `import`, or any
+  macro-generated call cannot slip past it. Test-support modules (compiled
+  into ebin under `MIX_ENV=test`) are excluded by their `module_info(:compile)`
+  source path. Dynamic `apply/3` with runtime-built atoms is invisible to any
+  static analysis; the accidental-caller channel this pins is the static one.
+  A POSITIVE CONTROL asserts the xref graph does see other production callers
+  of this module, so an empty result can never be a silently-broken harness.
   """
   use ExUnit.Case, async: true
 
-  @request_call ~r/\bConsent\.request\(|CompositionConsent\.request\(/
+  @callee_module :"Elixir.Ezagent.Socialware.CompositionConsent"
+  @callee_mfa {@callee_module, :request, 5}
 
-  test "CompositionConsent.request/5 has no production (non-test) call sites yet" do
-    root = repo_root()
+  test "CompositionConsent.request/5 has no production (non-test) call sites yet (BEAM xref)" do
+    # `:xref` lives in OTP's `:tools` app, which Elixir's code-path pruning
+    # hides from `mix test` unless explicitly ensured.
+    Mix.ensure_application!(:tools)
+    {:ok, xref} = :xref.start([])
 
-    violations =
-      root
-      |> Path.join("apps/**/*.ex")
-      |> Path.wildcard()
-      |> Enum.reject(&String.contains?(&1, "/test/"))
-      |> Enum.filter(fn file ->
-        source = File.read!(file)
-        source =~ @request_call
-      end)
+    try do
+      :xref.set_default(xref, warnings: false)
 
-    assert violations == [],
-           "request/5 gained a production call site outside of tests: " <>
-             "#{inspect(violations)}. Before wiring it up, derive " <>
-             "`authenticated_principal` from the dispatch context (ctx.caller / " <>
-             "ctx.authenticated_principal), never a free function argument, and " <>
-             "reopen security review per the moduledoc contract on request/5 " <>
-             "(apps/ezagent_domain_session/lib/ezagent/socialware/composition_consent.ex)."
+      ebins =
+        [Mix.Project.build_path(), "lib", "*", "ebin"]
+        |> Path.join()
+        |> Path.wildcard()
+
+      assert ebins != [], "no compiled ebins under #{Mix.Project.build_path()} — harness broken"
+      for ebin <- ebins, do: :xref.add_directory(xref, String.to_charlist(ebin))
+
+      # POSITIVE CONTROL — the harness must SEE production callers of this
+      # module (session.ex / composition_caps.ex call its read/decide side).
+      # If this is empty the xref graph is broken and the pin below would be
+      # vacuously green.
+      module_callers = production_caller_mfas(xref, @callee_module)
+
+      assert module_callers != [],
+             "xref positive control failed: no production caller edges into " <>
+               "#{inspect(@callee_module)} at all — the caller enumeration is broken, " <>
+               "so the request/5 pin below cannot be trusted"
+
+      request_callers =
+        module_callers
+        |> Enum.filter(fn {_caller, callee} -> callee == @callee_mfa end)
+
+      assert request_callers == [],
+             "request/5 gained a production call site outside of tests: " <>
+               "#{inspect(request_callers)}. Before wiring it up, derive " <>
+               "`authenticated_principal` from the dispatch context (ctx.caller / " <>
+               "ctx.authenticated_principal), never a free function argument, and " <>
+               "reopen security review per the contract on request/5 " <>
+               "(apps/ezagent_domain_session/lib/ezagent/socialware/composition_consent.ex)."
+    after
+      :xref.stop(xref)
+    end
   end
 
-  defp repo_root do
-    {root, 0} = System.cmd("git", ["rev-parse", "--show-toplevel"])
-    String.trim(root)
+  # Every remote-call edge into `callee_module` whose CALLER is production
+  # code: not the module itself, and not compiled from a test/ source file
+  # (test-support modules land in ebin under MIX_ENV=test).
+  defp production_caller_mfas(xref, callee_module) do
+    query = ~c"E || '#{callee_module}'"
+    {:ok, edges} = :xref.q(xref, query)
+
+    edges
+    |> Enum.filter(fn {{caller_mod, _f, _a}, _callee} ->
+      caller_mod != callee_module and not test_module?(caller_mod)
+    end)
+  end
+
+  defp test_module?(mod) do
+    source =
+      try do
+        mod.module_info(:compile)[:source] |> to_string()
+      rescue
+        _ -> ""
+      end
+
+    String.contains?(source, "/test/") or String.ends_with?(source, "_test.exs")
   end
 end
