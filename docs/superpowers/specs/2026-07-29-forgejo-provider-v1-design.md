@@ -36,7 +36,7 @@ observation 只刷新 facts 不制造 mutation）。
 **范围外：** webhook 接入、merge action、canary、任何 workflow 侧改动。
 
 **一个 adapter 同时服务 Forgejo 与 Gitea。** 版本串 `15.0.5+gitea-1.22.0` 直接内嵌
-Gitea 版本，API 层至今兼容。但**必须做版本探测并记录**，不假设永远兼容（§13.3）。
+Gitea 版本，API 层至今兼容。但**必须做版本探测并记录**，不假设永远兼容（§13.6）。
 
 ---
 
@@ -112,7 +112,7 @@ Forgejo 侧落到 `ChangeFilesOptions.dates.{author,committer}` +
 **V1 采用 OAuth2 授权码流程，不是 PAT**（决定：gaga 2026-07-29）。
 
 本节初稿把 PAT 与 OAuth2 并列成一档「帐号级、长期」。**实测推翻了「长期」**
-（findings §8）：
+（findings §7）：
 
 | | GitHub（Plan E） | Forgejo **OAuth2** | Forgejo PAT |
 |---|---|---|---|
@@ -198,7 +198,7 @@ refresh 轮换，与 GitHub installation token 时效同级。本节初稿称「
 **保不住 —— per-repo 最小权限。** 这是剩下的唯一实质差异：
 
 - 一个凭证的爆炸半径是该帐号在 `repository` 类别下的全部权限，而非一个仓库
-  一次操作（§4.1.1，结构性推断）；
+  一次操作（§4.1.1，已实证）；
 - 无按操作降权（读路径的凭证同样持写权限）。
 
 ### 4.3 隔离单元 = 授权用户本人（2026-07-29 定，取代初稿的 bot 帐号方案）
