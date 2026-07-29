@@ -62,19 +62,19 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
   # into `RecipeRegistry` for the lookup below. Atom-only — a no-op if a plugin
   # is absent from this build (same pattern as `Mix.Tasks.Ezagent.Agent.Create`).
   #
-  # A role resolves here IFF some booted plugin registered it via `roles/0`. This
-  # list is a RUNTIME atom set (no compile dep) — kanban owns `kanban-manager` (and
-  # the `pm-coordinator` product recipe) via its own `roles/0`, and loads
-  # `Ezagent.ActionSet.Kanban` for the cap-resolve loaded-check. Any role NOT
-  # registered by a booted plugin fails closed at `lookup_recipe/1`
-  # (`{:role_not_registered, role}`) — this task never seeds a role itself.
-  @role_plugins [:ezagent_plugin_kanban]
+  # A role resolves here IFF some booted plugin registered it via `roles/0`. The
+  # list is deployment config (`config :ezagent_domain_agent, :role_plugins`),
+  # NOT a hardcoded attribute, so a build can add role-owning plugins without
+  # editing this generic task. Any role NOT registered by a booted plugin fails
+  # closed at `lookup_recipe/1` (`{:role_not_registered, role}`) — this task never
+  # seeds a role itself.
+  @default_role_plugins [:ezagent_plugin_kanban]
 
   @impl Mix.Task
   def run(args) do
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
-    for plugin <- @role_plugins, do: _ = Application.ensure_all_started(plugin)
+    for plugin <- role_plugins(), do: _ = Application.ensure_all_started(plugin)
 
     {opts, positional, _} =
       OptionParser.parse(args, strict: [agent_uri: :string])
@@ -87,6 +87,9 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
         Mix.raise("usage: mix ezagent.agent.grant_recipe_caps <role> [--agent-uri <entity-uri>]")
     end
   end
+
+  defp role_plugins,
+    do: Application.get_env(:ezagent_domain_agent, :role_plugins, @default_role_plugins)
 
   defp do_grant(role, opts) do
     with {:ok, recipe} <- lookup_recipe(role),
@@ -368,5 +371,4 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantRecipeCaps do
     |> Enum.uniq_by(&Ezagent.Capability.identity_key/1)
     |> Enum.reverse()
   end
-
 end
