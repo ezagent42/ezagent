@@ -25,9 +25,13 @@ defmodule Ezagent.Socialware.ShareSetting do
 
     * `:link_login` — an authenticated clicker who has the link gets a person-cap
       (implemented here);
-    * `:link_anon` — the most-open level, unifying with anonymous access; the
-      mechanism is the existing session-scoped `web_anon_access`
-      (`Ezagent.Socialware.PublicView`), so the anon claim path routes there.
+    * `:link_anon` — the most-open level (anonymous access). Its wiring — provision
+      a DEDICATED per-resource public session (one shared thing per session, so an
+      anon visitor never sees other people's shares), mount the target into it via
+      A4 Mount, and mark it `web_anon_access` (`Ezagent.Socialware.PublicView`) — is
+      a later A-series piece that composes A4 (not yet complete). `enable/5` FAILS
+      CLOSED on `:link_anon` (`:anon_share_not_yet_supported`) for now, so the enum
+      records the superset shape without a half-working value.
 
   One row per target. Modeled on the per-session `web_anon_access` visibility
   policy, but per-target.
@@ -69,21 +73,31 @@ defmodule Ezagent.Socialware.ShareSetting do
     access = Keyword.get(opts, :access, :read)
     visibility = opts |> Keyword.get(:visibility, :link_login) |> to_string()
 
-    with :ok <- assert_current_owner(target, behavior, owner),
-         true <- visibility in @visibilities do
-      upsert(%{
-        target_uri: uri_string(target),
-        enabled: true,
-        visibility: visibility,
-        behavior: behavior_string(behavior),
-        actions_json: encode_actions(actions),
-        access: to_string(access),
-        granter_uri: uri_string(owner),
-        workspace_uri: uri_string(Ezagent.Capability.workspace_of(target))
-      })
-    else
-      false -> {:error, :invalid_share_visibility}
-      {:error, _} = err -> err
+    cond do
+      visibility not in @visibilities ->
+        {:error, :invalid_share_visibility}
+
+      # `link_anon` is the superset's most-open level, but its wiring (provision a
+      # DEDICATED per-resource public session — one shared thing per session so
+      # anon visitors never see other people's shares — and mount the target into
+      # it via A4 Mount + `web_anon_access`) is a later A-series piece. Fail closed
+      # until then so the enum value can't be set to a half-working state.
+      visibility == "link_anon" ->
+        {:error, :anon_share_not_yet_supported}
+
+      true ->
+        with :ok <- assert_current_owner(target, behavior, owner) do
+          upsert(%{
+            target_uri: uri_string(target),
+            enabled: true,
+            visibility: visibility,
+            behavior: behavior_string(behavior),
+            actions_json: encode_actions(actions),
+            access: to_string(access),
+            granter_uri: uri_string(owner),
+            workspace_uri: uri_string(Ezagent.Capability.workspace_of(target))
+          })
+        end
     end
   end
 

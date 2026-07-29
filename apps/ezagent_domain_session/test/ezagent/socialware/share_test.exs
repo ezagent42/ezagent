@@ -91,6 +91,19 @@ defmodule Ezagent.Socialware.ShareTest do
              Share.enable(target, owner, Target, [:get_tree])
   end
 
+  test "link_anon is fail-closed until wired (A-series follow-up composing A4)" do
+    owner = user_uri("la-owner")
+    target = live_agent("la-board", owner, [Target])
+
+    # The superset enum value exists, but its wiring (dedicated per-resource
+    # public session + A4 mount) is a later piece — so it can't be set yet.
+    assert {:error, :anon_share_not_yet_supported} =
+             Share.enable(target, owner, Target, [:get_tree], visibility: :link_anon)
+
+    # link_login is fully implemented.
+    assert {:ok, _} = Share.enable(target, owner, Target, [:get_tree], visibility: :link_login)
+  end
+
   test "a tampered link is rejected (fail-closed)" do
     owner = user_uri("t-owner")
     clicker = live_agent("t-clicker", owner, Ezagent.Entity.Agent.base_behaviors())
