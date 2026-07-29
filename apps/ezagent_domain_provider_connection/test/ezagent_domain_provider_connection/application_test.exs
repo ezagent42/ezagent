@@ -86,7 +86,25 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     assert :ets.info(behavior_table, :owner) == actor_ets_owner
 
     core_ets_owner = Process.whereis(EzagentCore.EtsOwner)
-    backups = backup_core_tables(core_ets_owner)
+    core_backups = backup_core_tables(core_ets_owner)
+    # `EzagentActor.EtsOwner.recreate_capability_tables_for_test/0` below
+    # wipes BehaviorRegistry EMPTY — RegistryOwner's own reconcile only
+    # ever refills ProviderConnection's 7 actions, so every OTHER app's
+    # dispatch declaration would be lost for the rest of the suite unless
+    # this full backup is restored (codex review, PR #1628 round 1 —
+    # exactly the poison class this shard is quarantined for).
+    behavior_backup = :ets.tab2list(behavior_table)
+
+    # GUARANTEED restore regardless of which assertion below fails —
+    # mirrors `backup_core_tables`/`restore_core_tables`'s intent but as
+    # `on_exit` so a mid-test failure can never skip it.
+    on_exit(fn ->
+      if :ets.whereis(behavior_table) != :undefined do
+        true = :ets.insert(behavior_table, behavior_backup)
+      end
+
+      restore_core_tables(core_backups)
+    end)
 
     # Exercise the test-helper path first (this alone reproduced the bug
     # on unfixed code: ownership flipped to `core_ets_owner` right here).
@@ -111,9 +129,22 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     assert :ets.whereis(behavior_table) != :undefined
     assert :ets.info(behavior_table, :owner) == actor_ets_owner
 
-    restore_core_tables(backups)
+    restore_core_tables(core_backups)
+    true = :ets.insert(behavior_table, behavior_backup)
     :ok = Ezagent.ProviderConnection.RegistryOwner.await_generation(generation)
     assert declarations_ready?()
+
+    # Foreign-app poison check (codex review, PR #1628 round 1): a
+    # BehaviorRegistry entry belonging to a DIFFERENT app — core's own
+    # `system://routing` `:add_rule`, registered once at
+    # `EzagentCore.Application` boot and never re-registered by anything
+    # subscribed to this owner's generations — must still resolve after
+    # this test's wipe/restore cycle. Without the backup+restore above,
+    # this assertion is the one that catches the permanent loss (verified
+    # red against the pre-fix version of this test, green against this
+    # version).
+    assert Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.System, :add_rule) ==
+             {:ok, Ezagent.ActionSet.Routing}
   end
 
   test "registry owner follows actual EtsOwner restarts with one live monitor" do

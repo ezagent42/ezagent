@@ -95,15 +95,17 @@ defmodule EzagentActor.EtsOwner do
     end
   end
 
-  @doc false
-  # Shared with `EzagentCore.EtsOwner` (which depends on this app, never the
-  # reverse) so the two sibling `EtsOwner`s don't carry a byte-identical
-  # copy of this body — `mix ci.shard.arch`'s cross-file duplicate-fn-body
-  # fitness function flags exactly that. Safe to share: ETS ownership is
-  # determined by which PROCESS calls `:ets.new`, not which MODULE defines
-  # the function text, so each owner still recreates a table only when
-  # called from within its own `handle_call` (its own process).
-  def recreate_table(table) do
+  # PRIVATE and reachable ONLY through the `Mix.env() == :test`-gated
+  # `handle_call` above. Codex review (PR #1628) round 1 caught an earlier
+  # version of this fix that made this function PUBLIC and unguarded so
+  # `EzagentCore.EtsOwner` could share it — that reopened the exact bug
+  # class this PR fixes: any caller, in any env, calling this directly
+  # would become the table's real ETS owner. Kept as a duplicate (not
+  # shared) per that review's explicit guidance — see the
+  # `cross_file_duplicate_fn_groups` cap-bump note in
+  # `arch_baseline_manifest.exs` for why this one duplicate is accepted
+  # rather than de-duplicated.
+  defp recreate_table(table) do
     if :ets.whereis(table) != :undefined, do: :ets.delete(table)
     :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
   end
