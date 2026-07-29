@@ -10,12 +10,15 @@ defmodule Ezagent.EntityCaps do
   #189 PR-1 (ADDITIVE): the unified per-entity identity-caps store
   (`Ezagent.EntityCaps.Store`) is populated as a WRITE-SHADOW of BOTH legacy
   stores via dual-write (`users.caps_json` writes, the Kind snapshot write
-  chokepoints, and direct `SnapshotStore` writes). In PR-1 the shadow is
-  NEVER consulted for an authoritative read — all reads keep returning the
-  legacy value below (codex review F1: a best-effort shadow write must not
-  be able to override the authoritative legacy store on read). The
-  store-preferred read + parity verification arrive with the atomic
-  cutover PR.
+  chokepoints, and direct `SnapshotStore` writes).
+
+  #189 PR-3 (read-cutover): `load_persisted/1` — the COLD durable read behind
+  the principal-axis authorization gate (`Cap.Authorize.principal_current?` →
+  `Identity.read_held_caps/1`) — now consults the store as AUTHORITATIVE
+  (`Store.fetch_durable_caps/1`), with a legacy fallback ONLY for an ABSENT row.
+  A PRESENT non-active store row is authoritative-empty (no fallback). The
+  live-first `load/1` slice read is unchanged (self-dispatch routes through
+  `load_persisted/1`; both remain gen-gated by `verified/2`).
 
   `load/1` is receiver-aware and live-first. It reads a live Identity slice when
   one exists, then falls back to the durable store selected by the entity type.
@@ -45,7 +48,7 @@ defmodule Ezagent.EntityCaps do
     SpawnRegistry
   }
 
-  alias Ezagent.EntityCaps.UserStore
+  alias Ezagent.EntityCaps.{Store, UserStore}
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
 
@@ -98,15 +101,35 @@ defmodule Ezagent.EntityCaps do
     if fenced?(uri), do: [], else: do_load_persisted(uri)
   end
 
+  # #189 PR-3 read-cutover: the unified `Ezagent.EntityCaps.Store` is now the
+  # AUTHORITATIVE durable holder source for the principal-axis cap read
+  # (`Cap.Authorize.principal_current?` → `Identity.read_held_caps/1` →
+  # `EntityCaps.load/1` → this cold path on self-dispatch). Store-preferred with a
+  # legacy fallback ONLY for an ABSENT row (`:fallback`): a PRESENT non-active row
+  # is authoritative-empty (`{:ok, []}`) and NEVER falls back — the store's
+  # guarded active-ness (§2, active iff a current-valid self-license) is the
+  # source of truth. `verified/2` ALWAYS gen-gates the result regardless of source
+  # (store OR legacy fallback), so a stale/rotated license — a store-active row
+  # left behind by a `regenesis` that only bumped the generation, or a stale
+  # legacy license — still loads EMPTY. A store read error resolves to `:fallback`
+  # (the legacy read, itself gen-gated) — safe because the gate is on `verified/2`,
+  # never on the source.
   defp do_load_persisted(uri) do
     caps =
-      if user_uri?(uri) do
-        UserStore.load(uri)
-      else
-        snapshot_caps(uri)
+      case Store.fetch_durable_caps(uri) do
+        {:ok, store_caps} -> store_caps
+        :fallback -> legacy_persisted_caps(uri)
       end
 
     verified(caps, uri)
+  end
+
+  defp legacy_persisted_caps(uri) do
+    if user_uri?(uri) do
+      UserStore.load(uri)
+    else
+      snapshot_caps(uri)
+    end
   end
 
   defp fenced?(uri), do: Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri)

@@ -160,6 +160,8 @@ defmodule Ezagent.ActionSet.Identity do
     caps = Ezagent.Cap.verified_set(caps, Map.get(args, :uri))
 
     with {:ok, caps} <- maybe_mint_self_license(caps, args) do
+      caps = maybe_reread_durable_self_license(caps, args)
+
       state =
         case recipe_binding do
           {:active, version, keys} ->
@@ -196,6 +198,32 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   defp maybe_mint_self_license(caps, _args), do: {:ok, caps}
+
+  # #189 PR-3 cutover (Axis B — "re-read on restart", NEVER re-mint). A
+  # NON-snapshot (`:ephemeral`) principal (the ExternalMirrorWorker) rebuilds an
+  # EMPTY `:identity` slice on restart — no snapshot to load, and no mint on
+  # `:existed` — so re-read its DURABLE self-license (written once at `:created`)
+  # from the store INTO the live slice. Needed for the LIVE NON-self read path: a
+  # worker authorized inside the SESSION's process during `subscribe_from`
+  # (`Kind.self?(worker_uri)` false → live-first loader reads the worker's LIVE
+  # slice, not the store), which would otherwise find an empty slice and deny
+  # (`:holder_revoked`) on rehydrate/resubscribe. `Store.load/1` yields caps ONLY
+  # for an `active` row (revoked/tombstoned/absent → `[]`) and the union is
+  # gen-gated by the loader's `verified/2` on every read, so a revoked /
+  # gen-bumped principal still loads EMPTY (no resurrection). Only reached for a
+  # non-snapshot principal (a durable Kind loads its snapshot slice + runs
+  # `activate/2`, so its `create/1` isn't called on `:existed`).
+  defp maybe_reread_durable_self_license(caps, %{create_freshness: :existed, uri: %URI{} = uri}) do
+    uri
+    |> Ezagent.EntityCaps.Store.load()
+    |> Enum.find(&(Ezagent.Capability.action_of(&1) == :self_license))
+    |> case do
+      %Ezagent.Capability{} = license -> MapSet.put(caps, license)
+      _ -> caps
+    end
+  end
+
+  defp maybe_reread_durable_self_license(caps, _args), do: caps
 
   defp hydrate_recipe_binding(caps, %URI{} = uri) do
     if Ezagent.URI.type?(uri, :agent) do

@@ -154,31 +154,38 @@ defmodule Ezagent.EntityCaps.StoreTest do
     end
   end
 
-  describe "legacy-authoritative reads under shadow divergence (codex F1)" do
-    test "a divergent shadow row never overrides the authoritative caps_json read" do
-      user = user_uri("divergent-user")
+  describe "store-authoritative durable reads (#189 PR-3 read-cutover)" do
+    # PR-1/PR-2 kept legacy (`users.caps_json` / snapshot `:identity`)
+    # authoritative and the store a write-shadow; PR-3 flips
+    # `EntityCaps.load_persisted/1` (the cold/self durable read behind the
+    # principal-axis gate) to the STORE as authoritative, with a legacy fallback
+    # ONLY for an ABSENT row. The security property that PR-1's "legacy wins"
+    # tests protected — a divergent/invalid shadow must not grant authority — is
+    # now preserved by (a) the write-boundary guard (an `active` row carries a
+    # current-valid self-license) and (b) `EntityCaps.verified/2` gen-gating
+    # every read, exercised by the anti-resurrection regression.
+
+    test "a present active store row is authoritative for a user (store-preferred over legacy caps_json)" do
+      user = user_uri("cutover-user")
       legacy_cap = issued_cap(user, :send)
-      shadow_cap = issued_cap(user, :join)
+      store_cap = issued_cap(user, :join)
 
       assert {:ok, _user} = Ezagent.Users.create(user, nil, licensed_caps(user, [legacy_cap]))
 
-      # Populate the shadow with a DIFFERENT set (simulating a lost/failed
-      # mirror write divergence).
-      assert :ok = Store.persist(user, licensed_caps(user, [shadow_cap]))
-      assert cap_present?(Store.load(user), shadow_cap)
+      # The guarded active store row (it carries a current-valid self-license) is
+      # now the AUTHORITATIVE durable holder source; legacy is consulted ONLY on
+      # an absent row.
+      assert :ok = Store.persist(user, licensed_caps(user, [store_cap]))
+      assert Store.status(user) == :active
 
-      # Authoritative reads still serve users.caps_json — the shadow is
-      # never consulted.
-      assert cap_present?(EntityCaps.load_persisted(user), legacy_cap)
-      refute cap_present?(EntityCaps.load_persisted(user), shadow_cap)
-      assert cap_present?(EntityCaps.load(user), legacy_cap)
-      refute cap_present?(EntityCaps.load(user), shadow_cap)
+      assert cap_present?(EntityCaps.load_persisted(user), store_cap)
+      refute cap_present?(EntityCaps.load_persisted(user), legacy_cap)
     end
 
-    test "a divergent shadow row never overrides the authoritative snapshot read" do
-      agent = agent_uri("divergent-agent")
+    test "a present active store row is authoritative for a snapshot-backed agent (store-preferred over the snapshot)" do
+      agent = agent_uri("cutover-agent")
       legacy_cap = issued_cap(agent, :send)
-      shadow_cap = issued_cap(agent, :join)
+      store_cap = issued_cap(agent, :join)
 
       assert {:ok, _snapshot} =
                SnapshotStore.write(
@@ -187,20 +194,27 @@ defmodule Ezagent.EntityCaps.StoreTest do
                  kind_type: :agent
                )
 
-      # The shadow mirrors the snapshot after the write hook…
-      assert cap_present?(Store.load(agent), legacy_cap)
-      # …force divergence (a granted cap that only exists in the shadow).
-      assert :ok = Store.persist(agent, licensed_caps(agent, [shadow_cap]))
-      assert cap_present?(Store.load(agent), shadow_cap)
+      assert :ok = Store.persist(agent, licensed_caps(agent, [store_cap]))
+      assert Store.status(agent) == :active
 
-      # Authoritative durable reads still serve the snapshot.
-      assert cap_present?(EntityCaps.load_persisted(agent), legacy_cap)
-      refute cap_present?(EntityCaps.load_persisted(agent), shadow_cap)
+      assert cap_present?(EntityCaps.load_persisted(agent), store_cap)
+      refute cap_present?(EntityCaps.load_persisted(agent), legacy_cap)
+    end
 
-      assert {:ok, %{caps: durable_caps}, _meta} = Ezagent.Kind.read_durable(agent, :identity)
-      durable = MapSet.to_list(durable_caps)
-      assert cap_present?(durable, legacy_cap)
-      refute cap_present?(durable, shadow_cap)
+    test "a present NON-active store row is authoritative-EMPTY — it denies without falling back to legacy" do
+      user = user_uri("cutover-revoked-user")
+      legacy_cap = issued_cap(user, :send)
+
+      assert {:ok, _user} = Ezagent.Users.create(user, nil, licensed_caps(user, [legacy_cap]))
+
+      assert :ok = Store.persist(user, licensed_caps(user, [legacy_cap]))
+      assert :ok = Store.revoke_provisioning(user)
+      assert Store.status(user) == :revoked_unprovisioned
+
+      # A present non-active (revoked) row is authoritative about the holder
+      # being EMPTY — it does NOT fall back to the legacy caps_json, which still
+      # carries the cap. This is the inert-until-reprovision guarantee.
+      assert EntityCaps.load_persisted(user) == []
     end
 
     test "a mirror-write failure is logged at :error and never changes an authz read" do

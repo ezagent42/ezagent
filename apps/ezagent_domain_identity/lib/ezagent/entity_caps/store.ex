@@ -105,6 +105,48 @@ defmodule Ezagent.EntityCaps.Store do
   def existence_signal?(uri), do: not user_uri?(uri) and has_row?(uri)
 
   @doc """
+  #189 PR-3 cutover — the FAIL-CLOSED durable ever-created signal for
+  `Kind.Server.create_freshness/2`.
+
+  For an `:ephemeral` principal `fresh_create?` (the snapshot `ever_created`
+  marker) is ALWAYS true (an ephemeral Kind writes no snapshot marker), so THIS
+  signal is the SOLE determinant of `:created` vs `:existed` at cutover — and a
+  wrong `:created` on a restart re-mints the self-license AND bumps the authority
+  generation (`open(:created)`), i.e. RESURRECTS a revoked principal. So it must
+  never fail OPEN. It returns `true` (ever-created ⇒ `:existed`, no re-mint)
+  UNLESS the read SUCCEEDS and finds no row (⇒ genuine first creation). A read
+  ERROR resolves to `true`, mirroring `Lifecycle.marker_lookup`'s contract ("a
+  marker-store failure must never be interpreted as permission to run the
+  one-time create path again"). USER URIs return `false` — their creation-fact is
+  the snapshot marker / `users` row, not this store (`existence_signal?`
+  precedent).
+  """
+  @spec ever_created_signal?(URI.t() | String.t()) :: boolean()
+  def ever_created_signal?(uri) do
+    if user_uri?(uri) do
+      false
+    else
+      case fetch_result(uri) do
+        {:ok, nil} -> false
+        {:ok, %__MODULE__{}} -> true
+        :error -> true
+      end
+    end
+  end
+
+  # Like `fetch/1` but DISTINGUISHES a successful "no row" (`{:ok, nil}`) from a
+  # read error (`:error`) — `fetch/1` collapses both to `nil`, which would make
+  # `ever_created_signal?` fail OPEN. Do not route `ever_created_signal?` through
+  # `fetch/1`.
+  defp fetch_result(uri) do
+    {:ok, Repo.get(__MODULE__, key(uri))}
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
+  end
+
+  @doc """
   The URI strings of every `active` store row — the fleet-parity barrier's
   backward (store → legacy) enumeration (#189 PR-2). URI-only projection: it
   never decodes `caps_json`, so it is not a raw-cap accessor.
@@ -512,6 +554,51 @@ defmodule Ezagent.EntityCaps.Store do
       )
 
       :ok
+  end
+
+  @doc """
+  #189 PR-3 cutover — write the DURABLE identity for an `:ephemeral` principal
+  on GENUINE creation (Axis B: "ephemeral is a property of the slice, identity is
+  durable").
+
+  An ephemeral Kind's slice is never snapshot-persisted, so the self-license
+  minted at `:created` reaches no durable store via the ordinary snapshot
+  dual-write (`sync_committed_identity/3` deliberately skips ephemeral). This is
+  the explicit, fail-closed boot-path write that makes the ephemeral principal's
+  self-license durable so its restart re-reads it (and `principal_current?`
+  passes on cold self-dispatch).
+
+  Called from `Kind.Server.persist_initial_snapshot/3` (the pre-ready fail-closed
+  seam, symmetric with the durable Kind's atomic initial-snapshot commit) on
+  EVERY init for an ephemeral principal — but it is STRUCTURALLY gated to write
+  ONLY when the slice carries a CURRENT-valid self-license, which is true ONLY on
+  a genuine `:created` mint. On an `:existed` restart the freshly-built ephemeral
+  slice carries no self-license, so this is a no-op — it never overwrites (and
+  never downgrades) the durable row a genuine creation established. That gate is
+  the anti-resurrection property: a revoked/tombstoned principal that restarts
+  reports `:existed`, mints nothing, and reaches here with no license → no write.
+
+  `slice` is the `:identity` sub-slice (`slice_state[:identity]`), any shape.
+  Returns `:ok` (wrote, or nothing to write) or `{:error, reason}` (the durable
+  write failed) so the boot path can `{:stop, ...}` — a self-license that cannot
+  be made durable at creation must fail the spawn, not silently create a
+  principal that can't self-authorize after restart.
+  """
+  @spec provision_created_identity(URI.t() | String.t(), term()) :: :ok | {:error, term()}
+  def provision_created_identity(uri, slice) do
+    case slice_caps(slice) do
+      %MapSet{} = caps ->
+        caps_list = MapSet.to_list(caps)
+
+        if has_current_self_license?(caps_list, uri) do
+          persist(uri, caps)
+        else
+          :ok
+        end
+
+      _ ->
+        :ok
+    end
   end
 
   # ====================================================================

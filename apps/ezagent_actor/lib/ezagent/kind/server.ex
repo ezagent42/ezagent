@@ -201,7 +201,7 @@ defmodule Ezagent.Kind.Server do
 
           case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
             :ok ->
-              case persist_initial_snapshot(uri, kind_module, slice_state) do
+              case persist_initial_snapshot(uri, kind_module, slice_state, create_freshness) do
                 :ok ->
                   schedule_periodic_snapshot(kind_module)
                   {:ok, state, {:continue, :announce_ready}}
@@ -225,9 +225,44 @@ defmodule Ezagent.Kind.Server do
 
   defp create_freshness(kind_module, uri) do
     if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
-      if Ezagent.Lifecycle.fresh_create?(uri), do: :created, else: :existed
+      if Ezagent.Lifecycle.fresh_create?(uri) and not ephemeral_ever_created?(kind_module, uri),
+        do: :created,
+        else: :existed
     else
       :unknown
+    end
+  end
+
+  # #189 PR-3 cutover — decouple the "ever created" fact from SLICE persistence,
+  # for `:ephemeral` principals ONLY (the ExternalMirrorWorker). An ephemeral
+  # Kind writes no `ever_created` snapshot marker, so `fresh_create?` is
+  # unconditionally true and would report `:created` on EVERY spawn — re-minting
+  # its self-license AND bumping its authority generation (`open(:created)`) each
+  # restart, which RESURRECTS a revoked principal. The DURABLE identity-caps row
+  # is the URI-tied creation fact that survives the process: a present row ⇒ this
+  # principal was created before ⇒ `:existed` (no re-mint; the durable license is
+  # re-read into the slice by `ActionSet.Identity.create/1`).
+  #
+  # A DURABLE Kind (User/Agent/Session) is DELIBERATELY excluded: its atomic
+  # snapshot `ever_created` marker is its sole, authoritative creation signal.
+  # After genuine creation the marker and a store row agree, but a raw snapshot
+  # write can dual-write a shadow row BEFORE any marker/authority exists (test
+  # fixtures, pre-authority migration rows); letting that shadow flip a durable
+  # Kind to `:existed` would wrongly fail its `open(:created)` genesis. So the
+  # store is consulted for the creation signal ONLY for ephemeral principals.
+  #
+  # FAIL-CLOSED for ephemeral: `ever_created_signal?` resolves a store read error
+  # to `true`, so a transient DB failure can never downgrade a restart to
+  # `:created`. Store is config-injected (`:identity_caps_store`, no compile-time
+  # actor→domain dependency); an unconfigured store keeps the pre-cutover behavior.
+  defp ephemeral_ever_created?(kind_module, uri) do
+    Ezagent.Kind.persistence_of(kind_module) == :ephemeral and durable_identity_exists?(uri)
+  end
+
+  defp durable_identity_exists?(uri) do
+    case Application.get_env(:ezagent_actor, :identity_caps_store) do
+      nil -> false
+      store -> store.ever_created_signal?(uri)
     end
   end
 
@@ -240,10 +275,21 @@ defmodule Ezagent.Kind.Server do
   # durably persist reports the failure to its caller (mix task /
   # Workspace.create_agent / LV) instead of leaving a Kind in
   # memory-only mode that disappears on restart.
-  defp persist_initial_snapshot(uri, kind_module, slice_state) do
+  defp persist_initial_snapshot(uri, kind_module, slice_state, create_freshness) do
     case Ezagent.Kind.persistence_of(kind_module) do
       :ephemeral ->
-        :ok
+        # #189 PR-3 cutover — an `:ephemeral` principal's slice is not
+        # snapshot-persisted, so its self-license minted at GENUINE creation
+        # (`:created`) is written to the durable identity-caps store HERE (Axis
+        # B), on the same pre-ready fail-closed seam as the durable Kind's
+        # initial-snapshot commit. Gated on `:created` — the mint-to-store happens
+        # ONCE, at genuine first creation; on `:existed` the license is re-read
+        # from the store into the live slice by `ActionSet.Identity.create/1`
+        # (not re-minted, not re-written), so restart never touches the durable
+        # row. A durable write failure propagates as `{:error, _}` → `{:stop,
+        # {:persistence_failed, _}}`, mirroring the durable-snapshot durability
+        # promise.
+        persist_ephemeral_identity(uri, slice_state, create_freshness)
 
       :external ->
         :ok
@@ -278,6 +324,34 @@ defmodule Ezagent.Kind.Server do
         end
     end
   end
+
+  # #189 PR-3 cutover — the ephemeral durable-identity write (Axis B). The
+  # config-injected store (`:identity_caps_store`, no compile-time actor→domain
+  # dependency) decides structurally whether there is a self-license to persist
+  # (`provision_created_identity/2` writes only on a genuine `:created` mint). A
+  # raise/exit is converted to `{:error, _}` so init/1 can `{:stop, ...}` cleanly
+  # rather than abort with an opaque `:EXIT` tuple — symmetric with the durable
+  # `save_now/4` catch above.
+  # Only genuine creation (`:created`) mints — and only a genuine mint has a
+  # self-license to make durable. On `:existed` the store row already exists (it
+  # is the very signal that produced `:existed`), so there is nothing to write.
+  defp persist_ephemeral_identity(uri, slice_state, :created) do
+    case Application.get_env(:ezagent_actor, :identity_caps_store) do
+      nil ->
+        :ok
+
+      store ->
+        try do
+          store.provision_created_identity(uri, Map.get(slice_state, :identity))
+        rescue
+          e -> {:error, {:ephemeral_identity_persist_failed, Exception.message(e)}}
+        catch
+          :exit, reason -> {:error, {:exit, reason}}
+        end
+    end
+  end
+
+  defp persist_ephemeral_identity(_uri, _slice_state, _freshness), do: :ok
 
   # Lifecycle Phase A (SPEC §9 OQ-1) — structural detection (a slice
   # carrying a `:transients` sub-key), no Behavior coupling. A Kind with
