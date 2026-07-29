@@ -12,6 +12,26 @@
 4. If the plugin spawns sessions, call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn` to plumb workspace scope (invariant 4).
 5. Test via `mix ezagent.plugin.install /path/to/plugin` against running Ezagent (invariant 8).
 
+### The three gates a new plugin app trips (verified 2026-07-29, `ezagent_plugin_forgejo`)
+
+**`mix test apps/ezagent_plugin_<name>/test` cannot see any of these.** A new plugin
+went 41/41 green on its own suite while `mix ci.fast` exited 2 with four reds. Run
+`mix ci.fast` (`timeout: 300000`) before believing a new plugin app is done.
+
+| Gate | Symptom | Fix |
+|---|---|---|
+| `Invariants.AllPluginAppsWiredToWebTest` | "these plugin apps exist under apps/ but are NOT wired into apps/ezagent_web/mix.exs deps" | Add `{:ezagent_plugin_<name>, in_umbrella: true}` to `apps/ezagent_web/mix.exs` `defp deps`. Without it the plugin's `Application.start/2` **never runs at web boot** — `Ezagent.Plugin.boot/1` never fires, nothing registers, and call sites get `:no_kind_module_for_agent`. (A genuinely-unwired plugin uses `# plugin-wire-exempt: <reason>`.) |
+| `Invariants.PluginWorkspaceLocalityContractTest` (A) and (B) | your file enumerated with `atomic_ownership_access - :unknown_value.<field>/0` | You wrote non-assertive access: `def store(command)` then `command.credential_ref`. **Destructure in the function head** (`def store(%{credential_ref: ref})`). Both enumerators go quiet and the code follows the documented Elixir idiom — this is the fix, not a baseline entry. |
+| `Architecture.CrossFileDuplicateFnTest` | `measured N, cap N-1` after mirroring a sibling plugin | Mirroring an existing plugin file-for-file is exactly what this ratchet is for. Prefer making the bodies genuinely different over `# arch-cap-bump:` — the head-destructuring fix above did it on its own. Reach for the bump only when the duplication is deliberate and argued. |
+
+Ordering note: fix the enumerators **before** re-measuring the duplicate ratchet —
+rewriting accessors changes function bodies, so the duplicate count moves too.
+Doing it in the other order wastes a cap-bump argument on debt that was about to
+disappear.
+
+CI shards need **no** manifest edit: the bare `apps/ezagent_plugin_` catch-all in
+`ci_shards.exs` auto-absorbs new plugin apps.
+
 Pre-built examples:
 - `apps/ezagent_plugin_echo/` (smallest reference plugin)
 - `apps/ezagent_plugin_feishu/` (canonical "external integration" — registers `FeishuReceive` on User Kind, no owned scheme)
