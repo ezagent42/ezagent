@@ -80,11 +80,27 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
     end
   end
 
-  defp seed_curl_agent(uri_str, state) do
+  defp seed_curl_agent(uri_str, state, opts \\ []) do
     binary = :erlang.term_to_binary(state)
 
     {:ok, _row} =
       KindSnapshot.upsert(uri_str, "curl_agent", binary, 0, @workspace, mark_ever_created: true)
+
+    # A post-#1457 pre-migration curl agent has authority history (minted at
+    # live creation for every durable principal); a PRE-#1457 row never
+    # reopened since may NOT. Post-#1621 the cold load refuses a history-less
+    # principal (`:no_authority_for_existing`), so the migration itself adopts
+    # history (`ensure_authority_history/1`). Default fixture = the common
+    # post-#1457 row; `authority_history: false` fabricates the pre-#1457
+    # population for the adoption regression.
+    if Keyword.get(opts, :authority_history, true) do
+      {:ok, _authority} =
+        Ezagent.Cap.Authority.open(
+          Ezagent.URI.instance(Ezagent.URI.new!(uri_str)),
+          :agent,
+          :created
+        )
+    end
 
     uri_str
   end
@@ -276,6 +292,35 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigrationTest do
       # resolves on Entity.Agent), and :receive is NOT a curl action.
       assert {:ok, Ezagent.ActionSet.CurlAgent} =
                Ezagent.BehaviorRegistry.lookup(Ezagent.Entity.Agent, :reset_conversation)
+
+      Kind.terminate(uri)
+      wait_until(fn -> KindRegistry.lookup(uri_str) == :error end)
+    end
+
+    # codex #1622 (b)/(c): the pre-#1457 population — a curl row created before
+    # authority history existed and never reopened since has NO
+    # `kind_cap_authorities` rows. Post-#1621 a cold load would refuse it
+    # (`:no_authority_for_existing`), permanently. The migration is the
+    # operator-run, pre-serving adoption point: it must mint the history so the
+    # migrated row boots.
+    test "a pre-#1457 row WITHOUT authority history is adopted by the migration and cold-loads" do
+      uri_str = "entity://team-alpha/agent/curl_nohist-#{System.unique_integer([:positive])}"
+      uri = Ezagent.URI.new!(uri_str)
+      instance = Ezagent.URI.instance(uri)
+
+      seed_curl_agent(uri_str, legacy_curl_state(), authority_history: false)
+      refute Ezagent.Cap.Authority.has_authority_history?(instance)
+
+      assert {:ok, %{migrated: 1}} = Migration.run()
+
+      # The migration adopted the principal into the authority system…
+      assert Ezagent.Cap.Authority.has_authority_history?(instance)
+
+      # …so the migrated row cold-loads instead of tripping the
+      # anti-resurrection guard.
+      {:ok, _pid} = Kind.spawn(Ezagent.Entity.Agent, %{uri: uri})
+      wait_until(fn -> Ezagent.ReadyGate.status(uri) == :ready end)
+      assert {:ok, %{flavor: "curl"}} = Kind.read(uri, :curl_agent, spawn: :never)
 
       Kind.terminate(uri)
       wait_until(fn -> KindRegistry.lookup(uri_str) == :error end)

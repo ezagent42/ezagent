@@ -303,9 +303,35 @@ defmodule Ezagent.PluginCurlAgent.CurlSnapshotMigration do
     if dry_run? do
       %{acc | dry_run: acc.dry_run + 1}
     else
-      new_state = migrate_state(Ezagent.URI.new!(row.uri), state)
+      uri = Ezagent.URI.new!(row.uri)
+      new_state = migrate_state(uri, state)
       persist_migrated(row, new_state)
+      ensure_authority_history(uri)
       %{acc | migrated: acc.migrated + 1}
+    end
+  end
+
+  # A pre-#1457 curl row created before authority history existed (and never
+  # reopened since) has NO `kind_cap_authorities` rows. Post-#1621 the cold
+  # load REFUSES such a principal (`:no_authority_for_existing` — the
+  # anti-resurrection guard), so a migrated-but-history-less row would be
+  # permanently unbootable. This operator-run, pre-serving migration is the
+  # legitimate adoption point: open `:created` authority for the row's real,
+  # previously-created agent so the unified row cold-loads. Idempotent — rows
+  # that already have history are left untouched.
+  defp ensure_authority_history(%URI{} = uri) do
+    instance = Ezagent.URI.instance(uri)
+
+    unless Ezagent.Cap.Authority.has_authority_history?(instance) do
+      case Ezagent.Cap.Authority.open(instance, :agent, :created) do
+        {:ok, _authority} ->
+          :ok
+
+        {:error, reason} ->
+          raise "Ezagent.PluginCurlAgent.CurlSnapshotMigration: failed to adopt " <>
+                  "authority history for #{URI.to_string(uri)}: #{inspect(reason)} — " <>
+                  "the migrated row would be unbootable (anti-resurrection guard)"
+      end
     end
   end
 

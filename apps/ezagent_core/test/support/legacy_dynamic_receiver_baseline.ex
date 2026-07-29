@@ -195,9 +195,12 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
      {:migrate_row, 4}, :remote, "migrated/0",
      "62c1b94c9239060765664ddf511bc5146107065d8490622c5062148e919443cc"},
+    # #1622: migrate_row now binds `uri = Ezagent.URI.new!(row.uri)` (threaded
+    # into ensure_authority_history/1 too) — same single dynamic-receiver read,
+    # new line content.
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
      {:migrate_row, 4}, :remote, "uri/0",
-     "bacda6dd5d4eaf8ce996344ec79aa75731efe9b8eba6ab9c006b63e4355e68f4"},
+     "fb47d42e327f013fbf00997072b47d074d4557a491d5f7e4a3507b766107b615"},
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/curl_snapshot_migration.ex",
      {:persist_migrated, 2}, :remote, "uri/0",
      "2851ac5e1962b73bdfc98d48d5aa37e667676261cf535854d6c7c912b08464dc"},
