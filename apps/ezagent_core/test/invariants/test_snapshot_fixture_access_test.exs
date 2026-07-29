@@ -52,7 +52,16 @@ defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
                # migration classifies). It lives in the session domain, which
                # cannot reach the core-only `SnapshotFixtures` support module —
                # same rationale as the kind_base_backfill / curl migration tests.
-               "apps/ezagent_domain_session/test/ezagent/socialware/session_self_license_migration_test.exs"
+               "apps/ezagent_domain_session/test/ezagent/socialware/session_self_license_migration_test.exs",
+               # #189 release-runnable cutover Runbook test — proves the
+               # Runbook's `apply/3` dispatch to the session domain's
+               # self-license migration ACTUALLY RUNS end-to-end by seeding one
+               # genuinely pre-cutover session snapshot (same
+               # `mark_ever_created` + `:kind_base`-without-SelfLicense shape as
+               # the session migration test above). Lives in the identity
+               # domain, which likewise cannot reach the core-only
+               # `SnapshotFixtures` support module (cross-app).
+               "apps/ezagent_domain_identity/test/ezagent/identity/cutover/runbook_test.exs"
              ])
 
   test "ordinary tests use SnapshotFixtures for direct snapshot fixture writes" do

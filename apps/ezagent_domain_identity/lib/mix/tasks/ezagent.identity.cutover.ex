@@ -6,15 +6,15 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
   The store-authoritative read-flip + the store-driven ephemeral ever-created
   signal ship DORMANT behind the persisted cutover epoch
   (`Ezagent.Identity.Cutover`). This task is the ONLY sanctioned way to activate
-  that epoch. Run it under a write-quiescence fence (no concurrent
-  grant/revoke/provision) so the parity the barrier proves is the parity that
-  holds at the cutover instant:
+  that epoch from a dev/CI box with Mix available. Run it under a
+  write-quiescence fence (no concurrent grant/revoke/provision) so the parity
+  the barrier proves is the parity that holds at the cutover instant:
 
-    1. **Backfill** — `mix ezagent.identity.backfill`: mirror every legacy
-       durable principal into the store (license-valid ⇒ `active`; known but
-       license-invalid ⇒ `revoked_unprovisioned`, NEVER `active`; tombstones
-       preserved). Then **`mix ezagent.session.self_license_migration`** (FIX 4)
-       — augment pre-carrier Session instances into principals.
+    1. **Backfill** — mirror every legacy durable principal into the store
+       (license-valid ⇒ `active`; known but license-invalid ⇒
+       `revoked_unprovisioned`, NEVER `active`; tombstones preserved). Then the
+       **session self-license migration** (FIX 4) — augment pre-carrier
+       Session instances into principals.
     2. **Fleet-parity barrier** — `Ezagent.Identity.FleetParity.check/0`: the
        store must be a complete, bidirectionally parity-correct mirror of the
        legacy self-license set.
@@ -31,11 +31,24 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
 
   Idempotent: re-running after activation re-verifies and re-affirms the epoch
   (the singleton insert is `ON CONFLICT DO NOTHING`; the epoch is monotone).
+
+  ## Release nodes (canary/prod — no Mix)
+
+  This task is a THIN SHELL over `Ezagent.Identity.Cutover.Runbook.run/1` (a
+  plain lib module). A release container has no Mix, so use the release
+  entrypoint instead:
+
+      bin/ezagent eval "EzagentCore.Release.identity_cutover()"
+      bin/ezagent eval "EzagentCore.Release.identity_cutover(dry_run: true)"
+
+  Both paths run the IDENTICAL interlock (backfill → session migration →
+  parity barrier → decide → activate); only the exit-signaling differs (`mix`
+  exits nonzero, the release `raise`s so `bin/ezagent eval` fails loudly).
   """
 
   use Mix.Task
 
-  alias Ezagent.Identity.{Cutover, FleetParity}
+  alias Ezagent.Identity.Cutover.Runbook
 
   @impl Mix.Task
   def run(args) do
@@ -43,124 +56,16 @@ defmodule Mix.Tasks.Ezagent.Identity.Cutover do
 
     dry_run? = "--dry-run" in args
 
-    Mix.shell().info("=== #189 identity-plane cutover ===")
+    io = fn msg -> Mix.shell().info(msg) end
+    io_err = fn msg -> Mix.shell().error(msg) end
 
-    if Cutover.activated?() do
-      Mix.shell().info("Epoch ALREADY active — re-verifying parity (idempotent).")
-    end
-
-    run_backfill(dry_run?)
-
-    result = FleetParity.check()
-    Mix.shell().info("Fleet parity — #{result.checked} durable holder(s) checked.")
-
-    case decide(result, dry_run?) do
-      :refuse ->
-        report_incomplete(result)
-        Mix.shell().error("REFUSED: the store is NOT a parity-correct mirror. Epoch NOT activated.")
-        exit({:shutdown, 1})
-
-      :dry_run ->
-        Mix.shell().info("COMPLETE — parity holds. (--dry-run: epoch NOT activated.)")
-
-      :activate ->
-        activate!()
+    case Runbook.run(dry_run: dry_run?, io: io, io_err: io_err) do
+      :activated -> :ok
+      :dry_run -> :ok
+      {:refused, _reason} -> exit({:shutdown, 1})
     end
   end
 
-  @doc """
-  The operator SAFETY INTERLOCK, extracted PURE for test coverage: the epoch is
-  activated ONLY when parity is `complete` and this is not a `--dry-run`. An
-  INCOMPLETE barrier ALWAYS `:refuse`s — the epoch is never activated on
-  divergence. (`activate/0` itself is exercised by `Ezagent.Identity.CutoverTest`.)
-  """
-  @spec decide(%{complete: boolean()}, boolean()) :: :refuse | :dry_run | :activate
-  def decide(%{complete: false}, _dry_run?), do: :refuse
-  def decide(%{complete: true}, true), do: :dry_run
-  def decide(%{complete: true}, false), do: :activate
-
-  defp run_backfill(dry_run?) do
-    args = if dry_run?, do: ["--dry-run"], else: []
-    Mix.shell().info("Step 1/2 — backfill#{if dry_run?, do: " (--dry-run)", else: ""}…")
-
-    # #189 PR-3 FINAL (ITEM 2) — CONSUME the backfill result. Any per-URI error
-    # (a failed user/snapshot backfill OR authority-history adoption) is FATAL to
-    # the cutover: abort BEFORE the parity barrier + activation so the epoch is
-    # never activated on an incomplete backfill. Pre-fix the backfill only
-    # PRINTED its errors and returned normally, and this interlock ignored the
-    # result — a failed adoption could still be followed by `complete: true`.
-    case Mix.Task.rerun("ezagent.identity.backfill", args) do
-      {:ok, results} ->
-        abort_on_backfill_errors(results)
-
-      unexpected ->
-        Mix.shell().error(
-          "REFUSED: backfill returned an unexpected result (#{inspect(unexpected)}) — " <>
-            "cannot confirm completeness. Epoch NOT activated."
-        )
-
-        exit({:shutdown, 1})
-    end
-
-    # The session self-license migration is fatal on its own errors (its mix task
-    # `exit({:shutdown, 1})`s), which likewise aborts this task before activation.
-    run_session_migration(args)
-  end
-
-  # ITEM 2 — every backfill error aborts the cutover before the barrier.
-  defp abort_on_backfill_errors(results) do
-    case for {uri, {:error, reason}} <- results, do: {uri, reason} do
-      [] ->
-        :ok
-
-      errors ->
-        Mix.shell().error("\nBACKFILL FAILED — #{length(errors)} principal(s) did not migrate:")
-        Enum.each(errors, fn {uri, reason} -> Mix.shell().error("  #{uri}: #{inspect(reason)}") end)
-
-        Mix.shell().error(
-          "REFUSED: the backfill is INCOMPLETE. Epoch NOT activated — re-run the " <>
-            "cutover after resolving the failure(s)."
-        )
-
-        exit({:shutdown, 1})
-    end
-  end
-
-  # FIX 4 — the Session self-license migration lives in the session domain
-  # (it references `Ezagent.ActionSet.SelfLicense`); invoke it as a mix task
-  # (a runtime string, so NO identity→session compile dependency is created).
-  defp run_session_migration(args) do
-    Mix.shell().info("Step 1b — session self-license migration…")
-    Mix.Task.rerun("ezagent.session.self_license_migration", args)
-  end
-
-  defp activate! do
-    Mix.shell().info("Step 2/2 — COMPLETE. Activating the cutover epoch…")
-
-    case Cutover.activate() do
-      :ok ->
-        if Cutover.activated?() do
-          Mix.shell().info("EPOCH ACTIVE — the store is now authoritative for identity reads.")
-        else
-          Mix.shell().error("Activation reported :ok but the epoch row is not readable. ABORTING.")
-          exit({:shutdown, 1})
-        end
-
-      {:error, reason} ->
-        Mix.shell().error("Activation FAILED: #{inspect(reason)}. Epoch NOT activated.")
-        exit({:shutdown, 1})
-    end
-  end
-
-  defp report_incomplete(result) do
-    Mix.shell().error("INCOMPLETE — #{length(result.discrepancies)} discrepancy(ies):")
-
-    result.discrepancies
-    |> Enum.group_by(fn {kind, _uri} -> kind end)
-    |> Enum.sort_by(fn {kind, _} -> to_string(kind) end)
-    |> Enum.each(fn {kind, entries} ->
-      Mix.shell().error("  #{kind} (#{length(entries)}):")
-      Enum.each(entries, fn {_kind, uri} -> Mix.shell().error("    #{uri}") end)
-    end)
-  end
+  @doc "See `Ezagent.Identity.Cutover.Runbook.decide/2` — the operator safety interlock."
+  defdelegate decide(result, dry_run?), to: Runbook
 end
