@@ -88,10 +88,22 @@ standard + conflict/merge management:
 docs/together/YYYY-MM-DD/
 ├── board.yaml          # SINGLE SOURCE OF TRUTH — plan writes it (BOD), review updates it (EOD)
 ├── board.html          # rendered kanban (plan+review 合一); regenerated from board.yaml, never hand-edited
-├── handoffs/<task>.md  # lead (handoff): one reviewed handoff per task
+├── tasks/<task>.md     # lead (plan/handoff): ONE FILE PER TASK — the task's full definition
+│                       #   AND the dispatch-ready handoff prompt (see below). Supersedes the
+│                       #   older `handoffs/` name; treat existing handoffs/ dirs as legacy.
 ├── returns/<task>.md   # dev  (return):  timestamped done + DoD artifact + merge request
 └── stack.md            # lead (push):    returns in analyzed merge order
 ```
+
+**`tasks/` — one file per task, prompt included (2026-07-29).** Every card on
+`board.yaml` MUST have a matching `tasks/<owner>-<slug>.md` containing: the goal,
+the acceptance checklist (mirroring the card), dependencies/branch, and — the
+point of the file — **the full handoff prompt** a dev or agent can be dispatched
+with verbatim. The card carries `task: "tasks/<owner>-<slug>.md"` so board ↔ task
+files stay linked. A board built without its tasks/ files is incomplete: the
+board is the index, the tasks/ files are the dispatchable substance. When a task
+has no formal prompt yet (external-party track, gated work), the file still
+exists and says so explicitly — never omit the file.
 **`board.yaml` replaces the old plan.md/plan.html/review.md/review.html four-file
 model.** It is one living kanban for the day: `plan` writes the cards with their
 acceptance checklists into status columns at start-of-day (the board *is* the
