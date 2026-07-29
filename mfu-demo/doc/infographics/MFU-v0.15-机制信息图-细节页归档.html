@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MFU v0.15 · 细节页归档</title>
+  <style>
+    :root{
+      --ink:#5b4632;--ink-dark:#3d2e1f;--cream:#fdf6e0;--bg:#e9d6a4;--gold:#f5b301;
+      --school:#3f9e4d;--school-bg:#e2f3e4;--incu:#e07b1f;--incu-bg:#fdeeda;
+      --assoc:#2f6fc4;--assoc-bg:#e3edfb;--red:#d94f3d;--teal:#1d9e75;--purple:#7a4fc9;
+      --muted:#8a765a;--paper:#fffaf0;
+    }
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;font-family:"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif;color:var(--ink-dark)}
+    body{
+      padding:14px 18px;overflow:hidden;background-color:var(--bg);
+      background-image:linear-gradient(45deg,rgba(91,70,50,.045) 25%,transparent 25%,transparent 75%,rgba(91,70,50,.045) 75%),
+        linear-gradient(45deg,rgba(91,70,50,.045) 25%,transparent 25%,transparent 75%,rgba(91,70,50,.045) 75%);
+      background-position:0 0,10px 10px;background-size:20px 20px;
+    }
+    button{font:inherit}
+    .toolbar{
+      max-width:1600px;margin:0 auto 14px;padding:8px;display:flex;gap:8px;align-items:center;
+      background:var(--cream);border:3px solid var(--ink);border-radius:10px;
+      box-shadow:0 4px 0 rgba(91,70,50,.45),inset 0 0 0 2px #fff;
+    }
+    .toolbar strong{margin:0 8px;font-size:13px;letter-spacing:1px}
+    .btn{
+      border:3px solid var(--ink);border-radius:8px;background:#fff2cf;color:var(--ink-dark);
+      box-shadow:0 3px 0 var(--ink);cursor:pointer;padding:6px 12px;font-weight:800;font-size:12px;
+    }
+    .btn[aria-pressed="true"]{background:var(--gold)}
+    .board{
+      width:min(1600px,calc(100vw - 36px),calc((100vh - 96px) * 16 / 9));aspect-ratio:16/9;margin:0 auto;
+      overflow:hidden;position:relative;background:var(--cream);border:4px solid var(--ink);border-radius:14px;
+      padding:28px 32px 26px;box-shadow:0 8px 0 rgba(91,70,50,.42),inset 0 0 0 3px #fff;
+    }
+    .board[hidden]{display:none}
+    .board::before{content:"";position:absolute;inset:12px;border:2px dotted rgba(91,70,50,.2);border-radius:9px;pointer-events:none}
+    .mast{height:92px;display:flex;align-items:flex-start;justify-content:space-between;position:relative;z-index:1}
+    .eyebrow{font-size:13px;font-weight:800;letter-spacing:2px;color:var(--muted);margin-bottom:5px}
+    h1{font-size:34px;line-height:1.08;margin:0;letter-spacing:1px}
+    .promise{font-size:15px;font-weight:700;color:var(--muted);margin:7px 0 0}
+    .stamp{
+      width:126px;height:74px;display:grid;place-items:center;text-align:center;transform:rotate(3deg);
+      border:4px double var(--incu);border-radius:10px;color:var(--incu);font-size:14px;font-weight:800;
+      line-height:1.35;background:var(--incu-bg);
+    }
+    .content{height:calc(100% - 124px);position:relative;z-index:1}
+    .footer-note{position:absolute;right:34px;bottom:16px;color:var(--muted);font-size:11px;font-weight:700}
+    .tag{display:inline-block;font-size:10.5px;font-weight:800;border:2px solid;border-radius:6px;padding:2px 7px;background:#fff}
+    .tag.school{color:var(--school);background:var(--school-bg)}.tag.purple{color:var(--purple);background:#f0e9ff}
+    .growth-summary{
+      display:flex;align-items:center;justify-content:center;border:3px dashed var(--red);border-radius:10px;
+      background:#fdeaea;color:#913a30;font-size:15px;font-weight:900;text-align:center;padding:10px;
+    }
+    .compare{
+      display:grid;grid-template-columns:1fr 110px 1fr;grid-template-rows:1fr 70px;gap:22px;align-items:center;
+      grid-template-areas:"left sign right" "summary summary summary";
+    }
+    .compare .student-card:first-child{grid-area:left}.compare .student-card:nth-of-type(2){grid-area:right}
+    .student-card{
+      display:grid;grid-template-columns:132px 1fr;grid-template-rows:auto auto auto auto 1fr;gap:10px 16px;padding:18px;
+      background:var(--paper);border:3px solid var(--ink);border-radius:11px;
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;
+    }
+    .character{grid-row:1/-1;align-self:center;text-align:center;font-weight:900;font-size:14px}
+    .character .face{
+      width:112px;height:112px;display:grid;place-items:center;margin-bottom:7px;border:4px solid var(--ink);
+      border-radius:14px;background:var(--cream);box-shadow:0 5px 0 var(--ink);font-size:55px;
+    }
+    .student-card h2{font-size:23px;margin:0}
+    .big-metric{
+      display:flex;align-items:baseline;justify-content:center;gap:8px;padding:10px;border:3px solid var(--ink);
+      border-radius:9px;background:#fff7d6;color:#a77700;font-size:46px;font-weight:900;line-height:1;
+    }
+    .big-metric small{font-size:11px;color:var(--muted)}
+    .metric{padding:9px 11px;border:3px solid var(--ink);border-radius:10px;background:#fff;font-size:11px;font-weight:900}
+    .metric span{display:block;color:var(--muted);margin-bottom:3px}.metric b{font-size:14px}
+    .student-card p{grid-column:2;margin:0;color:var(--muted);font-size:11px;font-weight:800}
+    .not-equal{grid-area:sign;text-align:center;font-size:64px;font-weight:900;color:var(--red)}
+    .compare>.growth-summary{grid-area:summary}
+    .simple-mapping{
+      display:grid;grid-template-columns:1fr 120px 1fr;grid-template-rows:1fr 66px;gap:22px;align-items:center;
+    }
+    .school-paths{display:grid;gap:14px}
+    .simple-school{
+      padding:14px;text-align:center;border:3px solid var(--school);border-radius:10px;background:var(--school-bg);
+      box-shadow:0 4px 0 rgba(63,158,77,.24);
+    }
+    .simple-school:nth-child(2){border-color:var(--purple);background:#f0e9ff}
+    .simple-school h2{font-size:16px;margin:5px}.simple-school .arrow{font-size:18px}
+    .simple-mapping>.arrow{font-size:34px;font-weight:900;text-align:center}
+    .common-standard{
+      height:82%;display:flex;flex-direction:column;justify-content:center;text-align:center;padding:20px;
+      border:3px solid var(--assoc);border-radius:11px;background:var(--assoc-bg);
+      box-shadow:0 4px 0 rgba(91,70,50,.32),inset 0 0 0 2px #fff;
+    }
+    .common-standard .big-icon{font-size:50px}.common-standard h2{font-size:24px;margin:8px}
+    .common-standard p{font-size:13px;font-weight:900;line-height:1.6}
+    .common-standard .rule{padding:10px;border:2px solid var(--assoc);border-radius:8px;background:#fff;font-size:11px}
+    .simple-mapping>.growth-summary{grid-column:1/-1}
+    .three-level{height:calc(100% - 124px);display:grid;grid-template-columns:1fr 72px 1fr 72px 1fr;grid-template-rows:1fr 66px;gap:10px;align-items:center}
+    .concept-card{
+      height:82%;display:flex;flex-direction:column;justify-content:space-between;text-align:center;padding:20px;
+      border:3px solid var(--ink);border-radius:11px;background:var(--paper);box-shadow:0 4px 0 rgba(91,70,50,.32);
+    }
+    .concept-card:nth-of-type(1){border-color:var(--teal);background:#e5f6ef}.concept-card:nth-of-type(2){border-color:var(--assoc);background:var(--assoc-bg)}
+    .concept-card:nth-of-type(3){border-color:var(--gold);background:#fff9dd}.concept-card .big-icon{font-size:50px}.concept-card h2{font-size:24px}
+    .company-sign{padding:13px;border:3px solid var(--ink);border-radius:9px;background:#fff;text-align:center;box-shadow:0 3px 0 rgba(91,70,50,.35);font-size:15px;font-weight:900}
+    .company-sign small{display:block;margin-top:5px;color:var(--muted);font-size:11px}.three-level>.growth-summary{grid-column:1/-1}
+    .goal-overview{height:calc(100% - 124px);display:grid;grid-template-rows:154px 1fr;gap:14px}
+    .goal-grid,.goal-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+    .goal-card{display:grid;grid-template-columns:44px 1fr;gap:9px;align-items:center;padding:12px;border:3px solid var(--ink);border-radius:10px;background:#fff}
+    .goal-card:nth-child(1){background:#fff9dd;border-color:var(--gold)}.goal-card:nth-child(2){background:#e5f6ef;border-color:var(--teal)}
+    .goal-card:nth-child(3){background:var(--assoc-bg);border-color:var(--assoc)}.goal-card:nth-child(4){background:var(--incu-bg);border-color:var(--incu)}
+    .goal-icon{font-size:34px;text-align:center}.goal-card h2{font-size:16px;margin:0 0 4px}.goal-number{display:block;font-size:9px;color:var(--muted)}
+    .goal-card p{font-size:9.5px;font-weight:800;color:var(--muted);margin:0}.action-column{padding:12px;border:3px solid var(--ink);border-radius:10px;background:var(--paper)}
+    .action-column:nth-child(1){border-color:var(--gold);background:#fff9dd}.action-column:nth-child(2){border-color:var(--teal);background:#e5f6ef}
+    .action-column:nth-child(3){border-color:var(--assoc);background:var(--assoc-bg)}.action-column:nth-child(4){border-color:var(--incu);background:var(--incu-bg)}
+    .action-column h3{text-align:center;font-size:11px;color:var(--muted);margin:0 0 9px}.verb-list{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+    .verb{min-height:34px;display:grid;place-items:center;padding:6px;border:2px solid var(--ink);border-radius:7px;background:#fff;text-align:center;font-size:10.5px;font-weight:900}
+    @media print{
+      body{padding:0;background:#fff}.toolbar{display:none}.board{width:1600px;height:900px;aspect-ratio:auto;border-radius:0;box-shadow:none;page-break-after:always}
+      .board[hidden]{display:block}
+    }
+  </style>
+</head>
+<body>
+  <nav class="toolbar" aria-label="归档页切换">
+    <strong>MFU v0.15 · 细节页归档</strong>
+    <button class="btn" data-show="detail-1">做得多 ≠ 做得好</button>
+    <button class="btn" data-show="detail-2">课程映射</button>
+    <button class="btn" data-show="detail-3">能力 / 认证 / 功能</button>
+    <button class="btn" data-show="detail-4">全部目标与行动</button>
+  </nav>
+
+  <main>
+    <section class="board" id="board-detail-1">
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 细节页归档 / 01</div>
+          <h1>做得多，不等于做得好</h1>
+          <p class="promise">经验记录做过多少；成长树记录已经证明会做好什么。</p>
+        </div>
+        <div class="stamp">MORE IS NOT<br>ALWAYS BETTER<br>多 ≠ 好</div>
+      </header>
+      <div class="content compare">
+        <article class="student-card">
+          <div class="character"><div class="face">🧑‍🎨</div>小满</div>
+          <h2>做了 20 个任务</h2>
+          <div class="big-metric">20<small>次经验</small></div>
+          <div class="metric"><span>经验履历</span><b>很丰富</b></div>
+          <div class="metric"><span>成长树</span><b>仍需更多好作品证明</b></div>
+          <p>她很熟练，但部分作品只是按要求完成。</p>
+        </article>
+        <div class="not-equal">≠</div>
+        <article class="student-card">
+          <div class="character"><div class="face">🧑‍💻</div>小云</div>
+          <h2>只做了 3 个任务</h2>
+          <div class="big-metric">3<small>次经验</small></div>
+          <div class="metric"><span>经验履历</span><b>刚刚开始</b></div>
+          <div class="metric"><span>成长树</span><b>「独立交付」已达标</b></div>
+          <p>她做得不多，但作品经过评价，证明了能力。</p>
+        </article>
+        <div class="growth-summary">经验告诉我们「熟不熟」；成长树告诉我们「已经能做到什么」。</div>
+      </div>
+      <div class="footer-note">归档自 MFU v0.15 主信息图</div>
+    </section>
+
+    <section class="board" id="board-detail-2" hidden>
+      <header class="mast">
+        <div>
+          <div class="eyebrow">MFU · 细节页归档 / 02</div>
+          <h1>课程不同，也能证明同一种能力</h1>
+          <p class="promise">学校可以用自己的课程和任务，平台把成果对应到共同的能力标准。</p>
+        </div>
+        <div class="stamp">DIFFERENT PATHS<br>SAME STANDARD<br>不同路 · 同标准</div>
+      </header>
+      <div class="content simple-mapping">
+        <div class="school-paths">
+          <article class="simple-school">
+            <span class="tag school">A 学校</span><h2>建筑设计基础 1</h2><div class="arrow">↓</div><h2>建筑设计基础 2</h2>
+          </article>
+          <article class="simple-school">
+            <span class="tag purple">B 学校</span><h2>建筑设计初级</h2><div class="arrow">＋</div><h2>真实项目周</h2>
+          </article>
+        </div>
+        <div class="arrow">→</div>
+        <article class="common-standard">
+          <div class="big-icon">🌳</div><div class="eyebrow">共同成长树</div><h2>「基础设计」已达标</h2>
+          <p>课程名称可以不同，课程数量也可以不同；最终都用作品与评价证明同一种能力。</p>
+          <div class="rule">学分与学时说明学了多少<br><b>成果证据决定是否达标</b></div>
+        </article>
+        <div class="growth-summary">学校保留自己的教法，学生获得可以跨学校理解的成长记录。</div>
+      </div>
+      <div class="footer-note">归档自 MFU v0.15 主信息图</div>
+    </section>
+
+    <section class="board" id="board-detail-3" hidden>
+      <header class="mast">
+        <div><div class="eyebrow">MFU · 细节页归档 / 03</div><h1>会做，不等于已经开通</h1><p class="promise">能力、认证和平台功能各自回答一个不同的问题。</p></div>
+        <div class="stamp">SKILL · TRUST<br>ACCESS<br>三件不同的事</div>
+      </header>
+      <div class="three-level">
+        <article class="concept-card"><div class="big-icon">🌱</div><div class="eyebrow">01 · 成长树</div><h2>我会什么？</h2><div class="company-sign">作品评价已达标<small>证明「会评价作品」</small></div></article>
+        <div>→</div>
+        <article class="concept-card"><div class="big-icon">🏅</div><div class="eyebrow">02 · 认证</div><h2>谁正式认可我？</h2><div class="company-sign">获得评审员资质<small>由平台、学校或机构确认</small></div></article>
+        <div>→</div>
+        <article class="concept-card"><div class="big-icon">🛠️</div><div class="eyebrow">03 · 平台功能</div><h2>平台允许我做什么？</h2><div class="company-sign">公开评审已开通<small>现在可以使用这项工具</small></div></article>
+        <div class="growth-summary">会不会、有没有被认可、能不能使用工具，是三件事。</div>
+      </div>
+      <div class="footer-note">归档自 MFU v0.15 主信息图</div>
+    </section>
+
+    <section class="board" id="board-detail-4" hidden>
+      <header class="mast">
+        <div><div class="eyebrow">MFU · 细节页归档 / 04</div><h1>学生在 MFU 的全部目标与行动</h1><p class="promise">详细操作索引：四个经营目标，以及会改变经营或成长状态的主动动作。</p></div>
+        <div class="stamp">GOALS<br>AND ACTIONS<br>目标与行动</div>
+      </header>
+      <div class="goal-overview">
+        <div class="goal-grid">
+          <article class="goal-card"><div class="goal-icon">💰</div><div><h2><span class="goal-number">目标 1</span>让公司经营下去</h2><p>照顾现金、时间、订单与信用。</p></div></article>
+          <article class="goal-card"><div class="goal-icon">📦</div><div><h2><span class="goal-number">目标 2</span>把客户任务做好</h2><p>理解需求，安排资源并完成交付。</p></div></article>
+          <article class="goal-card"><div class="goal-icon">🌳</div><div><h2><span class="goal-number">目标 3</span>让自己和公司变强</h2><p>积累经验、能力与认证。</p></div></article>
+          <article class="goal-card"><div class="goal-icon">🚀</div><div><h2><span class="goal-number">目标 4</span>获得更大的机会</h2><p>建立信誉并连接任务与孵化器。</p></div></article>
+        </div>
+        <div class="goal-actions">
+          <article class="action-column"><h3>经营下去</h3><div class="verb-list"><div class="verb">接单</div><div class="verb">打工</div><div class="verb">交付项目</div><div class="verb">再打磨作品</div><div class="verb">接入 Agent</div><div class="verb">招募成员</div><div class="verb">解雇成员</div><div class="verb">连接业务工具</div><div class="verb">加购教练时长</div><div class="verb">出售资产</div><div class="verb">申请桥贷</div><div class="verb">切换经营基地</div><div class="verb">清算重开</div></div></article>
+          <article class="action-column"><h3>做好任务</h3><div class="verb-list"><div class="verb">理解需求</div><div class="verb">路由任务</div><div class="verb">请求教练诊断</div><div class="verb">安排成员</div><div class="verb">安排 Agent</div><div class="verb">与 Agent 对话</div><div class="verb">喂 Agent 范例</div><div class="verb">编写 Agent 守则</div><div class="verb">复盘失败素材</div><div class="verb">检查交付质量</div><div class="verb">提交作品评审</div></div></article>
+          <article class="action-column"><h3>变得更强</h3><div class="verb-list"><div class="verb">完成课程任务</div><div class="verb">参加竞赛</div><div class="verb">接受作品评价</div><div class="verb">挑战复杂课题</div><div class="verb">复盘经营结果</div><div class="verb">参加判断力认证</div><div class="verb">录入外部认证</div><div class="verb">申请角色资质</div></div></article>
+          <article class="action-column"><h3>获得机会</h3><div class="verb-list"><div class="verb">商务社交</div><div class="verb">申请加入组织</div><div class="verb">退出组织</div><div class="verb">联合竞标</div><div class="verb">发布命题</div><div class="verb">评选投稿</div><div class="verb">发起公开评审</div><div class="verb">出租 Agent 资产</div><div class="verb">申请孵化器验证</div><div class="verb">申请入驻</div></div></article>
+        </div>
+      </div>
+      <div class="footer-note">归档自 MFU v0.15 主信息图</div>
+    </section>
+  </main>
+
+  <script>
+    const boards=[...document.querySelectorAll('.board')];
+    const buttons=[...document.querySelectorAll('[data-show]')];
+    function showBoard(id){
+      boards.forEach(board=>{board.hidden=board.id!==`board-${id}`;});
+      buttons.forEach(button=>button.setAttribute('aria-pressed',button.dataset.show===id));
+      const url=new URL(location.href);url.searchParams.set('board',id);history.replaceState(null,'',url);
+    }
+    buttons.forEach(button=>button.addEventListener('click',()=>showBoard(button.dataset.show)));
+    const initial=new URL(location.href).searchParams.get('board');
+    showBoard(['detail-1','detail-2','detail-3','detail-4'].includes(initial)?initial:'detail-1');
+  </script>
+</body>
+</html>

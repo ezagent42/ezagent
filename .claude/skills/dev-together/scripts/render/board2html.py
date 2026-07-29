@@ -12,7 +12,7 @@ Usage:  uv run --with pyyaml python board2html.py <board.yaml> [board.html]
 
 board.yaml schema — see scripts/render/board.example.yaml for a filled example.
 """
-import sys, html, json, datetime
+import sys, html, json, datetime, os, re
 
 try:
     import yaml
@@ -188,6 +188,81 @@ JS = """
   document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
 """
 
+# ---- cross-day task files (docs/together/tasks/<task-id>.md) ----
+# A card is a THIN projection of its task file: `task: <id>` references the
+# flat, cross-day record. The task file's "## Handoff prompt" section feeds the
+# card's 开工-prompt modal (so a done card's prompt stays viewable). Handoffs
+# are written ONCE at task creation; boards never regenerate them.
+BOARD_DIR = "."
+
+
+def task_prompt(card):
+    tid = card.get("task")
+    if not tid:
+        return ""
+    path = os.path.join(BOARD_DIR, "..", "tasks", f"{tid}.md")
+    if not os.path.exists(path):
+        return ""
+    with open(path, encoding="utf-8") as f:
+        txt = f.read()
+    m = re.search(r"##\s*Handoff prompt[^\n]*\n(.*?)(?=\n## |\Z)", txt, re.S)
+    return (m.group(1) if m else txt).strip()
+
+
+def check_board(b, src):
+    """HARD GATE (2026-07-29, lead-mandated): rendering REFUSES unless
+    (1) EVERY card — today's AND done_prev's — carries `task: <id>` whose flat
+        task file exists with a non-empty `## Handoff prompt` section, and
+    (2) every NOT-done card of the PREVIOUS board (latest dated dir with a
+        board.yaml before this one) is accounted for today: carried (matched by
+        a shared `#NNNN` PR token or normalized-title fragment) or explicitly
+        listed under top-level `carryover_resolved:` with a reason.
+    Sending a board.html therefore PROVES both checks ran (an unchecked board
+    cannot render). Bypass only with --no-check + a reason in the commit."""
+    errors = []
+    all_cards = (b.get("cards") or []) + (b.get("done_prev") or [])
+    for c in all_cards:
+        tid, title = c.get("task"), c.get("title", "?")
+        if not tid:
+            errors.append(f"card '{title}' has no task: id")
+            continue
+        path = os.path.join(BOARD_DIR, "..", "tasks", f"{tid}.md")
+        if not os.path.exists(path):
+            errors.append(f"card '{title}': task file missing (tasks/{tid}.md)")
+        elif not task_prompt(c):
+            errors.append(f"card '{title}': tasks/{tid}.md has an empty '## Handoff prompt'")
+    together, this_dir = os.path.dirname(BOARD_DIR), os.path.basename(BOARD_DIR)
+    prevs = sorted(
+        d for d in os.listdir(together)
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", d) and d < this_dir
+        and os.path.exists(os.path.join(together, d, "board.yaml"))
+    )
+    if prevs:
+        prev_dir = prevs[-1]
+        with open(os.path.join(together, prev_dir, "board.yaml"), encoding="utf-8") as f:
+            pb = yaml.safe_load(f)
+        raw_res = b.get("carryover_resolved") or []
+        resolved = set(raw_res.keys()) if isinstance(raw_res, dict) else set(raw_res)
+        with open(src, encoding="utf-8") as f:
+            today_text = f.read()
+        today_squash = re.sub(r"[\s★#（）()·—-]+", "", today_text)
+        for pc in (pb.get("cards") or []):
+            if pc.get("status") == "done":
+                continue
+            ptitle = pc.get("title", "")
+            prs = set(re.findall(r"#\d{3,5}", yaml.safe_dump(pc, allow_unicode=True)))
+            title_key = re.sub(r"[\s★#（）()·—-]+", "", ptitle)[:12]
+            if (ptitle in resolved
+                    or (title_key and title_key in today_squash)
+                    or any(p in today_text for p in prs)):
+                continue
+            errors.append(
+                f"prev board({prev_dir}) not-done card unaccounted: '{ptitle}' — "
+                "carry it, or list it under carryover_resolved: with a reason")
+    if errors:
+        sys.exit("board2html: BOARD CHECK FAILED —\n  " + "\n  ".join(errors))
+
+
 def render_card(card, pcolor, pname, today=None):
     color = pcolor.get(card.get("owner"), "#2563eb")
     delayed, overdue = card_delay(card, today)
@@ -220,6 +295,8 @@ def render_card(card, pcolor, pname, today=None):
         pills.append('<span class="pill carry">结转昨日</span>')
     if card.get("status") == "blocked":
         pills.append('<span class="pill blocked">阻塞</span>')
+    if card.get("task"):
+        pills.append(f'<span class="pill dep">task:{e(card["task"])}</span>')
     pills.append('<span class="pill more">详情</span>')
     # detail data
     acc_json = json.dumps([[("done" if a.get("done") else "todo"), a.get("text",""), a.get("evidence","")] for a in acc], ensure_ascii=False)
@@ -249,7 +326,7 @@ def render_card(card, pcolor, pname, today=None):
         f'{accm}{sched}{decomp}<div class="meta">{"".join(pills)}</div>'
         f'<div class="detail" data-title="{e(card.get("title"))}" data-who="{e(card.get("who",""))}" '
         f"data-acc='{html.escape(acc_json, quote=True)}' "
-        f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt",""))}"></div></div>'
+        f'data-review="{e(card.get("review_note",""))}" data-prompt="{e(card.get("prompt") or task_prompt(card))}"></div></div>'
     )
 
 def main():
@@ -257,8 +334,13 @@ def main():
         sys.exit("usage: board2html.py <board.yaml> [board.html]")
     src = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else (src[:-5] + ".html" if src.endswith(".yaml") else src + ".html")
+    # cross-day task files resolve relative to the board's dated dir (../tasks/)
+    global BOARD_DIR
+    BOARD_DIR = os.path.dirname(os.path.abspath(src))
     with open(src, encoding="utf-8") as f:
         b = yaml.safe_load(f)
+    if "--no-check" not in sys.argv:
+        check_board(b, src)
 
     today = board_today(b)  # deterministic 'today' for delay flags (as_of > date)
     people = b.get("people", []) or []
