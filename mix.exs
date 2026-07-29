@@ -417,6 +417,16 @@ defmodule EzagentCore.Umbrella.MixProject do
   # — see the comment on that tag and on `apps/ezagent_web/test/test_helper.exs`.
   # Fails LOUD on a non-zero exit so a broken build cannot masquerade as a green
   # run (or as a silently-skipped test).
+  #
+  # codex round-2 on #1626: a non-zero `mix assets.build` exit is not the only
+  # way this can go wrong — the build could exit 0 while producing NO bundle at
+  # all (an output-path drift between this task's `--output=` args and what
+  # test_helper.exs / demo_smoke_test.exs check for). In that case
+  # `test_helper.exs` would see the bundle missing and silently EXCLUDE the
+  # `:requires_built_assets` tests instead of failing — turning CI's Bug-2
+  # invariant check into an invisible skip. Assert the artifact actually landed
+  # at the exact path those two files read, so drift fails LOUD here instead of
+  # silently degrading into a skip downstream.
   defp build_web_assets(_args) do
     env = System.get_env() |> Map.put("MIX_ENV", to_string(Mix.env())) |> Map.to_list()
 
@@ -430,6 +440,18 @@ defmodule EzagentCore.Umbrella.MixProject do
 
     if status != 0 do
       Mix.raise("mix assets.build (apps/ezagent_web) failed (exit status #{status})")
+    end
+
+    css_path = Path.expand("apps/ezagent_web/priv/static/assets/css/app.css", __DIR__)
+
+    unless File.regular?(css_path) do
+      Mix.raise(
+        "mix assets.build (apps/ezagent_web) exited 0 but #{css_path} was not produced " <>
+          "— output path drift. apps/ezagent_web/test/test_helper.exs and demo_smoke_test.exs " <>
+          "both read that exact path; if it silently doesn't exist here, CI would silently " <>
+          "EXCLUDE the :requires_built_assets tests instead of failing. Check the `--output=` " <>
+          "arg in `config :tailwind, ezagent_web: [...]` (config/config.exs) still matches."
+      )
     end
   end
 
