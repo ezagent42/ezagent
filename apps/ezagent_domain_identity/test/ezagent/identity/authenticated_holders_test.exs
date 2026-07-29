@@ -56,6 +56,10 @@ defmodule Ezagent.Identity.AuthenticatedHoldersTest do
     assert :user in production
     assert :agent in production
     assert :external_mirror_worker in production
+    # Pin the MACRO-form (`use Ezagent.Kind, type_name:`) detection specifically
+    # (codex impl-review finding 3): a scanner that regressed to literal-`def`-only
+    # would drop this and the "closed" classification would silently reopen.
+    assert :git_task_access in production
 
     unclassified =
       Enum.filter(production, &(AuthenticatedHolders.classify(&1) == :unknown))
@@ -67,10 +71,19 @@ defmodule Ezagent.Identity.AuthenticatedHoldersTest do
   end
 
   # ------------------------------------------------------------------
-  # Scanner — every `def type_name, do: <literal atom>` across `apps/*/lib`.
-  # The `unquote(type_name)` macro in `kind.ex` (a non-literal body) is
-  # naturally skipped; test-support fixture Kinds live under `test/` and are
-  # out of scope.
+  # Scanner — every production Kind `type_name`, in BOTH declaration forms
+  # across `apps/*/lib`:
+  #
+  #   1. a literal `def type_name, do: <atom>` (the entity modules that override
+  #      the macro), and
+  #   2. the MACRO form `use Ezagent.Kind, ..., type_name: <atom>` (e.g.
+  #      `Ezagent.Entity.GitTaskAccess`) — scanning only literal `def`s missed
+  #      this class, so the "closed" classification was structurally incomplete
+  #      (codex impl-review finding 3).
+  #
+  # The `unquote(type_name)` clause INSIDE the `Ezagent.Kind` macro itself
+  # (`kind.ex`, a non-literal body) is naturally skipped; test-support fixture
+  # Kinds live under `test/` and are out of scope.
   # ------------------------------------------------------------------
 
   defp production_type_names do
@@ -85,9 +98,17 @@ defmodule Ezagent.Identity.AuthenticatedHoldersTest do
          {:ok, ast} <- Code.string_to_quoted(src) do
       {_ast, found} =
         Macro.prewalk(ast, [], fn
+          # Form 1 — a literal `def type_name, do: :atom`.
           {:def, _, [{:type_name, _, ctx}, [do: body]]} = node, acc
           when (is_nil(ctx) or ctx == []) and is_atom(body) ->
             {node, [body | acc]}
+
+          # Form 2 — `use Ezagent.Kind, ..., type_name: :atom`.
+          {:use, _, [{:__aliases__, _, [:Ezagent, :Kind]}, opts]} = node, acc ->
+            case type_name_opt(opts) do
+              nil -> {node, acc}
+              type_name -> {node, [type_name | acc]}
+            end
 
           node, acc ->
             {node, acc}
@@ -98,6 +119,17 @@ defmodule Ezagent.Identity.AuthenticatedHoldersTest do
       _ -> []
     end
   end
+
+  defp type_name_opt(opts) when is_list(opts) do
+    if Keyword.keyword?(opts) do
+      case Keyword.get(opts, :type_name) do
+        atom when is_atom(atom) and not is_nil(atom) -> atom
+        _ -> nil
+      end
+    end
+  end
+
+  defp type_name_opt(_opts), do: nil
 
   defp repo_root, do: Path.expand("../../../../..", __DIR__)
 end

@@ -30,9 +30,19 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # resurrection guard — `active iff current-valid
                              # self-license`). `do_persist/2` no longer touches the
                              # column (it now delegates to the row-locked
-                             # `persist_locked/4` → `persist_changes/3`); the raw-cap
+                             # `persist_locked/5` → `persist_changes/3`); the raw-cap
                              # seam is `persist_changes/3` instead. Still the adapter's
                              # own storage seam — no new external reader.
+                             #
+                             # #189 PR-2 (codex IMPL-review finding 1): `update_locked`
+                             # gained the `uri` param (arity 3 → 4) so it can route the
+                             # transformed set through the SAME `persist_changes/3`
+                             # resurrection guard as `persist/2` (it was a bypass: it
+                             # wrote caps and left the fresh row on the schema `"active"`
+                             # default). It still reads `row.caps_json` for the
+                             # transform (hence still on THIS read-side allowlist) but no
+                             # longer writes the column directly — see the
+                             # `cap_issue_chokepoint` assignment count (8 → 7).
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :activate_changes, 2},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
@@ -48,7 +58,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :tombstone, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
-                              :update_locked, 3},
+                              :update_locked, 4},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",

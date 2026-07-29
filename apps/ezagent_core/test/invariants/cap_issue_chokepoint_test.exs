@@ -159,10 +159,17 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # table column (a separate table from `users.caps_json`). In PR-1 it is a
     # WRITE-SHADOW: reads are never store-authoritative, and it MIRRORS the
     # verified set on every legacy write — it cannot mint, grant, or authorize by
-    # itself. (`=> 8` = 5 `caps_json` write forms + 3 `%{caps_json: ...}` read-pattern
+    # itself. (`=> 7` = 4 `caps_json` write forms + 3 `%{caps_json: ...}` read-pattern
     # matches; the scanner counts every AST map key, not distinct writers.) codex
     # adversarial review (6 rounds) confirmed no hidden authority path.
-    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 8,
+    #
+    # #189 PR-2 (codex IMPL-review finding 1): the count dropped 8 → 7 (5 → 4
+    # write forms) because `update_locked` no longer writes `caps_json:` directly
+    # — it now routes the transformed set through the shared `persist_changes/3`
+    # resurrection guard (closing the `update/2` bypass). One FEWER independent
+    # write site, all active-transitions funneled through the guard — strictly
+    # safer, no new authority path.
+    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 7,
 
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
     # preserves authority rather than broadening it, and grants nothing new.

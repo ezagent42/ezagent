@@ -230,6 +230,19 @@ defmodule Ezagent.EntityCaps.Store do
   # back nor silently pass (codex round-3).
   @p1_forced_shadow_failure_seam Mix.env() == :test
 
+  # TEST-ONLY interleave seam (same `Mix.env() == :test` precedent): lets a
+  # regression fire an `Authority.regenesis/2` DURING an active-transition,
+  # AFTER the identity row is locked but BEFORE the self-license is verified,
+  # to prove the verify runs INSIDE the transaction (codex impl-review finding
+  # 1, acceptance (c)). Pre-fix, `licensed?` was computed before the
+  # transaction, so a mid-transition regenesis could not affect it and the row
+  # would stay `active` (resurrection); with the verify inside the txn it sees
+  # the bumped generation and lands `revoked_unprovisioned`. Consulted ONLY when
+  # the app env `:p2_verify_race_hook` is set (a 1-arity fun) — never set outside
+  # the one regression — so it is a pure no-op off that test path, and provably
+  # unreachable in a dev/prod/release build.
+  @p2_verify_race_seam Mix.env() == :test
+
   @doc """
   Upsert the complete cap set for `uri`, computing `identity_status` STRUCTURALLY
   from the mirrored caps — the #189 PR-2 write-boundary resurrection guard
@@ -297,22 +310,23 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    # Freshly verify the mirrored self-license against the URI's CURRENT
-    # authority generation BEFORE deciding the row status (codex F1). A row is
-    # never `active` unless this holds — enforced under the row lock so a
-    # concurrent stale write cannot race it back to `active`.
-    licensed? = has_current_self_license?(caps_list, uri)
     encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> persist_locked(uri_key, workspace, encoded, licensed?) end) do
+    case Repo.transaction(fn -> persist_locked(uri, uri_key, workspace, encoded, caps_list) end) do
       {:ok, :ok} -> :ok
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp persist_locked(uri_key, workspace, encoded, licensed?) do
+  # The self-license verification runs INSIDE this transaction, under the
+  # authority-row lock (`licensed_under_lock?/2`), so a concurrent
+  # `Authority.regenesis/2` cannot rotate the generation between the verify and
+  # this write (codex impl-review finding 1 — the verify/write race). A row is
+  # never `active` unless a current-valid self-license holds at write time.
+  defp persist_locked(uri, uri_key, workspace, encoded, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         licensed? <- licensed_under_lock?(uri, caps_list),
          changes <- persist_changes(row, encoded, licensed?),
          {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       :ok
@@ -344,27 +358,43 @@ defmodule Ezagent.EntityCaps.Store do
   @doc """
   Row-locked transform of the complete cap set (mirrors
   `UserStore.update/2` semantics, upserting): the row is created when
-  absent, then locked `FOR UPDATE`, decoded, transformed, and re-encoded —
-  status and receipt are preserved.
+  absent, then locked `FOR UPDATE`, decoded, transformed, and re-encoded.
+
+  The resulting caps route through the SAME resurrection guard as `persist/2`
+  (codex impl-review finding 1 — `update/2` was a bypass: it wrote caps and left
+  the fresh row on the schema's `"active"` default with no self-license check).
+  The transformed set decides the status structurally via `persist_changes/3`:
+  an absent/`active` row whose new caps carry no current-valid self-license lands
+  `revoked_unprovisioned`, never silently `active`; a `revoked_unprovisioned` /
+  `tombstoned` row is never upgraded. The `fun`'s own `{:error, reason}` is
+  propagated verbatim (the transaction rolls back, leaving prior state intact).
   """
   @spec update(URI.t() | String.t(), ([Capability.t()] ->
                                         {:ok, [Capability.t()] | MapSet.t(Capability.t())}
                                         | {:error, term()})) ::
           :ok | {:error, term()}
   def update(uri, fun) when is_function(fun, 1) do
-    case Repo.transaction(fn -> update_locked(key(uri), workspace_key(uri), fun) end) do
+    case Repo.transaction(fn -> update_locked(uri, key(uri), workspace_key(uri), fun) end) do
       {:ok, result} -> result
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp update_locked(uri_key, workspace, fun) do
+  defp update_locked(uri, uri_key, workspace, fun) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
-         {:ok, caps} <- fun.(decode_caps(row.caps_json)),
-         {:ok, _row} <-
-           row |> Ecto.Changeset.change(caps_json: encode_caps(caps)) |> Repo.update() do
-      :ok
+         {:ok, caps} <- fun.(decode_caps(row.caps_json)) do
+      caps_list = Enum.to_list(caps)
+      licensed? = licensed_under_lock?(uri, caps_list)
+      changes = persist_changes(row, encode_caps(caps_list), licensed?)
+
+      case row |> Ecto.Changeset.change(changes) |> Repo.update() do
+        {:ok, _row} -> :ok
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    else
+      nil -> Repo.rollback(:not_found)
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 
@@ -524,23 +554,27 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    licensed? = has_current_self_license?(caps_list, uri)
     encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> backfill_locked(uri_key, workspace, encoded, licensed?) end) do
+    case Repo.transaction(fn -> backfill_locked(uri, uri_key, workspace, encoded, caps_list) end) do
       {:ok, status} -> {:ok, status}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  # Shares the `persist_changes/3` decision with the shadow `persist/2` so the
-  # "active iff current-valid self-license" invariant has ONE structural home
-  # (codex F1: a writer, backfill OR shadow, can never produce an active row
-  # for a license-invalid principal). The backfill is a DISTINCT entry point
-  # (its own transaction + status return) as the review requires.
-  defp backfill_locked(uri_key, workspace, encoded, licensed?) do
+  # Shares the `persist_changes/3` decision AND the atomic `licensed_under_lock?/2`
+  # guard with the shadow `persist/2` so the "active iff current-valid
+  # self-license" invariant has ONE structural home, verified inside the
+  # transaction under the authority-row lock (codex impl-review finding 1: the
+  # verify must be atomic with the write — a writer, backfill OR shadow, can
+  # never produce an active row for a license-invalid principal, and a
+  # concurrent regenesis cannot race a stale license back to `active`). The
+  # backfill is a DISTINCT entry point (its own transaction + status return) as
+  # the review requires.
+  defp backfill_locked(uri, uri_key, workspace, encoded, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         licensed? <- licensed_under_lock?(uri, caps_list),
          changes <- persist_changes(row, encoded, licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       String.to_existing_atom(updated.identity_status)
@@ -575,9 +609,9 @@ defmodule Ezagent.EntityCaps.Store do
     actor = Keyword.fetch!(opts, :actor)
 
     with :ok <- require_receipt(receipt, uri, :provision, caps, actor) do
-      transition_locked(uri, receipt, fn
+      activate_locked(uri, caps, receipt, fn
         %{identity_status: "tombstoned"} -> {:error, :tombstoned}
-        _row -> {:ok, activate_changes(caps, receipt)}
+        _row -> :ok
       end)
     end
   end
@@ -598,9 +632,9 @@ defmodule Ezagent.EntityCaps.Store do
     actor = Keyword.fetch!(opts, :actor)
 
     with :ok <- require_receipt(receipt, uri, :reprovision, caps, actor) do
-      transition_locked(uri, receipt, fn
+      activate_locked(uri, caps, receipt, fn
         %{identity_status: "active"} -> {:error, :already_active}
-        _row -> {:ok, activate_changes(caps, receipt)}
+        _row -> :ok
       end)
     end
   end
@@ -631,6 +665,41 @@ defmodule Ezagent.EntityCaps.Store do
       %{identity_status: "tombstoned"} -> {:ok, []}
       _row -> {:ok, [identity_status: "tombstoned", caps_json: "[]"]}
     end)
+  end
+
+  # The guarded active-transition for `provision/4` / `reprovision/4`. Inside
+  # ONE transaction: lock the identity row, run the state precheck, then require
+  # a CURRENT-valid self-license verified UNDER the authority-row lock, atomic
+  # with the write (codex impl-review finding 1: a valid `ProvisioningReceipt`
+  # attests to the cap-set DIGEST + actor, NOT to license currency — so a
+  # receipt alone could otherwise activate a revoked-generation principal, and a
+  # concurrent regenesis could race a stale license to `active`). Only then is
+  # the single-use receipt consumed and the row activated. `precheck_fun`
+  # returns `:ok` to proceed or `{:error, reason}` to reject on the locked row's
+  # current status.
+  defp activate_locked(uri, caps, receipt, precheck_fun) do
+    uri_key = key(uri)
+    workspace = workspace_key(uri)
+    caps_list = Enum.to_list(caps)
+
+    case Repo.transaction(fn ->
+           with :ok <- ensure_row(uri_key, workspace),
+                row when not is_nil(row) <- lock_row(uri_key),
+                :ok <- precheck_fun.(row),
+                true <-
+                  licensed_under_lock?(uri, caps_list) || {:error, :no_current_self_license},
+                :ok <- maybe_consume(receipt),
+                {:ok, _row} <-
+                  row |> Ecto.Changeset.change(activate_changes(caps, receipt)) |> Repo.update() do
+             :ok
+           else
+             {:error, reason} -> Repo.rollback(reason)
+             nil -> Repo.rollback(:not_found)
+           end
+         end) do
+      {:ok, :ok} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp activate_changes(caps, receipt) do
@@ -763,6 +832,11 @@ defmodule Ezagent.EntityCaps.Store do
   # in the legacy source. Mirrors the legacy reader gate
   # (`EntityCaps.current_self_license?/2`) so the store never trusts a license
   # the authorization plane would reject. Fail-closed on any error.
+  #
+  # PURE PREDICATE — lock-free, so it is safe to call OUTSIDE a transaction (the
+  # fleet-parity holder scan, the backfill `--dry-run`). The atomic-with-write
+  # guard is `licensed_under_lock?/2`, which locks the authority row FIRST; do
+  # NOT push the lock in here (a `FOR SHARE` outside a transaction is a no-op).
   @spec has_current_self_license?([Capability.t()], URI.t() | String.t()) :: boolean()
   def has_current_self_license?(caps, uri) when is_list(caps) do
     entity = uri_struct(uri)
@@ -771,6 +845,42 @@ defmodule Ezagent.EntityCaps.Store do
     _ -> false
   catch
     _, _ -> false
+  end
+
+  # The SINGLE guarded active-transition primitive (codex impl-review finding 1):
+  # inside the caller's OPEN transaction, take a `FOR SHARE` lock on the URI's
+  # current authority generation, THEN verify the self-license against it. The
+  # lock blocks a concurrent `Authority.regenesis/2` (which retires the active
+  # row) from interleaving between this verify and the caller's dependent row
+  # write, so the "active iff current-valid self-license" decision is atomic with
+  # the write. Every path that can set `identity_status: "active"` — `persist/2`,
+  # `backfill/2`, `update/2`, `provision/4`, `reprovision/4` — routes its license
+  # decision through here. MUST be called inside a `Repo.transaction/1`.
+  #
+  # (Residual note for re-reviewers: if the store WINS the lock race — verifies
+  # gen-N valid, writes `active`, and regenesis bumps to gen N+1 only AFTER this
+  # transaction commits — that is ordinary write-shadow staleness, NOT a
+  # verify/write TOCTOU: gen N genuinely WAS current at commit time, PR-2 reads
+  # stay legacy so it changes no authz outcome, and the quiescent PR-3 backfill +
+  # fence reconciles it. The property enforced here is only that regenesis cannot
+  # interleave DURING the verify→write window.)
+  defp licensed_under_lock?(uri, caps_list) do
+    maybe_run_verify_race_seam(uri)
+    :ok = Ezagent.Cap.Authority.lock_current_generation(uri_struct(uri))
+    has_current_self_license?(caps_list, uri)
+  end
+
+  if @p2_verify_race_seam do
+    defp maybe_run_verify_race_seam(uri) do
+      case Application.get_env(:ezagent_domain_identity, :p2_verify_race_hook) do
+        fun when is_function(fun, 1) -> fun.(uri_struct(uri))
+        _ -> :ok
+      end
+
+      :ok
+    end
+  else
+    defp maybe_run_verify_race_seam(_uri), do: :ok
   end
 
   defp current_self_license?(%Capability{} = cap, %URI{} = uri) do

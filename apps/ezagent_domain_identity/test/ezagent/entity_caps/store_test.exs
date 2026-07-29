@@ -106,16 +106,37 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert Store.load(agent) == []
     end
 
-    test "update/2 transforms under the row lock and creates the row when absent" do
-      agent = agent_uri("update")
-      cap = issued_cap(agent, :send)
+    test "update/2 routes through the resurrection guard (codex impl-review finding 1(a))" do
+      # FAIL-BEFORE / PASS-AFTER: pre-fix, `update/2` inserted an absent row on
+      # the schema's `"active"` default and wrote caps with NO self-license
+      # check — an ordinary issued cap would leave the row `active` (the bypass
+      # codex finding 1 named, demonstrated by the old store_test.exs:109). The
+      # guard now decides the status structurally from the transformed caps.
+      unlicensed = agent_uri("update-unlicensed")
+      cap = issued_cap(unlicensed, :send)
 
-      refute Store.has_row?(agent)
-      assert :ok = Store.update(agent, fn current -> {:ok, current ++ [cap]} end)
-      assert cap_present?(Store.load(agent), cap)
+      refute Store.has_row?(unlicensed)
+      assert :ok = Store.update(unlicensed, fn current -> {:ok, current ++ [cap]} end)
+      # No current-valid self-license ⇒ revoked_unprovisioned, NEVER active.
+      assert Store.status(unlicensed) == :revoked_unprovisioned
+      assert Store.load(unlicensed) == []
+      # The row EXISTS (never left absent) — a later stale write can't recreate
+      # it active.
+      assert Store.has_row?(unlicensed)
 
-      assert {:error, :boom} = Store.update(agent, fn _current -> {:error, :boom} end)
-      assert cap_present?(Store.load(agent), cap)
+      # A fresh-row update whose result carries a CURRENT-valid self-license
+      # legitimately activates (the guard permits the valid case).
+      licensed = agent_uri("update-licensed")
+      licensed_set = licensed_caps(licensed, [issued_cap(licensed, :send)])
+      assert :ok = Store.update(licensed, fn _current -> {:ok, licensed_set} end)
+      assert Store.status(licensed) == :active
+      assert identity_keys(Store.load(licensed)) == identity_keys(licensed_set)
+
+      # The fun's own error still rolls the transaction back, leaving prior
+      # state intact.
+      assert {:error, :boom} = Store.update(licensed, fn _current -> {:error, :boom} end)
+      assert Store.status(licensed) == :active
+      assert cap_present?(Store.load(licensed), Enum.at(licensed_set, 1))
     end
 
     test "fetch_durable_caps falls back only when no row exists (cutover-facing)" do
@@ -654,6 +675,51 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
       assert Store.status(agent) == :tombstoned
+      assert Store.load(agent) == []
+    end
+
+    test "provision REQUIRES a current self-license, not merely a valid receipt (finding 1(b))" do
+      agent = agent_uri("provision-no-license")
+      # Caps with NO self-license (an ordinary issued cap only) but a perfectly
+      # valid, digest-bound receipt for exactly that set.
+      caps = [issued_cap(agent, :send)]
+      receipt = ProvisioningReceipt.issue(agent, @system_actor, :provision, caps)
+      refute Store.has_current_self_license?(caps, agent)
+
+      # A valid receipt attests to the cap-set DIGEST + actor, NOT to license
+      # currency — so provision must still refuse to activate a license-missing
+      # principal (codex impl-review finding 1: the provision path was a bypass).
+      assert {:error, :no_current_self_license} =
+               Store.provision(agent, caps, receipt, actor: @system_actor)
+
+      refute Store.has_row?(agent)
+      refute Store.status(agent) == :active
+    end
+
+    test "reprovision of a revoked principal REQUIRES a current self-license (finding 1(b))" do
+      agent = agent_uri("reprovision-no-license")
+
+      # Bring it to revoked_unprovisioned via a legitimate provision + revoke.
+      good = licensed_caps(agent, [issued_cap(agent, :send)])
+
+      assert :ok =
+               Store.provision(agent, good, ProvisioningReceipt.issue(agent, @system_actor, :provision, good),
+                 actor: @system_actor
+               )
+
+      assert :ok = Store.revoke_provisioning(agent)
+      assert Store.status(agent) == :revoked_unprovisioned
+
+      # Reprovision with caps carrying NO current self-license: a valid receipt
+      # is not enough — the revoked principal is NOT resurrected to active.
+      bad = [issued_cap(agent, :join)]
+      receipt = ProvisioningReceipt.issue(agent, @system_actor, :reprovision, bad)
+      refute Store.has_current_self_license?(bad, agent)
+
+      assert {:error, :no_current_self_license} =
+               Store.reprovision(agent, bad, receipt, actor: @system_actor)
+
+      assert Store.status(agent) == :revoked_unprovisioned
       assert Store.load(agent) == []
     end
   end

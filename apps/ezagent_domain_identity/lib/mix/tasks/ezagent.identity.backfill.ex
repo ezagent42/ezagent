@@ -78,16 +78,45 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
     |> Enum.map(fn {uri_str, _meta} ->
       uri = Ezagent.URI.new!(uri_str)
 
-      case Ezagent.Kind.read_durable(uri, :identity) do
-        {:ok, identity, _meta} when is_map(identity) ->
-          run_one(uri, caps_from_slice(identity), dry_run?)
+      case read_identity(uri) do
+        {:ok, caps} ->
+          run_one(uri, caps, dry_run?)
 
-        _ ->
-          # No `:identity` slice (template/session-without-caps/…) — nothing
-          # to mirror; not a principal for the identity-caps store.
+        :no_identity ->
+          # The row read cleanly but carries no `:identity` slice
+          # (template/session-without-caps/…) — nothing to mirror; not a
+          # principal for the identity-caps store.
           {uri_str, :no_identity}
+
+        {:error, reason} ->
+          # The legacy source could NOT be read (decode failure, vanished row).
+          # Surface it as a FAILED principal — never silently a `:no_identity`
+          # skip that would let it disappear from the migration (codex
+          # impl-review finding 3).
+          {uri_str, {:error, {:read_failed, reason}}}
       end
     end)
+  end
+
+  # Split "no `:identity` slice" (legitimate skip) from "the read itself failed"
+  # (`read_durable/3` collapses a decode `:error` and an absent row to
+  # `{:error, :not_created}`). Raises are caught so one unreadable snapshot never
+  # aborts the whole migration silently.
+  defp read_identity(uri) do
+    case Ezagent.Kind.read_durable(uri, :identity) do
+      {:ok, identity, _meta} when is_map(identity) ->
+        if Map.has_key?(identity, :caps), do: {:ok, caps_from_slice(identity)}, else: :no_identity
+
+      {:ok, _non_caps_slice, _meta} ->
+        :no_identity
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  rescue
+    e -> {:error, {:raised, Exception.message(e)}}
+  catch
+    kind, reason -> {:error, {kind, reason}}
   end
 
   # In `--dry-run` mode compute ONLY the would-be classification (does the

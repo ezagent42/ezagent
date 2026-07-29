@@ -32,7 +32,8 @@ defmodule Ezagent.Identity.AuthenticatedHolders do
       both `users` and `kind_snapshots` must not let the barrier claim 100%).
     * `:non_holder` — never occupies `authenticated_principal` as a
       self-licensing subject (`:agent_template`, `:session_template`,
-      `:workspace`, `:system`). Structural / bootstrap / recipe Kinds; the
+      `:workspace`, `:system`, `:git_task_access`). Structural / bootstrap /
+      recipe / policy Kinds; the
       canonical admin's fresh-boot empty-`caps_json` contract lives under the
       `:system`/`:user` structural exception, handled by the barrier.
 
@@ -49,7 +50,12 @@ defmodule Ezagent.Identity.AuthenticatedHolders do
     agent_template: :non_holder,
     session_template: :non_holder,
     workspace: :non_holder,
-    system: :non_holder
+    system: :non_holder,
+    # An ephemeral, exact-operation Git-access POLICY entity — never occupies
+    # `authenticated_principal` as a self-licensing subject (codex impl-review
+    # finding 3: the ratchet now catches its macro `use Ezagent.Kind,
+    # type_name: :git_task_access` declaration, so it must be classified).
+    git_task_access: :non_holder
   }
 
   @holder_classes [:durable_holder, :ephemeral_holder]

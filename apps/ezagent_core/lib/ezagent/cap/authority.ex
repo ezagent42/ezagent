@@ -243,6 +243,25 @@ defmodule Ezagent.Cap.Authority do
 
   def verify_against_current(%Capability{}, %URI{}, %URI{}), do: false
 
+  @doc """
+  Row-lock the TARGET's current active authority generation inside the caller's
+  OPEN transaction, so a concurrent `regenesis/2` cannot rotate the generation
+  between a `verify_against_current/3` check and the caller's dependent write
+  (#189 PR-2, codex impl-review finding 1 — the verify/write race).
+
+  The lock is keyed byte-identically to `current_key_id/1` (`instance |>
+  stable_key`), so it serializes exactly the row `verify_against_current/3`
+  reads. Returns `:ok` whether or not an active row exists — a target with no
+  active row has nothing to lock and its self-license verification fails closed
+  anyway. MUST be called inside a `Repo.transaction/1`; outside one a `FOR
+  SHARE` locks nothing.
+  """
+  @spec lock_current_generation(URI.t()) :: :ok
+  def lock_current_generation(%URI{} = target) do
+    target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.lock_active()
+    :ok
+  end
+
   defp current_key_id(%URI{} = target) do
     target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
 
@@ -344,6 +363,17 @@ defmodule Ezagent.Cap.Authority do
           # never authorized (or whose authority was intentionally purged) —
           # exactly the regenesis-resurrection vector. Genesis stays reserved
           # for genuine creation (`:created`) and the legacy `:unknown` open.
+          #
+          # DEPLOY PRECONDITION (codex impl-review finding 2 — FLAGGED, unresolved
+          # here): this guard REGRESSES a pre-authority durable entity
+          # (`ever_created` snapshot, NO `kind_cap_authorities` row — created
+          # before the #1457 cap-signing rollout and not re-opened since): its
+          # cold restart hits this rollback and the Kind terminates. It is safe
+          # to deploy ONLY if every durable Lifecycle entity in the target DB has
+          # already acquired an authority row (opened once since #1457). If that
+          # cannot be evidenced, a GOVERNED authority-history adoption is required
+          # first, or this guard must land with PR-3's cutover instead. See
+          # docs/superpowers/plans/2026-07-29-189-pr2-migration.md → "FIX 3".
           Repo.rollback(:no_authority_for_existing)
 
         [] ->

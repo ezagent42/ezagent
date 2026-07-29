@@ -110,6 +110,49 @@ defmodule Ezagent.EntityCaps.StoreBackfillTest do
     end
   end
 
+  describe "verify/write race (codex impl-review finding 1(c))" do
+    test "a regenesis interleaving mid-transition lands revoked, proving verify-inside-txn" do
+      agent = agent_uri("verify-race")
+      # A CURRENT self-license at mint time (authority generation 1).
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
+      assert Store.has_current_self_license?(caps, agent)
+
+      # The TEST-ONLY seam fires a regenesis DURING the persist transaction —
+      # AFTER the identity row is locked, BEFORE the self-license is verified.
+      #
+      # FAIL-BEFORE: pre-fix, `licensed?` was computed BEFORE `Repo.transaction`,
+      # so a mid-transition regenesis could not affect it → the row would land
+      # `active` with a now-stale license (the resurrection race).
+      # PASS-AFTER: the verify runs INSIDE the transaction (under the
+      # authority-row lock), sees the bumped generation, and lands
+      # revoked_unprovisioned.
+      test_pid = self()
+
+      hook = fn %URI{} = uri ->
+        # regenesis is not idempotent (each call bumps a generation) — fire once.
+        if Process.get(:raced) == nil do
+          Process.put(:raced, true)
+          assert {:ok, _bumped} = Ezagent.Cap.Authority.regenesis(uri, :agent)
+          send(test_pid, :regenesis_fired)
+        end
+
+        :ok
+      end
+
+      Application.put_env(:ezagent_domain_identity, :p2_verify_race_hook, hook)
+
+      try do
+        assert :ok = Store.persist(agent, caps)
+        assert_received :regenesis_fired
+        assert Store.status(agent) == :revoked_unprovisioned
+        assert Store.load(agent) == []
+      after
+        Application.delete_env(:ezagent_domain_identity, :p2_verify_race_hook)
+        Process.delete(:raced)
+      end
+    end
+  end
+
   # -------------------------------------------------------------------
   # Helpers (mirror store_test.exs)
   # -------------------------------------------------------------------

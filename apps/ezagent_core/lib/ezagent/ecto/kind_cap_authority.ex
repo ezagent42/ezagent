@@ -33,6 +33,25 @@ defmodule Ezagent.Ecto.KindCapAuthority do
   end
 
   @doc false
+  # Take a row-level `FOR SHARE` lock on the URI's CURRENT active generation
+  # WITHIN the caller's open transaction, then return it (`nil` when there is
+  # no active row). `FOR SHARE` (not `FOR KEY SHARE`) is required: `regenesis`
+  # retires the active row with `retire_active/1` — an `UPDATE ... SET active`
+  # that takes a `FOR NO KEY UPDATE` lock, which `FOR KEY SHARE` does NOT
+  # conflict with but `FOR SHARE` does. Holding this lock therefore blocks a
+  # concurrent generation rotation until the caller commits, so a self-license
+  # verified against this generation cannot be silently invalidated between the
+  # verify and the caller's dependent write (#189 PR-2 verify/write race, codex
+  # impl-review finding 1). MUST be called inside a `Repo.transaction/1` — a
+  # `FOR SHARE` outside an explicit transaction is released instantly and locks
+  # nothing.
+  @spec lock_active(String.t()) :: %__MODULE__{} | nil
+  def lock_active(uri) when is_binary(uri) do
+    from(row in __MODULE__, where: row.uri == ^uri and row.active == true, lock: "FOR SHARE")
+    |> Repo.one()
+  end
+
+  @doc false
   @spec active_public(String.t()) ::
           %{generation: pos_integer(), public_key: binary()} | nil
   def active_public(uri) when is_binary(uri) do

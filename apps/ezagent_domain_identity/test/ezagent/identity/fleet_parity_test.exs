@@ -79,6 +79,46 @@ defmodule Ezagent.Identity.FleetParityTest do
     refute_uri_flagged(result, admin)
   end
 
+  test "cap parity catches a signature/key-id divergence with matching logical axes (finding 3)" do
+    user = user_uri("sig-divergence")
+    gen1 = licensed_caps(user, [])
+    # The store mirrors the CURRENT (gen-1) license → active.
+    assert {:ok, :active} = Store.backfill(user, gen1)
+
+    # Rotate the authority and re-mint a CURRENT (gen-2) self-license into the
+    # LEGACY source ONLY — the store keeps the gen-1 license. The two licenses
+    # share the same logical `identity_key` but differ in key_id + signature.
+    assert {:ok, _} = Ezagent.Cap.Authority.regenesis(user, :user)
+    gen2 = licensed_caps(user, [])
+    assert {:ok, _} = Ezagent.Users.create(user, nil, gen2)
+
+    # FAIL-BEFORE: identity_key-only parity treats gen-1 and gen-2 licenses as
+    # equal (same 5-tuple) → no discrepancy (the hole codex named).
+    # PASS-AFTER: the full-signed comparison flags the stale signature/key_id.
+    result = FleetParity.check()
+    assert {:caps_mismatch, URI.to_string(user)} in result.discrepancies
+  end
+
+  test "a license-invalid canonical admin with a STALE active store row is still flagged (finding 3)" do
+    admin = Ezagent.URI.user(:system, :admin)
+    licensed = licensed_caps(admin, [])
+
+    # Give the admin a CURRENT-valid license at BOTH legacy + store (active row).
+    assert :ok = Ezagent.EntityCaps.UserStore.persist(admin, licensed)
+    assert Store.status(admin) == :active
+
+    # Rotate the admin authority: the license is now STALE everywhere, but the
+    # store row is NOT re-mirrored — it stays `active` (a divergence).
+    assert {:ok, _} = Ezagent.Cap.Authority.regenesis(admin, :user)
+    refute Store.has_current_self_license?(licensed, admin)
+    assert Store.status(admin) == :active
+
+    # The admin exemption covers only a fresh-boot EMPTY caps_json — it must NOT
+    # hide a stale ACTIVE store row.
+    result = FleetParity.check()
+    assert {:stale_active, URI.to_string(admin)} in result.discrepancies
+  end
+
   test "incomplete on a partial store, complete after backfilling the whole population" do
     user = user_uri("only-principal")
     caps = licensed_caps(user, [])
