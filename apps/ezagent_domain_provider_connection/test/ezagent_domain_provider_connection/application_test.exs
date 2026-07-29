@@ -54,6 +54,12 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     subjects = :ets.tab2list(Ezagent.CapabilityRegistry.Subjects.table())
     behaviors = :ets.tab2list(Ezagent.BehaviorRegistry.table())
 
+    # Each owner recreates ONLY the table(s) it actually owns (see the
+    # root-cause note on `EzagentCore.EtsOwner.recreate_capability_tables_for_test/0`)
+    # — recreating `BehaviorRegistry`'s table from the wrong owner process
+    # silently reassigns its real ETS ownership and orphans it on the
+    # next genuine `EzagentCore.EtsOwner` crash.
+    :ok = EzagentActor.EtsOwner.recreate_capability_tables_for_test()
     :ok = EzagentCore.EtsOwner.recreate_capability_tables_for_test()
     {:ok, _owner, generation} = EzagentCore.EtsReadiness.subscribe()
     :ok = Ezagent.ProviderConnection.RegistryOwner.await_generation(generation)
@@ -116,6 +122,9 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     refute log =~ "terminating"
     refute log =~ "ArgumentError"
 
+    # Each owner recreates ONLY the table it actually owns — see the
+    # root-cause note on `EzagentCore.EtsOwner.recreate_capability_tables_for_test/0`.
+    :ok = EzagentActor.EtsOwner.recreate_capability_tables_for_test()
     :ok = EzagentCore.EtsOwner.recreate_capability_tables_for_test()
 
     Enum.each(backups, fn {table, rows} ->
@@ -128,6 +137,10 @@ defmodule EzagentDomainProviderConnection.ApplicationTest do
     assert declarations_ready?()
 
     on_exit(fn ->
+      if :ets.whereis(Ezagent.BehaviorRegistry.table()) == :undefined do
+        EzagentActor.EtsOwner.recreate_capability_tables_for_test()
+      end
+
       if :ets.whereis(Ezagent.CapabilityRegistry.Subjects.table()) == :undefined do
         EzagentCore.EtsOwner.recreate_capability_tables_for_test()
       end

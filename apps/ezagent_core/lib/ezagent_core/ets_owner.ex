@@ -179,6 +179,24 @@ defmodule EzagentCore.EtsOwner do
   end
 
   @doc false
+  # Test-only recreation of THIS owner's `Ezagent.CapabilityRegistry.Subjects`
+  # table, run from within this owner's own process so the recreated
+  # table's real ETS ownership stays correctly tied to this GenServer.
+  #
+  # Root-cause note (provider-connection suite-health P0, 2026-07): this
+  # function used to ALSO reach across and recreate
+  # `Ezagent.BehaviorRegistry`'s table — a table owned by
+  # `EzagentActor.EtsOwner`, not this process. Doing that `:ets.new` from
+  # here silently reassigned the table's real owner to THIS process, so a
+  # later genuine crash of `EzagentCore.EtsOwner` destroyed
+  # `BehaviorRegistry`'s table too — permanently, since it isn't in this
+  # module's `@tables` list and would never be recreated on restart. That
+  # deterministically crash-looped `Ezagent.ProviderConnection.RegistryOwner`
+  # (ArgumentError on every reconcile attempt against the missing table)
+  # until the whole domain Application died. Callers that need to
+  # simulate a full capability-table wipe must call BOTH this function
+  # AND `EzagentActor.EtsOwner.recreate_capability_tables_for_test/0` —
+  # each recreates only the table(s) it actually owns.
   def recreate_capability_tables_for_test do
     GenServer.call(__MODULE__, :recreate_capability_tables_for_test)
   end
@@ -186,7 +204,6 @@ defmodule EzagentCore.EtsOwner do
   @impl true
   def handle_call(:recreate_capability_tables_for_test, _from, state) do
     if Mix.env() == :test do
-      recreate_table(Ezagent.BehaviorRegistry.table())
       recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
 
       :ok = EzagentCore.EtsReadiness.ready(self())
