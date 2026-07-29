@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 看板 · 2026-07-29</title>
+<style>
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .late-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--red);border-radius:4px;padding:1px 6px;float:right}
+  .card.late{background:#fff8f8}
+  .sched{font-size:10.5px;color:#64748b;margin:1px 0 5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .sched .cal{filter:grayscale(.2)}
+  .sched.late{color:#b91c1c;font-weight:600}
+  .decomp{font-size:10px;color:#b91c1c;background:#fef2f2;border:1px dashed #fecaca;border-radius:6px;padding:3px 7px;margin:0 0 6px;line-height:1.45}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · 2026-07-29</h1>
+        <div class="north"><b>北极星：</b>agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。</div>
+      </div>
+      <div class="prog"><div class="lab"><span>身份平面 #189 → main 全绿(canary 阻塞根因)</span><span>冷启动自派发 :holder_revoked 根因(ephemeral ExternalMirrorWorker + Session 缺持久 self-license)。PR-1 统一 EntityCaps.Store + dual-write 入 main;写平面(原子 active-transition + backfill + fleet-parity barrier)分支完成;cutover(读翻转 store-authoritative + durable-identity mint + gen-gated 重读 + tombstone-guard)实施中 → 完成后 9 个 holder_revoked 红转绿。</span></div><div class="bar"><i style="width:75%"></i></div><div class="lab" style="margin-top:6px"><span>Group-A URI 通用分享(jjkysy, 正交)</span><span>URI 无关 bearer 分享令牌(#1594) + caps_toward 正向可见性(#1596) + grantees_of 反向索引(#1606) + CompositionConsent 超集(#1597) 四 PR 在飞;按 handoff 修 → 复审 → cc gate+merge。A4/#1611 + share-config/#1612 接续。</span></div><div class="bar b"><i style="width:55%"></i></div><div class="lab" style="margin-top:6px"><span>MFU demo v0.15(ruihua)</span><span>成长树修复包 + 技能/经验框架落地 #1586 已入 main(仅 demo/docs/skill 无 core 改动);landing package(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)继续中。</span></div><div class="bar b"><i style="width:70%"></i></div><div class="lab" style="margin-top:6px"><span>Feishu 绑定修复 B1/B2(gaga)</span><span>permission-neutral binding seed readiness(#1568) + 迁移到正式 UserBinding dispatch(#1547) 两 PR 在飞;待 gaga 推进。</span></div><div class="bar b"><i style="width:40%"></i></div><div class="lab" style="margin-top:6px"><span>C8 v5 use-side Kind-mailbox seal(暂缓)</span><span>spec 收敛 + codex 评审 + 修订完成;DEV 暂缓至 #189 落地。非 EM-authz(那是折入身份平面的独立 G-6 计划)。</span></div><div class="bar b"><i style="width:30%"></i></div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff"><div><b>PR-1 入 main</b><span>#1615 统一 EntityCaps.Store + dual-write(additive), 验证 zero-new-reds —— main bc1b9fb74</span></div><div><b>写平面分支完成</b><span>原子 active-transition(active⇔当前有效 self-license) + backfill + fleet-parity barrier + open(:existed) fail-closed —— fix/189-identity-plane-p2 @ 87e21fc35</span></div></div></div>
+    <div class="src">总效能来源：#189 身份平面是当前唯一在跑的关键整合线 —— 目标把 main full-suite 从 9 个 holder_revoked 系统性红翻到真绿, 从而打通 canary 自动放行(Allen 授权)。分三段 additive-then-cutover 落: PR-1 统一 store + dual-write 已入 main(向后兼容、zero-new-reds);写平面原子 active-transition + backfill + fleet-parity barrier 在分支完成并过 gate.arch;cutover 读翻转 + ephemeral durable-identity mint 实施中, 完成后整包一次 codex 过审、一次合入。其余车道(URI 分享 / MFU demo / Feishu 绑定)与 #189 正交并行, 不进关键路径。</div>
+  </div>
+  <div><div class="deploy"><div><span class="s">canary</span>⏳ 待 #189 cutover 合入 main 全绿后自动放行(Allen 授权)。当前 main=bc1b9fb74(PR-1 已入,写平面在 fix/189-identity-plane-p2 分支)。</div><div><span class="s">beta</span>⏳ 待 canary 通过后推进(deploy 流单独推 pointer,不由 dev-together 合入)。</div><div><span class="s">stable</span>⏳ 待 canary 通过后推进。</div></div></div>
+  <div class="risk"><b>风险：</b>🔴 #189 是 canary 阻塞根因: main full-suite 9 个 holder_revoked 红(冷启动自派发缺持久 self-license)。cutover 合入 + 整包一次 codex 全量过审前, canary 不能自动放行。收口路径: 完整 #189 一次合入 → main 真绿 → 自动放行 canary。<br>🟡 C8/v5 use-side Kind-mailbox seal DEV 暂缓至 #189 落地, 避免与身份平面并发改 use 侧 mailbox/pid 面导致返工。spec 已收敛 + codex 评审 + 修订, 待 #189 合入后启动。<br>🟢 Group-A URI 通用分享正交非阻塞: 需复审通过 + rebase main 后由 cc gate+merge, 不进 #189 关键路径。<br>🟢 MFU demo v0.15 仅 demo/docs/skill、无 core 改动, 风险低; 合入需与 Allen 敲定。</div>
+  <div class="legend">人：<span class="lg"><span class="odot" style="background:#2563eb"></span>Allen 轨道</span> <span class="lg"><span class="odot" style="background:#65a30d"></span>jjkysy</span> <span class="lg"><span class="odot" style="background:#7c3aed"></span>gaga</span> <span class="lg"><span class="odot" style="background:#db2777"></span>ruihua</span>　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    <div class="colwrap"><div class="colhead c-plan">计划 <span class="cnt">1</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">C8 v5 use-side Kind-mailbox seal / pid 纪律</div><div class="g">use 侧 Kind-mailbox 封口 + pid 纪律</div><div class="accm"><span class="d">☑</span> 1/2 验收 · <span style="color:var(--red)">DEV 暂缓至 #189 落地</span></div><div class="meta"><span class="pill pr-draft">feat/v5-use-side-mailbox</span><span class="pill more">详情</span></div><div class="detail" data-title="C8 v5 use-side Kind-mailbox seal / pid 纪律" data-who="Allen 轨道 · v5 use 侧 · 暂缓至 #189 落地" data-acc='[[&quot;done&quot;, &quot;spec 收敛 + codex 对抗评审 + 修订&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;DEV 启动(待 #189 合入后, 避免并发改 use 侧返工)&quot;, &quot;暂缓中&quot;]]' data-review="非 EM-authz —— 那是一条独立、尚未实施的 G-6 计划, 已折入身份平面。本卡是 use 侧 mailbox 封口 + pid 纪律, spec 已收敛 + codex 评审 + 修订。" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-wip">进行中 <span class="cnt">3</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">身份平面切换 #189 → main 全绿</div><div class="g">冷启动自派发 :holder_revoked 根因 → 三段身份平面一次性 cutover → main 真绿 → 自动放行 canary</div><div class="accm"><span class="d">☑</span> 2/4 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="meta"><span class="pill pr-merged">#1615 merged</span><span class="pill pr-draft">fix/189-identity-plane-p2</span><span class="pill more">详情</span></div><div class="detail" data-title="身份平面切换 #189 → main 全绿" data-who="Allen 轨道 · #189 canary 阻塞根因 · 三段身份平面 (additive → 写平面 → cutover)" data-acc='[[&quot;done&quot;, &quot;PR-1 统一 EntityCaps.Store + dual-write(additive, 向后兼容)入 main&quot;, &quot;main bc1b9fb74 / #1615, 验证 zero-new-reds&quot;], [&quot;done&quot;, &quot;写平面: 原子 active-transition(active⇔当前有效 self-license) + backfill + fleet-parity barrier + open(:existed) fail-closed —— 分支完成并验证&quot;, &quot;fix/189-identity-plane-p2 @ 87e21fc35, gate.arch 684/0&quot;], [&quot;todo&quot;, &quot;Cutover: 读翻转到 store-authoritative + ephemeral durable-identity mint + gen-gated 重读 + tombstone-guard → 9 个 holder_revoked 红转绿&quot;, &quot;cutover 实施中&quot;], [&quot;todo&quot;, &quot;完整 #189 一次 codex 过审 → 一次合入 → main 全绿 → 自动放行 canary(Allen 授权)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#7c3aed"><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">Feishu 绑定修复 B1/B2</div><div class="g">绑定 seed readiness + 迁移到正式 UserBinding dispatch</div><div class="accm"><span class="o">☐</span> 0/2 验收 · <span style="color:var(--red)">待 gaga 推进</span></div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="Feishu 绑定修复 B1/B2" data-who="gaga 轨道 · Feishu 绑定 · 待 gaga 推进" data-acc='[[&quot;todo&quot;, &quot;#1568 permission-neutral binding seed readiness (B1)&quot;, &quot;open&quot;], [&quot;todo&quot;, &quot;#1547 迁移 Feishu 绑定到正式 UserBinding dispatch&quot;, &quot;open&quot;]]' data-review="" data-prompt=""></div></div><div class="card" style="--pc:#db2777"><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">MFU demo v0.15 —— 成长树修复 + 技能/经验框架</div><div class="g">成长树修复包 + 技能/经验框架落地; 仅 demo/docs/skill 无 core 改动</div><div class="accm"><span class="d">☑</span> 1/2 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="meta"><span class="pill pr-merged">#1586 merged</span><span class="pill pr-draft">mfu-demo-tree</span><span class="pill more">详情</span></div><div class="detail" data-title="MFU demo v0.15 —— 成长树修复 + 技能/经验框架" data-who="ruihua 轨道 · MFU demo · landing package 继续中" data-acc='[[&quot;done&quot;, &quot;成长树修复包 + 技能/经验框架落地(#1586)&quot;, &quot;#1586 已 squash 入 main; demo/docs/skill 无 core 改动&quot;], [&quot;todo&quot;, &quot;v0.15 landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)&quot;, &quot;&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-rev">待评审 / 验收 <span class="cnt">1</span></div><div class="cell"><div class="card" style="--pc:#65a30d"><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">Group-A URI 通用分享</div><div class="g">URI 无关 bearer 分享令牌 + 通用可见性/consent —— 按 handoff 修 → 复审 → cc gate+merge(正交非阻塞)</div><div class="accm"><span class="o">☐</span> 0/4 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="Group-A URI 通用分享" data-who="jjkysy 轨道 · socialware URI-share · 复审 + gate+merge" data-acc='[[&quot;todo&quot;, &quot;#1594 share-A1: URI 无关 bearer 分享令牌 + 通用 /socialware/claim&quot;, &quot;open, 待复审&quot;], [&quot;todo&quot;, &quot;#1596 share-A2-1: Capability.caps_toward/2 通用正向可见性派生&quot;, &quot;open&quot;], [&quot;todo&quot;, &quot;#1606 share-A2-2: grantees_of 反向索引(cap→行派生只读)&quot;, &quot;open&quot;], [&quot;todo&quot;, &quot;#1597 share-A3: 泛化 CompositionConsent 成 URI-share 宽松超集&quot;, &quot;open&quot;]]' data-review="接续: A4/#1611(删 Mount reconcile 重发 trap, cap-as-truth 实证) + share-config/#1612。修 → 复审 → rebase main → cc gate+merge; 正交不进 #189 关键路径。" data-prompt=""></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-done">完成 · 昨日 07-28 <span class="cnt">4</span></div><div class="cell"><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#189 前置三连 + 身份平面 PR-1 入 main</div><div class="g">把 #189 的三个已确认成因逐个落地, 并为身份平面 cutover 打好 additive 地基</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="#189 前置三连 + 身份平面 PR-1 入 main" data-who="Allen 轨道 · #189 · 全部 squash 入 main" data-acc='[[&quot;done&quot;, &quot;#1604 — #201 成因① credential/flavor adopt-clobber 结构性 defer-writes&quot;, &quot;merged 07-28&quot;], [&quot;done&quot;, &quot;#1599 — 两个 full-suite 时序 flake 转绿(member_cap roster sync + world LiveView mailbox barrier)&quot;, &quot;merged 07-28&quot;], [&quot;done&quot;, &quot;#1610 — node-global-teardown 侵略者拆独立 CI leg(消 ~510 分片级联) + enumerator gate&quot;, &quot;merged 07-28&quot;], [&quot;done&quot;, &quot;#1615 — 身份平面 PR-1: 统一 EntityCaps.Store + dual-write(additive), 全套验证 zero-new-reds&quot;, &quot;merged(跨夜, 今晨 CST 03:07), main bc1b9fb74&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">插件 owner-bypass 债务清零</div><div class="g">枚举出的 plugin owner-bypass 全部烧到 0</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="插件 owner-bypass 债务清零" data-who="Allen 轨道 · CapBAC 债务" data-acc='[[&quot;done&quot;, &quot;#1593 — owner-gated executor + workspace facades, 枚举债务→0&quot;, &quot;merged 07-28&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">socialware-receiver handoff 文档</div><div class="g">typed-message + event-renderer + receiver 地基 handoff + LSP/ACP 协议框架</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="socialware-receiver handoff 文档" data-who="Allen 轨道 · handoff" data-acc='[[&quot;done&quot;, &quot;#1607 + #1609 — socialware-receiver foundation + origin/协议框架 handoff&quot;, &quot;merged 07-28&quot;]]' data-review="" data-prompt=""></div></div><div class="card done" style="--pc:#7c3aed"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">hooks sub-step-gate 修复</div><div class="g">sub-step-gate 应 gate 被提交的 worktree; 测试步骤收窄 ci.fast</div><div class="accm"><span class="d">☑</span> 已验收 · 2/2</div><div class="meta"><span class="pill more">详情</span></div><div class="detail" data-title="hooks sub-step-gate 修复" data-who="gaga 轨道 · dev-loop hooks" data-acc='[[&quot;done&quot;, &quot;#1601 — sub-step-gate 修复(gaga)&quot;, &quot;merged 07-28&quot;], [&quot;done&quot;, &quot;#1603/#1605 — cc 折入 review 修复(git -C 提交目标解析 + pre-push 跳过 deps-missing worktree)&quot;, &quot;merged 07-28&quot;]]' data-review="" data-prompt=""></div></div></div></div>
+  </div>
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\u5f00\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\u590d\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\u5df2\u590d\u5236 \u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+</script>
+</body>
+</html>
