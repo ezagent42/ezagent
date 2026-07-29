@@ -831,6 +831,64 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       :ok = Ezagent.Kind.terminate(agent)
     end
+
+    test "a Store READ ERROR at cold reload REFUSES the boot — never proceeds on the stale slice" do
+      # codex final review: the read path can fail (e.g. an undecodable row)
+      # while the mirror-back `persist/2` still SUCCEEDS (`lock_row` reads
+      # directly, not through the seam-affected `fetch_result/1`) — so a
+      # `:keep`-on-read-error reconcile would deterministically let the stale
+      # snapshot overwrite the authoritative Store. The only fail-closed answer
+      # is to REFUSE the boot until the store is readable again.
+      agent = agent_uri("item1-reload-read-error")
+      keep = issued_cap(agent, :send)
+      added = issued_cap(agent, :publish)
+
+      # 1. Live-create, then graceful stop: marker + snapshot {license, keep} +
+      #    store row are all durable.
+      {:ok, _pid} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [keep]})
+      wait_until_ready(agent)
+      assert Store.status(agent) == :active
+      :ok = Ezagent.Kind.terminate(agent)
+      wait_until(fn -> Ezagent.KindRegistry.lookup(agent) == :error end)
+
+      # 2. The ITEM-1 divergence: the store commits `added`, the snapshot upsert
+      #    is forced to fail → the store is AHEAD of the stale on-disk snapshot.
+      Application.put_env(:ezagent_actor, :p3_forced_snapshot_failure_uris, [URI.to_string(agent)])
+
+      assert {:ok, _} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new([keep, added, self_license(agent)])}}},
+                 kind_type: :agent
+               )
+
+      assert cap_present?(Store.load(agent), added)
+      Application.delete_env(:ezagent_actor, :p3_forced_snapshot_failure_uris)
+
+      # 3. Cold reload under a FORCED STORE READ ERROR (the FIX-2 seam): the
+      #    reconcile cannot read the authoritative set — the boot must REFUSE.
+      read_error_key = agent |> Ezagent.URI.instance() |> URI.to_string()
+      Application.put_env(:ezagent_domain_identity, :p2_forced_read_error_uris, [read_error_key])
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris)
+      end)
+
+      assert {:error, _reason} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent})
+
+      # The authoritative Store was NOT overwritten by the stale snapshot.
+      Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris)
+      assert cap_present?(Store.load(agent), added)
+      assert cap_present?(Store.load(agent), keep)
+
+      # 4. Recovery: with the store readable again the SAME cold reload succeeds
+      #    and reconciles — the committed grant survives on every plane.
+      {:ok, _pid2} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent})
+      wait_until_ready(agent)
+      assert cap_present?(EntityCaps.load(agent), added)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
   end
 
   describe "#189 PR-3 FINAL ITEM 2 (an UNREADABLE epoch REJECTS non-user durable mutations)" do

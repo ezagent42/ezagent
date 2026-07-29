@@ -670,16 +670,23 @@ defmodule Ezagent.EntityCaps.Store do
 
   Returns `{:replace, reconciled_slice}` (the caller swaps the `:identity` slice)
   or `:keep` (do nothing) — the latter pre-epoch or on an unreadable epoch (don't
-  disturb pre-epoch semantics), for a user URI (users reconcile `users.caps_json`
-  via `Identity.activate/2`), on a fresh `:created` boot (the minted slice is
+  disturb pre-epoch semantics; an `:unknown` epoch cannot leak a stale persist
+  because the mirror-back's own `persist/2` is epoch-gated and REJECTS on
+  `:unknown`), for a user URI (users reconcile `users.caps_json` via
+  `Identity.activate/2`), on a fresh `:created` boot (the minted slice is
   authoritative — there is no prior committed mutation to reconcile), when no
-  Store row exists (`:absent` — first creation / un-backfilled), for a slice
-  carrying no caps, or on a Store READ ERROR (`:keep` — the subsequent
-  epoch-gated mirror-back itself fails closed on an unreadable/erroring store, so
-  a transient read error never silently commits a stale slice).
+  Store row exists (`:absent` — first creation / un-backfilled), or for a slice
+  carrying no caps.
+
+  A Store READ ERROR returns `{:error, {:identity_reconcile_unreadable, _}}` —
+  the caller must REFUSE the boot (fail-closed). It must NOT proceed with the
+  stale slice: the read path can fail (e.g. an undecodable row) while
+  `persist/2` still succeeds, so proceeding would deterministically let the
+  stale snapshot overwrite the authoritative Store — exactly the hole this
+  reconcile closes.
   """
   @spec reconcile_cold_load_identity(URI.t() | String.t(), atom(), term()) ::
-          {:replace, term()} | :keep
+          {:replace, term()} | :keep | {:error, {:identity_reconcile_unreadable, term()}}
   def reconcile_cold_load_identity(uri, create_freshness, identity_slice) do
     with :existed <- create_freshness,
          :active <- Ezagent.Identity.Cutover.status(),
@@ -692,16 +699,12 @@ defmodule Ezagent.EntityCaps.Store do
         :absent ->
           :keep
 
-        {:error, _reason} ->
-          :keep
+        {:error, reason} ->
+          {:error, {:identity_reconcile_unreadable, reason}}
       end
     else
       _ -> :keep
     end
-  rescue
-    _ -> :keep
-  catch
-    _, _ -> :keep
   end
 
   # Replace the caps set inside an `:identity` slice, PRESERVING its container
