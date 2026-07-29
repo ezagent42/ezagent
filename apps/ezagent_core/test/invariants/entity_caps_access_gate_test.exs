@@ -18,6 +18,18 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :load, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
+                             # #189 PR-3 FIX 1 — the POST-epoch Store-first user
+                             # path: `read_current_caps/1` READS the current legacy
+                             # `caps` (the fun's input) and `write_caps_json_locked/2`
+                             # PROJECTS the already-authoritative store set back into
+                             # `users.caps_json`. Both are the physical user adapter's
+                             # own seam (parallel to `load/1` + `update_locked/2`);
+                             # neither mints/grants and a projection failure changes no
+                             # authz outcome (reads are store-authoritative post-epoch).
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                              :read_current_caps, 1},
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                              :write_caps_json_locked, 2},
                              # #189 PR-1 — the unified identity-caps store is a NEW
                              # physical cap adapter (parallel to `user_store.ex`) for
                              # the `identity_caps` table. Its raw-cap accessors are the
@@ -45,6 +57,13 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # `cap_issue_chokepoint` assignment count (8 → 7).
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :activate_changes, 2},
+                             # #189 PR-3 FIX 3 — `adopt_absent_authority_history/1`
+                             # writes an EMPTY (`caps_json: "[]"`) `revoked_unprovisioned`
+                             # row for an authority-history URI with no store row. It
+                             # writes NO caps and is strictly absent-only — the adapter's
+                             # own storage seam, no new external reader.
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :adopt_absent_authority_history, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :fetch_durable_caps, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
