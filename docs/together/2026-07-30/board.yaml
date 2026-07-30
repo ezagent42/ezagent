@@ -1,0 +1,438 @@
+# dev-together board.yaml — DISPLAY page for 2026-07-30.
+# Model: board for day N = PLAN(N) + DONE(N-1) + REVIEW(N-1).
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# DONE 列 = 07-29→30 夜车实证(git merges): #1621/#1622/#1623/#1624/#1625/#1626/
+#   #1628/#1629/#1630 + #1597(share-A3) + #1614(Git Provider Plan E), 每 PR 一卡。
+
+date: "2026-07-30"
+prev_date: "07-29"
+as_of: "2026-07-30"
+north_star: "agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "#189 身份平面 → epoch 激活", pct: 85, value: "cutover #1621 已合入(9 个 holder_revoked 红当场转绿) + epoch 激活 runbook #1625 已备; 剩 #1627 pre-epoch boot re-mint(设计分叉待裁) → canary 恢复 → epoch 激活。"}
+  - {label: "main full-suite 真绿", pct: 70, value: "旧红①③④ 已修(#1622/#1628/#1624); 剩红② adopt(#201, #1590 裁决) + 2 个新红(#1625 产 ReleaseTest hermeticity / #1626 产 web assets.build), 修复分支 fix/main-red-releasetest-webassets 在跑。"}
+  - {label: "test-supplement 测试补齐", pct: 60, value: "P0 可跑性(#1626) + P1 adapters 契约(#1629) + P2 world 行为(#1630) 已入 main; P3 分诊已交付(91 个待补测模块), 今日转执行排程。"}
+  - {label: "Group-A URI 通用分享(jjkysy)", pct: 75, value: "#1596(A2-1)/#1597(A3)/#1611(A4-1)/#1612(share-config) 已合入; #1594(A1)/#1606(A2-2) 复审中; #1619(A5 匿名)/#1620(A4-2 roster) design-first 待批。"}
+  - {label: "MFU demo v0.15(ruihua)", pct: 70, value: "#1586 已入 main; landing package 继续 + #1618 协作卡牌阵列教学订单 draft。"}
+
+efficiency:
+  - {value: "66.8h", delta: "↑50", label: "07-29 活跃工时(git下界) · 昨 16.4h"}
+  - {value: "17", delta: "↑3", label: "07-29 merged PR · 昨 14"}
+  - {value: "0.42", delta: "↑0.32", label: "07-29 折算人月(160h) · 昨 0.10"}
+efficiency_source: "07-29 实测 pr_session_hours.py（git-hours 下界 · ~1min 可复算）；'Allen Woods'作者=协调 agent 墙钟非人力；当日产出或次日才合入、此法略低估。"
+
+deploy:
+  - {env: "canary", state: "🔴 hard-down — 存量 DB 带 stale-gen admin self-license, 任何 pre-#1627 镜像启动即 :holder_revoked 崩溃循环; 容器已停止损。恢复 = #1627 合入 → 重部 self-heal → 按 #1625 runbook 激活 epoch。"}
+  - {env: "beta", state: "⏳ 待 canary 恢复 + epoch 激活后推进(deploy 流单独推 pointer)。"}
+  - {env: "stable", state: "⏳ 待 canary 通过后推进。"}
+
+risks:
+  - "🔴 canary hard-down 且被 #1627 gate: 设计分叉(genesis-admin-only re-mint vs 更宽 pre-epoch re-mint)待 Allen 裁决, codex 复审重跑中 —— epoch 激活与整条部署闸都压在此项上。"
+  - "🟡 main full-suite 仍未真绿: 红②(#201 adopt, #1590 与已入 main 的 #1604 关系待裁) + 2 个新红(#1625/#1626 各引入 1 个); 修复分支 fix/main-red-releasetest-webassets 在跑。"
+  - "🟡 07-29 深夜服务器重启丢失未推送工作树(main-red 修复 + #1627 复审中间态), 已按 durable 记录重建重派 —— 教训: 修复类分支尽早 push。"
+  - "🟢 Group-A URI 分享收尾正交非阻塞: #1594/#1606 复审通过 + rebase 后 gate+merge, 不进 #189/main-绿 关键路径。"
+
+people:
+  - {id: "allen", name: "Allen 轨道", track: "main 真绿 + #1627/canary/epoch + 测试补齐", color: "#2563eb"}
+  - {id: "jjkysy", name: "jjkysy", track: "Group-A URI 通用分享收尾(正交)", color: "#65a30d"}
+  - {id: "gaga", name: "gaga", track: "Git Provider loop + Feishu 绑定 B1/B2", color: "#7c3aed"}
+  - {id: "ruihua", name: "ruihua", track: "MFU demo v0.15", color: "#db2777"}
+  - {id: "zyli", name: "zyli", track: "hello 模板 LLM 流恢复", color: "#0891b2"}
+
+# ===== YESTERDAY (07-29, 含跨夜至 07-30 凌晨) done — git 实证, 每 merged PR 一卡 =====
+done_prev:
+  - owner: "allen"
+    title: "#1621 — #189 身份平面 cutover 合入"
+    goal: "durable self-license + store-authoritative 读 → main 的 9 个 holder_revoked 红当场转绿"
+    status: "done"
+    task: "189-identity-cutover"
+    who: "Allen 轨道 · #189 关键整合线 · squash 入 main"
+    pr: {num: 1621, state: "merged"}
+    acceptance:
+      - {text: "cutover 一次 codex 过审 → 一次合入; 9 个 holder_revoked 红转绿; 反复活不变量保持", done: true, evidence: "✓ merged 07-29 19:02, 6888e2541"}
+  - owner: "allen"
+    title: "#1622 — 红①: curl fixture 铸造 authority history"
+    goal: "curl-migration fixture 对齐 #1621 反复活语义 → full-suite 红① 转绿"
+    status: "done"
+    task: "main-fullsuite-burndown"
+    who: "Allen 轨道 · main 真绿 burn-down"
+    pr: {num: 1622, state: "merged"}
+    acceptance:
+      - {text: "fixture 铸造 authority history, 红① fail-before/pass-after", done: true, evidence: "✓ merged 07-29 21:34, b2622e05c"}
+  - owner: "allen"
+    title: "#1623 — retired-Kind 迁移机器删除(curl fold 收尾)"
+    goal: "死代码台账 → 一遍删除 + 全量验证"
+    status: "done"
+    task: "curl-migration-fold"
+    who: "Allen 轨道 · 结构清理"
+    pr: {num: 1623, state: "merged"}
+    acceptance:
+      - {text: "retired-Kind 迁移机器 + 枚举 dead compat 一次成套删除, 无新红", done: true, evidence: "✓ merged 07-29 21:56, d483d2293"}
+  - owner: "allen"
+    title: "#1624 — 红④: core shard 原生 mac 解堵"
+    goal: "credential resolve hang + /proc 探针 gate → full-suite core shard 可跑"
+    status: "done"
+    task: "main-fullsuite-burndown"
+    who: "Allen 轨道 · main 真绿 burn-down"
+    pr: {num: 1624, state: "merged"}
+    acceptance:
+      - {text: "credential resolve 挂死修复 + /proc 探针 gate, 红④ 转绿", done: true, evidence: "✓ merged 07-29 22:41, 9854423e1"}
+  - owner: "allen"
+    title: "#1625 — epoch 激活 runbook(release-runnable)"
+    goal: "canary/prod epoch 激活路径做成 bin/ezagent eval 可复演 runbook"
+    status: "done"
+    task: "189-epoch-activation"
+    who: "Allen 轨道 · #189 生产收尾链"
+    pr: {num: 1625, state: "merged"}
+    acceptance:
+      - {text: "release-runnable cutover runbook 合入(激活步骤可复演)", done: true, evidence: "✓ merged 07-29 23:20, 1b90c204d; 注: 引入 ReleaseTest hermeticity 新红 1 个, 由 burn-down 卡收尾"}
+  - owner: "allen"
+    title: "#1626 — P0: web 测试 fresh env 可跑"
+    goal: "测试跑动与资产构建解耦 → test-supplement 的可跑性地基"
+    status: "done"
+    task: "test-supplement"
+    who: "Allen 轨道 · test-supplement P0"
+    pr: {num: 1626, state: "merged"}
+    acceptance:
+      - {text: "web 测试在 fresh env 直接可跑(与 assets build 解耦)", done: true, evidence: "✓ merged 07-30 00:43, 908767ce1; 注: 引入 ci.shard.web assets.build 新红 1 个, 由 burn-down 卡收尾"}
+  - owner: "allen"
+    title: "#1628 — 红③: provider-connection 套件健康"
+    goal: "registry owner 生命周期 + 环境敏感 + 行为覆盖 → full-suite 红③ 转绿"
+    status: "done"
+    task: "main-fullsuite-burndown"
+    who: "Allen 轨道 · main 真绿 burn-down"
+    pr: {num: 1628, state: "merged"}
+    acceptance:
+      - {text: "registry owner 生命周期修复 + env-sensitivity + 行为覆盖, 红③ 转绿", done: true, evidence: "✓ merged 07-30 01:13, e4dd67039"}
+  - owner: "allen"
+    title: "#1629 — P1: adapters 契约覆盖"
+    goal: "protocol_api + feishu inbound 契约测试"
+    status: "done"
+    task: "test-supplement"
+    who: "Allen 轨道 · test-supplement P1"
+    pr: {num: 1629, state: "merged"}
+    acceptance:
+      - {text: "protocol_api + feishu inbound 契约覆盖落地", done: true, evidence: "✓ merged 07-30 01:28, 2dad70896"}
+  - owner: "allen"
+    title: "#1630 — P2: world 服务端 view-authz 行为覆盖"
+    goal: "server-side view-authz + admin-action 行为测试"
+    status: "done"
+    task: "test-supplement"
+    who: "Allen 轨道 · test-supplement P2"
+    pr: {num: 1630, state: "merged"}
+    acceptance:
+      - {text: "world 服务端 view-authz + admin-action 行为覆盖落地", done: true, evidence: "✓ merged 07-30 01:51, 65522fc03(现 main HEAD)"}
+  - owner: "jjkysy"
+    title: "#1597 — share-A3 CompositionConsent 超集(+同日 A2-1/A4-1/share-config)"
+    goal: "Group-A 四 PR 同日合入: #1596 caps_toward / #1597 consent 超集 / #1611 删 Mount reconcile trap / #1612 share-config"
+    status: "done"
+    task: "group-a-uri-share"
+    who: "jjkysy 轨道 · socialware URI-share"
+    pr: {num: 1597, state: "merged"}
+    acceptance:
+      - {text: "#1597 泛化 CompositionConsent 成 URI-share 宽松超集", done: true, evidence: "✓ merged 07-29 20:39, f04b2362b"}
+      - {text: "#1596 caps_toward 正向可见性 + #1611 cap-as-truth 实证 + #1612 config 收敛", done: true, evidence: "✓ 均 merged 07-29 14:02, 145cbbf11/fb35003cf/f7e99d82f"}
+  - owner: "gaga"
+    title: "#1614 — Git Provider V1 Plan E(P1–P4e)"
+    goal: "本地 provider-owned PR loop 全段落地"
+    status: "done"
+    task: "git-provider-plan-e-1614"
+    who: "gaga 轨道 · Git Provider"
+    pr: {num: 1614, state: "merged"}
+    acceptance:
+      - {text: "Plan E P1–P4e 本地 provider-owned PR loop 合入", done: true, evidence: "✓ merged 07-29 14:11, c4ec7b478"}
+
+# ===== 已交接/已收敛任务出板(渲染 gate: 07-29 板未完成卡须结转, 或在此列明理由) =====
+carryover_resolved:
+  "#1267 活页面连接层缺口调研（standing proposal）": "已交接即关闭 — proposal PR #1267 已关(07-28); 工作经已合入的 #1609(socialware-receiver origin + LSP/ACP 框架) + receiver-foundation handoff(docs/superpowers/handoffs/2026-07-28) 移交, 由 jjkysy 在 socialware-receiver 线接续。按「交接日即关卡」规则出板。"
+  "#1552 签名-token 分享收敛（clarify_first 设计提案）": "已收敛并交接 — 原提案 PR #1552 07-24 撤回(泛化 DownloadToken 前提误判; 正解=点击者当场领 person-bound cap); 设计问题已在 group-a-uri-share 权威裁决(D1 链接模式 / M1 mint 授权 / D2 person-binding+anon / D3 一次性), 实现线经 #1587(owns from here) + #1583 归 jjkysy。残项不丢: kanban.share_board 归宿随 #1474 权宜溶解, message-share 本批不纳入, assistant on-behalf 授权入口另行整理。"
+
+# ===== TODAY (07-30) plan — status ∈ planned|wip|review|blocked =====
+cards:
+  # ---- allen: main 真绿 + #189 生产收尾 + 测试补齐 ----
+  - owner: "allen"
+    title: "main full-suite 真绿 burn-down(残量)"
+    goal: "2 个新红 + 红② adopt 收尾 → 根目录 full-suite 实证全绿"
+    status: "wip"
+    task: "main-fullsuite-burndown"
+    started: "2026-07-29"
+    est_done: "2026-07-30"
+    who: "Allen 轨道 · main 真绿 · fix/main-red-releasetest-webassets(重启后重派)"
+    branch: "fix/main-red-releasetest-webassets"
+    acceptance:
+      - {text: "红①③④ 已修(#1622/#1628/#1624 合入)", done: true, evidence: "见完成列三卡"}
+      - {text: "新红 A: EzagentCore.ReleaseTest:44 FleetParity ambient-fleet hermeticity(#1625 产)修复", done: false}
+      - {text: "新红 B: ci.shard.web mix assets.build exit1(#1626 产)修复", done: false}
+      - {text: "红②: #1590 裁决(与已入 main 的 #1604 关系: rebase 抽独有增量或注明 superseded 关闭)", done: false, evidence: "#1590 现 conflicting"}
+      - {text: "根目录 full-suite 实证全绿(0 failures)", done: false}
+  - owner: "allen"
+    title: "#1627 pre-epoch boot re-mint → canary 恢复 → epoch 激活"
+    goal: "#189 生产收尾链: 设计分叉裁决 → 复审合入 → canary self-heal → 按 #1625 runbook 激活 epoch"
+    status: "review"
+    task: "189-epoch-activation"
+    started: "2026-07-29"
+    est_done: "2026-07-30"
+    who: "Allen 轨道 · #1627 · canary hard-down 止损中 · codex 第二轮打回后重设计"
+    pr: {num: 1627, state: "open"}
+    flag: "canary hard-down · 设计分叉待裁"
+    review_note: "codex 第二轮 DO-NOT-MERGE 后重设计为 genesis-admin-only re-mint; 设计分叉(vs 更宽 pre-epoch re-mint)待 Allen 裁决; 复审因深夜重启中断, 已重跑。canary DB(stale-gen admin license)即天然复现床。"
+    acceptance:
+      - {text: "设计分叉裁决(待 Allen): genesis-admin-only vs 更宽 pre-epoch re-mint", done: false}
+      - {text: "codex 复审通过 → 合入", done: false, evidence: "复审重跑中"}
+      - {text: "canary 重部 self-heal 启动(崩溃循环消失)", done: false}
+      - {text: "epoch 按 #1625 runbook 激活, 激活后 stale-gen 路径 fail-closed", done: false}
+  - owner: "allen"
+    title: "test-supplement P3 执行排程(91 模块)"
+    goal: "P3 分诊清单 → 分批执行计划 + 首批派发"
+    status: "planned"
+    task: "test-supplement"
+    started: "2026-07-30"
+    est_done: "2026-07-30"
+    who: "Allen 轨道 · test-supplement · P0-P2 已入 main"
+    acceptance:
+      - {text: "91 模块按风险×依赖分批(每批≤10 模块≤1 天), 首批派发", done: false}
+  - owner: "allen"
+    title: "追跟 bug: tracker #204 + #205"
+    goal: "#204 Feishu webhook 签名校验(fail-closed) · #205 world 路由死特性处置"
+    status: "planned"
+    task: "followup-bugs-204-205"
+    started: "2026-07-30"
+    est_done: "2026-07-30"
+    who: "Allen 轨道 · 夜车跟进项(tracker 编号非 PR 号)"
+    acceptance:
+      - {text: "#204: 无签名被接受的失败测试 → sig-verify fail-closed → pass-after", done: false}
+      - {text: "#205: 死特性引用点枚举台账 → 一遍删除或裁定保留", done: false}
+  - owner: "allen"
+    title: "＃189 test-defects E/F/D 验证"
+    goal: "验证 E(predicate-A)/F(customer-topology)/D(CLI) 在当前 main 上转绿; A(member_cap sync) 已由 #1599 修复"
+    status: "wip"
+    task: "189-test-defects-efd"
+    started: "2026-07-28"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · #189 test-defects 剩余项 · 待 main 真绿后一并实证"
+    carryover: true
+    flag: "发布闸剩余项"
+    acceptance:
+      - {text: "E(predicate-A layer) 在当前 main 上验证绿", done: false}
+      - {text: "F(customer-concept topology) 在当前 main 上验证绿", done: false}
+      - {text: "CLI(D 隔离) 在当前 main 上验证绿", done: false}
+  # ---- allen: v5/C8 家族(暂缓) + 排程/裁定类结转 ----
+  - owner: "allen"
+    title: "C8 v5 use-side Kind-mailbox seal / pid 纪律"
+    goal: "use 侧 Kind-mailbox 封口 + pid 纪律"
+    status: "planned"
+    task: "c8-mailbox-seal"
+    who: "Allen 轨道 · v5 use 侧 · 暂缓至 main 真绿 + epoch 收尾"
+    branch: "feat/v5-use-side-mailbox"
+    carryover: true
+    flag: "暂缓至 main 真绿"
+    acceptance:
+      - {text: "spec 收敛 + codex 对抗评审 + 修订", done: true}
+      - {text: "DEV 启动(待 main 真绿 + epoch 收尾, 避免并发改 use 侧返工)", done: false, evidence: "暂缓中"}
+  - owner: "allen"
+    title: "★ C8 obtain 侧 — URI-native 寻址（域代码零裸 pid）"
+    goal: "Kind 只经 URI 寻址, 域代码不再获取 raw Kind pid"
+    status: "planned"
+    task: "c8-pid-closure-obtain"
+    started: "2026-07-26"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · feat/v5-pid-closure · 已推送待合(19bfc7761) · v5 family 暂缓至 main 真绿后 cross-track reconcile"
+    branch: "feat/v5-pid-closure"
+    carryover: true
+    flag: "v5 family 暂缓"
+    acceptance:
+      - {text: "A1a/b/c + Chunks 1–4 完成: 域代码 KindRegistry.lookup 烧毁、TargetAuthority 进 scanner framework-verb allowlist、AST 级 enumerator gate 落地", done: true, evidence: "genserver_to_pid=0 · domain-lookup gate=0 · 19bfc7761 已推送"}
+      - {text: "与 use 侧分支 cross-track reconcile 后合入 main", done: false}
+  - owner: "allen"
+    title: "★ C8 收口: A2 census-freeze → cross-track reconcile → 双分支合 main"
+    goal: "关闭 C8, actor-isolation 全链落 main"
+    status: "planned"
+    task: "c8-closeout"
+    started: "2026-07-28"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · 依赖 c8-pid-closure-obtain(obtain 侧) + c8-mailbox-seal(use 侧); 暂缓"
+    carryover: true
+    flag: "结构主线的后半程 · 暂缓"
+    acceptance:
+      - {text: "A2 census-freeze(pid-surface 冻结清点)通过", done: false}
+      - {text: "obtain 侧 × use 侧 cross-track reconcile 完成, feat/v5-pid-closure + feat/v5-use-side-mailbox 两分支合入 main", done: false}
+  - owner: "allen"
+    title: "hello 官网部署迁移(hello-A PR-4)"
+    goal: "去硬编码后的官网迁移落到部署环境(canary→beta→stable)"
+    status: "planned"
+    task: "hello-a-pr4-deploy"
+    started: "2026-07-28"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · 待 canary 恢复(#1627)后执行 · 结转"
+    carryover: true
+    flag: "被 canary hard-down 阻塞"
+    acceptance:
+      - {text: "5 步部署迁移(canary→beta→stable)执行; 前置: 每节点须先有真实非管理员创始人用户 + add_member", done: false}
+  - owner: "allen"
+    title: "#1566 multi-repo split（umbrella → 6 repos）"
+    goal: "actor 抽取完成后的下一步结构排程"
+    status: "planned"
+    task: "multi-repo-split-1566"
+    started: "2026-07-28"
+    est_done: "2026-07-29"
+    who: "Allen 轨道 · #1566 · 排在 actor extraction 之后"
+    pr: {num: 1566, state: "open"}
+    carryover: true
+    acceptance:
+      - {text: "split 计划评审; C8 合入 main 后启动排程", done: false}
+  # ---- jjkysy ----
+  - owner: "jjkysy"
+    title: "Group-A URI 通用分享(收尾)"
+    goal: "已合 4/6(#1596/#1597/#1611/#1612); 收尾 #1594/#1606 复审合入 + #1619/#1620 design-first"
+    status: "review"
+    task: "group-a-uri-share"
+    started: "2026-07-26"
+    est_done: "2026-07-29"
+    who: "jjkysy 轨道 · socialware URI-share · post-#1621 rebase 后合并就绪核查跑动中"
+    carryover: true
+    review_note: "#1594(A1 bearer token)/#1606(A2-2 grantees_of) 复审 + 合并就绪核查在跑; #1619(A5 匿名 link_anon)/#1620(A4-2 :members roster 投影) design-first 待批后再动工。"
+    acceptance:
+      - {text: "#1594 share-A1: URI 无关 bearer 分享令牌 + 通用 /socialware/claim — 复审通过 + gate+merge", done: false, evidence: "open, 核查中"}
+      - {text: "#1606 share-A2-2: grantees_of 反向索引 — 复审通过 + gate+merge", done: false, evidence: "open, 核查中"}
+      - {text: "#1619(A5 匿名) / #1620(A4-2 roster) 设计对齐后批准动工", done: false, evidence: "design-first drafts"}
+  - owner: "jjkysy"
+    title: "#1474 kanban 协作改版二轮"
+    goal: "人本位分享 / tab 恒显 / 分享二期"
+    status: "wip"
+    task: "kanban-rework-1474"
+    started: "2026-07-24"
+    est_done: "2026-07-29"
+    who: "jjkysy 轨道 · #1474 · draft"
+    carryover: true
+    pr: {num: 1474, state: "draft"}
+    acceptance:
+      - {text: "kanban 协作改版二轮(权宜全部溶解对齐读面正路), 推到 mergeable", done: false}
+  - owner: "jjkysy"
+    title: "#1301 dealscout 完整改版"
+    goal: "真组合 socialware / 真页面真数据 / 四旅程"
+    status: "wip"
+    task: "dealscout-1301"
+    started: "2026-07-24"
+    est_done: "2026-07-29"
+    who: "jjkysy 轨道 · #1301 · 推 mergeable"
+    carryover: true
+    pr: {num: 1301, state: "open"}
+    acceptance:
+      - {text: "dealscout 完整改版(五段完整)推到 mergeable", done: false}
+  - owner: "jjkysy"
+    title: "#1376 通用挂载 infra（被 entity-caps 取代 · 保留）"
+    goal: "挂载表 + Mount API + reconcile(契约留用); reconcile 重发 trap 已由 #1611 删除"
+    status: "planned"
+    task: "mount-infra-1376"
+    started: "2026-07-24"
+    est_done: "2026-07-29"
+    who: "jjkysy 轨道 · #1376 · draft(保留)"
+    carryover: true
+    pr: {num: 1376, state: "draft"}
+    acceptance:
+      - {text: "被 entity-caps 去中心化模型取代、转 draft; API/测试/kanban 契约留用(显式保留)", done: false}
+  # ---- gaga ----
+  - owner: "gaga"
+    title: "Feishu 绑定修复 B1/B2"
+    goal: "绑定 seed readiness + 迁移到正式 UserBinding dispatch"
+    status: "wip"
+    task: "feishu-binding-b1b2"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "gaga 轨道 · Feishu 绑定 · 待 gaga 推进"
+    carryover: true
+    flag: "待 gaga 推进"
+    acceptance:
+      - {text: "#1568 permission-neutral binding seed readiness (B1)", done: false, evidence: "open"}
+      - {text: "#1547 迁移 Feishu 绑定到正式 UserBinding dispatch (B2)", done: false, evidence: "open"}
+  - owner: "gaga"
+    title: "#1501 held+pending caps 收敛幂等（rework）"
+    goal: "held + pending caps 合并进 effective view(grant 幂等、fail-closed)"
+    status: "review"
+    task: "caps-consolidation-1501"
+    started: "2026-07-24"
+    est_done: "2026-07-29"
+    who: "gaga 轨道 · #1501 · rework 中"
+    carryover: true
+    pr: {num: 1501, state: "open"}
+    flag: "对抗性评审打回: 补 pending absorb + 幂等 + fail-closed 后重评审"
+    acceptance:
+      - {text: "补齐 effective view 的 pending absorb + 幂等 + fail-closed 缺口, 重评审通过", done: false}
+  - owner: "gaga"
+    title: "#1498 system-closure 方法产品化 + 受控 Mix 执行"
+    goal: "把 system-closure 方法与 guarded Mix execution 产品化(接 #1614 Plan E loop)"
+    status: "wip"
+    task: "system-closure-1498"
+    started: "2026-07-24"
+    est_done: "2026-07-29"
+    who: "gaga 轨道 · #1498 · draft"
+    carryover: true
+    pr: {num: 1498, state: "draft"}
+    acceptance:
+      - {text: "产品化 system-closure 方法 + guarded Mix execution", done: false}
+  # ---- zyli ----
+  - owner: "zyli"
+    title: "#1576 hello 模板 LLM 生成流恢复"
+    goal: "restore template LLM generation flow; rework 后复审重跑中"
+    status: "review"
+    task: "hello-llm-flow-1576"
+    started: "2026-07-27"
+    est_done: "2026-07-29"
+    who: "zyli 轨道 · #1576 · rework 完成(2 blocker: arch gate + 2 红测试) · 复审 + rebase 清洁度核查中"
+    carryover: true
+    pr: {num: 1576, state: "open"}
+    acceptance:
+      - {text: "2 个 blocker(arch gate 违例 + 2 红测试)修复实证 + rebase 当前 main 干净", done: false, evidence: "复审重跑中"}
+      - {text: "复审通过 → gate+merge", done: false}
+  # ---- ruihua ----
+  - owner: "ruihua"
+    title: "MFU demo v0.15 —— 成长树修复 + 技能/经验框架"
+    goal: "landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树) + #1618 卡牌阵列教学订单"
+    status: "wip"
+    task: "mfu-v015"
+    started: "2026-07-29"
+    est_done: "2026-07-29"
+    who: "ruihua 轨道 · MFU demo · #1586 已合, #1618 draft"
+    carryover: true
+    branch: "mfu-demo-tree"
+    pr: {num: 1618, state: "draft"}
+    acceptance:
+      - {text: "成长树修复包 + 技能/经验框架落地(#1586)", done: true, evidence: "#1586 已 squash 入 main; demo/docs/skill 无 core 改动"}
+      - {text: "v0.15 landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)", done: false}
+      - {text: "#1618 协作卡牌阵列首个教学订单 draft 推进", done: false, evidence: "draft"}
+  - owner: "ruihua"
+    title: "#1533 Signature Interaction 原型"
+    goal: "Agent 角色交接 + Session 创建的签名式交互原型"
+    status: "wip"
+    task: "signature-interaction-1533"
+    started: "2026-07-27"
+    est_done: "2026-07-29"
+    who: "瑞华 (ruihua) 轨道 · #1533 · draft"
+    carryover: true
+    pr: {num: 1533, state: "draft"}
+    acceptance:
+      - {text: "Signature Interaction 原型草案定稿", done: false}
+
+# ===== YESTERDAY (07-29) review — bottom 昨日复盘 =====
+review:
+  method_deltas:
+    - "整包一次 cutover 的节奏成立: #189 cutover(#1621) 一次 codex 过审一次合入, 9 个 holder_revoked 红当场转绿 —— additive → 写平面 → cutover 三段式可复用。"
+    - "释放闸自动化: epoch 激活从手工步骤升级为 release-runnable runbook(#1625, bin/ezagent eval), canary/prod 可复演可审计。"
+    - "易失状态教训: 未推送分支与评审中间态在深夜重启中丢失, 恢复全靠 durable 记录(git log / 进度日志 / PR 线) —— 修复类分支应尽早 push, 关键 verdict 落 durable 记录。"
+    - "test-supplement 分层法(P0 可跑性 → P1 契约 → P2 行为 → P3 分诊)一晚推完 P0-P2, 91 模块清单进入排程 —— 分层让『补测试』变成可烧尽的清单而非无边界任务。"
+  incidents:
+    - "canary hard-down: 回滚旧镜像同样 :holder_revoked 崩溃循环(reflow 后 DB 带 stale-gen admin self-license) → 没有任何 pre-#1627 镜像能启动; 已停容器止损, canary DB 反成 #1627 的天然复现床。恢复路径 = #1627 合入 → 重部 self-heal → epoch 激活。"
+    - "07-29 深夜服务器重启: 丢失未推送的 main-red 修复工作树 + #1627 codex 复审 verdict; 均已按 durable 记录重建并重派。"
+    - "#1625/#1626 各引入 1 个 full-suite 新红(ReleaseTest FleetParity hermeticity / ci.shard.web assets.build), 已进入修复(fix/main-red-releasetest-webassets)。"
+  delivery:
+    - {owner: "Allen 轨道", delivered: "9-PR 夜车: #1621 cutover + #1622/#1624/#1628 旧红①④③ + #1623 死机器删除 + #1625 runbook + #1626/#1629/#1630 test-supplement P0-P2", acceptance_result: "✅ 全部合入 main(HEAD 65522fc03)", carryover: "2 新红 + 红② adopt + #1627/canary/epoch + P3 排程"}
+    - {owner: "jjkysy", delivered: "share-A2-1(#1596) · A3(#1597) · A4-1(#1611) · share-config(#1612) 四 PR 合入", acceptance_result: "✅ 合入", carryover: "#1594/#1606 复审 + #1619/#1620 design-first"}
+    - {owner: "gaga", delivered: "Git Provider V1 Plan E(#1614) 本地 provider-owned PR loop", acceptance_result: "✅ 合入", carryover: "Feishu B1/B2 + #1501 rework + #1498"}
+    - {owner: "zyli", delivered: "#1576 rework(arch gate + 2 红测试两 blocker 修复)", acceptance_result: "⏳ 复审重跑中", carryover: "复审通过后 gate+merge"}
+    - {owner: "ruihua", delivered: "#1618 协作卡牌阵列教学订单 draft", acceptance_result: "⏳ draft", carryover: "v0.15 landing package 继续"}
+  next_day:
+    - "main 真绿三件套: 修 2 新红(fix/main-red-releasetest-webassets) + 裁决红② #1590 → 根目录 full-suite 实证全绿。"
+    - "#1627 设计分叉裁决(Allen) → codex 复审 → 合入 → canary 重部 self-heal → 按 #1625 runbook 激活 epoch。"
+    - "Group-A 收尾: #1594/#1606 合并就绪核查 → gate+merge; #1619/#1620 设计对齐。"
+    - "test-supplement P3(91 模块)转执行排程; 追跟 bug 立项 tracker #204(Feishu webhook 签名校验) + #205(world 路由死特性)。"

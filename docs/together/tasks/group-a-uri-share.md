@@ -3,8 +3,8 @@
 - **id**: `group-a-uri-share`
 - **owner**: jjkysy
 - **status**: review
-- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —
-- **关联**: PR #1594/#1596/#1606/#1597(open) · codex: FIX-NEEDED(见 handoff 附录 findings)
+- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —（07-30 未完 = 已滑期, 不顺延估期）
+- **关联**: merged: #1596(A2-1) · #1597(A3) · #1611(A4-1) · #1612(share-config) — 07-29 合入; open 复审中: #1594(A1) · #1606(A2-2) — post-#1621 rebase 后合并就绪核查跑动中; design-first drafts: #1619(A5 匿名) · #1620(A4-2 roster)
 
 codex adversarial review of the 4 merged PRs (#1594 A1 / #1596 A2-1 / #1606 A2-2 / #1597 A3) =
 **FIX-NEEDED, merge blocked.** Compile + compose are clean; the blockers are Cap-security. Fix

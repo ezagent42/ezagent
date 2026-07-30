@@ -2,9 +2,9 @@
 
 - **id**: `189-identity-cutover`
 - **owner**: Allen 轨道(cc 协调)
-- **status**: wip
-- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual —
-- **关联**: PR #1615(PR-1, merged bc1b9fb74) · branch fix/189-identity-plane-p2 @ 写平面 87e21fc35 · codex: PR-1 六轮 MERGE-OK+SOUND; PR-2 写平面 impl FIX-NEEDED→已修; 整包一次 codex 待 cutover 完
+- **status**: done
+- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual 2026-07-29
+- **关联**: PR #1615(PR-1, merged bc1b9fb74) · **PR #1621(cutover, merged 07-29 19:02, 6888e2541 — 9 个 holder_revoked 红→绿)** · codex: PR-1 六轮 MERGE-OK+SOUND; 整包 cutover 一次过审一次合入 · 生产收尾(epoch 激活)接续于 `189-epoch-activation`
 
 - **branch**: `fix/189-identity-plane-p2`（基于 main `bc1b9fb74` = PR-1 已入 + 写平面 `87e21fc35`）
 - **依赖**: 写平面已完成并验证（原子 active-transition 闸 / backfill / fleet-parity barrier / open(:existed) fail-closed，Allen 已确认 A：门保持）

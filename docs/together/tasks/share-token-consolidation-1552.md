@@ -1,10 +1,14 @@
 # #1552 签名-token 分享收敛（clarify_first 设计提案）
 
 - **id**: `share-token-consolidation-1552`
-- **owner**: Allen 轨道（设计）→ jjkysy（实现，待确认后）
-- **status**: planned
-- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual —
-- **关联**: #1552
+- **owner**: Allen 轨道（设计）→ jjkysy（实现线已交接：#1587 owns from here + #1583 接续）
+- **status**: done（已收敛并交接，07-30 出板）
+- **历史**: started 2026-07-28 · est_done 2026-07-29 · actual 2026-07-30（追认收敛）
+- **关联**: PR #1552(closed 07-24, 提案撤回) · 收敛去向: group-a-uri-share 权威设计裁决
+  (D1 链接模式 / M1 mint 授权 / D2 person-binding+anon / D3 一次性) · 实现线 #1587(open,
+  owns from here) + #1583(draft, "#1552 的完整化(接续)")
+- **残项（不丢）**: kanban.share_board 归宿随 #1474 权宜溶解 · message-share 本批不纳入 ·
+  assistant on-behalf 授权入口另行整理（#1552 撤回评论言明）
 
 ## 目标
 `DownloadToken` 从 uploads-only 泛化到任意 target URI，消掉 kanban 侧平行造的分享实现

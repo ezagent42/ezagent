@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 看板 · 2026-07-30</title>
+<style>
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .late-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--red);border-radius:4px;padding:1px 6px;float:right}
+  .card.late{background:#fff8f8}
+  .sched{font-size:10.5px;color:#64748b;margin:1px 0 5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .sched .cal{filter:grayscale(.2)}
+  .sched.late{color:#b91c1c;font-weight:600}
+  .decomp{font-size:10px;color:#b91c1c;background:#fef2f2;border:1px dashed #fecaca;border-radius:6px;padding:3px 7px;margin:0 0 6px;line-height:1.45}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · 2026-07-30</h1>
+        <div class="north"><b>北极星：</b>agent 开发自举 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。</div>
+      </div>
+      <div class="prog"><div class="lab"><span>#189 身份平面 → epoch 激活</span><span>cutover #1621 已合入(9 个 holder_revoked 红当场转绿) + epoch 激活 runbook #1625 已备; 剩 #1627 pre-epoch boot re-mint(设计分叉待裁) → canary 恢复 → epoch 激活。</span></div><div class="bar"><i style="width:85%"></i></div><div class="lab" style="margin-top:6px"><span>main full-suite 真绿</span><span>旧红①③④ 已修(#1622/#1628/#1624); 剩红② adopt(#201, #1590 裁决) + 2 个新红(#1625 产 ReleaseTest hermeticity / #1626 产 web assets.build), 修复分支 fix/main-red-releasetest-webassets 在跑。</span></div><div class="bar b"><i style="width:70%"></i></div><div class="lab" style="margin-top:6px"><span>test-supplement 测试补齐</span><span>P0 可跑性(#1626) + P1 adapters 契约(#1629) + P2 world 行为(#1630) 已入 main; P3 分诊已交付(91 个待补测模块), 今日转执行排程。</span></div><div class="bar b"><i style="width:60%"></i></div><div class="lab" style="margin-top:6px"><span>Group-A URI 通用分享(jjkysy)</span><span>#1596(A2-1)/#1597(A3)/#1611(A4-1)/#1612(share-config) 已合入; #1594(A1)/#1606(A2-2) 复审中; #1619(A5 匿名)/#1620(A4-2 roster) design-first 待批。</span></div><div class="bar b"><i style="width:75%"></i></div><div class="lab" style="margin-top:6px"><span>MFU demo v0.15(ruihua)</span><span>#1586 已入 main; landing package 继续 + #1618 协作卡牌阵列教学订单 draft。</span></div><div class="bar b"><i style="width:70%"></i></div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff"><div><b>66.8h<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑50</span></b><span>07-29 活跃工时(git下界) · 昨 16.4h</span></div><div><b>17<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑3</span></b><span>07-29 merged PR · 昨 14</span></div><div><b>0.42<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑0.32</span></b><span>07-29 折算人月(160h) · 昨 0.10</span></div></div></div>
+    <div class="src">总效能来源：07-29 实测 pr_session_hours.py（git-hours 下界 · ~1min 可复算）；&#x27;Allen Woods&#x27;作者=协调 agent 墙钟非人力；当日产出或次日才合入、此法略低估。</div>
+  </div>
+  <div><div class="deploy"><div><span class="s">canary</span>🔴 hard-down — 存量 DB 带 stale-gen admin self-license, 任何 pre-#1627 镜像启动即 :holder_revoked 崩溃循环; 容器已停止损。恢复 = #1627 合入 → 重部 self-heal → 按 #1625 runbook 激活 epoch。</div><div><span class="s">beta</span>⏳ 待 canary 恢复 + epoch 激活后推进(deploy 流单独推 pointer)。</div><div><span class="s">stable</span>⏳ 待 canary 通过后推进。</div></div></div>
+  <div class="risk"><b>风险：</b>🔴 canary hard-down 且被 #1627 gate: 设计分叉(genesis-admin-only re-mint vs 更宽 pre-epoch re-mint)待 Allen 裁决, codex 复审重跑中 —— epoch 激活与整条部署闸都压在此项上。<br>🟡 main full-suite 仍未真绿: 红②(#201 adopt, #1590 与已入 main 的 #1604 关系待裁) + 2 个新红(#1625/#1626 各引入 1 个); 修复分支 fix/main-red-releasetest-webassets 在跑。<br>🟡 07-29 深夜服务器重启丢失未推送工作树(main-red 修复 + #1627 复审中间态), 已按 durable 记录重建重派 —— 教训: 修复类分支尽早 push。<br>🟢 Group-A URI 分享收尾正交非阻塞: #1594/#1606 复审通过 + rebase 后 gate+merge, 不进 #189/main-绿 关键路径。</div>
+  <div class="legend">人：<span class="lg"><span class="odot" style="background:#2563eb"></span>Allen 轨道</span> <span class="lg"><span class="odot" style="background:#65a30d"></span>jjkysy</span> <span class="lg"><span class="odot" style="background:#7c3aed"></span>gaga</span> <span class="lg"><span class="odot" style="background:#db2777"></span>ruihua</span> <span class="lg"><span class="odot" style="background:#0891b2"></span>zyli</span>　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    <div class="colwrap"><div class="colhead c-plan">计划 <span class="cnt">8</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">test-supplement P3 执行排程(91 模块)</div><div class="g">P3 分诊清单 → 分批执行计划 + 首批派发</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-30 → 2026-07-30</div><div class="meta"><span class="pill dep">task:test-supplement</span><span class="pill more">详情</span></div><div class="detail" data-title="test-supplement P3 执行排程(91 模块)" data-who="Allen 轨道 · test-supplement · P0-P2 已入 main" data-acc='[[&quot;todo&quot;, &quot;91 模块按风险×依赖分批(每批≤10 模块≤1 天), 首批派发&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; test-supplement P3 执行排程。输入 = P3 分诊交付物(91 个待补测模块清单)。产出 =
+&gt; 分批执行计划 + 首批派发:
+&gt;
+&gt; (1) 按「风险 × 依赖」排序: 授权/身份/cap 面优先, 其次 adapters/world 面, 纯工具尾批;
+&gt; 每批 ≤ 10 模块、≤ 1 天。
+&gt; (2) 每批的验收 = 该批模块的行为测试落地(非行覆盖凑数)、根目录跑全量无新红;
+&gt; 并行派发时各 agent 用 MIX_TEST_PARTITION 隔离测试库。
+&gt; (3) 清单是 enumerator gate 的产物 —— 完成一批就在清单上勾一批, 清单烧到 0 才算
+&gt; P3 done; 不许「挑软柿子」跳过难模块, 难的显式标 blocked + 原因。"></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">追跟 bug: tracker #204 + #205</div><div class="g">#204 Feishu webhook 签名校验(fail-closed) · #205 world 路由死特性处置</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-30 → 2026-07-30</div><div class="meta"><span class="pill dep">task:followup-bugs-204-205</span><span class="pill more">详情</span></div><div class="detail" data-title="追跟 bug: tracker #204 + #205" data-who="Allen 轨道 · 夜车跟进项(tracker 编号非 PR 号)" data-acc='[[&quot;todo&quot;, &quot;#204: 无签名被接受的失败测试 → sig-verify fail-closed → pass-after&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#205: 死特性引用点枚举台账 → 一遍删除或裁定保留&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; 两个 tracker bug, 各自独立、可并行:
+&gt;
+&gt; (#204) Feishu webhook sig-verify: 先写失败测试证明当前 inbound webhook 不验签即处理;
+&gt; 然后在 adapter 入口补签名校验, fail-closed(验签失败 4xx 拒收, 不落 pipeline)。校验密钥
+&gt; 走既有凭证面, 不新增 env 旁路。注意 #1629 刚给 feishu inbound 加了契约测试 —— 在其上
+&gt; 扩展, 不平行造面。
+&gt;
+&gt; (#205) world 路由死特性: grep 全仓枚举该路由/特性的所有引用(含前端调用、文档、
+&gt; invariant allowlist), 记台账; 确认无活流量语义后一遍删除 + 根目录全量测试; 若发现
+&gt; 仍有消费方, 转「保留 + 收敛」并把结论写回 tracker。"></div></div><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">C8 v5 use-side Kind-mailbox seal / pid 纪律</div><div class="g">use 侧 Kind-mailbox 封口 + pid 纪律</div><div class="accm"><span class="d">☑</span> 1/2 验收 · <span style="color:var(--red)">暂缓至 main 真绿</span></div><div class="meta"><span class="pill pr-draft">feat/v5-use-side-mailbox</span><span class="pill carry">结转昨日</span><span class="pill dep">task:c8-mailbox-seal</span><span class="pill more">详情</span></div><div class="detail" data-title="C8 v5 use-side Kind-mailbox seal / pid 纪律" data-who="Allen 轨道 · v5 use 侧 · 暂缓至 main 真绿 + epoch 收尾" data-acc='[[&quot;done&quot;, &quot;spec 收敛 + codex 对抗评审 + 修订&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;DEV 启动(待 main 真绿 + epoch 收尾, 避免并发改 use 侧返工)&quot;, &quot;暂缓中&quot;]]' data-review="" data-prompt="完整 dev spec（含 codex 评审两 blocker + 修订 + 合并计划）见
+`scratchpad/spec-C8-v5-use-side-mailbox-seal.md`（#189 落地后随 dispatch 附全文）。"></div></div><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ C8 obtain 侧 — URI-native 寻址（域代码零裸 pid）</div><div class="g">Kind 只经 URI 寻址, 域代码不再获取 raw Kind pid</div><div class="accm"><span class="d">☑</span> 1/2 验收 · <span style="color:var(--red)">v5 family 暂缓</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-26 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">feat/v5-pid-closure</span><span class="pill carry">结转昨日</span><span class="pill dep">task:c8-pid-closure-obtain</span><span class="pill more">详情</span></div><div class="detail" data-title="★ C8 obtain 侧 — URI-native 寻址（域代码零裸 pid）" data-who="Allen 轨道 · feat/v5-pid-closure · 已推送待合(19bfc7761) · v5 family 暂缓至 main 真绿后 cross-track reconcile" data-acc='[[&quot;done&quot;, &quot;A1a/b/c + Chunks 1–4 完成: 域代码 KindRegistry.lookup 烧毁、TargetAuthority 进 scanner framework-verb allowlist、AST 级 enumerator gate 落地&quot;, &quot;genserver_to_pid=0 · domain-lookup gate=0 · 19bfc7761 已推送&quot;], [&quot;todo&quot;, &quot;与 use 侧分支 cross-track reconcile 后合入 main&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; C8 obtain-side pid-closure：域代码 (apps/ezagent_domain 及各 socialware/kanban 插件) 里
+&gt; 任何直接持有/传递 Kind 的原始 pid（GenServer/`Process` handle）都必须消灭，改为只经
+&gt; URI（`kind://...`）寻址，由 `KindRegistry`/`TargetAuthority` 在边界处一次性解析。
+&gt;
+&gt; SCOPE：
+&gt; 1. **A1a/b/c** — 枚举域代码里所有 `KindRegistry.lookup/1`（或等价直接拿 pid 的调用）的
+&gt;    调用点；域代码本体一律烧毁改走 URI 寻址；仅框架层（scanner 已 allowlist 的
+&gt;    `TargetAuthority` verb 集合）保留裸 pid 特权。
+&gt; 2. **Chunks 1–4** — 按子系统分批清（数量以枚举结果为准，不预设具体文件名）。
+&gt; 3. **AST 级 enumerator gate** — 新增/复用静态扫描 gate，把「域代码裸 pid」变成可复算的
+&gt;    数字闸值：`genserver_to_pid` 调用计数 = 0，`domain-lookup` gate = 0。gate 必须能在
+&gt;    CI 里跑（非人工巡检）。
+&gt;
+&gt; DONE 判定：两个闸值都=0，且 AST gate 已提交进静态检查套件（不是本地脚本）。
+&gt;
+&gt; 完成后 **不要**单独合 main——与 use 侧 `feat/v5-use-side-mailbox`（task `c8-mailbox-seal`）
+&gt; 做 cross-track reconcile（同期都改 Kind 寻址/写路，需要对账合并顺序），再走 `c8-closeout`
+&gt; 任务的 A2 census-freeze 一并收口。"></div></div><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">★ C8 收口: A2 census-freeze → cross-track reconcile → 双分支合 main</div><div class="g">关闭 C8, actor-isolation 全链落 main</div><div class="accm"><span class="o">☐</span> 0/2 验收 · <span style="color:var(--red)">结构主线的后半程 · 暂缓</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-28 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:c8-closeout</span><span class="pill more">详情</span></div><div class="detail" data-title="★ C8 收口: A2 census-freeze → cross-track reconcile → 双分支合 main" data-who="Allen 轨道 · 依赖 c8-pid-closure-obtain(obtain 侧) + c8-mailbox-seal(use 侧); 暂缓" data-acc='[[&quot;todo&quot;, &quot;A2 census-freeze(pid-surface 冻结清点)通过&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;obtain 侧 × use 侧 cross-track reconcile 完成, feat/v5-pid-closure + feat/v5-use-side-mailbox 两分支合入 main&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; C8 收口是 actor-isolation（C0–C8 全链）结构主线的最后一步，**暂缓至 #189 身份平面
+&gt; cutover 落 main 之后启动**（避免两条线并发改 use 侧 mailbox/pid 面互相返工——07-28 板
+&gt; 的教训是 C8 use 侧曾被误判为「EM-authz」而与 #189 纠缠，已在 `c8-mailbox-seal` 卡订正
+&gt; 为纯 mailbox 封口）。
+&gt;
+&gt; #189 落地后，SCOPE：
+&gt; 1. **A2 census-freeze** — 对整个域代码跑一次 pid-surface 冻结清点：枚举所有仍然
+&gt;    持有/传递 Kind 原始 pid 的调用点，确认除了 `TargetAuthority` 的 framework-verb
+&gt;    allowlist 之外没有遗漏。这是「收口前最后一次全量核对」，不是增量检查。
+&gt; 2. **cross-track reconcile** — `feat/v5-pid-closure`（obtain 侧，URI-native 寻址）与
+&gt;    `feat/v5-use-side-mailbox`（use 侧，sealed mailbox）在 07-26～07-27 期间同期改了
+&gt;    Kind 寻址/写路相关代码；rebase 到彼时最新 main 后，人工对账两分支改动是否有语义
+&gt;    冲突（不是 git 冲突，是设计层面：obtain 侧收窄了寻址方式，use 侧收窄了写入方式，
+&gt;    两者组合后行为要仍然自洽）。
+&gt; 3. **合并** — 对账通过后，确定合并顺序（哪个分支先 rebase 到含另一个分支改动的 main），
+&gt;    两分支依次合入。
+&gt;
+&gt; DONE 判定：合入后 main 上 `mix gate.arch` 0 failures，`mix ezagent.uri_query.scan`
+&gt; 0 violations，且这两个闸值本身已经是「域代码零裸 pid」的可复算证明。"></div></div><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">hello 官网部署迁移(hello-A PR-4)</div><div class="g">去硬编码后的官网迁移落到部署环境(canary→beta→stable)</div><div class="accm"><span class="o">☐</span> 0/1 验收 · <span style="color:var(--red)">被 canary hard-down 阻塞</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-28 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:hello-a-pr4-deploy</span><span class="pill more">详情</span></div><div class="detail" data-title="hello 官网部署迁移(hello-A PR-4)" data-who="Allen 轨道 · 待 canary 恢复(#1627)后执行 · 结转" data-acc='[[&quot;todo&quot;, &quot;5 步部署迁移(canary→beta→stable)执行; 前置: 每节点须先有真实非管理员创始人用户 + add_member&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; hello 官网（去硬编码后，即 hello-A PR-1~3 已完成的产出）的部署迁移，走标准
+&gt; canary→beta→stable 五步流程（deploy 流维护在独立仓库，见
+&gt; `docs/agent-orchestration.md` 里对 deploy 拆分的说明；具体步骤参照该仓库的
+&gt; 部署 runbook，不在本任务重复）。
+&gt;
+&gt; **硬前置**：本任务**被 #189 阻塞**——canary 环境当前 HELD，要等 `189-identity-cutover`
+&gt; 完成、main full-suite 真绿、canary 自动放行之后才能执行部署。不要在 #189 解阻前尝试
+&gt; 手动绕过部署闸。
+&gt;
+&gt; 部署验收标准是**功能验收**而非「进程起来了」：每个环境（canary/beta/stable）都要
+&gt; 先用 `bin/ezagent rpc` 之类的正式写入路径创建一个真实的非管理员创始人用户并
+&gt; `add_member`，再用这个真实用户走一遍 hello 官网核心路径，确认去硬编码后的内容
+&gt; 正确渲染、无残留写死数据。不要用 admin 账号代替真实用户做验收（admin 视角会掩盖
+&gt; 权限相关的硬编码残留）。"></div></div><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1566 multi-repo split（umbrella → 6 repos）</div><div class="g">actor 抽取完成后的下一步结构排程</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-28 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-open">#1566 open</span><span class="pill carry">结转昨日</span><span class="pill dep">task:multi-repo-split-1566</span><span class="pill more">详情</span></div><div class="detail" data-title="#1566 multi-repo split（umbrella → 6 repos）" data-who="Allen 轨道 · #1566 · 排在 actor extraction 之后" data-acc='[[&quot;todo&quot;, &quot;split 计划评审; C8 合入 main 后启动排程&quot;, &quot;&quot;]]' data-review="" data-prompt="无正式 handoff prompt——本任务在 07-28 前已开工，prompt 回溯待补；范围以本文件目标/验收为准"></div></div><div class="card late" style="--pc:#65a30d"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">#1376 通用挂载 infra（被 entity-caps 取代 · 保留）</div><div class="g">挂载表 + Mount API + reconcile(契约留用); reconcile 重发 trap 已由 #1611 删除</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-24 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">#1376 draft</span><span class="pill carry">结转昨日</span><span class="pill dep">task:mount-infra-1376</span><span class="pill more">详情</span></div><div class="detail" data-title="#1376 通用挂载 infra（被 entity-caps 取代 · 保留）" data-who="jjkysy 轨道 · #1376 · draft(保留)" data-acc='[[&quot;todo&quot;, &quot;被 entity-caps 去中心化模型取代、转 draft; API/测试/kanban 契约留用(显式保留)&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; 本任务**已被 entity-caps 去中心化权限模型取代**——不是要继续主动开发这套通用挂载
+&gt; infra（挂载表 + Mount API + reconcile）本体。
+&gt;
+&gt; SCOPE 仅限「保留」，不是「推进」：
+&gt; 1. 确认 PR #1376 保持 draft 状态（不合入 main 作为正式实现）。
+&gt; 2. 其中已经写出的 API 签名、测试用例、kanban 契约（下游代码对这套挂载 infra 的调用
+&gt;    约定）**显式保留**，不删除、不因为「被取代」就清理掉——因为下游 kanban 代码目前
+&gt;    还在依赖这些契约，entity-caps 模型接管后需要一个平滑过渡，契约留用是过渡期的
+&gt;    安全网。
+&gt; 3. 如果 entity-caps 模型的推进过程中发现契约本身有过时/冲突之处，标注出来但不要
+&gt;    单方面改契约——升级路径由 entity-caps 主线（Allen 轨道）统筹。
+&gt;
+&gt; 换句话说：本卡是「维护性保留」而非「继续构建」，做的是确认+标注，不是新功能开发。"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-wip">进行中 <span class="cnt">8</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">main full-suite 真绿 burn-down(残量)</div><div class="g">2 个新红 + 红② adopt 收尾 → 根目录 full-suite 实证全绿</div><div class="accm"><span class="d">☑</span> 1/5 验收</div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-30</div><div class="meta"><span class="pill pr-draft">fix/main-red-releasetest-webassets</span><span class="pill dep">task:main-fullsuite-burndown</span><span class="pill more">详情</span></div><div class="detail" data-title="main full-suite 真绿 burn-down(残量)" data-who="Allen 轨道 · main 真绿 · fix/main-red-releasetest-webassets(重启后重派)" data-acc='[[&quot;done&quot;, &quot;红①③④ 已修(#1622/#1628/#1624 合入)&quot;, &quot;见完成列三卡&quot;], [&quot;todo&quot;, &quot;新红 A: EzagentCore.ReleaseTest:44 FleetParity ambient-fleet hermeticity(#1625 产)修复&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;新红 B: ci.shard.web mix assets.build exit1(#1626 产)修复&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;红②: #1590 裁决(与已入 main 的 #1604 关系: rebase 抽独有增量或注明 superseded 关闭)&quot;, &quot;#1590 现 conflicting&quot;], [&quot;todo&quot;, &quot;根目录 full-suite 实证全绿(0 failures)&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; main full-suite 真绿 burn-down 残量。分支 `fix/main-red-releasetest-webassets`(从 main
+&gt; 65522fc03 起)。两个新红各修各的、各带 fail-before/pass-after 证据:
+&gt;
+&gt; (A) `EzagentCore.ReleaseTest:44` — #1625 的 release-runnable cutover runbook 引入
+&gt; FleetParity ambient-fleet 依赖, 测试在隔离环境无 ambient fleet 时红。修 hermeticity:
+&gt; 测试注入自己的 fleet 视图, 不读 ambient 状态(environment-shape isolation, 冷注入)。
+&gt; 不许改产品语义迁就测试。
+&gt;
+&gt; (B) `ci.shard.web` 里 `mix assets.build` exit 1 — #1626 把测试跑动与资产构建解耦后,
+&gt; web shard 的构建步骤在 fresh env 缺前置。修 shard 定义/前置链, 使 fresh checkout 直接
+&gt; `mix ci.shard.web` 绿。
+&gt;
+&gt; (C) 红②: 对比 #1590 与已入 main 的 #1604(同为 #201/#189-成因① 结构性 defer-writes),
+&gt; 枚举 #1590 独有增量; 有则 rebase 抽干净重开, 无则评论 superseded by #1604 并关闭。
+&gt;
+&gt; 完成后在根目录跑 full-suite(完整文件路径、不 cd 进 app), gate on EXIT=0 且 grep
+&gt; &quot;0 failures&quot;; `mix gate.arch` 基线不回退。"></div></div><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">＃189 test-defects E/F/D 验证</div><div class="g">验证 E(predicate-A)/F(customer-topology)/D(CLI) 在当前 main 上转绿; A(member_cap sync) 已由 #1599 修复</div><div class="accm"><span class="o">☐</span> 0/3 验收 · <span style="color:var(--red)">发布闸剩余项</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-28 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:189-test-defects-efd</span><span class="pill more">详情</span></div><div class="detail" data-title="＃189 test-defects E/F/D 验证" data-who="Allen 轨道 · #189 test-defects 剩余项 · 待 main 真绿后一并实证" data-acc='[[&quot;todo&quot;, &quot;E(predicate-A layer) 在当前 main 上验证绿&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;F(customer-concept topology) 在当前 main 上验证绿&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;CLI(D 隔离) 在当前 main 上验证绿&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; #189 test-defects 剩余三项验证（A 已被 #1599/#1610 覆盖，不在本卡范围）。在当前 main
+&gt; （含 #1604/#1599/#1610/#1615）上跑 full-suite，定位以下三类是否仍红：
+&gt; 1. **E — predicate-A layer**：07-28 板标注为排查中，未见独立 PR 落地；先确认是否
+&gt;    已被身份平面 PR-1/写平面的 additive 改动顺带修复（dual-write 期间 predicate
+&gt;    判定可能已经改变），fail-before/pass-after 各跑一次隔离验证。
+&gt; 2. **F — customer-concept topology**：同上，先隔离复现红，再定位是结构性缺陷还是
+&gt;    fixture/测试拓扑问题。
+&gt; 3. **CLI(D) 隔离**：确认 CLI 相关测试是否已从主套件正确隔离（07-27 板标注为「隔离」
+&gt;    而非「修复」，含义是防串扰，不是消红——需要先确认隔离是否已落地）。
+&gt;
+&gt; 若三项在当前 main 上已经绿（因为身份平面改动顺带修了 predicate/topology 相关代码），
+&gt; 本卡收敛为「验证 + 记录」，不需要新 PR；若仍红，按 systematic-debugging 流程
+&gt; reproduce-first 定位根因，开小 PR 修复，回到 `189-identity-cutover` 的「无新增红」
+&gt; 验收线勾选证据。"></div></div><div class="card late" style="--pc:#65a30d"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">#1474 kanban 协作改版二轮</div><div class="g">人本位分享 / tab 恒显 / 分享二期</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-24 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">#1474 draft</span><span class="pill carry">结转昨日</span><span class="pill dep">task:kanban-rework-1474</span><span class="pill more">详情</span></div><div class="detail" data-title="#1474 kanban 协作改版二轮" data-who="jjkysy 轨道 · #1474 · draft" data-acc='[[&quot;todo&quot;, &quot;kanban 协作改版二轮(权宜全部溶解对齐读面正路), 推到 mergeable&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; kanban 协作改版二轮，三个具名交付点：
+&gt; 1. **人本位分享** — 分享逻辑从「按 board/资源」转成「按人」为中心建模（谁能看到什么
+&gt;    由接收人身份决定，而不是资源上挂一份静态分享列表）。
+&gt; 2. **tab 恒显** — 协作相关的 tab/入口在 UI 里保持常驻可见（不是条件渲染消失）。
+&gt; 3. **分享二期** — 一期分享机制的续作，具体范围以 PR #1474 现有 diff + 一期实现为准。
+&gt;
+&gt; 核心要求是**「权宜全部溶解对齐读面正路」**：现有实现里为了赶一期进度打的临时补丁/
+&gt; 权宜实现，二轮要全部消解掉，改成和正式读面（world/socialware 统一读模型）对齐的
+&gt; 正路实现，不能留权宜代码转正。
+&gt;
+&gt; 推到 mergeable：CI（precommit + check_invariants）green、rebase 到最新 main。
+&gt; 具体实现细节以 PR #1474 的既有 diff 和 review 意见为准（本文件不重复该 PR 里的
+&gt; 代码级讨论）。"></div></div><div class="card late" style="--pc:#65a30d"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">#1301 dealscout 完整改版</div><div class="g">真组合 socialware / 真页面真数据 / 四旅程</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-24 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-open">#1301 open</span><span class="pill carry">结转昨日</span><span class="pill dep">task:dealscout-1301</span><span class="pill more">详情</span></div><div class="detail" data-title="#1301 dealscout 完整改版" data-who="jjkysy 轨道 · #1301 · 推 mergeable" data-acc='[[&quot;todo&quot;, &quot;dealscout 完整改版(五段完整)推到 mergeable&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; dealscout 完整改版，三个具名交付轴：
+&gt; 1. **真组合 socialware** — dealscout 页面真正组合既有 socialware 能力（不是独立
+&gt;    重造一套并行实现），复用统一的 composition/caps 机制。
+&gt; 2. **真页面真数据** — 去掉 mock/占位数据，接入真实数据源和真实页面渲染路径。
+&gt; 3. **四旅程** — 覆盖 dealscout 场景下的四条用户旅程（具体旅程定义以 PR #1301 现有
+&gt;    diff/设计记录为准，本文件不重复枚举）。
+&gt;
+&gt; 验收标注为「五段完整」——指改版拆成五个阶段/模块，全部完成才算数，不是部分完成
+&gt; 就能标 mergeable。推到 mergeable 前确认 CI green + rebase 到最新 main + 五段
+&gt; 各自都有可核实的证据（不是自称完成）。具体实现细节以 PR #1301 的既有 diff 和
+&gt; review 意见为准。"></div></div><div class="card late" style="--pc:#7c3aed"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">Feishu 绑定修复 B1/B2</div><div class="g">绑定 seed readiness + 迁移到正式 UserBinding dispatch</div><div class="accm"><span class="o">☐</span> 0/2 验收 · <span style="color:var(--red)">待 gaga 推进</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:feishu-binding-b1b2</span><span class="pill more">详情</span></div><div class="detail" data-title="Feishu 绑定修复 B1/B2" data-who="gaga 轨道 · Feishu 绑定 · 待 gaga 推进" data-acc='[[&quot;todo&quot;, &quot;#1568 permission-neutral binding seed readiness (B1)&quot;, &quot;open&quot;], [&quot;todo&quot;, &quot;#1547 迁移 Feishu 绑定到正式 UserBinding dispatch (B2)&quot;, &quot;open&quot;]]' data-review="" data-prompt="无 cc 派发 prompt——gaga 自有轨道；实现方向以两 PR 的 review 意见为准。阻塞时在群里 @cc。"></div></div><div class="card late" style="--pc:#7c3aed"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">#1498 system-closure 方法产品化 + 受控 Mix 执行</div><div class="g">把 system-closure 方法与 guarded Mix execution 产品化(接 #1614 Plan E loop)</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-24 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">#1498 draft</span><span class="pill carry">结转昨日</span><span class="pill dep">task:system-closure-1498</span><span class="pill more">详情</span></div><div class="detail" data-title="#1498 system-closure 方法产品化 + 受控 Mix 执行" data-who="gaga 轨道 · #1498 · draft" data-acc='[[&quot;todo&quot;, &quot;产品化 system-closure 方法 + guarded Mix execution&quot;, &quot;&quot;]]' data-review="" data-prompt="无正式 handoff prompt——本任务在 07-28 前已开工，prompt 回溯待补；范围以本文件目标/验收为准"></div></div><div class="card late" style="--pc:#db2777"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">MFU demo v0.15 —— 成长树修复 + 技能/经验框架</div><div class="g">landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树) + #1618 卡牌阵列教学订单</div><div class="accm"><span class="d">☑</span> 1/3 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-29 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">#1618 draft</span><span class="pill pr-draft">mfu-demo-tree</span><span class="pill carry">结转昨日</span><span class="pill dep">task:mfu-v015</span><span class="pill more">详情</span></div><div class="detail" data-title="MFU demo v0.15 —— 成长树修复 + 技能/经验框架" data-who="ruihua 轨道 · MFU demo · #1586 已合, #1618 draft" data-acc='[[&quot;done&quot;, &quot;成长树修复包 + 技能/经验框架落地(#1586)&quot;, &quot;#1586 已 squash 入 main; demo/docs/skill 无 core 改动&quot;], [&quot;todo&quot;, &quot;v0.15 landing package 继续(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#1618 协作卡牌阵列首个教学订单 draft 推进&quot;, &quot;draft&quot;]]' data-review="" data-prompt="无 cc 派发 prompt——ruihua 自有轨道；范围以其 PR #1586 正文「接下来在本分支继续」+ living doc 为准。
+纯 demo/docs/skill、无 core 改动 → 合入走绿色通道（CI 绿即合，无需 codex Cap 审）。"></div></div><div class="card late" style="--pc:#db2777"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">#1533 Signature Interaction 原型</div><div class="g">Agent 角色交接 + Session 创建的签名式交互原型</div><div class="accm"><span class="o">☐</span> 0/1 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-27 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">#1533 draft</span><span class="pill carry">结转昨日</span><span class="pill dep">task:signature-interaction-1533</span><span class="pill more">详情</span></div><div class="detail" data-title="#1533 Signature Interaction 原型" data-who="瑞华 (ruihua) 轨道 · #1533 · draft" data-acc='[[&quot;todo&quot;, &quot;Signature Interaction 原型草案定稿&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; Signature Interaction 原型草案：为两类场景设计「签名式」交互模式（用户对一个动作
+&gt; 显式签署/确认，而不是隐式发生）——
+&gt; 1. **Agent 角色交接**——一个 agent 把当前角色/职责交给另一个 agent 或人时，交接
+&gt;    动作需要一个明确的签署步骤（谁交、交给谁、交接什么范围）。
+&gt; 2. **Session 创建**——新建 session 时的签名式确认交互（对齐当前 CapBAC/entity-caps
+&gt;    体系里「谁能创建什么」需要显式授权轨迹，而不是静默创建）。
+&gt;
+&gt; 产出是**设计原型草案**（产品/交互设计输入，不是代码实现）——参照现有 MFU demo
+&gt; （`mfu-demo/doc/tree/skill-tree.md`）的原型产出方式：可点击的静态原型或线框图 +
+&gt; 交互流程说明。草案定稿后交给 Allen/相关实现方评估是否/何时落地为代码。"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-rev">待评审 / 验收 <span class="cnt">4</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1627 pre-epoch boot re-mint → canary 恢复 → epoch 激活</div><div class="g">#189 生产收尾链: 设计分叉裁决 → 复审合入 → canary self-heal → 按 #1625 runbook 激活 epoch</div><div class="accm"><span class="o">☐</span> 0/4 验收 · <span style="color:var(--red)">canary hard-down · 设计分叉待裁</span></div><div class="sched"><span class="cal">🗓</span>2026-07-29 → 2026-07-30</div><div class="meta"><span class="pill pr-open">#1627 open</span><span class="pill dep">task:189-epoch-activation</span><span class="pill more">详情</span></div><div class="detail" data-title="#1627 pre-epoch boot re-mint → canary 恢复 → epoch 激活" data-who="Allen 轨道 · #1627 · canary hard-down 止损中 · codex 第二轮打回后重设计" data-acc='[[&quot;todo&quot;, &quot;设计分叉裁决(待 Allen): genesis-admin-only vs 更宽 pre-epoch re-mint&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;codex 复审通过 → 合入&quot;, &quot;复审重跑中&quot;], [&quot;todo&quot;, &quot;canary 重部 self-heal 启动(崩溃循环消失)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;epoch 按 #1625 runbook 激活, 激活后 stale-gen 路径 fail-closed&quot;, &quot;&quot;]]' data-review="codex 第二轮 DO-NOT-MERGE 后重设计为 genesis-admin-only re-mint; 设计分叉(vs 更宽 pre-epoch re-mint)待 Allen 裁决; 复审因深夜重启中断, 已重跑。canary DB(stale-gen admin license)即天然复现床。" data-prompt="&gt; #189 生产收尾链, 按序推进、每步有闸:
+&gt;
+&gt; (1) #1627 `fix/pre-epoch-boot-remint`: 只允许 **pre-epoch**(epoch 未激活)且
+&gt; **genesis-admin** 的 self-license 在 gen-reboot 后 re-mint; epoch 激活后此路径必须
+&gt; 死(fail-closed), 反复活不变量(revoked/tombstoned 重启后仍 denied)不许打洞。设计分叉
+&gt; (genesis-admin-only vs 更宽)是 Allen 的裁决点 —— 出双方案对比即可, 不擅自定。
+&gt; codex 复审必须过, 第二轮 DO-NOT-MERGE 的每条 finding 有回应。
+&gt;
+&gt; (2) canary 恢复: #1627 合入后重部 canary(容器现已停), 观察 boot self-heal; 不许
+&gt; 对 canary DB 做破坏性迁移或手工改行 —— canary DB 是 #1627 的复现床, 修复必须以
+&gt; 代码路径自愈证明。
+&gt;
+&gt; (3) epoch 激活: 严格按 #1625 runbook(`bin/ezagent eval` 包装)执行, 激活前确认
+&gt; fleet-parity barrier(写静默)前置满足; 激活后跑冒烟 + 验证 stale-gen 路径已死。"></div></div><div class="card late" style="--pc:#65a30d"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">Group-A URI 通用分享(收尾)</div><div class="g">已合 4/6(#1596/#1597/#1611/#1612); 收尾 #1594/#1606 复审合入 + #1619/#1620 design-first</div><div class="accm"><span class="o">☐</span> 0/3 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-26 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:group-a-uri-share</span><span class="pill more">详情</span></div><div class="detail" data-title="Group-A URI 通用分享(收尾)" data-who="jjkysy 轨道 · socialware URI-share · post-#1621 rebase 后合并就绪核查跑动中" data-acc='[[&quot;todo&quot;, &quot;#1594 share-A1: URI 无关 bearer 分享令牌 + 通用 /socialware/claim — 复审通过 + gate+merge&quot;, &quot;open, 核查中&quot;], [&quot;todo&quot;, &quot;#1606 share-A2-2: grantees_of 反向索引 — 复审通过 + gate+merge&quot;, &quot;open, 核查中&quot;], [&quot;todo&quot;, &quot;#1619(A5 匿名) / #1620(A4-2 roster) 设计对齐后批准动工&quot;, &quot;design-first drafts&quot;]]' data-review="#1594(A1 bearer token)/#1606(A2-2 grantees_of) 复审 + 合并就绪核查在跑; #1619(A5 匿名 link_anon)/#1620(A4-2 :members roster 投影) design-first 待批后再动工。" data-prompt="# Handoff → jjkysy: Group A (URI-share) — codex FIX-NEEDED, fixes + Allen decisions
+
+- **id**: `group-a-uri-share`
+- **owner**: jjkysy
+- **status**: review
+- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —（07-30 未完 = 已滑期, 不顺延估期）
+- **关联**: merged: #1596(A2-1) · #1597(A3) · #1611(A4-1) · #1612(share-config) — 07-29 合入; open 复审中: #1594(A1) · #1606(A2-2) — post-#1621 rebase 后合并就绪核查跑动中; design-first drafts: #1619(A5 匿名) · #1620(A4-2 roster)
+
+codex adversarial review of the 4 merged PRs (#1594 A1 / #1596 A2-1 / #1606 A2-2 / #1597 A3) =
+**FIX-NEEDED, merge blocked.** Compile + compose are clean; the blockers are Cap-security. Fix
+the must-fixes + apply Allen&#x27;s design decisions, then it goes back to codex → cc gates + merges.
+
+**The core problem:** the signed share token authenticates grant *intent* but not *who
+authorized it*. Claim then resolves the target owner and mints the token&#x27;s declared actions — so
+a valid server-signed token can grant authority its creator never held.
+
+## Allen&#x27;s design decisions (authoritative)
+
+- **D1** A1 (share-token → claim → mint) IS the *pre-authorized-link* mode, a peer of A3
+  (request → owner-approval). The link mode is made safe by **M1**: the token MUST carry an
+  issuer identity and mint MUST verify the issuer held the delegable authority (granter ≡
+  data_owner). This is a required fix, not optional.
+- **D2** **anon claim = unified with user claim; NO separate implementation.** An anon visitor is
+  first materialized as a read-only anon entity (`Users.create_read_only`, cookie-bound — the
+  existing socialware anon mechanism), then claim proceeds identically to a logged-in user. Move
+  `/socialware/claim` off the `RequireEntity`-only path onto one that materializes an anon entity
+  first; add a per-share &quot;allow anon claim?&quot; policy flag (business declares it — platform only
+  provides the mechanism). anon IS in scope for this batch.
+- **D3** Reusable-link vs one-shot is your call. If one-shot, add a JTI/redemption state (there
+  is none today; every verify immediately mints).
+
+## MUST-FIX (block merge)
+
+- **M1 [CRITICAL · A1] Bind + verify issuer authority.** `ShareToken.mint_link!/4` is a pure
+  signer (issuer-authz only a comment); the token carries no issuer field
+  (`share_token.ex:56-92`). `Share.claim/2` passes declared actions straight to `mint_cap/4`
+  (`share.ex:42-46`), which uses the resolved target owner as BOTH `target_owner` and
+  `configurer` → same-owner branch, consent bypassed (`composition_caps.ex:140-171`, `:296-315`);
+  `TargetAuthority.ensure/2` even lets admin mint grant-authority to that owner
+  (`target_authority.ex:20-46`). Add an issuer to the signed payload; verify at mint that the
+  issuer held the delegable (behavior, actions) authority on the target.
+- **M2 [CRITICAL · A1] Mint is not URI-kind-agnostic.** Claim hardcodes `kind: :agent`
+  (`composition_caps.ex:140-152`); runtime matches all five axes incl. kind (`match.ex:7-38`), so
+  session:// / resource:// tokens verify but produce non-authorizing caps. Derive `kind` from the
+  target URI; run the target-conformance validation the generic path has
+  (`composition_caps.ex:206-218`) on the claim path.
+- **M3 [HIGH · A3] Approval is unauthenticated / stale / unbound.** `request/3` records the
+  arbitrary `grantee` arg as source owner+approver with no authenticated requester
+  (`composition_consent.ex:174-201`). `decide/4` checks the actor against the request-time owner,
+  not the target&#x27;s *current* owner (`:240-259`). Approval identity is only `(target, grantee)` —
+  store behavior + actions too (`:168-178`, `:234-238`) so one approval can&#x27;t cover broader
+  authority than intended.
+- **M4 [HIGH · A3] Migration has no shape invariant.** `20260728000000_...:25-48` drops both
+  `binding_id` constraints + adds nullable columns with no exactly-one-shape CHECK; changesets/
+  commands require neither shape. Add a DB CHECK (binding XOR uri-share) + changeset validation.
+
+## HARDENING (fix or explicitly defer with a note)
+
+- **H1 [HIGH · A2-2]** `grantees_of` is not the promised non-bypassable single-funnel projection:
+  reindex is best-effort/​swallows failures (`grantee_index.ex:50-78`), commits before user-cap
+  persist (`identity.ex:761-772`), and alternate writers bypass it (recipe reconcile
+  `identity.ex:645-665`, legacy revoke `:729-751`). (The security-critical current-generation
+  revocation FILTER is correct ✓.) Route all writers through the funnel, or document the
+  eventual-consistency + a reconcile.
+- **H2 [MEDIUM · A2-2]** `grantees_of(target, behavior)` has no caller/workspace authorization
+  (`grantee_index.ex:89-108`) → any in-VM caller who knows a target URI enumerates its grantees.
+  Add caller authorization.
+- **H3 [MEDIUM · A2-1]** `caps_toward/2` filters only behavior+instance, no signature/current-
+  generation verification (`visibility.ex:29-35`), while dispatch verifies against current
+  authority (`authorize.ex:44-67`). A revoked cap stays &quot;visible&quot; forward while `grantees_of`
+  correctly hides it. Align forward visibility with current-gen verification.
+
+## Per-PR map
+- **#1594 (A1)**: M1, M2, D1, D2, D3.
+- **#1596 (A2-1)**: H3.
+- **#1606 (A2-2)**: H1, H2.
+- **#1597 (A3)**: M3, M4.
+
+Re-run codex after the fixes; cc gates + merges on a clean pass. Full original findings + line
+cites are on #1583 and each PR&#x27;s comment thread."></div></div><div class="card late" style="--pc:#7c3aed"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">#1501 held+pending caps 收敛幂等（rework）</div><div class="g">held + pending caps 合并进 effective view(grant 幂等、fail-closed)</div><div class="accm"><span class="o">☐</span> 0/1 验收 · <span style="color:var(--red)">对抗性评审打回: 补 pending absorb + 幂等 + fail-closed 后重评审</span></div><div class="sched late"><span class="cal">🗓</span>2026-07-24 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-open">#1501 open</span><span class="pill carry">结转昨日</span><span class="pill dep">task:caps-consolidation-1501</span><span class="pill more">详情</span></div><div class="detail" data-title="#1501 held+pending caps 收敛幂等（rework）" data-who="gaga 轨道 · #1501 · rework 中" data-acc='[[&quot;todo&quot;, &quot;补齐 effective view 的 pending absorb + 幂等 + fail-closed 缺口, 重评审通过&quot;, &quot;&quot;]]' data-review="" data-prompt="&gt; #1501 held+pending caps 收敛幂等——对抗性评审已经打回一轮，具体缺口是：effective
+&gt; view（cap 持有者最终看到的「我实际有效的权限集合」）目前只正确合并了 held caps，
+&gt; 没有把 pending（已 grant 但还没被 absorb 进 held 状态的）caps 一并纳入合并逻辑，
+&gt; 导致 effective view 可能少算或状态不一致。
+&gt;
+&gt; SCOPE：
+&gt; 1. **pending absorb** — effective view 计算路径要同时读 held + pending 两个来源，
+&gt;    合并成一个统一视图，而不是只认 held。
+&gt; 2. **幂等** — 对同一 target 重复调用 grant（比如网络重试、UI 重复点击）不能产生
+&gt;    重复的 pending/held 记录，也不能因为重复调用而改变最终 effective 状态。
+&gt; 3. **fail-closed** — absorb 路径（pending → held 的转移）如果失败或遇到异常状态，
+&gt;    默认结果必须是「该 cap 不生效」，不能默认放行（对齐 authz 结构化正确性的团队
+&gt;    共识：错误路径必须让 ActionSet 无法构造，而不是靠事后检查）。
+&gt;
+&gt; 修完后重新过对抗性评审（codex），通过后由 cc gate + merge。具体的评审打回意见
+&gt; 以 PR #1501 的评论线为准（本文件是任务追踪摘要，不是评审记录本身）。"></div></div><div class="card late" style="--pc:#0891b2"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#0891b2"></span>zyli</div><div class="t">#1576 hello 模板 LLM 生成流恢复</div><div class="g">restore template LLM generation flow; rework 后复审重跑中</div><div class="accm"><span class="o">☐</span> 0/2 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-27 → 2026-07-29</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-open">#1576 open</span><span class="pill carry">结转昨日</span><span class="pill dep">task:hello-llm-flow-1576</span><span class="pill more">详情</span></div><div class="detail" data-title="#1576 hello 模板 LLM 生成流恢复" data-who="zyli 轨道 · #1576 · rework 完成(2 blocker: arch gate + 2 红测试) · 复审 + rebase 清洁度核查中" data-acc='[[&quot;todo&quot;, &quot;2 个 blocker(arch gate 违例 + 2 红测试)修复实证 + rebase 当前 main 干净&quot;, &quot;复审重跑中&quot;], [&quot;todo&quot;, &quot;复审通过 → gate+merge&quot;, &quot;&quot;]]' data-review="" data-prompt="无正式 handoff prompt——本任务在 07-28 前已开工，prompt 回溯待补；范围以本文件目标/验收为准"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-done">完成 · 昨日 07-29 <span class="cnt">11</span></div><div class="cell"><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1621 — #189 身份平面 cutover 合入</div><div class="g">durable self-license + store-authoritative 读 → main 的 9 个 holder_revoked 红当场转绿</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1621 merged</span><span class="pill dep">task:189-identity-cutover</span><span class="pill more">详情</span></div><div class="detail" data-title="#1621 — #189 身份平面 cutover 合入" data-who="Allen 轨道 · #189 关键整合线 · squash 入 main" data-acc='[[&quot;done&quot;, &quot;cutover 一次 codex 过审 → 一次合入; 9 个 holder_revoked 红转绿; 反复活不变量保持&quot;, &quot;✓ merged 07-29 19:02, 6888e2541&quot;]]' data-review="" data-prompt="&gt; The FINAL step of the #189 identity-plane fix: the CUTOVER that makes the 9 `holder_revoked`
+&gt; reds go GREEN. Work on `fix/189-identity-plane-p2` (write-plane foundation done:
+&gt; `Store` guarded active-transition = active ⇔ current-valid `:self_license` verified fresh via
+&gt; `Authority.verify_against_current` under a FOR SHARE authority-generation lock, in-txn;
+&gt; `fleet_parity` bidirectional barrier; `authenticated_holders` closed classification;
+&gt; `open(:existed)` empty-history fail-closed — Allen confirmed SAFE as-is, do NOT change).
+&gt;
+&gt; SCOPE: (1) **Read-flip** — the principal-axis cap read (`EntityCaps.load_persisted/1` /
+&gt; whatever `Cap.Authorize.principal_current?` consults via `read_held_caps`) consults
+&gt; `Store.fetch_durable_caps/1` as AUTHORITATIVE, legacy fallback ONLY for an absent row
+&gt; (a present non-active row is authoritative-empty, never falls back); gen-gated.
+&gt; (2) **Ephemeral durable-identity (THE substantive fix)** — the ephemeral worker/Session mint
+&gt; their self-license into the durable store ONCE on genuine first creation (`:created`, no prior
+&gt; durable row); at restart the durable store row itself is the ever-created signal →
+&gt; `create_freshness` = `:existed` → `open(:existed)` reads durable authority + the durable
+&gt; self-license → self-dispatch passes. A `tombstoned`/revoked row ⇒ stays denied (NOT re-minted).
+&gt; (3) gen-gated re-read + tombstone-guard.
+&gt;
+&gt; HARD ANTI-RESURRECTION INVARIANT: a revoked (regenesis&#x27;d) or tombstoned worker/session MUST
+&gt; stay denied across restart — restart ≠ re-creation. Add a regression proving it.
+&gt; Fleet-parity barrier = the documented prod-cutover precondition (write-quiescence)。
+&gt; Gates: `mix gate.arch`（684 基线）+ `mix ezagent.uri_query.scan` 本地过；allowlist/baseline
+&gt; 变更须带 justification；umbrella 测试从根目录以 `/test` 子路径跑。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1622 — 红①: curl fixture 铸造 authority history</div><div class="g">curl-migration fixture 对齐 #1621 反复活语义 → full-suite 红① 转绿</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1622 merged</span><span class="pill dep">task:main-fullsuite-burndown</span><span class="pill more">详情</span></div><div class="detail" data-title="#1622 — 红①: curl fixture 铸造 authority history" data-who="Allen 轨道 · main 真绿 burn-down" data-acc='[[&quot;done&quot;, &quot;fixture 铸造 authority history, 红① fail-before/pass-after&quot;, &quot;✓ merged 07-29 21:34, b2622e05c&quot;]]' data-review="" data-prompt="&gt; main full-suite 真绿 burn-down 残量。分支 `fix/main-red-releasetest-webassets`(从 main
+&gt; 65522fc03 起)。两个新红各修各的、各带 fail-before/pass-after 证据:
+&gt;
+&gt; (A) `EzagentCore.ReleaseTest:44` — #1625 的 release-runnable cutover runbook 引入
+&gt; FleetParity ambient-fleet 依赖, 测试在隔离环境无 ambient fleet 时红。修 hermeticity:
+&gt; 测试注入自己的 fleet 视图, 不读 ambient 状态(environment-shape isolation, 冷注入)。
+&gt; 不许改产品语义迁就测试。
+&gt;
+&gt; (B) `ci.shard.web` 里 `mix assets.build` exit 1 — #1626 把测试跑动与资产构建解耦后,
+&gt; web shard 的构建步骤在 fresh env 缺前置。修 shard 定义/前置链, 使 fresh checkout 直接
+&gt; `mix ci.shard.web` 绿。
+&gt;
+&gt; (C) 红②: 对比 #1590 与已入 main 的 #1604(同为 #201/#189-成因① 结构性 defer-writes),
+&gt; 枚举 #1590 独有增量; 有则 rebase 抽干净重开, 无则评论 superseded by #1604 并关闭。
+&gt;
+&gt; 完成后在根目录跑 full-suite(完整文件路径、不 cd 进 app), gate on EXIT=0 且 grep
+&gt; &quot;0 failures&quot;; `mix gate.arch` 基线不回退。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1623 — retired-Kind 迁移机器删除(curl fold 收尾)</div><div class="g">死代码台账 → 一遍删除 + 全量验证</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1623 merged</span><span class="pill dep">task:curl-migration-fold</span><span class="pill more">详情</span></div><div class="detail" data-title="#1623 — retired-Kind 迁移机器删除(curl fold 收尾)" data-who="Allen 轨道 · 结构清理" data-acc='[[&quot;done&quot;, &quot;retired-Kind 迁移机器 + 枚举 dead compat 一次成套删除, 无新红&quot;, &quot;✓ merged 07-29 21:56, d483d2293&quot;]]' data-review="" data-prompt="07-29 派发, 实际内容摘要:
+
+&gt; curl fold 已完成、#1622 已把迁移 fixture 对齐 #1621 的 authority-history 语义。现在
+&gt; 删掉 retired-Kind 迁移机器: 先枚举(grep 全仓所有引用点, 含脚本/文档/gate allowlist),
+&gt; 记台账; 然后一遍删除 + 全量测试。删除类改动必须一次成套(delete+test in ONE pass),
+&gt; 不做「注释掉先留着」。gate/invariant allowlist 若引用被删符号, 同 PR 内清理并给
+&gt; justification。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1624 — 红④: core shard 原生 mac 解堵</div><div class="g">credential resolve hang + /proc 探针 gate → full-suite core shard 可跑</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1624 merged</span><span class="pill dep">task:main-fullsuite-burndown</span><span class="pill more">详情</span></div><div class="detail" data-title="#1624 — 红④: core shard 原生 mac 解堵" data-who="Allen 轨道 · main 真绿 burn-down" data-acc='[[&quot;done&quot;, &quot;credential resolve 挂死修复 + /proc 探针 gate, 红④ 转绿&quot;, &quot;✓ merged 07-29 22:41, 9854423e1&quot;]]' data-review="" data-prompt="&gt; main full-suite 真绿 burn-down 残量。分支 `fix/main-red-releasetest-webassets`(从 main
+&gt; 65522fc03 起)。两个新红各修各的、各带 fail-before/pass-after 证据:
+&gt;
+&gt; (A) `EzagentCore.ReleaseTest:44` — #1625 的 release-runnable cutover runbook 引入
+&gt; FleetParity ambient-fleet 依赖, 测试在隔离环境无 ambient fleet 时红。修 hermeticity:
+&gt; 测试注入自己的 fleet 视图, 不读 ambient 状态(environment-shape isolation, 冷注入)。
+&gt; 不许改产品语义迁就测试。
+&gt;
+&gt; (B) `ci.shard.web` 里 `mix assets.build` exit 1 — #1626 把测试跑动与资产构建解耦后,
+&gt; web shard 的构建步骤在 fresh env 缺前置。修 shard 定义/前置链, 使 fresh checkout 直接
+&gt; `mix ci.shard.web` 绿。
+&gt;
+&gt; (C) 红②: 对比 #1590 与已入 main 的 #1604(同为 #201/#189-成因① 结构性 defer-writes),
+&gt; 枚举 #1590 独有增量; 有则 rebase 抽干净重开, 无则评论 superseded by #1604 并关闭。
+&gt;
+&gt; 完成后在根目录跑 full-suite(完整文件路径、不 cd 进 app), gate on EXIT=0 且 grep
+&gt; &quot;0 failures&quot;; `mix gate.arch` 基线不回退。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1625 — epoch 激活 runbook(release-runnable)</div><div class="g">canary/prod epoch 激活路径做成 bin/ezagent eval 可复演 runbook</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1625 merged</span><span class="pill dep">task:189-epoch-activation</span><span class="pill more">详情</span></div><div class="detail" data-title="#1625 — epoch 激活 runbook(release-runnable)" data-who="Allen 轨道 · #189 生产收尾链" data-acc='[[&quot;done&quot;, &quot;release-runnable cutover runbook 合入(激活步骤可复演)&quot;, &quot;✓ merged 07-29 23:20, 1b90c204d; 注: 引入 ReleaseTest hermeticity 新红 1 个, 由 burn-down 卡收尾&quot;]]' data-review="" data-prompt="&gt; #189 生产收尾链, 按序推进、每步有闸:
+&gt;
+&gt; (1) #1627 `fix/pre-epoch-boot-remint`: 只允许 **pre-epoch**(epoch 未激活)且
+&gt; **genesis-admin** 的 self-license 在 gen-reboot 后 re-mint; epoch 激活后此路径必须
+&gt; 死(fail-closed), 反复活不变量(revoked/tombstoned 重启后仍 denied)不许打洞。设计分叉
+&gt; (genesis-admin-only vs 更宽)是 Allen 的裁决点 —— 出双方案对比即可, 不擅自定。
+&gt; codex 复审必须过, 第二轮 DO-NOT-MERGE 的每条 finding 有回应。
+&gt;
+&gt; (2) canary 恢复: #1627 合入后重部 canary(容器现已停), 观察 boot self-heal; 不许
+&gt; 对 canary DB 做破坏性迁移或手工改行 —— canary DB 是 #1627 的复现床, 修复必须以
+&gt; 代码路径自愈证明。
+&gt;
+&gt; (3) epoch 激活: 严格按 #1625 runbook(`bin/ezagent eval` 包装)执行, 激活前确认
+&gt; fleet-parity barrier(写静默)前置满足; 激活后跑冒烟 + 验证 stale-gen 路径已死。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1626 — P0: web 测试 fresh env 可跑</div><div class="g">测试跑动与资产构建解耦 → test-supplement 的可跑性地基</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1626 merged</span><span class="pill dep">task:test-supplement</span><span class="pill more">详情</span></div><div class="detail" data-title="#1626 — P0: web 测试 fresh env 可跑" data-who="Allen 轨道 · test-supplement P0" data-acc='[[&quot;done&quot;, &quot;web 测试在 fresh env 直接可跑(与 assets build 解耦)&quot;, &quot;✓ merged 07-30 00:43, 908767ce1; 注: 引入 ci.shard.web assets.build 新红 1 个, 由 burn-down 卡收尾&quot;]]' data-review="" data-prompt="&gt; test-supplement P3 执行排程。输入 = P3 分诊交付物(91 个待补测模块清单)。产出 =
+&gt; 分批执行计划 + 首批派发:
+&gt;
+&gt; (1) 按「风险 × 依赖」排序: 授权/身份/cap 面优先, 其次 adapters/world 面, 纯工具尾批;
+&gt; 每批 ≤ 10 模块、≤ 1 天。
+&gt; (2) 每批的验收 = 该批模块的行为测试落地(非行覆盖凑数)、根目录跑全量无新红;
+&gt; 并行派发时各 agent 用 MIX_TEST_PARTITION 隔离测试库。
+&gt; (3) 清单是 enumerator gate 的产物 —— 完成一批就在清单上勾一批, 清单烧到 0 才算
+&gt; P3 done; 不许「挑软柿子」跳过难模块, 难的显式标 blocked + 原因。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1628 — 红③: provider-connection 套件健康</div><div class="g">registry owner 生命周期 + 环境敏感 + 行为覆盖 → full-suite 红③ 转绿</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1628 merged</span><span class="pill dep">task:main-fullsuite-burndown</span><span class="pill more">详情</span></div><div class="detail" data-title="#1628 — 红③: provider-connection 套件健康" data-who="Allen 轨道 · main 真绿 burn-down" data-acc='[[&quot;done&quot;, &quot;registry owner 生命周期修复 + env-sensitivity + 行为覆盖, 红③ 转绿&quot;, &quot;✓ merged 07-30 01:13, e4dd67039&quot;]]' data-review="" data-prompt="&gt; main full-suite 真绿 burn-down 残量。分支 `fix/main-red-releasetest-webassets`(从 main
+&gt; 65522fc03 起)。两个新红各修各的、各带 fail-before/pass-after 证据:
+&gt;
+&gt; (A) `EzagentCore.ReleaseTest:44` — #1625 的 release-runnable cutover runbook 引入
+&gt; FleetParity ambient-fleet 依赖, 测试在隔离环境无 ambient fleet 时红。修 hermeticity:
+&gt; 测试注入自己的 fleet 视图, 不读 ambient 状态(environment-shape isolation, 冷注入)。
+&gt; 不许改产品语义迁就测试。
+&gt;
+&gt; (B) `ci.shard.web` 里 `mix assets.build` exit 1 — #1626 把测试跑动与资产构建解耦后,
+&gt; web shard 的构建步骤在 fresh env 缺前置。修 shard 定义/前置链, 使 fresh checkout 直接
+&gt; `mix ci.shard.web` 绿。
+&gt;
+&gt; (C) 红②: 对比 #1590 与已入 main 的 #1604(同为 #201/#189-成因① 结构性 defer-writes),
+&gt; 枚举 #1590 独有增量; 有则 rebase 抽干净重开, 无则评论 superseded by #1604 并关闭。
+&gt;
+&gt; 完成后在根目录跑 full-suite(完整文件路径、不 cd 进 app), gate on EXIT=0 且 grep
+&gt; &quot;0 failures&quot;; `mix gate.arch` 基线不回退。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1629 — P1: adapters 契约覆盖</div><div class="g">protocol_api + feishu inbound 契约测试</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1629 merged</span><span class="pill dep">task:test-supplement</span><span class="pill more">详情</span></div><div class="detail" data-title="#1629 — P1: adapters 契约覆盖" data-who="Allen 轨道 · test-supplement P1" data-acc='[[&quot;done&quot;, &quot;protocol_api + feishu inbound 契约覆盖落地&quot;, &quot;✓ merged 07-30 01:28, 2dad70896&quot;]]' data-review="" data-prompt="&gt; test-supplement P3 执行排程。输入 = P3 分诊交付物(91 个待补测模块清单)。产出 =
+&gt; 分批执行计划 + 首批派发:
+&gt;
+&gt; (1) 按「风险 × 依赖」排序: 授权/身份/cap 面优先, 其次 adapters/world 面, 纯工具尾批;
+&gt; 每批 ≤ 10 模块、≤ 1 天。
+&gt; (2) 每批的验收 = 该批模块的行为测试落地(非行覆盖凑数)、根目录跑全量无新红;
+&gt; 并行派发时各 agent 用 MIX_TEST_PARTITION 隔离测试库。
+&gt; (3) 清单是 enumerator gate 的产物 —— 完成一批就在清单上勾一批, 清单烧到 0 才算
+&gt; P3 done; 不许「挑软柿子」跳过难模块, 难的显式标 blocked + 原因。"></div></div><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">#1630 — P2: world 服务端 view-authz 行为覆盖</div><div class="g">server-side view-authz + admin-action 行为测试</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1630 merged</span><span class="pill dep">task:test-supplement</span><span class="pill more">详情</span></div><div class="detail" data-title="#1630 — P2: world 服务端 view-authz 行为覆盖" data-who="Allen 轨道 · test-supplement P2" data-acc='[[&quot;done&quot;, &quot;world 服务端 view-authz + admin-action 行为覆盖落地&quot;, &quot;✓ merged 07-30 01:51, 65522fc03(现 main HEAD)&quot;]]' data-review="" data-prompt="&gt; test-supplement P3 执行排程。输入 = P3 分诊交付物(91 个待补测模块清单)。产出 =
+&gt; 分批执行计划 + 首批派发:
+&gt;
+&gt; (1) 按「风险 × 依赖」排序: 授权/身份/cap 面优先, 其次 adapters/world 面, 纯工具尾批;
+&gt; 每批 ≤ 10 模块、≤ 1 天。
+&gt; (2) 每批的验收 = 该批模块的行为测试落地(非行覆盖凑数)、根目录跑全量无新红;
+&gt; 并行派发时各 agent 用 MIX_TEST_PARTITION 隔离测试库。
+&gt; (3) 清单是 enumerator gate 的产物 —— 完成一批就在清单上勾一批, 清单烧到 0 才算
+&gt; P3 done; 不许「挑软柿子」跳过难模块, 难的显式标 blocked + 原因。"></div></div><div class="card done" style="--pc:#65a30d"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">#1597 — share-A3 CompositionConsent 超集(+同日 A2-1/A4-1/share-config)</div><div class="g">Group-A 四 PR 同日合入: #1596 caps_toward / #1597 consent 超集 / #1611 删 Mount reconcile trap / #1612 share-config</div><div class="accm"><span class="d">☑</span> 已验收 · 2/2</div><div class="meta"><span class="pill pr-merged">#1597 merged</span><span class="pill dep">task:group-a-uri-share</span><span class="pill more">详情</span></div><div class="detail" data-title="#1597 — share-A3 CompositionConsent 超集(+同日 A2-1/A4-1/share-config)" data-who="jjkysy 轨道 · socialware URI-share" data-acc='[[&quot;done&quot;, &quot;#1597 泛化 CompositionConsent 成 URI-share 宽松超集&quot;, &quot;✓ merged 07-29 20:39, f04b2362b&quot;], [&quot;done&quot;, &quot;#1596 caps_toward 正向可见性 + #1611 cap-as-truth 实证 + #1612 config 收敛&quot;, &quot;✓ 均 merged 07-29 14:02, 145cbbf11/fb35003cf/f7e99d82f&quot;]]' data-review="" data-prompt="# Handoff → jjkysy: Group A (URI-share) — codex FIX-NEEDED, fixes + Allen decisions
+
+- **id**: `group-a-uri-share`
+- **owner**: jjkysy
+- **status**: review
+- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —（07-30 未完 = 已滑期, 不顺延估期）
+- **关联**: merged: #1596(A2-1) · #1597(A3) · #1611(A4-1) · #1612(share-config) — 07-29 合入; open 复审中: #1594(A1) · #1606(A2-2) — post-#1621 rebase 后合并就绪核查跑动中; design-first drafts: #1619(A5 匿名) · #1620(A4-2 roster)
+
+codex adversarial review of the 4 merged PRs (#1594 A1 / #1596 A2-1 / #1606 A2-2 / #1597 A3) =
+**FIX-NEEDED, merge blocked.** Compile + compose are clean; the blockers are Cap-security. Fix
+the must-fixes + apply Allen&#x27;s design decisions, then it goes back to codex → cc gates + merges.
+
+**The core problem:** the signed share token authenticates grant *intent* but not *who
+authorized it*. Claim then resolves the target owner and mints the token&#x27;s declared actions — so
+a valid server-signed token can grant authority its creator never held.
+
+## Allen&#x27;s design decisions (authoritative)
+
+- **D1** A1 (share-token → claim → mint) IS the *pre-authorized-link* mode, a peer of A3
+  (request → owner-approval). The link mode is made safe by **M1**: the token MUST carry an
+  issuer identity and mint MUST verify the issuer held the delegable authority (granter ≡
+  data_owner). This is a required fix, not optional.
+- **D2** **anon claim = unified with user claim; NO separate implementation.** An anon visitor is
+  first materialized as a read-only anon entity (`Users.create_read_only`, cookie-bound — the
+  existing socialware anon mechanism), then claim proceeds identically to a logged-in user. Move
+  `/socialware/claim` off the `RequireEntity`-only path onto one that materializes an anon entity
+  first; add a per-share &quot;allow anon claim?&quot; policy flag (business declares it — platform only
+  provides the mechanism). anon IS in scope for this batch.
+- **D3** Reusable-link vs one-shot is your call. If one-shot, add a JTI/redemption state (there
+  is none today; every verify immediately mints).
+
+## MUST-FIX (block merge)
+
+- **M1 [CRITICAL · A1] Bind + verify issuer authority.** `ShareToken.mint_link!/4` is a pure
+  signer (issuer-authz only a comment); the token carries no issuer field
+  (`share_token.ex:56-92`). `Share.claim/2` passes declared actions straight to `mint_cap/4`
+  (`share.ex:42-46`), which uses the resolved target owner as BOTH `target_owner` and
+  `configurer` → same-owner branch, consent bypassed (`composition_caps.ex:140-171`, `:296-315`);
+  `TargetAuthority.ensure/2` even lets admin mint grant-authority to that owner
+  (`target_authority.ex:20-46`). Add an issuer to the signed payload; verify at mint that the
+  issuer held the delegable (behavior, actions) authority on the target.
+- **M2 [CRITICAL · A1] Mint is not URI-kind-agnostic.** Claim hardcodes `kind: :agent`
+  (`composition_caps.ex:140-152`); runtime matches all five axes incl. kind (`match.ex:7-38`), so
+  session:// / resource:// tokens verify but produce non-authorizing caps. Derive `kind` from the
+  target URI; run the target-conformance validation the generic path has
+  (`composition_caps.ex:206-218`) on the claim path.
+- **M3 [HIGH · A3] Approval is unauthenticated / stale / unbound.** `request/3` records the
+  arbitrary `grantee` arg as source owner+approver with no authenticated requester
+  (`composition_consent.ex:174-201`). `decide/4` checks the actor against the request-time owner,
+  not the target&#x27;s *current* owner (`:240-259`). Approval identity is only `(target, grantee)` —
+  store behavior + actions too (`:168-178`, `:234-238`) so one approval can&#x27;t cover broader
+  authority than intended.
+- **M4 [HIGH · A3] Migration has no shape invariant.** `20260728000000_...:25-48` drops both
+  `binding_id` constraints + adds nullable columns with no exactly-one-shape CHECK; changesets/
+  commands require neither shape. Add a DB CHECK (binding XOR uri-share) + changeset validation.
+
+## HARDENING (fix or explicitly defer with a note)
+
+- **H1 [HIGH · A2-2]** `grantees_of` is not the promised non-bypassable single-funnel projection:
+  reindex is best-effort/​swallows failures (`grantee_index.ex:50-78`), commits before user-cap
+  persist (`identity.ex:761-772`), and alternate writers bypass it (recipe reconcile
+  `identity.ex:645-665`, legacy revoke `:729-751`). (The security-critical current-generation
+  revocation FILTER is correct ✓.) Route all writers through the funnel, or document the
+  eventual-consistency + a reconcile.
+- **H2 [MEDIUM · A2-2]** `grantees_of(target, behavior)` has no caller/workspace authorization
+  (`grantee_index.ex:89-108`) → any in-VM caller who knows a target URI enumerates its grantees.
+  Add caller authorization.
+- **H3 [MEDIUM · A2-1]** `caps_toward/2` filters only behavior+instance, no signature/current-
+  generation verification (`visibility.ex:29-35`), while dispatch verifies against current
+  authority (`authorize.ex:44-67`). A revoked cap stays &quot;visible&quot; forward while `grantees_of`
+  correctly hides it. Align forward visibility with current-gen verification.
+
+## Per-PR map
+- **#1594 (A1)**: M1, M2, D1, D2, D3.
+- **#1596 (A2-1)**: H3.
+- **#1606 (A2-2)**: H1, H2.
+- **#1597 (A3)**: M3, M4.
+
+Re-run codex after the fixes; cc gates + merges on a clean pass. Full original findings + line
+cites are on #1583 and each PR&#x27;s comment thread."></div></div><div class="card done" style="--pc:#7c3aed"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">#1614 — Git Provider V1 Plan E(P1–P4e)</div><div class="g">本地 provider-owned PR loop 全段落地</div><div class="accm"><span class="d">☑</span> 已验收 · 1/1</div><div class="meta"><span class="pill pr-merged">#1614 merged</span><span class="pill dep">task:git-provider-plan-e-1614</span><span class="pill more">详情</span></div><div class="detail" data-title="#1614 — Git Provider V1 Plan E(P1–P4e)" data-who="gaga 轨道 · Git Provider" data-acc='[[&quot;done&quot;, &quot;Plan E P1–P4e 本地 provider-owned PR loop 合入&quot;, &quot;✓ merged 07-29 14:11, c4ec7b478&quot;]]' data-review="" data-prompt="07-28/29 gaga 轨道推进, 实际范围摘要:
+
+&gt; Git Provider V1 Plan E: 实现本地 provider-owned PR loop, 覆盖 P1–P4e 各段 ——
+&gt; provider 侧发起/承接 PR、本地 loop 内推进到可合状态。与 #1498(D1 复盘 + guarded Mix
+&gt; execution runner)衔接: Plan E 是 loop 本体, #1498 是其受控执行面的产品化。合入前过
+&gt; 全量 gate, 不触碰部署闸。"></div></div></div></div>
+  </div>
+  <div class="review">
+    <h2>昨日复盘（07-29） · 卡片验收结果 + 方法/事故</h2>
+    <div class="grid2">
+      <div class="good"><b>方法沉淀</b><br>• 整包一次 cutover 的节奏成立: #189 cutover(#1621) 一次 codex 过审一次合入, 9 个 holder_revoked 红当场转绿 —— additive → 写平面 → cutover 三段式可复用。<br>• 释放闸自动化: epoch 激活从手工步骤升级为 release-runnable runbook(#1625, bin/ezagent eval), canary/prod 可复演可审计。<br>• 易失状态教训: 未推送分支与评审中间态在深夜重启中丢失, 恢复全靠 durable 记录(git log / 进度日志 / PR 线) —— 修复类分支应尽早 push, 关键 verdict 落 durable 记录。<br>• test-supplement 分层法(P0 可跑性 → P1 契约 → P2 行为 → P3 分诊)一晚推完 P0-P2, 91 模块清单进入排程 —— 分层让『补测试』变成可烧尽的清单而非无边界任务。</div>
+      <div class="inc"><b>风险/事故</b><br>• canary hard-down: 回滚旧镜像同样 :holder_revoked 崩溃循环(reflow 后 DB 带 stale-gen admin self-license) → 没有任何 pre-#1627 镜像能启动; 已停容器止损, canary DB 反成 #1627 的天然复现床。恢复路径 = #1627 合入 → 重部 self-heal → epoch 激活。<br>• 07-29 深夜服务器重启: 丢失未推送的 main-red 修复工作树 + #1627 codex 复审 verdict; 均已按 durable 记录重建并重派。<br>• #1625/#1626 各引入 1 个 full-suite 新红(ReleaseTest FleetParity hermeticity / ci.shard.web assets.build), 已进入修复(fix/main-red-releasetest-webassets)。</div>
+    </div>
+    <table><tr><th>人</th><th>交付</th><th>验收结果</th><th>结转今日</th></tr><tr><td>Allen 轨道</td><td>9-PR 夜车: #1621 cutover + #1622/#1624/#1628 旧红①④③ + #1623 死机器删除 + #1625 runbook + #1626/#1629/#1630 test-supplement P0-P2</td><td>✅ 全部合入 main(HEAD 65522fc03)</td><td>2 新红 + 红② adopt + #1627/canary/epoch + P3 排程</td></tr><tr><td>jjkysy</td><td>share-A2-1(#1596) · A3(#1597) · A4-1(#1611) · share-config(#1612) 四 PR 合入</td><td>✅ 合入</td><td>#1594/#1606 复审 + #1619/#1620 design-first</td></tr><tr><td>gaga</td><td>Git Provider V1 Plan E(#1614) 本地 provider-owned PR loop</td><td>✅ 合入</td><td>Feishu B1/B2 + #1501 rework + #1498</td></tr><tr><td>zyli</td><td>#1576 rework(arch gate + 2 红测试两 blocker 修复)</td><td>⏳ 复审重跑中</td><td>复审通过后 gate+merge</td></tr><tr><td>ruihua</td><td>#1618 协作卡牌阵列教学订单 draft</td><td>⏳ draft</td><td>v0.15 landing package 继续</td></tr></table>
+    <h3 style="font-size:14px;color:#374151;margin-top:14px">今日建议</h3>
+    <div style="font-size:12.5px;color:#475569">• main 真绿三件套: 修 2 新红(fix/main-red-releasetest-webassets) + 裁决红② #1590 → 根目录 full-suite 实证全绿。<br>• #1627 设计分叉裁决(Allen) → codex 复审 → 合入 → canary 重部 self-heal → 按 #1625 runbook 激活 epoch。<br>• Group-A 收尾: #1594/#1606 合并就绪核查 → gate+merge; #1619/#1620 设计对齐。<br>• test-supplement P3(91 模块)转执行排程; 追跟 bug 立项 tracker #204(Feishu webhook 签名校验) + #205(world 路由死特性)。</div>
+  </div>
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\u5f00\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\u590d\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\u5df2\u590d\u5236 \u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+</script>
+</body>
+</html>
