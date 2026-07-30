@@ -100,7 +100,10 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
     value
   end
 
-  defp world_state(view), do: view |> world_root_attribute("data-world-state") |> Jason.decode!()
+  defp world_state(view) do
+    _html = render_async(view, 5_000)
+    view |> world_root_attribute("data-world-state") |> Jason.decode!()
+  end
 
   defp assert_dispatch_status(view, status) do
     assert has_element?(view, ~s(#world-root[data-last-dispatch="#{status}"]))
@@ -111,6 +114,11 @@ defmodule EzagentWeb.WorldFeishuBindingsRealRouteTest do
   end
 
   defp dispatch(view, action, args) do
+    # Current main loads the route state with LiveView start_async/3. Await
+    # that tracked task before driving a hook so the mutation starts from the
+    # same fully loaded state a browser receives.
+    _html = render_async(view, 5_000)
+
     view
     |> element("#world-root")
     |> render_hook("world:dispatch", %{"action" => action, "args" => args})
