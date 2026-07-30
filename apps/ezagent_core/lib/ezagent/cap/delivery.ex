@@ -19,6 +19,7 @@ defmodule Ezagent.Cap.Delivery do
           payload: binary() | nil,
           payload_version: pos_integer(),
           payload_identity: String.t() | nil,
+          semantic_identity: String.t() | nil,
           idempotency_key: String.t() | nil,
           status: :pending | :applied | :dead,
           attempts: non_neg_integer(),
@@ -37,6 +38,7 @@ defmodule Ezagent.Cap.Delivery do
     field :payload, :binary
     field :payload_version, :integer, default: 1
     field :payload_identity, :string
+    field :semantic_identity, :string
     field :idempotency_key, :string
     field :status, Ecto.Enum, values: [:pending, :applied, :dead], default: :pending
     field :attempts, :integer, default: 0
@@ -61,6 +63,7 @@ defmodule Ezagent.Cap.Delivery do
       :payload,
       :payload_version,
       :payload_identity,
+      :semantic_identity,
       :idempotency_key,
       :status,
       :attempts,
@@ -85,5 +88,9 @@ defmodule Ezagent.Cap.Delivery do
     |> validate_number(:attempts, greater_than_or_equal_to: 0)
     |> validate_number(:payload_version, greater_than: 0)
     |> validate_length(:idempotency_key, max: 255)
+    |> unique_constraint(:idempotency_key, name: :cap_delivery_outbox_idempotency_unique)
+    |> unique_constraint(:semantic_identity,
+      name: :cap_delivery_outbox_pending_absorb_semantic_identity_index
+    )
   end
 end

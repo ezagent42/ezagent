@@ -30,14 +30,23 @@ defmodule Ezagent.EntityCaps.UserStore do
   @doc false
   @spec load(URI.t()) :: [Ezagent.Capability.t()]
   def load(%URI{} = uri) do
-    case Ezagent.Users.get_by_uri(uri) do
-      %{caps: caps} when is_list(caps) -> caps
-      _ -> []
+    case load_checked(uri) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
+    end
+  end
+
+  @doc false
+  @spec load_checked(URI.t()) :: {:ok, [Ezagent.Capability.t()]} | {:error, term()}
+  def load_checked(%URI{} = uri) do
+    case Repo.get_by(Ezagent.Users, uri: URI.to_string(uri)) do
+      nil -> {:ok, []}
+      %Ezagent.Users{} = user -> decode_caps_checked(user.caps_json)
     end
   rescue
-    _ -> []
+    error -> {:error, {:user_caps_read_failed, Exception.message(error)}}
   catch
-    _, _ -> []
+    kind, reason -> {:error, {:user_caps_read_failed, kind, reason}}
   end
 
   @doc false
@@ -223,11 +232,22 @@ defmodule Ezagent.EntityCaps.UserStore do
   defp decode_caps(""), do: []
 
   defp decode_caps(json) do
+    case decode_caps_checked(json) do
+      {:ok, caps} -> caps
+      {:error, :invalid_caps_json} -> []
+    end
+  end
+
+  defp decode_caps_checked(nil), do: {:ok, []}
+  defp decode_caps_checked(""), do: {:ok, []}
+
+  defp decode_caps_checked(json) do
     case Jason.decode(json) do
-      {:ok, caps} when is_list(caps) -> Enum.map(caps, &Ezagent.Capability.from_map/1)
-      _ -> []
+      {:ok, nil} -> {:ok, []}
+      {:ok, caps} when is_list(caps) -> {:ok, Enum.map(caps, &Ezagent.Capability.from_map/1)}
+      _ -> {:error, :invalid_caps_json}
     end
   rescue
-    _ -> []
+    _ -> {:error, :invalid_caps_json}
   end
 end

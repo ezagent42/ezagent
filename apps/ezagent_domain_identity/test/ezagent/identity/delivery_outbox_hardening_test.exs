@@ -4,7 +4,8 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   import Ecto.Query
   import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
 
-  alias Ezagent.Cap.Delivery
+  alias Ezagent.{Cap, Capability}
+  alias Ezagent.Cap.{Authority, Delivery}
   alias Ezagent.Cap.DeliveryOutbox
   alias Ezagent.Cap.DeliveryOutbox.Sweeper
   alias Ezagent.Invocation
@@ -221,6 +222,86 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
+  test "concurrent equivalent absorbs create one pending delivery" do
+    {target, pid} = spawn_target("concurrent-semantic-absorb")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    first = capability(target)
+    second = same_semantic_cap(target, first)
+
+    assert Capability.identity_key(first) == Capability.identity_key(second)
+    refute first == second
+
+    tasks =
+      for cap <- [first, second] do
+        Task.async(fn ->
+          receive do
+            :go -> Invocation.dispatch(absorb_invocation(target, cap))
+          end
+        end)
+      end
+
+    Enum.each(tasks, fn task ->
+      Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), task.pid)
+      send(task.pid, :go)
+    end)
+
+    assert Enum.map(tasks, &Task.await(&1, 5_000)) == [:ok, :ok]
+    assert pending_delivery_count(target) == 1
+
+    terminate(target, pid)
+  end
+
+  test "authority rollover creates a new pending delivery for the same capability axes" do
+    {target, pid} = spawn_target("authority-generation-absorb")
+    authority_target = Ezagent.URI.instance(target)
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    generation_one = capability(target)
+
+    assert Authority.verify_against_current(generation_one, target, authority_target)
+    assert :ok = Invocation.dispatch(absorb_invocation(target, generation_one))
+    assert pending_delivery_count(target) == 1
+
+    assert {:ok, generation_two_authority} = Authority.regenesis(authority_target, :user)
+    generation_two = same_semantic_cap(target, generation_one, generation_two_authority)
+
+    assert Capability.identity_key(generation_one) == Capability.identity_key(generation_two)
+    refute generation_one.key_id == generation_two.key_id
+    refute Authority.verify_against_current(generation_one, target, authority_target)
+    assert Authority.verify_against_current(generation_two, target, authority_target)
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, generation_two))
+    assert pending_delivery_count(target) == 2
+
+    terminate(target, pid)
+  end
+
+  for {terminal_status, timestamp_field} <- [applied: :applied_at, dead: :dead_at] do
+    test "a #{terminal_status} semantic absorb does not block a later pending delivery" do
+      terminal_status = unquote(terminal_status)
+      timestamp_field = unquote(timestamp_field)
+      {target, pid} = spawn_target("#{terminal_status}-semantic-absorb")
+      :ok = Ezagent.ReadyGate.put(target, :not_ready)
+      first = capability(target)
+
+      assert :ok = Invocation.dispatch(absorb_invocation(target, first))
+      first_delivery = one_delivery!(target)
+
+      first_delivery
+      |> Ecto.Changeset.change(
+        Map.put(%{status: terminal_status}, timestamp_field, DateTime.utc_now())
+      )
+      |> Repo.update!()
+
+      assert :ok =
+               Invocation.dispatch(absorb_invocation(target, same_semantic_cap(target, first)))
+
+      assert delivery_count(target) == 2
+      assert pending_delivery_count(target) == 1
+
+      terminate(target, pid)
+    end
+  end
+
   test "an expired claimant cannot overwrite a newer lease, whose claimant can converge" do
     {target, pid} = spawn_target("stale-claim")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
@@ -314,6 +395,48 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
            end)
 
     terminate(target, pid)
+  end
+
+  test "pending absorb view returns only validated pending absorb artifacts" do
+    {target, pid} = spawn_target("pending-absorb-view")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    cap = capability(target)
+
+    assert :ok = Ezagent.Identity.absorb_cap(target, cap)
+    pending = one_delivery!(target)
+
+    insert_raw_delivery!(
+      target,
+      %{version: :ignored_revoke_envelope},
+      DateTime.utc_now(),
+      op: :revoke_cap
+    )
+
+    assert {:ok, [loaded]} = DeliveryOutbox.list_pending_absorb_caps(target)
+    assert Ezagent.Capability.identity_key(loaded) == Ezagent.Capability.identity_key(cap)
+
+    pending
+    |> Ecto.Changeset.change(status: :applied, applied_at: DateTime.utc_now())
+    |> Repo.update!()
+
+    assert {:ok, []} = DeliveryOutbox.list_pending_absorb_caps(target)
+    terminate(target, pid)
+  end
+
+  test "a malformed pending envelope makes the pending absorb view fail closed" do
+    target = Ezagent.URI.user("team-alpha", unique("malformed-pending-view"))
+
+    delivery =
+      insert_raw_delivery!(
+        target,
+        %{version: :not_a_valid_envelope},
+        DateTime.utc_now()
+      )
+
+    assert {:error, {:invalid_pending_delivery, id, _reason}} =
+             DeliveryOutbox.list_pending_absorb_caps(target)
+
+    assert id == delivery.id
   end
 
   test "a permanent authorization failure is audited as dead by the target handler" do
@@ -443,6 +566,26 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     )
   end
 
+  defp same_semantic_cap(target, cap) do
+    {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
+    same_semantic_cap(target, cap, authority)
+  end
+
+  defp same_semantic_cap(target, cap, authority) do
+    requested = %{
+      cap
+      | granted_by: nil,
+        granted_at: nil,
+        grantee_uri: nil,
+        key_id: nil,
+        signature: nil
+    }
+
+    issuer = Ezagent.URI.user("team-alpha", unique("semantic-issuer"))
+    {:ok, artifact} = Cap.prepare_provenance({:held_by, issuer}, target, requested)
+    Authority.sign(authority, artifact)
+  end
+
   defp one_delivery!(target) do
     Repo.one!(
       from(delivery in Delivery,
@@ -460,11 +603,20 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     )
   end
 
-  defp insert_raw_delivery!(target, envelope, next_retry_at) do
+  defp pending_delivery_count(target) do
+    Repo.aggregate(
+      from(delivery in Delivery,
+        where: delivery.target_uri == ^URI.to_string(target) and delivery.status == :pending
+      ),
+      :count
+    )
+  end
+
+  defp insert_raw_delivery!(target, envelope, next_retry_at, opts \\ []) do
     attrs = %{
       workspace_uri: Ezagent.Persistence.workspace_uri_for!(target),
       target_uri: URI.to_string(target),
-      op: :absorb_cap,
+      op: Keyword.get(opts, :op, :absorb_cap),
       payload: :erlang.term_to_binary(envelope),
       payload_identity: "poison-#{System.unique_integer([:positive])}",
       status: :pending,
