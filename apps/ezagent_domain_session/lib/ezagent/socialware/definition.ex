@@ -35,12 +35,14 @@ defmodule Ezagent.Socialware.Definition do
   shape-only here; the plugin catalog validates the NAME at materialization).
   """
   @type operate_edge :: %{role: String.t(), behavior: module(), action: atom()}
+  @type credential_admission :: :immediate | :before_session_join
   @type role_slot ::
           %{
             required(:role_name) => String.t(),
             required(:fill) => :agent,
             required(:recipe) => String.t(),
             required(:flavor) => String.t(),
+            required(:credential_admission) => credential_admission(),
             optional(:config) => map(),
             optional(:provider) => String.t(),
             optional(:operates) => [operate_edge()]
@@ -308,8 +310,15 @@ defmodule Ezagent.Socialware.Definition do
         with true <-
                non_empty_string?(recipe) and non_empty_string?(role_name) and
                  non_empty_string?(flavor),
+             {:ok, credential_admission} <- credential_admission(item),
              {:ok, operates} <- operates_list(item, role_name) do
-          slot = %{role_name: role_name, fill: :agent, recipe: recipe, flavor: flavor}
+          slot = %{
+            role_name: role_name,
+            fill: :agent,
+            recipe: recipe,
+            flavor: flavor,
+            credential_admission: credential_admission
+          }
 
           {:ok,
            slot
@@ -336,6 +345,16 @@ defmodule Ezagent.Socialware.Definition do
   end
 
   defp role_slot(other), do: {:error, {:invalid_socialware_role_slot, other}}
+
+  defp credential_admission(item) do
+    case get(item, :credential_admission, :immediate) do
+      :immediate -> {:ok, :immediate}
+      "immediate" -> {:ok, :immediate}
+      :before_session_join -> {:ok, :before_session_join}
+      "before_session_join" -> {:ok, :before_session_join}
+      other -> {:error, {:invalid_socialware_definition_field, :credential_admission, other}}
+    end
+  end
 
   defp operates_list(item, source_role) do
     case get(item, :operates, []) do

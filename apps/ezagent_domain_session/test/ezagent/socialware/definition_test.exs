@@ -7,6 +7,65 @@ defmodule Ezagent.Socialware.DefinitionTest do
   @view_mod Ezagent.ActionSet.Surface
 
   describe "roles field (P1 role-slot declaration)" do
+    test "normalizes credential admission declarations and defaults omitted agent roles" do
+      assert {:ok, definition} =
+               Definition.new(%{
+                 "name" => "hello",
+                 "roles" => [
+                   %{
+                     "role_name" => "llm",
+                     "fill" => "agent",
+                     "recipe" => "hello.llm",
+                     "flavor" => "codex",
+                     "credential_admission" => "before_session_join"
+                   },
+                   %{
+                     role_name: "helper",
+                     fill: :agent,
+                     recipe: "hello.helper",
+                     flavor: "curl"
+                   }
+                 ]
+               })
+
+      assert definition.roles == [
+               %{
+                 role_name: "llm",
+                 fill: :agent,
+                 recipe: "hello.llm",
+                 flavor: "codex",
+                 credential_admission: :before_session_join
+               },
+               %{
+                 role_name: "helper",
+                 fill: :agent,
+                 recipe: "hello.helper",
+                 flavor: "curl",
+                 credential_admission: :immediate
+               }
+             ]
+
+      assert {:ok, round_tripped} = definition |> Definition.body() |> Definition.new()
+      assert round_tripped.roles == definition.roles
+    end
+
+    test "rejects an invalid credential admission declaration" do
+      assert {:error,
+              {:invalid_socialware_definition_field, :credential_admission, "after_session_join"}} =
+               Definition.new(%{
+                 name: "hello",
+                 roles: [
+                   %{
+                     role_name: "llm",
+                     fill: :agent,
+                     recipe: "hello.llm",
+                     flavor: "codex",
+                     credential_admission: "after_session_join"
+                   }
+                 ]
+               })
+    end
+
     test "accepts agent recipe slots and human slots" do
       assert {:ok, definition} =
                Definition.new(%{
@@ -18,7 +77,13 @@ defmodule Ezagent.Socialware.DefinitionTest do
                })
 
       assert Map.get(definition, :roles) == [
-               %{role_name: "bot", fill: :agent, recipe: "hello-bot", flavor: "curl"},
+               %{
+                 role_name: "bot",
+                 fill: :agent,
+                 recipe: "hello-bot",
+                 flavor: "curl",
+                 credential_admission: :immediate
+               },
                %{role_name: "visitor", fill: :human}
              ]
     end
@@ -39,7 +104,13 @@ defmodule Ezagent.Socialware.DefinitionTest do
                })
 
       assert Map.get(definition, :roles) == [
-               %{role_name: "bot", fill: :agent, recipe: "hello-bot", flavor: "py"},
+               %{
+                 role_name: "bot",
+                 fill: :agent,
+                 recipe: "hello-bot",
+                 flavor: "py",
+                 credential_admission: :immediate
+               },
                %{role_name: "visitor", fill: :human}
              ]
     end
@@ -88,7 +159,8 @@ defmodule Ezagent.Socialware.DefinitionTest do
                  "role_name" => "bot",
                  "fill" => "agent",
                  "recipe" => "hello-bot",
-                 "flavor" => "curl"
+                 "flavor" => "curl",
+                 "credential_admission" => "immediate"
                }
              ]
 

@@ -45,6 +45,17 @@ defmodule Ezagent.Agent.CredentialAdapter do
   @callback auth_failure_signals() :: [Regex.t() | String.t()]
 
   @doc """
+  Declares how an operator connects credentials for this Template Class.
+
+  This callback is optional: omitting it means `:not_required`. When present,
+  it returns either `{:pty, label}` for an interactive terminal login or
+  `{:api_key, provider, label}` for an API-key prompt. The domain normalizes
+  those declarations through `Ezagent.Agent.CredentialConnection`.
+  """
+  @callback credential_connection(keyword()) ::
+              :not_required | {:pty, String.t()} | {:api_key, String.t(), String.t()}
+
+  @doc """
   #17 PR-E (④, TEST/E2E ONLY) — provision valid credentials into an agent's config
   `home` from a `source` credential path (refresh-if-expired + copy), so E2E runs without
   a human login. SEPARATE from the declarative all-or-none group below (a flavor may
@@ -83,7 +94,12 @@ defmodule Ezagent.Agent.CredentialAdapter do
   """
   @callback host_login_dir() :: String.t() | nil
 
-  @optional_callbacks [refresh_test_credentials: 3, credential_status: 2, host_login_dir: 0]
+  @optional_callbacks [
+    refresh_test_credentials: 3,
+    credential_status: 2,
+    host_login_dir: 0,
+    credential_connection: 1
+  ]
 
   @declarative_callbacks [
     {:credential_env_var, 0},

@@ -388,6 +388,8 @@ defmodule Ezagent.Socialware.DefinitionEditor do
   defp apply_role_slot_choice(role, nil), do: role
 
   defp apply_role_slot_choice(%{fill: :agent} = role, choice) when is_map(choice) do
+    # Install-level choices deliberately override only install/flavor fields.
+    # Declarative role policy such as :credential_admission remains on `role`.
     role
     |> maybe_put_flavor(map_get(choice, :flavor))
     |> maybe_put_install_mode(map_get(choice, :mode) || map_get(choice, :install_mode))
