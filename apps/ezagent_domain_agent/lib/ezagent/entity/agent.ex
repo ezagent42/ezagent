@@ -514,6 +514,28 @@ defmodule Ezagent.Entity.Agent do
     end
   end
 
+  @doc "Request a flavor-neutral completion, returning immediately or pending for WS flavors."
+  @spec request_completion(URI.t(), URI.t(), URI.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:pending, String.t()} | {:error, term()}
+  def request_completion(
+        %URI{} = caller_uri,
+        %URI{} = agent_uri,
+        %URI{} = session_uri,
+        prompt,
+        request_id
+      )
+      when is_binary(prompt) and is_binary(request_id) do
+    ws = Ezagent.Capability.workspace_of(agent_uri)
+
+    with {:ok, owner} <- Ezagent.AgentLineage.lookup(agent_uri),
+         :ok <- authorize_complete(caller_uri, owner, agent_uri, ws) do
+      Ezagent.AgentBridge.request_completion(agent_uri, session_uri, prompt, request_id)
+    else
+      :error -> {:error, :agent_owner_unresolvable}
+      {:error, _} = err -> err
+    end
+  end
+
   defp authorize_complete(caller, owner, _agent_uri, _ws) when caller == owner, do: :ok
 
   defp authorize_complete(caller, _owner, agent_uri, ws) do

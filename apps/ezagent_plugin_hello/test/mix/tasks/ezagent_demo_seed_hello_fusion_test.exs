@@ -4,6 +4,7 @@ defmodule Mix.Tasks.Ezagent.Demo.SeedHelloFusionTest do
   import ExUnit.CaptureIO
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kanban)

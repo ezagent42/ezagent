@@ -1,10 +1,9 @@
 defmodule EzagentPluginHello.Router do
   @moduledoc """
   The hello front-desk routing logic: for each USER message, decide whether it
-  goes to the page `builder` (generate/edit the page) or the read-only `concierge`
-  (question / navigation), and DISPATCH the named action (`:rebuild` / `:answer`)
-  to that member. Builder + concierge are native-flavor and receive via dispatch,
-  not chat delivery (T2 I-1).
+  is dispatched to a Session action: `:rebuild` (generate/edit the page),
+  `:answer` (question / navigation), `:share`, `:publish`, or
+  `:delegate_to_kanban`. The work does not require a separate agent identity.
 
   The dispatch is a fire-and-forget `:cast` — the generation round-trip is slow
   and must never block the delivery path. Runs off the Behavior process in a
@@ -12,28 +11,37 @@ defmodule EzagentPluginHello.Router do
 
   ## Policy — intent × identity (the safety boundary is identity-first)
 
-    * **Non-owner** member → ALWAYS `concierge`. The page-edit boundary is
-      structural: a visitor can never reach the builder, regardless of what they
+    * **Non-owner** member → ALWAYS `:answer`. The page-edit boundary is
+      structural: a visitor can never reach `:rebuild`, regardless of what they
       type, and no LLM call is made for them.
     * **Owner** → intent classification (`Generator.classify_intent/2`): a
-      change/create request → `builder`; a question / navigation → `concierge`.
+      change/create request → `:rebuild`; a question / navigation → `:answer`.
   """
 
   alias EzagentPluginHello.{Generator, Members}
 
-  # The front-desk's own worker roles (builder + concierge) — their output must
-  # never re-route back (loop guard). The platform orchestrator (`requires:
-  # ["orchestrator"]`) is NOT a hello worker.
-  @worker_roles ["builder", "concierge", "sharer", "publisher", "dispatcher"]
-
   @doc """
-  Route `user_text` (sent by `sender`) in `session_uri` to the builder's
-  `:rebuild` or the concierge's `:answer` action. Spawns a supervised Task;
+  Route `user_text` (sent by `sender`) in `session_uri` to a deterministic
+  Session action. Spawns a supervised Task;
   returns `{:ok, pid}` (fire-and-forget). No-ops (`:ignored`) when
   `should_route?/2` rejects the sender — the loop guard.
   """
   @spec route(URI.t(), String.t(), URI.t()) :: {:ok, pid()} | {:error, term()} | :ignored
   def route(%URI{} = session_uri, user_text, %URI{} = sender) when is_binary(user_text) do
+    route(session_uri, user_text, sender, nil)
+  end
+
+  @doc false
+  def route(%URI{} = session_uri, user_text, %URI{} = sender, ref_id)
+      when is_binary(user_text) do
+    if completion_reply?(ref_id) do
+      deliver_completion(ref_id, user_text)
+    else
+      route_user_message(session_uri, user_text, sender)
+    end
+  end
+
+  defp route_user_message(%URI{} = session_uri, user_text, %URI{} = sender) do
     if should_route?(session_uri, sender) do
       Task.Supervisor.start_child(EzagentPluginHello.TaskSupervisor, fn ->
         action = classify(user_text, owner?(session_uri, sender), session_uri)
@@ -49,8 +57,22 @@ defmodule EzagentPluginHello.Router do
     end
   end
 
+  defp completion_reply?(ref_id),
+    do: is_binary(ref_id) and String.starts_with?(ref_id, "hello-completion-")
+
+  defp deliver_completion(ref_id, text) do
+    case Registry.lookup(EzagentPluginHello.CompletionRegistry, ref_id) do
+      [{pid, _}] when is_pid(pid) ->
+        send(pid, {:hello_completion, ref_id, text})
+        :ok
+
+      _ ->
+        :ignored
+    end
+  end
+
   @doc false
-  def classify(_user_text, false = _owner?, _session_uri), do: :concierge
+  def classify(_user_text, false = _owner?, _session_uri), do: :answer
 
   def classify(user_text, true = _owner?, session_uri) do
     Generator.classify_intent(session_uri, user_text)
@@ -59,35 +81,23 @@ defmodule EzagentPluginHello.Router do
   # F2 fail-closed: publish/share are admin-level actions. A session whose
   # owner_uri is nil (e.g. a pre-owner_uri old session — owner? returns true
   # as a fail-open for builder/concierge) must NOT grant these. Downgrade to
-  # :concierge so a nil-owner session's visitors can't publish or share.
+  # :answer so a nil-owner session's visitors can't publish or share.
   defp guard_admin_actions(action, session_uri)
-       when action in [:publisher, :sharer] do
+       when action in [:publish, :share] do
     case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{owner_uri: owner}} when not is_nil(owner) -> action
       {:ok, %{"owner_uri" => owner}} when not is_nil(owner) -> action
-      _ -> :concierge
+      _ -> :answer
     end
   end
 
   defp guard_admin_actions(action, _session_uri), do: action
 
-  # Dispatch a named action to a session member by role_name.
-  defp dispatch_to_member(session_uri, role, user_text, sender) when is_atom(role) do
-    role_name = Atom.to_string(role)
-
-    {:ok, member_uri} = Members.role_uri(session_uri, role_name)
-
-    action_atom =
-      case role do
-        :builder -> :rebuild
-        :concierge -> :answer
-        :sharer -> :share
-        :publisher -> :publish
-        :dispatcher -> :delegate_to_kanban
-      end
-
-    target =
-      Ezagent.URI.with_action(member_uri, :agent, action_atom)
+  # Dispatch the selected deterministic operation on the Session itself. The
+  # front-desk and LLM remain members; build/answer/share/publish/delegate do
+  # not need per-operation agent identities.
+  defp dispatch_to_member(session_uri, action, user_text, sender) when is_atom(action) do
+    target = Ezagent.URI.with_action(session_uri, :hello_session_actions, action)
 
     session_uri_str = URI.to_string(session_uri)
     admin = Ezagent.Entity.User.admin_uri()
@@ -114,10 +124,10 @@ defmodule EzagentPluginHello.Router do
   end
 
   @doc """
-  Loop + multi-agent guard. Route a message UNLESS its sender is the
-  front-desk itself or one of its own workers (builder / concierge) — those
-  must never re-route (loop). Every other sender — a user OR an external agent
-  — IS routed, which is how the front-desk accepts more than human messages.
+  Loop + multi-agent guard. Route a message unless it was emitted by one of
+  Hello's own platform agents. The deterministic Hello operations are Session
+  actions, so the front-desk and LLM are the only worker-agent identities to
+  inspect. Every other sender — a user OR an external agent — is routed.
 
   Fails CLOSED: if the `:session` members slice cannot be read AT ALL (no live
   Kind / a read miss), we cannot identify our own workers and therefore cannot
@@ -127,8 +137,8 @@ defmodule EzagentPluginHello.Router do
   """
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
-    case Members.role_uris(session_uri, @worker_roles) do
-      {:ok, own_uris} -> not Enum.any?(own_uris, &same_uri?(&1, sender))
+    case Members.role_uris(session_uri, ["front-desk", "llm"]) do
+      {:ok, own_agent_uris} -> Enum.all?(own_agent_uris, &(not same_uri?(&1, sender)))
       :error -> false
     end
   end

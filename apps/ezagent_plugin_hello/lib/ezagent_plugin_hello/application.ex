@@ -83,26 +83,18 @@ defmodule EzagentPluginHello.Application do
     ]
   end
 
-  # hello's two agents are ROLES on the unified `Entity.Agent` (hosted by the
-  # `native` flavor), NOT own Kinds (Principle 1: an agent type is a role × flavor,
-  # never its own Kind). The behaviors load PER-INSTANCE via the recipe (RF-1
-  # `BehaviorSet.resolve_action` on `Entity.Agent`); cold-restart revival re-reads
-  # the durable `:role` marker from the sandbox slice and re-composes — so no
-  # `agent_flavors`/own-Kind revival registration is needed. Not `passive`: the
-  # builder/concierge are chat principals (@-mentionable + joinable).
+  # Hello materializes only two platform agents: `front-desk` is the chat
+  # bridge, and `llm` owns the chosen provider flavor and credentials. The other
+  # product operations are Session actions (HelloSessionActions), so they do not
+  # create agent identities, recipe bindings, or membership edges.
   @impl Ezagent.Plugin
   def roles,
     do: [
       hello_front_desk_recipe(),
-      hello_builder_recipe(),
-      hello_concierge_recipe(),
-      hello_llm_recipe(),
-      hello_sharer_recipe(),
-      hello_publisher_recipe(),
-      hello_dispatcher_recipe()
+      hello_llm_recipe()
     ]
 
-  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches to builder/concierge via their dispatchable actions."
+  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches deterministic operations to Hello Session actions."
   @spec hello_front_desk_recipe() :: map()
   def hello_front_desk_recipe do
     %{
@@ -114,80 +106,17 @@ defmodule EzagentPluginHello.Application do
     }
   end
 
-  @doc "The `hello.builder` role — the page-generating agent (`Behavior.HelloBuilder`)."
-  @spec hello_builder_recipe() :: map()
-  def hello_builder_recipe do
-    %{
-      name: "hello.builder",
-      behaviors: [Ezagent.ActionSet.HelloBuilder],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :receive},
-        %{behavior: Ezagent.ActionSet.HelloBuilder, action: :rebuild}
-      ]
-    }
-  end
-
-  @doc "The `hello.concierge` role — the read-only Q&A/navigation agent (`Behavior.HelloConcierge`)."
-  @spec hello_concierge_recipe() :: map()
-  def hello_concierge_recipe do
-    %{
-      name: "hello.concierge",
-      behaviors: [Ezagent.ActionSet.HelloConcierge],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :receive},
-        %{behavior: Ezagent.ActionSet.HelloConcierge, action: :answer}
-      ]
-    }
-  end
-
-  @doc "The `hello.llm` role — a curl LLM agent hello delegates HTTP-backend generation to (credential-optional so it keyless-spawns; key comes from the platform credential cascade)."
+  @doc "The `hello.llm` role — a flavor-selected platform agent Hello delegates generation to (credential-optional so the platform credential cascade decides readiness)."
   @spec hello_llm_recipe() :: map()
   def hello_llm_recipe do
     %{
       name: "hello.llm",
-      # curl behaviors come from the "curl" flavor's instance_behaviors, NOT here
-      # (Definition.roles materialize drops recipe.behaviors).
-      requested_caps: [],
+      # The selected flavor supplies its own instance behaviors; this recipe
+      # supplies only generic role configuration.
       config: %{
-        provider: "deepseek",
-        api_url: "https://api.deepseek.com/chat/completions",
-        model: "deepseek-chat",
-        # opt out of the required-by-default :slice credential (Task 1) so a
-        # deployment with no DeepSeek credential source still spawns this member.
         credential_optional: true
-      }
-    }
-  end
-
-  @doc "The `hello.sharer` role — wraps 'create share link' as a dispatchable action (`Behavior.HelloSharer`)."
-  @spec hello_sharer_recipe() :: map()
-  def hello_sharer_recipe do
-    %{
-      name: "hello.sharer",
-      behaviors: [Ezagent.ActionSet.HelloSharer],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloSharer, action: :share}]
-    }
-  end
-
-  @doc "The `hello.publisher` role — wraps 'publish as template' as a dispatchable action (`Behavior.HelloPublisher`)."
-  @spec hello_publisher_recipe() :: map()
-  def hello_publisher_recipe do
-    %{
-      name: "hello.publisher",
-      behaviors: [Ezagent.ActionSet.HelloPublisher],
-      requested_caps: [%{behavior: Ezagent.ActionSet.HelloPublisher, action: :publish}]
-    }
-  end
-
-  @doc "The `hello.dispatcher` role — delegates an authenticated hello instruction to the workspace Kanban."
-  @spec hello_dispatcher_recipe() :: map()
-  def hello_dispatcher_recipe do
-    %{
-      name: "hello.dispatcher",
-      behaviors: [Ezagent.ActionSet.HelloDispatcher],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloDispatcher, action: :delegate_to_kanban}
-      ]
+      },
+      requested_caps: []
     }
   end
 
@@ -223,65 +152,13 @@ defmodule EzagentPluginHello.Application do
   # default).
   @impl Ezagent.Plugin
   def children do
-    [{Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}] ++
-      credential_bridge_children() ++
+    [
+      {Registry, keys: :unique, name: EzagentPluginHello.CompletionRegistry},
+      {Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}
+    ] ++
       official_site_children() ++ demo_seed_children() ++ migrate_children()
   end
 
-  # #185 — the env→curl credential bridge. At boot (the SAME plugin boot the
-  # hello demo/workspace publish lane rides), when `DEEPSEEK_API_KEY` is
-  # present, bridge it into the hello HOME workspace's shared curl
-  # credential source (`EzagentPluginHello.CredentialBridge` — destination =
-  # `EzagentPluginHello.home_workspace/0`) so every hello `llm` curl member
-  # born in that workspace resolves the key through the unchanged platform
-  # cascade. Scoped to the home workspace ONLY — the shared hello template
-  # stays credential-optional and NO other workspace inherits our key. One-shot transient Task (never blocks the supervisor;
-  # a failure is logged, not fatal). Config-gated (`:credential_bridge_boot`,
-  # dev/prod on, test off) AND env-gated (`boot_enabled?/0`).
-  defp credential_bridge_children do
-    if EzagentPluginHello.CredentialBridge.boot_enabled?() do
-      [
-        Supervisor.child_spec({Task, &run_credential_bridge/0},
-          id: :hello_credential_bridge,
-          restart: :transient
-        )
-      ]
-    else
-      []
-    end
-  end
-
-  defp run_credential_bridge do
-    # Let the session / identity supervisors settle before spawning the source
-    # agent + dispatching the workspace-shared registration (the demo seed
-    # below waits longer, so the bridge always lands BEFORE a boot-seeded
-    # hello app materializes its `llm` member).
-    Process.sleep(1_000)
-
-    case EzagentPluginHello.CredentialBridge.ensure_deepseek_source() do
-      {:ok, %URI{} = source_uri} ->
-        Logger.info(
-          "hello credential bridge: deepseek workspace-shared curl source ready at " <>
-            URI.to_string(source_uri)
-        )
-
-      {:ok, :no_env_key} ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("hello credential bridge failed: #{inspect(reason)}")
-    end
-  end
-
-  # The governed 官网 deploy-seed. At boot (config-gated dev/prod on, test off —
-  # `:site_seed_boot`, matching `:credential_bridge_boot`), idempotently ensure
-  # `session://<home>/hello/ezagent-official` is provisioned: the marketing
-  # ruihua page + the front-desk/builder/concierge/curl-`llm` greeter, owned by
-  # the home workspace's founder, with the DeepSeek credential wired first.
-  # Absence-gated (only (re)provisions when the site has no page) so a reseed
-  # self-heals while a plain reboot preserves a live `refresh_hello_site.exs`
-  # refresh. One-shot transient Task; fail-soft (a failure is logged, never
-  # crashes boot). See `EzagentPluginHello.OfficialSiteSeed`.
   defp official_site_children do
     if EzagentPluginHello.OfficialSiteSeed.boot_enabled?() do
       [
@@ -342,13 +219,16 @@ defmodule EzagentPluginHello.Application do
     Process.sleep(5_000)
     report = EzagentPluginHello.Migrate.migrate_all()
 
+    migrated = Map.get(report, :migrated, [])
+    skipped = Map.get(report, :skipped, [])
+    failed = Map.get(report, :failed, [])
+
     Logger.info(
-      "hello orchestrator migration done — migrated=#{length(report.migrated)} " <>
-        "skipped=#{length(report.skipped)} failed=#{length(report.failed)}"
+      "hello orchestrator migration done — migrated=#{length(migrated)} " <>
+        "skipped=#{length(skipped)} failed=#{length(failed)}"
     )
 
-    if report.failed != [],
-      do: Logger.warning("hello migration failures: #{inspect(report.failed)}")
+    if failed != [], do: Logger.warning("hello migration failures: #{inspect(failed)}")
   end
 
   # `HELLO_DEMO_SEED=1` → at boot, instantiate a `public_view` hello app and land

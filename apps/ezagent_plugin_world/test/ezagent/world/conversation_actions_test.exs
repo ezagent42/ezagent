@@ -23,6 +23,13 @@ defmodule Ezagent.World.ConversationActionsTest do
     refute source =~ "Ezagent.Orchestrator.Tools.Templates.save_template_as"
   end
 
+  test "chat send rehydrates a cold session before dispatch" do
+    source =
+      File.read!(Path.expand("../../../lib/ezagent/world/conversation_actions.ex", __DIR__))
+
+    assert source =~ "socket = self_join(socket, session_uri)"
+  end
+
   alias Ezagent.World.ConversationRoutingForm
 
   test "create_session_result converts create_session exits into errors" do

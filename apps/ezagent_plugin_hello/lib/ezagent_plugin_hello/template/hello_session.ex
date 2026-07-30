@@ -65,7 +65,12 @@ defmodule EzagentPluginHello.Template.HelloSession do
       # the declared team. `Workspace.create_session` fires the socialware-install
       # transaction once this returns. (`App.ensure_app/3` is the create+install
       # composite, for boot seeding and tests.)
-      create_opts = if caller, do: [owner: caller], else: []
+      create_opts =
+        if caller do
+          [owner: caller] ++ maybe_llm_flavor(tmpl)
+        else
+          maybe_llm_flavor(tmpl)
+        end
 
       case App.create_app(workspace_name, session_name, create_opts) do
         {:ok, ^session_uri} ->
@@ -79,6 +84,13 @@ defmodule EzagentPluginHello.Template.HelloSession do
 
   defp do_instantiate(_tmpl_name, tmpl, _workspace_uri, _caller),
     do: {:error, {:invalid_template, tmpl}}
+
+  defp maybe_llm_flavor(tmpl) do
+    case Map.get(tmpl, "llm_flavor") || Map.get(tmpl, :llm_flavor) do
+      flavor when is_binary(flavor) and flavor != "" -> [llm_flavor: flavor]
+      _ -> []
+    end
+  end
 
   defp check_class(%{"class" => "session.hello"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}

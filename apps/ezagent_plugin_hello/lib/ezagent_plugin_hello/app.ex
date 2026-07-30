@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.App do
 
   alias Ezagent.Capability
   alias Ezagent.Entity.{Session, SessionTemplate, User}
-  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
+  alias Ezagent.Socialware.Installation
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.Derivation
   alias EzagentPluginHello.Members
@@ -68,8 +68,7 @@ defmodule EzagentPluginHello.App do
   def create_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Capability.workspace_of(session_uri)
-    socialware_name = "hello-#{name}"
-    content = %{name: socialware_name, installs: [socialware_name]}
+    content = hello_template_content(opts)
 
     # hello-A — the session OWNER is the caller principal: the home workspace's
     # founder for the boot 官网 seed (`OfficialSiteSeed`), the dispatch caller on
@@ -78,7 +77,7 @@ defmodule EzagentPluginHello.App do
     # entity for legacy test/tooling callers that pass no owner.
     owner = Keyword.get(opts, :owner, User.admin_uri())
 
-    with {:ok, _} <- seed_hello_definition(ws, socialware_name),
+    with :ok <- validate_llm_template(opts),
          # SPEC §4.4 (Decision A) — the anon-homesite create path is the SECOND
          # production behavior_set_for_template/2 call site and is NOT retired in
          # P0, so it MUST apply the SAME freeze helper: resolve the hello def to
@@ -162,69 +161,33 @@ defmodule EzagentPluginHello.App do
 
   # --- internals --------------------------------------------------------
 
-  # The platform cc orchestrator requires a real Claude Code binary + bridge
-  # infrastructure. In local dev (claude_code backend, no cc plugin bootstrap)
-  # the orchestrator activate times out — skip the requires so the session
-  # creates without it. Set HELLO_NO_ORCHESTRATOR=0 to force-enable.
-  defp hello_requires do
-    if System.get_env("HELLO_NO_ORCHESTRATOR", "1") == "0", do: ["orchestrator"], else: []
+  defp validate_llm_template(opts) do
+    flavor = Keyword.get(opts, :llm_flavor, "curl")
+
+    if flavor in llm_flavors() do
+      :ok
+    else
+      {:error, {:hello_llm_completion_unsupported, flavor}}
+    end
   end
 
-  @doc "The hello socialware Definition attrs for a given socialware name (testable)."
-  @spec hello_definition_attrs(String.t()) :: map()
-  def hello_definition_attrs(name) when is_binary(name) do
-    %{
-      name: name,
-      bases: [
-        Ezagent.ActionSet.Session,
-        Ezagent.ActionSet.Publisher.SessionImpl
-      ],
-      shape: [
-        Ezagent.ActionSet.Turn,
-        Ezagent.ActionSet.Surface
-      ],
-      roles: [
-        %{role_name: "front-desk", fill: :agent, recipe: "hello.front-desk", flavor: "hello"},
-        %{role_name: "builder", fill: :agent, recipe: "hello.builder", flavor: "native"},
-        %{role_name: "concierge", fill: :agent, recipe: "hello.concierge", flavor: "native"},
-        %{role_name: "llm", fill: :agent, recipe: "hello.llm", flavor: "curl"},
-        %{role_name: "sharer", fill: :agent, recipe: "hello.sharer", flavor: "native"},
-        %{role_name: "publisher", fill: :agent, recipe: "hello.publisher", flavor: "native"},
-        %{
-          role_name: "dispatcher",
-          fill: :agent,
-          recipe: "hello.dispatcher",
-          flavor: "native"
-        }
-      ],
-      routing_rules: [
-        %{
-          "matcher" => %{"type" => "always"},
-          "receivers" => ["front-desk"],
-          "rule_set" => "default",
-          "position" => 0
-        }
-      ],
-      # M3 #1230: the platform stock cc-orchestrator is auto-installed per-session
-      # (A-1 single-instance guarantee). This replaces the retired hello-owned
-      # orchestrator stub with the fully-wired cc orchestrator (credentials + tools).
-      # Skip in local dev when no cc infrastructure is available (the orchestrator
-      # activation times out without a real Claude Code binary).
-      requires: hello_requires(),
-      prompt_templates: %{},
-      legends: %{},
-      adapters: [%{adapter_id: "external_feed", role: :customer, config: %{}}],
-      visibility_policy: %{publish_policy: :auto, web_anon_access: true},
-      owner_policy: %{type: :installer}
-    }
-  end
+  @doc "Flavors whose registered AgentBridge can supply an LLM completion."
+  @spec llm_flavors() :: [String.t()]
+  def llm_flavors, do: ~w(curl cc-headless cc-headless-custom cc codex codex-remote py)
 
-  defp seed_hello_definition(ws, name) do
-    DefinitionRegistry.seed_definition_if_absent(
-      hello_definition_attrs(name),
-      workspace_uri: Ezagent.URI.workspace(ws),
-      actor_uri: User.admin_uri()
-    )
+  defp hello_template_content(opts) do
+    case Keyword.get(opts, :llm_flavor) do
+      flavor when is_binary(flavor) ->
+        %{
+          name: "hello",
+          installs: [
+            %{ref: "hello", config: %{role_slots: [%{role_name: "llm", flavor: flavor}]}}
+          ]
+        }
+
+      _ ->
+        %{name: "hello", installs: ["hello"]}
+    end
   end
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the

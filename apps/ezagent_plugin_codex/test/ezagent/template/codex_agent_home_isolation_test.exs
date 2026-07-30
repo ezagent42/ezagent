@@ -88,6 +88,23 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentHomeIsolationTest do
   end
 
   describe "CODEX_HOME env wiring" do
+    test "an unauthenticated agent starts the native Codex TUI without an app-server thread" do
+      agent_uri = URI.new!("entity://system/agent/codex_login-#{uniq()}")
+      codex_home = target_codex_home(agent_uri)
+      tmpl = %{"agent_config_dir" => codex_home}
+
+      assert {:ok, params} =
+               CodexAgent.build_initial_tui_params_for_env(
+                 "/work",
+                 tmpl,
+                 "/bin/codex",
+                 :dev
+               )
+
+      assert params.cmd_override == ["/bin/codex"]
+      assert params.cmd_env == %{"CODEX_HOME" => codex_home}
+    end
+
     test "all three codex subprocess paths receive the same per-agent CODEX_HOME" do
       agent_uri = URI.new!("entity://system/agent/codex_env-#{uniq()}")
       codex_home = target_codex_home(agent_uri)

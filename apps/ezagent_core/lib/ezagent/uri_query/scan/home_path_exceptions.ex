@@ -106,9 +106,14 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     #  capture) above the def — unchanged call, +9 line drift only;
     #  re-anchored 742→759: #201-cred codex r3 NEW-HIGH-1 wrapped the sidecar
     #  launch in `HomeRuntime.launch_under_grant_compensation/5` (grant compensation
-    #  on a launch raise) above the def — unchanged call, +17 line drift only)
+    #  on a launch raise) above the def — unchanged call, +17 line drift only;
+    #  re-anchored 759→817: PR #1576 (Hello Template LLM) added the first-login
+    #  flow — `ensure_initial_runtime/2` branching on `authenticated_config_home?/2`
+    #  to start the bare initial TUI (`ensure_initial_tui/5` +
+    #  `build_initial_tui_params_for_env/4`) before a bridge thread can exist —
+    #  above the def — unchanged call, +58 line drift only)
     {"apps/ezagent_plugin_codex/lib/ezagent/template/codex_agent.ex",
-     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 759,
+     "Ezagent.PluginCodex.Template.CodexAgent.default_app_server_socket_path/1", 817,
      "OS-handle socket, SUN_LEN short-path, not URI-addressable (D2)"},
     # operator mix-task: ezagent.plugin.install — supplies EZAGENT_HOME/plugins
     # as the zip-unpack target for a plugin-package hot-load. The runtime

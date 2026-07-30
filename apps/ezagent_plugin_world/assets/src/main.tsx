@@ -258,7 +258,19 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
         const merged = {...current, ...next}
         return clearSessionCreatePending ? {...merged, session_create_pending: false} : merged
       })
-      if (next.layout) setCurrentLayout(next.layout)
+      if (next.layout) {
+        setCurrentLayout(next.layout)
+      } else if (next.component === "conversation") {
+        // `session.switch` intentionally updates the conversation in place and
+        // only pushes the state payload. Keep the island's layout in sync so a
+        // session selected from the sessions table renders the conversation
+        // surface instead of leaving the old table layout mounted.
+        setCurrentLayout({
+          version: 1,
+          scope: next.workspace_uri || "workspace://system",
+          components: [{id: "conversation", type: "conversation", placement: {x: 0, y: 0, w: 12, h: 8}}],
+        })
+      }
 
       if (pendingDispatch.current) {
         // 本次 world:state 跟随岛内发起的 dispatch:以 dataset 里的最新
@@ -408,6 +420,16 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                 state,
                 pushEvent,
                 onJoin: (sessionUri) => {
+                  // The sessions-TABLE row click is a first-touch "open this
+                  // session" affordance — the direct `sessions.join` action
+                  // (WorldLive's dispatch_session_join/2), not the
+                  // conversation-group `session.switch` (switching sessions
+                  // from WITHIN an already-open conversation rail, wired
+                  // separately below via onSessionSwitch). The two are not
+                  // interchangeable: only sessions.join's push_patch ->
+                  // handle_params round trip supplies a `layout` in the
+                  // pushed world:state (see the world:state handler above);
+                  // session.switch's state never carries one.
                   sendEvent("world:dispatch", {
                     action: "sessions.join",
                     args: {session_uri: sessionUri},

@@ -31,6 +31,16 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   """
   def handle_publish(%{session_uri: session_str} = args, ctx)
       when is_binary(session_str) and session_str != "" do
+    _ = publish_from_session(args, ctx)
+    {:ok, %{}, []}
+  end
+
+  @doc false
+  def handle_publish(_args, _ctx), do: {:ok, %{}, []}
+
+  @doc false
+  def publish_from_session(%{session_uri: session_str} = args, ctx)
+      when is_binary(session_str) and session_str != "" do
     case parse_session_uri(session_str) do
       {:ok, session_uri} ->
         caller_uri = Ezagent.Entity.User.admin_uri()
@@ -41,7 +51,6 @@ defmodule Ezagent.ActionSet.HelloPublisher do
           with {:ok, name} <- resolve_template_name(session_uri, instruction),
                {:ok, %URI{} = tmpl_uri} <-
                  Ezagent.Orchestrator.Tools.Templates.save_template_as(name,
-                   session_uri: session_uri,
                    workspace_uri: Ezagent.Capability.workspace_of(session_uri),
                    caller: caller_uri,
                    caps: caps
@@ -49,7 +58,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
             {:ok, "Template \"#{template_display_name(tmpl_uri)}\" published."}
           end
 
-        case EzagentPluginHello.Members.role_uri(session_uri, "publisher") do
+        case result_actor(session_uri) do
           {:ok, publisher_uri} ->
             case result do
               {:ok, text} ->
@@ -72,12 +81,10 @@ defmodule Ezagent.ActionSet.HelloPublisher do
       :error ->
         :ok
     end
-
-    {:ok, %{}, []}
   end
 
   @doc false
-  def handle_publish(_args, _ctx), do: {:ok, %{}, []}
+  def publish_from_session(_args, _ctx), do: :ok
 
   @doc false
   def handle_receive(_args, _ctx), do: {:ok, %{}, []}
@@ -100,7 +107,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   end
 
   defp extract_base_name(session_uri, instruction) do
-    case extract_explicit_name(instruction) do
+    case extract_explicit_name(session_uri, instruction) do
       {:ok, name} -> name
       :none -> session_base_name(session_uri)
     end
@@ -114,8 +121,9 @@ defmodule Ezagent.ActionSet.HelloPublisher do
   - Return ONLY the name or \"auto\". No punctuation, no extra text.
   """
 
-  defp extract_explicit_name(instruction) when is_binary(instruction) and instruction != "" do
-    case EzagentPluginHello.LLM.ClaudeCode.chat(@name_prompt, instruction) do
+  defp extract_explicit_name(session_uri, instruction)
+       when is_binary(instruction) and instruction != "" do
+    case EzagentPluginHello.Generator.complete(session_uri, @name_prompt, instruction) do
       {:ok, %{content: content}} when is_binary(content) ->
         name =
           content
@@ -134,7 +142,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   end
 
-  defp extract_explicit_name(_), do: :none
+  defp extract_explicit_name(_session_uri, _), do: :none
 
   # Session URIs are `session://<ws>/hello/<name>` (template/type axis is
   # "hello"). Read the name segment through the Ezagent.URI accessors rather
@@ -169,5 +177,12 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   rescue
     ArgumentError -> :error
+  end
+
+  defp result_actor(session_uri) do
+    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
+      {:ok, uri} -> {:ok, uri}
+      :error -> EzagentPluginHello.Members.role_uri(session_uri, "publisher")
+    end
   end
 end

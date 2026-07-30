@@ -31,13 +31,14 @@ defmodule EzagentPluginHello.Members do
   end
 
   @doc """
-  Read the session's members map with ONE slice read. `{:ok, map}` even when the
-  map is empty (slice readable, nobody joined yet); `:error` ONLY when the
-  `:session` slice itself cannot be read at all (no live Kind / read miss).
+  Read the session's members map with ONE slice read. A cold but durable session
+  is restored through the framework's normal Kind rehydration path, so routing
+  continues after a node restart. `{:ok, map}` is returned even when the map is
+  empty; `:error` means the session slice could not be restored or read.
   """
   @spec members(URI.t()) :: {:ok, map()} | :error
   def members(%URI{} = session_uri) do
-    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+    case Ezagent.Kind.read(session_uri, :session) do
       {:ok, slice} when is_map(slice) -> {:ok, Map.get(slice, :members, %{})}
       _ -> :error
     end

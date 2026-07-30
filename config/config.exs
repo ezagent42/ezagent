@@ -32,7 +32,10 @@ config :ezagent_core, Ezagent.Authentication,
 # still install orchestrator socialware.
 config :ezagent_domain_session,
   default_orchestrator_template_uri: "template://system/agent/cc-orchestrator",
-  socialware_manifest_boot_scan: config_env() in [:prod]
+  # Dev must publish shipped socialware manifests during boot so the world
+  # session-create picker can resolve installs (notably `hello`) without an
+  # out-of-band import step. Test overrides this to false.
+  socialware_manifest_boot_scan: config_env() in [:dev, :prod]
 
 # Role/reference plugin app lists for the generic CLI tasks, moved OUT of the
 # task modules' `@attribute` literals so a deployment can extend them without
@@ -61,22 +64,13 @@ config :ezagent_domain_session,
 # structurally impossible. Default `"ezagent"` for all envs; a lane that needs
 # a different home overrides THIS key only.
 #
-# #185 — the hello plugin's boot-time `DEEPSEEK_API_KEY` env → curl credential
-# bridge (`EzagentPluginHello.CredentialBridge`). When the deploy env carries
-# the key, boot registers it as the home workspace's shared curl credential
-# source so freshly seeded hello `llm` members are born credentialed. Scoped to
-# that one workspace; never baked into the shared hello template.
 #
 # `:site_seed_boot` — the governed 官网 deploy-seed
 # (`EzagentPluginHello.OfficialSiteSeed`). When on, boot idempotently ensures
 # `session://<home>/hello/ezagent-official` (the ruihua marketing page +
 # greeter) exists, so a reseed self-heals the 官网 instead of leaving it wiped.
-# Same family as the credential bridge above (config-gated, deploy-owned, NOT
-# the `HELLO_DEMO_SEED` demo flag); paired with it so the DeepSeek source and
-# the site that consumes it come up in the same environments.
 config :ezagent_plugin_hello,
   home_workspace: "ezagent",
-  credential_bridge_boot: config_env() in [:dev, :prod],
   site_seed_boot: config_env() in [:dev, :prod]
 
 config :ezagent_domain_session,

@@ -12,6 +12,7 @@ defmodule EzagentPluginHello.MembersTest do
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     # The team materialization resolves each role's recipe through the
     # RecipeRegistry (role-as-data). Boot seeds them, but that write is outside
     # this DataCase sandbox (and the ETS cache can be flushed) — reseed here.
@@ -31,8 +32,9 @@ defmodule EzagentPluginHello.MembersTest do
     {:ok, session_uri, orch_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
 
     assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-    assert {:ok, %URI{}} = Members.role_uri(session_uri, "builder")
-    assert {:ok, %URI{}} = Members.role_uri(session_uri, "concierge")
+    assert {:ok, %URI{}} = Members.role_uri(session_uri, "llm")
+    assert :error = Members.role_uri(session_uri, "builder")
+    assert :error = Members.role_uri(session_uri, "concierge")
     assert :error = Members.role_uri(session_uri, "nope")
   end
 end

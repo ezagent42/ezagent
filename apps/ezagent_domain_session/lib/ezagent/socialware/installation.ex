@@ -212,12 +212,20 @@ defmodule Ezagent.Socialware.Installation do
       {:ok, %ConfigObject{body: body}} ->
         %{
           install
-          | config_id: install.config_id || Map.get(body, "definition_config_id"),
+          | config: session_install_config(body, install.config),
+            config_id: install.config_id || Map.get(body, "definition_config_id"),
             content_hash: install.content_hash || Map.get(body, "definition_content_hash")
         }
 
       :none ->
         install
+    end
+  end
+
+  defp session_install_config(body, fallback) when is_map(body) and is_map(fallback) do
+    case Map.get(body, "seed_config") do
+      config when is_map(config) -> config
+      _ -> fallback
     end
   end
 

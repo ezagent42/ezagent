@@ -24,6 +24,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
     # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
     # seeds it, but that write is outside this DataCase sandbox transaction (and the
@@ -148,6 +149,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert Ezagent.ActionSet.Turn in behaviors
     assert Ezagent.ActionSet.Surface in behaviors
     assert Ezagent.ActionSet.Publisher.SessionImpl in behaviors
+    assert Ezagent.ActionSet.HelloSessionActions in behaviors
   end
 
   test "a second validated prompt result changes the live anonymous page", ctx do

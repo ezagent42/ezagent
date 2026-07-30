@@ -80,6 +80,9 @@ config :ezagent_web, EzagentWeb.Endpoint,
   ]
 
 config :ezagent_plugin_world,
+  # Serve the checked-in World bundle from the same Phoenix origin in dev.
+  # This works for localhost, LAN, and tailnet clients alike; a browser on
+  # another machine must never be asked to fetch a Vite URL on `localhost`.
   world_module_url: "/assets/world/main.js",
   world_css_url: "/assets/world/world.css"
 

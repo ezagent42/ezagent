@@ -67,6 +67,11 @@ defmodule Ezagent.PluginCc.Provider do
 
   def provider_of(_), do: nil
 
+  @doc "Whether persisted template data identifies a session-template member."
+  @spec session_template_member?(map()) :: boolean()
+  def session_template_member?(tmpl) when is_map(tmpl),
+    do: Map.get(tmpl, "session_template_member") in [true, "true"]
+
   @doc """
   Fail-closed template-data profile gate shared by the custom-backend Template
   Classes (`CcCustomAgent` / `CcHeadlessCustomAgent`): `:ok` iff `tmpl` names
@@ -101,7 +106,8 @@ defmodule Ezagent.PluginCc.Provider do
       byte-unchanged — no vendor vars ever leak in);
     * catalog profile → the profile's static block + `ANTHROPIC_BASE_URL` +
       `ANTHROPIC_AUTH_TOKEN` (read from the profile's allowlisted env var);
-      key unset/empty → `{:error, {:backend_api_key_missing, name}}`;
+      key unset/empty → `{:error, {:backend_api_key_missing, name}}`, except
+      persisted session-template members, which omit the auth-token entry;
     * unknown profile → `{:error, {:unknown_backend_profile, name}}`.
   """
   @spec provider_env(map()) ::
@@ -112,7 +118,7 @@ defmodule Ezagent.PluginCc.Provider do
     case provider_of(tmpl) do
       nil -> {:ok, %{}}
       @anthropic -> {:ok, %{}}
-      name -> profile_env(name)
+      name -> profile_env(name, allow_missing_key?: session_template_member?(tmpl))
     end
   end
 
@@ -121,17 +127,26 @@ defmodule Ezagent.PluginCc.Provider do
           {:ok, %{optional(String.t()) => String.t()}}
           | {:error, {:unknown_backend_profile, String.t()}}
           | {:error, {:backend_api_key_missing, String.t()}}
-  def profile_env(name) when is_binary(name) do
-    with {:ok, profile} <- ProviderCatalog.fetch(name),
-         {:ok, token} <- api_key(profile) do
-      {:ok,
-       Map.merge(profile.static_env, %{
-         "ANTHROPIC_BASE_URL" => profile.base_url,
-         "ANTHROPIC_AUTH_TOKEN" => token
-       })}
+  def profile_env(name) when is_binary(name), do: profile_env(name, allow_missing_key?: false)
+
+  defp profile_env(name, allow_missing_key?: allow_missing_key?) when is_binary(name) do
+    with {:ok, profile} <- ProviderCatalog.fetch(name) do
+      case api_key(profile) do
+        {:ok, token} ->
+          {:ok,
+           Map.merge(profile.static_env, %{
+             "ANTHROPIC_BASE_URL" => profile.base_url,
+             "ANTHROPIC_AUTH_TOKEN" => token
+           })}
+
+        {:error, :missing_key} when allow_missing_key? ->
+          {:ok, Map.put(profile.static_env, "ANTHROPIC_BASE_URL", profile.base_url)}
+
+        {:error, :missing_key} ->
+          {:error, {:backend_api_key_missing, name}}
+      end
     else
       :error -> {:error, {:unknown_backend_profile, name}}
-      {:error, :missing_key} -> {:error, {:backend_api_key_missing, name}}
     end
   end
 
@@ -174,6 +189,24 @@ defmodule Ezagent.PluginCc.Provider do
       :error ->
         {:error, {:unknown_backend_profile, name, agent_uri}}
     end
+  end
+
+  @doc """
+  Template-data-shaped `ensure_api_key/2`: a session-template member is
+  ALWAYS launchable (its provider profile was already vetted at the
+  originating agent's own `ensure_api_key/2` call), else delegate to the
+  name-keyed gate above using the template's own `"provider"` value.
+  Shared by the custom-backend Template Classes (`CcCustomAgent` /
+  `CcHeadlessCustomAgent`) so the tmpl -> name adapter is defined once.
+  """
+  @spec ensure_api_key_for_template(map(), URI.t()) ::
+          :ok
+          | {:error, {:backend_api_key_missing, String.t(), URI.t()}}
+          | {:error, {:unknown_backend_profile, String.t(), URI.t()}}
+  def ensure_api_key_for_template(tmpl, %URI{} = agent_uri) when is_map(tmpl) do
+    if session_template_member?(tmpl),
+      do: :ok,
+      else: ensure_api_key(Map.fetch!(tmpl, @provider_key), agent_uri)
   end
 
   @doc """

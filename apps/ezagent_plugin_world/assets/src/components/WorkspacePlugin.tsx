@@ -524,10 +524,63 @@ type RoleSlotChoice = {
   mode: "fresh" | "reuse"
   flavor?: string
   agent_uri?: string
+  config?: Record<string, unknown>
 }
 
 const FOUNDATION_SOCIALWARE_REFS = new Set(["chat", "orchestrator", "socialware"])
 const DEFAULT_TEMPLATE_INSTALLS = ["chat"]
+const HELLO_COMPLETION_FLAVORS = new Set([
+  "curl",
+  "cc-headless",
+  "cc-headless-custom",
+  "cc",
+  "codex",
+  "codex-remote",
+  "py",
+])
+
+function helloLlmDefaults(): Record<string, unknown> {
+  return {
+    provider: "deepseek",
+    api_url: "https://api.deepseek.com/chat/completions",
+    model: "deepseek-v4-flash",
+    credential_optional: true,
+  }
+}
+
+function curlHelloLlmConfig(config: Record<string, unknown> | undefined) {
+  if (!config) return undefined
+
+  const allowed: Record<string, unknown> = {}
+
+  for (const key of ["provider", "api_url", "model", "credential_optional"]) {
+    if (config[key] !== undefined) allowed[key] = config[key]
+  }
+
+  return allowed
+}
+
+function helloCompletionFlavors(flavors: string[]) {
+  return flavors.filter((flavor) => HELLO_COMPLETION_FLAVORS.has(flavor))
+}
+
+function defaultHelloLlmFlavor(flavors: string[]) {
+  return flavors.includes("curl") ? "curl" : flavors[0]
+}
+
+function registeredHelloLlmFlavor(flavor: string | undefined, flavors: string[]) {
+  return flavor && flavors.includes(flavor) ? flavor : defaultHelloLlmFlavor(flavors)
+}
+
+function configurableTemplateRoles(socialware: SocialwareRow) {
+  const roles = socialware.roles || []
+
+  if (socialware.name === "hello") {
+    return roles.filter((role) => role.role_name === "llm")
+  }
+
+  return roles
+}
 
 function TemplateBuilder({
   state,
@@ -551,20 +604,26 @@ function TemplateBuilder({
       const next: Record<string, RoleSlotChoice> = {}
 
       for (const socialware of selectedSocialwares) {
-        for (const role of socialware.roles || []) {
+        for (const role of configurableTemplateRoles(socialware)) {
           if (role.fill !== "agent") continue
           const key = roleChoiceKey(socialware, role)
+          const helloLlmRole = socialware.name === "hello" && role.role_name === "llm"
+          const flavor = helloLlmRole
+            ? defaultHelloLlmFlavor(helloCompletionFlavors(state.agent_flavors || []))
+            : role.flavor || undefined
+
           next[key] = current[key] || {
             role_name: role.role_name,
             mode: "fresh",
-            flavor: role.flavor || undefined,
+            flavor,
+            config: helloLlmRole && flavor === "curl" ? helloLlmDefaults() : undefined,
           }
         }
       }
 
       return next
     })
-  }, [selectedSocialwares])
+  }, [selectedSocialwares, state.agent_flavors])
 
   return (
     <section
@@ -587,7 +646,7 @@ function TemplateBuilder({
 
           const installs = selectedSocialwares.flatMap((socialware) => {
             if (!socialware.name) return []
-            const config = installConfigForTemplate(socialware, roleChoices)
+            const config = installConfigForTemplate(socialware, roleChoices, state.agent_flavors || [])
             const install: Record<string, unknown> = {ref: socialware.name}
 
             if (config.role_slots.length > 0) install.config = config
@@ -706,8 +765,19 @@ function TemplateBuilder({
                 {(socialware.roles || []).length === 0 ? (
                   <EmptyState label="No role slots declared." />
                 ) : (
-                  (socialware.roles || []).map((role) =>
-                    role.fill === "agent" ? (
+                  configurableTemplateRoles(socialware).map((role) =>
+                    socialware.name === "hello" && role.role_name === "llm" ? (
+                      <HelloLlmRoleSlot
+                        key={String(socialware.name) + ":" + role.role_name}
+                        role={role}
+                        slotKey={roleDomId(socialware, role)}
+                        flavors={state.agent_flavors || []}
+                        choice={roleChoices[roleChoiceKey(socialware, role)]}
+                        onChange={(choice) =>
+                          setRoleChoices((current) => ({...current, [roleChoiceKey(socialware, role)]: choice}))
+                        }
+                      />
+                    ) : role.fill === "agent" ? (
                       <TemplateAgentRoleSlot
                         key={`${socialware.name}:${role.role_name}`}
                         role={role}
@@ -759,8 +829,12 @@ function normalizeSocialwareRow(row: DataRow): SocialwareRow {
   }
 }
 
-function installConfigForTemplate(socialware: SocialwareRow, choices: Record<string, RoleSlotChoice>) {
-  const roleSlots = (socialware.roles || [])
+export function installConfigForTemplate(
+  socialware: SocialwareRow,
+  choices: Record<string, RoleSlotChoice>,
+  registeredFlavors: string[],
+) {
+  const roleSlots = configurableTemplateRoles(socialware)
     .filter((role) => role.fill === "agent")
     .map((role) => {
       const choice = choices[roleChoiceKey(socialware, role)] || {
@@ -769,11 +843,23 @@ function installConfigForTemplate(socialware: SocialwareRow, choices: Record<str
         flavor: role.flavor || undefined,
       }
 
+      const helloLlmRole = socialware.name === "hello" && role.role_name === "llm"
+      const flavor = choice.mode === "fresh"
+        ? helloLlmRole
+          ? registeredHelloLlmFlavor(choice.flavor || role.flavor || undefined, helloCompletionFlavors(registeredFlavors))
+          : choice.flavor || role.flavor || undefined
+        : undefined
+
       return {
         role_name: role.role_name,
         mode: choice.mode,
-        flavor: choice.mode === "fresh" ? choice.flavor || role.flavor || undefined : undefined,
+        flavor,
         agent_uri: choice.mode === "reuse" ? choice.agent_uri : undefined,
+        config: choice.mode === "fresh" && helloLlmRole && flavor === "curl"
+          ? curlHelloLlmConfig({...helloLlmDefaults(), ...(choice.config || {})})
+          : choice.mode === "fresh" && !helloLlmRole
+            ? choice.config
+            : undefined,
       }
     })
     .filter((choice) => choice.mode === "fresh" || Boolean(choice.agent_uri))
@@ -787,6 +873,91 @@ function roleChoiceKey(socialware: SocialwareRow, role: SocialwareRole) {
 
 function roleDomId(socialware: SocialwareRow, role: SocialwareRole) {
   return roleChoiceKey(socialware, role).replace(/[^a-zA-Z0-9_-]+/g, "-")
+}
+
+export function HelloLlmRoleSlot({
+  role,
+  slotKey,
+  flavors,
+  choice,
+  onChange,
+}: {
+  role: SocialwareRole
+  slotKey: string
+  flavors: string[]
+  choice?: RoleSlotChoice
+  onChange: (choice: RoleSlotChoice) => void
+}) {
+  const completionFlavors = helloCompletionFlavors(flavors)
+  const flavor = registeredHelloLlmFlavor(choice?.flavor, completionFlavors)
+  const current = choice || {
+    role_name: role.role_name,
+    mode: "fresh" as const,
+    flavor,
+    config: flavor === "curl" ? helloLlmDefaults() : undefined,
+  }
+  const selectedFlavor = registeredHelloLlmFlavor(current.flavor, completionFlavors)
+  const curlFlavor = selectedFlavor === "curl"
+  const config = {...helloLlmDefaults(), ...(current.config || {})}
+  const updateFlavor = (flavor: string) =>
+    onChange(helloLlmChoiceForFlavor(current, flavor))
+  const updateConfig = (key: string, value: string) =>
+    onChange({...current, mode: "fresh", flavor: "curl", config: {...config, [key]: value}})
+  const fieldId = (name: string) => "template-hello-" + name + "-" + slotKey
+
+  return (
+    <div className="grid gap-3 rounded-md border border-border bg-card p-3" data-world-template-hello-llm-config>
+      <div className="flex min-w-0 items-center gap-2">
+        <Bot className="h-4 w-4 flex-none text-muted-foreground" aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-foreground">Role: {role.role_name}</p>
+          <p className="truncate text-xs text-muted-foreground">The only Hello role that calls a model.</p>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Credentials are bound after creation through the workspace credential flow; this template never stores a key.
+      </p>
+      <label className={fieldLabelClass} htmlFor={fieldId("flavor")}>
+        <span>Flavor <RequiredMarker /></span>
+        <select
+          id={fieldId("flavor")}
+          className={selectClass}
+          value={selectedFlavor || ""}
+          onChange={(event) => updateFlavor(event.target.value)}
+          required
+          aria-required="true"
+        >
+          <option value="" disabled>Select a flavor</option>
+          {completionFlavors.map((flavor) => (
+            <option key={flavor} value={flavor}>{flavor}</option>
+          ))}
+        </select>
+      </label>
+      {curlFlavor && <div className="grid gap-3 sm:grid-cols-3">
+        <label className={fieldLabelClass} htmlFor={fieldId("provider")}>
+          <span>Provider <RequiredMarker /></span>
+          <Input id={fieldId("provider")} value={String(config.provider || "")} onChange={(event) => updateConfig("provider", event.target.value)} required aria-required="true" />
+        </label>
+        <label className={fieldLabelClass} htmlFor={fieldId("api-url")}>
+          <span>API URL <RequiredMarker /></span>
+          <Input id={fieldId("api-url")} value={String(config.api_url || "")} onChange={(event) => updateConfig("api_url", event.target.value)} required aria-required="true" />
+        </label>
+        <label className={fieldLabelClass} htmlFor={fieldId("model")}>
+          <span>Model <RequiredMarker /></span>
+          <Input id={fieldId("model")} value={String(config.model || "")} onChange={(event) => updateConfig("model", event.target.value)} required aria-required="true" />
+        </label>
+      </div>}
+    </div>
+  )
+}
+
+function helloLlmChoiceForFlavor(current: RoleSlotChoice, flavor: string): RoleSlotChoice {
+  return {
+    ...current,
+    mode: "fresh",
+    flavor,
+    config: flavor === "curl" ? {...helloLlmDefaults(), ...(current.config || {})} : undefined,
+  }
 }
 
 export function TemplateAgentRoleSlot({

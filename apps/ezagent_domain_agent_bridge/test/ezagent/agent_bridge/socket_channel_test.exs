@@ -164,6 +164,24 @@ defmodule Ezagent.AgentBridge.SocketChannelTest do
     assert {:ok, socket.channel_pid} == Registry.lookup(agent_uri)
   end
 
+  test "canonical topic joins from the durable flavor while the agent Kind is cold" do
+    agent_uri = uri!("entity://team-alpha/agent/cold-flavor-#{u()}")
+
+    {:ok, _} =
+      Ezagent.SnapshotStore.write(
+        agent_uri,
+        %{sandbox: %{respawn_template_data: %{"flavor" => "cc"}}},
+        kind_type: :agent
+      )
+
+    {:ok, _reply, socket} =
+      @endpoint
+      |> socket("agent_bridge:#{URI.to_string(agent_uri)}", %{agent_uri: agent_uri})
+      |> subscribe_and_join(Channel, "agent_bridge:cc:#{URI.to_string(agent_uri)}", %{})
+
+    assert {:ok, socket.channel_pid} == Registry.lookup(agent_uri)
+  end
+
   test "legacy cc:bridge topic still joins during the deprecation window" do
     agent_uri = uri!("entity://team-alpha/agent/cc_legacy-topic-#{u()}")
     put_flavor(agent_uri, "cc")

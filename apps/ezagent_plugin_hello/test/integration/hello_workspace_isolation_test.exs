@@ -42,6 +42,7 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kanban)

@@ -1,61 +1,41 @@
 name: hello
 version: "0.1.0"
-title: "Pure-config hello"
-description: "Hello socialware authored as a manifest."
+title: "Hello website builder"
+description: "Build and publish a website through a two-agent Hello team."
 uses:
   - hello
-  - kanban
-requires:
-  - orchestrator
 bases:
   - Ezagent.ActionSet.Session
   - Ezagent.ActionSet.Publisher.SessionImpl
 shape:
   - Ezagent.ActionSet.Turn
   - Ezagent.ActionSet.Surface
-  - Ezagent.ActionSet.SupervisorApproval
+  - Ezagent.ActionSet.HelloSessionActions
 views:
   - hello_render
 roles:
-  - role_name: builder
+  - role_name: front-desk
     fill: agent
-    recipe: np
-    flavor: py
-  - role_name: responser
+    recipe: hello.front-desk
+    flavor: hello
+  - role_name: llm
     fill: agent
-    recipe: np
-    flavor: py
-  - role_name: viewer
-    fill: human
+    recipe: hello.llm
+    flavor: curl
+    config:
+      provider: deepseek
+      api_url: https://api.deepseek.com/chat/completions
+      model: deepseek-v4-flash
 routing_rules:
   - matcher:
-      type: from_role
-      arg: viewer
+      type: always
     receivers:
-      - responser
+      - front-desk
     rule_set: default
     position: 0
-  - matcher:
-      type: and
-      items:
-        - type: from_role
-          arg: responser
-        - type: text_matches
-          arg: '^\[need-build\]'
-    receivers:
-      - builder
-    rule_set: default
-    position: 1
 visibility_policy:
   scope: public
-  publish_policy: supervised
+  publish_policy: auto
   web_anon_access: true
 prompt_templates: {}
-legends:
-  hello:
-    member_set:
-      - viewer
-      - responser
-      - builder
-    bound_rule_set: default
-    fold: false
+legends: {}

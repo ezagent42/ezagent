@@ -17,6 +17,7 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
   alias EzagentPluginHello.Application, as: HelloApp
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
 
     Enum.each(HelloApp.roles(), fn recipe ->
@@ -35,7 +36,11 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
     {:ok, session_uri, orch_uri} = App.ensure_app(ws, "main")
 
     sender = Ezagent.URI.entity(ws, :user, "operator")
-    msg = Message.new(sender, %{text: "make the title blue", attachments: []})
+
+    msg =
+      Message.new(sender, %{text: "make the title blue", attachments: []},
+        ref_id: "hello-completion-test"
+      )
 
     ctx = %{self_uri: orch_uri, caller: session_uri}
 
@@ -46,6 +51,7 @@ defmodule EzagentPluginHello.Integration.HelloOrchestratorDeliveryTest do
     assert extracted.session_uri == session_uri
     assert extracted.sender == sender
     assert extracted.text == "make the title blue"
+    assert extracted.ref_id == "hello-completion-test"
   end
 
   test "a user message mentioning the role-resolved orchestrator (web channel's " <>

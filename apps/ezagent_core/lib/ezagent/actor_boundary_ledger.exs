@@ -242,78 +242,6 @@
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "5c0c4635529614d3aa0a5f2a622ee3684b99e08e96321a098873705e0850273f",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "a6164dbf11f04dfe289608f93f1b30b86c2f2eb9686f2816ecab7cde17d1fc4f",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "a6164dbf11f04dfe289608f93f1b30b86c2f2eb9686f2816ecab7cde17d1fc4f",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "a6164dbf11f04dfe289608f93f1b30b86c2f2eb9686f2816ecab7cde17d1fc4f",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "bd9c2bb0bd53ad0aa4b54114d8dd3d07aa9c48b3ae4438d33f79d30ea31697cc",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.Kind.ReadyTransition",
-      sha: "e993ab3f3fa5a36621040523f96f3c7ff1d1035b8fa5d578b2fb176a8bf7717e",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "6633a680e7cd5c9b9477d8f8aa0f7880e778242ecca758cd0313e80a9bdcd400",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.KindRegistry",
-      sha: "c0e413a25b0daa95c40722523009af7a0c74473ee56d296d00d68f1767ebbaf2",
-      note: "KindRegistry reach-in → alive?/self?/list_instances (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "Ezagent.PendingDelivery",
-      sha: "6a84fa6fda3cf0057bf48f67a2843b0f2e76707a0cda008474a89ed1c77ce182",
-      note: "§4.4 reach-in → §2.2 read surface (C1–C5)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "ReadyGate.put",
-      sha: "16b205786ebfc7957df4ac632901c4513a63f7069100dc1398d0276d51deddae",
-      note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "ReadyGate.status",
-      sha: "4517a14c816c228258123430452140841e88ec945a0f15bfed2a7ae559d6f755",
-      note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_agent/lib/ezagent/agent/transport_readiness.ex",
-      target: "ReadyGate.status",
-      sha: "afbeeb7d49bba47d5f15e51ac3bd57e4523f4ed3232c2d47aacf0b5e9c3d696f",
-      note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
       path: "apps/ezagent_domain_agent/lib/ezagent/agent_flavor_resolver.ex",
       target: "Ezagent.SnapshotStore",
       sha: "6f0efa841ae7b75d169ef72711f15f2f98cf8bba6c084cbf3474d9953304ed81",
@@ -836,12 +764,6 @@
       path: "apps/ezagent_plugin_curl_agent/lib/ezagent/plugin_curl_agent/bridge_adapter.ex",
       target: "Ezagent.SnapshotStore",
       sha: "c31c08b84d6bbf743380b518a71e7949258ad085a117cce09421415709dd4546",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/credential_bridge.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "89c27fb8c26f5ad0a792cef83abed1d6b9ef58d21cf6cf72a3a9bb3ed915ccd4",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{

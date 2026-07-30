@@ -13,11 +13,12 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Entity.User
+  alias Ezagent.Entity.{Profile, User}
   alias Ezagent.Socialware.ExternalFeed
   alias EzagentPluginHello.OfficialSiteSeed
 
   setup do
+    :ok = EzagentPluginHello.TestCatalog.import!()
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
     {:ok, _} = Application.ensure_all_started(:ezagent_plugin_kanban)
@@ -65,6 +66,19 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     # real ezagent-workspace user; create the row here the same way.
     owner = Ezagent.URI.entity(EzagentPluginHello.home_workspace(), :user, "lin_yilun")
     {:ok, _} = Ezagent.Users.create(owner, nil, [], email_verified: false)
+    email = "official-founder@example.test"
+
+    {:ok, _} =
+      Profile.upsert(%{entity_uri: owner, display_name: "Official founder", email: email})
+
+    previous = Application.get_env(:ezagent_plugin_hello, :official_site_founder_email)
+    Application.put_env(:ezagent_plugin_hello, :official_site_founder_email, email)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:ezagent_plugin_hello, :official_site_founder_email, previous),
+        else: Application.delete_env(:ezagent_plugin_hello, :official_site_founder_email)
+    end)
 
     :ok
   end

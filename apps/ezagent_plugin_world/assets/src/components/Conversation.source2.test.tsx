@@ -5,10 +5,55 @@ import {describe, expect, it, vi} from "vitest"
 import type {ConversationState} from "./Conversation"
 
 vi.mock("./PtyTerminal", () => ({PtyTerminalSurface: () => null}))
+vi.mock("../generated/plugin-page-renderers", () => ({
+  pluginPageRenderers: {},
+  pluginUnfurlRenderers: [],
+}))
 
 const noop = () => undefined
 
 describe("G5 source-2 async agent error cards", () => {
+  it("opens the Hello preview for a template-derived Hello session", async () => {
+    const {Conversation} = await import("./Conversation")
+    const state: ConversationState = {
+      active_view: "hello_page",
+      caller_uri: "entity://system/user/admin",
+      session_uri: "session://system/hello-codex/codex-1",
+      sessions: [{uri: "session://system/hello-codex/codex-1", name: "codex-1"}],
+      views: [
+        {id: "conversation", label: "对话", icon: "message-square", mode: "chat"},
+        {id: "hello_page", label: "Page", icon: "panel-top", mode: "external"},
+      ],
+    }
+
+    const html = renderToStaticMarkup(
+      <Conversation
+        state={state}
+        onAddRoutingRule={noop}
+        onForkConfig={noop}
+        onOpenPty={noop}
+        onRestartOrchestrator={noop}
+        onSend={noop}
+        onSwitch={noop}
+        onSwitchView={noop}
+        onToggleRoutingRule={noop}
+        onLoadOlder={noop}
+        onMarkDisplayed={noop}
+        onInvite={noop}
+        onRemoveParticipant={noop}
+        onUninstallSocialware={noop}
+        onPtyInput={noop}
+        onPtyResize={noop}
+        onKanbanAction={noop}
+        onPublishTemplate={noop}
+      />,
+    )
+
+    expect(html).toContain('data-world-subcomponent="hello-page"')
+    expect(html).toContain('title="渲染页面预览"')
+    expect(html).toContain("session%3A%2F%2Fsystem%2Fhello-codex%2Fcodex-1")
+  })
+
   it("renders a structured message error card without suppressing persisted text", async () => {
     const {Conversation} = await import("./Conversation")
     const state: ConversationState = {

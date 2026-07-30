@@ -1,31 +1,19 @@
 defmodule Ezagent.Agent.TransportReadiness do
   @moduledoc """
-  Domain-agent transport readiness contract for bridge-backed agents.
+  Generation-safe transport status tracking for bridge-backed agents.
 
-  A bridge-backed agent's Kind process being alive is not enough to receive
-  routed messages. The transport bridge must join first. This module keeps that
-  readiness requirement generic and keyed by `agent_uri`.
+  An agent Kind becoming ready and its bridge transport joining are independent
+  facts. `Ezagent.ReadyGate` is owned exclusively by the Kind lifecycle; this
+  module records transport-join status so CC can observe a real bridge join
+  without delaying Kind readiness or failing a ready Kind when a bridge is
+  unavailable.
 
-  ## Two transport-join signals (both satisfy readiness)
-
-  An agent is "transport-joined" when EITHER:
-
-  1. `Ezagent.Agent.LiveJoinRegistry.joined?/1` is true — the orchestrator MCP
-     bridge (`orch:bridge:<uri>`) joined end-to-end. Marked ONLY by
-     `Ezagent.Orchestrator.McpChannel` (orchestrator agents).
-  2. `Ezagent.AgentBridge.Registry` holds a LIVE binding — the agent's chat
-     transport bridge (`agent_bridge:<flavor>:<uri>` / `cc:bridge:<uri>`) joined
-     end-to-end (PTY up → `claude` up → `esr-bridge` MCP connected → channel
-     joined → bound). This is the readiness signal for a REGULAR (non-orchestrator)
-     cc agent, whose `esr-bridge` MCP joins the chat channel, NOT `orch:bridge:`.
-
-  Before this second source existed (#505), `require_transport_join` armed the
-  gate for EVERY cc agent but only the orchestrator path ever marked a join — so
-  a cold-activated REGULAR cc agent's ReadyGate flip deferred until the timeout
-  and then `mark_failed`, even though its PTY/`claude`/bridge came up fine and
-  bound in `AgentBridge.Registry`. Resolving on the actual bridge-bind event
-  makes readiness fire on a real signal (not a timer), eliminating the race
-  rather than widening a window.
+  A tracked transport is joined when either the orchestrator MCP bridge is in
+  `Ezagent.Agent.LiveJoinRegistry` or a live process is bound in
+  `Ezagent.AgentBridge.Registry`. Records are generation- and incarnation-
+  scoped: joins and timeouts clear only their matching current record, and a
+  stale record is discarded without affecting a replacement Kind at the same
+  URI.
   """
 
   alias Ezagent.Agent.LiveJoinRegistry
@@ -59,34 +47,23 @@ defmodule Ezagent.Agent.TransportReadiness do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
     generation = make_ref()
 
-    outcome =
-      with_transition_locks(agent_uri, fn ->
-        incarnation = current_incarnation(agent_uri)
+    with_transport_lock(agent_uri, fn ->
+      incarnation = current_incarnation(agent_uri)
 
-        true =
-          :ets.insert(
-            @table,
-            {URI.to_string(agent_uri), timeout_ms, generation, incarnation}
-          )
+      true =
+        :ets.insert(
+          @table,
+          {URI.to_string(agent_uri), timeout_ms, generation, incarnation}
+        )
 
-        :ok = Ezagent.ReadyGate.put(agent_uri, :not_ready)
-        :ok = TransportReadinessListener.arm_timeout(agent_uri, timeout_ms, generation)
+      :ok = TransportReadinessListener.arm_timeout(agent_uri, timeout_ms, generation)
 
-        # Close the arm/event ordering window: a bridge may already be live, or
-        # its broadcast may have raced this critical section. Pending →
-        # transport is the single lock order shared with the core ready edge.
-        if transport_joined?(agent_uri) do
-          {_status, stale_entries, failed_entries} =
-            settle_join_event_locked(agent_uri, incarnation)
-
-          :ok = clear_generation_locked(agent_uri, generation)
-          {:ok, stale_entries, failed_entries}
-        else
-          {:ok, [], []}
-        end
-      end)
-
-    finalize_transition(agent_uri, outcome)
+      if transport_joined?(agent_uri) do
+        clear_generation_locked(agent_uri, generation)
+      else
+        :ok
+      end
+    end)
   end
 
   @doc false
@@ -95,7 +72,7 @@ defmodule Ezagent.Agent.TransportReadiness do
     init()
 
     with_transport_lock(agent_uri, fn ->
-      case readiness_record(agent_uri) do
+      case transport_record(agent_uri) do
         {:current, _timeout_ms, generation, _incarnation, _record} ->
           clear_generation_locked(agent_uri, generation)
 
@@ -113,178 +90,119 @@ defmodule Ezagent.Agent.TransportReadiness do
   end
 
   @doc """
-  React to a live transport-join event for `agent_uri` (an AgentBridge bind /
-  orchestrator MCP join).
+  Clears the matching transport record after a live bridge-join event.
 
-  If a transport-join gate is ARMED for this agent and its ReadyGate is still
-  `:not_ready`, flip it to `:ready` now — the transport is live. This covers the
-  ordering where the Kind announced `:ready` BEFORE the gate was armed (the
-  FRESH-spawn / create path in `CcAgent.Spawn.spawn_for_local_pty`, where the
-  Agent Kind is started first and `require_transport_join` runs AFTER the announce
-  — so no `await_transport_or_fail` Task exists to observe the later bind). The
-  rehydrate/activate path is covered by `await_transport_or_fail/1`; this is the
-  event-driven complement so BOTH orderings reach `:ready` on the real bind.
-
-  No-op when the agent has no armed gate (non-bridge-backed agents) or is already
-  past `:not_ready`. Driven by `Ezagent.Agent.TransportReadinessListener`.
+  A queued event is authoritative only while the registered Kind incarnation
+  still matches and the registry still reports a live transport.
   """
   @spec on_transport_joined(URI.t()) :: :ok
   def on_transport_joined(%URI{} = agent_uri) do
     init()
 
-    outcome =
-      with_transition_locks(agent_uri, fn ->
-        case readiness_record(agent_uri) do
-          {:current, _timeout_ms, generation, expected_incarnation, _record} ->
-            current_incarnation = current_incarnation(agent_uri)
-
-            cond do
-              not incarnation_matches?(expected_incarnation, current_incarnation) ->
-                discard_stale_record(agent_uri, generation)
-                {:ok, [], []}
-
-              transport_joined?(agent_uri) ->
-                {_status, stale_entries, failed_entries} =
-                  settle_join_event_locked(agent_uri, expected_incarnation)
-
-                :ok = clear_generation_locked(agent_uri, generation)
-                {:ok, stale_entries, failed_entries}
-
-              true ->
-                # A queued bind event can arrive after the bridge unbound. Keep
-                # the generation armed; only current registry truth may settle it.
-                {:ok, [], []}
-            end
-
-          :none ->
-            {:ok, [], []}
-        end
-      end)
-
-    finalize_transition(agent_uri, outcome)
-  end
-
-  defp armed?(%URI{} = agent_uri) do
-    :ets.lookup(@table, URI.to_string(agent_uri)) != []
-  end
-
-  @doc false
-  @spec defer_ready?(URI.t() | String.t()) :: :ready | {:defer, pos_integer()}
-  def defer_ready?(uri) do
-    agent_uri = normalize_uri(uri)
-    init()
-
     with_transport_lock(agent_uri, fn ->
-      case readiness_decision(agent_uri) do
-        {:defer, timeout_ms, _generation, _incarnation} -> {:defer, timeout_ms}
-        :ready -> :ready
+      case transport_record(agent_uri) do
+        {:current, _timeout_ms, generation, expected_incarnation, _record} ->
+          cond do
+            not incarnation_matches?(expected_incarnation, current_incarnation(agent_uri)) ->
+              clear_generation_locked(agent_uri, generation)
+
+            transport_joined?(agent_uri) ->
+              clear_generation_locked(agent_uri, generation)
+
+            true ->
+              :ok
+          end
+
+        :none ->
+          :ok
       end
     end)
   end
 
   @doc false
-  @spec await_transport_or_fail(URI.t() | String.t()) ::
-          :ok | {:error, :timeout | :superseded}
-  def await_transport_or_fail(uri) do
-    agent_uri = normalize_uri(uri)
+  @spec defer_ready?(URI.t() | String.t()) :: :ready
+  def defer_ready?(_uri), do: :ready
 
-    case agent_uri do
-      nil ->
+  @doc false
+  @spec await_transport_or_fail(URI.t() | String.t()) :: :ok
+  def await_transport_or_fail(uri) do
+    case normalize_uri(uri) do
+      nil -> :ok
+      agent_uri -> await_join(agent_uri)
+    end
+  end
+
+  defp await_join(agent_uri) do
+    result =
+      with_transport_lock(agent_uri, fn ->
+        case transport_record(agent_uri) do
+          {:current, timeout_ms, generation, expected_incarnation, _record} ->
+            cond do
+              not incarnation_matches?(expected_incarnation, current_incarnation(agent_uri)) ->
+                clear_generation_locked(agent_uri, generation)
+                :done
+
+              transport_joined?(agent_uri) ->
+                clear_generation_locked(agent_uri, generation)
+                :done
+
+              true ->
+                {:wait, System.monotonic_time(:millisecond) + timeout_ms, generation,
+                 expected_incarnation}
+            end
+
+          :none ->
+            :done
+        end
+      end)
+
+    case result do
+      :done ->
         :ok
 
-      %URI{} ->
-        outcome =
-          with_transition_locks(agent_uri, fn ->
-            case readiness_decision(agent_uri) do
-              :ready ->
-                if armed?(agent_uri) and transport_joined?(agent_uri) do
-                  case readiness_record(agent_uri) do
-                    {:current, _, generation, expected_incarnation, _} ->
-                      {_status, stale_entries, failed_entries} =
-                        settle_join_event_locked(agent_uri, expected_incarnation)
-
-                      :ok = clear_generation_locked(agent_uri, generation)
-                      {:ready, stale_entries, failed_entries}
-
-                    :none ->
-                      {:ready, [], []}
-                  end
-                else
-                  {:ready, [], []}
-                end
-
-              deferred ->
-                {deferred, [], []}
-            end
-          end)
-
-        decision = finalize_transition(agent_uri, outcome)
-
-        case decision do
-          :ready ->
-            :ok
-
-          {:defer, timeout_ms, generation, expected_incarnation} ->
-            deadline = System.monotonic_time(:millisecond) + timeout_ms
-            await_join(agent_uri, deadline, generation, expected_incarnation)
-        end
+      {:wait, deadline, generation, incarnation} ->
+        await_join(agent_uri, deadline, generation, incarnation)
     end
   end
 
   defp await_join(agent_uri, deadline, generation, waiter_incarnation) do
-    outcome =
-      with_transition_locks(agent_uri, fn ->
-        case readiness_record(agent_uri) do
+    result =
+      with_transport_lock(agent_uri, fn ->
+        case transport_record(agent_uri) do
           {:current, _timeout_ms, ^generation, expected_incarnation, _record} ->
             cond do
               not incarnation_matches?(expected_incarnation, current_incarnation(agent_uri)) ->
-                discard_stale_record(agent_uri, generation)
-                {{:done, {:error, :superseded}}, [], []}
+                clear_generation_locked(agent_uri, generation)
+                :done
 
               transport_joined?(agent_uri) ->
-                {_status, stale_entries, failed_entries} =
-                  settle_join_event_locked(agent_uri, expected_incarnation)
-
-                :ok = clear_generation_locked(agent_uri, generation)
-                {{:done, :ok}, stale_entries, failed_entries}
+                clear_generation_locked(agent_uri, generation)
+                :done
 
               System.monotonic_time(:millisecond) >= deadline ->
-                failed_entries =
-                  fail_current_generation_locked(agent_uri, generation, expected_incarnation)
-
-                {{:done, {:error, :timeout}}, [], failed_entries}
+                clear_generation_locked(agent_uri, generation)
+                :done
 
               true ->
-                {:wait, [], []}
+                :wait
             end
-
-          :none ->
-            # Clearing the only gate releases this Kind; the core waiter may
-            # complete the ordinary ready transition.
-            {{:done, :ok}, [], []}
 
           {:current, timeout_ms, newer_generation, ^waiter_incarnation, _record}
           when is_pid(waiter_incarnation) ->
             if current_incarnation(agent_uri) == waiter_incarnation do
-              # Same live Kind re-armed its transport contract. Follow the
-              # newest generation so the original Kind.Server waiter still
-              # receives the eventual :ok and runs Lifecycle activated/2.
-              new_deadline = System.monotonic_time(:millisecond) + timeout_ms
-              {{:follow, new_deadline, newer_generation}, [], []}
+              {:follow, System.monotonic_time(:millisecond) + timeout_ms, newer_generation}
             else
-              {{:done, {:error, :superseded}}, [], []}
+              :done
             end
 
-          _replacement_or_legacy_rearm ->
-            {{:done, {:error, :superseded}}, [], []}
+          _stale_or_cleared ->
+            :done
         end
       end)
 
-    result = finalize_transition(agent_uri, outcome)
-
     case result do
-      {:done, result} ->
-        result
+      :done ->
+        :ok
 
       :wait ->
         Process.sleep(@poll_ms)
@@ -295,134 +213,42 @@ defmodule Ezagent.Agent.TransportReadiness do
     end
   end
 
-  defp readiness_decision(nil), do: :ready
-
-  defp readiness_decision(%URI{} = agent_uri) do
-    case readiness_record(agent_uri) do
-      {:current, timeout_ms, generation, expected_incarnation, _record} ->
-        if incarnation_matches?(expected_incarnation, current_incarnation(agent_uri)) do
-          if transport_joined?(agent_uri) do
-            :ready
-          else
-            {:defer, timeout_ms, generation, expected_incarnation}
-          end
-        else
-          discard_stale_record(agent_uri, generation)
-          :ready
-        end
-
-      :none ->
-        :ready
-    end
-  end
-
   @doc false
   @spec timeout_generation(URI.t(), reference()) :: :ok
   def timeout_generation(%URI{} = agent_uri, generation) when is_reference(generation) do
     init()
 
-    outcome =
-      with_transition_locks(agent_uri, fn ->
-        case readiness_record(agent_uri) do
-          {:current, _timeout_ms, ^generation, expected_incarnation, _record} ->
-            cond do
-              Ezagent.ReadyGate.status(agent_uri) != :not_ready ->
-                {:ok, [], []}
+    with_transport_lock(agent_uri, fn ->
+      case transport_record(agent_uri) do
+        {:current, _timeout_ms, ^generation, _expected_incarnation, _record} ->
+          clear_generation_locked(agent_uri, generation)
 
-              not incarnation_matches?(expected_incarnation, current_incarnation(agent_uri)) ->
-                discard_stale_record(agent_uri, generation)
-                {:ok, [], []}
-
-              transport_joined?(agent_uri) ->
-                {_status, stale_entries, failed_entries} =
-                  settle_join_event_locked(agent_uri, expected_incarnation)
-
-                :ok = clear_generation_locked(agent_uri, generation)
-                {:ok, stale_entries, failed_entries}
-
-              true ->
-                failed_entries =
-                  fail_current_generation_locked(agent_uri, generation, expected_incarnation)
-
-                {:ok, [], failed_entries}
-            end
-
-          _stale_or_cleared ->
-            {:ok, [], []}
-        end
-      end)
-
-    finalize_transition(agent_uri, outcome)
+        _stale_or_cleared ->
+          :ok
+      end
+    end)
   end
 
-  defp fail_current_generation_locked(agent_uri, generation, expected_incarnation) do
-    case readiness_record(agent_uri) do
-      {:current, _timeout_ms, ^generation, ^expected_incarnation, _record} ->
-        Ezagent.Kind.ReadyTransition.mark_failed_locked(URI.to_string(agent_uri))
-
-      _changed ->
-        []
-    end
+  @doc false
+  @spec generation_current?(URI.t(), reference()) :: boolean()
+  def generation_current?(%URI{} = agent_uri, generation) when is_reference(generation) do
+    init()
+    current_generation(agent_uri) == generation
   end
 
-  # Caller holds PendingDelivery first, then the transport-generation lock.
-  # Detached rows are returned so DLQ I/O happens after both locks release.
-  defp settle_join_event_locked(agent_uri, expected_incarnation) do
-    case Ezagent.ReadyGate.status(agent_uri) do
-      :not_ready ->
-        # A bridge event without its Kind is a late/stale incarnation, not a
-        # success. Failing it drains authority-bearing artifacts so a later
-        # entity at the same URI cannot absorb them.
-        case {expected_incarnation, Ezagent.KindRegistry.lookup(agent_uri)} do
-          {expected_pid, {:ok, registered_pid}}
-          when is_pid(expected_pid) and registered_pid == expected_pid ->
-            settle_registered_incarnation_locked(agent_uri, expected_pid)
-
-          {:legacy, {:ok, pid}} when is_pid(pid) ->
-            settle_registered_incarnation_locked(agent_uri, pid)
-
-          {:unregistered, :error} ->
-            failed_entries =
-              Ezagent.Kind.ReadyTransition.mark_failed_locked(URI.to_string(agent_uri))
-
-            {:failed, [], failed_entries}
-
-          _replacement_or_stale_record ->
-            # Registration + its initial :not_ready publication now takes the
-            # outer PendingDelivery lock. A mismatch here is therefore a record
-            # that was already stale before this transition began; never mutate
-            # the replacement's URI gate from the old generation.
-            {:superseded, [], []}
-        end
-
-      _already_settled ->
-        {:settled, [], []}
-    end
+  @doc false
+  @spec transport_joined?(URI.t()) :: boolean()
+  def transport_joined?(%URI{} = agent_uri) do
+    init()
+    LiveJoinRegistry.joined?(agent_uri) or bridge_bound?(agent_uri)
   end
 
-  defp settle_registered_incarnation_locked(agent_uri, pid) do
-    if Process.alive?(pid) do
-      {status, stale_entries} =
-        Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready_locked(
-          URI.to_string(agent_uri),
-          pid
-        )
-
-      {status, stale_entries, []}
-    else
-      failed_entries =
-        Ezagent.Kind.ReadyTransition.mark_failed_locked(URI.to_string(agent_uri))
-
-      {:failed, [], failed_entries}
-    end
-  end
-
-  defp readiness_record(%URI{} = agent_uri) do
+  defp transport_record(%URI{} = agent_uri) do
     case :ets.lookup(@table, URI.to_string(agent_uri)) do
       [{_, timeout_ms, generation, incarnation} = record] ->
         {:current, timeout_ms, generation, incarnation, record}
 
-      # Hot-upgrade tolerance for rows armed by the pre-S7 process.
+      # Hot-upgrade tolerance for records armed by an earlier release.
       [{_, timeout_ms, generation} = record] ->
         {:current, timeout_ms, generation, :legacy, record}
 
@@ -435,25 +261,23 @@ defmodule Ezagent.Agent.TransportReadiness do
   end
 
   defp current_incarnation(%URI{} = agent_uri) do
-    case Ezagent.KindRegistry.lookup(agent_uri) do
-      {:ok, pid} when is_pid(pid) -> pid
-      _ -> :unregistered
-    end
+    agent_uri
+    |> URI.to_string()
+    |> then(fn agent_uri_string ->
+      Enum.find_value(Ezagent.Kind.list_instances(), :unregistered, fn
+        {^agent_uri_string, %{pid: pid}} when is_pid(pid) -> pid
+        _instance -> nil
+      end)
+    end)
   end
 
   defp incarnation_matches?(:legacy, _current), do: true
   defp incarnation_matches?(expected, expected), do: true
   defp incarnation_matches?(_expected, _current), do: false
 
-  defp discard_stale_record(agent_uri, generation) do
-    clear_generation_locked(agent_uri, generation)
-  end
-
   defp clear_generation_locked(agent_uri, generation) do
-    case readiness_record(agent_uri) do
+    case transport_record(agent_uri) do
       {:current, _timeout_ms, ^generation, _incarnation, record} ->
-        # `delete_object` cannot erase a concurrent re-arm with a new
-        # generation, unlike a blind `delete(key)`.
         :ets.delete_object(@table, record)
 
       _newer_or_cleared ->
@@ -464,27 +288,11 @@ defmodule Ezagent.Agent.TransportReadiness do
     :ok
   end
 
-  @doc false
-  @spec generation_current?(URI.t(), reference()) :: boolean()
-  def generation_current?(%URI{} = agent_uri, generation) when is_reference(generation) do
-    init()
-    current_generation(agent_uri) == generation
-  end
-
   defp current_generation(%URI{} = agent_uri) do
-    case readiness_record(agent_uri) do
+    case transport_record(agent_uri) do
       {:current, _timeout_ms, generation, _incarnation, _record} -> generation
       _ -> :any
     end
-  end
-
-  # An agent's transport is joined when EITHER the orchestrator MCP bridge has
-  # marked a live-join (LiveJoinRegistry, orchestrator agents) OR the agent's
-  # chat transport bridge holds a LIVE binding in AgentBridge.Registry (the
-  # regular cc/bridge path — #505). The alive check guards against a stale row
-  # from a dead channel incarnation satisfying readiness before unbind runs.
-  defp transport_joined?(%URI{} = agent_uri) do
-    LiveJoinRegistry.joined?(agent_uri) or bridge_bound?(agent_uri)
   end
 
   defp bridge_bound?(%URI{} = agent_uri) do
@@ -504,24 +312,9 @@ defmodule Ezagent.Agent.TransportReadiness do
 
   defp normalize_uri(_), do: nil
 
-  defp with_transition_locks(%URI{} = agent_uri, fun) when is_function(fun, 0) do
-    Ezagent.PendingDelivery.with_lock(agent_uri, fn ->
-      with_transport_lock(agent_uri, fun)
-    end)
-  end
-
-  defp finalize_transition(%URI{} = agent_uri, {result, stale_entries, failed_entries}) do
-    uri_str = URI.to_string(agent_uri)
-    :ok = Ezagent.Kind.ReadyTransition.dead_letter_stale_entries(uri_str, stale_entries)
-    :ok = Ezagent.Kind.ReadyTransition.dead_letter_failed_entries(uri_str, failed_entries)
-    result
-  end
-
   defp with_transport_lock(agent_uri, fun) when is_function(fun, 0) do
-    lock_key = uri_string(agent_uri)
-    :global.trans({{__MODULE__, lock_key}, self()}, fun, [node()])
+    :global.trans({{__MODULE__, uri_string(agent_uri)}, self()}, fun, [node()])
   end
 
   defp uri_string(%URI{} = agent_uri), do: URI.to_string(agent_uri)
-  defp uri_string(_agent_uri), do: :invalid_uri
 end

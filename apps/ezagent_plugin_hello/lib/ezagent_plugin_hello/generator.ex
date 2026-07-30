@@ -13,12 +13,6 @@ defmodule EzagentPluginHello.Generator do
   FRESH spec otherwise; `land_page/6` drives the spec onto the Surface and then
   designs / updates the per-page CSS theme (`build_theme/5`).
 
-  ## LLM backend (Task 4)
-
-  `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI. Otherwise the
-  HTTP branch delegates to the session's own curl "llm" member
-  (`EzagentPluginHello.Members.role_uri/2` + `Ezagent.Entity.Agent.complete/3`) —
-  the API key lives on that agent's own `:api_keys` slice and is never seen by
   this module.
   """
 
@@ -50,41 +44,41 @@ defmodule EzagentPluginHello.Generator do
   end
 
   @doc """
-  Classify a PAGE-OWNER message as page `:builder`, read-only `:concierge`,
-  `:sharer` (share link), or `:publisher` (publish template), via one cheap
-  LLM round-trip (`Prompts.route_system/0`). Fail-closed to `:builder` — the
+  Classify a PAGE-OWNER message as a Session action: `:rebuild`, `:answer`,
+  `:share`, `:publish`, or `:delegate_to_kanban`, via one cheap LLM round-trip
+  (`Prompts.route_system/0`). Fail-closed to `:rebuild` — the
   owner is here to build, and a mis-route to the builder is recoverable (it
   just regenerates), whereas losing a build request is not.
   """
   @spec classify_intent(URI.t(), String.t()) ::
-          :builder | :concierge | :sharer | :publisher | :dispatcher
+          :rebuild | :answer | :share | :publish | :delegate_to_kanban
   def classify_intent(%URI{} = session_uri, user_text) when is_binary(user_text) do
     case call_llm(session_uri, Prompts.route_system(), user_text) do
       {:ok, %{content: content}} when is_binary(content) ->
         interpret_intent(content)
 
       other ->
-        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → builder")
-        :builder
+        Logger.warning("hello.Generator: intent classify failed (#{inspect(other)}); → rebuild")
+        :rebuild
     end
   end
 
   @doc """
-  Interpret the router model's one-word answer. SHARE→:sharer, PUBLISH→:publisher,
-  ASK→:concierge, anything else→:builder (fail-open to build, the owner default).
+  Interpret the router model's one-word answer. SHARE→:share, PUBLISH→:publish,
+  ASK→:answer, anything else→:rebuild (fail-open to build, the owner default).
   Pure — split out so the routing policy is unit-testable without the LLM.
   """
   @spec interpret_intent(String.t()) ::
-          :builder | :concierge | :sharer | :publisher | :dispatcher
+          :rebuild | :answer | :share | :publish | :delegate_to_kanban
   def interpret_intent(content) when is_binary(content) do
     up = String.upcase(content)
 
     cond do
-      String.contains?(up, "KANBAN") -> :dispatcher
-      String.contains?(up, "SHARE") -> :sharer
-      String.contains?(up, "PUBLISH") -> :publisher
-      String.contains?(up, "ASK") -> :concierge
-      true -> :builder
+      String.contains?(up, "KANBAN") -> :delegate_to_kanban
+      String.contains?(up, "SHARE") -> :share
+      String.contains?(up, "PUBLISH") -> :publish
+      String.contains?(up, "ASK") -> :answer
+      true -> :rebuild
     end
   end
 
@@ -218,11 +212,16 @@ defmodule EzagentPluginHello.Generator do
         Logger.warning("hello.Generator: generation failed: #{inspect(reason)}")
 
         # G5 source 2 — structured error, no hand-written prose.
-        TurnDriver.say_error(session_uri, builder, {:generation_failed, reason})
+        TurnDriver.say_error(session_uri, builder, error_signal_reason(reason))
 
         err
     end
   end
+
+  @doc false
+  @spec error_signal_reason(term()) :: term()
+  def error_signal_reason({:no_api_key, _provider} = reason), do: reason
+  def error_signal_reason(reason), do: {:generation_failed, reason}
 
   # Emit ONE "<label>…" line, then run the slow work inline. The client renders a
   # LIVE ticking elapsed time next to that one line (no per-tick chat spam); the
@@ -287,11 +286,54 @@ defmodule EzagentPluginHello.Generator do
 
   defp fresh_spec(session_uri, prompt_text) do
     with {:ok, %{content: content}} <-
-           call_llm(session_uri, Prompts.page_gen_system(), prompt_text),
-         {:ok, raw_spec} <- Spec.extract(content),
+           call_llm(session_uri, Prompts.page_gen_system(), prompt_text) do
+      decode_page_spec_with_retry(content, fn ->
+        with {:ok, %{content: retry_content}} <-
+               call_llm(
+                 session_uri,
+                 Prompts.page_gen_system(),
+                 compact_regeneration_prompt(prompt_text)
+               ) do
+          {:ok, retry_content}
+        end
+      end)
+    end
+  end
+
+  @doc false
+  @spec decode_page_spec_with_retry(String.t(), (-> {:ok, String.t()} | {:error, term()})) ::
+          {:ok, map()} | {:error, term()}
+  def decode_page_spec_with_retry(content, retry)
+      when is_binary(content) and is_function(retry, 0) do
+    case decode_page_spec(content) do
+      {:error, {:json, _reason}} ->
+        with {:ok, retry_content} <- retry.() do
+          decode_page_spec(retry_content)
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp decode_page_spec(content) do
+    with {:ok, raw_spec} <- Spec.extract(content),
          {:ok, spec} <- Spec.validate(raw_spec) do
       {:ok, spec}
     end
+  end
+
+  defp compact_regeneration_prompt(prompt_text) do
+    """
+    Your previous response could not be parsed as a complete JSON object.
+    Generate a compact replacement for the original request below. Use at most
+    twelve component nodes, concise copy, and return exactly one complete valid
+    JSON object with every array and object closed.
+
+    Original request:
+
+    #{prompt_text}
+    """
   end
 
   @doc """
@@ -475,35 +517,61 @@ defmodule EzagentPluginHello.Generator do
     end
   end
 
-  # Backend switch: `HELLO_LLM_BACKEND=claude_code` runs the local Claude Code CLI
-  # (much stronger designer); otherwise the session's own curl "llm" member
-  # (a curl-flavor agent materialized by `Definition.roles` — see
-  # `EzagentPluginHello.Members`). Both return `{:ok, %{content: ...}}`.
+  @doc false
+  def complete(session_uri, system, user_text), do: call_llm(session_uri, system, user_text)
+
   defp call_llm(session_uri, system, user_text) do
-    case System.get_env("HELLO_LLM_BACKEND") do
-      "claude_code" ->
-        EzagentPluginHello.LLM.ClaudeCode.chat(system, user_text)
+    case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
+      {:ok, llm_uri} ->
+        request_id = "hello-completion-" <> Integer.to_string(System.unique_integer([:positive]))
+        {:ok, _} = Registry.register(EzagentPluginHello.CompletionRegistry, request_id, [])
 
-      _ ->
-        case EzagentPluginHello.Members.role_uri(session_uri, "llm") do
-          {:ok, curl_uri} ->
-            case Ezagent.Entity.Agent.complete(
-                   Ezagent.Entity.User.admin_uri(),
-                   curl_uri,
-                   compose_prompt(system, user_text)
-                 ) do
-              {:ok, content} -> {:ok, %{content: content}}
-              {:error, _} = err -> err
-            end
+        result =
+          Ezagent.Entity.Agent.request_completion(
+            Ezagent.Entity.User.admin_uri(),
+            llm_uri,
+            session_uri,
+            compose_prompt(system, user_text),
+            request_id
+          )
 
-          :error ->
-            {:error, :no_llm_agent}
-        end
+        await_completion(result, request_id)
+
+      :error ->
+        {:error, :no_llm_agent}
     end
   end
 
-  # curl's completion is a single prompt; fold hello's per-call system prompt into
-  # the user turn (the llm member's own system_prompt config is left generic/empty).
+  defp await_completion({:ok, content}, request_id) when is_binary(content) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    {:ok, %{content: content}}
+  end
+
+  defp await_completion({:pending, request_id}, request_id) do
+    receive do
+      {:hello_completion, ^request_id, content} when is_binary(content) ->
+        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+        {:ok, %{content: content}}
+    after
+      120_000 ->
+        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+        {:error, :llm_completion_timeout}
+    end
+  end
+
+  defp await_completion({:error, _} = err, request_id) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    err
+  end
+
+  defp await_completion(other, request_id) do
+    Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
+    {:error, {:unexpected_llm_result, other}}
+  end
+
+  # The platform completion contract accepts one prompt; fold Hello's per-call
+  # system prompt into the user turn. Provider and credential handling remain
+  # inside the selected agent flavor.
   defp compose_prompt(system, user_text), do: system <> "\n\n" <> user_text
 
   # Land the page (page-only turn — NO turn-chat) then announce completion via a
@@ -765,17 +833,10 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # The session's builder agent URI. The builder is a PLANNED-URI member
-  # (materialized via `Definition.roles`, `EzagentPluginHello.Members`) — the
-  # old `session://<ws>/hello/<name> -> entity://<ws>/agent/hello_<name>`
-  # convention no longer points at a live entity, so resolve by `role_name` off
-  # the session's live membership slice first. This URI is used ONLY as
-  # `Message.sender` attribution for builder narration (`TurnDriver.say`), never
-  # as a dispatch target, so a `:error` fallback to the legacy convention URI
-  # keeps generation working (and keeps the `/agent/` shape the customer SPA's
-  # sender styling expects) even if the builder isn't materialized yet.
+  # Generated-page narration is emitted by the session's front-desk agent. The
+  # builder is a Session action, not an independently materialized member.
   defp builder_uri(%URI{} = session_uri) do
-    case EzagentPluginHello.Members.role_uri(session_uri, "builder") do
+    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
       {:ok, uri} -> uri
       :error -> legacy_builder_uri(session_uri)
     end
@@ -783,7 +844,14 @@ defmodule EzagentPluginHello.Generator do
 
   defp legacy_builder_uri(%URI{} = session_uri) do
     ws = Ezagent.URI.workspace_name!(session_uri)
-    name = session_uri.path |> to_string() |> String.split("/", trim: true) |> List.last()
+
+    name =
+      session_uri
+      |> Map.get(:path, "")
+      |> to_string()
+      |> String.split("/", trim: true)
+      |> List.last()
+
     Ezagent.URI.entity(ws, :agent, "hello_#{name}")
   end
 

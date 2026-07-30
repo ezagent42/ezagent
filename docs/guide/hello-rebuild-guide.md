@@ -76,20 +76,16 @@ v2 页面(body + shell CSS)来自 `apps/ezagent_plugin_hello/priv/seed_page/`:
 
 **页面主题:** Ezagent 开源项目官网("组织的 IDE / Organization IDE")，含 nav、hero、产品介绍、团队、世界赛进度等区块。
 
-## Session 结构(4 个声明式 agent + owner)
+## Session 结构(2 个声明式 agent + owner)
 
 | role_name | flavor | 职责 |
 |---|---|---|
-| `front-desk` | hello | chat 路由总机——收消息→判 owner+意图→dispatch `:rebuild`/`:answer` 给 builder/concierge |
-| `builder` | native | 页面生成——收到 `:rebuild` dispatch→调 LLM→TurnDriver→Surface |
-| `concierge` | native | 只读问答——收到 `:answer` dispatch→回答问题，永不触 Surface |
-| `llm` | curl | LLM 后端——持有 key(credential cascade)，给 builder/concierge 做 HTTP 补全。**credential-optional**——没配 DeepSeek 也能 keyless spawn。本地 dev 用 `claude_code`，休眠 |
-| `sharer` | native | 分享链接——收到 `:share` dispatch→生成公开 URL→回消息。触发词 "share"/"分享" |
-| `publisher` | native | 发布模板——收到 `:publish` dispatch→`update_template` 生成新模板版本→回消息。触发词 "publish"/"发布" |
+| `front-desk` | hello | chat 路由总机——收消息→判 owner+意图→向 Session dispatch `:rebuild` / `:answer` / `:share` / `:publish` / `:delegate_to_kanban` |
+| `llm` | curl | LLM 后端——持有 key(credential cascade)，供 Hello 的生成与问答动作做 HTTP 补全。**credential-optional**——没配 DeepSeek 也能 keyless spawn。本地 dev 用 `claude_code`，休眠 |
 
 session owner 是 `entity://system/user/admin`。匿名访客被自动 mint 只读 AnonUser(48h GC)。
 
-sharer/publisher 跟 builder/concierge 一样，靠 front-desk 意图识别触发，不靠 @-mention（native 味没有 bridge adapter）。
+页面生成、只读问答、分享链接、发布模板和 Kanban 委派都是 Session Action；它们没有独立的 agent、recipe 或成员边，因此创建 Hello 不会再为这些职责物化额外 agent。
 
 ## 本地 dev 注意事项
 

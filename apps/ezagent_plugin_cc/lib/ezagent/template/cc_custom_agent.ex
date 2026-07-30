@@ -115,8 +115,14 @@ defmodule Ezagent.PluginCc.Template.CcCustomAgent do
   def template_data_extra(content) when is_map(content) do
     base = CcAgent.template_data_extra(content)
 
-    case Ezagent.Kind.Template.content_field(content, :provider) do
-      p when is_binary(p) and p != "" -> Map.put(base, Provider.provider_key(), p)
+    base =
+      case Ezagent.Kind.Template.content_field(content, :provider) do
+        p when is_binary(p) and p != "" -> Map.put(base, Provider.provider_key(), p)
+        _ -> base
+      end
+
+    case Ezagent.Kind.Template.content_field(content, :session_template_member) do
+      true -> Map.put(base, "session_template_member", true)
       _ -> base
     end
   end
@@ -163,7 +169,7 @@ defmodule Ezagent.PluginCc.Template.CcCustomAgent do
          # Launchability gate FIRST — a missing profile API key is a clear
          # error BEFORE any Kind spawn / config-dir materialize / transport-join
          # wait, never an opaque bridge-join timeout.
-         :ok <- Provider.ensure_api_key(Map.fetch!(tmpl, Provider.provider_key()), agent_uri) do
+         :ok <- Provider.ensure_api_key_for_template(tmpl, agent_uri) do
       # Persist the flavor so Spawn's `Map.put_new("flavor", "cc")` no-ops and
       # cold-restart flavor resolution reads "cc-custom". The "provider" rides
       # in tmpl already (required user input — never injected here).
@@ -180,7 +186,7 @@ defmodule Ezagent.PluginCc.Template.CcCustomAgent do
       ) do
     with {:ok, agent_uri} <- parse_uri(uri_str),
          :ok <- Provider.check_backend_profile(tmpl),
-         :ok <- Provider.ensure_api_key(Map.fetch!(tmpl, Provider.provider_key()), agent_uri) do
+         :ok <- Provider.ensure_api_key_for_template(tmpl, agent_uri) do
       tmpl = Map.put(tmpl, "flavor", @flavor)
 
       CcAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri,

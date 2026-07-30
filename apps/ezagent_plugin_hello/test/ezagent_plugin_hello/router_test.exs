@@ -1,53 +1,49 @@
 defmodule EzagentPluginHello.RouterTest do
   @moduledoc """
-  The `hello.orchestrator` routing policy — identity-first (the page-edit security
-  boundary) + intent interpretation. Both are pure and tested here without the LLM;
-  the owner→LLM branch is exercised end-to-end elsewhere.
+  The `hello.orchestrator` routing policy. Hello materializes only its chat bridge
+  and LLM; intent actions execute on the session itself.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Workspace
   alias Ezagent.Agent.RecipeRegistry
+  alias Ezagent.Workspace
   alias EzagentPluginHello.{App, Generator, Members, Router}
   alias EzagentPluginHello.Application, as: HelloApp
 
   describe "classify/3 — identity is the security boundary" do
-    test "a NON-owner is ALWAYS routed to the concierge, whatever they type" do
+    test "a non-owner is always routed to the session answer action" do
       session = Ezagent.URI.session("system", :hello, "classify-nonowner")
 
-      assert Router.classify("make the title red", false, session) == :concierge
-      assert Router.classify("generate a whole new landing page", false, session) == :concierge
-      assert Router.classify("", false, session) == :concierge
+      assert Router.classify("make the title red", false, session) == :answer
+      assert Router.classify("generate a whole new landing page", false, session) == :answer
+      assert Router.classify("", false, session) == :answer
     end
   end
 
-  describe "interpret_intent/1 — owner intent parsing (pure)" do
-    test "KANBAN anywhere → dispatcher" do
-      assert Generator.interpret_intent("KANBAN") == :dispatcher
-      assert Generator.interpret_intent("kanban") == :dispatcher
-      assert Generator.interpret_intent("The answer is KANBAN.") == :dispatcher
+  describe "interpret_intent/1 — owner intent parsing" do
+    test "KANBAN anywhere delegates to the kanban session action" do
+      assert Generator.interpret_intent("KANBAN") == :delegate_to_kanban
+      assert Generator.interpret_intent("kanban") == :delegate_to_kanban
+      assert Generator.interpret_intent("The answer is KANBAN.") == :delegate_to_kanban
     end
 
-    test "ASK anywhere → concierge" do
-      assert Generator.interpret_intent("ASK") == :concierge
-      assert Generator.interpret_intent("ask") == :concierge
-      assert Generator.interpret_intent("The answer is ASK.") == :concierge
+    test "ASK anywhere routes to the session answer action" do
+      assert Generator.interpret_intent("ASK") == :answer
+      assert Generator.interpret_intent("ask") == :answer
+      assert Generator.interpret_intent("The answer is ASK.") == :answer
     end
 
-    test "BUILD / anything-not-ASK → builder (fail-open to build)" do
-      assert Generator.interpret_intent("BUILD") == :builder
-      assert Generator.interpret_intent("build") == :builder
-      assert Generator.interpret_intent("") == :builder
-      assert Generator.interpret_intent("garbled model output") == :builder
+    test "BUILD / anything-not-ASK routes to the rebuild session action" do
+      assert Generator.interpret_intent("BUILD") == :rebuild
+      assert Generator.interpret_intent("build") == :rebuild
+      assert Generator.interpret_intent("") == :rebuild
+      assert Generator.interpret_intent("garbled model output") == :rebuild
     end
   end
 
-  describe "should_route?/2 (loop + multi-agent guard)" do
+  describe "should_route?/2 (loop guard)" do
     setup do
-      # The guard resolves the orchestrator + managed members by `role_name` from
-      # the LIVE session, so it needs a materialized hello app (the team comes from
-      # `Definition.roles`). Reseed the recipes (boot's write is outside this
-      # DataCase sandbox) and stand up a real app.
+      :ok = EzagentPluginHello.TestCatalog.import!()
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
 
       Enum.each(HelloApp.roles(), fn recipe ->
@@ -56,50 +52,38 @@ defmodule EzagentPluginHello.RouterTest do
 
       ws = "hello-router-#{System.unique_integer([:positive])}"
       {:ok, _ws_pid} = Workspace.create(ws, %{})
-      {:ok, session, orchestrator} = App.ensure_app(ws, "guard-demo")
+      {:ok, session, front_desk} = App.ensure_app(ws, "guard-demo")
 
-      %{session: session, orchestrator: orchestrator}
+      %{session: session, front_desk: front_desk}
     end
 
-    test "front-desk own outbound IS routable by should_route? (Agent.Receive self-drop guards it)",
-         ctx do
-      assert Router.should_route?(ctx.session, ctx.orchestrator)
+    test "ignores messages emitted by its front-desk bridge", ctx do
+      refute Router.should_route?(ctx.session, ctx.front_desk)
     end
 
-    test "ignores its own builder member", %{session: session} do
-      assert {:ok, builder} = Members.role_uri(session, "builder")
-      refute Router.should_route?(session, builder)
-    end
-
-    test "ignores its own concierge member", %{session: session} do
-      assert {:ok, concierge} = Members.role_uri(session, "concierge")
-      refute Router.should_route?(session, concierge)
-    end
-
-    test "ignores its own dispatcher member", %{session: session} do
-      assert {:ok, dispatcher} = Members.role_uri(session, "dispatcher")
-      refute Router.should_route?(session, dispatcher)
+    test "ignores an LLM member's ordinary output", %{session: session} do
+      assert {:ok, llm_uri} = Members.role_uri(session, "llm")
+      refute Router.should_route?(session, llm_uri)
     end
 
     test "routes a user message", %{session: session} do
-      user = Ezagent.URI.user("system", "admin")
-      assert Router.should_route?(session, user)
+      assert Router.should_route?(session, Ezagent.URI.user("system", "admin"))
     end
 
-    test "routes an EXTERNAL agent message (multi-agent, not human-only)", %{session: session} do
+    test "routes an external agent message", %{session: session} do
       external = Ezagent.URI.entity("system", :agent, "some-other-agent")
       assert Router.should_route?(session, external)
     end
+
+    test "routes a user message after the session Kind is rehydrated", %{session: session} do
+      :ok = Ezagent.Kind.terminate(session)
+
+      assert Router.should_route?(session, Ezagent.URI.user("system", "admin"))
+    end
   end
 
-  describe "should_route?/2 — fails CLOSED when the members slice is unreadable" do
-    test "a session URI with no live Kind (members slice unreadable) is NOT routed" do
-      # No `App.ensure_app` call for this session — no live Kind is spawned at
-      # this URI, so `Ezagent.Kind.get_slice/2` returns `{:error, :not_found}`.
-      # Loop-safety cannot be guaranteed without knowing our own members, so the
-      # guard must fail CLOSED (refuse to route) rather than fail OPEN (which
-      # would let an unbounded loop through if the read miss ever coincided with
-      # a live orchestrator sending its own builder/concierge output back in).
+  describe "should_route?/2 — fails closed when the front-desk bridge is unavailable" do
+    test "a session URI with no live Kind is not routed" do
       ghost_session =
         Ezagent.URI.session(
           "hello-router-ghost-#{System.unique_integer([:positive])}",

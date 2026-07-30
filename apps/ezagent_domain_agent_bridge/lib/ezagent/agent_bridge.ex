@@ -102,6 +102,50 @@ defmodule Ezagent.AgentBridge do
     e -> {:error, {:complete_raise, e}}
   end
 
+  @doc """
+  Request a completion through the agent's durable flavor.
+
+  In-process flavors return the completion immediately. WebSocket flavors
+  enqueue the request on the existing bridge and return `{:pending, id}`; the
+  bridge must echo the request id in its reply envelope.
+  """
+  @spec request_completion(URI.t(), URI.t(), String.t(), String.t()) ::
+          {:ok, String.t()} | {:pending, String.t()} | {:error, term()}
+  def request_completion(%URI{} = agent_uri, %URI{} = session_uri, prompt, request_id)
+      when is_binary(prompt) and is_binary(request_id) and request_id != "" do
+    agent_uri_str = URI.to_string(agent_uri)
+
+    payload = %Payload{
+      message_id: request_id,
+      session_uri: session_uri,
+      sender_uri: agent_uri,
+      text: prompt,
+      event_type: :system,
+      meta: %{
+        "agent_uri" => agent_uri_str,
+        "hello_completion_request_id" => request_id
+      }
+    }
+
+    with {:ok, flavor} <- resolve_flavor(agent_uri) do
+      case AdapterRegistry.transport_class(flavor) do
+        :in_process_sync ->
+          case deliver_with_flavor(agent_uri, payload, flavor) do
+            {:ok, %{content: content}} when is_binary(content) -> {:ok, content}
+            {:error, _} = err -> err
+            other -> {:error, {:unexpected_completion_result, other}}
+          end
+
+        :subprocess_ws ->
+          case deliver_ensuring_with_flavor(agent_uri, payload, flavor) do
+            :ok -> {:pending, request_id}
+            {:error, _} = err -> err
+            other -> {:error, {:unexpected_completion_delivery, other}}
+          end
+      end
+    end
+  end
+
   @default_ready_timeout_ms 15_000
 
   @doc """

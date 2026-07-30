@@ -106,8 +106,14 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
   def template_data_extra(content) when is_map(content) do
     base = CcHeadlessAgent.template_data_extra(content)
 
-    case Ezagent.Kind.Template.content_field(content, :provider) do
-      p when is_binary(p) and p != "" -> Map.put(base, Provider.provider_key(), p)
+    base =
+      case Ezagent.Kind.Template.content_field(content, :provider) do
+        p when is_binary(p) and p != "" -> Map.put(base, Provider.provider_key(), p)
+        _ -> base
+      end
+
+    case Ezagent.Kind.Template.content_field(content, :session_template_member) do
+      true -> Map.put(base, "session_template_member", true)
       _ -> base
     end
   end
@@ -156,7 +162,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
          # Launchability gate FIRST — a missing profile API key is a clear
          # error BEFORE any Kind spawn / config-dir materialize / sidecar
          # start, never an opaque sidecar boot failure.
-         :ok <- Provider.ensure_api_key(Map.fetch!(tmpl, Provider.provider_key()), agent_uri) do
+         :ok <- Provider.ensure_api_key_for_template(tmpl, agent_uri) do
       # Persist the flavor so cold-restart flavor resolution reads
       # "cc-headless-custom". The "provider" rides in tmpl already (required
       # user input — never injected here).
@@ -173,7 +179,7 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessCustomAgent do
       ) do
     with {:ok, agent_uri} <- parse_uri(uri_str),
          :ok <- Provider.check_backend_profile(tmpl),
-         :ok <- Provider.ensure_api_key(Map.fetch!(tmpl, Provider.provider_key()), agent_uri) do
+         :ok <- Provider.ensure_api_key_for_template(tmpl, agent_uri) do
       tmpl = Map.put(tmpl, "flavor", @flavor)
 
       CcHeadlessAgent.instantiate_for_flavor(__MODULE__, uri_str, tmpl, workspace_uri,

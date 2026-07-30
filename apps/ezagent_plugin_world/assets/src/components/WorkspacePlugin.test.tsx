@@ -2,7 +2,24 @@ import React from "react"
 import {renderToStaticMarkup} from "react-dom/server"
 import {describe, expect, it} from "vitest"
 
-import {TemplateAgentRoleSlot, WorkspacePluginSurface} from "./WorkspacePlugin"
+import {HelloLlmRoleSlot, installConfigForTemplate, TemplateAgentRoleSlot, WorkspacePluginSurface} from "./WorkspacePlugin"
+
+type ElementProps = {
+  children?: React.ReactNode
+  id?: string
+  onChange?: (event: {target: {value: string}}) => void
+}
+
+function elementById(node: React.ReactNode, id: string): React.ReactElement<ElementProps> | undefined {
+  if (!React.isValidElement(node)) return undefined
+
+  const element = node as React.ReactElement<ElementProps>
+  if (element.props.id === id) return element
+
+  return React.Children.toArray(element.props.children)
+    .map((child) => elementById(child, id))
+    .find((child) => child !== undefined)
+}
 
 describe("workspace template builder", () => {
   it("marks the template name as required", () => {
@@ -34,5 +51,157 @@ describe("workspace template builder", () => {
     expect(html).toContain('<option value="cc-headless" selected="">cc-headless</option>')
     expect(html).toContain('required=""')
     expect(html).toContain('aria-required="true"')
+  })
+
+  it("defaults the Hello LLM selector to curl", () => {
+    const html = renderToStaticMarkup(
+      <HelloLlmRoleSlot
+        role={{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}}
+        slotKey="hello-llm"
+        flavors={["curl", "cc-headless"]}
+        onChange={() => undefined}
+      />,
+    )
+
+    expect(html).toContain('id="template-hello-flavor-hello-llm"')
+    expect(html).toContain('<option value="curl" selected="">curl</option>')
+    expect(html).toContain('template-hello-provider-hello-llm')
+  })
+
+  it("uses a registered completion flavor instead of unregistered curl", () => {
+    const html = renderToStaticMarkup(
+      <HelloLlmRoleSlot
+        role={{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}}
+        slotKey="hello-llm"
+        flavors={["cc-headless"]}
+        onChange={() => undefined}
+      />,
+    )
+
+    expect(html).toContain('<option value="cc-headless" selected="">cc-headless</option>')
+    expect(html).not.toContain('template-hello-provider-hello-llm')
+
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "curl",
+          config: {provider: "deepseek", api_url: "https://api.deepseek.com/chat/completions", model: "deepseek-v4-flash"},
+        },
+      },
+      ["cc-headless"],
+    )
+
+    expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "cc-headless"})
+    expect(config.role_slots[0].config).toBeUndefined()
+    expect(JSON.stringify(config)).not.toContain("deepseek")
+  })
+
+  it("serializes a selected non-curl Hello flavor without curl configuration", () => {
+    let choice: {
+      role_name: string
+      mode: "fresh" | "reuse"
+      flavor?: string
+      config?: Record<string, unknown>
+    } | undefined
+
+    const slot = HelloLlmRoleSlot({
+      role: {role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"},
+      slotKey: "hello-llm",
+      flavors: ["curl", "cc-headless"],
+      onChange: (next) => {
+        choice = next
+      },
+    })
+    const flavorSelect = elementById(slot, "template-hello-flavor-hello-llm")
+
+    expect(flavorSelect?.props.onChange).toBeTypeOf("function")
+    flavorSelect?.props.onChange?.({target: {value: "cc-headless"}})
+    expect(choice).toMatchObject({role_name: "llm", mode: "fresh", flavor: "cc-headless"})
+    expect(choice?.config).toBeUndefined()
+
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {"hello:llm": choice || {role_name: "llm", mode: "fresh"}},
+      ["curl", "cc-headless"],
+    )
+
+    expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "cc-headless"})
+    expect(config.role_slots[0].config).toBeUndefined()
+    expect(JSON.stringify(config)).not.toContain("deepseek")
+  })
+
+  it("restores sanitized curl defaults when an unavailable selection falls back to curl", () => {
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "cc-headless",
+          config: {api_key: "stale-snake-case-secret", apiKey: "stale-camel-case-secret"},
+        },
+      },
+      ["curl"],
+    )
+
+    expect(config.role_slots[0]).toMatchObject({role_name: "llm", mode: "fresh", flavor: "curl"})
+    expect(config.role_slots[0].config).toEqual({
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      credential_optional: true,
+    })
+    expect(JSON.stringify(config)).not.toContain("api_key")
+    expect(JSON.stringify(config)).not.toContain("apiKey")
+    expect(JSON.stringify(config)).not.toContain("stale-snake-case-secret")
+    expect(JSON.stringify(config)).not.toContain("stale-camel-case-secret")
+  })
+
+  it("serializes only nonsecret curl configuration", () => {
+    const config = installConfigForTemplate(
+      {
+        name: "hello",
+        roles: [{role_name: "llm", fill: "agent", recipe: "hello.llm", flavor: "curl"}],
+      },
+      {
+        "hello:llm": {
+          role_name: "llm",
+          mode: "fresh",
+          flavor: "curl",
+          config: {
+            provider: "deepseek",
+            api_url: "https://api.deepseek.com/chat/completions",
+            model: "deepseek-v4-flash",
+            credential_optional: true,
+            api_key: "injected-snake-case-secret",
+            apiKey: "injected-camel-case-secret",
+          },
+        },
+      },
+      ["curl"],
+    )
+
+    expect(config.role_slots[0].config).toEqual({
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-v4-flash",
+      credential_optional: true,
+    })
+    expect(JSON.stringify(config)).not.toContain("api_key")
+    expect(JSON.stringify(config)).not.toContain("apiKey")
+    expect(JSON.stringify(config)).not.toContain("injected-snake-case-secret")
+    expect(JSON.stringify(config)).not.toContain("injected-camel-case-secret")
   })
 })

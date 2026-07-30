@@ -29,6 +29,13 @@ end
 
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
+# Loaded by deployment from that environment's seed.env. This is a founder
+# email reference, not a credential; OfficialSiteSeed resolves it to an
+# already-registered user and fails loudly when absent or invalid.
+config :ezagent_plugin_hello,
+       :official_site_founder_email,
+       System.get_env("EZAGENT_HELLO_FOUNDER_EMAIL")
+
 # system starts, so it is typically used to load production configuration
 # and secrets from environment variables or elsewhere. Do not define
 # any compile-time configuration in here, as it won't be applied.

@@ -312,13 +312,10 @@ export function Conversation({
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
   const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
-  // TEMPORARY (hello internal view): only hello sessions get a Page tab. The
-  // proper home for this is world surfacing registered SessionViews (Phase 3);
-  // for now it embeds the external surface. See HelloPagePreview below.
-  // Server-detected (has a `:surface` slice) so a session from a PUBLISHED hello
-  // template — whose URI carries the template name, not `/hello/` — still gets the
-  // Page pane. Falls back to the URI check.
-  const isHelloSession = state.is_hello === true || sessionUri.includes("/hello/")
+  // The server's caller-authorized SessionView registry is the source of truth.
+  // Hello templates may use arbitrary template names (`hello-codex`, etc.), so
+  // inferring product type from a URI segment loses valid rendered pages.
+  const hasHelloPageView = views.some((view) => view.id === "hello_page")
   const createPending = state.session_create_pending === true
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
@@ -889,7 +886,7 @@ export function Conversation({
                 </div>
               )}
             </div>
-            {isHelloSession && sessionUri && (
+            {hasHelloPageView && sessionUri && (
               <Button type="button" size="sm" onClick={() => setPublishOpen(true)} aria-label="发布为模板" data-world-publish-template-button>
                 <Upload aria-hidden="true" />
                 发布
@@ -925,6 +922,10 @@ export function Conversation({
                 state: state as unknown as Record<string, unknown>,
                 onAction: onKanbanAction,
               })}
+            </div>
+          ) : activeId === "hello_page" && hasHelloPageView ? (
+            <div className="min-w-0 flex-1 overflow-hidden bg-white" data-world-subcomponent="hello-page">
+              <HelloPagePreview sessionUri={sessionUri} />
             </div>
           ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
@@ -1134,7 +1135,7 @@ export function Conversation({
               </div>
             </form>
             </div>
-            {isHelloSession && (
+            {hasHelloPageView && (
               <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
                 <HelloPagePreview sessionUri={sessionUri} />
               </div>

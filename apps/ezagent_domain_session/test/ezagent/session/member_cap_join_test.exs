@@ -220,6 +220,9 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
 
     assert wait_member_cap(agent, session),
            "a joined agent must hold the member-cap (R1.4 — agents carry :identity caps)"
+
+    assert Enum.any?(Ezagent.Identity.list_caps_for(agent), &send_cap_over?(&1, session)),
+           "a joined agent must hold a scoped Session.:send cap so it can reply"
   end
 
   test "anon join grants the member-cap but NOT Session.:send (unconfirmed tier) [test 3]" do

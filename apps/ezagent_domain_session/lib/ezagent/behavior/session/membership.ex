@@ -109,10 +109,16 @@ defmodule Ezagent.ActionSet.Session.Membership do
               {:error, {:member_cap_grant_failed, reason}}
 
             grant_status when grant_status in [:already_held, :enqueued] ->
-              # Phase A only. Cursor/facets/owner claim commit together; the
-              # holder-driven `add_self` action is the sole roster writer.
-              {:ok, %{status: join_status, member: member_uri},
-               [join_cursor_effect, join_facets_effect | owner_effects]}
+              case MemberCap.grant_agent_participation_at_join(member_uri, ctx) do
+                :ok ->
+                  # Phase A only. Cursor/facets/owner claim commit together; the
+                  # holder-driven `add_self` action is the sole roster writer.
+                  {:ok, %{status: join_status, member: member_uri},
+                   [join_cursor_effect, join_facets_effect | owner_effects]}
+
+                {:error, reason} ->
+                  {:error, {:member_cap_grant_failed, reason}}
+              end
           end
         end
     end
@@ -778,6 +784,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   @spec leave_effects_with_ref(URI.t(), map()) :: {reference() | nil, [term()]}
   def leave_effects_with_ref(%URI{} = member_uri, ctx) do
     members = ctx[:read].(:members, %{})
+    join_facets = ctx[:read].(:join_facets, %{})
     # `:monitors` is a TRANSIENT (SPEC §2.3C) — read from ctx.transients.
     monitors = (ctx[:transients] || %{})[:monitors] || %{}
     last_seen = ctx[:read].(:last_seen, %{})
@@ -790,6 +797,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
     effects =
       [
         {:set, :members, new_members},
+        {:set, :join_facets, Map.delete(join_facets, member_uri)},
         # `:monitors` is a TRANSIENT (SPEC §2.3C / §7 OQ-2).
         {:set_transient, :monitors, new_monitors},
         {:set, :last_seen, new_last_seen}
@@ -826,6 +834,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
           {:ok, map(), [term()]} | {:ok, :already_removed, []} | {:error, term()}
   def handle_remove_participant(%URI{} = participant_uri, ctx) do
     members = ctx[:read].(:members, %{})
+    join_facets = ctx[:read].(:join_facets, %{})
     owner_uri = ctx[:read].(:owner_uri, nil)
     holder = ctx[:authenticated_principal]
 
@@ -833,7 +842,8 @@ defmodule Ezagent.ActionSet.Session.Membership do
       not remove_participant_authorized?(holder, participant_uri, owner_uri, ctx) ->
         {:error, :unauthorized}
 
-      not Map.has_key?(members, participant_uri) ->
+      not Map.has_key?(members, participant_uri) and
+          not Map.has_key?(join_facets, participant_uri) ->
         {:ok, :already_removed, []}
 
       true ->

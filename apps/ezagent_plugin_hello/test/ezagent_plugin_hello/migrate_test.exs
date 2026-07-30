@@ -20,7 +20,7 @@ defmodule EzagentPluginHello.MigrateTest do
 
   alias Ezagent.Workspace
   alias Ezagent.Entity.User
-  alias Ezagent.Socialware.{DefinitionRegistry, Installation}
+  alias Ezagent.Socialware.{DefinitionRegistry, Demo, Installation, ManifestSeed}
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentPluginHello.{App, Members, Migrate}
 
@@ -36,6 +36,12 @@ defmodule EzagentPluginHello.MigrateTest do
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
     end)
 
+    assert {:ok, %{name: "hello"}} =
+             ManifestSeed.import_package(File.read!(Demo.Hello.manifest_path()))
+
+    assert {:ok, _definition, _revision} =
+             DefinitionRegistry.lookup(Ezagent.URI.workspace(:system), "hello")
+
     ws = "hello-migrate-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
@@ -47,15 +53,13 @@ defmodule EzagentPluginHello.MigrateTest do
       {:ok, session_uri, orch_uri} = App.ensure_app(ws, "current")
 
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, llm_uri} = Members.role_uri(session_uri, "llm")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       # Same members, same recipe — a true no-op re-run.
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, ^builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, ^concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, ^llm_uri} = Members.role_uri(session_uri, "llm")
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
 
       # And migrate_all/0 (the boot entry point) reports it migrated, not failed.
@@ -67,19 +71,17 @@ defmodule EzagentPluginHello.MigrateTest do
   end
 
   describe "migrate_one/1 on a session missing the declarative team" do
-    test "materializes orchestrator + builder + concierge from scratch", %{ws: ws} do
+    test "materializes front-desk + llm from scratch", %{ws: ws} do
       {session_uri, _owner_uri, _workspace_uri} = bare_hello_session(ws, "bare")
 
       # Before migrate: behaviors + template binding exist, but NO team.
       assert :error = Members.role_uri(session_uri, "front-desk")
-      assert :error = Members.role_uri(session_uri, "builder")
-      assert :error = Members.role_uri(session_uri, "concierge")
+      assert :error = Members.role_uri(session_uri, "llm")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, _builder_uri} = Members.role_uri(session_uri, "builder")
-      assert {:ok, _concierge_uri} = Members.role_uri(session_uri, "concierge")
+      assert {:ok, _llm_uri} = Members.role_uri(session_uri, "llm")
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
     end
   end
@@ -138,16 +140,8 @@ defmodule EzagentPluginHello.MigrateTest do
   defp bare_hello_session(ws, name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
     workspace = Ezagent.Capability.workspace_of(session_uri)
-    socialware_name = "hello-#{name}-#{System.unique_integer([:positive])}"
     admin = User.admin_uri()
-    raw_content = %{name: socialware_name, installs: [socialware_name]}
-
-    {:ok, _} =
-      DefinitionRegistry.seed_definition_if_absent(
-        App.hello_definition_attrs(socialware_name),
-        workspace_uri: workspace,
-        actor_uri: admin
-      )
+    raw_content = %{name: "hello", installs: ["hello"]}
 
     {:ok, content} = Installation.freeze_template_installs(raw_content, workspace)
     {:ok, owner_uri} = Installation.owner_uri_for_template(content, workspace, admin)

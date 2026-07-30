@@ -59,12 +59,14 @@ defmodule Ezagent.ActionSet.HelloOrchestrator do
   """
   def handle_hello_sync_result(
         %{
-          result: {:ok, %{session_uri: %URI{} = session_uri, sender: %URI{} = sender, text: text}}
+          result:
+            {:ok,
+             %{session_uri: %URI{} = session_uri, sender: %URI{} = sender, text: text} = result}
         },
         _ctx
       )
       when is_binary(text) do
-    _ = EzagentPluginHello.Router.route(session_uri, text, sender)
+    _ = EzagentPluginHello.Router.route(session_uri, text, sender, Map.get(result, :ref_id))
     {:ok, %{}, []}
   end
 

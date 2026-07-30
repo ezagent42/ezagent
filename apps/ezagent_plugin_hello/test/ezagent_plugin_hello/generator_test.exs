@@ -1,62 +1,53 @@
 defmodule EzagentPluginHello.GeneratorTest do
-  # async: false — the backend-routing test mutates the HELLO_LLM_BACKEND env var,
-  # which is process-global; keep it off the shared async pool.
   use ExUnit.Case, async: false
-
-  import ExUnit.CaptureLog
 
   alias EzagentPluginHello.Generator
 
-  # INV-CC ① — with HELLO_LLM_BACKEND=claude_code, call_llm/3 MUST take the
-  # ClaudeCode.chat path and NEVER touch the curl "llm" member (Members.role_uri /
-  # AgentBridge.complete). Both branches degrade classify_intent to :builder on
-  # error, so the RETURN value alone can't tell them apart — but the error TAG the
-  # failure carries can: the claude_code branch surfaces a `:claude_*` tag (it ran
-  # the external CLI), while the HTTP branch on an unresolvable session would
-  # surface `:no_llm_agent` (Members.role_uri → :error). We run against a session
-  # URI with NO live Kind and assert the logged failure is the claude_code tag and
-  # NEVER `:no_llm_agent` — proving Members/AgentBridge were not consulted.
-  describe "call_llm backend routing (INV-CC ①)" do
-    setup do
-      prev_backend = System.get_env("HELLO_LLM_BACKEND")
-      prev_bin = System.get_env("HELLO_CLAUDE_BIN")
-
-      on_exit(fn ->
-        restore_env("HELLO_LLM_BACKEND", prev_backend)
-        restore_env("HELLO_CLAUDE_BIN", prev_bin)
-      end)
-
-      :ok
+  describe "error_signal_reason/1" do
+    test "preserves a missing API key so World can render credential guidance" do
+      assert Generator.error_signal_reason({:no_api_key, "deepseek"}) ==
+               {:no_api_key, "deepseek"}
     end
 
-    test "claude_code backend takes the ClaudeCode path, never the curl member" do
-      System.put_env("HELLO_LLM_BACKEND", "claude_code")
-      # Point at a bogus binary so the CLI attempt fails fast (no real generation)
-      # while STILL exercising the claude_code branch end to end.
-      System.put_env("HELLO_CLAUDE_BIN", "/nonexistent/hello-claude-bin")
-
-      # A session URI with NO live Kind. If the HTTP branch ran instead, call_llm
-      # would consult Members.role_uri(session, "llm") on this dead URI and the
-      # failure tag would be :no_llm_agent.
-      session = Ezagent.URI.session("system", :hello, "inv-cc-claude-code")
-
-      log =
-        capture_log(fn ->
-          assert Generator.classify_intent(session, "make the hero bigger") == :builder
-        end)
-
-      # The failure came from the claude_code branch (ran the CLI) …
-      assert log =~ "claude"
-      # … and NOT from the HTTP branch (which never ran — no member lookup).
-      refute log =~ "no_llm_agent"
+    test "wraps an unclassified generation failure for Layer 3 handling" do
+      reason = {:http, 502, "bad gateway"}
+      assert Generator.error_signal_reason(reason) == {:generation_failed, reason}
     end
 
-    test "classify_intent/2 remains a public arity-2 function" do
-      assert function_exported?(Generator, :classify_intent, 2)
+    test "wraps lookalike missing-key errors that are not the supported two-tuple" do
+      reason = {:no_api_key, "deepseek", :retryable}
+      assert Generator.error_signal_reason(reason) == {:generation_failed, reason}
+    end
+  end
+
+  describe "decode_page_spec_with_retry/2" do
+    test "retries an unrecoverable JSON response exactly once" do
+      retry = fn ->
+        send(self(), :retried)
+
+        {:ok,
+         Jason.encode!(%{
+           "type" => "Text",
+           "props" => %{"text" => "recovered"},
+           "children" => []
+         })}
+      end
+
+      assert {:ok, %{"props" => %{"text" => "recovered"}}} =
+               Generator.decode_page_spec_with_retry("{not json", retry)
+
+      assert_received :retried
+      refute_received :retried
     end
 
-    defp restore_env(key, nil), do: System.delete_env(key)
-    defp restore_env(key, val), do: System.put_env(key, val)
+    test "does not retry a valid response" do
+      valid = Jason.encode!(%{"type" => "Text", "props" => %{"text" => "ok"}, "children" => []})
+
+      assert {:ok, %{"props" => %{"text" => "ok"}}} =
+               Generator.decode_page_spec_with_retry(valid, fn ->
+                 flunk("valid JSON must not retry")
+               end)
+    end
   end
 
   # The incremental-edit core: nodes are id-annotated (pre-order), the model emits

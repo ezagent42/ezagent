@@ -5,13 +5,16 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
   The binding is identity-owned, keyed identically by writer and readers, and
   committed immediately after a fresh agent establishes its per-Kind authority
   and before it can join. Definitive bind/join failures must conditionally
-  tombstone the exact binding version and terminate the unjoined agent.
+  tombstone the exact binding version and retire the fresh agent through the
+  authoritative TemplateSpawn receipt, without a ready-gated action dispatch.
   """
   use ExUnit.Case, async: true
 
   @binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @identity "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @materializer "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex"
+  @recipe_materializer "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_materializer.ex"
+  @template_rollback "apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn/rollback.ex"
   @identity_mix "apps/ezagent_domain_identity/mix.exs"
   @identity_application "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex"
   @sweeper "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding/sweeper.ex"
@@ -38,7 +41,7 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     assert definition_source(@identity, :activate, 2) =~ "reconcile_recipe_binding"
   end
 
-  test "I9 fresh materialization spawns before binding, syncs, then joins" do
+  test "I9 fresh materialization spawns before binding, syncs, then joins and receipt-retires" do
     materialize = definition_source(@materializer, :materialize_fresh_agent, 6)
     refute materialize =~ "bind_recipe_caps"
 
@@ -46,11 +49,31 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     assert ordered?(spawn, "spawn_agent", "bind_recipe_caps")
     assert ordered?(spawn, "bind_recipe_caps", "RecipeCapBinding.sync_live")
     assert ordered?(spawn, "RecipeCapBinding.sync_live", "join_or_cleanup")
-    assert spawn =~ "compensate_recipe_binding"
-    assert spawn =~ "terminate_worker"
+    assert spawn =~ "fresh_receipt"
+    assert spawn =~ "rollback_failed_fresh"
 
-    compensate = definition_source(@materializer, :compensate_recipe_binding, 2)
-    assert compensate =~ "RecipeCapBinding.tombstone_if_version"
+    compensate = definition_source(@materializer, :rollback_failed_fresh, 5)
+    assert compensate =~ "RecipeMaterializer.rollback_fresh_agent"
+    assert compensate =~ "remove_fresh_member"
+
+    rollback_fresh =
+      definition_source(@recipe_materializer, :rollback_fresh_agent, 2)
+
+    assert ordered?(rollback_fresh, "rollback_recipe_binding", "Rollback.fresh_spawn")
+
+    binding_rollback =
+      definition_source(@recipe_materializer, :rollback_recipe_binding, 2)
+
+    assert binding_rollback =~ "RecipeCapBinding.tombstone_if_version"
+
+    spawn_rollback = definition_source(@template_rollback, :fresh_spawn, 1)
+    assert ordered?(spawn_rollback, "terminate_workers", "unbind_workers")
+    assert ordered?(spawn_rollback, "unbind_workers", "rollback_receipts")
+    assert ordered?(spawn_rollback, "rollback_receipts", "cleanup_config_dirs")
+
+    materializer_source = source(@materializer)
+    refute materializer_source =~ "sandbox.destroy"
+    refute materializer_source =~ "terminate_worker"
   end
 
   test "I9 reused and already-materialized URIs upsert the durable binding" do
