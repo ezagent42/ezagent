@@ -49,6 +49,24 @@ defmodule Ezagent.Cap.AdminUnkillableTest do
     end
   end
 
+  describe "Authority.retire/1 is root-guarded (codex r3 hardening 1)" do
+    test "REJECTS the admin (structural belt); the authority row is untouched" do
+      {:ok, _} = Authority.open(admin(), :user)
+      assert {:ok, gen_before} = Authority.current_generation(admin())
+
+      assert {:error, :root_authority_immutable} = Authority.retire(admin())
+
+      # retire never ran — the active authority row (and its generation) is intact.
+      assert {:ok, ^gen_before} = Authority.current_generation(admin())
+    end
+
+    test "a NON-admin authority still deactivates (returns :ok)" do
+      agent = regular_agent()
+      {:ok, _} = Authority.open(agent, :agent)
+      assert :ok = Authority.retire(agent)
+    end
+  end
+
   describe "sanctioned root rotation primitive" do
     test "rotate_root_generation/2 ADVANCES the admin generation (root-permitted)" do
       {:ok, gen1} = Authority.open(admin(), :user)

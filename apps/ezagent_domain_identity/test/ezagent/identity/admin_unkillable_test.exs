@@ -47,4 +47,28 @@ defmodule Ezagent.Identity.AdminUnkillableTest do
       assert RevocationFence.fenced?(user)
     end
   end
+
+  describe "admin cannot be destroyed via Lifecycle.destroy (codex r3 hardening 1)" do
+    alias Ezagent.Cap.Authority
+
+    test "Lifecycle.destroy/2 REJECTS the genesis admin BEFORE any teardown; authority intact" do
+      {:ok, _authority} = Authority.open(admin(), :user)
+      assert {:ok, gen_before} = Authority.current_generation(admin())
+
+      # `manage:delete` / offboarding-reaper / session-teardown all route through
+      # `Ezagent.Lifecycle.destroy/2` → `do_destroy`, which retires the authority +
+      # clears the ever_created marker. The root guard rejects the admin at that
+      # chokepoint BEFORE any hook/terminate/retire runs.
+      assert {:error, :root_authority_immutable} = Ezagent.Lifecycle.destroy(admin())
+
+      # No teardown ran — the admin's authority row (and its generation) is intact,
+      # so its next reference re-spawns cleanly (no soft kill).
+      assert {:ok, ^gen_before} = Authority.current_generation(admin())
+    end
+
+    test "Lifecycle.destroy/2 does NOT root-reject a NON-admin target (destroy-of-others intact)" do
+      user = unique_user("destroy")
+      refute match?({:error, :root_authority_immutable}, Ezagent.Lifecycle.destroy(user))
+    end
+  end
 end

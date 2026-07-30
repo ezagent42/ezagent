@@ -83,8 +83,23 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
-  @spec retire(URI.t()) :: :ok
-  def retire(%URI{} = uri), do: KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
+  # STRUCTURAL root un-killability (#1627 B1-hybrid, codex r3 hardening 1).
+  # `retire` DEACTIVATES the active authority row (no re-mint) — a bare
+  # gen-retiring path. For the genesis admin that is a soft kill, so reject the
+  # root here: "retire the admin's authority" is then impossible from EVERY
+  # caller (restoring the stated invariant "every retire path funnels through the
+  # guard"). The destroy chokepoint (`Lifecycle.do_destroy`) rejects the admin
+  # target EARLIER, before any teardown, so no legitimate flow reaches here with
+  # the root and the `:ok`-matching callers never see the error — this reject is
+  # the structural belt for any future direct caller.
+  @spec retire(URI.t()) :: :ok | {:error, :root_authority_immutable}
+  def retire(%URI{} = uri) do
+    if root?(uri) do
+      {:error, :root_authority_immutable}
+    else
+      KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
+    end
+  end
 
   @doc false
   @spec regenesis(URI.t(), atom(), map()) :: {:ok, t()} | {:error, term()}
