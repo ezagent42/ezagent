@@ -650,14 +650,17 @@ curl -x http://127.0.0.1:7890 → 200 in 1.5s
 
 ## 11. 实施切片
 
-| 片 | 状态 | 交付 | 依赖 |
-|---|---|---|---|
-| **F1** 骨架 | **已完成**（`1e976fbc1`） | mix 项目；`Instance`（base_url 从 `provider_host` 推导）；`ForgejoClient`（认证头 + §8.1 映射 + §8.3 传输区分）；`ForgejoCredentialBackend` | 无 |
-| **F0** OAuth 接入 | 待做 | `OAuthApp` 存储 + migration；`ForgejoOAuth`；`ForgejoDriver` 8 callback；`ForgejoCallbackPlug` + 路由；driver/backend-pair 声明；**把 `ForgejoCredentialBackend` 的两个 refresh callback 从 `:backend_unavailable` 换成真实现** | F1 |
-| **F2** 读路径 | 待做 | `resolve_repository` / `read_change_request` / `list_checks`（§9.1-9.2）/ `list_reviews`（§9.3）。纯读，无 reconciliation | F0 |
-| **F3** 写路径 | 待做 | `create_change_request` 全序列（§7.1）；read-before-write；upsert 映射；PR find-or-create；§10.1 全部故障注入 | F2 |
-| **F4** 本地 E2E | 待做 | §10.1 主场景 + Plan E §8 八项 + Forgejo 七项 | F3 |
-| **F5** 真实 E2E | 待做 | §10.2 | F4 |
+| 片 | 状态 | 交付 |
+|---|---|---|
+| **F1** 骨架 | ✅ `1e976fbc1` | `Instance` / `ForgejoClient` / `ForgejoCredentialBackend` |
+| **F0** OAuth 接入 | ✅ `6aaa59c07` `bdca9f550` `503199618` `70ae29fb2` | `OAuthApp` + migration、`ForgejoOAuth`、`ForgejoDriver` 8 callback、callback plug + 路由、声明、**凭证续期** |
+| **F2** 读路径 | ✅ `89f0eb891` `eda2d0599` | `Normalize`、`CredentialSource`、四个读 callback、adapter 注册 |
+| **F3** 写路径 | ✅ `8375646dc` | `create_change_request` create-or-reconcile + crash window |
+| **F4** 本地 E2E | ✅ `e3705f21c` | 有状态实例桩 + 双次/三次执行幂等 + crash window |
+| **F5** 真实 E2E | ✅ `082f2ee9d` | 打 `code.hyprial.com` 跑通（1 test / 14.7s） |
+
+另有一处 domain_git 改动：`52acb50da`（`OperationContext.credential_owner_uri`，
+见 §5.1.0）。全程 `mix ci.fast` EXIT=0，plugin 套件 188 tests / 0 failures。
 
 **F0 编号在 F1 之后但排在 F2 之前**：F1 已经合入，而 F0 是 2026-07-29 决定
 提前的（初稿把 OAuth 列为范围外，靠手工塞 PAT，会让 F2 无法端到端验证）。
@@ -732,10 +735,11 @@ durable 的，仍带着 `credential_backend_ref` / `credential_version` —— �
 
 ## 14. 完成声明
 
-本设计实施完成后可以声明：
+**F1–F5 全部完成，F5 已在真实实例上通过**，因此现在可以声明：
 
-> Forgejo provider V1 本地 provider-owned PR loop 当前切片完成；
-> 若 F5 通过，可加「并已在真实 Forgejo 实例上验证」。
+> Forgejo provider V1 本地 provider-owned PR loop 当前切片完成，
+> **并已在真实 Forgejo 实例（`code.hyprial.com`，`15.0.5+gitea-1.22.0`）上验证**：
+> 建分支、提交、开 PR、回读 PR/checks/reviews，且同一输入重跑不产生第二次 mutation。
 
 **不得声明**（继承 Plan E §11，逐条适用）：
 
