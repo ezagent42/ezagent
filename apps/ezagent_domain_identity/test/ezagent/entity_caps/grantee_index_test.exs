@@ -97,7 +97,57 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     assert GranteeIndex.grantees_of(t, @admin, admin_caps(), :other) == []
   end
 
+  # canary cutover-backfill rehearsal catch #3 (#189): a pre-#1399 legacy cap is
+  # a struct-shaped map that MATCHES `%Capability{}` yet LACKS the cap-signing
+  # trio (signature/key_id/grantee_uri, 2026-07-14). `reindex_in_txn`'s
+  # `row_attrs/2` did a strict `cap.key_id` read → `(KeyError) key :key_id not
+  # found`; because reindex runs INSIDE the Store write transaction WITHOUT a
+  # rescue, the whole cutover backfill rolled back and the epoch refused to
+  # activate. The same crash the canary hit on byte-copied stable data.
+  test "a legacy signature-less cap reindexes without KeyError and its nil-key row is fail-closed excluded" do
+    t = target("legacy-reindex")
+    g = active_agent("legacy-holder")
+
+    # A properly SIGNED cap toward t, stripped of the #1399 trio → the exact
+    # struct-shaped map `binary_to_term` reconstructs from a pre-signing snapshot.
+    # Concrete `%URI{}` instance, so it reaches the crashing concrete-target
+    # `row_attrs/2` clause (not the `:any` / scope-tuple no-op sink).
+    legacy = legacy_unsigned(sign_cap(t, g, :example, :send, @workspace))
+    refute Map.has_key?(legacy, :key_id)
+
+    # FAIL-BEFORE: `Store.persist` → `reindex_in_txn` → `row_attrs` raised
+    # `(KeyError) key :key_id not found`, rolling back the whole authoritative
+    # write. PASS-AFTER: it completes — the legacy cap normalizes to `key_id: nil`.
+    persist_with!(g, [legacy])
+
+    # The legacy cap's reverse row IS written (not silently skipped), carrying a
+    # nil key_id (the `fill_defaults` default — no signature/key_id fabricated).
+    target_key = Ezagent.URI.stable_key(t)
+    grantee_key = Ezagent.URI.stable_key(g)
+
+    legacy_rows =
+      Repo.all(
+        from(r in GranteeIndex,
+          where: r.grantee_uri == ^grantee_key and r.target_uri == ^target_key
+        )
+      )
+
+    assert [%GranteeIndex{key_id: nil}] = legacy_rows
+
+    # FAIL-CLOSED: an UNSIGNED legacy cap is not an active holder. The target's
+    # active-authority generation is a concrete (non-nil) key_id, so the read
+    # filter `r.key_id == ^active_key` naturally EXCLUDES the nil-key row — the
+    # same fail-closed treatment a revoked/regenesis'd cap gets.
+    assert GranteeIndex.grantees_of(t, @admin, admin_caps()) == []
+  end
+
   # --- fixtures -------------------------------------------------------------
+
+  # Strip the #1399 cap-signing trio's keys to reproduce a pre-signing
+  # `binary_to_term`'d snapshot cap: a struct-shaped map that MATCHES
+  # `%Capability{}` (only `:__struct__` checked) yet lacks those keys.
+  defp legacy_unsigned(%Capability{} = cap),
+    do: Map.drop(cap, [:signature, :key_id, :grantee_uri])
 
   defp u, do: System.unique_integer([:positive])
 
