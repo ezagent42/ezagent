@@ -61,7 +61,6 @@ defmodule Ezagent.ActionSet.Agent.Delivery do
     base_meta = %{
       "sender" => Ezagent.URI.stable_key(msg.sender),
       "message_id" => msg.id,
-      "ref_id" => msg.ref_id,
       "session" => source_session,
       # PR-6 — the recipient agent's OWN URI, so an `:in_process_sync`
       # adapter (curl) can read the agent's persisted slices from the
@@ -70,6 +69,17 @@ defmodule Ezagent.ActionSet.Agent.Delivery do
       # `Kind.get_slice` self-call would deadlock).
       "agent_uri" => agent_uri_meta(ctx)
     }
+
+    # Invariant #3 (channel notification `meta` is `Record<string, string>`):
+    # `ref_id` is `nil` for every non-reply message (the common case), so it
+    # can only be added when it is actually a non-empty string — an
+    # unconditional `msg.ref_id` here silently drops the WHOLE notification
+    # on the claude TUI side (PR 26).
+    base_meta =
+      case msg.ref_id do
+        ref_id when is_binary(ref_id) and ref_id != "" -> Map.put(base_meta, "ref_id", ref_id)
+        _ -> base_meta
+      end
 
     meta =
       case Body.first_attachment_path(attachments) do
