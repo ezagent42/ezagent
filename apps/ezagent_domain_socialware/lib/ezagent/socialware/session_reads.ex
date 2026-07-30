@@ -88,7 +88,7 @@ defmodule Ezagent.Socialware.SessionReads do
 
   alias Ezagent.MessageStore
   alias Ezagent.Session.Membership
-  alias Ezagent.Socialware.{DeliveryOutbox, PublicView}
+  alias Ezagent.Socialware.{DeliveryOutbox, PublicView, Share}
   alias EzagentCore.Repo
 
   @typedoc "Fixed view enum — selects a query SHAPE, never widens VISIBILITY."
@@ -327,7 +327,22 @@ defmodule Ezagent.Socialware.SessionReads do
         :ok
 
       {:error, _} = err ->
-        if PublicView.web_anon_access?(session_uri), do: :ok, else: err
+        cond do
+          # A publicly-visible session is readable by anyone (anon-web policy).
+          PublicView.web_anon_access?(session_uri) ->
+            :ok
+
+          # URI-share (A1, Feishu model): a caller who CLAIMED the link is
+          # readable WHILE the owner keeps sharing ENABLED — both re-read live
+          # (`Share.shared_to?/2`), so disabling the setting cuts the claimer off
+          # on the very next read (codex Fix 1). View reach only; still never
+          # grants write (posting/downloads keep the strict member predicate).
+          Share.shared_to?(session_uri, caller) ->
+            :ok
+
+          true ->
+            err
+        end
     end
   end
 

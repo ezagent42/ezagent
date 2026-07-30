@@ -31,7 +31,7 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
   end
 
   @tag :integration
-  test "valid token → mints a grantee-bound cap for the clicker + 302 to world root",
+  test "valid token → records the clicker's claim + 302 to world root",
        %{conn: conn, ws: ws} do
     owner = user(ws, "owner")
     target = target_agent(ws, "shared", owner)
@@ -48,9 +48,9 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
 
     assert redirected_to(out) == "/"
 
-    # cap-as-truth: the clicker now holds the shared read cap toward the target.
-    assert eventually(fn -> holds_cap?(clicker, target, :get_tree) end)
-    refute holds_cap?(clicker, target, :add_node)
+    # Feishu model: no durable cap is minted — the claim is recorded and access is
+    # re-derived live (`shared_to?/2`) while the owner keeps sharing enabled.
+    assert Share.shared_to?(target, clicker)
   end
 
   @tag :integration
@@ -65,7 +65,7 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
       |> get(~p"/socialware/claim?#{[token: "garbage"]}")
 
     assert out.status == 403
-    refute holds_cap?(clicker, target, :get_tree)
+    refute Share.shared_to?(target, clicker)
   end
 
   @tag :integration

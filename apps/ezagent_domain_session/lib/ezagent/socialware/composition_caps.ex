@@ -150,37 +150,66 @@ defmodule Ezagent.Socialware.CompositionCaps do
     # URI-kind-agnostic as promised.
     with {:ok, kind} <- target_kind(target_uri),
          {:ok, owner} <- assert_target_owner(behavior, target_uri),
-         :ok <- ensure_target_owner_authority(owner, target_uri) do
-      actions
-      |> Enum.reduce_while({:ok, []}, fn action, {:ok, artifacts} ->
-        cap =
-          Ezagent.Capability.cap(kind, behavior, action, target_instance, workspace_uri)
+         :ok <- ensure_target_owner_authority(owner, target_uri),
+         # codex Fix 3: issue EVERY action's artifact BEFORE absorbing any. The
+         # failure-prone step (authz/validation in `issue_item`) is thus
+         # all-or-nothing — a mid-batch issue failure grants NOTHING, so an error
+         # never hides a partially-granted cap set.
+         {:ok, artifacts} <-
+           issue_all(
+             actions,
+             kind,
+             behavior,
+             target_instance,
+             workspace_uri,
+             grantee_instance,
+             owner
+           ) do
+      absorb_all(grantee_instance, artifacts)
+    end
+  end
 
-        # Minimal item: for a same-owner grant `issue_item/2` takes the direct
-        # `{:ok, artifact}` branch (Cap.issue caller == data_owner), so consent /
-        # target_owner are never read — we still pass them for total-ness.
-        item = %{
-          source_uri: grantee_instance,
-          cap: cap,
-          consent: nil,
-          target_owner: owner
-        }
+  defp issue_all(actions, kind, behavior, target_instance, workspace_uri, grantee_instance, owner) do
+    actions
+    |> Enum.reduce_while({:ok, []}, fn action, {:ok, arts} ->
+      cap = Ezagent.Capability.cap(kind, behavior, action, target_instance, workspace_uri)
 
-        case issue_item(item, owner) do
-          {:ok, artifact, _target_required?} ->
-            case absorb_one(grantee_instance, artifact) do
-              :ok -> {:cont, {:ok, [artifact | artifacts]}}
-              {:error, reason} -> {:halt, {:error, {:composition_cap_absorb_failed, reason}}}
-            end
+      # Minimal item: for a same-owner grant `issue_item/2` takes the direct
+      # `{:ok, artifact}` branch (Cap.issue caller == data_owner), so consent /
+      # target_owner are never read — we still pass them for total-ness.
+      item = %{source_uri: grantee_instance, cap: cap, consent: nil, target_owner: owner}
 
-          {:error, reason} ->
-            {:halt, {:error, {:composition_cap_issue_failed, action, reason}}}
-        end
-      end)
-      |> case do
-        {:ok, artifacts} -> {:ok, Enum.reverse(artifacts)}
-        error -> error
+      case issue_item(item, owner) do
+        {:ok, artifact, _target_required?} -> {:cont, {:ok, [artifact | arts]}}
+        {:error, reason} -> {:halt, {:error, {:composition_cap_issue_failed, action, reason}}}
       end
+    end)
+    |> case do
+      {:ok, arts} -> {:ok, Enum.reverse(arts)}
+      error -> error
+    end
+  end
+
+  # Absorb the already-issued artifacts. Issue is all-or-nothing above; a rare
+  # absorb failure here (a store write, not authz) is reported FAITHFULLY with
+  # how many landed, so a caller never mistakes an error for "nothing granted"
+  # when a partial set was stored (codex Fix 3).
+  defp absorb_all(grantee_instance, artifacts) do
+    total = length(artifacts)
+
+    artifacts
+    |> Enum.reduce_while({:ok, []}, fn artifact, {:ok, done} ->
+      case absorb_one(grantee_instance, artifact) do
+        :ok ->
+          {:cont, {:ok, [artifact | done]}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:composition_cap_absorb_partial, length(done), total, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, done} -> {:ok, Enum.reverse(done)}
+      error -> error
     end
   end
 
@@ -493,18 +522,31 @@ defmodule Ezagent.Socialware.CompositionCaps do
   # (`entity://…/agent/…` → `:agent`, `session://…` → `:session`, `resource://…`
   # → `:resource`), so the minted cap's kind axis matches the target Kind. An
   # untyped or unknown-kind target fails closed (no silently non-authorizing cap).
-  defp target_kind(%URI{} = target_uri) do
+  # Derive a target's cap `kind` axis URI-agnostically. `Ezagent.URI.type/1`
+  # returns the FIRST path segment, which is the kind ONLY for `entity://`
+  # (agent/user/worker share that scheme). For the other unified schemes
+  # (`session://`, `resource://`, `template://`) the first path segment is a
+  # SUBTYPE (`session://acme/chat/s1` → "chat"), NOT the kind — the kind is the
+  # SCHEME itself (`:session`). Using the subtype minted a cap whose `kind` axis
+  # never matches at dispatch = a silently dead cap. So: entity → type segment,
+  # every other scheme → the scheme. No per-scheme special-casing beyond this
+  # container-vs-1:1 split.
+  defp target_kind(%URI{scheme: "entity"} = target_uri) do
     case Ezagent.URI.type(target_uri) do
-      {:ok, type} ->
-        try do
-          {:ok, String.to_existing_atom(type)}
-        rescue
-          ArgumentError -> {:error, {:unknown_target_kind, type}}
-        end
-
-      :error ->
-        {:error, {:untyped_target, target_uri}}
+      {:ok, type} -> to_kind_atom(type)
+      :error -> {:error, {:untyped_target, target_uri}}
     end
+  end
+
+  defp target_kind(%URI{scheme: scheme}) when is_binary(scheme) and scheme != "",
+    do: to_kind_atom(scheme)
+
+  defp target_kind(%URI{} = target_uri), do: {:error, {:untyped_target, target_uri}}
+
+  defp to_kind_atom(str) do
+    {:ok, String.to_existing_atom(str)}
+  rescue
+    ArgumentError -> {:error, {:unknown_target_kind, str}}
   end
 
   defp assert_target_owner(behavior, target_uri) do
