@@ -1,9 +1,23 @@
-# DeliveryOutbox as the STANDARD for all cross-actor delivery — implementation plan
+# Unify cross-actor durable delivery on the actor substrate — spec
 
 *Follow-up ② of the decentralization-hypothesis research
-(`docs/notes/2026-07-30-decentralization-hypothesis.md`, #1636 — recommendation 2:
-"Make the DeliveryOutbox pattern the standard for every cross-actor state delivery").
+(`docs/notes/2026-07-30-decentralization-hypothesis.md`, #1636 — recommendation 2).
 Planning doc only — no product code. Baseline: origin/main @ 2026-07-30.*
+
+> ## Grill outcome (2026-07-30)
+>
+> Allen grilled the original framing ("make `DeliveryOutbox` the new STANDARD
+> for every cross-actor delivery") and the X was re-pinned. **The X is NOT
+> "build a durable outbox standard from scratch."** Code inspection during the
+> session showed the actor substrate already has the two hard parts —
+> pull-on-wake and a port abstraction. What it does NOT have is ONE
+> cap-independent foundational primitive: durable delivery is domain-forked
+> into two implementations, and cold-load reconcile is identity-hardcoded.
+> **Direction changed from INVENT → UNIFY**: back the existing init-flush with
+> one actor-layer durable outbox behind the existing port, converge the forks
+> onto it, generalize the cold-load pull. Everything below is rewritten to
+> that conclusion; the bug corpus (§1) and the fire-and-forget worklist (§2.3)
+> stand unchanged from the original research.
 
 ---
 
@@ -13,250 +27,208 @@ Planning doc only — no product code. Baseline: origin/main @ 2026-07-30.*
 (`Ezagent.Identity.Grant` → `Cap.issue/3` → `Identity.absorb_cap/2`) delivered the
 signed cap artifact to the holder's own `:identity` slice via a VM-internal
 fire-and-forget cast. A cold/unstarted receiver fell into `Ezagent.PendingDelivery`
-— an ETS-backed, bounded (100/URI, `pending_delivery.ex:31`), **volatile** buffer:
-lost on BEAM restart, drops on overflow. The cap never landed;
-`CapAbsorbAwait.await_exact/3` timed out with `{:error, {:absorb_not_committed, _}}`
-(the `turn_survives_restart` / `page_view_external_render` red class). The fix —
-`Ezagent.Cap.DeliveryOutbox` — is the durable, at-least-once, idempotent-apply,
-applied-only-after-commit mechanism this plan generalizes.
+— an ETS-backed, bounded, **volatile** buffer: lost on BEAM restart, drops on
+overflow. The cap never landed; `CapAbsorbAwait.await_exact/3` timed out with
+`{:error, {:absorb_not_committed, _}}` (the `turn_survives_restart` /
+`page_view_external_render` red class). The fix — `Ezagent.Cap.DeliveryOutbox` —
+is durable, at-least-once, idempotent-apply, applied-only-after-commit… and
+cap-specific.
 
 **#1501 (PR open, in adversarial-review rework):** the residual of #207's fix.
 The effective cap view (`Ezagent.EntityCaps.load/1`) reads only **held** caps and
-never merges **pending** outbox rows; grant is not idempotent under producer retry;
-the absorb path is not uniformly fail-closed. Board task:
+never merges **pending** outbox rows; grant is not idempotent under producer
+retry; the absorb path is not uniformly fail-closed. Board task:
 `docs/together/tasks/caps-consolidation-1501.md`.
 
 **The class (research doc ③, bug #5):** "fire-and-forget cast to a maybe-dead
 actor" is not an absorb-specific bug. Any cross-actor **state transfer** — a write
 that must land in the *receiver's own durable store* — delivered as a bare cast
-assumes receiver liveness and has no owner while in flight. The research verdict:
-cross-actor state transfer must be **EC by construction** (durable enqueue +
-liveness-gated redelivery + idempotent apply), never fire-and-forget. Today only
-one producer op has that; everything else still rides the volatile buffer.
+assumes receiver liveness and has no owner while in flight. Cross-actor state
+transfer must be **EC by construction** (durable enqueue + liveness-gated
+redelivery + idempotent apply), never fire-and-forget. Today only one producer op
+has that; everything else still rides the volatile buffer.
 
-## 2. Current state — enumeration of cross-actor delivery paths
+## 2. Current state — what the substrate ALREADY has vs where it forked
 
-### 2.1 The durable mechanism that exists (narrow)
+All claims re-verified against the tree this session (2026-07-30).
 
-| Piece | Where | What it does |
+### 2.1 Already solved at the actor layer (do not rebuild)
+
+| Capability | Where | Verified behavior |
 |---|---|---|
-| `Ezagent.Cap.DeliveryOutbox` | `apps/ezagent_core/lib/ezagent/cap/delivery_outbox.ex` | `enqueue_and_attempt/1` persists a versioned envelope row **before** the first cast (`:pending`, `insert_or_reuse` at :278); claim-lease serialization (:193); exponential backoff 1s→60s (:381); `mark_applied/2` only after the target's handler + slice commit (:140); `:dead` terminal status |
-| Row schema | `apps/ezagent_core/lib/ezagent/cap/delivery.ex` (`cap_delivery_outbox`; PG migrations `20260714010000` + `20260714020000`) | `workspace_uri, target_uri, op, payload, payload_identity (sha256 of the cap), idempotency_key (partial unique index), status, attempts, next_retry_at, claim_token, lease_until` |
-| Envelope (v4) | `apps/ezagent_core/lib/ezagent/cap/delivery_outbox/envelope.ex` | Closed producer allowlist (`producer_parts/1`, :125–:151): **only** `:identity_absorb` (action `identity.absorb_cap`, caller `:vm_internal`) and `:identity_revoke` (action `identity.revoke_cap`, entity caller) |
-| Dispatch interception | `apps/ezagent_actor/lib/ezagent/invocation.ex:156–170` | `outbox().eligible?/replay?` checked at the **dispatch chokepoint**, via the config-resolved `OutboxPort` (`kind/ports/outbox_port.ex`, adapter `kind/adapters/outbox_adapter.ex`) |
-| Liveness-gated redelivery | `apps/ezagent_actor/lib/ezagent/kind/ready_transition.ex:56–58` (`drain_target` on the target's ready transition, ETS target-hint) + `cap/delivery_outbox/sweeper.ex` (periodic `sweep_due`, supervised at `ezagent_core/application.ex:60`) + `rehydrate_hints/0` at boot | A not-ready target leaves a durable row (`{:error, :durable_pending}` → `:not_ready`, `invocation.ex:237–238, 323–331`) instead of the volatile buffer |
-| Apply-side commit gate | `apps/ezagent_actor/lib/ezagent/kind/server.ex:1047, 1079` | `mark_applied` after handler+commit; `record_handler_failure` re-arms retry |
+| **Pull-on-wake** | `apps/ezagent_actor/lib/ezagent/kind/server.ex` — `handle_continue(:announce_ready, …)` and the last post-init continuation both end in `Ezagent.Kind.ReadyTransition.drain_then_mark_ready/2` | Every actor, on EVERY cold load, unconditionally drains `PendingDelivery` at the end of init/post-init, *before* flipping `:ready` (the drain-then-mark order is the PR-EM-CORE round-3 HIGH-1 fix). **"How does the receiver know to pull?" is already answered: it always pulls on wake. No notification protocol is needed for correctness.** |
+| **Outbox port abstraction** | `apps/ezagent_actor/lib/ezagent/kind/ports/outbox_port.ex` (7 callbacks: `replay?/1`, `eligible?/1`, `enqueue_and_attempt/1`, `mark_applied/2`, `record_handler_failure/2`, `pending_target?/1`, `drain_target/1`) + adapter `apps/ezagent_core/lib/ezagent/kind/adapters/outbox_adapter.ex`, resolved via `Application.fetch_env!(:ezagent_actor, :outbox)` | The dispatch chokepoint (`apps/ezagent_actor/lib/ezagent/invocation.ex`) and the ready transition (`kind/ready_transition.ex`) already talk to "the outbox" ONLY through this port. The seam for a substrate-level durable outbox **exists and is already load-bearing**. |
+| **Ready-drain + sweep + apply-commit gate** | `ready_transition.ex` (`drain_target` on target's ready flip), `cap/delivery_outbox/sweeper.ex` (periodic), `kind/server.ex` (`mark_applied` after handler+commit, `record_handler_failure` re-arms retry) | The full liveness-gated redelivery loop is wired end-to-end — for the one producer family that is outbox-eligible. |
 
-This is the right contract, already production-proven. It is just **only wired to
-one-and-a-half producer ops**.
+### 2.2 Where it forked / stayed narrow (the actual X)
 
-### 2.2 Fire-and-forget paths NOT on the outbox (the gap worklist)
+1. **`PendingDelivery` is ephemeral.**
+   `apps/ezagent_actor/lib/ezagent/pending_delivery.ex` — ETS-backed
+   (`:ets.insert`, `:ets.lookup`), bounded `@max_per_uri 100` (line 31), overflow
+   → DLQ, **lost entirely on BEAM restart**. So the substrate's universal
+   pull-on-wake drains a buffer that may have silently vanished.
+2. **The durable outbox is FORKED into two domain-owned implementations:**
+   - `apps/ezagent_core/lib/ezagent/cap/delivery_outbox.ex` — cap plane
+     (`cap_delivery_outbox` table, PG migrations `20260714010000` +
+     `20260714020000`); Envelope allowlist closed to two identity ops.
+   - `apps/ezagent_domain_session/lib/ezagent/socialware/delivery_outbox.ex` —
+     socialware turn delivery (per-turn rows, `committed_seq` cursor).
+   Two schemas, two sweep/replay loops, one contract — [B]-class duplication.
+3. **Cold-load reconcile is identity-SPECIFIC.**
+   `kind/server.ex:309` `maybe_reconcile_cold_load_identity/4` (called from the
+   cold-load path at :186) hardcodes a call into
+   `Ezagent.EntityCaps.Store.reconcile_cold_load_identity/3`
+   (`apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex:707`). The
+   actor framework knows about ONE domain's durable-state catch-up by name,
+   instead of offering a generic "pull your durable pending rows on wake" that
+   any domain rides.
 
-Classified per the receiver-owned-durable-state test (§3.1):
+**The X, pinned:** *the actor substrate has pull-on-wake and a port, but durable
+delivery is domain-forked and cold-load catch-up is identity-hardcoded — there
+is no ONE cap-independent foundational primitive.* Not "we lack a mechanism";
+we have one and a half too many, one layer too high.
+
+### 2.3 Fire-and-forget paths still on the volatile buffer (worklist, unchanged)
+
+Classified per the receiver-owned-durable-state test (§3.2):
 
 **(a) Cap-plane state transfer — same datum class as #207, still volatile:**
 
-1. **`grant_cap_via_router/4 :async`** — `apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex:143–166`.
-   Dispatches action `store_cap` with producer marker `:identity_grant`
-   (`storage_ctx/1` at :320–325). `:identity_grant` is **not** in the Envelope
-   allowlist → the cast rides `PendingDelivery` (volatile, 100/URI, DLQ on
-   overflow). Callers include `Session.membership.grant_first_join_owner_cap`
-   (deliberate fire-and-forget, grant.ex:312–319 NB) and every
+1. **`grant_cap_via_router/4 :async`** —
+   `apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex:143–166`.
+   Dispatches action `store_cap` with producer marker `:identity_grant` — not in
+   the Envelope allowlist → rides `PendingDelivery`. Callers include
+   `Session.membership.grant_first_join_owner_cap` and every
    `grant_cap_effect/3` effect site.
 2. **`revoke_cap_via_router/4 :async`** — `grant.ex:182–205`. Dispatches action
-   `remove_cap` with producer `:identity_revoke` and caller `:vm_internal`. The
-   Envelope's revoke clause (`envelope.ex:136–149`) requires action
-   `identity.revoke_cap` **and** an entity-URI caller — neither matches → **not
-   outbox-eligible**, despite this function's own moduledoc claiming "the cast is
-   persisted in the capability delivery outbox" (grant.ex:169–181). No prod call
-   site dispatches action `identity.revoke_cap` at all (rg: only the Envelope and
-   tests) — i.e. **the outbox's revoke leg appears to be dead code in prod; every
-   real revoke rides the volatile path**. Callers: session member-cap revoke on
-   leave/remove and the at-join compensation
-   (`apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex:100–118, 220–260`)
-   — `:async` is *required* there (sync self-deadlocks inside the Session Kind
-   callback, empirically verified, todo #161-A2), which is precisely why the
-   durable leg matters. **Verify this doc/behavior mismatch first (Phase 1, A1).**
+   `remove_cap` / caller `:vm_internal`; the Envelope's revoke clause requires
+   action `identity.revoke_cap` + an entity-URI caller — neither matches → not
+   outbox-eligible, **despite this function's own moduledoc claiming "the cast
+   is persisted in the capability delivery outbox"** (grant.ex:169–181). No prod
+   call site dispatches `identity.revoke_cap` at all (rg: only the Envelope and
+   tests) — **the outbox's revoke leg appears to be dead code in prod; every
+   real revoke rides the volatile path.** `:async` is *required* at the session
+   member-cap call sites (sync self-deadlocks inside the Session Kind callback,
+   todo #161-A2) — which is precisely why the durable leg matters.
 3. **`EntityCaps.persist/2 / grant/2 / revoke/2`** —
-   `apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex:160–197` — dispatch
-   `persist_caps` / `store_cap` / `remove_cap` mutations; same non-eligible
-   actions.
+   `apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex:160–197` — same
+   non-eligible actions.
 
-Already durable (for contrast): `Identity.absorb_cap/2`
-(`identity.ex:158–181`, producer `:identity_absorb`) and everything reaching
-absorb — `TargetAuthority.ensure/2` (`identity/target_authority.ex:38–45`),
-`MemberCap.grant_at_join` (`member_cap.ex:66–77`),
-`Grant.issue_and_absorb_cap/4` (awaits via `CapAbsorbAwait`).
+Already durable (for contrast): `Identity.absorb_cap/2` (producer
+`:identity_absorb`) and everything reaching absorb.
 
-**(b) Non-cap cross-actor casts assuming receiver liveness** (bare
-`GenServer.cast` outside the dispatch chokepoint, prod code):
+**(b) Non-cap bare `GenServer.cast` outside the dispatch chokepoint** (prod):
+`live_join_registry.ex:37`, `domain/pty.ex:170`, `domain/python.ex:241`,
+`session/delivery_queue.ex:79`, plus infra singletons (same-supervision-tree
+plumbing — those stay). Input worklist for the P3 gate baseline.
 
-- `apps/ezagent_domain_agent/lib/ezagent/agent/live_join_registry.ex:37`
-  (`{:live_joined, agent_uri}` to a registry-looked-up session pid)
-- `apps/ezagent_domain_pty/lib/ezagent/domain/pty.ex:170` (`:respawn`)
-- `apps/ezagent_domain_python/lib/ezagent/domain/python.ex:241` (`{:rpc_notify, …}`)
-- `apps/ezagent_domain_session/lib/ezagent/session/delivery_queue.ex:79`
-- infra singletons (audit writer, snapshot writer, presence mirror,
-  registration hooks, transport-readiness listener) — same-process-tree
-  plumbing, **not** cross-actor state transfer; these stay.
+**(c) Chat sends / signals / projections:** **EXCLUDED.** Their durable
+convergence is owned elsewhere (append-only MessageStore + cursor replay,
+Decision #91; monotonic-version EC projections) and they get their own
+convergence track. Wrapping them here would duplicate an existing owner — the
+exact [B]-class mistake this spec is closing.
 
-**(c) General `:cast`-mode dispatches** (chat sends, signals): transient message
-delivery whose durable convergence is owned elsewhere (append-only MessageStore +
-cursor replay, Decision #91). Explicitly **out of scope** — see §3.1.
+## 3. Direction — UNIFY what exists (nothing new invented)
 
-**(d) A second, independent durable outbox already exists:**
-`Ezagent.Socialware.DeliveryOutbox`
-(`apps/ezagent_domain_session/lib/ezagent/socialware/delivery_outbox.ex`) — per-turn
-delivery rows with `committed_seq` commit-order cursor for external surfaces. It
-already satisfies the standard's contract (durable row, committed-visible flag,
-replay self-heal). The standardization question is whether it must share the
-mechanism or only the contract (§5 Q2 — recommendation: contract only).
+### 3.1 The model (three roles, cleanly split)
 
-### 2.3 What #1501 shipped vs left pending
+| Role | Piece | Guarantee class |
+|---|---|---|
+| **Truth** | ONE actor-layer **durable pending table**, keyed by target URI — the durable backing of `PendingDelivery`'s buffer, behind the existing `outbox_port` | Durable, at-least-once, idempotent-apply, applied-only-after-commit |
+| **Guarantee** | **Pull-on-wake** — already implemented: the init/post-init drain in `kind/server.ex` (§2.1). Generalized cold-load pull replaces the identity-specific hook | Every wake converges the receiver, no matter what was missed |
+| **Latency** | **Best-effort push-notify** (the existing cast/drain-hint paths) | LOSSY-OK by design — a lost notify only delays convergence until the next wake/sweep; it can never lose state, because pull-on-wake is the guarantee |
 
-Nothing has shipped: **PR #1501 is open, in rework** after an adversarial-review
-reject. Its scope (board task file) is exactly the apply/read half of the outbox
-contract: (i) effective view = held ∪ pending (today `EntityCaps.load/1`,
-`entity_caps.ex:61–99`, reads live-slice-or-persisted only — a granted-but-not-yet
--absorbed cap is invisible); (ii) grant idempotency under producer retry;
-(iii) fail-closed absorb. This plan **absorbs #1501 as its Phase 0** — land it
-first (it is a prerequisite of the wider migration, not parallel work).
+This is the whole design. No new notification protocol, no new port, no new
+consistency regime — the substrate's existing shape, with the volatile piece
+made durable and the hardcoded piece made generic.
 
-## 3. Design — one standard, stated as a contract + one mechanism
+### 3.2 Scope rule (per-datum test, unchanged from research)
 
-### 3.1 The standard (contract)
+- **In scope:** any cross-actor write whose effect must land in the receiver's
+  own durable store — cap grant/revoke/absorb/persist today; future
+  receiver-store mutations (config pushes, membership convergence writes,
+  offboarding fences) ride the same primitive for free.
+- **Out of scope:** chat/message fan-out, signals, UI/projection notifies,
+  infra singleton casts (§2.3(c)/(b)-infra).
 
-> **Any cross-actor write whose effect must land in the receiver's own durable
-> store MUST be delivered through a durable outbox**: (1) durable enqueue
-> **before** the first delivery attempt; (2) redelivery gated on receiver
-> liveness (drain-on-ready + periodic sweep + dispatch-time lazy-spawn), never
-> on sender retry loops; (3) idempotent apply keyed on a payload identity;
-> (4) marked applied only **after** the receiver's handler and state commit;
-> (5) bounded failure → `:dead` + DLQ visibility, never silent drop.
+### 3.3 Phased migration (converged at the grill)
 
-Scope rule (what "every cross-actor delivery" means — the per-datum test):
+- **P0 — land #1501** (in flight, adversarial-review rework): held ∪ pending
+  effective view, idempotent grant, fail-closed absorb. Prerequisite: the
+  read-side contract must be right before more producers converge onto the
+  outbox. Gate: its own acceptance list.
+- **P1 — durable-back `PendingDelivery` + generalize cold-load.**
+  Give the substrate's buffer a durable backing behind the EXISTING
+  `outbox_port` (the port's seven callbacks already cover
+  enqueue/replay/drain/apply — this is an adapter/store change, not a port
+  change). Replace `maybe_reconcile_cold_load_identity` with a generic
+  cold-load pull ("drain my durable pending rows on wake") that the identity
+  reconcile becomes ONE client of, via the same port — `kind/server.ex` stops
+  naming `EntityCaps.Store`.
+- **P2 — migrate cap grant/revoke off fire-and-forget** onto the unified
+  primitive (the §2.3(a) worklist): `store_cap`, `remove_cap`, `persist_caps`
+  become durable. Includes **resolving the revoke doc-vs-behavior dead-code
+  gap** (§2.3(a)2): either wire the real revoke path into eligibility or delete
+  the dead Envelope leg — but first reproduce the loss as a failing test (cold
+  holder + `revoke_cap_via_router :async` + BEAM restart → revoke lost), per
+  trace-to-chokepoint discipline. Producer call sites unchanged (eligibility
+  decided at the dispatch chokepoint by ctx marker + action, zero caller churn
+  — the pattern absorb already proved).
+- **P3 — retire the socialware fork + CI gate.**
+  Converge `Ezagent.Socialware.DeliveryOutbox` onto the unified actor-layer
+  primitive (its `committed_seq` consumer cursor stays a socialware concern;
+  the durable-row/replay/sweep machinery stops being a second implementation).
+  Land the CI grep-gate forbidding new bare cross-actor `GenServer.cast` in
+  prod code outside an enumerated allowlist (baseline = §2.3(b), produced by an
+  empty-allowlist run; shrink-only), same invariant-test shape as
+  `cap_absorb_reachability_test.exs`. ARCHITECTURE.md Decision-Log entry.
 
-- **In scope:** cap grant/revoke/absorb/persist; any future receiver-store
-  mutation (config pushes, membership convergence writes, offboarding fences).
-- **Out of scope:** chat/message fan-out and signals (durable convergence =
-  MessageStore + cursor replay); UI/projection notifies (monotonic-version EC
-  projections); infra singleton casts (same supervision tree). Wrapping these in
-  an outbox would duplicate an owner that already exists — the exact [B]-class
-  mistake the research doc warns against.
-
-### 3.2 Mechanism: generalize `Cap.DeliveryOutbox` → producer-registered ops
-
-Keep the existing table, state machine, sweeper, ready-drain, and dispatch
-interception **unchanged**. Generalize only the closed eligibility set:
-
-1. **Op registry instead of a hard-coded two-op allowlist.** The Envelope's
-   `producer_parts/1` becomes a small registry of *delivery op specs* (still a
-   closed, code-reviewed set — not plugin-extensible in v1):
-   `{producer, action, payload_extractor, payload_identity, apply_contract}`.
-   V1 registers: `:identity_absorb` (absorb_cap — unchanged),
-   `:identity_grant` (store_cap), `:identity_revoke` (remove_cap — fixing the
-   §2.2(a)2 mismatch), `:identity_persist` (persist_caps).
-2. **Envelope version bump** (v4 → v5) with the op field widened; replay of v4
-   rows keeps decoding (rows are short-lived; a drain-before-deploy note in the
-   release checklist is acceptable — same as the #1409 rollout).
-3. **Ordering guarantee per target:** `drain_target` already replays
-   `order_by id` per target; the sweeper must preserve per-target ordering when
-   both a grant and its revoke are pending (add per-target ordered claim, or
-   skip a row whose target has an earlier pending row). This matters once
-   grant AND revoke are both durable: applying revoke-then-grant inverts intent.
-4. **Immediacy is not weakened:** revocation *security* remains the act-time
-   generation gate (`verify_against_current`, gen-gated holder reads) — research
-   doc "do not touch" #7. The outbox only makes the holder-store *convergence*
-   durable; a pending revoke row + stale held cap is already deniable at the
-   chokepoint. State this in the moduledoc to prevent the "outbox = revocation
-   lag" misreading.
-5. **`Socialware.DeliveryOutbox` stays separate** (recommendation): different row
-   shape (per-turn PK, `committed_seq` cursor as source of truth), different
-   consumer. It is declared a *conforming implementation* of the §3.1 contract;
-   the CI gate (§3.4) checks the contract, not the mechanism.
-
-### 3.3 Phased migration
-
-- **Phase 0 — land #1501** (owner: gaga, in flight): held ∪ pending effective
-  view, idempotent grant, fail-closed absorb, codex re-review. Gate: its own
-  acceptance list.
-- **Phase 1 — absorb/revoke correctness (proven painful first).**
-  A1: reproduce the §2.2(a)2 revoke gap as a failing test (cold holder +
-  `revoke_cap_via_router :async` + BEAM restart → revoke lost) — per
-  `feedback_trace_to_chokepoint_gate`, no fix before a failing reproduction.
-  A2: wire `:identity_revoke`/`remove_cap` through the outbox (op registry
-  entry), fix the `Grant.revoke_cap_via_router` moduledoc-vs-behavior mismatch.
-  A3: per-target ordering under mixed pending ops (§3.2.3).
-- **Phase 2 — grant/persist migration.** `store_cap` (`:identity_grant`) and
-  `persist_caps` producers become outbox-eligible; `PendingDelivery` no longer
-  carries any cap-plane mutation. Back-compat: producer call sites are
-  unchanged (eligibility is decided at the dispatch chokepoint by ctx marker +
-  action — the same pattern absorb used, zero caller churn).
-- **Phase 3 — the CI gate (§3.4) + PendingDelivery demotion.** PendingDelivery's
-  contract narrows to transient message buffering; its moduledoc + Decision-Log
-  entry updated; DLQ/dead-row operator surface (a `mix ezagent.outbox.list`
-  read-only task) added so `:dead` rows are visible (no silent graveyard).
-- **Phase 4 (deferred, needs Allen):** audit non-cap candidates (§2.2(b)) —
-  `live_join_registry` and session `delivery_queue` are liveness-sensitive but
-  their state is reconstructible (roster reconcile / queue rebuild); decide
-  per-site whether they get outbox rows or a documented "reconstructible on
-  restart" exemption.
-
-Each phase is a one-shot cutover (no long-lived dual-plane window — the #189
+Each phase is a one-shot cutover — no long-lived dual-plane window (the #189
 lesson, research doc ⑥.5).
 
-### 3.4 CI gate — forbid new bare cross-actor casts
+### 3.4 What this explicitly does NOT change
 
-Same shape as the existing dispatch-chokepoint gates
-(`apps/ezagent_core/test/invariants/cap_absorb_reachability_test.exs` — wildcard
-scan over `apps/**/*.ex` + explicit allowlist; runs in `mix ci.fast`):
+- **Revocation immediacy is not the outbox's job**: security remains the
+  act-time generation gate (`verify_against_current`, gen-gated holder reads —
+  research "do not touch" #7). The outbox only makes holder-store *convergence*
+  durable; a pending revoke row + stale held cap is already deniable at the
+  chokepoint.
+- No relaxation of `KindRegistry` `put_new` single-live-actor semantics (⑥.8).
+- No plugin-extensible producer registry in v1 (closed, code-reviewed set).
+- Chat/signals/projections excluded (own convergence track).
 
-- **G1 (mechanical):** no `GenServer.cast` in prod code outside an enumerated
-  allowlist (infra singletons + the two framework delivery points
-  `invocation.ex:310` / `ready_transition.ex:95`). Baseline allowlist =
-  the §2.2(b) list, produced by running the gate **empty-allowlist first**
-  (enumerator-gate discipline); it may only shrink.
-- **G2 (semantic):** any `%Cmd{}`/`%Invocation{}` construction whose action is a
-  registered *delivery op action* (`store_cap`, `remove_cap`, `absorb_cap`,
-  `persist_caps`, + future registry entries) must carry a `cap_delivery_producer`
-  marker — grep-gate over constructors, keyed off the op registry so the gate
-  can't drift from the code.
-- **G3 (contract doc):** ARCHITECTURE.md Decision-Log entry declaring §3.1 the
-  standing rule, cross-linked from the gate failure message.
+### 3.5 Acceptance (invariant-test style, per phase)
 
-### 3.5 Acceptance (per phase, invariant-test style)
+- P0: #1501's checkboxes green + codex pass.
+- P1: restart-survival test at the SUBSTRATE level — buffered delivery to a
+  not-ready actor survives BEAM restart and lands on next wake (red today:
+  ETS buffer dies with the VM); cold-load pull works for a non-identity datum
+  (proves the generalization); identity reconcile behavior unchanged.
+- P2: the revoke-loss reproduction flips red→green; grant-to-never-started-
+  entity survives restart; `turn_survives_restart` class stays green; rg proves
+  zero cap-plane mutations reach the volatile-only path.
+- P3: socialware delivery behavior-identical on the unified primitive (its
+  existing replay/self-heal tests stay green verbatim); cast-gate red on a
+  synthetic violation, green on baseline; `ci.fast` budget unchanged.
 
-- P0: #1501's three checkboxes green + codex pass.
-- P1: the A1 reproduction flips red→green; restart-survival test for revoke
-  (cold holder, revoke, kill BEAM, boot → holder store converged, gen-gate
-  unaffected); mixed grant+revoke ordering test.
-- P2: `turn_survives_restart` class stays green; a new
-  "grant to never-started entity survives restart" test; grep proves zero
-  cap-plane mutations reach `PendingDelivery.buffer_if_not_ready_locked`.
-- P3: G1/G2 red on a synthetic violation, green on baseline; `ci.fast` runtime
-  budget unchanged (<2 min).
+## 4. Open questions (genuinely open post-grill)
 
-## 4. Open questions for Allen
-
-1. **Scope confirmation (§3.1):** agree that chat/signals/projections are
-   explicitly OUT (durable owner exists elsewhere), so "standard for every
-   cross-actor delivery" = every *receiver-owned durable-store write*?
-2. **Socialware outbox:** contract-level standardization only (recommended), or
-   physically migrate it onto the generic mechanism (higher churn, no corpus bug
-   demanding it)?
-3. **Phase 4 non-cap candidates:** outbox rows vs documented reconstructible-
-   on-restart exemptions for `live_join_registry` / session `delivery_queue`?
-4. **`require_sync_ack` seam** (`delivery_outbox.ex:164–168`, currently unused):
-   should any producer class (e.g. offboarding fence writes) demand synchronous
-   applied-ACK, or does `CapAbsorbAwait`-style explicit await remain the only
-   sync surface?
-5. **`:dead`-row policy:** operator alert threshold + whether a `:dead` grant
-   should surface in the grantee's UI (visible degradation vs ops-only).
-
-## 5. Non-goals
-
-- No relaxation of the generation gate / revocation immediacy (research ⑥.7).
-- No change to `KindRegistry` `put_new` single-live-actor semantics (⑥.8).
-- No plugin-extensible op registry in v1 (closed, reviewed set).
-- No merging of `PendingDelivery` and the outbox into one mechanism — they serve
-  different contracts (transient buffering vs durable state transfer).
+1. **Migration sequencing inside P1/P2:** durable-back the buffer first and
+   then move producers (two deploys, safer), or cut grant+revoke over in the
+   same release as the durable backing (one deploy, bigger blast radius)?
+   Recommendation: two steps — P1 is substrate-only and invisible to domains.
+2. **The revoke dead-code decision (P2):** fix the Envelope clause so the REAL
+   revoke path (`remove_cap` / `:vm_internal`) becomes eligible, or re-route
+   callers to the documented `identity.revoke_cap` action? The moduledoc
+   already promises durability — behavior should be made to match the promise,
+   but which side moves needs the failing test first.
+3. **Unified table shape:** extend `cap_delivery_outbox` into the generic
+   actor-layer table (rename + widen op column) vs new table + cap rows
+   migrate? Affects P1/P3 rollout order and the drain-before-deploy note.
+4. **Socialware cursor semantics in P3:** `committed_seq` is a consumer-side
+   ordering cursor the cap plane doesn't have — confirm it layers ON TOP of the
+   unified rows (socialware-owned read model) rather than forcing per-target
+   ordered claims into the shared primitive.
+5. **`:dead`-row operator surface:** alert threshold + whether a `:dead` grant
+   surfaces in the grantee's UI (visible degradation vs ops-only) — unchanged
+   question from the original plan, still Allen's call.
