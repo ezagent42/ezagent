@@ -239,24 +239,37 @@ defmodule EzagentPluginForgejo.ForgejoAdapterReadTest do
     # Measured: the list mixes in REQUEST_REVIEW entries, which are requests
     # for a review rather than submitted reviews.
     test "keeps submitted reviews and drops review requests" do
+      # Paginated: `list_reviews/3` reads to exhaustion, so page 2 must come back
+      # empty or the loop cannot terminate. A fixture that answers every page
+      # with the same list contradicts the endpoint it stands in for.
       stub(fn conn ->
         assert conn.request_path == "/api/v1/repos/gagameow/ezagent-forgejo-test/pulls/42/reviews"
 
-        Req.Test.json(conn, [
-          %{
-            "id" => 1,
-            "state" => "APPROVED",
-            "dismissed" => false,
-            "user" => %{"login" => "alice"},
-            "submitted_at" => "2026-07-29T10:00:00Z"
-          },
-          %{
-            "id" => 2,
-            "state" => "REQUEST_REVIEW",
-            "dismissed" => false,
-            "user" => %{"login" => "bob"}
-          }
-        ])
+        page =
+          conn
+          |> Plug.Conn.fetch_query_params()
+          |> Map.fetch!(:query_params)
+          |> Map.get("page", "1")
+
+        if page != "1" do
+          Req.Test.json(conn, [])
+        else
+          Req.Test.json(conn, [
+            %{
+              "id" => 1,
+              "state" => "APPROVED",
+              "dismissed" => false,
+              "user" => %{"login" => "alice"},
+              "submitted_at" => "2026-07-29T10:00:00Z"
+            },
+            %{
+              "id" => 2,
+              "state" => "REQUEST_REVIEW",
+              "dismissed" => false,
+              "user" => %{"login" => "bob"}
+            }
+          ])
+        end
       end)
 
       {:ok, id} = ChangeRequestId.new(%{external_id: "42"})

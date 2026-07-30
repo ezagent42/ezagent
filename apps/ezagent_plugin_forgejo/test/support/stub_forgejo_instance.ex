@@ -169,7 +169,7 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
   defp route(state, "GET", ["pulls"], query, _body) do
     open? = Map.get(query, "state", "open") == "open"
     pulls = Enum.filter(state.pulls, &(not open? or &1["state"] == "open"))
-    {{200, pulls}, state}
+    {{200, paginate(pulls, query)}, state}
   end
 
   defp route(state, "POST", ["pulls"], _query, body) do
@@ -195,8 +195,8 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
     end
   end
 
-  defp route(state, "GET", ["pulls", number, "reviews"], _query, _body),
-    do: {{200, Map.get(state.reviews, number, [])}, state}
+  defp route(state, "GET", ["pulls", number, "reviews"], query, _body),
+    do: {{200, paginate(Map.get(state.reviews, number, []), query)}, state}
 
   defp route(state, "GET", ["commits", sha, "status"], _query, _body) do
     statuses = Map.get(state.statuses, sha, [])
@@ -222,6 +222,32 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
   # of (parent, message, dates, file contents), so the SAME inputs against the
   # SAME parent reproduce the SAME id -- the property measured in findings §3.2
   # and the one a resume relies on.
+  # List endpoints on the target instance take `page`/`limit`
+  # (`ListPullRequests`, `ListPullReviews` — swagger). A stub that ignored them
+  # was not a simplification: it made a read-to-exhaustion loop untestable, and
+  # it could not express the case that matters — an instance whose
+  # `max_response_items` caps a page BELOW what the caller asked for.
+  #
+  # `@cap` models that cap. Requesting `limit=50` against it yields 20-item
+  # pages, so "shorter than requested" cannot be used to detect the last page.
+  @cap 20
+
+  defp paginate(items, query) do
+    page = query |> Map.get("page", "1") |> to_int(1)
+    limit = query |> Map.get("limit", "30") |> to_int(30) |> min(@cap)
+
+    Enum.slice(items, (page - 1) * limit, limit)
+  end
+
+  defp to_int(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _other -> default
+    end
+  end
+
+  defp to_int(_value, default), do: default
+
   defp commit_for(body) do
     id =
       {body["branch"], body["message"], body["dates"], body["files"]}

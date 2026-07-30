@@ -836,6 +836,90 @@ statuses 内嵌，分页对该对象做什么（切数组并重算 rollup？还�
 `RefreshUse` 的不透明传递、caps 上下文对 task/caller/grantee/credential owner 的
 workspace 约束。
 
+## 12.3 第二轮 Codex review：四条缺陷，其中三条是「上一轮修得不完整」
+
+第二轮专门要求它攻击第一轮的修复本身。结果比找新缺陷更有价值 —— **①②③ 都指向
+我上一轮的改动**。
+
+### ① 秒级精度：我上一轮引入的回归（已修）
+
+`ours?/2` 改为比较时间戳后，用的是 `DateTime.compare` 精确比较。但
+`commit_date` = `git_workflow_runs.inserted_at`，那张表是
+`timestamps(type: :utc_datetime_usec)` —— **带微秒**；而 Git 以 epoch 秒存储
+commit 时间，Forgejo 回显不带小数位（实测 `2026-07-29T16:14:17+08:00`）。
+
+于是比较**永远不等**，adapter 认不出**自己写的** commit：每次响应丢失后的恢复都
+报 `:head_ref_conflict` 而不是收敛。这比上一轮的 fail-open 换了个方向错 —— 不再
+误认别人的，但也认不出自己的，恢复路径整条失效。
+
+我的测试没抓到，因为 fixture 用了 `~U[... 10:00:00Z]`（微秒为 0）。**同一类问题
+第二次出现**：上一轮是 stub 只记 message，这轮是 fixture 时间戳太干净。
+
+修：`git_instant/1` 截断到秒，**写出去和比较用同一个值**。截断不削弱判据 ——
+被丢掉的精度从来没被传输过。
+
+### ② `ours?/2` 仍不比对 parent 与文件内容 —— 与设计冲突，未修
+
+Codex 判为高严重度，理由是同一 head/title/date/身份下若先后收到两组不同
+`file_changes`，第二次会把第一组判为 `:already_written`。
+
+**但本设计 §7.6 明写**：
+
+> **ref 已前进**时字段比对是充分判据；**ref 停在 base** 时无 commit 可比对，
+> 这才是真缺口，与 GitHub 同源。
+
+也就是说「字段比对充分」是这份设计已经作出的判断，而非疏漏。Codex 的场景要成立，
+需要**同一个 run 的两次尝试产出不同内容** —— 而 Plan E §6.1 的确定性要求恰恰假定
+内容在同一 run 的重试之间不变。
+
+按 CLAUDE.md「不要发明新 Decision / 发现设计冲突就暂停明说」，**不在本 PR 里单方面
+改判据**。这条留给人类裁决：要么确认 §7.6 的判断继续有效，要么把内容比对纳入设计
+（代价是每个改动文件多一次 GET，且要在 `head_state/2` 之前完成 `file_operations`）。
+
+### ③ 分页终止条件错：`limit` 是请求不是承诺（已修）
+
+原实现把「返回条数 < 请求的 50」当作末页。但 `max_response_items` 是**实例级
+配置**（探针实例 50，可配更低，实测 `GET /api/v1/settings/api` 返回
+`{"max_response_items": 50, "default_paging_num": 30}`）。配成 20 的实例上，满页
+返回 20 < 50 → 立即停 → 漏页 → 重复建 PR / 漏掉最旧的 `REQUEST_CHANGES`。
+
+修：**只有空页才是末页**。代价是每次读多一个请求，换取与实例配置无关的正确性。
+
+顺带把 stub 也改成真的分页，并把它的每页上限设为 **20**（模拟低于请求值的实例），
+这样「短页 ≠ 末页」这件事在测试里可被表达 —— 原来的 stub 忽略 `page`/`limit`，
+根本无法覆盖第 ③ 条。
+
+### ④ handoff vault 先删后写（已修，残留窗口已记录）
+
+`:ets.take/2` 在durable 写入**之前**删掉了轮转后凭证的唯一副本。写入失败则 token
+永久丢失：provider 已使旧 refresh token 失效，而 domain 重试的是 `replace/1` 且只
+带 opaque reference（`refresh.ex:449`），该 reference 再也解析不出来 → 每次
+`:credential_conflict` → 重试预算耗尽后过期连接（`refresh.ex:28`）→ 用户重新授权。
+
+修：改为**查、写成功、再删**。一次失败的写现在可重试，one-use 语义不变（成功后
+删除，重放仍然冲突）。
+
+**我在 §12.2 与 backend moduledoc 里写的理由是错的** —— 我写「丢了只是失败一次
+refresh 而 domain 会重试」。domain 重试的是 `replace` 不是 exchange，同一个死
+reference 永远解析不出来。已订正。
+
+**残留窗口**：ETS 随进程死。`consume_refresh_exchange/1` 与 `replace/1` 之间重启，
+仍会丢掉一次 provider 已经应用的轮转，代价是该用户一次浏览器重新授权。关闭它需要把
+parked replacement 也做成持久（`forgejo_credentials` 旁边一张表）。**本 PR 不做**，
+在此记录。
+
+### ⑤ stub 的其它宽松处（低）
+
+Codex 指出 stub 不校验 update 的 `sha`、建分支时不继承 base 文件、原样回显微秒
+时间戳、且忽略分页。分页与时间戳已随 ①③ 修掉。`sha` 校验与文件继承**未做**：
+它们会让 stub 更严格从而可能暴露更多问题，但属测试基础设施投资，记录待办。
+
+### Codex 复核确认无误的部分
+
+租户收窄（含四元组 vault 迁移点与 scoped 零命中判定）、两处 `reconcile_head/3` 的
+状态区分、分段路径编码对 `FileChange.valid_path?/1` 字符集的覆盖、`sha_required`
+映射、`list_checks/3` 已知限制的表述与代码一致。
+
 ## 13. 未决 / 待人类决定
 
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户

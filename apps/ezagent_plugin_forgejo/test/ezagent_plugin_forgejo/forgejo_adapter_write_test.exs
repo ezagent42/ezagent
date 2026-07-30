@@ -88,6 +88,22 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
     :ok
   end
 
+  # A list route must behave like a paginated endpoint or the adapter's
+  # read-to-exhaustion loop never terminates: a fixture that returns the same
+  # list for every `page` is not a simplification, it is a contradiction of the
+  # API it stands in for. Page 1 gets the body, every later page gets `[]`.
+  defp json(body) when is_list(body) do
+    fn conn ->
+      page =
+        conn
+        |> Plug.Conn.fetch_query_params()
+        |> Map.fetch!(:query_params)
+        |> Map.get("page", "1")
+
+      Req.Test.json(conn, if(page == "1", do: body, else: []))
+    end
+  end
+
   defp json(body), do: fn conn -> Req.Test.json(conn, body) end
 
   defp status(code, body \\ ~s({"message":"x"})),
@@ -493,6 +509,36 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
     end
 
+    # `commit_date` is `git_workflow_runs.inserted_at`, and that table is
+    # `timestamps(type: :utc_datetime_usec)` — so it carries MICROSECONDS. Git
+    # stores commit times as epoch SECONDS, and Forgejo echoes them without a
+    # fractional part (measured). Comparing the two as instants therefore never
+    # matched, and the adapter stopped recognising ITS OWN commit: every
+    # lost-response resume reported `:head_ref_conflict` instead of converging.
+    #
+    # The earlier fixture hid this by using a whole-second `commit_date`.
+    test "its own commit is recognised when commit_date carries microseconds" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+
+      stub(routes)
+
+      request = request!(%{commit_date: ~U[2026-07-29 10:00:00.123456Z]})
+
+      assert {:ok, _result} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request)
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
     # The resume window this check exists to serve: our own commit landed but
     # the response was lost. Every pinned field matches, so the write is
     # skipped rather than stacking a second content-identical commit.
@@ -759,7 +805,69 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
               |> String.to_integer()
 
             body = if page == 1, do: filler, else: if(page == 2, do: [target], else: [])
-            json(body).(conn)
+            # `Req.Test.json/2` directly, NOT the `json/1` helper: that helper
+            # paginates on its own, which would zero out page 2 a second time.
+            Req.Test.json(conn, body)
+          end
+        )
+        |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/pulls"})
+
+      stub(routes)
+
+      assert {:ok, %{external_id: "7"}} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
+    end
+
+    # `limit` is a REQUEST, not a guarantee: `max_response_items` is an instance
+    # setting (50 on the probe instance, but configurable). On an instance that
+    # caps lower, a FULL page comes back shorter than asked for — and treating
+    # "shorter than requested" as "last page" then stops mid-list, which
+    # re-creates the duplicate PR this pagination exists to prevent.
+    test "keeps paging when the instance caps the page size below the request" do
+      target = %{
+        "number" => 7,
+        "html_url" => "https://#{@host}/#{@repo_id}/pulls/7",
+        "state" => "open",
+        "merged" => false,
+        "head" => %{"ref" => @head_ref, "sha" => @head_sha},
+        "base" => %{"ref" => "main"}
+      }
+
+      # 20 per page regardless of the requested 50 — an instance with
+      # max_response_items = 20.
+      filler = fn n ->
+        %{
+          "number" => 100 + n,
+          "html_url" => "https://#{@host}/#{@repo_id}/pulls/#{100 + n}",
+          "state" => "open",
+          "merged" => false,
+          "head" => %{"ref" => "other/#{n}", "sha" => @base_sha},
+          "base" => %{"ref" => "main"}
+        }
+      end
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+          fn conn ->
+            page =
+              conn
+              |> Plug.Conn.fetch_query_params()
+              |> Map.fetch!(:query_params)
+              |> Map.get("page", "1")
+              |> String.to_integer()
+
+            body =
+              case page do
+                1 -> for n <- 1..20, do: filler.(n)
+                2 -> [target]
+                _ -> []
+              end
+
+            Req.Test.json(conn, body)
           end
         )
         |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/pulls"})
@@ -812,7 +920,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
               |> String.to_integer()
 
             body = if page == 1, do: page1, else: if(page == 2, do: [match.(9)], else: [])
-            json(body).(conn)
+            Req.Test.json(conn, body)
           end
         )
 

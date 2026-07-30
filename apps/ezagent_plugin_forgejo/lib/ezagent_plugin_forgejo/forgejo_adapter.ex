@@ -242,12 +242,24 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # UTC value the adapter sent would never match a commit it really wrote.
   defp same_instant?(timestamp, %DateTime{} = commit_date) when is_binary(timestamp) do
     case DateTime.from_iso8601(timestamp) do
-      {:ok, at, _offset} -> DateTime.compare(at, commit_date) == :eq
+      {:ok, at, _offset} -> DateTime.compare(at, git_instant(commit_date)) == :eq
       _unparsable -> false
     end
   end
 
   defp same_instant?(_timestamp, _commit_date), do: false
+
+  # Git stores commit times as epoch SECONDS. `commit_date` is
+  # `git_workflow_runs.inserted_at`, whose column is `:utc_datetime_usec`, so it
+  # arrives with microseconds — which Git and Forgejo both drop.
+  #
+  # Truncating here is what makes the round trip closed: the same value is sent
+  # as `dates` and compared against what comes back, so a commit this adapter
+  # wrote is recognised. Comparing the untruncated value never matched, which
+  # made every lost-response resume report `:head_ref_conflict` against its own
+  # work. Truncation does not weaken the check — the discarded precision was
+  # never transmitted in the first place.
+  defp git_instant(%DateTime{} = at), do: DateTime.truncate(at, :second)
 
   defp create_branch(
          %{base: base, token: token, id: id, head_ref: head_ref} = env,
@@ -294,7 +306,10 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
          %CreateChangeRequest{title: title, commit_date: commit_date} = request
        ) do
     with {:ok, files} <- file_operations(env, file_changes) do
-      stamp = DateTime.to_iso8601(commit_date)
+      # Same truncation as `git_instant/1` in `ours?/2`: what is written and
+      # what is compared must be the same value, or a resume cannot recognise
+      # its own commit.
+      stamp = commit_date |> git_instant() |> DateTime.to_iso8601()
 
       body = %{
         branch: head_ref,
@@ -462,11 +477,17 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     url = "#{path}#{joiner}limit=#{@page_size}&page=#{page}"
 
     case ForgejoClient.get(base, url, token, req_opts()) do
+      # ONLY an empty page ends the read. `limit` is a request, not a promise:
+      # `max_response_items` is an instance setting (50 on the probe instance,
+      # configurable lower), so a FULL page can come back shorter than asked
+      # for. Inferring "last page" from a short page stops mid-list on any
+      # instance capped below @page_size — and a truncated list is
+      # indistinguishable from no-match, which creates a duplicate PR.
+      #
+      # The cost is one extra request per read. That is the correct trade
+      # against silently missing a page.
       {:ok, []} ->
         {:ok, acc}
-
-      {:ok, items} when is_list(items) and length(items) < @page_size ->
-        {:ok, acc ++ items}
 
       {:ok, items} when is_list(items) ->
         all_pages(base, token, path, page + 1, acc ++ items)

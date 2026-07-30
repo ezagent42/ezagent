@@ -288,4 +288,75 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
                })
     end
   end
+
+  # Runs one real rotation and returns the sealed result, so a test can then
+  # present its handoff to `replace/1` exactly as `refresh.ex:449` does.
+  defp rotate!(ref) do
+    Backend.consume_refresh_exchange(%{
+      refresh_use: claimed_use(ref),
+      provider_exchange: fn _frame ->
+        {:ok,
+         %{
+           provider_result_ref: "forgejo-refresh-durability",
+           replacement_credential:
+             {:write_only_handoff,
+              Jason.encode!(%{
+                "access_token" => "at-new",
+                "refresh_token" => "rt-new",
+                "expires_at" => "2026-07-29T11:00:00Z"
+              })},
+           granted_permissions_digest: "requested:write:repository",
+           expires_at: DateTime.utc_now(),
+           provider_metadata: %{}
+         }}
+      end
+    })
+  end
+
+  describe "handoff durability" do
+    # `:ets.take/2` removed the ONLY copy of the rotated credential before the
+    # durable write. If that write then failed, the token was gone: the provider
+    # had already invalidated the old refresh token, the domain retries
+    # `replace/1` with the same opaque ref (`refresh.ex:449`), and that ref can
+    # never resolve again — so every retry returns `:credential_conflict` until
+    # the connection is expired and the owner must re-authorize.
+    #
+    # Reading and only deleting AFTER the write succeeds makes the failure
+    # retryable, which is what the design claimed all along.
+    test "a failed replace leaves the parked replacement retryable", %{ref: ref} do
+      {:ok, %{credential_material: {:write_only_handoff, handoff}}} = rotate!(ref)
+
+      # Wrong expected version: the CAS refuses, so nothing was written.
+      assert {:error, :stale_version} =
+               Backend.replace(%{
+                 credential_material: {:write_only_handoff, handoff},
+                 expected_credential_version: 99
+               })
+
+      # The replacement must still be there, or the rotation is unrecoverable.
+      assert {:ok, %{credential_version: 2}} =
+               Backend.replace(%{
+                 credential_material: {:write_only_handoff, handoff},
+                 expected_credential_version: 1
+               })
+    end
+
+    # One-use is still enforced: after a SUCCESSFUL replace the entry is gone,
+    # so a replay cannot re-apply a rotation.
+    test "a successful replace consumes the parked replacement", %{ref: ref} do
+      {:ok, %{credential_material: {:write_only_handoff, handoff}}} = rotate!(ref)
+
+      assert {:ok, _result} =
+               Backend.replace(%{
+                 credential_material: {:write_only_handoff, handoff},
+                 expected_credential_version: 1
+               })
+
+      assert {:error, :credential_conflict} =
+               Backend.replace(%{
+                 credential_material: {:write_only_handoff, handoff},
+                 expected_credential_version: 2
+               })
+    end
+  end
 end

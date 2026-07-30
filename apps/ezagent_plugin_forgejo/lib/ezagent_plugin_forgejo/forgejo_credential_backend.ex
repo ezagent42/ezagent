@@ -42,9 +42,26 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   by this module's process, which meant one crash wiped every user's credential
   on the node while `provider_connections` kept pointing at them.
 
-  The **handoff vault stays in ETS on purpose**. A parked replacement is a
-  within-operation artifact: losing it fails a refresh that the domain retries,
-  whereas losing the credential costs a browser re-authorization per user.
+  ## The handoff vault is ETS, with a known window
+
+  A parked replacement is a within-operation artifact, so it lives in ETS rather
+  than in a table. The entry is deleted only AFTER the durable write succeeds,
+  so a failed write stays retryable.
+
+  **The residual window is a process restart.** ETS dies with its owner, and the
+  domain's refresh-path `replace/1` carries only an opaque reference — it cannot
+  re-derive the rotated credential. So a restart between
+  `consume_refresh_exchange/1` and `replace/1` loses a rotation that the provider
+  has already applied: the domain retries the same reference, gets
+  `:credential_conflict` each time, and after its retry budget expires the
+  connection (`refresh.ex:28`), which costs the owner one browser
+  re-authorization.
+
+  An earlier version of this moduledoc claimed losing the vault merely "fails a
+  refresh that the domain retries". That was WRONG — the domain retries the
+  `replace`, not the exchange, and the same dead reference can never resolve.
+  Closing the window needs the parked replacement to be durable (a table beside
+  `forgejo_credentials`); it is recorded in design §12.3 rather than fixed here.
   """
 
   @behaviour Ezagent.ProviderConnection.CredentialBackend
@@ -140,16 +157,34 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
         expected_credential_version: expected_version
       })
       when is_binary(handoff_ref) do
-    case :ets.take(@handoff_table, handoff_ref) do
+    # LOOKUP, then delete only after the durable write succeeds.
+    #
+    # `:ets.take/2` here removed the only copy of the rotated credential BEFORE
+    # the write. If the write then failed, the token was gone for good: the
+    # provider has already invalidated the old refresh token, and the domain
+    # retries `replace/1` with the same opaque reference (`refresh.ex:449`),
+    # which can never resolve again — so every retry returns
+    # `:credential_conflict` until the connection is expired and the owner has
+    # to re-authorize in a browser. Read-then-delete makes that failure
+    # retryable, which is what this path was documented to be.
+    #
+    # One-use is still enforced: after a successful write the entry is deleted,
+    # so a replay conflicts instead of re-applying a rotation.
+    #
+    # The workspace comes from the vault, not from the command: the refresh-path
+    # `replace/1` carries no `workspace_uri`, so it is captured when the handoff
+    # is parked — at which point this module still knows which tenant's
+    # credential is being rotated.
+    case :ets.lookup(@handoff_table, handoff_ref) do
       [{^handoff_ref, replacement, workspace_uri, target_ref}] ->
-        # `:ets.take/2` is the one-use guarantee: a replayed replace finds
-        # nothing and conflicts rather than re-applying a rotation.
-        #
-        # The workspace comes from the vault, not from the command: the domain's
-        # refresh-path `replace/1` (`refresh.ex:449`) carries no `workspace_uri`,
-        # so it is captured when the handoff is parked — at which point this
-        # module still knows which tenant's credential is being rotated.
-        CredentialRecord.replace(workspace_uri, target_ref, replacement, expected_version)
+        case CredentialRecord.replace(workspace_uri, target_ref, replacement, expected_version) do
+          {:ok, result} ->
+            :ets.delete(@handoff_table, handoff_ref)
+            {:ok, result}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
 
       [] ->
         {:error, :credential_conflict}
