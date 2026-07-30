@@ -334,8 +334,35 @@ per-repo 收窄不存在，且新增仓库自动落入既有凭证的半径内�
 
 刷新后的 access token（rotation 产物）返回同样结果。
 
-未测的一点：`permissions.push: true` 是服务端对该 token 的权限声明，未做实际
-写入验证。不影响上述结论。
+~~未测的一点：`permissions.push: true` 是服务端对该 token 的权限声明，未做实际
+写入验证。~~ —— **已补测（2026-07-30）**，见 §7.5。
+
+### 7.5 `write:repository` 足够跑通写路径 —— 已实证（2026-07-30）
+
+§7.1 当时只用 OAuth token 打过 `/user` 与仓库可见性，**没做实际写入**。而 token
+响应不回显已授予 scope（§7.1），所以"scope 够不够"只能靠一次真实写反推 —— 没有
+别的信号。缺口的危险形状是：授权成功、连接 active、读路径正常，**第一次开 PR 时
+才失败**。
+
+补测走的是**插件自己的代码路径**（`ForgejoOAuth.exchange_code/4` →
+`ForgejoClient.post/5`），不是手搓 curl，所以顺带验证了此前只对 stub 测过的
+OAuth 换取实现。
+
+| 步骤 | 结果 |
+|---|---|
+| code 换 token | `:ok`，`expires_at` 正确算出（≈1h），refresh_token 已签发 |
+| 读 `branches/main` | `:ok` |
+| `POST /branches` 建分支 | `:ok` |
+| `POST /contents` 写文件 | `:ok` ← 真正需要 `write:repository` 的一步 |
+| `POST /pulls` 开 PR | `:ok`（PR #8） |
+
+授权的 scope 集合就是插件 `@scopes` 里的 `["write:repository", "read:user"]`——
+授权 URL 由 `ForgejoOAuth.authorize_url/3` 生成，所以请求的和验证的是同一组。
+
+痕迹已清理：PR #8 关闭、探针分支删除（查询返回 404）。
+
+**仍未覆盖**：refresh 轮换只在 §7.1 人工走过一次，自动化里仍是 stub。补它需要
+一个可长期存放的 refresh token，属凭证管理决策。
 
 ### 7.4 操作坑：Cloudflare 按 User-Agent 拦截
 

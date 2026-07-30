@@ -750,17 +750,18 @@ Forgejo 侧单独修，GitHub 侧**故意保留 ETS**。
 4. **GitHub 凭证是否也持久化** —— §12.1 论证了不急：它存的 token 仅用于识别
    身份，仓库权限每次操作现签。真正该触发统一的是 capbac Path B（外部签名器 /
    HSM）落地时把全仓 AES 实现一起收敛，那时 core 才会有密封 seam。
-4. **`redirect_uri` 匹配规则**（精确 / 前缀 / 是否允许 http+localhost）未测。
+5. **`redirect_uri` 匹配规则**（精确 / 前缀 / 是否允许 http+localhost）未测。
    只影响给租户管理员的注册说明，不影响代码结构；F0 实施时顺带验。
-5. **OAuth 请求哪些 scope** —— 已知需要 `repository` 类别的写权限；`read:user`
-   用于识别授权者身份。token 响应**不回显**已授予 scope（§4.1.2），所以最终集合
-   要靠 F2/F3 的真实调用反推：缺 scope 时 Forgejo 会点名。
-6. **版本探测策略** —— 一个 adapter 服务 Forgejo + Gitea，探测到什么程度、
+6. ~~**OAuth 请求哪些 scope**~~ —— **已关闭**（2026-07-30）。用 OAuth token 走了
+   一次真实写链（建分支 → `POST /contents` → 开 PR），三步全 `:ok`，坐实
+   `["write:repository", "read:user"]` 够用。走的是插件自己的代码路径，所以
+   `ForgejoOAuth.exchange_code/4` 对真实实例也一并验证了。见 findings §7.5。
+7. **版本探测策略** —— 一个 adapter 服务 Forgejo + Gitea，探测到什么程度、
    不兼容时如何降级，本设计未定。建议先记录版本到 telemetry，不做行为分支。
-7. **§9.2 / §9.3 的 ⚠️ 取值** —— `error` / `warning` / `REQUEST_CHANGES` /
+8. **§9.2 / §9.3 的 ⚠️ 取值** —— `error` / `warning` / `REQUEST_CHANGES` /
    `COMMENT` / `PENDING` 未在采样中观察到，实施时实测确认；无论如何未知值
    必须走 `:other` / 丢弃，不得崩溃。
-8. **§2.2 的 PR 端点行为待在目标实例复核** —— 现有结论采自 Codeberg
+9. **§2.2 的 PR 端点行为待在目标实例复核** —— 现有结论采自 Codeberg
    16.0.0-dev，目标实例是 15.0.5。结论不变则 §7.4 直接落地；即使不同，
    §7.4 仍是安全选择。
 
