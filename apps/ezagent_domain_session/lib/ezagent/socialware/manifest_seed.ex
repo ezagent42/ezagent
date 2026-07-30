@@ -23,13 +23,36 @@ defmodule Ezagent.Socialware.ManifestSeed do
   `ConfigGovernance.Socialware.publish_or_upgrade/2` idempotency
   (`:published` / `:upgraded` / `:exists`).
 
-  Error layering:
+  Error layering — PER-PACKAGE isolation (2026-07-30, #206/#1633 follow-up
+  ③): one bad manifest must never abort the whole scan or take the node
+  down with it — that is exactly what happened in #206 (a stale kanban
+  package killed autoservice + hello + the whole node too, because the old
+  single-lane `scan_all!/1` raised on the FIRST failing package and that
+  call sat directly in `EzagentWeb.Application.start/2`).
 
-    * broken manifest content (parse / resolve / conformance) → raise, boot
-      fails LOUDLY — a deployment error should stop the node;
-    * `uses` naming a plugin that is not installed → raise with a readable
-      "requires plugin ... which is not installed" message instead of a deep
-      resolver tuple.
+    * broken manifest content (parse / resolve / conformance) is still a
+      genuine, strictly-validated failure — nothing about WHAT counts as
+      broken changed. Only the BLAST RADIUS did:
+        - `scan_dir/2` / `scan_all/1` (non-raising — the BOOT lane, called
+          from `EzagentWeb.Application`) catch the failure per package,
+          `Logger.error/1` it LOUDLY with the package name + exact reason,
+          and CONTINUE seeding every remaining package. The scan ends with
+          one summary log line ("socialware manifest seed (<source>): N
+          ok, M failed: [pkg: reason, ...]"). This is isolation, NOT
+          silencing — every failure is still surfaced, just scoped to its
+          own package instead of aborting the whole node.
+        - `scan_dir!/2` / `scan_all!/1` (raising) keep the ORIGINAL
+          whole-scan fail-loud semantics — raise on the first failing
+          package — for CLI / test call sites that want that behavior.
+    * `uses` naming a plugin that is not installed → the same readable
+      "requires plugin ... which is not installed" message, either raised
+      (bang variants) or logged + reported in the summary (non-bang
+      variants).
+
+  Builtin-vs-operator severity (should a failed CODE-owned builtin package
+  be treated as more severe than a failed third-party/operator package) is
+  an intentionally deferred follow-up — not built here, see the PR
+  description for #206-followup ③.
 
   Remote config-repo ingestion still belongs to the registry follow-up.
   """
@@ -40,6 +63,12 @@ defmodule Ezagent.Socialware.ManifestSeed do
 
   @typedoc "One imported manifest: its path, definition name, and publish result."
   @type result :: %{path: Path.t(), name: String.t(), result: :published | :upgraded | :exists}
+
+  @typedoc "One per-package seed failure captured during an isolating scan."
+  @type failure :: %{path: Path.t(), name: String.t(), reason: term()}
+
+  @typedoc "Isolating-scan outcome: packages that seeded vs packages that failed."
+  @type summary :: %{ok: [result()], failed: [failure()]}
 
   @doc "Return true when boot manifest scanning is enabled for this runtime."
   @spec enabled?() :: boolean()
@@ -60,7 +89,10 @@ defmodule Ezagent.Socialware.ManifestSeed do
     * `:deploy_dir` — override the deployment-level directory (default:
       `system://socialware` via `Ezagent.System.FsResolver`).
 
-  Raises on the first failing manifest (fail-loud boot semantics).
+  Raises on the first failing manifest (fail-loud, WHOLE-SCAN semantics —
+  one bad package aborts the entire sweep). Kept for CLI / test call sites
+  that want that behavior. **Do NOT call this from boot** — see `scan_all/1`
+  for the per-package isolating counterpart used by `EzagentWeb.Application`.
   """
   @spec scan_all!(keyword()) :: :ok
   def scan_all!(opts \\ []) do
@@ -73,12 +105,34 @@ defmodule Ezagent.Socialware.ManifestSeed do
   end
 
   @doc """
+  Non-raising, PER-PACKAGE ISOLATING counterpart to `scan_all!/1` — the
+  BOOT-time entry point (`EzagentWeb.Application`). One broken/unresolvable
+  socialware package must never abort the whole node (the #206 lesson: a
+  stale kanban package took canary — and every healthy package, and the
+  node itself — down with it). Same options as `scan_all!/1`.
+
+  See `scan_dir/2` for the isolation + loud-log + summary contract.
+  """
+  @spec scan_all(keyword()) :: summary()
+  def scan_all(opts \\ []) do
+    if enabled?() do
+      dir = deploy_dir(opts)
+      if File.dir?(dir), do: scan_dir(dir, source: "deploy"), else: %{ok: [], failed: []}
+    else
+      %{ok: [], failed: []}
+    end
+  end
+
+  @doc """
   Scan one directory whose children may contain `manifest.yaml` and import
   each through parse → resolve → conformance → governed publish.
 
   A missing/empty directory yields `[]` (the deploy dir is optional).
-  Raises on the first failing manifest; `opts[:source]` labels the origin in
-  logs and error messages.
+  Raises on the first failing manifest, WHOLE-SCAN (a bad package aborts
+  every package after it in this scan); `opts[:source]` labels the origin
+  in logs and error messages. Kept for CLI / test call sites; **do NOT
+  call this from boot** — see `scan_dir/2` for the per-package isolating
+  counterpart used by `scan_all/1`.
   """
   @spec scan_dir!(Path.t(), keyword()) :: [result()]
   def scan_dir!(dir, opts \\ []) when is_binary(dir) do
@@ -96,6 +150,86 @@ defmodule Ezagent.Socialware.ManifestSeed do
           raise seed_failure_message(source, path, name, reason)
       end
     end)
+  end
+
+  @doc """
+  Per-package ISOLATING scan (2026-07-30, #206/#1633 follow-up ③): sweep
+  `dir` the same way `scan_dir!/2` does, but a single package's failure —
+  whether it returns `{:error, {name, reason}}` (unresolvable recipe,
+  unsatisfied `uses`, malformed manifest) or raises outright (e.g. a
+  malformed sibling `recipes.yaml` in `seed_sibling_recipes/1`) — is
+  CAUGHT and reported instead of propagated. The blast radius of one bad
+  package is THAT package; every other package in the same scan still
+  seeds.
+
+  Each failure is logged LOUD (`Logger.error/1`, the exact message
+  `scan_dir!/2` would have raised with) and returned under `:failed`; the
+  run ends with ONE boot summary log line:
+
+      socialware manifest seed (<source>): N ok, M failed: [pkg: reason, ...]
+
+  This is isolation, NOT silencing — every failure is still surfaced
+  loudly, just scoped to its own package instead of aborting the whole
+  scan / the node.
+
+  Use this (or `scan_all/1`) at boot. Use the bang variants (`scan_dir!/2`,
+  `scan_all!/1`) where whole-scan fail-loud semantics are wanted (CLI /
+  existing tests that assert a malformed fixture raises).
+  """
+  @spec scan_dir(Path.t(), keyword()) :: summary()
+  def scan_dir(dir, opts \\ []) when is_binary(dir) do
+    source = Keyword.get(opts, :source, dir)
+
+    {oks, failures} =
+      dir
+      |> manifest_paths()
+      |> Enum.reduce({[], []}, fn path, {oks, failures} ->
+        case safe_import_manifest_path(path) do
+          {:ok, %{name: name, result: outcome} = result} ->
+            Logger.info("socialware manifest seed: #{name} (#{source}) → #{outcome}")
+            {[result | oks], failures}
+
+          {:error, {name, reason}} ->
+            package = name || Path.basename(Path.dirname(path))
+            Logger.error(seed_failure_message(source, path, name, reason))
+            {oks, [%{path: path, name: package, reason: reason} | failures]}
+        end
+      end)
+
+    oks = Enum.reverse(oks)
+    failures = Enum.reverse(failures)
+
+    Logger.log(
+      if(failures == [], do: :info, else: :error),
+      summary_message(source, oks, failures)
+    )
+
+    %{ok: oks, failed: failures}
+  end
+
+  # Per-package isolation boundary (#206 follow-up ③). `import_manifest_path/1`
+  # can fail two ways: a returned `{:error, {name, reason}}` tuple (the
+  # expected/handled shapes — bad manifest content, missing plugin) OR an
+  # outright `raise` (e.g. a malformed sibling `recipes.yaml`, see
+  # `seed_sibling_recipes/1`). Both must be caught HERE so one bad package can
+  # never propagate past its own iteration in `scan_dir/2`. This is only the
+  # isolation boundary — it does not weaken what counts as a failure; every
+  # caught error/exception still surfaces via `:failed` + a loud log line.
+  defp safe_import_manifest_path(path) do
+    import_manifest_path(path)
+  rescue
+    e -> {:error, {nil, Exception.message(e)}}
+  catch
+    kind, reason -> {:error, {nil, {kind, reason}}}
+  end
+
+  defp summary_message(source, oks, failures) do
+    detail =
+      Enum.map_join(failures, ", ", fn %{name: name, reason: reason} ->
+        "#{name}: #{inspect(reason)}"
+      end)
+
+    "socialware manifest seed (#{source}): #{length(oks)} ok, #{length(failures)} failed: [#{detail}]"
   end
 
   # The single manifest source: the deployment-level seed directory.

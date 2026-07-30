@@ -52,7 +52,7 @@ defmodule Ezagent.System.FsResolver do
     * `inbox`       → `Home.path("inbox")` — the profile-level inbox tree.
     * `socialware`  → `Home.path("socialware")` — deployment-level socialware
       manifest seeds, swept by the late boot lane
-      (`Ezagent.Socialware.ManifestSeed.scan_all!/1`).
+      (`Ezagent.Socialware.ManifestSeed.scan_all/1` — per-package isolating).
     * `skills`      → `Home.path("skills")` — deployment-level skill seed
       materialization, swept by `Ezagent.Home.SkillSeed`.
   """
