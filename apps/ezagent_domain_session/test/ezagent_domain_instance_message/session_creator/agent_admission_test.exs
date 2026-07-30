@@ -433,6 +433,78 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     assert binding.version > 0
   end
 
+  test "post-pointer joined-write failure restores the prior default source", %{
+    session_uri: session_uri,
+    declarations: declarations,
+    credential_flavor: credential_flavor
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, first} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    retry_session = live_session("pointer-restore-#{System.unique_integer([:positive])}")
+    on_exit(fn -> terminate(retry_session) end)
+    copy_declarations(retry_session, declarations)
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} = AgentAdmission.defer(retry_session, llm_declaration)
+    assert {:ok, candidate} = AgentAdmission.begin(retry_session, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(candidate.provisional_agent_uri)
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(session_uri, "llm", first.attempt_id, {@owner_uri, caps})
+
+    prior_source =
+      UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor)
+
+    assert prior_source == first.provisional_agent_uri
+
+    prior_fault = Application.get_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+
+    Application.put_env(
+      :ezagent_domain_session,
+      :agent_admission_put_joined_fault,
+      :injected_join_write_failure
+    )
+
+    on_exit(fn ->
+      if is_nil(prior_fault) do
+        Application.delete_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+      else
+        Application.put_env(
+          :ezagent_domain_session,
+          :agent_admission_put_joined_fault,
+          prior_fault
+        )
+      end
+    end)
+
+    assert {:error, :injected_join_write_failure} =
+             AgentAdmission.complete(
+               retry_session,
+               "llm",
+               candidate.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor) ==
+             prior_source
+
+    refute UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor) ==
+             URI.to_string(candidate_uri)
+
+    refute Ezagent.Kind.alive?(candidate_uri)
+  end
+
   test "admission record failure preserves cleanup failure evidence", %{
     session_uri: session_uri,
     declarations: declarations

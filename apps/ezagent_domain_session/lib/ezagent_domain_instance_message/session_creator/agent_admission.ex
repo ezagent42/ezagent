@@ -477,7 +477,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     do: {:ok, current}
 
   defp cancel_current(session_uri, current, actor_uri, caps, failure_code) do
-    with {:ok, agent_uri} <- provisional_uri(current),
+    with :ok <- restore_default_source_transaction(session_uri, current, actor_uri, caps),
+         {:ok, agent_uri} <- provisional_uri(current),
          :ok <-
            DefinitionAgents.cleanup_provisional(
              session_uri,
@@ -537,33 +538,74 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
                attempt_id,
                actor_ctx(actor_uri, caps)
              ),
-           :ok <-
-             set_default_source(
+           {:ok, pointer_transaction} <-
+             prepare_default_source_transaction(
+               session_uri,
+               materializing,
+               actor_uri,
+               agent_uri
+             ) do
+        case set_default_source(
                actor_uri,
                agent_uri,
                current.flavor,
                session_uri,
                caps
-             ),
-           {:ok, joined} <- put_joined(session_uri, materializing) do
-        transition_ok(:complete, session_uri, joined)
-        {:ok, joined}
+             ) do
+          :ok ->
+            case put_joined(session_uri, pointer_transaction) do
+              {:ok, joined} -> {:ok, joined}
+              {:error, reason} -> {:error, reason, pointer_transaction}
+            end
+
+          {:error, reason} ->
+            {:error, reason, pointer_transaction}
+        end
       end
 
     case result do
-      {:ok, _joined} = ok ->
+      {:ok, joined} = ok ->
+        transition_ok(:complete, session_uri, joined)
         ok
 
-      {:error, reason} ->
-        case cancel_current(session_uri, current, actor_uri, caps, nil) do
-          {:ok, _failed} ->
-            transition_failed(:complete, session_uri, current.role_name, reason)
-            {:error, reason}
+      {:error, reason, cleanup_current} ->
+        fail_authenticated_completion(
+          session_uri,
+          current.role_name,
+          cleanup_current,
+          actor_uri,
+          caps,
+          reason
+        )
 
-          {:error, cleanup_reason} ->
-            transition_failed(:complete, session_uri, current.role_name, cleanup_reason)
-            {:error, {reason, cleanup_reason}}
-        end
+      {:error, reason} ->
+        fail_authenticated_completion(
+          session_uri,
+          current.role_name,
+          current,
+          actor_uri,
+          caps,
+          reason
+        )
+    end
+  end
+
+  defp fail_authenticated_completion(
+         session_uri,
+         role_name,
+         cleanup_current,
+         actor_uri,
+         caps,
+         reason
+       ) do
+    case cancel_current(session_uri, cleanup_current, actor_uri, caps, nil) do
+      {:ok, _failed} ->
+        transition_failed(:complete, session_uri, role_name, reason)
+        {:error, reason}
+
+      {:error, cleanup_reason} ->
+        transition_failed(:complete, session_uri, role_name, cleanup_reason)
+        {:error, {reason, cleanup_reason}}
     end
   end
 
@@ -596,7 +638,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
            owner,
            %{
              flavor: flavor,
-             source_uri: URI.to_string(source),
+             source_uri: source_uri(source),
              workspace: workspace_name
            },
            actor_ctx(owner, caps)
@@ -606,14 +648,72 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     end
   end
 
+  defp prepare_default_source_transaction(session_uri, current, owner_uri, source_uri) do
+    workspace_name =
+      session_uri |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
+
+    transaction = %{
+      previous_source_uri:
+        UserDefaultSource.resolve(URI.to_string(owner_uri), workspace_name, current.flavor),
+      source_uri: source_uri(source_uri)
+    }
+
+    transactional = Map.put(current, :default_source_transaction, transaction)
+
+    with :ok <- put_admission(session_uri, transactional), do: {:ok, transactional}
+  end
+
+  defp restore_default_source_transaction(session_uri, current, owner_uri, caps) do
+    case Map.get(current, :default_source_transaction) do
+      %{previous_source_uri: previous, source_uri: source} ->
+        workspace_name =
+          session_uri |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
+
+        case UserDefaultSource.resolve(URI.to_string(owner_uri), workspace_name, current.flavor) do
+          ^source when is_binary(previous) ->
+            set_default_source(owner_uri, previous, current.flavor, session_uri, caps)
+
+          ^source ->
+            {:error, :default_credential_source_restore_requires_prior_source}
+
+          _other ->
+            :ok
+        end
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp source_uri(%URI{} = source), do: URI.to_string(source)
+  defp source_uri(source) when is_binary(source), do: source
+
+  if Mix.env() == :test do
+    defp joined_write_fault(current) do
+      case Application.get_env(:ezagent_domain_session, :agent_admission_put_joined_fault) do
+        nil -> :ok
+        fault when is_function(fault, 1) -> fault.(current)
+        reason -> {:error, reason}
+      end
+    end
+  else
+    defp joined_write_fault(_current), do: :ok
+  end
+
   defp put_status(session_uri, current, status, failure_code) do
     next = %{current | status: status, failure_code: failure_code}
     with :ok <- put_admission(session_uri, next), do: {:ok, next}
   end
 
   defp put_joined(session_uri, current) do
-    next = %{current | status: :joined, failure_code: nil}
-    with :ok <- put_admission(session_uri, next), do: {:ok, next}
+    next =
+      current
+      |> Map.delete(:default_source_transaction)
+      |> Map.merge(%{status: :joined, failure_code: nil})
+
+    with :ok <- joined_write_fault(next),
+         :ok <- put_admission(session_uri, next),
+         do: {:ok, next}
   end
 
   defp put_failed(session_uri, current, failure_code) do
@@ -623,12 +723,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   end
 
   defp failed_row(current, failure_code) do
-    %{
-      current
-      | status: :failed,
-        provisional_agent_uri: nil,
-        failure_code: failure_code
-    }
+    current
+    |> Map.delete(:default_source_transaction)
+    |> Map.merge(%{
+      status: :failed,
+      provisional_agent_uri: nil,
+      failure_code: failure_code
+    })
   end
 
   defp admission_row(declaration, revision, connection, status) do
@@ -710,6 +811,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
          {:ok, agent_uri} <- provisional_uri(current),
          caps <-
            EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri),
+         :ok <- restore_default_source_transaction(session_uri, current, owner_uri, caps),
          :ok <-
            DefinitionAgents.cleanup_provisional(
              session_uri,

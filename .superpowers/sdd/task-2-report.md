@@ -132,3 +132,28 @@ mise exec -- mix test \
 
 11 tests, 0 failures
 ```
+
+## Default credential-pointer compensation — 2026-07-30
+
+Admission completion now persists a materializing pointer transaction before it
+advances the default credential source: the old source URI and the candidate
+source URI. If the joined-row write fails, cancellation/expiry, or stale-row
+retirement now conditionally restores the prior source before retiring the
+candidate. A restore failure intentionally leaves the candidate live with its
+new pointer transaction, rather than creating a pointer to a retired agent.
+
+The regression first completes one candidate to establish a valid old default,
+then starts a second candidate and injects a joined-row write failure after its
+pointer succeeds. Before the fix it unexpectedly joined and overwrote the
+pointer; after the fix it returns the injected error, retires the second
+candidate, and resolves the pointer back to the first.
+
+```text
+# RED before compensation
+expected: {:error, :injected_join_write_failure}
+actual:   {:ok, %{status: :joined, ...}}
+
+# GREEN
+post-pointer joined-write regression: 1 test, 0 failures
+admission suite: 12 tests, 0 failures
+```
