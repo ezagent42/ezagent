@@ -5,9 +5,16 @@ defmodule Ezagent.ProviderConnection.EffectBoundaryWrappingTest do
   plugin raise/throw/exit carrying provider bodies or credential material can
   never reach Kind runtime logs or caller-visible error tuples (design §14,
   handoff §5). Inline try/rescue effect wrappers are forbidden so the boundary
-  has exactly one implementation; the two remaining `rescue` blocks in the
-  local authorization backend belong to AEAD unseal authentication (local
-  crypto, not plugin calls) and are pinned as the only permitted occurrences.
+  has exactly one implementation; the one remaining `rescue` block belongs to
+  AEAD unseal authentication (local crypto, not plugin calls) and is pinned as
+  the only permitted occurrence.
+
+  That rescue used to be duplicated in `exchange.ex` and `reconciliation.ex`.
+  Both copies moved into `Ezagent.ProviderConnection.SealedEnvelope`, so the
+  allowance moved with the code rather than being widened: those two files are
+  now pinned at zero, and `sealed_envelope.ex` is listed in `@files` purely so
+  the rescue count is still checked somewhere — a file absent from `@files` is
+  not scanned at all, which would have let the rescue land unguarded.
   """
 
   use ExUnit.Case, async: true
@@ -21,12 +28,16 @@ defmodule Ezagent.ProviderConnection.EffectBoundaryWrappingTest do
     "lib/ezagent/provider_connection/credential_replacement.ex" => 3,
     "lib/ezagent/provider_connection/recovery.ex" => 1,
     "lib/ezagent/provider_connection/local_authorization_backend/exchange.ex" => 3,
-    "lib/ezagent/provider_connection/local_authorization_backend/reconciliation.ex" => 1
+    "lib/ezagent/provider_connection/local_authorization_backend/reconciliation.ex" => 1,
+    # Zero effect calls — listed so its rescue count is scanned.
+    "lib/ezagent/provider_connection/sealed_envelope.ex" => 0
   }
 
+  # `exchange.ex` and `reconciliation.ex` are deliberately absent: their AEAD
+  # rescues moved into `sealed_envelope.ex`, so they must now have zero (the
+  # lookup below defaults to 0). Re-adding either means a rescue came back.
   @crypto_rescue_allowlist %{
-    "lib/ezagent/provider_connection/local_authorization_backend/exchange.ex" => 1,
-    "lib/ezagent/provider_connection/local_authorization_backend/reconciliation.ex" => 1
+    "lib/ezagent/provider_connection/sealed_envelope.ex" => 1
   }
 
   for {file, expected} <- @files do

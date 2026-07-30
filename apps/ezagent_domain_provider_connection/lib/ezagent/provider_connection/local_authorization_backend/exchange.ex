@@ -17,21 +17,17 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
 
   alias Ezagent.ProviderConnection.AuthorizationBackendRecord
   alias Ezagent.ProviderConnection.AuthorizationAttempt
-  alias Ezagent.ProviderConnection.AuthorizationKeyRing
   alias Ezagent.ProviderConnection.BackendPairRegistry
   alias Ezagent.ProviderConnection.Connection
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
   alias Ezagent.ProviderConnection.Operation
+  alias Ezagent.ProviderConnection.SealedEnvelope
   alias Ezagent.ProviderConnection.EffectBoundary
   alias EzagentCore.Repo
 
-  @tag_bytes 16
-  @fixture_enabled Application.compile_env(
-                     :ezagent_domain_provider_connection,
-                     :authorization_key_ring_fixture_enabled,
-                     false
-                   )
+  # Still used by `state_key_id/1` to validate the key id embedded in an opaque
+  # state token. The crypto that used to live here moved to `SealedEnvelope`.
   @key_id_pattern ~r/\A[a-zA-Z0-9._-]{1,64}\z/
   @begin_keys MapSet.new(
                 ~w(subject acquisition_method requested_permissions_digest redirect_uri_id correlation_id bound_input_digest)a ++
@@ -81,7 +77,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
 
   @doc false
   def state_digest(raw_state) when is_binary(raw_state) do
-    with {:ok, snapshot} <- crypto_state(),
+    with {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, key_id} <- state_key_id(raw_state),
          {:ok, key} <- Map.fetch(snapshot.keys, key_id) do
       {:ok, :crypto.mac(:hmac, :sha256, key, raw_state) |> Base.encode16(case: :lower)}
@@ -101,7 +97,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
            true <- row.backend_pair_id == pair_id,
            true <- row.lifecycle_status in ["pending", "consuming"],
            :lt <- DateTime.compare(DateTime.utc_now(), row.expires_at),
-           {:ok, snapshot} <- crypto_state() do
+           {:ok, snapshot} <- SealedEnvelope.snapshot() do
         callback = Map.put(provider_envelope, :state, raw_state)
         digest = Support.digest(callback)
 
@@ -115,7 +111,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
 
           true ->
             sealed =
-              seal_with(
+              SealedEnvelope.seal(
                 snapshot,
                 :active,
                 :authorization_callback,
@@ -157,14 +153,19 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
          :ok <- Support.validate_handoff(row, operation, attempt, connection),
          {:ok, credential_backend} <-
            registered_credential_backend(attempt.backend_pair_id),
-         {:ok, snapshot} <- crypto_state(),
+         {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, envelope} <- Support.decode_handoff_envelope(row.handoff_ciphertext),
          {:ok, credential_material} <-
-           unseal_with(
+           SealedEnvelope.open(
              snapshot,
              :credential_handoff,
              envelope,
-             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref, operation.operation_class)
+             Support.handoff_aad(
+               row,
+               attempt.correlation_id,
+               operation.handoff_ref,
+               operation.operation_class
+             )
            ),
          {:ok, result} <-
            apply_credential_effect(
@@ -203,14 +204,19 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
          :ok <- Support.validate_handoff(row, operation, attempt, base_connection),
          {:ok, credential_backend} <-
            registered_credential_backend(attempt.backend_pair_id),
-         {:ok, snapshot} <- crypto_state(),
+         {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, envelope} <- Support.decode_handoff_envelope(row.handoff_ciphertext),
          {:ok, credential_material} <-
-           unseal_with(
+           SealedEnvelope.open(
              snapshot,
              :credential_handoff,
              envelope,
-             Support.handoff_aad(row, attempt.correlation_id, operation.handoff_ref, operation.operation_class)
+             Support.handoff_aad(
+               row,
+               attempt.correlation_id,
+               operation.handoff_ref,
+               operation.operation_class
+             )
            ),
          {:ok, result} <-
            apply_credential_effect(
@@ -236,14 +242,14 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
     expires_at = DateTime.add(DateTime.utc_now(), 300, :second)
     aad = Support.begin_aad(authorization_ref, pair_id, digest, subject, request, expires_at)
 
-    with {:ok, snapshot} <- crypto_state() do
+    with {:ok, snapshot} <- SealedEnvelope.snapshot() do
       payload = %{
         state: "#{snapshot.active_key_id}.#{Support.random_token(32)}",
         pkce_verifier: Support.random_token(48),
         redirect: nil
       }
 
-      envelope = seal_with(snapshot, :active, :authorization_attempt, payload, aad)
+      envelope = SealedEnvelope.seal(snapshot, :active, :authorization_attempt, payload, aad)
 
       Repo.transaction(fn ->
         attrs =
@@ -305,9 +311,9 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   end
 
   defp finish_begin_command(command, row) do
-    with {:ok, snapshot} <- crypto_state(),
+    with {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, payload} <-
-           unseal_with(
+           SealedEnvelope.open(
              snapshot,
              :authorization_attempt,
              Support.envelope(row),
@@ -332,7 +338,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
            invoke_driver(driver, :begin_authorization, row, command, payload, %{}, %{}),
          {:ok, redirect} <- Support.normalize_begin_result(driver_result, payload, driver),
          {:ok, sealed} <-
-           seal_with_record_key(
+           SealedEnvelope.seal_with_record_key(
              snapshot,
              row,
              :authorization_attempt,
@@ -393,10 +399,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   end
 
   defp seal_callback_for_command(row, request, correlation_id, digest) do
-    with {:ok, snapshot} <- crypto_state(),
+    with {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, callback} <- callback_for_command(snapshot, row, request, correlation_id) do
       {:ok,
-       seal_with(
+       SealedEnvelope.seal(
          snapshot,
          :active,
          :authorization_callback,
@@ -412,7 +418,7 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
 
   defp callback_for_command(snapshot, row, _request, correlation_id) do
     if row.consume_correlation_id == correlation_id and is_binary(row.consume_input_digest) do
-      unseal_with(
+      SealedEnvelope.open(
         snapshot,
         :authorization_callback,
         Support.callback_envelope(row),
@@ -452,16 +458,16 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
   defp invoke_prepared_consume(command, row) do
     handoff_ref = Support.stable_ref("handoff", row.authorization_ref, command.correlation_id)
 
-    with {:ok, snapshot} <- crypto_state(),
+    with {:ok, snapshot} <- SealedEnvelope.snapshot(),
          {:ok, payload} <-
-           unseal_with(
+           SealedEnvelope.open(
              snapshot,
              :authorization_attempt,
              Support.envelope(row),
              Support.row_aad(row)
            ),
          {:ok, callback_envelope} <-
-           unseal_with(
+           SealedEnvelope.open(
              snapshot,
              :authorization_callback,
              Support.callback_envelope(row),
@@ -491,12 +497,17 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
              operation.expected_authorization_version
            ),
          handoff <-
-           seal_with(
+           SealedEnvelope.seal(
              snapshot,
              :active,
              :credential_handoff,
              normalized.credential_material,
-             Support.handoff_aad(row, command.correlation_id, handoff_ref, operation.operation_class)
+             Support.handoff_aad(
+               row,
+               command.correlation_id,
+               handoff_ref,
+               operation.operation_class
+             )
            ) do
       safe_result =
         Map.put(normalized, :credential_material, {:write_only_handoff, handoff_ref})
@@ -830,142 +841,6 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Exchange do
         lock: "FOR UPDATE"
       )
     )
-  end
-
-  defp seal_with(snapshot, :active, purpose, value, aad),
-    do: seal_with(snapshot, snapshot.active_key_id, purpose, value, aad)
-
-  defp seal_with(snapshot, key_id, purpose, value, aad) do
-    key = Map.fetch!(snapshot.keys, key_id)
-    nonce = :crypto.strong_rand_bytes(12)
-    plaintext = :erlang.term_to_binary(value, [:deterministic])
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(
-        :aes_256_gcm,
-        key,
-        nonce,
-        plaintext,
-        Support.encode_aad(purpose, aad),
-        true
-      )
-
-    %{
-      key_id: key_id,
-      key_fingerprint: Support.sha256(key),
-      nonce: nonce,
-      ciphertext: <<tag::binary, ciphertext::binary>>
-    }
-  end
-
-  defp seal_with_record_key(snapshot, row, purpose, value, aad) do
-    with {:ok, key} <- Map.fetch(snapshot.keys, row.key_id),
-         true <- Support.sha256(key) == row.key_fingerprint do
-      {:ok, seal_with(snapshot, row.key_id, purpose, value, aad)}
-    else
-      _error -> {:error, :authentication_failed}
-    end
-  end
-
-  defp unseal_with(
-         snapshot,
-         purpose,
-         %{key_id: key_id, key_fingerprint: fingerprint, nonce: nonce, ciphertext: blob},
-         aad
-       )
-       when is_binary(key_id) and is_binary(fingerprint) and is_binary(nonce) and
-              byte_size(nonce) == 12 and is_binary(blob) and byte_size(blob) >= @tag_bytes do
-    with {:ok, key} <- Map.fetch(snapshot.keys, key_id),
-         true <- Support.sha256(key) == fingerprint do
-      <<tag::binary-size(@tag_bytes), ciphertext::binary>> = blob
-
-      case :crypto.crypto_one_time_aead(
-             :aes_256_gcm,
-             key,
-             nonce,
-             ciphertext,
-             Support.encode_aad(purpose, aad),
-             tag,
-             false
-           ) do
-        :error -> {:error, :authentication_failed}
-        plaintext -> {:ok, :erlang.binary_to_term(plaintext, [:safe])}
-      end
-    else
-      _error -> {:error, :authentication_failed}
-    end
-  rescue
-    _error -> {:error, :authentication_failed}
-  end
-
-  defp unseal_with(_snapshot, _purpose, _envelope, _aad),
-    do: {:error, :authentication_failed}
-
-  defp crypto_state do
-    with {:ok, state} <- parse_crypto_config(),
-         {:ok, validated} <- AuthorizationKeyRing.validated_fingerprint(),
-         true <- crypto_fingerprint(state) == validated do
-      {:ok, state}
-    else
-      _error -> {:error, :authorization_backend_unavailable}
-    end
-  end
-
-  defp parse_crypto_config do
-    config =
-      Application.get_env(:ezagent_domain_provider_connection, AuthorizationKeyRing, [])
-
-    with {:ok, pairs} <- crypto_pairs(Keyword.get(config, :source), config),
-         {:ok, keys} <- crypto_keys(pairs),
-         active when is_binary(active) <- Keyword.get(config, :active_key_id),
-         true <- Regex.match?(@key_id_pattern, active),
-         true <- Map.has_key?(keys, active) do
-      {:ok, %{active_key_id: active, keys: keys}}
-    else
-      _error -> {:error, :authorization_backend_unavailable}
-    end
-  end
-
-  if @fixture_enabled do
-    defp crypto_pairs(:explicit_test, config) do
-      case Keyword.get(config, :keys) do
-        keys when is_map(keys) -> {:ok, Map.to_list(keys)}
-        _other -> {:error, :invalid}
-      end
-    end
-  end
-
-  defp crypto_pairs(:runtime_env, config) do
-    with json when is_binary(json) <- Keyword.get(config, :keys_json),
-         {:ok, %Jason.OrderedObject{values: pairs}} <-
-           Jason.decode(json, objects: :ordered_objects) do
-      Enum.reduce_while(pairs, {:ok, []}, fn {id, encoded}, {:ok, acc} ->
-        case is_binary(encoded) && Base.decode64(encoded) do
-          {:ok, key} -> {:cont, {:ok, [{id, key} | acc]}}
-          _other -> {:halt, {:error, :invalid}}
-        end
-      end)
-    else
-      _error -> {:error, :invalid}
-    end
-  end
-
-  defp crypto_pairs(_source, _config), do: {:error, :invalid}
-
-  defp crypto_keys(pairs) do
-    Enum.reduce_while(pairs, {:ok, %{}}, fn {id, key}, {:ok, acc} ->
-      if is_binary(id) and Regex.match?(@key_id_pattern, id) and is_binary(key) and
-           byte_size(key) == 32 and not Map.has_key?(acc, id) do
-        {:cont, {:ok, Map.put(acc, id, key)}}
-      else
-        {:halt, {:error, :invalid}}
-      end
-    end)
-  end
-
-  defp crypto_fingerprint(%{active_key_id: active, keys: keys}) do
-    key_digests = Map.new(keys, fn {id, key} -> {id, Support.sha256(key)} end)
-    Support.sha256(:erlang.term_to_binary({active, key_digests}, [:deterministic]))
   end
 
   defp state_key_id(raw_state) do
