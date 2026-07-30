@@ -362,15 +362,15 @@ cards:
   - owner: "gaga"
     title: "#1498 system-closure 方法产品化 + 受控 Mix 执行"
     goal: "把 system-closure 方法与 guarded Mix execution 产品化(接 #1614 Plan E loop)"
-    status: "wip"
+    status: "review"
     task: "system-closure-1498"
     started: "2026-07-24"
     est_done: "2026-07-29"
-    who: "gaga 轨道 · #1498 · draft"
+    who: "gaga 轨道 · #1498 · 已完成，待 review/merge"
     carryover: true
-    pr: {num: 1498, state: "draft"}
+    pr: {num: 1498, state: "open"}
     acceptance:
-      - {text: "产品化 system-closure 方法 + guarded Mix execution", done: false}
+      - {text: "产品化 system-closure 方法 + guarded Mix execution", done: true, evidence: "runner + 双语 runbook/复盘已完成；PR 重放最新 main 后 gates 通过，owner-only skill 后续已正交拆分"}
   # ---- zyli ----
   - owner: "zyli"
     title: "#1576 hello 模板 LLM 生成流恢复"
