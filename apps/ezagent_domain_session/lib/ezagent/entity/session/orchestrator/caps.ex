@@ -55,17 +55,15 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
        ) do
     desired = build_desired_caps(session_uri, session_workspace)
     # This reconciliation runs immediately after materialization, while the
-    # transport may still be settling. Read the Identity slice directly so
-    # deciding what to issue never dispatches through the readiness gate.
-    current = Ezagent.EntityCaps.load(orchestrator_uri)
-
-    to_grant =
-      desired
-      |> Enum.reject(fn want ->
-        Enum.any?(current, &cap_equal_ignoring_metadata?(&1, want))
-      end)
-
-    with :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, session_uri),
+    # transport may still be settling. The effective view combines the held
+    # Identity slice with durable pending absorbs without dispatching through
+    # the readiness gate.
+    with {:ok, current} <- Ezagent.EntityCaps.effective_caps(orchestrator_uri),
+         to_grant =
+           Enum.reject(desired, fn want ->
+             Enum.any?(current, &same_cap_identity?(&1, want))
+           end),
+         :ok <- Ezagent.Identity.TargetAuthority.ensure(owner_uri, session_uri),
          {:ok, issued} <- issue_scoped_caps(orchestrator_uri, owner_uri, session_uri, to_grant),
          :ok <- absorb_scoped_caps(orchestrator_uri, issued) do
       :ok
@@ -203,6 +201,10 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
       a.instance == b.instance and
       a.workspace_uri == b.workspace_uri and
       a.granted_by == b.granted_by
+  end
+
+  defp same_cap_identity?(%Ezagent.Capability{} = left, %Ezagent.Capability{} = right) do
+    Ezagent.Capability.identity_key(left) == Ezagent.Capability.identity_key(right)
   end
 
   defp same_uri?(%URI{} = left, %URI{} = right) do

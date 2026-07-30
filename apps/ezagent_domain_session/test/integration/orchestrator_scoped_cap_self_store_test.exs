@@ -54,7 +54,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     end)
 
     :ok = Ezagent.ReadyGate.put(orchestrator_uri, :not_ready)
-    buffer_size_before = Ezagent.PendingDelivery.buffer_size(orchestrator_uri)
 
     task =
       Task.async(fn ->
@@ -73,7 +72,11 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     # A never-ready transport does not block cap handoff: each exact Session
     # or Workspace action is already signed by its concrete target authority
     # and durably queued for the orchestrator's own absorb path.
-    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
+    assert [first_notification, second_notification] = pending_entries(orchestrator_uri)
+
+    assert_cascade_notification(first_notification, orchestrator_uri, 1)
+    assert_cascade_notification(second_notification, orchestrator_uri, 2)
+    pending_before = pending_deliveries(orchestrator_uri)
     pending = pending_artifacts(orchestrator_uri)
 
     assert length(pending) == expected_cap_count()
@@ -83,6 +86,39 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
                cap.grantee_uri == orchestrator_uri and is_binary(cap.signature) and
                is_binary(cap.key_id)
            end)
+
+    assert :ok =
+             Caps.grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri)
+
+    assert Enum.map(pending_deliveries(orchestrator_uri), &{&1.id, &1.attempts}) ==
+             Enum.map(pending_before, &{&1.id, &1.attempts})
+
+    assert {:ok, _generation_two} =
+             Ezagent.Cap.Authority.regenesis(session_uri, :session)
+
+    Process.exit(session_pid, :kill)
+    wait_restarted(session_uri, session_pid)
+    wait_ready(session_uri)
+
+    assert :ok =
+             Caps.grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri)
+
+    rotated_pending = pending_artifacts(orchestrator_uri)
+
+    assert length(rotated_pending) == length(pending) + session_cap_count()
+
+    session_artifacts = Enum.filter(rotated_pending, &(&1.instance == session_uri))
+
+    assert session_artifacts |> Enum.map(& &1.key_id) |> MapSet.new() |> MapSet.size() == 2
+
+    assert Enum.count(
+             session_artifacts,
+             &Ezagent.Cap.Authority.verify_against_current(
+               &1,
+               orchestrator_uri,
+               session_uri
+             )
+           ) == session_cap_count()
 
     refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
              Enum.any?(
@@ -120,27 +156,66 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   end
 
   defp pending_artifacts(uri) do
-    from(delivery in Delivery,
-      where: delivery.target_uri == ^URI.to_string(uri),
-      where: delivery.op == :absorb_cap,
-      where: delivery.status == :pending,
-      order_by: [asc: delivery.id],
-      select: delivery.payload
-    )
-    |> EzagentCore.Repo.all()
-    |> Enum.map(fn payload ->
-      %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(payload, [:safe])
+    uri
+    |> pending_deliveries()
+    |> Enum.map(fn delivery ->
+      %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(delivery.payload, [:safe])
       cap
     end)
   end
 
-  defp expected_cap_count do
-    session_count =
-      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
-      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
-      |> length()
+  defp pending_deliveries(uri) do
+    from(delivery in Delivery,
+      where: delivery.target_uri == ^URI.to_string(uri),
+      where: delivery.op == :absorb_cap,
+      where: delivery.status == :pending,
+      order_by: [asc: delivery.id]
+    )
+    |> EzagentCore.Repo.all()
+  end
 
-    session_count + 3
+  defp pending_entries(uri) do
+    Ezagent.PendingDelivery.with_lock(uri, fn ->
+      key = URI.to_string(uri)
+
+      case :ets.lookup(Ezagent.PendingDelivery.table(), key) do
+        [{^key, entries}] -> Ezagent.PendingDelivery.unwrap_entries(entries)
+        [] -> []
+      end
+    end)
+  end
+
+  defp assert_cascade_notification(invocation, orchestrator_uri, cursor) do
+    assert %Ezagent.Invocation{
+             target: %URI{query: "action=_.cascade_notify_managers"} = target,
+             mode: :cast,
+             args: %{cursor: ^cursor, slice_key: :identity, event_at: %DateTime{}},
+             ctx: %{caller: :vm_internal, reply: :ignore, mode: :cast, caps: caps},
+             origin: :trusted_internal
+           } = invocation
+
+    assert URI.to_string(%{target | query: nil}) == URI.to_string(orchestrator_uri)
+    assert MapSet.size(caps) == 0
+  end
+
+  defp expected_cap_count do
+    session_cap_count() + 3
+  end
+
+  defp session_cap_count do
+    Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+    |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+    |> length()
+  end
+
+  defp wait_restarted(uri, previous_pid, attempts \\ 200)
+  defp wait_restarted(_uri, _previous_pid, 0), do: flunk("Kind never restarted")
+
+  defp wait_restarted(uri, previous_pid, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} when pid != previous_pid -> :ok
+      _ -> Process.sleep(10) && wait_restarted(uri, previous_pid, attempts - 1)
+    end
   end
 
   defp wait_ready(uri, attempts \\ 200)
@@ -197,6 +272,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   end
 
   defp terminate_if_alive(uri, pid) when is_pid(pid) do
-    if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
+    if Process.alive?(pid) or match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)),
+      do: Ezagent.Kind.terminate(uri)
   end
 end

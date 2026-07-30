@@ -14,7 +14,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
 
   import Ecto.Query
 
-  alias Ezagent.{Invocation, Persistence}
+  alias Ezagent.{Capability, Invocation, Persistence}
   alias Ezagent.Cap.Delivery
   alias Ezagent.Cap.DeliveryOutbox.Envelope
   alias Ezagent.Cap.DeliveryOutbox.State
@@ -75,7 +75,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   def enqueue_and_attempt(%Invocation{} = invocation) do
     with {:ok, envelope} <- Envelope.encode(invocation),
          {:ok, delivery, disposition} <- insert_or_reuse(invocation, envelope),
-         :ok <- verify_reused_payload(delivery, envelope) do
+         :ok <- verify_reused_payload(delivery, envelope, disposition) do
       result = dispatch_accepted(delivery, disposition, invocation)
 
       case invocation.mode do
@@ -167,6 +167,50 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     config() |> Keyword.get(:require_sync_ack, [])
   end
 
+  @doc """
+  Return validated capabilities from pending `:absorb_cap` deliveries for one
+  target.
+
+  This is the core-owned read seam for temporary effective-capability views.
+  A malformed pending envelope or failed durable read fails the whole operation
+  closed; callers must not interpret an error as an empty pending set.
+  """
+  @spec list_pending_absorb_caps(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | {:error, term()}
+  def list_pending_absorb_caps(target_uri) do
+    target = target_uri |> to_uri() |> Ezagent.URI.instance()
+    target_string = URI.to_string(target)
+
+    with {:ok, workspace_uri} <- Persistence.workspace_uri_for(target) do
+      Delivery
+      |> Persistence.scope_by_workspace(workspace_uri)
+      |> where(
+        [delivery],
+        delivery.target_uri == ^target_string and delivery.op == :absorb_cap and
+          delivery.status == :pending
+      )
+      |> order_by([delivery], asc: delivery.id)
+      |> Repo.all()
+      |> decode_pending_absorbs()
+    end
+  rescue
+    error ->
+      Logger.error(
+        "DeliveryOutbox.list_pending_absorb_caps failed for " <>
+          "#{inspect(target_uri)}: #{Exception.message(error)}"
+      )
+
+      {:error, :pending_absorb_read_failed}
+  catch
+    kind, reason ->
+      Logger.error(
+        "DeliveryOutbox.list_pending_absorb_caps #{kind} for " <>
+          "#{inspect(target_uri)}: #{inspect(reason)}"
+      )
+
+      {:error, :pending_absorb_read_failed}
+  end
+
   @doc false
   @spec retry_base_ms() :: pos_integer()
   def retry_base_ms, do: Keyword.get(config(), :retry_base_ms, @default_retry_base_ms)
@@ -185,6 +229,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     do: {:error, :delivery_dead}
 
   defp dispatch_accepted(delivery, :reused, _invocation), do: do_attempt(delivery, nil)
+  defp dispatch_accepted(delivery, :reused_semantic, _invocation), do: do_attempt(delivery, nil)
   defp dispatch_accepted(delivery, :inserted, invocation), do: do_attempt(delivery, invocation)
 
   defp do_attempt(%Delivery{} = delivery, initial_invocation) do
@@ -265,6 +310,28 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     end
   end
 
+  defp decode_pending_absorbs(deliveries) do
+    deliveries
+    |> Enum.reduce_while({:ok, []}, fn delivery, {:ok, caps} ->
+      case Envelope.decode(delivery) do
+        {:ok, %{cap: %Capability{} = cap}} ->
+          {:cont, {:ok, [cap | caps]}}
+
+        {:error, reason} ->
+          Logger.error(
+            "DeliveryOutbox.list_pending_absorb_caps decode failed for " <>
+              "delivery_id=#{delivery.id}: #{inspect(reason)}"
+          )
+
+          {:halt, {:error, {:invalid_pending_delivery, delivery.id, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, caps} -> {:ok, Enum.reverse(caps)}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp attach_claim(%Invocation{} = invocation, %Delivery{} = delivery) do
     %{
       invocation
@@ -283,6 +350,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
       payload: Envelope.canonical_binary(envelope),
       payload_version: Envelope.version(),
       payload_identity: Envelope.payload_identity(envelope.cap),
+      semantic_identity: semantic_identity(envelope),
       idempotency_key: Map.get(invocation.ctx, :idempotency_key),
       status: :pending,
       attempts: 0,
@@ -291,9 +359,17 @@ defmodule Ezagent.Cap.DeliveryOutbox do
 
     changeset = Delivery.changeset(%Delivery{}, attrs)
 
-    case attrs.idempotency_key do
-      nil -> insert_new(changeset)
-      key -> insert_idempotent(changeset, attrs, key)
+    case find_idempotent(attrs) do
+      %Delivery{} = delivery ->
+        remember_target(delivery.target_uri)
+        {:ok, delivery, :reused}
+
+      nil ->
+        case {attrs.semantic_identity, attrs.idempotency_key} do
+          {nil, nil} -> insert_new(changeset)
+          {nil, key} -> insert_idempotent(changeset, attrs, key)
+          {_semantic_identity, _key} -> insert_semantic(changeset, attrs, 1)
+        end
     end
   end
 
@@ -343,11 +419,121 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     end
   end
 
-  defp verify_reused_payload(%Delivery{} = delivery, envelope) do
+  defp insert_semantic(changeset, attrs, retries_left) do
+    result =
+      TransientRetry.with_retry(fn ->
+        Repo.insert(changeset,
+          on_conflict: :nothing,
+          conflict_target:
+            {:unsafe_fragment,
+             "(workspace_uri, target_uri, op, semantic_identity) " <>
+               "WHERE status = 'pending' AND op = 'absorb_cap' " <>
+               "AND semantic_identity IS NOT NULL"}
+        )
+      end)
+
+    case result do
+      {:ok, %Delivery{id: id} = delivery} when is_integer(id) ->
+        remember_target(delivery.target_uri)
+        {:ok, delivery, :inserted}
+
+      {:ok, %Delivery{id: nil}} ->
+        reuse_constrained(changeset, attrs, retries_left)
+
+      {:error, changeset} ->
+        if constraint_error?(changeset, "cap_delivery_outbox_idempotency_unique") do
+          reuse_idempotent(attrs)
+        else
+          {:error, :durable_accept_failed}
+        end
+    end
+  end
+
+  defp reuse_constrained(changeset, attrs, retries_left) do
+    case find_idempotent(attrs) do
+      %Delivery{} = delivery ->
+        remember_target(delivery.target_uri)
+        {:ok, delivery, :reused}
+
+      nil ->
+        case find_pending_semantic(attrs) do
+          %Delivery{} = delivery ->
+            remember_target(delivery.target_uri)
+            {:ok, delivery, :reused_semantic}
+
+          nil when retries_left > 0 ->
+            insert_semantic(changeset, attrs, retries_left - 1)
+
+          nil ->
+            {:error, :durable_accept_failed}
+        end
+    end
+  end
+
+  defp reuse_idempotent(attrs) do
+    case find_idempotent(attrs) do
+      %Delivery{} = delivery ->
+        remember_target(delivery.target_uri)
+        {:ok, delivery, :reused}
+
+      nil ->
+        {:error, :durable_accept_failed}
+    end
+  end
+
+  defp find_idempotent(%{idempotency_key: nil}), do: nil
+
+  defp find_idempotent(attrs) do
+    Repo.one(
+      from(delivery in Delivery,
+        where:
+          delivery.workspace_uri == ^attrs.workspace_uri and
+            delivery.target_uri == ^attrs.target_uri and delivery.op == ^attrs.op and
+            delivery.idempotency_key == ^attrs.idempotency_key
+      )
+    )
+  end
+
+  defp find_pending_semantic(attrs) do
+    Repo.one(
+      from(delivery in Delivery,
+        where:
+          delivery.workspace_uri == ^attrs.workspace_uri and
+            delivery.target_uri == ^attrs.target_uri and delivery.op == ^attrs.op and
+            delivery.semantic_identity == ^attrs.semantic_identity and
+            delivery.status == :pending
+      )
+    )
+  end
+
+  defp constraint_error?(changeset, constraint_name) do
+    Enum.any?(changeset.errors, fn {_field, {_message, metadata}} ->
+      to_string(metadata[:constraint_name]) == constraint_name
+    end)
+  end
+
+  defp verify_reused_payload(_delivery, _envelope, :inserted), do: :ok
+
+  defp verify_reused_payload(%Delivery{} = delivery, envelope, :reused) do
     if delivery.payload == Envelope.canonical_binary(envelope),
       do: :ok,
       else: {:error, :idempotency_conflict}
   end
+
+  defp verify_reused_payload(%Delivery{} = delivery, envelope, :reused_semantic) do
+    with {:ok, %{cap: %Capability{} = stored_cap}} <- Envelope.decode(delivery),
+         true <- Capability.identity_key(stored_cap) == Capability.identity_key(envelope.cap),
+         true <- stored_cap.key_id == envelope.cap.key_id do
+      :ok
+    else
+      _ -> {:error, :idempotency_conflict}
+    end
+  end
+
+  defp semantic_identity(%{producer: :identity_absorb, cap: %Capability{} = cap}),
+    do: Envelope.semantic_identity(cap)
+
+  defp semantic_identity(_envelope), do: nil
 
   defp normalize_cast_acceptance({:error, reason})
        when reason in [

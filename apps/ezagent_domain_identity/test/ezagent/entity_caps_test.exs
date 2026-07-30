@@ -4,6 +4,8 @@ defmodule Ezagent.EntityCapsTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.{Cap, Capability, EntityCaps, SnapshotStore}
+  alias Ezagent.EntityCaps.{Store, UserStore}
+  alias EzagentCore.Repo
 
   @workspace URI.new!("workspace://entity-caps")
   @issuer URI.new!("entity://entity-caps/user/issuer")
@@ -169,6 +171,236 @@ defmodule Ezagent.EntityCapsTest do
       assert EntityCaps.load(agent) == []
       refute Process.alive?(pid)
       assert cap_present?(EntityCaps.load_persisted(agent), stale)
+    end
+  end
+
+  describe "effective_caps/1 and effective_caps_persisted/1" do
+    test "merges held and pending caps and deduplicates by semantic identity" do
+      agent = agent_uri("effective-held-pending")
+      held = issued_cap(agent, :history)
+      pending = issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [held]
+               })
+
+      wait_until_ready(agent)
+      :ok = Ezagent.ReadyGate.put(agent, :not_ready)
+
+      assert :ok = Ezagent.Identity.absorb_cap(agent, pending)
+      assert :ok = Ezagent.Identity.absorb_cap(agent, pending)
+
+      assert {:ok, effective} = EntityCaps.effective_caps(agent)
+      assert cap_present?(effective, held)
+      assert cap_present?(effective, pending)
+
+      assert Enum.count(
+               effective,
+               &(Capability.identity_key(&1) == Capability.identity_key(pending))
+             ) == 1
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "excludes a held artifact whose target authority generation is stale" do
+      agent = agent_uri("effective-stale-held")
+      stale = issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [stale]
+               })
+
+      wait_until_ready(agent)
+      assert {:ok, _generation_two} = Ezagent.Cap.Authority.regenesis(stale.instance, :session)
+
+      assert {:ok, effective} = EntityCaps.effective_caps(agent)
+      refute artifact_present?(effective, stale)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "filters stale pending artifacts before deduplicating equal capability identities" do
+      agent = agent_uri("effective-pending-generations")
+      generation_one = issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [generation_one]
+               })
+
+      wait_until_ready(agent)
+      :ok = Ezagent.ReadyGate.put(agent, :not_ready)
+      assert :ok = Ezagent.Identity.absorb_cap(agent, generation_one)
+
+      assert {:ok, generation_two_authority} =
+               Ezagent.Cap.Authority.regenesis(generation_one.instance, :session)
+
+      generation_two = reissue_cap(generation_two_authority, agent, generation_one)
+
+      assert Capability.identity_key(generation_one) == Capability.identity_key(generation_two)
+      refute generation_one.key_id == generation_two.key_id
+      assert :ok = Ezagent.Identity.absorb_cap(agent, generation_two)
+
+      assert {:ok, effective} = EntityCaps.effective_caps(agent)
+      refute artifact_present?(effective, generation_one)
+      assert artifact_present?(effective, generation_two)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "cold missing entities return a successful empty effective view" do
+      assert {:ok, []} = EntityCaps.effective_caps_persisted(agent_uri("effective-empty"))
+    end
+
+    test "an active authoritative-store read error is a tagged effective-read failure" do
+      agent = agent_uri("effective-store-error")
+      cap = issued_cap(agent, :send)
+
+      assert {:ok, _snapshot} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(licensed_caps(agent, [cap]))}}},
+                 kind_type: :agent
+               )
+
+      Application.put_env(:ezagent_domain_identity, :p2_forced_read_error_uris, [
+        store_key(agent)
+      ])
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris)
+      end)
+
+      assert EntityCaps.load_persisted(agent) == []
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "an unreadable cutover epoch is a tagged effective-read failure" do
+      agent = agent_uri("effective-epoch-unknown")
+      cap = issued_cap(agent, :send)
+
+      assert {:ok, _snapshot} =
+               SnapshotStore.write(
+                 agent,
+                 %{identity: %{state: %{caps: MapSet.new(licensed_caps(agent, [cap]))}}},
+                 kind_type: :agent
+               )
+
+      Application.delete_env(:ezagent_domain_identity, :identity_cutover_active_override)
+      Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :identity_cutover_force_read_error)
+
+        Application.put_env(
+          :ezagent_domain_identity,
+          :identity_cutover_active_override,
+          true
+        )
+      end)
+
+      assert Ezagent.Identity.Cutover.status() == :unknown
+      assert EntityCaps.load_persisted(agent) == []
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "a malformed inactive-epoch identity snapshot fails the effective read closed" do
+      agent = agent_uri("effective-corrupt-snapshot")
+
+      assert {:ok, _snapshot} =
+               SnapshotStore.write(agent, %{identity: :not_a_map}, kind_type: :agent)
+
+      Application.put_env(
+        :ezagent_domain_identity,
+        :identity_cutover_active_override,
+        false
+      )
+
+      on_exit(fn ->
+        Application.put_env(
+          :ezagent_domain_identity,
+          :identity_cutover_active_override,
+          true
+        )
+      end)
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "malformed caps JSON in an active store row fails checked and effective reads closed" do
+      agent = agent_uri("effective-corrupt-store")
+
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert Store.status(agent) == :active
+
+      assert {:ok, _row} =
+               agent
+               |> Store.fetch()
+               |> Ecto.Changeset.change(caps_json: "null")
+               |> Repo.update()
+
+      assert {:ok, []} = Store.fetch_durable_caps(agent)
+
+      assert {:ok, _row} =
+               agent
+               |> Store.fetch()
+               |> Ecto.Changeset.change(caps_json: "{malformed")
+               |> Repo.update()
+
+      assert {:error, :invalid_caps_json} = Store.fetch_durable_caps(agent)
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "malformed legacy user caps JSON fails checked and effective reads closed" do
+      user = user_uri("effective-corrupt-user")
+
+      assert {:ok, _user} =
+               Ezagent.Users.create(user, nil, licensed_caps(user, [issued_cap(user, :send)]))
+
+      assert {:ok, _row} =
+               Ezagent.Users
+               |> Repo.get_by(uri: URI.to_string(user))
+               |> Ecto.Changeset.change(caps_json: "null")
+               |> Repo.update()
+
+      assert {:ok, []} = UserStore.load_checked(user)
+
+      assert {:ok, _row} =
+               Ezagent.Users
+               |> Repo.get_by(uri: URI.to_string(user))
+               |> Ecto.Changeset.change(caps_json: "{malformed")
+               |> Repo.update()
+
+      Application.put_env(
+        :ezagent_domain_identity,
+        :identity_cutover_active_override,
+        false
+      )
+
+      on_exit(fn ->
+        Application.put_env(
+          :ezagent_domain_identity,
+          :identity_cutover_active_override,
+          true
+        )
+      end)
+
+      assert {:error, :invalid_caps_json} = UserStore.load_checked(user)
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(user)
     end
   end
 
@@ -604,7 +836,10 @@ defmodule Ezagent.EntityCapsTest do
       # collapsed to `:absent` and fell back to the VALID legacy license,
       # authorizing the revoked principal. Post-FIX-2 `{:error, _}` DENIES.
       Application.put_env(:ezagent_domain_identity, :p2_forced_read_error_uris, [store_key(agent)])
-      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris) end)
+
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :p2_forced_read_error_uris)
+      end)
 
       assert {:error, _} = Ezagent.EntityCaps.Store.fetch_durable_caps(agent)
       assert EntityCaps.load_persisted(agent) == []
@@ -670,7 +905,9 @@ defmodule Ezagent.EntityCapsTest do
       Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
 
       assert Ezagent.Identity.Cutover.status() == :unknown
-      assert {:error, :identity_epoch_unreadable} = Ezagent.EntityCaps.UserStore.persist(user, base)
+
+      assert {:error, :identity_epoch_unreadable} =
+               Ezagent.EntityCaps.UserStore.persist(user, base)
     end
 
     test "a fresh node with an UNREADABLE epoch reports ever-created TRUE — no re-mint / resurrection" do
@@ -723,6 +960,11 @@ defmodule Ezagent.EntityCapsTest do
 
     {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
+  end
+
+  defp reissue_cap(authority, receiver, cap) do
+    requested = %{cap | granted_by: nil, granted_at: nil, key_id: nil, signature: nil}
+    authority_signed_cap_as!(authority, @issuer, receiver, requested)
   end
 
   defp licensed_caps(receiver, caps) do
@@ -779,6 +1021,9 @@ defmodule Ezagent.EntityCapsTest do
 
   defp cap_present?(caps, cap),
     do: Capability.identity_key(cap) in identity_keys(caps)
+
+  defp artifact_present?(caps, artifact),
+    do: Enum.any?(caps, &(&1 == artifact))
 
   defp run_concurrent_mutations(uri, revoke_caps, grant_caps) do
     operations =

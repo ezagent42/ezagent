@@ -290,6 +290,57 @@ defmodule Ezagent.Cap.Authority do
 
   def verify_against_current(%Capability{}, %URI{}, %URI{}), do: false
 
+  @doc false
+  @spec verify_against_current_checked(Capability.t(), URI.t(), URI.t()) ::
+          {:ok, boolean()} | {:error, :authority_read_failed}
+  def verify_against_current_checked(
+        %Capability{signature: signature, grantee_uri: presenter} = cap,
+        %URI{} = presenter,
+        %URI{} = target
+      )
+      when is_binary(signature) do
+    target_string = target |> Ezagent.URI.instance() |> Ezagent.URI.stable_key()
+
+    case KindCapAuthority.active_public(target_string) do
+      %{generation: generation, public_key: public_key} ->
+        current_key_id = key_id(public_key, generation)
+        {:ok, cap.key_id == current_key_id and verify_signature(public_key, cap, presenter)}
+
+      nil ->
+        {:ok, false}
+    end
+  rescue
+    _ -> {:error, :authority_read_failed}
+  catch
+    _, _ -> {:error, :authority_read_failed}
+  end
+
+  def verify_against_current_checked(%Capability{}, %URI{}, %URI{}), do: {:ok, false}
+
+  @doc false
+  @spec filter_current_artifacts_checked([Capability.t()], URI.t()) ::
+          {:ok, [Capability.t()]} | {:error, :authority_read_failed}
+  def filter_current_artifacts_checked(caps, %URI{} = receiver) when is_list(caps) do
+    caps
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, current} ->
+      case target_uri(cap) do
+        {:ok, target} ->
+          case verify_against_current_checked(cap, receiver, target) do
+            {:ok, true} -> {:cont, {:ok, [cap | current]}}
+            {:ok, false} -> {:cont, {:ok, current}}
+            {:error, :authority_read_failed} = error -> {:halt, error}
+          end
+
+        {:error, :concrete_target_required} ->
+          {:cont, {:ok, [cap | current]}}
+      end
+    end)
+    |> case do
+      {:ok, current} -> {:ok, Enum.reverse(current)}
+      {:error, :authority_read_failed} = error -> error
+    end
+  end
+
   @doc """
   Row-lock the TARGET's current active authority generation inside the caller's
   OPEN transaction, so a concurrent `regenesis/2` cannot rotate the generation

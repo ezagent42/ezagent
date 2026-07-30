@@ -46,8 +46,17 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   def grant_at_join(%URI{} = member_uri, ctx) do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    held = member_snapshot_caps(member_uri)
 
+    case Ezagent.EntityCaps.effective_caps_persisted(member_uri) do
+      {:ok, caps} ->
+        grant_from_effective_caps(caps, member_uri, session_uri, workspace_uri, ctx)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp grant_from_effective_caps(held, member_uri, session_uri, workspace_uri, ctx) do
     case exact_member_cap(held, session_uri, workspace_uri) do
       %Ezagent.Capability{} = existing ->
         with :ok <- Ezagent.Identity.absorb_cap(member_uri, existing),
@@ -331,26 +340,6 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
       is_struct(caps, MapSet) -> MapSet.to_list(caps)
       true -> List.wrap(caps)
     end
-  end
-
-  # NON-BLOCKING idempotency source for the at-join grant: the member's PERSISTED
-  # `:identity` caps read straight from `EntityCaps.load_persisted/1` (a
-  # single indexed `Repo.get`, NO cross-Kind call). This is REQUIRED because
-  # `grant_at_join/2` runs INSIDE the Session Kind's `handle_join`: the live cap
-  # readers (the `Identity` list-caps-for reader `await_ready`s + `:call`s the
-  # member Kind; `Kind.get_slice/2` `:call`s it) would STALL the Session Kind on
-  # a not-yet-ready member (e.g. a worker mid-materialization) → cascade timeouts.
-  # The snapshot may lag an in-flight async grant by the `:on_change` window; a
-  # race just re-grants (`handle_grant_cap` dedups by `identity_key`, never
-  # duplicates). A member with no snapshot yet (brand-new) reads `[]` → grants.
-  @spec member_snapshot_caps(URI.t()) :: [Ezagent.Capability.t()]
-  defp member_snapshot_caps(%URI{} = member_uri) do
-    case Ezagent.EntityCaps.load_persisted(member_uri) do
-      caps when is_list(caps) -> caps
-      _missing_or_unavailable -> []
-    end
-  rescue
-    _ -> []
   end
 
   # The universal member-cap constructor (A1.1): `cap(:session, Session,
