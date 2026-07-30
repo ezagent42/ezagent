@@ -6,39 +6,37 @@ set -euo pipefail
 # the same PR. The marker makes the required governed import an explicit release
 # action instead of something an operator has to remember after deployment.
 
-declare -A changed=()
-declare -A packages=()
+awk '
+  /^apps\/[^/]+\/priv\/socialware_seed\/[^/]+\/(manifest|recipes)\.yaml$/ {
+    package_dir = $0
+    sub(/\/[^/]+$/, "", package_dir)
 
-while IFS= read -r path; do
-  [ -n "$path" ] || continue
-  changed["$path"]=1
+    if (!(package_dir in packages)) {
+      packages[package_dir] = 1
+      package_count++
+    }
+  }
 
-  if [[ "$path" =~ ^apps/[^/]+/priv/socialware_seed/([^/]+)/(manifest\.yaml|recipes\.yaml)$ ]]; then
-    packages["${path%/*}"]=1
-  fi
-done
+  NF { changed[$0] = 1 }
 
-if [ "${#packages[@]}" -eq 0 ]; then
-  echo "socialware manifest release gate: no manifest or recipe changes"
-  exit 0
-fi
+  END {
+    if (package_count == 0) {
+      print "socialware manifest release gate: no manifest or recipe changes"
+      exit 0
+    }
 
-failed=0
+    for (package_dir in packages) {
+      marker = package_dir "/release.yaml"
 
-for package_dir in "${!packages[@]}"; do
-  marker="$package_dir/release.yaml"
+      if (!(marker in changed)) {
+        printf "::error file=%s::socialware package changed without %s\n", package_dir, marker > "/dev/stderr"
+        printf "Update %s in this PR, then release with:\n", marker > "/dev/stderr"
+        printf "  mix ezagent.socialware.import_remote %s/manifest.yaml --dry-run\n", package_dir > "/dev/stderr"
+        printf "  mix ezagent.socialware.import_remote %s/manifest.yaml\n", package_dir > "/dev/stderr"
+        failed = 1
+      }
+    }
 
-  if [ -z "${changed[$marker]+x}" ]; then
-    echo "::error file=$package_dir::socialware package changed without $marker" >&2
-    echo "Update $marker in this PR, then release with:" >&2
-    echo "  mix ezagent.socialware.import_remote $package_dir/manifest.yaml --dry-run" >&2
-    echo "  mix ezagent.socialware.import_remote $package_dir/manifest.yaml" >&2
-    failed=1
-  fi
-done
-
-if [ "$failed" -ne 0 ]; then
-  exit 1
-fi
-
-echo "socialware manifest release gate: release marker present for changed package(s)"
+    exit failed
+  }
+'
