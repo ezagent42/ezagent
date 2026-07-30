@@ -94,9 +94,14 @@ defmodule EzagentPluginForgejo.Normalize do
   # failed".
   def checks(%{"statuses" => _malformed}), do: {:error, :provider_unavailable}
 
-  # An absent `statuses` key on an otherwise valid combined response means no
-  # checks have reported — a valid fact (Plan E §6.3), not a failure.
-  def checks(%{}), do: {:ok, []}
+  # An ABSENT `statuses` key is refused, not read as "no checks".
+  #
+  # `"statuses": nil` is measured — it is what a commit no CI has touched
+  # returns, key present. An absent key has never been observed, and the clause
+  # directly above already refuses a non-list. Answering `{:ok, []}` for an
+  # unmeasured shape is the same fail-open in a different costume: the caller
+  # reads it as "nothing failed" and a real failing check disappears on a
+  # response the code did not understand.
   def checks(_body), do: {:error, :provider_unavailable}
 
   @doc """
@@ -106,7 +111,20 @@ defmodule EzagentPluginForgejo.Normalize do
   state they do not mean.
   """
   @spec reviews(term()) :: {:ok, [Review.t()]} | {:error, :provider_unavailable}
-  def reviews(body) when is_list(body), do: {:ok, Enum.flat_map(body, &review/1)}
+  def reviews(body) when is_list(body) do
+    Enum.reduce_while(body, {:ok, []}, fn entry, {:ok, acc} ->
+      case review(entry) do
+        {:ok, [review]} -> {:cont, {:ok, [review | acc]}}
+        {:ok, []} -> {:cont, {:ok, acc}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, reviews} -> {:ok, Enum.reverse(reviews)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   def reviews(_body), do: {:error, :provider_unavailable}
 
   # ── internals ────────────────────────────────────────────────────────
@@ -146,14 +164,25 @@ defmodule EzagentPluginForgejo.Normalize do
   defp check_state("skipped"), do: {:completed, :skipped}
   defp check_state(_unknown), do: {:completed, :other}
 
-  # `flat_map` over a 0-or-1 list: a review that cannot be normalized is
-  # dropped, never turned into a neighbouring state. The caller's contract is
-  # "these are the reviews that exist", and a request-for-review is not one.
+  # FILTERING and LOSING are different, and collapsing them was a fail-open.
+  #
+  # A `REQUEST_REVIEW` / `PENDING` entry is not a submitted review, so dropping
+  # it is the contract. A SUBMITTED review this code cannot parse is something
+  # else entirely: dropping it silently means an `APPROVED` that normalizes
+  # survives while a `REQUEST_CHANGES` that does not simply disappears, and the
+  # caller records "approved=1" with a human's explicit objection erased from
+  # the facts a gate runs on.
+  #
+  # So: `{:ok, [review]}` kept, `{:ok, []}` deliberately filtered,
+  # `{:error, _}` refused — the whole read fails rather than returning a
+  # partial answer that reads as "nothing is blocking".
+  defp review(%{"state" => state}) when state in ["REQUEST_REVIEW", "PENDING"], do: {:ok, []}
+
   defp review(%{"id" => id, "user" => %{"login" => login}} = entry)
        when is_binary(login) and login != "" do
     case review_state(entry) do
       nil ->
-        []
+        {:error, :provider_unavailable}
 
       state ->
         attrs = %{
@@ -164,13 +193,13 @@ defmodule EzagentPluginForgejo.Normalize do
         }
 
         case Review.new(attrs) do
-          {:ok, review} -> [review]
-          {:error, _reason} -> []
+          {:ok, review} -> {:ok, [review]}
+          {:error, _reason} -> {:error, :provider_unavailable}
         end
     end
   end
 
-  defp review(_entry), do: []
+  defp review(_entry), do: {:error, :provider_unavailable}
 
   # Dismissal is checked BEFORE the state string: a dismissed approval is a
   # withdrawn approval, and reading `state` first would keep counting it.

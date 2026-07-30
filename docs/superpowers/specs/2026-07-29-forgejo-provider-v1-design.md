@@ -1084,6 +1084,62 @@ findings §8 有完整数据：
 豁免静默失效、gate 变红。两个 gate 对同一处代码有不同的形状要求：`uri_query.scan` 要
 字面量 scheme，`UriCanonicalizationInvariantTest` 要 allow 标记同行。已在代码里写明。
 
+## 12.6 第四轮 Codex review：读路径的两处 fail-open（已修）
+
+第四轮换角度专攻读路径 —— 前三轮 15 条缺陷几乎全在写路径与凭证托管。**换角度立刻见效**：
+两条确认缺陷都是 fail-open，且都在"上层据此决定能否合并"的路径上。
+
+### ① submitted review 归一化失败被静默丢弃（高，已修）
+
+`reviews/1` 用 `flat_map`，把三件不同的事折成同一个 `[]`：有意过滤的
+`REQUEST_REVIEW`/`PENDING`、未知 state、无法解析的作者。
+
+**危险形状是混合列表**：provider 返回一条正常 `APPROVED` + 一条 `user` 为 `nil` 的
+`REQUEST_CHANGES` → adapter 只返回 approved → 上层记为 `1 reviews: approved=1`，
+**人类明确要求修改的事件彻底消失**。
+
+修：`review/1` 改为三态 —— `{:ok, [r]}` 保留、`{:ok, []}` 有意过滤（只对
+`REQUEST_REVIEW`/`PENDING`）、`{:error, _}` 拒绝整次读取。宁可整体失败也不返回一个
+读起来像"没有阻塞"的部分答案。
+
+**我原有的两条测试把这个 fail-open 钉死了**（断言未知 state 返回 `{:ok, []}`、缺
+author 返回 `{:ok, []}`）。测试名叫 "dropped rather than guessed" —— "不猜相邻状态"是对
+的，但和"静默丢弃"是两件事，我把它们混为一谈了。已改为断言正确行为。
+
+### ② 缺 `statuses` 键被伪造成"没有 checks"（高，已修）
+
+`checks(%{})` catch-all 对任何缺 `statuses` 的 map 返回 `{:ok, []}`，而**紧邻的上一条
+子句**对非列表是拒绝的 —— 自相矛盾。
+
+`"statuses": nil` 是**实测过**的（无 CI 的 commit，键存在）；**缺键从未被观测过**。对未
+实测的形状回答"没有 checks"，上层会写入 `no checks reported`，已存在的失败 check 从阻塞
+事实中消失。
+
+修：删掉该 catch-all，未识别形状一律拒绝。
+
+### 实测否掉的怀疑
+
+**`warning -> :neutral` 会降级 failure** —— 不成立。目标实例接受 `warning` 且 rollup
+保持 `warning` 而非 `failure`（findings §9.3）；且上层 `observation_summary` 不做阻塞
+判定、只原样计数标签，`:neutral` 会如实出现。
+
+### 实测确证的设计判断
+
+组合端点按 context 去重并**保留最新**（`ci/test` failure→success 后留 success）——
+实证了选组合端点而非历史端点的理由（findings §9.2）。
+
+### 仍未定性的怀疑（记录，未修）
+
+- **`official` / `stale` 未读取**。Forgejo review 响应带这两个字段，`official` 表示该
+  review 是否计入受保护分支所需批准数。当前 `Review` 值把 `APPROVED` 一律记为
+  `:approved`。要定性需要配置分支保护并实测，且**先要决定 DomainGit `Review` 的契约
+  到底是"历史事件"还是"当前有效 gate"** —— 上层 `observation_summary.ex:124` 按全部
+  事件计数而非按 reviewer 取最新，说明当前契约是前者。在该契约下这不是 adapter 缺陷，
+  但**这些值不能直接用于自动合并**。归人类裁决。
+- **`merged_at` 与 `merged` 的异常组合**。已实测 closed-unmerged 为
+  `state:"closed", merged:false, merged_at:null`（正确映射为 `:closed`）；未穷举
+  merged / draft 的原始 JSON。
+
 ## 13. 未决 / 待人类决定
 
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户

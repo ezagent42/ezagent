@@ -211,12 +211,17 @@ defmodule EzagentPluginForgejo.NormalizeTest do
       end
     end
 
-    test "an unrecognised review state is dropped rather than guessed" do
+    # Corrected 2026-07-30: this used to assert `{:ok, []}`, i.e. it PINNED the
+    # fail-open. "Dropped rather than guessed" conflated two different things —
+    # not guessing a neighbouring state is right, but silently discarding a
+    # submitted review the code cannot read is a loss, and the caller cannot
+    # tell the difference between "no such review" and "we lost one".
+    test "an unrecognised review state is refused rather than guessed or dropped" do
       body = [
         %{"id" => 6, "state" => "TELEPORTED", "dismissed" => false, "user" => %{"login" => "a"}}
       ]
 
-      assert {:ok, []} = Normalize.reviews(body)
+      assert {:error, :provider_unavailable} = Normalize.reviews(body)
     end
 
     test "parses submitted_at when present" do
@@ -250,9 +255,12 @@ defmodule EzagentPluginForgejo.NormalizeTest do
       assert two.submitted_at == nil
     end
 
-    test "a review without an identifiable author is dropped" do
+    # Same correction. The dangerous shape is the MIXED list: an APPROVED that
+    # parses beside a REQUEST_CHANGES that does not. Dropping produced
+    # "approved=1" with the objection erased.
+    test "a review without an identifiable author is refused, not dropped" do
       body = [%{"id" => 10, "state" => "APPROVED", "dismissed" => false, "user" => %{}}]
-      assert {:ok, []} = Normalize.reviews(body)
+      assert {:error, :provider_unavailable} = Normalize.reviews(body)
     end
 
     test "empty reviews is an empty list, not a failure" do
@@ -261,6 +269,62 @@ defmodule EzagentPluginForgejo.NormalizeTest do
 
     test "a non-list response is refused" do
       assert {:error, :provider_unavailable} = Normalize.reviews(%{"unexpected" => true})
+    end
+  end
+
+  describe "read-path fail-open boundaries" do
+    # The dangerous asymmetry: an APPROVED that normalizes survives while a
+    # REQUEST_CHANGES that does not is silently dropped. The caller then records
+    # "1 review: approved=1" and a human's explicit objection has vanished from
+    # the facts a gate runs on.
+    #
+    # Dropping a REQUEST_REVIEW is a deliberate FILTER — it is not a submitted
+    # review. Dropping a submitted review this code cannot parse is a LOSS, and
+    # the two must not share a code path.
+    test "an unparseable submitted review is refused, not dropped" do
+      body = [
+        %{
+          "id" => 1,
+          "state" => "APPROVED",
+          "dismissed" => false,
+          "user" => %{"login" => "alice"},
+          "submitted_at" => "2026-07-29T10:00:00Z"
+        },
+        # A submitted REQUEST_CHANGES whose author is unusable.
+        %{"id" => 2, "state" => "REQUEST_CHANGES", "dismissed" => false, "user" => nil}
+      ]
+
+      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+    end
+
+    test "an unknown submitted state is refused, not dropped" do
+      body = [%{"id" => 3, "state" => "SOMETHING_NEW", "user" => %{"login" => "bob"}}]
+
+      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+    end
+
+    # Still a filter, not a loss: these are not submitted reviews.
+    test "review requests and pending drafts are still filtered silently" do
+      body = [
+        %{"id" => 4, "state" => "REQUEST_REVIEW", "user" => %{"login" => "carol"}},
+        %{"id" => 5, "state" => "PENDING", "user" => %{"login" => "dave"}}
+      ]
+
+      assert {:ok, []} = Normalize.reviews(body)
+    end
+
+    # `"statuses": nil` is MEASURED — a commit no CI has touched. An ABSENT key
+    # is not: it has never been observed, and the adjacent clause already
+    # refuses a non-list. Reporting "no checks" for an unmeasured shape is the
+    # same fail-open in a different costume: the caller reads it as "nothing
+    # failed".
+    test "a combined status missing the statuses key is refused" do
+      assert {:error, :provider_unavailable} =
+               Normalize.checks(%{"state" => "failure", "total_count" => 1})
+    end
+
+    test "the measured empty shape is still an empty list, not a failure" do
+      assert {:ok, []} = Normalize.checks(%{"statuses" => nil})
     end
   end
 end

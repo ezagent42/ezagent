@@ -445,3 +445,54 @@ commit sha 当 blob sha 传出去。
 
 探针痕迹已清理（分支删除，查询 404）。
 
+---
+
+## 9. commit status 的字段与聚合语义（2026-07-30 实测）
+
+用 `POST /repos/{o}/{r}/statuses/{sha}` 造真实状态后读组合端点。这些数据只能靠写权限
+取得，静态审查拿不到。
+
+### 9.1 单条状态的字段是 `status`，不是 `state`
+
+| 层级 | 字段名 | 例值 |
+|---|---|---|
+| 组合响应顶层（rollup） | `state` | `"failure"` |
+| `statuses[]` 单条 | **`status`** | `"success"` |
+
+单条 status 的完整字段：`context` / `created_at` / `creator` / `description` / `id` /
+**`status`** / `target_url` / `updated_at` / `url`。`Normalize.check/1` 读的正是
+`status["status"]`，对。
+
+### 9.2 组合端点按 context 去重，保留**最新**
+
+造 5 条状态（`ci/test` 先 `failure` 后 `success`），组合端点返回 `total_count: 4`：
+
+```
+ci/build  success (id=1)
+ci/lint   pending (id=3)
+ci/flaky  error   (id=4)
+ci/test   success (id=5)   ← 保留最新，不是最早
+```
+
+这实证了选组合端点而非 `/statuses` 历史端点的判断（设计 §9.2）：**重跑后修好的 check
+会被正确读成成功**，不会卡在旧的 failure 上。历史端点同一 SHA 返回全部 5 条。
+
+### 9.3 `warning` 被接受，且 rollup 保持 `warning`（不是 failure）
+
+第四轮 review 怀疑 `warning -> :neutral` 会把 Forgejo 视为 failure 的状态降级，依据是
+Gitea `commitstatus.Combine` 的文档。**在目标实例（15.0.5）上不成立**：
+
+```
+POST state=warning        → 201，回显 status="warning"
+组合端点 rollup           → "warning"    ← 不是 "failure"
+```
+
+所以不存在"把 failure 降级为 neutral"的场景。另外上层
+`observation_summary.ex` **不做阻塞判定**，只把 `status:conclusion` 原样计数成标签
+（`"3 checks: completed:failed=1 completed:succeeded=2"`），`:neutral` 与 `:other` 都会
+如实出现，不会被当作"无阻塞"放行。该怀疑不成立。
+
+### 9.4 状态词表覆盖
+
+实测接受并正确映射：`success` / `failure` / `pending` / `error` / `warning`。
+
