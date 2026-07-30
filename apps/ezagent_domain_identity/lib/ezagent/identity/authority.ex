@@ -102,8 +102,14 @@ defmodule Ezagent.Identity.Authority do
 
   @doc """
   Does `caller` have manage/owner authority over `target`? Resolves the caller's
-  DURABLE identity caps by URI (K2/K5). See the moduledoc for the admin-union
-  rationale.
+  DURABLE identity caps by URI (K2/K5) and judges them against the FULL admin
+  union — INCLUDING `AdminAuthority.admin?/2`'s `caller_admin_by_uri?`
+  (`home_is_system?` / `member_of_system?`) branch. This is the long-standing
+  behaviour of the live session-membership / composition authorizers
+  (`membership.ex`, `composition_caps.ex`) and is deliberately UNCHANGED. Note the
+  distinction from `manages?/3`: that arity takes a PRESENTED, unforgeable cap
+  witness and deliberately DROPS the URI-trust branch, for surfaces where the
+  caller identity is a free parameter (codex ② — `GranteeIndex.grantees_of/4`).
   """
   @spec manages?(URI.t(), URI.t()) :: boolean()
   def manages?(%URI{} = caller, %URI{} = target) do
@@ -115,6 +121,37 @@ defmodule Ezagent.Identity.Authority do
   end
 
   def manages?(_caller, _target), do: false
+
+  @doc """
+  Does `caller` manage `target`, judged against the caller's **presented**
+  `caller_caps` — the AUTHENTICATED, signed held-cap witness from a dispatch ctx /
+  self-license, NOT loaded from the caller URI. Use THIS from any surface where the
+  caller identity arrives as a free parameter (e.g. `GranteeIndex.grantees_of/4`,
+  codex ②): loading caps from a caller-supplied URI is a forgeable witness (naming
+  `user://system/admin` would load admin's caps); requiring the caller to PRESENT
+  the caps they actually hold is not forgeable — an attacker cannot present a
+  signed cap they do not hold. `caller` is still used for the canonical-admin
+  identity check (`AdminAuthority.admin?/2` binds the admin cap to the URI).
+  """
+  @spec manages?(URI.t(), URI.t(), Enumerable.t()) :: boolean()
+  def manages?(%URI{} = _caller, %URI{} = target, caller_caps) do
+    holds_manage_over_target?(caller_caps, target) or
+      caps_only_admin?(caller_caps) or
+      workspace_admin?(caller_caps, Capability.workspace_of(target))
+  end
+
+  def manages?(_caller, _target, _caps), do: false
+
+  # codex ②: the CAPS-only admin predicates. Deliberately EXCLUDES
+  # `AdminAuthority.admin?/2`'s `caller_admin_by_uri?` branch, which grants admin
+  # to ANY `system`-home caller URI (e.g. `user://system/admin`) with NO presented
+  # cap — the exact forgeable witness this presented-caps arity closes. A real
+  # admin presents its signed admin caps; an impostor merely naming the admin URI
+  # holds none, so this returns false.
+  defp caps_only_admin?(caps) do
+    Ezagent.ActionSet.IdentityAdmin.holds_admin_caps?(caps) or
+      Ezagent.ActionSet.IdentityAdmin.holds_cross_workspace_admin_cap?(caps)
+  end
 
   # ---- shared instance-scope helpers (moved verbatim from IdentityAdmin) ----
 
