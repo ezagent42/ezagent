@@ -78,6 +78,12 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     def validate(_data), do: :ok
 
     @impl true
+    def list_extensions(_config_dir), do: {:ok, []}
+
+    @impl true
+    def toggle_extension(_config_dir, _extension_id, _enabled?), do: :ok
+
+    @impl true
     def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
       if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(
            config_dir,
@@ -131,6 +137,22 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
           {:error, reason}
       end
     end
+  end
+
+  test "fallback config-dir cleanup rejects a non-canonical path without deleting it" do
+    unique = System.unique_integer([:positive])
+    agent_uri = Ezagent.URI.new!("entity://fallback-cleanup-#{unique}/agent/worker")
+    mismatched_dir = Path.join(System.tmp_dir!(), "fallback-cleanup-mismatch-#{unique}")
+    sentinel = Path.join(mismatched_dir, "sentinel")
+
+    File.mkdir_p!(mismatched_dir)
+    File.write!(sentinel, "preserve me")
+    on_exit(fn -> File.rm_rf(mismatched_dir) end)
+
+    assert {:error, :config_dir_path_mismatch} =
+             FallbackSandboxTemplate.destroy_config_dir(agent_uri, mismatched_dir)
+
+    assert File.read!(sentinel) == "preserve me"
   end
 
   test "fallback sandbox.update_config is fire-and-forget: does NOT block the spawner on a not-ready agent, buffers the write" do
