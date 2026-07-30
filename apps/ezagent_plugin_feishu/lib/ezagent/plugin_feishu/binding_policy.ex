@@ -58,8 +58,20 @@ defmodule EzagentPluginFeishu.BindingPolicy do
   to attribute.
   """
   @spec apply(URI.t() | String.t(), URI.t() | String.t()) :: :ok | {:error, term()}
-  def apply(user_uri, _admin_uri) do
+  def apply(user_uri, admin_uri) do
+    policy_mod().do_apply(user_uri, admin_uri)
+  end
+
+  # Default: ensure the user Kind is alive.
+  @doc false
+  def do_apply(user_uri, _admin_uri) do
     ensure_user_kind(user_uri)
+  end
+
+  # DI seam: tests inject a fake policy module via
+  # `config :ezagent_plugin_feishu, :binding_policy_mod`.
+  defp policy_mod do
+    Application.get_env(:ezagent_plugin_feishu, :binding_policy_mod, __MODULE__)
   end
 
   # Bound user might not be live yet (admin types

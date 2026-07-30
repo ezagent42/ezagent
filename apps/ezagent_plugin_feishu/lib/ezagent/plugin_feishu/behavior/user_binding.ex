@@ -72,12 +72,12 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   `mix ezagent workspace list_feishu_bindings --workspace <name>`
 
   The legacy `mix ezagent.feishu.bind` / `unbind` / `list` tasks are
-  retained pending operator migration (PR-CC-2-v2 ending-state
-  carve-out — Allen's "no defer" applies to ARCHITECTURE not UX:
-  legacy tasks are now thin wrappers that delegate to dispatch via
-  the auto-derived path; the operator-facing command line is
-  preserved for muscle memory while the internals go through
-  CapBAC + audit). See `@deprecated` annotations on those tasks.
+  now thin wrappers that delegate to formal synchronous dispatch
+  (handoff B1 Phase 4, 2026-07-24) — no raw storage, no raw handler,
+  no raw policy. They are retained with a deprecation notice for
+  operator muscle memory; the canonical authenticated path is
+  `mix ezagent workspace <action> --workspace <name> ...`. See the
+  task moduledocs for the exact replacement command per action.
 
   ## Phase B migration (2026-05-29) — Lifecycle API
 
@@ -116,7 +116,14 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :feishu_user_bindings
 
-  alias EzagentPluginFeishu.{BindingPolicy, UserBinding}
+  alias EzagentPluginFeishu.BindingPolicy
+  alias EzagentPluginFeishu.UserBinding
+
+  # DI seam: tests inject a fake storage module via
+  # `config :ezagent_plugin_feishu, :user_binding_storage_mod`.
+  defp storage_mod do
+    Application.get_env(:ezagent_plugin_feishu, :user_binding_storage_mod, UserBinding)
+  end
 
   # ===================================================================
   # Action declarations (SPEC §2.2 + §4.3)
@@ -261,7 +268,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
     with :ok <- ensure_same_workspace(user_uri_str, ctx),
          :ok <- ensure_no_cross_workspace_hijack(open_id, ctx),
-         {:ok, _row} <- UserBinding.bind(open_id, user_uri_str, bound_by),
+         {:ok, _row} <- storage_mod().bind(open_id, user_uri_str, bound_by),
          :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
       # Codex r1 P1.1: the Workspace Kind only initializes the
       # `:workspace` slice in its init_slice/1 — plugin-registered
@@ -297,7 +304,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     # globally. Reads happen pre-mutation; the only side-effect is
     # gated by `ensure_existing_binding_in_workspace/2`.
     with {:ok, _row} <- ensure_existing_binding_in_workspace(open_id, ctx),
-         :ok <- UserBinding.unbind(open_id) do
+         :ok <- storage_mod().unbind(open_id) do
       # Slice's bind_count is incidental — don't decrement (could go
       # negative on a multi-Kind restart race). The DB is the source
       # of truth. Returns no effects (slice unchanged).
@@ -327,15 +334,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     target_workspace = target_workspace_uri(ctx)
 
     bindings =
-      UserBinding.list_all()
-      |> Enum.filter(fn b -> workspace_match?(b.user_uri, target_workspace) end)
-      |> Enum.map(fn b ->
-        %{
-          open_id: b.open_id,
-          user_uri: b.user_uri,
-          bound_by: b.bound_by,
-          bound_at: b.bound_at
-        }
+      storage_mod().list_all()
+      |> Enum.filter(fn
+        %{user_uri: u} -> workspace_match?(u, target_workspace)
+        _ -> false
+      end)
+      |> Enum.map(fn %{open_id: o, user_uri: u, bound_by: by, bound_at: at} ->
+        %{open_id: o, user_uri: u, bound_by: by, bound_at: at}
       end)
 
     # Read-only: no effects. Slice unchanged.
@@ -391,7 +396,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # this is. We refuse unless the row's user belongs to the target
   # workspace (or the caller holds an :any target via bootstrap admin).
   defp ensure_existing_binding_in_workspace(open_id, ctx) do
-    case UserBinding.resolve(open_id) do
+    case storage_mod().resolve(open_id) do
       {:ok, %URI{} = user_uri} ->
         case ensure_same_workspace(URI.to_string(user_uri), ctx) do
           :ok -> {:ok, user_uri}
@@ -413,7 +418,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # Bootstrap admin (target = :any) bypasses — step 5.5 already
   # validated the cap; cross-workspace operator move is intentional.
   defp ensure_no_cross_workspace_hijack(open_id, ctx) do
-    case UserBinding.resolve(open_id) do
+    case storage_mod().resolve(open_id) do
       :error ->
         # No existing binding — fresh bind path. :ok.
         :ok
@@ -476,7 +481,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   defp rollback_binding(open_id, nil, original_err) do
     # No prior row — fresh bind that failed. Delete the row we wrote.
-    case UserBinding.unbind(open_id) do
+    case storage_mod().unbind(open_id) do
       :ok ->
         :ok
 
@@ -487,15 +492,18 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   defp rollback_binding(
          open_id,
-         %EzagentPluginFeishu.UserBinding{user_uri: prior_user, bound_by: prior_by},
+         %EzagentPluginFeishu.UserBinding{
+           user_uri: prior_user,
+           bound_by: prior_by,
+           bound_at: prior_bound_at
+         },
          original_err
        ) do
-    # Codex r3 P2: restore the prior binding instead of deleting.
-    # `UserBinding.bind/3` is upsert-on-`open_id`, so re-running it
-    # with the prior values brings the row back to its pre-rebind
-    # state. `bound_at` will be refreshed by the upsert; the
-    # `bound_by` attribution survives so audit trail is preserved.
-    case UserBinding.bind(open_id, prior_user, prior_by) do
+    # Codex r3 P2 restored + Handoff B1 Phase 3: restore the prior
+    # binding including the ORIGINAL bound_at timestamp. `UserBinding.bind/4`
+    # accepts an explicit bound_at, so the rollback restores every
+    # provenance field — user_uri, bound_by, AND bound_at — precisely.
+    case storage_mod().bind(open_id, prior_user, prior_by, prior_bound_at) do
       {:ok, _row} ->
         :ok
 
@@ -507,13 +515,22 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   defp log_rollback_failure(open_id, mode, rollback_reason, original_err) do
     require Logger
 
+    alias EzagentPluginFeishu.Redact
+
+    # Only log the error class atoms, never raw error terms that could
+    # carry the open_id or user_uri from the failed operation.
+    rollback_class = error_class(rollback_reason)
+    original_class = error_class(original_err)
+
     Logger.error(
       "EzagentPluginFeishu.Behavior.UserBinding.:bind: BindingPolicy failed + " <>
-        "rollback (#{mode}) failed: open_id=#{open_id} " <>
-        "rollback_reason=#{inspect(rollback_reason)} " <>
-        "original_err=#{inspect(original_err)}"
+        "rollback (#{mode}) failed: open_id=#{Redact.fingerprint(open_id)} " <>
+        "rollback_error=#{rollback_class} original_error=#{original_class}"
     )
   end
+
+  defp error_class({:error, reason}) when is_atom(reason), do: Atom.to_string(reason)
+  defp error_class(_other), do: "unexpected"
 
   # Pull the target Workspace URI out of dispatch ctx. `self_uri` is
   # injected by Kind.Runtime step 5 — for `workspace://X?action=...`

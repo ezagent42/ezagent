@@ -140,11 +140,13 @@ defmodule EzagentPluginFeishu.Application do
   end
 
   # Phase 3 post-register hook. Decision #112 boot-ordering: re-run the
-  # workspace loader once Behaviors + Adapters are published. Initial
-  # USER bindings (open_id → user_uri) still seed from
-  # `initial_bindings.yaml` (V1). Session bindings are no longer
-  # auto-seeded — operators use the generic `mix ezagent.external_mirror.bind`
-  # or the admin LV (PR-EM-4) to create them.
+  # workspace loader once Behaviors + Adapters are published, then seed
+  # initial USER bindings (open_id → user_uri) via the strict importer
+  # (handoff B1) which routes every mutation through formal synchronous
+  # dispatch — CapBAC, workspace check, anti-hijack, BindingPolicy, and
+  # deterministic rollback. The legacy raw-storage seed (open_id logged
+  # in full, `:ok` on every parse/validation error, unconditional upsert
+  # without workspace scoping) is retired.
   @impl Ezagent.Plugin
   def after_boot do
     _ = Ezagent.Workspace.Loader.load_all()
@@ -163,65 +165,46 @@ defmodule EzagentPluginFeishu.Application do
   end
 
   defp seed_initial_user_bindings do
-    # Skip in test env so the test suite doesn't leak real network
-    # calls to Feishu via boot-seeded subscribers.
-    if Code.ensure_loaded?(Mix) and Mix.env() == :test do
-      :ok
-    else
-      do_seed_initial_user_bindings()
-    end
-  end
-
-  defp do_seed_initial_user_bindings do
-    # Resource-unification P3 (SPEC §10 OI-3): a node-global plugin config file
-    # (no `<ws>`) → `system://plugins` via `UriQuery`, then the constant nested
-    # `feishu/...` relpath joined on. (A URI `<name>` segment cannot carry a `/`,
-    # so the nested layout is expressed as a join under the resolved component —
-    # byte-identical to the legacy plugins/feishu/... layout.) Runs in the
-    # feishu plugin Application, which depends on `ezagent_core`, so the UriQuery
-    # seam is up (NOT a boot-order exemption).
+    # Handoff B1 Phase 2 — the importer (not this Application module)
+    # owns the parse → preflight → dispatch pipeline. This function
+    # only resolves the seed path and delegates.
     plugins_dir = Ezagent.System.FsResolver.path!(Ezagent.URI.system_principal("plugins"))
     file = Path.join([plugins_dir, "feishu", "initial_user_bindings.yaml"])
 
-    case File.read(file) do
-      {:ok, body} ->
-        case YamlElixir.read_from_string(body) do
-          {:ok, %{"bindings" => bindings}} when is_list(bindings) ->
-            seed_each_user_binding(bindings)
-
-          _ ->
-            :ok
-        end
-
-      _ ->
+    case EzagentPluginFeishu.UserBindingSeed.run(file) do
+      {:ok, :absent} ->
         :ok
-    end
-  end
 
-  defp seed_each_user_binding(bindings) do
-    admin_uri = Ezagent.Entity.User.admin_uri() |> URI.to_string()
-
-    Enum.each(bindings, fn binding ->
-      open_id = Map.get(binding, "open_id")
-      user_uri = Map.get(binding, "user_uri")
-
-      if is_binary(open_id) and open_id != "" and is_binary(user_uri) and user_uri != "" do
+      {:ok, %{bound: bound, same: same, total: total}} ->
         Logger.info(
-          "Feishu plugin: seeding initial user binding open_id=#{open_id} → #{user_uri}"
+          "Feishu plugin: seeded #{length(bound)} new, #{length(same)} " <>
+            "already-current of #{total} user binding rows"
         )
 
-        case EzagentPluginFeishu.UserBinding.bind(open_id, user_uri, admin_uri) do
-          {:ok, _row} ->
-            :ok
+        :ok
 
-          {:error, reason} ->
-            Logger.warning(
-              "Feishu plugin: initial user binding open_id=#{open_id} failed: #{inspect(reason)}"
-            )
-        end
-      end
-    end)
+      {:error, :seed_not_enabled} ->
+        raise "Feishu plugin: initial user binding seed file is present, " <>
+                "but seed is not enabled. Set EZAGENT_FEISHU_SEED_ENABLED=1 before boot."
 
-    :ok
+      {:error, {:preflight_read_failed, _workspace, :seed_operator_not_configured}} ->
+        raise "Feishu plugin: initial user binding seed operator is not configured. " <>
+                "Set EZAGENT_FEISHU_SEED_OPERATOR_URI from deployment secrets."
+
+      {:error, {:preflight_read_failed, _workspace, :invalid_seed_operator_uri}} ->
+        raise "Feishu plugin: initial user binding seed operator URI is invalid."
+
+      {:error, {:preflight_read_failed, _workspace, :unsupported_seed_operator}} ->
+        raise "Feishu plugin: initial user binding seed operator is not supported by " <>
+                "the current reviewed authorization seam."
+
+      {:error, {:invalid_seed_executor_port, fields}} ->
+        raise "Feishu plugin: initial user binding seed executor port is invalid for " <>
+                "#{inspect(fields)}. Configure arity-1 `list_current` and arity-3 `bind` functions."
+
+      {:error, reason} ->
+        raise "Feishu plugin: initial user binding seed failed: " <>
+                "#{EzagentPluginFeishu.Redact.describe(reason)}"
+    end
   end
 end
