@@ -236,8 +236,18 @@ config :ezagent_plugin_github,
   webhook_secret: {:system, "GITHUB_WEBHOOK_SECRET"},
   token_encryption_key: {:system, "GITHUB_TOKEN_ENCRYPTION_KEY"}
 
-# D2 — register the GitHub credential backend module so the provider-connection
-# domain resolves it at runtime (via RuntimeBindings / Exchange).
+# Provider-connection registrations for ALL provider plugins.
+#
+# These MUST stay in ONE `config` call with ONE literal map per key. A second
+# `config :ezagent_domain_provider_connection, credential_backend_implementations:
+# Map.merge(Application.get_env(...), %{...})` block does NOT append: during
+# config evaluation `Application.get_env/3` cannot see values set by an earlier
+# `config` call in the same pass, so it merges from `%{}` and SILENTLY REPLACES
+# every entry the earlier block registered. That regression shipped once on the
+# Forgejo branch (github's three entries vanished; `mix ci.fast` does not run the
+# provider-connection suite, so only the full suite caught it).
+#
+# Adding a provider = adding a key to these literal maps.
 config :ezagent_domain_provider_connection,
   credential_backend_implementations:
     Map.merge(
@@ -246,12 +256,15 @@ config :ezagent_domain_provider_connection,
         :credential_backend_implementations,
         %{}
       ),
-      %{"github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend}
+      %{
+        "github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend,
+        "forgejo-credential-v1" => EzagentPluginForgejo.ForgejoCredentialBackend
+      }
     ),
   callback_redirect_pairs:
     Map.merge(
       Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
-      %{"github-oauth" => "pair-github-v1"}
+      %{"github-oauth" => "pair-github-v1", "forgejo-oauth" => "pair-forgejo-v1"}
     ),
   local_authorization_backend_pairs:
     Map.merge(
@@ -260,41 +273,15 @@ config :ezagent_domain_provider_connection,
         :local_authorization_backend_pairs,
         %{}
       ),
-      %{{"github", "oauth_user"} => "pair-github-v1"}
+      %{
+        {"github", "oauth_user"} => "pair-github-v1",
+        {"forgejo", "oauth_user"} => "pair-forgejo-v1"
+      }
     )
 
 # Forgejo provider plugin (design
 # docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md, slice F1).
 #
-# Slice F0 wires the full OAuth2 acquisition path: the credential backend, the
-# `forgejo-oauth` callback redirect (consumed by ForgejoCallbackPlug), and the
-# {provider, acquisition_method} -> pair mapping. The driver and backend pair
-# themselves are declared in the plugin's supervision tree, not here.
-config :ezagent_domain_provider_connection,
-  credential_backend_implementations:
-    Map.merge(
-      Application.get_env(
-        :ezagent_domain_provider_connection,
-        :credential_backend_implementations,
-        %{}
-      ),
-      %{"forgejo-credential-v1" => EzagentPluginForgejo.ForgejoCredentialBackend}
-    ),
-  callback_redirect_pairs:
-    Map.merge(
-      Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
-      %{"forgejo-oauth" => "pair-forgejo-v1"}
-    ),
-  local_authorization_backend_pairs:
-    Map.merge(
-      Application.get_env(
-        :ezagent_domain_provider_connection,
-        :local_authorization_backend_pairs,
-        %{}
-      ),
-      %{{"forgejo", "oauth_user"} => "pair-forgejo-v1"}
-    )
-
 # `token_encryption_key` has no default: the module-load fallback in
 # ForgejoCredentialBackend is per-VM-session, so a real deployment that leaves
 # this unset orphans every stored credential on restart.
