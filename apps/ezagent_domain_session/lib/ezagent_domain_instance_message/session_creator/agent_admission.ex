@@ -477,19 +477,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     do: {:ok, current}
 
   defp cancel_current(session_uri, current, actor_uri, caps, failure_code) do
-    with :ok <- restore_default_source_transaction(session_uri, current, actor_uri, caps),
-         {:ok, agent_uri} <- provisional_uri(current),
-         :ok <-
-           DefinitionAgents.cleanup_provisional(
+    with_default_source_lock(actor_uri, session_uri, current.flavor, fn ->
+      do_cancel_current(session_uri, current, actor_uri, caps, failure_code)
+    end)
+  end
+
+  defp do_cancel_current(session_uri, current, actor_uri, caps, failure_code) do
+    with {:ok, restored?} <-
+           restore_default_source_transaction(session_uri, current, actor_uri, caps),
+         {:ok, agent_uri} <- provisional_uri(current) do
+      case DefinitionAgents.cleanup_provisional(
              session_uri,
              actor_uri,
              agent_uri,
              current.attempt_id,
              actor_ctx(actor_uri, caps),
              failure_code
-           ),
-         {:ok, failed} <- put_failed(session_uri, current, failure_code) do
-      {:ok, failed}
+           ) do
+        :ok ->
+          put_failed(session_uri, current, failure_code)
+
+        {:error, cleanup_reason} ->
+          case reapply_candidate_default_source(session_uri, current, actor_uri, caps, restored?) do
+            :ok ->
+              {:error, cleanup_reason}
+
+            {:error, pointer_reason} ->
+              {:error, {cleanup_reason, {:pointer_reapply_failed, pointer_reason}}}
+          end
+      end
     end
   end
 
@@ -519,6 +535,28 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   end
 
   defp complete_authenticated(
+         session_uri,
+         actor_uri,
+         caps,
+         declaration,
+         current,
+         agent_uri,
+         attempt_id
+       ) do
+    with_default_source_lock(actor_uri, session_uri, current.flavor, fn ->
+      do_complete_authenticated(
+        session_uri,
+        actor_uri,
+        caps,
+        declaration,
+        current,
+        agent_uri,
+        attempt_id
+      )
+    end)
+  end
+
+  defp do_complete_authenticated(
          session_uri,
          actor_uri,
          caps,
@@ -671,18 +709,41 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
 
         case UserDefaultSource.resolve(URI.to_string(owner_uri), workspace_name, current.flavor) do
           ^source when is_binary(previous) ->
-            set_default_source(owner_uri, previous, current.flavor, session_uri, caps)
+            with :ok <- set_default_source(owner_uri, previous, current.flavor, session_uri, caps),
+                 do: {:ok, true}
 
           ^source ->
             {:error, :default_credential_source_restore_requires_prior_source}
 
           _other ->
-            :ok
+            {:ok, false}
         end
+
+      _ ->
+        {:ok, false}
+    end
+  end
+
+  defp reapply_candidate_default_source(_session_uri, _current, _owner_uri, _caps, false), do: :ok
+
+  defp reapply_candidate_default_source(session_uri, current, owner_uri, caps, true) do
+    case Map.get(current, :default_source_transaction) do
+      %{source_uri: source} ->
+        set_default_source(owner_uri, source, current.flavor, session_uri, caps)
 
       _ ->
         :ok
     end
+  end
+
+  defp with_default_source_lock(owner_uri, session_uri, flavor, fun) do
+    workspace_name =
+      session_uri |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
+
+    resource =
+      {__MODULE__, :default_credential_source, URI.to_string(owner_uri), workspace_name, flavor}
+
+    :global.trans({resource, self()}, fun)
   end
 
   defp source_uri(%URI{} = source), do: URI.to_string(source)
@@ -810,19 +871,38 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     with {:ok, owner_uri} <- Session.owner(session_uri),
          {:ok, agent_uri} <- provisional_uri(current),
          caps <-
-           EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri),
-         :ok <- restore_default_source_transaction(session_uri, current, owner_uri, caps),
-         :ok <-
-           DefinitionAgents.cleanup_provisional(
-             session_uri,
-             owner_uri,
-             agent_uri,
-             current.attempt_id,
-             actor_ctx(owner_uri, caps),
-             :stale_agent_admission_declaration
-           ),
-         :ok <- delete_admission(session_uri, current.role_name) do
-      :ok
+           EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri) do
+      with_default_source_lock(owner_uri, session_uri, current.flavor, fn ->
+        with {:ok, restored?} <-
+               restore_default_source_transaction(session_uri, current, owner_uri, caps) do
+          case DefinitionAgents.cleanup_provisional(
+                 session_uri,
+                 owner_uri,
+                 agent_uri,
+                 current.attempt_id,
+                 actor_ctx(owner_uri, caps),
+                 :stale_agent_admission_declaration
+               ) do
+            :ok ->
+              delete_admission(session_uri, current.role_name)
+
+            {:error, cleanup_reason} ->
+              case reapply_candidate_default_source(
+                     session_uri,
+                     current,
+                     owner_uri,
+                     caps,
+                     restored?
+                   ) do
+                :ok ->
+                  {:error, cleanup_reason}
+
+                {:error, pointer_reason} ->
+                  {:error, {cleanup_reason, {:pointer_reapply_failed, pointer_reason}}}
+              end
+          end
+        end
+      end)
     else
       {:error, _reason} = error -> error
       other -> {:error, {:stale_agent_admission_cleanup_failed, other}}

@@ -157,3 +157,19 @@ actual:   {:ok, %{status: :joined, ...}}
 post-pointer joined-write regression: 1 test, 0 failures
 admission suite: 12 tests, 0 failures
 ```
+
+## Pointer serialization and cleanup reapply — 2026-07-30
+
+Default-source transactions are now serialized globally by
+`(owner, workspace, flavor)`, rather than only by `(session, role)`. This
+keeps the old-source read, new-source write, conditional restoration, and
+candidate retirement in one cross-session critical section. When cleanup fails
+after a prior source was restored, the same transaction reapplies the candidate
+source, so a still-joined candidate never loses its reusable credential source.
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs
+
+12 tests, 0 failures
+```
