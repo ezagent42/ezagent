@@ -30,11 +30,15 @@ defmodule Ezagent.Agent.CredentialConnection do
   end
 
   defp template_connection(template_class, opts) do
-    Code.ensure_loaded(template_class)
+    case Code.ensure_loaded(template_class) do
+      {:module, ^template_class} ->
+        template_class
+        |> raw_connection(opts)
+        |> normalize()
 
-    template_class
-    |> raw_connection(opts)
-    |> normalize()
+      {:error, _reason} ->
+        {:error, :unsupported_connection}
+    end
   end
 
   defp raw_connection(template_class, opts) do

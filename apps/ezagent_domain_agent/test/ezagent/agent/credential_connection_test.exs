@@ -3,47 +3,51 @@ defmodule Ezagent.Agent.CredentialConnectionTest do
 
   alias Ezagent.Agent.CredentialConnection
   alias Ezagent.AgentFlavorRegistry
-
-  defmodule PtyTemplate do
-    def credential_connection(_opts), do: {:pty, "Sign in to Codex"}
-  end
-
-  defmodule ApiKeyTemplate do
-    def credential_connection(_opts), do: {:api_key, "openai", "OpenAI API key"}
-  end
-
-  defmodule MalformedTemplate do
-    def credential_connection(_opts), do: {:pty, 123}
-  end
-
-  defmodule CredentiallessTemplate do
-  end
+  alias EzagentDomainAgent.TestSupport.{CredentialConnectionTemplate, MissingLaunchContextTemplateClass}
 
   describe "for_flavor/2" do
     test "normalizes a PTY connection declaration" do
-      flavor = register(PtyTemplate)
+      flavor = register(CredentialConnectionTemplate)
 
-      assert {:ok, {:pty, %{label: "Sign in to Codex"}}} = CredentialConnection.for_flavor(flavor)
+      assert {:ok, {:pty, %{label: "Sign in to Codex"}}} =
+               CredentialConnection.for_flavor(flavor, connection: {:pty, "Sign in to Codex"})
     end
 
     test "normalizes an API-key connection declaration" do
-      flavor = register(ApiKeyTemplate)
+      flavor = register(CredentialConnectionTemplate)
 
       assert {:ok, {:api_key, %{provider: "openai", label: "OpenAI API key"}}} =
-               CredentialConnection.for_flavor(flavor)
+               CredentialConnection.for_flavor(flavor,
+                 connection: {:api_key, "openai", "OpenAI API key"}
+               )
     end
 
     test "rejects unknown flavors and malformed declarations" do
-      malformed_flavor = register(MalformedTemplate)
+      malformed_flavor = register(CredentialConnectionTemplate)
 
       assert {:error, :unsupported_connection} =
                CredentialConnection.for_flavor("missing-#{System.unique_integer([:positive])}")
 
-      assert {:error, :unsupported_connection} = CredentialConnection.for_flavor(malformed_flavor)
+      assert {:error, :unsupported_connection} =
+               CredentialConnection.for_flavor(malformed_flavor, connection: {:pty, 123})
+    end
+
+    test "rejects a flavor whose registered template class cannot be loaded" do
+      unavailable_template =
+        Module.concat([
+          Ezagent,
+          Agent,
+          CredentialConnectionTest,
+          "UnavailableTemplate#{System.unique_integer([:positive])}"
+        ])
+
+      flavor = register(unavailable_template)
+
+      assert {:error, :unsupported_connection} = CredentialConnection.for_flavor(flavor)
     end
 
     test "returns not_required for a credential-less flavor even when it is listed in a role" do
-      flavor = register(CredentiallessTemplate)
+      flavor = register(MissingLaunchContextTemplateClass)
 
       assert {:ok, :not_required} =
                CredentialConnection.for_flavor(flavor,
