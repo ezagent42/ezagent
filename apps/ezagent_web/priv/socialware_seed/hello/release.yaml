@@ -1,0 +1,6 @@
+# Release acknowledgement for the Hello deploy manifest.
+#
+# When manifest.yaml or recipes.yaml changes, update this file in the same PR.
+# The CI release gate then prints the required governed import command for the
+# running deployment. `revision` is an operator-visible audit marker.
+revision: 1

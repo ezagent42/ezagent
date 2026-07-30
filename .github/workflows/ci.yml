@@ -86,6 +86,22 @@ jobs:
     runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A source manifest is only copied on first deploy, by design. Require an
+      # explicit per-package release acknowledgement whenever it changes so the
+      # release operator receives the governed import command instead of relying
+      # on a restart to replace an existing deployment artifact.
+      - name: Socialware manifest release contract
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/socialware-manifest-release-gate_test.sh
+          git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$GITHUB_SHA" \
+            | bash .github/scripts/socialware-manifest-release-gate.sh
 
       # Fail fast with a clear message if OrbStack/Docker is down (the native-mix
       # gate remains the documented fallback — revert this commit).
