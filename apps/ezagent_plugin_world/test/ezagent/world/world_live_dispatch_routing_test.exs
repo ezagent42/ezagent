@@ -83,6 +83,37 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
       assert {:noreply, out} = dispatch("chat.send", %{})
       assert out.assigns.last_dispatch_status == "error:unsupported_action"
     end
+
+    test "credential admission actions belong to the conversation dispatch family" do
+      conversation_actions = Ezagent.World.DispatchContract.actions(:conversation)
+
+      assert "session.agent_admission.begin" in conversation_actions
+      assert "session.agent_admission.complete" in conversation_actions
+      assert "session.agent_admission.cancel" in conversation_actions
+    end
+  end
+
+  describe "credential admission session binding" do
+    test "begin refuses a client request for a session other than the one on screen" do
+      current = URI.new!("session://team-alpha/default/current-#{uniq()}")
+      other = URI.new!("session://team-alpha/default/other-#{uniq()}")
+
+      socket = socket_for() |> Phoenix.Component.assign(:current_session_uri, current)
+
+      assert {:noreply, out} =
+               dispatch(
+                 "session.agent_admission.begin",
+                 %{
+                   "session_uri" => URI.to_string(other),
+                   "role_name" => "llm",
+                   "flavor" => "client-must-not-select-this",
+                   "source_uri" => "entity://team-alpha/agent/forged"
+                 },
+                 socket
+               )
+
+      assert out.assigns.last_dispatch_status == "error:session_not_current"
+    end
   end
 
   # #224 — three conversation handlers were dispatched by the React client but

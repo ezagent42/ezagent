@@ -1520,7 +1520,7 @@ function ConfigFieldWidget({field: _field, value, schemaType, options, onChange}
   }
 }
 
-function AgentApiKeys({
+export function AgentApiKeys({
   state,
   onPutApiKey,
   onDeleteApiKey,

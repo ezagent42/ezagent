@@ -21,6 +21,7 @@ defmodule Ezagent.World.ConversationActions do
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationData
   alias Ezagent.World.ConversationRoutingForm
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
   @doc """
@@ -53,6 +54,37 @@ defmodule Ezagent.World.ConversationActions do
     with_session(socket, sid, fn uri ->
       Ezagent.World.ConversationSessionState.switch_session(socket, uri)
     end)
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.begin",
+        %{"session_uri" => sid, "role_name" => role_name}
+      )
+      when is_binary(role_name) do
+    with_current_session(socket, sid, &begin_agent_admission(socket, &1, role_name))
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.complete",
+        %{"session_uri" => sid, "role_name" => role_name, "attempt_id" => attempt_id}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    with_current_session(
+      socket,
+      sid,
+      &complete_agent_admission(socket, &1, role_name, attempt_id)
+    )
+  end
+
+  def handle_dispatch(
+        socket,
+        "session.agent_admission.cancel",
+        %{"session_uri" => sid, "role_name" => role_name, "attempt_id" => attempt_id}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    with_current_session(socket, sid, &cancel_agent_admission(socket, &1, role_name, attempt_id))
   end
 
   def handle_dispatch(socket, "session.invite", %{"session_uri" => sid, "member" => member})
@@ -176,6 +208,101 @@ defmodule Ezagent.World.ConversationActions do
       :on_error,
       {:noreply, assign(socket, :last_dispatch_status, "error:bad_session_uri")}
     )
+  end
+
+  defp with_current_session(socket, sid, fun) do
+    with_session(socket, sid, fn session_uri ->
+      case socket.assigns[:current_session_uri] do
+        %URI{} = current_session_uri ->
+          if same_uri?(current_session_uri, session_uri) do
+            fun.(session_uri)
+          else
+            {:noreply, assign(socket, :last_dispatch_status, "error:session_not_current")}
+          end
+
+        _ ->
+          {:noreply, assign(socket, :last_dispatch_status, "error:session_not_current")}
+      end
+    end)
+  end
+
+  defp begin_agent_admission(socket, %URI{} = session_uri, role_name) do
+    caller = socket.assigns.current_entity_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
+
+    case AgentAdmission.begin(session_uri, role_name, caller, caps) do
+      {:ok, admission} ->
+        socket = push_admission_state(socket, session_uri)
+
+        if pty_admission?(admission) do
+          switch_to_admission_pty(socket, session_uri, admission)
+        else
+          {:noreply, socket}
+        end
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp complete_agent_admission(socket, %URI{} = session_uri, role_name, attempt_id) do
+    caller = socket.assigns.current_entity_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
+
+    case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
+      {:ok, _admission} ->
+        {:noreply, push_admission_state(socket, session_uri)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+
+      {:error, reason, _admission} ->
+        socket = push_admission_state(socket, session_uri)
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp cancel_agent_admission(socket, %URI{} = session_uri, role_name, attempt_id) do
+    caller = socket.assigns.current_entity_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
+
+    case AgentAdmission.cancel(session_uri, role_name, attempt_id, {caller, caps}) do
+      {:ok, _admission} ->
+        {:noreply, push_admission_state(socket, session_uri)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason(reason)}")}
+    end
+  end
+
+  defp pty_admission?(%{connection: {:pty, _descriptor}}), do: true
+  defp pty_admission?(_admission), do: false
+
+  defp switch_to_admission_pty(socket, %URI{} = session_uri, admission) do
+    with uri when is_binary(uri) <- admission.provisional_agent_uri,
+         {:ok, candidate_uri} <- parse_agent_uri(uri),
+         true <- current_candidate?(session_uri, admission, candidate_uri) do
+      switch_to_pty(socket, session_uri, URI.to_string(candidate_uri))
+    else
+      _ ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:stale_agent_admission_attempt")}
+    end
+  end
+
+  defp current_candidate?(session_uri, admission, %URI{} = candidate_uri) do
+    candidate = URI.to_string(candidate_uri)
+
+    Enum.any?(AgentAdmission.list(session_uri), fn current ->
+      current.role_name == admission.role_name and
+        current.attempt_id == admission.attempt_id and
+        current.provisional_agent_uri == candidate
+    end)
+  end
+
+  defp push_admission_state(socket, %URI{} = session_uri) do
+    socket
+    |> push_members()
+    |> push_world_state(%{"agent_admissions" => ConversationData.agent_admissions(session_uri)})
   end
 
   # Max attachments per message — server-enforced here (never trusts the client),
@@ -1116,6 +1243,7 @@ defmodule Ezagent.World.ConversationActions do
       # user-facing surface).
       "unfilled_agent_role_slots" =>
         EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
+      "agent_admissions" => ConversationData.agent_admissions(session_uri),
       "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri)
     }
 
@@ -1190,7 +1318,8 @@ defmodule Ezagent.World.ConversationActions do
                   caller,
                   socket.assigns.current_workspace_uri,
                   members
-                )
+                ),
+              "agent_admissions" => ConversationData.agent_admissions(session_uri)
             })
           else
             # Unauthorized viewer (e.g. denied `?session=` deep-link): push NO
@@ -1396,6 +1525,9 @@ defmodule Ezagent.World.ConversationActions do
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: URI.to_string(left) == URI.to_string(right)
 
   defp jsonable(value) do
     cond do

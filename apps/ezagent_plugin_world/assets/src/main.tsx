@@ -583,6 +583,9 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                     args: {session_uri: sessionUri, agent},
                   })
                 },
+                onAgentAdmissionAction: (action, args) => {
+                  sendEvent("world:dispatch", {action, args})
+                },
                 onForkConfig: (sessionUri) => {
                   sendEvent("world:dispatch", {
                     action: "session.fork_config",
@@ -1054,6 +1057,7 @@ type RenderContext = {
   onSessionSwitch: (sessionUri: string) => void
   onSessionViewSwitch: (sessionUri: string, view: string) => void
   onOpenSessionPty: (sessionUri: string, agent: string) => void
+  onAgentAdmissionAction: (action: string, args: Record<string, string>) => void
   onRestartOrchestrator: (sessionUri: string) => void
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
   onToggleRoutingRule: (sessionUri: string, rule: {id: string; table: string; enabled: string}) => void
@@ -1088,6 +1092,8 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
           onAddRoutingRule={context.onAddRoutingRule}
           onCreate={context.onCreateSession}
           onOpenPty={context.onOpenSessionPty}
+          onAgentAdmissionAction={context.onAgentAdmissionAction}
+          onPutApiKey={context.onPutApiKey}
           onRestartOrchestrator={context.onRestartOrchestrator}
           onSend={context.onChatSend}
           onSwitch={context.onSessionSwitch}

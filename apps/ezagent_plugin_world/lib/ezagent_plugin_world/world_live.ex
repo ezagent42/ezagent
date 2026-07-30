@@ -16,6 +16,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.LiveStateBuilder
   alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentPluginWorld.{Layouts, WorldLoading}
 
   @refresh_ms 2_000
@@ -941,7 +942,7 @@ defmodule EzagentPluginWorld.WorldLive do
              ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :sync},
              origin: :authenticated_external
            }) do
-      refresh_api_keys_state(socket, agent_uri)
+      complete_api_key_admission_or_refresh(socket, agent_uri, caller, caps)
     else
       false ->
         {:noreply,
@@ -999,6 +1000,58 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_state, state)
      |> assign(:world_state_json, Jason.encode!(state))
      |> assign(:last_dispatch_status, "ok")
+     |> push_event("world:state", state)}
+  end
+
+  # An API-key candidate is created only by the credential-admission flow. Once
+  # the existing secure agent-key surface saves its key, complete the matching
+  # server-owned attempt directly; no client-supplied source or candidate URI is
+  # ever used for admission. Ordinary agent-key edits retain their existing page
+  # refresh behavior.
+  defp complete_api_key_admission_or_refresh(socket, %URI{} = agent_uri, caller, caps) do
+    case api_key_admission_for(socket, agent_uri) do
+      %{role_name: role_name, attempt_id: attempt_id, connection: {:api_key, _}} = _admission
+      when is_binary(attempt_id) ->
+        session_uri = socket.assigns.current_session_uri
+
+        case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
+          {:ok, _joined} -> refresh_admission_conversation(socket, session_uri)
+          {:error, _reason} -> refresh_admission_conversation(socket, session_uri)
+          {:error, _reason, _failed} -> refresh_admission_conversation(socket, session_uri)
+        end
+
+      _ ->
+        refresh_api_keys_state(socket, agent_uri)
+    end
+  end
+
+  defp api_key_admission_for(socket, %URI{} = agent_uri) do
+    with %URI{} = session_uri <- socket.assigns[:current_session_uri],
+         true <- URI.to_string(session_uri) == Map.get(socket.assigns.world_state, "session_uri"),
+         admission when not is_nil(admission) <-
+           Enum.find(AgentAdmission.list(session_uri), fn admission ->
+             admission.provisional_agent_uri == URI.to_string(agent_uri)
+           end) do
+      admission
+    else
+      _ -> nil
+    end
+  end
+
+  defp refresh_admission_conversation(socket, %URI{} = session_uri) do
+    layout = socket.assigns.world_state["layout"]
+
+    state =
+      session_uri
+      |> ConversationSessionState.state_for(socket)
+      |> Map.put("layout", layout)
+
+    {:noreply,
+     socket
+     |> assign(:world_state, state)
+     |> assign(:world_state_json, Jason.encode!(state))
+     |> assign(:last_dispatch_status, "ok")
+     |> ConversationActions.push_members()
      |> push_event("world:state", state)}
   end
 

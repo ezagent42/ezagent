@@ -7,6 +7,7 @@ import {pluginPageRenderers} from "../generated/plugin-page-renderers"
 import {matchUnfurl} from "./unfurl"
 import {PtyTerminalSurface} from "./PtyTerminal"
 import {ExternalMirror} from "./Admin"
+import {AgentApiKeys} from "./Identities"
 
 /** G5 structured error card pushed by ErrorRenderer */
 type DispatchErrorCard = {
@@ -129,6 +130,22 @@ type ViewTab = {
   mode: string
 }
 
+type AgentAdmissionConnection = {
+  kind: "pty" | "api_key" | "not_required" | "unsupported"
+  label: string
+  provider?: string | null
+}
+
+type AgentAdmission = {
+  role_name: string
+  flavor?: string | null
+  status: "pending_auth" | "authenticating" | "materializing" | "joined" | "failed"
+  attempt_id?: string | null
+  provisional_agent_uri?: string | null
+  failure_code?: string | null
+  connection: AgentAdmissionConnection
+}
+
 const ROUTING_MAGIC_RECEIVERS: InviteCandidateRow[] = [
   {uri: "$session_users,$mentions", display_name: "成员与被提及实体", kind: "preset"},
   {uri: "$session_users", display_name: "人类成员", kind: "group"},
@@ -174,6 +191,7 @@ export type ConversationState = {
   human_role_slots?: HumanRoleSlotRow[]
   installed_socialwares?: InstalledSocialwareRow[]
   unfilled_agent_role_slots?: { role_name: string; reason: string }[]
+  agent_admissions?: AgentAdmission[]
   degraded_operates_edges?: {
     request_id: string
     source_role: string
@@ -216,6 +234,8 @@ type Props = {
   // current page + agent (not the chat history). Operator-only; the button lives
   // in the page-preview overlay, so it never shows on the public share page.
   onPublishTemplate: (sessionUri: string, name: string) => void
+  onAgentAdmissionAction?: (action: string, args: Record<string, string>) => void
+  onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
 }
 
 export function handleBindingsViewSwitch(
@@ -297,6 +317,8 @@ export function Conversation({
   pushEvent,
   onKanbanAction,
   onPublishTemplate,
+  onAgentAdmissionAction,
+  onPutApiKey,
 }: Props) {
   const sessionUri = state.session_uri || ""
   const callerUri = state.caller_uri || ""
@@ -306,6 +328,7 @@ export function Conversation({
   const installedSocialwares = state.installed_socialwares || []
   const unfilledRoleSlots = state.unfilled_agent_role_slots || []
   const degradedOperatesEdges = state.degraded_operates_edges || []
+  const agentAdmissions = (state.agent_admissions || []).filter((admission) => admission.status !== "joined")
   const fallbackViews: ViewTab[] = [{id: "conversation", label: "对话", icon: "message-square", mode: "chat"}]
   const sourceViews = state.views && state.views.length > 0 ? state.views : fallbackViews
   const views = sourceViews.length > 0 ? sourceViews : fallbackViews
@@ -365,6 +388,32 @@ export function Conversation({
   const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
   const ptyMembers = members.filter((member) => member.kind === "agent" && member.pty_alive === true)
   const activePtyAgentUri = state.agent_uri || state.active_pty_agent_uri || null
+
+  const beginAdmission = (admission: AgentAdmission) => {
+    if (!sessionUri) return
+    onAgentAdmissionAction?.("session.agent_admission.begin", {
+      session_uri: sessionUri,
+      role_name: admission.role_name,
+    })
+  }
+
+  const completeAdmission = (admission: AgentAdmission) => {
+    if (!sessionUri || !admission.attempt_id) return
+    onAgentAdmissionAction?.("session.agent_admission.complete", {
+      session_uri: sessionUri,
+      role_name: admission.role_name,
+      attempt_id: admission.attempt_id,
+    })
+  }
+
+  const cancelAdmission = (admission: AgentAdmission) => {
+    if (!sessionUri || !admission.attempt_id) return
+    onAgentAdmissionAction?.("session.agent_admission.cancel", {
+      session_uri: sessionUri,
+      role_name: admission.role_name,
+      attempt_id: admission.attempt_id,
+    })
+  }
 
   React.useEffect(() => {
     setMembers(state.members || [])
@@ -952,6 +1001,59 @@ export function Conversation({
                   </Button>
                 </div>
               )}
+
+              {agentAdmissions.map((admission) => (
+                <section
+                  key={admission.role_name}
+                  className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm"
+                  data-world-agent-admission={admission.role_name}
+                  aria-label={`${admission.role_name} 连接状态`}
+                >
+                  <p className="font-semibold text-foreground">连接 {admission.role_name}</p>
+                  {admission.status === "failed" && (
+                    <p className="mt-1 text-muted-foreground">连接未完成，请重试。</p>
+                  )}
+                  {admission.status === "authenticating" || admission.status === "materializing" ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {admission.connection.kind !== "api_key" && (
+                        <span className="text-muted-foreground">正在连接…</span>
+                      )}
+                      {admission.connection.kind === "api_key" && (
+                        <AgentApiKeys
+                          state={{
+                            component: "agent_api_keys",
+                            agent_uri: admission.provisional_agent_uri,
+                            api_keys: [],
+                            can_edit: true,
+                          }}
+                          onPutApiKey={onPutApiKey}
+                        />
+                      )}
+                      {admission.connection.kind === "api_key" && (
+                        <Button type="button" size="sm" onClick={() => completeAdmission(admission)}>
+                          完成连接
+                        </Button>
+                      )}
+                      {admission.attempt_id && (
+                        <Button type="button" size="sm" variant="secondary" onClick={() => cancelAdmission(admission)}>
+                          取消
+                        </Button>
+                      )}
+                    </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="mt-2"
+                      onClick={() => beginAdmission(admission)}
+                      data-world-agent-admission-connect={admission.status === "pending_auth" ? true : undefined}
+                      data-world-agent-admission-retry={admission.status === "failed" ? true : undefined}
+                    >
+                      {admission.status === "failed" ? "重试" : admission.connection.label}
+                    </Button>
+                  )}
+                </section>
+              ))}
 
               {messages.length === 0 ? (
                 <p className="m-auto max-w-[38ch] text-center text-[13.5px] leading-relaxed text-muted-foreground">

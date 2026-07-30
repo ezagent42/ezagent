@@ -14,6 +14,7 @@ defmodule Ezagent.World.ConversationData do
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ErrorCards
   alias Ezagent.World.PluginPageRegistry
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
 
   @message_limit 50
 
@@ -88,6 +89,7 @@ defmodule Ezagent.World.ConversationData do
       "installed_socialwares" => installed_socialwares(session_uri),
       "unfilled_agent_role_slots" =>
         EzagentDomainInstanceMessage.SessionCreator.unfilled_agent_role_slots(session_uri),
+      "agent_admissions" => agent_admissions(session_uri),
       "degraded_operates_edges" => Ezagent.Socialware.CompositionCaps.degraded_edges(session_uri),
       "invite_candidates" => invite_candidates(session_uri, caller_uri, workspace_uri, members),
       "routing_entity_candidates" =>
@@ -129,6 +131,7 @@ defmodule Ezagent.World.ConversationData do
       "human_role_slots" => [],
       "installed_socialwares" => [],
       "unfilled_agent_role_slots" => [],
+      "agent_admissions" => [],
       "degraded_operates_edges" => [],
       "invite_candidates" => [],
       "routing_entity_candidates" => [],
@@ -147,6 +150,44 @@ defmodule Ezagent.World.ConversationData do
         err
     end
   end
+
+  @doc "Return non-secret credential-admission state for the World conversation surface."
+  @spec agent_admissions(URI.t()) :: [map()]
+  def agent_admissions(%URI{scheme: "session"} = session_uri) do
+    session_uri
+    |> AgentAdmission.list()
+    |> Enum.map(&admission_row/1)
+  rescue
+    _ -> []
+  end
+
+  def agent_admissions(_session_uri), do: []
+
+  defp admission_row(admission) do
+    %{
+      "role_name" => admission.role_name,
+      "flavor" => admission.flavor,
+      "status" => Atom.to_string(admission.status),
+      "attempt_id" => admission.attempt_id,
+      "provisional_agent_uri" => admission.provisional_agent_uri,
+      "failure_code" => failure_code(admission.failure_code),
+      "connection" => connection_descriptor(admission.connection)
+    }
+  end
+
+  defp connection_descriptor({:pty, %{label: label}}) when is_binary(label),
+    do: %{"kind" => "pty", "label" => label}
+
+  defp connection_descriptor({:api_key, %{provider: provider, label: label}})
+       when is_binary(provider) and is_binary(label),
+       do: %{"kind" => "api_key", "provider" => provider, "label" => label}
+
+  defp connection_descriptor(:not_required), do: %{"kind" => "not_required", "label" => "连接"}
+  defp connection_descriptor(_connection), do: %{"kind" => "unsupported", "label" => "连接"}
+
+  defp failure_code(nil), do: nil
+  defp failure_code(code) when is_atom(code), do: Atom.to_string(code)
+  defp failure_code(_code), do: "connection_failed"
 
   @doc """
   The registry-driven view tabs for `session_uri` visible to `caller_uri`.
