@@ -94,8 +94,9 @@ defmodule Ezagent.Agent.HostLoginAdopt do
     case UserDefaultSource.resolve(owner, ws_name, flavor) do
       nil ->
         with :ok <- register_source(source_uri, installer_uri, flavor, host_dir),
-             :ok <- ensure_source_read_cap(installer_uri, source_uri) do
-          set_pointer(installer_uri, ws_name, flavor, source_uri)
+             :ok <- ensure_source_read_cap(installer_uri, source_uri),
+             :ok <- before_pointer_write_fault() do
+          set_pointer(installer_uri, ws_name, flavor, source_uri, nil)
         end
 
       existing when is_binary(existing) ->
@@ -191,7 +192,7 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   # construction every operator/seed path uses (hello boot-publish, operator
   # mix tasks). No identity-domain cap enumeration here (invariant p6: cap
   # reads stay inside the Identity domain / display / tooling).
-  defp set_pointer(installer_uri, ws_name, flavor, source_uri) do
+  defp set_pointer(installer_uri, ws_name, flavor, source_uri, expected_source_uri) do
     source = URI.to_string(source_uri)
 
     target =
@@ -208,7 +209,12 @@ defmodule Ezagent.Agent.HostLoginAdopt do
              Ezagent.Cap.issue_for_action({:admin, admin}, installer_uri, target) do
         UserDefaultSource.set_via_dispatch(
           installer_uri,
-          %{flavor: flavor, source_uri: source, workspace: ws_name},
+          %{
+            flavor: flavor,
+            source_uri: source,
+            workspace: ws_name,
+            expected_source_uri: expected_source_uri
+          },
           %{
             caller: installer_uri,
             authenticated_principal: installer_uri,
@@ -221,15 +227,39 @@ defmodule Ezagent.Agent.HostLoginAdopt do
       {:ok, _} ->
         :ok
 
+      {:error, :default_source_changed} ->
+        # A sanctioned writer committed after our initial read. Its pointer is
+        # already validation-checked by the same behavior, so it is an explicit
+        # choice to preserve rather than an adoption failure.
+        case UserDefaultSource.resolve(URI.to_string(installer_uri), ws_name, flavor) do
+          current when is_binary(current) -> :ok
+          _ -> {:error, {:host_login_adopt_failed, :default_source_changed}}
+        end
+
       {:error, reason} ->
-        # Concurrent-install tolerance: if another materialization already
-        # landed the SAME pointer, the state we wanted exists — proceed.
+        # Repeated host adoption can observe its own successful concurrent
+        # registration; that desired state is idempotently complete.
         if UserDefaultSource.resolve(URI.to_string(installer_uri), ws_name, flavor) == source do
           :ok
         else
           {:error, {:host_login_adopt_failed, reason}}
         end
     end
+  end
+
+  if Mix.env() == :test do
+    defp before_pointer_write_fault do
+      case Application.get_env(
+             :ezagent_domain_agent,
+             :host_login_adopt_before_pointer_write_fault
+           ) do
+        nil -> :ok
+        fault when is_function(fault, 0) -> fault.()
+        reason -> {:error, reason}
+      end
+    end
+  else
+    defp before_pointer_write_fault, do: :ok
   end
 
   # --- gates ----------------------------------------------------------------

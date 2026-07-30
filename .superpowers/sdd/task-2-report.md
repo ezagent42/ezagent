@@ -235,3 +235,25 @@ mise exec -- mix test \
 
 26 tests, 0 failures
 ```
+
+## Host-login adoption preserves concurrent choices — 2026-07-30
+
+Host-login adoption now passes the pointer it observed (including an unset
+pointer) as `expected_source_uri` to the same authorized write behavior. If
+the behavior reports `:default_source_changed`, adoption rereads the pointer:
+any existing value is a validated concurrent user choice and is a successful
+no-op. Other write failures retain the prior fail-loud behavior.
+
+The deterministic test pauses adoption after it observes an unset pointer,
+writes a World-equivalent P1 through the authorized dispatch path, then lets
+adoption continue. Before the CAS threading, host adoption overwrote P1 with
+its `cc-host-login` source. It now returns `:ok` and retains P1.
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_agent/test/ezagent/agent/host_login_adopt_test.exs \
+  apps/ezagent_domain_identity/test/ezagent/behavior/set_default_source_behavior_test.exs \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs
+
+27 tests, 0 failures
+```
