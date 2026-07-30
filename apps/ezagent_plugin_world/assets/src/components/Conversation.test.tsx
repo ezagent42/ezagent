@@ -101,6 +101,8 @@ describe("credential-gated agent admission cards", () => {
 
     expect(html).toContain('id="world-api-key-form"')
     expect(html).toContain('data-world-agent-admission="llm"')
+    expect(html).toContain('value="openai"')
+    expect(html).toContain('readOnly=""')
   })
 
   it("renders a retry affordance for a failed attempt and no card after admission", () => {

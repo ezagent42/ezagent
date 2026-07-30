@@ -1524,10 +1524,12 @@ export function AgentApiKeys({
   state,
   onPutApiKey,
   onDeleteApiKey,
+  defaultProvider,
 }: {
   state: IdentitiesState
   onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
   onDeleteApiKey?: (payload: {agent_uri: string; provider: string}) => void
+  defaultProvider?: string
 }) {
   const keys = Array.isArray(state.api_keys) ? state.api_keys : []
   const error = !Array.isArray(state.api_keys) ? state.api_keys?.error : undefined
@@ -1591,7 +1593,7 @@ export function AgentApiKeys({
         {keys.length === 0 && !error && <EmptyState label="No stored keys." />}
       </div>
       {state.can_edit && state.agent_uri && (
-        <AddApiKeyForm agentUri={state.agent_uri} onPutApiKey={onPutApiKey} />
+        <AddApiKeyForm agentUri={state.agent_uri} onPutApiKey={onPutApiKey} defaultProvider={defaultProvider} />
       )}
     </section>
   )
@@ -1607,13 +1609,16 @@ export function AgentApiKeys({
 function AddApiKeyForm({
   agentUri,
   onPutApiKey,
+  defaultProvider,
 }: {
   agentUri: string
   onPutApiKey?: (payload: {agent_uri: string; provider: string; key: string}) => void
+  defaultProvider?: string
 }) {
-  const [form, setForm] = React.useState({provider: "", key: ""})
+  const [form, setForm] = React.useState({provider: defaultProvider || "", key: ""})
   const fieldLabel = "grid gap-1 text-xs font-medium text-muted-foreground"
-  const canSubmit = form.provider.trim() !== "" && form.key.trim() !== ""
+  const provider = defaultProvider || form.provider
+  const canSubmit = provider.trim() !== "" && form.key.trim() !== ""
 
   return (
     <form
@@ -1622,17 +1627,20 @@ function AddApiKeyForm({
       onSubmit={(event) => {
         event.preventDefault()
         if (!canSubmit) return
-        onPutApiKey?.({agent_uri: agentUri, provider: form.provider.trim(), key: form.key.trim()})
-        setForm({provider: "", key: ""})
+        onPutApiKey?.({agent_uri: agentUri, provider: provider.trim(), key: form.key.trim()})
+        setForm({provider: defaultProvider || "", key: ""})
       }}
     >
       <label className={fieldLabel}>
         <span>Provider *</span>
         <Input
           value={form.provider}
-          onChange={(event) => setForm({...form, provider: event.target.value})}
-          placeholder="deepseek"
+          onChange={(event) => {
+            if (!defaultProvider) setForm({...form, provider: event.target.value})
+          }}
+          placeholder={defaultProvider || "deepseek"}
           autoComplete="off"
+          readOnly={Boolean(defaultProvider)}
         />
       </label>
       <label className={fieldLabel}>

@@ -156,6 +156,54 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
     end
   end
 
+  describe "API-key admission binding" do
+    @session URI.new!("session://team-alpha/default/api-key-admission")
+    @candidate URI.new!("entity://team-alpha/agent/api-key-candidate")
+
+    defp api_key_admission(overrides \\ %{}) do
+      Map.merge(
+        %{
+          role_name: "llm",
+          attempt_id: "attempt-1",
+          provisional_agent_uri: URI.to_string(@candidate),
+          status: :authenticating,
+          connection: {:api_key, %{provider: "openai", label: "配置 API key"}}
+        },
+        overrides
+      )
+    end
+
+    test "only an active exact candidate with its declared provider may complete" do
+      assert WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission()
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "anthropic",
+               api_key_admission()
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission(%{status: :failed})
+             )
+
+      refute WorldLive.api_key_admission_matches?(
+               @session,
+               @candidate,
+               "openai",
+               api_key_admission(%{attempt_id: nil})
+             )
+    end
+  end
+
   describe "direct (non-grouped) clauses" do
     test "an unrecognized top-level action degrades to error:unsupported_action" do
       assert {:noreply, out} = dispatch("totally.made.up.action", %{"x" => 1})

@@ -1009,7 +1009,8 @@ export function Conversation({
                   data-world-agent-admission={admission.role_name}
                   aria-label={`${admission.role_name} 连接状态`}
                 >
-                  <p className="font-semibold text-foreground">连接 {admission.role_name}</p>
+                  <p className="font-semibold text-foreground">{admission.connection.label}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{admission.role_name}</p>
                   {admission.status === "failed" && (
                     <p className="mt-1 text-muted-foreground">连接未完成，请重试。</p>
                   )}
@@ -1027,11 +1028,12 @@ export function Conversation({
                             can_edit: true,
                           }}
                           onPutApiKey={onPutApiKey}
+                          defaultProvider={admission.connection.provider || undefined}
                         />
                       )}
                       {admission.connection.kind === "api_key" && (
                         <Button type="button" size="sm" onClick={() => completeAdmission(admission)}>
-                          完成连接
+                          完成 {admission.connection.label}
                         </Button>
                       )}
                       {admission.attempt_id && (
@@ -1049,7 +1051,7 @@ export function Conversation({
                       data-world-agent-admission-connect={admission.status === "pending_auth" ? true : undefined}
                       data-world-agent-admission-retry={admission.status === "failed" ? true : undefined}
                     >
-                      {admission.status === "failed" ? "重试" : admission.connection.label}
+                      {admission.status === "failed" ? `重试 ${admission.connection.label}` : admission.connection.label}
                     </Button>
                   )}
                 </section>

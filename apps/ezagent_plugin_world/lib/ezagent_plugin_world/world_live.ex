@@ -934,6 +934,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
     with {:ok, agent_uri} <- parse_agent_uri(agent_uri_str),
          true <- provider != "" and key != "",
+         :ok <- api_key_admission_permits_save(socket, agent_uri, provider),
          {:ok, _result} <-
            Invocation.dispatch(%Invocation{
              target: Ezagent.URI.with_action(agent_uri, :identity, :put_api_key),
@@ -942,7 +943,7 @@ defmodule EzagentPluginWorld.WorldLive do
              ctx: %{caller: caller, authenticated_principal: caller, caps: caps, reply: :sync},
              origin: :authenticated_external
            }) do
-      complete_api_key_admission_or_refresh(socket, agent_uri, caller, caps)
+      complete_api_key_admission_or_refresh(socket, agent_uri, provider, caller, caps)
     else
       false ->
         {:noreply,
@@ -1008,35 +1009,72 @@ defmodule EzagentPluginWorld.WorldLive do
   # server-owned attempt directly; no client-supplied source or candidate URI is
   # ever used for admission. Ordinary agent-key edits retain their existing page
   # refresh behavior.
-  defp complete_api_key_admission_or_refresh(socket, %URI{} = agent_uri, caller, caps) do
-    case api_key_admission_for(socket, agent_uri) do
-      %{role_name: role_name, attempt_id: attempt_id, connection: {:api_key, _}} = _admission
-      when is_binary(attempt_id) ->
-        session_uri = socket.assigns.current_session_uri
-
+  defp complete_api_key_admission_or_refresh(socket, %URI{} = agent_uri, provider, caller, caps) do
+    case api_key_admission_for(socket, agent_uri, provider) do
+      {:ok, %{role_name: role_name, attempt_id: attempt_id, session_uri: session_uri}} ->
         case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
           {:ok, _joined} -> refresh_admission_conversation(socket, session_uri)
           {:error, _reason} -> refresh_admission_conversation(socket, session_uri)
           {:error, _reason, _failed} -> refresh_admission_conversation(socket, session_uri)
         end
 
-      _ ->
+      :not_an_admission ->
         refresh_api_keys_state(socket, agent_uri)
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
     end
   end
 
-  defp api_key_admission_for(socket, %URI{} = agent_uri) do
+  defp api_key_admission_for(socket, %URI{} = agent_uri, provider) do
     with %URI{} = session_uri <- socket.assigns[:current_session_uri],
          true <- URI.to_string(session_uri) == Map.get(socket.assigns.world_state, "session_uri"),
          admission when not is_nil(admission) <-
            Enum.find(AgentAdmission.list(session_uri), fn admission ->
              admission.provisional_agent_uri == URI.to_string(agent_uri)
-           end) do
-      admission
+           end),
+         true <- api_key_admission_matches?(session_uri, agent_uri, provider, admission) do
+      {:ok,
+       %{
+         session_uri: session_uri,
+         role_name: admission.role_name,
+         attempt_id: admission.attempt_id,
+         candidate_uri: agent_uri
+       }}
     else
-      _ -> nil
+      nil -> :not_an_admission
+      false -> {:error, :stale_or_mismatched_agent_admission}
+      _ -> :not_an_admission
     end
   end
+
+  defp api_key_admission_permits_save(socket, %URI{} = agent_uri, provider) do
+    case api_key_admission_for(socket, agent_uri, provider) do
+      {:error, reason} -> {:error, reason}
+      _ -> :ok
+    end
+  end
+
+  @doc false
+  @spec api_key_admission_matches?(URI.t(), URI.t(), String.t(), map()) :: boolean()
+  def api_key_admission_matches?(
+        %URI{scheme: "session"} = _session_uri,
+        %URI{} = candidate_uri,
+        provider,
+        %{
+          role_name: role_name,
+          attempt_id: attempt_id,
+          provisional_agent_uri: provisional_agent_uri,
+          status: status,
+          connection: {:api_key, %{provider: declared_provider}}
+        }
+      )
+      when is_binary(provider) and is_binary(role_name) and is_binary(attempt_id) and
+             status in [:authenticating, :materializing] and is_binary(declared_provider) do
+    provisional_agent_uri == URI.to_string(candidate_uri) and provider == declared_provider
+  end
+
+  def api_key_admission_matches?(_session_uri, _candidate_uri, _provider, _admission), do: false
 
   defp refresh_admission_conversation(socket, %URI{} = session_uri) do
     layout = socket.assigns.world_state["layout"]
