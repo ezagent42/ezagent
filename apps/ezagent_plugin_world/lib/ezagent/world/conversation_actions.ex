@@ -149,7 +149,7 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(socket, "session.pty.open", %{"session_uri" => sid, "agent" => agent})
       when is_binary(agent) do
-    with_session(socket, sid, &switch_to_pty(socket, &1, agent))
+    with_current_session(socket, sid, &switch_to_pty(socket, &1, agent))
   end
 
   def handle_dispatch(socket, "session.orchestrator.restart", %{"session_uri" => sid}) do
@@ -803,7 +803,7 @@ defmodule Ezagent.World.ConversationActions do
   """
   @spec switch_to_pty(Phoenix.LiveView.Socket.t(), URI.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def switch_to_pty(socket, %URI{} = _session_uri, agent_str) when is_binary(agent_str) do
+  def switch_to_pty(socket, %URI{} = session_uri, agent_str) when is_binary(agent_str) do
     # `agent_str` is CLIENT input (the `session.pty.open` event's "agent" field),
     # so this is a full PTY read exit — it subscribes to the live output stream
     # and pushes liveness/phase. Without the gate any authenticated user could
@@ -815,18 +815,23 @@ defmodule Ezagent.World.ConversationActions do
     case parse_agent_uri(agent_str) do
       {:ok, %URI{} = agent_uri} ->
         if Ezagent.Domain.Pty.Access.may_read?(holder, agent_uri, caps) do
-          # A session can retain an agent membership across a node restart while
-          # the agent's subprocess is cold. Opening an authorized terminal is
-          # the demand boundary: revive the Agent first so Sandbox.activate/2
-          # restores its PTY (or the unauthenticated Codex login PTY) before we
-          # subscribe and render the terminal surface.
-          case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
-            {:ok, _status} ->
-              subscribe_pty(agent_uri)
-              push_pty_view(socket, agent_uri)
+          if pty_target_in_session?(session_uri, agent_uri) do
+            # A session can retain an agent membership across a node restart while
+            # the agent's subprocess is cold. Opening an authorized terminal is
+            # the demand boundary: revive the Agent first so Sandbox.activate/2
+            # restores its PTY (or the unauthenticated Codex login PTY) before we
+            # subscribe and render the terminal surface.
+            case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
+              {:ok, _status} ->
+                subscribe_pty(agent_uri)
+                push_pty_view(socket, agent_uri)
 
-            {:error, _reason} ->
-              {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
+              {:error, _reason} ->
+                {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
+            end
+          else
+            {:noreply,
+             assign(socket, :last_dispatch_status, "error:session_pty_target_unrelated")}
           end
         else
           {:noreply, assign(socket, :last_dispatch_status, "error:unauthorized")}
@@ -835,6 +840,18 @@ defmodule Ezagent.World.ConversationActions do
       :error ->
         {:noreply, assign(socket, :last_dispatch_status, "error:bad_agent_uri")}
     end
+  end
+
+  defp pty_target_in_session?(%URI{} = session_uri, %URI{} = agent_uri) do
+    agent_key = URI.to_string(agent_uri)
+
+    Enum.any?(Ezagent.Entity.Session.session_member_uris(session_uri), fn member_uri ->
+      same_uri?(member_uri, agent_uri)
+    end) or
+      Enum.any?(AgentAdmission.list(session_uri), fn admission ->
+        admission.status in [:authenticating, :materializing] and
+          admission.provisional_agent_uri == agent_key
+      end)
   end
 
   defp push_pty_view(socket, %URI{} = agent_uri) do

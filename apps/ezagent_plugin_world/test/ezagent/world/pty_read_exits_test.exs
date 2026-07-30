@@ -192,7 +192,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
     refute_receive {:pty_output, _, _}, 100
   end
 
-  test "the creator's existing manage cap opens it and subscribes" do
+  test "a manage-cap holder cannot open an unrelated agent through a session PTY action" do
     cap = creator_cap()
     # Actor-extraction C1: switch_to_pty re-derives caps FRESH via
     # PresenterCaps.load → EntityCaps.load(@creator); the creator must DURABLY
@@ -232,13 +232,14 @@ defmodule Ezagent.World.PtyConversationExitTest do
     end)
 
     {:noreply, socket} =
-      ConversationActions.switch_to_pty(
-        socket_with(MapSet.new([cap])),
-        @session,
-        URI.to_string(@agent)
+      ConversationActions.handle_dispatch(
+        socket_with(MapSet.new([cap]))
+        |> Phoenix.Component.assign(:current_session_uri, @session),
+        "session.pty.open",
+        %{"session_uri" => URI.to_string(@session), "agent" => URI.to_string(@agent)}
       )
 
-    refute socket.assigns[:last_dispatch_status] == "error:unauthorized"
+    assert socket.assigns.last_dispatch_status == "error:session_pty_target_unrelated"
 
     Phoenix.PubSub.broadcast(
       EzagentCore.PubSub,
@@ -246,7 +247,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
       {:pty_output, @agent, "mine"}
     )
 
-    assert_receive {:pty_output, _, "mine"}, 500
+    refute_receive {:pty_output, _, "mine"}, 100
   end
 end
 

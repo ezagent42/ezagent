@@ -397,15 +397,6 @@ export function Conversation({
     })
   }
 
-  const completeAdmission = (admission: AgentAdmission) => {
-    if (!sessionUri || !admission.attempt_id) return
-    onAgentAdmissionAction?.("session.agent_admission.complete", {
-      session_uri: sessionUri,
-      role_name: admission.role_name,
-      attempt_id: admission.attempt_id,
-    })
-  }
-
   const cancelAdmission = (admission: AgentAdmission) => {
     if (!sessionUri || !admission.attempt_id) return
     onAgentAdmissionAction?.("session.agent_admission.cancel", {
@@ -1030,11 +1021,6 @@ export function Conversation({
                           onPutApiKey={onPutApiKey}
                           defaultProvider={admission.connection.provider || undefined}
                         />
-                      )}
-                      {admission.connection.kind === "api_key" && (
-                        <Button type="button" size="sm" onClick={() => completeAdmission(admission)}>
-                          完成 {admission.connection.label}
-                        </Button>
                       )}
                       {admission.attempt_id && (
                         <Button type="button" size="sm" variant="secondary" onClick={() => cancelAdmission(admission)}>

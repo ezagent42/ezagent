@@ -103,6 +103,7 @@ describe("credential-gated agent admission cards", () => {
     expect(html).toContain('data-world-agent-admission="llm"')
     expect(html).toContain('value="openai"')
     expect(html).toContain('readOnly=""')
+    expect(html).not.toContain("完成 配置 API key")
   })
 
   it("renders a retry affordance for a failed attempt and no card after admission", () => {
