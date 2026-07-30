@@ -78,6 +78,22 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
     def validate(_data), do: :ok
 
     @impl true
+    def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
+      if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(
+           config_dir,
+           agent_uri,
+           config_dir_namespace()
+         ) do
+        case File.rm_rf(config_dir) do
+          {:ok, _removed} -> :ok
+          {:error, reason, _path} -> {:error, reason}
+        end
+      else
+        {:error, :config_dir_path_mismatch}
+      end
+    end
+
+    @impl true
     def instantiate(_name, data, _workspace_uri) do
       agent_uri = Ezagent.URI.new!(Map.fetch!(data, "agent_uri"))
       config_dir = Map.fetch!(data, "allocated_config_dir")
