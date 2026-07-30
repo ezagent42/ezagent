@@ -1062,12 +1062,27 @@ Codex 指出 stub 不校验 update 的 `sha`、建分支时不继承 base 文件
 一致 —— 我独立实测过同样五组）；空 `file_changes` 被 `ensure_changes/1` 前置拒绝；
 四处调用点无漏传或参数错位；无新的 caps 或三层边界违规。
 
-### 仍待验证的怀疑（未修）
+### 那条怀疑已实测定性（2026-07-30，已修）
 
-`/contents` 的 `type` 未校验（可为 `file`/`dir`/`symlink`/`submodule`，LFS 另有语义）。
-`FileChange` 只允许普通文件 upsert，但 head 上**那个路径**可能是 symlink/submodule，
-其 `sha` 未必是普通 blob sha → 内容比对恒假 → fail-closed 卡住。需要 live probe 才能
-定性，本轮未做。
+推 symlink（mode `120000`）与 gitlink（mode `160000`）到探针仓库后按 API 读回，
+findings §8 有完整数据：
+
+- **symlink 无害** —— `sha` 仍是标准 blob sha（内容为目标路径字符串），比较天然正确，
+  且写普通文件时必然不等 → 正确判冲突。**不需要特例**，怀疑的这一半被推翻。
+- **submodule / dir 坐实** —— 返回 commit sha / tree sha。危险方向不是误判为相同（需
+  SHA-1 碰撞级巧合），而是**恒不相同** → 该路径被占据时永远报 `:head_ref_conflict`，
+  一个 fail-closed 死锁穿着并发冲突的外衣。
+
+已按 `type` 显式判定：`submodule`/`dir` → `:unwritable_path_kind` →
+`:invalid_file_change`。**缺失 `type` 视为 file**（旧实例可能不返回，缺失不构成证据）。
+读路径与写路径共用 `blob_sha/3`，所以两条路径同时受保护；变异验证杀死 2 条测试。
+
+### 又一次「同一行」陷阱
+
+修 `positional_uri_read` 时，我把解释性注释插到了 `# uri-canonical-allow:` 与
+`URI.parse/1` 之间 —— 而 `UriCanonicalizationInvariantTest` **按行匹配**该标记，于是
+豁免静默失效、gate 变红。两个 gate 对同一处代码有不同的形状要求：`uri_query.scan` 要
+字面量 scheme，`UriCanonicalizationInvariantTest` 要 allow 标记同行。已在代码里写明。
 
 ## 13. 未决 / 待人类决定
 

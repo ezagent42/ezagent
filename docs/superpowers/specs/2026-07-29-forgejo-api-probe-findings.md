@@ -408,3 +408,40 @@ curl -sS -x http://127.0.0.1:7890 "$A/pulls?state=open&limit=50"                
 **§2.2 待补：** 在目标实例上造两个同 base+head 的 PR（一 closed 一 open），
 复核 `/pulls/{base}/{head}` 在 15.0.5 上是否同样返回 closed 的那个。
 结论不变则 §2.4 直接落地；若 15.0.5 行为不同，§2.4 仍是安全选择，只是不再必需。
+
+---
+
+## 8. `/contents` 的 `type` 与 `sha` 语义（2026-07-30 实测）
+
+第三轮 review 提出怀疑：`/contents` 可返回 `file`/`dir`/`symlink`/`submodule`，adapter
+把任何字符串 `sha` 都当普通 blob sha 用，若非 blob 则内容比对恒假 → fail-closed 卡死。
+
+**实测方法**：git push 一个 symlink（mode `120000`）与一个 gitlink（mode `160000`）到
+探针仓库，再按 API 读回。（`POST /contents` 只能写普通文件、无法设 mode，所以必须走
+git push。）
+
+| path | `type` | `sha` | 是什么 | `content` |
+|---|---|---|---|---|
+| `link.md` | `symlink` | `42061c01a1…` | **标准 blob sha** —— 内容是目标路径字符串 `"README.md"`，本地 `sha1("blob 9\0README.md")` 逐字节一致 | `null`，另有 `target: "README.md"` |
+| `sub` | `submodule` | `103a556951…` | **被指向的 commit sha，不是 blob sha** | `null` |
+| `README.md` | `file` | `cdb8d0e600…` | 普通 blob sha | 填充 |
+
+### 结论：怀疑一半被推翻，一半坐实
+
+- **symlink 无害。** 它的 `sha` 仍是 blob sha，比较逻辑天然正确；我们写普通文件时它
+  必然不等 → 正确判冲突。**不需要特例。**
+- **submodule / dir 是真陷阱。** 返回 commit sha / tree sha，与 blob sha 同在 40 位 hex
+  命名空间。危险方向不是"误判为相同"（那需要 SHA-1 碰撞级巧合），而是**恒不相同** →
+  该路径被 submodule 占据时永远报 `:head_ref_conflict`，一个 fail-closed 死锁穿着
+  并发冲突的外衣。
+
+已按 `type` 显式判定，`submodule`/`dir` 归 `:unwritable_path_kind` →
+`:invalid_file_change`（构造错误，重试与远端变化都不会让它成功）。**缺失 `type` 视为
+file** —— 旧实例可能不返回该字段，缺失不构成"非 file"的证据。
+
+同一个 `blob_sha/3` 也服务写路径（`file_operations/2` 读每个路径决定 create-vs-update），
+所以首次执行同样受保护：往 submodule 上写普通文件原先会计划一个 `update`、把那个
+commit sha 当 blob sha 传出去。
+
+探针痕迹已清理（分支删除，查询 404）。
+

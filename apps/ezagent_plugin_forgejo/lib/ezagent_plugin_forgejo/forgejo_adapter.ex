@@ -508,10 +508,38 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
            token,
            req_opts()
          ) do
-      {:ok, %{"sha" => sha}} when is_binary(sha) -> {:ok, sha}
-      {:ok, _other} -> {:ok, nil}
-      {:error, :not_found} -> {:ok, nil}
-      {:error, marker} -> {:error, marker}
+      # `sha` does NOT mean the same thing for every `type` (measured on the
+      # target instance, swagger `ContentsResponse`):
+      #
+      #   file      -> blob sha of the content
+      #   symlink   -> blob sha of the TARGET PATH string -- still a blob sha, so
+      #                it compares correctly and simply will not equal a plain
+      #                file's content, which is the right answer
+      #   submodule -> the pointed-at COMMIT sha, not a blob sha at all
+      #   dir       -> a tree sha
+      #
+      # Returning a submodule's or a directory's sha as if it were a blob sha
+      # makes every comparison false, so a path occupied by one of them would
+      # report `:head_ref_conflict` forever -- a fail-closed wedge wearing a
+      # concurrency conflict's name. They get their own marker instead.
+      #
+      # An ABSENT `type` is treated as a file: older instances (and any shape
+      # this probe did not see) omit it, and absence is not evidence of a
+      # non-file.
+      {:ok, %{"type" => type, "sha" => _sha}} when type in ["submodule", "dir"] ->
+        {:error, :unwritable_path_kind}
+
+      {:ok, %{"sha" => sha}} when is_binary(sha) ->
+        {:ok, sha}
+
+      {:ok, _other} ->
+        {:ok, nil}
+
+      {:error, :not_found} ->
+        {:ok, nil}
+
+      {:error, marker} ->
+        {:error, marker}
     end
   end
 
@@ -679,6 +707,12 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # means different things per operation, so each call site supplies the
   # reading: a 403 on a repository read is a read denial, the same 403 on the
   # checks endpoint means checks are unavailable.
+  # A path occupied by a submodule or a directory where this run wants a plain
+  # file is a malformed request, not a provider fault and not a race: no retry
+  # and no remote change makes it succeed. Same stable code as the other
+  # file-operation construction errors (design §8).
+  defp map_error(:unwritable_path_kind, _operation, _kind), do: :invalid_file_change
+
   defp map_error({:provider_status, status}, operation, _kind),
     do: {:provider_request_failed, operation, status}
 

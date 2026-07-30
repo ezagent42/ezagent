@@ -703,6 +703,94 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
     end
 
+    # `/contents` returns four `type`s and the `sha` does NOT mean the same thing
+    # for all of them (measured on the target instance):
+    #
+    #   file     -> blob sha of the content
+    #   symlink  -> blob sha of the TARGET PATH string (still a blob sha)
+    #   submodule-> the pointed-at COMMIT sha, not a blob sha at all
+    #   dir      -> a tree sha
+    #
+    # Comparing a blob sha against a submodule's commit sha can only ever be
+    # false, so a path that is a submodule where this run wants a plain file
+    # would report `:head_ref_conflict` forever — a fail-closed wedge dressed up
+    # as a concurrency conflict. It must be a distinguishable error.
+    test "a submodule where we would write a file is a distinguishable error" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{"type" => "submodule", "sha" => String.duplicate("9", 40)})
+        )
+
+      stub(routes)
+
+      assert {:error, :invalid_file_change} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
+    # A symlink's sha IS a blob sha (of the target path), so no special case is
+    # needed for the comparison to be correct — it simply will not match a plain
+    # file's content, which is the right answer.
+    test "a symlink where we would write a file is a conflict, not a crash" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{
+            "type" => "symlink",
+            "target" => "README.md",
+            "sha" => blob_sha_of("README.md")
+          })
+        )
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
+    # A plain file with no `type` at all (older instance, or a shape this probe
+    # did not see) must still work: absence of the field is not evidence of a
+    # non-file.
+    test "a response without a type field is treated as a file" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{"sha" => blob_sha_of("hello\n")})
+        )
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
     # The resume window this check exists to serve: our own commit landed but
     # the response was lost. Every pinned field matches, so the write is
     # skipped rather than stacking a second content-identical commit.
@@ -942,6 +1030,26 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), [change], request!())
 
       assert_received :encoded_read
+    end
+
+    # `blob_sha/3` also serves the WRITE path (`file_operations/2` reads each path
+    # to choose create-vs-update), so the same discrimination protects a first
+    # execution: writing a plain file over a submodule would otherwise plan an
+    # `update` carrying that submodule's commit sha as if it were a blob sha.
+    test "a submodule on the write path is refused before any write" do
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{"type" => "submodule", "sha" => String.duplicate("9", 40)})
+        )
+
+      stub(routes)
+
+      assert {:error, :invalid_file_change} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
     end
 
     # `sha_required` means the adapter built a malformed file operation (an

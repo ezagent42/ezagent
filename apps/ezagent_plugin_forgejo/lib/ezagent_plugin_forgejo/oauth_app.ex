@@ -212,8 +212,6 @@ defmodule EzagentPluginForgejo.OAuthApp do
   defp validate_present(_value, error), do: {:error, error}
 
   defp validate_redirect_uri(value) when is_binary(value) do
-    # uri-canonical-allow: an OAuth redirect_uri is an external http(s) URL handed to a third-party provider, not an Ezagent-scheme URI — Ezagent.URI.new!/1 would reject every valid value.
-    #
     # The scheme is matched as a LITERAL per clause rather than with a
     # `scheme in [...]` guard. `mix ezagent.uri_query.scan` already exempts
     # external-URL reads, but it recognises them by a literal `scheme: "http"` /
@@ -221,6 +219,11 @@ defmodule EzagentPluginForgejo.OAuthApp do
     # scheme to a variable hides that from the detector and the read is reported
     # as `positional_uri_read`. Writing it the way the gate reads it keeps the
     # exemption honest instead of widening the rule.
+    #
+    # NB the `uri-canonical-allow` marker below must stay on the SAME LINE as the
+    # `URI.parse/1` call: `UriCanonicalizationInvariantTest` matches it per-line,
+    # so pushing it above an explanatory block silently loses the exemption.
+    # uri-canonical-allow: an OAuth redirect_uri is an external http(s) URL handed to a third-party provider, not an Ezagent-scheme URI — Ezagent.URI.new!/1 would reject every valid value.
     case URI.parse(value) do
       %URI{scheme: "https", host: host} when is_binary(host) and host != "" ->
         {:ok, value}
