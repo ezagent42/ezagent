@@ -20,7 +20,7 @@ defmodule Mix.Tasks.Ezagent.Session.RepairTemplateConfig do
 
     case args do
       [session_uri_str | _] when is_binary(session_uri_str) and session_uri_str != "" ->
-        session_uri = parse_session_uri!(session_uri_str)
+        session_uri = Ezagent.Session.MixTaskUriArg.parse_session_uri!(session_uri_str)
 
         workspace_uri =
           case Ezagent.Capability.workspace_of(session_uri) do
@@ -49,11 +49,4 @@ defmodule Mix.Tasks.Ezagent.Session.RepairTemplateConfig do
     end
   end
 
-  defp parse_session_uri!(str) do
-    case Ezagent.URI.parse(String.trim(str)) do
-      {:ok, %URI{scheme: "session"} = uri} -> uri
-      {:ok, %URI{} = other} -> Mix.raise("not a session URI: #{URI.to_string(other)}")
-      _ -> Mix.raise("bad session URI: #{inspect(str)}")
-    end
-  end
 end

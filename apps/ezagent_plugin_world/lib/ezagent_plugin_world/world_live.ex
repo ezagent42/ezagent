@@ -122,7 +122,7 @@ defmodule EzagentPluginWorld.WorldLive do
     # it does — no gate-on-subscribe race, no lock-out until reload. (F3.)
     socket
     |> assign(:current_session_uri, uri)
-    |> assign(:current_session_uri_str, LiveStateBuilder.encode_uri(uri))
+    |> assign(:current_session_uri_str, encode_uri(uri))
     |> ConversationSessionState.ensure_session_subscribed(uri)
     |> ConversationActions.self_join(uri)
     |> ConversationActions.push_members()
@@ -506,8 +506,10 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
-    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == LiveStateBuilder.encode_uri(agent_uri)
+    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
   end
+
+  defp encode_uri(uri), do: LiveStateBuilder.encode_uri(uri)
 
   @impl true
   def handle_event("world:navigate", %{"to" => to}, socket) when is_binary(to) do

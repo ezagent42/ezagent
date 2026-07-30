@@ -192,6 +192,24 @@ defmodule Ezagent.PluginCc.Provider do
   end
 
   @doc """
+  Template-data-shaped `ensure_api_key/2`: a session-template member is
+  ALWAYS launchable (its provider profile was already vetted at the
+  originating agent's own `ensure_api_key/2` call), else delegate to the
+  name-keyed gate above using the template's own `"provider"` value.
+  Shared by the custom-backend Template Classes (`CcCustomAgent` /
+  `CcHeadlessCustomAgent`) so the tmpl -> name adapter is defined once.
+  """
+  @spec ensure_api_key_for_template(map(), URI.t()) ::
+          :ok
+          | {:error, {:backend_api_key_missing, String.t(), URI.t()}}
+          | {:error, {:unknown_backend_profile, String.t(), URI.t()}}
+  def ensure_api_key_for_template(tmpl, %URI{} = agent_uri) when is_map(tmpl) do
+    if session_template_member?(tmpl),
+      do: :ok,
+      else: ensure_api_key(Map.fetch!(tmpl, @provider_key), agent_uri)
+  end
+
+  @doc """
   Per-profile credential status (the #160 normalized enum), env-backed:
   key set → `:authenticated`; unset → `:missing` with an operator-facing
   detail naming the ENV VAR (never the value); nil/unknown profile →

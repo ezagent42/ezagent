@@ -69,7 +69,13 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @recipe_grant_task => %{{:absorb_cap, 2} => 1},
     @orchestrator_caps => %{{:absorb_cap, 2} => 1},
     @composition_caps => %{{:absorb_cap, 2} => 1},
-    @member_cap => %{{:absorb_cap, 2} => 2},
+    # PR #1576 (Hello Template LLM rebase) — member_cap.ex's
+    # grant_agent_participation_at_join/2 (the socialware-materialized-agent
+    # at-join path) gained its own `Ezagent.Identity.absorb_cap/2` call site,
+    # alongside the two pre-existing sites in the private do-join helpers.
+    # Same VM-internal self-store facade, one more caller; not a new
+    # dispatch-construction path. 2 -> 3.
+    @member_cap => %{{:absorb_cap, 2} => 3},
     @workspace_facade => %{{:absorb_cap, 2} => 1},
     @target_authority => %{{:absorb_cap, 2} => 1},
     @host_login_adopt => %{{:absorb_cap, 2} => 1}
@@ -84,7 +90,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @recipe_grant_task => 1,
     @orchestrator_caps => 1,
     @composition_caps => 1,
-    @member_cap => 2,
+    @member_cap => 3,
     @identity_behavior => 3,
     @identity_facade => 2,
     @workspace_facade => 1,

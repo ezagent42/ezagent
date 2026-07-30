@@ -16,6 +16,7 @@ defmodule Ezagent.World.LiveStateBuilder do
   # change for callers outside WorldLive" shape as the rest of the LOC
   # burn-down campaign in `arch_baseline_manifest.exs`.
 
+  alias Ezagent.World.CommandPaletteData
   alias Ezagent.World.ConversationSessionState
 
   # Route pages derive synthetic single-slot layouts. The older persisted
@@ -298,7 +299,7 @@ defmodule Ezagent.World.LiveStateBuilder do
 
   @doc false
   def put_command_palette(state, socket) do
-    Map.put(state, "cmdk", Ezagent.World.CommandPaletteData.state(socket.assigns, "", false))
+    Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
   end
 
   @doc false
