@@ -23,6 +23,27 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
   @doc "Durably enroll principals before any generation bump begins."
   @spec enroll([URI.t() | String.t()]) :: :ok | {:error, term()}
   def enroll(uris) when is_list(uris) do
+    # #1627 B1-hybrid: the genesis admin (authority root) is structurally
+    # un-killable — an offboarding fence on it is a SOFT kill (it blocks the
+    # pre-epoch re-mint → boot crashes on the §3 seed). Reject enrolling the root.
+    if Enum.any?(uris, &admin_uri?/1) do
+      {:error, :root_authority_immutable}
+    else
+      do_enroll(uris)
+    end
+  end
+
+  defp admin_uri?(uri) do
+    Ezagent.URI.stable_key(uri_to_instance(uri)) ==
+      Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
+  rescue
+    _ -> false
+  end
+
+  defp uri_to_instance(%URI{} = uri), do: Ezagent.URI.instance(uri)
+  defp uri_to_instance(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance()
+
+  defp do_enroll(uris) do
     now = DateTime.utc_now()
 
     rows =

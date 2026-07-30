@@ -86,10 +86,20 @@ defmodule Ezagent.Identity.Cutover do
   @doc """
   The TRI-STATE cutover epoch resolution — `:active | :inactive | :unknown`.
 
-  Resolution order: the `:identity_cutover_active_override` app-env flag (test /
-  dev escape) wins when set (`true` ⇒ `:active`, `false` ⇒ `:inactive`);
-  otherwise the sticky `:persistent_term` cache (only ever holds the monotone
-  `true` ⇒ `:active`); then a fail-closed DB read.
+  Resolution order: the `:identity_cutover_active_override` app-env flag (a
+  COMPILE-TIME `MIX_ENV=test`-ONLY escape) wins when set (`true` ⇒ `:active`,
+  `false` ⇒ `:inactive`); otherwise the sticky `:persistent_term` cache (only ever
+  holds the monotone `true` ⇒ `:active`); then a fail-closed DB read.
+
+  ## The override is production-MONOTONE (#1627 MAJOR-3)
+
+  In a dev/prod/release build the override read is COMPILED OUT entirely
+  (`@override_seam = Mix.env() == :test`, the `:pre_epoch_remint_root_uri`
+  precedent), so a runtime/release application-config `false` can NEVER
+  de-activate a persisted/sticky-active epoch and re-open the pre-epoch re-mint
+  path. Only `MIX_ENV=test` honors the override (the suite drives the epoch
+  through it). Dev consequently runs the DB-backed epoch (pre-epoch until an
+  operator activates), a valid state that exercises the pre-epoch path.
 
   An UNREADABLE epoch resolves to `:unknown` (NOT `:inactive`) — see the
   moduledoc "Fail-CLOSED on an unreadable epoch". Every authorization-relevant
@@ -97,12 +107,27 @@ defmodule Ezagent.Identity.Cutover do
   as the legacy fallback that `:inactive` selects.
   """
   @spec status() :: :active | :inactive | :unknown
-  def status do
-    case Application.get_env(:ezagent_domain_identity, :identity_cutover_active_override, :unset) do
-      true -> :active
-      false -> :inactive
-      :unset -> runtime_status()
+  def status, do: override_or_runtime_status()
+
+  # The `:identity_cutover_active_override` read is COMPILE-TIME `MIX_ENV=test`-only
+  # (#1627 MAJOR-3): the branch-selected private clause means the override read is
+  # LITERALLY ABSENT from a dev/prod/release beam, so runtime/release config can
+  # never de-activate a persisted/sticky-active epoch. (Kept private + delegated
+  # so the public `status/0` retains its `@doc`/`@spec` — the source doc-scanner
+  # does not bridge a doc across a compile-time `if`; see the #189 PR-1 note in
+  # `arch_baseline_manifest.exs`.)
+  @override_seam Mix.env() == :test
+
+  if @override_seam do
+    defp override_or_runtime_status do
+      case Application.get_env(:ezagent_domain_identity, :identity_cutover_active_override, :unset) do
+        true -> :active
+        false -> :inactive
+        :unset -> runtime_status()
+      end
     end
+  else
+    defp override_or_runtime_status, do: runtime_status()
   end
 
   defp runtime_status do

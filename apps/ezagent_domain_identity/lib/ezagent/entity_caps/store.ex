@@ -220,6 +220,23 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   @doc """
+  The identity lifecycle status for `uri` as a FAIL-CLOSED result — distinguishing
+  a store read ERROR (`:error`) from a genuinely absent row (`{:ok, nil}`) via the
+  `fetch_result/1` precedent. `status/1` collapses a read error to `nil` (fails
+  OPEN, indistinguishable from absent). Callers that must treat an unreadable
+  revocation ledger as "deny" (e.g. `Ezagent.Identity.PreEpochRemint`'s eligibility
+  gate) use THIS, never `status/1`.
+  """
+  @spec status_result(URI.t() | String.t()) :: {:ok, status() | nil} | :error
+  def status_result(uri) do
+    case fetch_result(uri) do
+      {:ok, nil} -> {:ok, nil}
+      {:ok, %__MODULE__{identity_status: status}} -> {:ok, String.to_existing_atom(status)}
+      :error -> :error
+    end
+  end
+
+  @doc """
   The complete held-cap set for `uri` — ONLY when the row is `active`.
 
   A row in `revoked_unprovisioned` / `tombstoned` state yields `[]` (the URI

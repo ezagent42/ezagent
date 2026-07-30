@@ -375,7 +375,12 @@ defmodule EzagentCore.Umbrella.MixProject do
     end
 
     Mix.shell().info("==> ci.shard.#{name}: #{length(files)} test files")
-    Mix.Task.run("test", files)
+    # `--include real_boot_seed_path` un-excludes the tag-gated real-boot-seed
+    # regression (default-excluded in the session test_helper because it mutates
+    # the VM-global admin). It is carved into its OWN one-file `session_boot_seed`
+    # shard, so this global flag only ever activates that leg; every other shard
+    # has no such-tagged test and the flag is a no-op.
+    Mix.Task.run("test", files ++ ["--include", "real_boot_seed_path"])
   end
 
   # The three JS-asset dirs whose node_modules must exist before `precommit`'s

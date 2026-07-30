@@ -179,25 +179,37 @@ defmodule Ezagent.ActionSet.Identity do
     if Enum.any?(caps, &(Ezagent.Capability.action_of(&1) == :self_license)) do
       {:error, :self_license_already_present}
     else
-      with {:ok, type} <- Ezagent.URI.type(uri),
-           kind <- String.to_existing_atom(type),
-           requested <-
-             Ezagent.Capability.cap(
-               kind,
-               __MODULE__,
-               :self_license,
-               uri,
-               Ezagent.URI.workspace_of(uri)
-             ),
-           intent <- Ezagent.Cap.Grant.freeze(uri, uri, uri, requested),
-           {:ok, license} <- Ezagent.Cap.Authority.issue_self_license_current(intent),
-           licensed <- MapSet.put(caps, license) do
-        {:ok, licensed}
-      end
+      mint_self_license(caps, uri)
     end
   end
 
   defp maybe_mint_self_license(caps, _args), do: {:ok, caps}
+
+  @doc false
+  # The SINGLE sanctioned self-license constructor for the Identity carrier (Z-1
+  # construction ratchet: exactly this file + `self_license.ex`). Mints under the
+  # in-scope authority, so it is valid only inside the principal's own compartment:
+  # `create/1` and the pre-ready `activate/2` continuation (the latter via the
+  # gated `Ezagent.Identity.PreEpochRemint`) both run under `Kind.Server`'s
+  # `with_authority`.
+  @spec mint_self_license(Enumerable.t(), URI.t()) :: {:ok, MapSet.t()} | {:error, term()}
+  def mint_self_license(caps, %URI{} = uri) do
+    with {:ok, type} <- Ezagent.URI.type(uri),
+         kind <- String.to_existing_atom(type),
+         requested <-
+           Ezagent.Capability.cap(
+             kind,
+             __MODULE__,
+             :self_license,
+             uri,
+             Ezagent.URI.workspace_of(uri)
+           ),
+         intent <- Ezagent.Cap.Grant.freeze(uri, uri, uri, requested),
+         {:ok, license} <- Ezagent.Cap.Authority.issue_self_license_current(intent),
+         licensed <- MapSet.put(caps, license) do
+      {:ok, licensed}
+    end
+  end
 
   # #189 PR-3 cutover (Axis B — "re-read on restart", NEVER re-mint). A
   # NON-snapshot (`:ephemeral`) principal (the ExternalMirrorWorker) rebuilds an
@@ -264,6 +276,13 @@ defmodule Ezagent.ActionSet.Identity do
       if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
 
     state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
+
+    # Canary boot regression (deploy 30456630379): PRE-EPOCH restore the genesis
+    # admin's stale/absent self-license so the §3 boot seed authorizes. The
+    # security-sensitive, resurrection-proof eligibility predicate lives in
+    # `Ezagent.Identity.PreEpochRemint` (a no-op post-epoch / for every non-admin);
+    # BEFORE `persist_user_caps_after_marker` so it rides the fail-closed projection.
+    state = Ezagent.Identity.PreEpochRemint.remint(state, uri)
 
     with :ok <- persist_user_caps_after_marker(uri, state.caps),
          {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do

@@ -759,6 +759,20 @@ defmodule Ezagent.Lifecycle do
   end
 
   defp do_destroy(uri, reason) do
+    # #1627 B1-hybrid (codex r3 hardening 1): the genesis admin (authority root)
+    # is structurally un-killable. `do_destroy` retires the authority (deactivates
+    # it) + clears the `ever_created` marker — a SOFT KILL of the sole §3 boot-seed
+    # holder. Reject the root at THIS destroy chokepoint (before any hook / terminate
+    # / retire runs), so EVERY destroy caller (manage:delete, offboarding reaper,
+    # session teardown, …) is covered and the admin's authority row + marker stay
+    # intact. Destroy of any OTHER Kind is unaffected; `Ezagent.Kind.terminate`
+    # (used by the admin key-rotation refresh) is NOT destroy and keeps working.
+    if root?(uri),
+      do: {:error, :root_authority_immutable},
+      else: do_destroy_target(uri, reason)
+  end
+
+  defp do_destroy_target(uri, reason) do
     uri_str = Ezagent.URI.stable_key(uri)
 
     # 1. Run the developer destroy hooks against the live Kind (best-
@@ -800,6 +814,16 @@ defmodule Ezagent.Lifecycle do
       {:ok, pid} when is_pid(pid) -> pid == self()
       :error -> false
     end
+  end
+
+  # #1627 B1-hybrid (codex r3 hardening 1): the authority root (genesis admin) is
+  # structurally un-killable — `do_destroy` rejects it. Compared on the canonical
+  # instance URI's stable key, fail-closed to `false` (a bad URI is not the root).
+  defp root?(uri) do
+    Ezagent.URI.stable_key(canonical_instance_uri(uri)) ==
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
+  rescue
+    _ -> false
   end
 
   # Ask the live Kind.Server to drain each of its Lifecycle Behaviors'

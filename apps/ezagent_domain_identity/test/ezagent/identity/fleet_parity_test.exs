@@ -107,9 +107,12 @@ defmodule Ezagent.Identity.FleetParityTest do
     assert :ok = Ezagent.EntityCaps.UserStore.persist(admin, licensed)
     assert Store.status(admin) == :active
 
-    # Rotate the admin authority: the license is now STALE everywhere, but the
-    # store row is NOT re-mirrored — it stays `active` (a divergence).
-    assert {:ok, _} = Ezagent.Cap.Authority.regenesis(admin, :user)
+    # Rotate the admin authority WITHOUT re-minting (the only reachable stale-admin
+    # state post-#1627: an INTERRUPTED admin key-rotation — a bare `regenesis(admin)`
+    # is now rejected as the root is un-killable). The license is now STALE
+    # everywhere, but the store row is NOT re-mirrored — it stays `active` (a
+    # divergence the barrier must still flag).
+    assert {:ok, _} = Ezagent.Cap.Authority.rotate_root_generation(admin, :user)
     refute Store.has_current_self_license?(licensed, admin)
     assert Store.status(admin) == :active
 

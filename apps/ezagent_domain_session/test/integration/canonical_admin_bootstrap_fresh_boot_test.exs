@@ -36,9 +36,15 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
     fix mints the self-license + borns the authority anchor mid-issuance.
   * (b) the gate is NOT weakened — a NON-admin with an empty independent load is
     still `:holder_revoked` (the admin-only bootstrap never leaks to it).
-  * (c) the offboarding fence still WINS — a FENCED admin is denied even though
-    the fix would otherwise make it current (`principal_fenced?` is checked
-    first and wins).
+  * (c1) the admin is STRUCTURALLY un-fenceable (#1627 B1-hybrid) — an
+    offboarding fence on the root is a SOFT kill (it blocks the pre-epoch
+    re-mint → boot crashes on the §3 seed), so `RevocationFence.enroll([admin])`
+    is REJECTED and no NEW fence row can be set on the root.
+  * (c2) gates still HONOR a fence that exists — the un-killability work exempts
+    the admin from being *newly* fenced, NOT from *honoring* a fence: a fence
+    forced at the store level still denies the admin at the authorize gate
+    (`principal_fenced?` is checked first and wins over the currency the #195
+    bootstrap conferred).
   """
 
   use EzagentCore.DataCase, async: false
@@ -175,21 +181,41 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
              Ezagent.Cap.authorize(non_admin, [inline], needed_any())
   end
 
-  test "(c) fence wins: a FENCED admin is denied even though the fix would make it current" do
-    # Bootstrap the admin to currency (the fix path) FIRST, so the denial below
-    # can only come from the fence — not from a lack of currency.
+  test "(c1) the admin cannot be NEWLY fenced (structurally un-fenceable)" do
+    # #1627 B1-hybrid: an offboarding fence on the genesis admin is a SOFT kill
+    # (it blocks the pre-epoch re-mint → boot crashes on the §3 seed), so the
+    # sanctioned enroll path REJECTS the root and no fence row is created.
+    assert {:error, :root_authority_immutable} = RevocationFence.enroll([admin()])
+    refute RevocationFence.fenced?(admin())
+  end
+
+  test "(c2) fence still WINS at the gate: a fence that EXISTS denies the admin even though the fix made it current" do
+    # Bootstrap the admin to currency (the #195 fix path) FIRST, so the denial
+    # below can only come from the fence — not from a lack of currency.
     _ = Ezagent.Cap.authorization_context({:admin, admin()})
 
     refute Enum.empty?(Ezagent.Identity.read_held_caps(admin())),
            "precondition: the bootstrapped admin is current (non-empty held-cap load)"
 
-    :ok = RevocationFence.enroll([admin()])
+    # The admin is un-fenceable via `enroll` (c1), so FORCE a fence row at the
+    # STORE level (byte-identical to what `enroll` used to write) to prove the
+    # un-killability work did NOT exempt the admin from HONORING a fence that
+    # exists — only from having one newly set. `principal_fenced?` is the first
+    # element of the gate tuple and must still win over the currency the #195
+    # bootstrap conferred. The row rolls back with the sandbox.
+    assert {1, _} =
+             EzagentCore.Repo.insert_all(RevocationFence, [
+               %{
+                 principal_uri: Ezagent.URI.stable_key(admin()),
+                 enrolled_at: DateTime.utc_now(),
+                 cleared_at: nil
+               }
+             ])
+
     assert RevocationFence.fenced?(admin())
 
     inline = cap(kind: :any, behavior: :any, instance: :any, workspace_uri: :any)
 
-    # `principal_fenced?` is the first element of the gate tuple and wins over
-    # any currency the bootstrap conferred.
     assert {:error, :holder_revoked} =
              Ezagent.Cap.authorize(admin(), [inline], needed_any())
   end

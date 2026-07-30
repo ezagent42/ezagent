@@ -245,6 +245,18 @@ defmodule Ezagent.Cap do
   def revoke_all_to(%URI{} = target, %{} = ctx) do
     target = Ezagent.URI.instance(target)
 
+    # #1627 B1-hybrid: the genesis admin (authority root) is structurally
+    # un-killable — an early clear-error reject over the `Authority.regenesis/2`
+    # structural guarantee (which also rejects it). Rotate the root only via the
+    # atomic `mix ezagent.identity.rotate_admin` operator command.
+    if root_uri?(target) do
+      {:error, :root_authority_immutable}
+    else
+      do_revoke_all_to(target, ctx)
+    end
+  end
+
+  defp do_revoke_all_to(%URI{} = target, %{} = ctx) do
     with %URI{} = holder <- Map.get(ctx, :authenticated_principal),
          {:ok, pid} <- Ezagent.LocalRuntime.ensure_started(target),
          false <- pid == self() do
@@ -270,6 +282,14 @@ defmodule Ezagent.Cap do
       _ -> {:error, :authenticated_principal_required}
     end
   end
+
+  # The canonical genesis admin (authority root) — structurally un-killable.
+  defp root_uri?(%URI{} = uri) do
+    Ezagent.URI.stable_key(Ezagent.URI.instance(uri)) ==
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin))
+  end
+
+  defp root_uri?(_), do: false
 
   @doc """
   Return born-signed, receiver-bound artifacts that may enter a cap store.

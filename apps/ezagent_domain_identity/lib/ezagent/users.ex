@@ -236,22 +236,36 @@ defmodule Ezagent.Users do
     Ezagent.Lifecycle.with_entity_transition(uri, fn ->
       principal = uri |> uri_to_str() |> Ezagent.URI.new!() |> Ezagent.URI.instance()
 
-      case Repo.get_by(__MODULE__, uri: URI.to_string(principal)) do
-        nil ->
-          :ok
+      cond do
+        # #1627 B1-hybrid: the genesis admin (authority root) is structurally
+        # un-killable — deleting it (regenesis + delete users-row) would brick the
+        # sole §3 boot-seed holder. An early clear-error reject; `DeleteUser`'s
+        # `Authority.regenesis/2` would also reject the root, so the `users` row
+        # deletion is never reached either.
+        admin_uri?(principal) ->
+          {:error, :cannot_delete_admin}
 
-        row ->
-          if self_target?(principal) do
-            {:error, :cannot_self_destroy}
-          else
-            with :ok <- Ezagent.Identity.Offboarding.DeleteUser.invalidate(principal),
-                 :ok <- Ezagent.Identity.Offboarding.DeleteUser.cleanup(principal),
-                 {:ok, _deleted} <- Repo.delete(row) do
+        self_target?(principal) ->
+          {:error, :cannot_self_destroy}
+
+        true ->
+          case Repo.get_by(__MODULE__, uri: URI.to_string(principal)) do
+            nil ->
               :ok
-            end
+
+            row ->
+              with :ok <- Ezagent.Identity.Offboarding.DeleteUser.invalidate(principal),
+                   :ok <- Ezagent.Identity.Offboarding.DeleteUser.cleanup(principal),
+                   {:ok, _deleted} <- Repo.delete(row) do
+                :ok
+              end
           end
       end
     end)
+  end
+
+  defp admin_uri?(%URI{} = uri) do
+    Ezagent.URI.stable_key(uri) == Ezagent.URI.stable_key(Ezagent.Entity.User.admin_uri())
   end
 
   defp self_target?(principal) do

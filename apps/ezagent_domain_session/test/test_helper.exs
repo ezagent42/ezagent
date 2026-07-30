@@ -33,4 +33,7 @@ unless Code.ensure_loaded?(Ezagent.TestSupport.TemplateAgentSpawn) do
   Code.require_file("ezagent_template_agent_spawn.ex", support_root)
 end
 
-ExUnit.start()
+# `:real_boot_seed_path` tests drive the REAL boot seed and mutate VM-global
+# singletons (the genesis admin) — safe standalone, sibling-corrupting in the
+# shared suite. Excluded by default; run with `--include real_boot_seed_path`.
+ExUnit.start(exclude: [:real_boot_seed_path])

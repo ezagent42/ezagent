@@ -50,6 +50,18 @@
     {"e2e", ["/test/e2e/"]},
     {"actor", ["apps/ezagent_actor/test/"]},
     {"core", ["apps/ezagent_core/test/"]},
+    # Isolated ONE-file legs for the tag-excluded tests that mutate the VM-GLOBAL
+    # genesis admin (#1627). Each mutation (rotate-without-remint + escaping
+    # SessionTemplate persist; rotate + re-mint + terminate the live admin) corrupts
+    # sibling tests that depend on the live admin — AND each other — so each runs
+    # ALONE in its OWN BEAM + DB partition, carved BEFORE `session` (first-match-
+    # wins). `run_shard_tests` passes `--include real_boot_seed_path` so their
+    # `@moduletag :real_boot_seed_path` (excluded by default in the session
+    # test_helper) actually RUNS here.
+    {"session_boot_seed",
+     ["apps/ezagent_domain_session/test/integration/stale_admin_pre_epoch_seed_test.exs"]},
+    {"session_admin_rotation",
+     ["apps/ezagent_domain_session/test/integration/admin_key_rotation_test.exs"]},
     {"session", ["apps/ezagent_domain_session/test/"]},
     {"web", ["apps/ezagent_web/test/", "apps/ezagent_cli/test/"]},
     {"plugin_world", ["apps/ezagent_plugin_world/test/"]},

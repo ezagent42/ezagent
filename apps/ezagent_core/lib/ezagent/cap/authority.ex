@@ -83,8 +83,23 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
-  @spec retire(URI.t()) :: :ok
-  def retire(%URI{} = uri), do: KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
+  # STRUCTURAL root un-killability (#1627 B1-hybrid, codex r3 hardening 1).
+  # `retire` DEACTIVATES the active authority row (no re-mint) — a bare
+  # gen-retiring path. For the genesis admin that is a soft kill, so reject the
+  # root here: "retire the admin's authority" is then impossible from EVERY
+  # caller (restoring the stated invariant "every retire path funnels through the
+  # guard"). The destroy chokepoint (`Lifecycle.do_destroy`) rejects the admin
+  # target EARLIER, before any teardown, so no legitimate flow reaches here with
+  # the root and the `:ok`-matching callers never see the error — this reject is
+  # the structural belt for any future direct caller.
+  @spec retire(URI.t()) :: :ok | {:error, :root_authority_immutable}
+  def retire(%URI{} = uri) do
+    if root?(uri) do
+      {:error, :root_authority_immutable}
+    else
+      KindCapAuthority.retire_active(Ezagent.URI.stable_key(uri))
+    end
+  end
 
   @doc false
   @spec regenesis(URI.t(), atom(), map()) :: {:ok, t()} | {:error, term()}
@@ -110,6 +125,38 @@ defmodule Ezagent.Cap.Authority do
   @doc false
   @spec regenesis(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
   def regenesis(%URI{} = uri, kind_type) when is_atom(kind_type) do
+    # STRUCTURAL un-killability of the authority root (#1627 B1-hybrid). A BARE
+    # generation bump of the genesis admin is a REVOCATION — it strands the root's
+    # self-license at a retired generation with NO re-mint, bricking the sole §3
+    # boot-seed holder. EVERY bare gen-bump path funnels through here (`regenesis/3`
+    # → `/2`; `delete_user` → `/2`; the `revoke_all_to` handler → `/3` → `/2`), so
+    # rejecting the root here makes "deliberately-killed admin" an UNREACHABLE
+    # state. The ONLY sanctioned way to advance the root's generation is
+    # `rotate_root_generation/2` (the atomic admin key-rotation operator command,
+    # which re-mints the self-license in the SAME transaction — no stale-gen
+    # window). Genesis (`open(:created)` on historical) is a re-mint path, not a
+    # kill — it mints a fresh self-license in the same `create/1` — and is a
+    # separate function, not `regenesis`.
+    if root?(uri) do
+      {:error, :root_authority_immutable}
+    else
+      do_regenesis(uri, kind_type)
+    end
+  end
+
+  @doc false
+  # SANCTIONED root-authority rotation — the ONLY path that may advance the
+  # genesis admin's generation. Root-RESTRICTED (a non-root caller is rejected, so
+  # this can never degrade into a general `regenesis` bypass). The caller MUST
+  # re-mint the root's self-license under the returned authority in the SAME
+  # transaction; `Ezagent.Identity.AdminKeyRotation` is the sole caller and the
+  # Z-1 recredential ratchet enforces that.
+  @spec rotate_root_generation(URI.t(), atom()) :: {:ok, t()} | {:error, term()}
+  def rotate_root_generation(%URI{} = uri, kind_type) when is_atom(kind_type) do
+    if root?(uri), do: do_regenesis(uri, kind_type), else: {:error, :not_root_authority}
+  end
+
+  defp do_regenesis(uri, kind_type) do
     uri_string = Ezagent.URI.stable_key(uri)
 
     Repo.transaction(fn ->
@@ -280,6 +327,24 @@ defmodule Ezagent.Cap.Authority do
     _ -> true
   catch
     _, _ -> true
+  end
+
+  @doc """
+  Error-aware authority-history read: `{:ok, boolean()}` on a successful read,
+  `:error` on a read failure. Unlike `has_authority_history?/1` (which fails OPEN
+  — an unreadable history resolves to `true` so a genesis is never licensed on a
+  transient read error), callers that must FAIL CLOSED on an unreadable history
+  (e.g. `Ezagent.Identity.PreEpochRemint`, which permits a re-mint only for a
+  principal with confirmed authority history) use THIS and require `{:ok, true}`.
+  """
+  @spec has_authority_history_result?(URI.t()) :: {:ok, boolean()} | :error
+  def has_authority_history_result?(%URI{} = uri) do
+    {:ok,
+     uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() != []}
+  rescue
+    _ -> :error
+  catch
+    _, _ -> :error
   end
 
   @doc """
@@ -522,4 +587,9 @@ defmodule Ezagent.Cap.Authority do
 
   defp admin_uri, do: Ezagent.URI.user(:system, :admin)
   defp same_uri?(left, right), do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+
+  # The authority root — the canonical genesis admin, structurally un-killable
+  # (#1627 B1-hybrid). Hardcoded to `admin_uri/0` (no config seam).
+  defp root?(%URI{} = uri), do: same_uri?(uri, admin_uri())
+  defp root?(_), do: false
 end
