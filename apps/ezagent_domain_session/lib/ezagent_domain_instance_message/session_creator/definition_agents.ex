@@ -46,6 +46,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   > (which itself takes a plain name and re-derives the subject).
   """
 
+  require Logger
+
+  alias Ezagent.Agent.CredentialPrecondition
   alias Ezagent.Agent.RecipeMaterializer
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.ActionSet.Session.Members
@@ -70,10 +73,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   Returns `{:ok, summary}` where `summary` is
   `%{satisfied: [role_name], skipped: [%{role_name:, reason:}]}`.
 
-  Credential setup is deliberately outside this materialization path. Every
-  materialization failure halts the batch (`{:error, reason}`): duplicate role
-  names, unknown recipes, failed spawns, and failed joins are all surfaced to
-  the caller.
+  ## Skip vs fail (chain C, Allen 2026-07-10 / #1326)
+
+  A FILE-credential role slot (cc: OAuth `.credentials.json`) whose installer has
+  no resolvable credential source is SKIPPED, not fatal: it is logged, emitted as
+  telemetry, recorded on the session (`unfilled_agent_role_slots`), and the rest
+  of the batch continues. Creating it anyway produces an agent that boots "Not
+  logged in", never joins its transport bridge, and hangs at `:not_ready` forever
+  — a silent zombie member (see `check_credential_source/3` +
+  `Ezagent.Agent.CredentialPrecondition`). env-/slice-credential flavors
+  keyless-spawn by design (credentialless template membership — the credential
+  may still arrive through the cascade at cold spawn), so they are NOT gated here.
+
+  Every OTHER failure still halts the batch (`{:error, reason, partial}`): a
+  duplicate role name, an unknown recipe, a failed spawn/bind/join. Those are
+  bugs, not environment, and must not be swallowed as "skipped".
   """
   @type summary :: %{
           satisfied: [String.t()],
@@ -137,6 +151,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
                  {:ok, seen, [role_name | installed], skipped,
                   Map.put(role_members, role_name, agent_uri)}}
 
+              # Chain C — a credential-less FILE-flavor role is skipped, not
+              # fatal: the batch continues and the durable, user-facing record is
+              # written from `summary.skipped` by the caller.
+              {:skip, reason} ->
+                report_skip(session_uri, role_name, reason)
+
+                {:cont,
+                 {:ok, seen, installed,
+                  [%{role_name: role_name, reason: reason} | skipped], role_members}}
+
               {:error, reason} ->
                 partial = %{
                   satisfied: Enum.reverse(installed),
@@ -172,6 +196,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:error, _} = err ->
         err
     end
+  end
+
+  # LOUD, but not fatal. The durable, user-facing record is written by
+  # `SessionCreator.record_unfilled_role_slots/2` from the returned summary — a
+  # server log alone would be a silent drop at a user-facing surface (#9).
+  defp report_skip(session_uri, role_name, reason) do
+    Logger.error(
+      "socialware role slot #{inspect(role_name)} SKIPPED on " <>
+        "#{URI.to_string(session_uri)}: #{inspect(reason)} — the agent would boot " <>
+        "without credentials, never join its transport bridge, and hang at :not_ready. " <>
+        "The session is alive without this role."
+    )
+
+    :telemetry.execute(
+      @telemetry_prefix ++ [:skipped],
+      %{count: 1},
+      %{session_uri: session_uri, role_name: role_name, reason: reason}
+    )
   end
 
   defp materialize_one(session_uri, workspace_uri, granted_by, %{} = agent) do
@@ -234,6 +276,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
               :ok -> {:ok, agent_uri}
               {:error, _reason} = error -> error
             end
+
+          # Chain C — a credential-less FILE-flavor role is skipped (not spawned),
+          # so no post-materialize hooks run; propagate the skip to the batch loop.
+          {:skip, _reason} = skip ->
+            skip
 
           {:error, _reason} = error ->
             error
@@ -314,7 +361,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp spawn_fresh_at_planned_uri(
          session_uri,
-         _workspace_uri,
+         workspace_uri,
          granted_by,
          _agent,
          recipe,
@@ -324,7 +371,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          provider,
          planned_uri
        ) do
+    # #1201 A② + chain C (#1326) — BEFORE the spawn (whose #17 cascade resolves
+    # the installer's credential source), auto-adopt the HOST operator's login as
+    # that source (no-op for non-operators / credential-less flavors / login-less
+    # nodes), then gate FILE-credential roles on a resolvable source. Without a
+    # source a cc role can only boot "Not logged in": skip the slot rather than
+    # join a silent zombie member. Neither step copies credentials — the unchanged
+    # cascade inside `spawn_bound_agent` does that when a source resolves.
     with :ok <-
+           Ezagent.Agent.HostLoginAdopt.ensure_installer_source(
+             granted_by,
+             workspace_uri,
+             flavor
+           ),
+         :ok <- check_credential_source(granted_by, workspace_uri, flavor),
+         :ok <-
            spawn_bound_agent(
              session_uri,
              granted_by,
@@ -336,6 +397,22 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              provider
            ) do
       {:ok, planned_uri}
+    end
+  end
+
+  # Chain C gate, scoped to FILE-credential flavors ONLY (cc: OAuth
+  # `.credentials.json`). Such a role with no resolvable source is skipped rather
+  # than spawned into a "Not logged in" zombie. env-/slice-credential flavors are
+  # deliberately NOT gated here — they keyless-spawn by design (credentialless
+  # template membership; the credential may still arrive through the cascade at
+  # cold spawn). `CredentialPrecondition.check_source/4` stays the standalone
+  # predicate the other lanes call directly; gating on `credential_bearing?/1`
+  # here selects exactly its file branch.
+  defp check_credential_source(installer, workspace_uri, flavor) do
+    if CredentialPrecondition.credential_bearing?(flavor) do
+      CredentialPrecondition.check_source(installer, workspace_uri, flavor)
+    else
+      :ok
     end
   end
 
