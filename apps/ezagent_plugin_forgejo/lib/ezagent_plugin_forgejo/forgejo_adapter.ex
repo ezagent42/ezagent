@@ -144,8 +144,8 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
          {:ok, base, token} <- session(ctx, repo),
          env <- %{base: base, token: token, id: id, base_ref: base_ref, head_ref: head_ref},
          :ok <- verify_base(env, request),
-         :ok <- ensure_head(env, file_changes, request),
-         :ok <- ensure_commit(env, file_changes, request) do
+         {:ok, head} <- ensure_head(env, file_changes, request),
+         :ok <- ensure_commit(env, head, file_changes, request) do
       find_or_create_pull(env, request)
     end
   end
@@ -169,12 +169,26 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # THIS run's commit, and `POST /contents` is not idempotent (findings §3.3),
   # so re-sending it would stack a second, content-identical commit.
 
+  # Returns the state so `ensure_commit/4` does not have to re-derive it. The
+  # provenance check costs one read PER CHANGED FILE, and `ChangeLimits` allows
+  # 100 files, so re-running it here meant up to 200 serial reads on a resume
+  # instead of 100 — and every extra read is another chance for the transient
+  # failure that used to wedge the run.
   defp ensure_head(env, file_changes, request) do
     case head_state(env, file_changes, request) do
-      {:ok, :absent} -> create_branch(env, file_changes, request)
-      {:ok, :at_base} -> :ok
-      {:ok, :already_written} -> :ok
-      {:error, reason} -> {:error, reason}
+      # `create_branch/3` returns the state it ESTABLISHED, which is not always
+      # `:at_base`: its 409 path reconciles and may find the branch already
+      # carrying this run's commit. Hardcoding `:at_base` here discarded that and
+      # wrote a second, content-identical commit — `POST /contents` is not
+      # idempotent, so that is a real duplicate.
+      {:ok, :absent} ->
+        create_branch(env, file_changes, request)
+
+      {:ok, state} ->
+        {:ok, state}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -200,9 +214,11 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # it" -- and that is decided by comparing what a re-run WOULD produce,
         # never by assuming. Anything else is someone else's branch and must
         # not be resumed onto or force-moved.
-        if ours?(env, file_changes, commit, req),
-          do: {:ok, :already_written},
-          else: {:error, :head_ref_conflict}
+        case ours?(env, file_changes, commit, req) do
+          {:ok, true} -> {:ok, :already_written}
+          {:ok, false} -> {:error, :head_ref_conflict}
+          {:error, marker} -> {:error, map_error(marker, :create_change_request, :read)}
+        end
     end
   end
 
@@ -224,18 +240,28 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # -- it is second-precision and taken from the caller's `commit_date`, so a
   # foreign commit must coincide on title, both identities AND that exact
   # timestamp to be misread.
+  # Three-valued on purpose: `{:ok, true|false}` when the answer is known, and
+  # `{:error, marker}` when it could not be determined. Collapsing the third
+  # case into `false` reported "someone else's branch" for what was actually a
+  # failed read — and `:head_ref_conflict` is a TERMINAL blocker for the
+  # workflow, so one transient 5xx during a resume permanently wedged a run
+  # whose write had in fact landed. Design §8.3: a transport failure means the
+  # remote state is UNKNOWN, and unknown must not be answered as known.
   defp ours?(env, file_changes, commit, %CreateChangeRequest{
          title: title,
          commit_date: commit_date
        })
        when is_map(commit) do
-    String.trim(to_string(commit["message"] || "")) == String.trim(title) and
-      same_identity?(commit["author"]) and same_identity?(commit["committer"]) and
-      same_instant?(commit["timestamp"], commit_date) and
-      same_content?(env, file_changes)
+    metadata? =
+      String.trim(to_string(commit["message"] || "")) == String.trim(title) and
+        same_identity?(commit["author"]) and same_identity?(commit["committer"]) and
+        same_instant?(commit["timestamp"], commit_date)
+
+    # Metadata first: it costs nothing. Only a metadata match is worth N reads.
+    if metadata?, do: same_content?(env, file_changes, commit["id"]), else: {:ok, false}
   end
 
-  defp ours?(_env, _file_changes, _commit, _request), do: false
+  defp ours?(_env, _file_changes, _commit, _request), do: {:ok, false}
 
   # Metadata alone is NOT provenance. message, identity and date are all derived
   # from the RUN, so a second attempt carrying different `file_changes` shares
@@ -257,14 +283,32 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # tree read plus a local reimplementation of git tree hashing (mode bits,
   # entry ordering, submodules). Reaching it requires every metadata field to
   # coincide first. Recorded in design §12.4.
-  defp same_content?(env, file_changes) do
-    Enum.all?(file_changes, fn %FileChange{path: path, content: content} ->
-      case blob_sha(env, path) do
-        {:ok, sha} when is_binary(sha) -> sha == git_blob_sha(content)
-        _absent_or_error -> false
+  # Reads are pinned to `commit_id`, NOT to the branch name. The metadata came
+  # from one specific commit; a branch can advance between that read and each
+  # content read, and then every file can match individually while no single
+  # commit carries the whole expected set. Measured: `/contents` accepts a commit
+  # sha as `ref`.
+  #
+  # Stops at the first mismatch, so a foreign branch costs one read, not N.
+  defp same_content?(env, file_changes, commit_id) when is_binary(commit_id) do
+    Enum.reduce_while(file_changes, {:ok, true}, fn %FileChange{path: path, content: content},
+                                                    acc ->
+      case blob_sha(env, path, commit_id) do
+        {:ok, sha} when is_binary(sha) ->
+          if sha == git_blob_sha(content), do: {:cont, acc}, else: {:halt, {:ok, false}}
+
+        # Absent is a definite answer: a file this call would write is not there,
+        # so the commit is not this call's.
+        {:ok, nil} ->
+          {:halt, {:ok, false}}
+
+        {:error, marker} ->
+          {:halt, {:error, marker}}
       end
     end)
   end
+
+  defp same_content?(_env, _file_changes, _absent_commit_id), do: {:ok, false}
 
   # `sha1("blob <byte_size>\0" <> content)` — the git object id of a blob. Pure,
   # local, no request.
@@ -314,8 +358,9 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     body = %{new_branch_name: head_ref, old_ref_name: base_sha}
 
     case ForgejoClient.post(base, "/repos/#{id}/branches", token, body, req_opts()) do
+      # Freshly created at the verified base: writable, nothing on it yet.
       {:ok, _created} ->
-        :ok
+        {:ok, :at_base}
 
       # 409 from THIS endpoint means the branch appeared between the read and
       # the create -- a concurrent-creation race, benign. (`POST /contents`
@@ -336,13 +381,13 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
 
   # ── §7.1 step 6: the commit ──────────────────────────────────────────
 
-  defp ensure_commit(env, file_changes, request) do
-    case head_state(env, file_changes, request) do
-      {:ok, :already_written} -> :ok
-      {:ok, _writable} -> write_contents(env, file_changes, request)
-      {:error, reason} -> {:error, reason}
-    end
-  end
+  # Takes the state `ensure_head/3` already established. It used to call
+  # `head_state/3` a second time, which on a resume repeated the whole
+  # per-file provenance read.
+  defp ensure_commit(_env, :already_written, _file_changes, _request), do: :ok
+
+  defp ensure_commit(env, _writable, file_changes, request),
+    do: write_contents(env, file_changes, request)
 
   defp write_contents(
          %{base: base, token: token, id: id, head_ref: head_ref} = env,
@@ -379,7 +424,9 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # retrying the write here would stack a second commit; and looping would
         # spin against a branch someone else is actively moving.
         {:error, marker} when marker in [:file_exists, :branch_exists] ->
-          reconcile_head(env, file_changes, request, [:already_written])
+          with {:ok, _state} <-
+                 reconcile_head(env, file_changes, request, [:already_written]),
+               do: :ok
 
         # `sha_required` is NOT a concurrency signal: it means this adapter built
         # an `update` operation without the blob sha, which is an internal
@@ -409,7 +456,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # site can resume onto a foreign branch.
   defp reconcile_head(env, file_changes, request, accept) do
     case head_state(env, file_changes, request) do
-      {:ok, state} -> if state in accept, do: :ok, else: {:error, :head_ref_conflict}
+      {:ok, state} -> if state in accept, do: {:ok, state}, else: {:error, :head_ref_conflict}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -452,10 +499,12 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp create_op(%FileChange{path: path, content: content}),
     do: %{operation: "create", path: path, content: Base.encode64(content)}
 
-  defp blob_sha(%{base: base, token: token, id: id, head_ref: head_ref}, path) do
+  defp blob_sha(%{head_ref: head_ref} = env, path), do: blob_sha(env, path, head_ref)
+
+  defp blob_sha(%{base: base, token: token, id: id}, path, ref) do
     case ForgejoClient.get(
            base,
-           "/repos/#{id}/contents/#{encode_path(path)}?ref=#{URI.encode_www_form(head_ref)}",
+           "/repos/#{id}/contents/#{encode_path(path)}?ref=#{URI.encode_www_form(ref)}",
            token,
            req_opts()
          ) do
@@ -499,10 +548,14 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # exists for. It also downgraded a two-match ambiguity to a silent reuse when
   # the matches straddled a page boundary.
   @page_size 50
-  # A bound, not a guess: 20 pages x 50 = 1000 open PRs on one repository. Past
-  # that the read is refused rather than silently truncated -- a truncated list
-  # is indistinguishable from "no match" and would create a duplicate.
-  @max_pages 20
+  # The bound is in ITEMS, not pages, because the page length is the instance's
+  # choice: `max_response_items` can be lower than `@page_size`, and a
+  # page-counted cap then silently shrinks with it (20 pages x a 20-item cap =
+  # 380 reachable PRs, not the 1000 a page count suggests).
+  #
+  # Past the bound the read is REFUSED rather than truncated -- a truncated list
+  # is indistinguishable from "no match" and would create a duplicate PR.
+  @max_items 2_000
 
   defp open_pulls(%{base: base, token: token, id: id}),
     do: all_pages(base, token, "/repos/#{id}/pulls?state=open")
@@ -513,7 +566,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # why the cap REFUSES rather than returning what it has.
   defp all_pages(base, token, path), do: all_pages(base, token, path, 1, [])
 
-  defp all_pages(_base, _token, _path, page, _acc) when page > @max_pages,
+  defp all_pages(_base, _token, _path, _page, acc) when length(acc) >= @max_items,
     do: {:error, :provider_unavailable}
 
   defp all_pages(base, token, path, page, acc) do
@@ -605,10 +658,20 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     end
   end
 
+  # `Ezagent.URI.workspace_of/1` already derives the tenant URI from an entity
+  # URI. Rebuilding it as `"workspace://" <> name` duplicated that derivation in
+  # a plugin AND hand-assembled an Ezagent-scheme URI — which
+  # `mix ezagent.uri_query.scan` flags as
+  # `raw_cross_cutting_uri_construction`, because a hand-built URI skips the
+  # canonicalisation every reader assumes.
+  #
+  # `:any` means the owner is cross-workspace (`system://` or an unknown
+  # scheme). A credential lookup needs ONE concrete tenant, so that is refused
+  # rather than resolved against an arbitrary workspace.
   defp workspace_of(owner_uri) do
-    case Ezagent.URI.workspace_name(owner_uri) do
-      {:ok, workspace} -> {:ok, "workspace://" <> workspace}
-      :error -> {:error, :provider_account_not_connected}
+    case Ezagent.URI.workspace_of(owner_uri) do
+      %URI{} = workspace -> {:ok, URI.to_string(workspace)}
+      :any -> {:error, :provider_account_not_connected}
     end
   end
 

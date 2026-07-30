@@ -67,7 +67,20 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
     Req.Test.stub(@stub, fn conn ->
       key = {conn.method, conn.request_path}
+
+      # `?ref=` is recorded SEPARATELY so a test can assert which ref a read was
+      # bound to. Routing on `request_path` alone meant the content-provenance
+      # tests passed even if the code read `main`, or dropped `ref` entirely —
+      # the fixture answered the same sha regardless, so those tests proved
+      # nothing about the ref.
+      ref =
+        conn
+        |> Plug.Conn.fetch_query_params()
+        |> Map.fetch!(:query_params)
+        |> Map.get("ref")
+
       send(test_pid, {:request, key})
+      send(test_pid, {:read_ref, elem(key, 1), ref})
 
       case Map.get(routes, key) do
         nil -> Plug.Conn.resp(conn, 599, ~s({"message":"unstubbed #{inspect(key)}"}))
@@ -636,6 +649,60 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
     end
 
+    # The metadata came from ONE commit; the content must be read from THAT
+    # commit, not from the branch name. A branch can advance between the
+    # metadata read and each content read, and then every file can match
+    # individually while no single commit carries the whole expected set —
+    # `:already_written` would open a PR whose head contains something else.
+    test "content is read from the commit the metadata came from, not the branch" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      # The provenance read must be pinned to the commit id.
+      assert_received {:read_ref, "/api/v1/repos/#{@repo_id}/contents/docs/a.md", @head_sha}
+    end
+
+    # A read that FAILED is not evidence that the content differs. Collapsing
+    # both into "not ours" turns a transient 5xx or timeout during a resume into
+    # `:head_ref_conflict` — which the workflow treats as a terminal blocker,
+    # so one flaky read permanently wedges a run whose write actually landed.
+    # Design §8.3: a transport failure means the remote state is UNKNOWN.
+    test "a transient failure reading content is not reported as a conflict" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          status(503, ~s({"message":"upstream unavailable"}))
+        )
+
+      stub(routes)
+
+      assert {:error, {:provider_request_failed, :create_change_request, 503}} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
     # The resume window this check exists to serve: our own commit landed but
     # the response was lost. Every pinned field matches, so the write is
     # skipped rather than stacking a second content-identical commit.
@@ -732,10 +799,11 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
           fn conn ->
             :counters.add(counter, 1, 1)
 
-            # Reads 1 and 2 are `ensure_head` and `ensure_commit`, both before the
-            # write. A lands between read 2 and B's POST, so only read 3 — the
-            # one this fix adds, after the 422 — sees A's commit.
-            if :counters.get(counter, 1) <= 2 do
+            # Read 1 is `ensure_head`'s single head_state — `ensure_commit` no
+            # longer repeats it (that repeat was up to 100 extra content reads on
+            # a resume). A lands between that read and B's POST, so only read 2,
+            # the reconciliation after the 422, sees A's commit.
+            if :counters.get(counter, 1) <= 1 do
               Req.Test.json(conn, %{"name" => @head_ref, "commit" => %{"id" => @base_sha}})
             else
               Req.Test.json(conn, %{
@@ -757,6 +825,52 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
       # Without this the test would pass by never reaching the write at all.
       assert_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # Regression: collapsing `ensure_head`'s two reads into one made it return a
+    # hardcoded `:at_base` after a branch creation, which DISCARDED the 409
+    # path's finding that the branch already carried this run's commit — so the
+    # write ran again. `POST /contents` is not idempotent, so that is a real
+    # duplicate commit, not a no-op.
+    test "a 409 that reconciles to already-written does not write again" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      counter = :counters.new(1, [])
+
+      routes =
+        happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
+          fn conn ->
+            :counters.add(counter, 1, 1)
+
+            if :counters.get(counter, 1) == 1 do
+              Plug.Conn.resp(conn, 404, ~s({"message":"branch does not exist"}))
+            else
+              Req.Test.json(conn, %{
+                "name" => @head_ref,
+                "commit" => Map.put(ours, "id", @head_sha)
+              })
+            end
+          end
+        )
+        |> Map.put(
+          {"POST", "/api/v1/repos/#{@repo_id}/branches"},
+          jsonc(409, %{"message" => "The branch already exists."})
+        )
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
     end
 
     # The reconciliation must not become a way to resume onto someone else's

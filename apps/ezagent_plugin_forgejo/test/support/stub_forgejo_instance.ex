@@ -161,7 +161,10 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
         # double-execution assertions exist to catch.
         commit = commit_for(body)
         state = put_in(state.branches[branch], commit)
-        state = Enum.reduce(body["files"], state, &apply_file(&2, branch, &1))
+
+        state =
+          Enum.reduce(body["files"], state, &apply_file(&2, branch, commit["id"], &1))
+
         {{201, %{"commit" => %{"sha" => commit["id"]}}}, bump(state, :contents)}
     end
   end
@@ -273,12 +276,24 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
   defp identity(%{"name" => name, "email" => email}), do: %{"name" => name, "email" => email}
   defp identity(_absent), do: nil
 
-  defp apply_file(state, branch, file) do
-    put_in(state.files[{branch, file["path"]}], %{
+  # Stored under BOTH the branch name and the commit id, because real Forgejo
+  # resolves `?ref=` against any of branch / tag / commit sha (measured: reading
+  # a path at a commit sha returns that path's blob). Keying only by branch made
+  # a read pinned to a commit id a 404 — which the adapter reads as "the file
+  # this run would write is absent", i.e. not ours.
+  #
+  # Pinning provenance reads to the commit id is exactly the fix for the branch
+  # moving under a multi-file check, so the fixture has to be able to serve it.
+  defp apply_file(state, branch, commit_id, file) do
+    entry = %{
       "path" => file["path"],
       "sha" => git_blob_sha(file["content"]),
       "content" => file["content"]
-    })
+    }
+
+    state
+    |> put_in([Access.key!(:files), {branch, file["path"]}], entry)
+    |> put_in([Access.key!(:files), {commit_id, file["path"]}], entry)
   end
 
   # The REAL git object id: `sha1("blob <byte_size>\0" <> raw_bytes)`. Measured

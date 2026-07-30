@@ -32,6 +32,34 @@ disappear.
 CI shards need **no** manifest edit: the bare `apps/ezagent_plugin_` catch-all in
 `ci_shards.exs` auto-absorbs new plugin apps.
 
+### `mix ci.fast` 不是门禁（2026-07-30 实测）
+
+`ci.fast` 只有 4 步：`ecto.create/migrate` + `ezagent.check_invariants` + socialware
+conformance + `gate.arch`。**它不跑 `mix test`，也不跑 `ezagent.uri_query.scan`。**
+
+一个 PR 连着三轮外部 review 都拿 `ci.fast` EXIT=0 当"门禁绿"，结果带着两条真实的
+`uri_query.scan` 违规（手工拼 `"workspace://" <> name`、变量绑定的 `%URI{scheme:}`
+positional read），因为那条扫描属 `ci.local` 而不属 `ci.fast`。
+
+返回前至少补跑 `ci.local` 里 `ci.fast` 缺的这几步 + 受影响 app 的测试：
+
+```bash
+mix deps.unlock --unused
+mix format --check-formatted
+mix ezagent.uri_query.scan
+mix world.e2e.fixtures --check
+mix test apps/<affected>/test --timeout 300000
+```
+
+全仓 `mix test` 在本机跑不完（>10 分钟），所以按 app 跑受影响范围，别假装跑了全套。
+
+`uri_query.scan` 的两个易踩点：
+- 需要 Ezagent 方案 URI 时用 `Ezagent.URI.workspace/1` / `workspace_of/1`，**不要**
+  自己拼字符串 —— 手拼绕过了每个读者都假定的规范化
+- 读外部 http(s) URL 的 `%URI{}` 时，scheme 要写**字面量**（每个 scheme 一条子句）。
+  该 gate 本就为外部 URL 留了出口（`scan.ex` 的 `external_url_pattern?/1`），但只认
+  字面量；`when scheme in ["http","https"]` 会对探测器隐身而被报违规
+
 ### 测试替身比真实系统宽松 = 那个会失败的场景无法被表达（2026-07-30，同一 PR 内三次）
 
 外部对抗性 review 在 `ezagent_plugin_forgejo` 上连揪出三个缺陷，**根因是同一个**：

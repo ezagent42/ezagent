@@ -984,6 +984,91 @@ Codex 指出 stub 不校验 update 的 `sha`、建分支时不继承 base 文件
 ③ 这次的 base64 哈希）。共同形状是：**测试替身比真实系统宽松，于是它无法表达那个会
 失败的场景**。已记入 `.claude/skills/ezagent-developer/references/how-to-recipes.md`。
 
+## 12.5 第三轮 Codex review：内容比对引入了新问题（已修）+ 一个门禁盲区
+
+第三轮判定第三轮的改动"引入新问题"。四条确认缺陷全部核实属实并修复；另外**在修的过程中
+发现一个更严重的问题：我前三轮一直在用错的门禁**。
+
+### ① 内容读绑在可移动的分支名上（高，已修）
+
+元数据取自**某一个** commit，内容却按 `head_ref` 读。分支能在元数据读与各次内容读之间
+前进，于是每个文件可以各自命中期望内容，而**任何单个 commit 都不包含完整期望集合** ——
+仍判 `:already_written`，开出 head 内容错误的 PR。
+
+修：读绑定到 `commit["id"]`。实测坐实 `/contents` 接受 commit sha 作 `ref`。
+并改用 `reduce_while` 首个不符即停 —— 外来分支只花 1 次读而非 N 次。
+
+### ② 读失败被吞成"内容不符"（高，已修）
+
+`/contents` 的超时 / 429 / 5xx 全被 `Enum.all?` 折成 `false` → `:head_ref_conflict`。
+而 workflow 把它当**终态 blocker**（`blocker.ex:132`），所以一次瞬时读失败会把一个
+**写入其实已经成功**的 run 永久卡死。直接违反设计 §8.3「传输失败意味着远端状态未知」。
+
+修：`ours?/2` 改为三态 —— `{:ok, true|false}` 与 `{:error, marker}`。不知道就报错，
+由 `map_error` 归成可重试的 provider 错误，而不是冒充"不是我们写的"。
+
+### ③ 恢复路径实际是 2N 次读而非 N（中，已修）
+
+`ensure_head` 判定一次，`ensure_commit` 又完整重做一次。`ChangeLimits` 允许
+`max_files: 100`，所以一次恢复最坏 **200 次串行 GET**，且每次都是 ② 那种卡死的机会。
+
+修：`ensure_head/3` 返回它建立的状态，`ensure_commit/4` 直接消费，不再重判。
+
+**这处改动我自己引入了一个新 bug，被测试当场抓住**：我在 `ensure_head` 里硬编码返回
+`{:ok, :at_base}`，丢掉了 409 路径 reconcile 出的 `:already_written` → 会重复写入
+（`POST /contents` 不幂等，是真重复 commit）。改为让 `create_branch/3` 返回它建立的
+状态。已加回归测试并变异验证。
+
+### ④ 分页上限按页数计算，随实例页长缩水（中，已修）
+
+`@max_pages 20 × 请求的 50 = 1000` 是**算错的**：页长由实例的 `max_response_items`
+决定，配成 20 时实际可达量是 `19 × 20 = 380`，而非 1000。超限返回
+`:provider_unavailable`（fail-closed，不会造重复 PR），但文档承诺的容量是假的。
+
+修：上限改为按**条目**计（`@max_items 2_000`），与实例页长无关。
+
+### ⑤ 单元 stub 忽略 `?ref=`（低，已修）
+
+第三轮新增的三条内容 provenance 单测，**即使生产代码错误地去读 `main` 或完全漏掉
+`ref` 也会通过** —— fixture 按 `request_path` 路由，对任何 ref 都回同一个 sha。
+
+修：stub 把 `?ref=` 单独 `send` 给测试进程，新增测试断言读绑定到了 commit id。
+同时 `apply_file/2` 现在按 branch **和** commit id 双键存文件，因为真实 Forgejo 能按
+任意 ref 解析 —— 只按 branch 存会让"钉到 commit id 的读"变成 404。
+
+**这是「测试替身比真实系统宽松」的第四、第五次**（stub 只记 message → fixture 微秒恒
+0 → stub 存 base64 哈希 → stub 忽略 ref → stub 只按 branch 存文件）。
+
+### 门禁盲区：`ci.fast` 不含 `mix test`，也不含 URI 扫描
+
+修 ⑤ 时顺手跑了完整门禁，发现 **`mix ci.fast` 只有 4 步**（`ecto.create/migrate` +
+`ezagent.check_invariants` + socialware + `gate.arch`）—— **它不跑 `mix test`，也不跑
+`ezagent.uri_query.scan`**。后者属 `ci.local`。
+
+我前三轮一直把 `ci.fast` EXIT=0 当"门禁绿"，于是漏掉了两条真实违规：
+
+| 违规 | 内容 |
+|---|---|
+| `raw_cross_cutting_uri_construction` | 我手工拼 `"workspace://" <> name`，而 `Ezagent.URI.workspace_of/1` 本就能从 entity URI 派生出 tenant URI —— 既重造轮子，又绕过了每个读者都假定的规范化。已改用它，并把 `:any`（跨 workspace owner）显式拒绝 |
+| `positional_uri_read` | `%URI{scheme: scheme, host: host} when scheme in [...]`。该 gate **本就为外部 URL 留了出口**（`scan.ex` 的 `external_url_pattern?/1`），但只认**字面量** `scheme: "http"`/`"https"`；绑到变量就对探测器隐身了。已改为逐子句字面量匹配 —— 让豁免诚实，而不是加宽规则 |
+
+**教训**：`mix ci.fast` 是快速反馈，不是门禁。返回前应跑 `ci.local` 里 `ci.fast` 缺的那几步
+（`deps.unlock --unused` / `format --check-formatted` / `ezagent.uri_query.scan` /
+`world.e2e.fixtures --check`）+ 受影响 app 的测试。已记入项目 skill。
+
+### Codex 明确排除的
+
+`byte_size/1` 是字节数（UTF-8 / 空串 / NUL / LF / CRLF 五组与 `git hash-object` 完全
+一致 —— 我独立实测过同样五组）；空 `file_changes` 被 `ensure_changes/1` 前置拒绝；
+四处调用点无漏传或参数错位；无新的 caps 或三层边界违规。
+
+### 仍待验证的怀疑（未修）
+
+`/contents` 的 `type` 未校验（可为 `file`/`dir`/`symlink`/`submodule`，LFS 另有语义）。
+`FileChange` 只允许普通文件 upsert，但 head 上**那个路径**可能是 symlink/submodule，
+其 `sha` 未必是普通 blob sha → 内容比对恒假 → fail-closed 卡住。需要 live probe 才能
+定性，本轮未做。
+
 ## 13. 未决 / 待人类决定
 
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户

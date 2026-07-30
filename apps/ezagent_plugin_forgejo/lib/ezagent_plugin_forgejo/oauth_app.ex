@@ -213,9 +213,20 @@ defmodule EzagentPluginForgejo.OAuthApp do
 
   defp validate_redirect_uri(value) when is_binary(value) do
     # uri-canonical-allow: an OAuth redirect_uri is an external http(s) URL handed to a third-party provider, not an Ezagent-scheme URI — Ezagent.URI.new!/1 would reject every valid value.
+    #
+    # The scheme is matched as a LITERAL per clause rather than with a
+    # `scheme in [...]` guard. `mix ezagent.uri_query.scan` already exempts
+    # external-URL reads, but it recognises them by a literal `scheme: "http"` /
+    # `"https"` in the pattern (`scan.ex` `external_url_pattern?/1`); binding the
+    # scheme to a variable hides that from the detector and the read is reported
+    # as `positional_uri_read`. Writing it the way the gate reads it keeps the
+    # exemption honest instead of widening the rule.
     case URI.parse(value) do
-      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) ->
-        if host == "", do: {:error, :invalid_redirect_uri}, else: {:ok, value}
+      %URI{scheme: "https", host: host} when is_binary(host) and host != "" ->
+        {:ok, value}
+
+      %URI{scheme: "http", host: host} when is_binary(host) and host != "" ->
+        {:ok, value}
 
       _other ->
         {:error, :invalid_redirect_uri}
