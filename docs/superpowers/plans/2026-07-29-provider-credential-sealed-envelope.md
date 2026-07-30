@@ -12,6 +12,7 @@
 
 - Run every `mix` command from the umbrella root, never from inside an app directory — `cd apps/<app> && mix test` loads only that app's deps and produces fake `UndefinedFunctionError`s.
 - Postgres on this machine is port **15432**. Every test command needs `MIX_ENV=test POSTGRES_PORT=15432`.
+- **Every worktree needs its own `MIX_TEST_PARTITION`.** `config/test.exs:54` names the DB `ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}`, so two worktrees sharing the default suffix share one database — a table another branch migrated makes *this* branch's `PerTenantTablesHaveWorkspaceColumnTest` fail on a table its own code has never heard of. Export a distinct value (`MIX_TEST_PARTITION=_se` for the PR-1 worktree) and run `mix ecto.create && mix ecto.migrate` once.
 - `mix ci.fast` is the mandatory gate before every commit. Run it with an explicit long timeout (`timeout: 600000`). **A killed or timed-out run is NOT a pass.**
 - Format only touched files: `mix format <paths>`. Never run a repo-wide `mix format`.
 - Assertive access only: destructure in function heads (`def f(%{k: v})`), never `arg.k` on a value the compiler cannot see through. `PluginWorkspaceLocalityContractTest` enumerates `:unknown_value.<field>/0` and will fail the gate.
@@ -31,6 +32,24 @@ Two suites in scope are **flaky at the branch anchor**, verified by repeated run
 | `apps/ezagent_plugin_github/test` | intermittent single failure (~1 in 5 runs) | Treat a single failure as noise; re-run |
 
 Every seal/unseal call site touched by PR-1 is covered by the stable 325. So the guard net is valid for what this plan changes — but **do not claim "the domain suite is green"**, and never use `application_test.exs` to decide whether a change broke something.
+
+## Corrections found while executing PR-1 — apply these to PR-2
+
+PR-1 is done (`a7090e28b`). Three things this plan got wrong showed up during it:
+
+1. **Tasks 1–3 cannot be three commits.** `CrossFileDuplicateFnTest` counts duplicate function bodies repo-wide and `EffectBoundaryWrappingTest` counts AEAD `rescue` blocks per file. Extracting without switching the call sites leaves *three* copies of the crypto and *two* rescues, so the intermediate state legitimately trips both gates. Since "`ci.fast` EXIT=0 before every commit" is a Global Constraint here, extraction + both switches landed as ONE commit. **For PR-2, apply the same rule:** any task whose intermediate state duplicates code or moves a gated construct must commit together with the task that removes the old copy.
+
+2. **A gate that only scans a file list will not scan a new file.** `EffectBoundaryWrappingTest` iterates `Map.keys(@files)`. Setting the two old files to zero without adding `sealed_envelope.ex` to `@files` would have moved the rescue into a file nothing checks — a silent loss of coverage that looks like a passing gate.
+
+3. **After deleting a line range, diff the `defp` list against the anchor.** A range replacement in `reconciliation.ex` also removed the unrelated `callback_operation_class/1`, which line 91 still called. `mix compile --warnings-as-errors` did **not** catch it (a missing private function called from a live path is a runtime error, not a compile warning); the check that caught it was:
+
+```bash
+git show <anchor>:<file> | grep -oE "^  defp [a-z_]+[a-z_?]*" | sort -u > /tmp/before.txt
+grep -oE "^  defp [a-z_]+[a-z_?]*" <file> | sort -u > /tmp/after.txt
+diff /tmp/before.txt /tmp/after.txt   # must show ONLY the functions you meant to remove
+```
+
+Run that after every block deletion in PR-2.
 
 ---
 
