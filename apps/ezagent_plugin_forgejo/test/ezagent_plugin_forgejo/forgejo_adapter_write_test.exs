@@ -406,9 +406,14 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
         |> Map.put(
           elem(head_missing(), 0),
           elem(
+            # Every field `write_contents/3` pins. An earlier version of this
+            # fixture carried only message+author, which is why it kept passing
+            # while `ours?/2` compared the message alone.
             head_at(@head_sha, %{
               "message" => "Automated change",
-              "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+              "timestamp" => "2026-07-29T18:00:00+08:00",
+              "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+              "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
             }),
             1
           )
@@ -441,6 +446,380 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
 
       refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # The message alone is NOT a provenance criterion: a PR title is public and
+    # anyone can write a commit carrying it. Resuming onto such a branch would
+    # skip the write and open a PR pointing at SOMEONE ELSE'S content.
+    #
+    # The adapter pins `dates` and `author`/`committer` on every commit it
+    # writes, so a commit it authored carries all of them. Any one of them
+    # differing means the branch is not this run's.
+    test "a foreign commit that happens to share our title is still a conflict" do
+      foreign = %{
+        "message" => "Automated change",
+        "timestamp" => "2020-01-01T00:00:00Z",
+        "author" => %{"name" => "Someone Else", "email" => "other@invalid"},
+        "committer" => %{"name" => "Someone Else", "email" => "other@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, foreign), 1))
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    test "a foreign commit sharing our title AND identity but not our date is a conflict" do
+      foreign = %{
+        "message" => "Automated change",
+        "timestamp" => "2020-01-01T00:00:00Z",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, foreign), 1))
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
+    # The resume window this check exists to serve: our own commit landed but
+    # the response was lost. Every pinned field matches, so the write is
+    # skipped rather than stacking a second content-identical commit.
+    test "our own commit is recognised and the write is skipped" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T10:00:00Z",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
+
+      stub(routes)
+
+      assert {:ok, _result} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+  end
+
+  describe "concurrent identical runs converge" do
+    # Two identical runs race. A creates the branch and writes; B's
+    # `POST /branches` comes back 409. Re-reading only to ask "is it still at
+    # base?" makes B report a conflict against ITS OWN logical work — the run is
+    # deterministic, so A's commit is the one B would have written. B must go
+    # back through the full head reconciliation, recognise it, and converge.
+    test "a 409 on branch creation reconciles instead of assuming conflict" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T10:00:00Z",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      # Absent on the first read (B decides to create), advanced-and-ours after
+      # the 409 (A got there first).
+      counter = :counters.new(1, [])
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
+          fn conn ->
+            :counters.add(counter, 1, 1)
+
+            if :counters.get(counter, 1) == 1 do
+              Plug.Conn.resp(conn, 404, ~s({"message":"branch does not exist"}))
+            else
+              Req.Test.json(conn, %{
+                "name" => @head_ref,
+                "commit" => Map.put(ours, "id", @head_sha)
+              })
+            end
+          end
+        )
+        |> Map.put(
+          {"POST", "/api/v1/repos/#{@repo_id}/branches"},
+          jsonc(409, %{"message" => "The branch already exists."})
+        )
+        |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/contents"})
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # Same race one step later: both runs saw the file absent and planned a
+    # `create`; A landed first, so B's write returns file-exists 422. B must
+    # re-read and recognise A's commit as the one it would have produced.
+    test "a file-exists 422 reconciles instead of assuming conflict" do
+      ours = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T10:00:00Z",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      counter = :counters.new(1, [])
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
+          fn conn ->
+            :counters.add(counter, 1, 1)
+
+            # Reads 1 and 2 are `ensure_head` and `ensure_commit`, both before the
+            # write. A lands between read 2 and B's POST, so only read 3 — the
+            # one this fix adds, after the 422 — sees A's commit.
+            if :counters.get(counter, 1) <= 2 do
+              Req.Test.json(conn, %{"name" => @head_ref, "commit" => %{"id" => @base_sha}})
+            else
+              Req.Test.json(conn, %{
+                "name" => @head_ref,
+                "commit" => Map.put(ours, "id", @head_sha)
+              })
+            end
+          end
+        )
+        |> Map.put(
+          {"POST", "/api/v1/repos/#{@repo_id}/contents"},
+          jsonc(422, %{"message" => "repository file already exists [path: docs/a.md]"})
+        )
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      # Without this the test would pass by never reaching the write at all.
+      assert_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # The reconciliation must not become a way to resume onto someone else's
+    # branch: if the re-read shows a commit that is NOT ours, it is still a
+    # conflict.
+    test "reconciliation after a 409 still refuses a foreign commit" do
+      foreign = %{
+        "message" => "totally different",
+        "timestamp" => "2020-01-01T00:00:00Z",
+        "author" => %{"name" => "Someone", "email" => "other@invalid"},
+        "committer" => %{"name" => "Someone", "email" => "other@invalid"}
+      }
+
+      counter = :counters.new(1, [])
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
+          fn conn ->
+            :counters.add(counter, 1, 1)
+
+            if :counters.get(counter, 1) == 1 do
+              Plug.Conn.resp(conn, 404, ~s({"message":"branch does not exist"}))
+            else
+              Req.Test.json(conn, %{
+                "name" => @head_ref,
+                "commit" => Map.put(foreign, "id", @head_sha)
+              })
+            end
+          end
+        )
+        |> Map.put(
+          {"POST", "/api/v1/repos/#{@repo_id}/branches"},
+          jsonc(409, %{"message" => "The branch already exists."})
+        )
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+  end
+
+  describe "path and error classification" do
+    # `FileChange.valid_path?/1` admits `#`, `?` and `%`. Interpolated raw into
+    # the URL they are parsed as fragment/query, so the GET reads a DIFFERENT
+    # path (usually 404) -> the adapter plans a `create` -> Forgejo answers
+    # file-exists 422 against the real path in the JSON body -> the run reports
+    # a concurrency conflict for what is purely an encoding bug.
+    test "a path containing URI-reserved characters is encoded in the read" do
+      test_pid = self()
+      {:ok, change} = FileChange.new(%{path: "docs/a?b#c.md", operation: :upsert, content: "x"})
+
+      routes =
+        happy_path()
+        |> Map.delete({"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"})
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a%3Fb%23c.md"},
+          fn conn ->
+            send(test_pid, :encoded_read)
+            Plug.Conn.resp(conn, 404, ~s({"message":"object does not exist"}))
+          end
+        )
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), [change], request!())
+
+      assert_received :encoded_read
+    end
+
+    # `sha_required` means the adapter built a malformed file operation (an
+    # update without the blob sha). That is an INTERNAL construction error, not
+    # a concurrent branch move, and design §8 gives it a distinct stable code so
+    # the caller does not retry a request that can never succeed.
+    test "sha_required is invalid_file_change, not head_ref_conflict" do
+      routes =
+        happy_path()
+        |> Map.put(
+          {"POST", "/api/v1/repos/#{@repo_id}/contents"},
+          jsonc(422, %{"message" => "a SHA or commit ID must be provided in the request"})
+        )
+
+      stub(routes)
+
+      assert {:error, :invalid_file_change} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+    end
+
+    # These two DO mean the state read a moment ago is stale.
+    test "file_exists and branch_exists stay head_ref_conflict" do
+      for message <- ["repository file already exists [path: docs/a.md]", "branch already exists"] do
+        routes =
+          happy_path()
+          |> Map.put(
+            {"POST", "/api/v1/repos/#{@repo_id}/contents"},
+            jsonc(422, %{"message" => message})
+          )
+
+        stub(routes)
+
+        assert {:error, :head_ref_conflict} =
+                 ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+      end
+    end
+  end
+
+  describe "find-or-create across pages" do
+    # `GET /pulls` has no head/base filter (findings §2.1), so the match is made
+    # client-side over the open list. Reading only the first page turns "the PR
+    # is on page 2" into "there is no PR" and opens a SECOND one -- which is
+    # exactly the duplicate this whole find-or-create path exists to prevent.
+    test "finds the existing PR when it is not on the first page" do
+      target = %{
+        "number" => 7,
+        "html_url" => "https://#{@host}/#{@repo_id}/pulls/7",
+        "state" => "open",
+        "merged" => false,
+        "head" => %{"ref" => @head_ref, "sha" => @head_sha},
+        "base" => %{"ref" => "main"}
+      }
+
+      filler =
+        for n <- 1..50 do
+          %{
+            "number" => 100 + n,
+            "html_url" => "https://#{@host}/#{@repo_id}/pulls/#{100 + n}",
+            "state" => "open",
+            "head" => %{"ref" => "someone/else-#{n}"},
+            "base" => %{"ref" => "main"}
+          }
+        end
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+          fn conn ->
+            page =
+              conn
+              |> Plug.Conn.fetch_query_params()
+              |> Map.fetch!(:query_params)
+              |> Map.get("page", "1")
+              |> String.to_integer()
+
+            body = if page == 1, do: filler, else: if(page == 2, do: [target], else: [])
+            json(body).(conn)
+          end
+        )
+        |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/pulls"})
+
+      stub(routes)
+
+      assert {:ok, %{external_id: "7"}} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
+    end
+
+    # Two exact matches must stay a conflict even when they straddle a page
+    # boundary -- otherwise paging silently downgrades the ambiguity.
+    test "two exact matches on different pages are still a conflict" do
+      match = fn n ->
+        %{
+          "number" => n,
+          "html_url" => "https://#{@host}/#{@repo_id}/pulls/#{n}",
+          "state" => "open",
+          "merged" => false,
+          "head" => %{"ref" => @head_ref, "sha" => @head_sha},
+          "base" => %{"ref" => "main"}
+        }
+      end
+
+      page1 =
+        [match.(7)] ++
+          for(
+            n <- 1..49,
+            do: %{
+              "number" => 200 + n,
+              "html_url" => "https://#{@host}/#{@repo_id}/pulls/#{200 + n}",
+              "state" => "open",
+              "head" => %{"ref" => "other/#{n}"},
+              "base" => %{"ref" => "main"}
+            }
+          )
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+          fn conn ->
+            page =
+              conn
+              |> Plug.Conn.fetch_query_params()
+              |> Map.fetch!(:query_params)
+              |> Map.get("page", "1")
+              |> String.to_integer()
+
+            body = if page == 1, do: page1, else: if(page == 2, do: [match.(9)], else: [])
+            json(body).(conn)
+          end
+        )
+
+      stub(routes)
+
+      assert {:error, :change_request_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
     end
   end
 

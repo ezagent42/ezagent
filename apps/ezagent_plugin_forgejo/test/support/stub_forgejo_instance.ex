@@ -229,8 +229,23 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
       |> then(&:crypto.hash(:sha, &1))
       |> Base.encode16(case: :lower)
 
-    %{"id" => id, "message" => body["message"]}
+    # Records what a real Forgejo branch response carries (measured on the
+    # target instance): {id, message, timestamp, author, committer, ...}. An
+    # earlier version stored only id+message, which let a provenance check that
+    # compared the message ALONE keep passing — the fixture could not express a
+    # commit that shared a title but nothing else.
+    %{
+      "id" => id,
+      "message" => body["message"],
+      "timestamp" => get_in(body, ["dates", "author"]),
+      "author" => identity(body["author"]),
+      "committer" => identity(body["committer"])
+    }
   end
+
+  defp identity(%{name: name, email: email}), do: %{"name" => name, "email" => email}
+  defp identity(%{"name" => name, "email" => email}), do: %{"name" => name, "email" => email}
+  defp identity(_absent), do: nil
 
   defp apply_file(state, branch, file) do
     sha =

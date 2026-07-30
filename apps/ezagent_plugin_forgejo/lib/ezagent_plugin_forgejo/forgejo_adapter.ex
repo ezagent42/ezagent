@@ -85,6 +85,20 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     # latter returns the full re-run history — 56 entries across 17 contexts on
     # a single head, one context repeated 7 times — which would become several
     # `Check` records sharing a name and contradicting each other.
+    #
+    # NOT paginated here, unlike `list_reviews/3` and the PR list. This endpoint
+    # takes `page`/`limit` (target-instance swagger) but returns a single
+    # CombinedStatus OBJECT with the statuses nested inside, so what paging does
+    # to that object — slice the array and repeat the rollup, or something else
+    # — is unmeasured. The probe repository has no CI, so it could not be
+    # settled. Reading page 1 only is therefore a KNOWN residual limit: a head
+    # with more distinct contexts than the instance default page size would
+    # report a partial check list.
+    #
+    # To settle it: point a repo with >30 distinct status contexts at one head
+    # and compare `?page=1&limit=1` with the unpaginated response. If the
+    # statuses array slices, switch to the same all-pages read and merge on
+    # `context`, keeping the LAST entry per context.
     with {:ok, base, token} <- session(ctx, repo),
          {:ok, body} <-
            ForgejoClient.get(
@@ -105,14 +119,13 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         %RepositoryRef{external_id: id} = repo,
         %ChangeRequestId{external_id: external_id}
       ) do
+    # Paginated: `ListPullReviews` takes `page`/`limit` (target-instance
+    # swagger). A single GET returns only the first page, and the reviews it
+    # drops are the OLDEST -- which is exactly where an earlier blocking
+    # `REQUEST_CHANGES` sits, so truncation reads as "approved".
     with {:ok, base, token} <- session(ctx, repo),
          {:ok, body} <-
-           ForgejoClient.get(
-             base,
-             "/repos/#{id}/pulls/#{external_id}/reviews",
-             token,
-             req_opts()
-           ) do
+           all_pages(base, token, "/repos/#{id}/pulls/#{external_id}/reviews") do
       Normalize.reviews(body)
     else
       {:error, marker} -> {:error, map_error(marker, :list_reviews, :read)}
@@ -192,17 +205,55 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
 
   # The commit sha is a pure function of (parent, tree, message, author,
   # committer, dates) -- measured, findings §3.2. The adapter cannot compute it
-  # locally without implementing Git object hashing, but it holds every input,
-  # so comparing the fields it authored is an equivalent and sufficient test.
-  defp ours?(commit, %CreateChangeRequest{title: title}) do
-    String.trim(to_string(commit["message"] || "")) == String.trim(title)
+  # locally without implementing Git object hashing, so it compares every input
+  # it pinned when writing: `write_contents/3` sets `message`, `author`,
+  # `committer` and both `dates` from the request.
+  #
+  # The message ALONE is not a provenance criterion -- a change-request title is
+  # public, so anyone can author a commit carrying it. Matching on it alone was
+  # fail-open: a branch advanced by someone else whose message happened to equal
+  # our title read as `:already_written`, skipping the write and opening a PR
+  # that points at THEIR content. Every pinned field must match.
+  #
+  # `parents` is not available here: the branch endpoint's commit object carries
+  # {id, message, timestamp, author, committer, url, verification} and no parent
+  # list (measured on the target instance). The date is what carries the weight
+  # -- it is second-precision and taken from the caller's `commit_date`, so a
+  # foreign commit must coincide on title, both identities AND that exact
+  # timestamp to be misread.
+  defp ours?(commit, %CreateChangeRequest{title: title, commit_date: commit_date})
+       when is_map(commit) do
+    String.trim(to_string(commit["message"] || "")) == String.trim(title) and
+      same_identity?(commit["author"]) and same_identity?(commit["committer"]) and
+      same_instant?(commit["timestamp"], commit_date)
   end
+
+  defp ours?(_commit, _request), do: false
+
+  defp same_identity?(%{"name" => name, "email" => email}) do
+    %{name: expected_name, email: expected_email} = commit_identity()
+    name == expected_name and email == expected_email
+  end
+
+  defp same_identity?(_absent), do: false
+
+  # Compared as instants, not strings: Forgejo echoes the timestamp in the
+  # instance's own offset (`+08:00` observed), so a byte comparison against the
+  # UTC value the adapter sent would never match a commit it really wrote.
+  defp same_instant?(timestamp, %DateTime{} = commit_date) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, at, _offset} -> DateTime.compare(at, commit_date) == :eq
+      _unparsable -> false
+    end
+  end
+
+  defp same_instant?(_timestamp, _commit_date), do: false
 
   defp create_branch(
          %{base: base, token: token, id: id, head_ref: head_ref} = env,
          %CreateChangeRequest{
            expected_base_sha: %CommitSha{value: base_sha}
-         }
+         } = request
        ) do
     body = %{new_branch_name: head_ref, old_ref_name: base_sha}
 
@@ -211,15 +262,16 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         :ok
 
       # 409 from THIS endpoint means the branch appeared between the read and
-      # the create -- a concurrent-creation race, benign. Re-read and decide
-      # from what is actually there. (`POST /contents` reports the same
-      # situation as 422 -- two endpoints, two codes, measured.)
+      # the create -- a concurrent-creation race, benign. (`POST /contents`
+      # reports the same situation as 422 -- two endpoints, two codes, measured.)
+      #
+      # Re-read through the FULL reconciliation, not just "is it still at base?".
+      # The racing writer is usually the same logical run executing twice, so the
+      # commit now on the branch is the one this call would have produced;
+      # answering `:head_ref_conflict` on sight would make two identical runs
+      # fail to converge. `head_state/2` still refuses anything that is not ours.
       {:error, :conflict} ->
-        case branch(env, head_ref) do
-          {:ok, ^base_sha} -> :ok
-          {:ok, _advanced} -> {:error, :head_ref_conflict}
-          {:error, marker} -> {:error, map_error(marker, :create_change_request, :write)}
-        end
+        reconcile_head(env, request, [:at_base, :already_written])
 
       {:error, marker} ->
         {:error, map_error(marker, :create_change_request, :write)}
@@ -239,7 +291,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp write_contents(
          %{base: base, token: token, id: id, head_ref: head_ref} = env,
          file_changes,
-         %CreateChangeRequest{title: title, commit_date: commit_date}
+         %CreateChangeRequest{title: title, commit_date: commit_date} = request
        ) do
     with {:ok, files} <- file_operations(env, file_changes) do
       stamp = DateTime.to_iso8601(commit_date)
@@ -257,15 +309,62 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         {:ok, _written} ->
           :ok
 
-        # Both mean the state read a moment ago is already stale. Failing closed
-        # beats retrying into a loop against a branch someone else is moving.
-        {:error, marker} when marker in [:file_exists, :branch_exists, :sha_required] ->
-          {:error, :head_ref_conflict}
+        # The state read a moment ago is stale: someone wrote between the read
+        # and this call. Re-read once through the full reconciliation -- for two
+        # identical runs the writer was the other run, and its commit is the one
+        # this call would have produced, so the correct answer is to converge on
+        # it rather than to report a conflict. `head_state/2` still refuses a
+        # commit that is not ours, so this cannot resume onto a foreign branch.
+        #
+        # Re-read ONCE. `POST /contents` is not idempotent (findings §3.3), so
+        # retrying the write here would stack a second commit; and looping would
+        # spin against a branch someone else is actively moving.
+        {:error, marker} when marker in [:file_exists, :branch_exists] ->
+          reconcile_head(env, request, [:already_written])
+
+        # `sha_required` is NOT a concurrency signal: it means this adapter built
+        # an `update` operation without the blob sha, which is an internal
+        # construction error. Design §8 gives it its own stable code so a caller
+        # does not retry a request that cannot succeed no matter how the remote
+        # state moves.
+        {:error, :sha_required} ->
+          {:error, :invalid_file_change}
 
         {:error, marker} ->
           {:error, map_error(marker, :create_change_request, :write)}
       end
     end
+  end
+
+  # The single re-read both benign races converge through. `accept` differs by
+  # call site because the same state means different things:
+  #
+  #   * after a 409 from `POST /branches`, `:at_base` is the ordinary outcome --
+  #     the concurrent creator made the branch but has not written yet, so this
+  #     call proceeds and `ensure_commit/3` writes onto it;
+  #   * after a file-exists 422 from `POST /contents`, `:at_base` is
+  #     contradictory (a file cannot exist on a branch still at base) and
+  #     accepting it would report success for a write that never landed.
+  #
+  # `head_state/2` refuses a commit that is not ours in both cases, so neither
+  # site can resume onto a foreign branch.
+  defp reconcile_head(env, request, accept) do
+    case head_state(env, request) do
+      {:ok, state} -> if state in accept, do: :ok, else: {:error, :head_ref_conflict}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # `FileChange.valid_path?/1` admits `#`, `?` and `%`. Interpolated raw, they
+  # are parsed as fragment/query and the GET reads a DIFFERENT resource — which
+  # 404s, so the adapter plans a `create`, Forgejo answers file-exists 422
+  # against the real path in the JSON body, and an encoding bug surfaces as a
+  # concurrency conflict. Segments are encoded individually so `/` keeps its
+  # meaning as the path separator.
+  defp encode_path(path) do
+    path
+    |> String.split("/")
+    |> Enum.map_join("/", &URI.encode(&1, fn c -> URI.char_unreserved?(c) end))
   end
 
   # Forgejo has no upsert: `create` and `update` are exclusive and `update` must
@@ -297,7 +396,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp blob_sha(%{base: base, token: token, id: id, head_ref: head_ref}, path) do
     case ForgejoClient.get(
            base,
-           "/repos/#{id}/contents/#{path}?ref=#{URI.encode_www_form(head_ref)}",
+           "/repos/#{id}/contents/#{encode_path(path)}?ref=#{URI.encode_www_form(head_ref)}",
            token,
            req_opts()
          ) do
@@ -334,16 +433,49 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
 
   defp exact_match?(_pull, _env), do: false
 
-  defp open_pulls(%{base: base, token: token, id: id}) do
-    case ForgejoClient.get(
-           base,
-           "/repos/#{id}/pulls?state=open&limit=50",
-           token,
-           req_opts()
-         ) do
-      {:ok, pulls} when is_list(pulls) -> {:ok, pulls}
-      {:ok, _other} -> {:error, :provider_unavailable}
-      {:error, marker} -> {:error, marker}
+  # `GET /pulls` has no head/base filter (findings §2.1), so the match is made
+  # client-side over the whole open list -- which means the whole list has to be
+  # read. Stopping at the first page turned "the PR is on page 2" into "there is
+  # no PR" and opened a SECOND one, defeating the find-or-create this path
+  # exists for. It also downgraded a two-match ambiguity to a silent reuse when
+  # the matches straddled a page boundary.
+  @page_size 50
+  # A bound, not a guess: 20 pages x 50 = 1000 open PRs on one repository. Past
+  # that the read is refused rather than silently truncated -- a truncated list
+  # is indistinguishable from "no match" and would create a duplicate.
+  @max_pages 20
+
+  defp open_pulls(%{base: base, token: token, id: id}),
+    do: all_pages(base, token, "/repos/#{id}/pulls?state=open")
+
+  # Reads a paginated list endpoint to exhaustion. Every list endpoint this
+  # adapter touches takes `page`/`limit` (target-instance swagger), and for all
+  # of them a truncated read is indistinguishable from a short one -- which is
+  # why the cap REFUSES rather than returning what it has.
+  defp all_pages(base, token, path), do: all_pages(base, token, path, 1, [])
+
+  defp all_pages(_base, _token, _path, page, _acc) when page > @max_pages,
+    do: {:error, :provider_unavailable}
+
+  defp all_pages(base, token, path, page, acc) do
+    joiner = if String.contains?(path, "?"), do: "&", else: "?"
+    url = "#{path}#{joiner}limit=#{@page_size}&page=#{page}"
+
+    case ForgejoClient.get(base, url, token, req_opts()) do
+      {:ok, []} ->
+        {:ok, acc}
+
+      {:ok, items} when is_list(items) and length(items) < @page_size ->
+        {:ok, acc ++ items}
+
+      {:ok, items} when is_list(items) ->
+        all_pages(base, token, path, page + 1, acc ++ items)
+
+      {:ok, _other} ->
+        {:error, :provider_unavailable}
+
+      {:error, marker} ->
+        {:error, marker}
     end
   end
 

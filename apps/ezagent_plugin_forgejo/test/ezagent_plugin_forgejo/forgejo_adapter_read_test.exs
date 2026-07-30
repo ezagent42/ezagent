@@ -265,6 +265,46 @@ defmodule EzagentPluginForgejo.ForgejoAdapterReadTest do
                ForgejoAdapter.list_reviews(ctx(), repo!(), id)
     end
 
+    # `ListPullReviews` takes `page`/`limit` (target-instance swagger), so a
+    # single unpaginated GET silently drops everything past the first page —
+    # and the reviews it drops are the OLDEST, which is where an earlier
+    # blocking `REQUEST_CHANGES` would sit.
+    test "reads every page of reviews" do
+      review = fn id, login ->
+        %{
+          "id" => id,
+          "state" => "APPROVED",
+          "dismissed" => false,
+          "user" => %{"login" => login},
+          "submitted_at" => "2026-07-29T10:00:00Z"
+        }
+      end
+
+      stub(fn conn ->
+        page =
+          conn
+          |> Plug.Conn.fetch_query_params()
+          |> Map.fetch!(:query_params)
+          |> Map.get("page", "1")
+          |> String.to_integer()
+
+        body =
+          case page do
+            1 -> for n <- 1..50, do: review.(n, "user#{n}")
+            2 -> [review.(51, "last")]
+            _ -> []
+          end
+
+        Req.Test.json(conn, body)
+      end)
+
+      {:ok, id} = ChangeRequestId.new(%{external_id: "42"})
+
+      assert {:ok, reviews} = ForgejoAdapter.list_reviews(ctx(), repo!(), id)
+      assert length(reviews) == 51
+      assert Enum.any?(reviews, &(&1.author_label == "last"))
+    end
+
     test "no reviews is an empty list, not a failure" do
       stub(fn conn -> Req.Test.json(conn, []) end)
       {:ok, id} = ChangeRequestId.new(%{external_id: "42"})

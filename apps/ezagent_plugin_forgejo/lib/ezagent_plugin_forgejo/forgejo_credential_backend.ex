@@ -125,12 +125,13 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   # up in an empty vault.
   @impl true
   def replace(%{
+        workspace_uri: workspace_uri,
         credential_material: {:write_only_handoff, new_token},
         prior_credential_ref: prior_ref,
         expected_credential_version: expected_version
       })
-      when is_binary(prior_ref) do
-    CredentialRecord.replace(prior_ref, new_token, expected_version)
+      when is_binary(workspace_uri) and is_binary(prior_ref) do
+    CredentialRecord.replace(workspace_uri, prior_ref, new_token, expected_version)
   end
 
   @impl true
@@ -140,10 +141,15 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       })
       when is_binary(handoff_ref) do
     case :ets.take(@handoff_table, handoff_ref) do
-      [{^handoff_ref, replacement, target_ref}] ->
+      [{^handoff_ref, replacement, workspace_uri, target_ref}] ->
         # `:ets.take/2` is the one-use guarantee: a replayed replace finds
         # nothing and conflicts rather than re-applying a rotation.
-        CredentialRecord.replace(target_ref, replacement, expected_version)
+        #
+        # The workspace comes from the vault, not from the command: the domain's
+        # refresh-path `replace/1` (`refresh.ex:449`) carries no `workspace_uri`,
+        # so it is captured when the handoff is parked — at which point this
+        # module still knows which tenant's credential is being rotated.
+        CredentialRecord.replace(workspace_uri, target_ref, replacement, expected_version)
 
       [] ->
         {:error, :credential_conflict}
@@ -160,13 +166,22 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
     end
   end
 
+  # `workspace_uri` is REQUIRED here. The credential is the only thing this
+  # backend hands back in plaintext, so it is the one call that must not be
+  # satisfiable by holding a ref alone: a stale or mis-bound pointer carrying
+  # another tenant's ref would otherwise lease that tenant's access token.
+  # `CredentialSource` is the sole production caller and always knows the
+  # workspace — it selected the connection by it.
   @impl true
-  def lease_for_operation(%{credential_ref: ref}) do
-    case CredentialRecord.fetch_credential(ref) do
+  def lease_for_operation(%{workspace_uri: workspace_uri, credential_ref: ref})
+      when is_binary(workspace_uri) do
+    case CredentialRecord.fetch_credential(workspace_uri, ref) do
       {:ok, token} -> {:ok, %{credential: token, credential_ref: ref, expires_at: nil}}
       {:error, reason} -> {:error, reason}
     end
   end
+
+  def lease_for_operation(_command), do: {:error, :credential_conflict}
 
   @impl true
   def consume_lease(_command), do: :ok
@@ -198,14 +213,21 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
         scope_token: token,
         scope_binding_digest: digest
       }) do
-    case CredentialRecord.version(ref) do
-      {:ok, _version} ->
+    # The workspace is captured HERE, from the row itself, because the domain's
+    # follow-up `replace/1` on the refresh path carries none — and the rotation
+    # must land on the same tenant's row it was read from.
+    case CredentialRecord.workspace_of(ref) do
+      {:ok, workspace_uri} ->
         # `private` is backend-owned and never leaves this module: the domain
         # treats the RefreshUse as opaque and its Inspect impl is redacted. Only
         # the REF travels — the credential is read from the durable row inside
         # `consume_refresh_exchange/1`, so an exchange that is begun but never
         # consumed leaves neither plaintext nor ciphertext sitting in a struct.
-        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{ref: ref})}
+        {:ok,
+         RefreshUse.new(authority, token, digest, __MODULE__, %{
+           ref: ref,
+           workspace_uri: workspace_uri
+         })}
 
       {:error, reason} ->
         {:error, reason}
@@ -219,12 +241,12 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       when is_function(exchange, 1) do
     with __MODULE__ <- RefreshUse.backend(use),
          :ok <- consume_claim(use),
-         %{ref: ref} <- RefreshUse.private(use),
-         {:ok, credential} <- CredentialRecord.fetch_credential(ref),
+         %{ref: ref, workspace_uri: workspace_uri} <- RefreshUse.private(use),
+         {:ok, credential} <- CredentialRecord.fetch_credential(workspace_uri, ref),
          {:ok, refresh_token} <- refresh_token(credential) do
       case exchange.(%{current_credential: refresh_token}) do
         {:ok, :not_completed} -> {:ok, :not_completed}
-        {:ok, result} when is_map(result) -> seal_result(result, ref)
+        {:ok, result} when is_map(result) -> seal_result(result, workspace_uri, ref)
         {:error, reason} -> {:error, reason}
         _unexpected -> {:error, :provider_protocol_failed}
       end
@@ -285,6 +307,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
            expires_at: expires_at,
            provider_metadata: metadata
          } = result,
+         workspace_uri,
          target_ref
        )
        when map_size(result) == 5 and is_map(metadata) do
@@ -298,14 +321,14 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
        |> Map.delete(:replacement_credential)
        |> Map.put(
          :credential_material,
-         park_handoff(provider_result_ref, material, target_ref)
+         park_handoff(provider_result_ref, material, workspace_uri, target_ref)
        )}
     else
       _invalid -> {:error, :provider_protocol_failed}
     end
   end
 
-  defp seal_result(_result, _target_ref), do: {:error, :provider_protocol_failed}
+  defp seal_result(_result, _workspace_uri, _target_ref), do: {:error, :provider_protocol_failed}
 
   # The handoff is a REFERENCE to the replacement, not the replacement itself:
   # the sealed result travels back through the domain and the driver, and the
@@ -316,7 +339,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   # carries ONLY the reference (`refresh.ex:449`). Minting a reference without
   # parking anything behind it, as an earlier version did, made every rotation
   # unrecoverable: the reference itself was stored as if it were the token.
-  defp park_handoff(provider_result_ref, material, target_ref) do
+  defp park_handoff(provider_result_ref, material, workspace_uri, target_ref) do
     reference =
       {__MODULE__, provider_result_ref, material}
       |> :erlang.term_to_binary([:deterministic])
@@ -324,8 +347,8 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       |> Base.url_encode64(padding: false)
 
     # Stored unsealed: the vault is in-VM, single-use, and consumed within the
-    # same operation. `CredentialRecord.replace/3` seals it on the way to disk.
-    :ets.insert(@handoff_table, {reference, material, target_ref})
+    # same operation. `CredentialRecord.replace/4` seals it on the way to disk.
+    :ets.insert(@handoff_table, {reference, material, workspace_uri, target_ref})
     {:write_only_handoff, reference}
   end
 

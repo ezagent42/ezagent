@@ -236,7 +236,11 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
                  expected_credential_version: 1
                })
 
-      assert {:ok, %{credential: leased}} = Backend.lease_for_operation(%{credential_ref: ref})
+      assert {:ok, %{credential: leased}} =
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
 
       assert {:ok, %{"access_token" => "at-new", "refresh_token" => "rt-new"}} =
                Jason.decode(leased)

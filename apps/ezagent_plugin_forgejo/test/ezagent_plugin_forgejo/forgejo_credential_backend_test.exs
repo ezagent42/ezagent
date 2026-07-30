@@ -35,7 +35,10 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
       ref = store!()
 
       assert {:ok, %{credential: @pat, credential_ref: ^ref}} =
-               Backend.lease_for_operation(%{credential_ref: ref})
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
     end
 
     test "two stores yield distinct credential refs" do
@@ -70,11 +73,15 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
                Backend.replace(%{
                  prior_credential_ref: ref,
                  expected_credential_version: 1,
+                 workspace_uri: @ws,
                  credential_material: {:write_only_handoff, "rotated-pat"}
                })
 
       assert {:ok, %{credential: "rotated-pat"}} =
-               Backend.lease_for_operation(%{credential_ref: ref})
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
     end
 
     test "replacing with a stale version is refused and leaves the credential intact" do
@@ -84,10 +91,15 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
                Backend.replace(%{
                  prior_credential_ref: ref,
                  expected_credential_version: 7,
+                 workspace_uri: @ws,
                  credential_material: {:write_only_handoff, "should-not-land"}
                })
 
-      assert {:ok, %{credential: @pat}} = Backend.lease_for_operation(%{credential_ref: ref})
+      assert {:ok, %{credential: @pat}} =
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
     end
 
     test "replacing an unknown ref is a conflict" do
@@ -127,7 +139,10 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
       assert :ok = Backend.revoke(%{credential_ref: ref, idempotency_key: "k1"})
 
       assert {:error, :credential_conflict} =
-               Backend.lease_for_operation(%{credential_ref: ref})
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
     end
 
     test "revoking twice with the same key stays successful" do
@@ -171,7 +186,11 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackendTest do
       assert [] == :ets.lookup(:forgejo_credential_handoffs, "probe"),
              "the kill did not wipe process-owned ETS, so this test proves nothing"
 
-      assert {:ok, %{credential: @pat}} = Backend.lease_for_operation(%{credential_ref: ref})
+      assert {:ok, %{credential: @pat}} =
+               Backend.lease_for_operation(%{
+                 workspace_uri: "workspace://acme",
+                 credential_ref: ref
+               })
     end
   end
 end

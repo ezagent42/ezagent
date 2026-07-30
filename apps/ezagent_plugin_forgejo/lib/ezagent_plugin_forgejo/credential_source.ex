@@ -63,15 +63,21 @@ defmodule EzagentPluginForgejo.CredentialSource do
     }
 
     case Selector.select(scope) do
-      {:ok, %{credential_backend_ref: ref}} when is_binary(ref) -> lease(ref)
+      {:ok, %{credential_backend_ref: ref}} when is_binary(ref) -> lease(workspace_uri, ref)
       {:ok, _no_credential_pointer} -> {:error, :provider_account_not_connected}
       {:error, _reason} -> {:error, :provider_account_not_connected}
     end
   end
 
-  defp lease(ref) do
+  # The workspace travels with the ref. `Selector.select/1` already chose the
+  # connection by tenant, so passing it on means a mis-bound or stale pointer to
+  # ANOTHER tenant's credential reads as a miss instead of leasing their token.
+  defp lease(workspace_uri, ref) do
     with {:ok, %{credential: credential}} <-
-           ForgejoCredentialBackend.lease_for_operation(%{credential_ref: ref}),
+           ForgejoCredentialBackend.lease_for_operation(%{
+             workspace_uri: workspace_uri,
+             credential_ref: ref
+           }),
          {:ok, %{"access_token" => access}} when is_binary(access) and access != "" <-
            Jason.decode(credential) do
       {:ok, access}

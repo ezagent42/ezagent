@@ -737,6 +737,105 @@ Forgejo 侧单独修，GitHub 侧**故意保留 ETS**。
 
 ---
 
+## 12.2 Codex 对抗性 review 的六条缺陷（2026-07-30，全部已修）
+
+外部 review 按 `origin/main...HEAD` 全量审。六条确认缺陷 + 一条怀疑，全部核实属实
+并修复；怀疑那条经 swagger 实测后升级为确认。
+
+### 高严重度
+
+**① `ours?/2` 是 fail-open，注释与实现不符**（`forgejo_adapter.ex`）
+
+注释声称按 `(parent, tree, message, author, committer, dates)` 判定，代码只比了
+`message`。change request 标题是公开的，任何人都能写一个带该 message 的 commit →
+被判为 `:already_written` → 跳过写入 → 开出指向**别人内容**的 PR。
+
+修：比较 `write_contents/3` 钉下的**每一个**字段（message + author + committer +
+两个 date）。`parents` 拿不到 —— branch 端点的 commit 对象只有
+`{id, message, timestamp, author, committer, url, verification}`（实测），所以由
+秒级精度的 date 承担主要区分力。时间戳按**时刻**比较而非字符串：Forgejo 用实例本地
+偏移回显（实测 `+08:00`），字节比较会让自己写的 commit 也认不出来。
+
+此前的变异测试没抓住它，因为那条测试的外来 commit 用了**不同的 message**。stub 也
+只记录 `id`+`message`，根本无法表达"标题相同、其余不同"的 commit —— 已一并补全为
+真实响应形状。
+
+**② PR 查找只读第一页**
+
+`GET /pulls` 无 head/base 过滤（findings §2.1），匹配在客户端做，所以必须读全。
+停在第一页会把"PR 在第二页"读成"没有 PR"→ **重复建 PR**，正是 find-or-create 要
+防的；两个精确匹配跨页时还会把冲突降级为静默复用。
+
+修：读到尽，`@page_size 50` / `@max_pages 20`（1000 个 open PR 的硬上限）。超限
+**拒绝**而非返回已读部分 —— 截断的列表与"无匹配"不可区分，会造出重复 PR。
+
+**③ `forgejo_credentials` 的 `workspace_uri` 是装饰性的**
+
+fetch/version/replace/delete 全部只按 `credential_ref` 查，租户列不参与任何边界。
+而这张表登记在 `PerTenantTablesHaveWorkspaceColumnTest` 里，那条不变式的契约就是
+"跨租户读是 miss 而非泄漏"。
+
+修：
+- `fetch_credential/2` 与 `replace/4` 要求 `workspace_uri` 并纳入查询（`replace` 的
+  零命中经**收窄后**的重读区分 stale-version 与 absent）
+- `lease_for_operation/1` 要求 `workspace_uri`。这是唯一以明文交出凭证的调用，
+  `CredentialSource` 是其生产调用方且本就按 workspace 选中了 connection
+- refresh 链：`begin_refresh_exchange/1` 从行里捕获 workspace 放进 `RefreshUse`，
+  vault 一并存下 —— 因为 domain 的 refresh-path `replace/1`（`refresh.ex:449`）
+  不带 workspace，轮转必须落回同一租户的行
+- `version/1` **刻意不收窄**：`status/1` 与 `begin_refresh_exchange/1` 的命令都不带
+  workspace（`termination.ex:138`、`refresh.ex:449`），无可比对象；它只返回整数、
+  从不返回凭证材料
+
+### 中严重度
+
+**④ 两处 benign race 未回到完整 head reconciliation**
+
+`POST /branches` 的 409 只比"是否仍在 base"，`POST /contents` 的 file-exists 422
+直接判冲突。两个**相同**逻辑请求并发时，赢的那个写下的正是输的那个本该写的 commit，
+却互相报冲突、无法收敛。
+
+修：两处都走 `reconcile_head/3`，但**接受的状态不同** —— 409 后 `:at_base` 是常态
+（并发者建了分支尚未写，本次继续写）；file-exists 422 后 `:at_base` 自相矛盾（文件
+存在则分支不可能还在 base），接受它等于为没落地的写报成功。两处都仍由 `head_state/2`
+拒绝非本次的 commit，所以都不会接到别人的分支上。只重读**一次**：`POST /contents`
+不幂等，重试会叠第二个 commit。
+
+**⑤ 文件路径未做 URI 编码**
+
+`FileChange.valid_path?/1` 允许 `#`、`?`、`%`。原样插入 URL 后被解析成 fragment/
+query，GET 读到**别的**资源（通常 404）→ 计划 `create` → Forgejo 对 JSON body 里的
+真实路径回 file-exists 422 → 一个编码 bug 表现为并发冲突。
+
+修：按段编码（保留 `/` 的分隔语义）。
+
+### 低严重度
+
+**⑥ `sha_required` 被错误归入 `:head_ref_conflict`**
+
+它表示本 adapter 构造了缺 blob sha 的 `update` 操作 —— 是**内部构造错误**，不是并发
+信号。按设计 §8 单独归为 `:invalid_file_change`，调用方才不会去重试一个无论远端怎么
+变都不可能成功的请求。
+
+### 由怀疑升级为确认：读路径分页
+
+Codex 只提出怀疑（`list_reviews` 可能只读第一页）。**目标实例 swagger 实测坐实**
+三个列表端点都接受 `page`/`limit`：`ListPullReviews`、`ListPullRequests`、
+`/commits/{ref}/status`。
+
+`list_reviews/3` 已改为读到尽（与 PR 列表共用 `all_pages/3`）。丢掉的是**最旧**的
+review —— 早先那条阻断性的 `REQUEST_CHANGES` 恰好在那里，截断会读成"已批准"。
+
+`list_checks/3` **未改**，理由写在代码注释里：它返回单个 CombinedStatus **对象**、
+statuses 内嵌，分页对该对象做什么（切数组并重算 rollup？还是别的）未实测，而探针仓库
+没有 CI 无法测。已写明这是已知残留限制与其证伪方法。
+
+### Codex 明确未发现问题的部分
+
+凭证 CAS 的 WHERE 条件、`credential_ref` 的 AAD 绑定、两个 `replace/1` 子句顺序、
+`RefreshUse` 的不透明传递、caps 上下文对 task/caller/grantee/credential owner 的
+workspace 约束。
+
 ## 13. 未决 / 待人类决定
 
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户
