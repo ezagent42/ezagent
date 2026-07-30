@@ -4,6 +4,8 @@ defmodule Ezagent.EntityCapsTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.{Cap, Capability, EntityCaps, SnapshotStore}
+  alias Ezagent.EntityCaps.{Store, UserStore}
+  alias EzagentCore.Repo
 
   @workspace URI.new!("workspace://entity-caps")
   @issuer URI.new!("entity://entity-caps/user/issuer")
@@ -284,6 +286,72 @@ defmodule Ezagent.EntityCapsTest do
 
       assert {:error, :effective_caps_read_failed} =
                EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "malformed caps JSON in an active store row fails checked and effective reads closed" do
+      agent = agent_uri("effective-corrupt-store")
+
+      assert :ok = Store.persist(agent, licensed_caps(agent, [issued_cap(agent, :send)]))
+      assert Store.status(agent) == :active
+
+      assert {:ok, _row} =
+               agent
+               |> Store.fetch()
+               |> Ecto.Changeset.change(caps_json: "null")
+               |> Repo.update()
+
+      assert {:ok, []} = Store.fetch_durable_caps(agent)
+
+      assert {:ok, _row} =
+               agent
+               |> Store.fetch()
+               |> Ecto.Changeset.change(caps_json: "{malformed")
+               |> Repo.update()
+
+      assert {:error, :invalid_caps_json} = Store.fetch_durable_caps(agent)
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(agent)
+    end
+
+    test "malformed legacy user caps JSON fails checked and effective reads closed" do
+      user = user_uri("effective-corrupt-user")
+
+      assert {:ok, _user} =
+               Ezagent.Users.create(user, nil, licensed_caps(user, [issued_cap(user, :send)]))
+
+      assert {:ok, _row} =
+               Ezagent.Users
+               |> Repo.get_by(uri: URI.to_string(user))
+               |> Ecto.Changeset.change(caps_json: "null")
+               |> Repo.update()
+
+      assert {:ok, []} = UserStore.load_checked(user)
+
+      assert {:ok, _row} =
+               Ezagent.Users
+               |> Repo.get_by(uri: URI.to_string(user))
+               |> Ecto.Changeset.change(caps_json: "{malformed")
+               |> Repo.update()
+
+      Application.put_env(
+        :ezagent_domain_identity,
+        :identity_cutover_active_override,
+        false
+      )
+
+      on_exit(fn ->
+        Application.put_env(
+          :ezagent_domain_identity,
+          :identity_cutover_active_override,
+          true
+        )
+      end)
+
+      assert {:error, :invalid_caps_json} = UserStore.load_checked(user)
+
+      assert {:error, :effective_caps_read_failed} =
+               EntityCaps.effective_caps_persisted(user)
     end
   end
 

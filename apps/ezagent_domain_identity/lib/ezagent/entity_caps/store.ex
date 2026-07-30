@@ -275,10 +275,17 @@ defmodule Ezagent.EntityCaps.Store do
           {:ok, [Capability.t()]} | :absent | {:error, term()}
   def fetch_durable_caps(uri) do
     case fetch_result(uri) do
-      {:ok, nil} -> :absent
-      {:ok, %__MODULE__{identity_status: "active", caps_json: caps_json}} -> {:ok, decode_caps(caps_json)}
-      {:ok, %__MODULE__{}} -> {:ok, []}
-      :error -> {:error, :store_read_failed}
+      {:ok, nil} ->
+        :absent
+
+      {:ok, %__MODULE__{identity_status: "active", caps_json: caps_json}} ->
+        decode_caps_checked(caps_json)
+
+      {:ok, %__MODULE__{}} ->
+        {:ok, []}
+
+      :error ->
+        {:error, :store_read_failed}
     end
   end
 
@@ -1172,12 +1179,23 @@ defmodule Ezagent.EntityCaps.Store do
   defp decode_caps(""), do: []
 
   defp decode_caps(json) do
+    case decode_caps_checked(json) do
+      {:ok, caps} -> caps
+      {:error, :invalid_caps_json} -> []
+    end
+  end
+
+  defp decode_caps_checked(nil), do: {:ok, []}
+  defp decode_caps_checked(""), do: {:ok, []}
+
+  defp decode_caps_checked(json) do
     case Jason.decode(json) do
-      {:ok, caps} when is_list(caps) -> Enum.map(caps, &Capability.from_map/1)
-      _ -> []
+      {:ok, nil} -> {:ok, []}
+      {:ok, caps} when is_list(caps) -> {:ok, Enum.map(caps, &Capability.from_map/1)}
+      _ -> {:error, :invalid_caps_json}
     end
   rescue
-    _ -> []
+    _ -> {:error, :invalid_caps_json}
   end
 
   defp now_usec, do: DateTime.utc_now() |> DateTime.truncate(:microsecond)
