@@ -505,6 +505,188 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     refute Ezagent.Kind.alive?(candidate_uri)
   end
 
+  test "a queued newer completion wins after a stale candidate compensates", %{
+    session_uri: session_uri,
+    declarations: declarations,
+    credential_flavor: credential_flavor
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, first} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    stale_session = live_session("stale-compensation-#{System.unique_integer([:positive])}")
+    newer_session = live_session("newer-completion-#{System.unique_integer([:positive])}")
+    on_exit(fn -> terminate(stale_session) end)
+    on_exit(fn -> terminate(newer_session) end)
+
+    copy_declarations(stale_session, declarations)
+    copy_declarations(newer_session, declarations)
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} = AgentAdmission.defer(stale_session, llm_declaration)
+    assert {:ok, stale} = AgentAdmission.begin(stale_session, "llm", @owner_uri, caps)
+
+    assert {:ok, %{status: :pending_auth}} = AgentAdmission.defer(newer_session, llm_declaration)
+    assert {:ok, newer} = AgentAdmission.begin(newer_session, "llm", @owner_uri, caps)
+    newer_uri = Ezagent.URI.new!(newer.provisional_agent_uri)
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(session_uri, "llm", first.attempt_id, {@owner_uri, caps})
+
+    prior_fault = Application.get_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+    test_pid = self()
+
+    Application.put_env(:ezagent_domain_session, :agent_admission_put_joined_fault, fn current ->
+      if current.attempt_id == stale.attempt_id do
+        task =
+          Task.async(fn ->
+            Process.put({CredentialTemplate, :credential_status}, :authenticated)
+            send(test_pid, :newer_completion_queued)
+
+            AgentAdmission.complete(
+              newer_session,
+              "llm",
+              newer.attempt_id,
+              {@owner_uri, caps}
+            )
+          end)
+
+        send(test_pid, {:newer_completion_task, task})
+
+        receive do
+          :newer_joined_write_reached -> :ok
+        after
+          250 -> :ok
+        end
+
+        {:error, :injected_stale_join_failure}
+      else
+        send(test_pid, :newer_joined_write_reached)
+        :ok
+      end
+    end)
+
+    on_exit(fn ->
+      if is_nil(prior_fault) do
+        Application.delete_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+      else
+        Application.put_env(
+          :ezagent_domain_session,
+          :agent_admission_put_joined_fault,
+          prior_fault
+        )
+      end
+    end)
+
+    assert {:error, :injected_stale_join_failure} =
+             AgentAdmission.complete(stale_session, "llm", stale.attempt_id, {@owner_uri, caps})
+
+    assert_receive :newer_completion_queued
+    assert_receive {:newer_completion_task, task}
+    assert {:ok, %{status: :joined}} = Task.await(task, 10_000)
+
+    assert UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor) ==
+             URI.to_string(newer_uri)
+
+    assert SessionBehavior.role_name_to_uri(members_of(newer_session), "llm") == newer_uri
+  end
+
+  test "cleanup failure reapplies the candidate default source after restoration", %{
+    session_uri: session_uri,
+    declarations: declarations,
+    credential_flavor: credential_flavor
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, first} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    retry_session = live_session("cleanup-reapply-#{System.unique_integer([:positive])}")
+    on_exit(fn -> terminate(retry_session) end)
+    copy_declarations(retry_session, declarations)
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} = AgentAdmission.defer(retry_session, llm_declaration)
+    assert {:ok, candidate} = AgentAdmission.begin(retry_session, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(candidate.provisional_agent_uri)
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(session_uri, "llm", first.attempt_id, {@owner_uri, caps})
+
+    prior_fault = Application.get_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+
+    Application.put_env(:ezagent_domain_session, :agent_admission_put_joined_fault, fn current ->
+      if current.attempt_id == candidate.attempt_id do
+        :ok = Ezagent.Agent.CreationInventory.delete_winner(candidate_uri)
+        {:error, :injected_join_write_failure}
+      else
+        :ok
+      end
+    end)
+
+    on_exit(fn ->
+      if is_nil(prior_fault) do
+        Application.delete_env(:ezagent_domain_session, :agent_admission_put_joined_fault)
+      else
+        Application.put_env(
+          :ezagent_domain_session,
+          :agent_admission_put_joined_fault,
+          prior_fault
+        )
+      end
+    end)
+
+    assert {:error, {:injected_join_write_failure, :creation_attempt_not_found}} =
+             AgentAdmission.complete(
+               retry_session,
+               "llm",
+               candidate.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor) ==
+             URI.to_string(candidate_uri)
+
+    assert SessionBehavior.role_name_to_uri(members_of(retry_session), "llm") == candidate_uri
+    assert Ezagent.Kind.alive?(candidate_uri)
+
+    assert {:ok, :inserted} =
+             Ezagent.Agent.CreationInventory.record_exact(
+               EzagentCore.Repo,
+               candidate.attempt_id,
+               candidate_uri,
+               @owner_uri,
+               @workspace_uri
+             )
+
+    assert :ok =
+             DefinitionAgents.cleanup_provisional(
+               retry_session,
+               @owner_uri,
+               candidate_uri,
+               candidate.attempt_id,
+               actor_ctx(),
+               :test_cleanup
+             )
+  end
+
   test "admission record failure preserves cleanup failure evidence", %{
     session_uri: session_uri,
     declarations: declarations

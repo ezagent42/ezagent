@@ -173,3 +173,32 @@ mise exec -- mix test \
 
 12 tests, 0 failures
 ```
+
+## Compensation race regressions — 2026-07-30
+
+Two deterministic test seams now protect the compensation boundary.
+
+- The stale candidate's injected joined-write failure queues a newer completion
+  for the same `(owner, workspace, flavor)`. The newer completion is allowed to
+  run after stale compensation releases the default-source lock, and must be
+  the final pointer and the joined session member.
+- A joined-write failure deletes only the candidate's creation-inventory
+  winner, making provisional cleanup return `:creation_attempt_not_found` while
+  retaining valid candidate lineage. The test proves the old pointer was
+  restored first and then reapplied to the still-live, still-joined candidate.
+
+The cleanup assertion is RED against `f681d295^`: that implementation returns
+the cleanup failure immediately after restoration, leaving the prior source in
+place. It is GREEN with the reapply path. The queued-completion test is a
+precise conditional-compensation seam: its forced interleaving proves a stale
+compensator cannot overwrite a newer pointer. It also passes with the global
+lock wrapper removed because the guarded restore correctly observes the newer
+source and declines to overwrite it; the lock adds serialization, not the
+underlying last-writer protection.
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs
+
+14 tests, 0 failures
+```
