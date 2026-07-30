@@ -104,6 +104,57 @@ defmodule EzagentPluginKanban.KanbanManifestPublishTest do
     assert length(Enum.filter(DefinitionRegistry.list(other_ws), &(&1.name == "kanban"))) == 1
   end
 
+  test "#206: a stale deployed kanban dir (predating recipes.yaml) self-heals on the next boot seed — recipes resolve, no manual home wipe needed",
+       %{ws: ws} do
+    dir = Path.join(System.tmp_dir!(), "kanban-stale-#{System.unique_integer([:positive])}")
+    File.rm_rf!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    # Simulate a persistent deployment home (EZAGENT_HOME=/data, bind-mounted
+    # — survives a DB reset) that already materialized the kanban package
+    # BEFORE `recipes.yaml` shipped alongside it (manifest.yaml first shipped
+    # cd7f5a599 2026-07-08; recipes.yaml added later 2e46164d3 2026-07-16).
+    # `SocialwareSeed.seed!/1` used to skip the whole package dir once it
+    # existed, so a persisted home never picked up the new sibling file —
+    # this is the exact #206 shape ("fresh DB, stale home" on canary).
+    manifest_src =
+      Path.join(:code.priv_dir(:ezagent_web), "socialware_seed/kanban/manifest.yaml")
+
+    File.mkdir_p!(Path.join(dir, "kanban"))
+    File.cp!(manifest_src, Path.join(dir, "kanban/manifest.yaml"))
+    refute File.exists?(Path.join(dir, "kanban/recipes.yaml")),
+           "fixture must mirror the pre-recipes.yaml deployed state"
+
+    # Prove the failure (pre-fix) / success (post-fix) is genuinely
+    # attributable to the missing recipes.yaml file, not a warm
+    # RecipeRegistry cache left over from an earlier test/boot.
+    RecipeRegistry.invalidate(ws, "kanban-assistant")
+    RecipeRegistry.invalidate(ws, "dev-together")
+    :ok = RecipeRegistry.flush_cache()
+    assert :error = RecipeRegistry.lookup(ws, "kanban-assistant")
+    assert :error = RecipeRegistry.lookup(ws, "dev-together")
+
+    # The next boot's seed! call must reconcile the NEW recipes.yaml into the
+    # already-deployed dir (file-level, not directory-level idempotency) —
+    # the #206 fix. No manual home wipe required.
+    :ok = Ezagent.Home.SocialwareSeed.seed!(dest: dir)
+
+    assert File.exists?(Path.join(dir, "kanban/recipes.yaml")),
+           "seed! must add the NEW recipes.yaml to the already-deployed kanban dir"
+
+    # Prune sibling flagships seed! also materialized (autoservice / hello) —
+    # same reason `seed_kanban_only!/0` does below: this domain+kanban-only
+    # test env has not booted the plugins/recipes those siblings need.
+    for pkg <- File.ls!(dir), pkg != "kanban" do
+      File.rm_rf!(Path.join(dir, pkg))
+    end
+
+    assert [%{name: "kanban", result: :published}] =
+             ManifestSeed.scan_dir!(dir, source: "deploy")
+
+    assert {:ok, %{}, _object} = DefinitionRegistry.lookup(ws, "kanban")
+  end
+
   # Seed the shipped kanban deploy-seed package into a fresh temp deployment dir
   # (the exact `Ezagent.Home.SocialwareSeed.seed!/0` copy), then prune every
   # sibling flagship so only the kanban package is scanned.
