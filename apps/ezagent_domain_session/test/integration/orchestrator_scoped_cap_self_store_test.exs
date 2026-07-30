@@ -76,6 +76,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     assert_cascade_notification(first_notification, orchestrator_uri, 1)
     assert_cascade_notification(second_notification, orchestrator_uri, 2)
+    pending_before = pending_deliveries(orchestrator_uri)
     pending = pending_artifacts(orchestrator_uri)
 
     assert length(pending) == expected_cap_count()
@@ -85,6 +86,12 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
                cap.grantee_uri == orchestrator_uri and is_binary(cap.signature) and
                is_binary(cap.key_id)
            end)
+
+    assert :ok =
+             Caps.grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri)
+
+    assert Enum.map(pending_deliveries(orchestrator_uri), &{&1.id, &1.attempts}) ==
+             Enum.map(pending_before, &{&1.id, &1.attempts})
 
     refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
              Enum.any?(
@@ -122,18 +129,22 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   end
 
   defp pending_artifacts(uri) do
+    uri
+    |> pending_deliveries()
+    |> Enum.map(fn delivery ->
+      %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(delivery.payload, [:safe])
+      cap
+    end)
+  end
+
+  defp pending_deliveries(uri) do
     from(delivery in Delivery,
       where: delivery.target_uri == ^URI.to_string(uri),
       where: delivery.op == :absorb_cap,
       where: delivery.status == :pending,
-      order_by: [asc: delivery.id],
-      select: delivery.payload
+      order_by: [asc: delivery.id]
     )
     |> EzagentCore.Repo.all()
-    |> Enum.map(fn payload ->
-      %{op: :absorb_cap, cap: cap} = :erlang.binary_to_term(payload, [:safe])
-      cap
-    end)
   end
 
   defp pending_entries(uri) do

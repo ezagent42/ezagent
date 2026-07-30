@@ -109,7 +109,10 @@ defmodule Ezagent.Session.MemberCapMigration do
           {:ok, session_uri, principals, _owner} ->
             count +
               Enum.count(principals, fn principal ->
-                not holds_member_cap_exact?(principal, session_uri)
+                case holds_member_cap_exact?(principal, session_uri) do
+                  {:ok, held?} -> not held?
+                  {:error, _reason} -> true
+                end
               end)
 
           :skip ->
@@ -123,17 +126,26 @@ defmodule Ezagent.Session.MemberCapMigration do
   # --- per-member grant ------------------------------------------------------
 
   defp migrate_member(session_uri, member_uri, owner, dry_run?, acc) do
-    cond do
-      holds_member_cap_exact?(member_uri, session_uri) ->
+    case holds_member_cap_exact?(member_uri, session_uri) do
+      {:ok, true} ->
         %{acc | skipped_already_held: acc.skipped_already_held + 1}
 
-      dry_run? ->
+      {:ok, false} when dry_run? ->
         # Report intent without writing — NOT counted as granted (R3.2: only a
         # committed `:ok` counts).
         acc
 
-      true ->
+      {:ok, false} ->
         do_grant(session_uri, member_uri, owner, acc)
+
+      {:error, reason} ->
+        Logger.warning(
+          "MemberCapMigration: effective-cap read FAILED; grant skipped for " <>
+            "member=#{URI.to_string(member_uri)} on session=#{URI.to_string(session_uri)}: " <>
+            "#{inspect(reason)}"
+        )
+
+        acc
     end
   end
 
@@ -181,12 +193,17 @@ defmodule Ezagent.Session.MemberCapMigration do
     ws = Ezagent.Capability.workspace_of(session_uri)
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
-    member_uri
-    |> Ezagent.EntityCaps.load()
-    |> Enum.any?(fn
-      %Ezagent.Capability{} = cap -> Ezagent.Capability.identity_key(cap) == target_key
-      _ -> false
-    end)
+    case Ezagent.EntityCaps.effective_caps(member_uri) do
+      {:ok, caps} ->
+        {:ok,
+         Enum.any?(caps, fn
+           %Ezagent.Capability{} = cap -> Ezagent.Capability.identity_key(cap) == target_key
+           _ -> false
+         end)}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp granter_for(%URI{scheme: "entity"} = owner), do: {owner, false}
