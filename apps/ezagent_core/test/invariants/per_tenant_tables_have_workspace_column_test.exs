@@ -171,7 +171,13 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # workspace. `workspace_uri` is the FIRST component of the composite
     # primary key {workspace_uri, governed_host} and is always part of the
     # lookup, so a cross-tenant read is a miss rather than a leak.
-    {EzagentPluginForgejo.OAuthApp.Record, "forgejo_oauth_apps"}
+    {EzagentPluginForgejo.OAuthApp.Record, "forgejo_oauth_apps"},
+
+    # Forgejo credential custody made durable (was an ETS table that died with
+    # its owning process). A credential belongs to exactly one workspace, and
+    # `workspace_uri` is written on insert from the store command the
+    # provider-connection domain supplies.
+    {EzagentPluginForgejo.CredentialRecord, "forgejo_credentials"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`
