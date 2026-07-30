@@ -4,20 +4,13 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
   alias Ezagent.ProviderConnection.LocalAuthorizationBackend.Support
   alias Ezagent.ProviderConnection.AuthorizationBackendRecord
   alias Ezagent.ProviderConnection.AuthorizationAttempt
-  alias Ezagent.ProviderConnection.AuthorizationKeyRing
+  alias Ezagent.ProviderConnection.SealedEnvelope
   alias Ezagent.ProviderConnection.Connection
   alias Ezagent.ProviderConnection.DriverRegistry
   alias Ezagent.ProviderConnection.Operation
   alias Ezagent.ProviderConnection.ProviderAuthorizationCommand
   alias Ezagent.ProviderConnection.EffectBoundary
   alias EzagentCore.Repo
-  @tag_bytes 16
-  @fixture_enabled Application.compile_env(
-                     :ezagent_domain_provider_connection,
-                     :authorization_key_ring_fixture_enabled,
-                     false
-                   )
-  @key_id_pattern ~r/\A[a-zA-Z0-9._-]{1,64}\z/
 
   @doc false
   def reconcile(operation_id, attempt_ref)
@@ -323,7 +316,12 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
            seal_recovered_handoff(
              recovery.snapshot,
              normalized.credential_material,
-             Support.handoff_aad(recovery.row, recovery.command.correlation_id, handoff_ref, recovery.operation.operation_class)
+             Support.handoff_aad(
+               recovery.row,
+               recovery.command.correlation_id,
+               handoff_ref,
+               recovery.operation.operation_class
+             )
            ) do
       Repo.transaction(fn ->
         connection =
@@ -466,29 +464,10 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
         )
       )
 
-  defp seal_recovered_handoff(snapshot, value, aad) do
-    key_id = snapshot.active_key_id
-    key = Map.fetch!(snapshot.keys, key_id)
-    nonce = :crypto.strong_rand_bytes(12)
-    plaintext = :erlang.term_to_binary(value, [:deterministic])
-
-    {ciphertext, tag} =
-      :crypto.crypto_one_time_aead(
-        :aes_256_gcm,
-        key,
-        nonce,
-        plaintext,
-        Support.encode_aad(:credential_handoff, aad),
-        true
-      )
-
-    %{
-      key_id: key_id,
-      key_fingerprint: Support.sha256(key),
-      nonce: nonce,
-      ciphertext: <<tag::binary, ciphertext::binary>>
-    }
-  end
+  # The purpose stays hardcoded: this path only ever re-seals a credential
+  # handoff. Passing it in would let a caller choose, which this path must not.
+  defp seal_recovered_handoff(snapshot, value, aad),
+    do: SealedEnvelope.seal(snapshot, :active, :credential_handoff, value, aad)
 
   defp unseal_recovered_attempt(snapshot, envelope, aad),
     do: decrypt_recovery_envelope(snapshot, :authorization_attempt, envelope, aad)
@@ -496,128 +475,22 @@ defmodule Ezagent.ProviderConnection.LocalAuthorizationBackend.Reconciliation do
   defp unseal_recovered_callback(snapshot, envelope, aad),
     do: decrypt_recovery_envelope(snapshot, :authorization_callback, envelope, aad)
 
-  defp decrypt_recovery_envelope(
-         snapshot,
-         purpose,
-         %{key_id: key_id, key_fingerprint: fingerprint, nonce: nonce, ciphertext: blob},
-         aad
-       )
-       when is_binary(key_id) and is_binary(fingerprint) and is_binary(nonce) and
-              byte_size(nonce) == 12 and is_binary(blob) and byte_size(blob) >= @tag_bytes do
-    if purpose in [:authorization_attempt, :authorization_callback] do
-      with {:ok, key} <- Map.fetch(snapshot.keys, key_id),
-           true <- Support.sha256(key) == fingerprint do
-        <<tag::binary-size(@tag_bytes), ciphertext::binary>> = blob
+  # This allowlist is the RECOVERY path's own restriction and stays here.
+  # `SealedEnvelope` deliberately does not police purposes — it serves callers
+  # that legitimately open `:credential_handoff` (see `exchange.ex`). Centralising
+  # this would impose it on them; deleting it would let recovery decrypt a
+  # credential handoff, which is exactly the boundary it must not cross.
+  @recovery_purposes [:authorization_attempt, :authorization_callback]
 
-        case :crypto.crypto_one_time_aead(
-               :aes_256_gcm,
-               key,
-               nonce,
-               ciphertext,
-               Support.encode_aad(purpose, aad),
-               tag,
-               false
-             ) do
-          :error -> {:error, :authentication_failed}
-          plaintext -> {:ok, :erlang.binary_to_term(plaintext, [:safe])}
-        end
-      else
-        _error -> {:error, :authentication_failed}
-      end
+  defp decrypt_recovery_envelope(snapshot, purpose, envelope, aad) do
+    if purpose in @recovery_purposes do
+      SealedEnvelope.open(snapshot, purpose, envelope, aad)
     else
       {:error, :authentication_failed}
     end
-  rescue
-    _error -> {:error, :authentication_failed}
   end
 
-  defp decrypt_recovery_envelope(_snapshot, _purpose, _envelope, _aad),
-    do: {:error, :authentication_failed}
-
-  defp recovery_crypto_state do
-    with {:ok, state} <- parse_recovery_crypto_config(),
-         {:ok, validated} <- AuthorizationKeyRing.validated_fingerprint(),
-         true <- recovery_crypto_fingerprint(state) == validated do
-      {:ok, state}
-    else
-      _error -> {:error, :authorization_backend_unavailable}
-    end
-  end
-
-  defp parse_recovery_crypto_config do
-    config = Application.get_env(:ezagent_domain_provider_connection, AuthorizationKeyRing, [])
-
-    with {:ok, keys} <- load_recovery_keys(Keyword.get(config, :source), config),
-         active when is_binary(active) <- Keyword.get(config, :active_key_id),
-         true <- Regex.match?(@key_id_pattern, active),
-         true <- Map.has_key?(keys, active) do
-      {:ok, %{active_key_id: active, keys: keys}}
-    else
-      _error -> {:error, :authorization_backend_unavailable}
-    end
-  end
-
-  if @fixture_enabled do
-    defp load_recovery_keys(:explicit_test, config) do
-      case Keyword.get(config, :keys) do
-        keys when is_map(keys) -> validate_recovery_keys(Map.to_list(keys))
-        _other -> {:error, :invalid}
-      end
-    end
-  end
-
-  defp load_recovery_keys(:runtime_env, config) do
-    with json when is_binary(json) <- Keyword.get(config, :keys_json),
-         {:ok, %Jason.OrderedObject{values: pairs}} <-
-           Jason.decode(json, objects: :ordered_objects) do
-      Enum.reduce_while(pairs, {:ok, %{}}, fn {id, encoded}, {:ok, keys} ->
-        with true <- valid_recovery_key_id?(id),
-             {:ok, key} <- decode_recovery_key(encoded),
-             false <- Map.has_key?(keys, id) do
-          {:cont, {:ok, Map.put(keys, id, key)}}
-        else
-          _invalid -> {:halt, {:error, :invalid}}
-        end
-      end)
-    else
-      _error -> {:error, :invalid}
-    end
-  end
-
-  defp load_recovery_keys(_source, _config), do: {:error, :invalid}
-
-  if @fixture_enabled do
-    defp validate_recovery_keys(pairs) do
-      Enum.reduce_while(pairs, {:ok, %{}}, fn {id, key}, {:ok, keys} ->
-        case {valid_recovery_key_id?(id), is_binary(key) and byte_size(key) == 32,
-              Map.has_key?(keys, id)} do
-          {true, true, false} -> {:cont, {:ok, Map.put(keys, id, key)}}
-          _invalid -> {:halt, {:error, :invalid}}
-        end
-      end)
-    end
-  end
-
-  defp valid_recovery_key_id?(id),
-    do: is_binary(id) and Regex.match?(@key_id_pattern, id)
-
-  defp decode_recovery_key(encoded) when is_binary(encoded) do
-    case Base.decode64(encoded) do
-      {:ok, key} when byte_size(key) == 32 -> {:ok, key}
-      _invalid -> {:error, :invalid}
-    end
-  end
-
-  defp decode_recovery_key(_encoded), do: {:error, :invalid}
-
-  defp recovery_crypto_fingerprint(%{active_key_id: active, keys: keys}) do
-    keys
-    |> Enum.map(fn {id, key} -> {id, Support.sha256(key)} end)
-    |> Map.new()
-    |> then(&{active, &1})
-    |> :erlang.term_to_binary([:deterministic])
-    |> Support.sha256()
-  end
+  defp recovery_crypto_state, do: SealedEnvelope.snapshot()
 
   defp callback_operation_class("initial_bind"), do: "store"
   defp callback_operation_class("reauthorize"), do: "replace"
