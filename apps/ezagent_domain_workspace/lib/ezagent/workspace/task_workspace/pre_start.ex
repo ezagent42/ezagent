@@ -64,10 +64,25 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   end
 
   def complete({id, start_token}, {:ok, %{workers: [_agent_uri], fresh?: false}}) do
-    case Store.release_start(id, start_token) do
-      {:ok, _ready} -> {:error, :sidecar_start_not_fresh}
-      {:error, reason} -> {:error, reason}
-    end
+    release_as_not_fresh(id, start_token)
+  end
+
+  # #201/red② — `Ezagent.Entity.Agent.TemplateSpawn.spawn_after_cascade/8`
+  # pre-converts the benign adopt-rejection outcome (`{:ok, %{fresh?: false}}`
+  # — "the loser keeps NOTHING, it minted nothing") into
+  # `{:error, :agent_uri_already_live}` BEFORE calling this callback, so in
+  # production the `{:ok, %{fresh?: false}}` clause above never actually
+  # fires — only this shape does. Route it through the SAME zero-side-effect
+  # path as that clause: the sidecar claim releases back to `:ready` for the
+  # surviving live worker, instead of falling through to the generic
+  # `{:error, _reason}` clause below, which would `fail_start` it into
+  # `:cleanup_pending` as if a real start had failed (main full-suite red②).
+  #
+  # Matches ONLY this literal atom — a genuine start failure (any other
+  # reason) still falls through to the generic clause and gets `fail_start`'d,
+  # so a real failure can never be misclassified as a benign adopt loser.
+  def complete({id, start_token}, {:error, :agent_uri_already_live}) do
+    release_as_not_fresh(id, start_token)
   end
 
   def complete({id, start_token}, {:error, _reason}) do
@@ -127,6 +142,13 @@ defmodule Ezagent.Workspace.TaskWorkspace.PreStart do
   end
 
   defp maybe_cleanup(_provision_id, _reason, error), do: error
+
+  defp release_as_not_fresh(id, start_token) do
+    case Store.release_start(id, start_token) do
+      {:ok, _ready} -> {:error, :sidecar_start_not_fresh}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   defp release_claim(row) do
     case Store.release_start(row.id, row.start_claim_token) do
