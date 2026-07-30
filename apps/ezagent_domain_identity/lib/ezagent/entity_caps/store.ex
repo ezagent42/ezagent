@@ -215,7 +215,7 @@ defmodule Ezagent.EntityCaps.Store do
   def status(uri) do
     case fetch(uri) do
       nil -> nil
-      %{identity_status: status} -> String.to_existing_atom(status)
+      %{identity_status: status} -> decode_status(status)
     end
   end
 
@@ -231,7 +231,7 @@ defmodule Ezagent.EntityCaps.Store do
   def status_result(uri) do
     case fetch_result(uri) do
       {:ok, nil} -> {:ok, nil}
-      {:ok, %__MODULE__{identity_status: status}} -> {:ok, String.to_existing_atom(status)}
+      {:ok, %__MODULE__{identity_status: status}} -> {:ok, decode_status(status)}
       :error -> :error
     end
   end
@@ -890,7 +890,7 @@ defmodule Ezagent.EntityCaps.Store do
          licensed? <- licensed_under_lock?(uri, caps_list),
          changes <- persist_changes(row, encoded, licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
-      String.to_existing_atom(updated.identity_status)
+      decode_status(updated.identity_status)
     else
       nil -> Repo.rollback(:not_found)
       {:error, reason} -> Repo.rollback(reason)
@@ -1181,6 +1181,44 @@ defmodule Ezagent.EntityCaps.Store do
   end
 
   defp now_usec, do: DateTime.utc_now() |> DateTime.truncate(:microsecond)
+
+  # Total string→atom decode for the persisted `identity_status` enum. The status
+  # is stored as a STRING (the `field(:identity_status, :string)` schema and every
+  # write literal) while the read APIs (`status/1`, `status_result/1`,
+  # `backfill/2`) hand back a `status()` ATOM. Each of the three known atoms is a
+  # COMPILE-TIME LITERAL here, so it lands in THIS module's atom chunk and loading
+  # `Store` alone interns it — the decode never depends on some OTHER module having
+  # been loaded first.
+  #
+  # This REPLACES `String.to_existing_atom/1`, which was load-order-fragile: the
+  # `@type status` typespec does NOT emit its atoms into the loadable atom chunk,
+  # and the only other `:revoked_unprovisioned` occurrences are guard literals in
+  # `Ezagent.Identity.{PreEpochRemint, FleetParity}`. So on a release node that ran
+  # the cutover backfill BEFORE those modules were loaded,
+  # `String.to_existing_atom("revoked_unprovisioned")` raised `ArgumentError`
+  # ("not an already existing atom") and crashed `EzagentCore.Release.identity_cutover/1`
+  # at Step 1/3 backfill (the canary catch) — on the first entity whose backfilled
+  # status is `revoked_unprovisioned`, which is exactly a status this store WRITES
+  # (a licence-invalid principal / an adopted authority-history URI). The read of
+  # the store's own persisted enum must not hinge on incidental interning.
+  #
+  # An UNRECOGNIZED status string is a corrupt / schema-drifted row: fail LOUD with
+  # a clear domain message — NEVER a silent `nil`, NEVER a stale-atom guess. This is
+  # the authoritative cap-read path, so a misdecoded status must never be swallowed
+  # (an unknown status that resolved to `nil` would read as "absent" and could let a
+  # legacy self-license authorize a principal the store means to deny). The raise
+  # can propagate past `status_result/1`'s `{:ok, _} | :error` contract, but ONLY
+  # for genuine corruption; the three known statuses never raise.
+  @spec decode_status(String.t()) :: status()
+  defp decode_status("active"), do: :active
+  defp decode_status("revoked_unprovisioned"), do: :revoked_unprovisioned
+  defp decode_status("tombstoned"), do: :tombstoned
+
+  defp decode_status(other) do
+    raise ArgumentError,
+          "Ezagent.EntityCaps.Store: unknown identity_status #{inspect(other)} " <>
+            "(expected \"active\" | \"revoked_unprovisioned\" | \"tombstoned\")"
+  end
 
   # ====================================================================
   # Self-license currency (the #189 PR-2 write-boundary + backfill guard)
