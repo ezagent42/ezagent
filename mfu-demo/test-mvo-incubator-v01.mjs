@@ -12,7 +12,8 @@ for (const id of [
   "opportunity-board",
   "mvo-portfolio",
   "mvo-running",
-  "incubate-three"
+  "incubate-three",
+  "create-mvo"
 ]) {
   assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
 }
@@ -37,10 +38,30 @@ for (const token of [
   "advanceMvos",
   "openMvoDetail",
   "resetDemo",
+  "openMvoBuilder",
+  "addBuilderNode",
+  "startBuilderLink",
+  "validateBuilder",
+  "saveBuilderMvo",
   "localStorage",
   "prefers-reduced-motion"
 ]) {
   assert.ok(html.includes(token), `missing MVO interaction: ${token}`);
+}
+
+for (const graphType of ["linear", "fork", "merge", "hub", "loop"]) {
+  assert.ok(html.includes(`graphType:"${graphType}"`), `missing ${graphType} organization graph`);
+}
+
+for (const id of [
+  "mvo-builder-overlay",
+  "org-builder-canvas",
+  "builder-add-node",
+  "builder-connect",
+  "builder-validate",
+  "builder-save"
+]) {
+  assert.ok(html.includes(`id="${id}"`), `missing MVO builder contract #${id}`);
 }
 
 const inlineScripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]);
