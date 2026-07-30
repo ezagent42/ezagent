@@ -122,6 +122,20 @@ defmodule EzagentPluginForgejo.NormalizeTest do
       assert {:ok, []} = Normalize.checks(%{"state" => "pending", "statuses" => []})
     end
 
+    # The live instance returns `"statuses": null` — not `[]` — for a commit no
+    # CI has touched (verified against code.hyprial.com). Reading null as "a
+    # shape I do not understand" turned "no checks yet" into a provider fault,
+    # which only the live E2E could surface: the stub produced `[]`.
+    test "a null statuses list is no checks, not a provider fault" do
+      assert {:ok, []} =
+               Normalize.checks(%{
+                 "state" => "",
+                 "sha" => "",
+                 "total_count" => 0,
+                 "statuses" => nil
+               })
+    end
+
     test "a malformed combined response is refused" do
       assert {:error, :provider_unavailable} = Normalize.checks(%{"statuses" => "not-a-list"})
     end

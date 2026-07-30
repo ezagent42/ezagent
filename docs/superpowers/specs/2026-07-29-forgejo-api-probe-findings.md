@@ -363,9 +363,14 @@ A=https://codeberg.org/api/v1/repos/forgejo/forgejo
 curl -sS -x http://127.0.0.1:7890 "$A/pulls/forgejo/renovate/forgejo-webpack-5.x"   # → #4484 closed
 curl -sS -x http://127.0.0.1:7890 "$A/pulls?state=open&limit=50"                     # → 含 #13674 open，同 pair
 
-# §3 的实写探针（需 PAT，本机直连不用代理）
+# §3 的实写探针（需 PAT + 代理 —— 见下方订正）
 #   凭证：/home/huangjiajia/ezagent/forgejo-token.txt（已入 .git/info/exclude，不入库）
 #   认证头是 "Authorization: token <TOKEN>"，不是 GitHub 的 Bearer
+#
+#   订正 2026-07-29：本文早前称目标实例"本机直连可达、不用代理"。错。shell 已
+#   导出 https_proxy=http://127.0.0.1:7890 且 curl 静默遵循，那些"裸 curl 200"
+#   其实都走了代理。curl --noproxy '*' 会 25s 超时。Req/Finch 不读该变量，
+#   必须显式传 connect_options: [proxy: ...]（设计 §10.2.1）。
 #   探针脚本与逐步结果见 session 记录；探针仓库残留状态：
 #     main                     103a5569  （base，未动）
 #     task/probe/run-dates01   344f8c6e  （首次提交 64c98574 + 一个空提交）

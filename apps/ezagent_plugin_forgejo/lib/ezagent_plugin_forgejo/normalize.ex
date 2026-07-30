@@ -83,9 +83,15 @@ defmodule EzagentPluginForgejo.Normalize do
     end
   end
 
-  # A `statuses` key that is present but not a list is a shape this code does
-  # not understand -- refuse rather than report "no checks", which a caller
-  # would read as "nothing failed".
+  # A commit no CI has touched comes back as `"statuses": null`, NOT `[]` --
+  # measured against the live instance, and the one shape the stub never
+  # produced. That is genuinely "no checks reported", so reporting a provider
+  # fault for it would turn every fresh pull request into a failure.
+  def checks(%{"statuses" => nil}), do: {:ok, []}
+
+  # Any OTHER non-list `statuses` is a shape this code does not understand --
+  # refuse rather than report "no checks", which a caller reads as "nothing
+  # failed".
   def checks(%{"statuses" => _malformed}), do: {:error, :provider_unavailable}
 
   # An absent `statuses` key on an otherwise valid combined response means no

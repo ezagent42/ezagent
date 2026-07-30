@@ -617,14 +617,34 @@ step，请求飞向真实 provider **之前**抄一份 `{method, path}` 给测�
 
 - **默认排除**，tag 用 `:live_forgejo`，照 `:live_github` / `:live_miro` 先例；
   不带 `--include` 时 CI 不受影响；
-- **不需要代理** —— `code.hyprial.com` 本机直连可达（实测裸 curl 200）。
-  交接文档 §5.3 那条 Req/Finch 代理配置在这条线上用不上；
+- **需要代理，且必须显式传**（订正 2026-07-29，见下）；
 - 凭证从 `forgejo-token.txt` 形状的本机文件读，**已入 `.git/info/exclude`**；
 - `GitRunner` 的 `clear_env: true` 加固**不动**；若 live 测试需要真实仓库，
   照 `mirror_real_repo!/2` 的做法本地镜像。
 
 覆盖 §8 中所有涉及 Forgejo 的部分。**刻意留在替身上的**：429/5xx 映射
 （无法让 provider 按需故障）、digest 冲突 / CAS 竞态（纯本地）。
+
+#### 10.2.1 订正：本机**不是**直连可达（2026-07-29）
+
+本节初稿写「不需要代理，`code.hyprial.com` 本机直连可达（实测裸 curl 200）」。
+**该结论错误。**
+
+shell 环境本来就导出了 `https_proxy=http://127.0.0.1:7890`，curl **静默遵循**它。
+所以那个「裸 curl 200」实际上是走代理的 200，我把它读成了直连。显式区分后：
+
+```
+curl --noproxy '*'            → Connection timed out after 25s
+curl -x http://127.0.0.1:7890 → 200 in 1.5s
+```
+
+而 Req/Finch **不读** `https_proxy`（交接文档 §5.3），所以必须显式传
+`connect_options: [proxy: {:http, host, port, []}]` —— 与 GitHub 那条线**完全相同**
+的安排，不是「这条线用不上」。不传的症状是 `%Req.TransportError{reason: :timeout}`，
+经本 adapter 报成 `{:provider_request_failed, op, 0}`。
+
+这正是交接文档 §6.3 那条「别从截断/失败的操作下结论」的又一个实例：我从一个
+悄悄用了代理的 curl 得出了直连可行，且从未用 `--noproxy` 验证过。
 
 ---
 
