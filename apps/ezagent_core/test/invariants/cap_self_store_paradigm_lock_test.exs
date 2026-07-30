@@ -18,6 +18,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @member_cap "apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex"
   @workspace_facade "apps/ezagent_domain_workspace/lib/ezagent/workspace.ex"
   @cap_delivery_schema "apps/ezagent_core/lib/ezagent/cap/delivery.ex"
+  @cap_delivery_outbox "apps/ezagent_core/lib/ezagent/cap/delivery_outbox.ex"
   @cap_delivery_envelope "apps/ezagent_core/lib/ezagent/cap/delivery_outbox/envelope.ex"
   @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
   @config_evolve "apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex"
@@ -84,6 +85,10 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @absorb_action_literals %{
     @grant_chokepoint => 1,
     @cap_delivery_schema => 2,
+    # PR #1501 — the core outbox's validated pending-cap reader matches the
+    # single absorb operation it is permitted to decode. This is a read-side
+    # discriminator, not a new dispatch constructor or producer.
+    @cap_delivery_outbox => 1,
     @cap_delivery_envelope => 6,
     @cap_verifier => 1,
     @config_evolve => 2,

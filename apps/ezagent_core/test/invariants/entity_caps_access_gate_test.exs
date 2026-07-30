@@ -14,8 +14,12 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              {"apps/ezagent_domain_identity/lib/ezagent/users.ex",
                               :create_read_only, 2},
                              {"apps/ezagent_domain_identity/lib/ezagent/users.ex", :decode, 1},
+                             # PR #1501 — the physical legacy-user adapter now
+                             # exposes a tagged checked read so effective-cap
+                             # callers can fail closed instead of collapsing a
+                             # malformed row to `[]`.
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
-                              :load, 1},
+                              :load_checked, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
                              # #189 PR-3 FIX 1 — the POST-epoch Store-first user
@@ -122,14 +126,14 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                     ])
 
   @persisted_only_allowlist MapSet.new([
-                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
-                               :do_load, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity.ex",
                                :spawn_with_hydrated_caps, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
                                :initial_caps_for_spawn, 1},
-                              {"apps/ezagent_domain_session/lib/ezagent/behavior/session/member_cap.ex",
-                               :member_snapshot_caps, 1},
+                              # PR #1501 shrank this allowlist: the EntityCaps
+                              # facade now owns the checked persisted/effective
+                              # composition, and MemberCap consumes that public
+                              # tagged API instead of calling the legacy loader.
                               # `:add_self` can be cast from the grantee's
                               # after-commit hook while that Kind is still busy.
                               # Persisted-only keeps projection convergence
