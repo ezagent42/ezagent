@@ -204,7 +204,7 @@ cards:
     status: "wip"
     task: "189-test-defects-efd"
     started: "2026-07-28"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · #189 test-defects 剩余项 · 待 main 真绿后一并实证"
     carryover: true
     flag: "发布闸剩余项"
@@ -231,7 +231,7 @@ cards:
     status: "planned"
     task: "c8-pid-closure-obtain"
     started: "2026-07-26"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · feat/v5-pid-closure · 已推送待合(19bfc7761) · v5 family 暂缓至 main 真绿后 cross-track reconcile"
     branch: "feat/v5-pid-closure"
     carryover: true
@@ -245,7 +245,7 @@ cards:
     status: "planned"
     task: "c8-closeout"
     started: "2026-07-28"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · 依赖 c8-pid-closure-obtain(obtain 侧) + c8-mailbox-seal(use 侧); 暂缓"
     carryover: true
     flag: "结构主线的后半程 · 暂缓"
@@ -258,7 +258,7 @@ cards:
     status: "planned"
     task: "hello-a-pr4-deploy"
     started: "2026-07-28"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · 待 canary 恢复(#1627)后执行 · 结转"
     carryover: true
     flag: "被 canary hard-down 阻塞"
@@ -270,7 +270,7 @@ cards:
     status: "planned"
     task: "share-token-consolidation-1552"
     started: "2026-07-28"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · #1552 · 结转 · 与 #1583/#1587 URI-share-authz 线衔接"
     carryover: true
     acceptance:
@@ -281,7 +281,7 @@ cards:
     status: "planned"
     task: "multi-repo-split-1566"
     started: "2026-07-28"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · #1566 · 排在 actor extraction 之后"
     pr: {num: 1566, state: "open"}
     carryover: true
@@ -293,7 +293,7 @@ cards:
     status: "planned"
     task: "live-page-connector-gap-1267"
     started: "2026-07-09"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "Allen 轨道 · #1267 · standing docs/proposal(07-09 起) · 非主线"
     pr: {num: 1267, state: "open"}
     carryover: true
@@ -306,7 +306,7 @@ cards:
     status: "review"
     task: "group-a-uri-share"
     started: "2026-07-26"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "jjkysy 轨道 · socialware URI-share · post-#1621 rebase 后合并就绪核查跑动中"
     carryover: true
     review_note: "#1594(A1 bearer token)/#1606(A2-2 grantees_of) 复审 + 合并就绪核查在跑; #1619(A5 匿名 link_anon)/#1620(A4-2 :members roster 投影) design-first 待批后再动工。"
@@ -320,7 +320,7 @@ cards:
     status: "wip"
     task: "kanban-rework-1474"
     started: "2026-07-24"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "jjkysy 轨道 · #1474 · draft"
     carryover: true
     pr: {num: 1474, state: "draft"}
@@ -332,7 +332,7 @@ cards:
     status: "wip"
     task: "dealscout-1301"
     started: "2026-07-24"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "jjkysy 轨道 · #1301 · 推 mergeable"
     carryover: true
     pr: {num: 1301, state: "open"}
@@ -344,7 +344,7 @@ cards:
     status: "planned"
     task: "mount-infra-1376"
     started: "2026-07-24"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "jjkysy 轨道 · #1376 · draft(保留)"
     carryover: true
     pr: {num: 1376, state: "draft"}
@@ -357,7 +357,7 @@ cards:
     status: "wip"
     task: "feishu-binding-b1b2"
     started: "2026-07-29"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "gaga 轨道 · Feishu 绑定 · 待 gaga 推进"
     carryover: true
     flag: "待 gaga 推进"
@@ -370,7 +370,7 @@ cards:
     status: "review"
     task: "caps-consolidation-1501"
     started: "2026-07-24"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "gaga 轨道 · #1501 · rework 中"
     carryover: true
     pr: {num: 1501, state: "open"}
@@ -383,7 +383,7 @@ cards:
     status: "wip"
     task: "system-closure-1498"
     started: "2026-07-24"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "gaga 轨道 · #1498 · draft"
     carryover: true
     pr: {num: 1498, state: "draft"}
@@ -396,7 +396,7 @@ cards:
     status: "review"
     task: "hello-llm-flow-1576"
     started: "2026-07-27"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "zyli 轨道 · #1576 · rework 完成(2 blocker: arch gate + 2 红测试) · 复审 + rebase 清洁度核查中"
     carryover: true
     pr: {num: 1576, state: "open"}
@@ -410,7 +410,7 @@ cards:
     status: "wip"
     task: "mfu-v015"
     started: "2026-07-29"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "ruihua 轨道 · MFU demo · #1586 已合, #1618 draft"
     carryover: true
     branch: "mfu-demo-tree"
@@ -425,7 +425,7 @@ cards:
     status: "wip"
     task: "signature-interaction-1533"
     started: "2026-07-27"
-    est_done: "2026-07-30"
+    est_done: "2026-07-29"
     who: "瑞华 (ruihua) 轨道 · #1533 · draft"
     carryover: true
     pr: {num: 1533, state: "draft"}
