@@ -1718,36 +1718,47 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     # PR #1576 (Hello Template LLM) — WorldLive's async-bootstrap rework
     # (`mount/3` now assigns a bounded fallback state synchronously and defers
     # the real caller/session/capability read to a `:load_world_state`
-    # `handle_info/2`, so the LiveView mount never blocks on a slow read) adds
-    # these dynamic-receiver reads across handle_params/3, handle_info/2,
-    # handle_loaded_params/2 (the deferred branch of handle_params/3), and the
-    # new do_load_world_state/1 (the Task.start bootstrap body). Benign census
-    # growth (concern B) — no workspace-bound runtime is touched; these mirror
-    # the same socket.assigns / route-field reads already ledgered elsewhere
-    # in this file for the pre-existing handle_params/handle_info clauses.
+    # background load, so the LiveView mount never blocks on a slow read) adds
+    # these dynamic-receiver reads across handle_params/3, handle_loaded_params/2
+    # (the deferred branch of handle_params/3), and the new do_load_world_state/1
+    # (the async-task bootstrap body). Benign census growth (concern B) — no
+    # workspace-bound runtime is touched; these mirror the same socket.assigns /
+    # route-field reads already ledgered elsewhere in this file for the
+    # pre-existing handle_params/handle_info clauses.
+    #
+    # Task #208 (post-#1576 mechanical reds) re-anchored the do_load_world_state/1
+    # entries below (re-indented one level deeper — same statements, new SHAs —
+    # after switching the bootstrap Task from `Task.start/1` to
+    # `Phoenix.LiveView.start_async/3`, which tracks the task against the socket
+    # so `Phoenix.LiveViewTest.render_async/1` can await it deterministically
+    # instead of racing the test's DB sandbox teardown) and moved the payload
+    # handler's three entries from `{:handle_info, 2}` (the old hand-rolled
+    # `{:world_bootstrap_ready, ...}` message clause) to `{:handle_async, 3}`
+    # (the new `start_async` result callback) — same source text, renamed
+    # enclosing function, so the SHAs are unchanged.
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
      {:do_load_world_state, 1}, :remote, "assigns/0",
-     "1ddfb376e0974884875cbc14ea9fd9572ddace2db1347582610e0fc4ae3bb521"},
+     "2a3a2374d0a0bb01d8e940ea911768a120d6e94e5606d4597348a99ce40347bd"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
      {:do_load_world_state, 1}, :remote, "assigns/0",
-     "fe7de089835af6dff027cb23fd54e01846a97aae4bdbe5e064d6820d3b72a84b"},
+     "d3d4f3e61159527ea3d79188a17d6e669adc4ebf6ad76d941c9bee9ecf2ff8fb"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
      {:do_load_world_state, 1}, :remote, "current_route/0",
-     "e877343873444306e22087d8a98552c7836b04c792e9b68ecb389779350c058b"},
+     "62043cbc4be1ebda7544b9dea23e8d62fb04bbc6f5cbbdee4a7e164d7953a876"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
      {:do_load_world_state, 1}, :remote, "current_workspace_uri/0",
-     "1c85ec2adaab1b018d6db247fb5d3cd0665110bf9adcfa722d566bfb93c372d0"},
+     "d4ddbe145361c7e3ea3f3c8805a1ded88ab266841479e2cdbda74bdd762bee50"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",
      {:do_load_world_state, 1}, :remote, "world_bootstrap_loading?/0",
      "9eb0a4f09efe4205a7b03bb9ce4926f77c45299a4248a6bc494ae3e150306760"},
-    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_info, 2},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_async, 3},
      :remote, "component/0", "60c931acb55f289d0ff68b4a8f5feea87094f5e9f2841ca6607a536ad3b62f0d"},
-    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_info, 2},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_async, 3},
      :remote, "component/0", "b0f5cd7f208d92a82893e1df63afb64870919eb7792c3496666d251fa4153bd3"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_info, 2},
      :remote, "current_route/0",
      "ae7821f49f44cd53e4271f9415a1c8e65c3a99525c4f6e9ba961b54f013b2328"},
-    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_info, 2},
+    {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex", {:handle_async, 3},
      :remote, "current_route/0",
      "d40d618a0d51f277a80b6da8e372e75a93fe02999d94d739a69a1c4fe85b110c"},
     {"apps/ezagent_plugin_world/lib/ezagent_plugin_world/world_live.ex",

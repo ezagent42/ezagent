@@ -302,11 +302,25 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
+  def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # `start_async/3` is the idiomatic LiveView primitive for this exact
+  # shape of work — a bounded mount that defers a slower read to a
+  # background task and patches it in once ready. Two properties matter
+  # here beyond ergonomics: (1) LiveView runs the task via
+  # `Task.start_link/1` and TRACKS it against this socket, so it is a
+  # linked, monitored child of the LiveView process rather than an
+  # orphaned `Task.start/1` with no lifecycle tie to the view that
+  # spawned it; (2) `Phoenix.LiveViewTest.render_async/1` awaits exactly
+  # these tracked tasks, giving tests a non-sleep, non-racy way to
+  # synchronize on the load before asserting — which a bare `Task.start/1`
+  # + hand-rolled `handle_info` message could not offer. Without a tracked
+  # task, a test that returns (and tears down its DB sandbox owner) before
+  # the detached task finishes its query hits a DBConnection ownership
+  # race; `start_async` plus `render_async/1` in the caller closes that
+  # window structurally instead of via a sleep.
   @impl true
-  def handle_info(
-        {:world_bootstrap_ready, route, layout, state, caller_payload, plugin_nav},
-        socket
-      ) do
+  def handle_async(:load_world_state, {:ok, {route, layout, state, caller_payload, plugin_nav}}, socket) do
     if socket.assigns.current_route not in [nil, route] do
       # A bootstrap task started for the previous URL may finish after
       # handle_params/3 has already selected a new session. Never let that
@@ -338,34 +352,46 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  # The task crashed (raised, exited) rather than resolving. Fall back to
+  # the bounded fallback/skeleton state already assigned at mount — never
+  # spin forever on `world_bootstrap_loading?: true` — and log so a real
+  # regression surfaces instead of hanging silently.
+  def handle_async(:load_world_state, {:exit, reason}, socket) do
+    require Logger
+
+    Logger.error(
+      "EzagentPluginWorld.WorldLive: :load_world_state task exited: #{inspect(reason)}"
+    )
+
+    {:noreply, assign(socket, :world_bootstrap_loading?, false)}
+  end
 
   defp do_load_world_state(socket) do
     if socket.assigns.world_bootstrap_loading? do
       {:noreply, socket}
     else
-      parent = self()
       snapshot = socket
 
-      Task.start(fn ->
-        route = snapshot.assigns.current_route
-        workspace = snapshot.assigns.current_workspace_uri
-        caller = Map.get(snapshot.assigns, :current_entity_uri)
-        layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
-        state = LiveStateBuilder.state_for_route(route, snapshot, layout)
-        caps = Ezagent.World.PresenterCaps.load(snapshot)
+      socket =
+        start_async(socket, :load_world_state, fn ->
+          route = snapshot.assigns.current_route
+          workspace = snapshot.assigns.current_workspace_uri
+          caller = Map.get(snapshot.assigns, :current_entity_uri)
+          layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
+          state = LiveStateBuilder.state_for_route(route, snapshot, layout)
+          caps = Ezagent.World.PresenterCaps.load(snapshot)
 
-        caller_payload =
-          LiveStateBuilder.caller_payload(
-            caller,
-            workspace,
-            caps,
-            Map.get(snapshot.assigns, :is_system_member?, false)
-          )
+          caller_payload =
+            LiveStateBuilder.caller_payload(
+              caller,
+              workspace,
+              caps,
+              Map.get(snapshot.assigns, :is_system_member?, false)
+            )
 
-        plugin_nav = Ezagent.World.WorkspacePluginData.plugin_nav_surfaces()
-        send(parent, {:world_bootstrap_ready, route, layout, state, caller_payload, plugin_nav})
-      end)
+          plugin_nav = Ezagent.World.WorkspacePluginData.plugin_nav_surfaces()
+          {route, layout, state, caller_payload, plugin_nav}
+        end)
 
       {:noreply, assign(socket, :world_bootstrap_loading?, true)}
     end

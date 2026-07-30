@@ -143,7 +143,29 @@ defmodule Ezagent.World.PtyConversationExitTest do
       |> then(&Ezagent.Cap.Authority.sign(authority, &1))
 
     Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{
-      Ezagent.URI.stable_key(@creator) => MapSet.new([cap])
+      Ezagent.URI.stable_key(@creator) => MapSet.new([cap]),
+      # `switch_to_pty` (#1576) self-dispatches a `reconcile_cascade` command
+      # AS the agent once it is spawned live (`ConfigEvolve.activate/2`'s
+      # boot reconcile). `Ezagent.Cap.Authorize.authorize/3`'s principal gate
+      # is independent of the presented candidate caps — it is satisfied
+      # purely by `read_held_caps(holder) != []` (see
+      # `Ezagent.Cap.Authorize.principal_current?/1`) — so a placeholder
+      # non-empty entry for the agent's own identity is enough to keep its
+      # self-dispatch from reading as a revoked principal under this
+      # narrowly-scoped stub. The reconcile's own caps are minted fresh
+      # (properly signed) via `Ezagent.Cap.issue/3`, so this placeholder
+      # never substitutes for a real capability check.
+      Ezagent.URI.stable_key(@agent) => MapSet.new([:test_principal_marker]),
+      # `ensure_canonical_admin_current/1` (Ezagent.Cap #195 canonical-admin
+      # bootstrap) lazily starts the system/admin Kind the first time an
+      # `{:admin, admin}`-authorized `Cap.issue/3` runs — here, from the
+      # agent's own boot reconcile minting its self-caps as admin. A live
+      # admin Kind normally proves its own currency via a freshly-minted
+      # `:identity`-slice self-license (see that function's moduledoc), but
+      # this stub is static and knows nothing about that — so admin's own
+      # principal gate needs the same placeholder treatment.
+      Ezagent.URI.stable_key(Ezagent.URI.user(:system, :admin)) =>
+        MapSet.new([:test_principal_marker])
     })
 
     cap
@@ -179,6 +201,35 @@ defmodule Ezagent.World.PtyConversationExitTest do
       Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: @creator, initial_caps: [cap]})
 
     on_exit(fn -> Ezagent.Kind.terminate(@creator) end)
+
+    # #1576 made `switch_to_pty` demand-revive the agent via
+    # `Agent.ensure_deliverable/1` (LocalRuntime.ensure_live/1) before it
+    # subscribes — the fix for a session retaining an agent membership
+    # across a node restart while the agent's subprocess is cold. That
+    # check refuses to materialize a Kind that was never durably created
+    # (`{:error, :not_created}`), and `@agent` here is a synthetic URI with
+    # no snapshot row. Spawn it live first (same pattern as
+    # `Ezagent.Domain.Agent`'s own `ensure_deliverable` coverage in
+    # apps/ezagent_domain_agent/test/ezagent/domain/agent_test.exs) so
+    # `ensure_live` finds it already registered and short-circuits to
+    # `{:ok, :live}` — this test is about the manage-cap authorization gate
+    # reaching the subscribe, not about cold-agent rehydration.
+    #
+    # `push_pty_view/2` (also new in #1576) reads `Agent.lifecycle_status/1`,
+    # which resolves the agent's flavor. A bare spawn carries no launch
+    # flavor attribute, so without this the resolver falls through to a
+    # LIVE `:sandbox` slice read on the Kind — an authenticated round trip
+    # this narrowly-stubbed test environment cannot satisfy. Stamp the
+    # launch flavor up front via the same public API a real template class
+    # uses (`Ezagent.AgentFlavorAttributes.put/2`) so resolution is a plain
+    # ETS hit and never touches the live Kind.
+    Ezagent.AgentFlavorAttributes.put(@agent, "cc")
+    {:ok, _agent_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: @agent})
+
+    on_exit(fn ->
+      Ezagent.Kind.terminate(@agent)
+      Ezagent.AgentFlavorAttributes.delete(@agent)
+    end)
 
     {:noreply, socket} =
       ConversationActions.switch_to_pty(

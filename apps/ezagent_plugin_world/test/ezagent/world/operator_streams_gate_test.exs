@@ -114,10 +114,19 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
       assert socket.assigns.world_component == "conversation"
       assert_receive :load_world_state, 200
 
+      # The bootstrap task is now delivered via `start_async/3` +
+      # `handle_async/3` (idiomatic LiveView async primitive, tracked and
+      # awaitable via `Phoenix.LiveViewTest.render_async/1` in LiveViewTest
+      # suites) rather than a hand-rolled `{:world_bootstrap_ready, ...}`
+      # message — see `EzagentPluginWorld.WorldLive.do_load_world_state/1`.
+      # This unit test drives the module's callbacks directly (no live
+      # socket transport), so it invokes the new callback with the same
+      # `{:ok, result}` shape `start_async` would deliver.
       {:noreply, socket} =
-        WorldLive.handle_info(
-          {:world_bootstrap_ready, socket.assigns.current_route, %{},
-           %{"component" => "conversation"}, %{}, []},
+        WorldLive.handle_async(
+          :load_world_state,
+          {:ok,
+           {socket.assigns.current_route, %{}, %{"component" => "conversation"}, %{}, []}},
           socket
         )
 
