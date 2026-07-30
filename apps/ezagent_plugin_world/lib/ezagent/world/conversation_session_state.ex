@@ -29,6 +29,14 @@ defmodule Ezagent.World.ConversationSessionState do
   def list_sessions(_, _), do: []
 
   @doc false
+  @spec visible_to_caller?(URI.t() | term(), URI.t() | term(), URI.t() | term()) :: boolean()
+  def visible_to_caller?(%URI{} = workspace_uri, %URI{} = caller_uri, %URI{} = session_uri) do
+    Enum.member?(list_sessions(workspace_uri, caller_uri), session_uri)
+  end
+
+  def visible_to_caller?(_, _, _), do: false
+
+  @doc false
   @spec rows_for_workspace(URI.t() | term(), URI.t() | term()) :: [map()]
   def rows_for_workspace(workspace_uri, caller_uri) do
     workspace_uri
@@ -115,29 +123,36 @@ defmodule Ezagent.World.ConversationSessionState do
   @spec switch_session(Phoenix.LiveView.Socket.t(), URI.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def switch_session(socket, %URI{} = session_uri) do
-    socket =
-      socket
-      |> ensure_session_subscribed(session_uri)
-      |> assign(:current_session_uri, session_uri)
-      |> assign(:current_session_uri_str, uri_string(session_uri))
-      |> ConversationActions.self_join(session_uri)
+    workspace_uri = socket.assigns.current_workspace_uri
+    caller_uri = socket.assigns.current_entity_uri
 
-    state =
-      session_uri
-      |> state_for(socket)
-      |> Map.put("path", "/sessions")
-      |> Map.put("title", "Chat")
+    if visible_to_caller?(workspace_uri, caller_uri, session_uri) do
+      socket =
+        socket
+        |> ensure_session_subscribed(session_uri)
+        |> assign(:current_session_uri, session_uri)
+        |> assign(:current_session_uri_str, uri_string(session_uri))
+        |> ConversationActions.self_join(session_uri)
 
-    path = "/sessions?session=#{encode_param(session_uri)}"
+      state =
+        session_uri
+        |> state_for(socket)
+        |> Map.put("path", "/sessions")
+        |> Map.put("title", "Chat")
 
-    {:noreply,
-     socket
-     |> assign(:world_component, "conversation")
-     |> assign(:world_state, state)
-     |> assign(:world_state_json, Jason.encode!(state))
-     |> assign(:last_dispatch_status, "ok")
-     |> push_event("world:state", state)
-     |> push_event("world:url", %{"path" => path})}
+      path = "/sessions?session=#{encode_param(session_uri)}"
+
+      {:noreply,
+       socket
+       |> assign(:world_component, "conversation")
+       |> assign(:world_state, state)
+       |> assign(:world_state_json, Jason.encode!(state))
+       |> assign(:last_dispatch_status, "ok")
+       |> push_event("world:state", state)
+       |> push_event("world:url", %{"path" => path})}
+    else
+      {:noreply, assign(socket, :last_dispatch_status, "error:session_not_visible")}
+    end
   end
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()

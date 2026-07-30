@@ -87,6 +87,14 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp handle_loaded_params(route, socket) do
+    if conversation_route_visible?(route, socket) do
+      render_loaded_route(route, socket)
+    else
+      {:noreply, push_patch(socket, to: "/sessions")}
+    end
+  end
+
+  defp render_loaded_route(route, socket) do
     workspace = socket.assigns.current_workspace_uri
     caller = Map.get(socket.assigns, :current_entity_uri)
     layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
@@ -112,6 +120,19 @@ defmodule EzagentPluginWorld.WorldLive do
 
     {:noreply, socket}
   end
+
+  defp conversation_route_visible?(
+         %{component: "conversation", session_uri: %URI{} = session_uri},
+         socket
+       ) do
+    ConversationSessionState.visible_to_caller?(
+      socket.assigns.current_workspace_uri,
+      socket.assigns.current_entity_uri,
+      session_uri
+    )
+  end
+
+  defp conversation_route_visible?(_route, _socket), do: true
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
     # Subscribe UNCONDITIONALLY — subscription is NOT the security boundary,
@@ -328,27 +349,34 @@ defmodule EzagentPluginWorld.WorldLive do
       send(self(), :load_world_state)
       {:noreply, assign(socket, :world_bootstrap_loading?, false)}
     else
-      socket = maybe_set_current_session(socket, route)
+      if conversation_route_visible?(route, socket) do
+        socket = maybe_set_current_session(socket, route)
 
-      state =
-        if route.component == "conversation" do
-          LiveStateBuilder.state_for_route(route, socket, layout)
-        else
-          state
-        end
+        state =
+          if route.component == "conversation" do
+            LiveStateBuilder.state_for_route(route, socket, layout)
+          else
+            state
+          end
 
-      {:noreply,
-       socket
-       |> assign(:layout_json, Jason.encode!(layout))
-       |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
-       |> assign(:caller_json, Jason.encode!(caller_payload))
-       |> assign(:world_state, state)
-       |> assign(:world_state_json, Jason.encode!(state))
-       |> assign(:world_component, route.component)
-       |> assign(:current_route, route)
-       |> assign(:world_bootstrap_ready?, true)
-       |> assign(:world_bootstrap_loading?, false)
-       |> push_event("world:state", state)}
+        {:noreply,
+         socket
+         |> assign(:layout_json, Jason.encode!(layout))
+         |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
+         |> assign(:caller_json, Jason.encode!(caller_payload))
+         |> assign(:world_state, state)
+         |> assign(:world_state_json, Jason.encode!(state))
+         |> assign(:world_component, route.component)
+         |> assign(:current_route, route)
+         |> assign(:world_bootstrap_ready?, true)
+         |> assign(:world_bootstrap_loading?, false)
+         |> push_event("world:state", state)}
+      else
+        {:noreply,
+         socket
+         |> assign(:world_bootstrap_loading?, false)
+         |> push_patch(to: "/sessions")}
+      end
     end
   end
 

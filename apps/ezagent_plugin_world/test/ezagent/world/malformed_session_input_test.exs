@@ -19,6 +19,7 @@ defmodule Ezagent.World.MalformedSessionInputTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.World.ConversationData
+  alias Ezagent.World.ConversationSessionState
   alias EzagentPluginWorld.WorldLive
 
   defp uniq, do: System.unique_integer([:positive])
@@ -106,6 +107,25 @@ defmodule Ezagent.World.MalformedSessionInputTest do
 
       assert state["access_denied"] == true
       assert state["messages"] == []
+    end
+  end
+
+  describe "ConversationSessionState.switch_session/2 — a valid but non-visible session" do
+    test "does not replace the active session for a nonexistent URI" do
+      workspace_uri = URI.new!("workspace://team-alpha")
+      caller_uri = URI.new!("entity://team-alpha/user/prober-#{uniq()}")
+      current_session_uri = URI.new!("session://team-alpha/default/current-#{uniq()}")
+      never_created = URI.new!("session://team-alpha/default/never-created-#{uniq()}")
+
+      socket =
+        %Phoenix.LiveView.Socket{}
+        |> Phoenix.Component.assign(:current_workspace_uri, workspace_uri)
+        |> Phoenix.Component.assign(:current_entity_uri, caller_uri)
+        |> Phoenix.Component.assign(:current_session_uri, current_session_uri)
+
+      assert {:noreply, out} = ConversationSessionState.switch_session(socket, never_created)
+      assert out.assigns.current_session_uri == current_session_uri
+      assert out.assigns.last_dispatch_status == "error:session_not_visible"
     end
   end
 end

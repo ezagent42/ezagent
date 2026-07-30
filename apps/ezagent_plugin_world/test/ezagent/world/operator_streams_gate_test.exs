@@ -96,7 +96,7 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
       assert_receive :load_world_state, 200
     end
 
-    test "the first connected session route initializes the active session before bootstrap" do
+    test "a valid but non-visible session route is returned to the sessions surface" do
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
 
       {:ok, socket} = WorldLive.mount(%{}, %{}, connected_socket(@non_operator))
@@ -130,7 +130,9 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
           socket
         )
 
-      assert socket.assigns.current_session_uri == session_uri
+      refute socket.assigns.current_session_uri
+      refute socket.assigns.world_bootstrap_ready?
+      assert socket.redirected == {:live, :patch, %{kind: :push, to: "/sessions"}}
     end
 
     test "a non-operator mount subscribes to NEITHER operator topic" do

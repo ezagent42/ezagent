@@ -3,7 +3,7 @@
 - **Task:** `ghost-session-route`
 - **Branch:** `codex/ghost-session-route`
 - **Base:** `main` at `90de06be8` (`ci(socialware): require manifest release acknowledgement (#1642)`)
-- **Status:** analysis complete; no product code changed
+- **Status:** implementation complete; caller-visible route and switch guards added with regression tests (local Mix validation blocked by missing worktree dependencies)
 - **Observed URL:** `/sessions?session=session%3A%2F%2Fsystem%2Fdefault%2Fdefault-3`
 
 ## Finding
