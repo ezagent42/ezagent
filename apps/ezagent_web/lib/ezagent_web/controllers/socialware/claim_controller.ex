@@ -7,14 +7,18 @@ defmodule EzagentWeb.Socialware.ClaimController do
   `token` (`Ezagent.Cap.ShareToken`, minted by whoever shared, naming any target
   URI + the behavior/actions it grants). This controller is **plugin-agnostic** —
   it neither knows nor names kanban (or any plugin): it delegates to
-  `Ezagent.Socialware.Share.claim/2`, which verifies the token and mints a
-  grantee-bound cap toward the target for the clicker (cap-as-truth `甲`:
-  bearer → mint). The shared thing then shows up in the clicker's own space via
-  cap-derived visibility — no server-side session/host resolution here.
+  `Ezagent.Socialware.Share.claim/2`, which verifies the token, confirms the
+  target's sharing setting is CURRENTLY enabled by its CURRENT owner, and
+  RECORDS a `ShareClaim` for the clicker (Feishu model A) — it mints **no**
+  durable capability. Access is re-derived LIVE at the domain read gate
+  (`Share.shared_to?/2`, checked on every read) from the claim plus the live
+  sharing setting, so the owner disabling sharing cuts every claimer off on
+  their very next read, instantly, for everyone.
 
-    * valid token → cap minted, 302 to the world root (the clicker's space);
-    * bad / expired / tampered token, or a target with no owner to grant from →
-      403 (fail-closed).
+    * valid token + sharing enabled → claim recorded, 302 to the world root
+      (the clicker's space);
+    * bad / expired / tampered token, sharing disabled, or a stale setting
+      whose owner has since transferred → 403 (fail-closed).
 
   A future plugin that wants a deep-link landing can carry a return path; A1
   keeps the landing generic (the world root) since the target may be any URI.
@@ -24,10 +28,12 @@ defmodule EzagentWeb.Socialware.ClaimController do
   alias Ezagent.Socialware.Share
 
   @doc """
-  Claim a bearer share link: verify the `token`, mint a grantee-bound cap toward
-  its target for the logged-in clicker (`Share.claim/2`), then 302 to the world
-  root. A bad/expired/tampered token, a missing token, or a target with no owner
-  to grant from → 403 (fail-closed).
+  Claim a bearer share link: verify the `token` and record a `ShareClaim` for
+  the logged-in clicker against its target (`Share.claim/2` — mints no cap;
+  access is re-derived live via `Share.shared_to?/2` on every subsequent read),
+  then 302 to the world root. A bad/expired/tampered token, a missing token,
+  disabled sharing, or a stale setting (owner transferred since it was
+  enabled) → 403 (fail-closed).
   """
   def claim(conn, %{"token" => token}) when is_binary(token) do
     clicker = conn.assigns.current_entity_uri

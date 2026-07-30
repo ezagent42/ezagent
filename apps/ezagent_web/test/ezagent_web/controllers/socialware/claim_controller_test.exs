@@ -4,12 +4,14 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
 
   A logged-in clicker opens a bearer share link (`Ezagent.Cap.ShareToken`,
   naming ANY target URI + the granted behavior/actions). The generic,
-  plugin-agnostic controller verifies the token and mints a grantee-bound cap
-  toward the target for the clicker (`Ezagent.Socialware.Share.claim/2`), then
-  302s to the world root; a tampered/expired token → 403 fail-closed; an
-  anonymous visitor is bounced to /login by RequireEntity. Target here is the
-  generic `CompositionGrantTargetBehavior` fixture — the point is scheme/plugin
-  agnosticism, not kanban.
+  plugin-agnostic controller verifies the token and RECORDS a `ShareClaim` for
+  the clicker against the target (`Ezagent.Socialware.Share.claim/2`) — Model A
+  (Feishu): no durable cap is minted; access is re-derived LIVE at the domain
+  read gate (`Share.shared_to?/2`) from the claim plus the live sharing
+  setting. Then 302s to the world root; a tampered/expired token → 403
+  fail-closed; an anonymous visitor is bounced to /login by RequireEntity.
+  Target here is the generic `CompositionGrantTargetBehavior` fixture — the
+  point is scheme/plugin agnosticism, not kanban.
   """
   use EzagentWeb.ConnCase, async: false
 
@@ -54,7 +56,7 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
   end
 
   @tag :integration
-  test "tampered token → 403, mints nothing", %{conn: conn, ws: ws} do
+  test "tampered token → 403, records no claim", %{conn: conn, ws: ws} do
     owner = user(ws, "owner2")
     target = target_agent(ws, "shared2", owner)
     clicker = signed_in_user(ws, "clicker2")
@@ -95,8 +97,9 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
   end
 
   # A generic target: an agent carrying the Target ActionSet with a recorded
-  # owner (data_owner resolves, so mint_cap has a granter). URI-agnostic — the
-  # controller neither knows nor names any plugin.
+  # owner (data_owner resolves, so `Share.enable/5`'s current-owner check has a
+  # granter to compare against). URI-agnostic — the controller neither knows
+  # nor names any plugin.
   defp target_agent(ws, name, owner) do
     uri = Ezagent.URI.agent(ws, "#{name}-#{u()}")
 
@@ -122,14 +125,6 @@ defmodule EzagentWeb.Socialware.ClaimControllerTest do
       "current_entity_uri" => URI.to_string(entity_uri),
       "current_workspace_uri" => "workspace://#{ws}"
     })
-  end
-
-  defp holds_cap?(grantee, target, action) do
-    Enum.any?(Ezagent.Identity.list_caps_for(grantee), fn cap ->
-      cap.kind == :agent and cap.behavior == Target and
-        cap.action == action and
-        cap.instance == Ezagent.URI.instance(target)
-    end)
   end
 
   defp eventually(fun, attempts \\ 50)
