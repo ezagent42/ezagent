@@ -121,6 +121,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     def credential_env_var, do: "MOONSHOT_API_KEY"
 
     @impl Ezagent.Agent.CredentialAdapter
+    def credential_connection(_opts), do: {:api_key, "moonshot", "Configure test API key"}
+
+    @impl Ezagent.Agent.CredentialAdapter
     def credential_relpaths, do: []
 
     @impl Ezagent.Agent.CredentialAdapter
@@ -1622,6 +1625,61 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert summary2.skipped == []
     assert summary2.satisfied == [role]
+  end
+
+  test "a gated role with no credential source is deferred instead of skipped" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    env_flavor = register_env_profile_flavor(n)
+    role_name = "gated-kimi-#{n}"
+
+    previous = System.get_env("MOONSHOT_API_KEY")
+    System.delete_env("MOONSHOT_API_KEY")
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("MOONSHOT_API_KEY", previous),
+        else: System.delete_env("MOONSHOT_API_KEY")
+    end)
+
+    declaration = %{
+      role_name: role_name,
+      fill: :agent,
+      recipe: recipe_name,
+      flavor: env_flavor,
+      provider: "kimi",
+      credential_admission: :before_session_join
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "gated@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert {:ok, %{satisfied: [], skipped: [], deferred: [^role_name]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [declaration]
+             )
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+
+    assert [
+             %{
+               role_name: ^role_name,
+               status: :pending_auth,
+               connection: {:api_key, %{provider: "moonshot", label: "Configure test API key"}}
+             }
+           ] =
+             EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
   end
 
   test "an env-credential flavor without a provider still materializes" do

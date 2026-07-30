@@ -68,6 +68,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   alias Ezagent.Entity.{Session, User}
 
   alias EzagentDomainInstanceMessage.SessionCreator.{
+    AgentAdmission,
     DefinitionAgents,
     Derivation,
     Listing,
@@ -156,6 +157,27 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
               to: TemplateTeam
 
   defdelegate session_discriminator(session_uri), to: TemplateTeam
+
+  @doc "List durable credential-gated role admissions for a session."
+  defdelegate list_agent_admissions(session_uri), to: AgentAdmission, as: :list
+
+  @doc "Start or resume a credential-gated role admission."
+  defdelegate begin_agent_admission(session_uri, role_name, actor_uri, caps),
+    to: AgentAdmission,
+    as: :begin
+
+  @doc "Complete a credential-gated role admission after validation."
+  defdelegate complete_agent_admission(session_uri, role_name, attempt_id, actor_and_caps),
+    to: AgentAdmission,
+    as: :complete
+
+  @doc "Cancel a credential-gated role admission."
+  defdelegate cancel_agent_admission(session_uri, role_name, attempt_id, actor_and_caps),
+    to: AgentAdmission,
+    as: :cancel
+
+  @doc "Expire a credential-gated role admission by attempt ID."
+  defdelegate expire_agent_admission(session_uri, attempt_id), to: AgentAdmission, as: :expire
 
   @install_telemetry [:ezagent, :session, :socialware_install]
 

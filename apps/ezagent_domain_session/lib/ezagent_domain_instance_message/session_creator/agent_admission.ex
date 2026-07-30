@@ -1,0 +1,697 @@
+defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
+  @moduledoc """
+  Durable admission state for credential-gated session role agents.
+
+  The session template declaration remains authoritative for role, recipe,
+  flavor, and revision. Admission rows contain only durable, non-secret state;
+  credential material stays in the flavor-owned agent surface.
+  """
+
+  alias Ezagent.Agent.CredentialConnection
+  alias Ezagent.Credential.UserDefaultSource
+  alias Ezagent.Entity.Session
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
+
+  @working_copy_key :agent_admissions
+  @telemetry_prefix [:ezagent, :session, :agent_admission]
+  @active_statuses [:authenticating, :materializing]
+
+  @type status :: :pending_auth | :authenticating | :materializing | :joined | :failed
+  @type failure_code ::
+          nil | :authentication_failed | :connection_cancelled | :connection_timed_out
+
+  @type admission :: %{
+          required(:status) => status(),
+          required(:flavor) => String.t(),
+          required(:role_name) => String.t(),
+          required(:template_revision) => String.t(),
+          required(:attempt_id) => String.t() | nil,
+          required(:provisional_agent_uri) => String.t() | nil,
+          required(:connection) => CredentialConnection.descriptor(),
+          required(:failure_code) => failure_code()
+        }
+
+  @doc "List durable admission rows for a session, sorted by role name."
+  @spec list(URI.t()) :: [admission()]
+  def list(%URI{scheme: "session"} = session_uri) do
+    session_uri
+    |> admissions()
+    |> Map.values()
+    |> Enum.sort_by(& &1.role_name)
+  end
+
+  @doc """
+  Start or resume the one provisional agent for a gated role.
+
+  `actor_uri` must own the session. `caps` are the actor's current authorized
+  context and are never persisted.
+  """
+  @spec begin(URI.t(), String.t(), URI.t(), Enumerable.t()) ::
+          {:ok, admission()} | {:error, term()}
+  def begin(
+        %URI{scheme: "session"} = session_uri,
+        role_name,
+        %URI{} = actor_uri,
+        caps
+      )
+      when is_binary(role_name) do
+    with_lock(session_uri, role_name, fn ->
+      with :ok <- require_owner(session_uri, actor_uri),
+           {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
+           {:ok, connection} <- connection_for(declaration),
+           {:ok, admission} <-
+             begin_from_current(
+               session_uri,
+               actor_uri,
+               caps,
+               declaration,
+               revision,
+               connection
+             ) do
+        transition_ok(:begin, session_uri, admission)
+        {:ok, admission}
+      else
+        {:error, reason} = error ->
+          transition_failed(:begin, session_uri, role_name, reason)
+          error
+      end
+    end)
+  end
+
+  @doc """
+  Validate the active provisional agent, bind its declared recipe, and join it.
+  """
+  @spec complete(URI.t(), String.t(), String.t(), {URI.t(), Enumerable.t()}) ::
+          {:ok, admission()} | {:error, term()}
+  def complete(
+        %URI{scheme: "session"} = session_uri,
+        role_name,
+        attempt_id,
+        {%URI{} = actor_uri, caps}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    with_lock(session_uri, role_name, fn ->
+      result =
+        with :ok <- require_owner(session_uri, actor_uri),
+             {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
+             {:ok, current} <-
+               active_attempt(session_uri, declaration, revision, attempt_id),
+             {:ok, agent_uri} <- provisional_uri(current),
+             {:ok, credential_status} <-
+               Ezagent.Domain.Agent.read_credential_status(
+                 agent_uri,
+                 actor_ctx(actor_uri, caps),
+                 backend_profile: provider_of(declaration)
+               ),
+             :ok <- credential_authenticated(credential_status, current.connection),
+             {:ok, joined} <-
+               complete_authenticated(
+                 session_uri,
+                 actor_uri,
+                 caps,
+                 declaration,
+                 current,
+                 agent_uri,
+                 attempt_id
+               ) do
+          {:ok, joined}
+        else
+          {:error, :authentication_failed} ->
+            fail_active_attempt(
+              session_uri,
+              role_name,
+              attempt_id,
+              actor_uri,
+              caps,
+              :authentication_failed
+            )
+
+          {:error, reason} ->
+            transition_failed(:complete, session_uri, role_name, reason)
+            {:error, reason}
+        end
+
+      result
+    end)
+  end
+
+  def complete(_session_uri, _role_name, _attempt_id, _actor_and_caps),
+    do: {:error, :invalid_agent_admission_completion}
+
+  @doc "Cancel an active candidate. Repeated cancellation of the same attempt is idempotent."
+  @spec cancel(URI.t(), String.t(), String.t(), {URI.t(), Enumerable.t()}) ::
+          {:ok, admission()} | {:error, term()}
+  def cancel(
+        %URI{scheme: "session"} = session_uri,
+        role_name,
+        attempt_id,
+        {%URI{} = actor_uri, caps}
+      )
+      when is_binary(role_name) and is_binary(attempt_id) do
+    with_lock(session_uri, role_name, fn ->
+      with :ok <- require_owner(session_uri, actor_uri),
+           {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
+           {:ok, current} <-
+             cancellable_attempt(session_uri, declaration, revision, attempt_id),
+           {:ok, failed} <-
+             cancel_current(
+               session_uri,
+               current,
+               actor_uri,
+               caps,
+               :connection_cancelled
+             ) do
+        transition_ok(:cancel, session_uri, failed)
+        {:ok, failed}
+      else
+        {:error, reason} = error ->
+          transition_failed(:cancel, session_uri, role_name, reason)
+          error
+      end
+    end)
+  end
+
+  def cancel(_session_uri, _role_name, _attempt_id, _actor_and_caps),
+    do: {:error, :invalid_agent_admission_cancellation}
+
+  @doc "Expire an attempt by its durable creation-attempt ID."
+  @spec expire(URI.t(), String.t()) :: {:ok, admission()} | {:error, term()}
+  def expire(%URI{scheme: "session"} = session_uri, attempt_id)
+      when is_binary(attempt_id) do
+    case Enum.find(list(session_uri), &(&1.attempt_id == attempt_id)) do
+      %{role_name: role_name} ->
+        with {:ok, owner_uri} <- Session.owner(session_uri) do
+          caps =
+            EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri)
+
+          with_lock(session_uri, role_name, fn ->
+            with {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
+                 {:ok, current} <-
+                   cancellable_attempt(session_uri, declaration, revision, attempt_id),
+                 {:ok, failed} <-
+                   cancel_current(
+                     session_uri,
+                     current,
+                     owner_uri,
+                     caps,
+                     :connection_timed_out
+                   ) do
+              transition_ok(:expire, session_uri, failed)
+              {:ok, failed}
+            else
+              {:error, reason} = error ->
+                transition_failed(:expire, session_uri, role_name, reason)
+                error
+            end
+          end)
+        end
+
+      nil ->
+        {:error, :stale_agent_admission_attempt}
+    end
+  end
+
+  @doc false
+  @spec defer(URI.t(), map()) :: {:ok, admission()} | {:error, term()}
+  def defer(%URI{scheme: "session"} = session_uri, declaration) when is_map(declaration) do
+    role_name = field(declaration, :role_name)
+
+    with_lock(session_uri, role_name, fn ->
+      with {:ok, current_declaration, revision} <-
+             declared_gated_role(session_uri, role_name),
+           :ok <- same_declaration(current_declaration, declaration),
+           {:ok, connection} <- connection_for(current_declaration) do
+        case Map.get(admissions(session_uri), role_name) do
+          %{status: status} = current when status in @active_statuses or status == :joined ->
+            {:ok, current}
+
+          %{status: :failed} = failed ->
+            {:ok, failed}
+
+          _ ->
+            pending =
+              admission_row(
+                current_declaration,
+                revision,
+                connection,
+                :pending_auth
+              )
+
+            with :ok <- put_admission(session_uri, pending) do
+              transition_ok(:defer, session_uri, pending)
+              {:ok, pending}
+            end
+        end
+      end
+    end)
+  end
+
+  @doc false
+  @spec clear(URI.t(), map()) :: :ok | {:error, term()}
+  def clear(%URI{scheme: "session"} = session_uri, declaration) when is_map(declaration) do
+    role_name = field(declaration, :role_name)
+
+    with_lock(session_uri, role_name, fn ->
+      current = admissions(session_uri)
+
+      case Map.get(current, role_name) do
+        nil -> :ok
+        %{status: status} when status in @active_statuses -> {:error, :agent_admission_active}
+        _ -> write_admissions(session_uri, Map.delete(current, role_name))
+      end
+    end)
+  end
+
+  defp begin_from_current(
+         session_uri,
+         actor_uri,
+         caps,
+         declaration,
+         revision,
+         connection
+       ) do
+    role_name = field(declaration, :role_name)
+
+    case Map.get(admissions(session_uri), role_name) do
+      %{status: status} = current when status in @active_statuses ->
+        with :ok <- validate_row(current, declaration, revision) do
+          {:ok, current}
+        end
+
+      %{status: :joined} = joined ->
+        {:ok, joined}
+
+      nil ->
+        {:error, :agent_admission_not_pending}
+
+      current when current.status in [:pending_auth, :failed] ->
+        start_provisional(
+          session_uri,
+          actor_uri,
+          caps,
+          declaration,
+          revision,
+          connection
+        )
+    end
+  end
+
+  defp start_provisional(session_uri, actor_uri, caps, declaration, revision, connection) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+
+    with {:ok, agent_uri, attempt_id} <-
+           DefinitionAgents.spawn_provisional(
+             session_uri,
+             workspace_uri,
+             actor_uri,
+             declaration
+           ) do
+      authenticating =
+        declaration
+        |> admission_row(revision, connection, :authenticating)
+        |> Map.put(:attempt_id, attempt_id)
+        |> Map.put(:provisional_agent_uri, URI.to_string(agent_uri))
+
+      case put_admission(session_uri, authenticating) do
+        :ok ->
+          {:ok, authenticating}
+
+        {:error, reason} ->
+          _ =
+            DefinitionAgents.cleanup_provisional(
+              session_uri,
+              actor_uri,
+              agent_uri,
+              attempt_id,
+              actor_ctx(actor_uri, caps),
+              :admission_record_failed
+            )
+
+          {:error, {:agent_admission_record_failed, reason}}
+      end
+    end
+  end
+
+  defp active_attempt(session_uri, declaration, revision, attempt_id) do
+    role_name = field(declaration, :role_name)
+
+    case Map.get(admissions(session_uri), role_name) do
+      %{status: status, attempt_id: ^attempt_id} = current
+      when status in @active_statuses ->
+        with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+
+      _ ->
+        {:error, :stale_agent_admission_attempt}
+    end
+  end
+
+  defp cancellable_attempt(session_uri, declaration, revision, attempt_id) do
+    role_name = field(declaration, :role_name)
+
+    case Map.get(admissions(session_uri), role_name) do
+      %{status: :failed, attempt_id: ^attempt_id} = current ->
+        with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+
+      current ->
+        case current do
+          %{status: status, attempt_id: ^attempt_id} when status in @active_statuses ->
+            with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+
+          _ ->
+            {:error, :stale_agent_admission_attempt}
+        end
+    end
+  end
+
+  defp cancel_current(_session_uri, %{status: :failed} = current, _actor, _caps, _reason),
+    do: {:ok, current}
+
+  defp cancel_current(session_uri, current, actor_uri, caps, failure_code) do
+    with {:ok, agent_uri} <- provisional_uri(current),
+         :ok <-
+           DefinitionAgents.cleanup_provisional(
+             session_uri,
+             actor_uri,
+             agent_uri,
+             current.attempt_id,
+             actor_ctx(actor_uri, caps),
+             failure_code
+           ),
+         {:ok, failed} <- put_failed(session_uri, current, failure_code) do
+      {:ok, failed}
+    end
+  end
+
+  defp fail_active_attempt(
+         session_uri,
+         role_name,
+         attempt_id,
+         actor_uri,
+         caps,
+         failure_code
+       ) do
+    current = Map.get(admissions(session_uri), role_name)
+
+    with %{attempt_id: ^attempt_id} <- current,
+         {:ok, failed} <-
+           cancel_current(session_uri, current, actor_uri, caps, failure_code) do
+      transition_failed(:complete, session_uri, role_name, failure_code)
+      {:error, failure_code, failed}
+    else
+      {:error, reason} ->
+        transition_failed(:complete, session_uri, role_name, reason)
+        {:error, reason}
+
+      _ ->
+        {:error, :stale_agent_admission_attempt}
+    end
+  end
+
+  defp complete_authenticated(
+         session_uri,
+         actor_uri,
+         caps,
+         declaration,
+         current,
+         agent_uri,
+         attempt_id
+       ) do
+    result =
+      with {:ok, materializing} <- put_status(session_uri, current, :materializing, nil),
+           :ok <-
+             DefinitionAgents.complete_provisional(
+               session_uri,
+               actor_uri,
+               declaration,
+               agent_uri,
+               attempt_id,
+               actor_ctx(actor_uri, caps)
+             ),
+           {:ok, joined} <- put_joined(session_uri, materializing),
+           :ok <-
+             set_default_source(
+               actor_uri,
+               agent_uri,
+               current.flavor,
+               session_uri,
+               caps
+             ) do
+        transition_ok(:complete, session_uri, joined)
+        {:ok, joined}
+      end
+
+    case result do
+      {:ok, _joined} = ok ->
+        ok
+
+      {:error, reason} ->
+        case cancel_current(session_uri, current, actor_uri, caps, nil) do
+          {:ok, _failed} ->
+            transition_failed(:complete, session_uri, current.role_name, reason)
+            {:error, reason}
+
+          {:error, cleanup_reason} ->
+            transition_failed(:complete, session_uri, current.role_name, cleanup_reason)
+            {:error, {reason, cleanup_reason}}
+        end
+    end
+  end
+
+  defp credential_authenticated(%{status: :authenticated}, _connection), do: :ok
+  defp credential_authenticated(%{status: :n_a}, :not_required), do: :ok
+  defp credential_authenticated(_status, _connection), do: {:error, :authentication_failed}
+
+  defp set_default_source(owner, source, flavor, session_uri, caps) do
+    workspace_uri = Ezagent.Capability.workspace_of(session_uri)
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+
+    target =
+      Ezagent.URI.with_action(
+        owner,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
+    caps =
+      if same_uri?(owner, Ezagent.Entity.User.admin_uri()) do
+        case Ezagent.Cap.issue_for_action({:admin, owner}, owner, target) do
+          {:ok, cap} -> MapSet.put(MapSet.new(caps), cap)
+          {:error, _reason} -> MapSet.new(caps)
+        end
+      else
+        MapSet.new(caps)
+      end
+
+    case UserDefaultSource.set_via_dispatch(
+           owner,
+           %{
+             flavor: flavor,
+             source_uri: URI.to_string(source),
+             workspace: workspace_name
+           },
+           actor_ctx(owner, caps)
+         ) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, {:default_credential_source_failed, reason}}
+    end
+  end
+
+  defp put_status(session_uri, current, status, failure_code) do
+    next = %{current | status: status, failure_code: failure_code}
+    with :ok <- put_admission(session_uri, next), do: {:ok, next}
+  end
+
+  defp put_joined(session_uri, current) do
+    next = %{current | status: :joined, failure_code: nil}
+    with :ok <- put_admission(session_uri, next), do: {:ok, next}
+  end
+
+  defp put_failed(session_uri, current, failure_code) do
+    failed = %{
+      current
+      | status: :failed,
+        provisional_agent_uri: nil,
+        failure_code: failure_code
+    }
+
+    with :ok <- put_admission(session_uri, failed), do: {:ok, failed}
+  end
+
+  defp admission_row(declaration, revision, connection, status) do
+    %{
+      status: status,
+      flavor: field(declaration, :flavor),
+      role_name: field(declaration, :role_name),
+      template_revision: revision,
+      attempt_id: nil,
+      provisional_agent_uri: nil,
+      connection: connection,
+      failure_code: nil
+    }
+  end
+
+  defp declared_gated_role(session_uri, role_name) do
+    working_copy = Session.read_template_working_copy(session_uri)
+    declarations = Map.get(working_copy, :member_declarations, [])
+
+    case Enum.find(declarations, &(field(&1, :role_name) == role_name)) do
+      nil ->
+        {:error, :undeclared_agent_admission_role}
+
+      declaration ->
+        if field(declaration, :credential_admission) == :before_session_join do
+          with {:ok, revision} <- template_revision(working_copy) do
+            {:ok, declaration, revision}
+          end
+        else
+          {:error, :role_does_not_require_agent_admission}
+        end
+    end
+  end
+
+  defp template_revision(%{session_template_uri: %URI{} = uri}),
+    do: {:ok, URI.to_string(uri)}
+
+  defp template_revision(_working_copy), do: {:error, :missing_session_template_revision}
+
+  defp connection_for(declaration) do
+    CredentialConnection.for_flavor(field(declaration, :flavor),
+      role: declaration
+    )
+  end
+
+  defp validate_row(current, declaration, revision) do
+    if current.role_name == field(declaration, :role_name) and
+         current.flavor == field(declaration, :flavor) and
+         current.template_revision == revision do
+      :ok
+    else
+      {:error, :stale_agent_admission_declaration}
+    end
+  end
+
+  defp same_declaration(current, requested) do
+    if field(current, :role_name) == field(requested, :role_name) and
+         field(current, :flavor) == field(requested, :flavor) and
+         field(current, :recipe) == field(requested, :recipe) do
+      :ok
+    else
+      {:error, :forged_agent_admission_declaration}
+    end
+  end
+
+  defp provisional_uri(%{provisional_agent_uri: value})
+       when is_binary(value) and value != "" do
+    case Ezagent.URI.parse(value) do
+      {:ok, %URI{scheme: "entity"} = uri} -> {:ok, uri}
+      _ -> {:error, :invalid_provisional_agent_uri}
+    end
+  end
+
+  defp provisional_uri(_current), do: {:error, :missing_provisional_agent_uri}
+
+  defp require_owner(session_uri, actor_uri) do
+    case Session.owner(session_uri) do
+      {:ok, owner_uri} ->
+        if same_uri?(owner_uri, actor_uri), do: :ok, else: {:error, :agent_admission_not_owner}
+
+      _ ->
+        {:error, :agent_admission_owner_unavailable}
+    end
+  end
+
+  defp admissions(session_uri) do
+    session_uri
+    |> Session.read_template_working_copy()
+    |> Map.get(@working_copy_key, %{})
+  end
+
+  defp put_admission(session_uri, admission) do
+    current = admissions(session_uri)
+    put_role = Map.put(current, admission.role_name, admission)
+    write_admissions(session_uri, put_role)
+  end
+
+  defp write_admissions(session_uri, value) do
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(@working_copy_key, value)
+
+    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
+      {:ok, _result} -> :ok
+      {:error, reason} -> {:error, {:agent_admission_write_failed, reason}}
+      other -> {:error, {:agent_admission_write_failed, other}}
+    end
+  end
+
+  defp actor_ctx(actor_uri, caps) do
+    %{
+      caller: actor_uri,
+      authenticated_principal: actor_uri,
+      caps: MapSet.new(caps)
+    }
+  end
+
+  defp provider_of(declaration), do: field(declaration, :provider)
+
+  defp field(map, key) when is_map(map) and is_atom(key) do
+    Map.get(map, key) || Map.get(map, Atom.to_string(key))
+  end
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+
+  defp with_lock(session_uri, role_name, fun) do
+    lock_id =
+      {{__MODULE__, URI.to_string(session_uri), role_name}, self()}
+
+    try do
+      true = :global.set_lock(lock_id, [node()])
+      fun.()
+    after
+      _ = :global.del_lock(lock_id, [node()])
+    end
+  end
+
+  defp transition_ok(event, session_uri, admission) do
+    :telemetry.execute(
+      @telemetry_prefix ++ [:transition, :ok],
+      %{count: 1},
+      %{
+        event: event,
+        session_uri: session_uri,
+        role_name: admission.role_name,
+        status: admission.status
+      }
+    )
+  end
+
+  defp transition_failed(event, session_uri, role_name, reason) do
+    :telemetry.execute(
+      @telemetry_prefix ++ [:transition, :failed],
+      %{count: 1},
+      %{
+        event: event,
+        session_uri: session_uri,
+        role_name: role_name,
+        reason: sanitize_reason(reason)
+      }
+    )
+  end
+
+  defp sanitize_reason(reason)
+       when reason in [
+              :authentication_failed,
+              :connection_cancelled,
+              :connection_timed_out,
+              :stale_agent_admission_attempt,
+              :stale_agent_admission_declaration,
+              :undeclared_agent_admission_role,
+              :role_does_not_require_agent_admission,
+              :agent_admission_not_owner
+            ],
+       do: reason
+
+  defp sanitize_reason(_reason), do: :transition_failed
+end

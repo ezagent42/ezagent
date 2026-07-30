@@ -131,6 +131,31 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            """
   end
 
+  test "create_session/3 never starts a credential-admission candidate" do
+    source =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/session_creator.ex")
+      |> File.read!()
+
+    [_, create_tail] =
+      String.split(
+        source,
+        "def create_session(short_name, creator_uri, opts)",
+        parts: 2
+      )
+
+    [create_lane | _] =
+      String.split(create_tail, ~s(@doc """\n  Repair an EXISTING session's orchestrator),
+        parts: 2
+      )
+
+    refute create_lane =~ "AgentAdmission.begin",
+           "create_session/3 must remain configuration/owner-only and never start a candidate"
+
+    refute create_lane =~ "begin_agent_admission",
+           "create_session/3 must not call the admission facade"
+  end
+
   # The gap that let `hello` stay broken while `default` was fixed: a session
   # Template Class's `instantiate/3` ALSO runs inside the `workspace.create_session`
   # dispatch (`Workspace.create_session_via_class/5`), and `HelloSession` →
