@@ -126,6 +126,50 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     assert snapshot2.page == expected_body
   end
 
+  # #207: `resolve_founder` validates the configured email → Profile → workspace
+  # but a Profile row is decoupled from the `users` provisioning row (separate
+  # tables, no FK). A founder that has a Profile+email but NO `users` row would
+  # pass the pre-guard `resolve_founder` and be handed to `provision/1`, where
+  # the owner member-cap `identity.absorb_cap` casts to a URI whose user Kind
+  # cannot cold-start → `:no_such_actor` and the ~60s absorb retry loop observed
+  # on canary. The fix is a fail-loud startability check: reject an
+  # unregistered founder at resolution, so the deploy provisions the user
+  # (Allen's "add the user, don't soften") instead of silently retry-looping.
+  test "fails loud when the configured founder has a profile but no registered user" do
+    home = EzagentPluginHello.home_workspace()
+    # A founder with a Profile (so `by_email` resolves it) but NO `users` row.
+    founder = Ezagent.URI.entity(home, :user, "unregistered_founder")
+    email = "unregistered-founder@example.test"
+
+    {:ok, _} =
+      Profile.upsert(%{entity_uri: founder, display_name: "Unregistered founder", email: email})
+
+    Application.put_env(:ezagent_plugin_hello, :official_site_founder_email, email)
+
+    assert {:error, :official_site_founder_not_registered} = OfficialSiteSeed.ensure()
+
+    # Fail-loud is EARLY — the site is never even attempted, so no owner-cap
+    # absorb is cast to the dead actor.
+    refute site_page_present?(OfficialSiteSeed.site_uri())
+  end
+
+  test "fails loud when the configured founder is soft-disabled" do
+    home = EzagentPluginHello.home_workspace()
+    founder = Ezagent.URI.entity(home, :user, "disabled_founder")
+    email = "disabled-founder@example.test"
+
+    {:ok, _} = Ezagent.Users.create(founder, nil, [], email_verified: false)
+
+    {:ok, _} =
+      Profile.upsert(%{entity_uri: founder, display_name: "Disabled founder", email: email})
+
+    {:ok, _} = Ezagent.Users.disable(founder, User.admin_uri(), "test")
+
+    Application.put_env(:ezagent_plugin_hello, :official_site_founder_email, email)
+
+    assert {:error, :official_site_founder_not_registered} = OfficialSiteSeed.ensure()
+  end
+
   # Mirrors `OfficialSiteSeed`'s internal absence gate.
   defp site_page_present?(site_uri) do
     match?(
