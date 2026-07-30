@@ -28,6 +28,14 @@ defmodule Ezagent.Home.SocialwareSeed do
   level reconciliation self-heals this on the very next boot: no manual
   home wipe needed.
 
+  Caveat: "never touched" cuts both ways. If an operator deliberately
+  DELETES a single file from an already-deployed package (rather than
+  editing it), the next seed! cannot tell that apart from "this dest simply
+  predates the file's existence in source" — it re-adds the file. Only a
+  content EDIT survives untouched; a content-level CHANGE shipped in a later
+  release of a builtin file also does not overwrite an existing (even
+  unedited) copy — see the module tests for both boundaries.
+
   Purely filesystem work (no Repo, no dispatch): safe to call from the Category-A
   `mix ezagent.home.init` bootstrap AND from the boot fallback in
   `Ezagent.Socialware.ManifestSeed`, which resolves + publishes the seeded
