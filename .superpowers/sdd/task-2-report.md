@@ -1,0 +1,108 @@
+# Task 2 report — durable credential-gated agent admission
+
+## Outcome
+
+Implemented the durable candidate admission state machine outside
+`create_session/3`.
+
+- Gated roles without a valid credential source are recorded under the session
+  working-copy `:agent_admissions` key and returned as non-fatal `deferred`
+  results.
+- `begin/4` creates one managed provisional agent backed by its durable
+  `CreationInventory` attempt ID, without adding a session membership edge.
+- `complete/4` performs the authorized credential-status read, reuses the normal
+  recipe/cap/join pipeline, sets the cap-checked default source, and records
+  `:joined`.
+- Authentication, materialization, cancellation, timeout, and source-write
+  failures use the durable retirement path and record `:failed`; retry creates a
+  new attempt.
+- Admission mutators re-read the live declaration/revision, serialize by
+  session/role, reject stale attempts, and emit credential-free transition
+  telemetry.
+- Immediate roles retain their existing materialization path.
+- Static architecture coverage proves `create_session/3` does not begin an
+  admission or spawn a candidate.
+
+## TDD evidence
+
+Initial focused lifecycle test failed as expected because the gated role was
+returned through the legacy missing-credential `skipped` lane:
+
+```text
+expected: %{satisfied: ["front-desk"], skipped: [], deferred: ["llm"]}
+actual:   gated "llm" present in skipped with :no_credential_source
+1 test, 1 failure
+```
+
+After implementation and scoped review:
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs \
+  apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs \
+  apps/ezagent_domain_session/test/architecture/session_create_no_agent_spawn_test.exs
+
+39 tests, 0 failures
+```
+
+`mix format` was run for all six Task 2 files and `git diff --check` passed.
+Full `mix precommit` was intentionally not run per coordinator instruction.
+
+## Scope and concerns
+
+Only the six Task 2 implementation/test files are included in the Task 2
+commit. Other agents' concurrent changes and existing report/plan artifacts
+were left unstaged.
+
+No known Task 2 correctness concern remains. The focused integration run emits
+existing asynchronous deferred-dispatch/teardown log noise, but exits
+successfully with all 39 tests passing.
+
+## Important-review hardening — 2026-07-30
+
+Addressed all five Important findings from the post-Task-2 review:
+
+- `:joined` is now durable only after the cap-checked default credential source
+  pointer succeeds. A pointer-boundary fault proves failure never exposes
+  `:joined`.
+- `defer`, `begin`, `clear`, expiry, and gated materialization reconcile rows
+  against the live declaration flavor and template revision. Stale active rows
+  are retired before replacement; stale terminal rows are cleared.
+- Provisional cleanup validates the exact `CreationInventory` tuple and current
+  lineage before tombstoning a recipe binding or removing session membership.
+- Post-spawn admission-write cleanup and fresh-spawn rollback failures are
+  returned as compound errors. The admission writer also converts exits into
+  explicit write failures so compensation cannot be bypassed.
+- The create-session no-spawn architecture gate now walks the reachable local
+  call graph and detects concrete Agent spawn writers, including a fixture whose
+  writer is hidden behind innocuously named helpers.
+
+### TDD evidence
+
+The new regressions failed before the hardening with four behavioral failures:
+stale active candidates remained live, stale `begin` returned the old joined
+row, wrong-attempt cleanup mutated state before failing, and pointer/cleanup
+failure ordering exposed the wrong state/error. The strengthened architecture
+fixture also caught an initial arity-zero call-graph gap.
+
+An exact admission-write injection then exposed one more recovery hole:
+`system_set_working_copy` exited while the session was suspended, bypassing the
+cleanup branch. `write_admissions/2` now converts throw/exit failures into the
+same explicit error lane; the regression proves both the durable-write failure
+and the cleanup lineage mismatch are retained.
+
+### Green verification
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs \
+  apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs \
+  apps/ezagent_domain_session/test/architecture/session_create_no_agent_spawn_test.exs
+
+47 tests, 0 failures
+```
+
+The three files also passed independently (`9/9`, `29/29`, and `9/9`).
+`mix format` was run on every touched Task 2 source/test file and
+`git diff --check` passed. Full `mix precommit` remains intentionally skipped
+under the coordinator's focused-suite instruction.

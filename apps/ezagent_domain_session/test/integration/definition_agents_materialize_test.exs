@@ -283,6 +283,14 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     @impl Ezagent.Kind.Template
     def destroy_config_dir(%URI{} = agent_uri, config_dir) when is_binary(config_dir) do
+      if Process.get({__MODULE__, :failure_mode}) == :post_spawn_rollback_failure do
+        {:error, :injected_config_cleanup_failure}
+      else
+        destroy_safe_config_dir(agent_uri, config_dir)
+      end
+    end
+
+    defp destroy_safe_config_dir(agent_uri, config_dir) do
       if Ezagent.Sandbox.ConfigDir.safe_to_destroy?(config_dir, agent_uri, @namespace) do
         case File.rm_rf(config_dir) do
           {:ok, _removed} -> :ok
@@ -297,6 +305,9 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       case Process.get({__MODULE__, :failure_mode}) do
         :convergence ->
           Ezagent.ReadyGate.put(uri, :not_ready)
+
+        :post_spawn_rollback_failure ->
+          Ezagent.ReadyGate.put(uri, :failed)
 
         {:join, session_uri, blocker_uri, role_name} ->
           join_blocker(session_uri, blocker_uri, role_name)
@@ -919,6 +930,43 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert_receive {:task_3_fresh_spawned, planned_uri, config_dir}
     assert_fresh_role_rolled_back(planned_uri, config_dir)
+  end
+
+  test "a provisional post-spawn failure surfaces rollback failure evidence" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "provisional-rollback-failure-#{n}"
+    flavor = register_convergence_timeout_flavor(n)
+
+    declaration = %{
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      credential_admission: :before_session_join
+    }
+
+    assert {:error,
+            {
+              _post_spawn_failure,
+              {:rollback_failed, {:fresh_spawn_rollback_incomplete, rollback_errors}}
+            }} =
+             with_failure_mode(:post_spawn_rollback_failure, fn ->
+               DefinitionAgents.spawn_provisional(
+                 session_uri,
+                 @workspace_uri,
+                 @owner_uri,
+                 declaration
+               )
+             end)
+
+    assert Enum.any?(rollback_errors, fn
+             {:config_dir_destroy_failed, _agent_uri, _path, :injected_config_cleanup_failure} ->
+               true
+
+             _ ->
+               false
+           end)
   end
 
   test "a fresh role that fails join leaves no live or durable residue" do

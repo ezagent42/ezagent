@@ -185,23 +185,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
             EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri)
 
           with_lock(session_uri, role_name, fn ->
-            with {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
-                 {:ok, current} <-
-                   cancellable_attempt(session_uri, declaration, revision, attempt_id),
-                 {:ok, failed} <-
-                   cancel_current(
-                     session_uri,
-                     current,
-                     owner_uri,
-                     caps,
-                     :connection_timed_out
-                   ) do
-              transition_ok(:expire, session_uri, failed)
-              {:ok, failed}
-            else
-              {:error, reason} = error ->
-                transition_failed(:expire, session_uri, role_name, reason)
-                error
+            case declared_gated_role(session_uri, role_name) do
+              {:ok, declaration, revision} ->
+                expire_current_or_stale(
+                  session_uri,
+                  declaration,
+                  revision,
+                  attempt_id,
+                  owner_uri,
+                  caps
+                )
+
+              {:error, _declaration_reason} ->
+                expire_undeclared_row(
+                  session_uri,
+                  role_name,
+                  attempt_id,
+                  owner_uri,
+                  caps
+                )
             end
           end)
         end
@@ -209,6 +211,82 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
       nil ->
         {:error, :stale_agent_admission_attempt}
     end
+  end
+
+  defp expire_current_or_stale(
+         session_uri,
+         declaration,
+         revision,
+         attempt_id,
+         owner_uri,
+         caps
+       ) do
+    role_name = field(declaration, :role_name)
+
+    with {:ok, row_state} <- reconcile_row(session_uri, declaration, revision) do
+      case row_state do
+        {:current, _current} ->
+          with {:ok, cancellable} <-
+                 cancellable_attempt(session_uri, declaration, revision, attempt_id),
+               {:ok, failed} <-
+                 cancel_current(
+                   session_uri,
+                   cancellable,
+                   owner_uri,
+                   caps,
+                   :connection_timed_out
+                 ) do
+            transition_ok(:expire, session_uri, failed)
+            {:ok, failed}
+          end
+
+        {:stale, %{attempt_id: ^attempt_id} = stale} ->
+          expired = failed_row(stale, :connection_timed_out)
+          transition_ok(:expire, session_uri, expired)
+          {:ok, expired}
+
+        _ ->
+          {:error, :stale_agent_admission_attempt}
+      end
+    else
+      {:error, reason} = error ->
+        transition_failed(:expire, session_uri, role_name, reason)
+        error
+    end
+  end
+
+  defp expire_undeclared_row(session_uri, role_name, attempt_id, _owner_uri, _caps) do
+    case Map.get(admissions(session_uri), role_name) do
+      %{attempt_id: ^attempt_id} = stale ->
+        with :ok <- retire_or_clear_stale_row(session_uri, stale) do
+          expired = failed_row(stale, :connection_timed_out)
+          transition_ok(:expire, session_uri, expired)
+          {:ok, expired}
+        end
+
+      _ ->
+        {:error, :stale_agent_admission_attempt}
+    end
+  end
+
+  @doc false
+  @spec current(URI.t(), map()) :: {:ok, admission() | nil} | {:error, term()}
+  def current(%URI{scheme: "session"} = session_uri, declaration) when is_map(declaration) do
+    role_name = field(declaration, :role_name)
+
+    with_lock(session_uri, role_name, fn ->
+      with {:ok, current_declaration, revision} <-
+             declared_gated_role(session_uri, role_name),
+           :ok <- same_declaration(current_declaration, declaration),
+           {:ok, row_state} <-
+             reconcile_row(session_uri, current_declaration, revision) do
+        case row_state do
+          {:current, row} -> {:ok, row}
+          :missing -> {:ok, nil}
+          {:stale, _row} -> {:ok, nil}
+        end
+      end
+    end)
   end
 
   @doc false
@@ -220,30 +298,43 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
       with {:ok, current_declaration, revision} <-
              declared_gated_role(session_uri, role_name),
            :ok <- same_declaration(current_declaration, declaration),
-           {:ok, connection} <- connection_for(current_declaration) do
-        case Map.get(admissions(session_uri), role_name) do
-          %{status: status} = current when status in @active_statuses or status == :joined ->
+           {:ok, connection} <- connection_for(current_declaration),
+           {:ok, row_state} <-
+             reconcile_row(session_uri, current_declaration, revision) do
+        case row_state do
+          {:current, %{status: status} = current}
+          when status in @active_statuses or status == :joined ->
             {:ok, current}
 
-          %{status: :failed} = failed ->
+          {:current, %{status: :failed} = failed} ->
             {:ok, failed}
 
-          _ ->
-            pending =
-              admission_row(
-                current_declaration,
-                revision,
-                connection,
-                :pending_auth
-              )
+          {:current, _pending} ->
+            put_pending(session_uri, current_declaration, revision, connection)
 
-            with :ok <- put_admission(session_uri, pending) do
-              transition_ok(:defer, session_uri, pending)
-              {:ok, pending}
-            end
+          :missing ->
+            put_pending(session_uri, current_declaration, revision, connection)
+
+          {:stale, _retired} ->
+            put_pending(session_uri, current_declaration, revision, connection)
         end
       end
     end)
+  end
+
+  defp put_pending(session_uri, declaration, revision, connection) do
+    pending =
+      admission_row(
+        declaration,
+        revision,
+        connection,
+        :pending_auth
+      )
+
+    with :ok <- put_admission(session_uri, pending) do
+      transition_ok(:defer, session_uri, pending)
+      {:ok, pending}
+    end
   end
 
   @doc false
@@ -252,12 +343,24 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     role_name = field(declaration, :role_name)
 
     with_lock(session_uri, role_name, fn ->
-      current = admissions(session_uri)
+      with {:ok, current_declaration, revision} <-
+             declared_gated_role(session_uri, role_name),
+           :ok <- same_declaration(current_declaration, declaration),
+           {:ok, row_state} <-
+             reconcile_row(session_uri, current_declaration, revision) do
+        case row_state do
+          {:current, %{status: status}} when status in @active_statuses ->
+            {:error, :agent_admission_active}
 
-      case Map.get(current, role_name) do
-        nil -> :ok
-        %{status: status} when status in @active_statuses -> {:error, :agent_admission_active}
-        _ -> write_admissions(session_uri, Map.delete(current, role_name))
+          {:current, _row} ->
+            delete_admission(session_uri, role_name)
+
+          :missing ->
+            :ok
+
+          {:stale, _retired} ->
+            :ok
+        end
       end
     end)
   end
@@ -270,29 +373,30 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
          revision,
          connection
        ) do
-    role_name = field(declaration, :role_name)
-
-    case Map.get(admissions(session_uri), role_name) do
-      %{status: status} = current when status in @active_statuses ->
-        with :ok <- validate_row(current, declaration, revision) do
+    with {:ok, row_state} <- reconcile_row(session_uri, declaration, revision) do
+      case row_state do
+        {:current, %{status: status} = current} when status in @active_statuses ->
           {:ok, current}
-        end
 
-      %{status: :joined} = joined ->
-        {:ok, joined}
+        {:current, %{status: :joined} = joined} ->
+          {:ok, joined}
 
-      nil ->
-        {:error, :agent_admission_not_pending}
+        :missing ->
+          {:error, :agent_admission_not_pending}
 
-      current when current.status in [:pending_auth, :failed] ->
-        start_provisional(
-          session_uri,
-          actor_uri,
-          caps,
-          declaration,
-          revision,
-          connection
-        )
+        {:current, current} when current.status in [:pending_auth, :failed] ->
+          start_provisional(
+            session_uri,
+            actor_uri,
+            caps,
+            declaration,
+            revision,
+            connection
+          )
+
+        {:stale, _retired} ->
+          {:error, :stale_agent_admission_declaration}
+      end
     end
   end
 
@@ -317,17 +421,19 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
           {:ok, authenticating}
 
         {:error, reason} ->
-          _ =
-            DefinitionAgents.cleanup_provisional(
-              session_uri,
-              actor_uri,
-              agent_uri,
-              attempt_id,
-              actor_ctx(actor_uri, caps),
-              :admission_record_failed
-            )
+          original = {:agent_admission_record_failed, reason}
 
-          {:error, {:agent_admission_record_failed, reason}}
+          case DefinitionAgents.cleanup_provisional(
+                 session_uri,
+                 actor_uri,
+                 agent_uri,
+                 attempt_id,
+                 actor_ctx(actor_uri, caps),
+                 :admission_record_failed
+               ) do
+            :ok -> {:error, original}
+            {:error, cleanup_reason} -> {:error, {original, {:cleanup_failed, cleanup_reason}}}
+          end
       end
     end
   end
@@ -427,7 +533,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
                attempt_id,
                actor_ctx(actor_uri, caps)
              ),
-           {:ok, joined} <- put_joined(session_uri, materializing),
            :ok <-
              set_default_source(
                actor_uri,
@@ -435,7 +540,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
                current.flavor,
                session_uri,
                caps
-             ) do
+             ),
+           {:ok, joined} <- put_joined(session_uri, materializing) do
         transition_ok(:complete, session_uri, joined)
         {:ok, joined}
       end
@@ -507,14 +613,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   end
 
   defp put_failed(session_uri, current, failure_code) do
-    failed = %{
+    failed = failed_row(current, failure_code)
+
+    with :ok <- put_admission(session_uri, failed), do: {:ok, failed}
+  end
+
+  defp failed_row(current, failure_code) do
+    %{
       current
       | status: :failed,
         provisional_agent_uri: nil,
         failure_code: failure_code
     }
-
-    with :ok <- put_admission(session_uri, failed), do: {:ok, failed}
   end
 
   defp admission_row(declaration, revision, connection, status) do
@@ -570,6 +680,52 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     end
   end
 
+  defp reconcile_row(session_uri, declaration, revision) do
+    role_name = field(declaration, :role_name)
+
+    case Map.get(admissions(session_uri), role_name) do
+      nil ->
+        {:ok, :missing}
+
+      current ->
+        case validate_row(current, declaration, revision) do
+          :ok ->
+            {:ok, {:current, current}}
+
+          {:error, :stale_agent_admission_declaration} ->
+            with :ok <- retire_or_clear_stale_row(session_uri, current) do
+              {:ok, {:stale, current}}
+            end
+        end
+    end
+  end
+
+  defp retire_or_clear_stale_row(session_uri, %{status: status} = current)
+       when status in @active_statuses do
+    with {:ok, owner_uri} <- Session.owner(session_uri),
+         {:ok, agent_uri} <- provisional_uri(current),
+         caps <-
+           EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri),
+         :ok <-
+           DefinitionAgents.cleanup_provisional(
+             session_uri,
+             owner_uri,
+             agent_uri,
+             current.attempt_id,
+             actor_ctx(owner_uri, caps),
+             :stale_agent_admission_declaration
+           ),
+         :ok <- delete_admission(session_uri, current.role_name) do
+      :ok
+    else
+      {:error, _reason} = error -> error
+      other -> {:error, {:stale_agent_admission_cleanup_failed, other}}
+    end
+  end
+
+  defp retire_or_clear_stale_row(session_uri, current),
+    do: delete_admission(session_uri, current.role_name)
+
   defp same_declaration(current, requested) do
     if field(current, :role_name) == field(requested, :role_name) and
          field(current, :flavor) == field(requested, :flavor) and
@@ -612,16 +768,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     write_admissions(session_uri, put_role)
   end
 
+  defp delete_admission(session_uri, role_name) do
+    current = admissions(session_uri)
+    write_admissions(session_uri, Map.delete(current, role_name))
+  end
+
   defp write_admissions(session_uri, value) do
     working_copy =
       session_uri
       |> Session.read_template_working_copy()
       |> Map.put(@working_copy_key, value)
 
-    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _result} -> :ok
-      {:error, reason} -> {:error, {:agent_admission_write_failed, reason}}
-      other -> {:error, {:agent_admission_write_failed, other}}
+    try do
+      case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
+        {:ok, _result} -> :ok
+        {:error, reason} -> {:error, {:agent_admission_write_failed, reason}}
+        other -> {:error, {:agent_admission_write_failed, other}}
+      end
+    catch
+      kind, reason ->
+        {:error, {:agent_admission_write_failed, {kind, reason}}}
     end
   end
 

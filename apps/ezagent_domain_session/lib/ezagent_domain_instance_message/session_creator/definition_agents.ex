@@ -357,37 +357,39 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          flavor,
          provider
        ) do
-    case active_admission(session_uri, role_name) do
-      %{status: status} = admission when status in [:authenticating, :materializing] ->
-        {:deferred, admission}
+    with {:ok, current_admission} <- AgentAdmission.current(session_uri, agent) do
+      case current_admission do
+        %{status: status} = admission when status in [:authenticating, :materializing] ->
+          {:deferred, admission}
 
-      _ ->
-        opts = [
-          backend_profile: provider,
-          credential_optional: map_field(role_config(agent), :credential_optional)
-        ]
+        _ ->
+          opts = [
+            backend_profile: provider,
+            credential_optional: map_field(role_config(agent), :credential_optional)
+          ]
 
-        case CredentialPrecondition.check_source(granted_by, workspace_uri, flavor, opts) do
-          :ok ->
-            with :ok <- AgentAdmission.clear(session_uri, agent) do
-              materialize_planned_agent(
-                session_uri,
-                workspace_uri,
-                granted_by,
-                agent,
-                recipe,
-                recipe_name,
-                role_name,
-                flavor,
-                provider
-              )
-            end
+          case CredentialPrecondition.check_source(granted_by, workspace_uri, flavor, opts) do
+            :ok ->
+              with :ok <- AgentAdmission.clear(session_uri, agent) do
+                materialize_planned_agent(
+                  session_uri,
+                  workspace_uri,
+                  granted_by,
+                  agent,
+                  recipe,
+                  recipe_name,
+                  role_name,
+                  flavor,
+                  provider
+                )
+              end
 
-          {:skip, _reason} ->
-            with {:ok, admission} <- AgentAdmission.defer(session_uri, agent) do
-              {:deferred, admission}
-            end
-        end
+            {:skip, _reason} ->
+              with {:ok, admission} <- AgentAdmission.defer(session_uri, agent) do
+                {:deferred, admission}
+              end
+          end
+      end
     end
   end
 
@@ -688,9 +690,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:ok, _, _} = ok ->
         ok
 
-      {:error, _reason} = error ->
-        _ = RecipeMaterializer.rollback_fresh_agent(fresh_receipt, nil)
-        error
+      {:error, reason} = error ->
+        case RecipeMaterializer.rollback_fresh_agent(fresh_receipt, nil) do
+          {:ok, :retired} -> error
+          {:error, rollback_reason} -> {:error, {reason, {:rollback_failed, rollback_reason}}}
+        end
     end
   end
 
@@ -767,7 +771,14 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       when is_binary(attempt_id) and is_map(ctx) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    with :ok <- tombstone_active_binding(agent_uri),
+    with :ok <-
+           validate_provisional_cleanup(
+             attempt_id,
+             agent_uri,
+             provenance_root,
+             workspace_uri
+           ),
+         :ok <- tombstone_active_binding(agent_uri),
          :ok <- remove_fresh_member(session_uri, agent_uri) do
       retirement =
         Ezagent.Domain.Agent.retire_spawned(agent_uri, %{
@@ -792,6 +803,28 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         :ok
       else
         {:error, {:provisional_retirement_failed, retirement}}
+      end
+    end
+  end
+
+  defp validate_provisional_cleanup(attempt_id, agent_uri, provenance_root, workspace_uri) do
+    with {:ok, _entry} <-
+           Ezagent.Agent.CreationInventory.exact(
+             attempt_id,
+             agent_uri,
+             provenance_root,
+             workspace_uri
+           ) do
+      case Ezagent.AgentLineage.lookup(agent_uri) do
+        {:ok, current_root} ->
+          if same_uri?(current_root, provenance_root) do
+            :ok
+          else
+            {:error, {:provisional_lineage_mismatch, current_root}}
+          end
+
+        :error ->
+          {:error, :provisional_lineage_not_found}
       end
     end
   end
@@ -1282,10 +1315,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp active_admission(session_uri, role_name) do
-    Enum.find(AgentAdmission.list(session_uri), &(&1.role_name == role_name))
-  end
-
   defp maybe_clear_admission(session_uri, agent) do
     if credential_admission_of(agent) == :before_session_join,
       do: AgentAdmission.clear(session_uri, agent),
@@ -1318,4 +1347,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
     Map.put(recipe, :config, Map.merge(base, config))
   end
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
 end

@@ -131,29 +131,27 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            """
   end
 
-  test "create_session/3 never starts a credential-admission candidate" do
+  test "create_session/3 reachable call graph contains no Agent spawn writer" do
     source =
       app_root()
       |> Path.join("lib/ezagent_domain_instance_message/session_creator.ex")
       |> File.read!()
 
-    [_, create_tail] =
-      String.split(
-        source,
-        "def create_session(short_name, creator_uri, opts)",
-        parts: 2
-      )
+    assert reachable_agent_spawn_calls(source, {:create_session, 3}) == []
+  end
 
-    [create_lane | _] =
-      String.split(create_tail, ~s(@doc """\n  Repair an EXISTING session's orchestrator),
-        parts: 2
-      )
+  test "create-session gate detects an actual Agent spawn hidden behind an innocuous helper" do
+    source = """
+    defmodule GateFixture do
+      def create_session(name, owner, opts), do: persist(name, owner, opts)
+      defp persist(_name, _owner, _opts), do: write_record()
+      defp write_record, do: Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{})
+    end
+    """
 
-    refute create_lane =~ "AgentAdmission.begin",
-           "create_session/3 must remain configuration/owner-only and never start a candidate"
-
-    refute create_lane =~ "begin_agent_admission",
-           "create_session/3 must not call the admission facade"
+    assert [
+             %{function: {:write_record, 0}, writer: "Ezagent.Kind.spawn(Ezagent.Entity.Agent)"}
+           ] = reachable_agent_spawn_calls(source, {:create_session, 3})
   end
 
   # The gap that let `hello` stay broken while `default` was fixed: a session
@@ -353,6 +351,120 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
       :nomatch -> nil
     end
   end
+
+  defp reachable_agent_spawn_calls(source, entrypoint) do
+    ast =
+      Code.string_to_quoted!(source,
+        warn_on_unnecessary_quotes: false,
+        emit_warnings: false
+      )
+
+    definitions =
+      Macro.prewalk(ast, %{}, fn
+        {kind, _meta, [head, [do: body]]} = node, acc when kind in [:def, :defp] ->
+          case function_signature(head) do
+            nil -> {node, acc}
+            signature -> {node, Map.update(acc, signature, [body], &[body | &1])}
+          end
+
+        node, acc ->
+          {node, acc}
+      end)
+      |> elem(1)
+
+    definitions
+    |> reachable_definitions([entrypoint], MapSet.new())
+    |> Enum.flat_map(fn signature ->
+      definitions
+      |> Map.fetch!(signature)
+      |> Enum.flat_map(&spawn_writers(&1, signature))
+    end)
+  end
+
+  defp reachable_definitions(_definitions, [], visited), do: MapSet.to_list(visited)
+
+  defp reachable_definitions(definitions, [signature | rest], visited) do
+    cond do
+      MapSet.member?(visited, signature) ->
+        reachable_definitions(definitions, rest, visited)
+
+      not Map.has_key?(definitions, signature) ->
+        reachable_definitions(definitions, rest, visited)
+
+      true ->
+        callees =
+          definitions
+          |> Map.fetch!(signature)
+          |> Enum.flat_map(&local_calls/1)
+          |> Enum.filter(&Map.has_key?(definitions, &1))
+
+        reachable_definitions(
+          definitions,
+          callees ++ rest,
+          MapSet.put(visited, signature)
+        )
+    end
+  end
+
+  defp local_calls(body) do
+    Macro.prewalk(body, MapSet.new(), fn
+      {{:., _, _}, _, _} = node, calls ->
+        {node, calls}
+
+      {name, _, args} = node, calls when is_atom(name) and is_list(args) ->
+        {node, MapSet.put(calls, {name, length(args)})}
+
+      node, calls ->
+        {node, calls}
+    end)
+    |> elem(1)
+    |> MapSet.to_list()
+  end
+
+  defp spawn_writers(body, signature) do
+    Macro.prewalk(body, [], fn node, calls ->
+      case spawn_writer(node) do
+        nil -> {node, calls}
+        writer -> {node, [%{function: signature, writer: writer} | calls]}
+      end
+    end)
+    |> elem(1)
+    |> Enum.reverse()
+  end
+
+  defp spawn_writer(
+         {{:., _, [{:__aliases__, _, kind_module}, :spawn]}, _,
+          [
+            {:__aliases__, _, agent_module} | _args
+          ]}
+       )
+       when kind_module in [[:Ezagent, :Kind], [:Kind]] and
+              agent_module in [[:Ezagent, :Entity, :Agent], [:Entity, :Agent], [:Agent]],
+       do: "Ezagent.Kind.spawn(Ezagent.Entity.Agent)"
+
+  defp spawn_writer({{:., _, [{:__aliases__, _, module}, function]}, _, _args})
+       when {module, function} in [
+              {[:Ezagent, :SpawnRegistry], :spawn},
+              {[:Ezagent, :SpawnRegistry], :spawn_detailed},
+              {[:SpawnRegistry], :spawn},
+              {[:SpawnRegistry], :spawn_detailed},
+              {[:Ezagent, :Agent, :RecipeMaterializer], :create_agent_from_recipe},
+              {[:RecipeMaterializer], :create_agent_from_recipe}
+            ],
+       do: "#{Enum.join(module, ".")}.#{function}"
+
+  defp spawn_writer({{:., _, [_module, :spawn_from_template_content]}, _, _args}),
+    do: "spawn_from_template_content"
+
+  defp spawn_writer(_node), do: nil
+
+  defp function_signature({:when, _, [head | _guards]}), do: function_signature(head)
+  defp function_signature({name, _, nil}) when is_atom(name), do: {name, 0}
+
+  defp function_signature({name, _, args}) when is_atom(name) and is_list(args),
+    do: {name, length(args)}
+
+  defp function_signature(_head), do: nil
 
   test "create_session/3 does not reference the agent materializer" do
     body =

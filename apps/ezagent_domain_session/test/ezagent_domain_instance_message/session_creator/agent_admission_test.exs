@@ -7,6 +7,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias Ezagent.Credential.UserDefaultSource
   alias Ezagent.Entity.Session
+  alias Ezagent.Identity.RecipeCapBinding
   alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
@@ -84,10 +85,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
              behaviors: Ezagent.Entity.Agent.base_behaviors(),
              role: data["role"]
            }) do
-        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
-        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
-        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
-        {:error, reason} -> {:error, reason}
+        {:ok, _pid} ->
+          :ok = inject_post_spawn_failure(uri)
+          {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+
+        {:error, {:already_started, _pid}} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, {:already_registered, _}} ->
+          {:ok, [uri], %{fresh?: false}}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     end
 
@@ -100,6 +109,22 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
         end
       else
         {:error, :unsafe_config_dir}
+      end
+    end
+
+    defp inject_post_spawn_failure(agent_uri) do
+      case Process.get({__MODULE__, :post_spawn_failure}) do
+        {:suspend_admission_write, controller} ->
+          send(controller, {:candidate_spawned, self(), agent_uri})
+
+          receive do
+            {:continue_candidate_spawn, ^controller} -> :ok
+          after
+            5_000 -> {:error, :admission_write_fault_controller_timeout}
+          end
+
+        _ ->
+          :ok
       end
     end
   end
@@ -145,6 +170,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
 
     on_exit(fn ->
       Process.delete({CredentialTemplate, :credential_status})
+      Process.delete({CredentialTemplate, :post_spawn_failure})
 
       session_uri
       |> Session.session_member_uris()
@@ -353,6 +379,294 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
              source
   end
 
+  test "default-source failure never exposes joined and preserves cleanup failure evidence", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    wrong_root = Ezagent.URI.user("system", "wrong-admission-root")
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+    restore_flavor_resolver = inject_pointer_failure(agent_uri, authenticating.flavor, wrong_root)
+
+    assert {:error,
+            {
+              {:default_credential_source_failed, :source_flavor_mismatch},
+              cleanup_failure
+            }} =
+             AgentAdmission.complete(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, Ezagent.Identity.list_caps_for(@owner_uri)}
+             )
+
+    assert cleanup_failure != nil
+    refute Enum.any?(AgentAdmission.list(session_uri), &(&1.status == :joined))
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == agent_uri
+    assert {:ok, binding} = RecipeCapBinding.fetch(agent_uri)
+
+    restore_flavor_resolver.()
+    :ok = Ezagent.AgentLineage.rollback_lineage_fact(agent_uri, wrong_root)
+    {:ok, _status} = Ezagent.AgentLineage.record_with_status(agent_uri, @owner_uri)
+
+    assert :ok =
+             DefinitionAgents.cleanup_provisional(
+               session_uri,
+               @owner_uri,
+               agent_uri,
+               authenticating.attempt_id,
+               actor_ctx(),
+               :test_cleanup
+             )
+
+    assert binding.version > 0
+  end
+
+  test "admission record failure preserves cleanup failure evidence", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    wrong_root = Ezagent.URI.user("system", "wrong-admission-record-root")
+    test_pid = self()
+    {:ok, session_pid} = Ezagent.KindRegistry.lookup(session_uri)
+
+    controller =
+      spawn(fn ->
+        test_monitor = Process.monitor(test_pid)
+
+        receive do
+          {:candidate_spawned, begin_pid, agent_uri} ->
+            :ok = :sys.suspend(session_pid)
+            send(begin_pid, {:continue_candidate_spawn, self()})
+            :ok = wait_for_admission_write(begin_pid)
+            :ok = Ezagent.AgentLineage.rollback_lineage_fact(agent_uri, @owner_uri)
+
+            {:ok, _status} =
+              Ezagent.AgentLineage.record_exact(EzagentCore.Repo, agent_uri, wrong_root)
+
+            :ok = Ezagent.AgentLineage.publish_cache(agent_uri, wrong_root)
+            send(test_pid, {:admission_write_suspended, self(), agent_uri})
+
+            receive do
+              :resume_session ->
+                :ok = :sys.resume(session_pid)
+                send(test_pid, {:admission_session_resumed, self()})
+
+              {:DOWN, ^test_monitor, :process, ^test_pid, _reason} ->
+                :ok = :sys.resume(session_pid)
+            end
+        end
+      end)
+
+    Process.put(
+      {CredentialTemplate, :post_spawn_failure},
+      {:suspend_admission_write, controller}
+    )
+
+    assert {:error,
+            {
+              {:agent_admission_record_failed, {:agent_admission_write_failed, _write_failure}},
+              {:cleanup_failed, {:provisional_lineage_mismatch, ^wrong_root}}
+            }} =
+             AgentAdmission.begin(
+               session_uri,
+               "llm",
+               @owner_uri,
+               Ezagent.Identity.list_caps_for(@owner_uri)
+             )
+
+    assert_receive {:admission_write_suspended, ^controller, agent_uri}
+    send(controller, :resume_session)
+    assert_receive {:admission_session_resumed, ^controller}
+    assert Ezagent.Kind.alive?(agent_uri)
+    assert :ok = Ezagent.Kind.terminate(agent_uri)
+  end
+
+  test "cleanup validates the exact attempt before tombstoning or removing membership", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, Ezagent.Identity.list_caps_for(@owner_uri)}
+             )
+
+    assert {:ok, binding} = RecipeCapBinding.fetch(agent_uri)
+
+    assert {:error, :creation_attempt_not_found} =
+             DefinitionAgents.cleanup_provisional(
+               session_uri,
+               @owner_uri,
+               agent_uri,
+               Ecto.UUID.generate(),
+               actor_ctx(),
+               :wrong_attempt
+             )
+
+    assert {:ok, ^binding} = RecipeCapBinding.fetch(agent_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == agent_uri
+    assert Ezagent.Kind.alive?(agent_uri)
+  end
+
+  test "gated materialization expires an active row after declaration revision and flavor drift",
+       %{
+         session_uri: session_uri,
+         declarations: declarations
+       } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    stale_agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+
+    n = System.unique_integer([:positive])
+    replacement_flavor = register_flavor("replacement", n, CredentialTemplate)
+
+    current_declarations =
+      Enum.map(declarations, fn
+        %{role_name: "llm"} = declaration -> %{declaration | flavor: replacement_flavor}
+        declaration -> declaration
+      end)
+
+    update_declarations(session_uri, current_declarations)
+
+    assert {:ok, %{deferred: ["llm"]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               current_declarations
+             )
+
+    assert eventually(fn -> not Ezagent.Kind.alive?(stale_agent_uri) end)
+
+    assert [
+             %{
+               role_name: "llm",
+               flavor: ^replacement_flavor,
+               status: :pending_auth,
+               attempt_id: nil,
+               provisional_agent_uri: nil
+             }
+           ] = AgentAdmission.list(session_uri)
+  end
+
+  test "begin and clear reject stale or forged declarations", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, Ezagent.Identity.list_caps_for(@owner_uri)}
+             )
+
+    update_declarations(session_uri, declarations)
+
+    assert {:error, :stale_agent_admission_declaration} =
+             AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    assert AgentAdmission.list(session_uri) == []
+
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} =
+             AgentAdmission.defer(session_uri, llm_declaration)
+
+    update_declarations(session_uri, declarations)
+    assert :ok = AgentAdmission.clear(session_uri, llm_declaration)
+    assert AgentAdmission.list(session_uri) == []
+
+    forged = %{llm_declaration | flavor: "forged-flavor"}
+
+    assert {:error, :forged_agent_admission_declaration} =
+             AgentAdmission.clear(session_uri, forged)
+  end
+
+  test "expiry retires and clears an attempt whose declaration revision is stale", %{
+    declarations: declarations
+  } do
+    session_uri = live_session("stale-expire-#{System.unique_integer([:positive])}")
+    on_exit(fn -> terminate(session_uri) end)
+    copy_declarations(session_uri, declarations)
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} =
+             AgentAdmission.defer(session_uri, llm_declaration)
+
+    assert {:ok, authenticating} =
+             AgentAdmission.begin(
+               session_uri,
+               "llm",
+               @owner_uri,
+               Ezagent.Identity.list_caps_for(@owner_uri)
+             )
+
+    agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    update_declarations(session_uri, declarations)
+
+    assert {:ok, %{status: :failed, failure_code: :connection_timed_out}} =
+             AgentAdmission.expire(session_uri, authenticating.attempt_id)
+
+    assert AgentAdmission.list(session_uri) == []
+    assert eventually(fn -> not Ezagent.Kind.alive?(agent_uri) end)
+  end
+
   defp seed_recipe(n) do
     name = "agent-admission-recipe-#{n}"
     RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), name)
@@ -421,6 +735,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
   end
 
+  defp update_declarations(session_uri, declarations) do
+    n = System.unique_integer([:positive])
+
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "hello@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, declarations)
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+  end
+
   defp terminate(%URI{} = uri) do
     if Ezagent.Kind.alive?(uri), do: Ezagent.Kind.terminate(uri), else: :ok
   end
@@ -428,6 +757,70 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
   defp members_of(session_uri) do
     {:ok, slice} = Ezagent.Kind.read(session_uri, :session, spawn: :never)
     Map.get(slice, :members, %{})
+  end
+
+  defp actor_ctx do
+    %{
+      caller: @owner_uri,
+      authenticated_principal: @owner_uri,
+      caps: Ezagent.Identity.list_caps_for(@owner_uri)
+    }
+  end
+
+  defp wait_for_admission_write(pid, attempts \\ 500)
+  defp wait_for_admission_write(_pid, 0), do: {:error, :admission_write_not_reached}
+
+  defp wait_for_admission_write(pid, attempts) do
+    case Process.info(pid, :current_stacktrace) do
+      {:current_stacktrace, stacktrace} ->
+        if Enum.any?(stacktrace, fn
+             {AgentAdmission, :write_admissions, 2, _location} -> true
+             _frame -> false
+           end) do
+          :ok
+        else
+          Process.sleep(10)
+          wait_for_admission_write(pid, attempts - 1)
+        end
+
+      nil ->
+        {:error, :admission_process_exited}
+    end
+  end
+
+  defp inject_pointer_failure(agent_uri, expected_flavor, wrong_root) do
+    table = Ezagent.UriQuery.table()
+    [{:flavor, original}] = :ets.lookup(table, :flavor)
+    counter = :atomics.new(1, [])
+    agent_key = Ezagent.URI.stable_key(agent_uri)
+
+    replacement = fn
+      %URI{} = queried_uri ->
+        if Ezagent.URI.stable_key(queried_uri) == agent_key do
+          case :atomics.add_get(counter, 1, 1) do
+            1 ->
+              {:ok, expected_flavor}
+
+            _pointer_validation ->
+              :ok = Ezagent.AgentLineage.rollback_lineage_fact(agent_uri, @owner_uri)
+
+              {:ok, _status} =
+                Ezagent.AgentLineage.record_exact(EzagentCore.Repo, agent_uri, wrong_root)
+
+              :ok = Ezagent.AgentLineage.publish_cache(agent_uri, wrong_root)
+              {:ok, "wrong-flavor"}
+          end
+        else
+          original.(queried_uri)
+        end
+
+      other ->
+        original.(other)
+    end
+
+    true = :ets.insert(table, {:flavor, replacement})
+    on_exit(fn -> :ets.insert(table, {:flavor, original}) end)
+    fn -> :ets.insert(table, {:flavor, original}) end
   end
 
   defp write_fake_credential!(agent_uri) do
