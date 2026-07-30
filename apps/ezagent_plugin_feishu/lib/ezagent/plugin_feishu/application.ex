@@ -185,8 +185,7 @@ defmodule EzagentPluginFeishu.Application do
 
       {:error, :seed_not_enabled} ->
         raise "Feishu plugin: initial user binding seed file is present, " <>
-                "but seed is not enabled. Set `config :ezagent_plugin_feishu, :seed_enabled, true` " <>
-                "after auth integration (deferred)."
+                "but seed is not enabled. Set EZAGENT_FEISHU_SEED_ENABLED=1 before boot."
 
       {:error, {:preflight_read_failed, _workspace, :seed_operator_not_configured}} ->
         raise "Feishu plugin: initial user binding seed operator is not configured. " <>

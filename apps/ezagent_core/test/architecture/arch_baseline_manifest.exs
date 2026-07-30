@@ -671,11 +671,11 @@
   #   two `def` heads sit inside a compile-time `if @p1_forced_shadow_failure_seam`
   #   (the test-only forced-failure seam) which the source doc-scanner does not
   #   associate with the preceding doc. Function is documented; scanner miscounts. 404→405.
-  #   405→407 (handoff B1 Phase 1-5, 2026-07-24): new public defs across
+  #   405→406 (handoff B1 Phase 1-5, 2026-07-24): new public defs across
   #   Redact.fingerprint/1, UserBindingSeed.run/1, UserBindingSeed.Parser.parse_and_validate/1,
   #   DispatchAdapter.list_current/1 + bind/3, and legacy mix task run/1 entries;
-  #   some are @impl Mix.Task (excluded by the scanner), net increase = 2.
-  undocumented_public_defs: 407,
+  #   some are @impl Mix.Task (excluded by the scanner), net increase = 1.
+  undocumented_public_defs: 406,
   # dynamic_public_def_heads — `def unquote(name)(...)` heads whose function name
   #   is only known at macro-expansion, so they cannot become a documented
   #   {name, arity} entry. ENFORCED at 0 (the tree has none): adding any new
