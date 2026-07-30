@@ -7,6 +7,10 @@
 > **deadline:** not stated in the 2026-07-24 handoff (same-day continuation of an existing draft)
 > **deadline_status:** on_time
 
+> **Finalized:** 2026-07-30 — PR #1498 itself is the completed,
+> permission-independent runner/docs slice. The owner-only skill follow-up is a
+> separate branch and is not a completion dependency for this PR.
+
 ## 0. Recap
 
 Synced instruction: #1498 is unrelated to main CapBAC, continue independently, introduce no permission dependency. Mission: rebase the existing draft, re-verify the guarded-Mix + system-closure contracts, and split the branch by ownership so the permission-independent part can merge normally while `.claude/skills/dev-together/**` goes through the lead-only path (`protect-dev-together-skill.yml`).
@@ -94,3 +98,26 @@ Coordinator confirmed the mechanism (asked explicitly, chose): append a non-dest
   - `docs/system-closure-method-productization` → `origin` via `--force-with-lease` (lease pinned to the known prior remote tip `1890c4603`, matched before pushing). PR #1498 now shows **11 changed files, 0 deletions, 2530 additions** — exactly Slice A + this return doc, confirmed via `gh pr view 1498 --json files`. No `.claude/skills/dev-together/**` file appears in the PR diff any more.
   - `system-closure/dev-together-skill-updates` → `origin` as a **new plain branch, no PR opened**. This never triggers `protect-dev-together-skill.yml` (its `on:` is `pull_request`/`push-to-main` only), so there's no confusing red check sitting on it — the owner opens their own PR from it under their own login when ready: `https://github.com/ezagent42/ezagent/compare/main...system-closure/dev-together-skill-updates`.
 - **Not done, still needs the owner:** actually authoring/landing Slice B under `allenwoods`/`jjkysy`. Nothing in this session's GitHub identity (`gagameow`, confirmed via `gh auth status`) can make that gate pass — by design, not a gap.
+
+## 8. Final closeout — 2026-07-30
+
+- Rebased the existing PR branch without conflicts onto
+  `origin/main@90de06be8`.
+- Reconciled the cross-day task record and the 2026-07-30 board from
+  `wip(draft)` to `review`.
+- Kept the scope boundary intact: #1498 contains the guarded runner, its
+  contract, bilingual runbook/retrospective, and contributor discoverability;
+  it contains no `.claude/skills/dev-together/**` changes and no `apps/**`
+  runtime changes.
+- Removed the stale cross-slice X/Y contract test from #1498. That test required
+  the protected skill proposal which the final design explicitly dropped, so
+  retaining an intentionally red test in the permission-independent PR
+  contradicted the accepted scope.
+- Final local verification:
+  - guarded-Mix runner contract: 11/11 cases pass;
+  - `mix ci.fast`: actor 1/0, core 691/0, identity 4/0,
+    external mirror 39/0, session 8/0;
+  - board render, `git diff --check`, and the no-`apps/**` /
+    no-protected-skill scope check pass.
+- GitHub CI evidence is recorded on the final PR head before it is marked ready
+  for review.
