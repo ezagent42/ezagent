@@ -21,10 +21,14 @@ defmodule EzagentPluginForgejo.CredentialRefreshTest do
               })
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(EzagentCore.Repo)
     assert is_pid(Process.whereis(Backend))
 
     {:ok, %{credential_ref: ref}} =
-      Backend.store(%{credential_material: {:write_only_handoff, @credential}})
+      Backend.store(%{
+        workspace_uri: "workspace://acme",
+        credential_material: {:write_only_handoff, @credential}
+      })
 
     {:ok, ref: ref}
   end

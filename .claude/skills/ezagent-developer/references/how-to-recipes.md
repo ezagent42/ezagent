@@ -32,6 +32,25 @@ disappear.
 CI shards need **no** manifest edit: the bare `apps/ezagent_plugin_` catch-all in
 `ci_shards.exs` auto-absorbs new plugin apps.
 
+Two more, verified 2026-07-30 on the same plugin:
+
+- **Ecto query bindings trip (A)/(B) too.** `from(r in Schema, where: r.id == ^id)`
+  enumerates as `:unknown_value.id/0` — the enumerator cannot see through a query
+  binding any more than through a bare variable. Use keyword syntax instead:
+  `from(Schema, where: [id: ^id, version: ^v])`, and `Repo.get/2` + struct
+  destructuring instead of `select: r.field`. Semantics are unchanged (both
+  columns still land in the WHERE clause), so re-run any mutation check you were
+  relying on to confirm the guard is still load-bearing.
+- **A `config/config.exs` edit forces a full recompile, which surfaces latent
+  missing deps.** Removing one plugin's config block turned
+  `Architecture.CompilerDeadCodeGateTest` red with a warning in a completely
+  unrelated app: `ezagent_plugin_git_workflow`'s `test/support` calls
+  `EzagentPluginGithub.GitHubAppJwt` without declaring the dep, and
+  `git_workflow` sorts **before** `github`, so the reference only resolved while a
+  stale beam happened to be on the path. `UndeclaredUmbrellaDepTest` does not
+  cover `test/support`. Fix = declare the dep (check for a cycle first); do not
+  reach for `apply/3`, which trades this for a dynamic-receiver violation.
+
 Pre-built examples:
 - `apps/ezagent_plugin_echo/` (smallest reference plugin)
 - `apps/ezagent_plugin_feishu/` (canonical "external integration" — registers `FeishuReceive` on User Kind, no owned scheme)

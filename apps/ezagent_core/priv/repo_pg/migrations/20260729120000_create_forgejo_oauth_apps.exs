@@ -26,8 +26,14 @@ defmodule EzagentCore.Repo.Migrations.CreateForgejoOauthApps do
       add :workspace_uri, :string, primary_key: true
       add :governed_host, :string, primary_key: true
       add :client_id, :string, null: false
-      add :client_secret_ciphertext, :binary, null: false
-      add :client_secret_nonce, :binary, null: false
+      # Shared envelope shape (Ezagent.ProviderConnection.SealedEnvelope). The
+      # first draft of this table had only ciphertext+nonce, with no key
+      # identity — which meant changing the configured key made every stored
+      # secret unopenable. `key_id` is what makes rotation work.
+      add :key_id, :string, null: false
+      add :key_fingerprint, :binary, null: false
+      add :nonce, :binary, null: false
+      add :ciphertext, :binary, null: false
       add :redirect_uri, :string, null: false
 
       timestamps(type: :utc_datetime_usec)

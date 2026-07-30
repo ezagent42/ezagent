@@ -693,17 +693,47 @@ worktree；不改 main worktree、不自行 merge main、不碰 canary。
 
 ---
 
-## 12.1 已知限制（gaga 2026-07-29 决定：记录，不在本线修）
+## 12.1 凭证持久化 —— 已关闭（2026-07-30）
 
-**凭证只存在 ETS，进程或 VM 重启后全部消失。** 而 `provider_connections` 行是
-durable 的，仍带着 `credential_backend_ref` / `credential_version` —— 重启后会
+原限制：**凭证只存在 ETS，进程或 VM 重启后全部消失**，而 `provider_connections`
+行是 durable 的，仍带着 `credential_backend_ref` / `credential_version`，重启后
 留下一批「看起来 active」却指向不存在凭证的连接。
 
-`EzagentPluginGithub.GitHubCredentialBackend` 是**同样的性质**，所以这是既有
-模式而非本线引入。修它应当统一两家（持久化加密托管 + 启动重建），属独立一片；
-只修 Forgejo 会制造两家不一致。
+当时判断「GitHub 后端同样性质，所以是既有模式，统一修」。**这个判断被推翻了**，
+因为两家的丢失代价不对等：
 
-不阻塞 F2–F5 的验证：一次测试或一次运行内凭证是在的。
+| | GitHub | Forgejo |
+|---|---|---|
+| 存的是什么 | user-to-server token，**仅用于识别身份** | **就是仓库凭证本身** |
+| 仓库权限来自 | 每次操作用 config 里的私钥现签 installation token | 存着的这个 access token |
+| ETS 被清的代价 | 身份关联丢失，可重建 | 每个用户每个实例**重走一次浏览器授权** |
+| refresh token | 无（不需要） | 在同一条被清掉的记录里 |
+
+所以「统一修」会把一个真实事故（Forgejo）压在一个可恢复瑕疵（GitHub）的节奏上。
+Forgejo 侧单独修，GitHub 侧**故意保留 ETS**。
+
+### 现在的形态
+
+- `forgejo_credentials`（per-tenant 表）+ `EzagentPluginForgejo.CredentialRecord`
+- 由 `Ezagent.ProviderConnection.SealedEnvelope` 密封 —— provider-connection
+  domain 自己的带密钥、可轮转的信封，不是第三份私有 AES 实现。该模块本身是从
+  domain 内**两份并行副本**（`exchange.ex` / `reconciliation.ex`）提取的
+- `credential_ref` 绑进 AAD：密文搬到另一行打不开
+- 版本 CAS 写在 WHERE 子句，并发替换的败者拿 `:stale_version`
+- **handoff vault 仍在 ETS，是故意的**：那是操作内产物，丢了只是失败一次 refresh
+  而 domain 会重试；凭证丢了才是重走授权
+- 顺带修掉 `forgejo_oauth_apps` 缺 `key_id` 的问题 —— 它原来的信封没有密钥身份，
+  换密钥就会让所有已存 client secret 打不开。现在与凭证同一个信封
+- 删掉 `EzagentPluginForgejo.Sealed` 与 plugin 私有的 `token_encryption_key`：
+  只剩一个 keyring
+
+### 承重的验证
+
+- `Backend.store` → 杀掉 backend 进程 → `Backend.lease_for_operation` 仍拿到原
+  token。测试里先往进程私有 ETS 塞探针，杀完后断言探针消失 —— 否则这条测试
+  证明不了任何东西（可能杀了个空进程）
+- 变异验证：去掉 CAS 的版本条件、去掉 AAD 的 ref 绑定，各杀死一条测试
+- 真实实例 E2E 连跑 3 次通过
 
 ---
 
@@ -717,6 +747,9 @@ durable 的，仍带着 `credential_backend_ref` / `credential_version` —— �
    帐号而非签发时快照。见 §4.1.1 与 findings §7.3。
 3. **§8.3 是否回头统一 `GitHubClient` 的传输/5xx 区分** —— 跨 owner 改动，
    本设计不做，建议单独一片。
+4. **GitHub 凭证是否也持久化** —— §12.1 论证了不急：它存的 token 仅用于识别
+   身份，仓库权限每次操作现签。真正该触发统一的是 capbac Path B（外部签名器 /
+   HSM）落地时把全仓 AES 实现一起收敛，那时 core 才会有密封 seam。
 4. **`redirect_uri` 匹配规则**（精确 / 前缀 / 是否允许 http+localhost）未测。
    只影响给租户管理员的注册说明，不影响代码结构；F0 实施时顺带验。
 5. **OAuth 请求哪些 scope** —— 已知需要 `repository` 类别的写权限；`read:user`

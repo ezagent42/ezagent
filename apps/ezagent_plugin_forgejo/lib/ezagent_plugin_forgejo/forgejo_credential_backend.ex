@@ -34,20 +34,25 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
   a structural inference from the grammar, **not** something measured — see
   design §4.1.1 for what would settle it.
 
-  Sealing lives in `EzagentPluginForgejo.Sealed`. It began as private
-  functions here, with a note that a second caller should trigger promotion
-  rather than a copy; `EzagentPluginForgejo.OAuthApp` became that caller in
-  slice F0, so it was promoted. This module's round-trip and
-  no-plaintext-at-rest tests still cover the path.
+  ## Custody is durable
+
+  The credential lives in `EzagentPluginForgejo.CredentialRecord` (a per-tenant
+  Postgres table) sealed by `Ezagent.ProviderConnection.SealedEnvelope` — the
+  domain's own keyed, rotatable envelope. It used to live in an ETS table owned
+  by this module's process, which meant one crash wiped every user's credential
+  on the node while `provider_connections` kept pointing at them.
+
+  The **handoff vault stays in ETS on purpose**. A parked replacement is a
+  within-operation artifact: losing it fails a refresh that the domain retries,
+  whereas losing the credential costs a browser re-authorization per user.
   """
 
   @behaviour Ezagent.ProviderConnection.CredentialBackend
 
   alias Ezagent.ProviderConnection.CredentialBackend.RefreshUse
   alias Ezagent.ProviderConnection.CredentialRefreshExchange.ScopeAuthority
-  alias EzagentPluginForgejo.Sealed
+  alias EzagentPluginForgejo.CredentialRecord
 
-  @table_name :forgejo_credential_tokens
   @handoff_table :forgejo_credential_handoffs
 
   @doc false
@@ -61,13 +66,18 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
     }
   end
 
-  @doc "Starts the credential backend process, which owns the ETS table."
+  @doc """
+  Starts the process that owns the handoff vault.
+
+  It no longer owns the credentials — those are durable rows. Only the
+  within-operation handoff vault is process-owned, which is why losing this
+  process is now recoverable.
+  """
   def start_link(opts \\ []) do
     name = Keyword.get(opts, :name, __MODULE__)
 
     Agent.start_link(
       fn ->
-        :ets.new(@table_name, [:set, :public, :named_table, read_concurrency: true])
         :ets.new(@handoff_table, [:set, :public, :named_table, read_concurrency: true])
         :ok
       end,
@@ -77,13 +87,21 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
 
   # ── Callbacks ──────────────────────────────────────────────────────────
 
+  # `workspace_uri` is REQUIRED. The real caller
+  # (`LocalAuthorizationBackend.Support.credential_command/3`) always sends it;
+  # the previous clause matched only `credential_material`, so every test
+  # described a command shape no caller produces. The durable row needs the
+  # workspace, so requiring it here matches the table to reality.
   @impl true
-  def store(%{credential_material: {:write_only_handoff, token}}) do
-    ref = "forgejo-credential-" <> (:crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower))
-
-    :ets.insert(@table_name, {ref, {Sealed.seal(token), 1}})
-    {:ok, %{credential_ref: ref, credential_version: 1}}
+  def store(%{
+        workspace_uri: workspace_uri,
+        credential_material: {:write_only_handoff, token}
+      })
+      when is_binary(workspace_uri) do
+    CredentialRecord.insert(workspace_uri, token)
   end
+
+  def store(_command), do: {:error, :credential_conflict}
 
   # The domain calls `replace/1` in TWO shapes, and NEITHER carries a
   # `credential_ref`:
@@ -112,7 +130,7 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
         expected_credential_version: expected_version
       })
       when is_binary(prior_ref) do
-    swap(prior_ref, Sealed.seal(new_token), expected_version)
+    CredentialRecord.replace(prior_ref, new_token, expected_version)
   end
 
   @impl true
@@ -122,10 +140,10 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       })
       when is_binary(handoff_ref) do
     case :ets.take(@handoff_table, handoff_ref) do
-      [{^handoff_ref, sealed_replacement, target_ref}] ->
+      [{^handoff_ref, replacement, target_ref}] ->
         # `:ets.take/2` is the one-use guarantee: a replayed replace finds
         # nothing and conflicts rather than re-applying a rotation.
-        swap(target_ref, sealed_replacement, expected_version)
+        CredentialRecord.replace(target_ref, replacement, expected_version)
 
       [] ->
         {:error, :credential_conflict}
@@ -134,43 +152,19 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
 
   def replace(_command), do: {:error, :credential_conflict}
 
-  defp swap(ref, sealed, expected_version) do
-    case :ets.lookup(@table_name, ref) do
-      [{^ref, {_encrypted, version}}] when is_integer(version) and version == expected_version ->
-        new_version = version + 1
-        :ets.insert(@table_name, {ref, {sealed, new_version}})
-        {:ok, %{credential_ref: ref, credential_version: new_version}}
-
-      [{^ref, {_encrypted, _version}}] ->
-        {:error, :stale_version}
-
-      [] ->
-        {:error, :credential_conflict}
-    end
-  end
-
   @impl true
   def status(%{credential_ref: ref}) do
-    case :ets.lookup(@table_name, ref) do
-      [{^ref, {_encrypted, version}}] ->
-        {:ok, %{credential_ref: ref, credential_version: version}}
-
-      [] ->
-        {:error, :credential_conflict}
+    case CredentialRecord.version(ref) do
+      {:ok, version} -> {:ok, %{credential_ref: ref, credential_version: version}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
   @impl true
   def lease_for_operation(%{credential_ref: ref}) do
-    case :ets.lookup(@table_name, ref) do
-      [{^ref, {sealed, _version}}] ->
-        case Sealed.open(sealed) do
-          {:ok, token} -> {:ok, %{credential: token, credential_ref: ref, expires_at: nil}}
-          {:error, reason} -> {:error, reason}
-        end
-
-      [] ->
-        {:error, :credential_conflict}
+    case CredentialRecord.fetch_credential(ref) do
+      {:ok, token} -> {:ok, %{credential: token, credential_ref: ref, expires_at: nil}}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -204,17 +198,17 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
         scope_token: token,
         scope_binding_digest: digest
       }) do
-    case :ets.lookup(@table_name, ref) do
-      [{^ref, {sealed, _version}}] ->
+    case CredentialRecord.version(ref) do
+      {:ok, _version} ->
         # `private` is backend-owned and never leaves this module: the domain
-        # treats the RefreshUse as opaque and its Inspect impl is redacted.
-        # The sealed credential is carried rather than the plaintext so an
-        # exchange that is begun but never consumed leaves no decrypted token
-        # sitting in a struct.
-        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{sealed: sealed, ref: ref})}
+        # treats the RefreshUse as opaque and its Inspect impl is redacted. Only
+        # the REF travels — the credential is read from the durable row inside
+        # `consume_refresh_exchange/1`, so an exchange that is begun but never
+        # consumed leaves neither plaintext nor ciphertext sitting in a struct.
+        {:ok, RefreshUse.new(authority, token, digest, __MODULE__, %{ref: ref})}
 
-      [] ->
-        {:error, :credential_conflict}
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -225,8 +219,8 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       when is_function(exchange, 1) do
     with __MODULE__ <- RefreshUse.backend(use),
          :ok <- consume_claim(use),
-         %{sealed: sealed, ref: ref} <- RefreshUse.private(use),
-         {:ok, credential} <- Sealed.open(sealed),
+         %{ref: ref} <- RefreshUse.private(use),
+         {:ok, credential} <- CredentialRecord.fetch_credential(ref),
          {:ok, refresh_token} <- refresh_token(credential) do
       case exchange.(%{current_credential: refresh_token}) do
         {:ok, :not_completed} -> {:ok, :not_completed}
@@ -329,17 +323,16 @@ defmodule EzagentPluginForgejo.ForgejoCredentialBackend do
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.url_encode64(padding: false)
 
-    :ets.insert(@handoff_table, {reference, Sealed.seal(material), target_ref})
+    # Stored unsealed: the vault is in-VM, single-use, and consumed within the
+    # same operation. `CredentialRecord.replace/3` seals it on the way to disk.
+    :ets.insert(@handoff_table, {reference, material, target_ref})
     {:write_only_handoff, reference}
   end
 
   defp nonempty?(value), do: is_binary(value) and value != ""
 
-  # Deleting an absent key is already a no-op in ETS, so an exact retry of the
-  # same `idempotency_key` applies the same single logical effect.
+  # Deleting an absent row is already the desired state, so an exact retry of
+  # the same `idempotency_key` applies the same single logical effect.
   @impl true
-  def revoke(%{credential_ref: ref}) do
-    :ets.delete(@table_name, ref)
-    :ok
-  end
+  def revoke(%{credential_ref: ref}), do: CredentialRecord.delete(ref)
 end

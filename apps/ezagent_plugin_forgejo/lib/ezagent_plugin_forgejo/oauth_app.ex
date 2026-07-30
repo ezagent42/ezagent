@@ -20,13 +20,16 @@ defmodule EzagentPluginForgejo.OAuthApp do
   of the lookup, so one workspace can never reach another's client secret —
   a cross-tenant read is a miss, not a leak (invariant 14).
 
-  The secret is sealed with `EzagentPluginForgejo.Sealed` before it reaches the
+  The secret is sealed with `Ezagent.ProviderConnection.SealedEnvelope` — the
+  provider-connection domain's keyed, rotatable envelope, the same one its own
+  authorization records use — before it reaches the
   database and is opened only in `fetch/2`, on the way to
   `EzagentPluginForgejo.ForgejoOAuth`.
   """
 
   alias EzagentCore.Repo
-  alias EzagentPluginForgejo.{Instance, Sealed}
+  alias Ezagent.ProviderConnection.SealedEnvelope
+  alias EzagentPluginForgejo.Instance
 
   defmodule Record do
     @moduledoc "Ecto schema for a tenant's Forgejo OAuth application registration."
@@ -37,8 +40,10 @@ defmodule EzagentPluginForgejo.OAuthApp do
       field(:workspace_uri, :string, primary_key: true)
       field(:governed_host, :string, primary_key: true)
       field(:client_id, :string)
-      field(:client_secret_ciphertext, :binary)
-      field(:client_secret_nonce, :binary)
+      field(:key_id, :string)
+      field(:key_fingerprint, :binary)
+      field(:nonce, :binary)
+      field(:ciphertext, :binary)
       field(:redirect_uri, :string)
 
       timestamps(type: :utc_datetime_usec)
@@ -74,32 +79,51 @@ defmodule EzagentPluginForgejo.OAuthApp do
          {:ok, client_id} <- validate_present(attrs[:client_id], :invalid_client_id),
          {:ok, secret} <- validate_present(attrs[:client_secret], :invalid_client_secret),
          {:ok, redirect_uri} <- validate_redirect_uri(attrs[:redirect_uri]) do
-      {nonce, ciphertext} = Sealed.seal(secret)
-      now = DateTime.utc_now()
+      with {:ok, snapshot} <- SealedEnvelope.snapshot() do
+        %{
+          key_id: key_id,
+          key_fingerprint: fingerprint,
+          nonce: nonce,
+          ciphertext: ciphertext
+        } =
+          SealedEnvelope.seal(
+            snapshot,
+            :active,
+            :provider_oauth_app,
+            secret,
+            secret_aad(workspace_uri, host)
+          )
 
-      {:ok,
-       Repo.insert!(
-         %Record{
-           workspace_uri: workspace_uri,
-           governed_host: host,
-           client_id: client_id,
-           client_secret_ciphertext: ciphertext,
-           client_secret_nonce: nonce,
-           redirect_uri: redirect_uri,
-           inserted_at: now,
-           updated_at: now
-         },
-         on_conflict:
-           {:replace,
-            [
-              :client_id,
-              :client_secret_ciphertext,
-              :client_secret_nonce,
-              :redirect_uri,
-              :updated_at
-            ]},
-         conflict_target: [:workspace_uri, :governed_host]
-       )}
+        now = DateTime.utc_now()
+
+        {:ok,
+         Repo.insert!(
+           %Record{
+             workspace_uri: workspace_uri,
+             governed_host: host,
+             client_id: client_id,
+             key_id: key_id,
+             key_fingerprint: fingerprint,
+             nonce: nonce,
+             ciphertext: ciphertext,
+             redirect_uri: redirect_uri,
+             inserted_at: now,
+             updated_at: now
+           },
+           on_conflict:
+             {:replace,
+              [
+                :client_id,
+                :key_id,
+                :key_fingerprint,
+                :nonce,
+                :ciphertext,
+                :redirect_uri,
+                :updated_at
+              ]},
+           conflict_target: [:workspace_uri, :governed_host]
+         )}
+      end
     end
   end
 
@@ -118,25 +142,40 @@ defmodule EzagentPluginForgejo.OAuthApp do
       %Record{
         governed_host: host,
         client_id: client_id,
-        client_secret_nonce: nonce,
-        client_secret_ciphertext: ciphertext,
+        key_id: key_id,
+        key_fingerprint: fingerprint,
+        nonce: nonce,
+        ciphertext: ciphertext,
         redirect_uri: redirect_uri
       } ->
-        case Sealed.open({nonce, ciphertext}) do
-          {:ok, secret} ->
-            {:ok,
-             %{
-               host: host,
-               client_id: client_id,
-               client_secret: secret,
-               redirect_uri: redirect_uri
-             }}
-
-          {:error, reason} ->
-            {:error, reason}
+        with {:ok, snapshot} <- SealedEnvelope.snapshot(),
+             {:ok, secret} <-
+               SealedEnvelope.open(
+                 snapshot,
+                 :provider_oauth_app,
+                 %{
+                   key_id: key_id,
+                   key_fingerprint: fingerprint,
+                   nonce: nonce,
+                   ciphertext: ciphertext
+                 },
+                 secret_aad(workspace_uri, host)
+               ) do
+          {:ok,
+           %{
+             host: host,
+             client_id: client_id,
+             client_secret: secret,
+             redirect_uri: redirect_uri
+           }}
         end
     end
   end
+
+  # Binds the ciphertext to its row: a secret sealed for one tenant/instance
+  # pair will not open under another.
+  defp secret_aad(workspace_uri, governed_host),
+    do: %{workspace_uri: workspace_uri, governed_host: governed_host}
 
   # ── validation ───────────────────────────────────────────────────────
 

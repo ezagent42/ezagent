@@ -23,6 +23,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterReadTest do
 
     {:ok, %{credential_ref: ref}} =
       ForgejoCredentialBackend.store(%{
+        workspace_uri: "workspace://acme",
         credential_material: {:write_only_handoff, Jason.encode!(%{"access_token" => "at-live"})}
       })
 
@@ -283,8 +284,8 @@ defmodule EzagentPluginForgejo.ForgejoAdapterReadTest do
       assert {:ok, _} = ForgejoAdapter.resolve_repository(ctx(), repo!())
 
       # Revoking between calls must take effect immediately.
-      [{_ref, _}] = :ets.tab2list(:forgejo_credential_tokens) |> Enum.take(1)
-      :ets.delete_all_objects(:forgejo_credential_tokens)
+      assert EzagentCore.Repo.aggregate(EzagentPluginForgejo.CredentialRecord, :count) > 0
+      EzagentCore.Repo.delete_all(EzagentPluginForgejo.CredentialRecord)
 
       assert {:error, :credential_backend_unavailable} =
                ForgejoAdapter.resolve_repository(ctx(), repo!())

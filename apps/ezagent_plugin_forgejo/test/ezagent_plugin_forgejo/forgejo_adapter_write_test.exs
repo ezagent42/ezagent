@@ -35,6 +35,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
     {:ok, %{credential_ref: ref}} =
       ForgejoCredentialBackend.store(%{
+        workspace_uri: "workspace://acme",
         credential_material: {:write_only_handoff, Jason.encode!(%{"access_token" => "at-live"})}
       })
 

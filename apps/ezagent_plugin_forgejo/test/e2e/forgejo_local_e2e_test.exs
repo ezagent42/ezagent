@@ -63,6 +63,7 @@ defmodule EzagentPluginForgejo.E2E.ForgejoLocalE2ETest do
 
     {:ok, %{credential_ref: ref}} =
       ForgejoCredentialBackend.store(%{
+        workspace_uri: "workspace://acme",
         credential_material: {:write_only_handoff, Jason.encode!(%{"access_token" => "at-e2e"})}
       })
 
@@ -345,7 +346,7 @@ defmodule EzagentPluginForgejo.E2E.ForgejoLocalE2ETest do
       {:ok, cr} = ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
       {:ok, id} = ChangeRequestId.new(%{external_id: cr.external_id})
 
-      :ets.delete_all_objects(:forgejo_credential_tokens)
+      EzagentCore.Repo.delete_all(EzagentPluginForgejo.CredentialRecord)
 
       assert {:error, :credential_backend_unavailable} =
                ForgejoAdapter.read_change_request(ctx(), repo!(), id)

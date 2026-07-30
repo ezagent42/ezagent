@@ -279,12 +279,33 @@ config :ezagent_domain_provider_connection,
       }
     )
 
-# Forgejo provider plugin (design
-# docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md, slice F1).
+# DEAD KEY, deliberately still here (2026-07-30).
 #
-# `token_encryption_key` has no default: the module-load fallback in
-# ForgejoCredentialBackend is per-VM-session, so a real deployment that leaves
-# this unset orphans every stored credential on restart.
+# `EzagentPluginForgejo.Sealed` is gone — the plugin now seals through
+# `Ezagent.ProviderConnection.SealedEnvelope` and uses the single
+# provider-connection keyring. Nothing reads `token_encryption_key` any more, so
+# this block SHOULD be deleted.
+#
+# It is not, because deleting it turns `Architecture.CompilerDeadCodeGateTest`
+# red in a completely unrelated app. Editing config/config.exs invalidates every
+# umbrella app, and that recompile surfaces a latent violation:
+# `apps/ezagent_plugin_git_workflow/test/support/github_live_case.ex` calls
+# `EzagentPluginGithub.GitHubAppJwt.generate/0` while
+# `git_workflow`'s OWN architecture test forbids the dependency that would make
+# it resolvable:
+#
+#     test "plugin dependency isolation no GitHub, Kanban, or socialware ..."
+#       refute mix_exs =~ ":ezagent_plugin_github"
+#
+# So the reference compiles only while a stale beam happens to be on the path
+# (`git_workflow` sorts before `github`). Declaring the dep makes the dead-code
+# gate green and that architecture test red — the two gates disagree, which is
+# a design question for the git_workflow owner (move the harness, share the JWT
+# signer, or relax the isolation rule), not something to pick a side on from
+# inside a Forgejo credential change. Measured: Task-4 state + `mix compile
+# --force` is green, so it is this config edit that surfaces it, not `--force`.
+#
+# Delete this block in the same change that resolves that conflict.
 config :ezagent_plugin_forgejo,
   token_encryption_key:
     if(config_env() == :prod,

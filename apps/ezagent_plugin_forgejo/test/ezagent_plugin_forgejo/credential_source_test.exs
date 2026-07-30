@@ -24,7 +24,10 @@ defmodule EzagentPluginForgejo.CredentialSourceTest do
     assert is_pid(Process.whereis(ForgejoCredentialBackend))
 
     {:ok, %{credential_ref: ref}} =
-      ForgejoCredentialBackend.store(%{credential_material: {:write_only_handoff, @credential}})
+      ForgejoCredentialBackend.store(%{
+        workspace_uri: @ws,
+        credential_material: {:write_only_handoff, @credential}
+      })
 
     {:ok, ref: ref}
   end
@@ -137,7 +140,10 @@ defmodule EzagentPluginForgejo.CredentialSourceTest do
     # unknown blob to the instance.
     test "a credential that is not this plugin's bundle is refused" do
       {:ok, %{credential_ref: bad_ref}} =
-        ForgejoCredentialBackend.store(%{credential_material: {:write_only_handoff, "not-json"}})
+        ForgejoCredentialBackend.store(%{
+          workspace_uri: @ws,
+          credential_material: {:write_only_handoff, "not-json"}
+        })
 
       connection!(bad_ref)
 
