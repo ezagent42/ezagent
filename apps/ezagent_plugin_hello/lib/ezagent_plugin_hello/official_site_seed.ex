@@ -43,12 +43,32 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     with email when is_binary(email) and email != "" <- founder_email(),
          %Profile{entity_uri: entity_uri} <- Profile.by_email(email),
          {:ok, %URI{} = founder} <- Ezagent.URI.parse(entity_uri),
-         true <- Ezagent.Capability.workspace_of(founder) == Ezagent.URI.workspace(home) do
+         true <- Ezagent.Capability.workspace_of(founder) == Ezagent.URI.workspace(home),
+         :ok <- ensure_startable_principal(founder) do
       {:ok, founder}
     else
       nil -> {:error, :official_site_founder_not_found}
       false -> {:error, :official_site_founder_wrong_workspace}
+      {:error, :not_registered} -> {:error, :official_site_founder_not_registered}
       _ -> {:error, :official_site_founder_unconfigured}
+    end
+  end
+
+  # A `Profile` row is decoupled from the `users` provisioning row (separate
+  # tables, no FK), so a configured founder email can resolve to an entity that
+  # has a Profile but NO registered — or a soft-disabled — user. Such a founder
+  # is not a startable principal: the owner member-cap `identity.absorb_cap` at
+  # session-create time has no durable user Kind to land on, so ownership is
+  # non-durable (dropped on the next boot's `Users.list_all` respawn) and on
+  # some deploys manifests as the `:no_such_actor` absorb retry loop (#207).
+  # #1576's contract is "the founder is an EXISTING non-admin user" — enforce
+  # it here and fail loud so the deployment provisions/enables the real user,
+  # never soften by creating one or falling back to a hard-coded principal.
+  defp ensure_startable_principal(%URI{} = founder) do
+    cond do
+      is_nil(Ezagent.Users.get_by_uri(founder)) -> {:error, :not_registered}
+      Ezagent.Users.disabled?(founder) -> {:error, :not_registered}
+      true -> :ok
     end
   end
 
