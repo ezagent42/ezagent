@@ -71,7 +71,11 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
   @spec reindex_in_txn(URI.t() | String.t(), Enumerable.t()) :: :ok
   def reindex_in_txn(uri, caps) do
     grantee_key = grantee_key(uri)
-    rows = caps |> Enum.flat_map(&row_attrs(&1, grantee_key))
+
+    rows =
+      Enum.flat_map(caps, fn cap ->
+        cap |> normalize_legacy_shape() |> row_attrs(grantee_key)
+      end)
 
     Repo.delete_all(from(r in __MODULE__, where: r.grantee_uri == ^grantee_key))
 
@@ -167,6 +171,31 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
       _ -> nil
     end
   end
+
+  # #189 canary rehearsal catch #3 — legacy-shape tolerance at the reindex
+  # boundary. A pre-#1399 durable `:identity` slice snapshotted a `%Capability{}`
+  # before the cap-signing trio (`signature` / `key_id` / `grantee_uri`,
+  # 2026-07-14); `binary_to_term` reconstructs it as a struct-shaped map that
+  # MATCHES `%Capability{}` (struct matching only checks `:__struct__`) yet LACKS
+  # those keys. `row_attrs/2`'s strict `cap.key_id` read then raised
+  # `(KeyError) key :key_id not found`, and because this reindex runs INSIDE the
+  # authoritative Store write transaction with NO rescue (by design — it commits
+  # atomically with the cap row), the whole cutover backfill rolled back and the
+  # epoch refused to activate. Re-project every cap onto a fresh defstruct HERE —
+  # the sole confluence of every reindex caller (persist / update / backfill /
+  # activate / backfill_all) — so `row_attrs` and every strict field read only
+  # ever sees a complete struct: the trio's missing keys fill with their `nil`
+  # defaults. This is the SAME shared helper (`Capability.Normalize.fill_defaults/1`)
+  # `Capability.to_map/1` and the `Jason.Encoder` impl route through (#213), so
+  # the serialize and index paths cannot drift on legacy tolerance; it is
+  # idempotent on already-complete structs (no double-normalize harm). Fail-closed
+  # holds: it NEVER fabricates a signature or widens an authorization axis — a
+  # legacy cap normalizes to an UNSIGNED cap (`key_id: nil`), whose nil `key_id`
+  # folds cleanly into `row_id/5` and is naturally EXCLUDED by the `active_key_id`
+  # read filter (an unsigned legacy cap is not an active holder). A non-struct
+  # input is passed through untouched to the `_non_concrete` `row_attrs` sink.
+  defp normalize_legacy_shape(%Capability{} = cap), do: Capability.Normalize.fill_defaults(cap)
+  defp normalize_legacy_shape(other), do: other
 
   # Only concrete-target caps are indexed; wildcard (`:any` / scope-tuple)
   # instances have no single target to key on.
