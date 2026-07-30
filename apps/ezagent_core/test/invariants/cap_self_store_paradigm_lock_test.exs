@@ -48,13 +48,12 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{
       {:grant_cap, 3} => 1
     },
-    "apps/ezagent_plugin_world/lib/ezagent/world/layout_bootstrap.ex" => %{{:grant_cap, 3} => 1},
     "apps/ezagent_web/lib/ezagent_web/socialware/anon_takeover.ex" => %{
       {:grant_cap_via_router, 4} => 1
     }
   }
-  @legacy_driver_files 10
-  @legacy_driver_sites 14
+  @legacy_driver_files 9
+  @legacy_driver_sites 13
 
   @legacy_local_grant_drivers %{}
 
