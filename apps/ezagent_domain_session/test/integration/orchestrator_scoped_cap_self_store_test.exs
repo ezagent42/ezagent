@@ -93,6 +93,33 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     assert Enum.map(pending_deliveries(orchestrator_uri), &{&1.id, &1.attempts}) ==
              Enum.map(pending_before, &{&1.id, &1.attempts})
 
+    assert {:ok, _generation_two} =
+             Ezagent.Cap.Authority.regenesis(session_uri, :session)
+
+    Process.exit(session_pid, :kill)
+    wait_restarted(session_uri, session_pid)
+    wait_ready(session_uri)
+
+    assert :ok =
+             Caps.grant_orchestrator_scoped_caps(orchestrator_uri, session_uri, owner_uri)
+
+    rotated_pending = pending_artifacts(orchestrator_uri)
+
+    assert length(rotated_pending) == length(pending) + session_cap_count()
+
+    session_artifacts = Enum.filter(rotated_pending, &(&1.instance == session_uri))
+
+    assert session_artifacts |> Enum.map(& &1.key_id) |> MapSet.new() |> MapSet.size() == 2
+
+    assert Enum.count(
+             session_artifacts,
+             &Ezagent.Cap.Authority.verify_against_current(
+               &1,
+               orchestrator_uri,
+               session_uri
+             )
+           ) == session_cap_count()
+
     refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
              Enum.any?(
                pending,
@@ -172,12 +199,23 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   end
 
   defp expected_cap_count do
-    session_count =
-      Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
-      |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
-      |> length()
+    session_cap_count() + 3
+  end
 
-    session_count + 3
+  defp session_cap_count do
+    Ezagent.CapabilityRegistry.subjects_for_kind(Ezagent.Entity.Session)
+    |> Enum.reject(&Ezagent.Cap.Verifier.non_cap_action?(&1.behavior, &1.action))
+    |> length()
+  end
+
+  defp wait_restarted(uri, previous_pid, attempts \\ 200)
+  defp wait_restarted(_uri, _previous_pid, 0), do: flunk("Kind never restarted")
+
+  defp wait_restarted(uri, previous_pid, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      {:ok, pid} when pid != previous_pid -> :ok
+      _ -> Process.sleep(10) && wait_restarted(uri, previous_pid, attempts - 1)
+    end
   end
 
   defp wait_ready(uri, attempts \\ 200)
@@ -234,6 +272,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
   end
 
   defp terminate_if_alive(uri, pid) when is_pid(pid) do
-    if Process.alive?(pid), do: Ezagent.Kind.terminate(uri)
+    if Process.alive?(pid) or match?({:ok, _pid}, Ezagent.KindRegistry.lookup(uri)),
+      do: Ezagent.Kind.terminate(uri)
   end
 end

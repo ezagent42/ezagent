@@ -211,8 +211,10 @@ defmodule Ezagent.EntityCaps do
   defp effective_read(uri, held_reader) do
     with {:ok, pending} <- Ezagent.Cap.DeliveryOutbox.list_pending_absorb_caps(uri),
          {:ok, held} <- held_reader.(uri),
-         {:ok, effective} <- verified_checked(held ++ pending, uri) do
-      {:ok, Enum.uniq_by(effective, &Capability.identity_key/1)}
+         {:ok, effective} <- verified_checked(held ++ pending, uri),
+         {:ok, current} <-
+           Ezagent.Cap.Authority.filter_current_artifacts_checked(effective, uri) do
+      {:ok, Enum.uniq_by(current, &Capability.identity_key/1)}
     else
       {:error, reason} ->
         log_effective_read_failure(uri, reason)

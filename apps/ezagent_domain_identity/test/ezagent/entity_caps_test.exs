@@ -204,6 +204,55 @@ defmodule Ezagent.EntityCapsTest do
       :ok = Ezagent.Kind.terminate(agent)
     end
 
+    test "excludes a held artifact whose target authority generation is stale" do
+      agent = agent_uri("effective-stale-held")
+      stale = issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [stale]
+               })
+
+      wait_until_ready(agent)
+      assert {:ok, _generation_two} = Ezagent.Cap.Authority.regenesis(stale.instance, :session)
+
+      assert {:ok, effective} = EntityCaps.effective_caps(agent)
+      refute artifact_present?(effective, stale)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
+    test "filters stale pending artifacts before deduplicating equal capability identities" do
+      agent = agent_uri("effective-pending-generations")
+      generation_one = issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [generation_one]
+               })
+
+      wait_until_ready(agent)
+      :ok = Ezagent.ReadyGate.put(agent, :not_ready)
+      assert :ok = Ezagent.Identity.absorb_cap(agent, generation_one)
+
+      assert {:ok, generation_two_authority} =
+               Ezagent.Cap.Authority.regenesis(generation_one.instance, :session)
+
+      generation_two = reissue_cap(generation_two_authority, agent, generation_one)
+
+      assert Capability.identity_key(generation_one) == Capability.identity_key(generation_two)
+      refute generation_one.key_id == generation_two.key_id
+      assert :ok = Ezagent.Identity.absorb_cap(agent, generation_two)
+
+      assert {:ok, effective} = EntityCaps.effective_caps(agent)
+      refute artifact_present?(effective, generation_one)
+      assert artifact_present?(effective, generation_two)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
     test "cold missing entities return a successful empty effective view" do
       assert {:ok, []} = EntityCaps.effective_caps_persisted(agent_uri("effective-empty"))
     end
@@ -913,6 +962,11 @@ defmodule Ezagent.EntityCapsTest do
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
 
+  defp reissue_cap(authority, receiver, cap) do
+    requested = %{cap | granted_by: nil, granted_at: nil, key_id: nil, signature: nil}
+    authority_signed_cap_as!(authority, @issuer, receiver, requested)
+  end
+
   defp licensed_caps(receiver, caps) do
     [self_license(receiver) | caps]
   end
@@ -967,6 +1021,9 @@ defmodule Ezagent.EntityCapsTest do
 
   defp cap_present?(caps, cap),
     do: Capability.identity_key(cap) in identity_keys(caps)
+
+  defp artifact_present?(caps, artifact),
+    do: Enum.any?(caps, &(&1 == artifact))
 
   defp run_concurrent_mutations(uri, revoke_caps, grant_caps) do
     operations =
