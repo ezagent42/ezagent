@@ -638,6 +638,73 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
              AgentAdmission.clear(session_uri, forged)
   end
 
+  test "complete retires an active candidate whose declaration revision is stale", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    update_declarations(session_uri, declarations)
+
+    assert {:error, :stale_agent_admission_declaration} =
+             AgentAdmission.complete(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert AgentAdmission.list(session_uri) == []
+    assert eventually(fn -> not Ezagent.Kind.alive?(agent_uri) end)
+  end
+
+  test "cancel retires an active candidate whose declaration flavor is stale", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    agent_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    n = System.unique_integer([:positive])
+    replacement_flavor = register_flavor("stale-cancel", n, CredentialTemplate)
+
+    current_declarations =
+      Enum.map(declarations, fn
+        %{role_name: "llm"} = declaration -> %{declaration | flavor: replacement_flavor}
+        declaration -> declaration
+      end)
+
+    replace_declarations(session_uri, current_declarations)
+
+    assert {:error, :stale_agent_admission_declaration} =
+             AgentAdmission.cancel(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert AgentAdmission.list(session_uri) == []
+    assert eventually(fn -> not Ezagent.Kind.alive?(agent_uri) end)
+  end
+
   test "expiry retires and clears an attempt whose declaration revision is stale", %{
     declarations: declarations
   } do
@@ -745,6 +812,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
         :session_template_uri,
         Ezagent.URI.template("system", :session, "hello@revision-#{n}")
       )
+      |> Map.put(:member_declarations, declarations)
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+  end
+
+  defp replace_declarations(session_uri, declarations) do
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
       |> Map.put(:member_declarations, declarations)
 
     assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)

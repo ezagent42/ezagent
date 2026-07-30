@@ -439,33 +439,37 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   end
 
   defp active_attempt(session_uri, declaration, revision, attempt_id) do
-    role_name = field(declaration, :role_name)
+    with {:ok, row_state} <- reconcile_row(session_uri, declaration, revision) do
+      case row_state do
+        {:current, %{status: status, attempt_id: ^attempt_id} = current}
+        when status in @active_statuses ->
+          {:ok, current}
 
-    case Map.get(admissions(session_uri), role_name) do
-      %{status: status, attempt_id: ^attempt_id} = current
-      when status in @active_statuses ->
-        with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+        {:stale, _retired} ->
+          {:error, :stale_agent_admission_declaration}
 
-      _ ->
-        {:error, :stale_agent_admission_attempt}
+        _ ->
+          {:error, :stale_agent_admission_attempt}
+      end
     end
   end
 
   defp cancellable_attempt(session_uri, declaration, revision, attempt_id) do
-    role_name = field(declaration, :role_name)
+    with {:ok, row_state} <- reconcile_row(session_uri, declaration, revision) do
+      case row_state do
+        {:current, %{status: :failed, attempt_id: ^attempt_id} = current} ->
+          {:ok, current}
 
-    case Map.get(admissions(session_uri), role_name) do
-      %{status: :failed, attempt_id: ^attempt_id} = current ->
-        with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+        {:current, %{status: status, attempt_id: ^attempt_id} = current}
+        when status in @active_statuses ->
+          {:ok, current}
 
-      current ->
-        case current do
-          %{status: status, attempt_id: ^attempt_id} when status in @active_statuses ->
-            with :ok <- validate_row(current, declaration, revision), do: {:ok, current}
+        {:stale, _retired} ->
+          {:error, :stale_agent_admission_declaration}
 
-          _ ->
-            {:error, :stale_agent_admission_attempt}
-        end
+        _ ->
+          {:error, :stale_agent_admission_attempt}
+      end
     end
   end
 

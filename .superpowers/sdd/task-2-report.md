@@ -106,3 +106,29 @@ The three files also passed independently (`9/9`, `29/29`, and `9/9`).
 `mix format` was run on every touched Task 2 source/test file and
 `git diff --check` passed. Full `mix precommit` remains intentionally skipped
 under the coordinator's focused-suite instruction.
+
+## Stale completion/cancellation reconciliation — 2026-07-30
+
+The follow-up review found that `complete/4` and `cancel/4` detected a stale
+active admission through `validate_row/3` but returned immediately, bypassing
+the reconciliation path that retires its provisional agent and clears the row.
+Both attempt lookups now run through `reconcile_row/3` before selecting the
+requested attempt.
+
+Two regressions mutate the declaration while a candidate is `:authenticating`:
+the completion case bumps the template revision, while the cancellation case
+changes the flavor without changing the revision.
+
+```text
+# RED before the fix
+2 tests, 2 failures
+# Both failures showed the stale :authenticating row still persisted.
+
+# GREEN after routing both lookups through reconciliation
+2 tests, 0 failures
+
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs
+
+11 tests, 0 failures
+```
