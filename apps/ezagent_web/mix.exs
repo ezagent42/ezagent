@@ -162,7 +162,27 @@ defmodule EzagentWeb.MixProject do
         "tailwind.install --if-missing",
         "esbuild.install --if-missing"
       ],
+      # `"compile"` MUST be the first step (post-#1626 CI-red fix). `tailwind`/
+      # `esbuild` are plain binary-wrapper Mix tasks — neither declares a
+      # `compile` prerequisite, so on a genuinely fresh `_build` (every CI shard
+      # leg's checkout; also a brand-new dev's `mix setup`) NOTHING has ever
+      # compiled `ezagent_web`'s own `.ex`/`.heex` sources before `esbuild
+      # ezagent_web` runs. That means `compilers: [:phoenix_live_view] ++
+      # Mix.compilers()` (this app's OWN compiler list, see `project/0` above)
+      # never runs either, so LiveView's colocated-JS extractor never populates
+      # `_build/$MIX_ENV/phoenix-colocated/ezagent_web/` — and esbuild's
+      # `NODE_PATH`-based resolution of `js/app.js`'s `import ... from
+      # "phoenix-colocated/ezagent_web"` (config/config.exs's `config :esbuild`
+      # `NODE_PATH` already points at `Mix.Project.build_path()` correctly; that
+      # part was never the bug) fails: `Could not resolve
+      # "phoenix-colocated/ezagent_web"` → `mix esbuild ezagent_web` exits 1 →
+      # `mix assets.build` exits 1. Reproduced locally byte-for-byte against a
+      # `_build` with `ezagent_web`'s ebin/manifest and
+      # `phoenix-colocated/ezagent_web` removed (simulating a fresh checkout);
+      # this `"compile"` step (idempotent — a no-op when already current) fixes
+      # it by generating the colocated-hooks output before esbuild bundles.
       "assets.build": [
+        "compile",
         "cmd mkdir -p priv/static/assets/css priv/static/assets/fonts",
         "cmd cp assets/css/local_fonts.css priv/static/assets/css/local_fonts.css",
         "cmd cp -R assets/static/fonts/. priv/static/assets/fonts",
@@ -172,7 +192,15 @@ defmodule EzagentWeb.MixProject do
         "cmd --cd ../ezagent_plugin_hello/assets npm run build",
         "esbuild ezagent_web"
       ],
+      # Same latent gap as `assets.build` above (identical root cause,
+      # identical idempotent fix) — and it is LIVE here: the prod
+      # `ezagent-deploy` Dockerfile runs `cd apps/ezagent_web && mix
+      # assets.setup && mix assets.deploy` BEFORE its own umbrella-root `RUN
+      # mix compile` step, so without this, a prod image build would hit the
+      # same `Could not resolve "phoenix-colocated/ezagent_web"` esbuild
+      # failure this PR fixes for `assets.build`.
       "assets.deploy": [
+        "compile",
         "cmd mkdir -p priv/static/assets/css priv/static/assets/fonts",
         "cmd cp assets/css/local_fonts.css priv/static/assets/css/local_fonts.css",
         "cmd cp -R assets/static/fonts/. priv/static/assets/fonts",
