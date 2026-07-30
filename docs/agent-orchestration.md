@@ -34,11 +34,34 @@ pre-merge checks in codex's place — the review gate is never skipped.
 
 ## Codex — the reviewer
 
-- Invoked via the `codex:codex-rescue` agent (relay → background codex job; poll the
-  job log to completion). Used for adversarial spec/plan/PR review + pre-merge checks.
-- **Zombie-process caveat:** accumulated stale `codex app-server`/broker/code-mode-host
-  processes across old worktrees exhaust the account and cause `stream disconnected`
-  failures that look like a backend outage. If codex reviews start failing:
+**Updated 2026-07-30 (Allen's directive):** dispatch through **`omp`** now, not the
+`codex:codex-rescue` agent / `codex-cc-plugin`. Full invocation contract, prompt
+template, auth, and a verified test transcript live in
+[dev-together's references/codex-review.md](../.claude/skills/dev-together/references/codex-review.md)
+(`.claude/skills/dev-together/references/codex-review.md` from repo root). Short
+version:
+
+```bash
+omp -p --model openai-codex/gpt-5.6-sol \
+  --tools=read,grep,glob,bash,lsp --auto-approve --no-session \
+  --cwd <repo-root> "@<prompt-file>"
+```
+
+Static-only (no `mix`/tests/edits), prompt ends with a required `VERDICT:` line.
+Auth is via omp's own auth-broker (ChatGPT Pro OAuth) — check with
+`omp token openai-codex` — not the real `codex` CLI's `CODEX_HOME`. This talks
+directly to the `openai-codex` model family (`omp models`) with no background
+broker process, which sidesteps the zombie-process failure mode below.
+
+- **Superseded, not deleted:** the `codex:codex-rescue` agent / `codex-cc-plugin`
+  (`/codex:adversarial-review`, `/codex:review`, etc.) still exists and still
+  produces a *structured* JSON verdict schema that the `omp` free-form path does
+  not replicate — see the reference doc for when that distinction matters. Do not
+  remove the plugin; just don't reach for it as the default review dispatch.
+- **Zombie-process caveat (legacy, `codex-cc-plugin` only):** accumulated stale
+  `codex app-server`/broker/code-mode-host processes across old worktrees exhaust
+  the account and cause `stream disconnected` failures that look like a backend
+  outage. If a `codex-cc-plugin` call starts failing:
   `pkill -f "app-server-broker.mjs"; pkill -f "codex app-server"; pkill -f codex-code-mode-host; pkill -x codex`
   (they respawn clean on next use). Diagnosed 2026-07-19 (34 zombies → 1 fixed it).
 
