@@ -125,6 +125,92 @@ defmodule Ezagent.CapabilityActionTest do
     end
   end
 
+  describe "#189 identity-plane divergence — from_map (READ side) must NOT widen a signed cap's lost action to :any" do
+    # ROOT CAUSE (verified against live prod stable node, 2026-07-30/31): five
+    # freshly-created users each held ONE workspace cap that differed between the
+    # two identity planes — `users.caps_json` (durable) carried
+    # `action: :create_session` (signature VALID), while the
+    # `Ezagent.EntityCaps.Store` mirror serialized the SAME signed cap as
+    # `action: :any` (workspace-admin, signature now INVALID). `:any` on Workspace
+    # is workspace-admin; `:create_session` is an ordinary member — a PRIVILEGE
+    # divergence the `FleetParity.caps_parity/3` barrier correctly refused on.
+    #
+    # MECHANISM (READ side): `Ezagent.Capability.Normalize.from_map/1` is the
+    # tolerant deserializer for `caps_json`. `Map.put_new("action", "any")`
+    # SILENTLY defaults a MISSING `"action"` to `:any` while `decode_signature/1`
+    # DECODES and preserves the map's `"signature"` verbatim — turning a JSON map
+    # that has a signature but lost its `"action"` key into a signed `:any`
+    # (workspace-admin) cap. This is the read-side symmetric twin of
+    # `fill_defaults/1`'s write-side widening; a signed cap post-dates the
+    # action-axis, so a signed-and-action-less map is corruption, not legacy.
+    #
+    # These are pure-data assertions on the deserialization chokepoint.
+
+    # The signed `create_session` workspace cap AS STORED in `caps_json` (string-
+    # keyed JSON map). A non-nil `"signature"` marks it post-action-axis: it MUST
+    # carry a concrete `"action"`. (Signature bytes are a real base64url value
+    # captured from the live stable node so `decode_signature/1` accepts them.)
+    defp signed_create_session_json do
+      %{
+        "kind" => "workspace",
+        "behavior" => "Ezagent.ActionSet.Workspace",
+        "action" => "create_session",
+        "instance" => "workspace://team-alpha",
+        "workspace_uri" => "workspace://team-alpha",
+        "granted_by" => "entity://system/user/admin",
+        "granted_at" => "2026-07-30T15:05:12.545128Z",
+        "signature" =>
+          "QKFJhMyeoS4OhTPQb-JZ3UcWP06uqNAtWMC690JF56SGxNDS6RyQ4E6_p7N8TBRnnCXK5qstw945TeAh0wewAA",
+        "key_id" => "kind-g1:CvcLxDl6515X4XmKWXIaR2F8y9qzKlNV5fNp2PGzhA8"
+      }
+    end
+
+    test "control: the intact signed JSON decodes to the concrete :create_session action" do
+      cap = Capability.from_map(signed_create_session_json())
+
+      assert cap.action == :create_session
+      refute is_nil(cap.signature), "the signature must round-trip (it covers create_session)"
+    end
+
+    test "from_map/1 REFUSES a signed map that lost its \"action\" (no silent :any widening)" do
+      corrupted = Map.delete(signed_create_session_json(), "action")
+
+      refute Map.has_key?(corrupted, "action"),
+             "fixture invariant: the corrupted map genuinely lacks an \"action\" key"
+
+      # FAILS-BEFORE (origin/main): `from_map/1` returns
+      # `%Capability{action: :any, signature: <preserved>}` — the exact escalated,
+      # signature-mismatched artifact that reached the store mirror. PASSES-AFTER:
+      # the fail-closed guard raises rather than widening.
+      assert_raise ArgumentError, ~r/signed capability map is missing its `"action"`/i, fn ->
+        Capability.from_map(corrupted)
+      end
+    end
+
+    test "legacy tolerance preserved: an UNSIGNED map missing \"action\" still decodes to :any" do
+      # A genuinely pre-#1399 row carries NO signature, so a missing "action" is
+      # honest legacy (it predates the axis) — tolerantly decode to :any, do NOT
+      # raise (the SPEC §3.4 / A4 backward-compat read path must not regress).
+      unsigned_legacy =
+        signed_create_session_json() |> Map.delete("action") |> Map.delete("signature")
+
+      assert is_nil(Map.get(unsigned_legacy, "signature"))
+      assert Capability.from_map(unsigned_legacy).action == :any
+    end
+
+    test "the two identity planes cannot diverge through decode on the same signed cap" do
+      # `to_map/1` ALWAYS serializes a concrete "action"; only the corrupted
+      # (action-key-dropped) map produces the escalated variant, which decode now
+      # refuses — so no `caps_json` ⇄ store round-trip can widen the signed cap.
+      intact = signed_create_session_json()
+      assert Capability.from_map(intact).action == :create_session
+
+      assert_raise ArgumentError, fn ->
+        Capability.from_map(Map.delete(intact, "action"))
+      end
+    end
+  end
+
   describe "C1 — admin full-wildcard cap matches every action" do
     test "kind: :any, behavior: :any, action: :any matches a concrete needed cap" do
       admin = %Capability{
