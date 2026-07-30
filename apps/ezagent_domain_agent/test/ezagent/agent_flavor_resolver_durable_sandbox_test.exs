@@ -19,6 +19,7 @@ defmodule Ezagent.AgentFlavorResolverDurableSandboxTest do
   """
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Agent.CredentialConnection
   alias Ezagent.AgentFlavorResolver
 
   defmodule PyLikeTemplate do
@@ -66,5 +67,27 @@ defmodule Ezagent.AgentFlavorResolverDurableSandboxTest do
     {:ok, _} = Ezagent.SnapshotStore.write(uri, state, kind_type: :agent)
 
     assert {:ok, "curl"} = AgentFlavorResolver.flavor_from_durable_snapshot(uri)
+  end
+
+  test "registered interactive and API-key flavors declare their connection surfaces" do
+    assert {:ok, {:pty, %{label: "Connect Codex"}}} =
+             CredentialConnection.for_flavor("codex")
+
+    assert {:ok, {:pty, %{label: "Connect Codex"}}} =
+             CredentialConnection.for_flavor("codex-remote")
+
+    assert {:ok, {:pty, %{label: "Connect Claude"}}} =
+             CredentialConnection.for_flavor("cc")
+
+    assert {:ok, {:pty, %{label: "Connect Claude"}}} =
+             CredentialConnection.for_flavor("cc-headless")
+
+    assert {:ok, {:api_key, %{provider: "deepseek", label: "Configure API key"}}} =
+             CredentialConnection.for_flavor("curl",
+               role: %{role_name: "llm", provider: "deepseek"}
+             )
+
+    assert {:error, :unsupported_connection} =
+             CredentialConnection.for_flavor("curl", role: %{role_name: "llm"})
   end
 end

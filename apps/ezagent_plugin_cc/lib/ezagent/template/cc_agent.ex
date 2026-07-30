@@ -208,6 +208,9 @@ defmodule Ezagent.PluginCc.Template.CcAgent do
   @impl Ezagent.Agent.CredentialAdapter
   def credential_relpaths, do: [".credentials.json"]
 
+  @impl Ezagent.Agent.CredentialAdapter
+  def credential_connection(_opts), do: {:pty, "Connect Claude"}
+
   # #17 cascade PR-0 (§D6, codex H4) — the SECRET subset, disjoint from config.
   # For cc the credential home holds only the single token file, so the secret set
   # equals credential_relpaths/0; codex differs (config.toml is config, not secret).

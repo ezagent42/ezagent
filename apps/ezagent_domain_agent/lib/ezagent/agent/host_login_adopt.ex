@@ -35,7 +35,7 @@ defmodule Ezagent.Agent.HostLoginAdopt do
        registration is refreshed (the host home may have moved via env);
     4. otherwise REGISTER the host login as a durable #17 source (a
        per-workspace `<flavor>-host-login` source registration: durable
-       sandbox `config_dir_path` + `flavor` — the exact shape
+       sandbox `config_dir_path` + respawn-template `flavor` — the exact shape
        `UriQuery.resolve(:config_dir | :flavor, source)` and
        `Resolver.default_source_available?/1` read, so cold-restart
        re-resolution through `Ezagent.Credential.CascadeRuntime` keeps working
@@ -125,9 +125,10 @@ defmodule Ezagent.Agent.HostLoginAdopt do
   # Durable #17 source registration. The snapshot carries the exact fields the
   # existing read seams consume: `:sandbox`/`config_dir_path` for
   # `UriQuery.resolve(:config_dir, source)` (materialize + cold-restart
-  # re-resolution) and `:flavor` for `UriQuery.resolve(:flavor, source)` (the
-  # pointer chokepoint's source-flavor validation). The `AgentLineage` edge is
-  # the durable owner signal the chokepoint's owner validation reads.
+  # re-resolution) and `:respawn_template_data["flavor"]` for
+  # `UriQuery.resolve(:flavor, source)` (the pointer chokepoint's source-flavor
+  # validation). The `AgentLineage` edge is the durable owner signal the
+  # chokepoint's owner validation reads.
   defp register_source(source_uri, installer_uri, flavor, host_dir) do
     case Ezagent.SnapshotStore.write(
            URI.to_string(source_uri),
@@ -135,9 +136,8 @@ defmodule Ezagent.Agent.HostLoginAdopt do
              sandbox: %{
                state: %{
                  config_dir_path: host_dir,
-                 flavor: flavor,
                  template_class: nil,
-                 respawn_template_data: nil,
+                 respawn_template_data: %{"flavor" => flavor},
                  pty_phase: nil,
                  passive: true,
                  recipe: nil

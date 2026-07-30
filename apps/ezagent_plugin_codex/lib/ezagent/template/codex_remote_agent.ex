@@ -30,6 +30,10 @@ defmodule Ezagent.PluginCodex.Template.CodexRemoteAgent do
   def credential_relpaths, do: Ezagent.PluginCodex.Template.CodexAgent.credential_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter
+  def credential_connection(opts),
+    do: Ezagent.PluginCodex.Template.CodexAgent.credential_connection(opts)
+
+  @impl Ezagent.Agent.CredentialAdapter
   def secret_relpaths, do: Ezagent.PluginCodex.Template.CodexAgent.secret_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter

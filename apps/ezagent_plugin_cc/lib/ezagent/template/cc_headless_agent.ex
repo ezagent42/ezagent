@@ -27,6 +27,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
   def credential_relpaths, do: Ezagent.PluginCc.Template.CcAgent.credential_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter
+  def credential_connection(opts),
+    do: Ezagent.PluginCc.Template.CcAgent.credential_connection(opts)
+
+  @impl Ezagent.Agent.CredentialAdapter
   def secret_relpaths, do: Ezagent.PluginCc.Template.CcAgent.secret_relpaths()
 
   @impl Ezagent.Agent.CredentialAdapter
