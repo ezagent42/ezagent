@@ -66,7 +66,7 @@ defmodule Ezagent.PluginCurlAgent.Template do
           {:api_key, String.t(), String.t()} | :unsupported_connection
   def credential_connection(opts) when is_list(opts) do
     role = Keyword.get(opts, :role, %{})
-    provider = Keyword.get(opts, :provider) || connection_role_provider(role)
+    provider = connection_role_provider(role)
 
     if is_binary(provider) and provider != "" do
       {:api_key, provider, "Configure API key"}
@@ -75,10 +75,18 @@ defmodule Ezagent.PluginCurlAgent.Template do
     end
   end
 
-  defp connection_role_provider(role) when is_map(role),
-    do: Map.get(role, :provider) || Map.get(role, "provider")
+  defp connection_role_provider(role) when is_map(role) do
+    role
+    |> Map.get(:config, Map.get(role, "config", %{}))
+    |> config_provider()
+  end
 
   defp connection_role_provider(_role), do: nil
+
+  defp config_provider(config) when is_map(config),
+    do: Map.get(config, :provider) || Map.get(config, "provider")
+
+  defp config_provider(_config), do: nil
 
   @impl Ezagent.Agent.CredentialSliceAdapter
   def materialize_credential_slice(%URI{} = agent_uri, tmpl) when is_map(tmpl) do

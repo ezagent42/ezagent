@@ -29,7 +29,6 @@ defmodule EzagentWeb.HelloManifestDriftTest do
         "recipe" => "hello.llm",
         "flavor" => "curl",
         "credential_admission" => "before_session_join",
-        "provider" => "deepseek",
         "config" => %{
           "provider" => "deepseek",
           "api_url" => "https://api.deepseek.com/chat/completions",

@@ -126,33 +126,37 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                HelloSession.instantiate("session.hello", %{}, workspace_uri)
     end
 
-    test "persists the selected llm flavor on the template role" do
+    test "flavor overrides preserve admission without carrying Curl provider metadata" do
       ws = "hello-tmpl-flavor-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
       workspace_uri = Ezagent.URI.workspace(ws)
 
-      tmpl = %{
-        "class" => "session.hello",
-        "session_name" => "main",
-        "llm_flavor" => "cc-headless"
-      }
+      Enum.each(["cc-headless", "codex"], fn flavor ->
+        tmpl = %{
+          "class" => "session.hello",
+          "session_name" => "main-#{flavor}",
+          "llm_flavor" => flavor
+        }
 
-      assert {:ok, [session_uri], _} =
-               HelloSession.instantiate("session.hello", tmpl, workspace_uri)
+        assert {:ok, [session_uri], _} =
+                 HelloSession.instantiate("session.hello", tmpl, workspace_uri)
 
-      declarations =
-        session_uri
-        |> Ezagent.Entity.Session.read_template_working_copy()
-        |> Map.get(:member_declarations, [])
+        declarations =
+          session_uri
+          |> Ezagent.Entity.Session.read_template_working_copy()
+          |> Map.get(:member_declarations, [])
 
-      assert %{
-               role_name: "llm",
-               flavor: "cc-headless",
-               credential_admission: :before_session_join
-             } =
-               Enum.find(declarations, fn role ->
-                 (Map.get(role, :role_name) || Map.get(role, "role_name")) == "llm"
-               end)
+        llm =
+          Enum.find(declarations, fn role ->
+            (Map.get(role, :role_name) || Map.get(role, "role_name")) == "llm"
+          end)
+
+        assert %{role_name: "llm", flavor: ^flavor, credential_admission: :before_session_join} =
+                 llm
+
+        refute Map.has_key?(llm, :provider)
+        assert %{"provider" => "deepseek"} = llm.config
+      end)
     end
   end
 end

@@ -84,7 +84,7 @@ defmodule Ezagent.AgentFlavorResolverDurableSandboxTest do
 
     assert {:ok, {:api_key, %{provider: "deepseek", label: "Configure API key"}}} =
              CredentialConnection.for_flavor("curl",
-               role: %{role_name: "llm", provider: "deepseek"}
+               role: %{role_name: "llm", config: %{"provider" => "deepseek"}}
              )
 
     assert {:error, :unsupported_connection} =
