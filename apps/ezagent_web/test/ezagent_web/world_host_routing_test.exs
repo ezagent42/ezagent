@@ -93,7 +93,13 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    {:ok, _view, html} = live(conn, "/sessions")
+    {:ok, view, _html} = live(conn, "/sessions")
+    # WorldLive's initial state is a bounded fallback assigned synchronously
+    # at mount; the real (DB-backed) layout/state lands via a `start_async`
+    # task patched in through `handle_async/3`. `render_async/1` is the
+    # Phoenix-idiomatic, non-sleep way to await that tracked task and
+    # re-render before asserting on the loaded state.
+    html = render_async(view, 5_000)
     state = world_state(html)
 
     assert "sessions_table" == state["component"]
@@ -113,7 +119,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
         "current_workspace_uri" => "workspace://system"
       })
 
-    {:ok, _view, html} = live(conn, "/sessions")
+    {:ok, view, _html} = live(conn, "/sessions")
+    # See render_async note above — the caller payload (workspaces list)
+    # is populated by the same async load.
+    html = render_async(view, 5_000)
     caller = world_caller(html)
 
     assert caller["workspace_uri"] == "workspace://system"
@@ -315,6 +324,11 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       })
 
     {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+    # The self-join rehydration (spawning the session/caller Kinds and
+    # granting the member cap) is a side effect of the async-loaded route
+    # state, not the bounded mount fallback. Await it via render_async
+    # before asserting the Kinds are live — see render_async note above.
+    _html = render_async(view, 5_000)
 
     assert has_element?(view, "#world-root[data-world-component='conversation']")
     assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
@@ -578,7 +592,10 @@ defmodule EzagentWeb.WorldHostRoutingTest do
              |> Map.fetch!("components")
              |> Enum.map(& &1["type"])
 
-    {:ok, _view, html} = live(conn, "/sessions")
+    {:ok, view, _html} = live(conn, "/sessions")
+    # See render_async note above the first test in this file — await the
+    # async-loaded layout before asserting the default-route override.
+    html = render_async(view, 5_000)
     assert html =~ "sessions_table"
     state = world_state(html)
     assert ["sessions_table"] = state["layout"]["components"] |> Enum.map(& &1["type"])
