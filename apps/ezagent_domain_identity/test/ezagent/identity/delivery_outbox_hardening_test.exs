@@ -316,6 +316,48 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
+  test "pending absorb view returns only validated pending absorb artifacts" do
+    {target, pid} = spawn_target("pending-absorb-view")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    cap = capability(target)
+
+    assert :ok = Ezagent.Identity.absorb_cap(target, cap)
+    pending = one_delivery!(target)
+
+    insert_raw_delivery!(
+      target,
+      %{version: :ignored_revoke_envelope},
+      DateTime.utc_now(),
+      op: :revoke_cap
+    )
+
+    assert {:ok, [loaded]} = DeliveryOutbox.list_pending_absorb_caps(target)
+    assert Ezagent.Capability.identity_key(loaded) == Ezagent.Capability.identity_key(cap)
+
+    pending
+    |> Ecto.Changeset.change(status: :applied, applied_at: DateTime.utc_now())
+    |> Repo.update!()
+
+    assert {:ok, []} = DeliveryOutbox.list_pending_absorb_caps(target)
+    terminate(target, pid)
+  end
+
+  test "a malformed pending envelope makes the pending absorb view fail closed" do
+    target = Ezagent.URI.user("team-alpha", unique("malformed-pending-view"))
+
+    delivery =
+      insert_raw_delivery!(
+        target,
+        %{version: :not_a_valid_envelope},
+        DateTime.utc_now()
+      )
+
+    assert {:error, {:invalid_pending_delivery, id, _reason}} =
+             DeliveryOutbox.list_pending_absorb_caps(target)
+
+    assert id == delivery.id
+  end
+
   test "a permanent authorization failure is audited as dead by the target handler" do
     {target, pid} = spawn_target("permanent-auth")
     cap = capability(target)
@@ -460,11 +502,11 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     )
   end
 
-  defp insert_raw_delivery!(target, envelope, next_retry_at) do
+  defp insert_raw_delivery!(target, envelope, next_retry_at, opts \\ []) do
     attrs = %{
       workspace_uri: Ezagent.Persistence.workspace_uri_for!(target),
       target_uri: URI.to_string(target),
-      op: :absorb_cap,
+      op: Keyword.get(opts, :op, :absorb_cap),
       payload: :erlang.term_to_binary(envelope),
       payload_identity: "poison-#{System.unique_integer([:positive])}",
       status: :pending,

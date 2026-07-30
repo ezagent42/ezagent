@@ -14,7 +14,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
 
   import Ecto.Query
 
-  alias Ezagent.{Invocation, Persistence}
+  alias Ezagent.{Capability, Invocation, Persistence}
   alias Ezagent.Cap.Delivery
   alias Ezagent.Cap.DeliveryOutbox.Envelope
   alias Ezagent.Cap.DeliveryOutbox.State
@@ -167,6 +167,50 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     config() |> Keyword.get(:require_sync_ack, [])
   end
 
+  @doc """
+  Return validated capabilities from pending `:absorb_cap` deliveries for one
+  target.
+
+  This is the core-owned read seam for temporary effective-capability views.
+  A malformed pending envelope or failed durable read fails the whole operation
+  closed; callers must not interpret an error as an empty pending set.
+  """
+  @spec list_pending_absorb_caps(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | {:error, term()}
+  def list_pending_absorb_caps(target_uri) do
+    target = target_uri |> to_uri() |> Ezagent.URI.instance()
+    target_string = URI.to_string(target)
+
+    with {:ok, workspace_uri} <- Persistence.workspace_uri_for(target) do
+      Delivery
+      |> Persistence.scope_by_workspace(workspace_uri)
+      |> where(
+        [delivery],
+        delivery.target_uri == ^target_string and delivery.op == :absorb_cap and
+          delivery.status == :pending
+      )
+      |> order_by([delivery], asc: delivery.id)
+      |> Repo.all()
+      |> decode_pending_absorbs()
+    end
+  rescue
+    error ->
+      Logger.error(
+        "DeliveryOutbox.list_pending_absorb_caps failed for " <>
+          "#{inspect(target_uri)}: #{Exception.message(error)}"
+      )
+
+      {:error, :pending_absorb_read_failed}
+  catch
+    kind, reason ->
+      Logger.error(
+        "DeliveryOutbox.list_pending_absorb_caps #{kind} for " <>
+          "#{inspect(target_uri)}: #{inspect(reason)}"
+      )
+
+      {:error, :pending_absorb_read_failed}
+  end
+
   @doc false
   @spec retry_base_ms() :: pos_integer()
   def retry_base_ms, do: Keyword.get(config(), :retry_base_ms, @default_retry_base_ms)
@@ -262,6 +306,28 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   defp invocation_for_claim(claimed, nil) do
     with {:ok, envelope} <- Envelope.decode(claimed) do
       {:ok, Envelope.to_invocation(envelope, claimed)}
+    end
+  end
+
+  defp decode_pending_absorbs(deliveries) do
+    deliveries
+    |> Enum.reduce_while({:ok, []}, fn delivery, {:ok, caps} ->
+      case Envelope.decode(delivery) do
+        {:ok, %{cap: %Capability{} = cap}} ->
+          {:cont, {:ok, [cap | caps]}}
+
+        {:error, reason} ->
+          Logger.error(
+            "DeliveryOutbox.list_pending_absorb_caps decode failed for " <>
+              "delivery_id=#{delivery.id}: #{inspect(reason)}"
+          )
+
+          {:halt, {:error, {:invalid_pending_delivery, delivery.id, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, caps} -> {:ok, Enum.reverse(caps)}
+      {:error, _reason} = error -> error
     end
   end
 
