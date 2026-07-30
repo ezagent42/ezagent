@@ -131,6 +131,15 @@ defmodule EzagentPluginFeishu.Integration.BootDispatchFeasibilityTest do
 
     row = EzagentCore.Repo.get(EzagentPluginFeishu.UserBinding, open_id)
     assert row.bound_by == URI.to_string(@admin)
+
+    # The adapter is the importer boundary, so it must unwrap the Behavior's
+    # `%{bindings: bindings}` result into the list shape consumed by preflight.
+    assert {:ok, bindings} = DispatchAdapter.list_current(ws_uri)
+    assert is_list(bindings)
+
+    assert Enum.any?(bindings, fn binding ->
+             binding.open_id == open_id and binding.user_uri == URI.to_string(user_uri)
+           end)
   end
 
   test "mission check 5a: the SAME dispatch is refused OUTSIDE the admin-operator scope (no ambient bypass)" do

@@ -7,7 +7,8 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
   (`EzagentPluginFeishu.BindingPolicy.apply/2`), or raw handler
   (`EzagentPluginFeishu.Behavior.UserBinding.handle_*`) directly.
 
-  Every mutation goes through `Ezagent.Invocation.dispatch/1`.
+  Every mutation goes through the sanctioned `Ezagent.Cmd` →
+  `Ezagent.Router.dispatch/1` boundary.
 
   This is a NARROW invariant — it does NOT forbid these calls in:
   - The formal Behavior itself (`behavior/user_binding.ex`) — it IS the
@@ -40,7 +41,25 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
   @forbidden_raw_policy ~r/\bBindingPolicy\.apply\b/
   # Raw handler:
   @forbidden_raw_handler ~r/\bBV\.handle_|\bBehavior\.UserBinding\.handle_/
-
+  @allowed_adapter_remote_modules MapSet.new([
+                                    [Access],
+                                    [:Application],
+                                    [:Ezagent, :Cmd],
+                                    [:Ezagent, :Entity, :User],
+                                    [:Ezagent, :Invocation],
+                                    [:Ezagent, :Router],
+                                    [:Ezagent, :URI],
+                                    [:MapSet],
+                                    [:Mix],
+                                    [:String],
+                                    [:System],
+                                    [:URI]
+                                  ])
+  @required_adapter_aliases %{
+    Cmd: [:Ezagent, :Cmd],
+    Invocation: [:Ezagent, :Invocation],
+    Router: [:Ezagent, :Router]
+  }
   defp repo_root, do: Path.expand("../../../..", __DIR__)
 
   # Pre-filter: exclude lines that are moduledoc prose or comments
@@ -57,6 +76,99 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
         String.contains?(trimmed, "`BindingPolicy")
     end)
     |> Enum.with_index(1)
+  end
+
+  defp remote_calls_and_structs(content) do
+    ast = Code.string_to_quoted!(content)
+
+    {_ast, result} =
+      Macro.prewalk(ast, {MapSet.new(), MapSet.new(), MapSet.new(), %{}}, fn
+        {:alias, _,
+         [
+           {{:., _, [{:__aliases__, _, base_parts}, :{}]}, _, grouped_aliases}
+         ]} = node,
+        {calls, structs, imports, aliases} ->
+          mappings =
+            Map.new(grouped_aliases, fn {:__aliases__, _, child_parts} ->
+              {List.last(child_parts), base_parts ++ child_parts}
+            end)
+
+          {node, {calls, structs, imports, Map.merge(aliases, mappings)}}
+
+        {:alias, _, [{:__aliases__, _, target_parts} | options]} = node,
+        {calls, structs, imports, aliases} ->
+          short_name =
+            options
+            |> List.first([])
+            |> Keyword.get(:as, List.last(target_parts))
+            |> case do
+              {:__aliases__, _, parts} -> List.last(parts)
+              name -> name
+            end
+
+          {node, {calls, structs, imports, Map.put(aliases, short_name, target_parts)}}
+
+        {:|>, _, [_input, {{:., _, [{:__aliases__, _, parts}, function]}, _, args}]} = node,
+        {calls, structs, imports, aliases}
+        when is_atom(function) and is_list(args) ->
+          {node,
+           {MapSet.put(calls, {parts, function, length(args) + 1}), structs, imports, aliases}}
+
+        {{:., _, [{:__aliases__, _, parts}, function]}, _, args} = node,
+        {calls, structs, imports, aliases}
+        when is_atom(function) and is_list(args) ->
+          {node, {MapSet.put(calls, {parts, function, length(args)}), structs, imports, aliases}}
+
+        {{:., _, [module, function]}, _, args} = node, {calls, structs, imports, aliases}
+        when is_atom(module) and is_atom(function) and is_list(args) ->
+          {node,
+           {MapSet.put(calls, {[module], function, length(args)}), structs, imports, aliases}}
+
+        {:%, _, [{:__aliases__, _, parts}, {:%{}, _, _fields}]} = node,
+        {calls, structs, imports, aliases} ->
+          {node, {calls, MapSet.put(structs, parts), imports, aliases}}
+
+        {:import, _, [{:__aliases__, _, parts} | _options]} = node,
+        {calls, structs, imports, aliases} ->
+          {node, {calls, structs, MapSet.put(imports, parts), aliases}}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    result
+  end
+
+  defp resolve_alias(parts, aliases) do
+    case parts do
+      [short_name] -> Map.get(aliases, short_name, parts)
+      _ -> parts
+    end
+  end
+
+  defp dynamic_bypass_sites(content) do
+    ast = Code.string_to_quoted!(content)
+
+    {_ast, sites} =
+      Macro.prewalk(ast, [], fn
+        {{:., _, [{:__aliases__, _, _parts}, _function]}, _, _args} = node, sites ->
+          {node, sites}
+
+        {{:., _, [module, _function]}, _, _args} = node, sites when is_atom(module) ->
+          {node, sites}
+
+        {{:., meta, [receiver, function]}, _, _args} = node, sites ->
+          site = "line #{meta[:line]}: #{Macro.to_string(receiver)}.#{function}(...)"
+          {node, [site | sites]}
+
+        {:struct, meta, _args} = node, sites ->
+          {node, ["line #{meta[:line]}: struct/2" | sites]}
+
+        node, sites ->
+          {node, sites}
+      end)
+
+    Enum.reverse(sites)
   end
 
   test "producer files never call raw storge (EzagentPluginFeishu.UserBinding)" do
@@ -138,5 +250,48 @@ defmodule EzagentPluginFeishu.SourceInvariants.DispatchOnlySeedTest do
                "#{file} lacks function-port/dispatch wiring"
       end
     end
+  end
+
+  test "production adapter pins the reviewed admin-operator Cmd/Router seam" do
+    file =
+      "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/user_binding_seed/dispatch_adapter.ex"
+
+    content = repo_root() |> Path.join(file) |> File.read!()
+    {calls, structs, imports, aliases} = remote_calls_and_structs(content)
+    dynamic_sites = dynamic_bypass_sites(content)
+
+    assert aliases == @required_adapter_aliases,
+           "production seed adapter aliases must retain the exact reviewed module mappings"
+
+    assert dynamic_sites == [],
+           "production seed adapter must not use dynamic remote calls or struct/2: " <>
+             Enum.join(dynamic_sites, ", ")
+
+    resolved_calls =
+      MapSet.new(calls, fn {parts, function, arity} ->
+        {resolve_alias(parts, aliases), function, arity}
+      end)
+
+    assert MapSet.member?(resolved_calls, {[:Ezagent, :Invocation], :with_admin_operator, 2})
+    assert MapSet.member?(resolved_calls, {[:Ezagent, :Cmd], :trusted_internal, 5})
+    assert MapSet.member?(resolved_calls, {[:Ezagent, :Router], :dispatch, 1})
+
+    assert imports == MapSet.new(),
+           "production seed adapter must not import modules that bypass the remote-call ratchet"
+
+    resolved_structs = MapSet.new(structs, &resolve_alias(&1, aliases))
+
+    assert Enum.all?(resolved_structs, &(&1 == [:URI])),
+           "production seed adapter may only match or construct URI structs"
+
+    remote_modules =
+      resolved_calls
+      |> Enum.reject(fn {_parts, function, _arity} -> function == :{} end)
+      |> Enum.map(&elem(&1, 0))
+      |> MapSet.new()
+
+    assert MapSet.subset?(remote_modules, @allowed_adapter_remote_modules),
+           "production seed adapter called a module outside the reviewed allowlist: " <>
+             inspect(MapSet.difference(remote_modules, @allowed_adapter_remote_modules))
   end
 end

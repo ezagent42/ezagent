@@ -29,7 +29,11 @@ defmodule EzagentPluginFeishu.UserBindingSeed.DispatchAdapter do
   @doc "List current bindings through a synchronous trusted-internal command."
   @spec list_current(URI.t()) :: {:ok, [map()]} | {:error, term()}
   def list_current(%URI{scheme: "workspace"} = workspace_uri) do
-    dispatch(workspace_uri, :list_feishu_bindings, %{})
+    case dispatch(workspace_uri, :list_feishu_bindings, %{}) do
+      {:ok, %{bindings: bindings}} when is_list(bindings) -> {:ok, bindings}
+      {:ok, _unexpected} -> {:error, :invalid_list_response}
+      {:error, _reason} = error -> error
+    end
   end
 
   @doc """
