@@ -113,6 +113,12 @@ defmodule EzagentCore.Invariants.DemoSmokeTest do
   end
 
   describe "Bug 2: Tailwind compiled bundle has shadcn-style classes" do
+    # Needs the REAL compiled tailwind bundle (see test_helper.exs). Skipped by
+    # default (not failed) when priv/static/assets/css/app.css hasn't been
+    # built — e.g. a bare `mix test` in a fresh worktree without
+    # `mix assets.build`/`npm install` run. CI's `web` shard + `ci.local` build
+    # the bundle explicitly, so this runs for real there.
+    @describetag :requires_built_assets
     @css_path Path.expand("../priv/static/assets/css/app.css", __DIR__)
 
     test "compiled app.css exists" do

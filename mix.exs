@@ -182,9 +182,11 @@ defmodule EzagentCore.Umbrella.MixProject do
       # two devs run concurrently and nobody touches the shared dev DB.
       #
       # Step ORDER mirrors CI and is load-bearing: `pnpm install` populates
-      # node_modules BEFORE `precommit`'s `mix compile`, because the assets
-      # esbuild build (triggered during the web app's `mix test`) must resolve
-      # react/zod — without it the run dies with `Could not resolve "react"`, a
+      # node_modules BEFORE `build_web_assets/1`'s `mix assets.build`, because
+      # esbuild bundling `apps/ezagent_web/assets/js/app.js` transitively pulls
+      # in `ezagent_plugin_world`/`ezagent_plugin_hello`'s own JS (react, zod,
+      # @json-render/react, xterm) via relative imports — without their
+      # node_modules present it dies with `Could not resolve "react"`, a
       # NON-test failure that otherwise masquerades as a green-with-EXIT=1 run.
       "ci.local": [
         &arm_ci_local_result_capture/1,
@@ -197,6 +199,16 @@ defmodule EzagentCore.Umbrella.MixProject do
         # runs ONCE from the umbrella root, so pnpm install lands in each assets
         # dir exactly once. See `pnpm_install_assets/1`.
         &pnpm_install_assets/1,
+        # Builds the REAL tailwind+esbuild bundle (`priv/static/assets/css/app.css`
+        # etc.) explicitly, once, here — so `apps/ezagent_web/test/demo_smoke_test.exs`
+        # "Bug 2" (@describetag :requires_built_assets) exercises the actual
+        # compiled CSS instead of skipping. Previously this build was a SIDE EFFECT
+        # of `mix test` itself (apps/ezagent_web/test/test_helper.exs shelling out to
+        # `mix tailwind`/`mix esbuild` on first run) — that made even a BARE
+        # `mix test apps/ezagent_web/test` in a fresh worktree (no node_modules)
+        # hard-depend on a full JS toolchain before a single test could run. See
+        # `build_web_assets/1`.
+        &build_web_assets/1,
         "ecto.create --quiet",
         "ecto.migrate --quiet",
         "precommit",
@@ -307,21 +319,34 @@ defmodule EzagentCore.Umbrella.MixProject do
   # closure (not a static string) because the file list is computed at RUNTIME from
   # the manifest — it cannot be built at alias-eval time (before `EzagentCore.
   # CiShards` compiles). pnpm runs in every test shard (idempotent/cached) so any
-  # shard whose tests boot web/world/hello assets resolves react/zod.
+  # shard whose tests boot web/world/hello assets resolves react/zod. Only the
+  # `web` shard additionally runs `build_web_assets/1`: it alone owns
+  # `apps/ezagent_web/test/demo_smoke_test.exs`'s "Bug 2" (@describetag
+  # :requires_built_assets), which needs the REAL compiled tailwind bundle, not
+  # just resolvable JS imports. Every OTHER shard leaves that tag skipped (the
+  # bundle stays unbuilt for them, and their tests don't need it) — `mix ci.shard.
+  # verify`'s STEP parity only requires the UNION of shard steps to match
+  # `ci.local`, not that every shard carries every step, so this asymmetry is sound.
   defp ci_shard_test_aliases do
     for name <- ci_shard_names() do
       {String.to_atom("ci.shard." <> name),
        [
          &arm_ci_local_result_capture/1,
          "deps.get",
-         &pnpm_install_assets/1,
-         "ecto.create --quiet",
-         "ecto.migrate --quiet",
-         shard_test_step(name),
-         &finalize_ci_local/1
-       ]}
+         &pnpm_install_assets/1
+       ] ++
+         web_asset_build_step(name) ++
+         [
+           "ecto.create --quiet",
+           "ecto.migrate --quiet",
+           shard_test_step(name),
+           &finalize_ci_local/1
+         ]}
     end
   end
+
+  defp web_asset_build_step("web"), do: [&build_web_assets/1]
+  defp web_asset_build_step(_other), do: []
 
   # Shard names come from the SAME `ci_shards.exs` `EzagentCore.CiShards` bakes in,
   # so mix.exs's aliases and the manifest can never drift (`mix ci.shard.verify`
@@ -379,6 +404,55 @@ defmodule EzagentCore.Umbrella.MixProject do
         Mix.raise("pnpm install failed in #{dir} (exit status #{status})")
       end
     end)
+  end
+
+  # Builds the REAL `apps/ezagent_web` asset bundle (tailwind CSS + esbuild JS,
+  # via that app's own `mix assets.build` alias) in a CHILD `mix` process, run
+  # ONCE from the umbrella root — same pattern as `run_socialware_check/1` (a
+  # plain alias function step does not recurse into child projects). Must run
+  # AFTER `pnpm_install_assets/1` (esbuild resolves react/zod/xterm from the
+  # web/world/hello node_modules it populates). This is what lets
+  # `apps/ezagent_web/test/demo_smoke_test.exs`'s "Bug 2"
+  # (@describetag :requires_built_assets) run for real in CI instead of skipping
+  # — see the comment on that tag and on `apps/ezagent_web/test/test_helper.exs`.
+  # Fails LOUD on a non-zero exit so a broken build cannot masquerade as a green
+  # run (or as a silently-skipped test).
+  #
+  # codex round-2 on #1626: a non-zero `mix assets.build` exit is not the only
+  # way this can go wrong — the build could exit 0 while producing NO bundle at
+  # all (an output-path drift between this task's `--output=` args and what
+  # test_helper.exs / demo_smoke_test.exs check for). In that case
+  # `test_helper.exs` would see the bundle missing and silently EXCLUDE the
+  # `:requires_built_assets` tests instead of failing — turning CI's Bug-2
+  # invariant check into an invisible skip. Assert the artifact actually landed
+  # at the exact path those two files read, so drift fails LOUD here instead of
+  # silently degrading into a skip downstream.
+  defp build_web_assets(_args) do
+    env = System.get_env() |> Map.put("MIX_ENV", to_string(Mix.env())) |> Map.to_list()
+
+    {_out, status} =
+      System.cmd("mix", ["assets.build"],
+        cd: Path.expand("apps/ezagent_web", __DIR__),
+        into: IO.stream(:stdio, :line),
+        stderr_to_stdout: true,
+        env: env
+      )
+
+    if status != 0 do
+      Mix.raise("mix assets.build (apps/ezagent_web) failed (exit status #{status})")
+    end
+
+    css_path = Path.expand("apps/ezagent_web/priv/static/assets/css/app.css", __DIR__)
+
+    unless File.regular?(css_path) do
+      Mix.raise(
+        "mix assets.build (apps/ezagent_web) exited 0 but #{css_path} was not produced " <>
+          "— output path drift. apps/ezagent_web/test/test_helper.exs and demo_smoke_test.exs " <>
+          "both read that exact path; if it silently doesn't exist here, CI would silently " <>
+          "EXCLUDE the :requires_built_assets tests instead of failing. Check the `--output=` " <>
+          "arg in `config :tailwind, ezagent_web: [...]` (config/config.exs) still matches."
+      )
+    end
   end
 
   # The cc-headless SDK worker's pure-helper unittest suite, run ONCE from the

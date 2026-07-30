@@ -371,7 +371,18 @@
   #   the identical config-injected `maybe_dual_write_identity_caps/2` mirror hooks
   #   in `Kind.Snapshot` ↔ `SnapshotStore`. Both intentional per-module (not shared,
   #   to avoid coupling the actor mirror seam / the domain key helper). 43→45.
-  cross_file_duplicate_fn_groups: 45,
+  # arch-cap-bump: provider-connection suite-health P0 (PR #1628) — the
+  #   private `recreate_table/1` test-helper body is now duplicated
+  #   byte-identically across `EzagentCore.EtsOwner` and
+  #   `EzagentActor.EtsOwner`. A first pass shared ONE public copy on
+  #   `EzagentActor.EtsOwner`, but codex review round 1 caught that this
+  #   makes the raw `:ets.new`/`:ets.delete` reachable by ANY caller in ANY
+  #   env (no `Mix.env() == :test` gate on the function itself) — exactly
+  #   the ETS-ownership-hijack bug class this PR fixes, just reopened as a
+  #   public API. The function MUST stay `defp`, reachable only through
+  #   each owner's own `Mix.env() == :test`-gated `handle_call`, so it
+  #   cannot be shared across the two modules. Intentional duplication. 45→46.
+  cross_file_duplicate_fn_groups: 46,
   # FF-4 (cleanup-1): distinct non-agent_bridge/non-test lib files still
   # referencing a `/cc_socket` deprecation-shim module
   # (EzagentPluginCc.{BridgeRegistry,Socket,Channel,TokenStore}). Cleanup-3

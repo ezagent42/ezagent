@@ -179,6 +179,24 @@ defmodule EzagentCore.EtsOwner do
   end
 
   @doc false
+  # Test-only recreation of THIS owner's `Ezagent.CapabilityRegistry.Subjects`
+  # table, run from within this owner's own process so the recreated
+  # table's real ETS ownership stays correctly tied to this GenServer.
+  #
+  # Root-cause note (provider-connection suite-health P0, 2026-07): this
+  # function used to ALSO reach across and recreate
+  # `Ezagent.BehaviorRegistry`'s table — a table owned by
+  # `EzagentActor.EtsOwner`, not this process. Doing that `:ets.new` from
+  # here silently reassigned the table's real owner to THIS process, so a
+  # later genuine crash of `EzagentCore.EtsOwner` destroyed
+  # `BehaviorRegistry`'s table too — permanently, since it isn't in this
+  # module's `@tables` list and would never be recreated on restart. That
+  # deterministically crash-looped `Ezagent.ProviderConnection.RegistryOwner`
+  # (ArgumentError on every reconcile attempt against the missing table)
+  # until the whole domain Application died. Callers that need to
+  # simulate a full capability-table wipe must call BOTH this function
+  # AND `EzagentActor.EtsOwner.recreate_capability_tables_for_test/0` —
+  # each recreates only the table(s) it actually owns.
   def recreate_capability_tables_for_test do
     GenServer.call(__MODULE__, :recreate_capability_tables_for_test)
   end
@@ -186,7 +204,6 @@ defmodule EzagentCore.EtsOwner do
   @impl true
   def handle_call(:recreate_capability_tables_for_test, _from, state) do
     if Mix.env() == :test do
-      recreate_table(Ezagent.BehaviorRegistry.table())
       recreate_table(Ezagent.CapabilityRegistry.Subjects.table())
 
       :ok = EzagentCore.EtsReadiness.ready(self())
@@ -197,6 +214,15 @@ defmodule EzagentCore.EtsOwner do
     end
   end
 
+  # PRIVATE and reachable ONLY through the `Mix.env() == :test`-gated
+  # `handle_call` above. Codex review (PR #1628) round 1 caught an earlier
+  # version of this fix that shared this body publicly via
+  # `EzagentActor.EtsOwner.recreate_table/1` — a public, unguarded function
+  # is callable by ANY caller in ANY env, and the calling process becomes
+  # the table's real ETS owner if the table is absent, reopening the exact
+  # bug class this PR fixes. Kept as a duplicate (not shared) per that
+  # review's explicit guidance — see the `cross_file_duplicate_fn_groups`
+  # cap-bump note in `arch_baseline_manifest.exs`.
   defp recreate_table(table) do
     if :ets.whereis(table) != :undefined, do: :ets.delete(table)
     :ets.new(table, [:set, :public, :named_table, read_concurrency: true])
