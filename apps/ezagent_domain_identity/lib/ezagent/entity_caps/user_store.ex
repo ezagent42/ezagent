@@ -41,7 +41,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   def load_checked(%URI{} = uri) do
     case Repo.get_by(Ezagent.Users, uri: URI.to_string(uri)) do
       nil -> {:ok, []}
-      %{caps_json: caps_json} -> decode_caps_checked(caps_json)
+      %Ezagent.Users{} = user -> decode_caps_checked(user.caps_json)
     end
   rescue
     error -> {:error, {:user_caps_read_failed, Exception.message(error)}}
