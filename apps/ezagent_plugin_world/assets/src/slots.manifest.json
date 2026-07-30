@@ -36,9 +36,6 @@
     "kanban": [
       "kanban"
     ],
-    "layout_editor": [
-      "layout_editor"
-    ],
     "market": [
       "market"
     ],
@@ -132,12 +129,6 @@
       "data_source": "Ezagent.World.AdminData",
       "renderer_family": "admin",
       "title": "Admin Dashboard"
-    },
-    "layout_editor": {
-      "category": "layout_slot",
-      "data_source": "layout",
-      "renderer_family": "layout_editor",
-      "title": "Layout"
     },
     "user_detail": {
       "category": "layout_slot",

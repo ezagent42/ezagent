@@ -20,17 +20,12 @@ defmodule Ezagent.World.LiveStateBuilder do
   alias Ezagent.World.ConversationSessionState
 
   # Route pages derive synthetic single-slot layouts. The older persisted
-  # multi-slot layout still exists for the layout.manage behavior, but Chat is
-  # now an IM surface; rendering a layout editor beside the default conversation
-  # shell breaks the product contract.
   @doc false
   def layout_for_route(%{component: component, title: title}, workspace_uri, _caller_uri) do
     scope_uri =
       if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
 
-    # Display-only scope label for the synthetic layout (persistence keys off
-    # LayoutManager.scope_key/1's stable_key, not this string). Bound to a var so
-    # the uri_query scan doesn't read it as an unaudited URI.to_string map key.
+    # Display-only scope label for the fixed route layout.
     scope_label = URI.to_string(scope_uri)
 
     synthetic = %{
@@ -46,15 +41,7 @@ defmodule Ezagent.World.LiveStateBuilder do
       ]
     }
 
-    case Ezagent.World.LayoutManager.validate_layout(scope_uri, synthetic) do
-      {:ok, validated} ->
-        validated
-
-      {:error, reason} ->
-        raise ArgumentError,
-              "world route produced an invalid layout for slot #{inspect(component)}: " <>
-                "#{inspect(reason)} — register the slot in Ezagent.World.SlotRegistry"
-    end
+    synthetic
   end
 
   @doc false
@@ -68,7 +55,6 @@ defmodule Ezagent.World.LiveStateBuilder do
     |> Map.put("path", route.path)
     |> Map.put("title", route.title)
     |> Map.put("layout", layout)
-    |> put_can_manage_layout("conversation", socket)
     |> put_command_palette(socket)
   end
 
@@ -105,7 +91,6 @@ defmodule Ezagent.World.LiveStateBuilder do
         caller_caps: Ezagent.World.PresenterCaps.load(socket)
       })
       |> Map.put("layout", layout)
-      |> put_can_manage_layout(route.component, socket)
       |> put_command_palette(socket)
     else
       unauthorized_route_state(route, socket, layout)
@@ -125,7 +110,6 @@ defmodule Ezagent.World.LiveStateBuilder do
         caller_caps: Ezagent.World.PresenterCaps.load(socket)
       })
       |> Map.put("layout", layout)
-      |> put_can_manage_layout(route.component, socket)
       |> put_command_palette(socket)
     else
       unauthorized_route_state(route, socket, layout)
@@ -159,7 +143,6 @@ defmodule Ezagent.World.LiveStateBuilder do
       "error" => "unauthorized",
       "layout" => layout
     }
-    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -181,7 +164,6 @@ defmodule Ezagent.World.LiveStateBuilder do
 
         state
         |> Map.put("layout", layout)
-        |> Map.put("can_manage_layout", false)
         |> put_command_palette(socket)
 
       nil ->
@@ -201,7 +183,6 @@ defmodule Ezagent.World.LiveStateBuilder do
       caller_caps: Ezagent.World.PresenterCaps.load(socket)
     })
     |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -214,7 +195,6 @@ defmodule Ezagent.World.LiveStateBuilder do
       create_error: create_error_for_route(route, socket)
     })
     |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
     |> put_command_palette(socket)
   end
 
@@ -228,7 +208,7 @@ defmodule Ezagent.World.LiveStateBuilder do
   def create_error_for_route(_route, _socket), do: nil
 
   @doc false
-  def sessions_state(sessions, current_session_uri, workspace_uri, layout, caps, caller) do
+  def sessions_state(sessions, current_session_uri, workspace_uri, layout, _caps, caller) do
     workspace = encode_uri(workspace_uri)
     current_session = encode_uri(current_session_uri)
 
@@ -237,7 +217,6 @@ defmodule Ezagent.World.LiveStateBuilder do
       "current_session_uri" => current_session,
       "workspace_uri" => workspace,
       "layout" => layout,
-      "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
       "templates" => session_template_names(caller, workspace_uri),
       "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
       "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
@@ -251,11 +230,8 @@ defmodule Ezagent.World.LiveStateBuilder do
   end
 
   @doc false
-  def bootstrap_layout(%URI{} = workspace_uri),
-    do: Ezagent.World.LayoutManager.default_layout(workspace_uri)
-
-  def bootstrap_layout(_),
-    do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
+  def bootstrap_layout(workspace_uri),
+    do: layout_for_route(%{component: "sessions_table", title: "Chat"}, workspace_uri, nil)
 
   @doc false
   def bootstrap_caller_payload(caller, workspace) do
@@ -276,7 +252,6 @@ defmodule Ezagent.World.LiveStateBuilder do
       "current_session_uri" => nil,
       "workspace_uri" => encode_uri(workspace),
       "layout" => layout,
-      "can_manage_layout" => false,
       "templates" => ["default"],
       "socialwares" => [],
       "sessions" => [],
@@ -333,20 +308,6 @@ defmodule Ezagent.World.LiveStateBuilder do
     do: Ezagent.URI.name!(workspace_uri)
 
   def workspace_name(_), do: nil
-
-  @doc false
-  def can_manage_layout?(_component, _workspace_uri, _caps), do: false
-
-  @doc false
-  def put_can_manage_layout(state, component, socket) do
-    caps = Ezagent.World.PresenterCaps.load(socket)
-
-    Map.put(
-      state,
-      "can_manage_layout",
-      can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
-    )
-  end
 
   @doc false
   def encode_uri(%URI{} = uri), do: URI.to_string(uri)

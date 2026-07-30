@@ -121,18 +121,7 @@ defmodule Ezagent.UriQuery.Scan.HomePathExceptions do
     # opt); this operator entry point is the sanctioned home-path resolver.
     {"apps/ezagent_core/lib/mix/tasks/ezagent.plugin.install.ex",
      "Mix.Tasks.Ezagent.Plugin.Install.install_from_path/2", 123,
-     "operator mix-task — supplies EZAGENT_HOME/plugins as zip-unpack target"},
-    # world layout one-shot migration (plugin-resource SPEC §4.4, HIGH-8) —
-    # operator mix-task run app-not-started; re-keys legacy world/layouts JSON
-    # onto the world-layouts/<ws>/<name> resolver path then deletes the old tree.
-    # Core-located (NOT the world plugin) so it is excluded from
-    # raw_home_path_outside_core, preserving the 2→1 ratchet; mirrors the
-    # Mix.Tasks.Ezagent.Home.* operator anchors.
-    {"apps/ezagent_core/lib/mix/tasks/ezagent.world.migrate_layouts.ex",
-     "Mix.Tasks.Ezagent.World.MigrateLayouts.run/1", 58, "operator migration, app-not-started"},
-    {"apps/ezagent_core/lib/mix/tasks/ezagent.world.migrate_layouts.ex",
-     "Mix.Tasks.Ezagent.World.MigrateLayouts.migrate_one/3", 89,
-     "operator migration, app-not-started"}
+     "operator mix-task — supplies EZAGENT_HOME/plugins as zip-unpack target"}
   ]
 
   @exceptions @config_exceptions ++ @app_exceptions

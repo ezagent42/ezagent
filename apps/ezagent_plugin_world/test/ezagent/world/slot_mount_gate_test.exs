@@ -19,8 +19,8 @@ defmodule Ezagent.World.SlotMountGateTest do
 
   # Layout-slot Surface components: the renderer's leaves, mountable ONLY by the
   # renderer in main.tsx.
-  @surfaces ~w(LayoutEditor SessionsTable Conversation PtyTerminalSurface
-               AdminSurface WorkspacePluginSurface IdentitiesSurface)
+  @surfaces ~w(SessionsTable Conversation PtyTerminalSurface AdminSurface
+               WorkspacePluginSurface IdentitiesSurface)
 
   # Sanctioned `:subcomponent` mounts (parent-owned, data-world-subcomponent).
   @subcomponent_allowlist %{"Conversation.tsx" => ["PtyTerminalSurface"]}
@@ -128,6 +128,15 @@ defmodule Ezagent.World.SlotMountGateTest do
 
     refute String.contains?(default_branch, "Surface"),
            "renderLayoutComponent default branch must not render a surface — unknown family = throw"
+  end
+
+  test "removed layout editor is absent from the renderer and manifest" do
+    main = File.read!(@main)
+    manifest = SlotRegistry.manifest()
+
+    refute String.contains?(main, "Layout" <> "Editor")
+    refute String.contains?(main, "layout." <> "manage")
+    refute Map.has_key?(manifest["slots"], "layout" <> "_editor")
   end
 
   # Generated pluginPageRenderers map keys — the frontend counterpart of the

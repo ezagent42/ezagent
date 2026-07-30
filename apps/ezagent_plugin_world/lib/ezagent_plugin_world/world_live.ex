@@ -560,14 +560,6 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  def handle_event(
-        "world:dispatch",
-        %{"action" => "layout.manage", "args" => %{"layout" => layout}},
-        socket
-      ) do
-    with_admin_operator(socket, fn -> dispatch_layout_manage(socket, layout) end)
-  end
-
   @agent_actions Ezagent.World.DispatchContract.actions(:agent)
   def handle_event("world:dispatch", %{"action" => action, "args" => args}, socket)
       when action in @agent_actions and is_map(args) do
@@ -878,55 +870,6 @@ defmodule EzagentPluginWorld.WorldLive do
     do: Ezagent.Socialware.MemberBackfill.backfill(session_uri, caller_uri)
 
   defp mount_session_participation_caps(_session_uri, _caller_uri), do: {:error, :no_authority}
-
-  defp dispatch_layout_manage(socket, layout) when is_map(layout) do
-    workspace_uri = socket.assigns.current_workspace_uri
-    caller = socket.assigns.current_entity_uri
-    caps = Ezagent.World.PresenterCaps.load(socket)
-
-    target = Ezagent.URI.with_action(workspace_uri, :layout, :manage)
-
-    result =
-      Invocation.dispatch(%Invocation{
-        target: target,
-        mode: :call,
-        args: %{layout: layout},
-        ctx: %{
-          caller: caller,
-          authenticated_principal: caller,
-          caps: caps,
-          reply: {:caller_inbox, self()}
-        },
-        origin: :authenticated_external
-      })
-
-    case result do
-      {:ok, %{layout: saved_layout}} ->
-        dispatch_layout_manage_ok(socket, saved_layout)
-
-      {:ok, %{"layout" => saved_layout}} ->
-        dispatch_layout_manage_ok(socket, saved_layout)
-
-      {:error, reason} ->
-        {:noreply, assign(socket, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
-    end
-  end
-
-  defp dispatch_layout_manage(socket, _layout) do
-    {:noreply, assign(socket, :last_dispatch_status, "error:invalid_layout")}
-  end
-
-  defp dispatch_layout_manage_ok(socket, saved_layout) do
-    state = Map.put(socket.assigns.world_state, "layout", saved_layout)
-
-    {:noreply,
-     socket
-     |> assign(:layout_json, Jason.encode!(saved_layout))
-     |> assign(:world_state, state)
-     |> assign(:world_state_json, Jason.encode!(state))
-     |> assign(:last_dispatch_status, "ok")
-     |> push_event("world:state", %{"layout" => saved_layout})}
-  end
 
   # Store/replace an agent's downstream-LLM API key from the world UI — the write
   # half of the agent_api_keys page (the read half is IdentityData.list_api_keys).

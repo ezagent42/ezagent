@@ -51,7 +51,6 @@ defmodule Ezagent.World.SlotRegistry do
     market: {Ezagent.World.WorkspacePluginData, [{"market", "Market"}]},
     conversation: {Ezagent.World.ConversationData, [{"conversation", "Conversation"}]},
     pty: {:world_live, [{"pty_terminal", "Terminal"}]},
-    layout_editor: {:layout, [{"layout_editor", "Layout"}]},
     admin:
       {Ezagent.World.AdminData,
        [

@@ -15,11 +15,7 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
   alias Ezagent.Entity.User
   alias Ezagent.Workspace
 
-  @fs_types_table :ezagent_resource_fs_types
-  @world_layouts "world-layouts"
-
   setup do
-    ensure_world_layouts_registered!()
     {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
 
     case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
@@ -264,20 +260,5 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
     |> LazyHTML.attribute("data-world-state")
     |> List.first()
     |> Jason.decode!()
-  end
-
-  defp ensure_world_layouts_registered! do
-    if :ets.lookup(@fs_types_table, @world_layouts) == [] do
-      {@world_layouts, spec} =
-        Enum.find(
-          EzagentPluginWorld.Application.resource_types(),
-          fn {type, _spec} -> type == @world_layouts end
-        )
-
-      :ok = Ezagent.Resource.FsResolver.register_type(@world_layouts, spec)
-      on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(@world_layouts) end)
-    end
-
-    :ok
   end
 end

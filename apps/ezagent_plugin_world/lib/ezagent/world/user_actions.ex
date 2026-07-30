@@ -197,7 +197,6 @@ defmodule Ezagent.World.UserActions do
       create_error: create_error
     })
     |> Map.put("layout", layout)
-    |> Map.put("can_manage_layout", false)
     |> put_command_palette(socket)
   end
 

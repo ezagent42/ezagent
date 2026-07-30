@@ -32,7 +32,7 @@ defmodule Ezagent.World.DispatchContract do
       ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   }
 
-  @direct_actions ~w(sessions.join layout.manage agent.api_key.put)
+  @direct_actions ~w(sessions.join agent.api_key.put)
 
   @type group :: :agent | :user | :cmdk | :admin | :workspace_plugin | :market | :conversation
 

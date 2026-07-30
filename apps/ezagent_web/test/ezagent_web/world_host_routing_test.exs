@@ -3,12 +3,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   import Phoenix.LiveViewTest
 
-  @fs_types_table :ezagent_resource_fs_types
-  @world_layouts "world-layouts"
-
   setup do
-    ensure_world_layouts_registered!()
-
     prior_world_host_scope =
       Application.get_env(:ezagent_web, :world_host_scope, :__ezagent_missing__)
 
@@ -30,27 +25,6 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
       File.rm_rf!(home)
     end)
-
-    :ok
-  end
-
-  # `world-layouts` IS registered at the world plugin's boot, but a full umbrella
-  # `mix test` sweep can wipe it: a sibling core suite restarts the resolver
-  # Registry GenServer, whose init/1 replays ONLY core boot types (plugin types
-  # are not replayed — a latent production bug tracked in docs/futures/todo.md).
-  # Ensure-if-absent (using the EXACT production spec so it can't drift), removing
-  # only what we add, so the layout.manage dispatch below can resolve.
-  defp ensure_world_layouts_registered! do
-    if :ets.lookup(@fs_types_table, @world_layouts) == [] do
-      {@world_layouts, spec} =
-        Enum.find(
-          EzagentPluginWorld.Application.resource_types(),
-          fn {type, _spec} -> type == @world_layouts end
-        )
-
-      :ok = Ezagent.Resource.FsResolver.register_type(@world_layouts, spec)
-      on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(@world_layouts) end)
-    end
 
     :ok
   end
@@ -77,14 +51,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     refute html =~ "motion-safe:animate-spin"
   end
 
-  test "world Chat default uses the IM single-slot layout, not the persisted layout editor",
-       %{conn: conn} do
-    workspace_uri = Ezagent.URI.workspace(:system)
-    layout = persisted_order_layout(workspace_uri)
-
-    {:ok, _saved} =
-      Ezagent.World.LayoutManager.write_layout(workspace_uri, layout, %{workspace: "system"})
-
+  test "world Chat uses a fixed single-slot layout", %{conn: conn} do
     conn =
       conn
       |> Map.put(:host, "world.ezagent.chat")
@@ -94,17 +61,13 @@ defmodule EzagentWeb.WorldHostRoutingTest do
       })
 
     {:ok, view, _html} = live(conn, "/sessions")
-    # WorldLive's initial state is a bounded fallback assigned synchronously
-    # at mount; the real (DB-backed) layout/state lands via a `start_async`
-    # task patched in through `handle_async/3`. `render_async/1` is the
-    # Phoenix-idiomatic, non-sleep way to await that tracked task and
-    # re-render before asserting on the loaded state.
     html = render_async(view, 5_000)
-    state = world_state(html)
 
-    assert "sessions_table" == state["component"]
-    assert ["sessions_table"] = state["layout"]["components"] |> Enum.map(& &1["type"])
-    refute html =~ "layout_editor"
+    state = world_state(html)
+    assert [component] = state["layout"]["components"]
+    assert component["type"] == "sessions_table"
+    refute Map.has_key?(state, "can_manage" <> "_layout")
+    refute html =~ "layout" <> "_editor"
   end
 
   test "world shell exposes visible workspaces for the header switcher", %{conn: conn} do
@@ -559,98 +522,6 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     assert_patch(view, "/sessions?session=#{encoded}")
   end
 
-  test "world layout manage dispatch persists and reloads for admin", %{conn: conn} do
-    workspace_uri = Ezagent.URI.workspace(:system)
-    layout = persisted_order_layout(workspace_uri)
-
-    conn =
-      conn
-      |> Map.put(:host, "world.ezagent.chat")
-      |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => URI.to_string(Ezagent.Entity.User.admin_uri()),
-        "current_workspace_uri" => "workspace://system"
-      })
-
-    {:ok, view, _html} = live(conn, "/sessions")
-
-    html =
-      view
-      |> element("#world-root")
-      |> render_hook("world:dispatch", %{
-        "action" => "layout.manage",
-        "args" => %{"layout" => layout}
-      })
-
-    assert html =~ ~s(data-last-dispatch="ok")
-
-    # R-3: read_layout/2 threads the AUTHENTICATED caller scope separately from
-    # the target URI. The dispatch above ran as admin in workspace://system, so
-    # the reload uses that same-workspace caller scope.
-    assert ["sessions_table", "layout_editor"] =
-             workspace_uri
-             |> Ezagent.World.LayoutManager.read_layout(%{workspace: "system"})
-             |> Map.fetch!("components")
-             |> Enum.map(& &1["type"])
-
-    {:ok, view, _html} = live(conn, "/sessions")
-    # See render_async note above the first test in this file — await the
-    # async-loaded layout before asserting the default-route override.
-    html = render_async(view, 5_000)
-    assert html =~ "sessions_table"
-    state = world_state(html)
-    assert ["sessions_table"] = state["layout"]["components"] |> Enum.map(& &1["type"])
-    refute html =~ "layout_editor"
-  end
-
-  test "world layout manage affordance follows explicit cap grant", %{conn: conn} do
-    caller = "entity://system/user/world_layout_manager_#{System.unique_integer([:positive])}"
-    caller_uri = Ezagent.URI.new!(caller)
-    workspace_uri = Ezagent.URI.workspace(:system)
-
-    :ok = create_read_only_user(caller_uri, [layout_manage_cap(caller_uri, workspace_uri)])
-
-    conn =
-      conn
-      |> Map.put(:host, "world.ezagent.chat")
-      |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => caller,
-        "current_workspace_uri" => "workspace://system"
-      })
-
-    {:ok, _view, html} = live(conn, "/sessions")
-
-    state = world_state(html)
-    assert state["can_manage_layout"] == false
-  end
-
-  test "world layout manage dispatch denies caller without manage cap", %{conn: conn} do
-    caller = "entity://system/user/world_layout_no_caps_#{System.unique_integer([:positive])}"
-    caller_uri = Ezagent.URI.new!(caller)
-    layout = persisted_order_layout(Ezagent.URI.workspace(:system))
-
-    :ok = create_read_only_user(caller_uri, [])
-
-    conn =
-      conn
-      |> Map.put(:host, "world.ezagent.chat")
-      |> Plug.Test.init_test_session(%{
-        "current_entity_uri" => caller,
-        "current_workspace_uri" => "workspace://system"
-      })
-
-    {:ok, view, _html} = live(conn, "/")
-
-    html =
-      view
-      |> element("#world-root")
-      |> render_hook("world:dispatch", %{
-        "action" => "layout.manage",
-        "args" => %{"layout" => layout}
-      })
-
-    assert html =~ ~s(data-last-dispatch="error:missing_cap")
-  end
-
   defp create_read_only_user(uri, caps) do
     result =
       case Ezagent.Users.create_read_only(uri, caps) do
@@ -756,22 +627,6 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     end
   end
 
-  defp layout_manage_cap(caller_uri, workspace_uri) do
-    requested =
-      Ezagent.Capability.cap(
-        :workspace,
-        Ezagent.World.Behavior.Layout,
-        :manage,
-        Ezagent.URI.instance(workspace_uri),
-        Ezagent.Capability.workspace_of(workspace_uri)
-      )
-
-    {:ok, artifact} =
-      Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, caller_uri, requested)
-
-    artifact
-  end
-
   defp world_caller(html) do
     [_, json] = Regex.run(~r/data-caller="([^"]*)"/, html)
 
@@ -795,18 +650,5 @@ defmodule EzagentWeb.WorldHostRoutingTest do
     |> String.replace("&amp;", "&")
     |> String.replace("&lt;", "<")
     |> String.replace("&gt;", ">")
-  end
-
-  defp persisted_order_layout(workspace_uri) do
-    [editor, sessions] = Ezagent.World.LayoutManager.default_layout(workspace_uri)["components"]
-
-    %{
-      "version" => 1,
-      "scope" => URI.to_string(workspace_uri),
-      "components" => [
-        %{sessions | "placement" => %{"x" => 0, "y" => 0, "w" => 12, "h" => 6}},
-        %{editor | "placement" => %{"x" => 0, "y" => 6, "w" => 12, "h" => 2}}
-      ]
-    }
   end
 end

@@ -384,20 +384,8 @@ defmodule Ezagent.World.AgentActions do
       create_error: Map.get(socket.assigns, :agent_create_error)
     })
     |> Map.put("layout", layout)
-    |> put_can_manage_layout(socket)
     |> put_command_palette(socket)
   end
-
-  defp put_can_manage_layout(state, socket) do
-    workspace_uri = socket.assigns.current_workspace_uri
-    caps = Ezagent.World.PresenterCaps.load(socket)
-
-    Map.put(state, "can_manage_layout", can_manage_layout?(workspace_uri, caps))
-  end
-
-  # Only the sessions_table route is user-arrangeable; agent routes are
-  # synthetic single-slot layouts where managing layout is a no-op.
-  defp can_manage_layout?(_workspace_uri, _caps), do: false
 
   defp put_command_palette(state, socket) do
     Map.put(
