@@ -143,6 +143,11 @@ done_prev:
     acceptance:
       - {text: "Plan E P1–P4e 本地 provider-owned PR loop 合入", done: true, evidence: "✓ merged 07-29 14:11, c4ec7b478"}
 
+# ===== 已交接/已收敛任务出板(渲染 gate: 07-29 板未完成卡须结转, 或在此列明理由) =====
+carryover_resolved:
+  "#1267 活页面连接层缺口调研（standing proposal）": "已交接即关闭 — proposal PR #1267 已关(07-28); 工作经已合入的 #1609(socialware-receiver origin + LSP/ACP 框架) + receiver-foundation handoff(docs/superpowers/handoffs/2026-07-28) 移交, 由 jjkysy 在 socialware-receiver 线接续。按「交接日即关卡」规则出板。"
+  "#1552 签名-token 分享收敛（clarify_first 设计提案）": "已收敛并交接 — 原提案 PR #1552 07-24 撤回(泛化 DownloadToken 前提误判; 正解=点击者当场领 person-bound cap); 设计问题已在 group-a-uri-share 权威裁决(D1 链接模式 / M1 mint 授权 / D2 person-binding+anon / D3 一次性), 实现线经 #1587(owns from here) + #1583 归 jjkysy。残项不丢: kanban.share_board 归宿随 #1474 权宜溶解, message-share 本批不纳入, assistant on-behalf 授权入口另行整理。"
+
 # ===== TODAY (07-30) plan — status ∈ planned|wip|review|blocked =====
 cards:
   # ---- allen: main 真绿 + #189 生产收尾 + 测试补齐 ----
@@ -265,17 +270,6 @@ cards:
     acceptance:
       - {text: "5 步部署迁移(canary→beta→stable)执行; 前置: 每节点须先有真实非管理员创始人用户 + add_member", done: false}
   - owner: "allen"
-    title: "#1552 签名-token 分享收敛（clarify_first 设计提案）"
-    goal: "DownloadToken 从 uploads-only 泛化到任意 target URI, 消掉 kanban 平行分享实现"
-    status: "planned"
-    task: "share-token-consolidation-1552"
-    started: "2026-07-28"
-    est_done: "2026-07-29"
-    who: "Allen 轨道 · #1552 · 结转 · 与 #1583/#1587 URI-share-authz 线衔接"
-    carryover: true
-    acceptance:
-      - {text: "写 DoD 回答 5 设计问题(target scheme / mint 授权口径 / kanban.share_board 归宿 / person-binding 语义 / message-share 是否纳入) → 确认后 jjkysy 实现", done: false}
-  - owner: "allen"
     title: "#1566 multi-repo split（umbrella → 6 repos）"
     goal: "actor 抽取完成后的下一步结构排程"
     status: "planned"
@@ -287,18 +281,6 @@ cards:
     carryover: true
     acceptance:
       - {text: "split 计划评审; C8 合入 main 后启动排程", done: false}
-  - owner: "allen"
-    title: "#1267 活页面连接层缺口调研（standing proposal）"
-    goal: "活页面连接层缺口调研 + external adapter 改造评估"
-    status: "planned"
-    task: "live-page-connector-gap-1267"
-    started: "2026-07-09"
-    est_done: "2026-07-29"
-    who: "Allen 轨道 · #1267 · standing docs/proposal(07-09 起) · 非主线"
-    pr: {num: 1267, state: "open"}
-    carryover: true
-    acceptance:
-      - {text: "proposal 裁定: 采纳进路线图排程, 或标注 superseded 关闭 —— 不长期挂账", done: false}
   # ---- jjkysy ----
   - owner: "jjkysy"
     title: "Group-A URI 通用分享(收尾)"

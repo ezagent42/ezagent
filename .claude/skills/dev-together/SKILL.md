@@ -190,6 +190,17 @@ edges). Example: 2026-06-24 (Wed) → `2026-W26`. Compute with
     renders a red `延期 Nd` rib and surfaces a decomposition hint. Delay is
     computed deterministically from `as_of`, never the wall clock, so a
     re-render is reproducible.
+  - **`est_done` is an HONEST trajectory — never auto-deferred (2026-07-30,
+    lead-mandated).** When carrying a not-done card onto a new day's board,
+    PRESERVE its prior-board `est_done` (read it from the previous day's
+    `board.yaml`); NEVER blanket-reset carried cards' `est_done` to today. A
+    carried task past its `est_done` MUST render as slipped — that is the 延期
+    flag doing its job (`board2html.py` flags `est_done < as_of` as overdue;
+    this render behavior IS the enforcement mechanism, and moving the date
+    defeats it by hiding real slippage). Only genuinely-new-today cards default
+    to `started == est_done == today`. A task with a genuine new estimate gets
+    that specific honest date — a deliberate per-card re-estimate with a
+    reason, never a blanket default.
   - **On delay → decompose, then daily-sequence by dependency.** When you
     organize the board on a later day and a task came back DELAYED, **recommend
     splitting it into smaller day-sized sub-modules** and set the sub-modules'
