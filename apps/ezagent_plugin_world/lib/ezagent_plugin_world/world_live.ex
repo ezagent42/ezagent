@@ -10,10 +10,10 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.AdminActions
   alias Ezagent.World.AgentActions
   alias Ezagent.World.CommandPaletteActions
-  alias Ezagent.World.CommandPaletteData
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationActions
   alias Ezagent.World.ConversationSessionState
+  alias Ezagent.World.LiveStateBuilder
   alias Ezagent.World.UserActions
   alias Ezagent.World.WorkspacePluginActions
   alias EzagentPluginWorld.{Layouts, WorldLoading}
@@ -30,7 +30,7 @@ defmodule EzagentPluginWorld.WorldLive do
     # read path can take several seconds on a warm development database; doing it
     # synchronously here makes the longpoll transport reconnect and reload the
     # document before the renderer ever mounts.
-    layout = bootstrap_layout(workspace)
+    layout = LiveStateBuilder.bootstrap_layout(workspace)
     if connected?(socket), do: subscribe_global_inbound(socket)
 
     if connected?(socket), do: send(self(), :load_world_state)
@@ -46,9 +46,12 @@ defmodule EzagentPluginWorld.WorldLive do
      socket
      |> assign(:layout_json, Jason.encode!(layout))
      |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
-     |> assign(:caller_json, Jason.encode!(bootstrap_caller_payload(caller, workspace)))
-     |> assign(:world_state, bootstrap_state(workspace, layout))
-     |> assign(:world_state_json, Jason.encode!(bootstrap_state(workspace, layout)))
+     |> assign(
+       :caller_json,
+       Jason.encode!(LiveStateBuilder.bootstrap_caller_payload(caller, workspace))
+     )
+     |> assign(:world_state, LiveStateBuilder.bootstrap_state(workspace, layout))
+     |> assign(:world_state_json, Jason.encode!(LiveStateBuilder.bootstrap_state(workspace, layout)))
      |> assign(:world_component, "sessions_table")
      |> assign(:current_route, nil)
      |> assign(:world_bootstrap_ready?, false)
@@ -86,9 +89,9 @@ defmodule EzagentPluginWorld.WorldLive do
   defp handle_loaded_params(route, socket) do
     workspace = socket.assigns.current_workspace_uri
     caller = Map.get(socket.assigns, :current_entity_uri)
-    layout = layout_for_route(route, workspace, caller)
+    layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
-    state = state_for_route(route, socket, layout)
+    state = LiveStateBuilder.state_for_route(route, socket, layout)
     socket = maybe_subscribe_pty(socket, route)
 
     socket =
@@ -119,7 +122,7 @@ defmodule EzagentPluginWorld.WorldLive do
     # it does — no gate-on-subscribe race, no lock-out until reload. (F3.)
     socket
     |> assign(:current_session_uri, uri)
-    |> assign(:current_session_uri_str, encode_uri(uri))
+    |> assign(:current_session_uri_str, LiveStateBuilder.encode_uri(uri))
     |> ConversationSessionState.ensure_session_subscribed(uri)
     |> ConversationActions.self_join(uri)
     |> ConversationActions.push_members()
@@ -315,7 +318,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
       state =
         if route.component == "conversation" do
-          state_for_route(route, socket, layout)
+          LiveStateBuilder.state_for_route(route, socket, layout)
         else
           state
         end
@@ -348,12 +351,12 @@ defmodule EzagentPluginWorld.WorldLive do
         route = snapshot.assigns.current_route
         workspace = snapshot.assigns.current_workspace_uri
         caller = Map.get(snapshot.assigns, :current_entity_uri)
-        layout = layout_for_route(route, workspace, caller)
-        state = state_for_route(route, snapshot, layout)
+        layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
+        state = LiveStateBuilder.state_for_route(route, snapshot, layout)
         caps = Ezagent.World.PresenterCaps.load(snapshot)
 
         caller_payload =
-          caller_payload(
+          LiveStateBuilder.caller_payload(
             caller,
             workspace,
             caps,
@@ -473,7 +476,7 @@ defmodule EzagentPluginWorld.WorldLive do
     |> assign(
       :caller_json,
       Jason.encode!(
-        caller_payload(
+        LiveStateBuilder.caller_payload(
           caller,
           socket.assigns.current_workspace_uri,
           caps,
@@ -488,8 +491,8 @@ defmodule EzagentPluginWorld.WorldLive do
       %{} = route ->
         workspace = socket.assigns.current_workspace_uri
         caller = socket.assigns.current_entity_uri
-        layout = layout_for_route(route, workspace, caller)
-        state = state_for_route(route, socket, layout)
+        layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
+        state = LiveStateBuilder.state_for_route(route, socket, layout)
 
         socket
         |> assign(:layout_json, Jason.encode!(layout))
@@ -503,7 +506,7 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
-    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
+    pty_agent_uri_str(socket.assigns[:world_state] || %{}) == LiveStateBuilder.encode_uri(agent_uri)
   end
 
   @impl true
@@ -971,7 +974,7 @@ defmodule EzagentPluginWorld.WorldLive do
     encoded = agent_uri |> URI.to_string() |> URI.encode_www_form()
     route = Ezagent.World.Routes.route_for(%{}, "/identities/agents/#{encoded}/api-keys")
     layout = socket.assigns.world_state["layout"]
-    state = state_for_route(route, socket, layout)
+    state = LiveStateBuilder.state_for_route(route, socket, layout)
 
     {:noreply,
      socket
@@ -1007,305 +1010,6 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp world_css_url,
     do: Application.get_env(:ezagent_plugin_world, :world_css_url, "/assets/world/world.css")
-
-  # Route pages derive synthetic single-slot layouts. The older persisted
-  # multi-slot layout still exists for the layout.manage behavior, but Chat is
-  # now an IM surface; rendering a layout editor beside the default conversation
-  # shell breaks the product contract.
-  defp layout_for_route(%{component: component, title: title}, workspace_uri, _caller_uri) do
-    scope_uri =
-      if match?(%URI{}, workspace_uri), do: workspace_uri, else: Ezagent.URI.workspace(:system)
-
-    # Display-only scope label for the synthetic layout (persistence keys off
-    # LayoutManager.scope_key/1's stable_key, not this string). Bound to a var so
-    # the uri_query scan doesn't read it as an unaudited URI.to_string map key.
-    scope_label = URI.to_string(scope_uri)
-
-    synthetic = %{
-      "version" => 1,
-      "scope" => scope_label,
-      "components" => [
-        %{
-          "id" => component,
-          "type" => component,
-          "placement" => %{"x" => 0, "y" => 0, "w" => 12, "h" => 8},
-          "props" => %{"title" => title}
-        }
-      ]
-    }
-
-    case Ezagent.World.LayoutManager.validate_layout(scope_uri, synthetic) do
-      {:ok, validated} ->
-        validated
-
-      {:error, reason} ->
-        raise ArgumentError,
-              "world route produced an invalid layout for slot #{inspect(component)}: " <>
-                "#{inspect(reason)} — register the slot in Ezagent.World.SlotRegistry"
-    end
-  end
-
-  defp state_for_route(
-         %{component: "conversation", session_uri: %URI{} = session_uri} = route,
-         socket,
-         layout
-       ) do
-    session_uri
-    |> ConversationSessionState.state_for(socket)
-    |> Map.put("path", route.path)
-    |> Map.put("title", route.title)
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout("conversation", socket)
-    |> put_command_palette(socket)
-  end
-
-  defp state_for_route(%{component: "sessions_table"}, socket, layout) do
-    sessions =
-      ConversationSessionState.list_sessions(
-        socket.assigns.current_workspace_uri,
-        socket.assigns.current_entity_uri
-      )
-
-    current_session_uri = socket.assigns.current_session_uri || List.first(sessions)
-
-    sessions_state(
-      sessions,
-      current_session_uri,
-      socket.assigns.current_workspace_uri,
-      layout,
-      Ezagent.World.PresenterCaps.load(socket),
-      socket.assigns.current_entity_uri
-    )
-    |> put_command_palette(socket)
-  end
-
-  # Overview 操作员落地页（FP5 S2-a）：KPI 概览 + 快捷入口,数据复用 AdminData
-  # （overview 不属 :admin group,故单独子句;nav 高亮仍走 path="/" → Overview）。
-  # F3 (read-plane PR-4 rework): operator-plane read — admin-gated like the
-  # `:require_admin` live_session (defense-in-depth behind the route gate).
-  defp state_for_route(%{component: "overview"} = route, socket, layout) do
-    if admin_socket?(socket) do
-      route
-      |> Ezagent.World.AdminData.state_for(%{
-        workspace_uri: socket.assigns.current_workspace_uri,
-        caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Ezagent.World.PresenterCaps.load(socket)
-      })
-      |> Map.put("layout", layout)
-      |> put_can_manage_layout(route.component, socket)
-      |> put_command_palette(socket)
-    else
-      unauthorized_route_state(route, socket, layout)
-    end
-  end
-
-  # F3 (read-plane PR-4 rework): the whole `:admin` route group is
-  # admin-gated HERE as well as by the `:require_admin` live_session — a
-  # non-admin caller gets an explicit unauthorized state, never
-  # cross-tenant counts/registries/templates.
-  defp state_for_route(%{group: :admin} = route, socket, layout) do
-    if admin_socket?(socket) do
-      route
-      |> Ezagent.World.AdminData.state_for(%{
-        workspace_uri: socket.assigns.current_workspace_uri,
-        caller_uri: socket.assigns.current_entity_uri,
-        caller_caps: Ezagent.World.PresenterCaps.load(socket)
-      })
-      |> Map.put("layout", layout)
-      |> put_can_manage_layout(route.component, socket)
-      |> put_command_palette(socket)
-    else
-      unauthorized_route_state(route, socket, layout)
-    end
-  end
-
-  defp state_for_route(route, socket, layout),
-    do: state_for_plugin_or_fallback(route, socket, layout)
-
-  # The same operator predicate the `:require_admin` on_mount enforces
-  # (bootstrap admin OR a member of the system workspace) — kept as one
-  # small check so the route gate and this data-layer gate cannot drift
-  # on WHAT counts as an operator.
-  defp admin_socket?(socket) do
-    Map.get(socket.assigns, :is_admin?, false) == true or
-      Map.get(socket.assigns, :is_system_member?, false) == true
-  end
-
-  # Explicit unauthorized state (Invariant #9 — surfaced, not silently
-  # dropped): the route's component shell plus a denial marker, and NO
-  # data keys.
-  defp unauthorized_route_state(route, socket, layout) do
-    %{
-      "component" => route.component,
-      "title" => route.title,
-      "path" => route.path,
-      "workspace_uri" => encode_uri(socket.assigns.current_workspace_uri),
-      "unauthorized" => true,
-      "error" => "unauthorized",
-      "layout" => layout
-    }
-    |> put_can_manage_layout(route.component, socket)
-    |> put_command_palette(socket)
-  end
-
-  # 插件页面经 `PluginPageRegistry` 在运行时查找已验证的 data builder；这避免了
-  # 编译期读取 ETS 插件 catalog，也让新增插件页面无需重编译 World。
-  defp state_for_plugin_or_fallback(%{component: component} = route, socket, layout) do
-    case Ezagent.World.PluginPageRegistry.by_key(component) do
-      %{data_builder: data_builder} ->
-        state =
-          apply(data_builder, :state_for, [
-            route,
-            %{
-              workspace_uri: socket.assigns.current_workspace_uri,
-              caller_uri: socket.assigns.current_entity_uri,
-              caller_caps: Ezagent.World.PresenterCaps.load(socket)
-            }
-          ])
-
-        state
-        |> Map.put("layout", layout)
-        |> Map.put("can_manage_layout", false)
-        |> put_command_palette(socket)
-
-      nil ->
-        state_for_non_plugin_route(route, socket, layout)
-    end
-  end
-
-  defp state_for_plugin_or_fallback(route, socket, layout),
-    do: state_for_non_plugin_route(route, socket, layout)
-
-  defp state_for_non_plugin_route(%{group: :workspace_plugins} = route, socket, layout) do
-    route
-    |> Ezagent.World.WorkspacePluginData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Ezagent.World.PresenterCaps.load(socket)
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
-    |> put_command_palette(socket)
-  end
-
-  defp state_for_non_plugin_route(route, socket, layout) do
-    route
-    |> Ezagent.World.IdentityData.state_for(%{
-      workspace_uri: socket.assigns.current_workspace_uri,
-      caller_uri: socket.assigns.current_entity_uri,
-      caller_caps: Ezagent.World.PresenterCaps.load(socket),
-      create_error: create_error_for_route(route, socket)
-    })
-    |> Map.put("layout", layout)
-    |> put_can_manage_layout(route.component, socket)
-    |> put_command_palette(socket)
-  end
-
-  defp create_error_for_route(%{component: "agent_new_form"}, socket),
-    do: Map.get(socket.assigns, :agent_create_error)
-
-  defp create_error_for_route(%{component: "user_new_form"}, socket),
-    do: Map.get(socket.assigns, :user_create_error)
-
-  defp create_error_for_route(_route, _socket), do: nil
-
-  defp sessions_state(sessions, current_session_uri, workspace_uri, layout, caps, caller) do
-    workspace = encode_uri(workspace_uri)
-    current_session = encode_uri(current_session_uri)
-
-    %{
-      "component" => "sessions_table",
-      "current_session_uri" => current_session,
-      "workspace_uri" => workspace,
-      "layout" => layout,
-      "can_manage_layout" => can_manage_layout?("sessions_table", workspace_uri, caps),
-      "templates" => session_template_names(caller, workspace_uri),
-      "socialwares" => Ezagent.World.WorkspacePluginData.socialware_rows(workspace_uri),
-      "sessions" => Enum.map(sessions, &ConversationSessionState.session_row/1),
-      # F3: explicitly clear any stale create_error — the React island merges
-      # world:state ({...current, ...next}) and never remounts, so a previously
-      # pushed create_error would otherwise linger as a phantom banner when the
-      # operator returns to a healthy sessions page (mirrors agent_new_form's
-      # nil-clear in IdentityData.put_create_error/3).
-      "create_error" => nil
-    }
-  end
-
-  defp bootstrap_layout(%URI{} = workspace_uri),
-    do: Ezagent.World.LayoutManager.default_layout(workspace_uri)
-
-  defp bootstrap_layout(_),
-    do: Ezagent.World.LayoutManager.default_layout(Ezagent.URI.workspace(:system))
-
-  defp bootstrap_caller_payload(caller, workspace) do
-    %{
-      "entity_uri" => encode_uri(caller),
-      "workspace_uri" => encode_uri(workspace),
-      "current_workspace_name" => workspace_name(workspace),
-      "display_name" => encode_uri(caller),
-      "is_system_member" => false,
-      "workspaces" => []
-    }
-  end
-
-  defp bootstrap_state(workspace, layout) do
-    %{
-      "component" => "sessions_table",
-      "current_session_uri" => nil,
-      "workspace_uri" => encode_uri(workspace),
-      "layout" => layout,
-      "can_manage_layout" => false,
-      "templates" => ["default"],
-      "socialwares" => [],
-      "sessions" => [],
-      "create_error" => nil,
-      "cmdk" => %{"open" => false, "query" => "", "results" => []}
-    }
-  end
-
-  # Resolvable SessionTemplate names for the "New session" picker —
-  # delegated to the SINGLE source
-  # `Ezagent.World.WorkspacePluginData.session_template_names/2` (which
-  # routes the instance enumeration through the caller-authorizing
-  # `Ezagent.Session.TemplateReads` chokepoint, read-plane PR-4 rework).
-  defp session_template_names(caller, %URI{scheme: "workspace"} = workspace_uri) do
-    Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
-  end
-
-  defp session_template_names(_caller, _), do: ["default"]
-
-  defp put_command_palette(state, socket) do
-    Map.put(state, "cmdk", CommandPaletteData.state(socket.assigns, "", false))
-  end
-
-  defp caller_payload(caller, workspace, caps, system_member?) do
-    %{
-      "entity_uri" => encode_uri(caller),
-      "workspace_uri" => encode_uri(workspace),
-      "current_workspace_name" => workspace_name(workspace),
-      "display_name" => caller_display_name(caller),
-      "is_system_member" => system_member?,
-      "workspaces" => workspace_switcher_rows(caller, workspace, caps)
-    }
-  end
-
-  defp workspace_switcher_rows(caller, current_workspace, caps) do
-    Ezagent.Workspace.list_workspaces_for(caller, caps)
-    |> Enum.map(fn workspace ->
-      %{
-        "name" => workspace.name,
-        "uri" => encode_uri(workspace.uri),
-        "current" => same_uri?(workspace.uri, current_workspace),
-        "switch_path" => "/workspaces/switch",
-        "detail_path" => "/workspaces/#{URI.encode_www_form(workspace.name)}"
-      }
-    end)
-  end
-
-  defp workspace_name(%URI{scheme: "workspace"} = workspace_uri),
-    do: Ezagent.URI.name!(workspace_uri)
-
-  defp workspace_name(_), do: nil
 
   defp subscribe_global_inbound(socket) do
     caller_uri = Map.get(socket.assigns, :current_entity_uri)
@@ -1371,18 +1075,6 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp parse_agent_uri(_), do: :error
-
-  defp can_manage_layout?(_component, _workspace_uri, _caps), do: false
-
-  defp put_can_manage_layout(state, component, socket) do
-    caps = Ezagent.World.PresenterCaps.load(socket)
-
-    Map.put(
-      state,
-      "can_manage_layout",
-      can_manage_layout?(component, socket.assigns.current_workspace_uri, caps)
-    )
-  end
 
   # A live broadcast reaches the browser only if the viewer is authorized for the
   # session AND the message is visible to them (row-policy: `:internal` only for a
@@ -1500,8 +1192,4 @@ defmodule EzagentPluginWorld.WorldLive do
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)
 
-  defp encode_uri(%URI{} = uri), do: URI.to_string(uri)
-  defp encode_uri(_), do: nil
-
-  defp caller_display_name(uri), do: Ezagent.World.CallerDisplay.name(uri)
 end

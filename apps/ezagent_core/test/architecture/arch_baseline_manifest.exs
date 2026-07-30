@@ -450,7 +450,16 @@
   #   (outside the mint's rescue) still CONFIRM-compensates the minted grant instead
   #   of leaking it. Security-fix wiring (a rescue boundary + closure), not new
   #   surface. Measured 1831→1851.
-  cc_codex_template_class_combined_loc: 1851,
+  # arch-cap-bump: PR #1576 (Hello Template LLM) — codex_agent.ex gains the
+  #   first-login flow: an empty per-agent CODEX_HOME is a valid state (no
+  #   authenticated login yet), so `ensure_initial_runtime/2` branches on
+  #   `authenticated_config_home?/2` and either starts the app-server sidecars
+  #   (existing path) or starts the bare initial TUI (`ensure_initial_tui/5` +
+  #   `build_initial_tui_params_for_env/4`) so the operator can complete `codex
+  #   login` before a bridge thread can exist. Genuine new product surface (not
+  #   extractable duplication — the branch is codex-specific; cc_agent.ex is
+  #   unchanged at 1005). Measured 1851→1909.
+  cc_codex_template_class_combined_loc: 1909,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam
