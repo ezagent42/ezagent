@@ -45,6 +45,7 @@ defmodule EzagentPluginHello.RouterTest do
     setup do
       :ok = EzagentPluginHello.TestCatalog.import!()
       {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+      {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
 
       Enum.each(HelloApp.roles(), fn recipe ->
         {:ok, _} = RecipeRegistry.seed_role_if_absent(recipe)
@@ -61,9 +62,11 @@ defmodule EzagentPluginHello.RouterTest do
       refute Router.should_route?(ctx.session, ctx.front_desk)
     end
 
-    test "ignores an LLM member's ordinary output", %{session: session} do
-      assert {:ok, llm_uri} = Members.role_uri(session, "llm")
-      refute Router.should_route?(session, llm_uri)
+    test "allows an external agent while the LLM connection is pending", %{session: session} do
+      assert :error = Members.role_uri(session, "llm")
+
+      pending_llm = Ezagent.URI.entity("system", :agent, "pending-llm")
+      assert Router.should_route?(session, pending_llm)
     end
 
     test "routes a user message", %{session: session} do

@@ -208,16 +208,21 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert artifact.kind == "hello_source"
   end
 
-  test "INV-CC ②: a session with the curl llm member is created even with NO credential source" do
-    # A fresh workspace in this test env has no DeepSeek credential source
-    # provisioned — this is exactly the deployment shape `credential_optional`
-    # (Task 1) exists to keep working.
+  test "a keyless session defers the curl LLM without blocking the front-desk" do
+    # A fresh workspace in this test env has no DeepSeek credential source.
     ws = "hello-e2e-llm-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})
 
     assert {:ok, session_uri, _orch} = App.ensure_app(ws, "llm-keyless")
-    # llm curl member materialized (keyless — did not crash session-create).
-    assert {:ok, %URI{}} = EzagentPluginHello.Members.role_uri(session_uri, "llm")
+    assert :error = EzagentPluginHello.Members.role_uri(session_uri, "llm")
+
+    assert [
+             %{
+               role_name: "llm",
+               status: :pending_auth,
+               connection: {:api_key, %{provider: "deepseek"}}
+             }
+           ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
   end
 
   # --- helpers ---------------------------------------------------------------

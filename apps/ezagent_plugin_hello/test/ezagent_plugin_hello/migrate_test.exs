@@ -31,6 +31,7 @@ defmodule EzagentPluginHello.MigrateTest do
     # test) — so seed the roles here (idempotent), mirroring
     # `hello_page_e2e_test.exs`.
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
 
     Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
       {:ok, _} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
@@ -53,13 +54,13 @@ defmodule EzagentPluginHello.MigrateTest do
       {:ok, session_uri, orch_uri} = App.ensure_app(ws, "current")
 
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, llm_uri} = Members.role_uri(session_uri, "llm")
+      assert :error = Members.role_uri(session_uri, "llm")
 
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       # Same members, same recipe — a true no-op re-run.
       assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, ^llm_uri} = Members.role_uri(session_uri, "llm")
+      assert :error = Members.role_uri(session_uri, "llm")
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
 
       # And migrate_all/0 (the boot entry point) reports it migrated, not failed.
@@ -71,7 +72,7 @@ defmodule EzagentPluginHello.MigrateTest do
   end
 
   describe "migrate_one/1 on a session missing the declarative team" do
-    test "materializes front-desk + llm from scratch", %{ws: ws} do
+    test "materializes front-desk and defers the credential-gated LLM", %{ws: ws} do
       {session_uri, _owner_uri, _workspace_uri} = bare_hello_session(ws, "bare")
 
       # Before migrate: behaviors + template binding exist, but NO team.
@@ -81,7 +82,12 @@ defmodule EzagentPluginHello.MigrateTest do
       assert {:ok, ^session_uri} = Migrate.migrate_one(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, _llm_uri} = Members.role_uri(session_uri, "llm")
+      assert :error = Members.role_uri(session_uri, "llm")
+
+      assert [
+               %{role_name: "llm", status: :pending_auth}
+             ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
+
       assert {:ok, "hello.front-desk"} = Ezagent.Agent.RecipeAttributes.fetch(orch_uri)
     end
   end

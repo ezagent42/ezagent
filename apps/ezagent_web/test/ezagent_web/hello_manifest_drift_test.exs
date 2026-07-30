@@ -28,6 +28,8 @@ defmodule EzagentWeb.HelloManifestDriftTest do
         "fill" => "agent",
         "recipe" => "hello.llm",
         "flavor" => "curl",
+        "credential_admission" => "before_session_join",
+        "provider" => "deepseek",
         "config" => %{
           "provider" => "deepseek",
           "api_url" => "https://api.deepseek.com/chat/completions",
@@ -58,11 +60,20 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     assert File.exists?(path)
   end
 
-  test "the shipped manifest is the two-agent curl-backed Hello definition" do
+  test "the shipped manifest is the two-role Hello definition with a gated LLM" do
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(Demo.Hello.manifest_path()))
     assert parsed == @reference
     assert Enum.count(parsed["roles"], &(&1["flavor"] == "curl")) == 1
-    assert Enum.find(parsed["roles"], &(&1["role_name"] == "llm"))["flavor"] == "curl"
+
+    assert %{
+             "flavor" => "curl",
+             "credential_admission" => "before_session_join"
+           } = Enum.find(parsed["roles"], &(&1["role_name"] == "llm"))
+
+    refute Map.has_key?(
+             Enum.find(parsed["roles"], &(&1["role_name"] == "front-desk")),
+             "credential_admission"
+           )
   end
 
   test "Demo.Hello loads the shipped manifest and supports only a name override" do

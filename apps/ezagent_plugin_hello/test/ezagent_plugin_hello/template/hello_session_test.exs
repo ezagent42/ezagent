@@ -9,6 +9,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
   setup do
     :ok = EzagentPluginHello.TestCatalog.import!()
+    {:ok, _} = Application.ensure_all_started(:ezagent_plugin_curl_agent)
     # hello's builder/concierge are role × native agents; `App.ensure_app` creates
     # them via the RF-5a role-create path, which resolves the recipe through the
     # "role-as-data" `RecipeRegistry` (ConfigStore-backed). Boot seeds the recipes,
@@ -74,11 +75,19 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
 
       # `Workspace.create_session` fires this transaction once the owner-only
       # session is durable; drive it synchronously here.
-      assert {:ok, %{satisfied: _, skipped: []}} =
+      assert {:ok, %{satisfied: ["front-desk"], skipped: [], deferred: ["llm"]}} =
                EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
 
       assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
-      assert {:ok, _llm_uri} = Members.role_uri(session_uri, "llm")
+      assert :error = Members.role_uri(session_uri, "llm")
+
+      assert [
+               %{
+                 role_name: "llm",
+                 status: :pending_auth,
+                 connection: {:api_key, %{provider: "deepseek"}}
+               }
+             ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
 
       assert match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)),
              "the orchestrator should be live"
@@ -136,7 +145,11 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         |> Ezagent.Entity.Session.read_template_working_copy()
         |> Map.get(:member_declarations, [])
 
-      assert %{role_name: "llm", flavor: "cc-headless"} =
+      assert %{
+               role_name: "llm",
+               flavor: "cc-headless",
+               credential_admission: :before_session_join
+             } =
                Enum.find(declarations, fn role ->
                  (Map.get(role, :role_name) || Map.get(role, "role_name")) == "llm"
                end)
