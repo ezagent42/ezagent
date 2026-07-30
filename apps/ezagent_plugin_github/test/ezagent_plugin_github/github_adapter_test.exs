@@ -111,7 +111,11 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
             })
 
           {"GET", "/repos/owner/repo"} ->
-            Req.Test.json(conn, %{"full_name" => "owner/repo", "default_branch" => "main"})
+            Req.Test.json(conn, %{
+              "full_name" => "owner/repo",
+              "default_branch" => "main",
+              "private" => false
+            })
         end
       end)
 
@@ -215,7 +219,11 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       end)
 
       Req.Test.expect(@stub_name, fn conn ->
-        Req.Test.json(conn, %{"full_name" => "owner/repo", "default_branch" => "main"})
+        Req.Test.json(conn, %{
+          "full_name" => "owner/repo",
+          "default_branch" => "main",
+          "private" => false
+        })
       end)
 
       assert {:ok, %RepositoryRef{}} = GitHubAdapter.resolve_repository(ctx(), repo())
@@ -290,6 +298,47 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:ok, %RepositoryRef{external_id: "owner/repo", base_ref: "main"}} =
              GitHubAdapter.resolve_repository(ctx(), repo())
+  end
+
+  test "resolve_repository reports a private repository as :private" do
+    stub_with_mint(:metadata_read, fn conn ->
+      Req.Test.json(conn, %{
+        "full_name" => "owner/repo",
+        "default_branch" => "main",
+        "private" => true
+      })
+    end)
+
+    assert {:ok, %RepositoryRef{visibility: :private}} =
+             GitHubAdapter.resolve_repository(ctx(), repo())
+  end
+
+  # `visibility` is not a label: `TaskWorkspace.Provisioner` refuses a checkout
+  # on `:private` and permits one on `:public`. Reading an ABSENT `private` field
+  # for truthiness answered `:public` and handed a private repository the
+  # permission its owner never gave.
+  test "resolve_repository refuses a body with no private field rather than assuming :public" do
+    stub_with_mint(:metadata_read, fn conn ->
+      Req.Test.json(conn, %{"full_name" => "owner/repo", "default_branch" => "main"})
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.resolve_repository(ctx(), repo())
+  end
+
+  # Falling back to the caller's own request values reports what we ASKED about
+  # as though the provider had confirmed it.
+  test "resolve_repository refuses a body missing full_name or default_branch" do
+    for partial <- [
+          %{"default_branch" => "main", "private" => false},
+          %{"full_name" => "owner/repo", "private" => false}
+        ] do
+      stub_with_mint(:metadata_read, fn conn -> Req.Test.json(conn, partial) end)
+
+      assert {:error, :provider_unavailable} =
+               GitHubAdapter.resolve_repository(ctx(), repo()),
+             "expected refusal for #{inspect(partial)}"
+    end
   end
 
   test "resolve_repository maps 404 to repository_not_found" do
@@ -1089,7 +1138,52 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     assert {:error, reason} =
              GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
 
-    assert is_atom(reason), "expected a DomainGit.Error atom, got: #{inspect(reason)}"
+    # Membership, not `is_atom/1`: an invented atom is an atom too, and the
+    # frozen typespec test checks the DECLARATION, never a value this adapter
+    # actually emits.
+    assert reason in domain_git_errors(),
+           "expected a member of DomainGit.Error.t(), got: #{inspect(reason)}"
+  end
+
+  # A closed pull request whose `merged` discriminator is absent cannot be told
+  # apart from a merged one, and `:closed` is not a safe default for that — it
+  # erases the merge, which is the single fact a reviewer cares about most.
+  test "read_change_request refuses a closed pull request with no merged discriminator" do
+    sha = String.duplicate("a", 40)
+
+    stub_with_mint(:change_request_read, fn conn ->
+      Req.Test.json(conn, %{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "closed",
+        "head" => %{"ref" => "feature-branch", "sha" => sha},
+        "base" => %{"ref" => "main"}
+      })
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
+  end
+
+  # An OPEN pull request is definitionally not merged, and the pull-request LIST
+  # endpoint `reconcile_pull_request/3` reads (pinned to `state: "open"`) does
+  # not carry `merged` at all. Requiring it there would fail a read that is
+  # perfectly well understood — this pins the asymmetry deliberately.
+  test "read_change_request accepts an open pull request with no merged discriminator" do
+    sha = String.duplicate("a", 40)
+
+    stub_with_mint(:change_request_read, fn conn ->
+      Req.Test.json(conn, %{
+        "number" => 42,
+        "html_url" => "https://github.com/owner/repo/pull/42",
+        "state" => "open",
+        "head" => %{"ref" => "feature-branch", "sha" => sha},
+        "base" => %{"ref" => "main"}
+      })
+    end)
+
+    assert {:ok, %ChangeRequest{external_id: "42", state: :open}} =
+             GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
   end
 
   # ── list_checks ─────────────────────────────────────────────────────────
@@ -1353,7 +1447,65 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
+  # ── scalar entries must not escape the closed result contract ───────────
+
+  # `Access` on a scalar RAISES, and a raise leaves the callback without either
+  # `{:ok, _}` or `{:error, Error.t()}` — outside the contract entirely, so the
+  # caller's `with` never sees it.
+  test "list_checks returns a typed error for a scalar check-run entry, never raises" do
+    stub_with_mint(:checks_read, fn conn ->
+      Req.Test.json(conn, %{"total_count" => 1, "check_runs" => ["unexpected"]})
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
+  end
+
+  test "list_reviews returns a typed error for a scalar review entry, never raises" do
+    stub_with_mint(:change_request_read, fn conn ->
+      Req.Test.json(conn, ["unexpected"])
+    end)
+
+    assert {:error, :provider_unavailable} =
+             GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
+  end
+
+  # `user` as a scalar is the same raise one level down; `user: null` is GitHub's
+  # documented shape for a deleted account and must take the same typed path.
+  test "list_reviews returns a typed error for a malformed or absent review author" do
+    for user <- ["ghost", nil] do
+      stub_with_mint(:change_request_read, fn conn ->
+        Req.Test.json(conn, [
+          %{
+            "id" => 1,
+            "user" => user,
+            "state" => "APPROVED",
+            "submitted_at" => "2024-01-15T10:30:00Z"
+          }
+        ])
+      end)
+
+      assert {:error, :provider_unavailable} =
+               GitHubAdapter.list_reviews(ctx(), repo(), change_request_id()),
+             "expected refusal for user: #{inspect(user)}"
+    end
+  end
+
   # ── Fixtures ────────────────────────────────────────────────────────────
+
+  # The runtime union, read off the domain type's own typespec so this test
+  # cannot drift from `Ezagent.DomainGit.Error` the way a restated copy would.
+  defp domain_git_errors do
+    {:ok, specs} = Code.Typespec.fetch_types(Ezagent.DomainGit.Error)
+
+    {:type, _, :union, members} =
+      Enum.find_value(specs, fn
+        {:type, {:t, definition, _args}} -> definition
+        _ -> nil
+      end)
+
+    for {:atom, _, atom} <- members, do: atom
+  end
 
   defp ctx do
     workspace = "test-ws"

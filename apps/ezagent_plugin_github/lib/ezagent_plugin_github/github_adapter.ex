@@ -585,20 +585,71 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   # ── Build helpers ───────────────────────────────────────────────────────
 
+  # `private` is required to be a boolean rather than read for truthiness.
+  #
+  # `RepositoryRef.visibility` is not a label — `TaskWorkspace.Provisioner`
+  # refuses a checkout on `:private` and permits one on `:public`. A body that
+  # omits the field used to answer `:public`, which hands a private repository
+  # the permission its owner never gave. "The provider did not tell us" is not
+  # "the provider said public".
+  #
+  # `full_name` and `default_branch` are likewise required from the RESPONSE
+  # rather than defaulted back to the caller's own request: falling back means
+  # the adapter reports the value it was asked about as though the provider had
+  # confirmed it, which is the whole failure mode this module was fixed for.
   defp build_repository_ref(%RepositoryRef{} = input, data) do
-    full_name = data["full_name"] || input.external_id
-    [owner | _rest] = String.split(full_name, "/")
-
-    RepositoryRef.new(%{
+    # The caller-derived and constant fields are bound once, ahead of the
+    # branch: `plugin_workspace_locality_contract_test` reads a workspace-bound
+    # runtime access from inside a plugin branch as an owner-bypass site, and
+    # hoisting keeps that gate meaningful rather than widening it.
+    identity = %{
       repository_uri: input.repository_uri,
       provider_adapter: :github,
-      provider_host: @github_host,
-      external_id: full_name,
-      owner_path: owner,
-      base_ref: data["default_branch"] || input.base_ref,
-      visibility: if(data["private"], do: :private, else: :public)
-    })
+      provider_host: @github_host
+    }
+
+    case repository_facts(data) do
+      {:ok, facts} ->
+        facts
+        |> Map.merge(identity)
+        |> RepositoryRef.new()
+        |> case do
+          {:ok, repository} -> {:ok, repository}
+          {:error, _validation_error} -> {:error, :provider_unavailable}
+        end
+
+      :error ->
+        {:error, :provider_unavailable}
+    end
   end
+
+  # Response-shape validation is a separate function from struct assembly so the
+  # guards live away from the clause that reads the caller's own
+  # `repository_uri` — `plugin_workspace_locality_contract_test` reads a guarded
+  # plugin clause touching workspace-bound runtime as an owner-bypass site, and
+  # the split keeps that gate meaningful instead of widening it.
+  defp repository_facts(%{
+         "full_name" => full_name,
+         "default_branch" => default_branch,
+         "private" => private
+       })
+       when is_binary(full_name) and is_binary(default_branch) and is_boolean(private) do
+    case String.split(full_name, "/") do
+      [owner | _rest] when owner != "" ->
+        {:ok,
+         %{
+           external_id: full_name,
+           owner_path: owner,
+           base_ref: default_branch,
+           visibility: if(private, do: :private, else: :public)
+         }}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp repository_facts(_data), do: :error
 
   # The required shape is matched in the head rather than dug out with Access:
   # an absent `head`/`base` is a body this code does not parse, and reading it as
@@ -637,7 +688,10 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # body we did not understand is the same fail-open in a different costume.
   defp build_checks(_body), do: {:error, :provider_unavailable}
 
-  defp build_check(run) do
+  # `is_map` is a guard, not decoration: `Access` on a scalar RAISES, and a raise
+  # escapes the callback without either `{:ok, _}` or `{:error, Error.t()}` —
+  # the closed result the adapter contract is typed against.
+  defp build_check(run) when is_map(run) do
     with {:ok, status} <- map_check_status(run["status"]),
          {:ok, conclusion} <- map_check_conclusion(run["conclusion"]),
          {:ok, url} <- map_uri(run["details_url"]),
@@ -654,6 +708,8 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       _ -> {:error, :provider_unavailable}
     end
   end
+
+  defp build_check(_run), do: {:error, :provider_unavailable}
 
   # FILTERING and LOSING are different, and collapsing them is a fail-open.
   #
@@ -672,13 +728,18 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
   defp build_review(_data), do: {:error, :provider_unavailable}
 
-  defp build_submitted_review(state, data) do
+  # `user` is destructured in the head for the same reason `build_check/1` guards
+  # on `is_map`: `data["user"]["login"]` RAISES when `user` is a scalar, and a
+  # raise leaves the callback's closed result contract entirely. A `nil` user
+  # (GitHub's shape for a deleted account) needs no special case — it fails the
+  # match here and leaves as the typed error.
+  defp build_submitted_review(state, %{"user" => %{"login" => login}} = data) do
     with {:ok, mapped} <- map_review_state(state),
          {:ok, submitted_at} <- map_datetime(data["submitted_at"]),
          {:ok, review} <-
            Review.new(%{
              external_id: to_string(data["id"]),
-             author_label: data["user"]["login"],
+             author_label: login,
              state: mapped,
              submitted_at: submitted_at
            }) do
@@ -687,6 +748,8 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       _ -> {:error, :provider_unavailable}
     end
   end
+
+  defp build_submitted_review(_state, _data), do: {:error, :provider_unavailable}
 
   # One unparsable entry fails the WHOLE read. A partial list is indistinguishable
   # from the complete facts at the call site, and the entry most likely to be
@@ -714,9 +777,19 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # `:other`; `Check.status`, `Review.state` and `ChangeRequest.state` have
   # nothing of the kind, so for those any answer would be an invention.
 
+  # `merged` is only load-bearing on a CLOSED pull request, and there it is the
+  # whole answer: a merged pull request still reports state "closed", so reading
+  # `state` alone records every merge as a plain close. An absent or non-boolean
+  # `merged` on a closed pull request means we cannot tell those two apart, and
+  # `ChangeRequest.state` has no member for "we could not tell" — so it fails.
+  #
+  # An OPEN pull request deliberately ignores the field. It is definitionally
+  # not merged, and `reconcile_pull_request/3` builds from the pull-request LIST
+  # endpoint (pinned to `state: "open"`), whose entries do not carry `merged` at
+  # all — requiring it there would fail a read that is perfectly well understood.
   defp map_pr_state("open", _merged), do: {:ok, :open}
   defp map_pr_state("closed", true), do: {:ok, :merged}
-  defp map_pr_state("closed", _merged), do: {:ok, :closed}
+  defp map_pr_state("closed", false), do: {:ok, :closed}
   defp map_pr_state(_state, _merged), do: :error
 
   # GitHub documents six statuses. `waiting` (deployment protection rule),
