@@ -1175,19 +1175,26 @@ defp map_review_state(_), do: :commented   # 字段缺失/非字符串 → 同�
 
 属 GitHub owner 的代码，本 PR 不改。建议单开一条。
 
-### 仍未定性的怀疑（记录，未修）
+### `official` / `stale` —— 契约已裁决（gaga 2026-07-30）
 
-- **`official` / `stale` 未读取**。Forgejo review 响应带这两个字段，`official` 表示该
-  review 是否计入受保护分支所需批准数。当前 `Review` 值把 `APPROVED` 一律记为
-  `:approved`。要定性需要配置分支保护并实测，且**先要决定 DomainGit `Review` 的契约
-  到底是"历史事件"还是"当前有效 gate"** —— 上层 `observation_summary.ex:124` 按全部
-  事件计数而非按 reviewer 取最新，说明当前契约是前者。在该契约下这不是 adapter 缺陷，
-  但**这些值不能直接用于自动合并**。归人类裁决。
+**裁决：DomainGit `Review` 是历史事件流，不是"当前有效的 gate"。**
+
+因此当前实现**正确**：`official` / `stale` 不读取，adapter 如实汇报"发生过哪些 review
+事件"，由上层自行解释。这与 `observation_summary.ex:124` 的既有行为一致（按全部事件
+计数，不按 reviewer 取最新）。
+
+**该裁决同时确立一条边界**：这些值**不能直接用于自动合并判定**。任何"够不够批准数"
+的判断都需要额外信号（Forgejo 侧是 `official`/`stale`，GitHub 侧是 GraphQL
+`reviewDecision`），两个 adapter 目前都不提供。要做自动合并，得先扩契约。
 - **`merged_at` 与 `merged` 的异常组合**。已实测 closed-unmerged 为
   `state:"closed", merged:false, merged_at:null`（正确映射为 `:closed`）；未穷举
   merged / draft 的原始 JSON。
 
 ## 13. 未决 / 待人类决定
+
+0. ~~**DomainGit `Review` 的契约语义**~~ —— **已关闭**（gaga 2026-07-30）。是**历史
+   事件流**，不是当前有效 gate。`official`/`stale` 不读取是正确的；代价是这些值不能
+   直接用于自动合并判定。详见 §12.6。
 
 1. ~~**§4.3 帐号级隔离**~~ —— **已关闭**（2026-07-29）。改走 OAuth 后每个用户
    用自己的帐号授权，爆炸半径由用户本人已有权限封住，是机制保证而非运维约定，
