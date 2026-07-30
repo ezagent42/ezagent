@@ -318,6 +318,42 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
       assert {:error, :unauthorized} = SessionReads.external_surface(nil, session)
     end
 
+    # N2 (share-A1 pre-merge review) — `authorize_external_read/2`'s URI-share
+    # branch (`Share.shared_to?/2`) only has a `%URI{}, %URI{}` clause. On a
+    # PRIVATE session (`web_anon_access?` false), `authorize/2` cleanly denies a
+    # nil/malformed caller, but the `cond` used to fall through UNGUARDED into
+    # `Share.shared_to?(session_uri, caller)` — raising `FunctionClauseError`
+    # (a 500) on every external-read entry point instead of the pre-#1594 clean
+    # `{:error, :unauthorized}`. Covers every `authorize_external_read/2` caller
+    # (messages :external_feed/:external_chat, deliveries, surface, snapshot)
+    # with both a nil AND a malformed (non-%URI{}) caller — fail-closed, not
+    # fail-crash.
+    test "N2: a nil/malformed caller on the external-read path is denied cleanly, never crashes" do
+      session = spawn_socialware_session()
+      msg = write(session, "secret", :external_visible)
+      _turn = commit(session, [msg.id], 1)
+
+      for bad_caller <- [nil, "entity://x", :not_a_uri] do
+        assert {:error, :unauthorized} =
+                 SessionReads.messages(bad_caller, session, :external_feed, %{limit: 50})
+
+        assert {:error, :unauthorized} =
+                 SessionReads.messages(bad_caller, session, :external_chat, %{limit: 50})
+
+        assert {:error, :unauthorized} =
+                 SessionReads.external_deliveries_since(bad_caller, session, 0)
+
+        assert {:error, :unauthorized} =
+                 SessionReads.latest_external_delivery_cursor(bad_caller, session)
+
+        assert {:error, :unauthorized} =
+                 SessionReads.committed_external_surface_version(bad_caller, session)
+
+        assert {:error, :unauthorized} = SessionReads.external_surface(bad_caller, session)
+        assert {:error, :unauthorized} = SessionReads.external_snapshot_reads(bad_caller, session)
+      end
+    end
+
     test "ExternalFeed's public API rejects the non-member end-to-end" do
       session = spawn_socialware_session()
 

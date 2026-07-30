@@ -1,0 +1,141 @@
+defmodule EzagentWeb.Socialware.ClaimControllerTest do
+  @moduledoc """
+  URI-share unification (A1) — `GET /socialware/claim?token=` acceptance.
+
+  A logged-in clicker opens a bearer share link (`Ezagent.Cap.ShareToken`,
+  naming ANY target URI + the granted behavior/actions). The generic,
+  plugin-agnostic controller verifies the token and RECORDS a `ShareClaim` for
+  the clicker against the target (`Ezagent.Socialware.Share.claim/2`) — Model A
+  (Feishu): no durable cap is minted; access is re-derived LIVE at the domain
+  read gate (`Share.shared_to?/2`) from the claim plus the live sharing
+  setting. Then 302s to the world root; a tampered/expired token → 403
+  fail-closed; an anonymous visitor is bounced to /login by RequireEntity.
+  Target here is the generic `CompositionGrantTargetBehavior` fixture — the
+  point is scheme/plugin agnosticism, not kanban.
+  """
+  use EzagentWeb.ConnCase, async: false
+
+  alias Ezagent.Socialware.Share
+  alias Ezagent.Entity.User
+  alias EzagentDomainInstanceMessage.CompositionGrantTargetBehavior, as: Target
+
+  setup do
+    {:ok, _apps} = Application.ensure_all_started(:ezagent_domain_session)
+
+    case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+      :ok -> :ok
+      {:error, {:already_registered, _}} -> :ok
+    end
+
+    ws = "claim-#{u()}"
+    {:ok, _ws} = Ezagent.Workspace.create(ws, %{})
+    {:ok, ws: ws}
+  end
+
+  @tag :integration
+  test "valid token → records the clicker's claim + 302 to world root",
+       %{conn: conn, ws: ws} do
+    owner = user(ws, "owner")
+    target = target_agent(ws, "shared", owner)
+    clicker = signed_in_user(ws, "clicker")
+
+    # Owner turns sharing ON (the authorization), then a stateless link is minted.
+    {:ok, _} = Share.enable(target, owner, Target, [:get_tree])
+    token = Share.mint_link(target, ttl_seconds: 60)
+
+    out =
+      conn
+      |> sign_in(ws, clicker)
+      |> get(~p"/socialware/claim?#{[token: token]}")
+
+    assert redirected_to(out) == "/"
+
+    # Feishu model: no durable cap is minted — the claim is recorded and access is
+    # re-derived live (`shared_to?/2`) while the owner keeps sharing enabled.
+    assert Share.shared_to?(target, clicker)
+  end
+
+  @tag :integration
+  test "tampered token → 403, records no claim", %{conn: conn, ws: ws} do
+    owner = user(ws, "owner2")
+    target = target_agent(ws, "shared2", owner)
+    clicker = signed_in_user(ws, "clicker2")
+
+    out =
+      conn
+      |> sign_in(ws, clicker)
+      |> get(~p"/socialware/claim?#{[token: "garbage"]}")
+
+    assert out.status == 403
+    refute Share.shared_to?(target, clicker)
+  end
+
+  @tag :integration
+  test "anonymous (not logged in) is bounced to /login by RequireEntity", %{conn: conn} do
+    out = get(conn, ~p"/socialware/claim?#{[token: "x"]}")
+    assert redirected_to(out) == "/login"
+  end
+
+  # --- helpers ------------------------------------------------------------
+
+  defp u, do: System.unique_integer([:positive])
+
+  defp user(ws, label) do
+    uri = Ezagent.URI.new!("entity://#{ws}/user/#{label}-#{u()}")
+    {:ok, _} = Ezagent.Users.create(uri, "test-password-#{u()}", [])
+    {:ok, _} = Ezagent.SpawnRegistry.spawn(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  defp signed_in_user(ws, label) do
+    uri = Ezagent.URI.new!("entity://#{ws}/user/#{label}-#{u()}")
+    {:ok, _} = Ezagent.Users.create_read_only(uri, [])
+    :ok = Ezagent.Entity.spawn_principal(uri)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  # A generic target: an agent carrying the Target ActionSet with a recorded
+  # owner (data_owner resolves, so `Share.enable/5`'s current-owner check has a
+  # granter to compare against). URI-agnostic — the controller neither knows
+  # nor names any plugin.
+  defp target_agent(ws, name, owner) do
+    uri = Ezagent.URI.agent(ws, "#{name}-#{u()}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: uri,
+        behaviors: Enum.uniq(Ezagent.Entity.Agent.base_behaviors() ++ [Target]),
+        creator_uri: owner,
+        initial_caps: MapSet.new()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(uri, Ezagent.URI.new!("workspace://#{ws}"))
+    :ok = Ezagent.AgentLineage.record(uri, owner)
+    on_exit(fn -> Ezagent.Kind.terminate(uri) end)
+    uri
+  end
+
+  # The clicker principal already exists (created by `signed_in_user/2`), so this
+  # only seeds the auth session — no user-ensure case (that keeps it distinct from
+  # other controller tests' `sign_in`, and there is nothing to ensure here).
+  defp sign_in(conn, ws, %URI{} = entity_uri) do
+    Plug.Test.init_test_session(conn, %{
+      "current_entity_uri" => URI.to_string(entity_uri),
+      "current_workspace_uri" => "workspace://#{ws}"
+    })
+  end
+
+  defp eventually(fun, attempts \\ 50)
+  defp eventually(fun, attempts) when attempts <= 1, do: fun.()
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
+  end
+end

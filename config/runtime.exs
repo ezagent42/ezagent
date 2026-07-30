@@ -151,6 +151,10 @@ if config_env() == :prod do
   # web/operator surfaces verifies identically.
   config :ezagent_core, Ezagent.Uploads.DownloadToken, secret_key_base: secret_key_base
 
+  # URI-share unification (A1) — bearer share-token signing secret (sibling of
+  # DownloadToken; SAME SECRET_KEY_BASE so web claim + plugin mint verify identically).
+  config :ezagent_core, Ezagent.Cap.ShareToken, secret_key_base: secret_key_base
+
   # ## Using releases
   #
   # If you are doing OTP releases, you need to instruct Phoenix

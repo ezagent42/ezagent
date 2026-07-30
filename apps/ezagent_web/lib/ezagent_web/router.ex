@@ -277,6 +277,15 @@ defmodule EzagentWeb.Router do
     # redirects to that session's world chat page. Behind RequireEntity so the
     # clicker is a resolved principal.
     get "/socialware/kanban/receive", Socialware.KanbanShareController, :claim
+
+    # URI-share unification (A1) — GENERIC claim landing. A logged-in user clicks
+    # a bearer share link (`?token=` only, `Ezagent.Cap.ShareToken`, naming ANY
+    # target URI + the behavior/actions it grants); the controller verifies the
+    # token and mints a grantee-bound cap toward the target for the clicker
+    # (`Ezagent.Socialware.Share.claim/2`). Plugin-agnostic — replaces the need
+    # for a per-plugin share controller. Behind RequireEntity so the clicker is a
+    # resolved principal (the mint grantee).
+    get "/socialware/claim", Socialware.ClaimController, :claim
   end
 
   # Liveness probe — plain JSON, no Ezagent dispatch path involved.
