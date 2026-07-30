@@ -6,14 +6,6 @@ defmodule EzagentWeb.WorldUserAdminTest do
   alias Ezagent.Entity.Profile
   alias Ezagent.Users
 
-  @fs_types_table :ezagent_resource_fs_types
-  @world_layouts "world-layouts"
-
-  setup do
-    ensure_world_layouts_registered!()
-    :ok
-  end
-
   test "admin user-management routes mount the new-user and user-detail surfaces", %{conn: conn} do
     user_uri = Ezagent.URI.user(:system, unique_name("route-user"))
     {:ok, _user} = Users.create(user_uri, "route-password", [])
@@ -182,20 +174,5 @@ defmodule EzagentWeb.WorldUserAdminTest do
     |> String.replace("&amp;", "&")
     |> String.replace("&lt;", "<")
     |> String.replace("&gt;", ">")
-  end
-
-  defp ensure_world_layouts_registered! do
-    if :ets.lookup(@fs_types_table, @world_layouts) == [] do
-      {@world_layouts, spec} =
-        Enum.find(
-          EzagentPluginWorld.Application.resource_types(),
-          fn {type, _spec} -> type == @world_layouts end
-        )
-
-      :ok = Ezagent.Resource.FsResolver.register_type(@world_layouts, spec)
-      on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(@world_layouts) end)
-    end
-
-    :ok
   end
 end

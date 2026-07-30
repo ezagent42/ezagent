@@ -46,7 +46,6 @@
     "kanban.unclaim_node",
     "kb.ingest",
     "kb.query",
-    "layout.manage",
     "market.install",
     "market.publish",
     "profile.display_name.cancel",

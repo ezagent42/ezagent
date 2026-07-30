@@ -17,7 +17,6 @@ const componentsDir = join(srcDir, "components")
 // Layout-slot Surface components: the renderer's leaves. They may be mounted
 // ONLY by the registry-backed renderer in main.tsx.
 const SURFACES = [
-  "LayoutEditor",
   "SessionsTable",
   "Conversation",
   "PtyTerminalSurface",

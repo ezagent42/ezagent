@@ -6,7 +6,6 @@ import {Button} from "./components/ui/primitives"
 import {AdminSurface, type AdminState} from "./components/Admin"
 import {Conversation, type ConversationState} from "./components/Conversation"
 import {IdentitiesSurface, type IdentitiesState} from "./components/Identities"
-import {LayoutEditor} from "./components/LayoutEditor"
 import {PtyTerminalSurface} from "./components/PtyTerminal"
 import {Overview} from "./components/Overview"
 import {MarketSurface, type MarketState} from "./components/Market"
@@ -101,7 +100,6 @@ type WorkspaceNavItem = {
 }
 
 type WorldState = IdentitiesState & WorkspacePluginState & ConversationState & {
-  can_manage_layout?: boolean
   cmdk?: {
     open?: boolean
     query?: string
@@ -451,13 +449,6 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   sendEvent("world:dispatch", {
                     action: "session.publish_template",
                     args: {session_uri: sessionUri, name},
-                  })
-                },
-                onManageLayout: (nextLayout) => {
-                  setCurrentLayout(nextLayout)
-                  sendEvent("world:dispatch", {
-                    action: "layout.manage",
-                    args: {layout: nextLayout},
                   })
                 },
                 onCreateAgent: (agent) => {
@@ -1046,7 +1037,6 @@ type RenderContext = {
   ) => void
   onPublishTemplate: (sessionUri: string, name: string) => void
   onForkConfig: (sessionUri: string) => void
-  onManageLayout: (layout: WorldLayout) => void
   onCreateAgent: (agent: Record<string, unknown>) => void
   onCreateUser: (user: Record<string, unknown>) => void
   onSaveUserProfile: (payload: {user_uri: string; display_name: string; email: string}) => void
@@ -1084,16 +1074,6 @@ function renderLayoutComponent(component: NonNullable<WorldLayout["components"]>
   // unregistered type throws in `rendererFamily` (no IdentitiesSurface
   // fallback); an unhandled family throws below.
   switch (rendererFamily(component.type)) {
-    case "layout_editor":
-      return (
-        <LayoutEditor
-          key={component.id}
-          layout={context.layout}
-          canManage={context.state.can_manage_layout === true}
-          onManageLayout={context.onManageLayout}
-        />
-      )
-
     case "sessions":
       return <SessionsTable key={component.id} state={context.state as SessionsState} onJoin={context.onJoin} onCreate={context.onCreateSession} />
 

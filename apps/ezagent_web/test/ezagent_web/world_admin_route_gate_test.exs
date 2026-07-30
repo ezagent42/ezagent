@@ -18,7 +18,6 @@ defmodule EzagentWeb.WorldAdminRouteGateTest do
   # "world.") — mirror WorldHostRoutingTest's host pinning, else the
   # WorldHostScope plug falls through to the 404 catch-all.
   setup do
-    ensure_world_layouts_registered!()
     {:ok, world_conn: Map.put(build_conn(), :host, "world.ezagent.chat")}
   end
 
@@ -33,25 +32,6 @@ defmodule EzagentWeb.WorldAdminRouteGateTest do
     uri = "entity://#{workspace}/user/#{label}-#{System.unique_integer([:positive])}"
     {:ok, _row} = Ezagent.Users.create(uri, "pw-#{System.unique_integer([:positive])}", [])
     uri
-  end
-
-  # See WorldHostRoutingTest — a full umbrella sweep can wipe the world
-  # layout registration; ensure-if-absent with the exact production spec.
-  defp ensure_world_layouts_registered! do
-    fs_types_table = :ezagent_resource_fs_types
-    world_layouts = "world-layouts"
-
-    if :ets.lookup(fs_types_table, world_layouts) == [] do
-      {^world_layouts, spec} =
-        Enum.find(EzagentPluginWorld.Application.resource_types(), fn {type, _spec} ->
-          type == world_layouts
-        end)
-
-      :ok = Ezagent.Resource.FsResolver.register_type(world_layouts, spec)
-      on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(world_layouts) end)
-    end
-
-    :ok
   end
 
   describe "an authenticated NON-admin is rejected" do

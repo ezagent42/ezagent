@@ -494,14 +494,7 @@
   # `HomePathExceptions`. Reconciles with the uri_query.scan
   # `home_path_in_runtime_code` baseline (see scan_home_path_reconcile_test.exs).
   #
-  # World PR-2 (plugin-resource SPEC §4.4) migrated `Ezagent.World.LayoutManager`
-  # OFF raw `Home.path("world/layouts")` ONTO the `resource://<ws>/world-layouts`
-  # seam (`Ezagent.Resource.FsResolver.resolve/2`). The runtime LayoutManager now
-  # has NO `Home.path` call; the one-shot `mix ezagent.world.migrate_layouts`
-  # operator task's `Home.path` reads live in `ezagent_core` (excluded from this
-  # outside-core metric by construction, like the `Mix.Tasks.Ezagent.Home.*`
-  # tasks) and are exact-anchored in `HomePathExceptions`. RATCHET-DOWN 2 → 1:
-  # the codex app-server SUN_LEN socket (`codex_agent.ex`) is the sole remaining
+  # The codex app-server SUN_LEN socket (`codex_agent.ex`) is the sole remaining
   # genuinely un-migratable outside-core caller. (Lowering a cap needs no
   # arch-cap-bump annotation; only raising does.)
   raw_home_path_outside_core: 1,
