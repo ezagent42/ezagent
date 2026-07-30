@@ -420,8 +420,18 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                 state,
                 pushEvent,
                 onJoin: (sessionUri) => {
+                  // The sessions-TABLE row click is a first-touch "open this
+                  // session" affordance — the direct `sessions.join` action
+                  // (WorldLive's dispatch_session_join/2), not the
+                  // conversation-group `session.switch` (switching sessions
+                  // from WITHIN an already-open conversation rail, wired
+                  // separately below via onSessionSwitch). The two are not
+                  // interchangeable: only sessions.join's push_patch ->
+                  // handle_params round trip supplies a `layout` in the
+                  // pushed world:state (see the world:state handler above);
+                  // session.switch's state never carries one.
                   sendEvent("world:dispatch", {
-                    action: "session.switch",
+                    action: "sessions.join",
                     args: {session_uri: sessionUri},
                   })
                 },

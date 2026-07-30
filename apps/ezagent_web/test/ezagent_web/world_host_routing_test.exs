@@ -161,6 +161,21 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
     assert html =~ ~s(data-last-dispatch="ok")
     assert html =~ ~s(data-current-session-uri="#{URI.to_string(session_uri)}")
+
+    # #1576 regression: the sessions-TABLE row click is client-wired to this
+    # exact action (`sessions.join`, `apps/ezagent_plugin_world/assets/src/
+    # main.tsx`'s SessionsTable `onJoin`) BECAUSE only this direct-action path
+    # (push_patch -> handle_params -> LiveStateBuilder.state_for_route) supplies
+    # a "layout" in the pushed world:state. The conversation-group `session.switch`
+    # action (ConversationSessionState.switch_session/2, used by the in-conversation
+    # session rail's onSessionSwitch) never adds one — the two actions are NOT
+    # interchangeable. A prior commit swapped the client's onJoin onto
+    # `session.switch`, silently losing the layout and breaking the
+    # sessions-table-join E2E contract (world.spec.ts "sessions interaction
+    # emits an admitted world:dispatch"). This assertion pins the asymmetry the
+    # client depends on so a future accidental swap of these two actions fails
+    # here first.
+    assert %{"layout" => %{}} = world_state(html)
   end
 
   test "world sessions_table opens an existing member without preloaded join caps", %{conn: conn} do
