@@ -45,7 +45,7 @@ defmodule Mix.Tasks.Ezagent.Home.Init do
     # Deploy-seed SPEC §4: idempotently install shipped socialware packages into
     # the deployment dir (`socialware/`). Pure FS copy — no Repo/dispatch, so it
     # is safe in this Category-A bootstrap; the governed publish happens later at
-    # boot via `Ezagent.Socialware.ManifestSeed.scan_all!`.
+    # boot via `Ezagent.Socialware.ManifestSeed.scan_all/1` (per-package isolating).
     Ezagent.Home.SocialwareSeed.seed!()
     Ezagent.Home.SkillSeed.seed!(index?: false)
 

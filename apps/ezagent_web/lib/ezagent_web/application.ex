@@ -47,10 +47,18 @@ defmodule EzagentWeb.Application do
         # umbrella dep closure to boot — at this point every plugin's
         # views/recipes are registered, so manifests that reference them
         # resolve. The scanning logic itself is owned by the session domain
-        # (`Ezagent.Socialware.ManifestSeed`). Fail-loud: a broken manifest
-        # or unsatisfied `uses` aborts the boot. No-op when disabled
-        # (`enabled?/0` — test default off).
-        :ok = Ezagent.Socialware.ManifestSeed.scan_all!()
+        # (`Ezagent.Socialware.ManifestSeed`).
+        #
+        # PER-PACKAGE isolation (2026-07-30, #206/#1633 follow-up ③): use the
+        # non-raising `scan_all/1`, NOT `scan_all!/1`. #206 was exactly this
+        # call site raising on the FIRST bad socialware package and aborting
+        # the whole node — a stale kanban manifest killed autoservice + hello
+        # + the node too. `scan_all/1` isolates each package: a failure is
+        # still fail-LOUD (`Logger.error/1` with the package name + reason,
+        # plus a boot summary line), but it no longer aborts boot, and every
+        # other package still seeds. No-op when disabled (`enabled?/0` —
+        # test default off).
+        _ = Ezagent.Socialware.ManifestSeed.scan_all()
         {:ok, sup_pid}
 
       other ->
