@@ -151,4 +151,3 @@ The migration is additive: one nullable column and one partial unique index.
 Rollback drops the index and column. Application rollback remains safe because
 older code ignores the nullable column; database rollback must happen only
 after old application code is active.
-
