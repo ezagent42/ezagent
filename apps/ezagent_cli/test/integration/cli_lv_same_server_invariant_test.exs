@@ -78,7 +78,7 @@ defmodule EzagentCli.Integration.CliRuntimeSameServerInvariantTest do
     cap =
       Ezagent.Capability.cap(
         :workspace,
-        Ezagent.World.Behavior.Layout,
+        Ezagent.ActionSet.Manage,
         :manage,
         workspace_uri,
         workspace_uri
