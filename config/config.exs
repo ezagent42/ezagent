@@ -236,8 +236,18 @@ config :ezagent_plugin_github,
   webhook_secret: {:system, "GITHUB_WEBHOOK_SECRET"},
   token_encryption_key: {:system, "GITHUB_TOKEN_ENCRYPTION_KEY"}
 
-# D2 — register the GitHub credential backend module so the provider-connection
-# domain resolves it at runtime (via RuntimeBindings / Exchange).
+# Provider-connection registrations for ALL provider plugins.
+#
+# These MUST stay in ONE `config` call with ONE literal map per key. A second
+# `config :ezagent_domain_provider_connection, credential_backend_implementations:
+# Map.merge(Application.get_env(...), %{...})` block does NOT append: during
+# config evaluation `Application.get_env/3` cannot see values set by an earlier
+# `config` call in the same pass, so it merges from `%{}` and SILENTLY REPLACES
+# every entry the earlier block registered. That regression shipped once on the
+# Forgejo branch (github's three entries vanished; `mix ci.fast` does not run the
+# provider-connection suite, so only the full suite caught it).
+#
+# Adding a provider = adding a key to these literal maps.
 config :ezagent_domain_provider_connection,
   credential_backend_implementations:
     Map.merge(
@@ -246,12 +256,15 @@ config :ezagent_domain_provider_connection,
         :credential_backend_implementations,
         %{}
       ),
-      %{"github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend}
+      %{
+        "github-credential-v1" => EzagentPluginGithub.GitHubCredentialBackend,
+        "forgejo-credential-v1" => EzagentPluginForgejo.ForgejoCredentialBackend
+      }
     ),
   callback_redirect_pairs:
     Map.merge(
       Application.get_env(:ezagent_domain_provider_connection, :callback_redirect_pairs, %{}),
-      %{"github-oauth" => "pair-github-v1"}
+      %{"github-oauth" => "pair-github-v1", "forgejo-oauth" => "pair-forgejo-v1"}
     ),
   local_authorization_backend_pairs:
     Map.merge(
@@ -260,7 +273,48 @@ config :ezagent_domain_provider_connection,
         :local_authorization_backend_pairs,
         %{}
       ),
-      %{{"github", "oauth_user"} => "pair-github-v1"}
+      %{
+        {"github", "oauth_user"} => "pair-github-v1",
+        {"forgejo", "oauth_user"} => "pair-forgejo-v1"
+      }
+    )
+
+# DEAD KEY, deliberately still here (2026-07-30).
+#
+# `EzagentPluginForgejo.Sealed` is gone — the plugin now seals through
+# `Ezagent.ProviderConnection.SealedEnvelope` and uses the single
+# provider-connection keyring. Nothing reads `token_encryption_key` any more, so
+# this block SHOULD be deleted.
+#
+# It is not, because deleting it turns `Architecture.CompilerDeadCodeGateTest`
+# red in a completely unrelated app. Editing config/config.exs invalidates every
+# umbrella app, and that recompile surfaces a latent violation:
+# `apps/ezagent_plugin_git_workflow/test/support/github_live_case.ex` calls
+# `EzagentPluginGithub.GitHubAppJwt.generate/0` while
+# `git_workflow`'s OWN architecture test forbids the dependency that would make
+# it resolvable:
+#
+#     test "plugin dependency isolation no GitHub, Kanban, or socialware ..."
+#       refute mix_exs =~ ":ezagent_plugin_github"
+#
+# So the reference compiles only while a stale beam happens to be on the path
+# (`git_workflow` sorts before `github`). Declaring the dep makes the dead-code
+# gate green and that architecture test red — the two gates disagree, which is
+# a design question for the git_workflow owner (move the harness, share the JWT
+# signer, or relax the isolation rule), not something to pick a side on from
+# inside a Forgejo credential change. Measured: Task-4 state + `mix compile
+# --force` is green, so it is this config edit that surfaces it, not `--force`.
+#
+# Delete this block in the same change that resolves that conflict.
+config :ezagent_plugin_forgejo,
+  token_encryption_key:
+    if(config_env() == :prod,
+      do: {:system, "FORGEJO_TOKEN_ENCRYPTION_KEY"},
+      # dev/test get an explicit, non-secret, STABLE key. A `{:system, ...}`
+      # tuple here would raise in every local run (the variable is unset), and
+      # letting it fall back to an ephemeral key instead would make stored
+      # credentials silently unreadable after a rebuild.
+      else: "ZXphZ2VudC1mb3JnZWpvLWRldi10ZXN0LWtleS0zMmI="
     )
 
 # Import environment specific config. This must remain at the bottom

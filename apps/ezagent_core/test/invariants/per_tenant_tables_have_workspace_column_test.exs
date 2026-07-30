@@ -162,7 +162,22 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # (`workspace_uri` NOT NULL, populated from `Ezagent.URI.workspace_of/1`
     # on every write).
     {Ezagent.EntityCaps.Store, "identity_caps"},
-    {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"}
+    {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"},
+    # Forgejo provider V1 slice F0 — per-tenant OAuth application
+    # registrations (design
+    # docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md §5.1).
+    # Forgejo is self-hosted, so each instance is its own OAuth provider with
+    # its own client_id/secret; a registration belongs to exactly one
+    # workspace. `workspace_uri` is the FIRST component of the composite
+    # primary key {workspace_uri, governed_host} and is always part of the
+    # lookup, so a cross-tenant read is a miss rather than a leak.
+    {EzagentPluginForgejo.OAuthApp.Record, "forgejo_oauth_apps"},
+
+    # Forgejo credential custody made durable (was an ETS table that died with
+    # its owning process). A credential belongs to exactly one workspace, and
+    # `workspace_uri` is written on insert from the store command the
+    # provider-connection domain supplies.
+    {EzagentPluginForgejo.CredentialRecord, "forgejo_credentials"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

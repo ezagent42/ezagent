@@ -1,0 +1,346 @@
+defmodule EzagentPluginForgejo.StubForgejoInstance do
+  @moduledoc """
+  A stateful in-memory Forgejo instance for local end-to-end tests.
+
+  Unlike a per-request stub, this one KEEPS STATE: a branch created by one
+  request is visible to the next, and a `POST /contents` actually advances the
+  branch. That is the whole point — the property under test is that running the
+  adapter twice produces **one** branch, **one** commit and **one** pull
+  request, and a stateless stub cannot tell a second mutation from the first.
+
+  It also mirrors the two measured behaviours the adapter must survive
+  (`docs/superpowers/specs/2026-07-29-forgejo-api-probe-findings.md` §3):
+
+    * `POST /contents` is **not** idempotent — every accepted call appends a
+      commit and moves the branch, even when the content is unchanged;
+    * a duplicate branch is `409` from `POST /branches` but `422` from
+      `POST /contents`.
+
+  Every mutating request is counted, so a test can assert "exactly one commit
+  happened across two runs" rather than inferring it.
+  """
+
+  use Agent
+
+  @type t :: pid()
+
+  defstruct branches: %{},
+            files: %{},
+            pulls: [],
+            statuses: %{},
+            reviews: %{},
+            counts: %{},
+            next_pull: 7
+
+  @doc "Starts an instance holding one repository whose base branch is at `base_sha`."
+  @spec start_link(keyword()) :: {:ok, t()}
+  def start_link(opts) do
+    base_ref = Keyword.get(opts, :base_ref, "main")
+    base_sha = Keyword.fetch!(opts, :base_sha)
+
+    Agent.start_link(fn ->
+      %__MODULE__{branches: %{base_ref => %{"id" => base_sha, "message" => "base"}}}
+    end)
+  end
+
+  @doc "How many times a mutating endpoint was accepted."
+  @spec count(t(), atom()) :: non_neg_integer()
+  def count(instance, kind), do: Agent.get(instance, &Map.get(&1.counts, kind, 0))
+
+  @doc "The commit a branch currently points at, or nil."
+  @spec branch_sha(t(), String.t()) :: String.t() | nil
+  def branch_sha(instance, ref),
+    do: Agent.get(instance, &get_in(&1.branches, [ref, "id"]))
+
+  @doc "Every pull request the instance holds."
+  @spec pulls(t()) :: [map()]
+  def pulls(instance), do: Agent.get(instance, & &1.pulls)
+
+  @doc "Records a commit status, as a CI system would."
+  @spec put_status(t(), String.t(), map()) :: :ok
+  def put_status(instance, sha, status) do
+    Agent.update(instance, fn state ->
+      %{state | statuses: Map.update(state.statuses, sha, [status], &(&1 ++ [status]))}
+    end)
+  end
+
+  @doc "Records a review entry, including the request-for-review shape."
+  @spec put_review(t(), String.t(), map()) :: :ok
+  def put_review(instance, number, review) do
+    Agent.update(instance, fn state ->
+      %{state | reviews: Map.update(state.reviews, number, [review], &(&1 ++ [review]))}
+    end)
+  end
+
+  @doc "Returns the Req plug that serves this instance."
+  @spec plug(t()) :: (Plug.Conn.t() -> Plug.Conn.t())
+  def plug(instance) do
+    fn conn ->
+      {:ok, raw, conn} = read_body(conn)
+      body = decode(raw)
+
+      {status, payload} =
+        Agent.get_and_update(instance, fn state ->
+          route(state, conn.method, path_parts(conn), conn.query_params, body)
+        end)
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.resp(status, Jason.encode!(payload))
+    end
+  end
+
+  # ── routing ──────────────────────────────────────────────────────────
+
+  # Paths arrive as ["api","v1","repos",owner,repo | rest]; only `rest` varies.
+  defp path_parts(conn) do
+    conn.request_path
+    |> String.split("/", trim: true)
+    |> Enum.drop(5)
+  end
+
+  # A branch ref may contain slashes -- `task/p4e/run-<hex>` is the shape
+  # `DeterministicRef.derive/2` produces. Real Forgejo matches the remainder
+  # greedily (verified: raw slashes and %2F both return 200), so a stub that
+  # split on a fixed two segments would be LESS permissive than the instance it
+  # stands in for, and would fail the adapter for a reason production never has.
+  defp route(state, "GET", ["branches" | rest], _query, _body) when rest != [] do
+    ref = Enum.join(rest, "/")
+
+    case Map.get(state.branches, ref) do
+      nil -> {{404, %{"message" => "branch does not exist [name: #{ref}]"}}, state}
+      commit -> {{200, %{"name" => ref, "commit" => commit}}, state}
+    end
+  end
+
+  defp route(state, "POST", ["branches"], _query, body) do
+    name = body["new_branch_name"]
+    from = body["old_ref_name"]
+
+    cond do
+      Map.has_key?(state.branches, name) ->
+        # Measured: duplicate branch is 409 HERE, and 422 from POST /contents.
+        {{409, %{"message" => "The branch already exists."}}, state}
+
+      true ->
+        commit = %{"id" => from, "message" => "base"}
+        state = put_in(state.branches[name], commit)
+        {{201, %{"name" => name, "commit" => commit}}, bump(state, :branches)}
+    end
+  end
+
+  defp route(state, "GET", ["contents" | rest], query, _body) do
+    path = Enum.join(rest, "/")
+    ref = Map.get(query, "ref")
+
+    case Map.get(state.files, {ref, path}) do
+      nil -> {{404, %{"message" => "object does not exist [path: #{path}]"}}, state}
+      file -> {{200, file}, state}
+    end
+  end
+
+  defp route(state, "POST", ["contents"], _query, body) do
+    branch = body["branch"]
+
+    cond do
+      # `new_branch` against an existing branch: 422 here, not 409 (measured).
+      is_binary(body["new_branch"]) and Map.has_key?(state.branches, body["new_branch"]) ->
+        {{422, %{"message" => "branch already exists [name: #{body["new_branch"]}]"}}, state}
+
+      not Map.has_key?(state.branches, branch) ->
+        {{404, %{"message" => "branch does not exist [name: #{branch}]"}}, state}
+
+      conflicting_files?(state, branch, body["files"]) ->
+        [path | _] = conflicting_paths(state, branch, body["files"])
+        {{422, %{"message" => "repository file already exists [path: #{path}]"}}, state}
+
+      true ->
+        # NOT idempotent, deliberately: every accepted call appends a commit and
+        # moves the branch, exactly as measured. An adapter that re-sends this
+        # after a lost response stacks a second commit -- which is what the
+        # double-execution assertions exist to catch.
+        commit = commit_for(body)
+        state = put_in(state.branches[branch], commit)
+
+        state =
+          Enum.reduce(body["files"], state, &apply_file(&2, branch, commit["id"], &1))
+
+        {{201, %{"commit" => %{"sha" => commit["id"]}}}, bump(state, :contents)}
+    end
+  end
+
+  defp route(state, "GET", ["pulls"], query, _body) do
+    open? = Map.get(query, "state", "open") == "open"
+    pulls = Enum.filter(state.pulls, &(not open? or &1["state"] == "open"))
+    {{200, paginate(pulls, query)}, state}
+  end
+
+  defp route(state, "POST", ["pulls"], _query, body) do
+    number = state.next_pull
+
+    pull = %{
+      "number" => number,
+      "html_url" => "https://stub.test/pulls/#{number}",
+      "state" => "open",
+      "merged" => false,
+      "head" => %{"ref" => body["head"], "sha" => branch_id(state, body["head"])},
+      "base" => %{"ref" => body["base"]}
+    }
+
+    state = %{state | pulls: state.pulls ++ [pull], next_pull: number + 1}
+    {{201, pull}, bump(state, :pulls)}
+  end
+
+  defp route(state, "GET", ["pulls", number], _query, _body) do
+    case Enum.find(state.pulls, &(to_string(&1["number"]) == number)) do
+      nil -> {{404, %{"message" => "pull does not exist"}}, state}
+      pull -> {{200, pull}, state}
+    end
+  end
+
+  defp route(state, "GET", ["pulls", number, "reviews"], query, _body),
+    do: {{200, paginate(Map.get(state.reviews, number, []), query)}, state}
+
+  defp route(state, "GET", ["commits", sha, "status"], _query, _body) do
+    statuses = Map.get(state.statuses, sha, [])
+
+    payload = %{
+      "state" => if(statuses == [], do: "pending", else: List.last(statuses)["status"]),
+      "total_count" => length(statuses),
+      "statuses" => statuses
+    }
+
+    {{200, payload}, state}
+  end
+
+  defp route(state, "GET", ["repos", _owner, _repo], _query, _body),
+    do: {{200, %{"full_name" => "stub/repo", "private" => true}}, state}
+
+  defp route(state, method, parts, _query, _body),
+    do: {{599, %{"message" => "unrouted #{method} /#{Enum.join(parts, "/")}"}}, state}
+
+  # ── state helpers ────────────────────────────────────────────────────
+
+  # The commit id is a digest of everything a real Forgejo commit is a function
+  # of (parent, message, dates, file contents), so the SAME inputs against the
+  # SAME parent reproduce the SAME id -- the property measured in findings §3.2
+  # and the one a resume relies on.
+  # List endpoints on the target instance take `page`/`limit`
+  # (`ListPullRequests`, `ListPullReviews` — swagger). A stub that ignored them
+  # was not a simplification: it made a read-to-exhaustion loop untestable, and
+  # it could not express the case that matters — an instance whose
+  # `max_response_items` caps a page BELOW what the caller asked for.
+  #
+  # `@cap` models that cap. Requesting `limit=50` against it yields 20-item
+  # pages, so "shorter than requested" cannot be used to detect the last page.
+  @cap 20
+
+  defp paginate(items, query) do
+    page = query |> Map.get("page", "1") |> to_int(1)
+    limit = query |> Map.get("limit", "30") |> to_int(30) |> min(@cap)
+
+    Enum.slice(items, (page - 1) * limit, limit)
+  end
+
+  defp to_int(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {n, ""} when n > 0 -> n
+      _other -> default
+    end
+  end
+
+  defp to_int(_value, default), do: default
+
+  defp commit_for(body) do
+    id =
+      {body["branch"], body["message"], body["dates"], body["files"]}
+      |> :erlang.term_to_binary([:deterministic])
+      |> then(&:crypto.hash(:sha, &1))
+      |> Base.encode16(case: :lower)
+
+    # Records what a real Forgejo branch response carries (measured on the
+    # target instance): {id, message, timestamp, author, committer, ...}. An
+    # earlier version stored only id+message, which let a provenance check that
+    # compared the message ALONE keep passing — the fixture could not express a
+    # commit that shared a title but nothing else.
+    %{
+      "id" => id,
+      "message" => body["message"],
+      "timestamp" => get_in(body, ["dates", "author"]),
+      "author" => identity(body["author"]),
+      "committer" => identity(body["committer"])
+    }
+  end
+
+  defp identity(%{name: name, email: email}), do: %{"name" => name, "email" => email}
+  defp identity(%{"name" => name, "email" => email}), do: %{"name" => name, "email" => email}
+  defp identity(_absent), do: nil
+
+  # Stored under BOTH the branch name and the commit id, because real Forgejo
+  # resolves `?ref=` against any of branch / tag / commit sha (measured: reading
+  # a path at a commit sha returns that path's blob). Keying only by branch made
+  # a read pinned to a commit id a 404 — which the adapter reads as "the file
+  # this run would write is absent", i.e. not ours.
+  #
+  # Pinning provenance reads to the commit id is exactly the fix for the branch
+  # moving under a multi-file check, so the fixture has to be able to serve it.
+  defp apply_file(state, branch, commit_id, file) do
+    entry = %{
+      "path" => file["path"],
+      "sha" => git_blob_sha(file["content"]),
+      "content" => file["content"]
+    }
+
+    state
+    |> put_in([Access.key!(:files), {branch, file["path"]}], entry)
+    |> put_in([Access.key!(:files), {commit_id, file["path"]}], entry)
+  end
+
+  # The REAL git object id: `sha1("blob <byte_size>\0" <> raw_bytes)`. Measured
+  # against the target instance — `/contents` returns exactly this.
+  #
+  # An earlier version hashed the BASE64 string with no git object header, which
+  # is not any sha the instance would ever return. Nothing noticed while the
+  # adapter only passed that value straight back as `sha` on an update; the
+  # moment provenance started comparing content against a locally computed blob
+  # sha, the fixture could no longer stand in for the instance.
+  defp git_blob_sha(encoded) do
+    raw =
+      case Base.decode64(encoded || "") do
+        {:ok, bytes} -> bytes
+        :error -> encoded || ""
+      end
+
+    :crypto.hash(:sha, "blob #{byte_size(raw)}\0" <> raw) |> Base.encode16(case: :lower)
+  end
+
+  # A `create` against a path that already exists on that branch is the 422 the
+  # adapter must read as "the state I read a moment ago is stale".
+  defp conflicting_paths(state, branch, files) do
+    for %{"operation" => "create", "path" => path} <- files,
+        Map.has_key?(state.files, {branch, path}),
+        do: path
+  end
+
+  defp conflicting_files?(state, branch, files),
+    do: conflicting_paths(state, branch, files) != []
+
+  defp branch_id(state, ref), do: get_in(state.branches, [ref, "id"])
+  defp bump(state, kind), do: %{state | counts: Map.update(state.counts, kind, 1, &(&1 + 1))}
+
+  defp read_body(conn) do
+    case conn.method do
+      "GET" -> {:ok, "", Plug.Conn.fetch_query_params(conn)}
+      _other -> Plug.Conn.read_body(Plug.Conn.fetch_query_params(conn))
+    end
+  end
+
+  defp decode(""), do: %{}
+
+  defp decode(raw) do
+    case Jason.decode(raw) do
+      {:ok, decoded} when is_map(decoded) -> decoded
+      _other -> %{}
+    end
+  end
+end

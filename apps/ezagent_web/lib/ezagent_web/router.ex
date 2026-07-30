@@ -317,6 +317,12 @@ defmodule EzagentWeb.Router do
   # `state` parameters to CallbackIngress.consume/3 for processing.
   forward "/github/callback", EzagentPluginGithub.GitHubCallbackPlug
 
+  # Forgejo OAuth callback receiver. One route serves every Forgejo instance:
+  # the `state` (not the host) identifies which pending authorization a
+  # callback belongs to, so a tenant on a second self-hosted server needs no
+  # second endpoint.
+  forward "/forgejo/callback", EzagentPluginForgejo.ForgejoCallbackPlug
+
   # Phase 6 PR 9: canonical auto-derived JSON API. Single controller
   # dispatches every `{kind, action}` registered in BehaviorRegistry.
   # GET /api/v1 = introspection (route catalog + interfaces).

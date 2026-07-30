@@ -12,6 +12,94 @@
 4. If the plugin spawns sessions, call `Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)` after `SpawnRegistry.spawn` to plumb workspace scope (invariant 4).
 5. Test via `mix ezagent.plugin.install /path/to/plugin` against running Ezagent (invariant 8).
 
+### The three gates a new plugin app trips (verified 2026-07-29, `ezagent_plugin_forgejo`)
+
+**`mix test apps/ezagent_plugin_<name>/test` cannot see any of these.** A new plugin
+went 41/41 green on its own suite while `mix ci.fast` exited 2 with four reds. Run
+`mix ci.fast` (`timeout: 300000`) before believing a new plugin app is done.
+
+| Gate | Symptom | Fix |
+|---|---|---|
+| `Invariants.AllPluginAppsWiredToWebTest` | "these plugin apps exist under apps/ but are NOT wired into apps/ezagent_web/mix.exs deps" | Add `{:ezagent_plugin_<name>, in_umbrella: true}` to `apps/ezagent_web/mix.exs` `defp deps`. Without it the plugin's `Application.start/2` **never runs at web boot** — `Ezagent.Plugin.boot/1` never fires, nothing registers, and call sites get `:no_kind_module_for_agent`. (A genuinely-unwired plugin uses `# plugin-wire-exempt: <reason>`.) |
+| `Invariants.PluginWorkspaceLocalityContractTest` (A) and (B) | your file enumerated with `atomic_ownership_access - :unknown_value.<field>/0` | You wrote non-assertive access: `def store(command)` then `command.credential_ref`. **Destructure in the function head** (`def store(%{credential_ref: ref})`). Both enumerators go quiet and the code follows the documented Elixir idiom — this is the fix, not a baseline entry. |
+| `Architecture.CrossFileDuplicateFnTest` | `measured N, cap N-1` after mirroring a sibling plugin | Mirroring an existing plugin file-for-file is exactly what this ratchet is for. Prefer making the bodies genuinely different over `# arch-cap-bump:` — the head-destructuring fix above did it on its own. Reach for the bump only when the duplication is deliberate and argued. |
+
+Ordering note: fix the enumerators **before** re-measuring the duplicate ratchet —
+rewriting accessors changes function bodies, so the duplicate count moves too.
+Doing it in the other order wastes a cap-bump argument on debt that was about to
+disappear.
+
+CI shards need **no** manifest edit: the bare `apps/ezagent_plugin_` catch-all in
+`ci_shards.exs` auto-absorbs new plugin apps.
+
+### `mix ci.fast` 不是门禁（2026-07-30 实测）
+
+`ci.fast` 只有 4 步：`ecto.create/migrate` + `ezagent.check_invariants` + socialware
+conformance + `gate.arch`。**它不跑 `mix test`，也不跑 `ezagent.uri_query.scan`。**
+
+一个 PR 连着三轮外部 review 都拿 `ci.fast` EXIT=0 当"门禁绿"，结果带着两条真实的
+`uri_query.scan` 违规（手工拼 `"workspace://" <> name`、变量绑定的 `%URI{scheme:}`
+positional read），因为那条扫描属 `ci.local` 而不属 `ci.fast`。
+
+返回前至少补跑 `ci.local` 里 `ci.fast` 缺的这几步 + 受影响 app 的测试：
+
+```bash
+mix deps.unlock --unused
+mix format --check-formatted
+mix ezagent.uri_query.scan
+mix world.e2e.fixtures --check
+mix test apps/<affected>/test --timeout 300000
+```
+
+全仓 `mix test` 在本机跑不完（>10 分钟），所以按 app 跑受影响范围，别假装跑了全套。
+
+`uri_query.scan` 的两个易踩点：
+- 需要 Ezagent 方案 URI 时用 `Ezagent.URI.workspace/1` / `workspace_of/1`，**不要**
+  自己拼字符串 —— 手拼绕过了每个读者都假定的规范化
+- 读外部 http(s) URL 的 `%URI{}` 时，scheme 要写**字面量**（每个 scheme 一条子句）。
+  该 gate 本就为外部 URL 留了出口（`scan.ex` 的 `external_url_pattern?/1`），但只认
+  字面量；`when scheme in ["http","https"]` 会对探测器隐身而被报违规
+
+### 测试替身比真实系统宽松 = 那个会失败的场景无法被表达（2026-07-30，同一 PR 内三次）
+
+外部对抗性 review 在 `ezagent_plugin_forgejo` 上连揪出三个缺陷，**根因是同一个**：
+fixture 或 stub 比真实 provider 宽松，于是能暴露 bug 的输入**根本造不出来**，测试
+写得再多也是绿的。
+
+| 失真处 | 掩盖了什么 |
+|---|---|
+| stub 的 commit 只记 `id` + `message` | provenance 判据只比 message（fail-open）—— "标题相同、其余不同"的 commit 无法表达 |
+| fixture 的时间戳微秒恒为 0 | 精确时刻比较会认不出自己写的 commit（真实来源是 `:utc_datetime_usec` 列） |
+| stub 存 `sha1(base64字符串)` 当 blob sha | 与真实 git object id 无关；内容比对一上线立刻站不住 |
+
+**做法**：给替身写响应时，问的不是"这个字段测试用得到吗"，而是"**真实系统在这里
+会返回什么**"。用得到的字段之外那些，恰恰是将来某个判据要依赖的。
+
+代价对比很悬殊：往 stub 多记三个字段是几行代码；缺了它们，一个 fail-open 的
+provenance 判据可以带着 20 条绿测试合进去。
+
+**可执行的自查**：对每个替身问一遍"**如果实现有 bug，我这个 fixture 能造出会让它失败
+的输入吗**"。造不出来 → 替身失真，先修替身。
+
+Two more, verified 2026-07-30 on the same plugin:
+
+- **Ecto query bindings trip (A)/(B) too.** `from(r in Schema, where: r.id == ^id)`
+  enumerates as `:unknown_value.id/0` — the enumerator cannot see through a query
+  binding any more than through a bare variable. Use keyword syntax instead:
+  `from(Schema, where: [id: ^id, version: ^v])`, and `Repo.get/2` + struct
+  destructuring instead of `select: r.field`. Semantics are unchanged (both
+  columns still land in the WHERE clause), so re-run any mutation check you were
+  relying on to confirm the guard is still load-bearing.
+- **A `config/config.exs` edit forces a full recompile, which surfaces latent
+  missing deps.** Removing one plugin's config block turned
+  `Architecture.CompilerDeadCodeGateTest` red with a warning in a completely
+  unrelated app: `ezagent_plugin_git_workflow`'s `test/support` calls
+  `EzagentPluginGithub.GitHubAppJwt` without declaring the dep, and
+  `git_workflow` sorts **before** `github`, so the reference only resolved while a
+  stale beam happened to be on the path. `UndeclaredUmbrellaDepTest` does not
+  cover `test/support`. Fix = declare the dep (check for a cycle first); do not
+  reach for `apply/3`, which trades this for a dynamic-receiver violation.
+
 Pre-built examples:
 - `apps/ezagent_plugin_echo/` (smallest reference plugin)
 - `apps/ezagent_plugin_feishu/` (canonical "external integration" — registers `FeishuReceive` on User Kind, no owned scheme)

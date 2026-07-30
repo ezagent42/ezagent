@@ -63,10 +63,30 @@ defmodule Ezagent.DomainGit.ValueContractTest do
       task_access_uri: uri("entity://ws/worker/gta_#{String.duplicate("a", 64)}"),
       caller_uri: uri("entity://ws/user/alice"),
       grantee_uri: uri("entity://ws/agent/codex"),
+      credential_owner_uri: uri("entity://ws/user/bob"),
       idempotency_key: "attempt-1"
     }
 
     assert {:ok, %OperationContext{}} = OperationContext.new(context)
+
+    # `credential_owner_uri` is REQUIRED and distinct from `grantee_uri`: the
+    # grantee is who may invoke, the credential owner is whose stored provider
+    # credential the operation runs under. A provider whose credential is
+    # stored rather than minted per-operation (Forgejo; GitHub App is the
+    # exception) cannot resolve a connection without it. Required with no
+    # default for the same reason `CreateChangeRequest.commit_date` is: a
+    # silently-absent value would surface later as an unresolvable credential.
+    assert {:error, {:missing_field, :credential_owner_uri}} =
+             OperationContext.new(Map.delete(context, :credential_owner_uri))
+
+    assert {:error, {:invalid_field, :credential_owner_uri}} =
+             OperationContext.new(%{
+               context
+               | credential_owner_uri: uri("entity://other/user/bob")
+             })
+
+    assert {:error, {:invalid_field, :credential_owner_uri}} =
+             OperationContext.new(%{context | credential_owner_uri: :not_a_uri})
 
     for invalid_task_access_uri <- [
           uri("entity://ws/worker/alice"),
@@ -84,7 +104,7 @@ defmodule Ezagent.DomainGit.ValueContractTest do
     assert {:error, {:invalid_field, :caller_uri}} =
              OperationContext.new(%{context | caller_uri: uri("entity://other/user/alice")})
 
-    for field <- [:task_access_uri, :caller_uri, :grantee_uri] do
+    for field <- [:task_access_uri, :caller_uri, :grantee_uri, :credential_owner_uri] do
       assert {:error, {:invalid_field, ^field}} =
                OperationContext.new(%{context | field => :not_a_uri})
     end

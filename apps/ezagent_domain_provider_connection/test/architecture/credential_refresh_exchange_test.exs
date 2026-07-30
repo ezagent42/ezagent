@@ -53,7 +53,13 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
     )
   end
 
-  test "repository inventory pins all five compiled implementations and three detector fixtures" do
+  # An inventory pin, not a coverage metric: a NEW `CredentialBackend` must be a
+  # conscious decision, because each one is an independent implementation of the
+  # private refresh-exchange contract and of secret custody. It went 9 -> 10 when
+  # `EzagentPluginForgejo.ForgejoCredentialBackend` landed (the second PRODUCTION
+  # implementation beside GitHub's), which is exactly the review this pin exists
+  # to force.
+  test "repository inventory pins all ten declarations: two production, five compiled fixtures, three detector fixtures" do
     root = Path.expand("../../../..", __DIR__)
 
     matches =
@@ -74,7 +80,17 @@ defmodule Ezagent.ProviderConnection.CredentialRefreshExchangeTest do
         |> Enum.map(fn {_line, index} -> {path, index} end)
       end)
 
-    assert length(matches) == 9
+    assert length(matches) == 10
+
+    # Both production implementations, named so a deletion or a rename shows up
+    # here rather than only as a count drifting back down.
+    Enum.each(
+      [
+        "/github_credential_backend.ex",
+        "/forgejo_credential_backend.ex"
+      ],
+      fn suffix -> assert Enum.any?(matches, &String.ends_with?(elem(&1, 0), suffix)) end
+    )
 
     assert Enum.count(matches, fn {path, _line} ->
              String.ends_with?(path, "/fake_backend_pairs.ex")
