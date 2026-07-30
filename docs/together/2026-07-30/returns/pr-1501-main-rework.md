@@ -2,15 +2,15 @@
 
 > **Task:** rework PR #1501 against current `main`
 > **Branch:** `fix/pr1501-main-rework`
-> **PR:** #1501 replacement branch prepared locally; no remote rewrite performed
+> **PR:** #1501 existing branch prepared for an exact-lease update
 > **Dev:** Codex
-> **returned_at:** 2026-07-30 14:36 +0800
+> **returned_at:** 2026-07-30 17:18 +0800
 > **deadline:** not provided
 > **deadline_status:** out_of_scope
 
 ## Frozen base and scope
 
-- Frozen base: `main@81a90855c`.
+- Final replay base: `origin/main@b3eb4df7c`.
 - Isolated worktree:
   `/home/huangjiajia/ezagent/.worktrees/pr-1501-main-rework`.
 - The original PR branch and its three worktrees were retained untouched for
@@ -38,48 +38,51 @@
 - Ratcheted only the exact invariant allowlists changed by the new checked
   adapter and core outbox reader.
 
-## Commits
+## Review hardening
 
-1. `2f27d467e` — `docs(cap): redesign PR 1501 against current main`
-2. `984526ae7` — `docs(cap): plan PR 1501 current-main rework`
-3. `28080baa6` — `test(session): restore scoped-cap cascade baseline`
-4. `a2ec39a1d` — `feat(cap): expose validated pending absorb view`
-5. `4f3f1a935` — `fix(cap): make pending absorb identity atomic`
-6. `3e4202734` — `feat(cap): merge held and pending effective caps`
-7. `e17c529bd` — `fix(session): converge grants across held and pending caps`
-8. `819bc617a` — `test(cap): ratchet effective-cap invariants`
+- Pending semantic identity includes the target authority `key_id`, so a stale
+  generation cannot suppress a newly issued artifact after key rotation.
+- Effective views use a DB-only checked current-authority verifier before
+  five-axis deduplication. Stale artifacts are discarded; an unreadable
+  authority store fails the entire read closed. The persisted path does not
+  call a Kind or dispatch across an actor boundary.
+- Active identity-store and legacy-user malformed capability JSON returns an
+  explicit checked-read error instead of being silently treated as an empty
+  authority set. `nil`, empty strings, and JSON `null` retain their legacy
+  empty-set compatibility.
+- Migration/gate documentation now states that a validated pending absorb is
+  effective but not yet confirmed in the held store.
 
 ## Verification
 
-- Pending outbox seam: 15 tests, 0 failures.
-- Atomic semantic identity suite: 18 tests, 0 failures, including concurrent
-  enqueue coverage.
-- Effective-cap reader suite: 46 tests, 0 failures.
-- Session caller suite plus reconciler helper coverage: 25 tests, 0 failures.
-- Final focused run:
-  - `ezagent_domain_identity`: 46 tests, 0 failures.
-  - `ezagent_domain_session`: 17 tests, 0 failures.
-- `mix ezagent.check_invariants`: all in-scope invariants clean.
-- Exact access/self-store ratchets: 14 tests, 0 failures.
-- `git diff --check`: passed before each commit.
-
-`mix precommit` was run as required. Its forced compilation passed and the
-largest suite, `ezagent_core`, completed with 2 doctests + 2241 tests and zero
-failures. Reusing the already-exercised `pr1501r` database then caused
-cross-application state pollution in later suites:
-
-- The 26 affected identity tests passed with zero failures on a fresh
-  `pr1501iso` partition.
-- One unrelated domain-agent file still had 3 failures on a fresh partition.
-  The exact same file failed identically on untouched `main@81a90855c` with a
-  separate fresh partition (22 tests, 3 failures). Those failures concern
-  template-spawn rollback return shapes and an unsupported config-dir cleanup,
-  not capability delivery/effective reads. They were not folded into #1501.
-
-There is also a pre-existing test-support compile warning:
-`EzagentPluginGithub.GitHubAppJwt.generate/0` is unavailable from
-`ezagent_plugin_git_workflow/test/support/github_live_case.ex`. It prevents a
-clean repository-wide warnings-as-errors claim but is not introduced here.
+- TDD authority-generation rollover:
+  - outbox direct rollover failed before the fix and passes after it;
+  - real Orchestrator reconciliation failed with 39 pending rows instead of 75
+    before the fix and passes after it;
+  - checked authority seam, stale held/pending filtering, and unreadable-store
+    fail-closed coverage pass.
+- Malformed-capability TDD:
+  - both active Store and legacy UserStore returned `{:ok, []}` before the fix;
+  - both now return checked errors, with null/empty compatibility controls.
+- Final focused verification on a fresh database after replaying onto
+  `origin/main@b3eb4df7c`:
+  - core authority and invariants: 24 tests, 0 failures;
+  - identity entity-cap and outbox paths: 51 tests, 0 failures;
+  - session consumers: 17 tests, 0 failures.
+- `mix ci.fast` passes:
+  - actor: 1 test, 0 failures;
+  - core: 691 tests, 0 failures;
+  - identity: 4 tests, 0 failures;
+  - external mirror: 39 tests, 0 failures;
+  - session: 8 tests, 0 failures.
+- A fresh-database `mix precommit` run reached core at 2 doctests plus 2,263
+  tests with 0 failures. It then reproduced the existing monolithic
+  cross-application state leak: identity reported 640 tests with 7 failures,
+  workspace reported 405 tests with 2 failures, and later suites showed the
+  same shared database/process contamination. The redundant local run was
+  stopped after this diagnosis; PR CI remains the full-suite authority.
+- Fresh migration through `20260730140000`: passes.
+- `git diff --check`: passes.
 
 ## Dependency observations
 
@@ -89,7 +92,7 @@ were intentionally kept out of this capability-delivery PR.
 
 ## Merge request
 
-The replacement branch is locally complete and based on current main. No
-force-push, PR branch rewrite, or deletion of the old worktrees was performed.
-Before updating PR #1501, push `fix/pr1501-main-rework` and choose whether to
-retarget the existing PR or open a clean replacement PR.
+After final verification and independent review, update the existing
+`fix/cap-pending-held-convergence-idempotence` branch only with the frozen
+remote lease `f0d1d14748f0b56ee530036da97c6d234fcbe01d`. The backup branch
+`backup/pr1501-remote-f0d1d147` preserves the pre-rewrite remote head.
