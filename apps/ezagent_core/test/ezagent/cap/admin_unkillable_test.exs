@@ -14,7 +14,9 @@ defmodule Ezagent.Cap.AdminUnkillableTest do
   alias Ezagent.Cap.Authority
 
   defp admin, do: Ezagent.URI.user(:system, :admin)
-  defp regular_agent, do: Ezagent.URI.agent("team-alpha", "unkill-#{System.unique_integer([:positive])}")
+
+  defp regular_agent,
+    do: Ezagent.URI.agent("team-alpha", "unkill-#{System.unique_integer([:positive])}")
 
   describe "the authority root is un-killable" do
     test "Cap.revoke_all_to/2 REJECTS the admin (early, before the handler)" do

@@ -324,7 +324,8 @@ defmodule Ezagent.Cap.Authority do
   """
   @spec has_authority_history_result?(URI.t()) :: {:ok, boolean()} | :error
   def has_authority_history_result?(%URI{} = uri) do
-    {:ok, uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() != []}
+    {:ok,
+     uri |> Ezagent.URI.instance() |> Ezagent.URI.stable_key() |> KindCapAuthority.list() != []}
   rescue
     _ -> :error
   catch
