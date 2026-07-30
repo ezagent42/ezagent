@@ -633,12 +633,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
          {:ok, profile_status} <- persist_display_name(instance_uri, template_content_map) do
       receipts = add_display_profile_receipt(ownership_receipts, instance_uri, profile_status)
 
-      hook_result = test_hook_after_display_profile(instance_uri, profile_status)
-
-      if hook_result == :ok do
-        {:ok, receipts}
-      else
-        {:error, hook_result, receipts}
+      case test_hook_after_display_profile(instance_uri, profile_status) do
+        :ok -> {:ok, receipts}
+        {:error, reason} -> {:error, reason, receipts}
       end
     else
       {:error, reason} -> {:error, reason, ownership_receipts}
