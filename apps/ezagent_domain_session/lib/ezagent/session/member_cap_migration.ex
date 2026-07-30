@@ -21,9 +21,10 @@ defmodule Ezagent.Session.MemberCapMigration do
   Idempotency is keyed on the **exact member-cap identity** (the `identity_key/1`
   5-tuple), NOT on general `matches?/2` authorization — so a session whose owner
   already holds a broad `:any` cap STILL gets its concrete member-cap written. A
-  re-run is a no-op (`skipped_already_held`). Grants are **synchronous and
-  CONFIRMED**: only a committed `:ok` increments `members_granted`; a `{:error}`
-  grant (e.g. an unreachable member Kind) is logged and NOT counted.
+  re-run is a no-op when the cap is already held or has a validated pending
+  absorb (`skipped_already_held`, retained as the legacy report key). New grants
+  are synchronous: only a committed `:ok` increments `members_granted`; a
+  `{:error}` grant (e.g. an unreachable member Kind) is logged and NOT counted.
 
   Ownerless sessions fall back to the #154 admin granter (matching
   `public_view_granter/1`), LOGGED and reported as `ownerless_fallback`.
@@ -52,7 +53,8 @@ defmodule Ezagent.Session.MemberCapMigration do
   @doc """
   CLI/programmatic entry. `argv` accepts `--dry-run` and `--gate`.
 
-    * `--gate` → `:ok` if every session member holds the exact member-cap, else
+    * `--gate` → `:ok` if every session member effectively has the exact
+      member-cap (held or validated pending), else
       `{:error, {:uncovered_member_caps, count}}` (nonzero-exit signal).
     * otherwise → runs the migration (`--dry-run` reports without writing) and
       returns the `report/0` map.
@@ -97,8 +99,9 @@ defmodule Ezagent.Session.MemberCapMigration do
   end
 
   @doc """
-  Go/no-go gate. `:ok` iff EVERY session member holds the exact member-cap;
-  `{:error, {:uncovered_member_caps, count}}` otherwise.
+  Go/no-go gate. `:ok` iff EVERY session member effectively has the exact
+  member-cap (held or validated pending); `{:error,
+  {:uncovered_member_caps, count}}` otherwise.
   """
   @spec gate() :: :ok | {:error, {:uncovered_member_caps, non_neg_integer()}}
   def gate do
@@ -186,9 +189,10 @@ defmodule Ezagent.Session.MemberCapMigration do
     end
   end
 
-  # Exact-identity idempotency (R3.2): the member already holds THIS concrete
-  # member-cap (5-tuple `identity_key/1` equality) — a broad `:any` cap does NOT
-  # satisfy it, so the concrete cap is still written.
+  # Exact-identity idempotency (R3.2): the member already holds or has a
+  # validated pending absorb for THIS concrete member-cap (5-tuple
+  # `identity_key/1` equality). A broad `:any` cap does NOT satisfy it, so the
+  # concrete cap is still written.
   defp holds_member_cap_exact?(member_uri, session_uri) do
     ws = Ezagent.Capability.workspace_of(session_uri)
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
