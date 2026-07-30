@@ -251,6 +251,30 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
+  test "authority rollover creates a new pending delivery for the same capability axes" do
+    {target, pid} = spawn_target("authority-generation-absorb")
+    authority_target = Ezagent.URI.instance(target)
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    generation_one = capability(target)
+
+    assert Authority.verify_against_current(generation_one, target, authority_target)
+    assert :ok = Invocation.dispatch(absorb_invocation(target, generation_one))
+    assert pending_delivery_count(target) == 1
+
+    assert {:ok, generation_two_authority} = Authority.regenesis(authority_target, :user)
+    generation_two = same_semantic_cap(target, generation_one, generation_two_authority)
+
+    assert Capability.identity_key(generation_one) == Capability.identity_key(generation_two)
+    refute generation_one.key_id == generation_two.key_id
+    refute Authority.verify_against_current(generation_one, target, authority_target)
+    assert Authority.verify_against_current(generation_two, target, authority_target)
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, generation_two))
+    assert pending_delivery_count(target) == 2
+
+    terminate(target, pid)
+  end
+
   for {terminal_status, timestamp_field} <- [applied: :applied_at, dead: :dead_at] do
     test "a #{terminal_status} semantic absorb does not block a later pending delivery" do
       terminal_status = unquote(terminal_status)
@@ -544,7 +568,10 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
   defp same_semantic_cap(target, cap) do
     {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
+    same_semantic_cap(target, cap, authority)
+  end
 
+  defp same_semantic_cap(target, cap, authority) do
     requested = %{
       cap
       | granted_by: nil,

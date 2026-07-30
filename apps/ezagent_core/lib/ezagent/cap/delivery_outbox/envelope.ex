@@ -126,13 +126,12 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec semantic_identity(Capability.t()) :: String.t()
   def semantic_identity(%Capability{} = cap) do
     digest =
-      cap
-      |> Capability.identity_key()
+      {Capability.identity_key(cap), cap.key_id}
       |> :erlang.term_to_binary([:deterministic])
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.encode16(case: :lower)
 
-    "cap-v1:#{digest}"
+    "cap-v2:#{digest}"
   end
 
   defp producer_parts(%Invocation{

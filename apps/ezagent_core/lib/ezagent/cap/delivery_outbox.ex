@@ -522,7 +522,8 @@ defmodule Ezagent.Cap.DeliveryOutbox do
 
   defp verify_reused_payload(%Delivery{} = delivery, envelope, :reused_semantic) do
     with {:ok, %{cap: %Capability{} = stored_cap}} <- Envelope.decode(delivery),
-         true <- Capability.identity_key(stored_cap) == Capability.identity_key(envelope.cap) do
+         true <- Capability.identity_key(stored_cap) == Capability.identity_key(envelope.cap),
+         true <- stored_cap.key_id == envelope.cap.key_id do
       :ok
     else
       _ -> {:error, :idempotency_conflict}
