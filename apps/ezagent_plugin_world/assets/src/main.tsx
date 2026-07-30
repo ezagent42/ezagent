@@ -135,7 +135,8 @@ const roots = new WeakMap<HTMLElement, Root>()
 
 export type WorldHandle = {
   unmount: () => void
-  // LiveView hook 侧桥：把最新的 data-last-dispatch 值推给已挂载的 WorldApp。
+  // LiveView hook 侧桥：把最新的 data-* 值推给已挂载的 WorldApp。
+  setCaller: (caller: WorldMountOptions["caller"]) => void
   setDispatchStatus: (status: string | null) => void
 }
 
@@ -144,21 +145,32 @@ export function mountWorld(element: HTMLElement, options: WorldMountOptions = {}
 
   const dispatchStatusListener: {current: ((status: string | null) => void) | null} = {current: null}
   const root = createRoot(element)
+  let caller = options.caller
+
+  const render = () => {
+    root.render(
+      <WorldApp
+        {...options}
+        caller={caller}
+        getDispatchStatus={() => element.dataset.lastDispatch || null}
+        registerDispatchStatusListener={(listener) => {
+          dispatchStatusListener.current = listener
+        }}
+      />,
+    )
+  }
+
   roots.set(element, root)
-  root.render(
-    <WorldApp
-      {...options}
-      getDispatchStatus={() => element.dataset.lastDispatch || null}
-      registerDispatchStatusListener={(listener) => {
-        dispatchStatusListener.current = listener
-      }}
-    />,
-  )
+  render()
 
   return {
     unmount: () => {
       root.unmount()
       roots.delete(element)
+    },
+    setCaller: (nextCaller) => {
+      caller = nextCaller
+      render()
     },
     setDispatchStatus: (status) => dispatchStatusListener.current?.(status),
   }

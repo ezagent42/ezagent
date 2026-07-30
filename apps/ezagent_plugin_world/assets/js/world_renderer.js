@@ -3,6 +3,7 @@ import {worldNavigationTarget} from "./world_navigation.js"
 export const WorldRenderer = {
   async mounted() {
     this._world = null
+    this._lastCallerJson = this.el.dataset.caller || ""
     this._lastDispatchStatus = null
     this._worldNavigate = (event) => {
       const to = worldNavigationTarget(event, this.el)
@@ -43,8 +44,14 @@ export const WorldRenderer = {
 
   updated() {
     // data 属性会穿过 phx-update="ignore" 被 patch（同 uri_picker.js 的先例），
-    // 但 React 岛不会自动重读。把最新的 data-last-dispatch 推进岛里，
-    // G5 错误卡片才能随后端 assign 实时出现/消失。
+    // 但 React 岛不会自动重读。把最新的 caller 和 data-last-dispatch 推进岛里。
+    const callerJson = this.el.dataset.caller || ""
+
+    if (callerJson !== this._lastCallerJson) {
+      this._lastCallerJson = callerJson
+      this._world?.setCaller(parseJson(callerJson, {}))
+    }
+
     const status = this.el.dataset.lastDispatch || null
     if (status === this._lastDispatchStatus) return
 
