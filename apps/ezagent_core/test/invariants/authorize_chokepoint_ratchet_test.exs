@@ -321,6 +321,25 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex",
         "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex"
       ]
+    },
+    %{
+      id: :public_self_license_minter,
+      desc:
+        "the public Identity self-license minter `Ezagent.ActionSet.Identity." <>
+          "mint_self_license/2` (#1627 — made public so `PreEpochRemint` + " <>
+          "`AdminKeyRotation` call it) invoked cross-module outside its two " <>
+          "sanctioned callers — a THIRD external caller is an un-gated re-credential " <>
+          "path the whole-file `identity.ex` allowlist would miss. Matches the " <>
+          "QUALIFIED `Identity.mint_self_license(` call form (identity.ex's own " <>
+          "unqualified internal calls + unrelated same-named private helpers, e.g. " <>
+          "`session_self_license_migration.ex`, are intentionally not matched).",
+      pattern: ~r/Identity\.mint_self_license\(/,
+      reviewed_paths: [
+        # the PRE-EPOCH admin re-mint (gated on the un-killable authority root).
+        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
+        # the MANUAL admin key-rotation operator command (atomic rotate + re-mint).
+        "apps/ezagent_domain_identity/lib/ezagent/identity/admin_key_rotation.ex"
+      ]
     }
   ]
 

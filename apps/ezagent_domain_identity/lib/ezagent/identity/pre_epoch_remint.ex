@@ -86,7 +86,11 @@ defmodule Ezagent.Identity.PreEpochRemint do
   """
   @spec remint(%{caps: term()}, URI.t()) :: %{caps: term()}
   def remint(%{caps: caps} = state, %URI{} = uri) do
-    if eligible?(caps, uri) do
+    # CHEAP, DRIFT-FREE pre-gate: only the authority ROOT is ever eligible, and a
+    # URI cannot change under us, so skip the transaction entirely for every other
+    # principal (the ~100% case). Every DRIFT-SENSITIVE condition (epoch, fence,
+    # store, history, no-current-license) is re-read INSIDE the locked transaction.
+    if authority_root?(uri) do
       case locked_remint(caps, uri) do
         {:ok, relicensed} -> %{state | caps: relicensed}
         :skip -> state
@@ -102,24 +106,16 @@ defmodule Ezagent.Identity.PreEpochRemint do
 
   def remint(state, _uri), do: state
 
-  # Eligible iff: a DEFINITIVE :inactive epoch, the canonical genesis admin, no
-  # current self-license already, the fence is clear (fail-closed), and the
-  # durable store row is not a revocation record (fail-closed).
-  defp eligible?(caps, uri) do
-    Cutover.status() == :inactive and
-      authority_root?(uri) and
-      not has_current_self_license?(caps, uri) and
-      fence_clear?(uri) and
-      store_permits_remint?(uri)
-  end
-
   # The un-forgeable structural witness: the canonical genesis admin
   # (`entity://system/user/admin`). No regular principal (nor a system-scoped
   # `entity://system/agent/*` role agent, which CAN be `revoke_all_to`'d) can
   # present this URI — provisioning under `workspace://system` requires admin
-  # authority — so a killed principal can never satisfy it. Note a
-  # `revoke_all_to`'d non-admin leaves a stale-`:active` store row (no downgrade),
-  # so ONLY this identity check blocks it; the store row cannot.
+  # authority — so a killed principal can never satisfy it. B1-hybrid backs this
+  # with STRUCTURAL un-killability: `Cap.revoke_all_to/2`, `DeleteUser`, and
+  # `Authority.regenesis/2` all REJECT `admin_uri()`, so a "deliberately-killed
+  # admin" is UNREACHABLE — a stale-gen admin is therefore ALWAYS legitimate
+  # (reflow / restore), and the ONLY sanctioned rotation
+  # (`Ezagent.Identity.AdminKeyRotation`) re-mints atomically (no stale window).
   defp authority_root?(uri) do
     Ezagent.URI.stable_key(uri) == Ezagent.URI.stable_key(root_uri())
   end
@@ -167,21 +163,54 @@ defmodule Ezagent.Identity.PreEpochRemint do
     end
   end
 
-  # Verify → mint → re-verify under a FOR SHARE lock on the current authority
-  # generation (MAJOR-2). A concurrent `regenesis/2` cannot rotate the generation
-  # between the mint and the currency check; a stale mint (from an authority
-  # opened before a pre-activate rotation) verifies `false` and is discarded.
+  # Fail-CLOSED authority-history read (MAJOR-3): an ABSENT store row is only the
+  # legitimate reflow/legacy case for a principal that HAS authority history; a
+  # history-read error or a genuine no-history "phantom" must BLOCK the re-mint.
+  # `Authority.has_authority_history?/1` fails OPEN (unreadable ⇒ true), so use the
+  # error-aware result variant and require an affirmative `{:ok, true}`.
+  defp authority_history_present?(uri) do
+    Authority.has_authority_history_result?(uri) == {:ok, true}
+  end
+
+  # The FULL drift-sensitive eligibility, re-read INSIDE the locked transaction
+  # (MAJOR-2): a DEFINITIVE `:inactive` epoch, no current self-license already, the
+  # fence clear (fail-closed), the store row not a revocation record (fail-closed),
+  # and authority history present (fail-closed). The `authority_root?` identity
+  # gate is the cheap drift-free pre-check in `remint/2`.
+  defp eligible_under_lock?(caps, uri) do
+    Cutover.status() == :inactive and
+      not has_current_self_license?(caps, uri) and
+      fence_clear?(uri) and
+      store_permits_remint?(uri) and
+      authority_history_present?(uri)
+  end
+
+  # ATOMIC re-mint (MAJOR-2): lock the current authority row FIRST, then re-read
+  # the ENTIRE eligibility predicate (epoch/fence/store/history/no-current-license)
+  # and mint + re-verify — all under the one lock, so no epoch-activation / fence /
+  # store transition can slip between the check and the mint. The mint is current
+  # by construction (signed under the locked in-scope authority) and re-verified
+  # before commit. The caps_json/store PROJECTION (`persist_user_caps_after_marker`
+  # in `activate/2`) rides outside the lock by design: the sole re-mint target is
+  # the STRUCTURALLY UN-KILLABLE admin, which cannot be concurrently regenesis'd
+  # (only `AdminKeyRotation` advances it, under this same lock), so there is no
+  # adversarial drift; the live-slice update is the authoritative outcome and
+  # caps_json is a best-effort projection that self-heals on the next boot.
   defp locked_remint(caps, uri) do
     Repo.transaction(fn ->
       :ok = Authority.lock_current_generation(uri)
 
-      without_stale = drop_self_licenses(caps)
+      if eligible_under_lock?(caps, uri) do
+        without_stale = drop_self_licenses(caps)
 
-      with {:ok, relicensed} <- Ezagent.ActionSet.Identity.mint_self_license(without_stale, uri),
-           true <- has_current_self_license?(relicensed, uri) do
-        relicensed
+        with {:ok, relicensed} <- Ezagent.ActionSet.Identity.mint_self_license(without_stale, uri),
+             true <- has_current_self_license?(relicensed, uri) do
+          relicensed
+        else
+          _ -> Repo.rollback(:remint_not_current)
+        end
       else
-        _ -> Repo.rollback(:remint_not_current)
+        Repo.rollback(:not_eligible)
       end
     end)
     |> case do

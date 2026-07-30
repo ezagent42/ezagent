@@ -306,7 +306,13 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         # Per-Kind authority genesis and explicit re-genesis are the one
         # canonical-admin root transition; this comparison is not a dispatch
         # authorization shortcut.
-        "apps/ezagent_core/lib/ezagent/cap/authority.ex"
+        "apps/ezagent_core/lib/ezagent/cap/authority.ex",
+        # STRUCTURAL (#1627 B1-hybrid): `Users.delete/1` compares the DELETE TARGET
+        # to `admin_uri()` to make the genesis admin UN-KILLABLE (`:cannot_delete_admin`).
+        # This is the OPPOSITE of a manage/admin authz shortcut — it grants no
+        # power; it PROTECTS the authority root from a kill path — so `Identity.admin?/1`
+        # (a "does this caller HOLD admin power" predicate) is the wrong tool.
+        "apps/ezagent_domain_identity/lib/ezagent/users.ex"
       ]
     }
   ]

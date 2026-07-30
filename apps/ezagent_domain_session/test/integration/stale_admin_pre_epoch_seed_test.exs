@@ -51,10 +51,12 @@ defmodule EzagentDomainInstanceMessage.Integration.StaleAdminPreEpochSeedTest do
     refute Enum.empty?(Ezagent.Identity.read_held_caps(admin())),
            "precondition: the bootstrapped admin is a current principal"
 
-    # 2. ROTATE the admin authority — its persisted self-license is now
-    #    STALE-GENERATION (the canary condition), and its independent held-cap
-    #    load gen-gates to EMPTY.
-    assert {:ok, _bumped} = Authority.regenesis(admin(), :user)
+    # 2. ROTATE the admin authority WITHOUT re-minting (an INTERRUPTED rotation —
+    #    a bare `regenesis(admin)` is rejected post-#1627 as the root is
+    #    un-killable). Its persisted self-license is now STALE-GENERATION (the
+    #    reflow/interrupted-rotation canary condition), and its independent
+    #    held-cap load gen-gates to EMPTY.
+    assert {:ok, _bumped} = Authority.rotate_root_generation(admin(), :user)
     _ = Ezagent.Kind.terminate!(admin())
     Process.sleep(50)
 
