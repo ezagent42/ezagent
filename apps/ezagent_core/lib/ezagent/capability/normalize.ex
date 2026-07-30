@@ -9,9 +9,34 @@ defmodule Ezagent.Capability.Normalize do
   `users.caps_json` storage: atoms/modules → strings, URIs → strings, `:any`
   → `"any"`, `granted_at` → ISO8601. Inverse of `from_map/1`. Backs
   `Ezagent.Capability.to_map/1`.
+
+  ## Legacy-shape tolerance (#213 — canary cutover-backfill catch #2)
+
+  Routes the cap through `fill_defaults/1` first, which re-projects it onto a
+  fresh defstruct so fields added AFTER it was serialized are present with their
+  `nil` defaults. A durable Kind's `:identity` slice snapshotted before the
+  #1399 cap-signing trio (`signature` / `key_id` / `grantee_uri`, 2026-07-14)
+  stores a `%Capability{}` via `:erlang.term_to_binary/1`; `binary_to_term`
+  reconstructs it as a struct-shaped map that MATCHES `%Capability{}` (struct
+  matching only checks `:__struct__`) yet LACKS the trio's keys — so a strict
+  `cap.signature` field access raised `(KeyError) key :signature not found`,
+  crashing the cutover backfill's `encode_caps/1`
+  (`EzagentCore.Release.identity_cutover/1` Step 1/3). Re-projection fills the
+  missing keys so serialization is total. It NEVER widens an authorization axis:
+  a genuinely-absent `workspace_uri` fills with `nil` and fails LOUD in
+  `workspace_to_wire/1` — it is not smoothed to `:any`. A legacy unsigned cap
+  serializes with `"signature" => nil` (still non-licensing: the self-license
+  verify fails closed on a non-binary signature).
+
+  A non-`%Capability{}` input is a bug (every serialize-path cap is a struct —
+  users decode via `from_map/1`, snapshots via `binary_to_term`); it is left to
+  crash rather than silently coerced, since `from_map/1` would default a missing
+  `workspace_uri` to `:any` (cross-workspace).
   """
   @spec to_map(Capability.t()) :: map()
   def to_map(%Capability{} = cap) do
+    cap = fill_defaults(cap)
+
     %{
       "kind" => atom_or_module_to_string(cap.kind),
       "behavior" => atom_or_module_to_string(cap.behavior),
@@ -25,6 +50,26 @@ defmodule Ezagent.Capability.Normalize do
       "grantee_uri" => uri_or_nil_to_string(cap.grantee_uri)
     }
   end
+
+  @doc """
+  Re-project a `%Capability{}` onto a fresh defstruct so every CURRENT field is
+  present, filling fields added after the struct was serialized (the #1399
+  cap-signing trio `signature` / `key_id` / `grantee_uri`) with their `nil`
+  defaults.
+
+  `struct/2` starts from `%Capability{}` (all defaults) and overlays only the
+  legacy map's recognized fields, so a pre-#1399 `binary_to_term`'d cap
+  (struct-shaped map missing the trio's keys) becomes a complete, strict-field-
+  accessible struct. It does NOT invent authorization: a missing `workspace_uri`
+  fills with the `nil` defstruct default (which fails LOUD at serialize time),
+  never `:any`; and `@enforce_keys` legacy fields (kind/behavior/instance/
+  workspace_uri/granted_by/granted_at, all pre-#1399) are already present.
+
+  Shared by `to_map/1` and the `Jason.Encoder` impl so the two serializers
+  cannot drift on legacy-shape tolerance.
+  """
+  @spec fill_defaults(Capability.t()) :: Capability.t()
+  def fill_defaults(%Capability{} = cap), do: struct(Capability, Map.from_struct(cap))
 
   @doc """
   Deserialize a JSON-decoded STRING-keyed map back to `%Capability{}`. This is

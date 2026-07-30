@@ -153,9 +153,64 @@ defmodule Ezagent.EntityCaps.StoreBackfillTest do
     end
   end
 
+  describe "legacy / unsigned caps (canary cutover-backfill catch #2, #213)" do
+    test "backfill over a pre-#1399 signature-less cap does NOT crash (encode_caps KeyError)" do
+      agent = agent_uri("legacy-encode")
+      # A pre-#1399 legacy cap: a struct-shaped map MISSING the
+      # signature/key_id/grantee_uri keys — the exact shape `binary_to_term`
+      # reconstructs from a durable `:identity` slice snapshotted before the
+      # cap-signing trio (2026-07-14).
+      legacy = legacy_unsigned(issued_cap(agent, :send))
+      refute Map.has_key?(legacy, :signature)
+
+      # FAIL-BEFORE: `Store.backfill/2`'s `encode_caps` raised
+      # `(KeyError) key :signature not found`, crashing the cutover backfill.
+      # PASS-AFTER: it completes (no self-license present → revoked).
+      assert {:ok, :revoked_unprovisioned} = Store.backfill(agent, [legacy])
+    end
+
+    test "an entity whose ONLY self-license is UNSIGNED backfills revoked_unprovisioned, NEVER active" do
+      # Control: a SIGNED self-license → active.
+      signed_agent = agent_uri("signed-self-license")
+      assert {:ok, :active} = Store.backfill(signed_agent, [self_license(signed_agent)])
+
+      # The SAME shape of license, minus its signature: an UNSIGNED self-license
+      # (the trio's keys absent — the legacy snapshot shape). The authority is
+      # freshly current, so the ONLY reason it must not activate is the missing
+      # signature.
+      agent = agent_uri("unsigned-self-license")
+      unsigned_license = legacy_unsigned(self_license(agent))
+      refute Map.has_key?(unsigned_license, :signature)
+
+      # SECURITY INVARIANT: unsigned ≠ valid license — `verify_against_current`
+      # fails closed on the absent signature key.
+      refute Store.has_current_self_license?([unsigned_license], agent)
+      assert {:ok, :revoked_unprovisioned} = Store.backfill(agent, [unsigned_license])
+      assert Store.status(agent) == :revoked_unprovisioned
+    end
+
+    test "a mixed signed + unsigned cap list backfills active on the valid self-license and round-trips" do
+      agent = agent_uri("mixed")
+      caps = [self_license(agent), legacy_unsigned(issued_cap(agent, :send))]
+
+      # The valid signed self-license grants `active`; the signature-less
+      # sibling neither crashes encode nor is treated as a license.
+      assert {:ok, :active} = Store.backfill(agent, caps)
+      assert Store.status(agent) == :active
+      # Both caps (incl. the signature-less one) round-trip through caps_json.
+      assert identity_keys(Store.load(agent)) == identity_keys(caps)
+    end
+  end
+
   # -------------------------------------------------------------------
   # Helpers (mirror store_test.exs)
   # -------------------------------------------------------------------
+
+  # Strip the #1399 cap-signing trio's keys to reproduce a pre-signing
+  # `binary_to_term`'d snapshot cap: a struct-shaped map that MATCHES
+  # `%Capability{}` (only `:__struct__` checked) yet lacks those keys.
+  defp legacy_unsigned(%Capability{} = cap),
+    do: Map.drop(cap, [:signature, :key_id, :grantee_uri])
 
   defp issued_cap(receiver, action) do
     unsigned = %Capability{
