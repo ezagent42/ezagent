@@ -437,6 +437,11 @@ defmodule Ezagent.Capability do
   Atoms become strings; modules become strings; URIs become strings.
   `workspace_uri` is serialized via `uri_or_any_to_string/1` (SPEC v3
   §4 — `:any` round-trips as `"any"`). Inverse of `from_map/1`.
+
+  Tolerant of a legacy `%Capability{}` deserialized from a pre-#1399 snapshot
+  (a struct-shaped map that still matches `%Capability{}` but lacks the
+  `signature` / `key_id` / `grantee_uri` keys) — those are re-projected to
+  `nil` defaults, never a `KeyError` (#213).
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = cap), do: Normalize.to_map(cap)
@@ -574,6 +579,12 @@ end
 # fields stringify, scope tuples become lists, atoms/DateTime pass through.
 defimpl Jason.Encoder, for: Ezagent.Capability do
   def encode(%Ezagent.Capability{} = cap, opts) do
+    # #213: re-project a possibly-legacy struct (pre-#1399 snapshot missing the
+    # signature/key_id/grantee_uri keys) so the strict field reads below can't
+    # KeyError — same legacy-shape tolerance as `Capability.to_map/1`, via the
+    # shared helper so the two serializers cannot drift.
+    cap = Ezagent.Capability.Normalize.fill_defaults(cap)
+
     Jason.Encode.map(
       %{
         kind: cap.kind,
