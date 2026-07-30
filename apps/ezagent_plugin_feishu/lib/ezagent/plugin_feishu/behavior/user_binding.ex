@@ -246,6 +246,13 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     bound_by = Map.get(ctx, :caller) || default_admin_uri()
     user_uri_str = uri_to_str(user_uri)
 
+    # B2 review R3: the ActionSet MUST fail-closed on non-entity URIs
+    # BEFORE any side-effect.  The old World-UI `valid_entity_uri?/4`
+    # check was the only gate and it was removed in B2; this is the
+    # authoritative single chokepoint — a template://, session://, or
+    # any other non-entity URI is rejected here regardless of caller
+    # caps or admin context.
+    #
     # Codex r1 P1.2: enforce workspace scope on the NEW user URI BEFORE
     # any side-effect. The table is global (no workspace column) so
     # we structurally derive the user's workspace from their URI and
@@ -266,7 +273,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
     # mid-policy must not destroy the operator's existing setup).
     prior_row = snapshot_existing_binding(open_id)
 
-    with :ok <- ensure_same_workspace(user_uri_str, ctx),
+    with :ok <- ensure_entity_user_uri(user_uri_str),
+         :ok <- ensure_same_workspace(user_uri_str, ctx),
          :ok <- ensure_no_cross_workspace_hijack(open_id, ctx),
          {:ok, _row} <- storage_mod().bind(open_id, user_uri_str, bound_by),
          :ok <- apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
@@ -353,6 +361,24 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
   defp uri_to_str(%URI{} = u), do: URI.to_string(u)
   defp uri_to_str(s) when is_binary(s), do: s
+
+  # B2 review R3: fail-closed gate — only `entity://<ws>/user/<name>` URIs
+  # are valid Feishu binding targets. The old World-UI `valid_entity_uri?`
+  # check was removed; this is the authoritative single chokepoint.
+  defp ensure_entity_user_uri(str) when is_binary(str) do
+    case Ezagent.URI.new!(str) do
+      %URI{scheme: "entity"} = uri ->
+        case Ezagent.URI.type(uri) do
+          {:ok, "user"} -> :ok
+          _ -> {:error, {:not_user_entity, str}}
+        end
+
+      _ ->
+        {:error, {:not_entity_uri, str}}
+    end
+  rescue
+    _ -> {:error, {:not_entity_uri, str}}
+  end
 
   # Fallback `bound_by` attribution. Only reachable in test
   # scenarios that bypass the dispatch caller-resolution path
@@ -451,21 +477,27 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   # existing setup. Restore is "rebind to the prior user_uri" (idempotent
   # on the open_id primary key).
   #
-  # Rollback failure is logged but the ORIGINAL policy error
-  # propagates — operator needs to see the first failure, not the
-  # rollback's.
+  # Rollback failure is distinct from an ordinary policy failure. Callers
+  # must not be told the mutation was restored when the compensating write
+  # failed and the new binding may still be durable.
   defp apply_policy_or_rollback(open_id, user_uri_str, bound_by, prior_row) do
     case BindingPolicy.apply(user_uri_str, bound_by) do
       :ok ->
         :ok
 
-      {:error, _} = err ->
-        rollback_binding(open_id, prior_row, err)
-        err
+      {:error, reason} = err ->
+        policy_failure_result(open_id, prior_row, reason, err)
 
       other ->
-        rollback_binding(open_id, prior_row, {:error, other})
-        {:error, {:policy_apply_failed, other}}
+        reason = {:unexpected_policy_result, other}
+        policy_failure_result(open_id, prior_row, reason, {:error, reason})
+    end
+  end
+
+  defp policy_failure_result(open_id, prior_row, policy_reason, original_err) do
+    case rollback_binding(open_id, prior_row, original_err) do
+      :ok -> {:error, {:binding_policy_failed, policy_reason}}
+      {:error, _rollback_reason} -> {:error, :binding_rollback_failed}
     end
   end
 
@@ -487,6 +519,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
       {:error, rollback_reason} ->
         log_rollback_failure(open_id, :delete, rollback_reason, original_err)
+        {:error, rollback_reason}
+
+      other ->
+        log_rollback_failure(open_id, :delete, other, original_err)
+        {:error, other}
     end
   end
 
@@ -509,6 +546,11 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
 
       {:error, rollback_reason} ->
         log_rollback_failure(open_id, :restore, rollback_reason, original_err)
+        {:error, rollback_reason}
+
+      other ->
+        log_rollback_failure(open_id, :restore, other, original_err)
+        {:error, other}
     end
   end
 
@@ -530,6 +572,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBinding do
   end
 
   defp error_class({:error, reason}) when is_atom(reason), do: Atom.to_string(reason)
+  defp error_class(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp error_class(_other), do: "unexpected"
 
   # Pull the target Workspace URI out of dispatch ctx. `self_uri` is

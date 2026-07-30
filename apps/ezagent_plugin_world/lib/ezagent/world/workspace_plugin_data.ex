@@ -7,6 +7,8 @@ defmodule Ezagent.World.WorkspacePluginData do
   LiveViews until a dedicated dispatch action is added.
   """
 
+  alias Ezagent.World.FeishuBindingDispatch
+
   @type route :: %{
           component: String.t(),
           title: String.t(),
@@ -116,9 +118,18 @@ defmodule Ezagent.World.WorkspacePluginData do
     |> Map.merge(auto_derive(kind, entity_uri))
   end
 
-  defp component_state(%{component: "feishu_bindings"}, base, workspace_uri, caller_uri, _caps) do
-    base
-    |> Map.put("bindings", list_feishu_bindings())
+  defp component_state(%{component: "feishu_bindings"}, base, workspace_uri, caller_uri, caps) do
+    case FeishuBindingDispatch.list_for_initial_state(workspace_uri, caller_uri, caps) do
+      {:ok, bindings} ->
+        base
+        |> Map.put("bindings", bindings)
+        |> Map.put("bindings_error", nil)
+
+      {:error, code} ->
+        base
+        |> Map.put("bindings", [])
+        |> Map.put("bindings_error", FeishuBindingDispatch.code_string(code))
+    end
     |> Map.put("entity_options", entity_options(caller_uri, workspace_uri))
   end
 
@@ -128,29 +139,6 @@ defmodule Ezagent.World.WorkspacePluginData do
     do: Map.put(state, "template_mode", "new")
 
   defp maybe_put_template_mode(state, _component), do: state
-
-  @doc "List Feishu open_id to entity bindings for the world bindings panel."
-  @spec list_feishu_bindings() :: [map()]
-  def list_feishu_bindings do
-    user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
-
-    if Code.ensure_loaded?(user_binding) and function_exported?(user_binding, :list_all, 0) do
-      user_binding
-      |> apply(:list_all, [])
-      |> Enum.map(fn binding ->
-        %{
-          "open_id" => field(binding, :open_id),
-          "user_uri" => field(binding, :user_uri),
-          "bound_by" => field(binding, :bound_by),
-          "bound_at" => datetime(field(binding, :bound_at))
-        }
-      end)
-    else
-      []
-    end
-  rescue
-    err -> [%{"error" => inspect(err)}]
-  end
 
   defp list_workspaces(caller_uri, caller_caps) do
     Ezagent.Workspace.list_workspaces_for(caller_uri, caller_caps)
@@ -664,9 +652,6 @@ defmodule Ezagent.World.WorkspacePluginData do
     _ -> []
   end
 
-  defp field(map, key) when is_map(map), do: Map.get(map, key) || Map.get(map, to_string(key))
-  defp field(_other, _key), do: nil
-
   defp display_name(nil), do: nil
   defp display_name(entity_uri), do: Ezagent.EntityPresenter.display(entity_uri)
 
@@ -688,11 +673,6 @@ defmodule Ezagent.World.WorkspacePluginData do
   rescue
     _ -> nil
   end
-
-  defp datetime(%DateTime{} = value), do: DateTime.to_iso8601(value)
-  defp datetime(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
-  defp datetime(nil), do: nil
-  defp datetime(value), do: inspect(value)
 
   defp jsonable(%URI{} = uri), do: URI.to_string(uri)
   defp jsonable(%DateTime{} = value), do: DateTime.to_iso8601(value)

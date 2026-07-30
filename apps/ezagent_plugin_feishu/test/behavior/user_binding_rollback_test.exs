@@ -29,6 +29,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
       reply: :sync,
       read: fn key, default -> Map.get(slice, key, default) end
     }
+
     Map.merge(base, overrides)
   end
 
@@ -47,7 +48,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
 
-      assert {:error, :policy_failure_synthetic} =
+      assert {:error, {:binding_policy_failed, :policy_failure_synthetic}} =
                BV.handle_bind(%{open_id: open_id, user_uri: @user_a}, ctx())
 
       assert :error = UB.resolve(open_id)
@@ -64,7 +65,7 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       Application.put_env(:ezagent_plugin_feishu, :binding_policy_mod, FailingPolicy)
 
-      assert {:error, :policy_failure_synthetic} =
+      assert {:error, {:binding_policy_failed, :policy_failure_synthetic}} =
                BV.handle_bind(%{open_id: open_id, user_uri: @user_b}, ctx())
 
       row_restored = EzagentCore.Repo.get!(EzagentPluginFeishu.UserBinding, open_id)
@@ -74,8 +75,8 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
     end
   end
 
-  describe "rollback failure log — real log_rollback_failure/4, redacted" do
-    test "unbind failure → log_rollback_failure fires, open_id redacted" do
+  describe "rollback failure — distinct result, durable row, redacted log" do
+    test "unbind failure reports binding_rollback_failed and the new row may remain" do
       secret = "ou_redact_log_#{System.unique_integer([:positive])}"
       alias EzagentPluginFeishu.Redact
       import ExUnit.CaptureLog
@@ -85,13 +86,15 @@ defmodule EzagentPluginFeishu.Behavior.UserBindingRollbackTest do
 
       log_output =
         capture_log(fn ->
-          BV.handle_bind(%{open_id: secret, user_uri: @user_a}, ctx())
+          assert {:error, :binding_rollback_failed} =
+                   BV.handle_bind(%{open_id: secret, user_uri: @user_a}, ctx())
         end)
 
+      assert {:ok, @user_a} = UB.resolve(secret)
       refute log_output =~ secret
       assert log_output =~ Redact.fingerprint(secret)
-      assert log_output =~ "rollback_error="
-      assert log_output =~ "synthetic"
+      assert log_output =~ "rollback_error=synthetic_unbind_failure"
+      assert log_output =~ "original_error=policy_failure_synthetic"
     end
   end
 end

@@ -6,7 +6,7 @@ defmodule Ezagent.World.WorkspacePluginActions do
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [push_event: 3, push_patch: 2]
 
-  alias Ezagent.World.{CredentialCascade, WorkspacePluginData}
+  alias Ezagent.World.{CredentialCascade, FeishuBindingDispatch, WorkspacePluginData}
 
   @default_world_template_installs ["chat"]
   @foundation_socialware_refs ["chat", "orchestrator", "socialware"]
@@ -123,7 +123,16 @@ defmodule Ezagent.World.WorkspacePluginActions do
     end
   end
 
-  @doc "Bind a Feishu open_id to a local entity URI."
+  @doc """
+  Bind a Feishu open_id to a local entity URI through the formal
+  `EzagentPluginFeishu.Behavior.UserBinding` dispatch.
+
+  B2 (handoff `feishu-binding-b2-world-dispatch`): retired the raw
+  `EzagentPluginFeishu.UserBinding.bind/3` + `BindingPolicy.apply/2`
+  calls — every mutation now goes through the Workspace Kind's registered
+  `:bind` action so CapBAC, workspace-scoping, anti-hijack, and policy
+  rollback are enforced at the dispatcher level.
+  """
   @spec bind_feishu_user(Phoenix.LiveView.Socket.t(), String.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def bind_feishu_user(socket, open_id, user_uri) do
@@ -131,50 +140,51 @@ defmodule Ezagent.World.WorkspacePluginActions do
     user_uri = String.trim(user_uri)
     caller = socket.assigns.current_entity_uri
     workspace = socket.assigns.current_workspace_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
     cond do
       open_id == "" or user_uri == "" ->
-        put_feishu_bindings(socket, "error:binding_fields_required")
-
-      not valid_entity_uri?(caller, workspace, user_uri) ->
-        put_feishu_bindings(socket, "error:invalid_entity_uri")
+        put_world_state(socket, %{}, "error:binding_fields_required")
 
       true ->
-        user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
-        binding_policy = Module.concat([EzagentPluginFeishu, BindingPolicy])
-        bound_by = URI.to_string(caller)
+        case FeishuBindingDispatch.bind(workspace, caller, caps, open_id, user_uri) do
+          {:ok, _result} ->
+            refresh_bindings_after_mutation(socket, "binding_saved_refresh_failed")
 
-        with true <- Code.ensure_loaded?(user_binding),
-             {:ok, _row} <- apply(user_binding, :bind, [open_id, user_uri, bound_by]) do
-          if Code.ensure_loaded?(binding_policy) and
-               function_exported?(binding_policy, :apply, 2) do
-            _ = apply(binding_policy, :apply, [user_uri, bound_by])
-          end
-
-          put_feishu_bindings(socket, "ok")
-        else
-          false -> put_feishu_bindings(socket, "error:feishu_binding_unavailable")
-          {:error, reason} -> put_feishu_bindings(socket, "error:#{reason(reason)}")
-          other -> put_feishu_bindings(socket, "error:#{reason(other)}")
+          {:error, code} ->
+            # Mutation failed — keep existing bindings visible, report only
+            # through the toast (last_dispatch_status). Never clear the
+            # table on a failed mutation.
+            put_world_state(socket, %{}, "error:#{FeishuBindingDispatch.code_string(code)}")
         end
     end
   end
 
-  @doc "Remove a Feishu open_id binding."
+  @doc """
+  Remove a Feishu open_id binding through the formal `:unbind` dispatch.
+
+  B2: retired the raw `EzagentPluginFeishu.UserBinding.unbind/2` call.
+  """
   @spec unbind_feishu_user(Phoenix.LiveView.Socket.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
   def unbind_feishu_user(socket, open_id) when is_binary(open_id) do
     open_id = String.trim(open_id)
-    user_binding = Module.concat([EzagentPluginFeishu, UserBinding])
+    caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
 
-    with true <- open_id != "",
-         true <- Code.ensure_loaded?(user_binding),
-         :ok <- apply(user_binding, :unbind, [open_id]) do
-      put_feishu_bindings(socket, "ok")
-    else
-      false -> put_feishu_bindings(socket, "error:open_id_required")
-      {:error, reason} -> put_feishu_bindings(socket, "error:#{reason(reason)}")
-      other -> put_feishu_bindings(socket, "error:#{reason(other)}")
+    cond do
+      open_id == "" ->
+        put_world_state(socket, %{}, "error:open_id_required")
+
+      true ->
+        case FeishuBindingDispatch.unbind(workspace, caller, caps, open_id) do
+          {:ok, _unbound} ->
+            refresh_bindings_after_mutation(socket, "binding_removed_refresh_failed")
+
+          {:error, code} ->
+            put_world_state(socket, %{}, "error:#{FeishuBindingDispatch.code_string(code)}")
+        end
     end
   end
 
@@ -517,8 +527,35 @@ defmodule Ezagent.World.WorkspacePluginActions do
     end
   end
 
-  defp put_feishu_bindings(socket, status) do
-    put_world_state(socket, %{"bindings" => WorkspacePluginData.list_feishu_bindings()}, status)
+  defp put_feishu_bindings(socket, bindings, bindings_error, status) do
+    put_world_state(
+      socket,
+      %{"bindings" => bindings, "bindings_error" => bindings_error},
+      status
+    )
+  end
+
+  # Mutation succeeded — now refresh the bindings table through the formal
+  # list dispatch. If refresh fails (e.g. the caller has a write cap but no
+  # list cap), the status is a distinct honest partial-success code so the
+  # UI never lies about the table being current.
+  defp refresh_bindings_after_mutation(socket, partial_code) do
+    caller = socket.assigns.current_entity_uri
+    workspace = socket.assigns.current_workspace_uri
+    caps = Ezagent.World.PresenterCaps.load(socket)
+
+    case FeishuBindingDispatch.list(workspace, caller, caps) do
+      {:ok, bindings} ->
+        put_feishu_bindings(socket, bindings, nil, "ok")
+
+      {:error, _code} ->
+        put_feishu_bindings(
+          socket,
+          [],
+          partial_code,
+          "error:#{partial_code}"
+        )
+    end
   end
 
   defp put_auto_notice(socket, notice, status) do
@@ -681,14 +718,6 @@ defmodule Ezagent.World.WorkspacePluginActions do
 
   defp patch_to_workspaces({:noreply, socket}) do
     {:noreply, push_patch(socket, to: "/workspaces")}
-  end
-
-  defp valid_entity_uri?(caller, workspace, user_uri) do
-    uri_options = Module.concat([Ezagent.UI, UriOptions])
-
-    Code.ensure_loaded?(uri_options) and
-      function_exported?(uri_options, :valid_for?, 4) and
-      apply(uri_options, :valid_for?, [caller, workspace, user_uri, [:entity]])
   end
 
   defp reason(reason) when is_atom(reason), do: Atom.to_string(reason)

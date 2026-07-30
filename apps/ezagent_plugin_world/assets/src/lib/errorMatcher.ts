@@ -35,6 +35,10 @@ function codeFromReason(reason: string): string | null {
   if (reason === "unauthorized") return "action_unauthorized"
   if (reason === "cross_workspace_denied") return "cross_workspace_denied"
   if (reason === "bad_args" || reason.startsWith("bad_args")) return "invalid_args"
+  if (reason === "invalid_args") return "invalid_args"
+  if (reason === "binding_fields_required") return "invalid_args"
+  if (reason === "invalid_entity_uri") return "invalid_args"
+  if (reason === "open_id_required") return "invalid_args"
   if (reason.startsWith("member_not_registered")) return "member_not_registered"
   if (reason === "quota_exhausted") return "quota_exhausted"
   return null
