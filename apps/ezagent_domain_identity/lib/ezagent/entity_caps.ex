@@ -41,6 +41,8 @@ defmodule Ezagent.EntityCaps do
   * `persist/2`, `grant/2`, and `revoke/2` return `:ok` or `{:error, reason}`.
   """
 
+  require Logger
+
   alias Ezagent.{
     Capability,
     Cmd,
@@ -61,39 +63,56 @@ defmodule Ezagent.EntityCaps do
   def load(uri) do
     uri = parse_uri(uri)
 
-    if fenced?(uri), do: [], else: do_load(uri)
+    case load_checked(uri) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
+    end
   end
 
-  defp do_load(uri) do
-    if Kind.self?(uri) do
-      # `Cap.authorize/3` runs inside the target Kind. When the target is also
-      # the authenticated holder, a live-first slice read would call the current
-      # GenServer synchronously and fail closed as `:holder_revoked`. The
-      # marker-bearing snapshot / user projection is the independently stored
-      # copy of the same Identity slice and avoids that self-call without
-      # trusting the presented candidate caps. (`Kind.read/3` §2.2 point 4 names
-      # exactly this `EntityCaps` self case; it serves the durable projection —
-      # but EntityCaps needs `verified/2` filtering, so it routes through
-      # `load_persisted/1`, whose `read_durable/3` never calls the live process.)
-      load_persisted(uri)
-    else
-      # SINGLE-SHOT public read (§2.2 `Kind.read/3`, `spawn: :never`) — the
-      # actor-internal-free replacement for the `KindRegistry.lookup` +
-      # `Kind.get_slice` reach-in that PRESERVES this loader's fail-CLOSED
-      # contract:
-      #   * `{:ok, slice}`        — live holder → verified live caps.
-      #   * `{:error, :not_live}` — genuinely cold-but-created → durable caps.
-      #   * any other `{:error, _}` (e.g. `{:get_slice_exit, _}` — a live holder
-      #     that transiently exited the read) → `[]`, never the stale durable set.
-      # `read_classified/2` is NOT used here: its bounded retry re-reads after a
-      # transiently-failing live pid deregisters, collapsing the fail-closed case
-      # into the cold-but-durable case (they become one `{:transient, ...}`).
-      case Kind.read(uri, :identity, spawn: :never) do
-        {:ok, slice} when is_map(slice) -> slice |> caps_from_slice() |> verified(uri)
-        {:ok, _non_map} -> []
-        {:error, :not_live} -> load_persisted(uri)
-        {:error, _transient} -> []
-      end
+  defp load_checked(uri) do
+    cond do
+      fenced?(uri) ->
+        {:ok, []}
+
+      Kind.self?(uri) ->
+        # `Cap.authorize/3` runs inside the target Kind. When the target is also
+        # the authenticated holder, a live-first slice read would call the current
+        # GenServer synchronously and fail closed as `:holder_revoked`. The
+        # marker-bearing snapshot / user projection is the independently stored
+        # copy of the same Identity slice and avoids that self-call without
+        # trusting the presented candidate caps. (`Kind.read/3` §2.2 point 4 names
+        # exactly this `EntityCaps` self case; it serves the durable projection —
+        # but EntityCaps needs `verified/2` filtering, so it routes through
+        # `load_persisted/1`, whose `read_durable/3` never calls the live process.)
+        load_persisted_checked(uri)
+
+      true ->
+        # SINGLE-SHOT public read (§2.2 `Kind.read/3`, `spawn: :never`) — the
+        # actor-internal-free replacement for the `KindRegistry.lookup` +
+        # `Kind.get_slice` reach-in that PRESERVES this loader's fail-CLOSED
+        # contract:
+        #   * `{:ok, slice}`        — live holder → verified live caps.
+        #   * `{:error, :not_live}` — genuinely cold-but-created → durable caps.
+        #   * any other `{:error, _}` (e.g. `{:get_slice_exit, _}` — a live holder
+        #     that transiently exited the read) → `[]`, never the stale durable set.
+        # `read_classified/2` is NOT used here: its bounded retry re-reads after a
+        # transiently-failing live pid deregisters, collapsing the fail-closed case
+        # into the cold-but-durable case (they become one `{:transient, ...}`).
+        case Kind.read(uri, :identity, spawn: :never) do
+          {:ok, slice} when is_map(slice) ->
+            with {:ok, caps} <- caps_from_slice_checked(slice) do
+              verified_checked(caps, uri)
+            end
+
+          {:ok, _non_map} ->
+            {:error, :invalid_identity_slice}
+
+          {:error, :not_live} ->
+            load_persisted_checked(uri)
+
+          {:error, reason} ->
+            {:error, {:identity_read_failed, reason}}
+        end
     end
   end
 
@@ -102,7 +121,10 @@ defmodule Ezagent.EntityCaps do
   def load_persisted(uri) do
     uri = parse_uri(uri)
 
-    if fenced?(uri), do: [], else: do_load_persisted(uri)
+    case load_persisted_checked(uri) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
+    end
   end
 
   # #189 PR-3 read-cutover, EPOCH-GATED (FIX 5): the unified
@@ -120,11 +142,15 @@ defmodule Ezagent.EntityCaps do
   # errors must never re-authorize a cap whose lagging legacy projection missed
   # a post-epoch revoke. Only `:inactive` (DB reachable, definitively no epoch
   # row) takes the legacy path.
-  defp do_load_persisted(uri) do
-    case Ezagent.Identity.Cutover.status() do
-      :active -> do_load_persisted_cutover(uri)
-      :inactive -> verified(legacy_persisted_caps(uri), uri)
-      :unknown -> []
+  defp load_persisted_checked(uri) do
+    if fenced?(uri) do
+      {:ok, []}
+    else
+      case Ezagent.Identity.Cutover.status() do
+        :active -> load_persisted_cutover_checked(uri)
+        :inactive -> load_legacy_persisted_checked(uri)
+        :unknown -> {:error, :identity_epoch_unreadable}
+      end
     end
   end
 
@@ -137,23 +163,78 @@ defmodule Ezagent.EntityCaps do
   # gen-gates the result regardless of source, so a stale/rotated license — a
   # store-active row left behind by a `regenesis` that only bumped the
   # generation, or a stale legacy license — still loads EMPTY.
-  defp do_load_persisted_cutover(uri) do
+  defp load_persisted_cutover_checked(uri) do
     case Store.fetch_durable_caps(uri) do
-      {:ok, store_caps} -> verified(store_caps, uri)
-      :absent -> verified(legacy_persisted_caps(uri), uri)
-      {:error, _reason} -> []
+      {:ok, store_caps} -> verified_checked(store_caps, uri)
+      :absent -> load_legacy_persisted_checked(uri)
+      {:error, reason} -> {:error, {:identity_store_read_failed, reason}}
     end
   end
 
-  defp legacy_persisted_caps(uri) do
+  defp load_legacy_persisted_checked(uri) do
+    with {:ok, caps} <- legacy_persisted_caps_checked(uri) do
+      verified_checked(caps, uri)
+    end
+  end
+
+  defp legacy_persisted_caps_checked(uri) do
     if user_uri?(uri) do
-      UserStore.load(uri)
+      UserStore.load_checked(uri)
     else
-      snapshot_caps(uri)
+      snapshot_caps_checked(uri)
     end
   end
 
   defp fenced?(uri), do: Ezagent.Identity.Offboarding.RevocationFence.fenced?(uri)
+
+  @doc """
+  Load the effective capability set: authoritative held capabilities plus
+  durable pending absorbs that have not reached the identity slice yet.
+  """
+  @spec effective_caps(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | {:error, :effective_caps_read_failed}
+  def effective_caps(uri) do
+    uri = parse_uri(uri)
+    effective_read(uri, &load_checked/1)
+  end
+
+  @doc """
+  Load the durable effective capability set without consulting a live Kind.
+  """
+  @spec effective_caps_persisted(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | {:error, :effective_caps_read_failed}
+  def effective_caps_persisted(uri) do
+    uri = parse_uri(uri)
+    effective_read(uri, &load_persisted_checked/1)
+  end
+
+  defp effective_read(uri, held_reader) do
+    with {:ok, pending} <- Ezagent.Cap.DeliveryOutbox.list_pending_absorb_caps(uri),
+         {:ok, held} <- held_reader.(uri),
+         {:ok, effective} <- verified_checked(held ++ pending, uri) do
+      {:ok, Enum.uniq_by(effective, &Capability.identity_key/1)}
+    else
+      {:error, reason} ->
+        log_effective_read_failure(uri, reason)
+        {:error, :effective_caps_read_failed}
+
+      other ->
+        log_effective_read_failure(uri, {:unexpected_result, other})
+        {:error, :effective_caps_read_failed}
+    end
+  rescue
+    error ->
+      log_effective_read_failure(uri, {:exception, Exception.message(error)})
+      {:error, :effective_caps_read_failed}
+  catch
+    kind, reason ->
+      log_effective_read_failure(uri, {kind, reason})
+      {:error, :effective_caps_read_failed}
+  end
+
+  defp log_effective_read_failure(uri, reason) do
+    Logger.error("EntityCaps effective read failed for #{URI.to_string(uri)}: #{inspect(reason)}")
+  end
 
   @doc "Replace the entity's complete cap set in its selected physical store and live slice."
   @spec persist(URI.t() | String.t(), caps()) :: :ok | {:error, term()}
@@ -307,6 +388,15 @@ defmodule Ezagent.EntityCaps do
     end
   end
 
+  defp snapshot_caps_checked(uri) do
+    case Kind.read_durable(uri, :identity) do
+      {:ok, identity, _meta} when is_map(identity) -> caps_from_slice_checked(identity)
+      {:ok, _non_map, _meta} -> {:error, :invalid_identity_slice}
+      {:error, :not_created} -> {:ok, []}
+      {:error, reason} -> {:error, {:durable_identity_read_failed, reason}}
+    end
+  end
+
   defp validate_caps(caps, uri) when is_list(caps) or is_struct(caps, MapSet) do
     caps = Enum.to_list(caps)
     verified = verified_set(caps, uri)
@@ -454,14 +544,25 @@ defmodule Ezagent.EntityCaps do
     end
   end
 
-  defp verified(caps, uri) do
+  defp caps_from_slice_checked(slice) do
+    case Map.fetch(slice, :caps) do
+      {:ok, %MapSet{} = caps} -> {:ok, MapSet.to_list(caps)}
+      {:ok, caps} when is_list(caps) -> {:ok, caps}
+      :error -> {:ok, []}
+      {:ok, _invalid} -> {:error, :invalid_identity_caps}
+    end
+  end
+
+  defp verified_checked(caps, uri) do
     verified = caps |> verified_set(uri) |> MapSet.to_list()
 
-    if Enum.any?(verified, &current_self_license?(&1, uri)), do: verified, else: []
+    if Enum.any?(verified, &current_self_license?(&1, uri)),
+      do: {:ok, verified},
+      else: {:ok, []}
   rescue
-    _ -> []
+    error -> {:error, {:cap_verification_failed, Exception.message(error)}}
   catch
-    _, _ -> []
+    kind, reason -> {:error, {:cap_verification_failed, kind, reason}}
   end
 
   defp current_self_license?(%Capability{} = cap, uri) do

@@ -30,14 +30,24 @@ defmodule Ezagent.EntityCaps.UserStore do
   @doc false
   @spec load(URI.t()) :: [Ezagent.Capability.t()]
   def load(%URI{} = uri) do
+    case load_checked(uri) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
+    end
+  end
+
+  @doc false
+  @spec load_checked(URI.t()) :: {:ok, [Ezagent.Capability.t()]} | {:error, term()}
+  def load_checked(%URI{} = uri) do
     case Ezagent.Users.get_by_uri(uri) do
-      %{caps: caps} when is_list(caps) -> caps
-      _ -> []
+      nil -> {:ok, []}
+      %{caps: caps} when is_list(caps) -> {:ok, caps}
+      _invalid -> {:error, :invalid_user_caps}
     end
   rescue
-    _ -> []
+    error -> {:error, {:user_caps_read_failed, Exception.message(error)}}
   catch
-    _, _ -> []
+    kind, reason -> {:error, {:user_caps_read_failed, kind, reason}}
   end
 
   @doc false
