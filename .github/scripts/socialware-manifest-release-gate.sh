@@ -7,9 +7,9 @@ set -euo pipefail
 # action instead of something an operator has to remember after deployment.
 
 awk '
-  /^apps\/[^/]+\/priv\/socialware_seed\/[^/]+\/(manifest|recipes)\.yaml$/ {
+  /^apps\/[^\/]+\/priv\/socialware_seed\/[^\/]+\/(manifest|recipes)\.yaml$/ {
     package_dir = $0
-    sub(/\/[^/]+$/, "", package_dir)
+    sub(/\/[^\/]+$/, "", package_dir)
 
     if (!(package_dir in packages)) {
       packages[package_dir] = 1
