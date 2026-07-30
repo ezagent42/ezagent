@@ -323,6 +323,36 @@ defmodule EzagentPluginForgejo.NormalizeTest do
                Normalize.checks(%{"state" => "failure", "total_count" => 1})
     end
 
+    # `CommitStatus.status` and `CombinedStatus.state` are the SAME Go type
+    # (`CommitStatusState`) serialized under two different JSON names — an
+    # upstream naming inconsistency, not a semantic distinction. That makes it
+    # exactly the kind of field a version bump could rename.
+    #
+    # An absent status field must be REFUSED, not folded into the
+    # unknown-value bucket: `:other` says "a state we do not recognise", while a
+    # missing field says "this is not the shape we parse". Collapsing them would
+    # silently downgrade every check on a schema change.
+    test "a check entry with no status field is refused, not mapped to :other" do
+      assert {:error, :provider_unavailable} =
+               Normalize.checks(%{"statuses" => [%{"id" => 1, "context" => "ci/x"}]})
+    end
+
+    test "a check entry whose status arrived under the wrong key is refused" do
+      assert {:error, :provider_unavailable} =
+               Normalize.checks(%{
+                 "statuses" => [%{"id" => 1, "context" => "ci/x", "state" => "failure"}]
+               })
+    end
+
+    # An unrecognised VALUE is still `:other` — that is a real state we simply
+    # do not have a mapping for, and the label surfaces it honestly upstream.
+    test "an unrecognised status value is still :other" do
+      assert {:ok, [%{status: :completed, conclusion: :other}]} =
+               Normalize.checks(%{
+                 "statuses" => [%{"id" => 1, "context" => "ci/x", "status" => "teleported"}]
+               })
+    end
+
     test "the measured empty shape is still an empty list, not a failure" do
       assert {:ok, []} = Normalize.checks(%{"statuses" => nil})
     end

@@ -1128,6 +1128,53 @@ author 返回 `{:ok, []}`）。测试名叫 "dropped rather than guessed" ——
 组合端点按 context 去重并**保留最新**（`ci/test` failure→success 后留 success）——
 实证了选组合端点而非历史端点的理由（findings §9.2）。
 
+### 追加：`status` / `state` 命名不一致引出的第三处同族 fail-open（已修）
+
+swagger 确认 `CommitStatus.status` 与 `CombinedStatus.state` 是**同一个 Go 类型**
+（`CommitStatusState`）序列化成两个 JSON 名 —— 上游命名不一致，不是语义区分。**正因为
+不是语义区分，它才是版本升级最可能改名的那类字段。**
+
+原实现 `check_state(status["status"])`：字段缺失或改名 → `nil` → 落到
+`check_state(_unknown)` → `{:completed, :other}`。实测两种输入都返回 `{:ok, ...}`，
+即**每条 check 静默降级**而非拒绝。
+
+修：`status` 必须是 binary，否则走 `check/1` 的 fallback 拒绝。保留"未知**值**仍为
+`:other`"—— `:other` 的意思是"这个状态我们没有映射"，不是"我们找不到状态"。
+
+### 关于 `official` / `stale`：GitHub 没有对应字段
+
+回答"GitHub 怎么处理"：**GitHub 的 API 根本没有 `official` / `stale`。** 它的等价机制是
+两条：
+
+1. **分支保护的 `dismiss_stale_reviews`** —— 开启后，新 commit 会让旧批准自动变成
+   `DISMISSED`，所以"陈旧"这件事体现在 **state 本身**里，而不是一个旁路布尔
+2. **GraphQL 的 `reviewDecision` rollup**（`APPROVED` / `CHANGES_REQUESTED` /
+   `REVIEW_REQUIRED`）—— 这才是"是否满足合并要求"的答案
+
+**两个 adapter 都不读第 2 条。** 所以在当前契约下，Forgejo 侧给的信息其实**比 GitHub 更
+多**（它把 `official`/`stale` 明确暴露出来），只是我们没用。
+
+### 顺带发现：GitHub adapter 有同族且更严重的 fail-open（不在本 PR 范围）
+
+`github_adapter.ex:674-683`：
+
+```elixir
+defp map_review_state(state) when is_binary(state) do
+  case String.upcase(state) do
+    ...
+    _ -> :commented        # 未知 state → 编造成"评论"
+  end
+end
+
+defp map_review_state(_), do: :commented   # 字段缺失/非字符串 → 同样编造
+```
+
+比 Forgejo 原来的静默丢弃更危险：丢弃至少让计数变少（可能被察觉），**编造成 `:commented`
+则让一条 `CHANGES_REQUESTED` 变成"有人评论了、无阻塞"**。`map_check_status(_)` 与
+`map_check_conclusion(_)` 也是同样形状。
+
+属 GitHub owner 的代码，本 PR 不改。建议单开一条。
+
 ### 仍未定性的怀疑（记录，未修）
 
 - **`official` / `stale` 未读取**。Forgejo review 响应带这两个字段，`official` 表示该

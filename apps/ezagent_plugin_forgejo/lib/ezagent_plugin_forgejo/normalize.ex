@@ -129,8 +129,18 @@ defmodule EzagentPluginForgejo.Normalize do
 
   # ── internals ────────────────────────────────────────────────────────
 
-  defp check(%{"id" => id, "context" => context} = status) do
-    {check_status, conclusion} = check_state(status["status"])
+  # The status field is `status` on a nested CommitStatus but `state` on the
+  # CombinedStatus wrapper — the SAME Go type (`CommitStatusState`) under two
+  # JSON names, an upstream naming inconsistency rather than a semantic
+  # distinction. Which makes it precisely the field a version bump might rename.
+  #
+  # So it is required to be a binary. An absent or non-string field is a shape
+  # this code does not parse, and folding that into `:other` would silently
+  # downgrade EVERY check on a schema change — `:other` means "a state we have
+  # no mapping for", not "we could not find the state".
+  defp check(%{"id" => id, "context" => context, "status" => raw} = status)
+       when is_binary(raw) do
+    {check_status, conclusion} = check_state(raw)
 
     attrs = %{
       external_id: to_string(id),
