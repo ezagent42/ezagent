@@ -161,7 +161,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # are tenant/entity data: each row carries the entity URI's workspace
     # (`workspace_uri` NOT NULL, populated from `Ezagent.URI.workspace_of/1`
     # on every write).
-    {Ezagent.EntityCaps.Store, "identity_caps"}
+    {Ezagent.EntityCaps.Store, "identity_caps"},
+    {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"}
   ]
 
   # Per-tenant tables that have NO schema module (raw `Repo.insert_all`

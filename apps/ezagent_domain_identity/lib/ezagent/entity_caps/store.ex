@@ -457,6 +457,13 @@ defmodule Ezagent.EntityCaps.Store do
          licensed? <- licensed_under_lock?(uri, caps_list),
          changes <- persist_changes(row, encoded, licensed?),
          {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+      # URI-share A2-2 (codex ⓪): the reverse cap index derives from THIS
+      # authoritative held-cap write, IN the same transaction — atomic, so a
+      # rolled-back commit never leaves the index over-reporting a cap that never
+      # durably landed. This is the single confluence of every conferral path
+      # (grant / initial_caps / cold-load reconcile / backfill / activate / the
+      # agent `sync_committed_identity` write), so no writer is missed.
+      Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
       :ok
     else
       nil -> Repo.rollback(:not_found)
@@ -517,8 +524,13 @@ defmodule Ezagent.EntityCaps.Store do
       changes = persist_changes(row, encode_caps(caps_list), licensed?)
 
       case row |> Ecto.Changeset.change(changes) |> Repo.update() do
-        {:ok, _row} -> :ok
-        {:error, reason} -> Repo.rollback(reason)
+        {:ok, _row} ->
+          # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
+          Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+          :ok
+
+        {:error, reason} ->
+          Repo.rollback(reason)
       end
     else
       nil -> Repo.rollback(:not_found)
@@ -897,6 +909,8 @@ defmodule Ezagent.EntityCaps.Store do
          licensed? <- licensed_under_lock?(uri, caps_list),
          changes <- persist_changes(row, encoded, licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+      # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
+      Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
       decode_status(updated.identity_status)
     else
       nil -> Repo.rollback(:not_found)
@@ -1059,6 +1073,11 @@ defmodule Ezagent.EntityCaps.Store do
                 :ok <- maybe_consume(receipt),
                 {:ok, _row} <-
                   row |> Ecto.Changeset.change(activate_changes(caps, receipt)) |> Repo.update() do
+             # A2-2 codex ⓪ (cc review 1) — the provision/reprovision writer is a
+             # conferral path too; derive the reverse index IN this txn so an
+             # activate (esp. a reprovision with a REDUCED set) never leaves a
+             # stale/over-reporting index row. Same-txn as the other 3 writers.
+             Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
              :ok
            else
              {:error, reason} -> Repo.rollback(reason)
