@@ -600,6 +600,118 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     assert SessionBehavior.role_name_to_uri(members_of(newer_session), "llm") == newer_uri
   end
 
+  test "an external default-source write wins over an admission's stale pointer transaction", %{
+    session_uri: session_uri,
+    declarations: declarations,
+    credential_flavor: credential_flavor
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+
+    target =
+      Ezagent.URI.with_action(
+        @owner_uri,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
+    assert {:ok, external_write_cap} =
+             Ezagent.Cap.issue_for_action({:admin, @owner_uri}, @owner_uri, target)
+
+    external_write_ctx = %{
+      caller: @owner_uri,
+      authenticated_principal: @owner_uri,
+      caps: MapSet.put(MapSet.new(caps), external_write_cap)
+    }
+
+    assert {:ok, first} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    candidate_session = live_session("pointer-cas-#{System.unique_integer([:positive])}")
+    external_session = live_session("pointer-external-#{System.unique_integer([:positive])}")
+    on_exit(fn -> terminate(candidate_session) end)
+    on_exit(fn -> terminate(external_session) end)
+
+    copy_declarations(candidate_session, declarations)
+    copy_declarations(external_session, declarations)
+    llm_declaration = Enum.find(declarations, &(&1.role_name == "llm"))
+
+    assert {:ok, %{status: :pending_auth}} =
+             AgentAdmission.defer(candidate_session, llm_declaration)
+
+    assert {:ok, candidate} = AgentAdmission.begin(candidate_session, "llm", @owner_uri, caps)
+
+    assert {:ok, %{status: :pending_auth}} =
+             AgentAdmission.defer(external_session, llm_declaration)
+
+    assert {:ok, external} = AgentAdmission.begin(external_session, "llm", @owner_uri, caps)
+    external_uri = external.provisional_agent_uri
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(session_uri, "llm", first.attempt_id, {@owner_uri, caps})
+
+    prior_pre_pointer_fault =
+      Application.get_env(
+        :ezagent_domain_session,
+        :agent_admission_before_default_source_write_fault
+      )
+
+    Application.put_env(
+      :ezagent_domain_session,
+      :agent_admission_before_default_source_write_fault,
+      fn current ->
+        if current.attempt_id == candidate.attempt_id do
+          assert {:ok, _} =
+                   UserDefaultSource.set_via_dispatch(
+                     @owner_uri,
+                     %{
+                       flavor: credential_flavor,
+                       source_uri: external_uri,
+                       workspace: "system"
+                     },
+                     external_write_ctx
+                   )
+        end
+
+        :ok
+      end
+    )
+
+    on_exit(fn ->
+      if is_nil(prior_pre_pointer_fault) do
+        Application.delete_env(
+          :ezagent_domain_session,
+          :agent_admission_before_default_source_write_fault
+        )
+      else
+        Application.put_env(
+          :ezagent_domain_session,
+          :agent_admission_before_default_source_write_fault,
+          prior_pre_pointer_fault
+        )
+      end
+    end)
+
+    assert {:error, {:default_credential_source_failed, :default_source_changed}} =
+             AgentAdmission.complete(
+               candidate_session,
+               "llm",
+               candidate.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert UserDefaultSource.resolve(URI.to_string(@owner_uri), "system", credential_flavor) ==
+             external_uri
+  end
+
   test "cleanup failure reapplies the candidate default source after restoration", %{
     session_uri: session_uri,
     declarations: declarations,

@@ -477,9 +477,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
     do: {:ok, current}
 
   defp cancel_current(session_uri, current, actor_uri, caps, failure_code) do
-    with_default_source_lock(actor_uri, session_uri, current.flavor, fn ->
-      do_cancel_current(session_uri, current, actor_uri, caps, failure_code)
-    end)
+    do_cancel_current(session_uri, current, actor_uri, caps, failure_code)
   end
 
   defp do_cancel_current(session_uri, current, actor_uri, caps, failure_code) do
@@ -543,17 +541,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
          agent_uri,
          attempt_id
        ) do
-    with_default_source_lock(actor_uri, session_uri, current.flavor, fn ->
-      do_complete_authenticated(
-        session_uri,
-        actor_uri,
-        caps,
-        declaration,
-        current,
-        agent_uri,
-        attempt_id
-      )
-    end)
+    do_complete_authenticated(
+      session_uri,
+      actor_uri,
+      caps,
+      declaration,
+      current,
+      agent_uri,
+      attempt_id
+    )
   end
 
   defp do_complete_authenticated(
@@ -582,13 +578,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
                materializing,
                actor_uri,
                agent_uri
-             ) do
+             ),
+           :ok <- before_default_source_write_fault(pointer_transaction) do
         case set_default_source(
                actor_uri,
                agent_uri,
                current.flavor,
                session_uri,
-               caps
+               caps,
+               Map.get(pointer_transaction.default_source_transaction, :previous_source_uri)
              ) do
           :ok ->
             case put_joined(session_uri, pointer_transaction) do
@@ -651,7 +649,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   defp credential_authenticated(%{status: :n_a}, :not_required), do: :ok
   defp credential_authenticated(_status, _connection), do: {:error, :authentication_failed}
 
-  defp set_default_source(owner, source, flavor, session_uri, caps) do
+  defp set_default_source(owner, source, flavor, session_uri, caps, expected_source_uri) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
 
@@ -672,13 +670,22 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
         MapSet.new(caps)
       end
 
+    args = %{
+      flavor: flavor,
+      source_uri: source_uri(source),
+      workspace: workspace_name
+    }
+
+    args =
+      if expected_source_uri == :any do
+        args
+      else
+        Map.put(args, :expected_source_uri, expected_source_uri)
+      end
+
     case UserDefaultSource.set_via_dispatch(
            owner,
-           %{
-             flavor: flavor,
-             source_uri: source_uri(source),
-             workspace: workspace_name
-           },
+           args,
            actor_ctx(owner, caps)
          ) do
       {:ok, _result} -> :ok
@@ -704,19 +711,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   defp restore_default_source_transaction(session_uri, current, owner_uri, caps) do
     case Map.get(current, :default_source_transaction) do
       %{previous_source_uri: previous, source_uri: source} ->
-        workspace_name =
-          session_uri |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
-
-        case UserDefaultSource.resolve(URI.to_string(owner_uri), workspace_name, current.flavor) do
-          ^source when is_binary(previous) ->
-            with :ok <- set_default_source(owner_uri, previous, current.flavor, session_uri, caps),
-                 do: {:ok, true}
-
-          ^source ->
-            {:error, :default_credential_source_restore_requires_prior_source}
-
-          _other ->
-            {:ok, false}
+        if is_binary(previous) do
+          case set_default_source(
+                 owner_uri,
+                 previous,
+                 current.flavor,
+                 session_uri,
+                 caps,
+                 source
+               ) do
+            :ok -> {:ok, true}
+            {:error, {:default_credential_source_failed, :default_source_changed}} -> {:ok, false}
+            {:error, _reason} = error -> error
+          end
+        else
+          {:error, :default_credential_source_restore_requires_prior_source}
         end
 
       _ ->
@@ -728,28 +737,29 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
 
   defp reapply_candidate_default_source(session_uri, current, owner_uri, caps, true) do
     case Map.get(current, :default_source_transaction) do
-      %{source_uri: source} ->
-        set_default_source(owner_uri, source, current.flavor, session_uri, caps)
+      %{source_uri: source, previous_source_uri: previous} ->
+        set_default_source(owner_uri, source, current.flavor, session_uri, caps, previous)
 
       _ ->
         :ok
     end
   end
 
-  defp with_default_source_lock(owner_uri, session_uri, flavor, fun) do
-    workspace_name =
-      session_uri |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
-
-    resource =
-      {__MODULE__, :default_credential_source, URI.to_string(owner_uri), workspace_name, flavor}
-
-    :global.trans({resource, self()}, fun)
-  end
-
   defp source_uri(%URI{} = source), do: URI.to_string(source)
   defp source_uri(source) when is_binary(source), do: source
 
   if Mix.env() == :test do
+    defp before_default_source_write_fault(current) do
+      case Application.get_env(
+             :ezagent_domain_session,
+             :agent_admission_before_default_source_write_fault
+           ) do
+        nil -> :ok
+        fault when is_function(fault, 1) -> fault.(current)
+        reason -> {:error, reason}
+      end
+    end
+
     defp joined_write_fault(current) do
       case Application.get_env(:ezagent_domain_session, :agent_admission_put_joined_fault) do
         nil -> :ok
@@ -758,6 +768,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
       end
     end
   else
+    defp before_default_source_write_fault(_current), do: :ok
     defp joined_write_fault(_current), do: :ok
   end
 
@@ -872,37 +883,35 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
          {:ok, agent_uri} <- provisional_uri(current),
          caps <-
            EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri) do
-      with_default_source_lock(owner_uri, session_uri, current.flavor, fn ->
-        with {:ok, restored?} <-
-               restore_default_source_transaction(session_uri, current, owner_uri, caps) do
-          case DefinitionAgents.cleanup_provisional(
-                 session_uri,
-                 owner_uri,
-                 agent_uri,
-                 current.attempt_id,
-                 actor_ctx(owner_uri, caps),
-                 :stale_agent_admission_declaration
-               ) do
-            :ok ->
-              delete_admission(session_uri, current.role_name)
+      with {:ok, restored?} <-
+             restore_default_source_transaction(session_uri, current, owner_uri, caps) do
+        case DefinitionAgents.cleanup_provisional(
+               session_uri,
+               owner_uri,
+               agent_uri,
+               current.attempt_id,
+               actor_ctx(owner_uri, caps),
+               :stale_agent_admission_declaration
+             ) do
+          :ok ->
+            delete_admission(session_uri, current.role_name)
 
-            {:error, cleanup_reason} ->
-              case reapply_candidate_default_source(
-                     session_uri,
-                     current,
-                     owner_uri,
-                     caps,
-                     restored?
-                   ) do
-                :ok ->
-                  {:error, cleanup_reason}
+          {:error, cleanup_reason} ->
+            case reapply_candidate_default_source(
+                   session_uri,
+                   current,
+                   owner_uri,
+                   caps,
+                   restored?
+                 ) do
+              :ok ->
+                {:error, cleanup_reason}
 
-                {:error, pointer_reason} ->
-                  {:error, {cleanup_reason, {:pointer_reapply_failed, pointer_reason}}}
-              end
-          end
+              {:error, pointer_reason} ->
+                {:error, {cleanup_reason, {:pointer_reapply_failed, pointer_reason}}}
+            end
         end
-      end)
+      end
     else
       {:error, _reason} = error -> error
       other -> {:error, {:stale_agent_admission_cleanup_failed, other}}

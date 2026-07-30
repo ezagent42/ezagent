@@ -202,3 +202,36 @@ mise exec -- mix test \
 
 14 tests, 0 failures
 ```
+
+## Shared default-source serialization — 2026-07-30
+
+The cross-session admission lock did not cover World, host-login adoption, or
+CLI writes because each reaches the authorized
+`UserDefaultCredentialSource` behavior through its own dispatch. Serialization
+now lives at that one cap-checked persistence path, keyed by
+`(owner_uri, workspace, flavor)`.
+
+Admission no longer holds a lock across dispatch. Its persisted transaction
+uses `expected_source_uri` compare-and-set writes for both candidate selection
+and rollback. A changed pointer returns `:default_source_changed`; compensation
+treats that as a successful no-op, retaining the newer sanctioned writer's
+source. Cleanup reapply is likewise conditional on the restored source.
+
+The deterministic regression saves P0, injects a World-equivalent authorized
+write of P1 immediately before the admission writes PA, then requires the
+admission to fail its stale CAS and preserve P1. It was RED before the shared
+CAS:
+
+```text
+expected: {:error, {:default_credential_source_failed, :default_source_changed}}
+actual:   {:ok, %{status: :joined, ...}}
+```
+
+```text
+mise exec -- mix test \
+  apps/ezagent_domain_session/test/ezagent_domain_instance_message/session_creator/agent_admission_test.exs \
+  apps/ezagent_domain_identity/test/ezagent/behavior/set_default_source_behavior_test.exs \
+  apps/ezagent_domain_agent/test/ezagent/agent/host_login_adopt_test.exs
+
+26 tests, 0 failures
+```
