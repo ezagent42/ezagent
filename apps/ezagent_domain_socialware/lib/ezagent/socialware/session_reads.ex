@@ -337,7 +337,11 @@ defmodule Ezagent.Socialware.SessionReads do
           # (`Share.shared_to?/2`), so disabling the setting cuts the claimer off
           # on the very next read (codex Fix 1). View reach only; still never
           # grants write (posting/downloads keep the strict member predicate).
-          Share.shared_to?(session_uri, caller) ->
+          # `Share.shared_to?/2` only has a `%URI{}, %URI{}` clause — guard the
+          # caller shape here so a nil/malformed caller (already denied by
+          # `authorize/2` above) falls through to the clean `err` branch below
+          # instead of raising FunctionClauseError (fail-closed, not fail-crash).
+          match?(%URI{}, caller) and Share.shared_to?(session_uri, caller) ->
             :ok
 
           true ->
