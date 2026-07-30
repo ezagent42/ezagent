@@ -51,6 +51,9 @@
     "profile.display_name.cancel",
     "profile.display_name.edit",
     "profile.display_name.save",
+    "session.agent_admission.begin",
+    "session.agent_admission.cancel",
+    "session.agent_admission.complete",
     "session.assign_role",
     "session.create",
     "session.fork_config",
@@ -168,6 +171,19 @@
       "slot_type": "conversation",
       "state": {
         "active_view": "conversation",
+        "agent_admissions": [
+          {
+            "role_name": "llm",
+            "status": "pending_auth",
+            "attempt_id": null,
+            "provisional_agent_uri": null,
+            "connection": {
+              "kind": "api_key",
+              "label": "Configure API key",
+              "provider": "deepseek"
+            }
+          }
+        ],
         "caller_uri": "entity://acme/user/allen",
         "component": "conversation",
         "invite_candidates": [],

@@ -114,6 +114,78 @@ test("conversation composer emits chat.send", async ({page}) => {
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
+test("credential admission uses public dispatch and joins the returned provisional member", async ({page}) => {
+  const attemptId = "attempt-e2e-llm"
+  const provisionalAgentUri = "entity://acme/agent/hello-llm-provisional"
+
+  await openFixture(page, "conversation")
+
+  const admission = page.locator('[data-world-agent-admission="llm"]')
+  await expect(admission).toBeVisible()
+  await admission.getByRole("button", {name: "Configure API key"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.begin",
+      args: {session_uri: conversationFixtureUri, role_name: "llm"},
+    },
+  })
+
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) =>
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "authenticating",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "api_key", label: "Configure API key", provider: "deepseek"},
+          },
+        ],
+      }),
+    {attemptId, provisionalAgentUri},
+  )
+
+  await admission.getByRole("button", {name: "完成 Configure API key"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.complete",
+      args: {session_uri: conversationFixtureUri, role_name: "llm", attempt_id: attemptId},
+    },
+  })
+
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) => {
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "joined",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "api_key", label: "Configure API key", provider: "deepseek"},
+          },
+        ],
+      })
+      window.__WORLD_E2E__.emit("members:update", {
+        members: [{uri: provisionalAgentUri, display_name: provisionalAgentUri, kind: "agent"}],
+      })
+    },
+    {attemptId, provisionalAgentUri},
+  )
+
+  await expect(admission).toHaveCount(0)
+  await page.getByRole("button", {name: "展开成员面板"}).click()
+  await expect(page.getByText(provisionalAgentUri, {exact: true})).toBeVisible()
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
 test("registered plugin interaction emits an admitted kanban action", async ({page}) => {
   await openFixture(page, "kanban")
   await page.getByLabel("Access Token").fill("fixture-token")
