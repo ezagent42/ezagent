@@ -80,6 +80,10 @@ test("sessions interaction emits an admitted world:dispatch", async ({page}) => 
     event: "world:dispatch",
     payload: {action: "sessions.join", args: {session_uri: sessionsFixtureUri}},
   })
+
+  await page.evaluate(() => window.__WORLD_E2E__.transitionTo("conversation"))
+  await expect(page.locator('[data-world-component="conversation"]')).toBeVisible()
+  await expect(page.locator('[data-world-component="sessions_table"]')).toHaveCount(0)
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
@@ -149,13 +153,14 @@ test("credential admission uses public dispatch and joins the returned provision
     {attemptId, provisionalAgentUri},
   )
 
-  await admission.getByRole("button", {name: "完成 Configure API key"}).click()
+  await admission.getByLabel("API key *").fill("sk-e2e-admission")
+  await admission.getByRole("button", {name: "Save key"}).click()
 
   await expect.poll(() => lastEvent(page)).toEqual({
     event: "world:dispatch",
     payload: {
-      action: "session.agent_admission.complete",
-      args: {session_uri: conversationFixtureUri, role_name: "llm", attempt_id: attemptId},
+      action: "agent.api_key.put",
+      args: {agent_uri: provisionalAgentUri, provider: "deepseek", key: "sk-e2e-admission"},
     },
   })
 
