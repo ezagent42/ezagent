@@ -170,6 +170,13 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
     req
   end
 
+  # git blob sha = sha1("blob <byte_size>\0" <> content). Forgejo's `/contents`
+  # returns exactly this (measured), which is what makes a local content check
+  # possible without fetching the file body.
+  defp blob_sha_of(content) do
+    :crypto.hash(:sha, "blob #{byte_size(content)}\0" <> content) |> Base.encode16(case: :lower)
+  end
+
   defp base_sha_value do
     {:ok, sha} = Ezagent.DomainGit.CommitSha.new(%{value: @base_sha})
     sha
@@ -198,6 +205,14 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
   defp file_absent,
     do: {{"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"}, status(404)}
+
+  # The file already carrying exactly what `changes()` would write. Needed by
+  # every "recognises its own commit" fixture: provenance now includes content,
+  # so a branch that advanced with our commit must ALSO show our blob.
+  defp file_is_ours,
+    do:
+      {{"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+       json(%{"sha" => blob_sha_of("hello\n")})}
 
   defp contents_written,
     do:
@@ -419,6 +434,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
     test "recognises its own commit and does NOT write again" do
       routes =
         happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
         |> Map.put(
           elem(head_missing(), 0),
           elem(
@@ -527,6 +543,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
       routes =
         happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
         |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
 
       stub(routes)
@@ -537,6 +554,86 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request)
 
       refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # Metadata alone cannot prove provenance. `ours?/2` compares message,
+    # identity and date — all of which a DIFFERENT set of file changes under the
+    # same run would share, because they are derived from the run, not from the
+    # content. Without a content check the adapter would skip the second write
+    # and open a PR pointing at the FIRST attempt's content.
+    #
+    # Forgejo's `/contents` returns the standard git blob sha (measured), so
+    # "what would we write" is computable locally at zero request cost.
+    test "a commit whose metadata matches but whose content differs is a conflict" do
+      ours_metadata = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours_metadata), 1))
+        # The file at head carries SOMEONE ELSE'S content.
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{"sha" => blob_sha_of("not what we would write\n")})
+        )
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # The same shape, but the content DOES match: this is our own commit and the
+    # write must be skipped rather than stacking a second identical commit.
+    test "a commit whose metadata AND content match is recognised" do
+      ours_metadata = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours_metadata), 1))
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"},
+          json(%{"sha" => blob_sha_of("hello\n")})
+        )
+
+      stub(routes)
+
+      assert {:ok, _cr} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/contents"}}
+    end
+
+    # A file we would create that is ABSENT at head means the commit did not
+    # come from this call, whatever its metadata says.
+    test "a commit whose metadata matches but which is missing our file is a conflict" do
+      ours_metadata = %{
+        "message" => "Automated change",
+        "timestamp" => "2026-07-29T18:00:00+08:00",
+        "author" => %{"name" => "Ezagent", "email" => "ezagent@invalid"},
+        "committer" => %{"name" => "Ezagent", "email" => "ezagent@invalid"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours_metadata), 1))
+        |> Map.put({"GET", "/api/v1/repos/#{@repo_id}/contents/docs/a.md"}, status(404))
+
+      stub(routes)
+
+      assert {:error, :head_ref_conflict} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
     end
 
     # The resume window this check exists to serve: our own commit landed but
@@ -552,6 +649,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
       routes =
         happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
         |> Map.put(elem(head_missing(), 0), elem(head_at(@head_sha, ours), 1))
 
       stub(routes)
@@ -583,6 +681,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
       routes =
         happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
         |> Map.put(
           {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
           fn conn ->
@@ -627,6 +726,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
 
       routes =
         happy_path()
+        |> Map.put(elem(file_is_ours(), 0), elem(file_is_ours(), 1))
         |> Map.put(
           {"GET", "/api/v1/repos/#{@repo_id}/branches/#{@head_ref}"},
           fn conn ->

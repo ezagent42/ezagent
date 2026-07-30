@@ -425,7 +425,31 @@ Plan E §6.2 的五个窗口在 Forgejo 上**不是同一组**：
 exact head+base 是 PR reconciliation identity；不用 PR title/body 作 identity；
 不 force push；冲突 fail closed。
 
-### 7.6 provenance 缺口：继承，不恶化
+### 7.6 provenance 判据：字段 + 内容（2026-07-30 加强）
+
+> **加强记录（gaga 裁决，2026-07-30）：** 本节原表述为「**ref 已前进**时字段比对
+> 是充分判据」。第二轮 review 指出字段全部派生自 run（message/身份/日期），所以
+> 同一 run 的两次尝试若产出**不同 file_changes**，字段会全部巧合 → 第二次被判
+> `:already_written` → 跳过写入 → 开出指向第一次内容的 PR。
+>
+> 调研结论支持加强：**我们自己的 GitHub adapter 一直在比对 tree**
+> （`github_adapter.ex:298`，注释原文 "Parent equality alone does not distinguish
+> this run's commit from any other commit that happens to share the same base"）。
+> 它能这么做是因为 GitHub 的 blob/tree 创建内容寻址且幂等，重建即可拿到 sha。
+>
+> Forgejo 无 Git Data 写链（findings §1），但**实测坐实 `/contents` 返回的 `sha`
+> 就是标准 git blob sha**（`sha1("blob <len>\0" <> bytes)`，逐字节验证一致）。
+> 所以「本次会写成什么」可**纯本地算出**，零请求。
+>
+> 因此判据加为：字段全等 **且** 每个改动文件在 head 上的 blob sha 等于本地算出的
+> 期望值。首次执行路径零新增请求（`file_operations/2` 本就要读这些路径）；仅恢复
+> 路径新增 N 次 GET（N = 改动文件数）。
+>
+> 未走「递归读全树 + 本地实现 git tree hashing」（方案 C）：那是唯一能做到 exact
+> 的路，但要自己实现 mode 位、条目排序、子模块规则 —— 一个 bug 会把**所有**恢复判成
+> 冲突。残留见 §12.4。
+
+### 7.6.1 原缺口记录：继承，不恶化
 
 Plan E §6.2.1 记的缺口（deterministic ref 已存在但**仍停在 base** 时，adapter
 分不清「自己上次留下的」与「外部 planted 的」）**在 Forgejo 上是同一条，不更严重**。
@@ -919,6 +943,46 @@ Codex 指出 stub 不校验 update 的 `sha`、建分支时不继承 base 文件
 租户收窄（含四元组 vault 迁移点与 scoped 零命中判定）、两处 `reconcile_head/3` 的
 状态区分、分段路径编码对 `FileChange.valid_path?/1` 字符集的覆盖、`sha_required`
 映射、`list_checks/3` 已知限制的表述与代码一致。
+
+## 12.4 内容比对落地 + 残留（2026-07-30）
+
+第二轮 review 的 ② 经裁决采纳方案 B（比对改动文件的 blob sha），已实施。
+
+### 关掉了什么
+
+元数据全部巧合但内容不同的 commit 现在被识别为**非本次所写**：
+
+| 场景 | 加强前 | 加强后 |
+|---|---|---|
+| 内容与我们要写的一致 | `:already_written` | `:already_written`（不变） |
+| 内容不同 | **`:already_written`（错，会开出指向别人内容的 PR）** | `:head_ref_conflict` |
+| 我们要写的文件在 head 上不存在 | **`:already_written`（错）** | `:head_ref_conflict` |
+
+### 成本（实测）
+
+- **首次执行：零新增请求。** `file_operations/2` 本来就为每个改动文件在 `head_ref`
+  上读一次 blob sha（原先只用于决定 create-vs-update）。
+- **恢复路径：+N 次 GET**（N = 改动文件数，通常个位数）。该路径原先判
+  `:already_written` 后直接跳过写入，从不读文件，所以这 N 次是真新增。
+- 期望值计算是纯本地的：`sha1("blob <byte_size>\0" <> content)`，无请求。
+
+### 残留：不覆盖「顺手改了别的文件」
+
+本判据证明**每个本次会写的文件已带有恰好该内容**，不证明同一 commit 里没有改动
+其它文件。要闭合只能上方案 C（递归读全树 + 本地实现 git tree hashing）。
+
+触发它需要攻击者/并发者先让 message、author、committer、commit date **和我们所有
+改动文件的内容**全部一致，然后额外改一个我们不碰的文件。归 Plan E §6.2.1 同一条轨。
+
+### 顺带修掉的第三处 stub 失真
+
+`apply_file/2` 存的 sha 是 `sha1(base64字符串)` —— **不是任何真实实例会返回的值**。
+之前没暴露，因为 adapter 只把它原样回传作为 update 的 `sha`；内容比对一上来，fixture
+立刻站不住。已改为真实 git blob sha。
+
+这是**同一类问题第三次出现**（① stub 只记 message；② fixture 时间戳微秒为 0；
+③ 这次的 base64 哈希）。共同形状是：**测试替身比真实系统宽松，于是它无法表达那个会
+失败的场景**。已记入 `.claude/skills/ezagent-developer/references/how-to-recipes.md`。
 
 ## 13. 未决 / 待人类决定
 

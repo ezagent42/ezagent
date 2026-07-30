@@ -32,6 +32,27 @@ disappear.
 CI shards need **no** manifest edit: the bare `apps/ezagent_plugin_` catch-all in
 `ci_shards.exs` auto-absorbs new plugin apps.
 
+### 测试替身比真实系统宽松 = 那个会失败的场景无法被表达（2026-07-30，同一 PR 内三次）
+
+外部对抗性 review 在 `ezagent_plugin_forgejo` 上连揪出三个缺陷，**根因是同一个**：
+fixture 或 stub 比真实 provider 宽松，于是能暴露 bug 的输入**根本造不出来**，测试
+写得再多也是绿的。
+
+| 失真处 | 掩盖了什么 |
+|---|---|
+| stub 的 commit 只记 `id` + `message` | provenance 判据只比 message（fail-open）—— "标题相同、其余不同"的 commit 无法表达 |
+| fixture 的时间戳微秒恒为 0 | 精确时刻比较会认不出自己写的 commit（真实来源是 `:utc_datetime_usec` 列） |
+| stub 存 `sha1(base64字符串)` 当 blob sha | 与真实 git object id 无关；内容比对一上线立刻站不住 |
+
+**做法**：给替身写响应时，问的不是"这个字段测试用得到吗"，而是"**真实系统在这里
+会返回什么**"。用得到的字段之外那些，恰恰是将来某个判据要依赖的。
+
+代价对比很悬殊：往 stub 多记三个字段是几行代码；缺了它们，一个 fail-open 的
+provenance 判据可以带着 20 条绿测试合进去。
+
+**可执行的自查**：对每个替身问一遍"**如果实现有 bug，我这个 fixture 能造出会让它失败
+的输入吗**"。造不出来 → 替身失真，先修替身。
+
 Two more, verified 2026-07-30 on the same plugin:
 
 - **Ecto query bindings trip (A)/(B) too.** `from(r in Schema, where: r.id == ^id)`

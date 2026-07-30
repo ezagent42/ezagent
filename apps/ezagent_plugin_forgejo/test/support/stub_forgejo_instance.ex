@@ -274,15 +274,29 @@ defmodule EzagentPluginForgejo.StubForgejoInstance do
   defp identity(_absent), do: nil
 
   defp apply_file(state, branch, file) do
-    sha =
-      :crypto.hash(:sha, file["content"] || "")
-      |> Base.encode16(case: :lower)
-
     put_in(state.files[{branch, file["path"]}], %{
       "path" => file["path"],
-      "sha" => sha,
+      "sha" => git_blob_sha(file["content"]),
       "content" => file["content"]
     })
+  end
+
+  # The REAL git object id: `sha1("blob <byte_size>\0" <> raw_bytes)`. Measured
+  # against the target instance — `/contents` returns exactly this.
+  #
+  # An earlier version hashed the BASE64 string with no git object header, which
+  # is not any sha the instance would ever return. Nothing noticed while the
+  # adapter only passed that value straight back as `sha` on an update; the
+  # moment provenance started comparing content against a locally computed blob
+  # sha, the fixture could no longer stand in for the instance.
+  defp git_blob_sha(encoded) do
+    raw =
+      case Base.decode64(encoded || "") do
+        {:ok, bytes} -> bytes
+        :error -> encoded || ""
+      end
+
+    :crypto.hash(:sha, "blob #{byte_size(raw)}\0" <> raw) |> Base.encode16(case: :lower)
   end
 
   # A `create` against a path that already exists on that branch is the 422 the

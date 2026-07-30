@@ -144,7 +144,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
          {:ok, base, token} <- session(ctx, repo),
          env <- %{base: base, token: token, id: id, base_ref: base_ref, head_ref: head_ref},
          :ok <- verify_base(env, request),
-         :ok <- ensure_head(env, request),
+         :ok <- ensure_head(env, file_changes, request),
          :ok <- ensure_commit(env, file_changes, request) do
       find_or_create_pull(env, request)
     end
@@ -169,9 +169,9 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # THIS run's commit, and `POST /contents` is not idempotent (findings §3.3),
   # so re-sending it would stack a second, content-identical commit.
 
-  defp ensure_head(env, request) do
-    case head_state(env, request) do
-      {:ok, :absent} -> create_branch(env, request)
+  defp ensure_head(env, file_changes, request) do
+    case head_state(env, file_changes, request) do
+      {:ok, :absent} -> create_branch(env, file_changes, request)
       {:ok, :at_base} -> :ok
       {:ok, :already_written} -> :ok
       {:error, reason} -> {:error, reason}
@@ -180,6 +180,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
 
   defp head_state(
          %{head_ref: head_ref} = env,
+         file_changes,
          %CreateChangeRequest{
            expected_base_sha: %CommitSha{value: base_sha}
          } = req
@@ -199,7 +200,9 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # it" -- and that is decided by comparing what a re-run WOULD produce,
         # never by assuming. Anything else is someone else's branch and must
         # not be resumed onto or force-moved.
-        if ours?(commit, req), do: {:ok, :already_written}, else: {:error, :head_ref_conflict}
+        if ours?(env, file_changes, commit, req),
+          do: {:ok, :already_written},
+          else: {:error, :head_ref_conflict}
     end
   end
 
@@ -221,14 +224,54 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # -- it is second-precision and taken from the caller's `commit_date`, so a
   # foreign commit must coincide on title, both identities AND that exact
   # timestamp to be misread.
-  defp ours?(commit, %CreateChangeRequest{title: title, commit_date: commit_date})
+  defp ours?(env, file_changes, commit, %CreateChangeRequest{
+         title: title,
+         commit_date: commit_date
+       })
        when is_map(commit) do
     String.trim(to_string(commit["message"] || "")) == String.trim(title) and
       same_identity?(commit["author"]) and same_identity?(commit["committer"]) and
-      same_instant?(commit["timestamp"], commit_date)
+      same_instant?(commit["timestamp"], commit_date) and
+      same_content?(env, file_changes)
   end
 
-  defp ours?(_commit, _request), do: false
+  defp ours?(_env, _file_changes, _commit, _request), do: false
+
+  # Metadata alone is NOT provenance. message, identity and date are all derived
+  # from the RUN, so a second attempt carrying different `file_changes` shares
+  # every one of them -- and skipping the write there would open a change request
+  # pointing at the first attempt's content.
+  #
+  # GitHub's adapter closes this by recomputing the tree sha, which its
+  # content-addressed, idempotent blob/tree writes make free
+  # (`github_adapter.ex:298`). Forgejo has no Git Data write chain (findings §1),
+  # so the tree sha cannot be obtained that way. What IS available: `/contents`
+  # returns the standard git blob sha (measured -- `sha1("blob <len>\0" <> body)`),
+  # so every changed file's expected sha is computable LOCALLY, and the read it
+  # is compared against is one `file_operations/2` performs anyway on the write
+  # path.
+  #
+  # Residual, deliberately not closed: this proves every file this call WOULD
+  # write already carries exactly that content. It does not prove nothing ELSE
+  # was changed in the same commit -- that needs the full tree, i.e. a recursive
+  # tree read plus a local reimplementation of git tree hashing (mode bits,
+  # entry ordering, submodules). Reaching it requires every metadata field to
+  # coincide first. Recorded in design §12.4.
+  defp same_content?(env, file_changes) do
+    Enum.all?(file_changes, fn %FileChange{path: path, content: content} ->
+      case blob_sha(env, path) do
+        {:ok, sha} when is_binary(sha) -> sha == git_blob_sha(content)
+        _absent_or_error -> false
+      end
+    end)
+  end
+
+  # `sha1("blob <byte_size>\0" <> content)` — the git object id of a blob. Pure,
+  # local, no request.
+  defp git_blob_sha(content) do
+    :crypto.hash(:sha, "blob #{byte_size(content)}\0" <> content)
+    |> Base.encode16(case: :lower)
+  end
 
   defp same_identity?(%{"name" => name, "email" => email}) do
     %{name: expected_name, email: expected_email} = commit_identity()
@@ -263,6 +306,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
 
   defp create_branch(
          %{base: base, token: token, id: id, head_ref: head_ref} = env,
+         file_changes,
          %CreateChangeRequest{
            expected_base_sha: %CommitSha{value: base_sha}
          } = request
@@ -283,7 +327,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
       # answering `:head_ref_conflict` on sight would make two identical runs
       # fail to converge. `head_state/2` still refuses anything that is not ours.
       {:error, :conflict} ->
-        reconcile_head(env, request, [:at_base, :already_written])
+        reconcile_head(env, file_changes, request, [:at_base, :already_written])
 
       {:error, marker} ->
         {:error, map_error(marker, :create_change_request, :write)}
@@ -293,7 +337,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # ── §7.1 step 6: the commit ──────────────────────────────────────────
 
   defp ensure_commit(env, file_changes, request) do
-    case head_state(env, request) do
+    case head_state(env, file_changes, request) do
       {:ok, :already_written} -> :ok
       {:ok, _writable} -> write_contents(env, file_changes, request)
       {:error, reason} -> {:error, reason}
@@ -335,7 +379,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # retrying the write here would stack a second commit; and looping would
         # spin against a branch someone else is actively moving.
         {:error, marker} when marker in [:file_exists, :branch_exists] ->
-          reconcile_head(env, request, [:already_written])
+          reconcile_head(env, file_changes, request, [:already_written])
 
         # `sha_required` is NOT a concurrency signal: it means this adapter built
         # an `update` operation without the blob sha, which is an internal
@@ -363,8 +407,8 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   #
   # `head_state/2` refuses a commit that is not ours in both cases, so neither
   # site can resume onto a foreign branch.
-  defp reconcile_head(env, request, accept) do
-    case head_state(env, request) do
+  defp reconcile_head(env, file_changes, request, accept) do
+    case head_state(env, file_changes, request) do
       {:ok, state} -> if state in accept, do: :ok, else: {:error, :head_ref_conflict}
       {:error, reason} -> {:error, reason}
     end
