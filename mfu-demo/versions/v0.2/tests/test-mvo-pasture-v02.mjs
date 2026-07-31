@@ -97,16 +97,16 @@ for (const fn of [
   "postTask"
 ]) assert.ok(html.includes(fn), `missing migrated incubator interaction ${fn}`);
 
-for (const token of [
+for (const expectedText of [
   "normalizeState",
   "recordLedger",
   "setOrderStatus",
   "ledger:",
   "paymentStatus",
   "assignedOrgId"
-]) assert.ok(html.includes(token), `missing shared operating record: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing shared operating record: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "待确认",
   "待分配",
   "进行中",
@@ -114,18 +114,18 @@ for (const token of [
   "已完成",
   "setOrderFilter",
   "openOrder"
-]) assert.ok(html.includes(token), `missing order lifecycle: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing order lifecycle: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "funds-resource-view",
   "compute-resource-view",
   "待收款",
   "待付款",
   "本周利润",
   "算力消耗记录"
-]) assert.ok(html.includes(token), `missing resource finance/compute feature: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing resource finance/compute feature: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "allResources",
   "assignResourcesToOrg",
   "releaseOrderResources",
@@ -133,9 +133,9 @@ for (const token of [
   "交付",
   "经营记录",
   "成长"
-]) assert.ok(html.includes(token), `missing organization operation: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing organization operation: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "issueInvoice",
   "receivePayment",
   "completeSettlement",
@@ -144,9 +144,9 @@ for (const token of [
   "应收款逾期",
   "即将超预算",
   "资源冲突"
-]) assert.ok(html.includes(token), `missing operating loop: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing operating loop: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "activeMainTab",
   "setMainTab",
   "renderMainView",
@@ -155,9 +155,9 @@ for (const token of [
   'id="main-tabs"',
   'id="workspace-view"',
   'id="world-view"'
-]) assert.ok(html.includes(token), `missing main world shell: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing main world shell: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "marketOrders",
   "worldFeed",
   "renderWorld",
@@ -165,9 +165,9 @@ for (const token of [
   "订单市场",
   "世界动态",
   "新闻与公告"
-]) assert.ok(html.includes(token), `missing world market: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing world market: ${expectedText}`);
 
-for (const token of [
+for (const expectedText of [
   "nodeStates",
   "normalizeNodeStates",
   "projectGraphMarkup",
@@ -176,17 +176,17 @@ for (const token of [
   "正在运行",
   "未开始",
   "等待外部承接"
-]) assert.ok(html.includes(token), `missing node execution state: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing node execution state: ${expectedText}`);
 
 assert.ok(!html.includes(">📮 外包子任务</button>"), "old instant outsourcing button remains");
 
-for (const token of [
+for (const expectedText of [
   "openNodeOutsourceForm",
   "publishNodeOrder",
   "simulateExternalAcceptance",
   "completeExternalNodeOrders",
   "发布为订单",
   "模拟外部玩家承接"
-]) assert.ok(html.includes(token), `missing node outsourcing: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing node outsourcing: ${expectedText}`);
 
 console.log("MFU organization pasture v0.2 static contract passed");

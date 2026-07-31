@@ -35,7 +35,7 @@ for (const phrase of [
   assert.ok(html.includes(phrase), `missing v0.3 copy: ${phrase}`);
 }
 
-for (const token of [
+for (const expectedText of [
   "data-card",
   "data-slot",
   "assignCard",
@@ -62,7 +62,7 @@ for (const token of [
   "coachAdvice",
   "selectTrainingMethod"
 ]) {
-  assert.ok(html.includes(token), `missing v0.3 interaction: ${token}`);
+  assert.ok(html.includes(expectedText), `missing v0.3 interaction: ${expectedText}`);
 }
 
 for (const removed of [

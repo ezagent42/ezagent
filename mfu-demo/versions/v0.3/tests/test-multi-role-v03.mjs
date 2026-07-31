@@ -21,7 +21,7 @@ for (const id of [
   "market-filters"
 ]) assert.match(html, new RegExp(`id=["']${id}["']`), `missing #${id}`);
 
-for (const token of [
+for (const expectedText of [
   "ROLE_PROFILES",
   "mfu-v03-world",
   "mfu-v03-role-",
@@ -42,7 +42,7 @@ for (const token of [
   "社会创新",
   "节点外包",
   "我发布的"
-]) assert.ok(html.includes(token), `missing multi-role behavior: ${token}`);
+]) assert.ok(html.includes(expectedText), `missing multi-role behavior: ${expectedText}`);
 
 assert.ok(!html.includes('const KEY="mfu-pasture-v02c"'), "v0.3 must not reuse v0.2 storage");
 assert.ok(html.includes("workshopChoices"), "organization workshop must use current role resources");

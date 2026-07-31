@@ -32,7 +32,7 @@ for (const phrase of [
   assert.ok(html.includes(phrase), `missing MVO overview copy: ${phrase}`);
 }
 
-for (const token of [
+for (const expectedText of [
   "incubateRecommendedMvos",
   "confirmIncubation",
   "advanceMvos",
@@ -46,7 +46,7 @@ for (const token of [
   "localStorage",
   "prefers-reduced-motion"
 ]) {
-  assert.ok(html.includes(token), `missing MVO interaction: ${token}`);
+  assert.ok(html.includes(expectedText), `missing MVO interaction: ${expectedText}`);
 }
 
 for (const graphType of ["linear", "fork", "merge", "hub", "loop"]) {
