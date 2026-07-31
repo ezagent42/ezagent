@@ -217,7 +217,8 @@ Ezagent.Router.dispatch(%Ezagent.Invocation{
 | `:repository_not_found` | 仓库不存在或无权限 |
 | `:provider_denied` | 权限不足或限流 |
 | `:change_request_conflict` | PR 重复或参数无效 |
-| `:provider_unavailable` | GitHub 不可用 |
+| `:provider_unavailable` | GitHub 没能给出可用应答（传输失败，或未专门分类的 HTTP 状态）。**可重试** |
+| `:provider_response_unrecognized` | GitHub 应答成功（2xx）但内容读不懂 —— 未知枚举值、字段缺失或改名、body 形状不对。重发同样的请求会得到同样的结果，所以**不重试**、直接 blocked。看到这个码去查 GitHub API 是不是变了 |
 | `:base_sha_mismatch` | base 分支已变化，需 rebase |
 | `:base_ref_not_found` | base 分支不存在 |
 | `:authorization_backend_unavailable` | CredentialBackend 未就绪 |

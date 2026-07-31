@@ -354,7 +354,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
 
     case GitHubClient.get(commit_path, token, request_opts()) do
       {:ok, %{"tree" => %{"sha" => tree_sha}}} -> {:ok, tree_sha}
-      {:ok, _unexpected_shape} -> {:error, :provider_unavailable}
+      {:ok, _unexpected_shape} -> {:error, :provider_response_unrecognized}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -373,7 +373,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
           {:cont, {:ok, acc ++ [sha]}}
 
         {:ok, _unexpected} ->
-          {:halt, {:error, :provider_unavailable}}
+          {:halt, {:error, :provider_response_unrecognized}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
@@ -400,7 +400,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         {:ok, sha}
 
       {:ok, _unexpected} ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
 
       {:error, reason} ->
         {:error, reason}
@@ -440,7 +440,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         {:ok, sha}
 
       {:ok, _unexpected} ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
 
       {:error, reason} ->
         {:error, reason}
@@ -504,7 +504,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, []} -> create_pr(repo, create_req, token)
       {:ok, [single]} when is_map(single) -> build_change_request(single)
       {:ok, [_, _ | _]} -> {:error, :change_request_conflict}
-      {:ok, _unexpected} -> {:error, :provider_unavailable}
+      {:ok, _unexpected} -> {:error, :provider_response_unrecognized}
       {:error, reason} -> {:error, map_read_error(reason)}
     end
   end
@@ -572,7 +572,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
             collect(reviews, &build_review/1)
 
           {:ok, _unexpected} ->
-            {:error, :provider_unavailable}
+            {:error, :provider_response_unrecognized}
 
           {:error, reason} ->
             {:error, map_read_error(reason)}
@@ -615,11 +615,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
         |> RepositoryRef.new()
         |> case do
           {:ok, repository} -> {:ok, repository}
-          {:error, _validation_error} -> {:error, :provider_unavailable}
+          {:error, _validation_error} -> {:error, :provider_response_unrecognized}
         end
 
       :error ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
     end
   end
 
@@ -674,11 +674,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       # `ChangeRequest.new/1` answers with a `ValidationError`, which is NOT a
       # member of the frozen `DomainGit.Error` union the callback is typed
       # against. Everything unparsable leaves as the one error atom.
-      _ -> {:error, :provider_unavailable}
+      _ -> {:error, :provider_response_unrecognized}
     end
   end
 
-  defp build_change_request(_data), do: {:error, :provider_unavailable}
+  defp build_change_request(_data), do: {:error, :provider_response_unrecognized}
 
   defp build_checks(%{"check_runs" => check_runs}) when is_list(check_runs),
     do: collect(check_runs, &build_check/1)
@@ -686,7 +686,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
   # An absent or non-list `check_runs` is refused rather than read as `{:ok, []}`
   # — a caller reads an empty list as "nothing failed", so answering it for a
   # body we did not understand is the same fail-open in a different costume.
-  defp build_checks(_body), do: {:error, :provider_unavailable}
+  defp build_checks(_body), do: {:error, :provider_response_unrecognized}
 
   # `is_map` is a guard, not decoration: `Access` on a scalar RAISES, and a raise
   # escapes the callback without either `{:ok, _}` or `{:error, Error.t()}` —
@@ -705,11 +705,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
            }) do
       {:ok, check}
     else
-      _ -> {:error, :provider_unavailable}
+      _ -> {:error, :provider_response_unrecognized}
     end
   end
 
-  defp build_check(_run), do: {:error, :provider_unavailable}
+  defp build_check(_run), do: {:error, :provider_response_unrecognized}
 
   # FILTERING and LOSING are different, and collapsing them is a fail-open.
   #
@@ -726,7 +726,7 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp build_review(_data), do: {:error, :provider_unavailable}
+  defp build_review(_data), do: {:error, :provider_response_unrecognized}
 
   # `user` is destructured in the head for the same reason `build_check/1` guards
   # on `is_map`: `data["user"]["login"]` RAISES when `user` is a scalar, and a
@@ -745,11 +745,11 @@ defmodule EzagentPluginGithub.GitHubAdapter do
            }) do
       {:ok, review}
     else
-      _ -> {:error, :provider_unavailable}
+      _ -> {:error, :provider_response_unrecognized}
     end
   end
 
-  defp build_submitted_review(_state, _data), do: {:error, :provider_unavailable}
+  defp build_submitted_review(_state, _data), do: {:error, :provider_response_unrecognized}
 
   # One unparsable entry fails the WHOLE read. A partial list is indistinguishable
   # from the complete facts at the call site, and the entry most likely to be
