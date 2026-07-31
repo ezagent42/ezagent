@@ -85,7 +85,8 @@ A0 ──────── A1 ──────── A2 ───────
 
 凭据位置   仅 BEAM  →  平台子进程  →  平台子进程  →  agent 进程 →  agent 进程 + 磁盘
 功能       只读公开  →  能写私有   →  + agent 自主 →  + 完整 git →  + 无 API 主机
-四后果     4/4 满分 →  ①③④ 满分  →  ①④ 满分    →  ①一半④一半 →  基本全丢
+四后果     4/4 满分 →  4/4 满分   →  ①②④ 满分   →  ①半④半    →  基本全丢
+                      └── A1/A2 采用 fd-helper 投递凭据时（§5.4）──┘
 ```
 
 **每向右一格，都是以某几条后果换取功能。** A0 在安全维度上是最优的那一端，但它**不支持私有仓库**——既然私有仓库已定为需求，**「不动」不是可选项**，问题只剩「向右移动几格」。A0 在下文保留为对照零点：它量化了每向右一格要放弃什么。
@@ -172,7 +173,7 @@ agent 在自己 shell 里跑完整 git；凭据是 SSH 私钥。
 | CapBAC 能表达「哪个仓库」 | ✅ | ✅ | ✅ | ✅（靠 token scope）| 仅 deploy key 时 ✅ |
 | CapBAC 能表达「哪个 ref」 | ✅ | ✅ | ✅ | ❌ → branch protection | ❌ → branch protection |
 | 禁 force-push / 禁删分支 | ✅ 结构性（无 push）| ✅ 结构性 | ✅ 结构性 | ❌ → branch protection | ❌ → branch protection |
-| 跨租户泄漏半径 | **零** | 几秒窗口（见 §5.4）| 几秒窗口（见 §5.4）| 1 小时 × 单仓库 | 长期 × key 可达范围 |
+| 跨租户泄漏半径 | **零** | **可降至零**（见 §5.4）| **可降至零**（见 §5.4）| 1 小时 × 单仓库 | 长期 × key 可达范围 |
 | 审计可归属到 task | ✅ | ✅ | ✅ | ❌ | ❌ |
 | 凭据可自动过期 | n/a | ✅ 1 小时 | ✅ 1 小时 | ✅ 1 小时 | ❌ |
 | 支持无 API 的 git 主机 | **必须有 API** | ❌ | ❌ | ❌ | ✅ |
@@ -213,7 +214,7 @@ agent 需读取仓库内容、issue、PR 评论。今天最坏情况是产出错
 | 后果 | A0 今天（已出局）| A1 平台全驱动 | A2 受控 argv | B1 full-shell+token | B2 full-shell+SSH |
 |---|---|---|---|---|---|
 | ① CapBAC 对 git 失效 | ✅ 完全解决 | ✅ 完全解决 | ✅ 完全解决 | ⚠️ 一半 | ❌（账号级 key 则全失效）|
-| ② 同 UID 跨租户泄漏 | ✅ **真正为零** | ⚠️ 只缩小 | ⚠️ 只缩小 | ⚠️ 缩小得少 | ❌ 最差 |
+| ② 同 UID 跨租户泄漏 | ✅ **真正为零** | ✅ **可为零**（fd-helper）| ✅ **可为零**（fd-helper）| ⚠️ 只缩小 | ❌ 最差 |
 | ③ 注入 → 直接写远端 | ✅ 完全解决 | ✅ 完全解决 | ⚠️ 参数钉死 | ❌ 不解决 | ❌ 不解决 |
 | ④ 审计归属 | ✅ 完全解决 | ✅ 完全解决 | ✅ 完全解决 | ⚠️ 平台侧可推断、provider 侧不可 | ❌ 不解决 |
 
@@ -237,22 +238,53 @@ B1 保住「哪个仓库」（token scope），丢掉「哪个 ref」与「哪�
 
 B2 使用账号级 key 时整条失效——key 位于文件系统，发不发 cap 结果相同。这正是 CLAUDE.md 所定义的「防漂移」要防的那类失效。
 
-### ② 跨租户泄漏 — 离开 A0 后无形态可解
+### ② 跨租户泄漏 — A1/A2 可解，B1/B2 不可解
 
-根因是同 UID 无隔离，属形态之外的问题。**A0 之所以为零，是因为它根本不把凭据交给任何子进程**；一旦向右移动，就只能缩小窗口：
+根因是同 UID 无隔离。**A0 为零是因为它根本不把凭据交给任何子进程**；向右移动后能否回到零，取决于凭据的投递方式（见下方三档）：
 
 | | 凭据存在于 | 存活时长 | 其它 agent 可读性 |
 |---|---|---|---|
 | **A0** | **仅 BEAM 进程内** | n/a | **不可读** — 被动读取（environ / 文件 / argv）一无所获，仅 ptrace / 读 mem 这类主动攻击可达 |
-| A1 / A2 | 平台侧 git 子进程 env | clone/fetch/push 的**数秒** | 需恰在该窗口内读取 `/proc` |
+| A1 / A2 ①env | 平台侧 git 子进程 env | clone/fetch/push 的**数秒** | 需恰在该窗口内读取 `/proc/environ` |
+| **A1 / A2 ②fd-helper** | **仅进程内存** | n/a | **不可读**（ptrace_scope≥1）|
 | B1 | agent 进程可达处 | **1 小时** | 全程可读 |
 | B2 | 文件系统（ssh 要求）| **长期** | 全程可读 |
 
-排序 A0 ≪ A1/A2 ≪ B1 < B2。**离开 A0 之后无一为零**——真正消除只能靠 Plan A 的隔离候选（独立 OS user / 容器沙箱 / 远程 signer），至今均未实现。
+排序：A0 = A1/A2②档 = 零 ≪ A1/A2①档 ≪ B1 < B2。**B1/B2 无一为零**——对它们而言真正消除只能靠 Plan A 的隔离候选（独立 OS user / 容器沙箱 / 远程 signer），至今均未实现。
 
 **限定**：本条仅就 git 这条线而言。agent 沙箱家目录中的 `~/.claude/.credentials.json`（§6）属另一条线，不受 A0 保护。
 
-**A1/A2 可用的近零加固（几乎免费）**：凭据不经 env，改由 **credential helper 从 BEAM 继承的 fd 读取**。git 的 credential helper 协议是「运行一个程序、从其 stdout 读 `password=...`」，该程序可从继承管道取得 token。如此 token **不在 environ、不在磁盘、不在 argv**，仅存在于两个进程的内存中——同 UID 的被动读取（读文件、读 environ）全部失效，只剩 ptrace / 读 mem 这类主动攻击。
+#### A1/A2 的泄漏窗口可以压到零 — 三档凭据投递方式
+
+上表 A1/A2 的「数秒窗口」是**最朴素投递方式（env 注入）下的值**，不是这两个形态的下界。同 UID 之间到底能读到什么，由凭据藏在哪里决定：
+
+**同 UID 兄弟进程可读性实测**（本机 2026-07-31）：
+
+| 读什么 | 结果 |
+|---|---|
+| `/proc/<pid>/mem` | **Permission denied** — `ptrace_scope=1`（yama），只有**父进程**能 ptrace |
+| `/proc/<pid>/environ` | **可读**（同 UID）|
+| `/proc/<pid>/cmdline` | **可读**（且默认全局可读，连别的 UID 都能看）|
+
+据此，A1/A2 有三档投递方式：
+
+| 档 | 凭据藏在哪 | 兄弟 agent 能否读到 | 成本 |
+|---|---|---|---|
+| ① env 注入（朴素）| `/proc/<git pid>/environ` | **能** — 窗口 = git 命令存活的数秒 | 最低 |
+| ② **fd-based credential helper** | 仅进程内存（管道传入）| **不能** — environ/cmdline/磁盘皆无，内存受 ptrace_scope 保护 | 几乎免费 |
+| ③ loopback 注入代理 | 完全不进 git 进程 | **不能**，且 git 子进程恢复 A0 的零凭据状态 | 需独立设计 |
+
+**②的机制**：git 的 credential helper 协议是「运行一个程序、从其 stdout 读 `password=...`」。让该 helper 从 BEAM 继承的管道 fd 读 token，则 token 不在它的 argv、不在它的 environ、不落盘，只存在于 helper 与 git 两个进程的内存里。而内存正是兄弟进程读不到的那一处。
+
+> **⚠️ 绝不能用的两种投递**：token 写进 remote URL（`https://x-access-token:TOK@host/...`）会**落盘进 `.git/config`**，永久可读；token 放 argv 会进 `/proc/<pid>/cmdline`，**连别的 UID 都能读**。现有的 `execute_matching_remote/3`（git_runner.ex:414-419）已要求 `remote get-url origin` 等于干净 URL，顺带就是第一条的防线。
+
+**③的思路**：git 指向 `http://127.0.0.1:<随机端口>/...`，由 BEAM 侧的短命代理在转发时加 `Authorization` 头。git 进程从头到尾不接触任何凭据——这让 A1/A2 在后果②上完全等同 A0，同时支持私有仓库。代价是需要一份独立设计（代理生命周期、端口绑定、调用方鉴别），本文不展开。
+
+**结论**：**A1/A2 采用②档后，后果②的泄漏半径为零**——与 A0 相同，而 A0 做不到私有仓库。这使 A1/A2 成为「既支持私有仓库、又不放弃任何一条后果」的唯一区间。
+
+**该结论的前提是部署主机 `ptrace_scope ≥ 1`**（本机为 1）。若部署在 `ptrace_scope = 0` 的主机上，兄弟进程可读任意同 UID 进程内存，②档退化回①档的强度。因此若选 A1/A2 + ②档，**须把 `ptrace_scope ≥ 1` 列为部署要求并在启动时自检**。
+
+**B1/B2 用不上②③**：B1 的 token 是**交付给 agent 的**，agent 是合法持有者；full-shell 下无法约束它不把 token 写进 `~/.git-credentials` 或 env。B2 更彻底——ssh 要求私钥**必须落盘**，落盘即兄弟可读，无从加固。
 
 B1/B2 用不上此加固，因其凭据本就必须交付给 agent。
 
@@ -337,17 +369,28 @@ B1/B2 用不上此加固，因其凭据本就必须交付给 agent。
 
 ## 8. 推荐
 
-**首选 A2（受控 argv + agent 可请求）+ HTTPS token。** 理由：拿到 agent 自主 git 的绝大部分收益，同时凭据从不进入 agent 进程，`allowed_head_ref`、单仓库、禁强推三条**继续结构性有效**；不需要建立密钥生命周期。
+**前提**：以下推荐均假定采用 §5.4 的 **②档 fd-based credential helper** 投递凭据（几乎免费，且是 A1/A2 泄漏半径为零的前提）。若用①档 env 注入，A1/A2 的后果②退化为「数秒窗口」。
 
-**次选 B1（full-shell + 短命 per-repo token）。** 若要求与人类开发者完全一致的 git 体验（自主 fetch/rebase/stacking），B1 是 full-shell 里唯一不失控的形态——因为它把授权表达搬到了 token scope 上。
+### 决策树
 
-**不推荐 B2。** 除非确认目标包含**没有 API/token 机制的 git 主机**。在 full-shell 模型下 SSH 比 token 差得更多：shell 凭据已够不着 argv 白名单保护，唯一剩下的保护就是「凭据本身多窄、多短命」，而这恰是 token 强、SSH key 弱之处。
+**不需要 agent 自主性 → A1 + HTTPS token + fd-helper。**
+这是**严格优于 A0 的点**：四条后果全满分（与 A0 相同），同时支持私有仓库、push、多 commit、删除/二进制。既然 A0 已因私有仓库需求出局，而 A1 在安全上不比 A0 差，**A1 是新的安全最优解**。代价只有一条：agent 无自主权，交付时机由状态机决定。
 
-**A1 仅在明确不需要 agent 自主性时选择。**
+**需要 agent 自主性（dev-together 那种形态）→ A2 + HTTPS token + fd-helper。**
+相对 A1 只让出后果③的一部分——注入可诱导 agent 调用 push tool，但推送目标是钉死的仓库与钉死的 ref，`--force` 不在 argv 里，**注入能控制「做不做」，控制不了「对谁做」**。①②④ 仍全满分。
 
-**A0 已出局**：它在四条后果上全满分、工时为零，但不支持私有仓库——这不是可补的缺口，是其定义性质（§3 形态 A0 的关键推论）。私有仓库已定为确定需求（见文首「已定输入」），故 A0 不再是候选，仅作对照零点。选择范围是 A1 / A2 / B1 / B2。
+**要求与人类完全一致的 git 体验（自主 fetch/rebase/多分支 stacking）→ B1 + 短命 per-repo token。**
+B1 是 full-shell 里唯一不失控的形态——授权表达从「argv 白名单」搬到「token scope」。但要清楚换掉了什么：后果②无法归零（token 交付给 agent 后无法约束它写进 `~/.git-credentials` 或 env）、③不解决、④只能推断、cap 管不住 ref 与操作（移交 branch protection）。
 
-**关于后果②**：一旦离开 A0，同 UID 跨租户泄漏就无形态可解，只能缩小窗口（§5.4）。若 §9.3 的租户模型答案是「会承载互不信任的租户」，则隔离轨不是可选项而是前置项，且它独立于本文的形态选择。
+**不推荐 B2。** 除非确认目标包含**没有 API/token 机制的 git 主机**——这是 SSH 的唯一独占理由。在 full-shell 下 SSH 比 token 差得更多：shell 凭据已够不着 argv 白名单保护，唯一剩下的保护就是「凭据多窄、多短命」，而这恰是 token 强、SSH key 弱之处；且 ssh 要求私钥落盘，落盘即兄弟进程可读，无从加固。
+
+### 两条前置
+
+**A0 已出局**：四条后果全满分、工时为零，但不支持私有仓库——不是可补的缺口，是其定义性质（§3 关键推论）。私有仓库已定为确定需求，故 A0 仅作对照零点。
+
+**若选 A1/A2 + ②档，须把 `ptrace_scope ≥ 1` 列为部署要求并在启动时自检**（本机实测为 1）。在 `ptrace_scope = 0` 的主机上兄弟进程可读任意同 UID 进程内存，②档退化回①档强度。
+
+**关于租户模型**：若 §9.3 答案是「会承载互不信任的租户」，B1/B2 的后果②无解，隔离轨成为前置项；而 A1/A2 + ②档不受此影响（泄漏半径本就为零）。**这可能是四选一中权重最大的一条。**
 
 ---
 
@@ -388,6 +431,14 @@ grep -cniE "uid|gid|namespace|bwrap|unshare|setuid|sandbox|cgroup" \
 # NO-GO ② OTP 自带 OpenSSH 私钥解析（本文结果：openssh_key_v1 成功）
 #   ssh-keygen -t ed25519 -N "" -f <一次性 key>
 #   :ssh_file.decode(File.read!("<一次性 key>"), :openssh_key_v1)
+
+# 同 UID 兄弟进程可读性（本文结果：mem 拒绝 / environ 可读 / cmdline 可读）
+cat /proc/sys/kernel/yama/ptrace_scope        # 本机 = 1（仅父进程可 ptrace）
+sleep 60 & v=$!; sleep 0.3
+cat /proc/$v/mem      >/dev/null 2>&1 && echo "mem 可读" || echo "mem 拒绝"
+cat /proc/$v/environ  >/dev/null 2>&1 && echo "environ 可读"
+cat /proc/$v/cmdline  >/dev/null 2>&1 && echo "cmdline 可读"
+kill $v
 
 # 现有凭据边界 gate（本文结果：7 + 1 + 10 = 18 tests, 0 failures）
 POSTGRES_PORT=15432 mix test \
