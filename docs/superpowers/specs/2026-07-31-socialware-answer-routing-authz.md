@@ -1,13 +1,18 @@
 # Socialware Answer Routing + Completion Authz — the OUTBOUND half of the socialware protocol
 
-**Status:** SPEC rev 2 (design only — no implementation in this PR)
+**Status:** SPEC rev 3 — FINAL (design only — no implementation in this PR)
 **Coordinator:** cc · **Review gate:** codex (adversarial, pre-impl — this touches the Cap axis)
 **Rev 2:** addresses the codex adversarial review on PR #1667 (verdict NEEDS-WORK).
-Per-finding changelog in §8.
+**Rev 3:** folds in the codex re-review of rev 2 (verdict: direction SOUND; 6
+residual findings — changelog in §8.2). **This is the last spec round; the
+document is the implementation handoff to jjkysy.** Every residual finding is
+resolved here as either a spec-level shape decision or an explicit
+**IMPL DIRECTIVE** — the implementer executes these without re-deriving them.
+Per-finding changelogs in §8.
 **Companion:** `docs/superpowers/handoffs/2026-07-28-socialware-receiver-foundation-handoff.md`
 (the INBOUND half). Together they form one socialware interaction protocol.
 **Evidence baseline:** read-only review of `origin/main` @ `9da32994f`; all
-file:line references re-verified for rev 2. Re-anchor before implementing.
+file:line references re-verified for rev 3. Re-anchor before implementing.
 
 ---
 
@@ -132,6 +137,7 @@ roles:
     recipe: hello.front-desk
     flavor: hello
     answers: chat        # NEW — this role replies to plain session traffic
+    completion: llm      # NEW — the role providing this answerer's LLM completion (or `none`)
 ```
 
 - `answers` is a role-level **typed** protocol declaration (shape in C2), not a
@@ -188,6 +194,37 @@ Coverage requirements, checked at publish (conformance) and at runtime (§4.2/§
    `answers` role, the session cannot answer; §4.3 reports it (`skipped_role`)
    with the repair command. Conformance cannot catch this (it is a runtime
    condition); the audit is the gate.
+5. **Every answerer declares its completion binding (`completion:`) — C2.5,
+   rev 3.** Rev 2 left enforcement unable to tell WHICH answering roles need
+   completion authority, or against WHICH target role: hello's recipes declare
+   no LLM dependency at all, and the driver hardcodes the `"llm"` role name
+   (`generator.ex:523-535`) — there was nothing declared to validate an edge
+   against. So the binding is declared, never inferred:
+
+   ```yaml
+   completion: llm      # this answerer thinks via the `llm` role, OR
+   completion: none     # this answerer needs no LLM completion (scripted/relay)
+   ```
+
+   - `completion` is REQUIRED on every role that declares `answers` (either
+     form). An `answers` role without `completion` is a conformance ERROR —
+     the same silence-is-invalid rule as C1.
+   - `completion: <role>` requires the named role to exist in the manifest
+     with `fill: agent`, AND requires an `operates` edge from the answering
+     role to EXACTLY that role with behavior
+     `Ezagent.ActionSet.Agent.Complete` / action `complete` (C3). Conformance
+     validates the exact `answers-role → declared completion-role` edge — a
+     `Complete` edge pointing at some OTHER role does not satisfy the
+     declaration.
+   - `completion: none` requires the ABSENCE of any `Agent.Complete` operate
+     edge from that role (a declared edge contradicting `none` is an ERROR).
+   - The declaration also scopes C3c: the activation barrier applies to a
+     role iff it declares `completion: <role>` — a `completion: none`
+     answerer has no completion bindings to await and becomes answer-routable
+     on rule install.
+   - This CLOSES rev 2 open question 1: no recipe-dependency inference, in v1
+     or ever — the manifest states the binding. Drivers likewise resolve role
+     names from the definition's declarations, not from string literals.
 
 The `MentionRouting` `system_default` (`always → [$session_users, $mentions]`)
 remains the default for **ad-hoc member sessions only**. An answering socialware
@@ -204,6 +241,7 @@ composition edge**, the same mechanism autoservice uses for kb
 roles:
   - role_name: front-desk
     answers: chat
+    completion: llm          # C2.5 — must name the operates target below
     operates:
       - role: llm
         behavior: Ezagent.ActionSet.Agent.Complete
@@ -227,17 +265,31 @@ blockers). This spec resolves both, without inventing a new authz mechanism:
   (`AgentLineage.spawned_by`, which is also the credential owner under C4's
   default policy). The grant root for ISSUE is therefore the owner of the
   target agent, preserving the #161 owner-authority chain.
-- **C3b — `CompositionCaps` learns cap-only subjects.** A Behavior may declare
-  itself **cap-only** (authorization subject with no dispatchable action — a
-  registry-level declaration on the Behavior, e.g. `@cap_only true` surfaced
-  via `CapabilityRegistry`). For a cap-only subject, target conformance =
-  "target is an Agent-Kind instance and the behavior declares the action as a
-  cap subject" — it does NOT require `BehaviorSet.resolve_action/3` on the
-  live behavior set. Explicitly: we do NOT mount the no-op `handle_complete/2`
-  into the agent's effective behavior set merely to satisfy conformance —
-  mounting a fake dispatchable action to pass a gate would falsify the gate.
-  Dispatchable subjects keep today's strict live-resolution conformance
-  unchanged.
+- **C3b — `CompositionCaps` learns cap-only subjects, using the EXISTING
+  registry flag.** `CapabilityRegistry` already models cap-only:
+  `dispatchable?/0 == false` writes the subject to the subjects table only and
+  skips `BehaviorRegistry`, so dispatch can never invoke it
+  (`apps/ezagent_core/lib/ezagent/capability_registry.ex:23-26,61-72,114-138`
+  — the `Notifications` `:subscribe` precedent). There is ONE flag; rev 2's
+  invented `@cap_only` marker is DROPPED — a second marker beside the one the
+  registry already enforces would drift. **IMPL DIRECTIVE:**
+  1. `Ezagent.ActionSet.Agent.Complete` implements
+     `def dispatchable?, do: false` (the existing optional callback).
+  2. It is registered at agent-domain boot alongside the existing
+     `Agent.Receive` line: `CapabilityRegistry.register(Agent, :complete,
+     Complete)` in
+     `apps/ezagent_domain_agent/lib/ezagent_domain_agent/application.ex`
+     (the post-supervisor block at :50-54, which today registers only
+     `Agent.Receive`).
+  3. Cap-only target conformance in `CompositionCaps` = an exact
+     `CapabilityRegistry.lookup_subject(Agent, :complete)` match — the
+     subject exists, its behavior is `Complete`, and `dispatchable? == false`
+     — plus "target is an Agent-Kind instance". It does NOT require
+     `BehaviorSet.resolve_action/3` on the live behavior set. Explicitly: we
+     do NOT mount the no-op `handle_complete/2` into the agent's effective
+     behavior set merely to satisfy conformance — mounting a fake
+     dispatchable action to pass a gate would falsify the gate. Dispatchable
+     subjects keep today's strict live-resolution conformance unchanged.
 - **C3c — storage barrier: no routable answerer before its cap is stored.**
   `absorb_cap/2` is a fire-and-forget cast (`apps/ezagent_domain_identity/lib/
   ezagent/identity.ex:146-179`; durable via the capability delivery outbox —
@@ -247,11 +299,14 @@ blockers). This spec resolves both, without inventing a new authz mechanism:
   routable while the driver's stored cap is still in flight → visible
   `:unauthorized` failures on a "healthy" session. Normative rule: **an
   `answers` role is not answer-routable until its completion cap's absorption
-  is CONFIRMED.** Mechanism (§3.2): composition activation gains a confirm
-  step — the binding is persisted `pending` and flipped `active` only on
-  absorption acknowledgement (the outbox row is the durable intent; the ack is
-  the barrier); create-time answering-role rule install is sequenced after
-  activation, and §4.2's tests await the barrier rather than sleeping.
+  is CONFIRMED.** The binding is persisted `pending` and flipped `active` only
+  on absorption acknowledgement (the outbox row is the durable intent; the
+  ack is the barrier); the answering role's delivery rule is DEFERRED — never
+  installed — until activation; §4.2's tests await the barrier rather than
+  sleeping. The full mechanism — the pending→active CAS, WHO performs it,
+  timeout/dead behavior, and restart reconciliation — is an IMPL DIRECTIVE in
+  §3.2 (rev 3; rev 2 left the activation owner unspecified). Scope: the
+  barrier applies per C2.5 — only to roles declaring `completion: <role>`.
 - **C3d — driver identity.** The completion driver calls as the **answering
   role member** (front-desk), never `User.admin_uri()` — the caller must be
   the entity that HOLDS the absorbed composition cap. Details in §3.4.
@@ -283,6 +338,25 @@ the role-agent owner/granter (`session_installer.ex:17-43`). Changing
     widens the `caller == owner` fast path so that EVERY admin-caller
     completion succeeds, silently bypassing the C3 edge this spec exists to
     require.
+- **The admin invariant, narrowed honestly (rev 3).** The prohibition above
+  is a POLICY-RESOLUTION rule, not a global "admin can never own an answering
+  agent" — rev 2 over-claimed. Under `inherit`, whoever owns the session owns
+  the role agents (`SessionInstaller.install/4` hands `Session.owner/1` to
+  materialization, `session_installer.ex:17-43`); when admin legitimately
+  owns/installs a session, admin IS the agent owner and the
+  `caller == owner` fast path in `authorize_complete/4` exists for it, as it
+  does for ANY owner. We deliberately do NOT forbid `inherit` from resolving
+  to admin: that would make admin the one principal unable to install an
+  answering socialware, for no security gain — the fast path it keeps is
+  scoped to sessions admin actually owns. The invariant this spec enforces
+  is therefore: **for every answering session, the C3 edge is declared,
+  minted, and the driver calls as the answering role member — regardless of
+  who owns the agents.** The stored-cap lane must be sufficient on its own;
+  ownership may ADD a fast path but never substitutes for the lane (§4.2's
+  fixtures pin `caller ≠ owner` precisely to prove the enforced path
+  ownership-independent). What stays forbidden is a SYSTEM POLICY resolving
+  to admin — `{type: platform}` → `User.admin_uri()` — because that would
+  confer the fast path on sessions admin does NOT own.
 - **v1 adoption: `inherit` everywhere, including the official site.** C3 alone
   fixes Defect B with no ownership change: the founder owns both role agents,
   the install is owner-authorized, the operate edge mints under the founder's
@@ -332,13 +406,34 @@ contracts:
   path, `installation.ex:252-280`), and finalizes the pin. `:upgrade` = that
   pipeline + the C2/C3 reconcile steps (§3.3). Blast radius is thereby
   resolved, not deferred (rev 1 open question 3, now closed): **a "config-only"
-  upgrade exists only as a proven-safe fast path** — the reconciler diffs the
-  pinned revision against the target revision restricted to config-bearing
-  fields (routing_rules, legends, prompt templates, operates, answers); if ANY
-  non-config field differs (behavior sets, recipes, roles, installs), the
-  config-only lane REFUSES and the operator must run the full
-  `migrate_session/2` upgrade. Install records never claim a revision whose
+  upgrade exists only as a proven-safe fast path.** Rev 3 makes the fast path
+  implementable — `answers`/`operates`/`completion` are NESTED inside role
+  records (`Definition.role_slot/1`, `definition.ex:299-318`), so a naive
+  role-record comparison would classify every completion-edge addition as a
+  role change and the fast path would never fire. Two directives:
+
+  **IMPL DIRECTIVE — the normalized config-only diff.** Normalize both
+  revisions into (a) the **role skeleton set** — each role MINUS its
+  `operates`, `answers`, and `completion` subfields (keeping `role_name`,
+  `fill`, `recipe`, `flavor`, provider/config, everything else), keyed by
+  `role_name` — and (b) the **config surface** — top-level `routing_rules`,
+  legends, prompt templates, plus the per-role `operates`/`answers`/
+  `completion` subfields. The fast path fires iff the role skeleton sets are
+  EQUAL and every remaining non-config field (installs/`requires`,
+  visibility, owner policies, …) is equal — i.e. the revisions differ ONLY
+  inside the config surface. Any skeleton or non-config difference →
+  `{:error, {:requires_full_upgrade, diff}}`; the operator runs the full
+  `migrate_session/2`. Install records never claim a revision whose
   non-config content the session does not actually run.
+
+  **IMPL DIRECTIVE — the fast path finalizes the pin.** The config-only lane
+  takes the TARGET template/revision as an explicit input, and after its
+  reconcile steps succeed it advances pins via
+  `Installation.repoint_template_installs/4` AND finalizes the session pin
+  exactly as `Migration.migrate_session/2` does (`migration.ex:10-45` — its
+  with-chain ends `repoint_template_installs` → `finalize_pin`). Without the
+  pin advance + finalize, the next `:repair` — frozen to the pinned revision
+  — would faithfully restore the OLD config and undo the upgrade.
 
 Shared reconcile semantics (both modes):
 
@@ -350,7 +445,13 @@ Shared reconcile semantics (both modes):
 - **Disabled state survives matcher healing.** Matcher drift is healed by
   delete+re-add under the same identity (no `update_matcher` today); the
   re-add explicitly carries the prior `enabled` value — healing a disabled
-  rule's matcher must not silently re-enable it.
+  rule's matcher must not silently re-enable it. **IMPL DIRECTIVE:** this is
+  impossible against today's API — `RuleStore.add/5` unconditionally builds
+  the row with `enabled: true` (`rule_store.ex:94-125`; `opts` has no
+  `:enabled`). Extend `add/5` with `opts[:enabled]` (default `true`, so every
+  existing caller is untouched) and have ONLY the reconcile matcher-heal pass
+  the prior value. Do NOT route around it with add-then-disable — that window
+  would be registry-visible as a briefly-enabled rule.
 - **Prompt/legend provenance.** Template-materialized prompt/legend keys are
   recorded with provenance (`template@revision`) at install and reconcile
   time. Reconcile replaces/deletes ONLY provenance-marked keys (a key removed
@@ -358,11 +459,28 @@ Shared reconcile semantics (both modes):
   additions (no template provenance) are untouched. Without provenance,
   "removed template key" and "local addition" are indistinguishable — that
   ambiguity was a review finding; the marker removes it.
-- **Removed installs are tombstoned.** `repoint_template_installs/4` only
-  advances refs still present in the target content. An upgrade that REMOVES
-  an install ref must tombstone the session's install record (the
-  `retract_session_installs/2` lane), so the session's record set stays the
-  authoritative enumeration `:repair` depends on.
+- **Removed installs are tombstoned — via a PUBLIC per-ref op.**
+  `repoint_template_installs/4` only advances refs still present in the
+  target content; an upgrade that REMOVES an install ref must tombstone that
+  session install record, so the session's record set stays the
+  authoritative enumeration `:repair` depends on. **IMPL DIRECTIVE:** today
+  only whole-session retraction is public
+  (`Installation.retract_session_installs/2`, `installation.ex:187-203` —
+  the uninstall lane, which also deactivates ALL composition bindings); the
+  per-ref tombstone write is a private helper (`retract_session_install`,
+  `installation.ex:457-487`). Expose a public
+  `Installation.retract_session_install(session_uri, ref, actor_uri)` with
+  the same tombstone body (`removed: true`) that does NOT touch composition
+  bindings — §3.3 step 4 re-reconciles them against the new declaration
+  anyway. Two consequences, both normative:
+  - `:repair` (and every pin enumeration) reads ONLY active, non-tombstoned
+    records — a record with `removed: true` is excluded, never healed, never
+    resurrected.
+  - The removed-set is computed over the FULL expanded `requires` closure of
+    BOTH revisions (`expand_installs_with_requires`,
+    `installation.ex:634-650`): a ref absent from the target's top-level
+    list but still reachable via another install's `requires` is NOT removed
+    — tombstoning it would orphan a live dependency.
 - **Actor vs authority are separate parameters.** Re-running
   `CompositionCaps.reconcile_session/5` takes the AUTHENTICATED actor (who
   invoked reconcile — operator or owner) and the ACCOUNTABLE configurer /
@@ -376,17 +494,22 @@ Shared reconcile semantics (both modes):
 ### 3.1 Manifest / Definition schema (additive)
 
 - `Definition.role`: optional `answers` — typed: `chat` |
-  `{events: [event_type]}` (C2; bare `true` rejected).
+  `{events: [event_type]}` (C2; bare `true` rejected); `completion` — a role
+  name or `none`, REQUIRED iff `answers` is present (C2.5).
 - `Definition`: optional top-level `answering: :none` opt-out marker.
 - `Definition`: optional `agent_owner_policy` — `inherit` (default) |
   `%{type: :platform}` (C4). `owner_policy` is unchanged.
 - `operates` whitelist gains `Agent.Complete`/`:complete` as a permitted
-  behavior/action pair (mirroring the kb `query` entry), marked **cap-only**
-  (C3b): conformance for this pair checks the target is an agent role, not
+  behavior/action pair (mirroring the kb `query` entry). Cap-only-ness is NOT
+  a whitelist-local marker — it is read from the registry
+  (`lookup_subject(Agent, :complete)` → `dispatchable? == false`, C3b):
+  conformance for this pair checks the target is an agent role, not
   live-action resolution.
 - `Ezagent.ActionSet.Agent.Complete`: `data_owner/1` resolves the concrete
-  instance's owner (C3a) instead of `:no_owner`; the Behavior is declared
-  cap-only in the registry. `handle_complete/2` stays unmounted.
+  instance's owner (C3a) instead of `:no_owner`; `def dispatchable?, do:
+  false`; registered at agent-domain boot via
+  `CapabilityRegistry.register(Agent, :complete, Complete)` (C3b).
+  `handle_complete/2` stays unmounted.
 - Version-hash extends over the new fields (write-once/hash-checked template
   machinery accommodates extra fields, per team-routing-unification §3.7).
 
@@ -399,14 +522,62 @@ add declarations, not a new create path. Two behavioral additions:
 
 - Rule-install failure stays loud (inside `finalize_fresh_session`'s
   with-chain, rolls back the create).
-- **Composition activation is barriered (C3c):** bindings persist `pending`;
-  the absorption ack flips them `active`; the `answers` role's delivery rule
-  is enabled only after its completion-edge bindings are `active`. A binding
-  stuck `pending` (grantee not ready) leaves the durable outbox row AND a
-  non-routable answerer — degraded loudly, visible to §4.3, never a
-  half-authorized live answerer.
+- **Composition activation is barriered (C3c).** Today NOTHING flips a domain
+  record on absorption: `absorb_cap/2` returns on cast-accept, and the
+  delivery outbox marks its OWN row applied post-commit
+  (`DeliveryOutbox.mark_applied/2`,
+  `apps/ezagent_core/lib/ezagent/cap/delivery_outbox.ex:140-151`) with no
+  domain callback. **IMPL DIRECTIVE — the activation path, end to end:**
 
-### 3.3 Reconcile (`SessionCreator.reconcile_session_config/2` — NEW)
+  1. **State.** `CompositionBinding.status` gains `:pending` (enum today
+     `[:active, :degraded, :inactive]`, `composition_binding.ex:38`).
+     `reconcile_session/5` persists completion-edge bindings as `:pending` —
+     today it writes `:active` BEFORE `absorb_active/1` runs
+     (`composition_caps.ex:228-232`); that ordering is the race this barrier
+     removes. Non-completion (dispatchable) edges keep today's `:active`
+     write — the barrier is scoped to cap-only completion edges (C2.5).
+  2. **The CAS.** Activation is a guarded update — set `status: :active`
+     WHERE `id = ^binding_id AND status == :pending` — idempotent (already
+     `:active` → `:ok`; `:inactive`/superseded → no-op, logged). Never an
+     unconditional write: a binding superseded by a later reconcile must not
+     be resurrected by a stale ack.
+  3. **WHO performs it.** Core cannot call the session domain, so the flip is
+     a registered ack sink, declare-don't-call like
+     `FlavorPublishHook`/`RoleSeedHook`: `ezagent_domain_session`'s
+     application registers a cap-delivery ack sink at boot;
+     `DeliveryOutbox.mark_applied/2` invokes registered sinks post-commit
+     with the delivery's producer tag + envelope. The absorb envelope for a
+     composition mint carries the `binding_id` correlation so the sink CASes
+     without inference. The existing `require_sync_ack/0` seam
+     (`delivery_outbox.ex:164-168`, a documented no-op) is NOT used — the ack
+     stays asynchronous by design.
+  4. **After the CAS.** When the sink observes ALL completion-edge bindings
+     of an `answers` role at `:active`, it installs that role's DEFERRED
+     delivery rule (identical parameters to create-time install; naturally
+     idempotent via `RuleStore.find_by_identity/4`) and calls
+     `RuleStore.load_into_registry/1`. The rule is **deferred, not
+     pre-installed disabled**: a disabled-then-enabled rule would be
+     indistinguishable from `admin_disabled`, corrupting C2.3's tri-state —
+     deferral is the shape that keeps the audit honest. (`completion: none`
+     answerers skip the barrier: their rule installs in the create chain.)
+  5. **Timeout / dead.** No wall-clock timeout fails the create: create
+     returns with the binding `:pending` and the answerer non-routable —
+     degraded loudly, §4.3 class `pending_cap`. If the outbox row exhausts
+     retries and goes `:dead`, the sink (also invoked on the dead transition)
+     marks the binding `:degraded` with reason `:absorb_dead` — still audited
+     as `pending_cap`, now carrying the dead delivery id for the operator.
+  6. **Restart/retry reconciliation.** The ack sink is an optimization; the
+     GUARANTEE is a sweep — absorption can commit after the initiating call
+     returned, and a crash between commit and callback loses the sink
+     invocation. The sweep: for each `:pending` binding, if the holder's
+     identity slice already holds the cap (`Kind.holds_cap?/3`) OR the outbox
+     row is `:applied` → run steps 2+4; if the row is `:dead` → step 5. It
+     runs (a) at session-domain boot, (b) inside every
+     `reconcile_session_config` (§3.3 step 4), and (c) on every §4.3 audit
+     pass (read-only there — it reports, with the reconcile command that
+     flips). All steps are idempotent; sink and sweep may race freely.
+
+### 3.3 Reconcile (`SessionCreator.reconcile_session_config/3` — NEW)
 
 ```
 reconcile_session_config(session_uri, mode, actor_uri) :: {:ok, summary} | {:error, term}
@@ -416,18 +587,24 @@ reconcile_session_config(session_uri, mode, actor_uri) :: {:ok, summary} | {:err
 1. Resolve template content:
    - `:repair` → the session-owned install record set, fully frozen (C5);
      refs without session records → `unpinned_ref` in summary, excluded.
-   - `:upgrade` → config-bearing diff against the target revision; if clean,
-     advance pins via `Installation.repoint_template_installs/4` and proceed
-     config-only; if not clean, `{:error, {:requires_full_upgrade, diff}}` —
-     the operator runs `Migration.migrate_session/2` (which itself calls back
-     into steps 2-5, keeping ONE implementation).
+   - `:upgrade` → the NORMALIZED config-only diff against the EXPLICIT target
+     revision (C5: role-skeleton equality + config-surface-only changes); if
+     clean, proceed config-only, then — after steps 2-5 succeed — tombstone
+     refs the target removed (public per-ref retraction, computed over the
+     expanded `requires` closure, C5), advance pins via
+     `Installation.repoint_template_installs/4`, and finalize the pin as
+     `migrate_session/2` does; if not clean,
+     `{:error, {:requires_full_upgrade, diff}}` — the operator runs
+     `Migration.migrate_session/2` (which itself calls back into steps 2-5,
+     keeping ONE implementation).
 2. Diff declared `routing_rules` against installed rows with
    `source == "system_default"` under identity `(created_by = session_uri,
    rule_set, position)`:
    - `missing` → `RuleStore.add/5` (source `system_default`, workspace-scoped,
      identical to create).
    - `drifted` (receivers) → `RuleStore.update_receivers/3`; (matcher) →
-     delete+re-add same identity, carrying `enabled` (C5).
+     delete+re-add same identity, carrying `enabled` via the new
+     `add/5 opts[:enabled]` (C5).
    - `admin_disabled` → matcher/receivers healed if drifted, `enabled: false`
      preserved, reported.
    - system_default rows no longer declared → delete (`force: true`).
@@ -435,7 +612,9 @@ reconcile_session_config(session_uri, mode, actor_uri) :: {:ok, summary} | {:err
 3. Reconcile legends + prompt templates by provenance-marked subset (C5).
 4. Re-run `CompositionCaps.reconcile_session/5` (already reconcile-shaped:
    replaces the session's binding set, revokes unsupported) with actor and
-   owner authority as separate parameters (C5); C3c barrier applies.
+   owner authority as separate parameters (C5); C3c barrier applies, and the
+   §3.2 pending-binding sweep runs here — absorbed-but-still-`:pending`
+   bindings are CASed active and their deferred answering rules installed.
 5. `RuleStore.load_into_registry/1` once, at the end.
 6. Authorization: `:repair` — the `repair_orchestrator/1` surfaces. `:upgrade`
    — the session owner, or a platform operator for platform-seeded
@@ -448,10 +627,12 @@ rules but cannot heal drift.
 ### 3.4 Driver identity (hello, and the generic rule)
 
 - `Generator.call_llm/3`: caller = the session's answering role member URI
-  (resolve via `EzagentPluginHello.Members.role_uri(session_uri, "front-desk")`
-  — the same seam it already uses to resolve `"llm"`; fail loud if
-  unresolvable — no admin fallback). Same change in any other completion
-  driver (`concierge` path included).
+  (resolve via `EzagentPluginHello.Members.role_uri/2` — the same seam it
+  already uses to resolve the completion role; fail loud if unresolvable — no
+  admin fallback). The role names come from hello's OWN manifest declarations
+  (`answers` on `front-desk`, `completion: llm` per C2.5), not fresh string
+  literals. Same change in any other completion driver (`concierge` path
+  included).
 - Generic protocol rule for future socialwares: **a completion driver's caller
   is the session role member on whose behalf it acts** — the holder of the
   absorbed composition cap. Framework code never substitutes a platform
@@ -475,9 +656,17 @@ rules but cannot heal drift.
   matcher is unconditional → ERROR (C2.1 — matcher coverage, not position).
 - `answers: {events: [...]}` → ERROR `not_yet_supported` until F1 `event_type`
   matchers land (C2.2).
-- `answers` role whose recipe declares an LLM-provider role dependency but no
-  `operates` edge for `Agent.Complete`/`:complete` → ERROR. (v1: explicit
-  edges only; recipe-dependency inference stays open, §7.)
+- `answers` role with no `completion` declaration → ERROR (C2.5 — rev 2's
+  recipe-dependency check is REPLACED: hello's recipes declare no LLM
+  dependency at all, so an inference-based check would never fire; the
+  explicit declaration is what makes this checkable).
+- `completion: <role>` where the named role is missing, not `fill: agent`, or
+  lacks an `operates` edge `answering-role → <role>` for
+  `Agent.Complete`/`:complete` → ERROR. The EXACT declared edge is validated;
+  a `Complete` edge targeting a different role does not satisfy it (C2.5).
+- `completion: none` alongside a declared `Agent.Complete` operate edge from
+  that role → ERROR (contradictory declaration, C2.5).
+- `answers` on a non-`fill: agent` role → ERROR (v1 restriction, §7.2).
 - `answers: true` (untyped) → ERROR with the two valid forms.
 
 ### 4.2 Invariant tests (runtime)
@@ -500,7 +689,8 @@ fixture. Hence four tests:
    answerer" — subsuming rule presence, enablement, workspace scoping, and
    role resolution.
 2. **Completion invariant (RED on main — the Defect B proof).** For the
-   manifest-with-edge fixture: session create succeeds, composition bindings
+   manifest-with-edge fixture (`answers: chat`, `completion: llm`, the C2.5
+   edge): session create succeeds, composition bindings
    reach `active` (await the C3c barrier — no sleeps, no asserting through
    the fire-and-forget cast), and
    `completion_authorized?(front_desk_member, llm_member)` passes via the
@@ -523,9 +713,17 @@ fixture. Hence four tests:
 
 ### 4.3 Deployed-session audit (ops)
 
-`mix ezagent.socialware.answer_audit` — enumerate sessions of answering
-socialwares (install records → definitions with `answers` roles), run the §4.2
-routing/completion predicates read-only, and classify each non-green session:
+`mix ezagent.socialware.answer_audit` — enumeration is by CURRENT intent, not
+pinned content (rev 3): a session pinned to a pre-declaration revision — the
+official site exactly — contains no `answers` role, so enumerating
+"definitions that CONTAIN `answers`" would skip the very session this audit
+exists to find. Instead: enumerate install records; for each installed
+definition ref, resolve the **CURRENT PUBLISHED CANDIDATE** from the
+registry; if THAT candidate declares any `answers` role, the session is in
+scope — and what gets evaluated is its PINNED/runtime state (the §4.2
+routing/completion predicates, read-only). A session whose pinned revision
+predates the declaration therefore surfaces as non-green instead of
+invisible. Classify each non-green session:
 
 ```
 missing | drifted | admin_disabled | skipped_role | pending_cap | unpinned_ref
@@ -582,6 +780,27 @@ provisioning stamps `seed_owned` on the sessions it creates; everything else
 defaults to `user_data` — fail-safe toward preservation). Rev 1's blanket
 rejection of destructive re-seed is replaced by this split.
 
+**Legacy adoption — how the EXISTING official session gets its stamp (rev 3).**
+Stamp-at-provision leaves a hole for sessions provisioned BEFORE this spec:
+they are unstamped, default to `user_data` (fail-safe), and `OfficialSiteSeed`
+cannot re-enter to stamp them (`official_site_seed.ex:29-36` →
+`:already_provisioned`) — while name-based inference stays forbidden.
+Resolution (chosen over making in-place `:upgrade` the unstamped-legacy
+canonical): **an explicit one-time, deployment-authorized lifecycle adoption,
+on PROVISIONER authority.** A seed module already knows — as module-owned
+constants, not runtime name matching — exactly which session URIs it
+provisions (`session://ezagent/hello/ezagent-official` for
+`OfficialSiteSeed`); the module that created a URI is the authority that may
+classify it. **IMPL DIRECTIVE:** seed modules expose their provisioned set
+(`provisioned_uris/0` on the seed behaviour); a deployment-operator operation
+— `mix ezagent.socialware.adopt_lifecycle`, also runnable as a release boot
+step — stamps `seed_owned` on exactly those URIs when present-and-unstamped.
+It is idempotent (already-stamped → no-op), refuses any URI outside a seed
+module's declared set, and records each adoption as an audited operator
+action. In-place `reconcile_session_config(:upgrade)` remains the specced
+alternative where a deployment declines the destructive-re-seed contract
+change (step 3 below) — but adoption + re-seed is CANONICAL.
+
 **Lifecycle-contract change, made intentional:** `OfficialSiteSeed` is
 absence-gated today (`official_site_seed.ex:29-36` — `:present →
 :already_provisioned`). Adopting destructive re-seed for `seed_owned` domains
@@ -596,9 +815,10 @@ incidental side effect.
 1. Ship C1-C4 (declarations + cap-only subject + barrier + driver identity).
 2. `answer_audit` → the official site reports `missing` + no completion authz
    (the legacy-pinned fixture, §4.2.4, is this state in a test).
-3. Re-seed it destructively under its `seed_owned` stamp (or, if the
-   deployment declines the contract change, `reconcile_session_config(session,
-   :upgrade)` reaches the same end state — both paths are specced; re-seed is
+3. Stamp it via `adopt_lifecycle` (legacy adoption above), then re-seed it
+   destructively under the `seed_owned` stamp (or, if the deployment declines
+   the contract change, `reconcile_session_config(session, :upgrade)` reaches
+   the same end state — both paths are specced; adoption + re-seed is
    canonical).
 4. Verify: `answer_audit` green + one live e2e visitor question on canary.
 
@@ -607,28 +827,30 @@ would need the re-own op that does not exist and is out of scope).
 
 ---
 
-## 7. Open questions (for codex re-review)
+## 7. Formerly-open questions — ALL CLOSED (final round; nothing blocks implementation)
 
-1. **Completion-dependency inference (§4.1):** should conformance infer "this
-   answers-role needs a Complete edge" from the recipe (recipe declares an LLM
-   provider role dependency), or stay with explicit `operates` declarations
-   only (v1)?
-2. **`answers` on non-agent fills:** is `answers: chat` meaningful for a
-   `fill: human` role (a human-staffed help desk)? v1 restricts it to
-   `fill: agent`; flag if the restriction should be lifted.
-3. **Cap-only subject surface (C3b):** is the registry-level `cap_only`
-   declaration the right home, or should it live on the `operates` whitelist
-   entry only? (Registry-level proposed: the property belongs to the Behavior,
-   not to one consumer of it.)
+1. **Completion-dependency inference** — CLOSED by C2.5: the manifest
+   declares `completion: <role>` or `completion: none` explicitly, required
+   with `answers`; conformance validates the exact declared edge. No recipe
+   inference, in v1 or later.
+2. **`answers` on non-agent fills** — CLOSED: v1 restricts `answers` to
+   `fill: agent` roles (conformance ERROR otherwise, §4.1). A human-staffed
+   help desk is expressible later by relaxing only that conformance check —
+   no schema change — so nothing in this spec forecloses it.
+3. **Cap-only subject surface** — CLOSED by C3b: the property lives on the
+   Behavior via the EXISTING `dispatchable?/0` registry callback; no
+   `operates`-whitelist-local marker, no new `@cap_only` attribute.
 
-Resolved since rev 1 (previously open): matcher-coverage semantics (now
-normative, C2); upgrade blast radius (now a refusal contract, C5);
-platform-principal identity (dedicated principal or nothing — admin forbidden,
-C4).
+Resolved since rev 1: matcher-coverage semantics (normative, C2); upgrade
+blast radius (refusal contract + normalized diff, C5); platform-principal
+identity (dedicated principal or nothing — admin forbidden as a POLICY
+resolution, accepted as a legitimate `inherit` owner, C4).
 
 ---
 
-## 8. Rev 2 changelog (per codex finding)
+## 8. Review changelogs (finding → resolution maps)
+
+### 8.1 Rev 2 (per codex adversarial-review finding; verdict NEEDS-WORK)
 
 | Codex finding | Resolution |
 |---|---|
@@ -638,3 +860,14 @@ C4).
 | 4. C5 repair leaks live refs; upgrade duplicates machinery; blast radius; row selection; provenance; tombstones; actor split | Repair = session-record set only, `unpinned_ref` reported; upgrade delegates to `migrate_session/2`/`repoint_template_installs/4`; config-only lane REFUSES on any non-config diff; `source == system_default` selection; enabled-carrying matcher heal; prompt/legend provenance; install tombstones; actor vs owner-authority params |
 | 5. Enforcement claim false (fresh routing already green; predicate test evadable) | §4.2 restates red/green precisely (red = completion layers 1-3); routing test kept as regression guard; production-path driver test observes actual caller; `completion_authorized?` delegation; barrier-awaited asserts; separate legacy-pinned fixture |
 | 6. Migration blanket-rejected destructive re-seed | §6 split: `seed_owned` → destructive re-seed canonical; `user_data` → reconcile-in-place; class = durable stamped metadata, never name-inferred; OfficialSiteSeed absence-gate change made an explicit contract change |
+
+### 8.2 Rev 3 (per codex re-review residual finding; verdict: direction SOUND)
+
+| Residual finding | Rev 3 resolution |
+|---|---|
+| 1. Cap-only marker invented a second flag (`@cap_only`) beside the registry's existing one | C3b rebuilt on the EXISTING `dispatchable?/0 == false` contract (`capability_registry.ex:23-26,61-72,114-138`); `@cap_only` DROPPED. IMPL DIRECTIVE: `Complete.dispatchable? → false`; boot registration next to `Agent.Receive` (`ezagent_domain_agent/application.ex:50-54`); conformance = exact `lookup_subject(Agent, :complete)` match (behavior `Complete`, `dispatchable? == false`) |
+| 2. Enforcement couldn't tell WHICH answerers need completion or against WHICH role (hello recipes declare no LLM dep; driver hardcodes `"llm"`, `generator.ex:523-535`) | NEW C2.5: typed `completion:` (role name or `none`), REQUIRED with `answers`; conformance validates the exact `answers-role → declared completion-role` edge (§4.1 rewritten — inference check replaced); the declaration scopes C3c's barrier (`none` ⇒ no barrier); closes OQ 1 |
+| 3. C3c had no activation owner (`absorb_cap/2` returns on cast-accept; outbox `mark_applied/2` marks only its own row; nothing flips a `CompositionBinding`) | §3.2 IMPL DIRECTIVE, end to end: `:pending` added to the binding status enum; guarded pending→active CAS (never unconditional); registered cap-delivery ack sink (declare-don't-call, session domain registers at boot; envelope carries `binding_id`); answering rule DEFERRED, not installed-disabled (preserves the C2.3 tri-state); no create-failing timeout — outbox `:dead` ⇒ binding `:degraded {:absorb_dead}`; boot/reconcile/audit sweep is the GUARANTEE, the sink an optimization |
+| 4. C4 admin invariant over-claimed (`inherit` legitimately resolves to admin for admin-owned sessions, `session_installer.ex:17-43`; owner callers bypass the stored-cap check) | Narrowed honestly (chosen over forbidding `inherit`→admin): admin-owned sessions KEEP the owner fast path like any owner; the enforced invariant = edge declared + minted + role-member caller REGARDLESS of ownership; §4.2 fixtures pin `caller ≠ owner`; forbidden only as a SYSTEM POLICY resolution (`{type: platform}` → admin) |
+| 5. C5 unimplementable as written (nested `answers`/`operates` defeat the config diff; fast path never finalized the pin; `RuleStore.add/5` hardcodes `enabled: true`; per-ref tombstone private; `requires` closure ignored) | Normalized role-skeleton diff defined (skeleton = role minus `operates`/`answers`/`completion`; fast path iff only the config surface differs); fast path takes the explicit target revision + `repoint_template_installs/4` + finalize-pin, mirroring `migration.ex:10-45`; `add/5 opts[:enabled]` impl fix (no add-then-disable); PUBLIC `Installation.retract_session_install/3` (no binding deactivation); repair excludes `removed: true` records; removed-set over the expanded `requires` closure (`installation.ex:634-650`) |
+| 6. Audit enumeration missed the pre-declaration official session; unstamped legacy can't reach `seed_owned` without forbidden name-inference | §4.3 discovery = install records whose CURRENT PUBLISHED CANDIDATE declares answering, evaluating PINNED/runtime state; §6 one-time deployment-authorized lifecycle adoption on PROVISIONER authority (`provisioned_uris/0` + `mix ezagent.socialware.adopt_lifecycle`, idempotent, set-restricted, audited); in-place `:upgrade` stays the specced fallback; adoption + re-seed canonical |
