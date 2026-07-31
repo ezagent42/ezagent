@@ -24,7 +24,8 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     * from `Ezagent.DomainGit.Error.t()` — `:repository_not_found`,
       `:base_ref_not_found`, `:invalid_ref`, `:invalid_file_change`,
       `:checks_unavailable`, `:provider_account_not_connected`,
-      `:credential_backend_unavailable`, `:private_checkout_not_supported`;
+      `:credential_backend_unavailable`, `:private_checkout_not_supported`,
+      `:provider_response_unrecognized`;
     * `:change_digest_mismatch`, produced by the stage runner itself rather
       than by a port (Slice P4c — see `@runner_codes` for why §6.2 needs it);
     * `:internal_error`, the catch-all `from_error/1` produces for a term
@@ -201,6 +202,7 @@ defmodule EzagentPluginGitWorkflow.Blocker do
           | :provider_permission_denied
           | :provider_rate_limited
           | :provider_unavailable
+          | :provider_response_unrecognized
           | :observation_incomplete
           | :no_changes_collected
           | :workspace_read_failed

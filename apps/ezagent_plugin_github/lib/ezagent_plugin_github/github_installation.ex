@@ -45,10 +45,12 @@ defmodule EzagentPluginGithub.GitHubInstallation do
   Returns `{:ok, token}` or `{:error, reason}` where `reason` is a stable
   `GitHubClient` error atom (`:authentication_rejected`, `:repository_not_found`,
   `:provider_denied`, `:provider_unavailable`, …), `:installation_scope_mismatch`
-  when GitHub's response does not exactly match the requested repository and
-  permissions, or `:provider_response_unrecognized` when the mint succeeded but
-  its body could not be read at all — a distinction the workflow layer acts on,
-  since only the first of those three is worth retrying. Raises (fail-loud) only if the App private key is missing or
+  when a readable response does not exactly match the requested repository and
+  permissions, or `:provider_response_unrecognized` when a 2xx response could not
+  be read at all — either the installation lookup without an `id`, or a mint body
+  whose scope fields are absent or wrongly typed. Only the transport-level
+  answers are worth retrying; the other two are terminal and say different
+  things to an operator ("scoped wrong" vs "shape changed"). Raises (fail-loud) only if the App private key is missing or
   malformed — an operations misconfiguration, deliberately distinct from a
   GitHub-side rejection.
   """
@@ -90,19 +92,52 @@ defmodule EzagentPluginGithub.GitHubInstallation do
   # missing/malformed/already-past expires_at. Returns `{:ok, token}` only when
   # every field checks out.
 
+  # SHAPE first, SCOPE second — they are different answers to different
+  # questions, and one clause answering both collapsed them.
+  #
+  # A mint body carrying none of these fields used to be reported as
+  # `:installation_scope_mismatch`, which tells an operator the credential came
+  # back scoped wrong. Nothing was scoped: the response shape had changed. Both
+  # codes are terminal, so no run behaves differently — the CAUSE an operator
+  # reads does, and that is the whole point of the distinction.
   defp validate_scope(
          %{
            "token" => token,
-           "repository_selection" => "selected",
-           "repositories" => [%{"full_name" => full_name}],
+           "repository_selection" => repository_selection,
+           "repositories" => repositories,
            "permissions" => permissions,
            "expires_at" => expires_at
          },
          repo_full_name,
          requested_permissions
        )
-       when is_binary(token) and token != "" and full_name == repo_full_name and
-              permissions == requested_permissions and is_binary(expires_at) do
+       when is_binary(token) and is_binary(repository_selection) and is_list(repositories) and
+              is_map(permissions) and is_binary(expires_at) do
+    scoped_as_requested(
+      {token, repository_selection, repositories, expires_at},
+      permissions,
+      repo_full_name,
+      requested_permissions
+    )
+  end
+
+  # The five scope fields are not all present and of the right primitive type,
+  # so there is no scope here to agree or disagree with.
+  defp validate_scope(_response, _repo_full_name, _requested_permissions),
+    do: {:error, :provider_response_unrecognized}
+
+  # Readable — now is it what we asked for? A wrong value here IS a scope
+  # mismatch: an "all"-repositories grant, a repository other than the one
+  # requested, permissions that do not match, an empty token, or an expiry that
+  # will not parse or has already passed.
+  defp scoped_as_requested(
+         {token, "selected", [%{"full_name" => full_name}], expires_at},
+         permissions,
+         repo_full_name,
+         requested_permissions
+       )
+       when token != "" and full_name == repo_full_name and
+              permissions == requested_permissions do
     case DateTime.from_iso8601(expires_at) do
       {:ok, dt, _offset} ->
         if DateTime.compare(dt, DateTime.utc_now()) == :gt do
@@ -116,7 +151,7 @@ defmodule EzagentPluginGithub.GitHubInstallation do
     end
   end
 
-  defp validate_scope(_response, _repo_full_name, _requested_permissions),
+  defp scoped_as_requested(_readable, _permissions, _repo_full_name, _requested_permissions),
     do: {:error, :installation_scope_mismatch}
 
   # ── Config ───────────────────────────────────────────────────────────────

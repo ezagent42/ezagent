@@ -45,10 +45,14 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
     test "every Ezagent.DomainGit.Error atom member maps to a real code, not :internal_error" do
       errors = domain_git_errors()
 
-      # A floor, not a fingerprint: it catches the typespec read silently
-      # returning nothing (a rename, a moved module) without needing a bump on
-      # every legitimate addition.
+      # Proof the read WORKED, not a fingerprint of what it read. A silently
+      # empty or garbage list would otherwise make the loop below vacuous and
+      # this test would claim total coverage of nothing. The exact membership is
+      # `plan_a_contract_test`'s job; duplicating it here would just be a second
+      # copy to bump.
       assert length(errors) >= 18
+      assert :provider_unavailable in errors
+      assert :provider_response_unrecognized in errors
 
       for error <- errors do
         code = Blocker.from_error(error)
@@ -304,6 +308,28 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
         _ -> nil
       end)
 
-    for {:atom, _, atom} <- members, do: atom
+    # Extraction is STRICT, not a filtering comprehension. `for {:atom, _, a} <-
+    # members` would silently skip any member with another representation — an
+    # alias, a nested union, a remote type — and this test would then report
+    # total coverage of a vocabulary it had never seen, which is the exact
+    # failure the literal copy this replaced already had once.
+    Enum.flat_map(members, fn
+      {:atom, _, atom} ->
+        [atom]
+
+      # The one non-atom member, mapped by status class in its own test below.
+      {:type, _, :tuple, _fields} ->
+        []
+
+      other ->
+        flunk("""
+        Ezagent.DomainGit.Error.t() gained a member shape this gate cannot read,
+        so it can no longer prove every member is mapped:
+
+            #{inspect(other)}
+
+        Teach this function that shape, or the totality claim is false.
+        """)
+    end)
   end
 end

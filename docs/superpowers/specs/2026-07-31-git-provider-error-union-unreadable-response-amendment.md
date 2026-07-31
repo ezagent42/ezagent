@@ -141,9 +141,11 @@ this member when it rebases.
 
 Two of those sites must NOT be moved mechanically:
 
-- `forgejo_adapter.ex:597` — the 2,000-item pagination-cap refusal. Deterministic,
-  but it is our own limit, not a response we could not read.
-- any site reached from a transport failure rather than a parsed 2xx body.
+- `forgejo_adapter.ex`, the `@max_items` clause of `all_pages/5` — the 2,000-item
+  pagination-cap refusal. Deterministic, but it is OUR limit being hit, not a
+  response we could not read. It needs its own answer.
+- any site reached from a transport failure or an unclassified status rather
+  than from a parsed 2xx body.
 
 This is the reason the member was added at the domain tier once rather than
 inside a provider PR: each new provider otherwise copies the conflation.
