@@ -52,6 +52,59 @@
 
 ---
 
+## ★ Socialware Protocol —— 终极目标的**实体形态**(新记,2026-07-31)
+
+> **用户定位**:"socialware protocol 应该是我们最终结果之一,是 **socialware 开发指南和 gate 的一个实际上的体现**。"
+> 也就是说:下面"plugin-dev gate + sw 模板"那节不是另一件事 —— **有了协议才谈得上"照着写就能装上"的开发指南,有了 conformance 才谈得上 gate**。协议是那个目标的可执行形式。
+
+### 心智模型(Allen 定性):这是个 PROTOCOL,按 LSP / ACP 设计
+
+| 协议要素 | 在 ezagent 里 | LSP 类比 |
+|---|---|---|
+| 总线 | **session** | LSP 连接 |
+| 一次交互 | 一条**带 `event_type` 的 typed message** | LSP 的 method |
+| 参与者 | **一个 socialware** = 定义自己的 typed 事件(`kanban:new_task`)+ 实现后端 handler + 注册前端 renderer | 语言服务器声明 capabilities + methods |
+| core 的职责 | 只提供**通用协议机制**:typed-message 信封(F1)、分发路由、注册 seam(`SessionViewRegistry`=F2 + cap 鉴权)、传输端点(F3 receiver 入站 / F0 EM 出站) | LSP core 不认具体语言 |
+| 关键性质 | **core 不硬编码任何 socialware 类型**;命名空间开放可版本化;客户端按类型分发 + 优雅 fallback(`registry[type] \|\| __unknown` 已在);未知类型降级不崩 | 同 LSP |
+
+**这正是它能统一 hello / kanban / autoservice 的原因** —— 也正是 Group B「kanban 纯化成自包含」想要的那个"通用底座"的**协议表述**。
+
+### 两个半边
+
+**① 入站半边 —— socialware-receiver foundation(原 P-α)**
+权威文档已在 main:`docs/superpowers/handoffs/2026-07-28-socialware-receiver-foundation-handoff.md`(PR **#1609**,含来龙去脉 + 上表的协议定性)。
+- **F1 typed-message**:`Ezagent.Message` 加 `event_type`(开放命名空间、默认 `:chat`、向后兼容)
+- **F2 event-renderer 注册**:扩 `SessionViewRegistry` + 前端 `registry[type]` 分发
+- **F0 EM 投递策略**:EM 现在盲发任何 message → 改按 `event_type` 决定外部投递(默认 `:chat` 投,typed 各自声明投/skip),**与 v5/B 协调**
+- **F3 receiver**:入站 `session.page_action`,坐在 F1/F2 之上
+- **约束**:匿名只读、交互触发登陆、复用 `anon_takeover`;`page_action` 进确认档、**绝不给匿名**;**复用后端唯一那套 cap 机制、不自造 auth**;web 层只 dispatch、绝不碰 Kind/pid;`page_version` 乐观并发**拒**;输入只走 catalog 受控组件;file upload 走现有 cap-authed 端点
+- **来龙去脉**:处理 PR **#1267**(过时的 "live-pages" 提案 doc)时挖出来的 —— #1267 已关,但其中"socialware 页面上的结构化输入"无人跟进,捞出来成 P-α,与 Allen grill 后长成这块地基
+
+**② 出站半边 —— 应答路由 + 完成授权(#1667)**
+spec:`docs/superpowers/specs/2026-07-31-socialware-answer-routing-authz.md`(branch `spec/socialware-answer-routing-authz`,commit `6bbd30800`,**过 3 轮 codex 对抗复审、逐条对 main 核过**;**暂留 branch 未合 main**,开工再合)。
+- **触发它的真实缺陷**:官网应答链断 —— front-desk→concierge→llm 以 **admin 身份**补全 → `authorize_complete :unauthorized`;且 #1576 改定义后**路由规则从没重装到已存在会话**。根因 = 协议对「应答路由 + 完成授权」没有成文约定。
+- **C1/C2** 声明式应答者 + **强制投递规则**:typed `answers: chat | {events:[...]}`;public 应答角色必须带一条 **enabled 的无条件 matcher**(否则消息永远到不了应答者 = 官网那个病);含糊的 `answers: true` 判 conformance error
+- **C2.5** 完成角色绑定:新增 `completion: <role>|none`,有 `answers` 即必填;conformance 校验这条**声明的边**(替掉靠 recipe 名字**猜**完成角色的老逻辑 —— 那条永远不触发)
+- **C3** 完成走 **composition-cap(去 admin)**:`Agent.Complete` 定成 `dispatchable?/0 == false` 的 cap-only 主体、有主 = lineage owner、boot 注册;driver 以「应答角色成员」身份补全。**C3c 激活 barrier**:binding `:pending`→CAS→`:active`;应答规则在激活前**deferred 不装**(不是装了 disable,保持 audit tri-state 诚实);cap-delivery ack sink 做优化、boot/reconcile sweep 做**保证**;不设"创建失败"超时,outbox `:dead` ⇒ `:degraded {:absorb_dead}`
+- **C4** owner policy:新增 `agent_owner_policy`(默认 `inherit`);唯一被禁的是「**system policy 解析成 admin**」,admin 自己拥有的会话照走 owner fast-path;会话 `owner_policy` 不动
+- **C5** config-reconcile 通道(官网"规则没重装"的结构性修法):`:repair` 只认会话自有 install 集;`:upgrade` 复用 migrate_session + `repoint_template_installs/4` + finalize-pin;normalized role-skeleton diff(skeleton = role 去掉 operates/answers/completion);公开 `retract_session_install/3` + per-ref tombstone;`add/5 opts[:enabled]`;repair 排除 `removed: true`
+- **cursor(归 socialware 协议,我方写)**:`committed_seq` 是 socialware 的读模型游标 —— 叠在通用 outbox 行之上、**由 socialware 拥有**(Allen 定)
+- **迁移**:seed_owned(官网/demo)破坏性重建 vs user_data reconcile;靠 **durable metadata 分类、绝不按名字猜**;老官网会话经 provisioner 授权的一次性 lifecycle adoption(`mix ezagent.socialware.adopt_lifecycle`,幂等、集合受限),in-place `:upgrade` 作 fallback
+
+### DoD(出站半边)
+- 新建任一"应答型" socialware 会话,必以「投递规则 → 应答角色 + **授权的完成边**」收尾 —— 有 fresh-session **不变量测试**守(缺完成边 → main 红;走 production-path driver seam;fixture 钉 `caller ≠ owner` + legacy-pinned)
+- 官网原生 front-desk→llm 链能**自动回话**(可退掉现场加的 id=3 路由规则 + 手工 deepseek key)
+
+### 纪律
+brainstorm → spec → **codex 对抗审(碰 Cap 轴、impl 前必过)** → impl。cap-model 的最终实现细节归本人判断(owner);**不确定的协议层形状先问 Allen/cc,不自行改语义**。
+
+### 与本 epic 其它部分的关系
+- **Group A(URI-share)** 提供协议的**鉴权轴**(cap 做注册 seam 的鉴权;#1667 的 C3 明确"复用唯一那套 cap 机制、不自造 auth")
+- **Group B(kanban 纯化)** 是协议的**第一个完整参与者样板**
+- **下节"plugin-dev gate + sw 模板"** = 本协议成文后的**自然产物**,不是并列的另一件事
+
+---
+
 ## 终极目标 —— plugin-dev gate + sw 模板(方向,未拆细)
 
 | 方向 | 状态 |
