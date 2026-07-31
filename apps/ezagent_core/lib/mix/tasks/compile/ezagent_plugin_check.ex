@@ -75,8 +75,13 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
      malformed maps are rejected (codex PR-5 MEDIUM-5).
   7. The app source does not call `*Registry.register` /
      `RoutingRegistry.declare_table` directly — registration goes
-     through `Ezagent.Plugin.boot/1` (grep gate). **Build-time Mix
-     tasks (`<elixirc_path>/mix/tasks/**.ex`) are EXEMPT** — a Mix task
+     through `Ezagent.Plugin.boot/1` (grep gate). The scan is
+     AST-based (`Code.string_to_quoted/1` + `Macro.prewalk/3`): only a
+     genuine call node trips it, so the same text inside a `#` comment
+     or a `@moduledoc` / `@doc` string is NOT a false positive (the
+     forgejo provider #1643 moduledoc reddened a fresh prod build).
+     **Build-time Mix tasks (`<elixirc_path>/mix/tasks/**.ex`) are
+     EXEMPT** — a Mix task
      is dev/build tooling invoked via `mix <task>`, never loaded into
      the running app's boot path, so seeding a registry there is
      legitimate (the target of this check is RUNTIME plugin code that
@@ -94,9 +99,26 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
   # `Ezagent.ExternalMirror.AdapterRegistry.register/1` directly.
   # The registries themselves now reject calls from modules that
   # don't implement the relevant behaviour (defense in depth), but
-  # the compile-time grep keeps the plugin contract — "declare,
+  # the compile-time check keeps the plugin contract — "declare,
   # don't call" (SPEC §3.2) — visible and enforceable at build.
+  #
+  # check 7 scans the AST (see `check_no_direct_registry_calls/1`); this
+  # regex is retained ONLY as the parse-error fallback, so a file that
+  # cannot be parsed (and therefore cannot compile) is still swept for a
+  # literal offending call rather than let through.
   @registry_grep_pattern ~r/\b(?:Ezagent\.)?(?:ExternalMirror\.)?(?:Adapter|Binding|Behavior|Spawn|Template|Plugin|AgentFlavor|Routing)Registry\.(?:register|register_module|declare_table)\b/
+
+  # AST equivalent of the regex above, kept in EXACT 1:1 correspondence
+  # with it (same registries, same call functions) so the AST scan and
+  # the regex fallback agree on scope. A `*Registry` module the gate
+  # cares about, by its alias's LAST segment:
+  @registry_last_segments ~w(
+    AdapterRegistry BindingRegistry BehaviorRegistry SpawnRegistry
+    TemplateRegistry PluginRegistry AgentFlavorRegistry RoutingRegistry
+  )a
+
+  # The forbidden call functions on those registries.
+  @registry_call_funs [:register, :register_module, :declare_table]
 
   # Build-time Mix tasks (`<elixirc_path>/mix/tasks/**.ex`, compiled to
   # `Mix.Tasks.*`) are EXEMPT from the check-7 grep. A Mix task is
@@ -741,7 +763,7 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
     offenders =
       Enum.filter(source_files, fn file ->
         case File.read(file) do
-          {:ok, content} -> Regex.match?(@registry_grep_pattern, content)
+          {:ok, content} -> direct_registry_call?(content)
           _ -> false
         end
       end)
@@ -760,6 +782,54 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheck do
       ]
     end
   end
+
+  # True iff `content` contains a genuine CALL to a `*Registry.register /
+  # .register_module / .declare_table`. It scans the AST rather than raw
+  # text, so an occurrence inside a `#` comment or a `@moduledoc` / `@doc`
+  # (or any) string literal — which is a binary node, never a call node —
+  # does NOT trip the gate. This is the fix for the forgejo prod-build red:
+  # its moduledoc mentions `AdapterRegistry.register/2` as prose, which the
+  # old raw-text regex matched as if it were a call (introduced by the
+  # forgejo provider, #1643). A genuine call,
+  # whether fully-qualified (`Ezagent.PluginRegistry.register(x)`) or via the
+  # aliased short form (`AdapterRegistry.register(x)`), is still caught.
+  #
+  # On a parse error the file cannot compile anyway; fall back to the
+  # raw-text regex so a broken-but-offending file is never silently let
+  # through (defense in depth — the fix must not weaken the gate).
+  defp direct_registry_call?(content) do
+    case Code.string_to_quoted(content) do
+      {:ok, ast} -> ast_has_registry_call?(ast)
+      {:error, _} -> Regex.match?(@registry_grep_pattern, content)
+    end
+  end
+
+  defp ast_has_registry_call?(ast) do
+    {_ast, found?} =
+      Macro.prewalk(ast, false, fn
+        node, true ->
+          {node, true}
+
+        {{:., _, [module, fun]}, _, _args} = node, false when fun in @registry_call_funs ->
+          {node, registry_module?(module)}
+
+        node, acc ->
+          {node, acc}
+      end)
+
+    found?
+  end
+
+  # A module reference in a remote call is `{:__aliases__, _, segments}`
+  # (e.g. `Ezagent.PluginRegistry` → `[:Ezagent, :PluginRegistry]`, aliased
+  # `PluginRegistry` → `[:PluginRegistry]`). The gate keys on the LAST
+  # segment so both forms resolve identically — mirroring the regex, which
+  # matches the `*Registry` name regardless of leading namespace.
+  defp registry_module?({:__aliases__, _, segments}) when is_list(segments) do
+    List.last(segments) in @registry_last_segments
+  end
+
+  defp registry_module?(_), do: false
 
   # --- check 10 — required_caps/0 callback presence + key parity --------
   #

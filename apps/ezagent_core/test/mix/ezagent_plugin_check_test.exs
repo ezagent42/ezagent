@@ -248,6 +248,49 @@ defmodule Mix.Tasks.Compile.EzagentPluginCheckTest do
              "a *Registry.register call inside lib/mix/tasks/** is build-time " <>
                "tooling and MUST be exempt from check 7 (#1476) — got #{inspect(result)}"
     end
+
+    # The prod-build regression this PR fixes (introduced by the forgejo provider,
+    # #1643). `ezagent_plugin_forgejo`'s `application.ex` @moduledoc mentions
+    # `AdapterRegistry.register/2` as PROSE; the old raw-text grep matched it as if
+    # it were a call and reddened a fresh `mix deps.compile`. check 7 now scans the
+    # AST, so text inside a `@moduledoc` heredoc OR a `#` line comment (this fixture
+    # carries BOTH, mirroring forgejo) is never a call node and MUST pass.
+    test "PASSES when *Registry.register appears ONLY in a @moduledoc / # comment" do
+      result =
+        in_fixture_project(:ezagent_plugin_reg_doccomment, "ezagent_plugin_reg_doccomment", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:ok, []} = result,
+             "a *Registry.register mentioned ONLY in a docstring / comment is prose, " <>
+               "not a call, and MUST pass check 7 after the AST hardening — " <>
+               "got #{inspect(result)}"
+    end
+
+    # don't-weaken guard — a GENUINE call must still fail even when written
+    # via the aliased short form (`alias …AdapterRegistry; AdapterRegistry.register(x)`),
+    # which is the form real plugins use. The AST detector keys on the alias's last
+    # segment, so the short and fully-qualified forms resolve identically; hardening
+    # against doc-comment false POSITIVES must not open a false-NEGATIVE hole here.
+    test "FAILS when a genuine call uses the ALIASED short form (don't-weaken)" do
+      result =
+        in_fixture_project(:ezagent_plugin_reg_aliased, "ezagent_plugin_reg_aliased", fn ->
+          EzagentPluginCheck.run([])
+        end)
+
+      assert {:error, diagnostics} = result
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "Registry.register" and msg =~ "grep gate"
+             end),
+             "a genuine aliased *Registry.register call must STILL be flagged by " <>
+               "check 7 after the AST hardening — got #{inspect(diagnostics)}"
+
+      assert Enum.any?(diagnostics, fn %{message: msg} ->
+               msg =~ "aliased_bad_registration.ex"
+             end),
+             "the check-7 diagnostic should name the offending aliased-call file"
+    end
   end
 
   # Compile a fixture's plugin .ex file into the loaded code path so
