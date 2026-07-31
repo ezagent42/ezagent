@@ -15,8 +15,15 @@ mfu-demo/
 
 ## 当前版本
 
-- [`versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html`](versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html)：当前完整可玩 Demo；
-- `versions/v0.3/`：下一版多角色共享世界 Demo，完成后加入。
+- [`versions/v0.3/demo/MFU-多角色组织世界-v0.3.html?role=incubator`](versions/v0.3/demo/MFU-多角色组织世界-v0.3.html?role=incubator)：当前多角色共享世界 Demo；
+- [`versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html`](versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html)：上一版组织牧场快照。
+
+v0.3 可以通过 URL 直接打开不同角色：
+
+- `?role=incubator`：孵化器运营者；
+- `?role=school`：学校课程负责人；
+- `?role=enterprise`：企业创新负责人；
+- `?role=student`：学生创业者。
 
 ## Living docs
 

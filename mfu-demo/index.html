@@ -6,29 +6,51 @@
   <title>MFU Demo 入口</title>
   <style>
     :root{--ink:#5b4632;--cream:#fdf6e0;--bg:#e9d6a4;--gold:#f5b301;--muted:#8a765a}
-    *{box-sizing:border-box}body{margin:0;min-height:100vh;padding:28px;color:#3d2e1f;font-family:"PingFang SC","Microsoft YaHei",sans-serif;background-color:var(--bg);background-image:linear-gradient(45deg,rgba(255,255,255,.14) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.14) 75%),linear-gradient(45deg,rgba(255,255,255,.14) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.14) 75%);background-size:28px 28px;background-position:0 0,14px 14px}.wrap{width:min(1080px,100%);margin:auto}.paper{padding:22px;border:3px solid var(--ink);border-radius:14px;background:var(--cream);box-shadow:0 5px 0 rgba(91,70,50,.4),inset 0 0 0 2px #fff}h1{margin:0;font-size:30px}header p{margin:8px 0 0;color:var(--muted);font-weight:700}.section{margin-top:16px}.section h2{margin:0 0 10px;font-size:18px}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{display:block;padding:16px;border:3px solid var(--ink);border-radius:11px;background:#fff;color:inherit;text-decoration:none;box-shadow:0 3px 0 var(--ink)}.card:hover{transform:translateY(-1px)}.card.primary{background:#fff2b5;border-color:#8c6410}.card h3{margin:0;font-size:16px}.card p{margin:7px 0 0;color:var(--muted);font-size:13px;font-weight:700;line-height:1.55}.tag{display:inline-block;margin-bottom:7px;padding:2px 7px;border:2px solid var(--ink);border-radius:6px;background:var(--gold);font-size:11px;font-weight:900}.links{display:flex;flex-wrap:wrap;gap:8px}.links a{padding:8px 11px;border:2px solid var(--ink);border-radius:8px;background:#fff;color:inherit;font-size:13px;font-weight:800;text-decoration:none}@media(max-width:700px){body{padding:12px}.grid{grid-template-columns:1fr}}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;padding:28px;color:#3d2e1f;font-family:"PingFang SC","Microsoft YaHei",sans-serif;background-color:var(--bg);background-image:linear-gradient(45deg,rgba(255,255,255,.14) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.14) 75%),linear-gradient(45deg,rgba(255,255,255,.14) 25%,transparent 25%,transparent 75%,rgba(255,255,255,.14) 75%);background-size:28px 28px;background-position:0 0,14px 14px}.wrap{width:min(1080px,100%);margin:auto}.paper{padding:22px;border:3px solid var(--ink);border-radius:14px;background:var(--cream);box-shadow:0 5px 0 rgba(91,70,50,.4),inset 0 0 0 2px #fff}h1{margin:0;font-size:30px}header p{margin:8px 0 0;color:var(--muted);font-weight:700}.section{margin-top:16px}.section h2{margin:0 0 10px;font-size:18px}.section-note{margin:-2px 0 13px;color:var(--muted);font-size:13px;font-weight:700;line-height:1.65}.grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}.card{display:block;padding:16px;border:3px solid var(--ink);border-radius:11px;background:#fff;color:inherit;text-decoration:none;box-shadow:0 3px 0 var(--ink)}.card:hover{transform:translateY(-1px)}.card.primary{background:#fff2b5;border-color:#8c6410}.card h3{margin:0;font-size:16px}.card p{margin:7px 0 0;color:var(--muted);font-size:13px;font-weight:700;line-height:1.55}.tag{display:inline-block;margin-bottom:7px;padding:2px 7px;border:2px solid var(--ink);border-radius:6px;background:var(--gold);font-size:11px;font-weight:900}.links{display:flex;flex-wrap:wrap;gap:8px}.links a{padding:8px 11px;border:2px solid var(--ink);border-radius:8px;background:#fff;color:inherit;font-size:13px;font-weight:800;text-decoration:none}.archive{margin-top:14px;padding-top:12px;border-top:2px dotted #d6c397}.archive summary{width:max-content;padding:6px 10px;border:2px solid var(--ink);border-radius:7px;background:#f3e8c8;font-size:12px;font-weight:900;cursor:pointer}.archive .links{margin-top:10px}@media(max-width:700px){body{padding:12px}.grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
   <main class="wrap">
     <header class="paper">
-      <h1>🦄 MFU Demo 入口</h1>
+      <h1>🦄 MFU 演示入口·MFU Demo Hub</h1>
       <p>完整游戏版本、功能性教学 Demo 和持续更新的产品概念，从这里进入。</p>
     </header>
 
     <section class="section paper">
-      <h2>当前版本</h2>
-      <div class="grid">
-        <a class="card primary" href="versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html">
-          <span class="tag">LATEST · v0.2</span>
-          <h3>🌿 MVO 组织牧场</h3>
-          <p>订单市场、组织运行、节点外包、资源、结算与成长的当前可玩版本。</p>
-        </a>
+      <h2>常青文档·Living Docs</h2>
+      <div class="links">
+        <a href="living-docs/platform-concept-model.html">平台概念模型</a>
+        <a href="living-docs/skill-tree.html">成长树</a>
+        <a href="living-docs/infographics/MFU-v0.15-机制信息图.html">机制信息图</a>
+        <a href="pending-decisions/README.md">待决策登记</a>
+        <a href="README.md">目录说明</a>
       </div>
     </section>
 
     <section class="section paper">
-      <h2>Concept Demos · 概念 Demo</h2>
+      <h2>完整 Demo·Complete Demo</h2>
+      <div class="grid">
+        <a class="card primary" href="versions/v0.3/demo/MFU-多角色组织世界-v0.3.html?role=incubator">
+          <span class="tag">LATEST · v0.3</span>
+          <h3>🌍 多角色组织世界</h3>
+          <p>四种角色使用同一套工作台，在共享世界中发布、承接订单并运行自己的 MVO。</p>
+        </a>
+      </div>
+      <details class="archive">
+        <summary>历史完整版本·Previous Complete Demos</summary>
+        <div class="links">
+          <a href="versions/v0.13/demo/MFU-v0.13-可试玩原型.html">v0.13</a>
+          <a href="versions/v0.14/demo/MFU-v0.14-可试玩原型.html">v0.14</a>
+          <a href="versions/v0.15/demo/MFU-v0.15-可试玩原型.html">v0.15</a>
+          <a href="versions/v0.1/demo/MFU-MVO孵化总览-v0.1-可玩原型.html">v0.16 · MVO 孵化总览</a>
+          <a href="versions/v0.2/demo/MFU-MVO组织牧场-v0.2-可玩原型.html">v0.2 · MVO 组织牧场</a>
+        </div>
+      </details>
+    </section>
+
+    <section class="section paper">
+      <h2>概念 Demo·Concept Demos</h2>
+      <p class="section-note">Concept Demo 是为了单独解释或验证某个玩法概念而制作的可交互示例，不代表完整游戏。以下内容形成于较早阶段，部分机制和用词可能尚未同步到最新完整 Demo。</p>
       <div class="grid">
         <a class="card" href="concept-demos/card-array/demo/MFU-协作阵列-v0.1-可玩原型.html">
           <span class="tag">教学 Demo</span>
@@ -40,27 +62,6 @@
           <h3>🔄 订单全生命周期</h3>
           <p>从发布、拆单和匹配，到交付、评价与形成组织，逐页验证各角色的操作。</p>
         </a>
-      </div>
-    </section>
-
-    <section class="section paper">
-      <h2>历史完整版本</h2>
-      <div class="links">
-        <a href="versions/v0.1/demo/MFU-MVO孵化总览-v0.1-可玩原型.html">v0.1 · MVO 孵化总览</a>
-        <a href="versions/v0.13/demo/MFU-v0.13-可试玩原型.html">v0.13</a>
-        <a href="versions/v0.14/demo/MFU-v0.14-可试玩原型.html">v0.14</a>
-        <a href="versions/v0.15/demo/MFU-v0.15-可试玩原型.html">v0.15</a>
-      </div>
-    </section>
-
-    <section class="section paper">
-      <h2>Living Docs · 常青文档</h2>
-      <div class="links">
-        <a href="living-docs/platform-concept-model.html">平台概念模型</a>
-        <a href="living-docs/skill-tree.html">成长树</a>
-        <a href="living-docs/infographics/MFU-v0.15-机制信息图.html">机制信息图</a>
-        <a href="pending-decisions/README.md">待决策登记</a>
-        <a href="README.md">目录说明</a>
       </div>
     </section>
   </main>
