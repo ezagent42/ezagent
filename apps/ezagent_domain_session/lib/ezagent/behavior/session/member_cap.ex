@@ -241,14 +241,85 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   def revoke_membership(%URI{} = member_uri, ctx) do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
-    cap = member_cap(session_uri, workspace_uri)
+    authorization = grant_authorization(ctx)
 
-    Ezagent.Identity.Grant.revoke_cap_via_router(
-      member_uri,
-      cap,
-      grant_authorization(ctx),
-      :sync
-    )
+    case Ezagent.Identity.Grant.revoke_cap_via_router(
+           member_uri,
+           member_cap(session_uri, workspace_uri),
+           authorization,
+           :sync
+         ) do
+      :ok ->
+        revoke_participation_tier(member_uri, session_uri, workspace_uri, authorization)
+        :ok
+
+      {:error, _reason} = error ->
+        # ABORT path (REMOVE contract): leave the member FULLY intact — do not
+        # strip the participation tier when the authoritative member-cap revoke
+        # did not land.
+        error
+    end
+  end
+
+  # #1665 — REVOCATION COMPLETENESS.
+  #
+  # At join a member receives FOUR caps, not one: the authoritative member-cap
+  # `:receive` plus the participation tier (`Membership.chat_action_pairs/0` =
+  # `:send`/`:leave`/`:attach` on `Ezagent.ActionSet.Session`, and
+  # `Membership.publisher_action_pairs/0` = `:subscribe_from` on
+  # `Ezagent.ActionSet.Publisher.SessionImpl`). Leave/remove used to revoke ONLY
+  # `:receive`, so a departed member kept live write authority: `:send`/`:attach`
+  # are NOT in `Cap.Verifier`'s `@non_cap_actions` allowlist and
+  # `Session.handle_send/2` performs no membership re-check beyond the cap — i.e.
+  # write-after-leave.
+  #
+  # Best-effort by design: the caller's abort contract keys off the member-cap
+  # result above (already returned `:ok` when we get here). A partial failure
+  # here logs + emits telemetry and leaves the remaining caps in the PRE-FIX
+  # state — never worse than before — and `reconcile` plus the next revoke pass
+  # heal it. Revoking a cap the member never held (e.g. the chat tier of an
+  # unconfirmed user) is a no-op.
+  defp revoke_participation_tier(member_uri, session_uri, workspace_uri, authorization) do
+    pairs =
+      Ezagent.ActionSet.Session.Membership.chat_action_pairs() ++
+        Ezagent.ActionSet.Session.Membership.publisher_action_pairs()
+
+    Enum.each(pairs, fn {behavior, action} ->
+      cap =
+        Ezagent.Capability.cap(:session, behavior, action, session_uri, workspace_uri)
+
+      case Ezagent.Identity.Grant.revoke_cap_via_router(
+             member_uri,
+             cap,
+             authorization,
+             :sync
+           ) do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning(
+            "Session.MemberCap.revoke_participation_tier/4: revoke failed for member=" <>
+              "#{URI.to_string(member_uri)} session=#{URI.to_string(session_uri)} " <>
+              "action=#{inspect(action)}: #{inspect(reason)} (best-effort; the cap " <>
+              "remains as it did pre-#1665 and is retried on the next revoke pass)."
+          )
+
+          :telemetry.execute(
+            [:ezagent, :session, :participation_revoke, :failed],
+            %{count: 1},
+            %{
+              session_uri: session_uri,
+              member_uri: member_uri,
+              behavior: behavior,
+              action: action,
+              reason: reason
+            }
+          )
+
+          :ok
+      end
+    end)
   end
 
   defp grant_authorization(%URI{} = owner) do

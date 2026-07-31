@@ -135,6 +135,61 @@ defmodule Ezagent.ActionSet.Session.MemberCapRemovalTest do
     member
   end
 
+  # #1665 — REVOCATION COMPLETENESS. Before the fix, leave/remove revoked only
+  # the `:receive` member-cap and left the participation tier live, so a departed
+  # member kept WRITE authority: `:send`/`:attach` are not in `Cap.Verifier`'s
+  # `@non_cap_actions` allowlist and `Session.handle_send/2` has no membership
+  # re-check beyond the cap itself (write-after-leave).
+  defp holds_participation_cap?(entity_uri, session_uri, behavior, action) do
+    target =
+      Capability.identity_key(
+        Capability.cap(
+          :session,
+          behavior,
+          action,
+          session_uri,
+          Capability.workspace_of(session_uri)
+        )
+      )
+
+    entity_uri
+    |> Ezagent.Identity.list_caps_for()
+    |> Enum.any?(&(Capability.identity_key(&1) == target))
+  end
+
+  test "#1665: remove revokes the WHOLE participation tier, not just :receive (no write-after-leave)" do
+    owner = confirmed_user("owner")
+    session = new_session("revcomplete", owner)
+    member = joined_member(session, "member")
+
+    # The participation tier is granted CALLER-SIDE after a confirmed join (the
+    # at-join handler may not grant it — a sync grant inside `handle_join`
+    # deadlocks), which is what every production add-member entry point does.
+    :ok = Ezagent.Socialware.MemberBackfill.backfill(session, member)
+
+    # PRECONDITION — the member really holds the write caps while a member.
+    assert holds_participation_cap?(member, session, Ezagent.ActionSet.Session, :send),
+           "a joined member must hold :send (otherwise this test proves nothing)"
+
+    assert {:ok, %{status: :removed}} =
+             Participants.remove_participant(session, member, op_ctx(owner, session))
+
+    refute holds_member_cap?(member, session), "member-cap must be revoked on remove"
+
+    for action <- [:send, :leave, :attach] do
+      refute holds_participation_cap?(member, session, Ezagent.ActionSet.Session, action),
+             "departed member must NOT keep session.#{action} (write-after-leave)"
+    end
+
+    refute holds_participation_cap?(
+             member,
+             session,
+             Ezagent.ActionSet.Publisher.SessionImpl,
+             :subscribe_from
+           ),
+           "departed member must NOT keep the publisher subscribe cap"
+  end
+
   test "owner-remove REVOKES the member-cap AND drops the roster (test 10)" do
     owner = confirmed_user("owner")
     session = new_session("rm", owner)

@@ -538,6 +538,22 @@ defmodule Ezagent.ActionSet.Session.Membership do
   @member_chat_actions [:send, :leave, :attach]
   @member_publisher_actions [:subscribe_from]
 
+  # #1665 (revocation completeness): the participation tier is granted HERE and
+  # revoked in `MemberCap.revoke_membership/2`. Both sides read the SAME two
+  # accessors so the sets cannot drift apart again — the original defect was
+  # precisely that leave revoked only `:receive` while these stayed live, which
+  # left a departed member able to `session.send` / `:attach` (`handle_send/2`
+  # has no membership re-check beyond the cap itself).
+  @doc false
+  @spec chat_action_pairs() :: [{module(), atom()}]
+  def chat_action_pairs,
+    do: Enum.map(@member_chat_actions, &{Ezagent.ActionSet.Session, &1})
+
+  @doc false
+  @spec publisher_action_pairs() :: [{module(), atom()}]
+  def publisher_action_pairs,
+    do: Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
+
   @doc """
   Provision the per-session `:join` authority on a prospective joiner BEFORE the
   `session.join` dispatch, rooted at SESSION POLICY (#154 spec 甲 / PR-甲-2 §B —
@@ -1164,10 +1180,9 @@ defmodule Ezagent.ActionSet.Session.Membership do
 
     actions =
       if confirmed? do
-        Enum.map(@member_chat_actions, &{Ezagent.ActionSet.Session, &1}) ++
-          Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
+        chat_action_pairs() ++ publisher_action_pairs()
       else
-        Enum.map(@member_publisher_actions, &{Ezagent.ActionSet.Publisher.SessionImpl, &1})
+        publisher_action_pairs()
       end
 
     grant_session_caps(
