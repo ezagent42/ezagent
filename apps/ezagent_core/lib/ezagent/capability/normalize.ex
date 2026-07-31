@@ -67,9 +67,47 @@ defmodule Ezagent.Capability.Normalize do
 
   Shared by `to_map/1` and the `Jason.Encoder` impl so the two serializers
   cannot drift on legacy-shape tolerance.
+
+  ## Fail-CLOSED on a signed cap that lost its `:action` axis (#189 divergence)
+
+  `struct/2` fills a MISSING `:action` KEY with the defstruct default `:any`
+  (workspace-admin). For a `binary_to_term`'d / mis-shaped struct-map that lacks
+  the key that is a SILENT PRIVILEGE ESCALATION: the cap's SIGNATURE still covers
+  its true concrete action (e.g. `:create_session`), so the widened `:any` copy
+  is a signature-INVALID artifact that nonetheless serializes into the
+  identity-caps store as workspace-admin — the exact `{:caps_mismatch}` the #189
+  fleet-parity barrier caught (`create_session` in `users.caps_json`, `any` in
+  the store mirror, SAME signature). The capability-action-axis (SPEC 2026-05-27)
+  predates the #1399 cap-signing trio (2026-07-14), so ANY cap carrying a
+  `signature` was minted WITH the action axis and MUST carry a concrete
+  `:action`; a signed cap whose `:action` key is absent is therefore corruption,
+  never legacy, and is REFUSED here (the same fail-LOUD contract this helper
+  already honors for a missing `workspace_uri`). A genuinely pre-action-axis cap
+  is UNSIGNED (pre-#1399), so its missing action still honestly reprojects to
+  `:any` (the #213 legacy tolerance is preserved).
   """
   @spec fill_defaults(Capability.t()) :: Capability.t()
-  def fill_defaults(%Capability{} = cap), do: struct(Capability, Map.from_struct(cap))
+  def fill_defaults(%Capability{} = cap) do
+    refuse_signed_action_widening!(cap)
+    struct(Capability, Map.from_struct(cap))
+  end
+
+  # A cap carrying a `signature` post-dates the action-axis, so a missing
+  # `:action` KEY is corruption — refuse to widen it to `:any` at serialize time.
+  defp refuse_signed_action_widening!(cap) do
+    if not Map.has_key?(cap, :action) and not is_nil(Map.get(cap, :signature)) do
+      raise ArgumentError,
+            "Ezagent.Capability.Normalize: a SIGNED capability is missing its " <>
+              "`:action` axis — refusing to serialize it. Reprojecting would widen the " <>
+              "absent action to `:any` (workspace-admin), a SILENT privilege escalation " <>
+              "whose signature still covers the true concrete action (the #189 " <>
+              "identity-plane divergence). A signature post-dates the " <>
+              "capability-action-axis, so a signed cap MUST carry a concrete `:action`; " <>
+              "a missing one is corruption, not legacy. Got: #{inspect(cap)}"
+    end
+
+    :ok
+  end
 
   @doc """
   Deserialize a JSON-decoded STRING-keyed map back to `%Capability{}`. This is
