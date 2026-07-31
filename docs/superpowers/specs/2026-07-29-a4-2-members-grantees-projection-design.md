@@ -1,6 +1,6 @@
 # A4-2 — `:members` roster 投影到 `grantees_of`【设计 v3 · 对抗取证复核后重写】
 
-- **status**: proposed — design-first,待 Allen 对齐。**v3 的结论比 v1/v2 严重:按原 scope(直接换源)今天不安全。**
+- **status**: **已由 Allen 2026-07-31 裁决(见 §0c),转入实施排期**。v3 的结论比 v1/v2 严重:按原 scope(直接换源)今天不安全,须按 §3b 分段做。
 - **task**: A4-2(URI-share 统一授权:两步 `:members` 迁移的第二步)
 - **base**: `origin/main`(A2-2 #1606 已合,merge commit `cc31d1dd`;本文 file:line 全按 main 现读核对)
 - **前身 PR**:#1620(base 是 A2-2 分支,#1606 合入删 base 后被 GitHub 连带关闭;本设计换 base=main 重开)
@@ -50,8 +50,8 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
    - **过报**(索引多、roster 少):5 类(§2.1)
    - **漏报**(索引少、roster 多):2 类,其中 `:receive` 成员 cap 走 **cast + delivery outbox**,冷 principal 刚 join 时索引里根本没有(§2.2)
    - **源不同**:reconcile 用的 `EntityCaps.load/1` 是 **live-first 读活 slice**,索引只从 `Store` 写派生;**pre-epoch 两者不相交**(§2.3)
-   - **epoch**:测试强制 post-epoch,而 dev/prod 在 operator 跑 cutover 前是 pre-epoch → **测试全绿不代表 dev/prod 一致**(§2.4)
-3. 因此 v3 建议:**A4-2 先做"等价性修复"这一层(§3 的 1-4),并把换源排在 #189 cutover 激活之后**;或者由 Allen 拍板接受"roster = best-effort 投影"的语义降级。
+   - **epoch**:测试强制 post-epoch,未跑过 cutover task 的库仍是 pre-epoch → 那种库上索引一致性只是 best-effort(§2.4);**prod/canary 已激活,故此顾虑对生产不成立**
+3. 因此 A4-2 拆成分段(§3b):先做"等价性修复"+ 安全前置,再换源。**epoch 前提已由 Allen 实测确认满足**(prod `activated?() => true`),换源不再被它挡。
 
 ## 1. 现状(origin/main 行号)
 
