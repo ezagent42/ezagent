@@ -202,9 +202,9 @@ defmodule Ezagent.ActionSet.ApiKeysTest do
       refute message =~ "sk-secret-xyz"
     end
 
-    test "authorized by the :put_api_key cap subject (CAS is strictly weaker)" do
+    test "requires its own :put_api_key_if_absent cap action axis" do
       assert ApiKeys.required_caps()[:put_api_key_if_absent] ==
-               Ezagent.Capability.cap(:any, ApiKeys, :put_api_key)
+               Ezagent.Capability.cap(:any, ApiKeys, :put_api_key_if_absent)
     end
   end
 

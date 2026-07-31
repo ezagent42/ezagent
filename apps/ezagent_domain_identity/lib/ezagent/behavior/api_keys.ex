@@ -90,7 +90,7 @@ defmodule Ezagent.ActionSet.ApiKeys do
   action(:put_api_key_if_absent,
     args: %{provider: :string, key: :string},
     returns: %{ok: :boolean, provider: :string, set: :boolean},
-    caps: [{:put_api_key, kind: :any}],
+    caps: [{:put_api_key_if_absent, kind: :any}],
     description:
       "Store the agent's API key for a provider ONLY when the slot is empty " <>
         "(compare-and-set; never overwrites an existing key)",
@@ -125,9 +125,10 @@ defmodule Ezagent.ActionSet.ApiKeys do
     %{
       list_api_keys: Ezagent.Capability.cap(:any, __MODULE__, :list_api_keys),
       put_api_key: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key),
-      # CAS variant is strictly WEAKER than `:put_api_key` (it can only fill
-      # an empty slot, never replace) — the same cap subject authorizes it.
-      put_api_key_if_absent: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key),
+      # CAS variant has its OWN action axis — the required-cap invariant
+      # demands each entry's action == its map key, and
+      # `Cap.Verifier.required_cap/4` scopes the cap to the DISPATCHED action.
+      put_api_key_if_absent: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key_if_absent),
       delete_api_key: Ezagent.Capability.cap(:any, __MODULE__, :delete_api_key),
       get_api_key: Ezagent.Capability.cap(:any, __MODULE__, :get_api_key)
     }

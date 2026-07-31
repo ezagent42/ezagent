@@ -199,7 +199,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
         _ ->
           Logger.warning(
-            "hello official-site seed: #{@llm_api_key_env} not set — the 官网 llm responder " <>
+            "hello official-site seed: #{@llm_api_key_env} not set — the official-site llm responder " <>
               "stays keyless (set it to wire the DeepSeek credential)"
           )
       end
@@ -288,7 +288,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   # (codex must-fix #3) — the mutation passes the scope-bound CapBAC
   # chokepoint instead of laundering an admin-attributed row around it.
   defp ensure_delivery_rule(%URI{} = site_uri, %URI{} = llm_uri) do
-    best_effort("官网 delivery-rule wiring", fn ->
+    best_effort("official-site delivery-rule wiring", fn ->
       table = Ezagent.Routing.Resolver.default_routing_table()
       matcher_json = Matcher.to_json(Matcher.in_session(site_uri))
       receiver = uri_to_string(llm_uri)
@@ -357,13 +357,13 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
         # The winner's row is exactly the row we wanted; adopt it.
         if delivery_rule_now_present?(table, site_uri, llm_uri) do
           Logger.warning(
-            "hello official-site seed: 官网 delivery-rule insert raced a concurrent seeder " <>
+            "hello official-site seed: official-site delivery-rule insert raced a concurrent seeder " <>
               "(#{credential_error_class(reason)} — likely the unique-index guard); " <>
               "adopted the existing row"
           )
         else
           Logger.warning(
-            "hello official-site seed: failed to add the 官网 delivery rule: " <>
+            "hello official-site seed: failed to add the official-site delivery rule: " <>
               "#{inspect(reason, limit: 6)}"
           )
         end
@@ -390,7 +390,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
       {:error, reason} ->
         # A concurrent seeder may have deleted the same row first — benign.
         Logger.warning(
-          "hello official-site seed: stale 官网 delivery rule #{rule.id} delete returned " <>
+          "hello official-site seed: stale official-site delivery rule #{rule.id} delete returned " <>
             "#{inspect(reason, limit: 4)} (continuing reconcile)"
         )
     end
