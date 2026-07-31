@@ -138,6 +138,27 @@ defmodule EzagentPluginHello.App do
          # CONFIG only — prompts / legends / routing rules. The `Definition.roles`
          # agents are the install transaction's job (see `create_app/3` moduledoc).
          :ok <- SessionCreator.materialize_template_config(session_uri, workspace, content) do
+      # Fix 2 (#224): `grant_owner_at_creation` above grants ONLY the tier-1
+      # membership cap (`cap(:session, Session, :receive, S)`). The
+      # participation tier (`:send`/`:leave`/`:attach`) is otherwise minted only
+      # by `Membership.mount_participation_caps/2`, which runs on the LV
+      # self-join / invite paths — NOT at seed. So an owner created here (the
+      # official-site seed AND the world-create path) could `:receive` but hit
+      # `:missing_cap` on their first `session.send`. Mount the tier here so
+      # both create paths are covered uniformly. Best-effort by design (spec'd
+      # `:: :ok`, logs its own grant failures — a missing participation cap
+      # degrades to "observe", it must not fail creation), so it is a non-gating
+      # side effect. Idempotent: `grant_session_caps` dedups by exact cap
+      # identity, so a later participation-mount (self-join/invite) will not
+      # double-grant. Safe here (`:sync`, caller-side, NOT inside `handle_join`)
+      # and only reached on a fully-materialized session whose owner already
+      # holds tier-1, so `current_member_entitled?/2` is true.
+      _ =
+        Ezagent.ActionSet.Session.Membership.mount_participation_caps(
+          session_uri,
+          owner_uri
+        )
+
       {:ok, session_uri}
     end
   end

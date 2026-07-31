@@ -426,6 +426,18 @@ defmodule Ezagent.World.ConversationActions do
        |> assign(:last_dispatch_status, "error:template_name_required")
        |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
     else
+      # BLOCKER B — owner authority for world publish is PENDING #224 Fix-3
+      # decision (do NOT implement here). `save_template_as` reaches
+      # `Ezagent.Session.Config.Admission.template_write_cap?/3`, which needs
+      # `cap(:workspace, Workspace, :write_session_templates, ws)`. That cap is
+      # orchestrator-scoped — no human owner holds it (it is not in
+      # founder_caps/default_caps) — so a world owner's publish still fails
+      # `:unauthorized`/`:missing_cap` even after #224 Fix 1 routes this handler.
+      # The fix is an AUTHZ DESIGN CHOICE for Allen: either grant the owner the
+      # cap at seed (an escalation) OR route the world publish through the same
+      # orchestrator/admin authority the chat-publish path uses. Until that is
+      # decided, this remains the obvious home for the decision. See the paired
+      # note at `Ezagent.Session.Config.Admission.template_write_cap?/3`.
       case Ezagent.Session.Config.execute(
              "save_template_as",
              %{"new_name" => trimmed},

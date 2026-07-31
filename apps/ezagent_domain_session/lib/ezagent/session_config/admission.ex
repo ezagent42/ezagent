@@ -98,6 +98,16 @@ defmodule Ezagent.Session.Config.Admission do
     workspace_action_authorized?(caps, workspace_uri, caller, action)
   end
 
+  # BLOCKER B (#224 Fix-3, PENDING Allen's authz decision — do NOT change this
+  # gate to resolve it). The world publish path (`session.publish_template` →
+  # `save_template_as`) reaches here needing
+  # `cap(:workspace, Workspace, :write_session_templates, ws)`, which is
+  # orchestrator-scoped: no human owner holds it (not in founder_caps/
+  # default_caps), so a world OWNER's publish fails `:unauthorized` even after
+  # #224 Fix 1 routes the handler. Resolving it is an AUTHZ DESIGN CHOICE (grant
+  # the owner the cap at seed = escalation, OR route world publish through the
+  # orchestrator/admin authority the chat-publish path uses). Decision home:
+  # `Ezagent.World.ConversationActions.publish_template/3`.
   @doc false
   def template_write_cap?(caps, %URI{} = workspace_uri, %URI{} = caller) do
     workspace_action_authorized?(caps, workspace_uri, caller, :write_session_templates)
