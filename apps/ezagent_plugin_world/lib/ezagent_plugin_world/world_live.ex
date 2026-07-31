@@ -182,6 +182,17 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
+  # Canonical operator warning/event seam (`Ezagent.OperatorEvents`) — same
+  # OPERATOR-OBSERVABILITY plane as audit/cc_event, gated LIVE on the operator
+  # predicate at delivery-time (fail-closed on unknown/missing caller).
+  def handle_info({:operator_event, event}, socket) do
+    if operator_streams?(socket) do
+      {:noreply, push_inbound_event(socket, "operator_event", event)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:cc_connected, bridge_id, entry}, socket) do
     if authorized_for_current_session?(socket) do
       socket = ConversationActions.push_members(socket)
@@ -1029,6 +1040,7 @@ defmodule EzagentPluginWorld.WorldLive do
     if operator_streams?(socket) do
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.Audit.stream_topic())
       Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.CCEvents.topic())
+      Phoenix.PubSub.subscribe(EzagentCore.PubSub, Ezagent.OperatorEvents.topic())
     end
 
     # The legacy-bridge topic carries cc_connected/cc_disconnected, delivered

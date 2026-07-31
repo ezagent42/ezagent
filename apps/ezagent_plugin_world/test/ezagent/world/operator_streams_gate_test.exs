@@ -28,7 +28,18 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
   @events [
     {:audit_event, %{"target" => "world"}},
     {:authz_event, :denied, %{"target" => "entity://team-alpha/agent/x"}, DateTime.utc_now()},
-    {:cc_event, %{"event" => "stdout"}}
+    {:cc_event, %{"event" => "stdout"}},
+    # Canonical operator warning/event seam (`Ezagent.OperatorEvents`) — shaped
+    # exactly like the DeliveryOutbox `:dead` emit. Same operator plane, so the
+    # same subscribe-time + delivery-time gate must cover it.
+    {:operator_event,
+     %{
+       severity: :warning,
+       source: :cap_delivery_outbox,
+       message: "capability delivery permanently failed (dead) after retry exhaustion",
+       meta: %{target_uri: "entity://team-alpha/agent/x"},
+       at: DateTime.utc_now()
+     }}
   ]
 
   defp socket_for(caller_uri) do
@@ -137,61 +148,54 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
       assert socket.redirected == {:live, :patch, %{kind: :push, to: "/sessions"}}
     end
 
-    test "a non-operator mount subscribes to NEITHER operator topic" do
+    test "a non-operator mount subscribes to NONE of the operator topics" do
       {:ok, _socket} = WorldLive.mount(%{}, %{}, connected_socket(@non_operator))
 
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.Audit.stream_topic(),
-        {:audit_event, %{"target" => "world"}}
-      )
-
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.CCEvents.topic(),
-        {:cc_event, %{"event" => "stdout"}}
-      )
+      broadcast_all_operator_topics()
 
       refute_receive {:audit_event, _}, 200
       refute_receive {:cc_event, _}, 200
+      refute_receive {:operator_event, _}, 200
     end
 
-    test "fail-closed: a caller-less mount subscribes to NEITHER operator topic" do
+    test "fail-closed: a caller-less mount subscribes to NONE of the operator topics" do
       {:ok, _socket} = WorldLive.mount(%{}, %{}, connected_socket(nil))
 
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.Audit.stream_topic(),
-        {:audit_event, %{"target" => "world"}}
-      )
-
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.CCEvents.topic(),
-        {:cc_event, %{"event" => "stdout"}}
-      )
+      broadcast_all_operator_topics()
 
       refute_receive {:audit_event, _}, 200
       refute_receive {:cc_event, _}, 200
+      refute_receive {:operator_event, _}, 200
     end
 
-    test "an operator mount subscribes to BOTH operator topics" do
+    test "an operator mount subscribes to ALL operator topics" do
       {:ok, _socket} = WorldLive.mount(%{}, %{}, connected_socket(@operator))
 
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.Audit.stream_topic(),
-        {:audit_event, %{"target" => "world"}}
-      )
-
-      Phoenix.PubSub.broadcast(
-        EzagentCore.PubSub,
-        Ezagent.CCEvents.topic(),
-        {:cc_event, %{"event" => "stdout"}}
-      )
+      broadcast_all_operator_topics()
 
       assert_receive {:audit_event, _}, 500
       assert_receive {:cc_event, _}, 500
+      assert_receive {:operator_event, _}, 500
+    end
+
+    defp broadcast_all_operator_topics do
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        Ezagent.Audit.stream_topic(),
+        {:audit_event, %{"target" => "world"}}
+      )
+
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        Ezagent.CCEvents.topic(),
+        {:cc_event, %{"event" => "stdout"}}
+      )
+
+      Phoenix.PubSub.broadcast(
+        EzagentCore.PubSub,
+        Ezagent.OperatorEvents.topic(),
+        {:operator_event, %{severity: :warning, source: :cap_delivery_outbox, message: "m", meta: %{}, at: DateTime.utc_now()}}
+      )
     end
   end
 end

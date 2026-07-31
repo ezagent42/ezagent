@@ -293,8 +293,24 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     handle_failure_result(State.fail(claimed.id, claimed.claim_token, reason, &retry_delay_ms/1))
   end
 
+  # A `:dead` row is a capability delivery permanently abandoned after
+  # retry exhaustion — the capability never reached its target. This was
+  # completely silent (just forget-the-target + `:ok`); it is now the first
+  # emitter on the canonical operator seam so an operator can see it.
+  # Ordering: the ETS-hint forget (bookkeeping) runs FIRST and always;
+  # the operator emit is best-effort observability layered after it, so an
+  # observability call can never skip or corrupt outbox state. The full
+  # `reason`/`last_error` persists on the `:dead` DB row for deep
+  # inspection — the live warning stays lean by design.
   defp handle_failure_result({:dead, target_uri}) do
     maybe_forget_target(target_uri)
+
+    Ezagent.OperatorEvents.warn(
+      :cap_delivery_outbox,
+      "capability delivery permanently failed (dead) after retry exhaustion",
+      %{target_uri: target_uri}
+    )
+
     :ok
   end
 
