@@ -154,6 +154,89 @@ agent 在自己 shell 里跑完整 git；凭据是 SSH 私钥。
 - **新建**：B1 的全部 + Entity SSH Identity 资源 + 密钥生成/导入/存储/轮转 + host-key policy（当年 broker 矩阵中每个候选都标注 "Not implemented; must bind repository host and pinned/approved host key"）。
 - **唯一优势**：可对接**没有 API/token 机制的 git 主机**（自建裸仓库、非 GitHub/Forgejo 托管）。
 
+### 形态 B2′ — **Allen 方案**（B2 + 复用已有凭据授权轨）
+
+> **来源：Allen，2026-07-31。** 原话：「用最简单的方案就好了。跨租户泄露这些都不是 git plugin 要解决的事情，只保留最简单的**安装 git + 挂载 SSH + 操作**就可以了，ssh 的归属应该属于 **user/agent 自己**，每次用的时候用 **`ssh.read` 这样的 caps 授权**去读取。」
+
+B2 的具体化：agent 在自己 shell 里跑完整 git，凭据是 SSH 私钥；**归属在 user/agent 侧，读取经 cap 授权**。
+
+**关键发现：这个授权模型平台里已经有一整套在跑**（目前用于 LLM 凭据，不是 SSH）：
+
+| 已有件 | 作用 | 证据 |
+|---|---|---|
+| `Ezagent.Credential.GrantCap.read_cap_for/1` | 每次读派生**一个 scoped 到确切 source 的窄 cap**；moduledoc 原话「never a broad set」「there is **no standing principal cap**」；`Capability.matches?/2` 要求 workspace URI 精确相等 | grant_cap.ex:27 |
+| `Ezagent.Credential.UserDefaultSource` | 凭据按 `(owner, workspace, flavor)` **归属 user**；校验同 workspace / 同 owner / 同 flavor / 存在，且校验与写入**都在 cap-checked、有审计的 Behavior action 内**，模块本身无 cap-less mutator | user_default_source.ex:1 |
+| `CascadeRuntime` / `Adopt` / `HomeRuntime` / `GrantMint` / `GrantCompensationLeaked` | user→agent 传播、采纳、装进 agent config_dir、grant 生命周期、泄漏补偿 | `apps/ezagent_core/lib/ezagent/credential/` |
+| `SealedEnvelope` | at-rest AES-256-GCM + 可轮转 keyring | provider_connection/sealed_envelope.ex |
+
+**所以 Allen 说的 `ssh.read`，实质上就是已有的 `sandbox.read` on source agent + `GrantCap` 派生的窄 cap。SSH 是接一种新 credential flavor 进这条轨，不是造新轨。**
+
+**因此相对上文 B2 的修正**：
+
+- **「Entity SSH Identity 是新子系统」这个前提是错的** —— 轨已存在。
+- **成本从 5–8 天下修到 2–4 天。** 复用：`UserDefaultSource`（归属）+ `GrantCap`（窄 cap）+ `CascadeRuntime`（传播）+ `HomeRuntime`（装进 agent home）+ `SealedEnvelope`（加密）。新建：SSH flavor 接入、key 生成/导入入口、per-task ssh-agent 生命周期、`known_hosts` 策略。
+- **跨租户泄漏从「失分项」改为「明确排除项」** —— Allen 判定不归 git plugin 管，故不再是本形态的验收项。
+
+**一处必须修正的表述**：「每次用的时候授权」在 ssh 下**不可实现**。ssh 的密钥认证没有「每次回来问平台」的钩子（不像 HTTPS 的 credential helper），只有两种形态：key 文件在盘上，或 ssh-agent socket。实际流程是「一次 cap-checked read → key 落到 agent 的 `~/.ssh/` → 之后 N 次 git 操作零次 cap 检查」。
+
+> **可行的近似 — per-task ssh-agent**：一次 cap-checked read → 把 key 加进 per-task 的 `ssh-agent` → 只把 `SSH_AUTH_SOCK` 交给 agent → 任务结束杀掉。这样 key **不落 agent 可读的盘**，且**任务边界即失效**。这是 ssh 协议约束下最接近「每次用的时候授权」意图的形态，实施时按此写。
+
+#### B2′ 的防线分布 — 三分，不是全靠 remote
+
+| 挡什么 | 谁在挡 |
+|---|---|
+| 能推到**哪个仓库** | **remote** — per-repo deploy key |
+| 能推到**哪条 ref**、force-push、删分支、直接改 main | **remote** — branch protection |
+| **谁能拿到这把 key** | **ezagent** — `GrantCap` 窄 cap + `UserDefaultSource` 归属校验（现成且强）|
+| key 的 at-rest 加密 | **ezagent** — `SealedEnvelope` |
+| 主机真伪（MITM）| **ezagent** — `known_hosts` pinning，remote 帮不了 |
+| **key 泄漏之后** | **谁都不挡** —— ssh key 无 TTL，只能靠人发现并手工删 |
+
+#### 最实质的变化：从结构保证降级为配置保证
+
+A0 是**结构保证**——公开仓库、零凭据、argv 白名单，想出错都出不了错。B2′ 是**配置保证**——只有 remote 侧真的配了，防线才存在。
+
+两者的**失败模式不同**：
+
+- 结构保证失败 → 编译不过 / 测试变红 / 立刻有人知道
+- 配置保证失败 → **什么都不会发生**。某个仓库忘了开 branch protection，代码照跑、测试全绿、PR 照开，只是那个仓库其实毫无保护，且无人察觉
+
+**且 ezagent 代码里没有任何东西能验证 remote 侧配好了。** 这是 B2′ 最脆的一环——比密钥面的缺口更实际，因为密钥泄漏是小概率事件，而「某个仓库漏配」在仓库数变多后几乎必然发生。
+
+**补救（建议采用方案 B）**：
+
+- 方案 A：注册仓库时 preflight 读 branch protection 状态，未开则拒绝。缺点——读 protection 在 GitHub 需 admin 权限，而**为了检查限制去索取管理员权限本身是负收益**（能读即能改，能改即能关）。
+- **方案 B（推荐）**：仓库接入 ezagent 前必须有人**显式确认**「已配 branch protection + 已用 per-repo deploy key」，确认带人与时间戳落库。仍是程序性的，但失败点从「静默无保护」变成「注册被拒 + 有据可查」，且不需要任何额外权限。
+
+#### B2′ 的密钥面缺口清单
+
+**真缺口（不在 Allen 的排除范围内）**：
+
+1. **key 无法过期** —— ssh key 无 TTL，一把泄漏的 key **永久有效**直到人工删除。**ssh 协议内无解**，只能靠 per-repo deploy key 缩小范围 + 定期轮转（轮转机制目前为零，需建）。
+2. **`known_hosts` 为零** —— 首次连接可被 MITM；容器/CI 默认做法 `StrictHostKeyChecking=no` 会让 agent 静默连上任何冒充主机。必补（拉 `https://api.github.com/meta` 的 `ssh_keys` 钉死）。
+3. **`SealedEnvelope` 的 purpose 不受集中管束** —— moduledoc 原话「This module does not police which purposes a caller may open」，purpose 是调用方自选 atom、无注册表。密钥间隔离**靠代码评审保证，不靠结构**。
+4. **主密钥在部署配置里**（`EZAGENT_PROVIDER_AUTH_ACTIVE_KEY_ID` + keyring），无 HSM/KMS。归统一安全轨，不阻塞。
+
+**Allen 已明确接受的（不计为缺口）**：同 UID 兄弟 agent 可读 key 文件或 ssh-agent socket；key 读走后无法约束用途；审计无法归属到具体 agent/task。
+
+**Allen 可能未意识到的一条**：**cap 管不住「哪个仓库 / 哪条 ref / 哪些操作」**——这不属于「跨租户泄漏」那类被排除的关切，而是**授权模型表达不了业务意图**（CLAUDE.md 所定义的「防漂移」正是要防这类）。补救只在 remote 侧，ezagent 内补不了。
+
+#### B2′ 的落地强制前置
+
+1. **per-repo deploy key**，禁账号级 key —— 这是「哪个仓库」这条约束的唯一载体
+2. **remote 侧 branch protection 先开**（保护 main、禁 force-push、禁删分支、强制 PR），并按方案 B 做注册确认
+3. **`known_hosts` pinning**，不得用 `StrictHostKeyChecking=no`
+4. **key 轮转机制**（因无法过期，只能靠定期换）
+5. 「每次用的时候授权」按 **per-task ssh-agent** 实现
+
+#### 运维成本随仓库数线性增长
+
+deploy key 是 per-repo 的：10 个仓库 = 10 把 key + 10 次配置。对「团队自己的几个仓库」完全可接受；对「用户随便接入任意仓库」会很重。
+
+对照：**B1 的 installation token 是零 per-repo 配置**（GitHub App 装一次，token 按仓库自动铸造，`github_app_jwt.ex` + `token_for_operation/3` 已在跑）。**注意 branch protection 两种方案都要配**——它挡的是 full-shell 带来的 ref 失控，与凭据类型无关。差别仅在 key 管理一栏。
+
+> **书签**：若仓库数长到十几个以上，per-repo deploy key 的运维成本值得回头对比 installation token —— 那条路 per-repo 配置为零，且 App 已在运行。
+
 ---
 
 ## 4. 横向对比
