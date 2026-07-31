@@ -494,6 +494,81 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
+  # ② P2(a) grant cutover — a capability GRANT (`grant_cap_via_router/4`,
+  # producer `:identity_grant`, action `:store_cap`) to a not-ready holder is
+  # durably buffered in `cap_delivery_outbox` and drains on the holder's next
+  # ready transition. Before the cutover the cast landed in the volatile
+  # `PendingDelivery` ETS buffer and died with the VM (the #207 class).
+  test "a grant to a not-ready holder is durably buffered and applied after a full restart" do
+    suffix = System.unique_integer([:positive])
+    workspace_name = "grant-outbox-#{suffix}"
+    workspace = Ezagent.URI.workspace(workspace_name)
+    {:ok, _pid} = Ezagent.Workspace.create(workspace_name, %{})
+
+    {holder, pid} = spawn_target("grant-outbox-holder")
+    :ok = Ezagent.ReadyGate.put(holder, :not_ready)
+
+    cap =
+      Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :list_members,
+        workspace,
+        workspace
+      )
+
+    # Issuance runs against the LIVE workspace Kind; only the storage cast is
+    # deferred. The grant MUST land in the durable outbox, NOT the volatile
+    # ETS buffer.
+    assert :ok =
+             Ezagent.Identity.Grant.grant_cap_via_router(
+               holder,
+               cap,
+               {:admin, Ezagent.Entity.User.admin_uri()},
+               :async
+             )
+
+    delivery = one_delivery!(holder)
+    assert delivery.op == :store_cap
+    assert Ezagent.PendingDelivery.buffer_size(holder) == 0
+
+    # Full restart: the holder Kind dies, respawns cold, and comes ready on
+    # its own post-init transition. Simulating a BEAM restart's hint loss:
+    # the volatile hint ETS is wiped BEFORE the respawn, so the natural
+    # ready transition finds no hint (proves the process alone cannot
+    # deliver); rehydrating from the DB restores it, and the drain — the
+    # exact `drain_target/1` the ready transition invokes — applies the row.
+    terminate(holder, pid)
+    assert eventually(fn -> not Process.alive?(pid) end), "holder Kind should be down"
+
+    :ets.delete_all_objects(DeliveryOutbox.table())
+    refute DeliveryOutbox.pending_target?(holder)
+
+    {:ok, pid2} = Ezagent.SpawnRegistry.spawn(holder)
+    assert :ok = Ezagent.ReadyGate.await(holder, 5_000)
+
+    assert :ok = DeliveryOutbox.rehydrate_hints()
+    assert DeliveryOutbox.pending_target?(holder)
+    assert :ok = DeliveryOutbox.drain_target(holder)
+
+    # The redelivery is a cast, so mark_applied lands asynchronously — allow
+    # a generous window.
+    assert eventually(fn -> raw_status(delivery.id) == "applied" end, 500)
+
+    assert eventually(
+             fn ->
+               Enum.any?(
+                 Ezagent.EntityCaps.load(holder),
+                 &(Capability.identity_key(&1) == Capability.identity_key(cap))
+               )
+             end,
+             500
+           ),
+           "the granted cap MUST be held after the restart drain"
+
+    terminate(holder, pid2)
+  end
+
   defp absorb_invocation(target, cap, opts \\ []) do
     ctx = %{
       caller: :vm_internal,

@@ -10,13 +10,22 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   @cascade_hook "apps/ezagent_actor/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @cap_verifier "apps/ezagent_core/lib/ezagent/cap/verifier.ex"
+  @cap_delivery "apps/ezagent_core/lib/ezagent/cap/delivery.ex"
+  @cap_delivery_envelope "apps/ezagent_core/lib/ezagent/cap/delivery_outbox/envelope.ex"
   @identity_grant "apps/ezagent_domain_identity/lib/ezagent/identity/grant.ex"
   @recipe_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @actions [:persist_caps, :store_cap, :remove_cap]
 
   test "storage action literals and producers are exact" do
+    # ② P2(a) grant cutover (2026-07-31) — the `:store_cap` op family joined
+    # the durable outbox: `delivery.ex` (schema op enum + typespec) and
+    # `envelope.ex` (encode/decode/validate + the `:identity_grant` producer
+    # clause) carry the new literals. The mutation PRODUCERS are unchanged —
+    # `grant_cap_via_router/4` still dispatches the same `:store_cap` Cmd.
     assert action_literals() == %{
              @cap_verifier => %{persist_caps: 1, store_cap: 1, remove_cap: 1},
+             @cap_delivery => %{store_cap: 2},
+             @cap_delivery_envelope => %{store_cap: 5},
              @facade => %{persist_caps: 1, store_cap: 1, remove_cap: 1},
              @identity_behavior => %{persist_caps: 3, store_cap: 3, remove_cap: 3},
              @identity_grant => %{store_cap: 2, remove_cap: 2}

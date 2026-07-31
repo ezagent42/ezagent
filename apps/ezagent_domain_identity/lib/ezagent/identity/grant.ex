@@ -65,6 +65,8 @@ defmodule Ezagent.Identity.Grant do
 
   alias Ezagent.{Cap, Capability, Cmd, Invocation, Router}
 
+  require Logger
+
   @type authorization ::
           {:held_by, URI.t()}
           | {:admin, URI.t()}
@@ -170,14 +172,28 @@ defmodule Ezagent.Identity.Grant do
   router twin of `grant_cap_via_router/4`. `reply_mode` is `:async` (buffered
   `:ignore`) or `:sync` (`{:caller_inbox, self()}`); default `:async`.
 
-  The `:async` form is REQUIRED for a revoke issued from INSIDE a Kind callback
-  (e.g. the at-join member-cap compensation in `handle_join`): a session-instance
-  cap's grant/revoke resolves the instance's data-owner, which re-enters the
-  session Kind — a `:sync` call from within that same blocked Kind self-deadlocks.
-  The cast is persisted in the capability delivery outbox before dispatch and
-  retried until the grantee handler applies it. The call remains asynchronous;
-  there is no wait for the outbox row to become applied. Returns `:ok` or
-  `{:error, reason}`.
+  ② P2(b) — DURABILITY: the revoke FIRST deletes the cap from the target's
+  authoritative durable store (`Ezagent.EntityCaps.revoke_persisted/2`),
+  synchronously and independent of target liveness. That store delete — not
+  the dispatch — is what makes the revoke survive the target being down or
+  restarting: the generation gate does NOT backstop `remove_cap` (the
+  `revoke_generation_gate_repro_test` verdict — ②-Q2 option (a)). The
+  `:remove_cap` dispatch is only a "wake up + re-read" hint: a live holder
+  drops its in-memory copy and re-persists; a cold/restarted holder
+  reconciles from the store on load.
+
+  The durable store delete is a direct store-layer write — NOT a round-trip
+  to the target Kind — so the self-deadlock contract is preserved: the
+  `:async` form remains REQUIRED for a revoke issued from INSIDE a Kind
+  callback (e.g. the at-join member-cap compensation in `handle_join`): a
+  session-instance cap's grant/revoke resolves the instance's data-owner,
+  which re-enters the session Kind — a `:sync` HINT dispatch from within that
+  same blocked Kind self-deadlocks. Returns `:ok` once the durable delete
+  committed; an `:async` hint-dispatch failure is logged, not propagated (the
+  store is already correct — the target reconciles on its next load), while
+  `:sync` propagates the hint result so callers (member REMOVE) keep their
+  abort-on-error contract. An `{:error, reason}` return means the durable
+  delete failed and the revoke did NOT happen.
   """
   @spec revoke_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
           :ok | {:error, term()}
@@ -189,15 +205,36 @@ defmodule Ezagent.Identity.Grant do
       ) do
     case prepare(target, cap, authorization, :revoke_cap) do
       {:ok, {target_uri, cap2, ctx}} ->
-        cmd = %Cmd{
-          target: target_uri,
-          action: :remove_cap,
-          args: %{cap: cap2},
-          ctx: Map.put(ctx, :reply, reply_for(reply_mode)),
-          origin: :trusted_internal
-        }
+        with :ok <- Ezagent.EntityCaps.revoke_persisted(target, cap2) do
+          cmd = %Cmd{
+            target: target_uri,
+            action: :remove_cap,
+            args: %{cap: cap2},
+            ctx: Map.put(ctx, :reply, reply_for(reply_mode)),
+            origin: :trusted_internal
+          }
 
-        normalize_dispatch_result(Router.dispatch(cmd))
+          case normalize_dispatch_result(Router.dispatch(cmd)) do
+            :ok ->
+              :ok
+
+            {:error, reason} = error ->
+              case reply_mode do
+                :sync ->
+                  error
+
+                :async ->
+                  Logger.warning(
+                    "Ezagent.Identity.Grant.revoke_cap_via_router: durable revoke " <>
+                      "committed but the :remove_cap reconcile hint failed for " <>
+                      "#{URI.to_string(target)}: #{inspect(reason)} — the store is " <>
+                      "authoritative; the target reconciles from it on its next load"
+                  )
+
+                  :ok
+              end
+          end
+        end
 
       {:error, _} = err ->
         err

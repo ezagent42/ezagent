@@ -5,7 +5,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   alias Ezagent.Cap.Delivery
 
   @version 4
-  @delivery_actions [:absorb_cap, :revoke_cap]
+  @delivery_actions [:absorb_cap, :revoke_cap, :store_cap]
   @keys [
     :caller,
     :authenticated_principal,
@@ -73,6 +73,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
       case envelope.op do
         :absorb_cap -> %{artifact: envelope.cap}
         :revoke_cap -> %{cap: envelope.cap}
+        :store_cap -> %{cap: envelope.cap}
       end
 
     ctx = %{
@@ -141,6 +142,24 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
        }) do
     case Ezagent.URI.behavior_action(target) do
       {:ok, {:identity, :absorb_cap}} -> {:ok, {:identity_absorb, :absorb_cap, cap}}
+      _ -> :error
+    end
+  end
+
+  # ② P2(a) grant cutover — the `:identity_grant` producer
+  # (`Ezagent.Identity.Grant.grant_cap_via_router/4`, action `:store_cap`) is
+  # outbox-eligible at the dispatch chokepoint, so a capability GRANT to a
+  # down/restarting target is durably buffered in `cap_delivery_outbox` and
+  # drains on the target's next ready transition instead of dying with the
+  # volatile `PendingDelivery` ETS buffer. Same ctx-marker + action pattern
+  # `:identity_absorb` proved; zero caller churn.
+  defp producer_parts(%Invocation{
+         target: target,
+         args: %{cap: %Capability{} = cap},
+         ctx: %{caller: :vm_internal, cap_delivery_producer: :identity_grant}
+       }) do
+    case Ezagent.URI.behavior_action(target) do
+      {:ok, {:identity, :store_cap}} -> {:ok, {:identity_grant, :store_cap, cap}}
       _ -> :error
     end
   end
@@ -225,9 +244,14 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
          },
          %Delivery{} = delivery
        )
-       when producer in [:identity_absorb, :identity_revoke] and
+       when producer in [:identity_absorb, :identity_revoke, :identity_grant] and
               op in @delivery_actions and is_binary(target_uri) and is_list(caps) do
-    expected_producer = if op == :absorb_cap, do: :identity_absorb, else: :identity_revoke
+    expected_producer =
+      case op do
+        :absorb_cap -> :identity_absorb
+        :revoke_cap -> :identity_revoke
+        :store_cap -> :identity_grant
+      end
 
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and

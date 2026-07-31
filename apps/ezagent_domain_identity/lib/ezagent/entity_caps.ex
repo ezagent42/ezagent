@@ -279,6 +279,63 @@ defmodule Ezagent.EntityCaps do
     end)
   end
 
+  @doc """
+  ② P2(b) — durably revoke `cap` from `uri`'s AUTHORITATIVE durable store(s),
+  WITHOUT involving the entity's live Kind.
+
+  This is the store-layer half of `Ezagent.Identity.Grant.revoke_cap_via_router/4`:
+  a revoke MUST delete the cap from the durable store synchronously/reliably —
+  never contingent on messaging a (possibly down or restarting) target process.
+  The `:remove_cap` process notification is only a "wake up + re-read" hint; a
+  cold/restarted target reconciles from the store state written HERE on load.
+
+  Writes the plane(s) the entity type makes authoritative, mirroring the
+  mutation split this facade already owns:
+
+    * user — `users.caps_json` via `UserStore.update/2` (which itself mirrors
+      the unified identity-caps store + the reverse grantee index), AND the
+      user Kind's snapshot `:identity` slice. The snapshot delete is NOT
+      optional: `Identity.activate/2` runs on every cold boot and set-UNIONS
+      the snapshot-restored caps with `users.caps_json` (invariant 20), then
+      re-persists the union — a cap left in the snapshot would be
+      RESURRECTED into both authoritative planes on the holder's next
+      restart (observed: the ②-Q2 GAP repro clobbering the store delete).
+    * non-user with a snapshot — the snapshot `:identity` slice via
+      `SnapshotStore.write/3` (which dual-writes the identity-caps store +
+      grantee index), the `clear_snapshot_self_license/1` precedent;
+    * non-user without a snapshot but with a store row (e.g. an `:ephemeral`
+      principal, whose identity durability IS the store) — a store-only
+      `Store.update/2`.
+
+  Idempotent: revoking a cap the store does not hold is `:ok`, and a holder
+  with no durable row at all is `:ok` (a revoke never CREATES creation
+  evidence for a URI it knows nothing about).
+  `Ezagent.Capability.revoke/2`'s `{:error, :cannot_revoke_admin}` propagates
+  (fail-closed), as does any store error — an unreadable identity epoch
+  (`:unknown`) refuses the mutation rather than risking a stale authoritative
+  plane.
+
+  The user-path writes are two non-atomic plane commits (UserStore first —
+  the authoritative store must commit before the restore-source cleanup —
+  then the snapshot). A crash between them returns `{:error, _}` so the
+  caller knows the revoke did not fully commit; a retry is safe (both
+  halves are idempotent).
+  """
+  @spec revoke_persisted(URI.t() | String.t(), Capability.t()) :: :ok | {:error, term()}
+  def revoke_persisted(uri, %Capability{} = cap) do
+    uri = parse_uri(uri)
+
+    if user_uri?(uri) do
+      case UserStore.update(uri, fn caps -> revoke_from_cap_list(caps, cap) end) do
+        {:error, :not_found} -> :ok
+        :ok -> revoke_user_snapshot(uri, cap)
+        {:error, _reason} = error -> error
+      end
+    else
+      revoke_snapshot_persisted(uri, cap)
+    end
+  end
+
   @doc false
   @spec clear_self_license_persisted(URI.t() | String.t()) :: :ok | {:error, term()}
   def clear_self_license_persisted(uri) do
@@ -443,23 +500,116 @@ defmodule Ezagent.EntityCaps do
     if user_uri?(uri), do: UserStore.load(uri), else: snapshot_caps(uri)
   end
 
-  defp clear_snapshot_self_license(uri) do
+  defp revoke_from_cap_list(caps, %Capability{} = cap) when is_list(caps) do
+    case Ezagent.Capability.revoke(MapSet.new(caps), cap) do
+      {:ok, updated} -> {:ok, MapSet.to_list(updated)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # The ONE snapshot read-modify-write seam every mutation above routes
+  # through — deliberately the ONLY `SnapshotStore` reach-ins in this module's
+  # mutation paths, so the actor-internals boundary ledger (§4.2,
+  # frequency-enforced) stays exactly at its frozen count. `fun` transforms
+  # the decoded snapshot state; `{:error, :not_found}` (no snapshot row) is
+  # returned DISTINCTLY so each caller decides what absence means.
+  #
+  # NB the row `version` is the Kind's declared SCHEMA version
+  # (`Kind.Snapshot.check_version/2` refuses `stored != declared`), NOT an
+  # optimistic-concurrency counter — it is rewritten UNCHANGED.
+  # (`SnapshotStore.write/3`'s auto-increment default would persist
+  # `version + 1` and make the row unloadable on the next cold boot —
+  # `:snapshot_version_too_new`. The pre-refactor `version + 1` here was
+  # exactly that latent corruption.)
+  @spec mutate_snapshot_state(URI.t(), (map() -> {:ok, map()} | {:error, term()})) ::
+          :ok | {:error, :not_found | term()}
+  defp mutate_snapshot_state(uri, fun) when is_function(fun, 1) do
     case SnapshotStore.latest(uri) do
       {:ok, %{state: state, version: version}} when is_map(state) ->
-        with {:ok, updated} <- remove_snapshot_self_license(state),
+        with {:ok, updated} <- fun.(state),
              {:ok, _written} <-
                SnapshotStore.write(uri, updated,
                  kind_type: snapshot_kind_type(uri),
-                 version: version + 1
+                 version: version
                ) do
           :ok
         end
 
       {:error, :not_found} ->
-        :ok
+        {:error, :not_found}
 
       {:error, reason} ->
         {:error, reason}
+    end
+  end
+
+  # User durable revoke, snapshot half: the user Kind's `:on_change` snapshot
+  # is the cold-boot restore source for the live identity slice, and
+  # `Identity.activate/2` unions it into `users.caps_json` on every start —
+  # so the cap must leave the snapshot too, or the next restart resurrects
+  # it into every plane. For a user the `SnapshotStore.write/3` dual-write is
+  # a no-op (the store skips user URIs — users mirror via `users.caps_json`,
+  # which `UserStore.update/2` already wrote). No snapshot at all is `:ok`
+  # (nothing to resurrect from).
+  defp revoke_user_snapshot(uri, cap) do
+    case mutate_snapshot_state(uri, fn state -> remove_snapshot_cap(state, cap) end) do
+      {:error, :not_found} -> :ok
+      result -> result
+    end
+  end
+
+  # Non-user durable revoke: the legacy authoritative plane is the snapshot
+  # `:identity` slice (`SnapshotStore.write/3` dual-writes the identity-caps
+  # store + reverse grantee index in the same write). With NO snapshot, the
+  # identity-caps store is the only plane that can still hold the cap (e.g.
+  # an `:ephemeral` principal) — update it only when a row EXISTS.
+  defp revoke_snapshot_persisted(uri, cap) do
+    case mutate_snapshot_state(uri, fn state -> remove_snapshot_cap(state, cap) end) do
+      {:error, :not_found} ->
+        if Store.has_row?(uri) do
+          Store.update(uri, fn caps -> revoke_from_cap_list(caps, cap) end)
+        else
+          :ok
+        end
+
+      result ->
+        result
+    end
+  end
+
+  defp remove_snapshot_cap(state, %Capability{} = cap) do
+    case Map.get(state, :identity) do
+      %{state: identity_state} = container when is_map(identity_state) ->
+        with {:ok, updated_state} <- revoke_from_slice_caps(identity_state, cap) do
+          {:ok, Map.put(state, :identity, Map.put(container, :state, updated_state))}
+        end
+
+      identity when is_map(identity) ->
+        with {:ok, updated_identity} <- revoke_from_slice_caps(identity, cap) do
+          {:ok, Map.put(state, :identity, updated_identity)}
+        end
+
+      nil ->
+        {:ok, state}
+
+      _invalid ->
+        {:error, :invalid_identity_snapshot}
+    end
+  end
+
+  defp revoke_from_slice_caps(identity_state, cap) do
+    caps = Map.get(identity_state, :caps, MapSet.new())
+
+    case Ezagent.Capability.revoke(MapSet.new(caps), cap) do
+      {:ok, updated} -> {:ok, Map.put(identity_state, :caps, updated)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp clear_snapshot_self_license(uri) do
+    case mutate_snapshot_state(uri, &remove_snapshot_self_license/1) do
+      {:error, :not_found} -> :ok
+      result -> result
     end
   end
 

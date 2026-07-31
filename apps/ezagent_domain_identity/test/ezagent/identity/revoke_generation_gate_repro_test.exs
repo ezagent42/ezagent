@@ -1,11 +1,23 @@
 defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
   @moduledoc """
-  ②-Q2 spec-mandated repro test (delivery-outbox final plan §Q2).
+  ②-Q2 spec-mandated repro test (delivery-outbox final plan §Q2) — VERDICT
+  ENCODED: the question was whether `revoke_cap_via_router/4`'s physical
+  `remove_cap` is store-convergence cleanup the GENERATION gate backstops
+  (plan lean (b)), or security-load-bearing so a lost delivery leaves a
+  still-usable/still-readable cap (plan → (a)).
 
-  Question under test: is `revoke_cap_via_router/4`'s physical `remove_cap`
-  store-convergence cleanup that the GENERATION gate already backstops (plan
-  lean (b)), or is the physical delete security-load-bearing so its lost
-  delivery leaves a still-usable/still-readable cap (plan → (a))?
+  VERDICT: (a). The GAP arm as originally committed PROVED a lost `:async`
+  revoke leaves the cap usable + readable (the generation gate never covers
+  `remove_cap` — no key_id bump happens on the revoke path), so the physical
+  delete IS security-load-bearing. The fix (② P2(b)): the revoke FIRST
+  deletes the cap from the holder's AUTHORITATIVE DURABLE STORE
+  (`Ezagent.EntityCaps.revoke_persisted/2` — users: `users.caps_json` +
+  identity-caps store + the user Kind's snapshot slice; non-users: the
+  snapshot `:identity` slice + store + grantee index), synchronously and
+  independent of target liveness; the `:remove_cap` dispatch degrades to a
+  reconcile HINT. The GAP arm now asserts the fixed contract: a lost hint
+  changes nothing — after restart + full ready-drain the cap is DENIED +
+  HIDDEN because the store was deleted at revoke time.
 
   Two arms, both driving the REAL production revoke API
   (`Ezagent.Identity.Grant.revoke_cap_via_router/4`) and asserting through the
@@ -20,14 +32,15 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
   CONTROL — revoke is APPLIED (ready holder, :sync) → cap must become
   DENIED + HIDDEN. Proves the harness and the revoke work.
 
-  GAP — revoke is ACCEPTED then LOST before apply (holder goes not-ready, the
-  accepted :async cast buffers volatilely, then the holder Kind is restarted:
-  terminate + respawn + full ready-drain / outbox rehydrate) → if the cap is
-  STILL usable + STILL readable, the generation gate does NOT backstop
-  `remove_cap`, so its durability IS security-load-bearing → (a). (This
-  simulates a Kind-process restart; `Kind.terminate/1` even DLQs the pending
-  cast first, whereas a real BEAM crash drops the ETS buffer outright — strictly
-  MORE lossy, never less. Either way no durable outbox row exists to redeliver.)
+  GAP (fixed) — revoke is ACCEPTED then the hint is LOST before apply
+  (holder goes not-ready, the accepted :async cast buffers volatilely, then
+  the holder Kind is restarted: terminate + respawn + full ready-drain /
+  outbox rehydrate) → the cap is STILL DENIED + HIDDEN, because
+  `revoke_persisted/2` deleted it from the durable store at revoke time,
+  before the hint was ever dispatched. (This simulates a Kind-process
+  restart; `Kind.terminate/1` even DLQs the pending cast first, whereas a
+  real BEAM crash drops the ETS buffer outright — strictly MORE lossy,
+  never less.)
 
   Both CONTROL and GAP also assert the target authority `key_id` is UNCHANGED
   across the revoke, so the CONTROL denial is provably the physical delete (not
@@ -71,7 +84,7 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
     terminate(holder, pid)
   end
 
-  test "GAP: a LOST revoke_cap_via_router leaves the cap USABLE + READABLE (generation does NOT cover remove_cap)" do
+  test "GAP (fixed): a LOST remove_cap hint still denies + hides the cap (durable store delete carries the revoke)" do
     target = session_target("gap")
     {holder, pid} = spawn_holder("gap-holder")
     cap = hold_cap_toward!(holder, target)
@@ -81,18 +94,18 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
     key_id_before = active_key_id(target)
 
     # Holder goes cold (the M-10 consume_join_entitlement condition: a not-ready
-    # principal). The :async remove_cap cast is ACCEPTED (buffers volatilely);
-    # NOTHING bumps a generation (no regenesis on the revoke path). Asserting :ok
-    # proves we are losing an accepted delivery, not short-circuiting a
-    # pre-dispatch error.
+    # principal). The durable store delete commits SYNCHRONOUSLY here (the P2(b)
+    # fix); the :async remove_cap hint cast is ACCEPTED (buffers volatilely) and
+    # then LOST. NOTHING bumps a generation (no regenesis on the revoke path).
+    # Asserting :ok proves the durable delete committed and the hint was
+    # accepted, not short-circuited by a pre-dispatch error.
     :ok = Ezagent.ReadyGate.put(holder, :not_ready)
     assert :ok = Grant.revoke_cap_via_router(holder, cap, {:held_by, holder}, :async)
 
     # Restart — DOWN half: the holder Kind dies with its volatile buffer. The
     # detached cast is dead-lettered (:never_ready → DLQ sink: log/telemetry,
-    # NOT a redelivery path). The durable holder store was never mutated
-    # (handle_remove_cap never ran); no durable outbox row exists for the revoke
-    # (the Envelope revoke clause is dead, so remove_cap is never outbox-eligible).
+    # NOT a redelivery path). The durable holder store was ALREADY mutated by
+    # revoke_persisted/2 (that is the fix); the lost hint changes nothing.
     terminate(holder, pid)
     assert eventually(fn -> not Process.alive?(pid) end), "holder Kind should be down (restart)"
 
@@ -113,22 +126,24 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
                pid2
              )
 
-    # The durable holder store was never mutated (read it DIRECTLY, not the
-    # live-first loader).
-    assert holds_cap_in_durable_store?(holder, cap),
-           "GAP: the durable holder store STILL contains the un-revoked cap after restart+drain"
+    # The durable holder store was deleted at revoke time (read it DIRECTLY,
+    # not the live-first loader) — and the holder's cold-boot restore source
+    # (its snapshot identity slice) was cleaned too, so `Identity.activate/2`'s
+    # snapshot ∪ caps_json union cannot resurrect the cap.
+    refute holds_cap_in_durable_store?(holder, cap),
+           "GAP (fixed): the durable holder store MUST NOT contain the revoked cap after restart+drain"
 
-    # ...and the target generation was never bumped — so the survival below is
-    # NOT masking a regenesis.
+    # ...and the target generation was never bumped — so the denial below is
+    # the durable delete, NOT a regenesis.
     assert active_key_id(target) == key_id_before,
-           "GAP: key_id unchanged — the revoke path performed no generation bump"
+           "GAP (fixed): key_id unchanged — the revoke path performed no generation bump"
 
     # Re-check through the same act-time gates dispatch uses.
-    assert usable?(holder, target),
-           "GAP: the revoked cap is STILL usable after restart+respawn+drain — the revoke is PERMANENTLY lost; generation gate does NOT deny remove_cap"
+    refute usable?(holder, target),
+           "GAP (fixed): the revoked cap is DENIED after restart+respawn+drain — the durable delete survived the lost hint"
 
-    assert readable?(holder, target),
-           "GAP: the revoked holder is STILL readable via grantees_of after restart+drain — key_id was never bumped"
+    refute readable?(holder, target),
+           "GAP (fixed): the revoked holder is HIDDEN from grantees_of after restart+drain — the grantee index lost the row"
 
     terminate(holder, pid2)
   end

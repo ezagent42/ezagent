@@ -15,7 +15,7 @@ defmodule Ezagent.Cap.Delivery do
           id: integer() | nil,
           workspace_uri: String.t() | nil,
           target_uri: String.t() | nil,
-          op: :absorb_cap | :revoke_cap | nil,
+          op: :absorb_cap | :revoke_cap | :store_cap | nil,
           payload: binary() | nil,
           payload_version: pos_integer(),
           payload_identity: String.t() | nil,
@@ -34,7 +34,7 @@ defmodule Ezagent.Cap.Delivery do
   schema "cap_delivery_outbox" do
     field :workspace_uri, :string
     field :target_uri, :string
-    field :op, Ecto.Enum, values: [:absorb_cap, :revoke_cap]
+    field :op, Ecto.Enum, values: [:absorb_cap, :revoke_cap, :store_cap]
     field :payload, :binary
     field :payload_version, :integer, default: 1
     field :payload_identity, :string
