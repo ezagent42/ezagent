@@ -87,6 +87,16 @@ defmodule Ezagent.ActionSet.ApiKeys do
     modes: [:call]
   )
 
+  action(:put_api_key_if_absent,
+    args: %{provider: :string, key: :string},
+    returns: %{ok: :boolean, provider: :string, set: :boolean},
+    caps: [{:put_api_key_if_absent, kind: :any}],
+    description:
+      "Store the agent's API key for a provider ONLY when the slot is empty " <>
+        "(compare-and-set; never overwrites an existing key)",
+    modes: [:call]
+  )
+
   action(:delete_api_key,
     args: %{provider: :string},
     returns: %{ok: :boolean, provider: :string},
@@ -115,6 +125,10 @@ defmodule Ezagent.ActionSet.ApiKeys do
     %{
       list_api_keys: Ezagent.Capability.cap(:any, __MODULE__, :list_api_keys),
       put_api_key: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key),
+      # CAS variant has its OWN action axis — the required-cap invariant
+      # demands each entry's action == its map key, and
+      # `Cap.Verifier.required_cap/4` scopes the cap to the DISPATCHED action.
+      put_api_key_if_absent: Ezagent.Capability.cap(:any, __MODULE__, :put_api_key_if_absent),
       delete_api_key: Ezagent.Capability.cap(:any, __MODULE__, :delete_api_key),
       get_api_key: Ezagent.Capability.cap(:any, __MODULE__, :get_api_key)
     }
@@ -165,6 +179,40 @@ defmodule Ezagent.ActionSet.ApiKeys do
 
   def handle_put_api_key(args, _ctx) do
     {:error, {:bad_args, "put_api_key requires {provider, key} as non-empty strings", args}}
+  end
+
+  @doc """
+  Compare-and-set variant of `:put_api_key`: fills the provider slot ONLY
+  when it holds no non-empty key, returning `set: false` (with NO `:set` /
+  `:emit` effects) when one is already stored.
+
+  The check-and-set runs INSIDE the agent's own serialized action path, so
+  two concurrent callers can never both observe absence — the property
+  reseed-safe credential wiring (`OfficialSiteSeed`) needs: an
+  operator-rotated key is never clobbered by a racing/late seeder.
+  """
+  def handle_put_api_key_if_absent(%{provider: provider, key: key}, ctx)
+      when is_binary(provider) and is_binary(key) and provider != "" and key != "" do
+    current_keys = ctx[:read].(:keys, %{})
+
+    case Map.get(current_keys, provider) do
+      existing when is_binary(existing) and existing != "" ->
+        {:ok, %{ok: true, provider: provider, set: false}, []}
+
+      _ ->
+        new_keys = Map.put(current_keys, provider, key)
+
+        {:ok, %{ok: true, provider: provider, set: true},
+         [
+           {:set, :keys, new_keys},
+           {:emit, :api_key_put, %{provider: provider, at: DateTime.utc_now()}}
+         ]}
+    end
+  end
+
+  def handle_put_api_key_if_absent(_args, _ctx) do
+    # NEVER echo `_args` in the reason — they carry the plaintext key.
+    {:error, {:bad_args, "put_api_key_if_absent requires {provider, key} as non-empty strings"}}
   end
 
   def handle_delete_api_key(%{provider: provider}, ctx) when is_binary(provider) do

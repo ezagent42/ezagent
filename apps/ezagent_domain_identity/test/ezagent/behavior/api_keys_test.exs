@@ -163,14 +163,65 @@ defmodule Ezagent.ActionSet.ApiKeysTest do
     end
   end
 
+  describe "handle_put_api_key_if_absent/2 (CAS)" do
+    test "empty slot: stores the key + emits :set + :emit, set: true" do
+      ctx = ctx_with_keys(%{})
+      args = %{provider: "deepseek", key: "sk-cas-new-key-0001"}
+
+      assert {:ok, %{ok: true, provider: "deepseek", set: true}, effects} =
+               ApiKeys.handle_put_api_key_if_absent(args, ctx)
+
+      assert {:set, :keys, %{"deepseek" => "sk-cas-new-key-0001"}} in effects
+      assert Enum.any?(effects, &match?({:emit, :api_key_put, _}, &1))
+    end
+
+    test "occupied slot: NEVER overwrites — set: false with NO effects" do
+      ctx = ctx_with_keys(%{"deepseek" => "sk-operator-rotated-key"})
+      args = %{provider: "deepseek", key: "sk-stale-seed-key"}
+
+      assert {:ok, %{ok: true, provider: "deepseek", set: false}, []} =
+               ApiKeys.handle_put_api_key_if_absent(args, ctx)
+    end
+
+    test "empty-string slot counts as absent (refills)" do
+      ctx = ctx_with_keys(%{"deepseek" => ""})
+      args = %{provider: "deepseek", key: "sk-cas-refill-key"}
+
+      assert {:ok, %{ok: true, set: true}, effects} =
+               ApiKeys.handle_put_api_key_if_absent(args, ctx)
+
+      assert {:set, :keys, %{"deepseek" => "sk-cas-refill-key"}} in effects
+    end
+
+    test "bad args: error reason NEVER echoes the key" do
+      ctx = ctx_with_keys(%{})
+
+      assert {:error, {:bad_args, message}} =
+               ApiKeys.handle_put_api_key_if_absent(%{provider: "", key: "sk-secret-xyz"}, ctx)
+
+      refute message =~ "sk-secret-xyz"
+    end
+
+    test "requires its own :put_api_key_if_absent cap action axis" do
+      assert ApiKeys.required_caps()[:put_api_key_if_absent] ==
+               Ezagent.Capability.cap(:any, ApiKeys, :put_api_key_if_absent)
+    end
+  end
+
   describe "P2-b new-contract markers" do
     test "__behavior__?/0 is true" do
       assert ApiKeys.__behavior__?() == true
     end
 
-    test "__action_names__/0 lists all four actions" do
+    test "__action_names__/0 lists all five actions" do
       assert Enum.sort(ApiKeys.__action_names__()) ==
-               [:delete_api_key, :get_api_key, :list_api_keys, :put_api_key]
+               [
+                 :delete_api_key,
+                 :get_api_key,
+                 :list_api_keys,
+                 :put_api_key,
+                 :put_api_key_if_absent
+               ]
     end
   end
 end

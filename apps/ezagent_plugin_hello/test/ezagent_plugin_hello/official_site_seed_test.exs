@@ -45,14 +45,20 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
       &terminate/1
     )
 
-    # Isolate this test to the SITE-provisioning invariant. `ensure/0`'s second
-    # step wires the DeepSeek credential source, but that path (a) has its own
-    # coverage (`HelloCredentialSourceTest`) and (b) spawns a source agent +
-    # workspace-shared pointer into the home workspace whose ETS registrations
-    # survive the DataCase transaction and leak into sibling tests' cap-signing.
-    # With no key, `ensure_deepseek_source/0` is a no-op (`{:ok, :no_env_key}`)
-    # and the `llm` member keyless-spawns — the page still provisions, which is
-    # all this invariant asserts.
+    # Routing-registry hygiene: the seed's INTERIM delivery-rule wiring writes
+    # the live RoutingRegistry ETS, which survives the DataCase transaction's
+    # DB rollback. Reconcile ETS from the (clean) DB so no stale rule from a
+    # sibling test leaks into this one.
+    :ok =
+      Ezagent.Routing.Resolver.default_routing_table()
+      |> Ezagent.Routing.RuleStore.load_into_registry()
+
+    # Isolate this test to the SITE-provisioning invariant. `ensure/0` also
+    # wires the llm responder's DeepSeek credential (`:put_api_key` from
+    # `DEEPSEEK_API_KEY`); with no key that leg skips with a warning and the
+    # `llm` member keyless-spawns — the page still provisions, which is all
+    # this invariant asserts. The credential + delivery-rule wiring has its
+    # own test below (it sets the env var explicitly).
     prev_key = System.get_env("DEEPSEEK_API_KEY")
     System.delete_env("DEEPSEEK_API_KEY")
 
@@ -125,6 +131,196 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     # And the page is unchanged after the skipped run.
     assert {:ok, snapshot2} = ExternalFeed.snapshot(site_uri, User.admin_uri())
     assert snapshot2.page == expected_body
+  end
+
+  # INTERIM workaround wiring (removed by the #1667 structural fix): the seed
+  # must durably re-create what live-prod patched by hand — (a) the llm
+  # greeter's DeepSeek credential (from `DEEPSEEK_API_KEY`, COMPARE-AND-SET so
+  # a rerun NEVER overwrites) and (b) EXACTLY ONE seed-owned session-scoped
+  # MentionRouting delivery rule that really routes in-session messages.
+  test "wires the llm credential + one seed-owned delivery rule; rerun never overwrites" do
+    key = "sk-official-site-seed-test-key"
+    System.put_env("DEEPSEEK_API_KEY", key)
+    on_exit(fn -> System.delete_env("DEEPSEEK_API_KEY") end)
+
+    site_uri = OfficialSiteSeed.site_uri()
+    table = Ezagent.Routing.Resolver.default_routing_table()
+
+    assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
+    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+    assert {:ok, owner_uri} = Ezagent.Entity.Session.owner(site_uri)
+
+    # VM-global hygiene: the llm Kind process and the RoutingRegistry ETS
+    # entry survive the sandbox rollback — remove both so sibling tests see
+    # neither a stale credential nor a dead-agent delivery rule.
+    on_exit(fn ->
+      terminate(llm_uri)
+
+      table
+      |> owned_delivery_rules(site_uri)
+      |> Enum.each(&Ezagent.Routing.RuleStore.delete(&1.id, force: true))
+
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+    end)
+
+    # (a) The DeepSeek credential landed on the llm greeter agent.
+    assert {:ok, slice} = Ezagent.Kind.read(llm_uri, :api_keys)
+    assert get_in(slice, [:keys, "deepseek"]) == key
+
+    # (b) EXACTLY ONE seed-owned row: marked, enabled, admin-sourced, and
+    # pointing at EXACTLY the current llm member (membership is not enough).
+    assert [row] = owned_delivery_rules(table, site_uri)
+    assert row.rule_set == "official-site-interim"
+    assert row.enabled
+    assert row.source == "admin"
+    assert row.receivers == [URI.to_string(llm_uri)]
+
+    # (c) REAL delivery: the hydrated registry routes an in-session message
+    # to the llm agent.
+    message = %Ezagent.Message{
+      id: "msg-seed-test-#{System.unique_integer([:positive])}",
+      session_uri: site_uri,
+      sender: owner_uri,
+      mentions: [],
+      body: %{text: "你好官网", attachments: []},
+      inserted_at: DateTime.utc_now()
+    }
+
+    assert llm_uri in Ezagent.Routing.Resolver.resolve(message, site_uri, [])
+
+    # Watch the llm's api_keys slice across the rerun: a second `:api_key_put`
+    # would commit a `:set` effect → `{:slice_changed, _}` broadcast.
+    :ok = Ezagent.SliceChange.subscribe_unverified(llm_uri)
+
+    # Idempotent rerun with a DIFFERENT env key (the operator-rotated-env
+    # shape): the already-provisioned path must NOT overwrite the ORIGINAL
+    # key, must NOT emit a second :api_key_put, and must NOT touch the rule.
+    System.put_env("DEEPSEEK_API_KEY", "sk-rotated-env-key-must-not-land")
+    assert {:ok, {:already_provisioned, ^site_uri}} = OfficialSiteSeed.ensure()
+
+    assert {:ok, slice2} = Ezagent.Kind.read(llm_uri, :api_keys)
+    assert get_in(slice2, [:keys, "deepseek"]) == key
+    refute_received {:slice_changed, _}, 250
+
+    assert [row2] = owned_delivery_rules(table, site_uri)
+    assert row2.id == row.id
+  end
+
+  # codex must-fix #1 (tri-state): when the llm agent's :api_keys slice is
+  # UNREADABLE (here: never-durably-created after teardown — the same
+  # `{:error, _}` bucket as a ReadyGate `{:not_ready, _}`), the credential
+  # leg must SKIP with a warning — never blindly put over what it cannot
+  # see — while the independent routing leg still reconciles and the seed
+  # outcome stays healthy.
+  test "unreadable llm api_keys slice: credential leg skips (no put, no respawn)" do
+    key = "sk-unreadable-slice-test-key"
+    System.put_env("DEEPSEEK_API_KEY", key)
+    on_exit(fn -> System.delete_env("DEEPSEEK_API_KEY") end)
+
+    site_uri = OfficialSiteSeed.site_uri()
+    table = Ezagent.Routing.Resolver.default_routing_table()
+
+    assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
+    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+
+    on_exit(fn ->
+      terminate(llm_uri)
+
+      table
+      |> owned_delivery_rules(site_uri)
+      |> Enum.each(&Ezagent.Routing.RuleStore.delete(&1.id, force: true))
+
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+    end)
+
+    assert {:ok, slice} = Ezagent.Kind.read(llm_uri, :api_keys)
+    assert get_in(slice, [:keys, "deepseek"]) == key
+
+    # Make the slice UNREADABLE: stop the live Kind AND remove its durable
+    # snapshot, so `Kind.read/3` refuses the cold respawn (`:not_created`).
+    terminate(llm_uri)
+
+    EzagentCore.Repo.delete_all(
+      from(k in Ezagent.Ecto.KindSnapshot, where: k.uri == ^URI.to_string(llm_uri))
+    )
+
+    :ok = Ezagent.SliceChange.subscribe_unverified(llm_uri)
+
+    # The seed still succeeds end-to-end (wiring failures never fail it).
+    assert {:ok, {:already_provisioned, ^site_uri}} = OfficialSiteSeed.ensure()
+
+    # No put was dispatched (no slice event) and the seed did NOT respawn the
+    # agent to force the key in.
+    refute_received {:slice_changed, _}, 250
+    assert :error = Ezagent.KindRegistry.lookup(llm_uri)
+
+    # The routing leg is independent — the delivery rule is still exactly one.
+    assert [_] = owned_delivery_rules(table, site_uri)
+  end
+
+  # codex must-fix #2 (duplicate guard): N concurrent reseeds (the two
+  # deploy-node shape) that ALL observe the delivery rule absent must
+  # converge to EXACTLY ONE seed-owned row — enforced at the DB level by the
+  # `routing_rules_official_site_interim_unique` partial unique index (the
+  # racing loser's insert violates it and adopts the winner's row).
+  test "concurrent reseeds converge to exactly one delivery rule (duplicate guard)" do
+    key = "sk-concurrent-guard-test-key"
+    System.put_env("DEEPSEEK_API_KEY", key)
+    on_exit(fn -> System.delete_env("DEEPSEEK_API_KEY") end)
+
+    site_uri = OfficialSiteSeed.site_uri()
+    table = Ezagent.Routing.Resolver.default_routing_table()
+
+    assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
+    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+
+    on_exit(fn ->
+      terminate(llm_uri)
+
+      table
+      |> owned_delivery_rules(site_uri)
+      |> Enum.each(&Ezagent.Routing.RuleStore.delete(&1.id, force: true))
+
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+    end)
+
+    # Remove the seeded row so EVERY racer observes absence.
+    table
+    |> owned_delivery_rules(site_uri)
+    |> Enum.each(&Ezagent.Routing.RuleStore.delete(&1.id, force: true))
+
+    :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+    assert [] = owned_delivery_rules(table, site_uri)
+
+    results =
+      1..8
+      |> Enum.map(fn _ -> Task.async(fn -> OfficialSiteSeed.ensure() end) end)
+      |> Enum.map(&Task.await(&1, 60_000))
+
+    assert Enum.all?(results, &match?({:ok, {:already_provisioned, ^site_uri}}, &1))
+
+    assert [row] = owned_delivery_rules(table, site_uri)
+    assert row.rule_set == "official-site-interim"
+    assert row.enabled
+    assert row.receivers == [URI.to_string(llm_uri)]
+  end
+
+  # Mirrors `OfficialSiteSeed`'s seed-owned predicate: marker rows plus
+  # legacy pre-marker rows from this same workaround (admin-attributed
+  # in_session rules for THIS session without a rule_set).
+  defp owned_delivery_rules(table, site_uri) do
+    matcher_json =
+      site_uri |> Ezagent.Routing.Matcher.in_session() |> Ezagent.Routing.Matcher.to_json()
+
+    admin = URI.to_string(User.admin_uri())
+
+    table
+    |> Ezagent.Routing.RuleStore.list()
+    |> Enum.filter(fn rule ->
+      rule.rule_set == "official-site-interim" or
+        (is_nil(rule.rule_set) and rule.matcher_data == matcher_json and
+           rule.created_by == admin)
+    end)
   end
 
   # #207: `resolve_founder` validates the configured email → Profile → workspace
