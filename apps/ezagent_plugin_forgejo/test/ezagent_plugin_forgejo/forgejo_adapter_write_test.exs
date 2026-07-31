@@ -1142,6 +1142,53 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
       refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
     end
 
+    # The pagination work above refuses a TRUNCATED read because "we did not see
+    # the whole list" is indistinguishable from "there is no match" and would
+    # open a second PR. An entry we cannot READ is the same failure one level
+    # down, and it was not covered: `exact_match?/2` answered `false` for a pull
+    # whose `head.ref` was missing or whose shape was not a map, so an existing
+    # PR that had drifted was filtered out, the list came back empty, and
+    # find-or-create created a DUPLICATE on the provider.
+    #
+    # That is a wrong WRITE, not a misreport — the strongest reason this one had
+    # to be fixed rather than filed.
+    test "refuses when a pull entry cannot be read, rather than opening a duplicate" do
+      unreadable = [
+        # `head` present but `ref` missing — the field most likely to drift.
+        %{"number" => 5, "head" => %{"sha" => @head_sha}, "base" => %{"ref" => "main"}},
+        # `head` is not a map at all.
+        %{"number" => 5, "head" => "feature", "base" => %{"ref" => "main"}},
+        # the entry itself is not a map.
+        "not-a-pull"
+      ]
+
+      for entry <- unreadable do
+        routes =
+          happy_path()
+          |> Map.put(
+            {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+            fn conn ->
+              page =
+                conn
+                |> Plug.Conn.fetch_query_params()
+                |> Map.fetch!(:query_params)
+                |> Map.get("page", "1")
+
+              Req.Test.json(conn, if(page == "1", do: [entry], else: []))
+            end
+          )
+
+        stub(routes)
+
+        assert {:error, :provider_response_unrecognized} =
+                 ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!()),
+               "expected refusal for #{inspect(entry)}"
+
+        # The point of the whole test: no second pull request was opened.
+        refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
+      end
+    end
+
     # `limit` is a REQUEST, not a guarantee: `max_response_items` is an instance
     # setting (50 on the probe instance, but configurable). On an instance that
     # caps lower, a FULL page comes back shorter than asked for — and treating

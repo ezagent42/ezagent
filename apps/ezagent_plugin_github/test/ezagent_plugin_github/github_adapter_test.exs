@@ -555,6 +555,11 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     assert tree_body["base_tree"] == "tree_base"
   end
 
+  # Asserted as a PAIR with the case below it. `:base_sha_mismatch` is an
+  # actionable diagnosis — it tells an operator the base branch moved and the
+  # work needs rebasing — and it is only true when two shas were actually
+  # COMPARED. Answering it for a body we could not read invents that diagnosis
+  # and sends someone to rebase against a base that may not have moved at all.
   test "create_change_request returns base_sha_mismatch when SHA doesn't match" do
     expect_mint(:change_request_write)
 
@@ -564,6 +569,22 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:error, :base_sha_mismatch} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  test "create_change_request refuses an unreadable base ref instead of claiming a sha mismatch" do
+    for body <- [%{"unexpected" => true}, %{"object" => %{}}, %{"object" => "not-a-map"}] do
+      expect_mint(:change_request_write)
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
   end
 
   test "create_change_request maps 404 on ref to base_ref_not_found" do
@@ -1010,6 +1031,73 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     # call) exhausts the queue and raises, failing this test.
     assert {:ok, %ChangeRequest{external_id: "42", head_sha: ^head_sha, state: :open}} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  # The three `:head_ref_conflict` tests below are the readable half: the
+  # provider's answer was understood and it genuinely disagrees with what this
+  # run expected. The two here are the unreadable half, and they used to answer
+  # `:head_ref_conflict` too — the clause that produced it was literally named
+  # `_mismatched_or_unexpected_shape`.
+  #
+  # That conflation invents a diagnosis. `:head_ref_conflict` tells an operator
+  # somebody else moved this branch, which is a specific, checkable claim about
+  # the repository. "We could not read the commit body" is a claim about the
+  # API, and the two send an operator to different places.
+  test "create_change_request refuses an unreadable head commit instead of claiming a conflict" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+
+    for body <- [
+          %{"unexpected" => true},
+          %{"tree" => %{"sha" => "tree_x"}},
+          %{"tree" => "not-a-map", "parents" => [%{"sha" => sha}]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => "not-a-list"}
+        ] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
+  end
+
+  test "create_change_request refuses an unreadable head ref instead of claiming a conflict" do
+    sha = String.duplicate("a", 40)
+
+    for body <- [%{"unexpected" => true}, %{"object" => %{}}, %{"object" => %{"sha" => 12_345}}] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      # The head ref exists (200) but its body carries no usable sha.
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
   end
 
   test "create_change_request returns head_ref_conflict when the existing head's parent does not match the expected base" do

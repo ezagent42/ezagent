@@ -147,11 +147,17 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     end
   end
 
-  defp verify_base_sha(%{"object" => %{"sha" => sha}}, %CommitSha{value: expected}) do
+  defp verify_base_sha(%{"object" => %{"sha" => sha}}, %CommitSha{value: expected})
+       when is_binary(sha) do
     if sha == expected, do: {:ok, expected}, else: {:error, :base_sha_mismatch}
   end
 
-  defp verify_base_sha(_ref_data, _expected_sha), do: {:error, :base_sha_mismatch}
+  # `:base_sha_mismatch` is a claim about the REPOSITORY — the base branch moved
+  # and this work needs rebasing — and it is only true when two shas were
+  # actually compared. A ref body with no usable sha supports no such claim, and
+  # answering it anyway sends an operator to rebase against a base that may not
+  # have moved at all.
+  defp verify_base_sha(_ref_data, _expected_sha), do: {:error, :provider_response_unrecognized}
 
   # ── Step 2: deterministic head ref create-or-reconcile (design §6.1 steps 3-6) ──
   #
@@ -313,16 +319,30 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       {:ok, %{"tree" => %{"sha" => existing_tree_sha}, "parents" => [%{"sha" => ^base_sha}]}} ->
         verify_tree_reuse(repo, file_changes, base_sha, existing_tree_sha, head_sha, token)
 
-      {:ok, _mismatched_or_unexpected_shape} ->
+      # READ, and it disagrees: a commit body we understood whose first parent
+      # is not the base this run verified (or which has no parents at all).
+      # Somebody else moved this branch — a real conflict, and a claim about the
+      # repository that an operator can go and check.
+      {:ok, %{"tree" => %{"sha" => tree_sha}, "parents" => parents}}
+      when is_binary(tree_sha) and is_list(parents) ->
         {:error, :head_ref_conflict}
+
+      # NOT read. The old clause here was named
+      # `_mismatched_or_unexpected_shape`, which admits the conflation: it
+      # answered `:head_ref_conflict` for a commit body it could not parse,
+      # inventing a claim about the repository out of a fact about the API.
+      {:ok, _unreadable} ->
+        {:error, :provider_response_unrecognized}
 
       {:error, reason} ->
         {:error, map_git_data_error(reason)}
     end
   end
 
+  # The head ref itself came back without a usable sha — same distinction as
+  # above, one call earlier.
   defp reconcile_existing_head(_repo, _head_ref_data, _file_changes, _base_sha, _token),
-    do: {:error, :head_ref_conflict}
+    do: {:error, :provider_response_unrecognized}
 
   # Blob/tree creation is content-addressed and idempotent (design §6.1 step
   # 5 note): recomputing this call's tree from `file_changes` and comparing

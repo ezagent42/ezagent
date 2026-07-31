@@ -552,10 +552,21 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # the exact match is made here. `/pulls/{base}/{head}` exists but
         # returns the OLDEST match regardless of state -- a trap, not a
         # shortcut (findings §2.2).
-        case Enum.filter(pulls, &exact_match?(&1, env)) do
-          [] -> create_pull(env, request)
-          [single] -> Normalize.change_request(single)
-          [_ | _] -> {:error, :change_request_conflict}
+        #
+        # An entry we cannot READ fails the whole find-or-create, for the same
+        # reason `@max_items` refuses a truncated read: "we could not tell" is
+        # indistinguishable from "no match", and the consequence of guessing
+        # "no match" is a DUPLICATE pull request on the provider. `readable?/1`
+        # runs before the filter so an unreadable entry cannot be silently
+        # dropped by it.
+        if Enum.all?(pulls, &readable_pull?/1) do
+          case Enum.filter(pulls, &exact_match?(&1, env)) do
+            [] -> create_pull(env, request)
+            [single] -> Normalize.change_request(single)
+            [_ | _] -> {:error, :change_request_conflict}
+          end
+        else
+          {:error, :provider_response_unrecognized}
         end
 
       {:error, marker} ->
@@ -563,6 +574,18 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     end
   end
 
+  # Both refs must be present AND strings before a comparison against them
+  # means anything. Without this, `get_in/2` answered `nil`, `nil == head_ref`
+  # answered `false`, and "we could not read this entry" became "this entry is
+  # not the one" — the shape of every fail-open in this module.
+  defp readable_pull?(%{"head" => %{"ref" => head}, "base" => %{"ref" => base}})
+       when is_binary(head) and is_binary(base),
+       do: true
+
+  defp readable_pull?(_pull), do: false
+
+  # Only ever reached for entries `readable_pull?/1` already vouched for, so a
+  # `false` here means a genuine non-match rather than an unreadable entry.
   defp exact_match?(pull, %{head_ref: head_ref, base_ref: base_ref}) when is_map(pull) do
     get_in(pull, ["head", "ref"]) == head_ref and get_in(pull, ["base", "ref"]) == base_ref
   end
