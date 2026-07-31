@@ -28,8 +28,16 @@ defmodule Ezagent.World.DispatchContract do
     # service path (`Socialware.retract/2`/`restore/2`, gate proven by session
     # `Ezagent.Socialware.RetractTest`).
     market: ~w(market.install market.publish),
+    # NOTE: this list is the SoT for BOTH the `WorldLive` `:conversation`
+    # routing guard AND the parity gate in
+    # `conversation_dispatch_parity_test.exs`. Every action string that
+    # `Ezagent.World.ConversationActions.handle_dispatch/3` matches must be a
+    # member here (or an explicitly-documented exemption in that test).
+    # `session.assign_role`/`session.fork_config`/`session.publish_template`
+    # were dispatched by the React client (`main.tsx`) but were MISSING here,
+    # so they fell through to the catch-all → `error:unsupported_action` (#224).
     conversation:
-      ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.socialware.uninstall session.create session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
+      ~w(chat.send chat.load_older chat.mark_displayed session.switch session.invite session.remove_participant session.assign_role session.socialware.uninstall session.create session.fork_config session.publish_template session.view.switch session.pty.open session.orchestrator.restart session.routing.add session.routing.toggle)
   }
 
   @direct_actions ~w(sessions.join agent.api_key.put)

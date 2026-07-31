@@ -85,6 +85,46 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
     end
   end
 
+  # #224 — three conversation handlers were dispatched by the React client but
+  # were ABSENT from `DispatchContract.actions(:conversation)`, so they fell
+  # through `WorldLive`'s guards to the catch-all and returned
+  # `error:unsupported_action` — the handler never ran. Proof of ROUTING (not
+  # of the handler's success): dispatch each with a MALFORMED `session_uri` but
+  # otherwise-matching args. If it routes, its `with_session/3` guard rejects the
+  # URI with the DISTINCT `error:bad_session_uri`; if it is still unrouted it
+  # returns `error:unsupported_action` (the pre-fix behavior). The bad-URI probe
+  # also sidesteps Blocker B (publish would still fail `template_write_cap?`,
+  # #224 Fix-3, pending) — we prove reach, not publish.
+  describe "#224 — conversation actions restored to the contract route to their handler" do
+    test "session.publish_template routes (bad session_uri -> handler's bad_session_uri, not unsupported_action)" do
+      assert {:noreply, out} =
+               dispatch("session.publish_template", %{
+                 "session_uri" => "not-a-session-uri",
+                 "name" => "my-template"
+               })
+
+      assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+
+    test "session.fork_config routes (bad session_uri -> handler's bad_session_uri, not unsupported_action)" do
+      assert {:noreply, out} =
+               dispatch("session.fork_config", %{"session_uri" => "not-a-session-uri"})
+
+      assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+
+    test "session.assign_role routes (bad session_uri -> handler's bad_session_uri, not unsupported_action)" do
+      assert {:noreply, out} =
+               dispatch("session.assign_role", %{
+                 "session_uri" => "not-a-session-uri",
+                 "member" => "entity://team-alpha/user/m",
+                 "role_name" => "reviewer"
+               })
+
+      assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+  end
+
   describe "direct (non-grouped) clauses" do
     test "an unrecognized top-level action degrades to error:unsupported_action" do
       assert {:noreply, out} = dispatch("totally.made.up.action", %{"x" => 1})

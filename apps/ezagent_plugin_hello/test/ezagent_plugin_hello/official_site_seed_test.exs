@@ -13,6 +13,7 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
   """
   use EzagentCore.DataCase, async: false
 
+  alias Ezagent.Capability
   alias Ezagent.Entity.{Profile, User}
   alias Ezagent.Socialware.ExternalFeed
   alias EzagentPluginHello.OfficialSiteSeed
@@ -168,6 +169,45 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     Application.put_env(:ezagent_plugin_hello, :official_site_founder_email, email)
 
     assert {:error, :official_site_founder_not_registered} = OfficialSiteSeed.ensure()
+  end
+
+  # #224 Fix 2 — at seed the owner was granted ONLY the tier-1 membership cap
+  # (`cap(:session, Session, :receive, S)`) by `MemberCap.grant_owner_at_creation`;
+  # the participation tier (`:send`/`:leave`/`:attach`) is minted by
+  # `Membership.mount_participation_caps/2`, which never ran on the create path.
+  # So the official-site owner could `:receive` but their FIRST `session.send`
+  # (via `/socialware/external`) failed `:missing_cap`. `App.create_app/3` now
+  # mounts the participation tier at creation. This pins the observable outcome:
+  # the seeded owner HOLDS `:send` after `ensure/0`. (Red on today's receive-only
+  # grant, green with the fix.)
+  test "the official-site owner holds :send after seed (first session.send is authorized)" do
+    site_uri = OfficialSiteSeed.site_uri()
+
+    assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
+    assert {:ok, owner_uri} = Ezagent.Entity.Session.owner(site_uri)
+
+    assert wait_owner_send_cap(owner_uri, site_uri),
+           "the official-site owner must hold cap(:session, Session, :send, S) after seed — " <>
+             "without the participation-tier mount the owner's first session.send fails " <>
+             ":missing_cap (#224 Fix 2)"
+  end
+
+  defp owner_holds_send_cap?(%URI{} = owner_uri, %URI{} = session_uri) do
+    Enum.any?(Ezagent.Identity.list_caps_for(owner_uri), fn cap ->
+      match?(%Capability{}, cap) and
+        cap.kind == :session and
+        cap.behavior == Ezagent.ActionSet.Session and
+        Capability.action_of(cap) == :send and
+        cap.instance == session_uri
+    end)
+  end
+
+  defp wait_owner_send_cap(owner_uri, session_uri, retries \\ 50) do
+    cond do
+      owner_holds_send_cap?(owner_uri, session_uri) -> true
+      retries > 0 -> Process.sleep(20) && wait_owner_send_cap(owner_uri, session_uri, retries - 1)
+      true -> false
+    end
   end
 
   # Mirrors `OfficialSiteSeed`'s internal absence gate.
