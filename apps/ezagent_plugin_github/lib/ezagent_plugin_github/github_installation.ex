@@ -16,10 +16,13 @@ defmodule EzagentPluginGithub.GitHubInstallation do
        profile (`EzagentPluginGithub.InstallationPermissions`).
     4. Strictly validates the response's `token`, `repository_selection`,
        `repositories`, `permissions`, and `expires_at` against the request before
-       returning the token — a missing/empty/non-binary token, any scope
-       mismatch or widening, or a missing/malformed/already-past `expires_at`
-       fails closed with `{:error, :installation_scope_mismatch}` before any
-       repository HTTP call.
+       returning the token. Everything fails closed before any repository HTTP
+       call, under one of two codes: a field that is absent or of the wrong type
+       is `{:error, :provider_response_unrecognized}` (there was no scope to
+       read), while a readable field whose VALUE is wrong — an empty token, a
+       widened or narrowed permission set, an "all"-repositories grant, the
+       wrong repository, a malformed or already-past `expires_at` — is
+       `{:error, :installation_scope_mismatch}`.
 
   There is no cache: every call mints fresh. A token returned by this module is
   meant to live only on the caller's current call stack for one adapter callback
@@ -113,12 +116,20 @@ defmodule EzagentPluginGithub.GitHubInstallation do
        )
        when is_binary(token) and is_binary(repository_selection) and is_list(repositories) and
               is_map(permissions) and is_binary(expires_at) do
-    scoped_as_requested(
-      {token, repository_selection, repositories, expires_at},
-      permissions,
-      repo_full_name,
-      requested_permissions
-    )
+    # `is_list/1` only vouches for the container. An entry that is not a map
+    # with a binary `full_name` is a repository we could not READ, not a
+    # repository that is the wrong one — and a guard cannot walk the list, so
+    # the check lives here.
+    if Enum.all?(repositories, &match?(%{"full_name" => name} when is_binary(name), &1)) do
+      scoped_as_requested(
+        {token, repository_selection, repositories, expires_at},
+        permissions,
+        repo_full_name,
+        requested_permissions
+      )
+    else
+      {:error, :provider_response_unrecognized}
+    end
   end
 
   # The five scope fields are not all present and of the right primitive type,
