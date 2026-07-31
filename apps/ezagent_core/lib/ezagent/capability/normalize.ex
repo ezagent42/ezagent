@@ -88,9 +88,28 @@ defmodule Ezagent.Capability.Normalize do
   `users.caps_json` path relies on every persisted cap actually carrying the
   field (post-PR-3 grant code always writes it via `normalize!/2`). Inverse of
   `to_map/1`; backs `Ezagent.Capability.from_map/1`.
+
+  ## Fail-CLOSED on a SIGNED map that lost its `"action"` (#189 divergence — READ side)
+
+  The tolerant `Map.put_new("action", "any")` below silently defaults a MISSING
+  `"action"` to `:any` (workspace-admin) while `decode_signature/1` decodes and
+  PRESERVES the map's `"signature"` verbatim. For a JSON map that carries a
+  `"signature"` but LACKS `"action"` that is a SILENT PRIVILEGE ESCALATION — the
+  exact `{:caps_mismatch}` the #189 fleet-parity barrier caught (a workspace cap
+  read back as `:any` with a signature that still covers the true concrete action,
+  e.g. `:create_session`). This is the READ-side (deserialize) symmetric twin of
+  `fill_defaults/1`'s WRITE-side (serialize) guard: the capability-action-axis
+  (SPEC 2026-05-27) predates the #1399 cap-signing trio (2026-07-14), so ANY
+  cap carrying a `"signature"` was minted WITH the action axis and MUST carry a
+  concrete `"action"`; a signed map whose `"action"` key is absent is therefore
+  corruption, never legacy, and is REFUSED here rather than round-tripped into an
+  `:any` cap. A genuinely pre-action-axis cap is UNSIGNED (pre-#1399), so its
+  missing action still tolerantly decodes to `:any` — the documented legacy
+  round-trip tolerance is preserved.
   """
   @spec from_map(map()) :: Capability.t()
   def from_map(%{} = m) do
+    refuse_signed_action_widening_on_decode!(m)
     m = Map.put_new(m, "action", "any")
 
     %Capability{
@@ -105,6 +124,27 @@ defmodule Ezagent.Capability.Normalize do
       key_id: Map.get(m, "key_id"),
       grantee_uri: string_to_uri_or_nil(Map.get(m, "grantee_uri"))
     }
+  end
+
+  # A decoded map carrying a non-nil `"signature"` post-dates the action-axis, so
+  # a missing `"action"` KEY is corruption — refuse to widen it to `:any` at
+  # DECODE time (the read-side twin of `fill_defaults/1`'s write-side guard).
+  # Only the SIGNED + action-less shape is refused; an unsigned legacy map still
+  # tolerantly decodes a missing action to `:any` (round-trip tolerance intact).
+  defp refuse_signed_action_widening_on_decode!(m) do
+    if not Map.has_key?(m, "action") and not is_nil(Map.get(m, "signature")) do
+      raise ArgumentError,
+            "Ezagent.Capability.Normalize.from_map/1: a SIGNED capability map is " <>
+              "missing its `\"action\"` field — refusing to decode it. Defaulting the " <>
+              "absent action to `:any` (workspace-admin) would silently widen the true " <>
+              "concrete action while preserving the (now-mismatched) signature verbatim — " <>
+              "the #189 identity-plane divergence (a workspace `:create_session` cap read " <>
+              "back as `:any`). A signature post-dates the capability-action-axis, so a " <>
+              "signed cap MUST carry a concrete `\"action\"`; a missing one is corruption, " <>
+              "not legacy. Got: #{inspect(m)}"
+    end
+
+    :ok
   end
 
   @doc """
