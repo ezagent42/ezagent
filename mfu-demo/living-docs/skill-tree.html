@@ -1,0 +1,2339 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>MFU 成长树</title>
+  <style>
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+  <link rel="stylesheet" href="living-docs.css" />
+</head>
+<body>
+<h1 id="mfu-成长树--living-doc">MFU 成长树 · Living Doc</h1>
+<blockquote>
+<p><strong>状态</strong>: Living · v0.15 成长树规则；v0.14
+节点保留为迁移台账 <strong>创建</strong>: 2026-07-24（原
+<code>doc/skill-trees.md</code>）· <strong>迁入本目录</strong>:
+2026-07-27 <strong>定位</strong>:
+成长树的<strong>单一事实源</strong>——能力分类、达标节点、图形关系、问题登记、SOP
+与路线图全部在此迭代。 <strong>规则</strong>: GDD
+与审计文档是版本快照，不回改；快照与本文件冲突时以本文件为准，并在 §9
+变更记录中说明。改树必改本文。与其他文档的关系见附录 A。</p>
+</blockquote>
+<blockquote>
+<p>平台全部概念及关系以 <a
+href="platform-concept-model.md"><code>platform-concept-model.md</code></a>
+为准。本文不再承担经验、认证、会籍与平台功能的定义。</p>
+</blockquote>
+<p><strong>术语更新</strong>：v0.15 统一使用「成长树」。技能树、科技树和
+<code>TREE_NODES</code>
+是历史名称。成长树可以进阶、并列分叉、汇合或交叉，不要求是严格的单根树。</p>
+<hr />
+<h2 id="1-what--成长树是什么">1. What —— 成长树是什么</h2>
+<p><strong>成长树只展示已经被证据证明的稳定能力，不是经验条、徽章架或平台功能菜单。</strong></p>
+<p>节点必须同时满足：</p>
+<ol type="1">
+<li>表达“已经能够完成什么”，而不是“正在学习”；</li>
+<li>离开 MFU 平台后仍然成立；</li>
+<li>有明确的任务与评价方式；</li>
+<li>粒度足够稳定，不把单一工具、按钮或作品形态误当成完整能力。</li>
+</ol>
+<h3 id="11-三类成长树">1.1 三类成长树</h3>
+<table>
+<thead>
+<tr>
+<th>成长树</th>
+<th>谁拥有</th>
+<th>展示什么</th>
+<th>不展示什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>个人成长树</td>
+<td>主理人</td>
+<td>OPC 核心能力与专业能力的达标结果</td>
+<td>打工/作品计数、信誉等级、会籍、功能按钮</td>
+</tr>
+<tr>
+<td>公司成长树</td>
+<td>公司</td>
+<td>可稳定复用的组织能力</td>
+<td>主理人技能与 Agent 能力的简单并集</td>
+</tr>
+<tr>
+<td>角色成长树</td>
+<td>已取得角色资质的个人或组织</td>
+<td>在教练、孵化、平台运营等角色中的实践能力</td>
+<td>角色资质本身、工作台按钮</td>
+</tr>
+</tbody>
+</table>
+<h3 id="12-v015-个人成长树">1.2 v0.15 个人成长树</h3>
+<p>OPC 核心能力采用六项最小集合：</p>
+<ul>
+<li>机会判断；</li>
+<li>客户理解；</li>
+<li>方案设计；</li>
+<li>资源编排；</li>
+<li>交付负责；</li>
+<li>复盘迭代。</li>
+</ul>
+<p>专业领域允许放射状展开。例如“内容与表达”是分类，下面可以并列图文、视频、长文等方向；分类本身不是达标节点。</p>
+<p>每个方向可以出现三类可评价成果：</p>
+<ul>
+<li>基础应用达标；</li>
+<li>独立交付达标；</li>
+<li>复杂项目达标。</li>
+</ul>
+<p>专业评审、教学带教、方法创新和专业负责是复杂项目之后可能出现的不同分支，不是统一的第四级。</p>
+<hr />
+<h2 id="2-why--为什么这样设计">2. Why —— 为什么这样设计</h2>
+<h3 id="21-解决什么问题">2.1 解决什么问题</h3>
+<p>成长树模型延续 flywheel-audit 对 progression
+的要求，但不再承担全部权限：</p>
+<table>
+<thead>
+<tr>
+<th>问题</th>
+<th>成长树如何回应</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Progression 有骨架无感知</td>
+<td>树<strong>就是</strong>骨架：节点 = 里程碑，解锁 =
+有仪式感的事件，分支 = 可选路径</td>
+</tr>
+<tr>
+<td>白银→黄金中期真空</td>
+<td>能力证据持续积累，学生每周都能看到距下一项达标还差什么</td>
+</tr>
+<tr>
+<td>四种 Bartle 玩家类型出口单一</td>
+<td>不同能力分支、专业方向、角色实践与真实挑战提供不同追求</td>
+</tr>
+<tr>
+<td>其他角色界面要不要做</td>
+<td>角色资质负责开通工作台，角色成长树负责表达开通后的成长</td>
+</tr>
+<tr>
+<td>目标透明度</td>
+<td>能力标准与本人证据公开透明；孵化器偏好和最终选择不由平台预设</td>
+</tr>
+</tbody>
+</table>
+<h3 id="22-核心模型与兑现链">2.2 核心模型与兑现链</h3>
+<pre><code>课程 / 任务 / 项目
+        ↓
+经过评价且标明贡献归属的能力证据
+        ↓
+满足平台统一能力标准
+        ↓
+能力节点达标</code></pre>
+<p>能力达标可以成为平台功能开放的条件之一，但功能本身不进入成长树：</p>
+<pre class="text"><code>能力 + 信誉等级 + 专业认证/角色资质 + 会籍/人工审批
+        ↓
+独立的功能开放规则
+        ↓
+联合竞标、公开评审、工作台等平台功能</code></pre>
+<h3 id="23-设计决策记录">2.3 设计决策记录</h3>
+<blockquote>
+<p>D31–D33 来自 GDD v0.14 §0.1（快照）；D35–D41 于 2026-07-27
+在本文档订立（待写入下一版 GDD）。D34 仍是开放问题（GDD v0.14
+#12：企业树是否=成员个人树并集；D39 给出倾向回答「否」，Allen
+已认可框架方向）。</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>决策</th>
+<th>要点</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>D31</td>
+<td>动词规则</td>
+<td>节点不含纯数值加成。每个节点解锁一个新<strong>动词</strong>；动词在整棵树上只出现一次</td>
+<td>已定</td>
+</tr>
+<tr>
+<td>D32</td>
+<td>公司树 = 学分线</td>
+<td>公司树节点仅由学分积累 +
+资格认证解锁。打工是生存手段，不推进公司树</td>
+<td>已定</td>
+</tr>
+<tr>
+<td>D33</td>
+<td>统一起点</td>
+<td>所有组织初始 = 学生企业，共享同一基础面板与主干树；差异 =
+各自开启了哪些资质树。<strong>注：原表述「单棵树多分支」被 D35
+修订，内核（统一起点）保留</strong></td>
+<td>已修订</td>
+</tr>
+<tr>
+<td>D35</td>
+<td>多树结构</td>
+<td>单主干 +
+资质树森林。主干树（企业经营）、个人树（经历线）、资质树（角色树，由认证节点开启）。认证节点同节点兼作资质树根</td>
+<td><strong>已定 2026-07-27</strong></td>
+</tr>
+<tr>
+<td>D36</td>
+<td>认证双重记录</td>
+<td>白银/黄金等认证：公司获得认证（影响业务、官网展示），个人档案同步记一笔（跨公司保留）。个人树节点可用个人认证记录做条件</td>
+<td><strong>已定 2026-07-27</strong>（demo 已落地
+<code>S.profile.certs.gold</code>）</td>
+</tr>
+<tr>
+<td><del>D37</del></td>
+<td><del>打工仅解锁个人树</del></td>
+<td><strong>已被 P-15 框架取代（Allen
+批准）</strong>：打工只进经验条（活跃度），不解锁任何技能树节点</td>
+<td>已取代</td>
+</tr>
+<tr>
+<td>D38</td>
+<td>树内容平台统一定义</td>
+<td>所有树（含资质树）的结构与数值由平台运营（=策划）定义；角色组织只有解锁与使用权，可经协会渠道提案</td>
+<td><strong>已定 2026-07-27</strong></td>
+</tr>
+<tr>
+<td>D39</td>
+<td>成长归属 = 资产归属</td>
+<td>Agent
+的成长属于其所有者实体（公司资产，D19），不计入主理人个人成长；Agent
+不设成长树（Agent 是资产不是实体，progression = 能力分 + 资产清单 +
+里程碑徽章）；0 号 Agent（小
+H，D29）属个人，其沉淀为个人偏好配置资产。对 GDD v0.14 开放问题
+#12（D34）倾向「否」</td>
+<td><strong>已定 2026-07-27</strong>（框架方向 Allen 已认可）</td>
+</tr>
+<tr>
+<td>D40</td>
+<td>学分代理（demo 临时）</td>
+<td>练习单重新定义为「课程作业」：只有质量过门的完成才计学分（demo
+质量门 = 班内竞赛排名前 50%，即 4 队竞赛的前 2
+名）；未来接入学校教务系统的真实学分。与 GDD v0.13
+§5.4「学校培训」一致</td>
+<td><strong>已定 2026-07-27</strong>（demo 已落地）</td>
+</tr>
+<tr>
+<td>D41</td>
+<td>外部认证录入</td>
+<td>主理人/公司可录入平台外获得的认证资格（学历、行业证书、作品集奖项），经核验后解锁相应技能树节点——解决「高手新入驻」场景（B
+案例：平台外水平高但无平台记录）。核验机制待定（协会认证 Agent 初审 +
+人工抽查？）；录入的外部认证在徽章架上与平台内认证并列展示、标注来源</td>
+<td><strong>已定 2026-07-27</strong>（Allen 批准框架时确认的方向）</td>
+</tr>
+<tr>
+<td>D42</td>
+<td>成长树不等于功能菜单</td>
+<td>联合竞标、资产出租、公开评审、A/B
+测试器和各类工作台属于平台功能；能力、信誉、认证、资质等只作为功能开放条件</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+<tr>
+<td>D43</td>
+<td>节点必须是达标结果</td>
+<td>节点统一表达可评价的完成状态，不使用“学习中”；过程通过未开始/证据积累中/已达标展示</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+<tr>
+<td>D44</td>
+<td>宽领域 + 分支能力</td>
+<td>不再把 A/B
+实验、模板等细碎方法各做节点。领域用于分类，能力成果可以进阶、并列、汇合和交叉</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+<tr>
+<td>D45</td>
+<td>多校课程映射</td>
+<td>平台统一能力标准，学校自由设计课程；课程与能力是多对多关系。学分/学时是证据输入，不直接证明能力</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+<tr>
+<td>D46</td>
+<td>证据必须标明贡献归属</td>
+<td>学生主导、Agent
+主导、共同完成分别记录；只有学生承担关键判断的部分才进入个人能力证据</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+<tr>
+<td>D47</td>
+<td>三类成长树</td>
+<td>保留个人、公司、角色三类成长树；角色资质先开通工作台，角色成长树描述履职后的成长，资质本身不作节点</td>
+<td><strong>已定 2026-07-28</strong></td>
+</tr>
+</tbody>
+</table>
+<h3 id="24-其他设计原则">2.4 其他设计原则</h3>
+<ul>
+<li><strong>统一起点</strong>（flywheel-audit §5.2）：做孵化器视图 =
+做同一张面板 + 孵化器树解锁的额外模块，不是另做一套界面（D27）</li>
+<li><strong>树公开</strong>：树结构与解锁状态对所有登录用户公开（D28）——野心机制
++ 信任机制 + 竞争情报</li>
+<li><strong>分支价值由市场决定</strong>（命题供给/会籍需求），系统不标「最优路径」</li>
+<li><strong>GDKeys 7 原则</strong>的逐条落地见 GDD v0.14
+§5.10.4（若落地方式变更，改记到本文 §9）</li>
+</ul>
+<hr />
+<h2 id="3-how--成长树的完整逻辑">3. How —— 成长树的完整逻辑</h2>
+<blockquote>
+<p><strong>迁移说明</strong>：本节至 §5 记录 v0.14
+<code>TREE_NODES</code> 的实现事实，用于 v0.15
+改造与回归检查，不再定义当前概念。当前成长树规则以 §1、§2 和
+<code>platform-concept-model.md</code> 为准。</p>
+</blockquote>
+<h3 id="30-v014-节点迁移表">3.0 v0.14 节点迁移表</h3>
+<table>
+<thead>
+<tr>
+<th>v0.14 内容</th>
+<th>v0.15 归属</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N-00 公司注册</td>
+<td>基础身份与面板开通，不是能力节点</td>
+</tr>
+<tr>
+<td>N-01/N-02/N-03 设计、文案、增长专精</td>
+<td>改为专业能力领域与可评价的达标成果</td>
+</tr>
+<tr>
+<td>N-04 设计提案</td>
+<td>“商业提案”能力证据 + “发起提案”平台功能</td>
+</tr>
+<tr>
+<td>N-05 品牌模板</td>
+<td>“方法沉淀与复用”能力证据 + 模板资产</td>
+</tr>
+<tr>
+<td>N-06 A/B 实验</td>
+<td>“实验验证”能力证据 + A/B 测试平台功能</td>
+</tr>
+<tr>
+<td>N-07/N-11 白银、黄金</td>
+<td>信誉等级，移入徽章架</td>
+</tr>
+<tr>
+<td>N-08/N-09/N-10 联合竞标、资产出租、公开评审</td>
+<td>平台功能，移入功能开放面板</td>
+</tr>
+<tr>
+<td>N-12/N-13/N-14 教练、孵化、平台运营</td>
+<td>角色资质/内部授权；获得后开通角色工作台</td>
+</tr>
+<tr>
+<td>P-00~P-03 打工、作品、人脉、复盘</td>
+<td>个人经验与履历</td>
+</tr>
+<tr>
+<td>P-04 判断力认证</td>
+<td>MFU 课程专业认证，移入徽章架</td>
+</tr>
+<tr>
+<td>P-05 孵化器背书</td>
+<td>荣誉与背书</td>
+</tr>
+<tr>
+<td>P-06 创业导师</td>
+<td>角色身份；是否取得导师资质单独记录</td>
+</tr>
+</tbody>
+</table>
+<h3 id="31-树的种类与诞生时机">3.1 树的种类与诞生时机</h3>
+<table>
+<thead>
+<tr>
+<th>树</th>
+<th>谁拥有</th>
+<th>诞生时机</th>
+<th>访问路径</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主干树（企业经营树）</td>
+<td>每家公司一棵</td>
+<td><strong>公司注册时</strong>：N-00 公司注册解锁 = 树诞生</td>
+<td>ERP → 🌳 成长树 tab</td>
+</tr>
+<tr>
+<td>个人树（经历线）</td>
+<td>每个主理人一棵</td>
+<td><strong>主理人建档时</strong>（进入游戏即存在）；P-00
+随首次打工解锁</td>
+<td>主理人档案 → 内嵌</td>
+</tr>
+<tr>
+<td>资质树（角色树）</td>
+<td>获得对应资质的公司</td>
+<td><strong>认证节点解锁时</strong>：根节点解锁 = 树诞生 =
+功能面板开放</td>
+<td>对应功能面板内嵌（如孵化器工作台）</td>
+</tr>
+</tbody>
+</table>
+<p>已规划的资质树：</p>
+<table>
+<thead>
+<tr>
+<th>根节点（主干树上）</th>
+<th>资质树</th>
+<th>开启的面板</th>
+<th>子节点内容（草案）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>N-12 教练认证</td>
+<td>教练树</td>
+<td>教练视图</td>
+<td>学生企业数据面板、周复盘模板、带队指数</td>
+</tr>
+<tr>
+<td>N-13 孵化认证</td>
+<td>孵化器树</td>
+<td>孵化器工作台</td>
+<td>Scouting 配置、命题管理、grant/桥贷、投后管理（§8.2）</td>
+</tr>
+<tr>
+<td>N-14 平台运营</td>
+<td>平台运营树</td>
+<td>平台治理面板</td>
+<td>平台配置、Connector 生态管理、系统健康、目标管理</td>
+</tr>
+</tbody>
+</table>
+<h3 id="32-节点的解锁时机与检查机制">3.2 节点的解锁时机与检查机制</h3>
+<ul>
+<li><strong>检查时机</strong>（当前实现，两处）：① <code>tick()</code>
+周结算——新解锁记入日志（正式版应改为结算日事件推送）；②
+<code>renderRadialTree()</code> 渲染时静默刷新</li>
+<li><strong>父节点检查自动派生</strong>：节点的 <code>deps</code>
+声明结构依赖，<code>nodeAvail(n)</code> 统一做「所有 deps 已解锁 +
+自身条件」判断——<code>condFn</code>
+只写额外条件，不再手写父节点检查（P-01，2026-07-27 落地）</li>
+<li><strong>解锁即永久</strong>：已解锁节点不回退，切换专精线已训 Agent
+不降级（GDKeys 5：成本是时间，不是损失）</li>
+<li><strong>三种状态</strong>：<code>unlocked</code>（已解锁）/
+<code>available</code>（条件已满足待解锁）/
+<code>locked</code>（条件未满足）</li>
+</ul>
+<h3 id="33-条件的合法来源d32--p-15-框架">3.3 条件的合法来源（D32 + P-15
+框架）</h3>
+<table>
+<thead>
+<tr>
+<th>树</th>
+<th>condFn 允许读取的字段</th>
+<th>打工能否作为条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>主干树（公司树）</td>
+<td>公司字段（<code>S.credits</code>、<code>S.lines</code>、<code>S.rep</code>、<code>S.cred</code>、<code>S.rank</code>、<code>S.realN/Q</code>、公司树节点状态）</td>
+<td>❌ 永不（D32）</td>
+</tr>
+<tr>
+<td>个人树</td>
+<td>个人字段（<code>S.profile.*</code>——含
+<code>gigs</code>、<code>guildHist</code>、<code>certs</code>、<code>S.reviews</code>）</td>
+<td>❌（P-15 批准：打工只进经验条）⚠️ 现有 P-00
+条件待框架落地时移除</td>
+</tr>
+<tr>
+<td>资质树</td>
+<td>同主干树（公司字段）+ 资质树自身节点状态</td>
+<td>❌</td>
+</tr>
+</tbody>
+</table>
+<p><strong>约束</strong>：个人树节点的 <code>condFn</code>
+不允许读公司状态（<code>S.guilds</code>、<code>S.rank</code>、<code>S.cash</code>…）。认证要通过
+D36 的个人认证记录进入个人树。</p>
+<h3 id="34-解锁后兑现什么grants-机制">3.4 解锁后兑现什么（grants
+机制）</h3>
+<p>每个节点声明 <code>grants</code>（它开启什么）。兑现链：</p>
+<pre><code>资质认证（如 N-13 解锁）→ 资质树诞生 → 根节点开启功能面板（如孵化器工作台）
+                                    → 子节点开启或改变面板内的使用权限</code></pre>
+<ul>
+<li>根节点 grants：<code>panel:incubator</code>（面板可见 +
+基础只读）</li>
+<li>子节点
+grants：<code>feature:scouting</code>（配置候选追踪）、<code>feature:directed-order</code>（定向命题）……</li>
+<li>UI 层查询「当前组织已解锁的 grants
+集合」决定面板可见性/可操作性</li>
+<li>主干树节点同理：N-04 设计提案 grants
+<code>feature:reverse-pitch</code>，N-05 品牌模板 grants
+<code>feature:template-market</code>……（当前全部未实现，见 §6
+P-08）</li>
+</ul>
+<h3 id="35-树的消亡">3.5 树的消亡</h3>
+<table>
+<thead>
+<tr>
+<th>事件</th>
+<th>影响</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>公司破产/清算</td>
+<td>公司主干树随公司消亡；<strong>个人树不受影响</strong>（跨公司保留）；公司已获得的认证在个人档案中的记录保留（D36）</td>
+</tr>
+<tr>
+<td>公司消亡时的资质树</td>
+<td>资质树（功能面板使用权）随公司消亡而关闭；个人档案中的认证记录保留，作为重建时的凭据（推论，若需调整在此修订）</td>
+</tr>
+<tr>
+<td>个人树</td>
+<td>永不消亡</td>
+</tr>
+</tbody>
+</table>
+<h3 id="36-成长归属agent-的成长算谁的d39">3.6 成长归属：Agent
+的成长算谁的（D39）</h3>
+<ul>
+<li><strong>Agent 的成长不算个人成长</strong>。Agent
+是公司资产（D19：可出售/转让/归档）——若 Agent
+成长计入个人成长，卖掉一个训练好的 Agent 就等于卖掉个人成长，花钱买强
+Agent 就等于花钱买个人技能（撞 D17「金钱买不到能力」）</li>
+<li><strong>Agent
+没有成长树</strong>。平台上只有两种实体有树：公司（Org）和人。Agent
+是资产，不是实体。Agent 的 progression 用<strong>能力分 + 训练资产清单 +
+里程碑徽章</strong>（能力分 6/8/10 觉醒点，见 flywheel-audit
+C.5）表达，不设树</li>
+<li>Agent 能力分 = f（训练资产，
+实战<strong>评价</strong>史）——本就是质量信号驱动的成长，与技能/经验框架（P-15）的原则一致</li>
+<li><strong>例外</strong>：0 号 Agent 小 H
+属于人（D29，随档案永续、不可交易），其沉淀 =
+个人偏好配置，算个人资产，但仍不是树节点</li>
+<li><strong>对 GDD v0.14 开放问题 #12（D34）的回答</strong>：企业树 ≠
+成员/Agent 个人树的并集——倾向「否」，框架方向已获 Allen 认可</li>
+</ul>
+<hr />
+<h2 id="4-节点定义">4. 节点定义</h2>
+<blockquote>
+<p>本节的 condFn 反映<strong>当前代码事实</strong>（2026-07-27
+修复包已同步）。「功能兑现」列 =
+该节点按动词规则应该解锁的能力（grants），是目标 2 的填写处。 ⚠️
+P-15/P-16 已批准、待落地：N-07/N-11 将移出树（认证徽章架），P-00~P-03
+将移出个人树（经验条），见 §8.1。</p>
+</blockquote>
+<h3 id="41-主干树公司成长树scope-company">4.1 主干树（公司成长树，scope:
+<code>'company'</code>）</h3>
+<h4 id="n-00--公司注册">N-00 · 公司注册</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>0（根）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>注册</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🏢</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>base</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>进入游戏即解锁</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.started</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>✅ 已有：基础面板（Agent/订单/现金流）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-01--设计专精">N-01 · 设计专精</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>调教</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🎨</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>specialty</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-00</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>设计课程作业 ≥ 5（竞赛前 50% 才计，D40）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.credits.design &gt;= 5</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：设计 Agent 范例库、设计命题适配星级更准（GDD §5.10.3）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-02--文案专精">N-02 · 文案专精</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>编写</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>✍️</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>specialty</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-00</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>文案课程作业 ≥ 5（竞赛前 50% 才计，D40）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.credits.copy &gt;= 5</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：品牌语气模板、模板保存复用</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-03--增长专精">N-03 · 增长专精</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>投放</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>📈</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>specialty</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-00</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>增长课程作业 ≥ 5（竞赛前 50% 才计，D40）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.credits.growth &gt;= 5</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：A/B 测试模拟器</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-04--设计提案">N-04 · 设计提案</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>提案</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>📋</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>deepen</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-01（父节点检查由 nodeAvail 自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>设计专精 + 真单 ≥ 3</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.lines.design &gt;= 3</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：主动向孵化器发起设计提案（反向 pitch），不等命题发布</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-05--品牌模板">N-05 · 品牌模板</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>复用</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>📄</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>deepen</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-02（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>文案专精 + 真单 ≥ 3</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.lines.copy &gt;= 3</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：品牌文案存为模板、资产市场出售/license</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-06--ab实验">N-06 · A/B实验</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>实验</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🧪</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>deepen</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-03（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>增长专精 + 真单 ≥ 3</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.lines.growth &gt;= 3</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：同一命题提交两套方案取优（风险对冲）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-07--白银认证">N-07 · 白银认证</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2.5（资质门）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>入会</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🥈</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>gate</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>—（无依赖，独立解锁）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>声望 ≥ 30 + 信用 ≥ 70</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.rep &gt;= 30 &amp;&amp; S.cred &gt;= 70</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>✅ 部分已有：预备营/协会会籍准入、真单准入；❌ 缺：Scouting
+开始追踪的信号</td>
+</tr>
+<tr>
+<td>⚠️</td>
+<td>P-16
+已批准：将移出树，进入认证徽章架；其条件成为「白银认证状态」供其他节点引用</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-08--联合竞标">N-08 · 联合竞标</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>联合</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🤝</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>cross</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）⚠️ P-16 落地时将重锚到专精线</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>白银 + ≥ 2 条 T1 线</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; {const t1 = ['N-01','N-02','N-03']; return t1.filter(id =&gt; S.treeNodes[id] &amp;&amp; S.treeNodes[id].unlocked).length &gt;= 2;}</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：邀请其他 OPC 组队竞标（联机功能，单机版需 NPC
+队友方案）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-09--资产出租">N-09 · 资产出租</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>出租</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🏷️</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>cross</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）⚠️ 同上</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>白银 + 任一 T2</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; ['N-04','N-05','N-06'].some(id =&gt; S.treeNodes[id] &amp;&amp; S.treeNodes[id].unlocked)</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：Agent 授权其他 OPC 使用、按周收 license 费</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-10--公开评审">N-10 · 公开评审</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>评审</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🔍</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>cross</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）⚠️ 同上</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>白银 + 作品集 ≥ 10</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.portfolio &gt;= 10</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 应为：对其他 OPC 交付物发起公开评审、计入评审员资格积累</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-11--黄金认证">N-11 · 黄金认证</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3.5（角色）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>入驻</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🥇</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>role</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>声望 ≥ 85 + 均分 ≥ 74</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.rank &gt;= 2 &amp;&amp; S.realN &gt;= 2 &amp;&amp; (S.realQ.length ? S.realQ.reduce((a,b) =&gt; a+b, 0) / S.realQ.length : 0) &gt;= 74</code>（<code>checkEnd()</code>
+已复用此条件，P-09 已修复）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>⚠️
+现状：自动触发入驻弹窗。设计意图：解锁入驻<strong>资格</strong>，邀请由孵化器人做决策（happy-paths
+§4 Phase 3）；黄金达成时按 D36 同步写
+<code>S.profile.certs.gold</code>（已落地）</td>
+</tr>
+<tr>
+<td>⚠️</td>
+<td>P-16 已批准：将移出树，进入认证徽章架</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-12--教练认证教练树根">N-12 · 教练认证（教练树根）</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3.5（角色）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>带教</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🎓</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>role</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>联机版：带队 ≥ 5 家 · 单机版待定</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; false</code>（联机版功能，单机版永久锁定）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 教练树诞生 + 教练视图面板。单机版替代条件见 GDD v0.14 开放问题
+#11</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-13--孵化认证孵化器树根">N-13 · 孵化认证（孵化器树根）</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3.5（角色）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>孵化</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🏭</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>role</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>外部资质（孵化平台授予）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; false</code>（外部授予，游戏内不可自行解锁）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ <strong>目标 2</strong>：孵化器树诞生 + 孵化器工作台面板，见
+§8.2</td>
+</tr>
+</tbody>
+</table>
+<h4 id="n-14--平台运营平台运营树根">N-14 · 平台运营（平台运营树根）</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3.5（角色）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>治理</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🦄</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>ezagent</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>N-07（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>ezagent 团队内部资质</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; false</code>（ezagent 团队内部，玩家不可解锁）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 平台运营树诞生 + 平台治理面板：平台配置、Connector
+生态管理、系统健康监控、目标管理（world.cup）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="42-个人树经历线scope-personal">4.2 个人树（经历线，scope:
+<code>'personal'</code>）</h3>
+<blockquote>
+<p>个人树不受公司破产影响，节点状态跟随主理人档案跨公司保留。condFn
+只读个人字段（§3.3）。 ⚠️ P-15 已批准、待落地：P-00~P-03
+为计数节点，将移出树改为个人页经验条；个人树只留认证/动词类节点。</p>
+</blockquote>
+<h4 id="p-00--跨组织从业">P-00 · 跨组织从业</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>0（根）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>连接</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🔗</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>base</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>—</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>完成打工 ≥ 1 次</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.gigs &gt;= 1</code>（P-04
+已修复：读真实打工计数，不再读人脉）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定；⚠️ 将移出树改经验条（P-15）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-01--作品积累">P-01 · 作品积累</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>归档</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🗂️</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>specialty</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-00（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>作品集 ≥ 3</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.portfolio &gt;= 3</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定；⚠️ 将移出树改经验条（P-15）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-02--人脉经营">P-02 · 人脉经营</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>1</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>拓展</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🤝</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>specialty</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-00（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>人脉 ≥ 3</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.net &gt;= 3</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定；⚠️ 将移出树改经验条（P-15）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-03--复盘沉淀">P-03 · 复盘沉淀</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>反思</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>📝</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>deepen</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-01（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>复盘素材 ≥ 5</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.reviews.length &gt;= 5</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定；⚠️ 将移出树改经验条（P-15）</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-04--判断力认证">P-04 · 判断力认证</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>2.5（资质门）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>认证</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🎯</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>gate</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-02（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>判断力 ≥ 60%（至少 5 次判断）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; {const jt = S.profile.judgeT; return jt &gt;= 5 &amp;&amp; S.profile.judgeG / jt &gt;= 0.6;}</code></td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定；⚠️ 属认证类，P-16 落地时进入个人认证徽章架</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-05--孵化器背书">P-05 · 孵化器背书</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>背书</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🏭</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>cross</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-04（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>加入孵化器预备营</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.guildHist.incu === true</code>（P-05
+已修复：读个人档案会籍记录，不读公司会籍状态）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定</td>
+</tr>
+</tbody>
+</table>
+<h4 id="p-06--创业导师">P-06 · 创业导师</h4>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>值</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Tier</td>
+<td>3.5（角色）</td>
+</tr>
+<tr>
+<td>Verb</td>
+<td>带教</td>
+</tr>
+<tr>
+<td>Icon</td>
+<td>🎓</td>
+</tr>
+<tr>
+<td>Group</td>
+<td>role</td>
+</tr>
+<tr>
+<td>Deps</td>
+<td>P-05（自动派生）</td>
+</tr>
+<tr>
+<td>Cond</td>
+<td>黄金认证（声望 ≥ 85）</td>
+</tr>
+<tr>
+<td>condFn</td>
+<td><code>() =&gt; S.profile.certs.gold === true</code>（P-06
+已修复：读个人认证记录 D36，不读公司 rank）</td>
+</tr>
+<tr>
+<td>功能兑现</td>
+<td>❌ 待定</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="5-how--实现细节">5. How —— 实现细节</h2>
+<h3 id="51-渲染架构">5.1 渲染架构</h3>
+<p>两棵树共享同一套渲染引擎（<code>renderRadialTree(scope)</code> +
+<code>nodeAngle(n, scope)</code>），通过 <code>scope</code>
+字段区分。资质树的渲染复用同一引擎（新增 scope + 参数行，见 §7.1）。</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>公司主干树</th>
+<th>个人树</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SVG viewBox</td>
+<td><code>0 0 720 740</code></td>
+<td><code>0 0 620 500</code></td>
+</tr>
+<tr>
+<td>中心点</td>
+<td><code>(360, 390)</code></td>
+<td><code>(310, 265)</code></td>
+</tr>
+<tr>
+<td>Tier 半径</td>
+<td><code>0:0, 1:78, 2:150, 2.5:220, 3:285, 3.5:350</code></td>
+<td><code>0:0, 1:48, 2:95, 2.5:138, 3:180, 3.5:225</code></td>
+</tr>
+<tr>
+<td>节点圆半径</td>
+<td>tier 0 = 20，其他 = 16</td>
+<td>统一 = 12</td>
+</tr>
+<tr>
+<td>连线</td>
+<td>正交路径 + <code>stroke-linejoin:round</code></td>
+<td>同左</td>
+</tr>
+<tr>
+<td>平移容器</td>
+<td><code>#treePanWrap</code></td>
+<td><code>#personalTreePanWrap</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="52-连线逻辑">5.2 连线逻辑</h3>
+<p>连线从父节点（<code>deps[]</code>）指向子节点，使用正交路径：</p>
+<pre><code>M parentX parentY  →  L parentX midY  →  L childX midY  →  L childX childY</code></pre>
+<p><code>midY = parentY + (childY - parentY) * 0.55</code>（偏向父节点一端）。</p>
+<p>CSS:
+<code>stroke-width:3; stroke-linejoin:round; stroke-linecap:round</code>。
+状态 class：<code>unlocked</code>（子节点已解锁 → 实线
+teal）、<code>available</code>（仅父节点解锁 → 虚线 gold）、默认（虚线
+gray）。</p>
+<h3 id="53-节点状态机">5.3 节点状态机</h3>
+<p>每个节点在 <code>S.treeNodes[id]</code> 中存储
+<code>{unlocked: boolean}</code>。</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode javascript"><code class="sourceCode javascript"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="co">// 初始化（$(&#39;startBtn&#39;).onclick 中调用）</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">initTreeNodes</span>(){</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>  TREE_NODES<span class="op">.</span><span class="fu">forEach</span>(n <span class="kw">=&gt;</span> {S<span class="op">.</span><span class="at">treeNodes</span>[n<span class="op">.</span><span class="at">id</span>] <span class="op">=</span> {<span class="dt">unlocked</span><span class="op">:</span> n<span class="op">.</span><span class="fu">condFn</span>()}<span class="op">;</span>})<span class="op">;</span></span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-6"><a href="#cb5-6" aria-hidden="true" tabindex="-1"></a><span class="co">// 可解锁判断（P-01）：父节点检查从 deps 自动派生，condFn 只写额外条件</span></span>
+<span id="cb5-7"><a href="#cb5-7" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">nodeAvail</span>(n){</span>
+<span id="cb5-8"><a href="#cb5-8" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> n<span class="op">.</span><span class="at">deps</span><span class="op">.</span><span class="fu">every</span>(d <span class="kw">=&gt;</span> {<span class="kw">const</span> ds <span class="op">=</span> S<span class="op">.</span><span class="at">treeNodes</span>[d]<span class="op">;</span> <span class="cf">return</span> ds <span class="op">&amp;&amp;</span> ds<span class="op">.</span><span class="at">unlocked</span><span class="op">;</span>}) <span class="op">&amp;&amp;</span> n<span class="op">.</span><span class="fu">condFn</span>()<span class="op">;</span></span>
+<span id="cb5-9"><a href="#cb5-9" aria-hidden="true" tabindex="-1"></a>}</span>
+<span id="cb5-10"><a href="#cb5-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb5-11"><a href="#cb5-11" aria-hidden="true" tabindex="-1"></a><span class="co">// 解锁检查（tick() 周结算记日志；renderRadialTree() 内静默调用）</span></span>
+<span id="cb5-12"><a href="#cb5-12" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">checkTreeNodes</span>(){</span>
+<span id="cb5-13"><a href="#cb5-13" aria-hidden="true" tabindex="-1"></a>  <span class="kw">let</span> newly <span class="op">=</span> []<span class="op">;</span></span>
+<span id="cb5-14"><a href="#cb5-14" aria-hidden="true" tabindex="-1"></a>  TREE_NODES<span class="op">.</span><span class="fu">forEach</span>(n <span class="kw">=&gt;</span> {</span>
+<span id="cb5-15"><a href="#cb5-15" aria-hidden="true" tabindex="-1"></a>    <span class="cf">if</span> (<span class="op">!</span>S<span class="op">.</span><span class="at">treeNodes</span>[n<span class="op">.</span><span class="at">id</span>]<span class="op">.</span><span class="at">unlocked</span> <span class="op">&amp;&amp;</span> <span class="fu">nodeAvail</span>(n)) {</span>
+<span id="cb5-16"><a href="#cb5-16" aria-hidden="true" tabindex="-1"></a>      S<span class="op">.</span><span class="at">treeNodes</span>[n<span class="op">.</span><span class="at">id</span>]<span class="op">.</span><span class="at">unlocked</span> <span class="op">=</span> <span class="kw">true</span><span class="op">;</span></span>
+<span id="cb5-17"><a href="#cb5-17" aria-hidden="true" tabindex="-1"></a>      newly<span class="op">.</span><span class="fu">push</span>(n)<span class="op">;</span></span>
+<span id="cb5-18"><a href="#cb5-18" aria-hidden="true" tabindex="-1"></a>    }</span>
+<span id="cb5-19"><a href="#cb5-19" aria-hidden="true" tabindex="-1"></a>  })<span class="op">;</span></span>
+<span id="cb5-20"><a href="#cb5-20" aria-hidden="true" tabindex="-1"></a>  <span class="cf">return</span> newly<span class="op">;</span></span>
+<span id="cb5-21"><a href="#cb5-21" aria-hidden="true" tabindex="-1"></a>}</span></code></pre></div>
+<h3 id="54-三种渲染状态">5.4 三种渲染状态</h3>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>CSS class</th>
+<th>条件</th>
+<th>视觉效果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>unlocked</td>
+<td><code>.tnode.unlocked</code></td>
+<td><code>S.treeNodes[id].unlocked === true</code></td>
+<td>cream 填充 + teal 描边</td>
+</tr>
+<tr>
+<td>available</td>
+<td><code>.tnode.available</code></td>
+<td><code>!unlocked &amp;&amp; nodeAvail(n)</code></td>
+<td>金色虚线描边 + 脉冲动画</td>
+</tr>
+<tr>
+<td>locked</td>
+<td><code>.tnode.locked</code></td>
+<td>以上皆否</td>
+<td>灰色填充 + 灰色描边 · <code>cursor:default</code></td>
+</tr>
+</tbody>
+</table>
+<p>连线对应三种状态：<code>.tline.unlocked</code>（teal）、<code>.tline.available</code>（金色虚线）、默认（灰色虚线）。</p>
+<h3 id="55-渲染管线">5.5 渲染管线</h3>
+<pre><code>renderRadialTree(scope)
+  ├── checkTreeNodes()                  // 刷新解锁状态（静默）
+  ├── filter TREE_NODES by scope        // 选出当前树的节点
+  ├── 背景环 [1, 2, 2.5, 3, 3.5]       // &lt;circle class=&quot;tree-ring&quot;&gt;
+  ├── 连线 (n.deps → parent)            // &lt;path&gt; 正交路径
+  │   └── nodeAngle(n, scope) → 角度   // 按 scope 过滤同 tier 节点后均分（π*0.12 → π*0.88）
+  └── 节点                              // &lt;circle class=&quot;tnode&quot;&gt; + &lt;text&gt;
+      └── onclick → openNodeDetail(id)  // 弹窗：图标/名称/verb/等级条/条件/依赖</code></pre>
+<h3 id="56-关键函数签名">5.6 关键函数签名</h3>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode javascript"><code class="sourceCode javascript"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">renderRadialTree</span>(scope)        <span class="co">// scope = &#39;company&#39; | &#39;personal&#39;，默认 &#39;company&#39;</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">nodeAngle</span>(n<span class="op">,</span> scope)            <span class="co">// 返回节点在环上的弧度角</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">nodeAvail</span>(n)                   <span class="co">// deps 全部解锁 &amp;&amp; n.condFn()（P-01）</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">initTreePan</span>(wrapId)            <span class="co">// 鼠标/触摸拖拽平移，wrapId 默认 &#39;treePanWrap&#39;</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="kw">function</span> <span class="fu">openNodeDetail</span>(nid)            <span class="co">// 节点详情弹窗（搜索全部 TREE_NODES，不限 scope）</span></span></code></pre></div>
+<h3 id="57-数据源映射">5.7 数据源映射</h3>
+<p>主干树的 <code>condFn</code> 读取以下 <code>S</code> 字段：</p>
+<table>
+<thead>
+<tr>
+<th>S 字段</th>
+<th>类型</th>
+<th>被哪些节点使用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>S.started</code></td>
+<td>bool</td>
+<td>N-00</td>
+</tr>
+<tr>
+<td><code>S.credits.design</code> / <code>.copy</code> /
+<code>.growth</code></td>
+<td>number</td>
+<td>N-01 / N-02 / N-03</td>
+</tr>
+<tr>
+<td><code>S.lines.design</code> / <code>.copy</code> /
+<code>.growth</code></td>
+<td>number</td>
+<td>N-04 / N-05 / N-06</td>
+</tr>
+<tr>
+<td><code>S.rep</code></td>
+<td>number</td>
+<td>N-07, N-11</td>
+</tr>
+<tr>
+<td><code>S.cred</code></td>
+<td>number</td>
+<td>N-07</td>
+</tr>
+<tr>
+<td><code>S.treeNodes['N-01'..'N-06']</code></td>
+<td>object</td>
+<td>N-08（≥2 条 T1）, N-09（任一 T2）——父节点检查由 nodeAvail 派生</td>
+</tr>
+<tr>
+<td><code>S.profile.portfolio</code></td>
+<td>number</td>
+<td>N-10</td>
+</tr>
+<tr>
+<td><code>S.rank</code></td>
+<td>number</td>
+<td>N-11</td>
+</tr>
+<tr>
+<td><code>S.realN</code> / <code>S.realQ</code></td>
+<td>number / array</td>
+<td>N-11</td>
+</tr>
+</tbody>
+</table>
+<p>个人树的 <code>condFn</code> 读取以下字段（全部个人字段，§3.3
+约束已落实）：</p>
+<table>
+<thead>
+<tr>
+<th>S 字段</th>
+<th>类型</th>
+<th>被哪些节点使用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>S.profile.gigs</code></td>
+<td>number</td>
+<td>P-00</td>
+</tr>
+<tr>
+<td><code>S.profile.portfolio</code></td>
+<td>number</td>
+<td>P-01</td>
+</tr>
+<tr>
+<td><code>S.profile.net</code></td>
+<td>number</td>
+<td>P-02</td>
+</tr>
+<tr>
+<td><code>S.reviews.length</code></td>
+<td>number</td>
+<td>P-03</td>
+</tr>
+<tr>
+<td><code>S.profile.judgeT</code> / <code>.judgeG</code></td>
+<td>number</td>
+<td>P-04</td>
+</tr>
+<tr>
+<td><code>S.profile.guildHist.incu</code></td>
+<td>bool</td>
+<td>P-05</td>
+</tr>
+<tr>
+<td><code>S.profile.certs.gold</code></td>
+<td>bool</td>
+<td>P-06</td>
+</tr>
+</tbody>
+</table>
+<p>字段增长来源（实现事实）：</p>
+<table>
+<thead>
+<tr>
+<th>字段</th>
+<th>增长时机</th>
+<th>代码位置</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>S.credits[dm]</code></td>
+<td>练习单交付<strong>且班内竞赛排名前 50%（4 队前 2
+名）</strong>，按环节每个 +1（D40）</td>
+<td><code>:1282</code></td>
+</tr>
+<tr>
+<td><code>S.lines[dm]</code></td>
+<td>真单交付，按执行环节（stages[1] 或 [0]）+1</td>
+<td><code>:1293-1294</code></td>
+</tr>
+<tr>
+<td><code>S.profile.portfolio</code></td>
+<td>真单交付 +1</td>
+<td><code>:1292</code></td>
+</tr>
+<tr>
+<td><code>S.profile.net</code></td>
+<td>打工 +1；商务社交 +1</td>
+<td><code>:1059</code>, <code>:1409</code></td>
+</tr>
+<tr>
+<td><code>S.profile.gigs</code></td>
+<td>打工完成 +1（P-04）</td>
+<td><code>:1059</code></td>
+</tr>
+<tr>
+<td><code>S.profile.guildHist[k]</code></td>
+<td>加入会籍时置 true（P-05，个人档案永久记录）</td>
+<td><code>:1659</code></td>
+</tr>
+<tr>
+<td><code>S.profile.certs.gold</code></td>
+<td>公司达成黄金认证时同步置 true（P-06 / D36）</td>
+<td><code>:1368</code></td>
+</tr>
+<tr>
+<td><code>S.profile.judgeT/G</code></td>
+<td>环节完成时判断；跑赢基准则 G+1</td>
+<td><code>:1345</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-问题登记与修订">6. 问题登记与修订</h2>
+<blockquote>
+<p>Living 核心。问题按发现顺序编号，状态：<code>待决策</code> /
+<code>已决策</code> / <code>已修复</code> /
+<code>已批准</code>。修复后勾掉并写入 §9。</p>
+</blockquote>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>问题</th>
+<th>现状（代码事实）</th>
+<th>影响</th>
+<th>决定</th>
+<th>状态</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>P-01</td>
+<td>deps 与 condFn 双重事实源</td>
+<td><del><code>deps</code> 只画线，<code>condFn</code>
+各自重新检查父节点</del></td>
+<td>改一处不改另一处 → 逻辑/视觉分裂</td>
+<td><strong>已修复 2026-07-27</strong>：新增
+<code>nodeAvail(n)</code>，父节点检查从 <code>deps</code>
+自动派生；N-04~N-10 的 condFn 已简化为只写额外条件</td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-02</td>
+<td>N-07 资质门是孤点</td>
+<td><code>deps:[]</code>，无连线指向</td>
+<td>视觉悬浮</td>
+<td>ruihua
+判断：白银/黄金认证本就不是技能树的一部分，而是独立的认证体系——被 P-16
+覆盖，<strong>已随 P-16 获 Allen
+批准</strong>，认证移出树后本条消解</td>
+<td>✅ 已批准（随 P-16 落地）</td>
+</tr>
+<tr>
+<td>P-03</td>
+<td>学分来源与 D32 不符</td>
+<td><del><code>S.credits</code> 练习单交付即 +1，无质量门</del></td>
+<td>计数≠水平</td>
+<td><strong>已修复 2026-07-27（D40）</strong>：练习单 =
+课程作业代理，班内竞赛前 50% 才计学分（<code>:1282</code>）；N-01/02/03
+条件文案已改</td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-04</td>
+<td>P-00 条件语义错误</td>
+<td><del>condFn 判
+<code>S.profile.net &gt;= 1</code>，人脉可刷</del></td>
+<td>没打过工也解锁「跨组织从业」</td>
+<td><strong>已修复 2026-07-27</strong>：新增 <code>S.profile.gigs</code>
+计数（<code>:1059</code>），condFn 改判 <code>gigs &gt;= 1</code></td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-05</td>
+<td>P-05 读公司状态</td>
+<td><del>condFn = <code>S.guilds.incu</code></del></td>
+<td>与个人树「跨公司保留」矛盾</td>
+<td><strong>已修复 2026-07-27（D36 机制）</strong>：加入会籍时写
+<code>S.profile.guildHist[k]=true</code>（<code>:1659</code>），condFn
+改判 <code>guildHist.incu</code></td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-06</td>
+<td>P-06 读公司状态</td>
+<td><del>condFn = <code>S.rank &gt;= 2</code></del></td>
+<td>同上</td>
+<td><strong>已修复 2026-07-27（D36）</strong>：公司达成黄金时写
+<code>S.profile.certs.gold=true</code>（<code>:1368</code>），condFn
+改判它</td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-07</td>
+<td>strategy/comm 学分是死数据</td>
+<td>有积累、无节点消费</td>
+<td>档案页 5 项学分 2 项无意义</td>
+<td><strong>已修复 2026-07-27（ruihua
+方案）</strong>：有节点的三类（设计/文案/增长）置顶显示；策略/沟通收进「未开启」折叠面板（<code>&lt;details&gt;</code>），数据继续积累、开线后可用</td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-08</td>
+<td><strong>节点不兑现功能（D31 失败）</strong></td>
+<td>N-01~N-10 解锁只出一行日志</td>
+<td>按动词规则，T2 以上全是失败节点</td>
+<td><strong>已决策</strong>：建立 <code>grants</code>
+通用机制（§3.4），孵化器树是第一个完整用例</td>
+<td>已决策</td>
+</tr>
+<tr>
+<td>P-09</td>
+<td>N-11 与 checkEnd() 条件重复</td>
+<td><del>同一套条件写两遍</del></td>
+<td>改门槛时漏改一处</td>
+<td><strong>已修复 2026-07-27</strong>：<code>checkEnd()</code> 改为复用
+<code>TREE_NODES['N-11'].condFn()</code></td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-10</td>
+<td><strong>专精激活线未实现</strong></td>
+<td>GDD §5.10.4：同一时间仅一条 T1 线享 +30% 训练效率，切换冷却 2
+周</td>
+<td>demo 完全没有该概念</td>
+<td>提议：demo 阶段标注「暂不实现」，或加最小版（激活线选择 +
+日志提示）</td>
+<td>待决策</td>
+</tr>
+<tr>
+<td>P-11</td>
+<td><strong>locked 节点显示名称</strong></td>
+<td>GDD §5.10.6：锁定节点显示条件但不显示名称；demo 直接显示</td>
+<td>Explorer 的发现感被剧透</td>
+<td>提议：locked 节点名显示为「？？？」，available 后才显示</td>
+<td>待决策</td>
+</tr>
+<tr>
+<td>P-12</td>
+<td><strong>个人树节点无任何兑现</strong></td>
+<td>P-00~P-06 全是装饰</td>
+<td>个人树没有存在意义</td>
+<td>方向：P-00~P-03 移出树改经验条（P-15
+已批准）；剩余节点的动词单独设计一轮；grants 机制共用</td>
+<td>待决策</td>
+</tr>
+<tr>
+<td>P-13</td>
+<td><strong>解锁通知太弱</strong></td>
+<td>仅日志一行（flywheel-audit C.6-1）</td>
+<td>Content progression 无感知</td>
+<td>候选插队项：全屏 banner + 教练消息</td>
+<td>待决策</td>
+</tr>
+<tr>
+<td>P-14</td>
+<td>死代码 <code>RING_RADII</code></td>
+<td><del><code>:1668</code> 定义未使用</del></td>
+<td>误导读者</td>
+<td><strong>已修复 2026-07-27</strong>：已删除，全文无残留</td>
+<td>✅ 已修复</td>
+</tr>
+<tr>
+<td>P-15</td>
+<td><strong>技能/经验两套度量混淆（框架级）</strong></td>
+<td>现状：计数（练习单数/打工数/人脉数）直接解锁树节点</td>
+<td>是 P-03/P-07 等的上游，决定现有 T1 节点条件合法性</td>
+<td><strong>✅ 已批准（Allen，2026-07-27，PR #1543）</strong>：技能 =
+水平，仅由质量信号（课程学分/资格认证/竞赛与专家评级/外部认证录入）衡量
+→ 解锁技能树；经验 = 交付计数（订单/打工/作品/人脉）→
+进度条展示（平台活跃度），派生信用与声望，不解锁树；公司页与个人页均为「上经验条
++ 下技能树」。A/B 案例见 §2.2。落地清单见 §8.1；D37 随之废止</td>
+<td>✅ 已批准（待落地）</td>
+</tr>
+<tr>
+<td>P-16</td>
+<td><strong>认证与技能树是两套体系</strong></td>
+<td>N-07/N-11 作为「资质门」挂在树上（v0.14
+设计），但条件（声望/信用）属声誉体系，与树的「学分/动词」逻辑不同源</td>
+<td>是 P-02（N-07 孤点）的根因</td>
+<td><strong>✅ 已批准（Allen，2026-07-27）</strong>：青铜/白银/黄金 =
+协会基于声望/信用颁发的认证阶梯，独立于技能树；认证作为<strong>输入</strong>解锁树节点与资质树，本身不挂树；技能树只剩纯动词节点；认证单独做「徽章架」展示。个人侧同理（判断力认证等）。落地：N-07/N-11
+移出 TREE_NODES，N-08/09/10 重锚到专精线，N-12/13/14
+保留「同节点兼作资质树根」语义</td>
+<td>✅ 已批准（待落地）</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-sop">7. SOP</h2>
+<blockquote>
+<p><strong>v0.15 修订</strong>：本节现有“节点数组 / 资质树根 /
+grants”步骤只适用于 v0.14 代码维护。新增成长树节点时必须先按
+<code>platform-concept-model.md</code>
+判断它是不是可评价的能力；认证、资质、会籍和平台功能不得按本节旧流程加入成长树。</p>
+</blockquote>
+<h3 id="71-技术-sop--如何加节点--tier--树">7.1 技术 SOP —— 如何加节点 /
+tier / 树</h3>
+<h4 id="新增一个主干树节点">新增一个主干树节点</h4>
+<p>在 <code>TREE_NODES</code> 数组中，<code>N-14</code>
+之后、<code>// ---- 个人成长树节点 ----</code> 注释之前插入：</p>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode javascript"><code class="sourceCode javascript"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a>{<span class="dt">id</span><span class="op">:</span><span class="st">&#39;N-15&#39;</span><span class="op">,</span><span class="dt">tier</span><span class="op">:</span><span class="dv">4</span><span class="op">,</span><span class="dt">name</span><span class="op">:</span><span class="st">&#39;新节点名称&#39;</span><span class="op">,</span><span class="dt">verb</span><span class="op">:</span><span class="st">&#39;动作&#39;</span><span class="op">,</span><span class="dt">icon</span><span class="op">:</span><span class="st">&#39;🆕&#39;</span><span class="op">,</span><span class="dt">group</span><span class="op">:</span><span class="st">&#39;newgroup&#39;</span><span class="op">,</span><span class="dt">scope</span><span class="op">:</span><span class="st">&#39;company&#39;</span><span class="op">,</span><span class="dt">deps</span><span class="op">:</span>[<span class="st">&#39;N-11&#39;</span>]<span class="op">,</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a> <span class="dt">cond</span><span class="op">:</span><span class="st">&#39;条件描述&#39;</span><span class="op">,</span><span class="dt">condFn</span><span class="op">:</span>()<span class="kw">=&gt;</span><span class="co">/* 只写额外条件 */</span><span class="op">,</span><span class="dt">level</span><span class="op">:</span>{<span class="dt">cur</span><span class="op">:</span><span class="dv">0</span><span class="op">,</span><span class="dt">max</span><span class="op">:</span><span class="dv">1</span>}}<span class="op">,</span></span></code></pre></div>
+<p>检查清单：</p>
+<ol type="1">
+<li><code>verb</code> 在整棵树上只出现一次（D31 动词规则）</li>
+<li>只写 <code>deps</code> + 额外条件——父节点检查由
+<code>nodeAvail</code> 自动派生（P-01 已修复），不要在
+<code>condFn</code> 里手写父节点检查</li>
+<li>声明 <code>grants</code>（§3.4）；没有兑现的节点不允许合入</li>
+<li>在本文 §4 补节点定义表</li>
+<li>§9 变更记录 +1</li>
+</ol>
+<h4 id="新增一个个人树节点">新增一个个人树节点</h4>
+<p>在 <code>P-06</code> 之后、<code>];</code>
+之前插入（格式同上，<code>scope:'personal'</code>，<code>deps</code>
+引用 P-xx 节点）。 额外约束：<code>condFn</code>
+只读个人字段（§3.3）；P-15
+批准后：计数类条件一律进经验条，不做树节点。</p>
+<h4 id="新增一棵资质树如孵化器树">新增一棵资质树（如孵化器树）</h4>
+<ol type="1">
+<li>主干树上的认证节点（根）已存在（如 N-13）；其 <code>condFn</code>
+通常为外部授予</li>
+<li>子节点用新 scope（如 <code>'incubator'</code>）加入节点数组，deps
+引用根节点
+id；渲染时根节点同时出现在主干树（<code>scope:'company'</code>）和资质树（<code>scope:'incubator'</code>）的过滤器中（同节点兼作树根，D35）</li>
+<li><code>renderRadialTree</code>
+参数表加一行（viewBox/中心/半径），背景环数组按 tier 调整</li>
+<li>资质树的访问路径 = 对应功能面板内嵌（不是 ERP tab）</li>
+<li>声明每个子节点的 <code>grants</code> 并接到 UI 权限查询</li>
+</ol>
+<h4 id="新增-tier">新增 tier</h4>
+<ol type="1">
+<li>在 <code>renderRadialTree</code> 中扩展 <code>radii</code>
+映射（每个 scope 都需要对应半径）</li>
+<li>在背景环渲染的数组中添加新 tier</li>
+<li>确保新 tier 的半径不超过 viewBox 范围</li>
+</ol>
+<h3 id="72-运营-sop--谁能开新树--新分支">7.2 运营 SOP —— 谁能开新树 /
+新分支</h3>
+<blockquote>
+<p>基础决策：<strong>D38 ——
+树内容由平台统一定义</strong>（2026-07-27）。</p>
+</blockquote>
+<p><strong>原则：树的内容是平台级公共品，定义权集中在平台；角色组织获得的是解锁状态，不是定义权。</strong></p>
+<table>
+<thead>
+<tr>
+<th>角色</th>
+<th>能做什么</th>
+<th>不能做什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>平台运营</strong>（ezagent，N-14）= 现实中的游戏策划</td>
+<td>新增/修改任何树的节点、分支、tier；调整解锁数值；定义新资质树</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>协会</strong></td>
+<td>提案认证门（gate）节点的门槛数值（认证标准本就是协会资产）；提案新认证节点</td>
+<td>直接上线——仍需平台运营合入</td>
+</tr>
+<tr>
+<td><strong>孵化器/其他角色组织</strong></td>
+<td>解锁资质树后获得面板使用权；可提案自己业务需要的功能子节点</td>
+<td>自定义树结构</td>
+</tr>
+<tr>
+<td><strong>普通组织（OPC）</strong></td>
+<td>解锁节点；看到全树</td>
+<td>提案需经协会或平台渠道</td>
+</tr>
+</tbody>
+</table>
+<p><strong>新节点上线流程</strong>：</p>
+<ol type="1">
+<li>提案：写明 verb、解锁条件、功能兑现（grants）、数值依据</li>
+<li>评审：动词唯一性检查 + 数值 playtest</li>
+<li>合入：按 §7.1 技术 SOP 实施</li>
+<li>公开：树结构变更对所有用户可见（D28），在结算日事件中公告</li>
+<li>记录：本文 §6（如有问题修订）+ §9 变更记录</li>
+</ol>
+<p><strong>开「新资质树」的判定</strong>：默认作为现有主干树认证节点的展开（D35）。只有当面板/视角/字段完全不同于现有类型时，才考虑全新树型，且需本文档重大版本记录。</p>
+<p><strong>待决策</strong>：</p>
+<ul>
+<li>组织自定义「目标节点」（GDD 开放问题 #9
+的世界杯模式）是否开放？当前建议：demo
+阶段不开放，待目标树讨论有结论</li>
+<li>数值门槛的最终拍板权：平台运营单方决定，还是需要协会联署？（认证通胀风险，gap-analysis
+#17）</li>
+<li>外部认证录入（D41）的核验机制：协会认证 Agent 初审 +
+人工抽查？核验失败的惩罚？</li>
+</ul>
+<hr />
+<h2 id="8-路线图">8. 路线图</h2>
+<h3 id="81-目标-1v015-概念分层与成长树2026-07-28">8.1 目标 1：v0.15
+概念分层与成长树（2026-07-28）</h3>
+<ol type="1">
+<li><del>P-01（双重事实源）</del> ✅、<del>P-03（D40 质量门）</del>
+✅、<del>P-04/P-05/P-06（个人树去污染）</del>
+✅、<del>P-07（显示分层）</del> ✅、<del>P-09（重复条件）</del>
+✅、<del>P-14（死代码）</del> ✅ —— 2026-07-27 修复包已落地</li>
+<li><strong>v0.15 落地包</strong>：
+<ul>
+<li><strong>概念模型</strong>：以 <code>platform-concept-model.md</code>
+统一经验、能力、信誉等级、专业认证、角色资质、背书、会籍与平台功能</li>
+<li><strong>旧节点迁移</strong>：N-07/N-11、P-04
+移入徽章架；N-08/N-09/N-10 移入功能开放面板；P-00~P-03 移入经验履历</li>
+<li><strong>个人成长树</strong>：六项 OPC 核心能力 +
+示例专业分支；节点只表示可评价的达标结果</li>
+<li><strong>公司成长树</strong>：展示稳定交付、协作、方法沉淀等组织能力，不等于成员/Agent
+能力并集</li>
+<li><strong>外部认证录入</strong>：档案页最小表单，录入后标注“平台外 /
+待核验”</li>
+<li><strong>候选档案</strong>：展示能力、经验、认证、证据、缺口与下一道验证任务，不设
+OPC 总分</li>
+<li>D35–D47 写入 GDD v0.15</li>
+</ul></li>
+<li>v0.14 <code>TREE_NODES</code> 细节在 §3~§5 保留为迁移台账，完成
+v0.15 demo 后再删除已无实现用途的旧条目。</li>
+</ol>
+<h3 id="82-目标-2孵化器角色成长树--孵化器工作台">8.2 目标
+2：孵化器角色成长树 + 孵化器工作台</h3>
+<p><strong>结构修订（D47）</strong>：孵化平台资质不作为树节点。组织取得资质并由平台开通工作台后，孵化器角色成长树开始记录履职能力。</p>
+<pre><code>孵化平台角色资质 + 平台开通 → 孵化器工作台
+  ├─ 候选项目判断达标
+  ├─ 支持方案设计达标
+  └─ 投后管理达标
+
+工作台功能（独立开放规则）：
+  Scouting · 定向命题 · grant/桥贷 · 投后管理</code></pre>
+<p>角色能力的达标条件必须包含履职质量评价；发布命题数、追踪企业数和
+grant 次数只算经验，不能单独使能力达标。</p>
+<p><strong>demo 实现路径</strong>：单机 demo
+中没有真孵化器玩家——用「角色扮演入口」模拟：玩家以 DHS
+孵化器身份查看同一张基础面板 + 孵化器树解锁状态（复用已有
+<code>data-view</code> 高亮机制的思路）。</p>
+<p>需求来源：<a
+href="../versions/v0.13/docs/happy-paths-v0.13.md"><code>v0.13/happy-paths-v0.13.md</code></a>
+§4（孵化器 Happy Path 三阶段）。</p>
+<hr />
+<h2 id="9-变更记录">9. 变更记录</h2>
+<table>
+<thead>
+<tr>
+<th>日期</th>
+<th>版本</th>
+<th>变更</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-07-24</td>
+<td>v0.14</td>
+<td>初始版本：15 个公司节点 + 7 个个人节点，scope 分离，正交连线，living
+doc 创建</td>
+</tr>
+<tr>
+<td>2026-07-27</td>
+<td>—</td>
+<td>迁移至 <code>doc/tree/skill-tree.md</code>，扩为全量 living
+doc：新增文档地图、设计原则、问题登记（P-01~P-14）、运营 SOP
+草案、路线图；修正渲染参数与代码的漂移</td>
+</tr>
+<tr>
+<td>2026-07-27</td>
+<td>—</td>
+<td>按 what→why→how 重构全文；订立 D35（多树结构，修订
+D33）、D36（认证双重记录）、D37（打工仅解锁个人树，D32
+精确化）、D38（树内容平台统一定义）；新增 §3
+完整逻辑（诞生/解锁/兑现/消亡）；P-04/P-05/P-06/P-08
+标记已决策；资质树扩展 SOP 落地</td>
+</tr>
+<tr>
+<td>2026-07-27</td>
+<td>—</td>
+<td>订立 D39（成长归属=资产归属，对开放问题 #12
+倾向「否」）、D40（学分代理：练习单+质量门模拟教务学分）；新增 §3.6
+成长归属；登记 P-15（技能/经验框架提案，待 Allen 批准）；P-03
+标记已决策</td>
+</tr>
+<tr>
+<td>2026-07-27</td>
+<td>—</td>
+<td>demo 修复包落地（<code>MFU-v0.14-可试玩原型.html</code>，node
+--check 通过）：P-01（<code>nodeAvail</code> 依赖自动派生 + N-04~N-10
+condFn 简化）、P-03（D40 质量门 <code>:1282</code> + N-01/02/03
+文案）、P-04（<code>S.profile.gigs</code>）、P-05（<code>guildHist.incu</code>）、P-06（<code>certs.gold</code>
+双重记录）、P-07（学分显示分层 +
+「未开启」折叠面板）、P-09（<code>checkEnd</code> 复用 N-11
+条件）、P-14（删 <code>RING_RADII</code>）；登记
+P-16（认证独立于技能树，ruihua 方向），P-02 被 P-16 覆盖</td>
+</tr>
+<tr>
+<td>2026-07-27</td>
+<td>—</td>
+<td><strong>P-15/P-16 获 Allen 批准</strong>（PR #1543
+merge）：技能/经验框架 + 认证独立体系成为正式方向；订立
+D41（外部认证录入，B 案例）；D37 被框架取代（打工只进经验条）；§2.2
+补三体系全景图与 A/B 市场价值案例；工作移至新分支
+<code>mfu-demo-tree</code>，进入 v0.15 落地阶段（§8.1）</td>
+</tr>
+<tr>
+<td>2026-07-28</td>
+<td>v0.15</td>
+<td>建立 <code>platform-concept-model.md</code>；订立
+D42–D47：成长树与平台功能分离、节点只表达达标结果、宽领域与放射分支、多校课程映射、学生/Agent
+贡献归属、个人/公司/角色三类成长树；加入 v0.14 全节点迁移表</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="附录-a-文档地图--与已有文档的关系">附录 A. 文档地图 ——
+与已有文档的关系</h2>
+<table>
+<thead>
+<tr>
+<th>文档</th>
+<th>性质</th>
+<th>与本文档的关系</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GDD v0.13 <a
+href="../versions/v0.13/docs/MFU-策划案-GDD-v0.13.md"><code>v0.13/MFU-策划案-GDD-v0.13.md</code></a>
+D28</td>
+<td>快照</td>
+<td>三棵成长树的原始决策，已被 D33→D35 演化取代</td>
+</tr>
+<tr>
+<td>GDD v0.14 <a
+href="../versions/v0.14/docs/MFU-策划案-GDD-v0.14.md"><code>v0.14/MFU-策划案-GDD-v0.14.md</code></a>
+§5.10</td>
+<td>快照</td>
+<td>科技树系统设计案（D31–D33、动词规则、GDKeys 落地）。本文 §2 是其浓缩
++ 持续迭代</td>
+</tr>
+<tr>
+<td><a
+href="../versions/v0.13/docs/flywheel-audit-v0.13.md"><code>v0.13/flywheel-audit-v0.13.md</code></a>
+§5</td>
+<td>快照</td>
+<td>「科技树作为统一 progression 与权限体系」的设计回应，§2.1
+问题清单的来源</td>
+</tr>
+<tr>
+<td><a
+href="../versions/v0.13/docs/happy-paths-v0.13.md"><code>v0.13/happy-paths-v0.13.md</code></a>
+§4</td>
+<td>快照</td>
+<td>孵化器 happy path，孵化器树（§8.2）的需求来源</td>
+</tr>
+<tr>
+<td><a
+href="../versions/v0.13/docs/gap-analysis-v0.13.md"><code>v0.13/gap-analysis-v0.13.md</code></a></td>
+<td>快照</td>
+<td>仿真差距清单，与本树无直接耦合</td>
+</tr>
+<tr>
+<td><a
+href="../versions/v0.14/demo/MFU-v0.14-可试玩原型.html"><code>../versions/v0.14/demo/MFU-v0.14-可试玩原型.html</code></a></td>
+<td>历史实现</td>
+<td>v0.14 成长树快照；当前平台概念以
+<code>platform-concept-model.md</code> 与最新 Demo 为准</td>
+</tr>
+</tbody>
+</table>
+</body>
+</html>
