@@ -420,46 +420,82 @@ defmodule Ezagent.World.ConversationActions do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
     trimmed = String.trim(name)
 
-    if trimmed == "" do
-      {:noreply,
-       socket
-       |> assign(:last_dispatch_status, "error:template_name_required")
-       |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
-    else
-      # BLOCKER B — owner authority for world publish is PENDING #224 Fix-3
-      # decision (do NOT implement here). `save_template_as` reaches
-      # `Ezagent.Session.Config.Admission.template_write_cap?/3`, which needs
-      # `cap(:workspace, Workspace, :write_session_templates, ws)`. That cap is
-      # orchestrator-scoped — no human owner holds it (it is not in
-      # founder_caps/default_caps) — so a world owner's publish still fails
-      # `:unauthorized`/`:missing_cap` even after #224 Fix 1 routes this handler.
-      # The fix is an AUTHZ DESIGN CHOICE for Allen: either grant the owner the
-      # cap at seed (an escalation) OR route the world publish through the same
-      # orchestrator/admin authority the chat-publish path uses. Until that is
-      # decided, this remains the obvious home for the decision. See the paired
-      # note at `Ezagent.Session.Config.Admission.template_write_cap?/3`.
-      case Ezagent.Session.Config.execute(
-             "save_template_as",
-             %{"new_name" => trimmed},
-             caller,
-             session_uri
-           ) do
-        {:ok, %URI{}} ->
-          {:noreply,
-           socket
-           |> assign(:last_dispatch_status, "ok")
-           |> push_world_state(%{
-             "publish_notice" => "已发布为模板",
-             "templates" =>
-               Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
-           })}
+    cond do
+      trimmed == "" ->
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "error:template_name_required")
+         |> push_event("world:state", %{"publish_error" => "请填写发布物名称"})}
 
-        {:error, reason} ->
-          {:noreply,
-           socket
-           |> assign(:last_dispatch_status, "error:#{reason(reason)}")
-           |> push_event("world:state", %{"publish_error" => "发布失败：#{reason(reason)}"})}
-      end
+      not publish_authorized?(caller, session_uri) ->
+        # #224 Blocker B (Option B): the world publish borrows the ADMIN operator
+        # authority below, so it MUST be gated here by an un-forgeable identity
+        # check — only the session OWNER (or system admin) may publish. A
+        # non-owner participant is refused BEFORE any operator dispatch, so the
+        # operator authority can never be borrowed by a non-owner. No owner cap
+        # is granted on this path.
+        {:noreply,
+         socket
+         |> assign(:last_dispatch_status, "error:unauthorized")
+         |> push_event("world:state", %{"publish_error" => "只有会话所有者可以发布模板"})}
+
+      true ->
+        # #224 Blocker B — RESOLVED via Option B (no owner cap escalation). Route
+        # the publish through the SAME admin-operator authority the
+        # orchestrator/chat-publish path uses by passing the admin URI as
+        # principal. `Ezagent.Session.Config.execute/4`'s `:template_write`
+        # admission gate AND the executor's own write-cap check both run
+        # `with_admin_operator(admin)` + `operator_dispatch_caps(admin) = ∅`, so
+        # the DispatchPolicyAdapter materializes the exact admin action-cap — no
+        # owner cap is required or granted for authority. The template still lands
+        # in the SESSION's workspace (`derive_context` derives it from
+        # `session_uri`, not the principal), and `save_template_as` grants the
+        # OWNER (not the admin) the per-template instantiate cap. Owner-gated
+        # above. See `Ezagent.World.PublishTemplateOwnerGateTest`.
+        case Ezagent.Session.Config.execute(
+               "save_template_as",
+               %{"new_name" => trimmed},
+               Ezagent.Entity.User.admin_uri(),
+               session_uri
+             ) do
+          {:ok, %URI{}} ->
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "ok")
+             |> push_world_state(%{
+               "publish_notice" => "已发布为模板",
+               "templates" =>
+                 Ezagent.World.WorkspacePluginData.session_template_names(caller, workspace_uri)
+             })}
+
+          {:error, reason} ->
+            {:noreply,
+             socket
+             |> assign(:last_dispatch_status, "error:#{reason(reason)}")
+             |> push_event("world:state", %{"publish_error" => "发布失败：#{reason(reason)}"})}
+        end
+    end
+  end
+
+  # #224 Blocker B (Option B) owner-gate. The world publish runs under the admin
+  # operator authority, so it MUST be gated by an identity the caller cannot
+  # forge: a publish is authorized iff the caller is the session owner (compared
+  # by canonical URI) or the system admin. A nil/anonymous caller is refused —
+  # never crashes the handler.
+  @spec publish_authorized?(URI.t() | nil, URI.t()) :: boolean()
+  defp publish_authorized?(%URI{} = caller, %URI{} = session_uri) do
+    session_owner?(caller, session_uri) or Ezagent.Identity.admin?(caller)
+  end
+
+  defp publish_authorized?(_caller, _session_uri), do: false
+
+  defp session_owner?(%URI{} = caller, %URI{} = session_uri) do
+    case Ezagent.Entity.Session.owner(session_uri) do
+      {:ok, %URI{} = owner} ->
+        Ezagent.URI.stable_key(owner) == Ezagent.URI.stable_key(caller)
+
+      _ ->
+        false
     end
   end
 
