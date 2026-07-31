@@ -277,12 +277,12 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     with {:ok, template_class} <-
            Ezagent.Entity.AgentTemplate.resolve_template_class(template_content_map),
          {:ok, flavor} <- template_content_flavor(template_content_map),
-         # `resolve_cascade_content` is the grant-MINT boundary. Its own failures
-         # (incl. a unique-constraint insert conflict from a concurrent duplicate
-         # create — where the WINNER owns the row, not this call) must NOT trigger
-         # the grant cleanup below: this call did not successfully mint, so deleting
-         # would erase the winner's grant (codex r6 HIGH — race). So it stays in the
-         # OUTER `with`, whose `else` returns the error WITHOUT deleting any grant.
+         # #201-cred (codex r2 HIGH-1) — `resolve_cascade_content` RESOLVES +
+         # AUTHORIZES the credential source but NEVER mints: the durable grant
+         # is deferred to the created-winner's materialization boundary
+         # (after the immutable `:started ∧ created?` receipt), so NO path
+         # below — loser, adopter, rehydrating winner, exception — can leave
+         # or need to compensate a grant.
          {:ok, template_content_map} <-
            resolve_cascade_content(
              template_content_map,
@@ -293,9 +293,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              flavor,
              opts
            ),
-         # Past the mint boundary: from here, ANY failure is owned by THIS call
-         # (this call minted the grant, if any), so the grant cleanup is safe. The
-         # nested `with` scopes the grant-delete to exactly these post-mint steps.
          {:ok, result} <-
            spawn_after_cascade(
              template_class,
@@ -379,10 +376,18 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     end)
   end
 
-  # Post-grant-mint spawn steps. ANY failure here is owned by THIS call (the grant
-  # was just minted by this call's `resolve_cascade_content`), so on failure we
-  # HARD-delete the grant — leaving zero residue — via `revoke_cascade_grant_best_effort/1`.
-  # This is the ONLY grant-cleanup site (the pre-mint outer `with` must not delete).
+  # Post-cascade spawn steps. #201-cred (codex r2 HIGH-1) — no credential grant
+  # exists yet at ANY point below (the mint is deferred to the created-winner's
+  # materialization boundary inside the plugin Template Class), so a loser /
+  # error / raise here has NOTHING to compensate. The only grant cleanup left
+  # anywhere is (a) the plugin's own post-mint failure (it deletes exactly the
+  # incarnation it minted — confirmed, never best-effort) and (b) a post-spawn
+  # obligation failure rolling back a SUCCESSFUL created-winner instantiate —
+  # compensated by `Rollback.fresh_spawn` from the `:grant_incarnation_id`
+  # receipt the plugin returns in its instantiate meta (incarnation-bound —
+  # never a delete-by-URI, which could erase a concurrent reapproval's newer
+  # incarnation OR a wholly pre-existing grant this call never touched —
+  # regression fixed here, #211 codex r6).
   defp spawn_after_cascade(
          template_class,
          template_content_map,
@@ -397,6 +402,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
            Ezagent.Entity.AgentTemplate.to_template_data(template_content_map, instance_uri) do
       case instantiate_workers(template_class, data, workspace_uri, pre_start_ref) do
         {:ok, _workers, false, _instantiate_meta, pre_start_completion} ->
+          # The loser (`:already_started`) keeps NOTHING — it minted nothing.
           finalize_pre_start(pre_start_completion, {:error, :agent_uri_already_live})
 
         {:ok, workers, fresh?, instantiate_meta, pre_start_completion} ->
@@ -416,12 +422,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
           end)
 
         {:error, reason, pre_start_completion} ->
-          revoke_cascade_grant_best_effort(instance_uri)
           delete_agent_flavor_unless_pre_start(instance_uri, pre_start_completion)
           finalize_pre_start(pre_start_completion, {:error, reason})
 
         {:error, reason} ->
-          revoke_cascade_grant_best_effort(instance_uri)
           Ezagent.AgentFlavorAttributes.delete(instance_uri)
           {:error, reason}
 
@@ -433,7 +437,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
       end
     else
       {:error, _reason} = err ->
-        revoke_cascade_grant_best_effort(instance_uri)
         delete_agent_flavor_unless_pre_start(instance_uri, pre_start_ref)
         err
     end
@@ -693,19 +696,6 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
     defp test_hook_after_display_profile(_agent_uri, :skipped), do: :ok
   else
     defp test_hook_after_display_profile(_agent_uri, _status), do: :ok
-  end
-
-  # codex r5 HIGH — best-effort HARD-delete of the #17 credential grant for an
-  # agent whose fresh spawn failed after the grant was minted. Delete (not soft
-  # `revoke`) so the unique `agent_uri` key is freed and a later retry's
-  # `GrantRow.insert/1` does not conflict (the agent never came up — no row should
-  # survive). Idempotent: a no-op when no grant exists (e.g. no credential source
-  # was resolved).
-  defp revoke_cascade_grant_best_effort(%URI{} = agent_uri) do
-    _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
-    :ok
-  rescue
-    _ -> :ok
   end
 
   defp template_content_flavor(template_content_map) when is_map(template_content_map) do
