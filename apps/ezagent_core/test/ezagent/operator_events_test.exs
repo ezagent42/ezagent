@@ -83,6 +83,39 @@ defmodule Ezagent.OperatorEventsTest do
 
       assert event.meta == %{}
     end
+
+    test "caps an oversized message (truncates + marks, valid UTF-8)" do
+      big = String.duplicate("a", 10_000)
+      assert {:ok, event} = OperatorEvents.emit(%{severity: :info, source: :x, message: big})
+
+      assert byte_size(event.message) < byte_size(big)
+      assert String.ends_with?(event.message, "…[truncated]")
+      assert String.valid?(event.message)
+    end
+
+    test "replaces an oversized meta with a marker instead of fanning it out" do
+      huge = %{blob: String.duplicate("x", 50_000)}
+
+      assert {:ok, event} =
+               OperatorEvents.emit(%{severity: :info, source: :x, message: "m", meta: huge})
+
+      assert event.meta.truncated == true
+      assert event.meta.reason == :meta_too_large
+      assert is_integer(event.meta.approx_bytes)
+    end
+
+    test "keeps a normal-sized message and meta unchanged" do
+      assert {:ok, event} =
+               OperatorEvents.emit(%{
+                 severity: :warning,
+                 source: :cap_delivery_outbox,
+                 message: "dead",
+                 meta: %{target_uri: "entity://team-alpha/agent/x"}
+               })
+
+      assert event.message == "dead"
+      assert event.meta == %{target_uri: "entity://team-alpha/agent/x"}
+    end
   end
 
   describe "convenience helpers" do

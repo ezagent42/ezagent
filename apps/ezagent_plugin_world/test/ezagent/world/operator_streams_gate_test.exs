@@ -194,7 +194,14 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
       Phoenix.PubSub.broadcast(
         EzagentCore.PubSub,
         Ezagent.OperatorEvents.topic(),
-        {:operator_event, %{severity: :warning, source: :cap_delivery_outbox, message: "m", meta: %{}, at: DateTime.utc_now()}}
+        {:operator_event,
+         %{
+           severity: :warning,
+           source: :cap_delivery_outbox,
+           message: "m",
+           meta: %{},
+           at: DateTime.utc_now()
+         }}
       )
     end
   end

@@ -77,6 +77,13 @@ defmodule Ezagent.OperatorEvents do
 
   @severities [:info, :warning, :error]
 
+  # Bounds on the fan-out payload. This is a GLOBAL stream: every operator
+  # LiveView converts, encodes, and retains up to 20 events, so an oversized
+  # or deeply-nested `meta`/`message` multiplies memory/CPU by the operator
+  # count. The canonical API must not fan out unbounded user-derived payloads.
+  @max_message_bytes 4_096
+  @max_meta_bytes 8_192
+
   @typedoc "A normalized operator event."
   @type event :: %{
           severity: :info | :warning | :error,
@@ -102,6 +109,11 @@ defmodule Ezagent.OperatorEvents do
   `:message` (non-empty string). `:meta` (map, default `%{}`) carries a
   structured payload for the operator surface.
 
+  Fan-out bounds (this is a GLOBAL, per-operator-socket stream): a message
+  over #{@max_message_bytes} bytes is truncated and marked; a `meta` whose
+  serialized size exceeds #{@max_meta_bytes} bytes is replaced with a
+  `%{truncated: true, reason: :meta_too_large, approx_bytes: n}` marker.
+
   Returns `{:ok, event}` or `{:error, reason}`.
   """
   @spec emit(map()) :: {:ok, event()} | {:error, term()}
@@ -112,8 +124,8 @@ defmodule Ezagent.OperatorEvents do
       event = %{
         severity: severity,
         source: source,
-        message: message,
-        meta: normalize_meta(Map.get(attrs, :meta)),
+        message: bound_message(message),
+        meta: bound_meta(normalize_meta(Map.get(attrs, :meta))),
         at: DateTime.utc_now()
       }
 
@@ -198,4 +210,38 @@ defmodule Ezagent.OperatorEvents do
 
   defp normalize_meta(meta) when is_map(meta), do: meta
   defp normalize_meta(_), do: %{}
+
+  # --- fan-out payload bounds -----------------------------------------------
+
+  # Cap the message at a byte length, trimmed to a valid-UTF-8 prefix (so a
+  # multi-byte codepoint is never split) and marked. Under the cap → unchanged.
+  defp bound_message(message) when byte_size(message) <= @max_message_bytes, do: message
+
+  defp bound_message(message) do
+    valid_utf8_prefix(binary_part(message, 0, @max_message_bytes)) <> "…[truncated]"
+  end
+
+  defp valid_utf8_prefix(bin) do
+    if String.valid?(bin) do
+      bin
+    else
+      # binary_part may have cut mid-codepoint; drop trailing bytes until valid
+      # (at most 3 iterations for UTF-8, terminating at "").
+      valid_utf8_prefix(binary_part(bin, 0, byte_size(bin) - 1))
+    end
+  end
+
+  # Reject an oversized `meta` (replace with a marker) rather than fan a
+  # multi-MB / deeply-nested payload out to every operator socket. Serialized
+  # size via `term_to_binary/1` (never raises; grows with both breadth and
+  # depth) is a cheap proxy that also bounds nesting.
+  defp bound_meta(meta) do
+    approx_bytes = meta |> :erlang.term_to_binary() |> byte_size()
+
+    if approx_bytes > @max_meta_bytes do
+      %{truncated: true, reason: :meta_too_large, approx_bytes: approx_bytes}
+    else
+      meta
+    end
+  end
 end
