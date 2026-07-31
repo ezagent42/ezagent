@@ -36,7 +36,7 @@ DEEPSEEK_API_KEY=sk-... bash docs/e2e/auto/run.sh
 
 ### 11 feishu 入站怎么做到全自动(关键)
 
-不靠真飞书/真用户:**`feishu_setup.py`** 直插两条绑定(假 `open_id`→admin 过 SenderResolver、假 `chat_id`→session 过 InboundChatLookup),再 **`POST /api/feishu/webhook`**(未鉴权端点)一个合成 `im.message.receive_v1` 事件 → 走完整入站链(decode→路由→agent 回复)。用**假 chat_id** → 出站镜像发往它无害失败,不打扰真群。覆盖入站 decode/路由/回复;不覆盖 WSS 传输腿(单独验 sidecar 连上即可)。
+**已按 #204 变更:** 公网未鉴权路由 `POST /api/feishu/webhook`(可伪造 `open_id` 冒充)已删除,故此步不再经 HTTP 合成注入 → 现为 SKIP。生产入站改走已鉴权的 WS 长连(`WsClient` → `InboundDispatcher`),本 harness 无 rpc/容器句柄,无法免真飞书在应用内合成注入。入站链(decode→路由→回复)的覆盖改由单测保证:`inbound_dispatcher_test.exs`(共享入站链)+ `webhook_plug_test.exs`(保留但已 unmount 的 plug 逻辑)。`feishu_setup.py`(直插两条绑定:假 `open_id`→admin 过 SenderResolver、假 `chat_id`→session 过 InboundChatLookup)保留,供将来经 WS/rpc 注入复用。
 
 ### 12 审计是 CLI 不是 browser
 

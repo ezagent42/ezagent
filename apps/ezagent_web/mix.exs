@@ -94,9 +94,11 @@ defmodule EzagentWeb.MixProject do
       {:ezagent_plugin_world, in_umbrella: true},
       {:ezagent_plugin_hello, in_umbrella: true},
       {:ezagent_plugin_protocol_api, in_umbrella: true},
-      # Phase 5 PR 6: Feishu webhook route forwards to
-      # EzagentPluginFeishu.WebhookPlug — needed at compile time so the
-      # router macro resolves the module atom.
+      # Feishu plugin (umbrella member). The public HTTP webhook route that
+      # once forced this compile-time dep was REMOVED for #204 (see
+      # router.ex). The dep is retained because the plugin ships the live
+      # Feishu integration — WsClient long-connection + Behaviors / Adapters /
+      # config_surface — as part of the umbrella.
       {:ezagent_plugin_feishu, in_umbrella: true},
       # D2 GitHub OAuth: forward "/github/callback" references
       # EzagentPluginGithub.GitHubCallbackPlug — needed at compile time
