@@ -122,10 +122,11 @@ defmodule Ezagent.World.ConversationSessionState do
   """
   @spec switch_session(Phoenix.LiveView.Socket.t(), URI.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}
-  def switch_session(socket, %URI{} = session_uri) do
-    workspace_uri = socket.assigns.current_workspace_uri
-    caller_uri = socket.assigns.current_entity_uri
-
+  def switch_session(
+        %{assigns: %{current_workspace_uri: workspace_uri, current_entity_uri: caller_uri}} =
+          socket,
+        %URI{} = session_uri
+      ) do
     if visible_to_caller?(workspace_uri, caller_uri, session_uri) do
       socket =
         socket
@@ -154,6 +155,9 @@ defmodule Ezagent.World.ConversationSessionState do
       {:noreply, assign(socket, :last_dispatch_status, "error:session_not_visible")}
     end
   end
+
+  def switch_session(socket, %URI{}),
+    do: {:noreply, assign(socket, :last_dispatch_status, "error:session_not_visible")}
 
   defp encode_param(%URI{} = uri), do: uri |> URI.to_string() |> URI.encode_www_form()
   defp uri_string(%URI{} = uri), do: URI.to_string(uri)

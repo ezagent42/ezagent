@@ -51,7 +51,10 @@ defmodule EzagentPluginWorld.WorldLive do
        Jason.encode!(LiveStateBuilder.bootstrap_caller_payload(caller, workspace))
      )
      |> assign(:world_state, LiveStateBuilder.bootstrap_state(workspace, layout))
-     |> assign(:world_state_json, Jason.encode!(LiveStateBuilder.bootstrap_state(workspace, layout)))
+     |> assign(
+       :world_state_json,
+       Jason.encode!(LiveStateBuilder.bootstrap_state(workspace, layout))
+     )
      |> assign(:world_component, "sessions_table")
      |> assign(:current_route, nil)
      |> assign(:world_bootstrap_ready?, false)
@@ -87,16 +90,9 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp handle_loaded_params(route, socket) do
-    if conversation_route_visible?(route, socket) do
-      render_loaded_route(route, socket)
-    else
-      {:noreply, push_patch(socket, to: "/sessions")}
-    end
-  end
-
-  defp render_loaded_route(route, socket) do
     workspace = socket.assigns.current_workspace_uri
     caller = Map.get(socket.assigns, :current_entity_uri)
+    {route, redirect_to_sessions?} = authorize_conversation_route(route, workspace, caller)
     layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
     state = LiveStateBuilder.state_for_route(route, socket, layout)
@@ -118,21 +114,28 @@ defmodule EzagentPluginWorld.WorldLive do
         socket
       end
 
-    {:noreply, socket}
+    {:noreply, redirect_to_sessions(socket, redirect_to_sessions?)}
   end
 
-  defp conversation_route_visible?(
-         %{component: "conversation", session_uri: %URI{} = session_uri},
-         socket
+  defp authorize_conversation_route(
+         %{component: "conversation", session_uri: %URI{} = session_uri} = route,
+         workspace_uri,
+         caller_uri
        ) do
-    ConversationSessionState.visible_to_caller?(
-      socket.assigns.current_workspace_uri,
-      socket.assigns.current_entity_uri,
-      session_uri
-    )
+    if ConversationSessionState.visible_to_caller?(workspace_uri, caller_uri, session_uri) do
+      {route, false}
+    else
+      {%{component: "sessions_table", title: "Chat", path: "/sessions"}, true}
+    end
   end
 
-  defp conversation_route_visible?(_route, _socket), do: true
+  defp authorize_conversation_route(route, _workspace_uri, _caller_uri), do: {route, false}
+
+  defp redirect_to_sessions(socket, true), do: push_patch(socket, to: "/sessions")
+  defp redirect_to_sessions(socket, false), do: socket
+
+  defp redirect_result({:noreply, socket}, redirect_to_sessions?),
+    do: {:noreply, redirect_to_sessions(socket, redirect_to_sessions?)}
 
   defp maybe_set_current_session(socket, %{component: "conversation", session_uri: %URI{} = uri}) do
     # Subscribe UNCONDITIONALLY — subscription is NOT the security boundary,
@@ -341,7 +344,12 @@ defmodule EzagentPluginWorld.WorldLive do
   # race; `start_async` plus `render_async/1` in the caller closes that
   # window structurally instead of via a sleep.
   @impl true
-  def handle_async(:load_world_state, {:ok, {route, layout, state, caller_payload, plugin_nav}}, socket) do
+  def handle_async(
+        :load_world_state,
+        {:ok,
+         {route, render_route, layout, state, caller_payload, plugin_nav, redirect_to_sessions?}},
+        socket
+      ) do
     if socket.assigns.current_route not in [nil, route] do
       # A bootstrap task started for the previous URL may finish after
       # handle_params/3 has already selected a new session. Never let that
@@ -349,34 +357,29 @@ defmodule EzagentPluginWorld.WorldLive do
       send(self(), :load_world_state)
       {:noreply, assign(socket, :world_bootstrap_loading?, false)}
     else
-      if conversation_route_visible?(route, socket) do
-        socket = maybe_set_current_session(socket, route)
+      route = render_route
+      socket = maybe_set_current_session(socket, route)
 
-        state =
-          if route.component == "conversation" do
-            LiveStateBuilder.state_for_route(route, socket, layout)
-          else
-            state
-          end
+      state =
+        if route.component == "conversation" do
+          LiveStateBuilder.state_for_route(route, socket, layout)
+        else
+          state
+        end
 
-        {:noreply,
-         socket
-         |> assign(:layout_json, Jason.encode!(layout))
-         |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
-         |> assign(:caller_json, Jason.encode!(caller_payload))
-         |> assign(:world_state, state)
-         |> assign(:world_state_json, Jason.encode!(state))
-         |> assign(:world_component, route.component)
-         |> assign(:current_route, route)
-         |> assign(:world_bootstrap_ready?, true)
-         |> assign(:world_bootstrap_loading?, false)
-         |> push_event("world:state", state)}
-      else
-        {:noreply,
-         socket
-         |> assign(:world_bootstrap_loading?, false)
-         |> push_patch(to: "/sessions")}
-      end
+      {:noreply,
+       socket
+       |> assign(:layout_json, Jason.encode!(layout))
+       |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
+       |> assign(:caller_json, Jason.encode!(caller_payload))
+       |> assign(:world_state, state)
+       |> assign(:world_state_json, Jason.encode!(state))
+       |> assign(:world_component, route.component)
+       |> assign(:current_route, route)
+       |> assign(:world_bootstrap_ready?, true)
+       |> assign(:world_bootstrap_loading?, false)
+       |> push_event("world:state", state)}
+      |> redirect_result(redirect_to_sessions?)
     end
   end
 
@@ -405,8 +408,12 @@ defmodule EzagentPluginWorld.WorldLive do
           route = snapshot.assigns.current_route
           workspace = snapshot.assigns.current_workspace_uri
           caller = Map.get(snapshot.assigns, :current_entity_uri)
-          layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
-          state = LiveStateBuilder.state_for_route(route, snapshot, layout)
+
+          {render_route, redirect_to_sessions?} =
+            authorize_conversation_route(route, workspace, caller)
+
+          layout = LiveStateBuilder.layout_for_route(render_route, workspace, caller)
+          state = LiveStateBuilder.state_for_route(render_route, snapshot, layout)
           caps = Ezagent.World.PresenterCaps.load(snapshot)
 
           caller_payload =
@@ -418,7 +425,8 @@ defmodule EzagentPluginWorld.WorldLive do
             )
 
           plugin_nav = Ezagent.World.WorkspacePluginData.plugin_nav_surfaces()
-          {route, layout, state, caller_payload, plugin_nav}
+
+          {route, render_route, layout, state, caller_payload, plugin_nav, redirect_to_sessions?}
         end)
 
       {:noreply, assign(socket, :world_bootstrap_loading?, true)}
@@ -1190,5 +1198,4 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp reason_to_string(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp reason_to_string(reason), do: inspect(reason)
-
 end

@@ -126,12 +126,14 @@ defmodule Ezagent.World.OperatorStreamsGateTest do
         WorldLive.handle_async(
           :load_world_state,
           {:ok,
-           {socket.assigns.current_route, %{}, %{"component" => "conversation"}, %{}, []}},
+           {socket.assigns.current_route,
+            %{component: "sessions_table", title: "Chat", path: "/sessions"}, %{},
+            %{"component" => "sessions_table"}, %{}, [], true}},
           socket
         )
 
       refute socket.assigns.current_session_uri
-      refute socket.assigns.world_bootstrap_ready?
+      assert socket.assigns.world_bootstrap_ready?
       assert socket.redirected == {:live, :patch, %{kind: :push, to: "/sessions"}}
     end
 
