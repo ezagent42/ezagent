@@ -67,4 +67,4 @@
 
 ## 暂缓
 
-见 `MFU-v0.2-迁移待决策-临时.md`。
+见 `pending-decisions/MFU-v0.2-迁移待决策.md`。
