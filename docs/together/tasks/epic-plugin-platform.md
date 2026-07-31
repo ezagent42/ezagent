@@ -62,19 +62,28 @@ A4 收尾 + A5 收尾  →  Group B:kanban 纯化(#1474)  →  Socialware Protoc
 
 与 allenwoods 在 #1587:72-76 的建议次序一致(**先把 URI-share 原语立起来 → #1474 rebase 到它上面 → 再合**)—— 因为 A4 剩余件里的「Mount→Provision/Share 改名 + 删 MountRow 表」正是 #1474 要落在其上的那块原语。
 
-### A4 收尾清单(逐条,依据已合入 main 的 `docs/together/2026-07-28/returns/share-a4-1-reconcile-trap.md:34-37`)
+### A4 收尾清单
 
-| # | 件 | 状态 | 备注 |
-|---|---|---|---|
-| A4-1 | 删 Mount reconcile 重发 trap | ✅ 已合 `fb35003cf`(#1611) | 重启存活 = cap-as-truth |
-| **A4-2** | `:members` roster → 纯投影 | 🔵 **进行中 #1655** | P1 ✅ / P1.5(#1665)✅ / **P2 待做** / P4 待做 |
-| **A4-3** | **backfill 改派生** —— 现读 `MountRow.list_for_session`,改为从成员各自 cap 推(`session_member_uris` + 每成员按 behavior/`:operate` 过滤取 `cap.instance`) | ⏳ 待做 | 用 **`caps_toward`(A2-1 forward,#1596 已合)**,不是 `grantees_of`;依赖已满足 |
-| **A4-4** | **`Mount`→`Provision`/`Share` 改名 + 删 `MountRow` 表** | ⏳ 待做 | **碰 kanban 消费者**(`board_provision` / `kanban_share_controller` / `board_*_test`)→ 与 Group B 天然衔接;#1474 正是要落在这块之上 |
-| **A4-5** | **`unmount` 取 actions 脱 `MountRow`** —— 改从 grantee 现有 cap 派生 | ⏳ 待做 | 与 A4-4 同批 |
+> **⚠️ 自我更正(2026-07-31)**:本节一度被我写成 "A4-1..A4-5" 五件套,**是错的**。
+> 我把已合入 main 的计划文档 `share-a4-1-reconcile-trap.md:35-37` 里"A4 剩余"那几行
+> 当成了 A4 的待办,但**原文明写「归后续(或 Group B 一起)」** —— 那是**延后到
+> kanban 阶段**的项,不是 A4 的收尾条件。**A4 = A4-1 + A4-2,做完即进 A5。**
 
-### A5 收尾
+| # | 件 | 状态 |
+|---|---|---|
+| A4-1 | 删 Mount reconcile 重发 trap | ✅ 已合 `fb35003cf`(#1611) |
+| **A4-2** | `:members` roster → 纯投影(#192) | 🔵 **#1655**:P1 ✅ / P1.5(#1665)✅ / P2 ✅,**CI 全绿**;剩收口确认(见下) |
+
+**A4-2 的剩余 delta(一个确认题,不是架构决定)**
+#192 的要求是 Allen 备忘里那句:「`:members` 今天仍是**单独存储、只是被 reconcile 一下**,要变成纯投影」——**要求是"别再当第二个真相源",没规定必须用反向索引**。
+既然 M-8 已把 reconcile 变成精确 cap-holder 投影、`MembershipConvergence`(`behavior/identity.ex:290`/`:767`)又在钥匙落地时从 caps 自愈、P1 让它连在途的钥匙也算得进,**正向派生已经满足"从 caps 派生"**。
+⇒ 待确认:这样是否即可判 #192 收口?(此前我写的"甲/乙/丙三选一"是**把手段〔用 grantees_of〕当成了要求**后自己制造的取舍,已撤回。)
+
+### Mount 改名 / 删表 —— **归 Group B,不属 A4**
+`Mount→Provision/Share 改名 + 删 MountRow 表`、`unmount 取 actions 脱 MountRow`、`backfill 改派生`:计划文档原文即「碰 kanban 消费者…归后续(或 Group B 一起)」。且实证一个必须先解的点 —— **`access: :read` / `:operate` 只存在于挂载表的列**(`mount_row.ex:62`),cap 上没有该字段(`mint_cap` 只收 actions),两者在 cap 层只差"发了哪些动作",而那份只读动作清单住在 **kanban 策略层**(`board_provision.ex:83 @default_read_actions`)。所以"读挂载不扩散"这条规则**无法从 cap 派生**,删表前需先定 tier 怎么表达。**留到 Group B 一并处理。**
+
+### A5 收尾(A4-2 之后的下一件)
 设计 v4 已获 allenwoods 批准(#1619)。实现四步:接通 `enable(:link_anon)` + provision `S_R` + 经 A4 primitive 建绑定并铸只读 cap → **匿名 feed 的 cap-gated 资源投影(主体工作量)** → 前端匿名壳渲染 → e2e(可见/隔离/fail-closed/撤销即失效)。
-**注意耦合**:A5 的"绑定源"选 `MountRow`(现成)还是 `caps_toward`(A4-4 后)—— 若 A4-4 先落,A5 直接用派生式绑定,不必写一遍再改。
 
 ---
 
