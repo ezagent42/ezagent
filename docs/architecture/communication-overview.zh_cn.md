@@ -29,7 +29,7 @@ ENTITY.receive   ── 一个动作，按 kind_module 分支
 
 ## 1. IM 摄入：外部消息 → session 消息
 
-两条传输汇聚到一个 dispatcher：HTTP webhook（`EzagentPluginFeishu.WebhookPlug.call/2`，`webhook_plug.ex:31`）和 WS 长连（`WsClient`，`ws_client.ex:222`）都调用 `InboundDispatcher.dispatch/1`（`inbound_dispatcher.ex:58`）。它：解析 sender→caller URI+caps（`SenderResolver`，`:64`）；抽取 @提及（`MentionParser`，`:89`）；用 `InboundChatLookup` 读通用 `external_mirror_bindings` 表把 `chat_id→session_uri`（多 session 绑定歧义时 fail-closed，`:174`）；然后在 `dispatch_to_session/5`（`:248`）构造 `Ezagent.Message`（`:280`）、组 `<session_uri>?action=chat.send`（`:286`）、`Invocation.dispatch/1` 以 `mode: :call`（`:292`）。
+两条传输喂给同一个 dispatcher，但只暴露一条：**WS 长连（`WsClient`，`ws_client.ex:222`）是线上唯一已鉴权的生产传输**；HTTP webhook（`EzagentPluginFeishu.WebhookPlug.call/2`）的**公网路由已按 #204 移除**（未鉴权公网端点 → 伪造 `open_id` 冒充），plug 保留但**已 unmount**,重新暴露前须先做 Encrypt-Key/签名校验。两者都调用 `InboundDispatcher.dispatch/1`（`inbound_dispatcher.ex:58`）。它：解析 sender→caller URI+caps（`SenderResolver`，`:64`）；抽取 @提及（`MentionParser`，`:89`）；用 `InboundChatLookup` 读通用 `external_mirror_bindings` 表把 `chat_id→session_uri`（多 session 绑定歧义时 fail-closed，`:174`）；然后在 `dispatch_to_session/5`（`:248`）构造 `Ezagent.Message`（`:280`）、组 `<session_uri>?action=chat.send`（`:286`）、`Invocation.dispatch/1` 以 `mode: :call`（`:292`）。
 
 外部消息**在 `chat.send` 派发处变成 session 消息**。目前**没有具名的 `session.send` 入口**——插件直接够到 Chat behavior 的 `:send` 动作 URI。`:call` 而非 `:cast` 是有意的（Decision #134），让 cap 拒绝能冒泡回人。
 

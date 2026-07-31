@@ -157,24 +157,16 @@ else
   fi
 fi
 
-# ---------- 11 feishu 入站(合成 webhook 注入,免真飞书/真用户)----------
-step "11 feishu 入站(POST /api/feishu/webhook 合成注入)"
-# 端点活性:URL verification challenge
-CH=$(curl -s -m6 -X POST "$BASE_URL/api/feishu/webhook" -H 'content-type: application/json' -d '{"type":"url_verification","challenge":"e2e_'"$RUN_ID"'"}')
-[[ "$CH" == *"e2e_$RUN_ID"* ]] && pass "webhook 端点活性(challenge 回显)" || fail "webhook challenge 未回显($CH)"
-if [[ $HAVE_PG -eq 1 ]]; then
-  CHAT="oc_e2e_$RUN_ID"
-  "$PY" ./feishu_setup.py "$SESS_URI" "ou_e2e_$RUN_ID" "$CHAT" "entity://system/user/admin" >/dev/null 2>&1 \
-    && info "已建合成绑定(open_id+chat→$SESS)" || skip "11 绑定建立失败"
-  FMARK="f9inbound-$RUN_ID"
-  BODY='{"schema":"2.0","header":{"event_id":"e2e_'"$RUN_ID"'","event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_e2e_'"$RUN_ID"'"},"sender_type":"user"},"message":{"chat_id":"'"$CHAT"'","message_id":"om_'"$RUN_ID"'","chat_type":"group","message_type":"text","content":"{\"text\":\"@py_default '"$FMARK"'\"}"}}}'
-  HC=$(curl -s -m6 -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/feishu/webhook" -H 'content-type: application/json' -d "$BODY")
-  [[ "$HC" == "200" ]] && info "合成入站事件已 POST(HTTP 200)" || fail "webhook 事件 POST 非 200($HC)"
-  open_session
-  assert_agent_reply "$FMARK" "feishu 入站经路由 → py_default 在会话回显 $FMARK(完整入站链)" 15
-else
-  skip "11 完整路由 — 需 python3.12+pg8000+PG env 建绑定(端点活性已验)"
-fi
+# ---------- 11 feishu 入站 —— 公网 HTTP webhook 已按 #204 移除 ----------
+step "11 feishu 入站(公网 HTTP webhook 已移除 — #204)"
+# #204:公网未鉴权路由 /api/feishu/webhook(可伪造 open_id 冒充受害者)已删除。
+# 生产入站改走已鉴权的 WS 长连(WsClient → InboundDispatcher),本 harness 无
+# rpc/容器句柄,无法免真飞书在应用内合成注入,故此步 SKIP(非 FAIL)。入站链的
+# 覆盖改由单测保证:
+#   - apps/ezagent_plugin_feishu/test/inbound_dispatcher_test.exs(共享入站链)
+#   - apps/ezagent_plugin_feishu/test/webhook_plug_test.exs(保留但已 unmount 的 plug 逻辑)
+# feishu_setup.py(合成绑定直插 PG)保留,供将来经 WS/rpc 注入复用。
+skip "11 feishu 入站合成注入 — 公网 webhook 已按 #204 移除;入站链改由单测覆盖"
 
 # ---------- 12 dispatch 审计(CLI/PG,非 agent-browser)----------
 step "12 dispatch 审计 (CLI)"

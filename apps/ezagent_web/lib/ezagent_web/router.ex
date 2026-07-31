@@ -304,10 +304,17 @@ defmodule EzagentWeb.Router do
     post "/cc-events", CcEventsController, :report
   end
 
-  # Phase 5 PR 6: Feishu webhook receiver. The ONLY touch
-  # ezagent_plugin_feishu makes to ezagent_web — explicit exception per SPEC v2
-  # north star ("beyond webhook route registration").
-  forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
+  # Feishu inbound: the public HTTP webhook route
+  # (`forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug`) was
+  # REMOVED for #204. It was an unauthenticated public endpoint — no
+  # Encrypt-Key / signature verification — so a forged POST carrying a
+  # victim's `open_id` could reach `EzagentPluginFeishu.InboundDispatcher`
+  # → `SenderResolver` → impersonation (Feishu app access-control does not
+  # protect the raw HTTP endpoint). Production inbound flows over the
+  # authenticated WS long-connection (`EzagentPluginFeishu.WsClient`), which
+  # feeds the SAME `InboundDispatcher` and is unaffected by this removal.
+  # `WebhookPlug` stays in the plugin but unmounted; re-exposing the HTTP
+  # transport requires the #204 signature verification first.
 
   # LLM Protocol API: OpenAI-compatible inbound endpoint.
   forward "/v1/chat/completions", EzagentPluginProtocolApi.OpenAI.ChatCompletionsPlug

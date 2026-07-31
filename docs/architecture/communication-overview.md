@@ -29,9 +29,9 @@ ENTITY.receive   ── one action, branches by kind_module
 
 ## 1. IM ingestion: external message → session message
 
-Two transports converge on one dispatcher:
-- HTTP webhook — `EzagentPluginFeishu.WebhookPlug.call/2` (`apps/ezagent_plugin_feishu/.../webhook_plug.ex:31`, hand-off `:84`).
-- WS long-connect — `EzagentPluginFeishu.WsClient` (`.../ws_client.ex:222`).
+Two transports feed one dispatcher, but only one is exposed:
+- WS long-connect — `EzagentPluginFeishu.WsClient` (`.../ws_client.ex:222`). **The live, authenticated production transport.**
+- HTTP webhook — `EzagentPluginFeishu.WebhookPlug.call/2` (`apps/ezagent_plugin_feishu/.../webhook_plug.ex`). **Route removed for #204** (unauthenticated public endpoint → forged-`open_id` impersonation). The plug is retained but **unmounted**; re-exposing it requires Encrypt-Key/signature verification first.
 
 Both call `EzagentPluginFeishu.InboundDispatcher.dispatch/1` (`.../inbound_dispatcher.ex:58`), which: resolves sender → caller URI + caps (`SenderResolver`, `:64`); extracts `@`-mentions (`MentionParser`, `:89`); resolves `chat_id → session_uri` via `InboundChatLookup` reading the generic `external_mirror_bindings` table (fails closed on an ambiguous multi-session binding, `:174`); then in `dispatch_to_session/5` (`:248`) builds `Ezagent.Message.new(...)` (`:280`), forms `<session_uri>?action=chat.send` (`:286`), and `Ezagent.Invocation.dispatch/1` with `mode: :call` (`:292`).
 

@@ -1,6 +1,6 @@
 defmodule EzagentPluginFeishu.WebhookPlug do
   @moduledoc """
-  Phase 5 PR 6 — Feishu webhook receiver.
+  Feishu webhook receiver — HTTP transport (currently DISABLED, see #204).
 
   Two payload shapes Feishu sends:
   1. **URL verification challenge** (`{type: "url_verification", challenge: "X"}`)
@@ -8,20 +8,31 @@ defmodule EzagentPluginFeishu.WebhookPlug do
   2. **Event callback** (`{schema: "2.0", header: {...}, event: {...}}`)
      → if event is a message in a bound chat, dispatch into the session
 
-  ## Route registration
+  ## Route registration — REMOVED for #204
 
-  ezagent_web's router.ex adds:
+  This plug used to be mounted publicly in ezagent_web's router.ex:
       forward "/api/feishu/webhook", EzagentPluginFeishu.WebhookPlug
 
-  This is the ONLY touch this plugin makes to ezagent_web — explicitly
-  allowed per SPEC v2 north star clause ("beyond webhook route
-  registration").
+  That route was **removed** for #204. The endpoint was unauthenticated at
+  the network level (no `Encrypt-Key` / signature verification — see "Auth"
+  below), and Feishu app access-control does not protect the raw HTTP
+  endpoint. Once bindings exist, a forged POST carrying a victim's `open_id`
+  → `SenderResolver` → impersonation. Production Feishu inbound flows over
+  the authenticated WS long-connection (`EzagentPluginFeishu.WsClient`),
+  which feeds the SAME `EzagentPluginFeishu.InboundDispatcher` and is
+  unaffected by the route removal.
 
-  ## Auth
+  The module is **retained but unmounted**: its parse → decode → dispatch
+  logic (`EventDecoder` + `InboundDispatcher`) is shared with `WsClient` and
+  stays under test. Re-exposing the HTTP transport requires implementing the
+  #204 signature verification below FIRST, then re-adding the router forward.
 
-  Webhook is unauthenticated at the network level (Feishu can't carry
-  Ezagent session cookies). Future hardening: validate `Encrypt-Key` header
-  signature when `verification_token` is configured.
+  ## Auth — the #204 gap
+
+  The webhook is unauthenticated at the network level (Feishu can't carry
+  Ezagent session cookies). Before this plug may be re-mounted, validate the
+  `Encrypt-Key` header signature (Feishu event-subscription encryption /
+  `verification_token`) so forged POSTs are rejected.
   """
   import Plug.Conn
   require Logger
