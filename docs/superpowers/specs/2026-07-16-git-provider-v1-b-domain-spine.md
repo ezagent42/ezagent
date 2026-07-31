@@ -542,6 +542,10 @@ Task 2's `plan_a_contract_test.exs` will assert:
    states; provider check strings must normalize to the closed union;
 4. `Ezagent.DomainGit.Error.t()` contains exactly all 15 atom members and the
    `{:provider_request_failed, atom(), pos_integer()}` member in §10;
+   *(this count was already inaccurate before the 2026-07-31 amendment — the
+   union carried 18 atom members by the time V1-B shipped, and 19 after. The
+   live gate is `plan_a_contract_test`'s member-for-member assertion, not this
+   number. Left as written; see §10's amendment notice.)*
 5. source and compiled struct inspection reject fields matching token, secret,
    credential, credential reference/path, Req/client, checkout/local path,
    provider payload/request/response, environment, callback, or Cap.

@@ -597,7 +597,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       expect_create_steps_until(unquote(step))
 
       # A 2xx whose body carries none of the keys this step reads.
-      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"unexpected" => true}) end)
+      expect_malformed_at(unquote(step))
 
       assert {:error, :provider_response_unrecognized} =
                GitHubAdapter.create_change_request(
@@ -609,35 +609,46 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end
   end
 
+  @create_steps [
+    {"GET", "/repos/owner/repo/git/ref/heads/main"},
+    {"GET", "/repos/owner/repo/git/ref/heads/feature-branch"},
+    {"POST", "/repos/owner/repo/git/refs"},
+    {"GET", "/repos/owner/repo/git/commits/" <> String.duplicate("a", 40)},
+    {"POST", "/repos/owner/repo/git/blobs"},
+    {"POST", "/repos/owner/repo/git/trees"},
+    {"POST", "/repos/owner/repo/git/commits"},
+    {"PATCH", "/repos/owner/repo/git/refs/heads/feature-branch"},
+    {"GET", "/repos/owner/repo/pulls"}
+  ]
+
   # The successful responses for create_change_request's ordered HTTP batch,
   # steps 1..n-1, so the test above can arm exactly one malformed reply at step n.
+  #
+  # Every step asserts its own METHOD and PATH before answering. Without that the
+  # queue is positional only, and a production change that skips a call shifts
+  # every later reply one slot: the test named "malformed tree" would then feed
+  # the tree reply to the commit call, the malformed body would land on commit —
+  # which refuses with the same atom — and the assertion would pass green while
+  # the tree clause was never executed at all.
   defp expect_create_steps_until(step) do
     sha = String.duplicate("a", 40)
 
-    responses = [
-      # 1. GET base ref
+    bodies = [
       fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end,
-      # 2. GET head ref -> absent
       fn conn -> Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"})) end,
-      # 3. POST create ref
       fn conn ->
         conn
         |> Plug.Conn.put_status(201)
         |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
       end,
-      # 4. GET base commit -> tree sha
       fn conn ->
         Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
       end,
-      # 5. POST blob
       fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"}) end,
-      # 6. POST tree
       fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"}) end,
-      # 7. POST commit
       fn conn ->
         conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
       end,
-      # 8. PATCH advance ref
       fn conn ->
         conn
         |> Plug.Conn.put_status(200)
@@ -645,9 +656,26 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       end
     ]
 
-    responses
+    bodies
+    |> Enum.zip(@create_steps)
     |> Enum.take(step - 1)
-    |> Enum.each(&Req.Test.expect(@stub_name, fn conn -> &1.(conn) end))
+    |> Enum.each(fn {body, step_spec} -> expect_step(step_spec, body) end)
+  end
+
+  # The step under test asserts its method/path too, so a desync is caught AT the
+  # malformed reply rather than silently redirecting it to a different clause.
+  defp expect_malformed_at(step) do
+    expect_step(Enum.at(@create_steps, step - 1), fn conn ->
+      Req.Test.json(conn, %{"unexpected" => true})
+    end)
+  end
+
+  defp expect_step({method, path}, body) do
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.method == method
+      assert conn.request_path == path
+      body.(conn)
+    end)
   end
 
   test "create_change_request maps a PR-create 422 to change_request_conflict" do

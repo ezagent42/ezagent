@@ -84,6 +84,13 @@ defmodule EzagentPluginGithub.GitHubInstallationTest do
              GitHubInstallation.token_for_operation(repo(), profile)
   end
 
+  defp assert_unrecognized(profile, override_fn) do
+    stub_mint(override_fn.(baseline_response(profile)))
+
+    assert {:error, :provider_response_unrecognized} =
+             GitHubInstallation.token_for_operation(repo(), profile)
+  end
+
   # ── InstallationPermissions.for!/1 — closed set ─────────────────────────
 
   describe "InstallationPermissions.for!/1" do
@@ -234,10 +241,6 @@ defmodule EzagentPluginGithub.GitHubInstallationTest do
       )
     end
 
-    test "missing expires_at is rejected" do
-      assert_scope_mismatch(:metadata_read, &Map.delete(&1, "expires_at"))
-    end
-
     test "malformed expires_at is rejected" do
       assert_scope_mismatch(:metadata_read, &Map.put(&1, "expires_at", "not-a-date"))
     end
@@ -246,20 +249,39 @@ defmodule EzagentPluginGithub.GitHubInstallationTest do
       assert_scope_mismatch(:metadata_read, &Map.put(&1, "expires_at", past_iso()))
     end
 
-    test "missing token is rejected" do
-      assert_scope_mismatch(:metadata_read, &Map.delete(&1, "token"))
-    end
-
-    test "a nil token is rejected" do
-      assert_scope_mismatch(:metadata_read, &Map.put(&1, "token", nil))
-    end
-
     test "an empty-string token is rejected" do
       assert_scope_mismatch(:metadata_read, &Map.put(&1, "token", ""))
     end
 
-    test "a non-binary token is rejected" do
-      assert_scope_mismatch(:metadata_read, &Map.put(&1, "token", 12_345))
+    # ── the line between "scoped wrong" and "could not be read" ──────────
+    #
+    # Everything above keeps `:installation_scope_mismatch`: the five scope
+    # fields were all there and readable, and one of their VALUES was not what
+    # we asked for. Everything below is a field that is absent or of the wrong
+    # type, so there is no scope to disagree with — the response shape changed.
+    #
+    # Both codes are terminal, so no run behaves differently either way. What
+    # differs is the cause an operator is handed, which is the entire reason
+    # `:provider_response_unrecognized` exists.
+    #
+    # `"expires_at" => "not-a-date"` deliberately stays on the scope side: it is
+    # a present, correctly-typed string whose value is unusable, same as an
+    # already-past expiry.
+
+    test "a missing expires_at is unreadable, not a scope mismatch" do
+      assert_unrecognized(:metadata_read, &Map.delete(&1, "expires_at"))
+    end
+
+    test "a missing token is unreadable, not a scope mismatch" do
+      assert_unrecognized(:metadata_read, &Map.delete(&1, "token"))
+    end
+
+    test "a nil token is unreadable, not a scope mismatch" do
+      assert_unrecognized(:metadata_read, &Map.put(&1, "token", nil))
+    end
+
+    test "a non-binary token is unreadable, not a scope mismatch" do
+      assert_unrecognized(:metadata_read, &Map.put(&1, "token", 12_345))
     end
   end
 
