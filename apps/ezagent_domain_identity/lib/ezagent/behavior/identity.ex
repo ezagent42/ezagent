@@ -275,7 +275,25 @@ defmodule Ezagent.ActionSet.Identity do
     user_caps =
       if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
 
-    state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
+    # ② P2(c) (codex must-fix #3a) — the REVOCATION FENCE on the invariant-20
+    # union. Both restore sources can carry an artifact revoked while the
+    # holder was down (the snapshot — re-written by a stale live holder's
+    # intervening whole-Kind commit — and a lagging `caps_json` projection
+    # whose delete failed best-effort). Filtering the union through the
+    # monotone revocation ledger (`EntityCaps.Revocations`) drops any
+    # artifact whose `granted_at` predates its tombstone watermark — a
+    # genuine re-grant (re-stamped by `Cap.issue/3` after the watermark)
+    # passes. The filtered set is also what `persist_user_caps_after_marker`
+    # re-projects, so the boot CONVERGES the lagging planes. A ledger read
+    # error raises (the `hydrate_recipe_binding` precedent) — the boot
+    # retries rather than guessing at the fence.
+    state =
+      Map.update!(state, :caps, fn restored ->
+        restored
+        |> merge_caps_by_identity(user_caps)
+        |> then(&Ezagent.EntityCaps.Revocations.filter(uri, &1))
+        |> MapSet.new()
+      end)
 
     # Canary boot regression (deploy 30456630379): PRE-EPOCH restore the genesis
     # admin's stale/absent self-license so the §3 boot seed authorizes. The

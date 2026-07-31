@@ -348,6 +348,9 @@ defmodule Ezagent.Socialware.Mount do
              {:held_by, granter}
            ) do
         :ok -> {:cont, :ok}
+        # ② P2(c) — durable delete committed, live hint lost: the revoke IS
+        # durable (the target reconciles on its next load) — not a failure.
+        {:ok, {:hint_failed, _reason}} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:mount_revoke_failed, action, reason}}}
       end
     end)

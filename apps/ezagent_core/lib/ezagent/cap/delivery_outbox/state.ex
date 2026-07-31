@@ -164,6 +164,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.State do
       %Delivery{status: :applied} -> {:error, :delivery_applied}
       %Delivery{status: :dead} -> {:error, :delivery_dead}
       %Delivery{status: :pending} -> {:error, :claimed_elsewhere}
+      %Delivery{status: :cancelled} -> {:error, :delivery_cancelled}
       nil -> {:error, :delivery_not_found}
     end
   end

@@ -87,7 +87,10 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     # PR #1501 — the core outbox's validated pending-cap reader matches the
     # single absorb operation it is permitted to decode. This is a read-side
     # discriminator, not a new dispatch constructor or producer.
-    @cap_delivery_outbox => 1,
+    # ② P2(c) — `cancel_pending_grants/2` matches pending `:store_cap` /
+    # `:absorb_cap` rows for cancellation on durable revoke: another
+    # read-side discriminator, still no new dispatch constructor. 1 → 2.
+    @cap_delivery_outbox => 2,
     @cap_delivery_envelope => 6,
     @cap_verifier => 1,
     @config_evolve => 2,

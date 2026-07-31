@@ -468,6 +468,9 @@ defmodule Ezagent.Socialware.CompositionCaps do
                {:held_by, Ezagent.URI.new!(row.issuer_uri)}
              ) do
           :ok -> {:cont, :ok}
+          # ② P2(c) — durable delete committed, live hint lost: the revoke IS
+          # durable (the target reconciles on its next load) — not a failure.
+          {:ok, {:hint_failed, _reason}} -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:composition_cap_revoke_failed, reason}}}
         end
       end

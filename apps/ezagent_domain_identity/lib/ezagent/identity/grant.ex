@@ -126,13 +126,47 @@ defmodule Ezagent.Identity.Grant do
   end
 
   @doc """
-  Revoke `cap` from `target` via `Ezagent.Invocation.dispatch/1`
-  (`:call` mode). Symmetric to `grant_cap/3`. Returns `:ok` or
-  `{:error, reason}`.
+  Revoke `cap` from `target` — STORE-FIRST, symmetric to
+  `revoke_cap_via_router/4` (② P2(c), codex must-fix #4: EVERY revoke entry
+  point routes through the same durable `Ezagent.EntityCaps.revoke_persisted/2`
+  core). The durable delete (tombstone + pending-delivery cancel + plane
+  deletes) commits FIRST, independent of target liveness; the `:remove_cap`
+  `Ezagent.Invocation.dispatch/1` (`:call` mode) is then only the
+  live-reconcile hint. Returns:
+
+    * `:ok` — durable delete committed AND the live hint applied;
+    * `{:ok, {:hint_failed, reason}}` — the durable delete COMMITTED (the
+      revoke IS durable: tombstone recorded, planes deleted, pending
+      deliveries cancelled) but the target did not apply the live hint
+      (down/restarting). NOT a revoke failure — the target reconciles from
+      the store on its next load, and the tombstone fences any stale write
+      in between. Callers must NOT treat this as "member fully intact";
+    * `{:error, reason}` — the durable delete did NOT commit; the revoke did
+      not happen (safe to abort dependent work).
   """
-  @spec revoke_cap(URI.t(), Capability.t(), authorization()) :: :ok | {:error, term()}
+  @spec revoke_cap(URI.t(), Capability.t(), authorization()) ::
+          :ok | {:ok, {:hint_failed, term()}} | {:error, term()}
   def revoke_cap(%URI{} = target, %Capability{} = cap, authorization) do
-    imperative_invocation(target, cap, authorization, :revoke_cap)
+    case prepare(target, cap, authorization, :revoke_cap) do
+      {:ok, {target_uri, cap2, ctx}} ->
+        with :ok <- Ezagent.EntityCaps.revoke_persisted(target, cap2) do
+          inv = %Invocation{
+            target: target_uri,
+            mode: :call,
+            args: %{cap: cap2},
+            ctx: Map.put(ctx, :reply, {:caller_inbox, self()}),
+            origin: :trusted_internal
+          }
+
+          case normalize_dispatch_result(Invocation.dispatch(inv)) do
+            :ok -> :ok
+            {:error, reason} -> hint_failed(target, reason)
+          end
+        end
+
+      {:error, _} = err ->
+        err
+    end
   end
 
   @doc """
@@ -188,15 +222,23 @@ defmodule Ezagent.Identity.Grant do
   callback (e.g. the at-join member-cap compensation in `handle_join`): a
   session-instance cap's grant/revoke resolves the instance's data-owner,
   which re-enters the session Kind — a `:sync` HINT dispatch from within that
-  same blocked Kind self-deadlocks. Returns `:ok` once the durable delete
-  committed; an `:async` hint-dispatch failure is logged, not propagated (the
-  store is already correct — the target reconciles on its next load), while
-  `:sync` propagates the hint result so callers (member REMOVE) keep their
-  abort-on-error contract. An `{:error, reason}` return means the durable
-  delete failed and the revoke did NOT happen.
+  same blocked Kind self-deadlocks.
+
+  Return contract (② P2(c), codex must-fix #5 — the REMOVE-abort fix):
+
+    * `:ok` — durable delete committed AND the hint applied;
+    * `{:ok, {:hint_failed, reason}}` (`:sync` only) — the durable delete
+      COMMITTED but the live hint did not apply. This is NOT a "revoke did
+      not happen" signal: the caller must NOT claim a full rollback (e.g.
+      member REMOVE proceeds with / reconciles the roster removal — the cap
+      is durably gone and the tombstone fences stale writers);
+    * `:async` — a hint failure is logged and swallowed to `:ok` (the store
+      is already correct — the target reconciles on its next load);
+    * `{:error, reason}` — the durable delete did NOT commit; the revoke did
+      not happen (safe to abort dependent work).
   """
   @spec revoke_cap_via_router(URI.t(), Capability.t(), authorization(), :async | :sync) ::
-          :ok | {:error, term()}
+          :ok | {:ok, {:hint_failed, term()}} | {:error, term()}
   def revoke_cap_via_router(
         %URI{} = target,
         %Capability{} = cap,
@@ -218,10 +260,10 @@ defmodule Ezagent.Identity.Grant do
             :ok ->
               :ok
 
-            {:error, reason} = error ->
+            {:error, reason} ->
               case reply_mode do
                 :sync ->
-                  error
+                  hint_failed(target, reason)
 
                 :async ->
                   Logger.warning(
@@ -239,6 +281,20 @@ defmodule Ezagent.Identity.Grant do
       {:error, _} = err ->
         err
     end
+  end
+
+  # The committed-delete / failed-hint signal (must-fix #5): the durable
+  # revoke DID commit, so this is a success variant — but a distinguishable
+  # one, so an abort-on-error caller (member REMOVE) does NOT roll back
+  # dependent work under the false belief that the member is fully intact.
+  defp hint_failed(target, reason) do
+    Logger.warning(
+      "Ezagent.Identity.Grant: durable revoke committed but the :remove_cap " <>
+        "reconcile hint failed for #{URI.to_string(target)}: #{inspect(reason)} — " <>
+        "the store is authoritative; the target reconciles from it on its next load"
+    )
+
+    {:ok, {:hint_failed, reason}}
   end
 
   # ── effect-constructor wrappers (return effect tuples; RAISE on prepare error) ──
@@ -269,13 +325,49 @@ defmodule Ezagent.Identity.Grant do
   @doc """
   Build a `{:dispatch_returning, %Cmd{}, bind_as: bind_as}` effect that
   REVOKES `cap` from `target` (the security-revoke twin — synchronous,
-  failure-propagating). RAISES on a `prepare/4` error.
+  failure-propagating).
+
+  ② P2(c) (codex must-fix #4) — STORE-FIRST at construction: the durable
+  `Ezagent.EntityCaps.revoke_persisted/2` delete commits HERE, while the
+  handler builds the effect, so the revoke is durable even if the dispatch
+  (now only the live-reconcile `:remove_cap` hint) never lands. RAISES on a
+  `prepare/4` error OR a durable-delete failure — an effect site cannot
+  carry an `{:error}` tuple, and a revoke that cannot commit durably must
+  fail the handler loudly (let-it-crash; the slice mutation never commits
+  under a failed security revoke).
   """
   @spec revoke_cap_returning_effect(URI.t(), Capability.t(), authorization(), atom()) ::
           {:dispatch_returning, Cmd.t(), keyword()}
   def revoke_cap_returning_effect(%URI{} = target, %Capability{} = cap, authorization, bind_as)
       when is_atom(bind_as) do
-    {:dispatch_returning, cmd!(target, cap, authorization, :revoke_cap, :sync), bind_as: bind_as}
+    case prepare(target, cap, authorization, :revoke_cap) do
+      {:ok, {target_uri, cap2, ctx}} ->
+        case Ezagent.EntityCaps.revoke_persisted(target, cap2) do
+          :ok ->
+            cmd = %Cmd{
+              target: target_uri,
+              action: storage_action(:revoke_cap),
+              args: %{cap: cap2},
+              ctx: Map.put(ctx, :reply, reply_for(:sync)),
+              origin: :trusted_internal
+            }
+
+            {:dispatch_returning, cmd, bind_as: bind_as}
+
+          {:error, reason} ->
+            raise ArgumentError,
+                  "Ezagent.Identity.Grant: cannot build revoke_cap effect — the durable " <>
+                    "revoke failed to commit: #{inspect(reason)}. An effect site cannot " <>
+                    "carry an {:error} tuple; a security revoke that cannot commit " <>
+                    "durably must fail the handler (let-it-crash)."
+        end
+
+      {:error, reason} ->
+        raise ArgumentError,
+              "Ezagent.Identity.Grant: cannot build revoke_cap effect — #{inspect(reason)}. " <>
+                "An effect site cannot carry an {:error} tuple; invalid authority is a " <>
+                "programmer error (Decision #154)."
+    end
   end
 
   # ── CORE: prepare/4 — dispatch adapter over the Cap provenance seam ───

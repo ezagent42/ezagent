@@ -130,6 +130,9 @@ defmodule Ezagent.Workspace.ResponsibilityAssignments do
     |> Enum.reduce_while(:ok, fn cap, :ok ->
       case Ezagent.Identity.Grant.revoke_cap(holder, cap, {:held_by, Map.fetch!(ctx, :caller)}) do
         :ok -> {:cont, :ok}
+        # ② P2(c) — durable delete committed, live hint lost: the revoke IS
+        # durable (the target reconciles on its next load) — not a failure.
+        {:ok, {:hint_failed, _reason}} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, {:revoke_responsibility_cap_failed, cap, reason}}}
       end
     end)

@@ -85,6 +85,124 @@ defmodule Ezagent.Cap.DeliveryOutbox do
     end
   end
 
+  @doc """
+  ② P2(c) — cancel every PENDING grant-side delivery (`:store_cap` /
+  `:absorb_cap`) for `target_uri` whose payload cap carries the same cap
+  identity as `cap` (`Capability.identity_key/1`, canonicalized — provenance-
+  and generation-independent, matching `Capability.revoke/2`'s revoke
+  semantics).
+
+  This is the durable-revoke fence for the outbox plane: a grant buffered
+  while the holder was down must NOT drain after the cap was revoked —
+  otherwise the next restart/ready-drain replays the grant and the revoked
+  cap resurrects. Cancellation is a terminal `:cancelled` status (the row is
+  never deleted, so the ledger stays auditable) applied inside one
+  transaction under row locks; a claimed-but-undelivered row is cancelled
+  too (its in-flight `mark_applied` then no-ops on the stale claim).
+
+  Returns `:ok` (zero or more rows cancelled) or `{:error, reason}` — the
+  revoke path treats a cancellation failure as a revoke failure
+  (fail-closed): an uncancelled pending grant is a resurrection vector.
+  """
+  @spec cancel_pending_grants(URI.t() | String.t(), Capability.t()) :: :ok | {:error, term()}
+  def cancel_pending_grants(target_uri, %Capability{} = cap) do
+    target = target_uri |> to_uri() |> Ezagent.URI.instance()
+    target_string = URI.to_string(target)
+    workspace_uri = Persistence.workspace_uri_for!(target)
+    identity = canonical_identity(cap)
+
+    case Repo.transaction(fn ->
+           cancel_matching_pending(workspace_uri, target_string, identity)
+         end) do
+      {:ok, cancelled} ->
+        if cancelled > 0 do
+          Logger.info(
+            "DeliveryOutbox.cancel_pending_grants: cancelled #{cancelled} pending " <>
+              "grant delivery row(s) for #{target_string} (cap revoked before drain)"
+          )
+        end
+
+        maybe_forget_target(target_string)
+        :ok
+
+      {:error, reason} ->
+        {:error, {:pending_grant_cancel_failed, reason}}
+    end
+  rescue
+    error -> {:error, {:pending_grant_cancel_failed, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {:pending_grant_cancel_failed, {kind, reason}}}
+  end
+
+  defp cancel_matching_pending(workspace_uri, target_string, identity) do
+    rows =
+      Delivery
+      |> Persistence.scope_by_workspace(workspace_uri)
+      |> where(
+        [delivery],
+        delivery.target_uri == ^target_string and delivery.status == :pending and
+          delivery.op in [:store_cap, :absorb_cap]
+      )
+      |> lock("FOR UPDATE")
+      |> Repo.all()
+
+    ids =
+      rows
+      |> Enum.filter(fn delivery ->
+        case Envelope.decode(delivery) do
+          {:ok, %{cap: %Capability{} = stored}} ->
+            canonical_identity(stored) == identity
+
+          # An undecodable row cannot be proven to carry the revoked cap; the
+          # drain already fails it permanently (:delivery_decode → :dead), so
+          # it is not a delivery vector — leave it for that path.
+          {:error, _reason} ->
+            false
+        end
+      end)
+      |> Enum.map(& &1.id)
+
+    case ids do
+      [] ->
+        0
+
+      _ ->
+        now = DateTime.utc_now()
+
+        {count, _} =
+          from(delivery in Delivery,
+            where: delivery.id in ^ids and delivery.status == :pending
+          )
+          |> Repo.update_all(
+            set: [
+              status: :cancelled,
+              claim_token: nil,
+              lease_until: nil,
+              last_error: "cancelled: cap revoked before delivery",
+              updated_at: now
+            ]
+          )
+
+        count
+    end
+  end
+
+  # `Capability.identity_key/1` tuple with URI axes canonicalized to strings —
+  # the revoke argument and the buffered grant artifact may hold structurally
+  # divergent `%URI{}` terms for the same logical instance (the
+  # `identity_key/1` doc warns raw struct comparison is brittle), and a missed
+  # cancel is a resurrection.
+  defp canonical_identity(%Capability{} = cap) do
+    cap
+    |> Capability.identity_key()
+    |> Tuple.to_list()
+    |> Enum.map(fn
+      %URI{} = uri -> URI.to_string(uri)
+      other -> other
+    end)
+    |> List.to_tuple()
+  end
+
   @doc "Retry all pending rows for one target after its ready transition."
   @spec drain_target(URI.t() | String.t()) :: :ok
   def drain_target(target_uri) do
@@ -132,6 +250,9 @@ defmodule Ezagent.Cap.DeliveryOutbox do
 
   def attempt(%Delivery{status: :applied}), do: :ok
   def attempt(%Delivery{status: :dead}), do: {:error, :delivery_dead}
+  # ② P2(c) — a `:cancelled` row (revoked before drain) is terminal: the drain
+  # must NEVER dispatch it, and an explicit retry attempt is a clean no-op.
+  def attempt(%Delivery{status: :cancelled}), do: :ok
 
   def attempt(%Delivery{} = delivery) do
     do_attempt(delivery, nil)

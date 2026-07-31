@@ -40,7 +40,13 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
   before the hint was ever dispatched. (This simulates a Kind-process
   restart; `Kind.terminate/1` even DLQs the pending cast first, whereas a
   real BEAM crash drops the ETS buffer outright — strictly MORE lossy,
-  never less.)
+  never less.) ② P2(c) EXTENSION (codex must-fix #3): between the lost hint
+  and the restart, the STILL-LIVE stale holder commits an INTERVENING
+  whole-state snapshot write (`Kind.Snapshot.save_now/3` with its stale
+  identity slice — the exact write its next `:on_change` commit performs),
+  which re-poisons the snapshot row with the revoked cap; the monotone
+  revocation tombstone (`Ezagent.EntityCaps.Revocations`) must fence the
+  cold-boot union so the cap STILL stays revoked.
 
   Both CONTROL and GAP also assert the target authority `key_id` is UNCHANGED
   across the revoke, so the CONTROL denial is provably the physical delete (not
@@ -102,6 +108,41 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
     :ok = Ezagent.ReadyGate.put(holder, :not_ready)
     assert :ok = Grant.revoke_cap_via_router(holder, cap, {:held_by, holder}, :async)
 
+    # ② P2(c) INTERVENING WRITE (codex adversarial must-fix #3): the holder is
+    # still LIVE and STALE — the :remove_cap hint never landed, so its
+    # in-memory identity slice still carries the revoked cap. Any intervening
+    # mutation (here driven directly through the REAL whole-state snapshot
+    # chokepoint, `Kind.Snapshot.save_now/3` — the exact write a stale
+    # holder's next `:on_change` commit performs) serializes that stale
+    # identity slice back into the durable snapshot row. Without the
+    # revocation tombstone/fence, the cold-boot invariant-20 union below
+    # would resurrect the cap from this row.
+    {:ok, stale_identity} = Ezagent.Kind.SliceAccess.get_raw_slice(holder, :identity)
+
+    assert slice_holds_cap?(stale_identity, cap),
+           "setup: the stale live holder MUST still hold the revoked cap in memory (hint lost)"
+
+    {:ok, %{state: whole_state}} = Ezagent.SnapshotStore.latest(holder)
+
+    assert :ok =
+             Ezagent.Kind.Snapshot.save_now(
+               holder,
+               Ezagent.Entity.User,
+               Map.put(whole_state, :identity, stale_identity)
+             )
+
+    # The stale write DID land in the snapshot row (the fence does not rewrite
+    # the binary snapshot — it fences its CONSUMERS: the Store write boundary
+    # and the activate union)...
+    assert snapshot_holds_cap?(holder, cap),
+           "the intervening whole-state write must re-add the stale cap to the snapshot row"
+
+    # ...while the authoritative Store row — deleted at revoke time — stays
+    # clean (for a user the dual-write is a no-op; the fence is what guards
+    # the non-user Store/index path, covered by the revoke-durability suite).
+    refute holds_cap_in_durable_store?(holder, cap),
+           "the authoritative Store row MUST stay clean across the stale write"
+
     # Restart — DOWN half: the holder Kind dies with its volatile buffer. The
     # detached cast is dead-lettered (:never_ready → DLQ sink: log/telemetry,
     # NOT a redelivery path). The durable holder store was ALREADY mutated by
@@ -138,7 +179,13 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
     assert active_key_id(target) == key_id_before,
            "GAP (fixed): key_id unchanged — the revoke path performed no generation bump"
 
-    # Re-check through the same act-time gates dispatch uses.
+    # Re-check through the same act-time gates dispatch uses — INCLUDING the
+    # stale-snapshot-write arm: the cold-boot union of the (re-poisoned)
+    # snapshot slice with `users.caps_json` must have dropped the tombstoned
+    # artifact (the revocation fence in `Identity.activate/2`).
+    refute holds_cap?(holder, cap),
+           "GAP (fixed): the live slice MUST NOT resurrect the cap from the stale snapshot write"
+
     refute usable?(holder, target),
            "GAP (fixed): the revoked cap is DENIED after restart+respawn+drain — the durable delete survived the lost hint"
 
@@ -237,6 +284,32 @@ defmodule Ezagent.Identity.RevokeGenerationGateReproTest do
   # DURABLE store, read directly (bypasses the live-first loader) — the exact
   # row a lost remove_cap would have deleted.
   defp holds_cap_in_durable_store?(holder, cap), do: cap_present?(Store.load(holder), cap)
+
+  # The LIVE identity slice of the still-running (stale) holder — the
+  # two-container Lifecycle shape `%{state: %{caps: MapSet}, transients: _}`.
+  defp slice_holds_cap?(slice, cap) do
+    caps =
+      case slice do
+        %{state: %{caps: %MapSet{} = caps}} -> MapSet.to_list(caps)
+        %{caps: %MapSet{} = caps} -> MapSet.to_list(caps)
+        _ -> []
+      end
+
+    cap_present?(caps, cap)
+  end
+
+  # The durable SNAPSHOT row's identity slice (the cold-boot restore source),
+  # read directly from `SnapshotStore` — tolerating both the Lifecycle
+  # `%{state: %{caps: _}}` container and the legacy flat `%{caps: _}` shape.
+  defp snapshot_holds_cap?(holder, cap) do
+    case Ezagent.SnapshotStore.latest(holder) do
+      {:ok, %{state: %{identity: identity}}} when is_map(identity) ->
+        slice_holds_cap?(identity, cap)
+
+      _ ->
+        false
+    end
+  end
 
   defp cap_present?(caps, cap) do
     Enum.any?(caps, fn c ->

@@ -23,15 +23,18 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :update_locked, 2},
                              # #189 PR-3 FIX 1 — the POST-epoch Store-first user
-                             # path: `read_current_caps/1` READS the current legacy
+                             # path: `read_current_caps/2` READS the current legacy
                              # `caps` (the fun's input) and `write_caps_json_locked/2`
                              # PROJECTS the already-authoritative store set back into
                              # `users.caps_json`. Both are the physical user adapter's
                              # own seam (parallel to `load/1` + `update_locked/2`);
                              # neither mints/grants and a projection failure changes no
                              # authz outcome (reads are store-authoritative post-epoch).
+                             # ② P2(c) — arity 1 → 2: the `source` opt lets the REVOKE
+                             # path read the AUTHORITATIVE Store set (never the lagging
+                             # projection) for its read-modify-write.
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
-                              :read_current_caps, 1},
+                              :read_current_caps, 2},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
                               :write_caps_json_locked, 2},
                              # #189 PR-1 — the unified identity-caps store is a NEW

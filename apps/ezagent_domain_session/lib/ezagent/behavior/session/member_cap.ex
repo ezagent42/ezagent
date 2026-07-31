@@ -272,12 +272,23 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   @doc """
   LEAVE revoke wrapper (A2.4 / R3.1) — best-effort: a revoke failure is logged
   (the member is de-escalating ITSELF and reconcile evicts any residue) and `:ok`
-  is returned so the self-leave still drops the roster.
+  is returned so the self-leave still drops the roster. A
+  `{:ok, {:hint_failed, _}}` (durable delete committed, live hint lost) is a
+  committed revoke — logged, and the leave proceeds.
   """
   @spec revoke_member_cap_best_effort(URI.t(), map()) :: :ok
   def revoke_member_cap_best_effort(%URI{} = member_uri, ctx) do
     case revoke_membership(member_uri, ctx) do
       :ok ->
+        :ok
+
+      {:ok, {:hint_failed, reason}} ->
+        Logger.info(
+          "Session.MemberCap.leave: durable revoke committed, live hint lost " <>
+            "for member=#{URI.to_string(member_uri)} on " <>
+            "session=#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} (reconcile heals)."
+        )
+
         :ok
 
       {:error, reason} ->
@@ -298,14 +309,40 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   FULLY INTACT — a loud error, never a silent partial). Placed by the caller AFTER
   every rejecting check (teardown authority + routing prune) has passed, so a
   rejected removal never reaches it and cap + roster stay intact (preserves test
-  11). A NOT-LIVE member (`:no_such_actor` / `:not_ready` / `:failed`) has no live cap to
-  revoke, so the removal PROCEEDS (mirrors the teardown's idempotent handling;
-  reconcile/migration are the backstop for any persisted snapshot cap).
+  11).
+
+  ② P2(c) (codex must-fix #5) — the REMOVE-abort contract now distinguishes
+  the TWO ways the revoke can "not fully apply":
+
+    * `{:error, _}` — the DURABLE delete did not commit. The member really is
+      fully intact → ABORT (unchanged).
+    * `{:ok, {:hint_failed, reason}}` — the durable delete COMMITTED
+      (tombstone + plane deletes + pending-delivery cancel); only the live
+      `:remove_cap` hint failed (member crashed between the delete and the
+      hint). The cap is durably GONE — claiming a full rollback would be a
+      lie that leaves the member in the roster while its cap is already
+      revoked. The removal PROCEEDS (logged); the tombstone fences any stale
+      write the not-quite-dead member makes, and reconcile heals residue.
+    * A NOT-LIVE member (`:no_such_actor` / `:not_ready` / `:failed`) — kept
+      for the legacy error shape; the removal PROCEEDS (mirrors the
+      teardown's idempotent handling; reconcile/migration are the backstop
+      for any persisted snapshot cap).
   """
   @spec revoke_member_cap_checked(URI.t(), map()) :: :ok | {:error, term()}
   def revoke_member_cap_checked(%URI{} = member_uri, ctx) do
     case revoke_membership(member_uri, ctx) do
       :ok ->
+        :ok
+
+      {:ok, {:hint_failed, reason}} ->
+        Logger.warning(
+          "Session.MemberCap.remove_participant: durable revoke COMMITTED but " <>
+            "the live hint failed for member=#{URI.to_string(member_uri)} on " <>
+            "session=#{URI.to_string(ctx[:self_uri])}: #{inspect(reason)} — " <>
+            "the grant is durably gone (tombstone + plane deletes); the removal " <>
+            "PROCEEDS, reconcile heals any live residue."
+        )
+
         :ok
 
       {:error, reason} when reason in [:no_such_actor, :not_ready, :failed] ->

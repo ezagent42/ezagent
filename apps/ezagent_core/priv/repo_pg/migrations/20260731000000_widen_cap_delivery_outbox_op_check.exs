@@ -16,7 +16,22 @@ defmodule EzagentCore.Repo.Migrations.WidenCapDeliveryOutboxOpCheck do
   end
 
   def down do
-    execute("DELETE FROM cap_delivery_outbox WHERE op = 'store_cap'")
+    # ② must-fix #6 — NEVER silently DELETE queued `store_cap` rows on
+    # rollback: each is an offline holder's pending durable grant, and
+    # dropping it loses the grant without any operator signal. REFUSE the
+    # rollback while any exist; the operator must drain or deliberately
+    # clear them first.
+    %{rows: [[store_cap_rows]]} =
+      repo().query!("SELECT count(*) FROM cap_delivery_outbox WHERE op = 'store_cap'", [])
+
+    if store_cap_rows > 0 do
+      raise """
+      refusing to roll back widen_cap_delivery_outbox_op_check: #{store_cap_rows} \
+      store_cap row(s) still exist in cap_delivery_outbox. Rolling back would \
+      require deleting them, silently dropping an offline holder's pending \
+      durable grant. Drain or deliberately clear those rows first, then retry.
+      """
+    end
 
     drop constraint(:cap_delivery_outbox, :cap_delivery_outbox_op_check)
 

@@ -163,6 +163,10 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # on every write).
     {Ezagent.EntityCaps.Store, "identity_caps"},
     {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"},
+    # ② P2(c) — the monotone per-cap revocation tombstone ledger. Each row
+    # carries the holder entity's workspace (`workspace_uri` NOT NULL, from
+    # `Ezagent.URI.workspace_of/1` at record time).
+    {Ezagent.EntityCaps.Revocations, "cap_revocations"},
     # Forgejo provider V1 slice F0 — per-tenant OAuth application
     # registrations (design
     # docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md §5.1).

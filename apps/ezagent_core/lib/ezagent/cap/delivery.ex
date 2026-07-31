@@ -21,7 +21,7 @@ defmodule Ezagent.Cap.Delivery do
           payload_identity: String.t() | nil,
           semantic_identity: String.t() | nil,
           idempotency_key: String.t() | nil,
-          status: :pending | :applied | :dead,
+          status: :pending | :applied | :dead | :cancelled,
           attempts: non_neg_integer(),
           next_retry_at: DateTime.t() | nil,
           claim_token: String.t() | nil,
@@ -40,7 +40,7 @@ defmodule Ezagent.Cap.Delivery do
     field :payload_identity, :string
     field :semantic_identity, :string
     field :idempotency_key, :string
-    field :status, Ecto.Enum, values: [:pending, :applied, :dead], default: :pending
+    field :status, Ecto.Enum, values: [:pending, :applied, :dead, :cancelled], default: :pending
     field :attempts, :integer, default: 0
     field :next_retry_at, :utc_datetime_usec
     field :claim_token, :string

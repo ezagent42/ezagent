@@ -37,6 +37,13 @@ defmodule Ezagent.Invariants.TestSnapshotFixtureAccessTest do
                "apps/ezagent_core/test/invariants/no_silent_workspace_in_writers_test.exs",
                "apps/ezagent_core/test/invariants/lifecycle_persistence_access_test.exs",
                "apps/ezagent_core/test/invariants/test_snapshot_fixture_access_test.exs",
+               # ② P2(c) — the revoke repro's GAP arm drives the low-level
+               # `Kind.Snapshot.save_now/3` chokepoint DIRECTLY: the test's
+               # subject IS the stale whole-state write a live holder's
+               # `:on_change` commit performs, so it must construct that exact
+               # write (SnapshotFixtures would bypass the dual-write chokepoint
+               # the fence is asserted against).
+               "apps/ezagent_domain_identity/test/ezagent/identity/revoke_generation_gate_repro_test.exs",
                # #189 PR-3 FIX 4 — the Session self-license migration test SEEDS
                # pre-cutover session snapshot fixtures via the low-level
                # `KindSnapshot.upsert/6` (it must control `mark_ever_created` +

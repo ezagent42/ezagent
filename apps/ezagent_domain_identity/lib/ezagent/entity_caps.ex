@@ -54,7 +54,7 @@ defmodule Ezagent.EntityCaps do
     SpawnRegistry
   }
 
-  alias Ezagent.EntityCaps.{Store, UserStore}
+  alias Ezagent.EntityCaps.{Revocations, Store, UserStore}
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
 
@@ -320,20 +320,62 @@ defmodule Ezagent.EntityCaps do
   then the snapshot). A crash between them returns `{:error, _}` so the
   caller knows the revoke did not fully commit; a retry is safe (both
   halves are idempotent).
+
+  ## ② P2(c) — the revoke is durable against resurrection (codex must-fixes #1-#3)
+
+  Before ANY plane delete, the revoke commits two fail-closed preconditions:
+
+    1. **Revocation tombstone** (`Ezagent.EntityCaps.Revocations.record/3`) —
+       the monotone fence `(holder, cap identity) -> revoked_at`. It is what
+       makes the delete durable against STALE WRITERS: a live holder that
+       missed the `:remove_cap` hint still carries the cap in memory, and any
+       intervening whole-Kind snapshot write would re-add it to the durable
+       planes; the fence refuses the artifact at every Store write boundary
+       and at `Identity.activate/2`'s invariant-20 union (re-grants pass —
+       `Cap.issue/3` re-stamps `granted_at` after the watermark). Recording
+       FIRST means a tombstone failure aborts the revoke before any delete
+       (fail-closed), and a later delete failure still leaves the fence in
+       place (fail-safe, toward denial).
+    2. **Pending-delivery cancel** (`DeliveryOutbox.cancel_pending_grants/2`) —
+       pending `:store_cap` / `:absorb_cap` outbox rows carrying this cap
+       identity are tombstoned `:cancelled`, so a grant buffered while the
+       holder was down cannot drain after the revoke and resurrect the cap.
+
+  The user plane delete then runs AUTHORITATIVE (`UserStore.update/3` with
+  `source: :store, projection: :authoritative`): the read-modify-write
+  sources the current set from the identity-caps Store (never the lagging
+  `caps_json` projection), and a `caps_json` projection failure propagates
+  as `{:error, _}` instead of being swallowed (must-fix #2).
   """
   @spec revoke_persisted(URI.t() | String.t(), Capability.t()) :: :ok | {:error, term()}
   def revoke_persisted(uri, %Capability{} = cap) do
     uri = parse_uri(uri)
 
-    if user_uri?(uri) do
-      case UserStore.update(uri, fn caps -> revoke_from_cap_list(caps, cap) end) do
-        {:error, :not_found} -> :ok
-        :ok -> revoke_user_snapshot(uri, cap)
-        {:error, _reason} = error -> error
+    with :ok <- refuse_admin_invariant(cap),
+         :ok <- Revocations.record(uri, cap),
+         :ok <- Ezagent.Cap.DeliveryOutbox.cancel_pending_grants(uri, cap) do
+      if user_uri?(uri) do
+        case UserStore.update(uri, fn caps -> revoke_from_cap_list(caps, cap) end,
+               source: :store,
+               projection: :authoritative
+             ) do
+          {:error, :not_found} -> :ok
+          :ok -> revoke_user_snapshot(uri, cap)
+          {:error, _reason} = error -> error
+        end
+      else
+        revoke_snapshot_persisted(uri, cap)
       end
-    else
-      revoke_snapshot_persisted(uri, cap)
     end
+  end
+
+  # `Capability.revoke/2` refuses the genesis admin invariant — but the
+  # tombstone + outbox cancel run BEFORE the plane deletes now, so the
+  # refusal must gate FIRST: a recorded tombstone for the admin `:any` cap
+  # would fence the root authority itself (its `granted_at` predates every
+  # watermark) without any delete ever failing.
+  defp refuse_admin_invariant(%Capability{} = cap) do
+    if Capability.admin_invariant?(cap), do: {:error, :cannot_revoke_admin}, else: :ok
   end
 
   @doc false

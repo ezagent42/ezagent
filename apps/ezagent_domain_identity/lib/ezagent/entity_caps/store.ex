@@ -438,9 +438,8 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> persist_locked(uri, uri_key, workspace, encoded, caps_list) end) do
+    case Repo.transaction(fn -> persist_locked(uri, uri_key, workspace, caps_list) end) do
       {:ok, :ok} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -451,11 +450,18 @@ defmodule Ezagent.EntityCaps.Store do
   # `Authority.regenesis/2` cannot rotate the generation between the verify and
   # this write (codex impl-review finding 1 — the verify/write race). A row is
   # never `active` unless a current-valid self-license holds at write time.
-  defp persist_locked(uri, uri_key, workspace, encoded, caps_list) do
+  #
+  # ② P2(c) — the revocation-fence filter runs INSIDE the transaction too
+  # (`fence_filter_in_txn/2`, must-fix #3): a stale LIVE holder's intervening
+  # whole-Kind snapshot write carries the revoked artifact in its identity
+  # slice; without the fence this write would re-add it to the authoritative
+  # Store (and, below, the grantee index) after the durable delete committed.
+  defp persist_locked(uri, uri_key, workspace, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         {:ok, caps_list} <- fence_filter_in_txn(uri, caps_list),
          licensed? <- licensed_under_lock?(uri, caps_list),
-         changes <- persist_changes(row, encoded, licensed?),
+         changes <- persist_changes(row, encode_caps(caps_list), licensed?),
          {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       # URI-share A2-2 (codex ⓪): the reverse cap index derives from THIS
       # authoritative held-cap write, IN the same transaction — atomic, so a
@@ -518,8 +524,8 @@ defmodule Ezagent.EntityCaps.Store do
   defp update_locked(uri, uri_key, workspace, fun) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
-         {:ok, caps} <- fun.(decode_caps(row.caps_json)) do
-      caps_list = Enum.to_list(caps)
+         {:ok, caps} <- fun.(decode_caps(row.caps_json)),
+         {:ok, caps_list} <- fence_filter_in_txn(uri, Enum.to_list(caps)) do
       licensed? = licensed_under_lock?(uri, caps_list)
       changes = persist_changes(row, encode_caps(caps_list), licensed?)
 
@@ -886,9 +892,8 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> backfill_locked(uri, uri_key, workspace, encoded, caps_list) end) do
+    case Repo.transaction(fn -> backfill_locked(uri, uri_key, workspace, caps_list) end) do
       {:ok, status} -> {:ok, status}
       {:error, reason} -> {:error, reason}
     end
@@ -903,11 +908,12 @@ defmodule Ezagent.EntityCaps.Store do
   # concurrent regenesis cannot race a stale license back to `active`). The
   # backfill is a DISTINCT entry point (its own transaction + status return) as
   # the review requires.
-  defp backfill_locked(uri, uri_key, workspace, encoded, caps_list) do
+  defp backfill_locked(uri, uri_key, workspace, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         {:ok, caps_list} <- fence_filter_in_txn(uri, caps_list),
          licensed? <- licensed_under_lock?(uri, caps_list),
-         changes <- persist_changes(row, encoded, licensed?),
+         changes <- persist_changes(row, encode_caps(caps_list), licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
       Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
@@ -1068,11 +1074,14 @@ defmodule Ezagent.EntityCaps.Store do
            with :ok <- ensure_row(uri_key, workspace),
                 row when not is_nil(row) <- lock_row(uri_key),
                 :ok <- precheck_fun.(row),
+                {:ok, caps_list} <- fence_filter_in_txn(uri, caps_list),
                 true <-
                   licensed_under_lock?(uri, caps_list) || {:error, :no_current_self_license},
                 :ok <- maybe_consume(receipt),
                 {:ok, _row} <-
-                  row |> Ecto.Changeset.change(activate_changes(caps, receipt)) |> Repo.update() do
+                  row
+                  |> Ecto.Changeset.change(activate_changes(caps_list, receipt))
+                  |> Repo.update() do
              # A2-2 codex ⓪ (cc review 1) — the provision/reprovision writer is a
              # conferral path too; derive the reverse index IN this txn so an
              # activate (esp. a reprovision with a REDUCED set) never leaves a
@@ -1087,6 +1096,21 @@ defmodule Ezagent.EntityCaps.Store do
       {:ok, :ok} -> :ok
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  # ② P2(c) (must-fix #3) — the revocation-fence filter for the write
+  # boundary: drop every artifact tombstoned in `Ezagent.EntityCaps.Revocations`
+  # from the incoming set BEFORE it is encoded/re-indexed. Runs inside the
+  # caller's open transaction, so a fence READ error rolls the write back
+  # (`{:error, {:revocation_fence_unreadable, _}}`) instead of letting a stale
+  # writer re-add a revoked cap while the fence is unreadable (fail-closed,
+  # never a silent pass).
+  defp fence_filter_in_txn(uri, caps_list) do
+    {:ok, Ezagent.EntityCaps.Revocations.filter(uri, caps_list)}
+  rescue
+    error -> {:error, {:revocation_fence_unreadable, Exception.message(error)}}
+  catch
+    kind, reason -> {:error, {:revocation_fence_unreadable, {kind, reason}}}
   end
 
   defp activate_changes(caps, receipt) do
@@ -1151,16 +1175,25 @@ defmodule Ezagent.EntityCaps.Store do
   # Internals
   # ====================================================================
 
-  defp key(%URI{} = uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
+  # Shared with `Ezagent.EntityCaps.Revocations` (the revocation fence keys
+  # its rows by the exact same holder/workspace canonicalization — the fence
+  # must address the same durable identity the Store does, so there is ONE
+  # implementation; ② P2(c)).
+  @doc false
+  @spec key(URI.t() | String.t()) :: String.t()
+  def key(%URI{} = uri), do: uri |> Ezagent.URI.instance() |> URI.to_string()
 
-  defp key(uri) when is_binary(uri),
+  def key(uri) when is_binary(uri),
     do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance() |> URI.to_string()
 
   # Per-tenant column: the entity URI's own workspace. Cross-cutting URIs
   # (`system://`, …) resolve to `:any` and land in the structural system
   # sink (the `Kind.Snapshot.save_now` precedent, SPEC #324 rev 3).
-  defp workspace_key(%URI{} = uri), do: uri |> Ezagent.URI.workspace_of() |> workspace_to_string()
-  defp workspace_key(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> workspace_key()
+  # Public for `Ezagent.EntityCaps.Revocations` (see `key/1`).
+  @doc false
+  @spec workspace_key(URI.t() | String.t()) :: String.t()
+  def workspace_key(%URI{} = uri), do: uri |> Ezagent.URI.workspace_of() |> workspace_to_string()
+  def workspace_key(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> workspace_key()
 
   defp workspace_to_string(%URI{} = workspace), do: URI.to_string(workspace)
   defp workspace_to_string(:any), do: Ezagent.URI.workspace(:system) |> URI.to_string()
