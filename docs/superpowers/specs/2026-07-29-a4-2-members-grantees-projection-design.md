@@ -30,7 +30,8 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 2. 因此 §2 的七类差异**危害不等** —— 但**必须把"roster 多报"和"钥匙没撤"分开算**(本文 v3 初稿把两者混为一谈,Allen 2026-07-31 纠正,已改):
    - **过报(roster 多出人)本身**:投递到他 → **收信闸当场拒**(M-9 查 `:receive` 并过完整 `Cap.authorize`),不泄漏消息内容;真实危害只有"成员名单 UI 显示了前成员/从未加入者"(`SessionReads.members` 会读它)。**级别:正确性/观感,fail-closed。**
    - **⚠️ 但造成过报的那个根因不是 fail-closed**:离会只撤 `:receive`,残留的 `:send`/`:attach` **在发送路径上没有任何东西挡** —— `Verifier` 的 `@non_cap_actions`(`verifier.ex:21-41`)对 `Ezagent.ActionSet.Session` 只免验签 `[:approve_admission, :deny_admission, :withdraw_admission, :composition_consent, :add_self]`,`:send`/`:attach` 走正常 cap 验签;而 `handle_send/2`(`session.ex:591`)**除 cap 外零成员校验**。⇒ **已退出成员仍能发言/传附件 = write-after-leave,撤销完整性漏洞**。**级别:安全缺陷,已单开 issue #1665,且按 Allen 裁决排在 P4 之前。**
-   - **漏报(cap 持有者不在 roster)**:**他收不到消息,直到被 heal** —— **真丢投递**。**级别:功能损坏,必须先修(P1)。**
+   - **漏报(cap 持有者不在 roster)**:**在途窗口内发给他的消息收不到**。**级别:功能损坏,先修(P1)。**
+     **⚠️ 修正一处夸大(2026-07-31 实证)**:此前本文写作"消息**永久**丢失"—— 不准。`Ezagent.Identity.MembershipConvergence`(`behavior/identity.ex:290` `converge/2`、`:767` `after_commit_effects/2`)在 member-cap **落地**时由持有人自己 dispatch `session.add_self`,**成员身份会自愈**。真正丢的只是**窗口内那几条消息**(无消息级补投)。P1 的价值因此更窄也更准:把窗口在 **activate 当刻**关掉,而不是"防止永久失联"。
 
 ## 0c. Allen 裁决(2026-07-31,已落入下方各节)
 
@@ -184,8 +185,15 @@ A4-2 只改 `reconcile_after_load`(delivery-targeting 投影的 seeding),不碰 
 5. ~~generation 语义变化是否接受~~ → **是投影的定义,不是待批的行为 delta**。目标既然是"roster = caps 的纯投影",撤销者掉出去就是定义本身;且 `effective_read` 已带 current-generation 门。
 
 **真正仍待定的一条(方向反转的固有代价,原先完全没识别):**
-6. **P4 把方向倒过来之后,在途的授予怎么进投影?**
-   正向可见、反向不可见:`effective_caps` 能替**某个人**把在途 cap 算进来;但反查索引只有**已落库**的,而 `cap_delivery_outbox` 的 `target_uri` 是**收钥匙的人**、cap 封在不透明 `payload` 里 —— **无法按"钥匙指向哪个资源"反查**。三个选项:
-   - **(a) 索引在 grant 入 outbox 时就写**(cap-as-truth 的一致解:在途 cap 已有 durable owner〔#207/#1409〕,按定义已是真相),落库后改标记;要动 grant 路径。
-   - **(b) 给 outbox 加可按资源反查的列/索引**,查询时并上。
-   - **(c) 接受窗口 + 靠 drain-on-ready 触发一次 re-reconcile** —— 最省,但窗口内 roster 不准,**对 agent 成员仍有永久漏消息风险**(agent 由投递驱动、不翻历史,且无消息级补投)。
+6. **P4 与 P1 是结构性取舍 —— 需要拍板(2026-07-31 收敛后的形态)**
+
+   **事实**:`effective_caps`(正向,问某个人)**能**把在途 cap 算进来;反向索引**结构上不能** —— `cap_delivery_outbox` 的 `target_uri` 是**收钥匙的人**、cap 封在不透明 `payload` 里,**无法按"钥匙指向哪个资源"反查**。
+
+   **混合方案不成立**:先用索引出候选集、再逐个正向确认 —— 在途的人**根本不在候选集里**,照样漏。要保住"activate 当刻严格",候选集就必须来自索引之外(= 今天的全 workspace 扫,正是 P4 要消灭的东西)。
+
+   ⇒ **二选一,或付代价买两全**:
+   - **(甲) 保 P1、不做 P4**:activate 当刻严格,继续 O(workspace) 扫。#192 只收窄不关闭(roster 仍单独存储),需记账。
+   - **(乙) 做 P4、接受窗口**:反向一次查询,activate 当刻可能漏掉在途成员;**但 `MembershipConvergence` 会在钥匙落地时自愈**(见 §0 口径 2 的修正),故是**有界陈旧**而非永久失联。代价 = 窗口内那几条消息投递不到该成员(对 agent 尤其可见)。**P1 的测试需相应改写**(它断言的正是 activate 当刻严格)。
+   - **(丙) 两全,但要动别的**:**授予 durably 入 outbox 时就写索引**(在途 cap 已有 durable owner〔#207/#1409〕,按 cap-as-truth 它已是真相),落库后改标记;或给 outbox 加可按资源反查的列/索引。**这是 cap-as-truth 的一致解**,但要碰 grant 路径 / outbox schema,超出 A4-2 scope,且与 #1644 的 DeliveryOutbox 标准化计划同域(该计划**未覆盖**反向查询这一面,可一并纳入)。
+
+   **本文倾向 (丙) 的方向、(乙) 作为过渡** —— 但 (乙) 会回吐 P1 刚关掉的窗口,属**语义回退**,不敢自行决定。**交 Allen。**
