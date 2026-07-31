@@ -553,20 +553,25 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # returns the OLDEST match regardless of state -- a trap, not a
         # shortcut (findings §2.2).
         #
-        # An entry we cannot READ fails the whole find-or-create, for the same
-        # reason `@max_items` refuses a truncated read: "we could not tell" is
-        # indistinguishable from "no match", and the consequence of guessing
-        # "no match" is a DUPLICATE pull request on the provider. `readable?/1`
-        # runs before the filter so an unreadable entry cannot be silently
-        # dropped by it.
-        if Enum.all?(pulls, &readable_pull?/1) do
-          case Enum.filter(pulls, &exact_match?(&1, env)) do
-            [] -> create_pull(env, request)
-            [single] -> Normalize.change_request(single)
-            [_ | _] -> {:error, :change_request_conflict}
-          end
-        else
-          {:error, :provider_response_unrecognized}
+        # An unreadable entry only endangers anything when the next action would
+        # be a WRITE. `exact_match?/2` compared `get_in(pull, ["head", "ref"])`,
+        # so an entry missing that field answered `nil == head_ref` → `false`
+        # and was filtered out; the list then looked empty and this function
+        # created a DUPLICATE pull request on the provider. Same failure the
+        # `@max_items` cap refuses a truncated read for, one level down.
+        #
+        # The refusal is scoped to the create branch, NOT to the whole list: if
+        # the match was found among the readable entries we reuse it and write
+        # nothing, so an unrelated unreadable sibling cannot produce a duplicate.
+        # Refusing there would trade the duplicate for a total failure of
+        # pull-request creation in any repository containing one odd open PR.
+        {readable, unreadable} = Enum.split_with(pulls, &readable_pull?/1)
+
+        case {Enum.filter(readable, &exact_match?(&1, env)), unreadable} do
+          {[_, _ | _], _} -> {:error, :change_request_conflict}
+          {[single], _} -> Normalize.change_request(single)
+          {[], []} -> create_pull(env, request)
+          {[], _unreadable} -> {:error, :provider_response_unrecognized}
         end
 
       {:error, marker} ->

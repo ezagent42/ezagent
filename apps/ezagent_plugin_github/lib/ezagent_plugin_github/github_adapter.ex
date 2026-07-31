@@ -316,16 +316,29 @@ defmodule EzagentPluginGithub.GitHubAdapter do
     commit_path = "/repos/#{repo.external_id}/git/commits/#{head_sha}"
 
     case GitHubClient.get(commit_path, token, request_opts()) do
-      {:ok, %{"tree" => %{"sha" => existing_tree_sha}, "parents" => [%{"sha" => ^base_sha}]}} ->
+      # `is_binary` on the tree sha is load-bearing: without it a non-binary
+      # tree value entered `verify_tree_reuse/6`, differed from the recomputed
+      # tree as any non-string would, and came back `:head_ref_conflict` — the
+      # invented diagnosis this split removes, surviving one level deeper.
+      {:ok, %{"tree" => %{"sha" => existing_tree_sha}, "parents" => [%{"sha" => ^base_sha}]}}
+      when is_binary(existing_tree_sha) ->
         verify_tree_reuse(repo, file_changes, base_sha, existing_tree_sha, head_sha, token)
 
       # READ, and it disagrees: a commit body we understood whose first parent
       # is not the base this run verified (or which has no parents at all).
       # Somebody else moved this branch — a real conflict, and a claim about the
       # repository that an operator can go and check.
+      #
+      # "Is a list" does not make the parents readable. `[%{}]`, `["bad"]` and
+      # `[%{"sha" => 999}]` carry no usable parent sha, so there is nothing to
+      # have disagreed WITH — those are unreadable, not conflicting.
       {:ok, %{"tree" => %{"sha" => tree_sha}, "parents" => parents}}
       when is_binary(tree_sha) and is_list(parents) ->
-        {:error, :head_ref_conflict}
+        if Enum.all?(parents, &match?(%{"sha" => sha} when is_binary(sha), &1)) do
+          {:error, :head_ref_conflict}
+        else
+          {:error, :provider_response_unrecognized}
+        end
 
       # NOT read. The old clause here was named
       # `_mismatched_or_unexpected_shape`, which admits the conflation: it

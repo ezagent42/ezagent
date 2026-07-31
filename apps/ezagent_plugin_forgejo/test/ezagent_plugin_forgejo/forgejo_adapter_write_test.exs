@@ -1189,6 +1189,55 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
       end
     end
 
+    # The decisive case for WHERE the refusal belongs.
+    #
+    # An unreadable entry only endangers anything when the next action would be
+    # a WRITE. If the match was found among the readable entries we reuse it and
+    # create nothing, so an unrelated unreadable sibling cannot produce a
+    # duplicate — refusing there would trade the duplicate we prevent for a
+    # total failure of pull-request creation in any repository that happens to
+    # contain one odd open PR.
+    test "an unreadable sibling does not block reusing a match that was found" do
+      target = %{
+        "number" => 7,
+        "html_url" => "https://#{@host}/#{@repo_id}/pulls/7",
+        "state" => "open",
+        "merged" => false,
+        "head" => %{"ref" => @head_ref, "sha" => @head_sha},
+        "base" => %{"ref" => "main"}
+      }
+
+      # Someone else's open PR whose head shape this code cannot read.
+      unreadable_sibling = %{
+        "number" => 9,
+        "head" => %{"sha" => @base_sha},
+        "base" => %{"ref" => "main"}
+      }
+
+      routes =
+        happy_path()
+        |> Map.put(
+          {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+          fn conn ->
+            page =
+              conn
+              |> Plug.Conn.fetch_query_params()
+              |> Map.fetch!(:query_params)
+              |> Map.get("page", "1")
+
+            Req.Test.json(conn, if(page == "1", do: [unreadable_sibling, target], else: []))
+          end
+        )
+        |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/pulls"})
+
+      stub(routes)
+
+      assert {:ok, %{external_id: "7"}} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
+    end
+
     # `limit` is a REQUEST, not a guarantee: `max_response_items` is an instance
     # setting (50 on the probe instance, but configurable). On an instance that
     # caps lower, a FULL page comes back shorter than asked for — and treating

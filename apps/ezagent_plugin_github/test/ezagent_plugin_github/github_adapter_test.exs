@@ -1051,7 +1051,17 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
           %{"unexpected" => true},
           %{"tree" => %{"sha" => "tree_x"}},
           %{"tree" => "not-a-map", "parents" => [%{"sha" => sha}]},
-          %{"tree" => %{"sha" => "tree_x"}, "parents" => "not-a-list"}
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => "not-a-list"},
+          # Correct parent, but the tree sha is not a string. This one reached
+          # `verify_tree_reuse/6`, where a non-binary tree simply differs from
+          # the recomputed one and came back `:head_ref_conflict` — the exact
+          # fabrication this change removes, surviving one level deeper.
+          %{"tree" => %{"sha" => 12_345}, "parents" => [%{"sha" => sha}]},
+          # Readable tree, but no usable parent sha to disagree WITH. "Is a
+          # list" was not enough to call the parents readable.
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => [%{}]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => ["bad"]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => [%{"sha" => 999}]}
         ] do
       expect_mint(:change_request_write)
 
