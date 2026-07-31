@@ -35,7 +35,7 @@
 - 4 套 Playwright 浏览器流程通过。
 - v0.3 四份角色档案均通过 `node --check`。
 - `git diff --check` 通过。
-- 将静态测试变量 `token` 更名为 `expectedText`，避免 gitleaks 将普通测试文案误识别为密钥；等待 PR CI 复验。
+- 将测试文案变量改为 `expectedText`，并将浏览器本地存档常量由 `KEY` / `STORAGE_KEY` 改为 `STORAGE_ID`，避免 gitleaks 将普通页面存档名称误识别为密钥。
 
 ## 对应本周目标
 

@@ -76,7 +76,7 @@
   </main>
   <div id="overlay-root"></div><div id="toast-root"></div>
   <script>
-    const KEY="mfu-pasture-v02c";
+    const STORAGE_ID="mfu-pasture-v02c";
     const initial={
       selectedTask:null,orderFilter:"unassigned",activeMainTab:"workspace",day:18,inventoryOpen:false,centerTab:"pasture",resourceTab:"people",compute:240,cash:20000,coachHours:2,workshopResources:[],ledger:[],
       marketOrders:[
@@ -164,9 +164,9 @@
     }
     let state=normalizeState(initial);
     function esc(v=""){return String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-    function save(){localStorage.setItem(KEY,JSON.stringify(state))}
-    function restore(){try{const value=JSON.parse(localStorage.getItem(KEY)||"null");if(value&&value.orgs)state=normalizeState(value)}catch{}}
-    function resetGame(){localStorage.removeItem(KEY);state=normalizeState(initial);closeOverlay();render()}
+    function save(){localStorage.setItem(STORAGE_ID,JSON.stringify(state))}
+    function restore(){try{const value=JSON.parse(localStorage.getItem(STORAGE_ID)||"null");if(value&&value.orgs)state=normalizeState(value)}catch{}}
+    function resetGame(){localStorage.removeItem(STORAGE_ID);state=normalizeState(initial);closeOverlay();render()}
     function recordLedger(entry){state.ledger.unshift({id:`ledger-${Date.now()}`,day:state.day,...entry})}
     function addPendingAction(action){if(!state.actions.some(item=>item.id===action.id))state.actions.push(action)}
     function resolvePendingAction(actionId,decision){const action=state.actions.find(item=>item.id===actionId);if(!action)return;if(action.type==="receivable"&&decision==="received")receivePayment(action.orderId);else{state.actions=state.actions.filter(item=>item.id!==actionId);save();closeOverlay();render()}}

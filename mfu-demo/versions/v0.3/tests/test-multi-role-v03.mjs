@@ -44,7 +44,7 @@ for (const expectedText of [
   "我发布的"
 ]) assert.ok(html.includes(expectedText), `missing multi-role behavior: ${expectedText}`);
 
-assert.ok(!html.includes('const KEY="mfu-pasture-v02c"'), "v0.3 must not reuse v0.2 storage");
+assert.ok(!html.includes('const STORAGE_ID="mfu-pasture-v02c"'), "v0.3 must not reuse v0.2 storage");
 assert.ok(html.includes("workshopChoices"), "organization workshop must use current role resources");
 assert.ok(!html.includes('const choices=[{id:"person-ahe"'), "workshop must not hard-code incubator resources");
 assert.ok(!html.includes('id="role-view-notice"'), "duplicate current-role label must be removed");

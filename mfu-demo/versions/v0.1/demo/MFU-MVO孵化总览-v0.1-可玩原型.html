@@ -52,7 +52,7 @@
   <div id="overlay-root"></div>
   <div id="toast-root"></div>
   <script>
-    const STORAGE_KEY="mfu-mvo-incubator-v01";
+    const STORAGE_ID="mfu-mvo-incubator-v01";
     const baseMvos=[
       {id:"growth",name:"校园增长 MVO",icon:"📈",graphType:"fork",steps:["用户洞察","图文素材","社群活动","效果验证"],gems:["👩‍🎓","🤖","🧑‍🎓","📊"],rep:58,status:"running",progress:72,task:"旧书店新生增长方案",certified:false},
       {id:"video",name:"短视频交付 MVO",icon:"🎬",graphType:"linear",steps:["策划","生产","发布"],gems:["🧑‍🎓","🤖","🎞️"],rep:66,status:"review",progress:91,task:"本地品牌短视频计划",certified:true},
@@ -69,9 +69,9 @@
     const initialState={incubated:false,completed:false,resources:{talent:12,agent:6,ip:4,compute:240,cash:20000},mvos:baseMvos};
     const state=structuredClone(initialState);
     function esc(v=""){return String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-    function persist(){localStorage.setItem(STORAGE_KEY,JSON.stringify(state))}
-    function restore(){try{const saved=JSON.parse(localStorage.getItem(STORAGE_KEY)||"null");if(saved&&Array.isArray(saved.mvos))Object.assign(state,initialState,saved,{resources:{...initialState.resources,...saved.resources}})}catch{}}
-    function resetDemo(){localStorage.removeItem(STORAGE_KEY);Object.assign(state,structuredClone(initialState));closeOverlay();renderDashboard()}
+    function persist(){localStorage.setItem(STORAGE_ID,JSON.stringify(state))}
+    function restore(){try{const saved=JSON.parse(localStorage.getItem(STORAGE_ID)||"null");if(saved&&Array.isArray(saved.mvos))Object.assign(state,initialState,saved,{resources:{...initialState.resources,...saved.resources}})}catch{}}
+    function resetDemo(){localStorage.removeItem(STORAGE_ID);Object.assign(state,structuredClone(initialState));closeOverlay();renderDashboard()}
     function graphData(mvo){
       if(mvo.nodes&&mvo.edges)return {nodes:mvo.nodes,edges:mvo.edges};
       const layouts={
