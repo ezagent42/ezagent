@@ -322,7 +322,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"full_name" => "owner/repo", "default_branch" => "main"})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.resolve_repository(ctx(), repo())
   end
 
@@ -335,7 +335,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         ] do
       stub_with_mint(:metadata_read, fn conn -> Req.Test.json(conn, partial) end)
 
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                GitHubAdapter.resolve_repository(ctx(), repo()),
              "expected refusal for #{inspect(partial)}"
     end
@@ -575,6 +575,79 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:error, :base_ref_not_found} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  # ── create_change_request: a malformed 2xx at each write/reconcile step ──
+  #
+  # The read path's parse refusals are covered further down. These pin the WRITE
+  # and reconciliation steps, which carry their own `{:ok, _unexpected}` clauses.
+  # Without them a later refactor could keep the read path classified correctly
+  # and quietly collapse these back onto `:provider_unavailable` — which is
+  # RETRYABLE, so a provider whose git-data payloads changed shape would be
+  # re-asked until the deadline instead of reported to an operator.
+  for {step, label} <- [
+        {4, "base-commit"},
+        {5, "blob"},
+        {6, "tree"},
+        {7, "commit"},
+        {9, "pull-request search"}
+      ] do
+    test "create_change_request refuses a malformed 2xx from the #{label} step" do
+      expect_mint(:change_request_write)
+      expect_create_steps_until(unquote(step))
+
+      # A 2xx whose body carries none of the keys this step reads.
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, %{"unexpected" => true}) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               )
+    end
+  end
+
+  # The successful responses for create_change_request's ordered HTTP batch,
+  # steps 1..n-1, so the test above can arm exactly one malformed reply at step n.
+  defp expect_create_steps_until(step) do
+    sha = String.duplicate("a", 40)
+
+    responses = [
+      # 1. GET base ref
+      fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end,
+      # 2. GET head ref -> absent
+      fn conn -> Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"})) end,
+      # 3. POST create ref
+      fn conn ->
+        conn
+        |> Plug.Conn.put_status(201)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      end,
+      # 4. GET base commit -> tree sha
+      fn conn ->
+        Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+      end,
+      # 5. POST blob
+      fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"}) end,
+      # 6. POST tree
+      fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"}) end,
+      # 7. POST commit
+      fn conn ->
+        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      end,
+      # 8. PATCH advance ref
+      fn conn ->
+        conn
+        |> Plug.Conn.put_status(200)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      end
+    ]
+
+    responses
+    |> Enum.take(step - 1)
+    |> Enum.each(&Req.Test.expect(@stub_name, fn conn -> &1.(conn) end))
   end
 
   test "create_change_request maps a PR-create 422 to change_request_conflict" do
@@ -1117,7 +1190,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
   end
 
@@ -1161,7 +1234,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
   end
 
@@ -1279,7 +1352,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1297,7 +1370,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1326,7 +1399,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"total_count" => 0})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1404,7 +1477,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1424,7 +1497,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1443,7 +1516,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1457,7 +1530,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"total_count" => 1, "check_runs" => ["unexpected"]})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1466,7 +1539,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, ["unexpected"])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1485,7 +1558,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         ])
       end)
 
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                GitHubAdapter.list_reviews(ctx(), repo(), change_request_id()),
              "expected refusal for user: #{inspect(user)}"
     end

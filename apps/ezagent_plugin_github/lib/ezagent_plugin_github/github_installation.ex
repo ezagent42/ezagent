@@ -44,9 +44,11 @@ defmodule EzagentPluginGithub.GitHubInstallation do
 
   Returns `{:ok, token}` or `{:error, reason}` where `reason` is a stable
   `GitHubClient` error atom (`:authentication_rejected`, `:repository_not_found`,
-  `:provider_denied`, `:provider_unavailable`, …) or `:installation_scope_mismatch`
+  `:provider_denied`, `:provider_unavailable`, …), `:installation_scope_mismatch`
   when GitHub's response does not exactly match the requested repository and
-  permissions. Raises (fail-loud) only if the App private key is missing or
+  permissions, or `:provider_response_unrecognized` when the mint succeeded but
+  its body could not be read at all — a distinction the workflow layer acts on,
+  since only the first of those three is worth retrying. Raises (fail-loud) only if the App private key is missing or
   malformed — an operations misconfiguration, deliberately distinct from a
   GitHub-side rejection.
   """
@@ -71,7 +73,7 @@ defmodule EzagentPluginGithub.GitHubInstallation do
       validate_scope(response, repo_full_name, permissions)
     else
       {:error, reason} -> {:error, reason}
-      {:ok, _unexpected_shape} -> {:error, :provider_unavailable}
+      {:ok, _unexpected_shape} -> {:error, :provider_response_unrecognized}
     end
   end
 

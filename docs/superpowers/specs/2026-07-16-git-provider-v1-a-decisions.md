@@ -171,6 +171,11 @@ and makes no network call.
 
 ## 6. Error union
 
+> **Amended 2026-07-31** by
+> `2026-07-31-git-provider-error-union-unreadable-response-amendment.md`, which
+> adds `:provider_response_unrecognized`. The union below is left as written —
+> it is the record of what was decided on 2026-07-16, not a live listing.
+
 ```elixir
 @type t ::
         :provider_account_not_connected

@@ -122,7 +122,8 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :checks_unavailable,
     :provider_account_not_connected,
     :credential_backend_unavailable,
-    :private_checkout_not_supported
+    :private_checkout_not_supported,
+    :provider_response_unrecognized
   ]
 
   @codes @spec_codes ++ @port_codes ++ @runner_codes ++ [:internal_error]
@@ -162,7 +163,17 @@ defmodule EzagentPluginGitWorkflow.Blocker do
     :base_ref_not_found,
     :provider_account_not_connected,
     :invalid_change_request,
-    :internal_error
+    :internal_error,
+    # The provider ANSWERED — a successful 2xx — and the adapter could not
+    # normalize what it said. Re-asking gets the same bytes back, so a retry
+    # buys nothing but the wait before the deadline converts this into
+    # `:observation_incomplete`, which reads to an operator like a timeout and
+    # hides the actual event: the provider's API no longer matches this code.
+    #
+    # This is the half of the old `:provider_unavailable` that never belonged
+    # in the retryable bucket. The other half — transport failure, unclassified
+    # status — stays there and stays correct.
+    :provider_response_unrecognized
   ]
 
   # Transient/provider — bounded retry (§7.2 second and fourth bullets).

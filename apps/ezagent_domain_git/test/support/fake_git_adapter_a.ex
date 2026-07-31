@@ -18,6 +18,7 @@ defmodule Ezagent.DomainGit.TestSupport.FakeGitAdapterA do
     :change_request_conflict,
     :checks_unavailable,
     :provider_unavailable,
+    :provider_response_unrecognized,
     :authentication_rejected
   ]
 

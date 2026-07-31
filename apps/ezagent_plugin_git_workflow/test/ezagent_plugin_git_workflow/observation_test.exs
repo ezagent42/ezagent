@@ -575,6 +575,28 @@ defmodule EzagentPluginGitWorkflow.ObservationTest do
       assert version == run.state_version
     end
 
+    # The state-machine consequence of the split, asserted against the retryable
+    # case directly above it: the SAME shape of adapter failure produces a
+    # different run outcome depending on whether re-asking could ever help.
+    #
+    # Before the split both were `:provider_unavailable`, so a provider whose
+    # response shape had changed sat at "pr_open" being re-asked until the
+    # observation deadline turned it into `:observation_incomplete` — a code
+    # that reads like a timeout and hides the schema drift that actually
+    # happened.
+    test "an unreadable provider response CASes to blocked instead of being retried", %{run: run} do
+      install(list_checks: {:error, :provider_response_unrecognized})
+
+      assert {:blocked, %{code: :provider_response_unrecognized, retryable: false}} =
+               Observation.tick(run.id)
+
+      assert {:ok,
+              %WorkflowRun{
+                status: "blocked",
+                last_error_code: "provider_response_unrecognized"
+              }} = Store.read_run(run.id)
+    end
+
     test "checks_unavailable is retryable, not a reason to fake a summary", %{run: run} do
       install(list_checks: {:error, :checks_unavailable})
 

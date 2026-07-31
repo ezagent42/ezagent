@@ -177,6 +177,24 @@ defmodule EzagentPluginGithub.GitHubInstallationTest do
   # ── token_for_operation/3 — strict response validation, fail closed ────
 
   describe "token_for_operation/3 — strict response validation fails closed" do
+    # The installation LOOKUP answering 2xx without an `id` is a response this
+    # code cannot read — distinct from `:installation_scope_mismatch`, which
+    # means the mint succeeded and we read a scope that was not the one asked
+    # for. Both are terminal, but only this one says "GitHub's response shape
+    # changed", which is the thing an operator would go and look at.
+    #
+    # (A malformed MINT body still answers `:installation_scope_mismatch` via
+    # `validate_scope/3`. That conflation is cosmetic — the code is already
+    # terminal, so no run is retried on it — and is left alone here.)
+    test "a 2xx installation lookup with no id is unrecognized, not a scope mismatch" do
+      Req.Test.stub(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"unexpected" => true})
+      end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubInstallation.token_for_operation(repo(), :metadata_read)
+    end
+
     test "repository_selection: all is rejected" do
       assert_scope_mismatch(:metadata_read, &Map.put(&1, "repository_selection", "all"))
     end

@@ -455,6 +455,11 @@ Contract tests prove:
 
 ## 10. Error model
 
+> **Amended 2026-07-31** by
+> `2026-07-31-git-provider-error-union-unreadable-response-amendment.md`, which
+> adds `:provider_response_unrecognized`. The union below is left as written —
+> it is the record of what was decided on 2026-07-16, not a live listing.
+
 `Ezagent.DomainGit.Error.t()` is the exact Plan A union:
 
 ```elixir
