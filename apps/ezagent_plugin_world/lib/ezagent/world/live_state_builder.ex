@@ -233,13 +233,22 @@ defmodule Ezagent.World.LiveStateBuilder do
   def bootstrap_layout(workspace_uri),
     do: layout_for_route(%{component: "sessions_table", title: "Chat"}, workspace_uri, nil)
 
+  # The bounded mount payload for `data-caller` — pushed at `mount/3` before the
+  # async `:load_world_state` read completes. `display_name` is resolved HERE
+  # (via the same `CallerDisplay.name/1` the post-load `caller_payload/4` uses)
+  # rather than stubbed to the raw URI: the React island reads `data-caller`
+  # exactly ONCE at mount (`WorldRenderer.mounted()` never re-reads it), so if
+  # the stub loses the mount-vs-async race the top-right account menu is stuck
+  # rendering the raw `entity://…` URI for the whole session. Resolving here
+  # costs one indexed profile PK read (`Profile.get/1` = `Repo.get`), NOT the
+  # caps/session/workspace read path this mount defers — first paint is correct.
   @doc false
   def bootstrap_caller_payload(caller, workspace) do
     %{
       "entity_uri" => encode_uri(caller),
       "workspace_uri" => encode_uri(workspace),
       "current_workspace_name" => workspace_name(workspace),
-      "display_name" => encode_uri(caller),
+      "display_name" => caller_display_name(caller),
       "is_system_member" => false,
       "workspaces" => []
     }
