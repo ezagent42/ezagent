@@ -132,20 +132,30 @@ via `Code.Typespec.fetch_types/1`. (The copy's stated reason — "`t()` is a TYP
 there is nothing to read at runtime" — was untrue; typespecs live in the BEAM
 chunk.)
 
-## 7. Adoption outside this change
+## 7. Forgejo adopts it here, not later
 
-`apps/ezagent_plugin_forgejo/` is not on main; it exists only on PR #1643 and
-carries the same conflation across **19** production sites (`normalize.ex` 13,
-`forgejo_adapter.ex` 6), having been modelled on the GitHub adapter. It adopts
-this member when it rebases.
+An earlier draft of this section said Forgejo was absent from main and would
+adopt the new member when PR #1643 rebased. **#1643 merged on 2026-07-30**, so
+by the time this change landed Forgejo was already in the tree carrying the same
+conflation — modelled on the GitHub adapter, 19 production sites. Leaving it
+would have shipped one tree in which the identical schema-drift event stops
+immediately for GitHub and retries to the observation deadline for Forgejo.
 
-Two of those sites must NOT be moved mechanically:
+So it is migrated here: **14 runtime sites** (10 in `normalize.ex`, 4 in
+`forgejo_adapter.ex`) plus the three `@spec` declarations in `normalize.ex`,
+and the 11 `normalize_test` assertions that had frozen the old answer.
 
-- `forgejo_adapter.ex`, the `@max_items` clause of `all_pages/5` — the 2,000-item
-  pagination-cap refusal. Deterministic, but it is OUR limit being hit, not a
-  response we could not read. It needs its own answer.
-- any site reached from a transport failure or an unclassified status rather
-  than from a parsed 2xx body.
+**Two sites deliberately keep `:provider_unavailable`:**
 
-This is the reason the member was added at the domain tier once rather than
-inside a provider PR: each new provider otherwise copies the conflation.
+- the `@max_items` clause of `all_pages/5` — the 2,000-item pagination cap.
+  Deterministic, but nothing was unreadable: the instance was still answering
+  and OUR limit was reached. Calling that a provider schema problem points an
+  operator at the wrong system. Now covered by a test, which it was not before.
+- `map_error/3`'s fallback — the transport/status residue, the same role as the
+  GitHub client's unclassified-status fallback, and retryable for the same
+  reason.
+
+The general rule this leaves: a provider plugin's parse refusals are
+`:provider_response_unrecognized`; its own limits and its transport residue stay
+`:provider_unavailable`. A third provider should be read against that line
+rather than against either adapter's line count.

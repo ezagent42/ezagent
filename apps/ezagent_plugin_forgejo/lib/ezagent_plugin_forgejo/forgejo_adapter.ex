@@ -50,7 +50,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
            ForgejoClient.get(base, "/repos/#{id}", token, req_opts()) do
       {:ok, repo}
     else
-      {:ok, _unexpected} -> {:error, :provider_unavailable}
+      {:ok, _unexpected} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, map_error(marker, :resolve_repository, :read)}
     end
   end
@@ -594,6 +594,11 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # why the cap REFUSES rather than returning what it has.
   defp all_pages(base, token, path), do: all_pages(base, token, path, 1, [])
 
+  # Deliberately NOT `:provider_response_unrecognized`. Every other refusal in
+  # this module is "the provider said something we cannot read"; this one is
+  # "the provider is still talking and WE stopped listening". Nothing about the
+  # response was unreadable — our own cap was reached. Classifying it as a
+  # provider schema problem would point an operator at the wrong system.
   defp all_pages(_base, _token, _path, _page, acc) when length(acc) >= @max_items,
     do: {:error, :provider_unavailable}
 
@@ -618,7 +623,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         all_pages(base, token, path, page + 1, acc ++ items)
 
       {:ok, _other} ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
 
       {:error, marker} ->
         {:error, marker}
@@ -643,7 +648,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp branch(env, ref) do
     case branch_commit(env, ref) do
       {:ok, %{"id" => sha}} when is_binary(sha) -> {:ok, sha}
-      {:ok, _other} -> {:error, :provider_unavailable}
+      {:ok, _other} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, marker}
     end
   end
@@ -656,7 +661,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
            req_opts()
          ) do
       {:ok, %{"commit" => commit}} when is_map(commit) -> {:ok, commit}
-      {:ok, _other} -> {:error, :provider_unavailable}
+      {:ok, _other} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, marker}
     end
   end
@@ -735,11 +740,24 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp map_error(:provider_denied, _operation, _kind), do: :repository_read_denied
 
   # Already a closed `DomainGit.Error` — `CredentialSource` returns those
-  # directly, so they pass through rather than being re-mapped.
+  # directly, and this module's own read helpers (`all_pages/5`'s cap and its
+  # non-list-body refusal, `branch/2`, `branch_commit/2`) return a classification
+  # they have ALREADY made. Re-mapping those would discard the answer: every one
+  # of them fell through to the residue clause below and came back out as
+  # `:provider_unavailable`, so a refusal this module raised on purpose was
+  # indistinguishable from a transport failure by the time a caller saw it.
   defp map_error(marker, _operation, _kind)
-       when marker in [:provider_account_not_connected, :credential_backend_unavailable],
+       when marker in [
+              :provider_account_not_connected,
+              :credential_backend_unavailable,
+              :provider_response_unrecognized,
+              :provider_unavailable
+            ],
        do: marker
 
+  # The transport/status residue, and it stays retryable: these markers come
+  # from a request that did not produce a readable 2xx at all, not from a body
+  # this code could not parse. Same split as the GitHub client's own fallback.
   defp map_error(_marker, _operation, _kind), do: :provider_unavailable
 
   defp req_opts, do: Application.get_env(:ezagent_plugin_forgejo, :adapter_req_opts, [])

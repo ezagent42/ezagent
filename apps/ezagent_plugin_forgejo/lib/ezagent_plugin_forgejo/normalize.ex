@@ -33,7 +33,8 @@ defmodule EzagentPluginForgejo.Normalize do
   alias Ezagent.DomainGit.{Check, ChangeRequest, Review}
 
   @doc "Normalizes a pull-request body into provider-neutral change-request facts."
-  @spec change_request(term()) :: {:ok, ChangeRequest.t()} | {:error, :provider_unavailable}
+  @spec change_request(term()) ::
+          {:ok, ChangeRequest.t()} | {:error, :provider_response_unrecognized}
   def change_request(
         %{
           "number" => number,
@@ -56,11 +57,11 @@ defmodule EzagentPluginForgejo.Normalize do
 
     case ChangeRequest.new(attrs) do
       {:ok, change_request} -> {:ok, change_request}
-      {:error, _reason} -> {:error, :provider_unavailable}
+      {:error, _reason} -> {:error, :provider_response_unrecognized}
     end
   end
 
-  def change_request(_body), do: {:error, :provider_unavailable}
+  def change_request(_body), do: {:error, :provider_response_unrecognized}
 
   @doc """
   Normalizes a `CombinedStatus` body into provider-neutral check facts.
@@ -68,7 +69,7 @@ defmodule EzagentPluginForgejo.Normalize do
   Takes the combined endpoint's `statuses` array, which Forgejo has already
   reduced to the latest entry per context.
   """
-  @spec checks(term()) :: {:ok, [Check.t()]} | {:error, :provider_unavailable}
+  @spec checks(term()) :: {:ok, [Check.t()]} | {:error, :provider_response_unrecognized}
   def checks(%{"statuses" => statuses}) when is_list(statuses) do
     statuses
     |> Enum.reduce_while({:ok, []}, fn status, {:ok, acc} ->
@@ -92,7 +93,7 @@ defmodule EzagentPluginForgejo.Normalize do
   # Any OTHER non-list `statuses` is a shape this code does not understand --
   # refuse rather than report "no checks", which a caller reads as "nothing
   # failed".
-  def checks(%{"statuses" => _malformed}), do: {:error, :provider_unavailable}
+  def checks(%{"statuses" => _malformed}), do: {:error, :provider_response_unrecognized}
 
   # An ABSENT `statuses` key is refused, not read as "no checks".
   #
@@ -102,7 +103,7 @@ defmodule EzagentPluginForgejo.Normalize do
   # unmeasured shape is the same fail-open in a different costume: the caller
   # reads it as "nothing failed" and a real failing check disappears on a
   # response the code did not understand.
-  def checks(_body), do: {:error, :provider_unavailable}
+  def checks(_body), do: {:error, :provider_response_unrecognized}
 
   @doc """
   Normalizes a review list, keeping only genuinely submitted reviews.
@@ -110,7 +111,7 @@ defmodule EzagentPluginForgejo.Normalize do
   Review requests and unsubmitted drafts are dropped rather than mapped onto a
   state they do not mean.
   """
-  @spec reviews(term()) :: {:ok, [Review.t()]} | {:error, :provider_unavailable}
+  @spec reviews(term()) :: {:ok, [Review.t()]} | {:error, :provider_response_unrecognized}
   def reviews(body) when is_list(body) do
     Enum.reduce_while(body, {:ok, []}, fn entry, {:ok, acc} ->
       case review(entry) do
@@ -125,7 +126,7 @@ defmodule EzagentPluginForgejo.Normalize do
     end
   end
 
-  def reviews(_body), do: {:error, :provider_unavailable}
+  def reviews(_body), do: {:error, :provider_response_unrecognized}
 
   # ── internals ────────────────────────────────────────────────────────
 
@@ -152,11 +153,11 @@ defmodule EzagentPluginForgejo.Normalize do
 
     case Check.new(attrs) do
       {:ok, check} -> {:ok, check}
-      {:error, _reason} -> {:error, :provider_unavailable}
+      {:error, _reason} -> {:error, :provider_response_unrecognized}
     end
   end
 
-  defp check(_status), do: {:error, :provider_unavailable}
+  defp check(_status), do: {:error, :provider_response_unrecognized}
 
   # `merged` is a boolean beside `state`; a merged pull request still reports
   # state "closed". Reading only `state` would record every merge as a plain
@@ -192,7 +193,7 @@ defmodule EzagentPluginForgejo.Normalize do
        when is_binary(login) and login != "" do
     case review_state(entry) do
       nil ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
 
       state ->
         attrs = %{
@@ -204,12 +205,12 @@ defmodule EzagentPluginForgejo.Normalize do
 
         case Review.new(attrs) do
           {:ok, review} -> {:ok, [review]}
-          {:error, _reason} -> {:error, :provider_unavailable}
+          {:error, _reason} -> {:error, :provider_response_unrecognized}
         end
     end
   end
 
-  defp review(_entry), do: {:error, :provider_unavailable}
+  defp review(_entry), do: {:error, :provider_response_unrecognized}
 
   # Dismissal is checked BEFORE the state string: a dismissed approval is a
   # withdrawn approval, and reading `state` first would keep counting it.
