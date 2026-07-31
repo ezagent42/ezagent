@@ -74,9 +74,15 @@ defmodule Ezagent.Capability.Normalize do
   @doc """
   Deserialize a JSON-decoded STRING-keyed map back to `%Capability{}`. This is
   the TOLERANT read-side decode (contrast the strict `normalize!/2` grant
-  chokepoint): a missing `"action"`/`"workspace_uri"` defaults to `:any` and an
-  unknown atom/module name collapses to `:any` rather than raising, so a row
-  authored before the action-axis / `workspace_uri` field still round-trips.
+  chokepoint): a missing `"action"`/`"workspace_uri"` KEY defaults to `:any`, so
+  a row authored before the action-axis / `workspace_uri` field still round-trips.
+  A PRESENT atom/module NAME is resolved via `String.to_atom/1` (create-if-absent,
+  see `string_to_atom_or_module/1`), so it round-trips to its concrete value
+  regardless of which modules are loaded on the decoding node — closing the #189
+  cold-node silent-widening where a valid `"create_session"` collapsed to `:any`
+  merely because the defining app was unstarted on a partial `bin/ezagent eval`
+  cutover node. (A well-formed but genuinely unknown name becomes its own concrete
+  atom, authorization-inert, never the `:any` wildcard.)
   CAUTION: because a missing `"workspace_uri"` becomes `:any` (cross-workspace),
   this decode does NOT itself reject a field-less row — the durable
   `users.caps_json` path relies on every persisted cap actually carrying the
@@ -271,19 +277,48 @@ defmodule Ezagent.Capability.Normalize do
 
   defp string_to_atom_or_module("any"), do: :any
 
+  # Resolve a serialized axis value (kind / behavior / action) back to its
+  # concrete atom or module.
+  #
+  # #189 cold-node fix — use `String.to_atom/1` (create-if-absent), NOT
+  # `String.to_existing_atom/1` + `rescue -> :any`. `to_existing_atom` couples
+  # cap-decode correctness to the CALLING NODE'S MODULE-LOAD STATE: on a PARTIAL
+  # release node (a `bin/ezagent eval` cutover node that only started
+  # `:ezagent_domain_identity` + deps, per `EzagentCore.Release.identity_cutover/1`)
+  # the module that defines an action atom like `:create_session` (the Workspace
+  # Kind, in `:ezagent_domain_workspace`, NOT a dep of identity) is never loaded,
+  # so its atom is absent from the table, `to_existing_atom` raised, and the
+  # rescue SILENTLY WIDENED the concrete action to `:any` (workspace-admin) while
+  # `decode_signature/1` preserved the signature verbatim — the #189 identity-plane
+  # divergence (`create_session` in `users.caps_json`, `any` in the Store mirror,
+  # SAME signature) that the fleet-parity barrier caught. Verified live 2026-07-31:
+  # the identical `caps_json` decodes to `:create_session` via warm `rpc` (full app,
+  # atom loaded) but `:any` via cold `eval` (partial app, atom absent).
+  # `grant_migration.ex` already flags this same rescue-to-`:any` as a
+  # silent-broadening hazard for a renamed module string.
+  #
+  # `to_atom` yields the SAME global atom the warm node resolves, so the decode is
+  # load-state-INDEPENDENT — a valid `create_session` never collapses to `:any`
+  # just because the defining app is unstarted. It is also strictly SAFER than the
+  # old rescue: a genuinely unknown/defunct name now becomes its own concrete atom
+  # (authorization-inert — it matches nothing) instead of the `:any` WILDCARD (which
+  # matches everything). Atom-exhaustion is not a concern: every `from_map/1` caller
+  # decodes OUR OWN bounded, minted cap vocabulary — durable `users.caps_json` /
+  # `identity_caps` rows and the digest-bound `%Capability{}` `callback_artifact`,
+  # all written by `to_map/1` — never arbitrary unbounded external input. The `cond`
+  # still classifies module (`Elixir.`-prefixed / bare-capitalized) vs plain-atom
+  # shape so the reconstructed atom is correct.
   defp string_to_atom_or_module(s) when is_binary(s) do
     cond do
       String.starts_with?(s, "Elixir.") ->
-        String.to_existing_atom(s)
+        String.to_atom(s)
 
       Regex.match?(~r/^[a-z_][a-z0-9_]*$/, s) ->
-        String.to_existing_atom(s)
+        String.to_atom(s)
 
       true ->
-        String.to_existing_atom("Elixir." <> s)
+        String.to_atom("Elixir." <> s)
     end
-  rescue
-    ArgumentError -> :any
   end
 
   defp instance_to_wire(:any), do: "any"
