@@ -502,12 +502,12 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
     {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex", {:advance_ref, 4},
      :remote, "external_id/0",
      "aeaaea930168eba204c55971004f4ba5e3685c2009c91ea1573620f8ab0bc791"},
-    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex",
-     {:build_repository_ref, 2}, :remote, "base_ref/0",
-     "11c737367308843f8786ce82ced303a80ad8b560d653eb2553a05d2e0f683ec1"},
-    {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex",
-     {:build_repository_ref, 2}, :remote, "external_id/0",
-     "0d2049d520a8a4fc39932a6941025ced4232814f9c81b89ccfa5f2a837d48681"},
+    # `base_ref/0` and `external_id/0` were removed here, not suppressed: the
+    # two sites they fingerprinted were the `data["default_branch"] ||
+    # input.base_ref` / `data["full_name"] || input.external_id` fallbacks, and
+    # those fallbacks are gone — `resolve_repository/2` now requires the
+    # provider's own response to carry both rather than answering with the
+    # value the caller asked about. Census 35 → 33 for this file.
     {"apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_adapter.ex",
      {:build_repository_ref, 2}, :remote, "repository_uri/0",
      "dc5c268da62ff947cadff871678ecb8186a4b07c3bb789a8b4865612b8ed911c"},
