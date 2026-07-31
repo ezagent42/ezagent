@@ -12,7 +12,30 @@
 
 ---
 
-## 0. 结论摘要
+## 0. 意图:这件事到底为什么做(**不是性能**)
+
+A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一真相源)违规,不是"把全扫换成索引查询"的性能优化。权威表述见 allenwoods 的研究备忘 `docs/notes/2026-07-30-decentralization-hypothesis.md` 第 9 行(已在 main):
+
+> 成员真相住在**两个地方**:(i) session 的 `:members` roster(chat-slice map,唯一写者 `add_self`)—— **投递目标,显式容忍陈旧,不携带任何权限**;(ii) 每个成员**自己** `:identity` store 里的 member-cap —— **动作时授权**(撤销 ⇒ 立即拒收)。
+> 入会时的授予是 `:async` best-effort **出于必然** —— 在 `handle_join` 内同步授予会**死锁** session 创建(已实证)—— 所以**漂移是结构性的**:要么 roster 有陈旧条目(fail-closed,无 cap 就收不到),要么**只有 cap 没进 roster(没被当作投递目标,直到被 heal)**。
+> 已落地:M-6、**M-8**(`reconcile_after_load` 从并集翻成**精确 cap 持有者投影** —— "caps win",补齐 + 驱逐)、#1611。
+> **#1620 计划把 `:members` 做成纯投影 —— 今天它仍然是单独存储的,只是被 reconcile 一下。**
+> 分类:**[B] textbook** —— 两个成员真相源;归属权(caps)正在指派中。
+
+**所以 A4-2 的目标 = 把 roster 从"第二真相源"降级成"caps 的纯投影"**,让"谁是成员"只有一个答案:谁持有 member-cap。
+
+**两条必须先说清的口径(直接决定验收标准):**
+
+1. **roster 不是权限,只是投递目标**。收信闸(M-9 `holds_member_cap_over?`)在**投递时**独立查 member-cap 并过完整 `Cap.authorize` —— 这一条**保持不变**。⇒ roster **稍旧是安全的**(fail-closed),目标不是"集合永远完全相等",而是"**不丢投递**"。
+2. 因此 §2 的七类差异**危害不等**:
+   - **过报**(roster 多出人):投递到他 → **收信闸当场拒**,不泄漏消息内容;真实危害只有"成员名单 UI 里显示了前成员/从未加入者"(`SessionReads.members` 会读它)。**级别:正确性/观感,fail-closed。**
+   - **漏报**(cap 持有者不在 roster):**他收不到消息,直到被 heal** —— 这是**真丢投递**。**级别:功能损坏,必须修。**
+
+⇒ **优先级:先修漏报,再收敛过报。** 而漏报里最主要的那条(钥匙还在投递 outbox、尚未落库)**恰好就是 #207/#1501 已记在案的残留**("`EntityCaps.load` 只读已持有的 cap,没有并入 pending outbox 行")—— 同一件事,不是新问题。
+
+---
+
+## 0b. 结论摘要
 
 1. **action 过滤:仍然必需**,而且有**两条独立**理由(§2.1)。
 2. **但远不止如此** —— 把 roster 换成 `grantees_of` 查询**不是等价替换**:
@@ -96,6 +119,21 @@
 - 可借的系统主体**已被 #154 清空**(`system_principal/catalog.ex:99, :255-280`),只剩 `system://bootstrap`。
 - 测试里手搓的 quadruple-`:any` admin witness **绝不能进生产**(= CLAUDE.md 安全姿态点名要防的"构造假 admin caps 绕 authz"漂移)。
 - ⇒ 唯一正当方向:给 `GranteeIndex` 加 **"target 自读" arity**(target Kind 在自己进程内查"谁持有指向我的 cap",凭自身权威免 `manages?`,概念上类比 `session/self_add.ex` 用 `authenticated_principal`)。**新决策,交 Allen。**
+
+## 3b. 分阶段 plan(建议次序,每阶段独立可合)
+
+按 §0 的口径(先修漏报=真丢投递,再收敛过报=fail-closed 的观感问题),拆成 5 段:
+
+| 阶段 | 做什么 | 为什么排这个位置 | 依赖/gate |
+|---|---|---|---|
+| **P1 — 修漏报(真丢投递)** | roster 派生时把 **pending absorb outbox** 一并算进来(或 join 后 `await` 落库再 reconcile,二选一)。**不换源**,仍用今天的 `EntityCaps` 读法 | 唯一会让成员**收不到消息**的一类;且与 #207/#1501 的"held ∪ pending"是同一件事,应该一次做掉、别两处各修一半 | 与 #1501 协调(可能就该合进 #1501) |
+| **P2 — 索引侧补齐(让它有资格当源)** | ① `grantees_of` 加 action 维过滤 ② 加 provenance 过滤 ③ 补 `revoke_provisioning`/`tombstone` 的 reindex | 这三条是"索引要成为可信派生源"的前置;**现在做不影响任何生产行为**(`grantees_of` 目前零生产调用点),纯加固 | 无;可独立合。③ 与 allen 07-30 在 #1606 要求补 `activate_locked` reindex 同族 |
+| **P3 — 授权口子(需 Allen 拍板)** | 给 `GranteeIndex` 加 **"target 自读" arity**:session 在自己进程内查"谁持有指向我的 cap",凭自身权威免 `manages?` | reconcile 在 `activate` 里跑、无 user caller;两个替代方案已证死(`:vm_internal` 在 `manages?/3` 直接 false;可借的系统主体 #154 已清空)。**这是新机制,不能自作主张** | **Allen 决策** |
+| **P4 — 换源 + 降级成纯投影** | reconcile 改走索引;`:members` 不再作为独立真相存储(或明确降级为纯缓存,唯一写者=投影) | 这才是 #192 真正的收尾。**建议排在 #189 identity cutover 激活之后** —— 否则 dev/prod 处于 pre-epoch,索引与 `EntityCaps.load` 的源不相交(§2.3/§2.4),等于把 roster 建在一个测试口径与线上口径不一致的地基上 | P1+P2+P3 + **#189 cutover** |
+| **P5 — 回归与闸** | §5 的双向断言 + M-9 回归 + epoch 双跑 | 收口 | P4 |
+
+**如果只能做一段**:做 **P1**(它修的是真丢投递),其余可以等。
+**如果 Allen 认为 P4 不值得**:P1+P2 仍有独立价值(修投递丢失 + 加固索引),`:members` 维持"reconcile 出来的投影"现状即可 —— 此时 #192 只是收窄而非关闭,应明确记账。
 
 ## 4. M-9 保持
 
