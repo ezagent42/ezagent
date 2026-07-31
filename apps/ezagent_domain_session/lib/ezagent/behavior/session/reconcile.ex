@@ -95,10 +95,32 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
       match?({:ok, "anon-" <> _}, Ezagent.URI.name(uri))
   end
 
-  # True iff `candidate` HOLDS the EXACT member-cap over `session_uri` — LIVE
-  # caps, K4 provenance-filtered BEFORE the identity test. Rescued per-candidate
-  # so a raising read is treated as "not a holder" and never crashes
-  # `activate/2`.
+  # True iff `candidate` HOLDS the EXACT member-cap over `session_uri` — its
+  # EFFECTIVE caps, K4 provenance-filtered BEFORE the identity test. Rescued
+  # per-candidate so a raising read is treated as "not a holder" and never
+  # crashes `activate/2`.
+  #
+  # EFFECTIVE, not merely HELD (#192 P1): the at-join member-cap grant is
+  # `:async` OF NECESSITY — a synchronous grant from inside `handle_join`
+  # DEADLOCKS session creation — so there is ALWAYS a window in which a member
+  # has joined but the signed artifact is still in the durable
+  # `Cap.DeliveryOutbox` rather than in the holder's own store. Reading only the
+  # LANDED set (`EntityCaps.load/1`) makes that member invisible to the
+  # projection, and the roster is what `Resolver`'s `valid_member?` filter uses
+  # to fan a message out — so the member is DROPPED from the recipient set.
+  # For a human that self-heals (the message is persisted before routing, so it
+  # shows up in history); for an AGENT member — which is delivery-driven and
+  # does not poll history — the message is simply never acted upon, and no
+  # message-level catch-up exists (`Socialware.MemberBackfill` backfills caps
+  # and mounts, NOT messages).
+  #
+  # `EntityCaps.effective_caps/1` is the codebase's existing answer to "does
+  # this principal hold X", already the read used by the join idempotency check
+  # (`MemberCap` :50), orchestrator caps and the member-cap migration: it merges
+  # `DeliveryOutbox.list_pending_absorb_caps/1` (the in-flight cap's DURABLE
+  # owner, #207/#1409) into the held set and then applies the self-license and
+  # current-generation gates. Its `{:error, _}` stays FAIL-CLOSED here, matching
+  # the rescue policy below.
   #
   # EXACT identity, NOT `matches?/2` (codex BLOCKER): the projection must be
   # SEEDED only from the concrete member-cap `cap(:session, Session, :receive,
@@ -113,10 +135,21 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
   def member_cap_holder?(%URI{} = candidate, %URI{} = session_uri, %URI{} = ws) do
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
-    candidate
-    |> Ezagent.EntityCaps.load()
-    |> Enum.filter(&Ezagent.Capability.granted_by_entity?/1)
-    |> Enum.any?(fn cap -> Ezagent.Capability.identity_key(cap) == target_key end)
+    case Ezagent.EntityCaps.effective_caps(candidate) do
+      {:ok, caps} ->
+        caps
+        |> Enum.filter(&Ezagent.Capability.granted_by_entity?/1)
+        |> Enum.any?(fn cap -> Ezagent.Capability.identity_key(cap) == target_key end)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Session.Reconcile.member_cap_holder?/3: effective-cap read failed for " <>
+            "candidate #{URI.to_string(candidate)}: #{inspect(reason)} — treated as " <>
+            "non-holder (fail-closed targeting)."
+        )
+
+        false
+    end
   rescue
     error ->
       Logger.warning(

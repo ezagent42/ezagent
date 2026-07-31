@@ -144,7 +144,7 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 
 | 阶段 | 做什么 | 为什么排这个位置 | 依赖/gate |
 |---|---|---|---|
-| **P1 — 修漏报(真丢投递)** | roster 派生时把 **pending absorb outbox** 一并算进来(或 join 后 `await` 落库再 reconcile,二选一)。**不换源**,仍用今天的 `EntityCaps` 读法 | 唯一会让成员**收不到消息**的一类;与 #207/#1501 的"held ∪ pending"是同一件事,应一次做掉 | 与 #1501 协调(可能就该合进 #1501) |
+| **P1 — 修漏报(真丢投递)** | `reconcile.ex` 的 `member_cap_holder?/3` 由 `EntityCaps.load/1`(**只看已落库**)改用 **`EntityCaps.effective_caps/1`**(`entity_caps.ex:196`,其 `effective_read` `:212` 已并入 `DeliveryOutbox.list_pending_absorb_caps` 并套上 self-license 与 current-generation 两道门)。**不换源、不新增机制** | 唯一会让成员**收不到消息**的一类。**这不是待设计的机制,是读错了函数** —— `effective_caps` 已是代码库对"某主体是否持有 X"的既有答案(join 幂等判断 `member_cap.ex:50` / orchestrator caps `caps.ex:61` / 成员 cap 迁移 `:200` 都用它) | 无(纯读面对齐);与 #1501 同源,可互相印证 |
 | **P1.5 — 撤销完整性(issue #1665)** | 退出/移除时撤销**全部参与档**(`:receive` + `:send`/`:leave`/`:attach`),覆盖 leave(`membership.ex:760`)与 remove 三处(`:946`/`:970`/`:1002`)、user 与 agent 两侧 | **安全缺陷**(write-after-leave,§0 口径 2);且**必须在 P4 之前** —— 否则换源后历史成员因仍持 Session-behavior cap 被全部算回 roster | 独立可合;**P4 的前置** |
 | **P2 — 索引侧补齐 + 内部机制入口** | ① `grantees_of` 加 action 维过滤 ② 加 provenance 过滤 ③ 补 `revoke_provisioning`/`tombstone` 的 reindex ④ **加 `members_of(target)` 内部机制入口(不走 `manages?`),对外 `grantees_of/4` 原样不动**(裁决 1) | 前三条是"索引要成为可信派生源"的前置,**现在做不影响任何生产行为**(`grantees_of` 目前零生产调用点);④ 是换源的调用面 | 无;可独立合。③ 与 allen 07-30 在 #1606 要求补 `activate_locked` reindex 同族 |
 | **P4 — 换源 + 降级成纯投影** | `:members` 退化成 **`Membership.members_of(session)`** 的投影;不再作为独立真相存储;**实体不直接读 cap 表** | #192 真正的收尾。**epoch 前提已满足** —— Allen 实测 prod `Cutover.activated?() => true`(canary 同) | P1 + **P1.5** + P2 |
@@ -179,6 +179,13 @@ A4-2 只改 `reconcile_after_load`(delivery-targeting 投影的 seeding),不碰 
 2. ~~授权门形状~~ → **改走 ActionSet 分层**:`ActionSet.Session.Membership` + `GranteeIndex` 内部机制入口(不走 `manages?`),对外 `grantees_of/4` 不动;**实体不直接读 cap 表**,原提的"target 自读 arity"作废(§3.3)。
 3. ~~离会残留参与档是否单开~~ → **单开 issue #1665**,且定级上调为**安全缺陷**(write-after-leave,非 roster 观感),**排在 P4 之前**(P1.5)。
 
-**仍待定:**
-4. **P1 的 outbox 处理方式**:并进查询 vs join 后 `await` 落库再 reconcile?(建议与 #1501 一并定,别两处各修一半)
-5. **generation 语义变化**(被撤销成员从 roster 掉出)接受为改进?
+**深挖后自我消解的两条(原列为开放问题,实为伪问题):**
+4. ~~P1 的 outbox 处理方式(并进 vs await)~~ → **代码库已有答案**:`EntityCaps.effective_caps/1` 就是"已落库 ∪ 在途"的既有读面(§3b-P1)。不该拿出去让人选,该去查"这问题别处有没有已经定过"。
+5. ~~generation 语义变化是否接受~~ → **是投影的定义,不是待批的行为 delta**。目标既然是"roster = caps 的纯投影",撤销者掉出去就是定义本身;且 `effective_read` 已带 current-generation 门。
+
+**真正仍待定的一条(方向反转的固有代价,原先完全没识别):**
+6. **P4 把方向倒过来之后,在途的授予怎么进投影?**
+   正向可见、反向不可见:`effective_caps` 能替**某个人**把在途 cap 算进来;但反查索引只有**已落库**的,而 `cap_delivery_outbox` 的 `target_uri` 是**收钥匙的人**、cap 封在不透明 `payload` 里 —— **无法按"钥匙指向哪个资源"反查**。三个选项:
+   - **(a) 索引在 grant 入 outbox 时就写**(cap-as-truth 的一致解:在途 cap 已有 durable owner〔#207/#1409〕,按定义已是真相),落库后改标记;要动 grant 路径。
+   - **(b) 给 outbox 加可按资源反查的列/索引**,查询时并上。
+   - **(c) 接受窗口 + 靠 drain-on-ready 触发一次 re-reconcile** —— 最省,但窗口内 roster 不准,**对 agent 成员仍有永久漏消息风险**(agent 由投递驱动、不翻历史,且无消息级补投)。

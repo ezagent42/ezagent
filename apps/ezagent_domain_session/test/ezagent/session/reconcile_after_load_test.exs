@@ -23,6 +23,30 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
     uri
   end
 
+  # A principal that HAS a durable self-license (so the effective-cap read's
+  # all-or-nothing self-license gate passes) but whose Kind is NOT live, so an
+  # async absorb parks in the durable `Cap.DeliveryOutbox` instead of landing in
+  # its own store. That is the structural in-flight window of #192: the at-join
+  # grant is `:async` OF NECESSITY — a synchronous grant inside `handle_join`
+  # deadlocks session creation — and a not-yet-ready receiver is exactly the
+  # #207/#1409 case the outbox was built to own.
+  defp offline_principal(prefix) do
+    uri = Ezagent.URI.worker("system", "#{prefix}-#{uniq()}")
+
+    {:ok, pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: uri, initial_caps: MapSet.new()})
+
+    # Activation provisions the durable self-license; take the process down so
+    # the member-cap absorb below cannot be applied and stays pending.
+    :ok =
+      DynamicSupervisor.terminate_child(
+        EzagentDomainInstanceMessage.AgentSupervisor,
+        pid
+      )
+
+    uri
+  end
+
   defp new_session(prefix, owner) do
     {:ok, session_uri, _meta} =
       EzagentDomainInstanceMessage.SessionCreator.create_session(
@@ -106,6 +130,40 @@ defmodule Ezagent.ActionSet.Session.ReconcileAfterLoadTest do
         {:admin, Ezagent.Entity.User.admin_uri()},
         :sync
       )
+  end
+
+  test "P1/#192: a member whose cap is still IN FLIGHT (pending in the delivery outbox) IS projected as a member" do
+    owner = confirmed_user("inflight-owner")
+    session = new_session("inflight", owner)
+    member = offline_principal("inflight-member")
+    ws = Capability.workspace_of(session)
+    target_key = Capability.identity_key(member_cap_over(session))
+
+    {:ok, artifact} =
+      Ezagent.Identity.Grant.issue_cap(
+        member,
+        member_cap_over(session),
+        {:admin, Ezagent.Entity.User.admin_uri()}
+      )
+
+    :ok = Ezagent.Identity.absorb_cap(member, artifact)
+
+    # PRECONDITION — the artifact is genuinely IN FLIGHT: durably owned by the
+    # outbox, NOT yet in the holder's own (landed) set. This is exactly the
+    # state the old `EntityCaps.load/1`-based projection could not see, so this
+    # test is red before the fix and green after.
+    assert {:ok, pending} = Ezagent.Cap.DeliveryOutbox.list_pending_absorb_caps(member)
+    assert Enum.any?(pending, &(Capability.identity_key(&1) == target_key))
+
+    refute member
+           |> Ezagent.EntityCaps.load()
+           |> Enum.any?(&(Capability.identity_key(&1) == target_key))
+
+    # BEHAVIOUR UNDER TEST — the projection counts the in-flight holder, so the
+    # member is not dropped from `Resolver`'s fan-out during the window. For an
+    # AGENT member that drop is permanent (delivery-driven, no history poll, no
+    # message-level catch-up).
+    assert Reconcile.member_cap_holder?(member, session, ws)
   end
 
   test "reconcile_after_load heals cap-only drift — a member-cap holder missing from the projection is ADDED [test 5]" do
