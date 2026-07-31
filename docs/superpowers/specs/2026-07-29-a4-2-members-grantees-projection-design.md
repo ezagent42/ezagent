@@ -95,11 +95,16 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 
 ### 2.4 epoch:测试与 dev/prod 不同口径
 
-- `config/test.exs:47` `identity_cutover_active_override = true` → **整个测试套跑在 post-epoch**。
-- `config/dev.exs:14-18`:dev/prod 走 DB epoch,operator 跑 `mix ezagent.identity.cutover` 之前一直 `:inactive`。
+**先把口径说准(避免"#189 没落"的误读)**:**#189 的代码已经合了,而且是刻意做成 DORMANT 的** —— 翻不翻 epoch 是一个**运维动作**,不随合并发生。逐条实证:
+
+- migration `20260729130000_create_identity_cutover.exs` **只建表、不插行**,其注释即设计声明:「Merging PR-3 does **NOT** flip production reads to the store; it lands the store-authoritative code **DORMANT** behind this epoch. The operator activates the epoch **ONLY after** `mix ezagent.identity.cutover` runs the backfill + the fleet-parity barrier … and the barrier reports COMPLETE.」
+- 判定(`identity/cutover.ex:144-156` `db_status`):**有行 → `:active`;无行 → 明确 `:inactive`(真 pre-cutover 节点);读不到 → `:unknown` 且不缓存**,gated 消费者一律 fail-closed 回落 legacy 语义。
+- `Cutover.activate/0`(`cutover.ex:218`)的调用者**只有** `mix ezagent.identity.cutover`(`mix/tasks/ezagent.identity.cutover.ex:24`)与 `cutover/runbook.ex:194` —— **boot 不跑**(各 app `application.ex` 无调用点)。
+- `config/test.exs:47` 强制 `identity_cutover_active_override = true` → **测试套跑在 post-epoch**;而 #1627 MAJOR-3 把该 override 做成**编译期 `MIX_ENV=test` only**(`cutover.ex:119` `@override_seam = Mix.env() == :test`)→ **dev/prod 构建里 override 整个被编译掉**,只能读 DB 那一行。
 - pre-epoch 下镜像失败被**吞成 `:ok`**:user 侧 `user_store.ex:207-229`;agent 侧 `store.ex:628` → `:659-664 swallow_pre_epoch`。
 
-⇒ **"原子同事务、永不过报"的论证只在 epoch 激活后成立**;在 dev/prod 现状下索引一致性是 best-effort。**这是最危险的一条:CI 全绿不代表线上一致。**
+⇒ **"原子同事务、永不过报"的论证只在 epoch 已激活的库上成立**;在尚未跑过 cutover task 的库(含本地 dev)上,索引一致性是 best-effort。**最危险的一条:CI 全绿不代表线上一致。**
+⇒ **代码答不了的一问**:目标环境(canary / prod)到底跑过 cutover task 没有?查法 = 该库 `identity_cutover` 表有无那行,或节点上 `Ezagent.Identity.Cutover.activated?()`。**若已激活,§3b-P4 的这条顾虑即消失。**
 
 ### 2.5 存量覆盖
 
@@ -129,7 +134,7 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 | **P1 — 修漏报(真丢投递)** | roster 派生时把 **pending absorb outbox** 一并算进来(或 join 后 `await` 落库再 reconcile,二选一)。**不换源**,仍用今天的 `EntityCaps` 读法 | 唯一会让成员**收不到消息**的一类;且与 #207/#1501 的"held ∪ pending"是同一件事,应该一次做掉、别两处各修一半 | 与 #1501 协调(可能就该合进 #1501) |
 | **P2 — 索引侧补齐(让它有资格当源)** | ① `grantees_of` 加 action 维过滤 ② 加 provenance 过滤 ③ 补 `revoke_provisioning`/`tombstone` 的 reindex | 这三条是"索引要成为可信派生源"的前置;**现在做不影响任何生产行为**(`grantees_of` 目前零生产调用点),纯加固 | 无;可独立合。③ 与 allen 07-30 在 #1606 要求补 `activate_locked` reindex 同族 |
 | **P3 — 授权口子(需 Allen 拍板)** | 给 `GranteeIndex` 加 **"target 自读" arity**:session 在自己进程内查"谁持有指向我的 cap",凭自身权威免 `manages?` | reconcile 在 `activate` 里跑、无 user caller;两个替代方案已证死(`:vm_internal` 在 `manages?/3` 直接 false;可借的系统主体 #154 已清空)。**这是新机制,不能自作主张** | **Allen 决策** |
-| **P4 — 换源 + 降级成纯投影** | reconcile 改走索引;`:members` 不再作为独立真相存储(或明确降级为纯缓存,唯一写者=投影) | 这才是 #192 真正的收尾。**建议排在 #189 identity cutover 激活之后** —— 否则 dev/prod 处于 pre-epoch,索引与 `EntityCaps.load` 的源不相交(§2.3/§2.4),等于把 roster 建在一个测试口径与线上口径不一致的地基上 | P1+P2+P3 + **#189 cutover** |
+| **P4 — 换源 + 降级成纯投影** | reconcile 改走索引;`:members` 不再作为独立真相存储(或明确降级为纯缓存,唯一写者=投影) | 这才是 #192 真正的收尾。**前提是目标环境的 cutover epoch 已激活** —— #189 代码已合但按设计 DORMANT(§2.4),未激活的库上索引与 `EntityCaps.load` 的源不相交,等于把 roster 建在测试口径与线上口径不一致的地基上。**若线上已跑过 cutover task,此前提即满足,P4 可照常排** | P1+P2+P3 +(**确认目标环境 epoch 已激活**) |
 | **P5 — 回归与闸** | §5 的双向断言 + M-9 回归 + epoch 双跑 | 收口 | P4 |
 
 **如果只能做一段**:做 **P1**(它修的是真丢投递),其余可以等。
@@ -156,7 +161,7 @@ A4-2 只改 `reconcile_after_load`(delivery-targeting 投影的 seeding),不碰 
 
 ## 6. 交 Allen 的开放问题
 
-1. **§3.5 次序**:A4-2 是否应排在 #189 identity cutover 激活之后?(v3 推荐:是)
+1. **§3b-P4 的前提**:**canary / prod 上的 cutover epoch 已经激活了吗?**(#189 代码已合但按设计 DORMANT,需 operator 跑 `mix ezagent.identity.cutover` 才翻;查法见 §2.4 末。)**已激活 → P4 照常排;未激活 → P4 应等它**。这一问代码答不了,需运维/部署侧确认。
 2. **§3 授权门**:新增 target-自读 arity(唯一可行方向)的形状?
 3. **§3.4 outbox**:并进查询 vs join 后 await?
 4. **generation 语义变化**(被撤销成员从 roster 掉出)接受为改进?
