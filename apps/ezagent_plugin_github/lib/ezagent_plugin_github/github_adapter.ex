@@ -324,21 +324,26 @@ defmodule EzagentPluginGithub.GitHubAdapter do
       when is_binary(existing_tree_sha) ->
         verify_tree_reuse(repo, file_changes, base_sha, existing_tree_sha, head_sha, token)
 
-      # READ, and it disagrees: a commit body we understood whose first parent
-      # is not the base this run verified (or which has no parents at all).
-      # Somebody else moved this branch — a real conflict, and a claim about the
-      # repository that an operator can go and check.
-      #
-      # "Is a list" does not make the parents readable. `[%{}]`, `["bad"]` and
-      # `[%{"sha" => 999}]` carry no usable parent sha, so there is nothing to
-      # have disagreed WITH — those are unreadable, not conflicting.
+      # Exactly one parent, readable, and it is not our base (the clause above
+      # took the equal case). Somebody else moved this branch — a real conflict,
+      # and a claim about the repository an operator can go and check.
+      {:ok, %{"tree" => %{"sha" => tree_sha}, "parents" => [%{"sha" => parent_sha}]}}
+      when is_binary(tree_sha) and is_binary(parent_sha) ->
+        {:error, :head_ref_conflict}
+
+      # Exactly one parent and we cannot read its sha: nothing to have disagreed
+      # WITH, so this is unreadable rather than conflicting.
+      {:ok, %{"tree" => %{"sha" => tree_sha}, "parents" => [_unreadable]}}
+      when is_binary(tree_sha) ->
+        {:error, :provider_response_unrecognized}
+
+      # Zero or two-plus parents. CARDINALITY alone settles it: the commit this
+      # adapter creates has exactly one parent, so this is provably not it —
+      # whether or not every entry is readable. Requiring all parents to carry a
+      # readable sha discarded a fact the response had already established.
       {:ok, %{"tree" => %{"sha" => tree_sha}, "parents" => parents}}
       when is_binary(tree_sha) and is_list(parents) ->
-        if Enum.all?(parents, &match?(%{"sha" => sha} when is_binary(sha), &1)) do
-          {:error, :head_ref_conflict}
-        else
-          {:error, :provider_response_unrecognized}
-        end
+        {:error, :head_ref_conflict}
 
       # NOT read. The old clause here was named
       # `_mismatched_or_unexpected_shape`, which admits the conflation: it

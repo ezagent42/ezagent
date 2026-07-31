@@ -1152,6 +1152,23 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
     #
     # That is a wrong WRITE, not a misreport — the strongest reason this one had
     # to be fixed rather than filed.
+    # One page of `entries`, then empty — the shape `all_pages/5` needs to stop.
+    defp pulls_returning(entries) do
+      happy_path()
+      |> Map.put(
+        {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
+        fn conn ->
+          page =
+            conn
+            |> Plug.Conn.fetch_query_params()
+            |> Map.fetch!(:query_params)
+            |> Map.get("page", "1")
+
+          Req.Test.json(conn, if(page == "1", do: entries, else: []))
+        end
+      )
+    end
+
     test "refuses when a pull entry cannot be read, rather than opening a duplicate" do
       unreadable = [
         # `head` present but `ref` missing — the field most likely to drift.
@@ -1189,15 +1206,36 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
       end
     end
 
-    # The decisive case for WHERE the refusal belongs.
-    #
-    # An unreadable entry only endangers anything when the next action would be
-    # a WRITE. If the match was found among the readable entries we reuse it and
-    # create nothing, so an unrelated unreadable sibling cannot produce a
-    # duplicate — refusing there would trade the duplicate we prevent for a
-    # total failure of pull-request creation in any repository that happens to
-    # contain one odd open PR.
-    test "an unreadable sibling does not block reusing a match that was found" do
+    # An entry whose head ref is READABLE AND DIFFERENT is proven not to be ours,
+    # so it must not block anything — even though its `base` is unreadable. The
+    # earlier readable/unreadable split failed this: it needed BOTH refs, so
+    # "demonstrably somebody else's" and "cannot tell" collapsed into one bucket
+    # and the first one blocked the repository for no reason.
+    test "an entry with a readable, different head does not block create" do
+      other = %{
+        "number" => 9,
+        "head" => %{"ref" => "someone/else"},
+        # base is unreadable — irrelevant, the head already settles it
+        "base" => %{"sha" => @base_sha}
+      }
+
+      stub(pulls_returning([other]))
+
+      assert {:ok, %Ezagent.DomainGit.ChangeRequest{}} =
+               ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
+
+      # Asserted, not inferred from the returned id: the point is that the
+      # create branch was REACHED, i.e. the unrelated entry blocked nothing.
+      assert_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}
+    end
+
+    # The counterpart, and the reason `{[single], _} -> reuse` was wrong: this
+    # entry supplies OUR base and no head, so nothing in it proves it is not a
+    # second pull request on the same head+base. The design's rule for that
+    # state is exactly-one-or-fail, and with an opaque candidate present the
+    # adapter cannot establish "exactly one" — reusing the readable one could
+    # silently attach the whole workflow to the wrong review history.
+    test "an opaque entry blocks reuse, because exactly-one cannot be established" do
       target = %{
         "number" => 7,
         "html_url" => "https://#{@host}/#{@repo_id}/pulls/7",
@@ -1207,32 +1245,16 @@ defmodule EzagentPluginForgejo.ForgejoAdapterWriteTest do
         "base" => %{"ref" => "main"}
       }
 
-      # Someone else's open PR whose head shape this code cannot read.
-      unreadable_sibling = %{
-        "number" => 9,
-        "head" => %{"sha" => @base_sha},
-        "base" => %{"ref" => "main"}
-      }
+      opaque = %{"number" => 9, "head" => %{"sha" => @base_sha}, "base" => %{"ref" => "main"}}
 
       routes =
-        happy_path()
-        |> Map.put(
-          {"GET", "/api/v1/repos/#{@repo_id}/pulls"},
-          fn conn ->
-            page =
-              conn
-              |> Plug.Conn.fetch_query_params()
-              |> Map.fetch!(:query_params)
-              |> Map.get("page", "1")
-
-            Req.Test.json(conn, if(page == "1", do: [unreadable_sibling, target], else: []))
-          end
-        )
+        [opaque, target]
+        |> pulls_returning()
         |> Map.delete({"POST", "/api/v1/repos/#{@repo_id}/pulls"})
 
       stub(routes)
 
-      assert {:ok, %{external_id: "7"}} =
+      assert {:error, :provider_response_unrecognized} =
                ForgejoAdapter.create_change_request(ctx(), repo!(), changes(), request!())
 
       refute_received {:request, {"POST", "/api/v1/repos/#{@repo_id}/pulls"}}

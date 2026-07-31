@@ -565,13 +565,18 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # nothing, so an unrelated unreadable sibling cannot produce a duplicate.
         # Refusing there would trade the duplicate for a total failure of
         # pull-request creation in any repository containing one odd open PR.
-        {readable, unreadable} = Enum.split_with(pulls, &readable_pull?/1)
+        states = Enum.map(pulls, &match_state(&1, env))
+        matched = for {pull, :match} <- Enum.zip(pulls, states), do: pull
 
-        case {Enum.filter(readable, &exact_match?(&1, env)), unreadable} do
+        case {matched, :unknown in states} do
+          # Two PROVEN matches: already the anomalous state §6.2 fails closed on,
+          # and no opaque entry can make it less so.
           {[_, _ | _], _} -> {:error, :change_request_conflict}
-          {[single], _} -> Normalize.change_request(single)
-          {[], []} -> create_pull(env, request)
-          {[], _unreadable} -> {:error, :provider_response_unrecognized}
+          {[single], false} -> Normalize.change_request(single)
+          {[], false} -> create_pull(env, request)
+          # An opaque candidate is still on the table, so "exactly one" — the
+          # precondition for BOTH reuse and create — cannot be established.
+          {_, true} -> {:error, :provider_response_unrecognized}
         end
 
       {:error, marker} ->
@@ -579,23 +584,42 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     end
   end
 
-  # Both refs must be present AND strings before a comparison against them
-  # means anything. Without this, `get_in/2` answered `nil`, `nil == head_ref`
-  # answered `false`, and "we could not read this entry" became "this entry is
-  # not the one" — the shape of every fail-open in this module.
-  defp readable_pull?(%{"head" => %{"ref" => head}, "base" => %{"ref" => base}})
-       when is_binary(head) and is_binary(base),
-       do: true
+  # THREE answers, not two. `exact_match?/2` originally had two — match or not —
+  # and `get_in/2` answering `nil` for a missing field made "we could not read
+  # this entry" arrive as "this entry is not the one", which filtered an
+  # unreadable candidate out and let find-or-create open a duplicate.
+  #
+  # Collapsing to readable/unreadable instead was the opposite error: an entry
+  # whose head ref is present and DIFFERENT is proven not to be ours, and
+  # blocking on it stops pull-request creation for the whole repository over a
+  # PR that demonstrably has nothing to do with this run.
+  #
+  #   :match    — both refs read, both equal
+  #   :nonmatch — a ref we could read is different; the other need not be read
+  #   :unknown  — neither ref proves it either way
+  @spec match_state(term(), map()) :: :match | :nonmatch | :unknown
+  defp match_state(pull, %{head_ref: head_ref, base_ref: base_ref}) when is_map(pull) do
+    head = ref_of(pull, "head")
+    base = ref_of(pull, "base")
 
-  defp readable_pull?(_pull), do: false
-
-  # Only ever reached for entries `readable_pull?/1` already vouched for, so a
-  # `false` here means a genuine non-match rather than an unreadable entry.
-  defp exact_match?(pull, %{head_ref: head_ref, base_ref: base_ref}) when is_map(pull) do
-    get_in(pull, ["head", "ref"]) == head_ref and get_in(pull, ["base", "ref"]) == base_ref
+    cond do
+      head == head_ref and base == base_ref -> :match
+      is_binary(head) and head != head_ref -> :nonmatch
+      is_binary(base) and base != base_ref -> :nonmatch
+      true -> :unknown
+    end
   end
 
-  defp exact_match?(_pull, _env), do: false
+  defp match_state(_pull, _env), do: :unknown
+
+  # Total on purpose: `get_in/2` raises on a scalar under "head", and a nil here
+  # has to mean "not readable" rather than "absent ref equals absent ref".
+  defp ref_of(pull, key) do
+    case Map.get(pull, key) do
+      %{"ref" => ref} when is_binary(ref) -> ref
+      _ -> nil
+    end
+  end
 
   # `GET /pulls` has no head/base filter (findings §2.1), so the match is made
   # client-side over the whole open list -- which means the whole list has to be

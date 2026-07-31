@@ -1110,6 +1110,41 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     end
   end
 
+  # Cardinality alone settles this one. The commit this adapter creates has
+  # exactly ONE parent, so a two-parent commit is provably not it — whether or
+  # not the extra parent entry is readable. Checking every parent for a readable
+  # sha answered `:provider_response_unrecognized` here and threw away a fact
+  # the response had already established.
+  test "create_change_request treats a multi-parent head as a conflict even if one parent is malformed" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+
+    for parents <- [[%{"sha" => sha}, %{}], [%{"sha" => sha}, %{"sha" => 999}]] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"tree" => %{"sha" => "tree_x"}, "parents" => parents})
+      end)
+
+      assert {:error, :head_ref_conflict} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected conflict for #{inspect(parents)}"
+    end
+  end
+
   test "create_change_request returns head_ref_conflict when the existing head's parent does not match the expected base" do
     sha = String.duplicate("a", 40)
     other_sha = String.duplicate("z", 40)
