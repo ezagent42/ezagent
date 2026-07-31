@@ -117,7 +117,7 @@ A0 ──────── A1 ──────── A2 ───────
 
 - **agent 体验**：与今天完全一致——只改文件，不感知 git。可选地允许它本地 commit。
 - **凭据位置**：仅平台侧 git 子进程 env。
-- **保住**：CapBAC 完整；remote 与 ref 由 task policy 钉死；无 force-push / 无删分支路径；审计可归属到每次 dispatch。
+- **保住**：CapBAC 完整；**remote 与 refspec 由 task policy 钉死**（这才是安全性的来源，见 §8.1）；碰不到任何其它 ref；审计可归属到每次 dispatch。
 - **失去**：agent 无自主权——何时交付、交付几次由状态机决定。
 - **新建**：push 阶段 + 凭据供给 seam。
 
@@ -249,13 +249,14 @@ deploy key 是 per-repo 的：10 个仓库 = 10 把 key + 10 次配置。对「�
 | agent 多 commit 原样保留 | **❌** squash | ✅ | ✅ | ✅ | ✅ |
 | agent 自主决定交付时机 | ❌ | ❌ | ✅ | ✅ | ✅ |
 | agent 自行 fetch / rebase 上游 | ❌ | ❌ | 需加 action | ✅ | ✅ |
-| 多分支 stacking | ❌ | ❌ | 需加 action | ✅ | ✅ |
+| **git stacked PR**（B 基于未合并的 A）| ❌ | ❌ | 需加 action | ✅ | ✅ |
+| **合并顺序编排**（dev-together 的 "stack"，见 §8.1）| ✅ | ✅ | ✅ | ✅ | ✅ |
 | 删除 / 二进制 / 权限位 | **❌** | ✅ | ✅ | ✅ | ✅ |
 | **凭据是否进入 OS 子进程** | **否** | 是（平台侧）| 是（平台侧）| 是（agent 侧）| 是（agent 侧）|
 | **凭据是否进入 agent 进程** | 否 | 否 | **否** | 是 | 是 |
 | CapBAC 能表达「哪个仓库」 | ✅ | ✅ | ✅ | ✅（靠 token scope）| 仅 deploy key 时 ✅ |
 | CapBAC 能表达「哪个 ref」 | ✅ | ✅ | ✅ | ❌ → branch protection | ❌ → branch protection |
-| 禁 force-push / 禁删分支 | ✅ 结构性（无 push）| ✅ 结构性 | ✅ 结构性 | ❌ → branch protection | ❌ → branch protection |
+| 碰不到其它 ref / 不能删他人分支 | ✅ 结构性（无 push）| **✅ 结构性（refspec 钉死）** | **✅ 结构性（refspec 钉死）** | ❌ → branch protection | ❌ → branch protection |
 | 跨租户泄漏半径 | **零** | **可降至零**（见 §5.4）| **可降至零**（见 §5.4）| 1 小时 × 单仓库 | 长期 × key 可达范围 |
 | 审计可归属到 task | ✅ | ✅ | ✅ | ❌ | ❌ |
 | 凭据可自动过期 | n/a | ✅ 1 小时 | ✅ 1 小时 | ✅ 1 小时 | ❌ |
@@ -466,6 +467,69 @@ B1/B2 用不上此加固，因其凭据本就必须交付给 agent。
 B1 是 full-shell 里唯一不失控的形态——授权表达从「argv 白名单」搬到「token scope」。但要清楚换掉了什么：后果②无法归零（token 交付给 agent 后无法约束它写进 `~/.git-credentials` 或 env）、③不解决、④只能推断、cap 管不住 ref 与操作（移交 branch protection）。
 
 **不推荐 B2。** 除非确认目标包含**没有 API/token 机制的 git 主机**——这是 SSH 的唯一独占理由。在 full-shell 下 SSH 比 token 差得更多：shell 凭据已够不着 argv 白名单保护，唯一剩下的保护就是「凭据多窄、多短命」，而这恰是 token 强、SSH key 弱之处；且 ssh 要求私钥落盘，落盘即兄弟进程可读，无从加固。
+
+### 8.1 A1 vs B2′ — 基于代码实证的重算
+
+形态由 Allen 选定为 B2′。本节记录选型讨论中对 A1 的**四处修正**——初稿低估了 A1 的能力，据此得出的对比不成立。若后续回头评估，应以本节为准。
+
+#### 修正一：A1 支持 rebase
+
+`git rebase` 是**纯本地操作，不需要任何凭据**，agent 在 worktree 中随时可做，A1 不拦截。
+
+可 rebase 的目标范围也比初稿宽：provision 用 `clone --bare` + `fetch +refs/heads/*:refs/ezagent/origin/heads/*` + tags **全量**拉取（git_runner.ex:86-91），故 bare cache 内有上游**全部**分支与 tag。
+
+唯一缺口：rebase 到 provision **之后**上游新落的提交——需一次 fetch → 需凭据 → **平台加一个 refresh stage 即可解除**。
+
+#### 修正二：A1 的安全性来自 refspec 钉死，不是来自禁 force
+
+初稿把「禁 force-push」列为 A1 的结构性保障，**不准确**。那条 ref 是 `provision_id` 的 sha256 派生（git_runner.ex:57-65），**无人共享它**——对自己的 task 分支 force-push 是标准做法且无害。
+
+真正的保障是 **refspec 钉死 → 碰不到任何其它 ref**。因此 **rebase-after-push 在 A1 下同样可支持**：argv 用 `--force-with-lease`、refspec 保持钉死即可。
+
+#### 修正三：dev-together 的 "stack" 不是 git stacked PR，A1 完全支持
+
+`.claude/skills/dev-together/SKILL.md` 实证：
+
+- `:93` — `stack.md  # lead (push): returns in analyzed merge order`
+- `:243` — `push | lead | stack the returns + analyze merge order → stack.md`
+- `:79` — 「Branch model — Task branches merge into `main` only」
+- `:284` — 「Per-task branches + lead-merges keep parallel devs from colliding」
+
+即该工作流的 "stack" = **独立 per-task 分支 + lead 分析合并顺序**，而非「B 基于未合并的 A」。**这正是 A1 的模型。** A1 缺的是 git stacked PR，而该工作流不使用它。
+
+#### 修正四：团队共用同一 repo 在 A1 下不麻烦，且比 B2′ 更可控
+
+`Paths.derive` 中 `cache_identity(repository_uri, base_ref)`（paths.ex:47）**不含 provision_id**，而 `worktree_identity(provision_id, generation)` 含。故**同一 repo + 同一 base_ref 的所有 task 共享一个 bare cache，各挂一个 worktree**——git worktree 的标准用法：磁盘一份对象库，一个 task 的 fetch 更新共享 cache，**其它 task 立即可见新 refs**。
+
+并发写共享 cache 在 A1 下**由平台仲裁**（`branch_owner` 三态 `:available` / `:same_target` / `:conflict`）；**B2′ 下 agent 自行 fetch，平台不知情，共享 cache 的并发无仲裁**。
+
+其余同步顾虑逐条：
+
+| 顾虑 | 实际情况 |
+|---|---|
+| base 陈旧 | 该工作流靠 planning 阶段划分 owned surfaces/files 避免冲突（SKILL.md:153、:284），**不靠 rebase 解冲突**，与 A1 的快照式 base 契合 |
+| PR 合并时 base 落后 | GitHub "Update branch" 是**服务端操作**，无需本地 fetch，agent 不参与 |
+| CI 在陈旧 base 上跑 | 所有 per-task branch 模型的通病，B2′ 亦然，非 A1 特有 |
+
+#### 重算后的 A1 缺口
+
+| 初稿认为 A1 缺 | 修正后 |
+|---|---|
+| 不能 rebase | **能**；缺的只是 rebase 到最新上游（加一个 refresh stage）|
+| 不能 stacking | **该工作流的 "stack"（合并顺序）能**；git stacked PR 不能，但该工作流不用 |
+| 不能 force-push | **能**；对自己钉死的 ref force 是安全的 |
+| 团队共用 repo 会麻烦 | **不麻烦**，且并发仲裁比 B2′ 强 |
+
+> **A1 剩余的真实缺口只有一条：agent 不能自己决定何时 fetch / 何时交付，时机由状态机决定。**
+
+#### 决定性问题
+
+> 这个 git 能力是给**流水线**用的，还是给**协作者**用的？
+
+- **流水线**（一 task → 一 PR → 人 review → lead 排序合并）→ **A1 更划算**：4/4 安全满分、零 remote 配置、零 per-repo 运维、凭据自动过期、审计可归属到 task
+- **协作者**（agent 自主掌握 git 全部时机，需自行 fetch / rebase 到最新上游）→ **B2′**
+
+Allen 选择 B2′，对应「协作者」意图。**本节的记录目的**：若后续实际使用中「agent 改代码、交一个 PR」占绝大多数、极少真正需要自主 fetch，**A1 是可回头的更优点**——它更便宜（2–3 天 vs 2–4 天）、更安全（结构保证而非配置保证）、且无 per-repo 运维。
 
 ### 两条前置
 
