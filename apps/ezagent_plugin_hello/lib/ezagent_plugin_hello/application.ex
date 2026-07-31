@@ -146,10 +146,11 @@ defmodule EzagentPluginHello.Application do
   end
 
   # The supervisor for off-process page-generation Tasks (the LLM round-trip),
-  # the #185 env→curl credential bridge (env-gated; no-op without
-  # `DEEPSEEK_API_KEY`), the governed 官网 (`<home>/hello/ezagent-official`)
-  # deploy-seed (config-gated, dev/prod), plus an OPT-IN demo boot seed (off by
-  # default).
+  # the governed 官网 (`<home>/hello/ezagent-official`) deploy-seed
+  # (config-gated, dev/prod), plus an OPT-IN demo boot seed (off by default).
+  # The 官网 seed also re-wires the llm responder's DeepSeek credential
+  # (env-gated on `DEEPSEEK_API_KEY`) + its delivery rule — see
+  # `OfficialSiteSeed` (INTERIM workaround, #1667 lands the structural fix).
   @impl Ezagent.Plugin
   def children do
     [
@@ -175,9 +176,9 @@ defmodule EzagentPluginHello.Application do
   defp run_official_site_seed do
     # Let the session / socialware / identity supervisors settle before driving a
     # Turn (same rationale as the demo seed). Credential ordering is NOT carried
-    # by this delay — `OfficialSiteSeed.ensure/0` ensures the DeepSeek source
-    # itself as its first step, so the `llm` member is born credentialed
-    # regardless of how the standalone credential-bridge child is scheduled.
+    # by this delay — the `llm` member is born keyless (`credential_optional`)
+    # and `OfficialSiteSeed.ensure/0` dispatches the DeepSeek `:put_api_key`
+    # AFTER materialization, so scheduling against other children is irrelevant.
     Process.sleep(3_000)
 
     case EzagentPluginHello.OfficialSiteSeed.ensure() do

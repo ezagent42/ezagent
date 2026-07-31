@@ -45,14 +45,20 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
       &terminate/1
     )
 
-    # Isolate this test to the SITE-provisioning invariant. `ensure/0`'s second
-    # step wires the DeepSeek credential source, but that path (a) has its own
-    # coverage (`HelloCredentialSourceTest`) and (b) spawns a source agent +
-    # workspace-shared pointer into the home workspace whose ETS registrations
-    # survive the DataCase transaction and leak into sibling tests' cap-signing.
-    # With no key, `ensure_deepseek_source/0` is a no-op (`{:ok, :no_env_key}`)
-    # and the `llm` member keyless-spawns — the page still provisions, which is
-    # all this invariant asserts.
+    # Routing-registry hygiene: the seed's INTERIM delivery-rule wiring writes
+    # the live RoutingRegistry ETS, which survives the DataCase transaction's
+    # DB rollback. Reconcile ETS from the (clean) DB so no stale rule from a
+    # sibling test leaks into this one.
+    :ok =
+      Ezagent.Routing.Resolver.default_routing_table()
+      |> Ezagent.Routing.RuleStore.load_into_registry()
+
+    # Isolate this test to the SITE-provisioning invariant. `ensure/0` also
+    # wires the llm responder's DeepSeek credential (`:put_api_key` from
+    # `DEEPSEEK_API_KEY`); with no key that leg skips with a warning and the
+    # `llm` member keyless-spawns — the page still provisions, which is all
+    # this invariant asserts. The credential + delivery-rule wiring has its
+    # own test below (it sets the env var explicitly).
     prev_key = System.get_env("DEEPSEEK_API_KEY")
     System.delete_env("DEEPSEEK_API_KEY")
 
@@ -125,6 +131,64 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     # And the page is unchanged after the skipped run.
     assert {:ok, snapshot2} = ExternalFeed.snapshot(site_uri, User.admin_uri())
     assert snapshot2.page == expected_body
+  end
+
+  # INTERIM workaround wiring (removed by the #1667 structural fix): the seed
+  # must durably re-create what live-prod patched by hand — (a) the llm
+  # greeter's DeepSeek credential (from `DEEPSEEK_API_KEY`) and (b) the
+  # session-scoped MentionRouting delivery rule — both absence-gated, so a
+  # re-run neither re-dispatches the key nor duplicates the rule.
+  test "wires the llm credential + in_session delivery rule, idempotent on re-run" do
+    key = "sk-official-site-seed-test-key"
+    System.put_env("DEEPSEEK_API_KEY", key)
+    on_exit(fn -> System.delete_env("DEEPSEEK_API_KEY") end)
+
+    site_uri = OfficialSiteSeed.site_uri()
+    table = Ezagent.Routing.Resolver.default_routing_table()
+
+    assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
+    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+
+    # VM-global hygiene: the llm Kind process and the RoutingRegistry ETS
+    # entry survive the sandbox rollback — remove both so sibling tests see
+    # neither a stale credential nor a dead-agent delivery rule.
+    on_exit(fn ->
+      terminate(llm_uri)
+
+      table
+      |> delivery_rule_ids(site_uri, llm_uri)
+      |> Enum.each(&Ezagent.Routing.RuleStore.delete(&1, force: true))
+
+      :ok = Ezagent.Routing.RuleStore.load_into_registry(table)
+    end)
+
+    # (a) The DeepSeek credential landed on the llm greeter agent.
+    assert {:ok, slice} = Ezagent.Kind.read(llm_uri, :api_keys)
+    assert get_in(slice, [:keys, "deepseek"]) == key
+
+    # (b) The in_session → llm delivery rule exists (exactly one).
+    assert [_] = delivery_rule_ids(table, site_uri, llm_uri)
+
+    # Idempotent re-run: the already-provisioned path re-wires nothing — the
+    # credential is untouched and NO duplicate rule is added.
+    assert {:ok, {:already_provisioned, ^site_uri}} = OfficialSiteSeed.ensure()
+    assert {:ok, slice2} = Ezagent.Kind.read(llm_uri, :api_keys)
+    assert get_in(slice2, [:keys, "deepseek"]) == key
+    assert [_] = delivery_rule_ids(table, site_uri, llm_uri)
+  end
+
+  defp delivery_rule_ids(table, site_uri, llm_uri) do
+    matcher_json =
+      site_uri |> Ezagent.Routing.Matcher.in_session() |> Ezagent.Routing.Matcher.to_json()
+
+    receiver = URI.to_string(llm_uri)
+
+    table
+    |> Ezagent.Routing.RuleStore.list()
+    |> Enum.filter(fn rule ->
+      rule.matcher_data == matcher_json and receiver in (rule.receivers || [])
+    end)
+    |> Enum.map(& &1.id)
   end
 
   # #207: `resolve_founder` validates the configured email → Profile → workspace
