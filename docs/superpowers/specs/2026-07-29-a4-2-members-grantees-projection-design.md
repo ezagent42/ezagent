@@ -27,9 +27,17 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 **两条必须先说清的口径(直接决定验收标准):**
 
 1. **roster 不是权限,只是投递目标**。收信闸(M-9 `holds_member_cap_over?`)在**投递时**独立查 member-cap 并过完整 `Cap.authorize` —— 这一条**保持不变**。⇒ roster **稍旧是安全的**(fail-closed),目标不是"集合永远完全相等",而是"**不丢投递**"。
-2. 因此 §2 的七类差异**危害不等**:
-   - **过报**(roster 多出人):投递到他 → **收信闸当场拒**,不泄漏消息内容;真实危害只有"成员名单 UI 里显示了前成员/从未加入者"(`SessionReads.members` 会读它)。**级别:正确性/观感,fail-closed。**
-   - **漏报**(cap 持有者不在 roster):**他收不到消息,直到被 heal** —— 这是**真丢投递**。**级别:功能损坏,必须修。**
+2. 因此 §2 的七类差异**危害不等** —— 但**必须把"roster 多报"和"钥匙没撤"分开算**(本文 v3 初稿把两者混为一谈,Allen 2026-07-31 纠正,已改):
+   - **过报(roster 多出人)本身**:投递到他 → **收信闸当场拒**(M-9 查 `:receive` 并过完整 `Cap.authorize`),不泄漏消息内容;真实危害只有"成员名单 UI 显示了前成员/从未加入者"(`SessionReads.members` 会读它)。**级别:正确性/观感,fail-closed。**
+   - **⚠️ 但造成过报的那个根因不是 fail-closed**:离会只撤 `:receive`,残留的 `:send`/`:attach` **在发送路径上没有任何东西挡** —— `Verifier` 的 `@non_cap_actions`(`verifier.ex:21-41`)对 `Ezagent.ActionSet.Session` 只免验签 `[:approve_admission, :deny_admission, :withdraw_admission, :composition_consent, :add_self]`,`:send`/`:attach` 走正常 cap 验签;而 `handle_send/2`(`session.ex:591`)**除 cap 外零成员校验**。⇒ **已退出成员仍能发言/传附件 = write-after-leave,撤销完整性漏洞**。**级别:安全缺陷,已单开 issue #1665,且按 Allen 裁决排在 P4 之前。**
+   - **漏报(cap 持有者不在 roster)**:**他收不到消息,直到被 heal** —— **真丢投递**。**级别:功能损坏,必须先修(P1)。**
+
+## 0c. Allen 裁决(2026-07-31,已落入下方各节)
+
+1. **授权门 —— 否掉"会话自证",改走 ActionSet 分层**:查 `GranteeIndex` 的应当是 **`ActionSet.Session.Membership`**(它本就是"成员"这件事的机制/权威层,grant/revoke 参与权就是它做的),**不是 Session 实体** —— 实体永远不直接读 cap 表。做法 = 给 `GranteeIndex` 加一个**内部机制入口**(如 `members_of(target)`),**不走** `grantees_of/4` 的 `manages?` 人类管理员闸(调用方是机制在算自己域内、单一目标的投影,属 platform mechanism 声明,不需要用户级 cap witness);**面向外部枚举的 `grantees_of/4` 保持 `manages?` 不变**。→ **本设计原提的 "target 自读 arity" 作废,不需要发明新授权机制。**
+2. **cutover 已激活**:prod 实测 `Ezagent.Identity.Cutover.activated?() => true`(status `:active`),canary 同;**P4 的 epoch 前提已满足,可照常排**(§2.4 的顾虑消解)。
+3. **撤销完整性单开且前置**:见上方 ⚠️ 与 issue #1665,**排在 P4 之前**(否则换源后历史成员会被全部算回 roster)。
+4. **执行顺序**:P1 →(#1665 撤销完整性)→ P2(含裁决 1 的内部入口)→ P4。每步独立可合。
 
 ⇒ **优先级:先修漏报,再收敛过报。** 而漏报里最主要的那条(钥匙还在投递 outbox、尚未落库)**恰好就是 #207/#1501 已记在案的残留**("`EntityCaps.load` 只读已持有的 cap,没有并入 pending outbox 行")—— 同一件事,不是新问题。
 
@@ -119,26 +127,31 @@ A4-2 是 **#192「成员真相有两份」** 的收尾件 —— 属 P3(单一�
 4. **处理 pending absorb outbox**(§2.2-F):查询时并进 outbox,还是 join 后 `await` 落库再 reconcile?
 5. **明确 epoch 语义**(§2.3/§2.4):**建议把换源排在 #189 cutover 激活之后**,否则索引在 dev/prod 不是权威源。
 
-**仍未解的授权门**(v1 §3.4 的老问题,现已证死两个候选):
-- `manages?/3` 函数头要求 `%URI{} = caller`,catch-all 对 `:vm_internal` 直接 `false` → `grantees_of` 返 `[]`。**朴素的 trusted-internal 写法不成立**(它与 `kind/runtime.ex` 的 `:vm_internal` 旁路不是一套机制)。
-- 可借的系统主体**已被 #154 清空**(`system_principal/catalog.ex:99, :255-280`),只剩 `system://bootstrap`。
-- 测试里手搓的 quadruple-`:any` admin witness **绝不能进生产**(= CLAUDE.md 安全姿态点名要防的"构造假 admin caps 绕 authz"漂移)。
-- ⇒ 唯一正当方向:给 `GranteeIndex` 加 **"target 自读" arity**(target Kind 在自己进程内查"谁持有指向我的 cap",凭自身权威免 `manages?`,概念上类比 `session/self_add.ex` 用 `authenticated_principal`)。**新决策,交 Allen。**
+**授权门 —— 已由 Allen 裁决(2026-07-31),不再是开放问题**
+
+背景(为什么它曾是问题):`grantees_of/4` 的第一道门是 `manages?(caller, target, caller_caps)`,而 reconcile 在 `activate` 里跑、无 user caller。三个候选走不通:`manages?/3` 函数头要求 `%URI{} = caller`,catch-all 对 `:vm_internal` 直接 `false`(与 `kind/runtime.ex` 的 `:vm_internal` 旁路不是一套机制);可借的系统主体**已被 #154 清空**(`system_principal/catalog.ex:99, :255-280`);测试里手搓的 admin witness **绝不能进生产**。
+
+**裁决(采纳,替代本文原提的"target 自读 arity"):**
+- 查 `GranteeIndex` 的是 **`ActionSet.Session.Membership`** —— 它本就是"成员"这件事的机制/权威层(发/撤参与权就是它做的);**Session 实体永远不直接读 cap 表**。
+- 给 `GranteeIndex` 加**内部机制入口**(如 `members_of(target)`),**不走** `manages?` 闸 —— 调用方是机制在算**自己域内、单一目标**的投影,属 **platform mechanism 声明**,不是外部 principal 冒名枚举,不需要用户级 cap witness。
+- **对外的 `grantees_of/4` 保持 `manages?` 原样不变**(那条服务 dispatch 可达的外部调用)。
+- `:members` roster 退化成 `Membership.members_of(session)` 的投影。
+- ⇒ **不需要发明新授权机制**:这不是"会话自证",是"机制读自己域"。落点归 P2。
 
 ## 3b. 分阶段 plan(建议次序,每阶段独立可合)
 
-按 §0 的口径(先修漏报=真丢投递,再收敛过报=fail-closed 的观感问题),拆成 5 段:
+**按 Allen 2026-07-31 裁决的顺序**(原 P3 已被裁决消解、折进 P2;新增撤销完整性作为 P4 前置):
 
 | 阶段 | 做什么 | 为什么排这个位置 | 依赖/gate |
 |---|---|---|---|
-| **P1 — 修漏报(真丢投递)** | roster 派生时把 **pending absorb outbox** 一并算进来(或 join 后 `await` 落库再 reconcile,二选一)。**不换源**,仍用今天的 `EntityCaps` 读法 | 唯一会让成员**收不到消息**的一类;且与 #207/#1501 的"held ∪ pending"是同一件事,应该一次做掉、别两处各修一半 | 与 #1501 协调(可能就该合进 #1501) |
-| **P2 — 索引侧补齐(让它有资格当源)** | ① `grantees_of` 加 action 维过滤 ② 加 provenance 过滤 ③ 补 `revoke_provisioning`/`tombstone` 的 reindex | 这三条是"索引要成为可信派生源"的前置;**现在做不影响任何生产行为**(`grantees_of` 目前零生产调用点),纯加固 | 无;可独立合。③ 与 allen 07-30 在 #1606 要求补 `activate_locked` reindex 同族 |
-| **P3 — 授权口子(需 Allen 拍板)** | 给 `GranteeIndex` 加 **"target 自读" arity**:session 在自己进程内查"谁持有指向我的 cap",凭自身权威免 `manages?` | reconcile 在 `activate` 里跑、无 user caller;两个替代方案已证死(`:vm_internal` 在 `manages?/3` 直接 false;可借的系统主体 #154 已清空)。**这是新机制,不能自作主张** | **Allen 决策** |
-| **P4 — 换源 + 降级成纯投影** | reconcile 改走索引;`:members` 不再作为独立真相存储(或明确降级为纯缓存,唯一写者=投影) | 这才是 #192 真正的收尾。**前提是目标环境的 cutover epoch 已激活** —— #189 代码已合但按设计 DORMANT(§2.4),未激活的库上索引与 `EntityCaps.load` 的源不相交,等于把 roster 建在测试口径与线上口径不一致的地基上。**若线上已跑过 cutover task,此前提即满足,P4 可照常排** | P1+P2+P3 +(**确认目标环境 epoch 已激活**) |
-| **P5 — 回归与闸** | §5 的双向断言 + M-9 回归 + epoch 双跑 | 收口 | P4 |
+| **P1 — 修漏报(真丢投递)** | roster 派生时把 **pending absorb outbox** 一并算进来(或 join 后 `await` 落库再 reconcile,二选一)。**不换源**,仍用今天的 `EntityCaps` 读法 | 唯一会让成员**收不到消息**的一类;与 #207/#1501 的"held ∪ pending"是同一件事,应一次做掉 | 与 #1501 协调(可能就该合进 #1501) |
+| **P1.5 — 撤销完整性(issue #1665)** | 退出/移除时撤销**全部参与档**(`:receive` + `:send`/`:leave`/`:attach`),覆盖 leave(`membership.ex:760`)与 remove 三处(`:946`/`:970`/`:1002`)、user 与 agent 两侧 | **安全缺陷**(write-after-leave,§0 口径 2);且**必须在 P4 之前** —— 否则换源后历史成员因仍持 Session-behavior cap 被全部算回 roster | 独立可合;**P4 的前置** |
+| **P2 — 索引侧补齐 + 内部机制入口** | ① `grantees_of` 加 action 维过滤 ② 加 provenance 过滤 ③ 补 `revoke_provisioning`/`tombstone` 的 reindex ④ **加 `members_of(target)` 内部机制入口(不走 `manages?`),对外 `grantees_of/4` 原样不动**(裁决 1) | 前三条是"索引要成为可信派生源"的前置,**现在做不影响任何生产行为**(`grantees_of` 目前零生产调用点);④ 是换源的调用面 | 无;可独立合。③ 与 allen 07-30 在 #1606 要求补 `activate_locked` reindex 同族 |
+| **P4 — 换源 + 降级成纯投影** | `:members` 退化成 **`Membership.members_of(session)`** 的投影;不再作为独立真相存储;**实体不直接读 cap 表** | #192 真正的收尾。**epoch 前提已满足** —— Allen 实测 prod `Cutover.activated?() => true`(canary 同) | P1 + **P1.5** + P2 |
+| **P5 — 回归与闸** | §5 的双向断言 + M-9 回归 | 收口 | P4 |
 
-**如果只能做一段**:做 **P1**(它修的是真丢投递),其余可以等。
-**如果 Allen 认为 P4 不值得**:P1+P2 仍有独立价值(修投递丢失 + 加固索引),`:members` 维持"reconcile 出来的投影"现状即可 —— 此时 #192 只是收窄而非关闭,应明确记账。
+**如果只能做一段**:做 **P1**(它修的是真丢投递)。
+**如果最终判定 P4 不值得**:P1+P1.5+P2 仍各自有独立价值(修投递丢失 / 补安全洞 / 加固索引),`:members` 维持现状即可 —— 此时 #192 只是收窄而非关闭,应明确记账。
 
 ## 4. M-9 保持
 
@@ -161,8 +174,11 @@ A4-2 只改 `reconcile_after_load`(delivery-targeting 投影的 seeding),不碰 
 
 ## 6. 交 Allen 的开放问题
 
-1. **§3b-P4 的前提**:**canary / prod 上的 cutover epoch 已经激活了吗?**(#189 代码已合但按设计 DORMANT,需 operator 跑 `mix ezagent.identity.cutover` 才翻;查法见 §2.4 末。)**已激活 → P4 照常排;未激活 → P4 应等它**。这一问代码答不了,需运维/部署侧确认。
-2. **§3 授权门**:新增 target-自读 arity(唯一可行方向)的形状?
-3. **§3.4 outbox**:并进查询 vs join 后 await?
-4. **generation 语义变化**(被撤销成员从 roster 掉出)接受为改进?
-5. **§2.1-B 是独立于本任务的既有缺陷**(离会成员的参与档 cap 从不撤销)—— 单开一条修?A4-2 用 action 过滤能绕开它,但缺陷本身还在。
+**已由 Allen 2026-07-31 裁决关闭的三条:**
+1. ~~cutover epoch 前提~~ → **已满足**:prod 实测 `Cutover.activated?() => true`(canary 同),P4 照常排。
+2. ~~授权门形状~~ → **改走 ActionSet 分层**:`ActionSet.Session.Membership` + `GranteeIndex` 内部机制入口(不走 `manages?`),对外 `grantees_of/4` 不动;**实体不直接读 cap 表**,原提的"target 自读 arity"作废(§3.3)。
+3. ~~离会残留参与档是否单开~~ → **单开 issue #1665**,且定级上调为**安全缺陷**(write-after-leave,非 roster 观感),**排在 P4 之前**(P1.5)。
+
+**仍待定:**
+4. **P1 的 outbox 处理方式**:并进查询 vs join 后 `await` 落库再 reconcile?(建议与 #1501 一并定,别两处各修一半)
+5. **generation 语义变化**(被撤销成员从 roster 掉出)接受为改进?
