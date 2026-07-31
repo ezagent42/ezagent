@@ -584,6 +584,68 @@ Allen 说「跨租户泄露这些都不是 git plugin 要解决的事情」—�
 - **确定只服务单租户 / 自用** → B2′ 按现计划走
 - **确定或可能走多租户** → 要么先建隔离轨，要么在多租户到来前用 **A1**（结构性免疫，且无需 remote 侧配置）
 
+### 8.3 A1 与 B2′ 能否并存 — 成本、重叠与叠加禁忌
+
+#### A1 的一句话定义
+
+> **A1 = agent 拥有全部 local git + 平台垄断 remote git。**
+
+| | 谁做 | 为什么 |
+|---|---|---|
+| **local git**：log / diff / status / add / commit / branch / **rebase** / checkout / stash | **agent 自己** | 不需要凭据，worktree 就在文件系统上 |
+| **remote git**：clone / fetch / push | **平台** | 需要凭据，而凭据不在 agent 的 env 里 |
+
+这条分界线**不是靠禁止划的，是靠凭据自然形成的**——agent 跑 `git push` 会因无凭据而失败，无需任何拦截逻辑。
+
+#### 技术上不冲突，但叠加会让 A1 的安全价值归零
+
+A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉死、refspec 钉死、审计归属，都建立在这一条上。**B2′ 就是给 agent 凭据。**
+
+同一个 task 上两者都开启时：agent 手里有 SSH key，可完全绕过 A1 的所有约束自行推送。**实际安全水位 = B2′ 的水位**，A1 那套约束退化为「agent 愿意配合时才有效」。
+
+> **结果：付了 A1 的建设成本，拿不到 A1 的安全收益。**
+
+#### 四个具体实现冲突点
+
+| 冲突点 | 说明 | 好解吗 |
+|---|---|---|
+| **remote URL 传输不同** | A1 用 `https://host/owner/repo.git`，B2′ 用 `git@host:owner/repo`；同一 worktree 的 `origin` 只能是一个，而 `execute_matching_remote/3`（git_runner.ex:414-419）断言 `remote get-url origin` **精确等于**预期 URL | 好解 —— 配两个 remote 或统一传输，但需放宽该断言 |
+| **那条 ref 归谁** | A1 推 `refs/heads/ezagent/task/<digest>/g<gen>`；B2′ 下 agent 想推哪条推哪条。两边都推则 PR 开在哪条上不确定 | **语义冲突** —— 一个 task 的交付物必须唯一 |
+| **`verify/1` 断言** | 要求 `HEAD == resolved_base_commit` 且工作区干净（git_runner.ex:177-186）；B2′ 下 agent 会 commit、会移 HEAD | 目前只在 pre-start 跑（Reconciler 只扫 `:ready`，store.ex:231-235），运行中不受影响；但 A1 状态机若在 agent 干活后再 verify 会失败 |
+| **安全语义** | 见上 | **不好解，本质冲突** |
+
+#### 并存的正确形态：按 task / 仓库二选一，而非叠加
+
+- **高约束场景**（核心仓库、不完全信任的 agent、多租户）→ 走 **A1**
+- **高自主场景**（团队自有 repo、需 rebase / 自主交付）→ 走 **B2′**
+
+两者不在同一 worktree 内同时生效，各自的约束就都成立。**叠加在同一个 task 上 → 不要做。**
+
+#### 成本不是简单相加 — 大部分底座共享
+
+| | A1 | B2′ | 共享？ |
+|---|---|---|---|
+| provision workspace | ✅ | ✅ | **共享，已存在** |
+| E2-B 触发入口 | ✅ 要驱动 4 状态机 + **agent 完成信号**（今天不存在）| ✅ 只要一个 provision 入口 | **共享底座**，A1 要的更多 |
+| `SealedEnvelope` | ✅ | ✅ | **共享，已存在** |
+| 凭据授权轨 `Ezagent.Credential.*` | 取 token | 取 ssh key | **共享，已存在** |
+| 独有部分 | push stage + 完成信号 | ssh-agent 挂载 + remote 侧配置 | — |
+
+**故两者一起做约 4–6 天，而非 2–3 + 2–4 = 5–7 天。**
+
+#### 建议顺序：先 B2′，A1 留作可选高约束模式
+
+理由不是安全，是**驱动面**：
+
+- **B2′ 只需要一个 provision 触发点**，agent 自己当驱动
+- **A1 需要把 E2-B 那条 dormant 的状态机真正接上**（`EzagentPluginGitWorkflow.Application` moduledoc：「E2-A dormant declarative contract only」「zero surfaces」「Authorization ingress is deferred to E2-B」；`StageRunner.advance/2` 全仓仅测试调用），**还要发明一个今天不存在的「agent 完成信号」**（`ezagent_domain_agent` 无 `:complete` action）
+
+且**先做 B2′ 会把共享底座建好**（E2-B 入口、凭据轨接 SSH、provision 触发）。日后真需要 A1 那种高约束模式时，增量只剩 push stage 与完成信号。
+
+反过来先做 A1 的话，B2′ 仍要重走一遍 key 挂载与 remote 配置，而 A1 建好的约束**一开 B2′ 就作废**。
+
+> **例外**：若 §8.2 的租户模型答案是「会走多租户」，则顺序应反转 —— A1 是结构性免疫的那一个，B2′ 在隔离轨建成前不应启用。
+
 ### 两条前置
 
 **A0 已出局**：四条后果全满分、工时为零，但不支持私有仓库——不是可补的缺口，是其定义性质（§3 关键推论）。私有仓库已定为确定需求，故 A0 仅作对照零点。
