@@ -128,6 +128,9 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
   defp check_invariant_1 do
     # Allowlisted files for PubSub.broadcast:
     # - `audit.ex`: legitimate view fan-out to esr:audit:stream (§5.7.6)
+    # - `operator_events.ex`: canonical operator warning/event seam —
+    #   operator-observability fan-out to operator:events:stream (§5.7.6,
+    #   same class as audit.ex / cc_events.ex; never an inbound message)
     # - `invocation.ex`: reply path :phoenix_pubsub (caller chose this
     #   reply target explicitly — not an inbound message broadcast)
     # - `kind/runtime/effects.ex`: Kind.Runtime `:notify` effect fan-out
@@ -159,6 +162,7 @@ defmodule Mix.Tasks.Ezagent.CheckInvariants do
             "| grep -v 'apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex' " <>
             "| grep -v 'apps/ezagent_actor/lib/ezagent/slice_change.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/cc_events.ex' " <>
+            "| grep -v 'apps/ezagent_core/lib/ezagent/operator_events.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/publisher_lifecycle.ex' " <>
             "| grep -v 'apps/ezagent_core/lib/ezagent/notifications.ex' " <>
             "| grep -v 'apps/ezagent_domain_pty/lib/ezagent_domain_pty/server.ex' " <>
