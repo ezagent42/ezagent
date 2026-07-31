@@ -52,6 +52,32 @@
 
 ---
 
+## 🚦 执行次序(用户 2026-07-31 拍板)
+
+> **"我们需要把 A4、A5 收尾,kanban 纯化做完,才能转到 socialware protocol + plugin gate 这条线。"**
+
+```
+A4 收尾 + A5 收尾  →  Group B:kanban 纯化(#1474)  →  Socialware Protocol + plugin-dev gate
+```
+
+与 allenwoods 在 #1587:72-76 的建议次序一致(**先把 URI-share 原语立起来 → #1474 rebase 到它上面 → 再合**)—— 因为 A4 剩余件里的「Mount→Provision/Share 改名 + 删 MountRow 表」正是 #1474 要落在其上的那块原语。
+
+### A4 收尾清单(逐条,依据已合入 main 的 `docs/together/2026-07-28/returns/share-a4-1-reconcile-trap.md:34-37`)
+
+| # | 件 | 状态 | 备注 |
+|---|---|---|---|
+| A4-1 | 删 Mount reconcile 重发 trap | ✅ 已合 `fb35003cf`(#1611) | 重启存活 = cap-as-truth |
+| **A4-2** | `:members` roster → 纯投影 | 🔵 **进行中 #1655** | P1 ✅ / P1.5(#1665)✅ / **P2 待做** / P4 待做 |
+| **A4-3** | **backfill 改派生** —— 现读 `MountRow.list_for_session`,改为从成员各自 cap 推(`session_member_uris` + 每成员按 behavior/`:operate` 过滤取 `cap.instance`) | ⏳ 待做 | 用 **`caps_toward`(A2-1 forward,#1596 已合)**,不是 `grantees_of`;依赖已满足 |
+| **A4-4** | **`Mount`→`Provision`/`Share` 改名 + 删 `MountRow` 表** | ⏳ 待做 | **碰 kanban 消费者**(`board_provision` / `kanban_share_controller` / `board_*_test`)→ 与 Group B 天然衔接;#1474 正是要落在这块之上 |
+| **A4-5** | **`unmount` 取 actions 脱 `MountRow`** —— 改从 grantee 现有 cap 派生 | ⏳ 待做 | 与 A4-4 同批 |
+
+### A5 收尾
+设计 v4 已获 allenwoods 批准(#1619)。实现四步:接通 `enable(:link_anon)` + provision `S_R` + 经 A4 primitive 建绑定并铸只读 cap → **匿名 feed 的 cap-gated 资源投影(主体工作量)** → 前端匿名壳渲染 → e2e(可见/隔离/fail-closed/撤销即失效)。
+**注意耦合**:A5 的"绑定源"选 `MountRow`(现成)还是 `caps_toward`(A4-4 后)—— 若 A4-4 先落,A5 直接用派生式绑定,不必写一遍再改。
+
+---
+
 ## ★ Socialware Protocol —— 终极目标的**实体形态**(新记,2026-07-31)
 
 > **用户定位**:"socialware protocol 应该是我们最终结果之一,是 **socialware 开发指南和 gate 的一个实际上的体现**。"
