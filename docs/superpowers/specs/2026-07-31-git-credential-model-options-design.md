@@ -286,25 +286,50 @@ B1/B2 用不上此加固，因其凭据本就必须交付给 agent。
 
 ## 7. 成本
 
-| 形态 | 新建工作量 | 说明 |
+**口径：agent 驱动的端到端墙钟**（spec/handoff → merged），非人日。本条线全部由 agent 建成，人日不是适用单位。
+
+### 7.1 实测基线（本仓库同一条线的历史吞吐）
+
+| PR | 内容 | spec/handoff → merged |
 |---|---|---|
-| **A0** | **0** | 现状。代价是 §1.1 的全部功能缺口，不是工时 |
-| A1 | 5–8 天 | 凭据供给 seam + push 阶段 |
-| A2 | 8–12 天 | A1 + agent git tool 面（cc 侧从零）+ caps |
-| B1 | 6–10 天 | 凭据 seam（token）+ credential helper + branch protection 约定 |
-| B2 | **周级，需先出独立 spec** | B1 + Entity SSH Identity + 密钥生命周期 + host-key policy |
+| #1643 | **整个 Forgejo 插件**：OAuth 凭证链 + 5 个 adapter 回调，12 模块 2710 LOC，16 测试文件 | 07-29 → 07-30 = **1 天** |
+| #1641 | SealedEnvelope 收敛（合并两份并行密封实现）| 07-29 → 07-30 = **1 天** |
+| #1653 | github adapter read-path fail-open 修复 | 07-30 → 07-31 = **1 天** |
+| #1614 | **Plan E 全部 P1–P4e**：整个 workflow 层，新 app 3823 LOC，24 测试文件 | 07-24 → 07-29 = **5 天** |
+| #1445 | **domain spine + connection framework + GitHub OAuth 插件**（三个子系统）| 07-15 → 07-22 = **7 天** |
 
-口径：含实现、测试与本项目要求的 gate/review 开销。参照 Plan A→E 历史（两周走完五个 Plan），review 与跑绿测试占比不低于写实现。
+规律：**有 spec 的 bounded slice ≈ 1 天；多 slice 的 plan ≈ 5 天；新子系统 ≈ 5–7 天。**
 
-### 7.1 选定任一形态后，以下已排工作**取消**
+### 7.2 重估
 
-| 原计划 | 原估 | 新状态 |
+| 形态 | 工作量 | 分解 |
 |---|---|---|
-| commit 序列 collect | 25–40 天 | **取消** — agent commit 直接 push，无需经 API 重放 |
-| FileChange envelope 扩展（删除/二进制/上限）| 4–6 天 | **降级可选** — 仅当保留 API 写路径作 fallback 时需要 |
-| 两侧 adapter 的 Git Data 重放 + 幂等 reconciliation | 已存在约 1480 行中的大头 | 写路径上**不再需要** — 开 PR 只剩 `POST /pulls` 传 head/base |
+| **A0** | **0** | 现状。代价是 §1.1 的功能缺口，不是工时 |
+| A1 | **2–3 天** | 凭据 seam（新契约面，无 template）1–2 天 + GitRunner 注入 / 新 gate / push 阶段 1 天 |
+| A2 | **3–4 天** | A1 + agent git tool 面。cc 的 tool 机制现成（已有 13 个 tool），加几个不构成新子系统 |
+| B1 | **2–3 天** | 同 A1 的 seam；无需把 push 接进状态机，但多出 credential helper 与 branch protection 约定 |
+| B2 | **5–8 天** | B1 + Entity SSH Identity 属**新子系统**（新资源 + 密钥生成/导入/轮转 + host-key policy），对标 #1445 的单子系统量级 |
 
-**净效应：任一形态都是大幅简化，而非增量负担。**
+上表数字**已含评审与测试**——实测基线本身即为含评审的端到端墙钟。
+
+**区间的含义**：上下限差别不在「写多久」，在「评审几轮」。#1643 那种 1 天量级的前提是**有 template 可抄**（github 插件作模板）；凭据 seam 是全新契约面、无模板，故取区间上限，风险集中于评审轮次。
+
+### 7.3 不随 agent 速度缩短的四项
+
+1. **人类裁决等待** —— 不含在上述任何数字内。§9 四个问题未答则无法开工。
+2. **跨 Task 集成正确性** —— `docs/notes/2026-07-21-git-provider-system-closure-retrospective.zh_cn.md` §3 结论：「多个 Task 被当作独立正确性闭环，但正确性实际住在同一条跨 Task 状态机里」「局部绿灯在没有集成 Closure checkpoint 时被当成闭环」。此项只随评审轮次缩短，不随实现速度缩短。
+3. **测试跑绿的物理时间** —— 受影响的四个 app 共 88 个测试文件，依赖 DB，且复盘要求经 guarded runner 串行（`MemoryHigh=4G` / `MemoryMax=5G` / `ERL_FLAGS='+S 4:4'`）。
+4. **契约设计返工** —— agent 重写很快，但评审轮次会整轮重复。
+
+### 7.4 被本次选型 obviate 掉的备选方案
+
+以下方案曾在选型讨论中评估过，选定 A1 及以右任一形态后**不再需要**。此处仅作记录——**它们从未进入任何已批准计划**：
+
+- **commit 序列 collect**（把 agent 的 commit 序列经 provider API 逐个重放）—— agent commit 可直接 push，无需重放。曾是最大的一项（agent 口径 5–8 天）。
+- **FileChange envelope 扩展**（删除 / 重命名 / 二进制 / 提上限）—— 这些限制源于「把改动搬运过 API」，push 路径上不存在。仅当保留 API 写路径作 fallback 时才需要。
+- **两侧 adapter 的 Git Data 重放与幂等 reconciliation** —— 现存约 1480 行中的主体，写路径上不再需要；开 PR 只剩 `POST /pulls` 传 head/base。
+
+**净效应：任一形态都是简化，而非增量负担。**
 
 ---
 
