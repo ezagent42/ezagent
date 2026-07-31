@@ -170,6 +170,29 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
       assert_raise FunctionClauseError, fn -> Blocker.classify(:made_up_code) end
     end
 
+    # The runtime list and the exported type are two statements of the same
+    # vocabulary, and nothing else compares them: a code added to `@codes`
+    # without a `code()` member leaves every runtime test green while Dialyzer
+    # and the generated docs are told a returned value cannot occur. That is
+    # exactly what happened when `:provider_response_unrecognized` was added.
+    test "the exported code() type lists exactly the runtime vocabulary" do
+      {:ok, specs} = Code.Typespec.fetch_types(Blocker)
+
+      {:type, _, :union, members} =
+        Enum.find_value(specs, fn
+          {:type, {:code, definition, _args}} -> definition
+          _ -> nil
+        end)
+
+      typed =
+        Enum.map(members, fn
+          {:atom, _, atom} -> atom
+          other -> flunk("Blocker.code() gained a non-atom member: #{inspect(other)}")
+        end)
+
+      assert Enum.sort(typed) == Enum.sort(Blocker.codes())
+    end
+
     # Asserted as a PAIR on purpose. Either half alone survives the failure this
     # guards against — the two codes being collapsed back into one — because
     # whichever code the collapse keeps still classifies the way its own
@@ -317,8 +340,12 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
       {:atom, _, atom} ->
         [atom]
 
-      # The one non-atom member, mapped by status class in its own test below.
-      {:type, _, :tuple, _fields} ->
+      # The ONE non-atom member, matched by its tag rather than by "is a tuple".
+      # `{:type, _, :tuple, _}` would wave through a future
+      # `{:provider_response_invalid, field}` that nobody had mapped, and this
+      # test would go on claiming total coverage — the same hole as the literal
+      # copy and the filtering comprehension this file has now shed twice.
+      {:type, _, :tuple, [{:atom, _, :provider_request_failed} | _rest]} ->
         []
 
       other ->
