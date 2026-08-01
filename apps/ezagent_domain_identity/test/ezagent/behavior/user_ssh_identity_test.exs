@@ -69,10 +69,11 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
       # this assertion is meant to catch (private key smuggled into
       # :public_key or :fingerprint) were independently reproduced by two
       # reviewers and PASSED the old `refute Jason.encode!(result) =~
-      # private` — see task-1-report.md for the red-demonstration
-      # transcript proving the NEW assertion below actually catches both.
-      # Assert against the RAW map values instead — no serialization step
-      # to hide behind.
+      # private` — verified directly: reverting the assertion below to
+      # that Jason.encode!/1-based form and re-running reproduces both
+      # false-negatives (a smuggled private key in either field still
+      # passes). Assert against the RAW map values instead — no
+      # serialization step to hide behind.
       refute Enum.any?(Map.values(result), &(is_binary(&1) and String.contains?(&1, private)))
 
       # 审计
@@ -98,7 +99,7 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
                UserSshIdentity.handle_generate_ssh_key(%{}, ctx(state))
     end
 
-    # R1 (task-2-findings-round2.md): metadata-only state (no public_key, no
+    # R1: metadata-only state (no public_key, no
     # private_key — e.g. fingerprint/comment/created_at surviving a snapshot
     # migration or partial repair) is a genuinely reachable "identity
     # exists" shape per any_identity_field?/1 — the SAME predicate
@@ -314,6 +315,19 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     # `returns: %{fingerprint: :string}` declaration.
     test "公钥存在但指纹缺失时 unavailable，不违反 returns 声明" do
       state = %{public_key: "ssh-ed25519 AAAAC3 alice"}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+    end
+
+    # m3 (final-review Minor): an empty-string public_key (partial write)
+    # must NOT report success — is_binary("") is true, so without the
+    # `pub != ""` guard this would return {:ok, %{public_key: "", ...}},
+    # and 1b would paste an empty public key to the provider. The
+    # private-key side already guards equivalently via
+    # valid_private_key?/1's header check.
+    test "公钥为空字符串时 unavailable，不是成功（m3）" do
+      state = %{public_key: "", fingerprint: "SHA256:abc"}
 
       assert {:error, :ssh_identity_unavailable} =
                UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))

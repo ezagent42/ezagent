@@ -202,5 +202,71 @@ defmodule Ezagent.ActionSet.UserSshIdentityAuthzTest do
              "持 read_ssh_public_key cap 的 read_ssh_key dispatch 必须被拒绝，得到: " <>
                inspect(reason)
     end
+
+    # M2 (final-review fix, 2026-08-02): user_ssh_identity.ex's OWN
+    # protective keygen timeout (`@keygen_timeout_ms`) and this dispatch's
+    # default call deadline (`inv.ctx[:deadline_ms] || 5_000` at
+    # invocation.ex:440 — production identity dispatch never sets
+    # `deadline_ms`, confirmed by `dispatch/4` above) MUST stay in that
+    # order: handler timeout strictly BELOW dispatch deadline. Before this
+    # fix both were 5_000 — TIED, not ordered — so the CALLER's
+    # `GenServer.call` clock (which starts BEFORE routing/cap-check
+    # overhead, i.e. strictly before the handler's own internal clock even
+    # starts) always elapsed first, and `Ezagent.Invocation.
+    # call_live_target/3` re-raised `** (exit) :timeout` instead of
+    # `handle_generate_ssh_key/2` ever returning its mapped
+    # `{:error, {:keygen_failed, :timeout}}` — a contract violation of
+    # spec §5 ("failure is always a synchronous `{:error, reason}`").
+    # Neither existing timeout test (user_ssh_identity_test.exs) catches
+    # this: both call the handler DIRECTLY, with no dispatch layer in
+    # between.
+    #
+    # Deliberately does NOT override `ssh_keygen_timeout_ms` and does NOT
+    # set `ctx[:deadline_ms]` — both sides run their REAL production
+    # defaults, so this exercises the actual coupling rather than a
+    # scaled-down stand-in that would pass regardless of either constant's
+    # value (an override on either side would mask a regression of this
+    # exact fix). A fake `ssh-keygen` that sleeps well past both defaults
+    # stands in for I2's "stuck child" scenario (a real ssh-keygen normally
+    # returns in milliseconds, nowhere near either timeout). Runs for a few
+    # real seconds (bounded by the smaller of the two ~3-5s timeouts) —
+    # deliberate, not a flake; do not "fix" by shrinking it back to
+    # overridden/synthetic values, which would silently stop testing the
+    # actual default coupling this test exists to guard.
+    test "generate_ssh_key through real dispatch returns an error tuple, not an EXIT, when ssh-keygen hangs (M2)",
+         ctx do
+      fake_bin_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "ezagent-fake-sshkeygen-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(fake_bin_dir)
+      fake_keygen = Path.join(fake_bin_dir, "ssh-keygen")
+      # Absolute path to `sleep` — PATH is about to be replaced ENTIRELY
+      # (below), so a bare `sleep` inside this script would itself fail to
+      # resolve (caught empirically: without this it exits 127 "sleep: not
+      # found", which keygen/1 maps to {:exit_status, 127, _} instead of
+      # the intended :timeout — a different, wrong branch of this test).
+      File.write!(fake_keygen, "#!/bin/sh\n/bin/sleep 10\n")
+      File.chmod!(fake_keygen, 0o755)
+
+      original_path = System.get_env("PATH")
+      System.put_env("PATH", fake_bin_dir)
+
+      try do
+        t = target(ctx.uri, :generate_ssh_key)
+        cap = signed_required_cap!(t, :user, UserSshIdentity, :generate_ssh_key, ctx.admin)
+
+        assert {:error, {:keygen_failed, :timeout}} =
+                 dispatch(t, %{comment: "m2-real-dispatch"}, [cap], ctx.admin)
+      after
+        if original_path,
+          do: System.put_env("PATH", original_path),
+          else: System.delete_env("PATH")
+
+        File.rm_rf(fake_bin_dir)
+      end
+    end
   end
 end

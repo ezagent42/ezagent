@@ -699,6 +699,20 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 
 几乎全部是「在已有机制上加一个值」而非建新机制：
 
+> **⚠️ 已被取代（2026-08-02，final-review M4）**：下表前三行描述的存储方向
+> ——key 经 `SealedEnvelope` 封存、按 `UserDefaultSource` 的 `(owner,
+> workspace, flavor)` 归属、cap 走 `GrantCap.read_cap_for/1`——已被
+> `2026-08-01-agent-ssh-credential-1a-design.md` §2.1 / §6 明确拒绝：
+> `SealedEnvelope` 住在 `ezagent_domain_provider_connection`，而该 app
+> **依赖** `ezagent_domain_identity`，反向引用即循环依赖。**最终实现**：SSH
+> 身份是 User Kind 自己的 state slice（`Ezagent.ActionSet.UserSshIdentity`，
+> `apps/ezagent_domain_identity/lib/ezagent/behavior/user_ssh_identity.ex`），
+> 不经 `SealedEnvelope`/`UserDefaultSource`；四个 action（`generate_ssh_key`
+> / `read_ssh_public_key` / `read_ssh_key` / `revoke_ssh_key`）各自声明专属
+> `kind: :user` cap，不复用 `GrantCap`。at-rest 明文落 snapshot 是有意延后
+> 的决定，见 1a design §6。下表后两行（物化进 agent 目录 / 给 agent 传
+> env）是 1b 的范畴，不受本条影响。
+
 | 需要 | 复用什么 |
 |---|---|
 | key at-rest 加密 | `SealedEnvelope`（现成）+ 一个新 `purpose` atom |
@@ -733,6 +747,14 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 - `ssh-keygen -t ed25519 -N "" -C <comment> -f <tmpfile>` **一行即得**标准 `-----BEGIN OPENSSH PRIVATE KEY-----` 私钥与 `ssh-ed25519 AAAA…` 公钥，正确性无疑
 
 **因此任务 1 的 key 供给入口 = 生成为主**：world UI 一个「生成 SSH 密钥」动作 → cap-checked action → `ssh-keygen` 子进程 → 私钥经 `SealedEnvelope` 封存进 `UserDefaultSource`（flavor `"ssh"`）→ **只回显公钥与指纹**，供用户粘贴到 GitHub。
+
+> **⚠️ 已被取代（2026-08-02，final-review M4）**：「私钥经 `SealedEnvelope`
+> 封存进 `UserDefaultSource`」这一步已改向，原因同上（`SealedEnvelope`
+> 所在的 `ezagent_domain_provider_connection` 依赖 `ezagent_domain_identity`，
+> 反向即循环依赖——见 1a design §2.1 / §6）。**最终实现**：私钥经一个
+> `:set` 效果直接写进 `UserSshIdentity` 挂在 User Kind 上的 `state`
+> slice，取用经专属 `read_ssh_key` cap（不是 `GrantCap`）。「生成优先于
+> 导入」「只回显公钥与指纹」两条结论不变。
 
 「导入已有私钥」作为**可选的次要入口**，若做需额外确保私钥不进日志 / 不进错误信息。
 

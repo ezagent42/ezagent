@@ -13,7 +13,7 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
   one Kind/entity trust domain, and INVOCATION stays cap-gated at dispatch step
   5.5/5.6). The defense-in-depth that replaces the runtime cap is THIS static
   gate: every read of a SENSITIVE slice (the caps + credentials slices —
-  `:identity`, `:api_keys`) by code OTHER than the slice's owning Behavior must
+  `:identity`, `:api_keys`, `:user_ssh_identity`) by code OTHER than the slice's owning Behavior must
   be explicitly allowlisted with a justification. A new, un-reviewed
   credential/caps read then fails CI in code rather than silently leaking
   authority at runtime.
@@ -58,7 +58,12 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
   # slice here when one is introduced.
   @sensitive_slices %{
     identity: "Ezagent.ActionSet.Identity",
-    api_keys: "Ezagent.ActionSet.ApiKeys"
+    api_keys: "Ezagent.ActionSet.ApiKeys",
+    # M1 (final-review): stores the SSH PRIVATE key in plaintext
+    # (user_ssh_identity.ex :private_key field) — same sensitivity class as
+    # :identity/:api_keys, unlike the bcrypt-hashed :user_tokens/
+    # :user_credentials slices which correctly stay off this list.
+    user_ssh_identity: "Ezagent.ActionSet.UserSshIdentity"
   }
 
   @sensitive_keys Map.keys(@sensitive_slices)
@@ -354,6 +359,25 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
       """
 
       assert [] = scan_source(benign, "apps/x/lib/rb.ex")
+    end
+
+    # M1 (final-review): :user_ssh_identity stores the SSH PRIVATE key in
+    # plaintext (user_ssh_identity.ex :private_key field) — the same
+    # sensitivity class as :identity/:api_keys, NOT the bcrypt-hashed
+    # :user_tokens/:user_credentials slices that correctly stay off
+    # @sensitive_slices. Pinned as its own fixture test (not just folded
+    # silently into @sensitive_slices) so a future removal of the entry
+    # is itself caught, even though nothing in the live tree reads this
+    # slice today (see the live-tree test below, which stays green).
+    test "flags an un-allowlisted Kind.read of the sensitive :user_ssh_identity slice (M1)" do
+      src = """
+      defmodule Some.Behavior.SshReader do
+        def peek(uri), do: Ezagent.Kind.read(uri, :user_ssh_identity)
+      end
+      """
+
+      assert [%{key: :user_ssh_identity, via: :read}] =
+               scan_source(src, "apps/x/lib/ssh_reader.ex")
     end
   end
 

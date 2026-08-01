@@ -549,6 +549,22 @@ POSTGRES_PORT=15432 mix test apps/ezagent_domain_identity/test/ezagent/behavior/
 
 - [ ] **Step 4: 写三个 handler**
 
+> **⚠️ 已被取代（2026-08-02，final-review M4）**：下方示例代码里的
+> absent/unavailable 判定——`handle_read_ssh_public_key/2` 只看
+> `public_key` 一个字段、`handle_revoke_ssh_key/2` 用 `public_key ||
+> private_key` 两字段判断、`identity_state/1` 的 `is_nil(priv) and
+> is_nil(pub) -> :absent`——**全部只检查两个 key 字段，正是造成本轮
+> complete-review Critical 的那段代码**：metadata-only state
+> （`fingerprint`/`comment`/`created_at` 仍在、两个 key 字段皆 `nil`）会被
+> 误判为 absent，从而放行覆盖，或与其它三处判断给出自相矛盾的"身份是否
+> 存在"答案。**最终实现改为统一检查全部五个身份字段**（`@identity_fields
+> = [:public_key, :private_key, :fingerprint, :comment, :created_at]` +
+> 四处共用的 `any_identity_field?/1` 谓词），见
+> `apps/ezagent_domain_identity/lib/ezagent/behavior/user_ssh_identity.ex`
+> 的 `any_identity_field?/1`、`identity_state/1`、`public_key_state/1`
+> （290 行起）与 1a design §5.1「absent ≠ unavailable」。下方代码块保留
+> 作历史记录，**实施后续任务时不要照抄**。
+
 在 `handle_generate_ssh_key/2` 之后追加：
 
 ```elixir

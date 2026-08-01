@@ -46,7 +46,26 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # 可经 `Application.put_env(:ezagent_domain_identity, :ssh_keygen_timeout_ms,
   # ms)` 注入极小值以确定性触发超时路径,不改动生产默认值。见
   # run_ssh_keygen/2 对孤儿进程取舍的说明。
-  @keygen_timeout_ms 5_000
+  #
+  # M2 (final-review fix, 2026-08-02): this MUST stay strictly BELOW the
+  # dispatch layer's default call deadline — `inv.ctx[:deadline_ms] ||
+  # 5_000` at apps/ezagent_actor/lib/ezagent/invocation.ex:440. Nothing
+  # sets `deadline_ms` for identity dispatch, so that 5_000 fallback
+  # always applies to every call into this Behavior. Before this fix both
+  # were 5_000 — TIED, not ordered. Under I2's actual scenario (ssh-keygen
+  # genuinely stuck), the CALLER's `GenServer.call` deadline — which
+  # starts BEFORE routing/cap-check overhead, i.e. strictly before this
+  # module's own Task.yield clock even starts — always elapses first
+  # (deterministically, not a race: the callee's clock can only start
+  # later). `Ezagent.Invocation.call_live_target/3` then re-raises `**
+  # (exit) :timeout` instead of `handle_generate_ssh_key/2` ever getting a
+  # chance to return its mapped `{:error, {:keygen_failed, :timeout}}` —
+  # a real contract violation of spec §5 ("failure is always a
+  # synchronous `{:error, reason}`"). Whoever changes either constant
+  # MUST re-check the other; see the real-dispatch regression test in
+  # user_ssh_identity_authz_test.exs ("M2 (final-review fix)") and the
+  # matching comment at invocation.ex:440.
+  @keygen_timeout_ms 3_000
 
   # R6 (round-2 review): exposed so tests derive the prefix instead of
   # repeating the literal — a rename here would otherwise silently desync
@@ -138,8 +157,10 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   已存在身份(任一身份字段存在，见 `any_identity_field?/1`)时拒绝并返回
   `{:error, :ssh_identity_exists}`——不静默覆盖：覆盖会让用户已在 provider
   配好的公钥突然失效且不可回退。判定不能只看 `public_key`/`private_key`
-  两个字段(R1 修正，见 task-2-findings-round2.md)——metadata-only 状态下
-  也必须拒绝，否则会跟 `:read_ssh_key`/`:revoke_ssh_key` 对同一份 state
+  两个字段(R1 修正——早期实现仅检查这两个字段，会把只剩
+  `fingerprint`/`comment`/`created_at` 的 metadata-only state 误判为
+  "无身份"从而放行覆盖)——metadata-only 状态下也必须拒绝，否则会跟
+  `:read_ssh_key`/`:revoke_ssh_key` 对同一份 state
   给出相矛盾的"身份是否存在"判断。返回值只含 `:public_key` / `:fingerprint`；
   私钥只经一条 `:set` effect 写进 state 的 `:private_key` 键，永不出现在
   返回值里(取私钥是 `:read_ssh_key` 的事，另一条更敏感的 cap，Task 2 落地)。
@@ -294,7 +315,7 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # handle_revoke_ssh_key/2、handle_generate_ssh_key/2 都要回答"这份 state
   # 里有没有身份记录"，只写一次，不要四份各写各的判断（读哪几个字段一旦
   # 漂移，四处必然不同步）。handle_generate_ssh_key/2 补上这一处是 R1
-  # (task-2-findings-round2.md 修正)——它此前独立用
+  # 修正——它此前独立用
   # `public_key || private_key` 两字段判定，对 metadata-only 状态给出跟
   # 另外三处相矛盾的"没有身份，可以放行覆盖"的答案，与自己
   # action 的 description("Refuses when an identity already exists")矛盾。
@@ -326,7 +347,17 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
     fp = ctx[:read].(:fingerprint, nil)
 
     cond do
-      is_binary(pub) and is_binary(fp) -> {:ok, pub, fp}
+      # m3 (final-review Minor, 2026-08-02): guard against an empty
+      # string, not just non-nil — `is_binary("")` is true, so without
+      # `pub != ""` a partial write leaving `public_key: ""` would report
+      # success (`{:ok, %{public_key: "", ...}}`) and 1b would paste an
+      # empty public key to the provider. Mirrors the private-key side
+      # (identity_state/1), which already rejects a shape that merely
+      # LOOKS present via valid_private_key?/1's header check rather than
+      # a bare is_binary/1. Spec §5.2⑤ only requires "a legal string", so
+      # the prior form was not a spec violation — this is a hardening,
+      # not a behavior-contract fix.
+      is_binary(pub) and pub != "" and is_binary(fp) -> {:ok, pub, fp}
       any_identity_field?(ctx) -> :unavailable
       true -> :absent
     end
@@ -390,11 +421,18 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # =================================================================
   # ssh-keygen —— 用 System.cmd 而非 OsProcess，限时用 Task(I2)
   #
-  # X/Y：Y 是"用哪个跑子进程"，X 是"这个子进程的风险特征"。ssh-keygen 是
-  # 本地 / 无网络 / 输出固定小的命令，没有 GitRunner 要防的网络挂死、大
-  # 输出、孤儿进程树那几条，因此不需要 OsProcess 的 pid_file + 输出上限
-  # 那一整套。core 内已有先例：stress_metrics.ex:208、pid_file.ex:240 都
-  # 用 System.cmd 跑 `ps`。
+  # X/Y：Y 是"用哪个跑子进程"，X 是"这个子进程的风险特征"。
+  #
+  # m1 (final-review Minor, 2026-08-02)：此前这里说 ssh-keygen "没有
+  # GitRunner 要防的网络挂死、大输出、孤儿进程树那几条"——这句话把两件事
+  # 混成一件：「不需要 OsProcess 的 pid_file + 输出上限那一整套机制」是对
+  # 的，「孤儿风险不存在」是错的（1a design §4.1 订正）。ssh-keygen 本地 /
+  # 无网络 / 输出固定小，因此确实不需要 OsProcess 那一整套 pid_file + 输出
+  # 上限 + orphan-reaping 机制；但本地子进程一样会卡死（二进制被换、文件
+  # 系统 stall、熵不足），且下方 run_ssh_keygen/2 的超时分支自己就说明了
+  # Task.shutdown 只杀得掉 Elixir 任务进程，底下的 ssh-keygen 子进程可能
+  # 变孤儿——孤儿风险是真实、已知、接受的取舍，不是不存在。core 内已有
+  # 先例：stress_metrics.ex:208、pid_file.ex:240 都用 System.cmd 跑 `ps`。
   #
   # 但"卡死"风险是真实的、跟"慢"无关——二进制被换、文件系统 stall、熵不足
   # 都会让子进程挂着不退出；没有 timeout 的同步 System.cmd 会无限期占住
