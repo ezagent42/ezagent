@@ -46,12 +46,14 @@ config :ezagent_web, :world_host_scope, "world."
 # The MIX_TEST_PARTITION environment variable can be used
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
+default_database = "ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}"
+
 config :ezagent_core, EzagentCore.Repo,
   username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
   password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),
   hostname: System.get_env("POSTGRES_HOST", "127.0.0.1"),
   port: String.to_integer(System.get_env("POSTGRES_PORT", "55432")),
-  database: "ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}",
+  database: System.get_env("EZAGENT_TEST_DATABASE", default_database),
   priv: "priv/repo_pg",
   # Phase 9 (Allen 2026-05-21): integration tests that exercise the
   # full dispatch pipeline now hit the Repo from:

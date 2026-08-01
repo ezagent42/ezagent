@@ -67,7 +67,12 @@ defmodule EzagentCore.Umbrella.MixProject do
       # socialware.check, the arch/invariant ExUnit subset), so they MUST run in
       # `:test` — auto-select it so a dev/agent can just `mix ci.fast` without
       # remembering `MIX_ENV=test` (the CI `gate` job sets `MIX_ENV=test` itself).
-      preferred_envs: [precommit: :test, "ci.fast": :test, "gate.arch": :test]
+      preferred_envs: [
+        precommit: :test,
+        "ci.fast": :test,
+        "ci.clean_per_grant": :test,
+        "gate.arch": :test
+      ]
     ]
   end
 
@@ -156,6 +161,7 @@ defmodule EzagentCore.Umbrella.MixProject do
         "compile --warnings-as-errors --force",
         "deps.unlock --unused",
         "format",
+        "ci.clean_per_grant",
         "test",
         # cc-headless SDK worker pure-helper suite (stdlib-only, no SDK needed) —
         # codex review of PR #1452 flagged it was not wired into any gate. Run as
@@ -271,6 +277,7 @@ defmodule EzagentCore.Umbrella.MixProject do
         &run_socialware_check/1,
         "gate.arch"
       ],
+      "ci.clean_per_grant": ["ezagent.cap_revocation.verify_clean_start"],
       # ci-shard-full-suite — the DETERMINISTIC-gate shard of the full-suite split.
       # The full-suite (`mix ci.local`) is sharded (see `ci_shard_test_aliases/0`
       # below + `EzagentCore.CiShards` + the `.github/workflows/ci.yml` full-suite
