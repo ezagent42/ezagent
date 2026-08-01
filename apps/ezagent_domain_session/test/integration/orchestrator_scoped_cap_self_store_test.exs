@@ -54,6 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     end)
 
     :ok = Ezagent.ReadyGate.put(orchestrator_uri, :not_ready)
+    buffer_size_before = Ezagent.PendingDelivery.buffer_size(orchestrator_uri)
 
     task =
       Task.async(fn ->
@@ -71,11 +72,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     # A never-ready transport does not block cap handoff: each exact Session
     # or Workspace action is already signed by its concrete target authority
-    # and durably queued for the orchestrator's own absorb path.
-    assert [first_notification, second_notification] = pending_entries(orchestrator_uri)
-
-    assert_cascade_notification(first_notification, orchestrator_uri, 1)
-    assert_cascade_notification(second_notification, orchestrator_uri, 2)
+    # and durably queued for the orchestrator's own absorb path. The identity
+    # slice has not changed yet, so its post-commit manager cascade must not
+    # enter the bounded in-memory PendingDelivery buffer before ready-drain.
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
     pending_before = pending_deliveries(orchestrator_uri)
     pending = pending_artifacts(orchestrator_uri)
 
@@ -128,6 +128,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
              )
            end)
 
+    :ok = Ezagent.SliceChange.subscribe_unverified(orchestrator_uri)
+    trace_session = start_invocation_trace(orchestrator_pid)
+    on_exit(fn -> _ = :trace.session_destroy(trace_session) end)
+
     assert :ready =
              Ezagent.Kind.ReadyTransition.drain_pending_then_mark_ready(
                URI.to_string(orchestrator_uri),
@@ -153,6 +157,20 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
                  :count
                ) == 0
            end)
+
+    settle_boot_mailbox(orchestrator_pid)
+
+    {identity_changes, cascade_invocations} =
+      collect_cascade_observations(
+        orchestrator_pid,
+        orchestrator_uri,
+        length(rotated_pending)
+      )
+
+    assert_cascade_notifications(cascade_invocations, identity_changes, orchestrator_uri)
+    assert :ok = Ezagent.SliceChange.unsubscribe_unverified(orchestrator_uri)
+    assert :trace.session_destroy(trace_session)
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
   end
 
   defp pending_artifacts(uri) do
@@ -174,28 +192,60 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     |> EzagentCore.Repo.all()
   end
 
-  defp pending_entries(uri) do
-    Ezagent.PendingDelivery.with_lock(uri, fn ->
-      key = URI.to_string(uri)
-
-      case :ets.lookup(Ezagent.PendingDelivery.table(), key) do
-        [{^key, entries}] -> Ezagent.PendingDelivery.unwrap_entries(entries)
-        [] -> []
-      end
-    end)
+  defp start_invocation_trace(pid) do
+    session = :trace.session_create(__MODULE__, self(), [])
+    1 = :trace.process(session, pid, true, [:call])
+    1 = :trace.function(session, {Ezagent.Invocation, :dispatch, 1}, [], [])
+    session
   end
 
-  defp assert_cascade_notification(invocation, orchestrator_uri, cursor) do
-    assert %Ezagent.Invocation{
-             target: %URI{query: "action=_.cascade_notify_managers"} = target,
-             mode: :cast,
-             args: %{cursor: ^cursor, slice_key: :identity, event_at: %DateTime{}},
-             ctx: %{caller: :vm_internal, reply: :ignore, mode: :cast, caps: caps},
-             origin: :trusted_internal
-           } = invocation
+  defp collect_cascade_observations(pid, uri, expected_count) do
+    identity_changes =
+      for _ <- 1..expected_count do
+        assert_receive {:slice_changed, %{uri: ^uri, slice_key: :identity} = event}, 1_000
+        event
+      end
 
-    assert URI.to_string(%{target | query: nil}) == URI.to_string(orchestrator_uri)
-    assert MapSet.size(caps) == 0
+    cascade_invocations =
+      for _ <- 1..expected_count do
+        assert_receive {:trace, ^pid, :call,
+                        {Ezagent.Invocation, :dispatch, [%Ezagent.Invocation{} = invocation]}},
+                       1_000
+
+        invocation
+      end
+
+    refute_receive {:slice_changed, %{uri: ^uri, slice_key: :identity}}, 0
+    refute_receive {:trace, ^pid, :call, {Ezagent.Invocation, :dispatch, [_invocation]}}, 0
+
+    {identity_changes, cascade_invocations}
+  end
+
+  defp assert_cascade_notifications(invocations, identity_changes, orchestrator_uri) do
+    changes_by_cursor = Map.new(identity_changes, &{&1.cursor, &1})
+
+    assert map_size(changes_by_cursor) == length(identity_changes)
+
+    assert MapSet.new(Enum.map(invocations, & &1.args.cursor)) ==
+             MapSet.new(Map.keys(changes_by_cursor))
+
+    Enum.each(invocations, fn invocation ->
+      assert %Ezagent.Invocation{
+               target: %URI{query: "action=_.cascade_notify_managers"} = target,
+               mode: :cast,
+               args: %{
+                 cursor: cursor,
+                 slice_key: :identity,
+                 event_at: %DateTime{} = event_at
+               },
+               ctx: %{caller: :vm_internal, reply: :ignore, mode: :cast, caps: caps},
+               origin: :trusted_internal
+             } = invocation
+
+      assert URI.to_string(%{target | query: nil}) == URI.to_string(orchestrator_uri)
+      assert MapSet.size(caps) == 0
+      assert %{event_at: ^event_at} = Map.fetch!(changes_by_cursor, cursor)
+    end)
   end
 
   defp expected_cap_count do
