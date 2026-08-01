@@ -53,7 +53,8 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
     agent_uri = create_curl_agent!(workspace_uri)
     agent_uri_str = URI.to_string(agent_uri)
 
-    {:ok, view, html} = live(admin_conn(conn, workspace_uri), "/identities/agents")
+    {:ok, view, _html} = live(admin_conn(conn, workspace_uri), "/identities/agents")
+    html = render_async(view, 5_000)
 
     assert has_element?(view, "#world-root[data-world-component='agents_table']")
 
@@ -67,7 +68,8 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
 
   test "new-agent route exposes dynamic flavor schemas and cwd policy",
        %{conn: conn, workspace_uri: workspace_uri} do
-    {:ok, view, html} = live(admin_conn(conn, workspace_uri), "/identities/agents/new")
+    {:ok, view, _html} = live(admin_conn(conn, workspace_uri), "/identities/agents/new")
+    html = render_async(view, 5_000)
 
     assert has_element?(view, "#world-root[data-world-component='agent_new_form']")
 
@@ -95,8 +97,10 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
     agent_uri_str = URI.to_string(agent_uri)
     encoded = URI.encode_www_form(agent_uri_str)
 
-    {:ok, detail_view, detail_html} =
+    {:ok, detail_view, _detail_html} =
       live(admin_conn(conn, workspace_uri), "/identities/agents/#{encoded}")
+
+    detail_html = render_async(detail_view, 5_000)
 
     assert has_element?(detail_view, "#world-root[data-world-component='agent_detail']")
 
@@ -112,8 +116,10 @@ defmodule EzagentWeb.WorldAgentConsoleRoutesTest do
     assert "provider" in config_field_keys
     assert "api_url" in config_field_keys
 
-    {:ok, config_view, config_html} =
+    {:ok, config_view, _config_html} =
       live(admin_conn(conn, workspace_uri), "/identities/agents/#{encoded}/config")
+
+    config_html = render_async(config_view, 5_000)
 
     assert has_element?(config_view, "#world-root[data-world-component='agent_config']")
 

@@ -45,7 +45,8 @@ defmodule EzagentWeb.WorldConversationTest do
     session_uri = world_session_uri()
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
-    {:ok, view, html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    html = render_async(view, 5_000)
 
     assert html =~ ~s(id="world-root")
     assert has_element?(view, "#world-root[data-world-component='conversation']")
@@ -68,6 +69,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     # Barrier before broadcasting (as the cold-session sibling below does): the
     # mount's async self-join floods the LiveView mailbox with telemetry-forwarded
@@ -93,19 +95,21 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   test "inbound bridge subscribes to the VIEWED session even when it is cold", %{conn: conn} do
-    # Regression for the PR-1 E2E bug: subscribing only to the live
-    # `list_sessions/1` set missed a viewed session that was not yet a live
-    # Kind (cold after a server restart), so the sender never saw their own
-    # `:cast` message. The conversation route must subscribe to the in-view
-    # session regardless of liveness. This session URI is never spawned, so it
-    # is absent from the live registry — yet a broadcast on its topic must
-    # still reach the island.
-    cold_uri =
-      Ezagent.URI.new!("session://system/default/coldsub-#{System.unique_integer([:positive])}")
+    # Regression for the PR-1 E2E bug: a durably persisted session remains
+    # visible while its Kind is cold, and opening it must subscribe to the
+    # in-view topic after rehydration. A broadcast on that topic must still
+    # reach the island.
+    cold_uri = world_session_uri()
+    {:ok, cold_pid} = Ezagent.KindRegistry.lookup(cold_uri)
+    :ok = EzagentCore.DataCase.drain_async_supervisor(Ezagent.Workspace.CapGrantSupervisor)
+    _ = GenServer.call(cold_pid, :ezagent_kind_module, 5_000)
+    :ok = Ezagent.Kind.terminate(cold_uri)
+    wait_until_cold(cold_uri)
 
     encoded = cold_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
     drain_liveview_mailbox(view)
 
     msg = Ezagent.Message.new(Ezagent.Entity.User.admin_uri(), %{text: "cold-session-inbound"})
@@ -151,6 +155,8 @@ defmodule EzagentWeb.WorldConversationTest do
         session_cap(caller_uri, session_uri, :send)
       ])
 
+    :ok = join_session(session_uri, caller_uri)
+
     conn =
       conn
       |> Map.put(:host, "world.ezagent.chat")
@@ -160,6 +166,8 @@ defmodule EzagentWeb.WorldConversationTest do
       })
 
     {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
+    drain_liveview_mailbox(view)
 
     html =
       view
@@ -220,6 +228,7 @@ defmodule EzagentWeb.WorldConversationTest do
       })
 
     {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     # member_options (the autocomplete source) includes the joined member.
     state = world_state(view)
@@ -253,6 +262,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     # A membership/presence event on the in-view session re-reads members and
     # pushes them to the React panel (PR-1 dropped these; PR-3a handles them).
@@ -424,6 +434,8 @@ defmodule EzagentWeb.WorldConversationTest do
         session_cap(caller_uri, session_uri, :send)
       ])
 
+    :ok = join_session(session_uri, caller_uri)
+
     conn =
       conn
       |> Map.put(:host, "world.ezagent.chat")
@@ -586,6 +598,7 @@ defmodule EzagentWeb.WorldConversationTest do
     short_name = "world-pr4-#{System.unique_integer([:positive])}"
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+    _html = render_async(view, 5_000)
 
     view
     |> element("#world-root")
@@ -615,7 +628,8 @@ defmodule EzagentWeb.WorldConversationTest do
   test "PR-5: sessions state lists installable socialware definitions", %{conn: conn} do
     :ok = Ezagent.Socialware.DefinitionRegistry.seed_builtin_definitions()
 
-    {:ok, _view, html} = live(admin_conn(conn), "/sessions")
+    {:ok, view, _html} = live(admin_conn(conn), "/sessions")
+    html = render_async(view, 5_000)
 
     assert html =~ ~s(&quot;socialwares&quot;)
     assert html =~ ~s(&quot;name&quot;:&quot;socialware&quot;)
@@ -676,7 +690,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = URI.encode_www_form(URI.to_string(new_uri))
 
     assert_patch(view, "/sessions?session=#{encoded}")
-    assert_push_event(view, "world:state", %{"component" => "conversation"})
+    assert_push_event(view, "world:state", %{"component" => "conversation"}, 5_000)
 
     {:ok, %{id: _rule_id}} =
       RuleStore.add(
@@ -844,7 +858,13 @@ defmodule EzagentWeb.WorldConversationTest do
         requested_manage_cap
       )
 
-    :ok = create_read_only_user(viewer_uri, [manage_cap])
+    :ok =
+      create_read_only_user(viewer_uri, [
+        manage_cap,
+        session_cap(viewer_uri, session_uri, :join)
+      ])
+
+    :ok = join_session(session_uri, viewer_uri)
 
     on_exit(fn ->
       _ = Ezagent.Domain.Pty.stop(agent_uri)
@@ -896,6 +916,7 @@ defmodule EzagentWeb.WorldConversationTest do
     caller_uri = Ezagent.URI.new!(caller)
 
     :ok = create_read_only_user(caller_uri, [session_cap(caller_uri, session_uri, :join)])
+    :ok = join_session(session_uri, caller_uri)
 
     conn =
       conn
@@ -906,6 +927,7 @@ defmodule EzagentWeb.WorldConversationTest do
       })
 
     {:ok, view, _html} = live(conn, "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     html =
       view
@@ -1060,6 +1082,7 @@ defmodule EzagentWeb.WorldConversationTest do
     encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     assert_push_event(view, "world:state", %{
       "component" => "conversation",
@@ -1299,6 +1322,7 @@ defmodule EzagentWeb.WorldConversationTest do
     user_uri = Ezagent.Entity.User.admin_uri()
 
     {:ok, view, _html} = live(admin_conn(conn), "/sessions?session=#{encoded}")
+    _html = render_async(view, 5_000)
 
     envelopes = [
       {"notification", {:notification, user_uri, %{body: %{text: "notice"}}}},
@@ -1534,7 +1558,10 @@ defmodule EzagentWeb.WorldConversationTest do
              row.name == manifest_name and row.public? == true
            end)
 
-    {:ok, view, html} = live(workspace_conn(conn, installer_ws_name, installer_user), "/sessions")
+    {:ok, view, _html} =
+      live(workspace_conn(conn, installer_ws_name, installer_user), "/sessions")
+
+    html = render_async(view, 5_000)
     assert html =~ ~s(&quot;name&quot;:&quot;#{manifest_name}&quot;)
 
     view
@@ -1647,6 +1674,7 @@ defmodule EzagentWeb.WorldConversationTest do
     # in :test, so seed it explicitly (same as the acceptance test seeds its
     # own recipe) so conformance/materialization resolve it.
     :ok = seed_np_recipe()
+    :ok = seed_hello_recipes()
 
     system_ws = Ezagent.URI.workspace(:system)
     n = System.unique_integer([:positive])
@@ -1695,6 +1723,17 @@ defmodule EzagentWeb.WorldConversationTest do
   end
 
   # --- helpers ----------------------------------------------------------
+
+  defp seed_hello_recipes do
+    Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
+      RecipeRegistry.invalidate(RecipeRegistry.system_workspace_uri(), recipe.name)
+
+      case RecipeRegistry.seed_role_if_absent(recipe) do
+        {:ok, _} -> :ok
+        {:error, reason} -> flunk("failed to seed #{recipe.name} recipe: #{inspect(reason)}")
+      end
+    end)
+  end
 
   defp seed_np_recipe do
     recipe = EzagentPluginPy.Application.np_role_recipe()
@@ -1937,6 +1976,41 @@ defmodule EzagentWeb.WorldConversationTest do
     end)
 
     session_uri
+  end
+
+  defp wait_until_cold(uri, attempts \\ 50)
+  defp wait_until_cold(_uri, 0), do: flunk("session Kind did not terminate")
+
+  defp wait_until_cold(uri, attempts) do
+    case Ezagent.KindRegistry.lookup(uri) do
+      :error ->
+        :ok
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        wait_until_cold(uri, attempts - 1)
+    end
+  end
+
+  defp join_session(session_uri, member_uri) do
+    cap = session_cap(member_uri, session_uri, :join)
+
+    Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+      origin: :trusted_internal,
+      target: Ezagent.URI.with_action(session_uri, :session, :join),
+      mode: :call,
+      args: %{member: member_uri},
+      ctx: %{
+        caller: member_uri,
+        authenticated_principal: member_uri,
+        caps: MapSet.new([cap]),
+        reply: :ignore
+      }
+    })
+    |> case do
+      :ok -> :ok
+      {:ok, _} -> :ok
+    end
   end
 
   defp session_cap(caller_uri, session_uri, action) do

@@ -29,23 +29,27 @@ defmodule Ezagent.Workspace.WorkspaceReads do
        SPEC 2026-05-27-workspace-cap-based-visibility §3.3 predicate the
        web surfaces use). Any failure → `[]` (fail closed) — never a
        degraded workspace-only listing.
-    2. PER-ROW visibility — from the workspace-scoped listing a row is
-       kept ONLY when the caller may see it. For a session: the caller is
-       an owner/member of the session (the shared live-first
-       `SessionReads.authorized?/2` predicate — REUSED, never copied; a
-       security boundary must not be copy-pasted), OR the session is
-       public (`PublicView.web_anon_access?/1`). For an agent: the caller
-       OWNS or MANAGES the agent, OR — ONLY when the CALLER is itself a
+    2. PER-ROW visibility — from the durable workspace-scoped listing a row
+       is kept ONLY when the caller may see it. For a session: the caller is
+       present in the session facade's live-or-cold member listing, is an
+       owner/member according to the shared live-first
+       `SessionReads.authorized?/2` predicate, OR the session is public
+       (`PublicView.web_anon_access?/1`). The durable member listing keeps cold
+       sessions visible without force-spawning them; the live-first check
+       preserves immediate revocation for running sessions. For an agent: the
+       caller OWNS or MANAGES the agent, OR — ONLY when the CALLER is itself a
        declared workspace member — the agent is on the workspace's shared
-       roster (a declared member agent). The shared-roster disjunct keys
-       on the CALLER's membership, never the agent's (F2, read-plane
-       PR-4 rework): a cap-scoped non-member gets NO roster.
+       roster (a declared member agent). The shared-roster disjunct keys on the
+       CALLER's membership, never the agent's (F2, read-plane PR-4 rework): a
+       cap-scoped non-member gets NO roster.
     3. REQUIRED facades pre-resolve (F6, read-plane PR-4 rework) —
        `sessions/2` validates the REQUIRED membership predicate facade
-       (`SessionReads.authorized?/2`) BEFORE fetching/filtering; when it
-       is unavailable the whole read fails closed to `[]` and does NOT
-       fall through to the independent public-session predicate. A down
-       `PublicView` merely means no public rows are added.
+       (`SessionReads.authorized?/2`) and the durable session-list facade
+       (`list_persisted_sessions/1` + `list_sessions/2`) BEFORE
+       fetching/filtering; when either is unavailable the whole read fails
+       closed to `[]` and does NOT fall through to the independent
+       public-session predicate. A down `PublicView` merely means no public
+       rows are added.
 
   ## Dependency direction (runtime DI)
 
@@ -80,8 +84,9 @@ defmodule Ezagent.Workspace.WorkspaceReads do
   def sessions(%URI{} = caller, %URI{scheme: "workspace"} = workspace_uri) do
     with :ok <- authorize_workspace(caller, workspace_uri),
          :ok <- session_reads_available?(),
-         {:ok, scoped} <- workspace_scoped_sessions(workspace_uri) do
-      Enum.filter(scoped, &visible_to?(caller, &1))
+         {:ok, {scoped, member_visible}} <- workspace_scoped_sessions(workspace_uri, caller) do
+      member_visible = MapSet.new(member_visible, &Ezagent.URI.canonical!/1)
+      Enum.filter(scoped, &visible_to?(caller, &1, member_visible))
     else
       _ -> []
     end
@@ -204,11 +209,15 @@ defmodule Ezagent.Workspace.WorkspaceReads do
 
   # ----- workspace-scoped base listing (runtime DI — see moduledoc) -----
 
-  defp workspace_scoped_sessions(%URI{} = workspace_uri) do
+  defp workspace_scoped_sessions(%URI{} = workspace_uri, %URI{} = caller) do
     facade = session_listing_facade()
 
-    if Code.ensure_loaded?(facade) and function_exported?(facade, :list_sessions, 1) do
-      {:ok, facade.list_sessions(workspace_uri)}
+    if Code.ensure_loaded?(facade) and
+         function_exported?(facade, :list_persisted_sessions, 1) and
+         function_exported?(facade, :list_sessions, 2) do
+      {:ok,
+       {facade.list_persisted_sessions(workspace_uri),
+        facade.list_sessions(workspace_uri, caller)}}
     else
       {:error, {:session_listing_unavailable, facade}}
     end
@@ -224,8 +233,9 @@ defmodule Ezagent.Workspace.WorkspaceReads do
 
   # ----- per-row visibility (owner/member OR public) --------------------
 
-  defp visible_to?(%URI{} = caller, %URI{} = session_uri) do
-    member_or_owner?(caller, session_uri) or public_session?(session_uri)
+  defp visible_to?(%URI{} = caller, %URI{} = session_uri, member_visible) do
+    MapSet.member?(member_visible, Ezagent.URI.canonical!(session_uri)) or
+      member_or_owner?(caller, session_uri) or public_session?(session_uri)
   end
 
   # F6 (read-plane PR-4 rework) — the membership predicate facade is a

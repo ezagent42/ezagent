@@ -7,10 +7,14 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     "name" => "hello",
     "version" => "0.1.0",
     "title" => "Hello website builder",
-    "description" => "Build and publish a website through a seven-role Hello team.",
+    "description" => "Build and publish a website through a two-agent Hello team.",
     "uses" => ["hello"],
     "bases" => [Ezagent.ActionSet.Session, Ezagent.ActionSet.Publisher.SessionImpl],
-    "shape" => [Ezagent.ActionSet.Turn, Ezagent.ActionSet.Surface],
+    "shape" => [
+      Ezagent.ActionSet.Turn,
+      Ezagent.ActionSet.Surface,
+      Ezagent.ActionSet.HelloSessionActions
+    ],
     "views" => ["hello_render"],
     "roles" => [
       %{
@@ -20,35 +24,15 @@ defmodule EzagentWeb.HelloManifestDriftTest do
         "flavor" => "hello"
       },
       %{
-        "role_name" => "builder",
+        "role_name" => "llm",
         "fill" => "agent",
-        "recipe" => "hello.builder",
-        "flavor" => "native"
-      },
-      %{
-        "role_name" => "concierge",
-        "fill" => "agent",
-        "recipe" => "hello.concierge",
-        "flavor" => "native"
-      },
-      %{"role_name" => "llm", "fill" => "agent", "recipe" => "hello.llm", "flavor" => "curl"},
-      %{
-        "role_name" => "sharer",
-        "fill" => "agent",
-        "recipe" => "hello.sharer",
-        "flavor" => "native"
-      },
-      %{
-        "role_name" => "publisher",
-        "fill" => "agent",
-        "recipe" => "hello.publisher",
-        "flavor" => "native"
-      },
-      %{
-        "role_name" => "dispatcher",
-        "fill" => "agent",
-        "recipe" => "hello.dispatcher",
-        "flavor" => "native"
+        "recipe" => "hello.llm",
+        "flavor" => "curl",
+        "config" => %{
+          "provider" => "deepseek",
+          "api_url" => "https://api.deepseek.com/chat/completions",
+          "model" => "deepseek-v4-flash"
+        }
       }
     ],
     "routing_rules" => [
@@ -74,7 +58,7 @@ defmodule EzagentWeb.HelloManifestDriftTest do
     assert File.exists?(path)
   end
 
-  test "the shipped manifest is the seven-role curl-only Hello definition" do
+  test "the shipped manifest is the two-agent curl-backed Hello definition" do
     assert {:ok, parsed} = ManifestYaml.parse(File.read!(Demo.Hello.manifest_path()))
     assert parsed == @reference
     assert Enum.count(parsed["roles"], &(&1["flavor"] == "curl")) == 1

@@ -27,8 +27,17 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
 
   defmodule FakeSessionListing do
     @moduledoc false
-    def list_sessions(%URI{scheme: "workspace"}) do
+    def list_persisted_sessions(%URI{scheme: "workspace"}) do
       Process.get({:fake_session_listing, :sessions}, [])
+    end
+
+    def list_sessions(%URI{scheme: "workspace"}, %URI{} = caller) do
+      authorized = Process.get({:fake_session_reads, :authorized}, [])
+
+      Enum.filter(
+        Process.get({:fake_session_listing, :sessions}, []),
+        &({caller, &1} in authorized)
+      )
     end
   end
 
