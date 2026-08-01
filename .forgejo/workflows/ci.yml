@@ -82,12 +82,29 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # act_runner injects ImageOS=ubuntu20 into the step env and it OVERRIDES a
+      # job-level `env: ImageOS` (verified: job-level ubuntu22 was ignored). The
+      # ubuntu-20.04 OTP build links libcrypto.so.1.1 (OpenSSL 1.1), which is
+      # ABSENT on this Debian bookworm runner (it ships OpenSSL 3 / libcrypto.so.3)
+      # -> the crypto NIF fails to load -> mix can't do TLS -> setup-beam's
+      # `mix local.rebar` dies. Force ubuntu22 via $GITHUB_ENV (highest-precedence
+      # override, applied to all subsequent steps) so setup-beam installs the
+      # ubuntu-22.04 arm64 OTP built against libcrypto.so.3, which IS present here.
+      - name: Pin setup-beam target OS (override runner ImageOS)
+        shell: bash
+        run: |
+          echo "runner-provided ImageOS='${ImageOS:-<unset>}'"
+          echo "ImageOS=ubuntu22" >> "$GITHUB_ENV"
+
       # Full github.com URL: this Forgejo runner's DEFAULT_ACTIONS_URL is
       # data.forgejo.org, which mirrors only the `actions/*` org — `erlef/*` is
       # not there (a bare `erlef/setup-beam` 404s). github.com egress is
       # available from the runner, so the explicit URL resolves.
+      # Step-level env also pins ImageOS (belt-and-suspenders with $GITHUB_ENV).
       - name: Set up Elixir/OTP
         uses: https://github.com/erlef/setup-beam@v1
+        env:
+          ImageOS: ubuntu22
         with:
           otp-version: "28"
           elixir-version: "1.19"
