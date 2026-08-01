@@ -64,6 +64,7 @@ defmodule EzagentWeb.WorldUserAdminTest do
 
     encoded = user_uri |> URI.to_string() |> URI.encode_www_form()
     {:ok, view, html} = live(admin_conn(conn), "/identities/users/#{encoded}")
+    html = render_async(view, 5_000)
 
     assert has_element?(view, "#world-root[data-world-component='user_detail']")
     assert world_state(html)["display_name"] == "Managed User"

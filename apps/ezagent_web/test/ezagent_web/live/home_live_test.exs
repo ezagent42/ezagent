@@ -160,48 +160,23 @@ defmodule EzagentWeb.HomeLiveTest do
 
   describe "wizard (no sessions)" do
     setup do
-      # PR-J — to exercise the empty-sessions branch, terminate every
-      # session currently registered under the SessionSupervisor via
-      # `DynamicSupervisor.terminate_child/2` (plain `GenServer.stop`
-      # would trigger the default `:permanent` restart). Sessions then
-      # disappear from `EzagentDomainInstanceMessage.list_sessions/0`.
-      restore_short_names = drain_system_sessions()
+      workspace_name = "home-wizard-#{System.unique_integer([:positive])}"
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      ensure_workspace_seeded!(workspace_uri)
 
-      on_exit(fn ->
-        # Restore only the boot baseline. Other live system sessions are
-        # residue from earlier tests in this shared VM and must not be
-        # recreated here (doing so made teardown scale with the whole suite
-        # and eventually outlive the SQL sandbox ownership timeout).
-        for short <- restore_short_names do
-          # SPEC `2026-05-26-session-create-orchestrator-unified` Gap A —
-          # return is `{:ok, uri, meta} | {:error, _}`. This re-seed
-          # discards everything; we only need the side effect.
-          _ =
-            create_session_via_workspace(short, Ezagent.Entity.User.admin_uri(),
-              template_name: "default"
-            )
-        end
-      end)
+      on_exit(fn -> _ = Ezagent.Kind.terminate(workspace_uri) end)
 
-      :ok
+      %{workspace_uri: workspace_uri}
     end
 
-    # #189 full-suite session-creation-under-load flake (family:
-    # #902/#58/AutoserviceTier1Seed). The shared `setup` above registers an
-    # `on_exit` that re-seeds torn-down sessions via
-    # `Ezagent.Workspace.create_session/3` — a heavy SYNCHRONOUS op (Session
-    # Kind spawn + template freeze/finalize + a `:global` per-URI lock), NOT a
-    # self-deadlock (green in isolation; the create path never re-enters the
-    # busy Workspace Kind). Under the full concurrent mac-runner load this
-    # teardown can exceed ExUnit's default 60s on_exit budget. Raise the budget
-    # (a timeout quarantine, not a logic change). Both tests in this describe
-    # share the same slow on_exit, so both carry the tag.
-    @tag timeout: 180_000
-    test "renders the wizard when no sessions exist", %{conn: conn} do
+    # Use a private workspace so "empty" means no live OR durable sessions
+    # without tearing down the shared system fixture.
+    test "renders the wizard when no sessions exist", %{conn: conn, workspace_uri: workspace_uri} do
       conn =
         conn
         |> Plug.Test.init_test_session(%{
-          "current_entity_uri" => "entity://system/user/admin"
+          "current_entity_uri" => "entity://system/user/admin",
+          "current_workspace_uri" => URI.to_string(workspace_uri)
         })
 
       {:ok, _lv, html} = live(conn, ~p"/")
@@ -211,14 +186,17 @@ defmodule EzagentWeb.HomeLiveTest do
       assert html =~ "main"
     end
 
-    # #189 flake (see above) — the shared on_exit re-seed can also blow the
-    # default 60s on_exit budget here under full concurrent mac-runner load.
-    @tag timeout: 180_000
-    test "submitting the wizard creates the session and navigates to /sessions", %{conn: conn} do
+    test "submitting the wizard creates the session and navigates to /sessions", %{
+      conn: conn,
+      workspace_uri: workspace_uri
+    } do
+      short_name = "wizard-submit-#{System.unique_integer([:positive])}"
+
       conn =
         conn
         |> Plug.Test.init_test_session(%{
-          "current_entity_uri" => "entity://system/user/admin"
+          "current_entity_uri" => "entity://system/user/admin",
+          "current_workspace_uri" => URI.to_string(workspace_uri)
         })
 
       {:ok, lv, _html} = live(conn, ~p"/")
@@ -227,14 +205,15 @@ defmodule EzagentWeb.HomeLiveTest do
       # `render_submit/1` returns the redirect tuple in :error form.
       assert {:error, {:live_redirect, %{to: "/sessions"}}} =
                lv
-               |> form("#first-session-wizard", %{"wizard" => %{"short_name" => "main"}})
+               |> form("#first-session-wizard", %{"wizard" => %{"short_name" => short_name}})
                |> render_submit()
 
-      # session://system/default/main is now registered.
-      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(URI.new!("session://system/default/main"))
-      # …and bound to the default workspace (invariant).
-      assert {:ok, _workspace_uri} =
-               Ezagent.WorkspaceRegistry.lookup(URI.new!("session://system/default/main"))
+      session_uri = Ezagent.URI.session(:system, :default, short_name)
+      on_exit(fn -> _ = Ezagent.Kind.terminate(session_uri) end)
+      assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
+      # The wizard intentionally creates in the admin's structural home workspace.
+      assert {:ok, %URI{scheme: "workspace", host: "system"}} =
+               Ezagent.WorkspaceRegistry.lookup(session_uri)
     end
   end
 
@@ -285,89 +264,6 @@ defmodule EzagentWeb.HomeLiveTest do
     after
       :erlang.trace(:all, false, [:call])
       :erlang.trace_pattern(mfa, false, [:local])
-    end
-  end
-
-  # Terminate every SYSTEM-workspace session under EzagentDomainInstanceMessage.SessionSupervisor so
-  # the wizard's empty-list branch can be exercised. Returns the list of
-  # session short_names that were torn down (so `on_exit` can re-seed).
-  # Drive `EzagentDomainInstanceMessage.list_sessions/0` to empty so HomeLive takes
-  # the wizard branch.
-  #
-  # `list_sessions/0` derives its result from `Ezagent.KindRegistry`
-  # (every live `session://` Kind), NOT from the membership of any one
-  # supervisor. The boot-seeded `session://system/default/main` is in
-  # fact a `:permanent` child of the GENERIC `Ezagent.KindSupervisor`
-  # (the `resolve_supervisor/1` fallback), NOT
-  # `EzagentDomainInstanceMessage.SessionSupervisor` — so the old drain, which
-  # only walked `SessionSupervisor`'s children, found nothing to
-  # terminate and the wizard branch never fired.
-  #
-  # Drain from the registry instead: enumerate live `session://system/...`
-  # Kind, and `DynamicSupervisor.terminate_child/2` each one against its
-  # ACTUAL parent supervisor (resolved from the process's `$ancestors`).
-  # `terminate_child` is the only call that permanently removes a
-  # `:permanent` child — a bare `Process.exit`/`GenServer.stop` would
-  # trigger the supervisor restart and the session would reappear.
-  # The HomeLive landing check is workspace-scoped, so other tenants are
-  # deliberately left untouched. Return only the canonical boot session's
-  # short name for restoration; transient test sessions are cleanup residue,
-  # not shared fixtures. The old implementation returned `uri.host` for every
-  # session ("system"), then synchronously recreated it N times at on_exit.
-  defp drain_system_sessions do
-    live_sessions =
-      Ezagent.KindRegistry.list_all()
-      |> Enum.filter(fn {uri, pid} ->
-        is_binary(uri) and String.starts_with?(uri, "session://system/") and is_pid(pid)
-      end)
-
-    restore_short_names =
-      if Enum.any?(live_sessions, fn {uri_str, _pid} ->
-           uri_str == "session://system/default/main"
-         end) do
-        ["main"]
-      else
-        []
-      end
-
-    for {_uri_str, pid} <- live_sessions do
-      case parent_supervisor(pid) do
-        nil -> :ok
-        sup -> DynamicSupervisor.terminate_child(sup, pid)
-      end
-    end
-
-    wait_until_system_empty()
-    restore_short_names
-  end
-
-  # The parent DynamicSupervisor of a Kind.Server pid is the first entry
-  # of its `$ancestors` process-dict key (set by `proc_lib` on spawn).
-  defp parent_supervisor(pid) do
-    case Process.info(pid, :dictionary) do
-      {:dictionary, dict} ->
-        case Keyword.get(dict, :"$ancestors") do
-          [parent | _] when is_atom(parent) -> Process.whereis(parent)
-          [parent | _] when is_pid(parent) -> parent
-          _ -> nil
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp wait_until_system_empty(retries \\ 50)
-  defp wait_until_system_empty(0), do: :ok
-
-  defp wait_until_system_empty(retries) do
-    if Enum.any?(Ezagent.KindRegistry.list_all(), fn {uri, _pid} ->
-         String.starts_with?(uri, "session://system/")
-       end) do
-      Process.sleep(20)
-      wait_until_system_empty(retries - 1)
-    else
-      :ok
     end
   end
 end

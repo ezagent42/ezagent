@@ -9,9 +9,9 @@ defmodule EzagentWeb.FeishuWebhookRouteRemovedTest do
 
   Neither GET nor POST reaches `WebhookPlug` (which would answer 200):
 
-    * POST matches no route (there is no POST catch-all), so the router
-      raises `Phoenix.Router.NoRouteError` (`plug_status: 404`). This is the
-      #204 attack vector (a forged event POST) -- the load-bearing assertion.
+    * POST falls through to the router's not-found response and returns 404.
+      This is the #204 attack vector (a forged event POST) -- the
+      load-bearing assertion.
     * GET falls through to the browser catch-all
       (`get "/*path", FallbackController, :not_found`) and returns a normal
       404 response, not the webhook's 200.
@@ -29,10 +29,9 @@ defmodule EzagentWeb.FeishuWebhookRouteRemovedTest do
 
   @path "/api/feishu/webhook"
 
-  test "POST to removed webhook route raises 404 (the #204 attack vector)", %{conn: conn} do
-    assert_error_sent 404, fn ->
-      post(conn, @path, %{"type" => "url_verification", "challenge" => "x"})
-    end
+  test "POST to removed webhook route returns 404 (the #204 attack vector)", %{conn: conn} do
+    conn = post(conn, @path, %{"type" => "url_verification", "challenge" => "x"})
+    assert conn.status == 404
   end
 
   test "GET to removed webhook route returns 404, not the webhook 200", %{conn: conn} do
