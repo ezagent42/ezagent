@@ -692,6 +692,9 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 
 #### 任务 1 — 最简 B2′（1–2 天）
 
+> **已再切分为 1a / 1b（2026-08-01）** —— 设计见 `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md`。
+> **1a**（本节的凭据侧主体）是 A1/B2′ **共享底座**；**1b**（物化进 agent + 给 agent 的 env）是 B2′ 独有、A1 下作废，单列为可独立决定的开关。
+
 **范围：只动凭据侧。agent 自己 `git clone`。**
 
 几乎全部是「在已有机制上加一个值」而非建新机制：
@@ -751,8 +754,19 @@ A1 的其余增量：push stage + **agent 完成信号**（今天不存在，见
 
 #### 该划分放弃了什么（如实记录）
 
-- **最简 B2′ 不为 A1 预建底座。** §8.3 中「先做 B2′ 会把共享底座建好」的说法**在最简版本下不成立**——共享的只剩凭据轨，而那本来就存在。这是有意的取舍：用「A1 的底座延后」换「任务 1 更快落地」。
-- **最简 B2′ 期间放弃**：worktree 隔离、共享 bare cache（每 agent 一份完整 clone）、provision 幂等、reconciler 回收、base commit 钉死。这些今天都有，最简 B2′ 用不上；任务 2 后可选择性拿回。
+> **修订（2026-08-01）**：本节初稿称「最简 B2′ 不为 A1 预建底座」，**该判断已被 1a/1b 再切分推翻** —— 详见 `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md`。下文已按修订后的事实重写。
+
+**任务 1 再切一刀为 1a / 1b**，切分依据是「哪部分在转向 A1 后不白费」：
+
+| 部分 | B2′ 用 | A1 用 |
+|---|---|---|
+| **1a — key 存储 + 归属 + cap-gated read** | ✅ | ✅ **共享底座** |
+| **1b — 物化进 agent config_dir + 给 agent 的 `GIT_SSH_COMMAND` + cascade/grant** | ✅ | ❌ 作废 |
+| 任务 2 — provision 入口 + push stage + 完成信号 + 给平台 git 的 `GIT_SSH_COMMAND` | ❌ | ✅ |
+
+- **1a 是实打实的共享底座**（凭据面的全部主体），A1 与 B2′ 都要。**故「不为 A1 预建底座」这句作废。**
+- **真正不共享的是 1b** —— 它是「把 key 交给 agent」这个决定的落地，也是 agent 权限变大的那一步，因此单列为一个**可独立决定的开关**：若中途转向 A1，1b 不做，直接接任务 2。
+- **仍然放弃的**：worktree 隔离、共享 bare cache（每 agent 一份完整 clone，磁盘/带宽随 agent 数增长）、provision 幂等、reconciler 回收、base commit 钉死。这些今天都有，最简 B2′ 用不上；**任务 2 建成 provision 后可选择性拿回**。
 
 ### 两条前置
 
