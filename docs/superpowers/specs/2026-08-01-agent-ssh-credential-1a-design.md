@@ -179,7 +179,7 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 
 1a 只有 user 一层、没有 fall-through，但**这个区分必须从第一天就有** —— 否则将来接入覆盖策略（§2.1）时会出现静默降权：一个损坏的身份会被误当成"没配"而 fall through 到下一层，正是既有 `pick_credential_source` 明令禁止的静默降权。错误名刻意对齐既有的 `:user_source_unavailable`。
 
-### 5.2 四条具体处理
+### 5.2 六条具体处理
 
 **① `ssh-keygen` 失败 → `{:error, {:keygen_failed, reason}}`**
 命令不存在 / 非零退出 / 输出不合预期，全部显式返回。**绝不返回 `:ok` 而实际没生成**（CLAUDE.md「不要 silent 失败」）。
@@ -198,6 +198,16 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 - 含 `\0`：不同 BEAM/libc 组合下行为不一致（实测 OTP 28 + Elixir 1.19 上 `System.cmd/3` 静默把该 argv 元素截到 NUL 处，而非抛错）；即便不抛错，也会导致持久化的 `comment` 字段与 ssh-keygen 实际写入公钥文件的注释不一致 —— 同属「不要 silent 失败」要挡的一类。
 
 三者均在调用 `ssh-keygen` **之前**拒绝，不依赖后续解析兜底（防御深度：`keygen/1` 内部另外只取 `.pub` 输出首行，见实现注释）。
+
+**⑤ `:read_ssh_public_key` / `:read_ssh_key` 的 absent/unavailable 判定落实**（Task 2，2026-08-01 补）
+
+`:read_ssh_public_key` 只检查 `public_key` 字段：为空返回 `{:error, :ssh_identity_absent}`；否则返回公钥与指纹，**不做 unavailable 细分**——公钥字段本身要么完整要么不存在，没有"公钥损坏"的中间态需要覆盖。
+
+`:read_ssh_key` 应用 §5.1 的完整三态判定：私钥是合法形状（以 OpenSSH 私钥头开头）→ 返回私钥；私钥与公钥皆缺失 → `{:error, :ssh_identity_absent}`；其余任何形状（有公钥无私钥、私钥内容不合法等）→ `{:error, :ssh_identity_unavailable}`。两个错误原子均已在 §5.1 声明；这里是把该判定落实到具体 action 的实现条件，没有引入新原子。
+
+**⑥ `:revoke_ssh_key` 无错误路径，幂等返回 `revoked` 布尔值**（Task 2，2026-08-01 补）
+
+`:revoke_ssh_key` **不返回 `{:error, _}`**：本来就没有身份时视为幂等成功，返回 `revoked: false` 且不产生任何 state 变更、不留审计；有身份时清除全部身份字段（公钥/私钥/指纹/comment/created_at）并返回 `revoked: true`。清除的必须是**全部**字段而非只清私钥——只清私钥会让之后的 `:read_ssh_key` 落进 `:ssh_identity_unavailable`（"有公钥无私钥"的形状）而不是期望的 `:ssh_identity_absent`，见 §8 测试列表最后一条。
 
 ### 5.3 审计
 

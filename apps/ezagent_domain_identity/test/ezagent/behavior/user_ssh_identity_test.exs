@@ -244,6 +244,104 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     end
   end
 
+  describe "read_ssh_public_key" do
+    test "返回公钥与指纹" do
+      state = %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"}
+
+      assert {:ok, %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"}, []} =
+               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+    end
+
+    test "无身份时 absent" do
+      assert {:error, :ssh_identity_absent} =
+               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx())
+    end
+  end
+
+  describe "read_ssh_key" do
+    test "返回私钥并留审计" do
+      state = %{
+        public_key: "ssh-ed25519 AAAAC3 alice",
+        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+        fingerprint: "SHA256:abc"
+      }
+
+      assert {:ok, %{private_key: priv}, effects} =
+               UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
+
+      assert String.starts_with?(priv, "-----BEGIN OPENSSH PRIVATE KEY-----")
+      assert Enum.any?(effects, &match?({:emit, :ssh_identity_read, _}, &1))
+    end
+
+    test "无身份时 absent" do
+      assert {:error, :ssh_identity_absent} = UserSshIdentity.handle_read_ssh_key(%{}, ctx())
+    end
+
+    test "有公钥但私钥缺失时 unavailable —— 绝不降级成 absent" do
+      state = %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
+    end
+
+    test "私钥形状不合法时 unavailable" do
+      state = %{public_key: "ssh-ed25519 AAAAC3 alice", private_key: "not-a-key"}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
+    end
+  end
+
+  describe "revoke_ssh_key" do
+    test "清除全部身份字段并留审计" do
+      state = %{
+        public_key: "ssh-ed25519 AAAAC3 alice",
+        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+        fingerprint: "SHA256:abc",
+        comment: "alice",
+        created_at: DateTime.utc_now()
+      }
+
+      assert {:ok, %{revoked: true}, effects} =
+               UserSshIdentity.handle_revoke_ssh_key(%{}, ctx(state))
+
+      for key <- [:public_key, :private_key, :fingerprint, :comment, :created_at] do
+        assert Enum.any?(effects, &match?({:set, ^key, nil}, &1)),
+               "revoke 必须清除 #{key}"
+      end
+
+      assert Enum.any?(effects, &match?({:emit, :ssh_identity_revoked, _}, &1))
+    end
+
+    test "无身份时幂等返回 revoked: false" do
+      assert {:ok, %{revoked: false}, []} = UserSshIdentity.handle_revoke_ssh_key(%{}, ctx())
+    end
+
+    # spec §8 明确要求：revoke 之后 read 必须得 :absent 而非 :unavailable。
+    # 这是 revoke 必须清除**全部**身份字段（而非只清私钥）的原因 —— 只清
+    # 私钥会留下"有公钥无私钥"的形状，正好落进 :unavailable。
+    test "revoke 之后 read 得 absent 而非 unavailable" do
+      state = %{
+        public_key: "ssh-ed25519 AAAAC3 alice",
+        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+        fingerprint: "SHA256:abc"
+      }
+
+      assert {:ok, %{revoked: true}, effects} =
+               UserSshIdentity.handle_revoke_ssh_key(%{}, ctx(state))
+
+      # 把 revoke 的 {:set, k, nil} 应用回 state，模拟框架 commit 后的样子
+      after_state =
+        Enum.reduce(effects, state, fn
+          {:set, k, v}, acc -> Map.put(acc, k, v)
+          _, acc -> acc
+        end)
+
+      assert {:error, :ssh_identity_absent} =
+               UserSshIdentity.handle_read_ssh_key(%{}, ctx(after_state))
+    end
+  end
+
   defp tmp_entries do
     # R6: derive from the module's own constant instead of repeating the
     # literal — a rename of @keygen_tmp_prefix would otherwise desync

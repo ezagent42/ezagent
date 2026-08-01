@@ -67,6 +67,41 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
     modes: [:call]
   )
 
+  action(:read_ssh_public_key,
+    args: %{},
+    returns: %{public_key: :string, fingerprint: :string},
+    caps: [{:read_ssh_public_key, kind: :user}],
+    description:
+      "Read this User's SSH public key + fingerprint. NOT sensitive — " <>
+        "this is what the user pastes into the provider. Deliberately a " <>
+        "SEPARATE cap from :read_ssh_key.",
+    data_owner: :self,
+    modes: [:call]
+  )
+
+  action(:read_ssh_key,
+    args: %{},
+    returns: %{private_key: :string},
+    caps: [{:read_ssh_key, kind: :user}],
+    description:
+      "Read this User's SSH PRIVATE key. Sensitive — every call is " <>
+        "audited. This is the `ssh.read` authorization gate.",
+    data_owner: :self,
+    modes: [:call]
+  )
+
+  action(:revoke_ssh_key,
+    args: %{},
+    returns: %{revoked: :boolean},
+    caps: [{:revoke_ssh_key, kind: :user}],
+    description:
+      "Clear this User's SSH identity entirely. Idempotent — returns " <>
+        "revoked: false when there was nothing to revoke. Required " <>
+        "before :generate_ssh_key can run again.",
+    data_owner: :self,
+    modes: [:call]
+  )
+
   # 保留 `kind: :user` 轴（宏自动派生会硬编码 `:any`，见 UserCredentials.ex）。
   # 实测(Ezagent.Cap.Verifier.required_cap/4)：declared.kind == :any 时会
   # 用派发目标 Kind 的 type_name/0 替换，本 Behavior 目前只挂 User Kind，
@@ -79,7 +114,10 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   @doc false
   def required_caps do
     %{
-      generate_ssh_key: Ezagent.Capability.cap(:user, __MODULE__, :generate_ssh_key)
+      generate_ssh_key: Ezagent.Capability.cap(:user, __MODULE__, :generate_ssh_key),
+      read_ssh_public_key: Ezagent.Capability.cap(:user, __MODULE__, :read_ssh_public_key),
+      read_ssh_key: Ezagent.Capability.cap(:user, __MODULE__, :read_ssh_key),
+      revoke_ssh_key: Ezagent.Capability.cap(:user, __MODULE__, :revoke_ssh_key)
     }
   end
 
@@ -138,6 +176,102 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
         {:error, _reason} = error ->
           error
       end
+    end
+  end
+
+  @doc """
+  读取本 User 的 SSH 公钥与指纹。
+
+  不敏感——这是用户要贴进 provider 的东西，与 `:read_ssh_key`(私钥读取)
+  有意分成两条不同的 cap，不 emit 审计(高频、非敏感)。无身份时返回
+  `{:error, :ssh_identity_absent}`。
+  """
+  def handle_read_ssh_public_key(_args, ctx) do
+    case ctx[:read].(:public_key, nil) do
+      nil -> {:error, :ssh_identity_absent}
+      pub -> {:ok, %{public_key: pub, fingerprint: ctx[:read].(:fingerprint, nil)}, []}
+    end
+  end
+
+  @doc """
+  读取本 User 的 SSH 私钥。
+
+  敏感操作——每次调用都留一条审计 emit(谁在什么时候取走了私钥是这条线上
+  最值得留痕的事)。区分 `{:error, :ssh_identity_absent}`(完全没有身份)与
+  `{:error, :ssh_identity_unavailable}`(有身份记录但私钥缺失或形状不合法)
+  ——见下方 `identity_state/1` 的说明，这个区分从第一天就必须存在，否则
+  将来接入既有覆盖策略时会把损坏的身份误判成"没配"而静默降权。
+  """
+  def handle_read_ssh_key(_args, ctx) do
+    case identity_state(ctx) do
+      :absent ->
+        {:error, :ssh_identity_absent}
+
+      :unavailable ->
+        {:error, :ssh_identity_unavailable}
+
+      {:ok, priv} ->
+        {:ok, %{private_key: priv},
+         [
+           {:emit, :ssh_identity_read,
+            %{
+              user_uri: uri_to_string(ctx.self_uri),
+              fingerprint: ctx[:read].(:fingerprint, nil),
+              at: DateTime.utc_now()
+            }}
+         ]}
+    end
+  end
+
+  @doc """
+  撤销本 User 的 SSH 身份，清除全部相关 state 字段。
+
+  幂等——本来就没有身份时返回 `revoked: false` 且不产生任何 state 变更，
+  不是错误。清除的是**全部**身份字段(公钥/私钥/指纹/comment/created_at)
+  而非只清私钥，确保撤销之后的读取得到 `:ssh_identity_absent` 而非
+  `:ssh_identity_unavailable`——只清私钥会留下"有公钥无私钥"的形状，正好
+  落进 unavailable。
+  """
+  def handle_revoke_ssh_key(_args, ctx) do
+    if ctx[:read].(:public_key, nil) || ctx[:read].(:private_key, nil) do
+      {:ok, %{revoked: true},
+       [
+         {:set, :public_key, nil},
+         {:set, :private_key, nil},
+         {:set, :fingerprint, nil},
+         {:set, :comment, nil},
+         {:set, :created_at, nil},
+         {:emit, :ssh_identity_revoked,
+          %{user_uri: uri_to_string(ctx.self_uri), at: DateTime.utc_now()}}
+       ]}
+    else
+      {:ok, %{revoked: false}, []}
+    end
+  end
+
+  # =================================================================
+  # absent ≠ unavailable —— 这个区分必须从第一天就有
+  #
+  # absent   = 完全没有身份 → 调用方可决定 fall-through 还是报错
+  # unavailable = 有身份记录但私钥缺失/形状不合法（部分写入、迁移遗留；
+  #               统一安全轨接手 at-rest 加密后，解封失败也归这一类）
+  #
+  # 若把 unavailable 降级成 absent，将来接入既有的覆盖策略
+  # (Ezagent.Credential.Resolver.pick_credential_source/1: explicit >
+  # user > workspace-shared) 时会出现静默降权 —— 一个损坏的身份被误当成
+  # "没配"而 fall through 到下一层。错误名刻意对齐既有的
+  # :user_source_unavailable。
+  # =================================================================
+  @private_key_header "-----BEGIN OPENSSH PRIVATE KEY-----"
+
+  defp identity_state(ctx) do
+    priv = ctx[:read].(:private_key, nil)
+    pub = ctx[:read].(:public_key, nil)
+
+    cond do
+      is_binary(priv) and String.starts_with?(priv, @private_key_header) -> {:ok, priv}
+      is_nil(priv) and is_nil(pub) -> :absent
+      true -> :unavailable
     end
   end
 

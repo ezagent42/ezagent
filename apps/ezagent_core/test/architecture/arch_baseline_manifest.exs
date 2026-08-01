@@ -546,7 +546,17 @@
   #   ...)`, which requires each to stay its own top-level state key. No
   #   shared setter exists to route them through. cross-slice stays 0 (all
   #   writes are UserSshIdentity's own state). 131→136.
-  set_effect_sites: 136,
+  # arch-cap-bump: agent-ssh-credential Task 2 — Behavior.UserSshIdentity's
+  #   handle_revoke_ssh_key clears the identity: 5 irreducible {:set, ...}
+  #   sites (:public_key, :private_key, :fingerprint, :comment, :created_at,
+  #   each set to nil). Same irreducibility argument as Task 1a's generate
+  #   handler directly above — five independent top-level state keys, no
+  #   shared setter to route them through, and clearing must be exhaustive
+  #   (a partial clear would leave the identity in the :unavailable shape
+  #   instead of :absent — see handle_read_ssh_key's absent-vs-unavailable
+  #   split). cross-slice stays 0 (all writes are UserSshIdentity's own
+  #   state). 136→141.
+  set_effect_sites: 141,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,
