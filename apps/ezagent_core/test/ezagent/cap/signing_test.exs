@@ -80,6 +80,20 @@ defmodule Ezagent.Cap.SigningTest do
       assert Signing.signing_payload(golden_cap()) ==
                ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"kind-g1:test-key","kind":"session","v":1,"workspace_uri":"workspace://team-alpha"})
     end
+
+    test "v2 covers grant_id while v1 preserves the legacy payload" do
+      v1_payload = Signing.signing_payload(golden_cap())
+
+      v2_payload =
+        golden_cap()
+        |> Map.merge(%{signing_version: 2, grant_id: "grant-018fbc96"})
+        |> Signing.signing_payload()
+
+      assert v2_payload =~ ~s("grant_id":"grant-018fbc96")
+      assert v2_payload =~ ~s("v":2)
+      refute v1_payload =~ "grant_id"
+      assert v1_payload =~ ~s("v":1)
+    end
   end
 
   describe "trust_domain/1" do
@@ -92,6 +106,20 @@ defmodule Ezagent.Cap.SigningTest do
 
       assert_raise ArgumentError, fn -> Signing.trust_domain(nil) end
       assert_raise ArgumentError, fn -> Signing.trust_domain(:not_a_workspace) end
+    end
+  end
+
+  describe "valid_protocol?/1" do
+    test "accepts only legal v1 and v2 grant-id combinations" do
+      v1 = golden_cap()
+      v2 = %{v1 | signing_version: 2, grant_id: "grant-018fbc96"}
+
+      assert Signing.valid_protocol?(v1)
+      assert Signing.valid_protocol?(v2)
+      refute Signing.valid_protocol?(%{v1 | grant_id: "illegal-v1-id"})
+      refute Signing.valid_protocol?(%{v2 | grant_id: nil})
+      refute Signing.valid_protocol?(%{v2 | grant_id: ""})
+      refute Signing.valid_protocol?(%{v2 | signing_version: 99})
     end
   end
 

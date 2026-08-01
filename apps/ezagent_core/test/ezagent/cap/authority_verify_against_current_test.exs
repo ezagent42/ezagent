@@ -13,6 +13,7 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
 
   import Ezagent.Test.CapHelper, only: [authority_signed_cap!: 3]
 
+  alias Ezagent.Cap
   alias Ezagent.Cap.Authority
   alias Ezagent.Capability
   alias Ezagent.Test.{TestBehavior, TestKind}
@@ -82,6 +83,36 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
 
     other_signed = mint_signed_cap_for(other_uri, grantee)
     refute Authority.verify_against_current(other_signed, grantee, uri)
+  end
+
+  test "normalizes a legacy signed struct before protocol verification" do
+    {uri, pid, grantee} = start_target("legacy-protocol")
+    authority = :sys.get_state(pid).authority
+    cap = authority_signed_cap!(authority, grantee, action_cap(uri))
+    assert cap.signing_version == 1
+
+    legacy_cap =
+      cap
+      |> Map.from_struct()
+      |> Map.drop([:signing_version, :grant_id])
+      |> Map.put(:__struct__, Capability)
+
+    assert Authority.verify_against_current(legacy_cap, grantee, uri)
+  end
+
+  test "issue overwrites caller protocol metadata with a fresh v2 grant id" do
+    {uri, _pid, grantee} = start_target("framework-stamp")
+    requested = %{action_cap(uri) | signing_version: 99, grant_id: "caller-controlled"}
+
+    assert {:ok, first} = Cap.issue({:admin, admin()}, grantee, requested)
+    assert {:ok, second} = Cap.issue({:admin, admin()}, grantee, requested)
+
+    assert first.signing_version == 2
+    assert is_binary(first.grant_id) and first.grant_id != ""
+    refute first.grant_id == "caller-controlled"
+    refute second.grant_id == first.grant_id
+    assert Authority.verify_against_current(first, grantee, uri)
+    assert Authority.verify_against_current(second, grantee, uri)
   end
 
   defp start_target(suffix) do

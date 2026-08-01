@@ -13,6 +13,7 @@ defmodule Ezagent.Cap.Authority do
 
   alias Ezagent.Cap.Signing
   alias Ezagent.Capability
+  alias Ezagent.Capability.Normalize
   alias Ezagent.Ecto.KindCapAuthority
   alias EzagentCore.Repo
 
@@ -274,13 +275,7 @@ defmodule Ezagent.Cap.Authority do
     with {:ok, current_key_id} <- current_key_id(target),
          true <- cap.key_id == current_key_id,
          {:ok, public_key} <- Ezagent.Cap.AuthorityCache.public_key(current_key_id) do
-      :crypto.verify(
-        :eddsa,
-        :none,
-        Signing.signing_payload(cap),
-        signature,
-        [public_key, :ed25519]
-      )
+      verify_signature(public_key, cap, presenter)
     else
       _ -> false
     end
@@ -498,13 +493,18 @@ defmodule Ezagent.Cap.Authority do
 
   defp verify_signature(public_key, %Capability{signature: signature} = cap, %URI{})
        when is_binary(public_key) and is_binary(signature) do
-    :crypto.verify(
-      :eddsa,
-      :none,
-      Signing.signing_payload(cap),
-      signature,
-      [public_key, :ed25519]
-    )
+    cap = Normalize.fill_defaults(cap)
+
+    Signing.valid_protocol?(cap) and
+      :crypto.verify(
+        :eddsa,
+        :none,
+        Signing.signing_payload(cap),
+        signature,
+        [public_key, :ed25519]
+      )
+  rescue
+    _ -> false
   end
 
   defp verify_signature(_public_key, %Capability{}, %URI{}), do: false
@@ -594,7 +594,9 @@ defmodule Ezagent.Cap.Authority do
         workspace_uri: Ezagent.Capability.workspace_of(uri),
         granted_by: admin_uri(),
         granted_at: DateTime.utc_now(),
-        grantee_uri: admin_uri()
+        grantee_uri: admin_uri(),
+        signing_version: 2,
+        grant_id: Ecto.UUID.generate()
       }
       |> then(&sign(authority, &1))
 

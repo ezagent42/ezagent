@@ -20,6 +20,8 @@ defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
     assert {:ok, anchor} = Authority.anchor(uri)
     assert anchor.instance == uri
     assert anchor.grantee_uri == admin
+    assert anchor.signing_version == 2
+    assert is_binary(anchor.grant_id) and anchor.grant_id != ""
     assert Authority.verify(first, anchor, admin)
 
     assert %KindCapAuthority{sealed: true, active: true} =
@@ -43,6 +45,10 @@ defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
     assert {:ok, second} = Authority.regenesis(uri, :agent)
     assert second.generation == first.generation + 1
     refute second.key_id == first.key_id
+
+    assert {:ok, second_anchor} = Authority.anchor(uri)
+    assert second_anchor.signing_version == 2
+    assert is_binary(second_anchor.grant_id) and second_anchor.grant_id != ""
 
     assert [old, current] = KindCapAuthority.list(Ezagent.URI.stable_key(uri))
     refute old.active
