@@ -528,7 +528,7 @@ Phase 7 是 Allen 亲手驱动的最后一个 phase + **Ezagent v1 official rele
 **8. 关键架构发现**(subagent 在实施期抓到):
 - CapBAC step 5.5 实际住在 `Kind.Runtime.handle_dispatch/4`,不是 `Invocation.dispatch/1`(PR-4 subagent 找到)
 - PR-3 的 `workspace_match?/2` 已经在 step 5.5 做 cap-workspace 匹配;step 5.6 的**独立**作用是 caller↔target workspace 检查(admin 在 default 持 team-alpha-scoped cap 的边角情况)
-- SPEC §7.1 logical tables vs physical:caps 在 `users.caps_json`,sessions/agents/templates 多路复用在 `kind_snapshots`(实际只有 6 张物理表加列)
+- SPEC §7.1 当时的 physical mapping 已被 2026-08-01 clean-slate capability 设计取代：held caps 现在只以 `identity_caps.caps_json` 为持久 authority；`users` 不再有 `caps_json`，`kind_snapshots` 只保留可重建的 runtime projection。
 - SQLite 不支持 ALTER COLUMN → CREATE-NEW/INSERT-SELECT/DROP/RENAME 模式重建 6 张表
 - "Pre-existing sandbox failures" 实际是 Phase 9 dispatch concurrency 把 pool 5 推到瓶颈以上 → bump 到 20 解决
 

@@ -331,8 +331,8 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
           "another external caller is an un-gated re-credential " <>
           "path the whole-file `identity.ex` allowlist would miss. Matches the " <>
           "QUALIFIED `Identity.mint_self_license(` call form (identity.ex's own " <>
-          "unqualified internal calls + unrelated same-named private helpers, e.g. " <>
-          "`session_self_license_migration.ex`, are intentionally not matched).",
+          "unqualified internal calls and unrelated same-named private helpers " <>
+          "are intentionally not matched).",
       pattern: ~r/Identity\.mint_self_license\(/,
       reviewed_paths: [
         # the MANUAL admin key-rotation operator command (atomic rotate + re-mint).

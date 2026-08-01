@@ -1,10 +1,7 @@
 %{
-  # arch-cap-bump: 0→1 P2 per-cap revocation — IdentityCaps.Store is the
-  # transaction boundary that must atomically couple the authoritative cap row,
-  # exact-revocation ledger, delivery outbox, grantee index, and epoch cutover.
-  # The fail-closed write/read gates and cutover replacement API bring the module
-  # to 1526 LOC. Burn-down: extract the provisioning-receipt API after the
-  # revocation cutover, preserving this single transaction owner.
+  # IdentityCaps.Store is the sole durable authority and the transaction boundary
+  # coupling its cap row, exact-revocation ledger, delivery outbox, and grantee
+  # index. Burn-down must preserve that single transaction owner.
   oversized_modules_gt_1500: 1,
   # #25 Phase-3 burn-down (ratchets DOWN toward 0):
   #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)

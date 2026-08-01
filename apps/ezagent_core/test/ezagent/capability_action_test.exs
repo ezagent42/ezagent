@@ -117,31 +117,10 @@ defmodule Ezagent.CapabilityActionTest do
     end
   end
 
-  describe "#189 identity-plane divergence — from_map (READ side) must NOT widen a signed cap's lost action to :any" do
-    # ROOT CAUSE (verified against live prod stable node, 2026-07-30/31): five
-    # freshly-created users each held ONE workspace cap that differed between the
-    # two identity planes — `users.caps_json` (durable) carried
-    # `action: :create_session` (signature VALID), while the
-    # `Ezagent.IdentityCaps.Store` mirror serialized the SAME signed cap as
-    # `action: :any` (workspace-admin, signature now INVALID). `:any` on Workspace
-    # is workspace-admin; `:create_session` is an ordinary member — a PRIVILEGE
-    # divergence the `FleetParity.caps_parity/3` barrier correctly refused on.
-    #
-    # MECHANISM (READ side): `Ezagent.Capability.Normalize.from_map/1` is the
-    # tolerant deserializer for `caps_json`. `Map.put_new("action", "any")`
-    # SILENTLY defaults a MISSING `"action"` to `:any` while `decode_signature/1`
-    # DECODES and preserves the map's `"signature"` verbatim — turning a JSON map
-    # that has a signature but lost its `"action"` key into a signed `:any`
-    # (workspace-admin) cap. This is the read-side symmetric twin of
-    # `fill_defaults/1`'s write-side widening; a signed cap post-dates the
-    # action-axis, so a signed-and-action-less map is corruption, not legacy.
-    #
-    # These are pure-data assertions on the deserialization chokepoint.
-
-    # The signed `create_session` workspace cap AS STORED in `caps_json` (string-
-    # keyed JSON map). A non-nil `"signature"` marks it post-action-axis: it MUST
-    # carry a concrete `"action"`. (Signature bytes are a real base64url value
-    # captured from the live stable node so `decode_signature/1` accepts them.)
+  describe "signed artifact decoding must not widen a missing action to :any" do
+    # A signed artifact missing its action is corrupt. Deserialization must reject
+    # it instead of manufacturing the workspace-admin `:any` wildcard while
+    # preserving a signature that no longer matches the payload.
     defp signed_create_session_json do
       %{
         "kind" => "workspace",
@@ -253,32 +232,9 @@ defmodule Ezagent.CapabilityActionTest do
     end
   end
 
-  describe "#189 identity-plane divergence — serializing a signed cap must NOT widen a lost `:action` to `:any`" do
-    # ROOT CAUSE (verified against live prod, 2026-07-30): five freshly-created
-    # users each held ONE workspace cap that differed between the two identity
-    # planes — `users.caps_json` (durable) carried
-    # `action: :create_session` with a VALID signature, while the
-    # `Ezagent.IdentityCaps.Store` mirror carried the SAME signed cap serialized as
-    # `action: :any` (workspace-admin) with a now-INVALID signature. The
-    # `FleetParity.caps_parity/3` barrier compares the full signed cap-set and
-    # refused the cutover on `{:caps_mismatch}`. `:any` on Workspace is
-    # workspace-admin; `:create_session` is an ordinary member — a PRIVILEGE-level
-    # divergence.
-    #
-    # MECHANISM: `Ezagent.Capability.to_map/1` and the `Jason.Encoder` impl both
-    # route the action through `Normalize.fill_defaults/1`, which reprojects onto a
-    # fresh defstruct via `struct/2`. When the cap object reaching serialization is
-    # a struct-shaped map whose `:action` KEY is absent, `struct/2` fills the
-    # defstruct default `:any` and `Capability.action_of/1`
-    # (`Map.get(cap, :action, :any)`) reads `:any` — SILENTLY widening the true
-    # concrete action while the (now-mismatched) signature is preserved verbatim.
-    #
-    # These are pure-data assertions on the serialization chokepoint that produced
-    # the divergent bytes.
-
-    # A signed, concrete-action workspace cap (the shape the grant chokepoint mints
-    # + signs). A non-nil `signature` marks it as post-action-axis: it MUST carry a
-    # concrete `:action`.
+  describe "signed artifact serialization must not widen a missing action to :any" do
+    # Serialization is also fail-closed: a struct-shaped signed artifact with no
+    # action key is malformed, not permission to fill the `:any` wildcard.
     defp signed_create_session_cap do
       %Capability{
         kind: :workspace,

@@ -1,6 +1,7 @@
 # Clean-Slate Per-Grant Durable Revocation Design
 
-**Status:** approved and design-complete after three adversarial review rounds
+**Status:** implemented on the target branch after three adversarial review rounds;
+final delivery verification is pending
 
 **Decision date:** 2026-08-01
 
@@ -392,9 +393,7 @@ The executable gate is the Mix task
 through exactly one alias entry:
 
 ```elixir
-"ci.clean_per_grant": [
-  "cmd MIX_ENV=test mix ezagent.cap_revocation.verify_clean_start"
-]
+"ci.clean_per_grant": ["ezagent.cap_revocation.verify_clean_start"]
 ```
 
 `mix precommit` includes `ci.clean_per_grant` exactly once. CI and final-delivery
@@ -416,41 +415,46 @@ EZAGENT_TEST_DATABASE=<the generated prefixed database>
 Each child refuses to run unless its resolved `EzagentCore.Repo.config()[:database]`
 equals `EZAGENT_TEST_DATABASE`. Migration, seed/bootstrap, first application scenario,
 and cold-restart verification are separate child processes, so the second application
-start is a real cold start. The ordinary partition database name is computed before any
-child launch; the task asserts it differs from the generated name, and no child command
-is permitted without the override.
+start is a real cold start. Before any child launch, the task asserts that the generated
+database differs from the ordinary configured test database. No child command is
+permitted without the override.
 
 The task must:
 
 1. derive a unique database name matching
-   `~r/\Aezagent_p2_clean_start_[a-zA-Z0-9_]+\z/` from the test Repo server config,
-   `MIX_TEST_PARTITION`, and a generated suffix; it does not accept a caller-provided
-   database name to drop;
+   `~r/\Aezagent_pg_compat_test_clean_[a-z0-9_]+\z/` from a monotonic integer and random
+   suffix; the public Mix-task interface does not accept a caller-provided database name
+   to drop;
 2. parse and revalidate the resolved name immediately before every create/drop, connect
    only to the same configured PostgreSQL server, and use `try/after` cleanup that drops
    only that exact name on every exit path;
-3. spawn isolated children for create/migrate and seeds/bootstrap, all with the exact
-   override above;
+3. create the database through the outer task's direct admin connection, then spawn
+   isolated children for migration, seeds/bootstrap, first boot, and cold boot, all with
+   the exact override above;
 4. spawn the first normal-application child and assert authority-anchor and bootstrap
-   grants pass
-   `GrantArtifact` validation;
+   grants pass `GrantArtifact` and current-authority validation;
 5. issue, authorize, revoke, deny, re-grant with a fresh ID, and authorize the new grant;
-6. exercise Store-before-snapshot, a forced snapshot failure after Store commit, and
-   cold-load replacement from Store; prove missing/error Store states refuse readiness;
-7. exit the first child and launch a second normal-application child against the same
+6. exit the first child and launch a second normal-application child against the same
    generated database, then prove the old grant remains denied and the new grant remains
    authorized;
-8. inspect every durable grant carrier and assert canonical signed grant IDs, UUID/NOT
-   NULL database constraints, Store-only authority, and absence of any P2 or Identity
-   activation/cutover/remint step;
-9. drop the disposable database on success or failure.
+7. inspect the Store, authority anchors, ledger, and outbox schema; assert canonical
+   signed grant IDs, UUID/NOT NULL constraints, Store-only authority, and absence of any
+   P2 or Identity activation/cutover/remint step;
+8. drop the disposable database on success or failure.
+
+The mandatory `Ezagent.IdentityCapsTest` suite complements the process-level gate with
+fault injection: Store-before-projection ordering, snapshot failure after Store commit,
+cold-load replacement from Store, and missing/corrupt Store readiness denial. Carrier
+owner suites cover outbox, recipe, provider, snapshot, and event-log boundaries. These
+tests run in `ci.fast`/`precommit`; the clean-start task owns the empty-schema and real
+cross-process persistence proof.
 
 A unit test against an already migrated test database is not sufficient evidence.
 
 ### Source ratchet
 
-`apps/ezagent_core/test/invariants/no_capability_protocol_compatibility_test.exs` scans
-`apps/*/lib/**/*.{ex,exs}`, `apps/*/test/**/*.{ex,exs}`, and `config/*.exs`. It rejects:
+`apps/ezagent_core/test/invariants/clean_slate_grant_protocol_test.exs` scans runtime
+library source, configuration, and the umbrella Mix project. It rejects:
 
 - `signing_version`;
 - `RevocationEpoch`, `CapRevocationEpoch`, and `cap_revocation_epoch`;
@@ -461,10 +465,12 @@ A unit test against an already migrated test database is not sufficient evidence
 - reads or writes of `users.caps_json` while allowing `identity_caps.caps_json`.
 
 Narrow exceptions are the ratchet source itself, immutable historical migration
-`20260729130000_create_identity_cutover.exs`, and cleanup migration
+files that originally created retired columns/tables, and cleanup migration
 `20260801000300_remove_identity_cap_compatibility.exs`. Authority `key_id` versions,
-authority generations, and rotation code are explicitly permitted and have no wildcard
-exception. Every exception is an exact file path with a reason.
+authority generations, and rotation code remain permitted. Every exception is an exact
+file path. The clean-start verification task is also an exact-path exception because it
+must name the retired schema objects to assert their absence; it cannot provide runtime
+compatibility behavior.
 
 ### Gates
 
@@ -473,6 +479,25 @@ exception. Every exception is an exact file path with a reason.
 - `mix format --check-formatted` for touched files;
 - `mix ci.fast`;
 - `mix precommit`.
+
+### Implementation evidence map
+
+- Artifact identity, canonical UUIDs, issuance overwrite, and signature binding:
+  `grant_artifact_test.exs`, `capability_protocol_test.exs`, and
+  `authority_verify_against_current_test.exs`.
+- Authority-anchor fail-closed behavior: `authority_anchor_validation_test.exs`.
+- Atomic exact revoke, fresh-ID re-grant, Store write rejection, and absent-Store exact
+  validation: `identity_caps/store_test.exs`.
+- Store-first projection semantics and cold repair/readiness denial:
+  `identity_caps_test.exs`.
+- Durable delivery and restart enforcement: `delivery_outbox_hardening_test.exs` plus
+  recipe/provider carrier suites.
+- Compatibility removal and final PostgreSQL schema:
+  `clean_slate_grant_protocol_test.exs` and
+  `20260801000300_remove_identity_cap_compatibility.exs`.
+- Empty-database/restart acceptance:
+  `mix ezagent.cap_revocation.verify_clean_start`, wired exactly once through
+  `ci.clean_per_grant` in `precommit`.
 
 ## 10. Branch and PR delivery
 

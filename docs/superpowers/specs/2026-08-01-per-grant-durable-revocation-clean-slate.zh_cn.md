@@ -1,6 +1,6 @@
 # 全新数据库下的逐授权持久撤销设计
 
-**状态：** 已批准，并在三轮对抗性评审后完成设计
+**状态：** 已完成三轮对抗性评审并在 target branch 实现；最终交付验证待完成
 
 **决策日期：** 2026-08-01
 
@@ -366,9 +366,7 @@ boundary 必须执行 `GrantArtifact` validation。
 通过一个 alias entry 调用：
 
 ```elixir
-"ci.clean_per_grant": [
-  "cmd MIX_ENV=test mix ezagent.cap_revocation.verify_clean_start"
-]
+"ci.clean_per_grant": ["ezagent.cap_revocation.verify_clean_start"]
 ```
 
 `mix precommit` 恰好一次包含 `ci.clean_per_grant`。CI 和最终交付验证运行
@@ -389,36 +387,40 @@ EZAGENT_TEST_DATABASE=<the generated prefixed database>
 每个 child 都必须确认 resolved `EzagentCore.Repo.config()[:database]` 等于
 `EZAGENT_TEST_DATABASE`，否则拒绝运行。migration、seed/bootstrap、first application
 scenario 与 cold-restart verification 使用独立 child process，因此第二次 application
-start 是真实 cold start。启动任何 child 前先计算 ordinary partition database name，
-断言它与 generated name 不同；任何 child command 都不得缺少 override。
+start 是真实 cold start。启动任何 child 前，task 断言 generated database 与普通配置的
+test database 不同；任何 child command 都不得缺少 override。
 
 task 必须：
 
-1. 从 test Repo server config、`MIX_TEST_PARTITION` 和 generated suffix 派生匹配
-   `~r/\Aezagent_p2_clean_start_[a-zA-Z0-9_]+\z/` 的唯一数据库名；不得接受调用方传入
-   database name 作为 drop target；
+1. 从 monotonic integer 与 random suffix 派生匹配
+   `~r/\Aezagent_pg_compat_test_clean_[a-z0-9_]+\z/` 的唯一数据库名；公开 Mix-task
+   interface 不接受调用方传入 database name 作为 drop target；
 2. 每次 create/drop 前 parse 并重新验证 resolved name，只连接同一个 configured
    PostgreSQL server，并使用 `try/after` cleanup 在所有退出路径只 drop 该精确名称；
-3. 为 create/migrate 与 seeds/bootstrap 启动隔离 child，全部携带上述 exact
-   override；
+3. 外层 task 通过 direct admin connection 创建数据库，再为 migration、seeds/bootstrap、
+   first boot 和 cold boot 启动隔离 child，全部携带上述 exact override；
 4. 启动第一个正常应用 child，并断言 authority-anchor 与 bootstrap grant 通过
-   `GrantArtifact` validation；
+   `GrantArtifact` 和 current-authority validation；
 5. 执行 issue、authorize、revoke、deny、使用新 ID re-grant，并 authorize 新 grant；
-6. 覆盖 Store-before-snapshot、Store commit 后强制 snapshot failure，以及 cold-load
-   从 Store replace；证明 Store missing/error 状态拒绝 ready；
-7. 结束第一个 child，再针对同一 generated database 启动第二个正常应用 child，
+6. 结束第一个 child，再针对同一 generated database 启动第二个正常应用 child，
    证明旧 grant 仍 deny、新 grant 仍 authorize；
-8. 检查所有 durable grant carrier，断言 canonical signed grant ID、UUID/NOT NULL
-   database constraint、Store-only authority，以及不存在任何 P2 或 Identity
+7. 检查 Store、authority anchor、ledger 与 outbox schema，断言 canonical signed grant
+   ID、UUID/NOT NULL constraint、Store-only authority，以及不存在任何 P2 或 Identity
    activation/cutover/remint step；
-9. 无论成功或失败都 drop disposable database。
+8. 无论成功或失败都 drop disposable database。
+
+强制执行的 `Ezagent.IdentityCapsTest` suite 用 fault injection 补充 process-level gate：
+覆盖 Store-before-projection 顺序、Store commit 后 snapshot failure、cold-load 从 Store
+replace，以及 Store missing/corrupt 时拒绝 ready。carrier owner suites 覆盖 outbox、
+recipe、provider、snapshot 和 event-log 边界。这些测试进入 `ci.fast`/`precommit`；
+clean-start task 负责空 schema 与真实跨进程持久性证明。
 
 针对已迁移 test database 的 unit test 不能作为充分证据。
 
 ### Source ratchet
 
-`apps/ezagent_core/test/invariants/no_capability_protocol_compatibility_test.exs` 扫描
-`apps/*/lib/**/*.{ex,exs}`、`apps/*/test/**/*.{ex,exs}` 和 `config/*.exs`，拒绝：
+`apps/ezagent_core/test/invariants/clean_slate_grant_protocol_test.exs` 扫描 runtime library
+source、configuration 和 umbrella Mix project，拒绝：
 
 - `signing_version`；
 - `RevocationEpoch`、`CapRevocationEpoch` 和 `cap_revocation_epoch`；
@@ -428,11 +430,12 @@ task 必须：
   `PreEpochRemint` 或其 Mix/release 入口的引用；
 - `users.caps_json` 的读写，同时允许 `identity_caps.caps_json`。
 
-narrow exception 只有 ratchet source 自身、immutable historical migration
-`20260729130000_create_identity_cutover.exs`，以及 cleanup migration
+narrow exception 只有 ratchet source 自身、最初创建 retired column/table 的 immutable
+historical migration，以及 cleanup migration
 `20260801000300_remove_identity_cap_compatibility.exs`。authority `key_id` version、
-authority generation 与 rotation code 明确允许且没有 wildcard exception。每个 exception
-都是带原因的 exact file path。
+authority generation 与 rotation code 继续允许。每个 exception 都是 exact file path。
+clean-start verification task 也是 exact-path exception，因为它必须命名 retired schema
+object 才能断言其不存在；它不能提供 runtime compatibility behavior。
 
 ### Gates
 
@@ -441,6 +444,23 @@ authority generation 与 rotation code 明确允许且没有 wildcard exception�
 - touched files 的 `mix format --check-formatted`；
 - `mix ci.fast`；
 - `mix precommit`。
+
+### 实现证据映射
+
+- artifact identity、canonical UUID、签发覆盖调用方 ID 与签名绑定：
+  `grant_artifact_test.exs`、`capability_protocol_test.exs` 和
+  `authority_verify_against_current_test.exs`。
+- authority-anchor fail-closed：`authority_anchor_validation_test.exs`。
+- atomic exact revoke、新 ID re-grant、Store write rejection 与 absent-Store exact
+  validation：`identity_caps/store_test.exs`。
+- Store-first projection、cold repair 与 readiness denial：`identity_caps_test.exs`。
+- durable delivery 与 restart enforcement：`delivery_outbox_hardening_test.exs` 及
+  recipe/provider carrier suites。
+- compatibility removal 与最终 PostgreSQL schema：
+  `clean_slate_grant_protocol_test.exs` 和
+  `20260801000300_remove_identity_cap_compatibility.exs`。
+- 空数据库/重启验收：`mix ezagent.cap_revocation.verify_clean_start`，并通过
+  `ci.clean_per_grant` 恰好一次接入 `precommit`。
 
 ## 10. Branch 与 PR 交付
 
