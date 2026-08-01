@@ -22,12 +22,20 @@ defmodule EzagentPluginForgejo.Normalize do
   boolean beside `state`, not a state value — read in the wrong order, a
   withdrawn approval still reads as an approval.
 
-  ## Unknown values degrade, they never guess
+  ## Unknown values degrade only where the domain has somewhere honest to land
 
   `error` / `warning` commit statuses and the `REQUEST_CHANGES` / `COMMENT`
   review states were not observed during sampling, and a later Forgejo may add
-  more. An unrecognized check conclusion becomes `:other`; an unrecognized
-  review state is dropped. Neither is read as success, and neither raises.
+  more.
+
+  An unrecognized check conclusion becomes `:other`, because `Check.conclusion`
+  declares that member and it means exactly "a value we have no mapping for".
+  An unrecognized review state has no such member on `Review.state`, so it
+  REFUSES the whole read as `:provider_response_unrecognized` — it is not
+  dropped, which an earlier revision of this doc claimed and which would let a
+  `REQUEST_CHANGES` disappear while the approvals beside it survived.
+
+  Nothing here is read as success, and nothing raises.
   """
 
   alias Ezagent.DomainGit.{Check, ChangeRequest, Review}
@@ -162,8 +170,15 @@ defmodule EzagentPluginForgejo.Normalize do
   # `merged` is a boolean beside `state`; a merged pull request still reports
   # state "closed". Reading only `state` would record every merge as a plain
   # close, losing the one fact a reviewer cares about most.
+  #
+  # On a CLOSED pull request that boolean is the WHOLE answer, so an absent or
+  # non-boolean one means we cannot tell a merge from a plain close — and
+  # `:closed` is not a safe guess, it erases the merge. An OPEN pull request is
+  # definitionally not merged and never consults it, which is also why the
+  # pull-request LIST endpoint (no `merged` field) still normalizes.
   defp change_request_state("closed", true), do: :merged
-  defp change_request_state("closed", _merged), do: :closed
+  defp change_request_state("closed", false), do: :closed
+  defp change_request_state("closed", _unreadable), do: nil
   defp change_request_state("open", _merged), do: :open
   defp change_request_state(_state, _merged), do: nil
 

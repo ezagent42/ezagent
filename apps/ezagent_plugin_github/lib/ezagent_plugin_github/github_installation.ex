@@ -50,10 +50,15 @@ defmodule EzagentPluginGithub.GitHubInstallation do
   `:provider_denied`, `:provider_unavailable`, …), `:installation_scope_mismatch`
   when a readable response does not exactly match the requested repository and
   permissions, or `:provider_response_unrecognized` when a 2xx response could not
-  be read at all — either the installation lookup without an `id`, or a mint body
-  whose scope fields are absent or wrongly typed. Only the transport-level
-  answers are worth retrying; the other two are terminal and say different
-  things to an operator ("scoped wrong" vs "shape changed"). Raises (fail-loud) only if the App private key is missing or
+  be read at all — the installation lookup with no `id` key, or a mint body whose
+  scope fields are absent or wrongly typed. Only the transport-level answers are
+  worth retrying; the other two are terminal and say different things to an
+  operator ("scoped wrong" vs "shape changed").
+
+  Note the lookup checks for the PRESENCE of `id`, not its type: a wrongly-typed
+  one still reaches path interpolation. That is a live gap in the same family as
+  the rest of this module's readability guards, tracked separately rather than
+  claimed here. Raises (fail-loud) only if the App private key is missing or
   malformed — an operations misconfiguration, deliberately distinct from a
   GitHub-side rejection.
   """

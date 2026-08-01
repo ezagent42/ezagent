@@ -50,6 +50,32 @@ defmodule EzagentPluginForgejo.NormalizeTest do
       assert {:ok, %ChangeRequest{state: :closed}} = Normalize.change_request(closed)
     end
 
+    # The same defect the GitHub adapter's `map_pr_state/2` was fixed for
+    # earlier in this change, left behind here when the rest of this module was
+    # migrated. `merged` is only load-bearing on a CLOSED pull request, and
+    # there it is the whole answer — absent or non-boolean means we cannot tell
+    # a merge from a plain close, and `:closed` is not a safe guess: it erases
+    # the merge, the one fact a reviewer most needs.
+    test "a closed pull request with no usable merged discriminator is refused" do
+      for merged <- [nil, "true", 1] do
+        body = @pull |> Map.put("state", "closed") |> Map.put("merged", merged)
+
+        assert {:error, :provider_response_unrecognized} = Normalize.change_request(body),
+               "expected refusal for merged: #{inspect(merged)}"
+      end
+
+      without = @pull |> Map.put("state", "closed") |> Map.delete("merged")
+      assert {:error, :provider_response_unrecognized} = Normalize.change_request(without)
+    end
+
+    # An OPEN pull request is definitionally not merged, so the discriminator is
+    # not consulted — same asymmetry the GitHub side settled on, and the reason
+    # the pull-request LIST endpoint (which omits `merged`) still works.
+    test "an open pull request does not need the merged discriminator" do
+      without = @pull |> Map.put("state", "open") |> Map.delete("merged")
+      assert {:ok, %ChangeRequest{state: :open}} = Normalize.change_request(without)
+    end
+
     test "a response missing required fields is refused" do
       assert {:error, :provider_response_unrecognized} =
                Normalize.change_request(%{"number" => 42})
