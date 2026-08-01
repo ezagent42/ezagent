@@ -173,10 +173,16 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   end
 
   # (a) The DeepSeek credential on the llm greeter agent, mirroring the
-  # live-prod `:put_api_key` dispatch. Gated on a TRI-STATE read of the
-  # agent's api_keys slice; a missing env key skips gracefully (keyless dev
-  # stays keyless). The whole leg runs inside a secret-aware boundary: the
-  # key must never reach a log line, and a failure must never fail the seed.
+  # live-prod credential dispatch. The bounded TRI-STATE read preserves the
+  # deploy-time readiness contract: only a successful read can classify the
+  # provider key as present/absent; an unreadable or not-ready slice skips the
+  # credential leg without entering dispatch's longer WAIT-then-serve path.
+  # When absent, the `:put_api_key_if_absent` COMPARE-AND-SET performs the final
+  # check inside the agent's serialized action path, so racing seeders still
+  # cannot overwrite an operator-rotated key. A missing env key skips
+  # gracefully (keyless dev stays keyless). The whole leg runs inside a
+  # secret-aware boundary: the key must never reach a log line, and a failure
+  # must never fail the seed.
   defp ensure_llm_credential(%URI{} = llm_uri) do
     best_effort("llm credential wiring", [secret?: true], fn ->
       case System.get_env(@llm_api_key_env) do
@@ -192,8 +198,8 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
               Logger.warning(
                 "hello official-site seed: the #{@llm_role} agent's :api_keys slice is " <>
                   "unreadable (agent rehydrating / not ready) — skipped the #{@llm_provider} " <>
-                  "credential wiring rather than risk overwriting an operator-rotated key; " <>
-                  "the next boot's ensure/0 retries"
+                  "credential wiring rather than risk changing credentials without a bounded " <>
+                  "pre-read; the next boot's ensure/0 retries"
               )
           end
 
@@ -206,12 +212,9 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     end)
   end
 
-  # TRI-STATE read (codex must-fix #1): `Kind.read/3` can return
-  # `{:error, {:not_ready, _}}` while a cold agent rehydrates (ReadyGate) or
-  # `{:error, :not_created}` for a never-durably-created one. Treating ANY
-  # read failure as "absent" would re-dispatch a put and CLOBBER an
-  # operator-rotated key on a deploy-time readiness timeout — so only a
-  # successful read classifies present/absent; every error is :unreadable.
+  # A read failure is NOT absence. `Kind.read/2` preserves the original bounded
+  # live/cold read contract; only a successful read may authorize the CAS
+  # dispatch. This keeps slow/unreadable agents on the skip path.
   defp llm_key_state(%URI{} = llm_uri) do
     case Ezagent.Kind.read(llm_uri, :api_keys) do
       {:ok, slice} when is_map(slice) ->
@@ -266,12 +269,17 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   # Credential-leg error reasons may embed the plaintext key (handler
   # bad-args echoes, GenServer.call exit payloads carry the invocation
   # args) — reduce them to a key-free class tag before logging.
-  defp credential_error_class(%{__exception__: true} = e), do: inspect(e.__struct__)
+  defp credential_error_class(%{__exception__: true} = e), do: exception_class(e)
   defp credential_error_class({:error, reason}), do: credential_error_class(reason)
   defp credential_error_class({first, _}) when is_atom(first), do: Atom.to_string(first)
   defp credential_error_class({first, _, _}) when is_atom(first), do: Atom.to_string(first)
   defp credential_error_class(atom) when is_atom(atom), do: Atom.to_string(atom)
   defp credential_error_class(_), do: "unknown"
+
+  # The exception's module as a key-free class tag. The `%mod{}` struct
+  # pattern binds `mod` directly (no dynamic `e.__struct__` field read on a
+  # value the workspace-locality scanner cannot type-prove).
+  defp exception_class(%mod{}), do: inspect(mod)
 
   # (b) The session-scoped delivery rule: EVERY message in the 官网 session is
   # delivered directly to the (keyed) llm agent. ATOMIC RECONCILE to exactly
@@ -298,13 +306,22 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
         |> RuleStore.list()
         |> Enum.filter(&owned_delivery_rule?(&1, matcher_json))
 
+      admin_source = RuleStore.admin_source()
+
       {good, stale} =
-        Enum.split_with(owned, fn rule ->
-          rule.rule_set == @delivery_rule_set and
-            rule.matcher_data == matcher_json and
-            rule.receivers == [receiver] and
-            rule.enabled and
-            rule.source == RuleStore.admin_source()
+        Enum.split_with(owned, fn
+          %{
+            rule_set: rule_set,
+            matcher_data: matcher_data,
+            receivers: receivers,
+            enabled: enabled,
+            source: source
+          } ->
+            rule_set == @delivery_rule_set and
+              matcher_data == matcher_json and
+              receivers == [receiver] and
+              enabled and
+              source == admin_source
         end)
 
       case good do
@@ -328,10 +345,15 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   # (admin-attributed in_session rule for THIS session without a rule_set).
   # The legacy leg is what garbage-collects rows pointing at a removed llm
   # member — those would otherwise keep delivering to a dead agent.
-  defp owned_delivery_rule?(rule, matcher_json) do
-    rule.rule_set == @delivery_rule_set or
-      (is_nil(rule.rule_set) and rule.matcher_data == matcher_json and
-         rule.created_by == uri_to_string(User.admin_uri()))
+  defp owned_delivery_rule?(
+         %{rule_set: rule_set, matcher_data: matcher_data, created_by: created_by},
+         matcher_json
+       ) do
+    admin_created_by = uri_to_string(User.admin_uri())
+
+    rule_set == @delivery_rule_set or
+      (is_nil(rule_set) and matcher_data == matcher_json and
+         created_by == admin_created_by)
   end
 
   defp add_delivery_rule(table, %URI{} = site_uri, %URI{} = llm_uri) do
@@ -376,21 +398,27 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
 
     table
     |> RuleStore.list()
-    |> Enum.any?(fn rule ->
-      rule.rule_set == @delivery_rule_set and rule.matcher_data == matcher_json and
-        rule.receivers == [receiver] and rule.enabled
+    |> Enum.any?(fn
+      %{
+        rule_set: rule_set,
+        matcher_data: matcher_data,
+        receivers: receivers,
+        enabled: enabled
+      } ->
+        rule_set == @delivery_rule_set and matcher_data == matcher_json and
+          receivers == [receiver] and enabled
     end)
   end
 
-  defp delete_delivery_rule(table, %URI{} = site_uri, rule) do
-    case dispatch_rule_mutation(site_uri, :delete_rule, %{table: table, id: rule.id}) do
+  defp delete_delivery_rule(table, %URI{} = site_uri, %{id: id}) do
+    case dispatch_rule_mutation(site_uri, :delete_rule, %{table: table, id: id}) do
       {:ok, %{deleted: _}} ->
         :ok
 
       {:error, reason} ->
         # A concurrent seeder may have deleted the same row first — benign.
         Logger.warning(
-          "hello official-site seed: stale official-site delivery rule #{rule.id} delete returned " <>
+          "hello official-site seed: stale official-site delivery rule #{id} delete returned " <>
             "#{inspect(reason, limit: 4)} (continuing reconcile)"
         )
     end
@@ -441,7 +469,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     e ->
       detail =
         if Keyword.get(opts, :secret?, false) do
-          inspect(e.__struct__)
+          exception_class(e)
         else
           Exception.message(e)
         end
