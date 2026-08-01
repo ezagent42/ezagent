@@ -36,7 +36,17 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
 
   use Ezagent.Lifecycle
 
+  require Logger
+
   @keygen_tmp_prefix "ezagent-sshkeygen-"
+
+  # ssh-keygen 正常是毫秒级；给一个远超正常耗时、但仍有限的上限(I2 —— 人类
+  # 裁决 2026-08-01)。没有 timeout 的同步 System.cmd 一旦子进程卡死(二进制
+  # 被换、文件系统 stall、熵不足)会无限期占住这个 User 的 GenServer。测试
+  # 可经 `Application.put_env(:ezagent_domain_identity, :ssh_keygen_timeout_ms,
+  # ms)` 注入极小值以确定性触发超时路径,不改动生产默认值。见
+  # run_ssh_keygen/2 对孤儿进程取舍的说明。
+  @keygen_timeout_ms 5_000
 
   action(:generate_ssh_key,
     args: %{comment: {:option, :string}},
@@ -93,40 +103,68 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
     else
       comment = Map.get(args, :comment) || default_comment(ctx)
 
-      case keygen(comment) do
-        {:ok, %{public_key: pub, private_key: priv, fingerprint: fp}} ->
-          now = DateTime.utc_now()
+      case validate_comment(comment) do
+        :ok ->
+          case keygen(comment) do
+            {:ok, %{public_key: pub, private_key: priv, fingerprint: fp}} ->
+              now = DateTime.utc_now()
 
-          {:ok, %{public_key: pub, fingerprint: fp},
-           [
-             {:set, :public_key, pub},
-             {:set, :private_key, priv},
-             {:set, :fingerprint, fp},
-             {:set, :comment, comment},
-             {:set, :created_at, now},
-             {:emit, :ssh_identity_generated,
-              %{
-                user_uri: uri_to_string(ctx.self_uri),
-                fingerprint: fp,
-                comment: comment,
-                at: now
-              }}
-           ]}
+              {:ok, %{public_key: pub, fingerprint: fp},
+               [
+                 {:set, :public_key, pub},
+                 {:set, :private_key, priv},
+                 {:set, :fingerprint, fp},
+                 {:set, :comment, comment},
+                 {:set, :created_at, now},
+                 {:emit, :ssh_identity_generated,
+                  %{
+                    user_uri: uri_to_string(ctx.self_uri),
+                    fingerprint: fp,
+                    comment: comment,
+                    at: now
+                  }}
+               ]}
 
-        {:error, reason} ->
-          {:error, {:keygen_failed, reason}}
+            {:error, reason} ->
+              {:error, {:keygen_failed, reason}}
+          end
+
+        {:error, _reason} = error ->
+          error
       end
     end
   end
 
+  # I1: `comment` reaches `ssh-keygen -C <comment>` verbatim. A newline lets
+  # a caller-controlled comment terminate the .pub file's first line early
+  # and append a SECOND, syntactically-valid authorized_keys entry chosen by
+  # the caller — `fingerprint/1` only ever inspects the first line, so the
+  # fingerprint we return and persist would silently not cover the injected
+  # key. Reject at the source rather than relying solely on the
+  # first-line-only parsing in `keygen/1` (defense in depth — both are
+  # cheap and independent; this is argument validation, not a new security
+  # mechanism).
+  defp validate_comment(comment) do
+    if String.contains?(comment, ["\n", "\r"]) do
+      {:error, :invalid_comment}
+    else
+      :ok
+    end
+  end
+
   # =================================================================
-  # ssh-keygen —— 用 System.cmd 而非 OsProcess
+  # ssh-keygen —— 用 System.cmd 而非 OsProcess，限时用 Task(I2)
   #
   # X/Y：Y 是"用哪个跑子进程"，X 是"这个子进程的风险特征"。ssh-keygen 是
-  # 本地 / 无网络 / 毫秒级 / 输出固定小的命令，没有 GitRunner 要防的那些
-  # (网络挂死、大输出、孤儿进程树)，因此不需要 OsProcess + 自建 GenServer
-  # + deadline + 输出上限那一整套。core 内已有先例：stress_metrics.ex:208、
-  # pid_file.ex:240 都用 System.cmd 跑 `ps`。
+  # 本地 / 无网络 / 输出固定小的命令，没有 GitRunner 要防的网络挂死、大
+  # 输出、孤儿进程树那几条，因此不需要 OsProcess 的 pid_file + 输出上限
+  # 那一整套。core 内已有先例：stress_metrics.ex:208、pid_file.ex:240 都
+  # 用 System.cmd 跑 `ps`。
+  #
+  # 但"卡死"风险是真实的、跟"慢"无关——二进制被换、文件系统 stall、熵不足
+  # 都会让子进程挂着不退出；没有 timeout 的同步 System.cmd 会无限期占住
+  # 这个 User 的 GenServer(人类裁决 2026-08-01)。用 Task.async +
+  # Task.yield + Task.shutdown 限时；不新建 OsProcess 那套重机制。
   #
   # argv 中只有路径与 `-N ""`(空 passphrase 标志，不是密钥)，无敏感内容，
   # 故 /proc/<pid>/cmdline 世界可读不构成泄漏。
@@ -138,57 +176,174 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
     try do
       File.mkdir_p!(dir)
 
-      case System.cmd(
-             "ssh-keygen",
-             ["-t", "ed25519", "-N", "", "-C", comment, "-f", key_path],
-             stderr_to_stdout: true
-           ) do
-        {_out, 0} ->
+      case run_ssh_keygen(comment, key_path) do
+        {:ok, {_out, 0}} ->
           with {:ok, priv} <- File.read(key_path),
-               {:ok, pub} <- File.read(key_path <> ".pub") do
-            {:ok,
-             %{
-               private_key: priv,
-               public_key: String.trim(pub),
-               fingerprint: fingerprint(String.trim(pub))
-             }}
+               {:ok, pub_raw} <- File.read(key_path <> ".pub") do
+            # I1 defense-in-depth: validate_comment/1 already rejects a
+            # `\n`/`\r` comment before we ever get here, but only take the
+            # FIRST line of the .pub output regardless — a second line
+            # (whatever its origin) is never treated as part of this
+            # identity's public key.
+            pub = first_line(pub_raw)
+
+            case fingerprint(pub) do
+              {:ok, fp} ->
+                {:ok, %{private_key: priv, public_key: pub, fingerprint: fp}}
+
+              # M2: an unparseable pubkey must FAIL the action, not persist
+              # a "SHA256:unknown" placeholder a downstream reader could
+              # mistake for a real value.
+              :error ->
+                {:error, {:fingerprint_unparseable, pub}}
+            end
           else
             {:error, posix} -> {:error, {:read_failed, posix}}
           end
 
-        {out, status} ->
+        {:ok, {out, status}} ->
           {:error, {:exit_status, status, String.slice(out, 0, 500)}}
+
+        # :timeout / :keygen_exception / :keygen_crashed from
+        # run_ssh_keygen/2 pass straight through — handle_generate_ssh_key/2
+        # wraps whatever we return here as `{:keygen_failed, reason}`,
+        # exactly like every other keygen/1 failure (human decision: reuse
+        # the existing error shape, don't grow a new atom hierarchy for
+        # :timeout specifically).
+        {:error, _reason} = error ->
+          error
       end
     rescue
-      # System.cmd/3 resolves a relative executable via :os.find_executable/1
-      # and, when it's missing, raises through :erlang.error(:enoent, ...)
-      # (elixir/lib/system.ex) — a raw :error whose reason has no dedicated
-      # Elixir exception, so Exception.normalize/3 always wraps it as
-      # ErlangError. That makes ErlangError here a strict superset of a
-      # `catch :error, :enoent` clause (verified: compiling the two-clause
-      # form emits no warning, but the catch branch is provably never
-      # reached for this raise) — so there is no separate catch clause.
+      # File.mkdir_p!/1 is the only raise left in THIS process — the
+      # ssh-keygen subprocess call now runs inside run_ssh_keygen/2's Task
+      # and is caught there (see its comment for why it must not be allowed
+      # to raise across the Task boundary).
       e in [File.Error, ErlangError] -> {:error, {:keygen_exception, Exception.message(e)}}
     after
-      # 立刻删，不依赖进程退出或 GC
-      File.rm_rf(dir)
+      # 立刻删，不依赖进程退出或 GC。M1: don't discard the result — a failed
+      # cleanup leaves a plaintext private key sitting in /tmp with nobody
+      # told.
+      cleanup_tmp_dir(dir)
     end
   end
 
-  # OpenSSH 的 SHA256 指纹：对公钥 base64 段解码后取 sha256，再 base64(去 padding)
-  defp fingerprint(pub_line) do
+  # Runs ssh-keygen bounded by keygen_timeout_ms/0. Returns:
+  #   {:ok, {output, exit_status}}     — completed within the timeout
+  #   {:error, :timeout}               — did not complete in time
+  #   {:error, {:keygen_exception, _}} — System.cmd raised (e.g. :enoent,
+  #                                      ssh-keygen missing from PATH)
+  #   {:error, {:keygen_crashed, _}}   — the task exited for any other reason
+  #
+  # Task.async (not Task.Supervisor.async_nolink) per the human decision.
+  # Task.async LINKS the spawned process to this one — so the System.cmd
+  # call is wrapped in its OWN try/rescue INSIDE the task. Verified
+  # empirically: without that inner rescue, a raise in the task (e.g. the
+  # :enoent case below) kills THIS process too via the link before
+  # Task.yield ever gets a chance to turn it into a graceful
+  # `{:exit, reason}` — which would be strictly worse than the hang I2
+  # exists to fix (a crashed User actor vs. one blocked call). Catching
+  # inside the task keeps it exiting NORMALLY (carrying an `{:error, _}`
+  # value) for every case we can anticipate; the `{:exit, reason}` clause
+  # below is a last-resort net for anything else.
+  defp run_ssh_keygen(comment, key_path) do
+    task =
+      Task.async(fn ->
+        try do
+          {:ok,
+           System.cmd(
+             "ssh-keygen",
+             ["-t", "ed25519", "-N", "", "-C", comment, "-f", key_path],
+             stderr_to_stdout: true
+           )}
+        rescue
+          e in [File.Error, ErlangError] -> {:error, {:keygen_exception, Exception.message(e)}}
+        end
+      end)
+
+    case Task.yield(task, keygen_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error, {:keygen_crashed, reason}}
+
+      nil ->
+        # Task.shutdown/2 kills the ELIXIR task process. It does NOT reach
+        # into the OS process tree — the ssh-keygen child can be left
+        # orphaned (reparented, not reaped) rather than killed. This is a
+        # KNOWN, ACCEPTED tradeoff (human decision, I2): a timeout here is
+        # an extremely low-probability event (binary swapped, fs stall,
+        # entropy starvation), and building OsProcess's pid_file +
+        # orphan-reaping machinery to close that gap costs more than the
+        # gap is worth. What we must NOT do is stay silent about it — log
+        # so an operator can go find and reap a stray ssh-keygen if this
+        # ever fires.
+        Logger.warning(
+          "UserSshIdentity: ssh-keygen exceeded #{keygen_timeout_ms()}ms and was shut " <>
+            "down; the underlying OS process may be left orphaned (accepted tradeoff, " <>
+            "see run_ssh_keygen/2)",
+          key_path: key_path
+        )
+
+        {:error, :timeout}
+    end
+  end
+
+  defp keygen_timeout_ms do
+    Application.get_env(:ezagent_domain_identity, :ssh_keygen_timeout_ms, @keygen_timeout_ms)
+  end
+
+  # M1: File.rm_rf/1's result was previously discarded — a failed cleanup
+  # left a plaintext private key on disk with no signal anywhere. `def` +
+  # `@doc false` (not `defp`) purely so the failure path is unit-testable
+  # directly, without racing keygen/1's internally-randomized dir name.
+  @doc false
+  def cleanup_tmp_dir(dir) do
+    case File.rm_rf(dir) do
+      {:ok, _deleted} ->
+        :ok
+
+      {:error, reason, path} ->
+        Logger.warning(
+          "UserSshIdentity: failed to remove ssh-keygen tmp dir #{dir} — plaintext key " <>
+            "material may remain on disk",
+          path: path,
+          reason: inspect(reason)
+        )
+
+        :ok
+    end
+  end
+
+  # First line only (I1 defense-in-depth), trimmed of surrounding
+  # whitespace/CR. `trim: true` drops the empty trailing entry a normal
+  # `"...\n"` split produces, so `List.first/2` lands on the real content.
+  defp first_line(raw) do
+    raw
+    |> String.split("\n", trim: true)
+    |> List.first(raw)
+    |> String.trim()
+  end
+
+  # OpenSSH 的 SHA256 指纹：对公钥 base64 段解码后取 sha256，再 base64(去
+  # padding)。M2: returns :error (not a placeholder string) when the line
+  # can't be parsed — see the fingerprint/1 call site in keygen/1. `def` +
+  # `@doc false` (not `defp`) so this is unit-testable directly against
+  # malformed input a real ssh-keygen invocation can never produce.
+  @doc false
+  def fingerprint(pub_line) do
     case String.split(pub_line, " ") do
       [_type, b64 | _rest] ->
         case Base.decode64(b64) do
           {:ok, raw} ->
-            "SHA256:" <> (:crypto.hash(:sha256, raw) |> Base.encode64(padding: false))
+            {:ok, "SHA256:" <> (:crypto.hash(:sha256, raw) |> Base.encode64(padding: false))}
 
           :error ->
-            "SHA256:unknown"
+            :error
         end
 
       _ ->
-        "SHA256:unknown"
+        :error
     end
   end
 

@@ -147,12 +147,14 @@ action(:revoke_ssh_key,
 
 **X/Y 溯源**：Y 是「用哪个跑子进程」；X 是「**这个子进程的风险特征是什么**」。
 
-`ssh-keygen` 是**本地、无网络、毫秒级、输出固定小**的命令。它**没有** `GitRunner` 需要防的那些风险（网络挂死、大输出、孤儿进程树），因此不需要 `OsProcess` + 自建 GenServer + deadline + 输出上限那一整套。
+**订正(2026-08-01，task-1 review D1)**：原稿在这里说 `ssh-keygen` "没有 `GitRunner` 要防的那些风险(网络挂死、大输出、孤儿进程树)"——这句话**错了**。风险不是"慢"，是"卡死";本地子进程一样会卡(二进制被换、文件系统 stall、熵不足),卡住就会无限期占住调用方的 GenServer(见 I2 / task-1-findings.md)。结论不变,理由改写如下。
+
+`ssh-keygen` 是**本地、无网络、输出固定小**的命令,所以不需要 `OsProcess` 的 `pid_file` + 输出上限那一整套——但"卡死"风险是真实存在的,用 `Task.async` + `Task.yield` 限时解决(人类裁决,I2),并接受超时后 `Task.shutdown` 只能杀掉 Elixir 任务进程、底下的 ssh-keygen 子进程可能变孤儿这一已知取舍(极低概率事件,为它引入 `OsProcess` 的 pid_file + orphan reaping 那套重机制不划算)。
 
 - `Ezagent.Runtime.OsProcess` 只有 `spawn/2`，是为**长命 sidecar / PTY** 设计的，无 run-and-collect
 - `System.cmd` 在 core 内已有先例：`stress_metrics.ex:208`、`pid_file.ex:240`（都用它跑 `ps`）
 
-**结论：用 `System.cmd`，不提取 `GitRunner` 的 run-and-collect，不动 `OsProcess` —— 不新建抽象。**
+**结论(不变)：用 `System.cmd` + `Task.async`/`Task.yield`/`Task.shutdown` 限时，不提取 `GitRunner` 的 run-and-collect，不动 `OsProcess` —— 不新建抽象。**
 
 argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**无敏感内容**，故 `/proc/<pid>/cmdline` 世界可读不构成泄漏。
 

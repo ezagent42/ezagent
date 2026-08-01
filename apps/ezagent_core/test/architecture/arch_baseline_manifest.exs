@@ -535,10 +535,17 @@
   # arch-cap-bump: agent-ssh-credential Task 1a — Behavior.UserSshIdentity's
   #   handle_generate_ssh_key persists the freshly generated identity: 5
   #   irreducible {:set, ...} sites (:public_key, :private_key, :fingerprint,
-  #   :comment, :created_at), each a distinct state key with no shared setter to
-  #   consolidate through (unlike py-agent's last_input/result/error, these are
-  #   independently-read fields, not a triple always written together).
-  #   cross-slice stays 0 (all writes are UserSshIdentity's own state). 131→136.
+  #   :comment, :created_at). Corrected 2026-08-01 (task-1 review M6): these
+  #   ARE all written together, from the same handler call, in one effects
+  #   list — unlike py-agent's last_input/result/error triple, the reason
+  #   they can't be CONSOLIDATED into one {:set, ...} isn't that they're
+  #   written separately. It's that (a) the brief pins a flat state shape —
+  #   five independent top-level keys, not one nested map — and (b) the
+  #   existence guard and the future read/revoke actions address one field
+  #   at a time via `ctx[:read].(:public_key, ...)` / `ctx[:read].(:private_key,
+  #   ...)`, which requires each to stay its own top-level state key. No
+  #   shared setter exists to route them through. cross-slice stays 0 (all
+  #   writes are UserSshIdentity's own state). 131→136.
   set_effect_sites: 136,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
