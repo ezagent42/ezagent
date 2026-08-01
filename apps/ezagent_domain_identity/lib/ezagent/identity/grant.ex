@@ -134,6 +134,34 @@ defmodule Ezagent.Identity.Grant do
   end
 
   @doc """
+  Resolve a logical revoke shape to the exact signed artifact in the holder's
+  durable effective set (authoritative Store plus pending absorbs).
+
+  Signed inputs are preserved exactly. A missing logical grant is reported
+  separately so lifecycle callers can choose an idempotent no-op without
+  weakening `IdentityCaps.Store.revoke_cap/2`'s exact-artifact requirement.
+  """
+  @spec resolve_revocation_artifact(URI.t(), Capability.t()) ::
+          {:ok, Capability.t()} | {:error, :cap_not_held | :effective_caps_read_failed}
+  def resolve_revocation_artifact(
+        _target,
+        %Capability{signature: signature} = cap
+      )
+      when is_binary(signature) and byte_size(signature) > 0,
+      do: {:ok, cap}
+
+  def resolve_revocation_artifact(%URI{} = target, %Capability{} = logical_cap) do
+    identity = Capability.identity_key(logical_cap)
+
+    with {:ok, caps} <- Ezagent.IdentityCaps.effective_caps_persisted(target) do
+      case Enum.find(caps, &(Capability.identity_key(&1) == identity)) do
+        nil -> {:error, :cap_not_held}
+        artifact -> {:ok, artifact}
+      end
+    end
+  end
+
+  @doc """
   Grant `cap` to `target` via `Ezagent.Router.dispatch/1` (a `%Cmd{}`,
   `:call` mode). For sites that already speak the Router `%Cmd{}`
   envelope. `reply_mode` is `:async` (buffered `:ignore`) or `:sync`
@@ -254,7 +282,7 @@ defmodule Ezagent.Identity.Grant do
     artifact_result =
       case action do
         :grant_cap -> Cap.issue(authorization, target, cap)
-        :revoke_cap -> {:ok, cap}
+        :revoke_cap -> revocation_artifact(target, cap)
       end
 
     case artifact_result do
@@ -266,6 +294,18 @@ defmodule Ezagent.Identity.Grant do
 
       {:error, _} = error ->
         error
+    end
+  end
+
+  # Framework revoke sites historically pass the logical cap shape produced by
+  # `Capability.cap/5`. Resolve that shape against the durable effective view so
+  # a not-yet-absorbed grant carries its exact grant_id/signature into the
+  # remove-cap outbox. Already signed inputs remain exact: replacing one by an
+  # identity match could accidentally revoke a newer grant generation.
+  defp revocation_artifact(target, %Capability{} = logical_cap) do
+    case resolve_revocation_artifact(target, logical_cap) do
+      {:error, :cap_not_held} -> {:ok, logical_cap}
+      result -> result
     end
   end
 

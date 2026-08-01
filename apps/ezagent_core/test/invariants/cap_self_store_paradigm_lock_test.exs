@@ -43,7 +43,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     },
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex" =>
       %{{:grant_cap, 3} => 4},
-    "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => %{
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace/member_caps.ex" => %{
       {:grant_cap_effect, 3} => 1
     },
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{

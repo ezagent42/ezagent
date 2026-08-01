@@ -26,7 +26,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/rollback.ex" =>
       1,
     "apps/ezagent_domain_socialware/lib/ezagent/socialware/anon_user.ex" => 1,
-    "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => 1
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace/member_caps.ex" => 1
   }
   @mint_candidate_files 11
   @mint_candidate_sites 19
@@ -128,7 +128,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     assert store =~ "set_caps_effect(new_caps)"
     assert revoke =~ "set_caps_effect(new_caps)"
     assert writer =~ "{:set, :caps, caps}"
-    assert revoke =~ "Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap_struct)"
+    assert revoke =~ "revocation_artifact(current_caps, cap_struct)"
+    assert revoke =~ "Ezagent.IdentityCaps.Store.revoke_cap(receiver, revocation_artifact)"
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, resolved)"
     refute revoke =~ "MapSet.put"
   end

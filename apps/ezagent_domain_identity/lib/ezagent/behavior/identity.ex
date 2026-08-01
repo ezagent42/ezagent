@@ -674,7 +674,9 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     current_caps = ctx[:read].(:caps, MapSet.new())
     receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, resolved} <- Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap),
+    with {:ok, revocation_artifact} <- revocation_artifact(current_caps, cap),
+         {:ok, resolved} <-
+           Ezagent.IdentityCaps.Store.revoke_cap(receiver, revocation_artifact),
          {:ok, updated} <- Ezagent.Capability.revoke(current_caps, resolved),
          {:ok, persistable} <-
            Ezagent.IdentityCaps.prepare_for_storage(updated, receiver, true) do
@@ -780,7 +782,9 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     current_caps = ctx[:read].(:caps, MapSet.new())
     receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, resolved} <- Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap_struct),
+    with {:ok, revocation_artifact} <- revocation_artifact(current_caps, cap_struct),
+         {:ok, resolved} <-
+           Ezagent.IdentityCaps.Store.revoke_cap(receiver, revocation_artifact),
          {:ok, new_caps} <- Ezagent.Capability.revoke(current_caps, resolved) do
       notify_cap_change(
         ctx,
@@ -801,6 +805,27 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
        ]}
     else
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A revoke envelope historically carried only the logical cap shape. P2's
+  # ledger needs the exact signed grant artifact when the durable Store has no
+  # matching row (for example, while an absorb is still pending). The live
+  # identity slice is trusted holder state, so prefer its matching artifact and
+  # leave Store responsible for exact signature/current-generation validation.
+  # Preserve the genesis invariant before touching either Store or the ledger.
+  defp revocation_artifact(current_caps, %Ezagent.Capability{} = caller_cap) do
+    if Ezagent.Capability.admin_invariant?(caller_cap) do
+      {:error, :cannot_revoke_admin}
+    else
+      identity = Ezagent.Capability.identity_key(caller_cap)
+
+      artifact =
+        Enum.find(current_caps, fn held ->
+          Ezagent.Capability.identity_key(held) == identity
+        end)
+
+      {:ok, artifact || caller_cap}
     end
   end
 

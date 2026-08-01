@@ -462,16 +462,29 @@ defmodule Ezagent.Socialware.CompositionCaps do
             Ezagent.URI.new!(row.workspace_uri)
           )
 
-        case Ezagent.Identity.Grant.revoke_cap(
-               source_uri,
-               cap,
-               {:held_by, Ezagent.URI.new!(row.issuer_uri)}
-             ) do
+        case revoke_if_held(source_uri, cap, Ezagent.URI.new!(row.issuer_uri)) do
           :ok -> {:cont, :ok}
           {:error, reason} -> {:halt, {:error, {:composition_cap_revoke_failed, reason}}}
         end
       end
     end)
+  end
+
+  # Binding rows deliberately retain only logical cap identity. Resolve that
+  # identity through the durable holder view before crossing the exact-artifact
+  # revoke boundary. A missing artifact means the desired cleanup state already
+  # holds (for example, a degraded edge whose issued cap was never absorbed).
+  defp revoke_if_held(source_uri, cap, issuer_uri) do
+    case Ezagent.Identity.Grant.resolve_revocation_artifact(source_uri, cap) do
+      {:ok, artifact} ->
+        Ezagent.Identity.Grant.revoke_cap(source_uri, artifact, {:held_by, issuer_uri})
+
+      {:error, :cap_not_held} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp binding_attrs(item, session_uri, workspace_uri, configurer) do
