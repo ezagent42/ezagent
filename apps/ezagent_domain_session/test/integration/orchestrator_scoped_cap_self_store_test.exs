@@ -54,6 +54,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
     end)
 
     :ok = Ezagent.ReadyGate.put(orchestrator_uri, :not_ready)
+    buffer_size_before = Ezagent.PendingDelivery.buffer_size(orchestrator_uri)
 
     task =
       Task.async(fn ->
@@ -71,11 +72,10 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
 
     # A never-ready transport does not block cap handoff: each exact Session
     # or Workspace action is already signed by its concrete target authority
-    # and durably queued for the orchestrator's own absorb path.
-    assert [first_notification, second_notification] = pending_entries(orchestrator_uri)
-
-    assert_cascade_notification(first_notification, orchestrator_uri, 1)
-    assert_cascade_notification(second_notification, orchestrator_uri, 2)
+    # and durably queued for the orchestrator's own absorb path. The identity
+    # slice has not changed yet, so its post-commit manager cascade must not
+    # enter the bounded in-memory PendingDelivery buffer before ready-drain.
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
     pending_before = pending_deliveries(orchestrator_uri)
     pending = pending_artifacts(orchestrator_uri)
 
@@ -153,6 +153,9 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
                  :count
                ) == 0
            end)
+
+    settle_boot_mailbox(orchestrator_pid)
+    assert Ezagent.PendingDelivery.buffer_size(orchestrator_uri) == buffer_size_before
   end
 
   defp pending_artifacts(uri) do
@@ -172,30 +175,6 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
       order_by: [asc: delivery.id]
     )
     |> EzagentCore.Repo.all()
-  end
-
-  defp pending_entries(uri) do
-    Ezagent.PendingDelivery.with_lock(uri, fn ->
-      key = URI.to_string(uri)
-
-      case :ets.lookup(Ezagent.PendingDelivery.table(), key) do
-        [{^key, entries}] -> Ezagent.PendingDelivery.unwrap_entries(entries)
-        [] -> []
-      end
-    end)
-  end
-
-  defp assert_cascade_notification(invocation, orchestrator_uri, cursor) do
-    assert %Ezagent.Invocation{
-             target: %URI{query: "action=_.cascade_notify_managers"} = target,
-             mode: :cast,
-             args: %{cursor: ^cursor, slice_key: :identity, event_at: %DateTime{}},
-             ctx: %{caller: :vm_internal, reply: :ignore, mode: :cast, caps: caps},
-             origin: :trusted_internal
-           } = invocation
-
-    assert URI.to_string(%{target | query: nil}) == URI.to_string(orchestrator_uri)
-    assert MapSet.size(caps) == 0
   end
 
   defp expected_cap_count do
