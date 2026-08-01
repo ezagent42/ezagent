@@ -3,7 +3,7 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
 
   import Ecto.Query
 
-  alias Ezagent.Cap.{Authority, Delivery, RevocationLedger}
+  alias Ezagent.Cap.{Authority, Delivery, RevocationEpoch, RevocationLedger}
   alias Ezagent.Capability
   alias Ezagent.Ecto.{CapRevocationEpoch, KindSnapshot}
   alias Ezagent.EntityCaps.Store
@@ -70,18 +70,32 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
              Capability.action_of(cap) == :self_license and cap.signing_version == 2
            end)
 
-    for {holder, old_caps} <- [
-          {user, [user_license, user_cap]},
-          {pending_holder, [pending_license, pending_cap]}
-        ] do
-      reminted = Store.load(holder)
-      assert identities(reminted) == identities(old_caps)
-      assert Enum.all?(reminted, &(&1.signing_version == 2 and is_binary(&1.grant_id)))
+    reminted_by_holder =
+      for {holder, old_caps} <- [
+            {user, [user_license, user_cap]},
+            {pending_holder, [pending_license, pending_cap]}
+          ],
+          into: %{} do
+        reminted = Store.load(holder)
+        assert identities(reminted) == identities(old_caps)
+        assert Enum.all?(reminted, &(&1.signing_version == 2 and is_binary(&1.grant_id)))
 
-      old_ids = old_caps |> Enum.map(& &1.grant_id) |> Enum.reject(&is_nil/1) |> MapSet.new()
-      new_ids = reminted |> Enum.map(& &1.grant_id) |> MapSet.new()
-      assert MapSet.disjoint?(old_ids, new_ids)
-    end
+        old_ids = old_caps |> Enum.map(& &1.grant_id) |> Enum.reject(&is_nil/1) |> MapSet.new()
+        new_ids = reminted |> Enum.map(& &1.grant_id) |> MapSet.new()
+        assert MapSet.disjoint?(old_ids, new_ids)
+        {URI.to_string(holder), reminted}
+      end
+
+    Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
+    assert RevocationEpoch.status() == :active
+    refute Authority.verify_against_current(user_license, user, user)
+
+    reminted_user_license =
+      reminted_by_holder
+      |> Map.fetch!(URI.to_string(user))
+      |> Enum.find(&(Capability.action_of(&1) == :self_license))
+
+    assert Authority.verify_against_current(reminted_user_license, user, user)
 
     assert Enum.all?(Ezagent.Users.get_by_uri(user).caps, &(&1.signing_version == 2))
 
@@ -144,6 +158,9 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
                io: quiet()
              )
 
+    Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
+    assert RevocationEpoch.status() == :active
+
     refute Capability.identity_key(revoked) in identities(Store.load(holder))
 
     refute Capability.identity_key(revoked) in identities(
@@ -170,6 +187,35 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
     assert refused.manifest_hash == report.manifest_hash
     assert Repo.get(CapRevocationEpoch, "per_cap") == nil
     refute Store.has_row?(admin)
+  end
+
+  test "the one-shot is release/mix prestart wiring, never an application child" do
+    root = Path.expand("../../../../..", __DIR__)
+    release = File.read!(Path.join(root, "apps/ezagent_core/lib/ezagent_core/release.ex"))
+
+    mix_task =
+      File.read!(
+        Path.join(
+          root,
+          "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.cap_revocation.cutover.ex"
+        )
+      )
+
+    identity_app =
+      File.read!(
+        Path.join(
+          root,
+          "apps/ezagent_domain_identity/lib/ezagent_domain_identity/application.ex"
+        )
+      )
+
+    web_app = File.read!(Path.join(root, "apps/ezagent_web/lib/ezagent_web/application.ex"))
+
+    assert release =~ "@cap_revocation_cutover Ezagent.Identity.CapRevocationCutover"
+    assert release =~ "def cap_revocation_cutover(opts"
+    assert mix_task =~ "CapRevocationCutover.run(opts)"
+    refute identity_app =~ "CapRevocationCutover"
+    refute web_app =~ "CapRevocationCutover"
   end
 
   defp v1_self_license(holder) do
