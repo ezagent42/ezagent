@@ -174,7 +174,8 @@ defmodule Ezagent.Entity.User do
     do: [
       Ezagent.ActionSet.Identity,
       Ezagent.ActionSet.UserCredentials,
-      Ezagent.ActionSet.UserTokens
+      Ezagent.ActionSet.UserTokens,
+      Ezagent.ActionSet.UserSshIdentity
     ]
 
   @impl Ezagent.Kind

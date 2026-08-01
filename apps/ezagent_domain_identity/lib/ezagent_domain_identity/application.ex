@@ -49,6 +49,7 @@ defmodule EzagentDomainIdentity.Application do
     ApiKeys,
     UserCredentials,
     UserTokens,
+    UserSshIdentity,
     WorkspaceUserAdmin,
     WorkspaceSharedCredentialSource,
     CredentialGrant,
@@ -474,6 +475,14 @@ defmodule EzagentDomainIdentity.Application do
     # them to model after yet).
     for action <- UserTokens.actions() do
       :ok = CapabilityRegistry.register(User, action, UserTokens)
+    end
+
+    # 任务 1a (2026-08-01): UserSshIdentity Behavior —— User 的 SSH 身份
+    # (generate / read_public / read / revoke)。仅注册在 User Kind 上：
+    # 身份归 User，不归 Agent(agent 是动态物化的，归 agent 则每物化一个
+    # 就要去 provider 手工加一次公钥)。
+    for action <- UserSshIdentity.actions() do
+      :ok = CapabilityRegistry.register(User, action, UserSshIdentity)
     end
 
     # Codex PR #356 r1 CRIT fix (2026-05-26): split `:create_user`

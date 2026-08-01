@@ -532,7 +532,14 @@
   #   helper line (3 sites, not 12), plus {:set, :timeout_ms} (configure) and
   #   {:set, :python_phase} (handle_signal). 3 irreducible new sites (cross-slice
   #   stays 0); net +3.
-  set_effect_sites: 131,
+  # arch-cap-bump: agent-ssh-credential Task 1a — Behavior.UserSshIdentity's
+  #   handle_generate_ssh_key persists the freshly generated identity: 5
+  #   irreducible {:set, ...} sites (:public_key, :private_key, :fingerprint,
+  #   :comment, :created_at), each a distinct state key with no shared setter to
+  #   consolidate through (unlike py-agent's last_input/result/error, these are
+  #   independently-read fields, not a triple always written together).
+  #   cross-slice stays 0 (all writes are UserSshIdentity's own state). 131→136.
+  set_effect_sites: 136,
   cross_slice_set_violations: 0,
   missing_cap_check_mutating_actions: 0,
   kind_runtime_ordering_violations: 0,

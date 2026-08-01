@@ -54,13 +54,17 @@ defmodule Ezagent.Entity.UserTest do
     # FLIPPED ApiKeys to the Agent Kind (agents hold their own keys); User
     # no longer carries it. HIGH-2 completion (2026-05-26) added
     # UserCredentials + UserTokens for dispatch-backed password + token
-    # CRUD.
+    # CRUD. Task 1a (2026-08-01) added UserSshIdentity — SSH identity
+    # belongs to User, never Agent (agents are dynamically materialized;
+    # per-agent would mean a manual provider public-key add on every
+    # materialization).
     assert User.type_name() == :user
 
     assert User.behaviors() == [
              Ezagent.ActionSet.Identity,
              Ezagent.ActionSet.UserCredentials,
-             Ezagent.ActionSet.UserTokens
+             Ezagent.ActionSet.UserTokens,
+             Ezagent.ActionSet.UserSshIdentity
            ]
 
     refute Ezagent.ActionSet.ApiKeys in User.behaviors(),
