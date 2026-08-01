@@ -135,14 +135,17 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   @doc """
   生成一份新的 ed25519 SSH 身份并写入本 User 的 state。
 
-  已存在身份(state 已有 `:private_key` 或 `:public_key`)时拒绝并返回
+  已存在身份(任一身份字段存在，见 `any_identity_field?/1`)时拒绝并返回
   `{:error, :ssh_identity_exists}`——不静默覆盖：覆盖会让用户已在 provider
-  配好的公钥突然失效且不可回退。返回值只含 `:public_key` / `:fingerprint`；
+  配好的公钥突然失效且不可回退。判定不能只看 `public_key`/`private_key`
+  两个字段(R1 修正，见 task-2-findings-round2.md)——metadata-only 状态下
+  也必须拒绝，否则会跟 `:read_ssh_key`/`:revoke_ssh_key` 对同一份 state
+  给出相矛盾的"身份是否存在"判断。返回值只含 `:public_key` / `:fingerprint`；
   私钥只经一条 `:set` effect 写进 state 的 `:private_key` 键，永不出现在
   返回值里(取私钥是 `:read_ssh_key` 的事，另一条更敏感的 cap，Task 2 落地)。
   """
   def handle_generate_ssh_key(args, ctx) when is_map(args) do
-    if ctx[:read].(:private_key, nil) || ctx[:read].(:public_key, nil) do
+    if any_identity_field?(ctx) do
       {:error, :ssh_identity_exists}
     else
       comment = Map.get(args, :comment) || default_comment(ctx)
@@ -287,9 +290,14 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   @identity_fields [:public_key, :private_key, :fingerprint, :comment, :created_at]
   @private_key_header "-----BEGIN OPENSSH PRIVATE KEY-----"
 
-  # C1/C4 共用谓词——identity_state/1、public_key_state/1、
-  # handle_revoke_ssh_key/2 都要回答"这份 state 里有没有身份记录"，只写
-  # 一次，不要三份各写各的判断（读哪几个字段一旦漂移，三处必然不同步）。
+  # C1/C4/R1 共用谓词——identity_state/1、public_key_state/1、
+  # handle_revoke_ssh_key/2、handle_generate_ssh_key/2 都要回答"这份 state
+  # 里有没有身份记录"，只写一次，不要四份各写各的判断（读哪几个字段一旦
+  # 漂移，四处必然不同步）。handle_generate_ssh_key/2 补上这一处是 R1
+  # (task-2-findings-round2.md 修正)——它此前独立用
+  # `public_key || private_key` 两字段判定，对 metadata-only 状态给出跟
+  # 另外三处相矛盾的"没有身份，可以放行覆盖"的答案，与自己
+  # action 的 description("Refuses when an identity already exists")矛盾。
   defp any_identity_field?(ctx) do
     Enum.any?(@identity_fields, fn key -> not is_nil(ctx[:read].(key, nil)) end)
   end

@@ -98,6 +98,24 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
                UserSshIdentity.handle_generate_ssh_key(%{}, ctx(state))
     end
 
+    # R1 (task-2-findings-round2.md): metadata-only state (no public_key, no
+    # private_key — e.g. fingerprint/comment/created_at surviving a snapshot
+    # migration or partial repair) is a genuinely reachable "identity
+    # exists" shape per any_identity_field?/1 — the SAME predicate
+    # identity_state/1, public_key_state/1, and handle_revoke_ssh_key/2 use.
+    # Before this fix, handle_generate_ssh_key/2 used its own two-field
+    # check (public_key || private_key) and would silently proceed here,
+    # contradicting its own `description` ("Refuses when an identity
+    # already exists; revoke first.") and contradicting :read_ssh_key /
+    # :revoke_ssh_key, which both already treat this shape as identity
+    # present.
+    test "已存在身份时拒绝，不覆盖 —— 只有 metadata 字段(无 public_key/private_key)" do
+      state = %{fingerprint: "SHA256:abc", comment: "alice", created_at: DateTime.utc_now()}
+
+      assert {:error, :ssh_identity_exists} =
+               UserSshIdentity.handle_generate_ssh_key(%{}, ctx(state))
+    end
+
     test "生成后临时目录不残留" do
       before = tmp_entries()
       assert {:ok, _r, _e} = UserSshIdentity.handle_generate_ssh_key(%{}, ctx())

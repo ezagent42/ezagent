@@ -184,9 +184,9 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 **① `ssh-keygen` 失败 → `{:error, {:keygen_failed, reason}}`**
 命令不存在 / 非零退出 / 输出不合预期，全部显式返回。**绝不返回 `:ok` 而实际没生成**（CLAUDE.md「不要 silent 失败」）。
 
-**② 已有 key 时再次 generate → 拒绝，`{:error, :ssh_identity_exists}`**
+**② 已有身份（任一身份字段存在）时再次 generate → 拒绝，`{:error, :ssh_identity_exists}`**（2026-08-02 订正——原文写「已有 key」，与 §5.1 的判定口径矛盾，见下；task-2-findings-round2.md R1）
 
-静默覆盖会让用户已在 GitHub 配好的公钥**突然失效**，且旧私钥已不可回退 —— 这是「逻辑写错导致无意破坏」的教科书案例，属于必须挡的事故面。**要求先显式 `:revoke_ssh_key` 再生成**：多一步操作，换掉一整类「我的 git 突然不能用了」的事故。
+判定依据与 §5.1 一致：**是否存在任一身份字段**（`public_key` / `private_key` / `fingerprint` / `comment` / `created_at`），**不是**「两个 key 字段是否都缺」。静默覆盖会让用户已在 GitHub 配好的公钥**突然失效**，且旧私钥已不可回退 —— 这是「逻辑写错导致无意破坏」的教科书案例，属于必须挡的事故面。metadata-only 状态（只剩 `fingerprint`/`comment`/`created_at`，两个 key 字段皆 nil）下虽然没有可用的 key，但有证据表明曾经存在过一份身份、用户很可能已把对应公钥注册在 provider 上——同样必须挡下，不能因两个 key 字段为 nil 就静默放行覆盖。**要求先显式 `:revoke_ssh_key` 再生成**：多一步操作，换掉一整类「我的 git 突然不能用了」的事故。
 
 **③ 临时目录**
 每次调用一个随机名临时目录；读出内容后**立刻 `File.rm_rf`**，不依赖进程退出或 GC；异常路径同样清理（`try/after`）。
@@ -263,6 +263,7 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 **功能**
 - generate → 返回公钥 + 指纹；state 中有私钥；**返回值中没有私钥**
 - generate 二次 → `{:error, :ssh_identity_exists}`
+- generate 遇 metadata-only 状态（两个 key 字段为 nil，其余身份字段仍在）→ 同样 `{:error, :ssh_identity_exists}`（task-2-findings-round2.md R1）
 - read_ssh_public_key → 公钥 + 指纹
 - read_ssh_key → 私钥，且产生审计 emit
 - 无 key 时 read → `{:error, :ssh_identity_absent}`
