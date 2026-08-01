@@ -473,6 +473,14 @@ Include `ci.clean_per_grant` exactly once in `precommit`.
 - [ ] Run `MIX_ENV=test MIX_TEST_PARTITION=p2final mix ci.fast`.
 - [ ] Run `MIX_ENV=test MIX_TEST_PARTITION=p2final mix precommit`; fix every
   issue in scope and rerun until green.
+- [ ] Resolve the development Repo database from the effective dev config,
+  print and assert the exact name is `ezagent_pg_compat_dev`, then run the
+  repository-supported drop/create/migrate/seed sequence against that exact
+  database. Never use a wildcard, environment-expanded target, or a broader
+  PostgreSQL cleanup command.
+- [ ] Boot the application once against the reinitialized development database
+  and verify its capability Store, authority anchors, and seeds contain only the
+  clean-slate schema/artifact shape.
 - [ ] Review `git diff origin/main...HEAD`, `git status`, commit history, and
   verify there are no secrets, compatibility leftovers, or unrelated changes.
 - [ ] Push `feat/p2-per-cap-revocation` to origin.
