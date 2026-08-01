@@ -140,14 +140,22 @@ jobs:
             MIX_ENV=test \
             MIX_HOME=/home/node/.mix \
             HEX_HOME=/home/node/.hex \
+            HEX_HTTP_CONCURRENCY="${HEX_HTTP_CONCURRENCY:-1}" \
+            HEX_HTTP_TIMEOUT="${HEX_HTTP_TIMEOUT:-120}" \
             SHELL=/bin/bash \
             POSTGRES_HOST="$POSTGRES_HOST" POSTGRES_PORT="$POSTGRES_PORT" \
             POSTGRES_USER="$POSTGRES_USER" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
             bash -euo pipefail -c '
               git config --global --add safe.directory "*"
-              mix local.hex --force
-              mix local.rebar --force
-              echo "== deps.get =="                    ; mix deps.get
+              # hex.pm fetches (local.hex/local.rebar hit builds.hex.pm; deps.get
+              # hits repo.hex.pm ~150x) intermittently time out on a single tarball
+              # and fail the whole gate (observed: exqlite on run 39, rebar.csv on
+              # run 25). HEX_HTTP_TIMEOUT/CONCURRENCY (see runner env) lengthen +
+              # serialize each request; retry() covers a hard transient failure.
+              retry() { local n=0; until "$@"; do n=$((n+1)); [ "$n" -ge 3 ] && return 1; echo "retry $n/3: $*"; sleep $((n*5)); done; }
+              retry mix local.hex --force
+              retry mix local.rebar --force
+              echo "== deps.get =="                    ; retry mix deps.get
               echo "== compile --warnings-as-errors ==" ; mix compile --warnings-as-errors --force
               echo "== world.e2e.fixtures --check =="   ; mix world.e2e.fixtures --check
               echo "== format --check-formatted =="     ; mix format --check-formatted
