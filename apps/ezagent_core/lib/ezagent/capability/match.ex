@@ -62,18 +62,23 @@ defmodule Ezagent.Capability.Match do
 
   @doc """
   The logical-identity 5-tuple of a cap — `{kind, behavior, action, instance,
-  workspace_uri}`, with the two URI axes normalized via
-  `Ezagent.URI.stable_key/1` and URIs NESTED inside `instance` scope tuples
-  (`{:within_session | :within_workspace | :spawned_by, URI.t()}`)
-  canonicalized to their `Ezagent.URI.new!/1` form, so logically-equal scoped
-  URIs key equal. Deliberately EXCLUDES `granted_by`/`granted_at`
-  provenance so revoke can match a held cap despite a different grant
-  timestamp (codex review HIGH-1, 2026-05-26 — full-struct equality silently
-  failed revoke). Backs `Ezagent.Capability.identity_key/1`.
+  workspace_uri}`. Top-level URI axes are normalized via
+  `Ezagent.URI.stable_key/1`; URIs NESTED inside `instance` scope tuples
+  (`{:within_session | :within_workspace | :spawned_by, URI.t()}`) are keyed by
+  `URI.to_string/1` so two logically-equal scoped URIs (a canonical
+  `Ezagent.URI.new!/1` struct and its authority-bearing `URI.parse/1` twin —
+  identical under `to_string`) collapse to ONE key, fixing the silent
+  MapSet/digest/revoke miss the old raw-struct passthrough caused. `to_string`
+  is TOTAL over the exported `scope_tuple()` contract (an earlier draft used
+  `Ezagent.URI.new!/1`, which raised on unregistered schemes — codex review
+  BLOCKER 2026-08-01). Deliberately EXCLUDES `granted_by`/`granted_at`
+  provenance so revoke can match a held cap despite a different grant timestamp
+  (codex review HIGH-1, 2026-05-26 — full-struct equality silently failed
+  revoke). Backs `Ezagent.Capability.identity_key/1`.
   """
   @spec identity_key(Capability.t()) ::
           {atom() | :any, module() | :any, atom() | :any,
-           URI.t() | :any | Capability.scope_tuple(), URI.t() | :any}
+           String.t() | :any | {atom(), String.t()}, String.t() | :any}
   def identity_key(
         %Capability{
           kind: k,
@@ -158,19 +163,27 @@ defmodule Ezagent.Capability.Match do
 
   # Scope-tuple instance axes (`{:within_session | :within_workspace |
   # :spawned_by, URI.t()}` — the three shapes of `Capability.scope_tuple()`)
-  # carry a NESTED %URI{} the top-level clause never sees. Canonicalize it so
-  # two logically-equal scoped URIs — e.g. a `URI.parse/1`-built
-  # authority-bearing struct and its `Ezagent.URI.new!/1` canonical twin,
-  # already equal under `URI.to_string/1` — yield EQUAL identity_keys. A raw
-  # struct passthrough silently mismatches the MapSet/digest/revoke lookups
-  # identity_key feeds. Match SEMANTICS are untouched: this only rewrites the
-  # identity KEY. The `canonical?/1` fast path returns the tuple unchanged so
-  # already-canonical caps pay no reparse.
-  defp normalize_uri_for_key({scope, %URI{} = u} = tuple)
+  # carry a NESTED %URI{} the top-level `%URI{}` clause never sees. Key it by
+  # `URI.to_string/1` so two logically-equal scoped URIs collapse to ONE key
+  # (a canonical `Ezagent.URI.new!/1` struct and its authority-bearing
+  # `URI.parse/1` twin differ ONLY in the redundant `:authority` field and
+  # serialize to the IDENTICAL string — verified), fixing the silent MapSet/
+  # digest/revoke miss caused by the old raw-struct passthrough.
+  #
+  # `URI.to_string/1` — NOT `Ezagent.URI.new!/1` (an earlier draft: raised on
+  # unregistered schemes — codex BLOCKER 2026-08-01) and NOT the top-level
+  # axis's `stable_key/1` (raises via `canonical!/1` on an authority-bearing
+  # URI): both are NON-total over the exported `scope_tuple()` contract, which
+  # admits any `URI.t()` and stores it unvalidated (`Capability.cap/5`).
+  # `to_string/1` is TOTAL and collision-safe (it faithfully serializes
+  # scheme/host/path/query), so it eliminates the silent mismatch WITHOUT a
+  # crash on a contract-valid input. (The bare-URI axis keeps `stable_key`'s
+  # crash-loud rule; the scope axis is deliberately total — either way there is
+  # no silent miss, which is the actual invariant.) Match SEMANTICS are
+  # untouched: this only rewrites the identity KEY.
+  defp normalize_uri_for_key({scope, %URI{} = u})
        when scope in [:within_session, :within_workspace, :spawned_by] do
-    if Ezagent.URI.canonical?(u),
-      do: tuple,
-      else: {scope, u |> URI.to_string() |> Ezagent.URI.new!()}
+    {scope, URI.to_string(u)}
   end
 
   defp normalize_uri_for_key(other), do: other

@@ -267,11 +267,20 @@ defmodule Ezagent.Identity do
   re-check each artifact's TARGET generation at match time, so a target
   regenesis AFTER the load would otherwise leave a stale cap "matching"
   (cap-revocation hardening P3). The re-verify is ordered AFTER `matches?/2`
-  so a shape-miss short-circuits with ZERO authority reads: the batch caller
-  (`Ezagent.Domain.Agent.read_credential_statuses/3`, SPEC §6.3) stays
-  O(authorized-caps) in store loads and CONSTANT in the denied count.
-  Fail-closed: unsigned, scope-tuple (no concrete target), old-gen, tampered,
-  or an unreadable authority store all yield `false` — not matched.
+  so a pure shape-MISS short-circuits with ZERO authority reads (the batch
+  caller `Ezagent.Domain.Agent.read_credential_statuses/3`, SPEC §6.3, does no
+  authority read per shape-denied candidate). A shape-MATCHING but stale /
+  tampered / wrong-generation cap still incurs ONE authority read before it is
+  denied — so authority reads scale with the shape-matching subset, not
+  strictly with the authorized subset.
+
+  Deny (`false`) is CORRECT for a genuine miss — unsigned, scope-tuple / `:any`
+  (no concrete target), old-gen, or tampered. But a TRANSIENT authority-store
+  read failure is NOT a denial: it RAISES `Ezagent.Cap.AuthorityReadError` (via
+  the `verify_against_current_checked/3` `:authority_read_failed` path) rather
+  than silently returning `false` — the silent-denial class #1346 /
+  `Ezagent.Cap.HoldsCap` forbids converting a store blip into an unauthorized
+  result.
   """
   @spec caps_match?(
           MapSet.t(Ezagent.Capability.t()) | [Ezagent.Capability.t()],
@@ -296,15 +305,32 @@ defmodule Ezagent.Identity do
   # binds `grantee_uri == holder` (`Cap.storable_for?/2`); the load-time
   # binding is what the per-call re-verify adds the fresh TARGET-generation
   # check on top of.
+  #
+  # Uses the CHECKED verifier so a TRANSIENT authority-store read failure
+  # (`{:error, :authority_read_failed}`) is NOT collapsed into a `false` denial
+  # — it RAISES `Ezagent.Cap.AuthorityReadError` (fail-LOUD, per #1346 /
+  # `Ezagent.Cap.HoldsCap`: a store blip must never masquerade as
+  # "unauthorized"). A genuine stale / tampered / wrong-generation cap returns
+  # `{:ok, false}` → not matched. A non-concrete target (scope-tuple / `:any`)
+  # → `false` (a shape issue, not a transient error — such caps are already
+  # excluded from `EntityCaps.load/1` by `Cap.storable_for?/2`). No blanket
+  # `rescue`/`catch`: `target_uri/1` and `verify_against_current_checked/3`
+  # both return tagged results, so anything else genuinely unexpected must
+  # crash (let-it-crash), not silently deny.
   defp target_current?(%Ezagent.Capability{grantee_uri: %URI{} = grantee} = cap) do
     case Ezagent.Cap.Authority.target_uri(cap) do
-      {:ok, target} -> Ezagent.Cap.Authority.verify_against_current(cap, grantee, target)
-      {:error, :concrete_target_required} -> false
+      {:ok, target} ->
+        case Ezagent.Cap.Authority.verify_against_current_checked(cap, grantee, target) do
+          {:ok, current?} ->
+            current?
+
+          {:error, :authority_read_failed} ->
+            raise Ezagent.Cap.AuthorityReadError, target: target, grantee: grantee
+        end
+
+      {:error, :concrete_target_required} ->
+        false
     end
-  rescue
-    _ -> false
-  catch
-    _, _ -> false
   end
 
   defp target_current?(_cap), do: false
