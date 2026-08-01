@@ -56,6 +56,9 @@ defmodule Ezagent.Cap.GrantArtifactTest do
       assert {:error, {:invalid_field, :kind}} =
                GrantArtifact.validate(%{artifact() | kind: "session"})
 
+      assert {:error, {:invalid_field, :action}} =
+               GrantArtifact.validate(%{artifact() | action: nil})
+
       assert {:error, {:invalid_field, :granted_at}} =
                GrantArtifact.validate(%{artifact() | granted_at: "now"})
 

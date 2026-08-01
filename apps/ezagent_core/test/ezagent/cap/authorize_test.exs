@@ -57,6 +57,16 @@ defmodule Ezagent.Cap.AuthorizeTest do
     assert authorized == cap
   end
 
+  test "authorize/3 rejects the whole candidate carrier when one artifact is malformed" do
+    {uri, _pid, holder} = start_target("malformed-carrier")
+    valid = mint_signed_cap_for(uri, holder)
+    malformed = %{valid | grant_id: nil}
+    license_holder(MapSet.new([valid]))
+
+    assert {:error, :no_matching_cap} =
+             Ezagent.Cap.authorize(holder, [valid, malformed], needed_for(uri))
+  end
+
   test "authorize/3 immediately denies a current live-slice cap after its grant_id is revoked" do
     {uri, _pid, holder} = start_target("per-cap-revoked")
     cap = mint_signed_cap_for(uri, holder)

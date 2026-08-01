@@ -56,6 +56,7 @@ defmodule Ezagent.Cap.DeliveryOutboxDeadOperatorEventTest do
       op: :absorb_cap,
       payload: :erlang.term_to_binary(%{placeholder: true}),
       payload_identity: "dead-emit-#{System.unique_integer([:positive])}",
+      grant_id: Ecto.UUID.generate(),
       status: :pending,
       attempts: 3,
       next_retry_at: DateTime.utc_now(),

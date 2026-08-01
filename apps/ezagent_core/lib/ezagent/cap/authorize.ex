@@ -29,7 +29,7 @@ defmodule Ezagent.Cap.Authorize do
   M-1 adds the membership predicate.
   """
 
-  alias Ezagent.Cap.{Authority, RevocationLedger}
+  alias Ezagent.Cap.{Authority, GrantArtifact, RevocationLedger}
   alias Ezagent.Capability
 
   @type denial :: {:error, :holder_revoked | :no_matching_cap}
@@ -51,17 +51,14 @@ defmodule Ezagent.Cap.Authorize do
         {:error, :holder_revoked}
 
       {false, true} ->
-        verified = Enum.filter(candidate_caps, &verified_candidate?(&1, holder))
-
-        case RevocationLedger.filter_unrevoked(Ezagent.URI.workspace_of(holder), verified) do
-          {:ok, unrevoked} ->
-            case Enum.find(unrevoked, &Capability.matches?(&1, needed)) do
-              %Capability{} = cap -> {:ok, cap}
-              nil -> {:error, :no_matching_cap}
-            end
-
-          {:error, _reason} ->
-            {:error, :no_matching_cap}
+        with {:ok, artifacts} <- GrantArtifact.validate_set(candidate_caps, :authorization),
+             verified <- Enum.filter(artifacts, &verified_candidate?(&1, holder)),
+             {:ok, unrevoked} <-
+               RevocationLedger.filter_unrevoked(Ezagent.URI.workspace_of(holder), verified),
+             %Capability{} = cap <- Enum.find(unrevoked, &Capability.matches?(&1, needed)) do
+          {:ok, cap}
+        else
+          _ -> {:error, :no_matching_cap}
         end
     end
   end

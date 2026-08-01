@@ -57,6 +57,22 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     assert delivery_count(target) == 0
   end
 
+  test "enqueue rejects the whole envelope when its artifact carrier is malformed" do
+    target = Ezagent.URI.user("team-alpha", unique("malformed-artifact-carrier"))
+    valid = capability(target)
+    malformed = %{valid | signature: nil}
+
+    assert {:error, :invalid_delivery_envelope} =
+             Invocation.dispatch(absorb_invocation(target, malformed))
+
+    assert {:error, :invalid_delivery_envelope} =
+             Invocation.dispatch(
+               absorb_invocation(target, valid, caps: MapSet.new([valid, malformed]))
+             )
+
+    assert delivery_count(target) == 0
+  end
+
   test "same durable idempotency key with a different payload is rejected" do
     {target, pid} = spawn_target("idem-conflict")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
@@ -486,6 +502,35 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
              DeliveryOutbox.list_pending_absorb_caps(target)
 
     assert id == delivery.id
+  end
+
+  test "one malformed context grant makes the entire persisted envelope unreadable" do
+    {target, pid} = spawn_target("malformed-context-carrier")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    cap = capability(target)
+
+    assert :ok =
+             Invocation.dispatch(absorb_invocation(target, cap, caps: MapSet.new([cap])))
+
+    delivery = one_delivery!(target)
+    envelope = :erlang.binary_to_term(delivery.payload, [:safe])
+    malformed = %{cap | key_id: nil}
+
+    delivery
+    |> Ecto.Changeset.change(
+      payload:
+        Ezagent.Cap.DeliveryOutbox.Envelope.canonical_binary(%{
+          envelope
+          | caps: [cap, malformed]
+        })
+    )
+    |> Repo.update!()
+
+    assert {:error, {:invalid_pending_delivery, id, _reason}} =
+             DeliveryOutbox.list_pending_absorb_caps(target)
+
+    assert id == delivery.id
+    terminate(target, pid)
   end
 
   test "a permanent authorization failure is audited as dead by the target handler" do

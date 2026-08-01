@@ -60,11 +60,16 @@ defmodule Ezagent.EventLog do
   because `Repo.insert_all/2` against a string table name does NOT
   auto-encode `:map` columns (the same constraint `Ezagent.DLQ` and
   `Ezagent.Audit` work around). On read, `args` arrives as a string;
-  `decode_payload/1` round-trips it through `Jason.decode!/1`.
+  `decode_payload/1` round-trips it through `Jason.decode!/1`. Explicit
+  `cap` and `caps` fields are validated atomically and rehydrated through
+  `Ezagent.Cap.GrantArtifact`; malformed artifact fields reject the whole
+  event write or read.
   """
 
   import Ecto.Query
 
+  alias Ezagent.Cap.GrantArtifact
+  alias Ezagent.Capability
   alias EzagentCore.Repo
 
   @type aggregate_uri :: URI.t() | String.t()
@@ -137,28 +142,30 @@ defmodule Ezagent.EventLog do
                 "(invocations.workspace_uri is NOT NULL per Phase 9 PR-6). " <>
                 "Got ctx=#{inspect(ctx)}"
 
-    row = %{
-      trace_id: Map.get(ctx, :trace_id),
-      caller: uri_to_string_or_nil(Map.get(ctx, :caller)),
-      target: uri_to_string!(aggregate_uri),
-      action: event_name_to_string!(event_name),
-      args: Jason.encode!(payload),
-      result: nil,
-      duration_us: 0,
-      authz: "n/a",
-      exception: nil,
-      workspace_uri: uri_to_string!(workspace_uri),
-      inserted_at: Map.get(ctx, :inserted_at, DateTime.utc_now())
-    }
+    with {:ok, payload} <- normalize_capability_fields(payload) do
+      row = %{
+        trace_id: Map.get(ctx, :trace_id),
+        caller: uri_to_string_or_nil(Map.get(ctx, :caller)),
+        target: uri_to_string!(aggregate_uri),
+        action: event_name_to_string!(event_name),
+        args: Jason.encode!(payload),
+        result: nil,
+        duration_us: 0,
+        authz: "n/a",
+        exception: nil,
+        workspace_uri: uri_to_string!(workspace_uri),
+        inserted_at: Map.get(ctx, :inserted_at, DateTime.utc_now())
+      }
 
-    try do
-      {1, [%{id: event_id}]} =
-        Repo.insert_all("invocations", [row], returning: [:id])
+      try do
+        {1, [%{id: event_id}]} =
+          Repo.insert_all("invocations", [row], returning: [:id])
 
-      {:ok, event_id}
-    rescue
-      e ->
-        {:error, Exception.message(e)}
+        {:ok, event_id}
+      rescue
+        e ->
+          {:error, Exception.message(e)}
+      end
     end
   end
 
@@ -300,12 +307,101 @@ defmodule Ezagent.EventLog do
 
   defp decode_payload(s) when is_binary(s) do
     case Jason.decode(s) do
-      {:ok, decoded} -> decoded
-      {:error, _} -> s
+      {:ok, decoded} ->
+        case normalize_capability_fields(decoded) do
+          {:ok, normalized} ->
+            normalized
+
+          {:error, reason} ->
+            raise ArgumentError, "invalid capability event payload: #{inspect(reason)}"
+        end
+
+      {:error, _} ->
+        s
     end
   end
 
   defp decode_payload(other), do: other
+
+  defp normalize_capability_fields(payload), do: normalize_capability_fields(payload, [])
+
+  defp normalize_capability_fields(value, _path) when is_struct(value), do: {:ok, value}
+
+  defp normalize_capability_fields(%{} = payload, path) do
+    Enum.reduce_while(payload, {:ok, %{}}, fn {key, value}, {:ok, normalized} ->
+      field_path = Enum.reverse([key | path])
+
+      result =
+        case key do
+          key when key in [:cap, "cap"] -> normalize_artifact(value, field_path)
+          key when key in [:caps, "caps"] -> normalize_artifact_set(value, field_path)
+          _ -> normalize_capability_fields(value, [key | path])
+        end
+
+      case result do
+        {:ok, normalized_value} -> {:cont, {:ok, Map.put(normalized, key, normalized_value)}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp normalize_capability_fields(values, path) when is_list(values) do
+    values
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {value, index}, {:ok, normalized} ->
+      case normalize_capability_fields(value, [index | path]) do
+        {:ok, normalized_value} -> {:cont, {:ok, [normalized_value | normalized]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp normalize_capability_fields(value, _path), do: {:ok, value}
+
+  defp normalize_artifact(%Capability{} = artifact, path) do
+    case GrantArtifact.validate(artifact) do
+      {:ok, artifact} -> {:ok, artifact}
+      {:error, reason} -> invalid_event_artifact(path, 0, reason)
+    end
+  end
+
+  defp normalize_artifact(%{} = artifact, path) do
+    case GrantArtifact.from_map(artifact) do
+      {:ok, artifact} -> {:ok, artifact}
+      {:error, reason} -> invalid_event_artifact(path, 0, reason)
+    end
+  end
+
+  defp normalize_artifact(_artifact, path), do: invalid_event_artifact(path, 0, :not_capability)
+
+  defp normalize_artifact_set(artifacts, path) when is_list(artifacts) do
+    artifacts
+    |> Enum.with_index()
+    |> Enum.reduce_while({:ok, []}, fn {artifact, index}, {:ok, normalized} ->
+      case normalize_artifact(artifact, path) do
+        {:ok, normalized_artifact} ->
+          {:cont, {:ok, [normalized_artifact | normalized]}}
+
+        {:error, {:invalid_grant_artifact, _, _, reason}} ->
+          {:halt, invalid_event_artifact(path, index, reason)}
+      end
+    end)
+    |> case do
+      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp normalize_artifact_set(_artifacts, path),
+    do: invalid_event_artifact(path, 0, :not_capability)
+
+  defp invalid_event_artifact(path, index, reason) do
+    {:error, {:invalid_grant_artifact, {:event_payload, path}, index, reason}}
+  end
 
   defp uri_to_string!(%URI{} = u), do: URI.to_string(u)
   defp uri_to_string!(s) when is_binary(s), do: s

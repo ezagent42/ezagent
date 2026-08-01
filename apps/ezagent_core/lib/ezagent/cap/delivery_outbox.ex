@@ -662,7 +662,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   defp normalize_revocation_gate({:error, reason}), do: {:error, reason}
 
   defp normalized_grant_id(%Capability{} = cap) do
-    cap |> Ezagent.Capability.Normalize.fill_defaults() |> Map.get(:grant_id)
+    cap.grant_id
   end
 
   defp retry_delay_ms(attempts) do

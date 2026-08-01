@@ -111,7 +111,7 @@ defmodule Ezagent.Cap.GrantArtifact do
   defp validate_grantee(nil), do: {:error, :missing_grantee_uri}
   defp validate_grantee(value), do: validate_uri_field(value, :grantee_uri)
 
-  defp validate_atom(value, _field) when is_atom(value), do: :ok
+  defp validate_atom(value, _field) when is_atom(value) and not is_nil(value), do: :ok
   defp validate_atom(_value, field), do: {:error, {:invalid_field, field}}
 
   defp validate_datetime(%DateTime{}), do: :ok

@@ -11,7 +11,7 @@ defmodule Ezagent.Cap.Authority do
   already executing maliciously inside the BEAM is explicitly out of scope.
   """
 
-  alias Ezagent.Cap.{GrantArtifact, Signing}
+  alias Ezagent.Cap.{GrantArtifact, RevocationLedger, Signing}
   alias Ezagent.Capability
   alias Ezagent.Capability.Normalize
   alias Ezagent.Ecto.KindCapAuthority
@@ -49,12 +49,17 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
-  @spec anchor(URI.t()) :: {:ok, Capability.t()} | {:error, :not_found}
+  @spec anchor(URI.t()) ::
+          {:ok, Capability.t()} | {:error, :not_found | :invalid_authority_anchor}
   def anchor(%URI{} = uri) do
     case KindCapAuthority.active(Ezagent.URI.stable_key(uri)) do
-      %KindCapAuthority{anchor: anchor} -> {:ok, :erlang.binary_to_term(anchor, [:safe])}
+      %KindCapAuthority{} = row -> validate_anchor(row)
       nil -> {:error, :not_found}
     end
+  rescue
+    _ -> {:error, :invalid_authority_anchor}
+  catch
+    _, _ -> {:error, :invalid_authority_anchor}
   end
 
   @doc false
@@ -533,6 +538,52 @@ defmodule Ezagent.Cap.Authority do
   end
 
   defp verify_signature(_public_key, %Capability{}, %URI{}), do: false
+
+  defp validate_anchor(%KindCapAuthority{} = row) do
+    with {:ok, artifact} <- GrantArtifact.from_term(row.anchor),
+         :ok <- verify_anchor_row_binding(row, artifact),
+         {:ok, true} <-
+           verify_against_current_checked(artifact, artifact.grantee_uri, artifact.instance),
+         {:ok, revoked} <-
+           RevocationLedger.revoked_grant_ids(artifact.workspace_uri, [artifact.grant_id]),
+         false <- MapSet.member?(revoked, artifact.grant_id) do
+      {:ok, artifact}
+    else
+      _ -> {:error, :invalid_authority_anchor}
+    end
+  rescue
+    _ -> {:error, :invalid_authority_anchor}
+  catch
+    _, _ -> {:error, :invalid_authority_anchor}
+  end
+
+  defp verify_anchor_row_binding(
+         %KindCapAuthority{} = row,
+         %Capability{
+           kind: kind,
+           behavior: :any,
+           action: :grant,
+           instance: %URI{} = target,
+           workspace_uri: %URI{} = workspace_uri,
+           granted_by: %URI{} = granted_by,
+           grantee_uri: %URI{} = grantee_uri,
+           key_id: key_id
+         }
+       ) do
+    expected_workspace = Capability.workspace_of(target)
+
+    if row.sealed == true and row.active == true and row.uri == Ezagent.URI.stable_key(target) and
+         row.kind_type == Atom.to_string(kind) and row.key_id == key_id and
+         same_uri?(workspace_uri, expected_workspace) and same_uri?(granted_by, admin_uri()) and
+         same_uri?(grantee_uri, admin_uri()) do
+      :ok
+    else
+      {:error, :anchor_row_mismatch}
+    end
+  end
+
+  defp verify_anchor_row_binding(%KindCapAuthority{}, %Capability{}),
+    do: {:error, :anchor_row_mismatch}
 
   defp genesis(uri, kind_type, create_freshness) do
     uri_string = Ezagent.URI.stable_key(uri)
