@@ -41,6 +41,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
     refute Ezagent.Cap.Authority.has_authority_history?(holder)
     assert :ok = Store.initialize(holder, [grant])
     assert Store.status(holder) == :staged
+    refute Store.ever_created_signal?(holder)
     assert {:ok, [^grant]} = Store.load_initial(holder)
     assert {:ok, []} = Store.fetch_durable_caps(holder)
     assert {:error, :identity_caps_already_initialized} = Store.initialize(holder, [])
@@ -51,6 +52,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
 
     assert :ok = Store.provision_created_identity(holder, %{caps: MapSet.new([license])})
     assert Store.status(holder) == :active
+    assert Store.ever_created_signal?(holder)
     assert identity_keys(Store.load(holder)) == identity_keys([license, grant])
   end
 

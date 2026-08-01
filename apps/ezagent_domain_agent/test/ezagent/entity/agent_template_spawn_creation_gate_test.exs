@@ -350,7 +350,8 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
       assert {:ok, ^flavor} = AgentFlavorAttributes.get(fixture.agent_uri)
     end
 
-    test "destroy then recreate DOES write a fresh credential", fixture do
+    test "destroy then direct recreate is rejected until explicit identity reprovision",
+         fixture do
       {source_a, caller_a, caps_a} = authorized_source(fixture.workspace_name, "a")
 
       assert {:ok, %{fresh?: true}} =
@@ -367,15 +368,14 @@ defmodule Ezagent.Entity.AgentTemplateSpawnCreationGateTest do
 
       {source_b, caller_b, caps_b} = authorized_source(fixture.workspace_name, "b")
 
-      assert {:ok, %{fresh?: true}} =
+      assert {:error, {:authority_load_failed, :regenesis_required}} =
                spawn(fixture, credentialed_content(fixture, source_b), caller_b, caps_b)
 
-      # The marker was cleared → this IS a genuine logical create → the
-      # fresh grant is minted AND kept.
-      assert %GrantRow{} = recreated = grant_for(fixture.agent_uri)
-      assert recreated.credential_source_uri == URI.to_string(source_b)
-      assert recreated.version == 1
-      refute recreated.incarnation_id == original.incarnation_id
+      # Snapshot deletion is not an identity lifecycle authorization. The
+      # tombstoned Store row remains inert and no new credential is minted.
+      assert grant_for(fixture.agent_uri) == nil
+      assert Ezagent.IdentityCaps.Store.status(fixture.agent_uri) == :tombstoned
+      refute is_nil(original.incarnation_id)
     end
 
     test "rehydration re-writes the volatile flavor row idempotently (no clobber)", fixture do

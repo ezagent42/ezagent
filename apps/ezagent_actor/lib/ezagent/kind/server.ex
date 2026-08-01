@@ -108,37 +108,72 @@ defmodule Ezagent.Kind.Server do
     uri = Map.fetch!(args, :uri)
     uri_str = URI.to_string(uri)
     create_freshness = create_freshness(kind_module, uri)
-    # #201 PR-1 — publish the verdict BEFORE any later init step can fail and
-    # BEFORE the initial persist writes the `ever_created` marker, so the
-    # atomic spawn winner reads THIS incarnation's verdict back from the
-    # spawning process (no GenServer.call queued behind post_init/activate).
-    :ok = Ezagent.Kind.CreateFreshness.record(uri_str, create_freshness)
     args = Map.put(args, :create_freshness, create_freshness)
 
-    # main's before-start hook: `LaunchContextInit.prepare` may transform
-    # `args` and yields a `launch_context_relay` threaded through init and
-    # discarded on terminate. It runs BEFORE the authority open + snapshot load.
-    with {:ok, args, launch_context_relay} <-
-           Ezagent.Kind.LaunchContextInit.prepare(kind_module, args) do
-      init_after_before_start(
-        kind_module,
-        args,
-        uri,
-        uri_str,
-        create_freshness,
-        launch_context_relay
-      )
-    else
-      {:error, :launch_context_lost} -> {:stop, :launch_context_lost}
-      {:error, reason} -> {:stop, {:before_start_failed, reason}}
+    # The before-start hook remains strictly before live registration. Once it
+    # succeeds, claim the URI before the first durable authority/snapshot write.
+    case Ezagent.Kind.LaunchContextInit.prepare(kind_module, args) do
+      {:ok, args, launch_context_relay} ->
+        claim_and_init(
+          kind_module,
+          args,
+          uri,
+          uri_str,
+          create_freshness,
+          launch_context_relay
+        )
+
+      {:error, :launch_context_lost} ->
+        {:stop, :launch_context_lost}
+
+      {:error, reason} ->
+        {:stop, {:before_start_failed, reason}}
     end
   end
+
+  defp claim_and_init(
+         kind_module,
+         args,
+         uri,
+         uri_str,
+         create_freshness,
+         launch_context_relay
+       ) do
+    case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
+      :ok ->
+        # #201 PR-1 — publish only the winning incarnation's verdict, before
+        # initial persistence writes the `ever_created` marker.
+        :ok = Ezagent.Kind.CreateFreshness.record(uri_str, create_freshness)
+
+        result =
+          init_after_before_start(
+            kind_module,
+            args,
+            uri,
+            uri_str,
+            create_freshness,
+            launch_context_relay
+          )
+
+        finalize_claimed_init(uri_str, result)
+
+      {:error, {:already_registered, _other_pid}} ->
+        {:stop, {:already_registered, uri_str}}
+    end
+  end
+
+  defp finalize_claimed_init(uri_str, {:stop, _reason} = stopped) do
+    :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
+    stopped
+  end
+
+  defp finalize_claimed_init(_uri_str, started), do: started
 
   defp init_after_before_start(
          kind_module,
          args,
          uri,
-         uri_str,
+         _uri_str,
          create_freshness,
          launch_context_relay
        ) do
@@ -215,23 +250,16 @@ defmodule Ezagent.Kind.Server do
             create_freshness: create_freshness
           }
 
-          case Ezagent.Kind.ReadyTransition.register_not_ready(uri_str, self()) do
+          case persist_initial_snapshot(uri, kind_module, slice_state, create_freshness) do
             :ok ->
-              case persist_initial_snapshot(uri, kind_module, slice_state, create_freshness) do
-                :ok ->
-                  schedule_periodic_snapshot(kind_module)
-                  {:ok, state, {:continue, :announce_ready}}
+              schedule_periodic_snapshot(kind_module)
+              {:ok, state, {:continue, :announce_ready}}
 
-                {:error, reason} ->
-                  # Persistence is a durability promise. Registration is already
-                  # visible, so fail and detach any pending delivery before exit.
-                  :ok = Ezagent.Kind.ReadyTransition.mark_failed(uri_str)
-                  {:stop, {:persistence_failed, reason}}
-              end
-
-            {:error, {:already_registered, _other_pid}} ->
-              # Let-it-crash — duplicate spawn is a bug at the caller layer.
-              {:stop, {:already_registered, uri_str}}
+            {:error, reason} ->
+              # Persistence is a durability promise. Registration is already
+              # visible; `finalize_claimed_init/2` detaches pending delivery
+              # before this failed initialization exits.
+              {:stop, {:persistence_failed, reason}}
           end
         else
           # A Store read error during the cold-load identity reconcile REFUSES
@@ -249,7 +277,7 @@ defmodule Ezagent.Kind.Server do
 
   defp create_freshness(kind_module, uri) do
     if Ezagent.Lifecycle.hosts_lifecycle?(kind_module) do
-      if Ezagent.Lifecycle.fresh_create?(uri) and not ephemeral_ever_created?(kind_module, uri),
+      if Ezagent.Lifecycle.fresh_create?(uri) and not durable_identity_ever_created?(uri),
         do: :created,
         else: :existed
     else
@@ -257,30 +285,14 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  # Decouple the "ever created" fact from slice persistence for `:ephemeral`
-  # principals (the ExternalMirrorWorker). An ephemeral
-  # Kind writes no `ever_created` snapshot marker, so `fresh_create?` is
-  # unconditionally true and would report `:created` on EVERY spawn — re-minting
-  # its self-license AND bumping its authority generation (`open(:created)`) each
-  # restart, which RESURRECTS a revoked principal. The DURABLE identity-caps row
-  # is the URI-tied creation fact that survives the process: a present row ⇒ this
-  # principal was created before ⇒ `:existed` (no re-mint; the durable license is
-  # re-read into the slice by `ActionSet.Identity.create/1`).
-  #
-  # A DURABLE Kind (User/Agent/Session) is DELIBERATELY excluded: its atomic
-  # snapshot `ever_created` marker is its sole, authoritative creation signal.
-  # After genuine creation the marker and Store row agree. Store is consulted
-  # for this creation signal only for ephemeral principals.
-  #
-  # FAIL-CLOSED for ephemeral: `ever_created_signal?` resolves a store read error
-  # to `true`, so a transient DB failure can never downgrade a restart to
-  # `:created`. Store is config-injected (`:identity_caps_store`, no compile-time
-  # actor→domain dependency).
-  defp ephemeral_ever_created?(kind_module, uri) do
-    Ezagent.Kind.persistence_of(kind_module) == :ephemeral and durable_identity_exists?(uri)
-  end
-
-  defp durable_identity_exists?(uri) do
+  # The Store is the identity lifecycle authority for every principal, while
+  # the snapshot marker remains the actor-state lifecycle authority. Consulting
+  # both prevents either an ephemeral restart or a deleted durable snapshot
+  # from masquerading as a genuine identity create. A `staged` Store row is the
+  # one exception: it is the authorized first-create hand-off and the Store
+  # reports it as not-yet-created. The config injection preserves the actor →
+  # domain layering boundary.
+  defp durable_identity_ever_created?(uri) do
     case Application.get_env(:ezagent_actor, :identity_caps_store) do
       nil -> false
       store -> store.ever_created_signal?(uri)

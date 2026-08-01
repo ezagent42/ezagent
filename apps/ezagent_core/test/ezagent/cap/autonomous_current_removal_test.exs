@@ -162,7 +162,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
                end)
     end
 
-    test "t2: cold `:created` reprovision → ready holding a valid current-generation self-license (independent renew)" do
+    test "t2: deleting an actor snapshot cannot impersonate an explicit identity reprovision" do
       agent = unique_agent("t2")
       spawn_ready_agent(agent)
       {:ok, first_gen} = Authority.current_generation(agent)
@@ -174,14 +174,14 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       :ok = KindSnapshot.delete(URI.to_string(agent))
       assert Ezagent.Lifecycle.fresh_create?(agent), "marker cleared → :created reprovision"
 
+      # The actor marker alone is not the identity lifecycle authority. The
+      # established Store row makes this an `:existed` restart, so no new
+      # self-license is minted and the principal stays inert.
       spawn_ready_agent(agent)
 
-      # Reaches ready holding a self-license valid against the CURRENT (bumped)
-      # generation — minted fresh, with no dependence on the pre-bump license.
       {:ok, current_gen} = Authority.current_generation(agent)
       assert current_gen == first_gen + 1
-      assert [lic] = self_licenses(IdentityCaps.load_persisted(agent))
-      assert Authority.verify_against_current(lic, agent, agent)
+      assert self_licenses(IdentityCaps.load_persisted(agent)) == []
     end
 
     test "t3: the self-license is durable BEFORE readiness (ordering, not sleep-based)" do
@@ -261,19 +261,11 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       assert commit_post_init =~ "rescue"
       refute commit_post_init =~ "self_license"
 
-      # (d) the user-backed self-license persist rides `activate/2`'s marker-gated
-      #     projection persist (a failure crashes the pre-ready continuation),
-      #     NOT a post-ready cast.
-      identity =
-        File.read!(
-          Path.join(
-            repo_root(),
-            "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
-          )
-        )
-
-      assert identity =~ "persist_user_caps_after_marker(uri, state.caps)"
-      assert identity =~ "with :ok <- persist_user_caps_after_marker(uri, state.caps)"
+      # (d) a newly-created identity is provisioned in the sole durable Store
+      #     from the same fail-closed pre-ready snapshot path. There is no
+      #     post-ready projection or compatibility write to fall back to.
+      assert server =~ "maybe_provision_created_identity(uri, slice_state, create_freshness)"
+      assert server =~ "store.provision_created_identity(uri, identity_slice)"
     end
   end
 

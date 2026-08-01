@@ -68,25 +68,21 @@ defmodule Ezagent.IdentityCaps.Store do
   def existence_signal?(uri), do: not user_uri?(uri) and has_row?(uri)
 
   @doc """
-  Fail-closed durable ever-created signal for ephemeral principals.
+  Fail-closed durable ever-created signal for every principal.
 
-  For an `:ephemeral` principal `fresh_create?` (the snapshot `ever_created`
-  marker) is ALWAYS true (an ephemeral Kind writes no snapshot marker), so THIS
-  signal is the SOLE determinant of `:created` vs `:existed` — and a
-  wrong `:created` on a restart re-mints the self-license AND bumps the authority
-  generation (`open(:created)`), i.e. RESURRECTS a revoked principal. So it must
-  never fail OPEN. It returns `true` (ever-created ⇒ `:existed`, no re-mint)
-  UNLESS the read SUCCEEDS and finds no row (⇒ genuine first creation). A read
-  ERROR resolves to `true`, mirroring `Lifecycle.marker_lookup`'s contract ("a
-  marker-store failure must never be interpreted as permission to run the
-  one-time create path again"). USER URIs return `false` — their creation-fact is
-  the snapshot marker / `users` row, not this store (`existence_signal?`
-  precedent).
+  A `staged` row belongs to an authorized first-create workflow and therefore
+  does not suppress `:created`. Every established state (`active`,
+  `revoked_unprovisioned`, or `tombstoned`) does: deleting an actor snapshot
+  must never impersonate identity reprovisioning. A missing row with authority
+  history is also established, covering a partial prior genesis. Read errors
+  resolve to `true`, so an unavailable Store never grants permission to mint a
+  new self-license or authority generation.
   """
   @spec ever_created_signal?(URI.t() | String.t()) :: boolean()
   def ever_created_signal?(uri) do
     case fetch_result(uri) do
       {:ok, nil} -> Ezagent.Cap.Authority.has_authority_history?(uri_struct(uri))
+      {:ok, %__MODULE__{identity_status: "staged"}} -> false
       {:ok, %__MODULE__{}} -> true
       :error -> true
     end
