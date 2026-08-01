@@ -1,7 +1,7 @@
 # Git 凭据模型选型 — 四形态对比（A0 为已出局基线）+ Plan A 三条 NO-GO 重核
 
 **日期：** 2026-07-31
-**状态：** 待决策（decision required）— 本文不实施任何形态
+**状态：** 形态已定 = **B2′**（Allen）；实施划分已定 = **最简 B2′ → A1（provision 归 A1）**（gaga，见 §8.4）。本文仍不实施任何形态。
 **基线：** `c0cb35e69`（main，2026-07-31 FF）
 **决策人：** Allen
 **触发：** Allen 提出方向转为「走 git ssh，走 CLI」；重估前先把证据摆齐
@@ -423,6 +423,7 @@ B1/B2 用不上此加固，因其凭据本就必须交付给 agent。
 | 形态 | 工作量 | 分解 |
 |---|---|---|
 | A0（已出局）| — | 不支持私有仓库，非工时问题 |
+| **最简 B2′（已定，任务 1）** | **1–2 天** | 只动凭据侧，agent 自己 clone；不碰 GitRunner / provision / StageRunner（§8.4）|
 | A1 | **2–3 天** | 凭据 seam（新契约面，无 template）1–2 天 + GitRunner 注入 / 新 gate / push 阶段 1 天 |
 | A2 | **3–4 天** | A1 + agent git tool 面。cc 的 tool 机制现成（已有 13 个 tool），加几个不构成新子系统 |
 | B1 | **2–3 天** | 同 A1 的 seam；无需把 push 接进状态机，但多出 credential helper 与 branch protection 约定 |
@@ -645,6 +646,50 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 反过来先做 A1 的话，B2′ 仍要重走一遍 key 挂载与 remote 配置，而 A1 建好的约束**一开 B2′ 就作废**。
 
 > **例外**：若 §8.2 的租户模型答案是「会走多租户」，则顺序应反转 —— A1 是结构性免疫的那一个，B2′ 在隔离轨建成前不应启用。
+
+### 8.4 实施任务划分（**已定** — gaga，2026-07-31）
+
+> 「最简 B2′，在 B2′ 之后再考虑 A1；**provision 作为 A1 的内容，可选，也能为 B2′ 服务一下**。」
+> 「B2′ 本身方向安全性就不足，实施尽量简化——确保共享底座、必要的 B2′ 依赖；其余如 key 轮转，本身就是个人 key，轮转反而增加麻烦，**策略秉持 user/agent 自己负责**。」
+
+#### 任务 1 — 最简 B2′（1–2 天）
+
+**范围：只动凭据侧。agent 自己 `git clone`。**
+
+几乎全部是「在已有机制上加一个值」而非建新机制：
+
+| 需要 | 复用什么 |
+|---|---|
+| key at-rest 加密 | `SealedEnvelope`（现成）+ 一个新 `purpose` atom |
+| key 归属 user | `UserDefaultSource` 按 `(owner, workspace, flavor)`——**flavor 是现成维度**，SSH 是新 flavor 值 |
+| cap 授权读取（`ssh.read`）| `GrantCap.read_cap_for/1`（现成，每次派生窄 cap，无 standing cap）|
+| 物化进 agent 目录 | `HomeRuntime.create_agent_config_dir`（现成路径——cc 的 `.credentials.json` 就是这么进去的）|
+| 给 agent 传 env | `cmd_env` → `EZAGENT_CC_SDK_ENV`（现成通道，sdk_sidecar.ex:279）|
+
+**真正新建的只有三件**：key 导入入口（cap-checked 写路径，抄 `UserDefaultSource` 的模式）、`known_hosts` pinning（拉 `api.github.com/meta` 的 `ssh_keys`）、以及把 `GIT_SSH_COMMAND` 接进 `cmd_env` 的那处接线。
+
+**不做**（按「自己负责」原则砍掉）：key 生成、key 轮转、per-repo deploy key 管理、审计归属补救、ssh-agent 进程管理。
+
+**不碰**：`GitRunner`（771 行）、`Provisioner` / `Paths` / `ChangeCollector`、`StageRunner` / `ExecutionSeam` / 整个 git_workflow——**连 provision 触发入口（E2-B）都不需要**，因为没有 provision 这个动作了。
+
+#### ⚠️ 任务 1 必须守住的设计约束
+
+> **key 投递必须与「工作目录从哪来」解耦。**
+
+key 写进 agent 的 config_dir + `GIT_SSH_COMMAND` 指过去——这套机制**不应依赖 cwd 是 agent 自己 clone 的还是平台 provision 的**。
+
+**若把两者耦合，任务 2 建好 provision 后 B2′ 将用不上它**，「provision 也能为 B2′ 服务」这个设计意图会失效。这是任务 1 唯一的前瞻性要求，成本为零，但漏掉就要返工。
+
+#### 任务 2 — A1（后续，可选）
+
+**provision 入口归入 A1 范围。** 建成后可回头服务 B2′——B2′ 届时可选择使用平台 provision 的 worktree 替代自己 clone，从而拿回 worktree 隔离、共享 bare cache（磁盘/带宽不再随 agent 数线性增长）、provision 幂等与 reconciler 回收。
+
+A1 的其余增量：push stage + **agent 完成信号**（今天不存在，见 §8.3）。
+
+#### 该划分放弃了什么（如实记录）
+
+- **最简 B2′ 不为 A1 预建底座。** §8.3 中「先做 B2′ 会把共享底座建好」的说法**在最简版本下不成立**——共享的只剩凭据轨，而那本来就存在。这是有意的取舍：用「A1 的底座延后」换「任务 1 更快落地」。
+- **最简 B2′ 期间放弃**：worktree 隔离、共享 bare cache（每 agent 一份完整 clone）、provision 幂等、reconciler 回收、base commit 钉死。这些今天都有，最简 B2′ 用不上；任务 2 后可选择性拿回。
 
 ### 两条前置
 
