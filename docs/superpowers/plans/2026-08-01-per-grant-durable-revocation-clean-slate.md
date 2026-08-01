@@ -75,11 +75,12 @@ start gate proves empty-database migration, seed, first boot, and cold boot.
 ```elixir
 defmodule Ezagent.Cap.GrantArtifact do
   @spec from_map(map()) :: {:ok, Capability.t()} | {:error, term()}
-  @spec from_term(term()) :: {:ok, Capability.t()} | {:error, term()}
-  @spec validate(Capability.t()) :: :ok | {:error, term()}
+  @spec from_term(binary()) :: {:ok, Capability.t()} | {:error, term()}
+  @spec validate(Capability.t()) :: {:ok, Capability.t()} | {:error, term()}
   @spec valid_grant_id?(term()) :: boolean()
-  @spec validate_set(Enumerable.t(), keyword()) ::
-          {:ok, [Capability.t()]} | {:error, {:invalid_artifact, non_neg_integer(), term()}}
+  @spec validate_set(Enumerable.t(), term()) ::
+          {:ok, MapSet.t(Capability.t())}
+          | {:error, {:invalid_grant_artifact, term(), non_neg_integer(), term()}}
 end
 ```
 
