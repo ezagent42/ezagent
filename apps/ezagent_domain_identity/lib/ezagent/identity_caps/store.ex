@@ -59,7 +59,7 @@ defmodule Ezagent.IdentityCaps.Store do
 
   require Logger
 
-  alias Ezagent.Cap.RevocationLedger
+  alias Ezagent.Cap.{GrantArtifact, RevocationLedger}
   alias Ezagent.Capability
   alias Ezagent.Capability.Normalize
   alias Ezagent.Identity.ProvisioningReceipt
@@ -249,8 +249,11 @@ defmodule Ezagent.IdentityCaps.Store do
   @spec load(URI.t() | String.t()) :: [Capability.t()]
   def load(uri) do
     case fetch(uri) do
-      %{identity_status: "active", caps_json: caps_json} -> decode_caps(caps_json)
-      _ -> []
+      %{identity_status: "active", caps_json: caps_json} ->
+        decode_caps(caps_json, workspace_key(uri))
+
+      _ ->
+        []
     end
   end
 
@@ -281,7 +284,7 @@ defmodule Ezagent.IdentityCaps.Store do
         :absent
 
       {:ok, %__MODULE__{identity_status: "active", caps_json: caps_json}} ->
-        decode_caps_checked(caps_json)
+        decode_caps_checked(caps_json, workspace_key(uri))
 
       {:ok, %__MODULE__{}} ->
         {:ok, []}
@@ -308,7 +311,7 @@ defmodule Ezagent.IdentityCaps.Store do
       %{identity_status: status, caps_json: caps_json, updated_at: updated_at} ->
         caps =
           if status == "active",
-            do: caps_json |> decode_caps() |> MapSet.new(),
+            do: caps_json |> decode_caps(workspace_key(uri)) |> MapSet.new(),
             else: MapSet.new()
 
         {:ok, %{caps: caps}, %{version: 0, updated_at: updated_at}}
@@ -332,7 +335,7 @@ defmodule Ezagent.IdentityCaps.Store do
     |> Map.new(fn row ->
       caps =
         if row.identity_status == "active",
-          do: row.caps_json |> decode_caps() |> MapSet.new(),
+          do: row.caps_json |> decode_caps(row.workspace_uri) |> MapSet.new(),
           else: MapSet.new()
 
       {row.uri, {:ok, %{caps: caps}, %{version: 0, updated_at: row.updated_at}}}
@@ -1333,17 +1336,45 @@ defmodule Ezagent.IdentityCaps.Store do
     end
   end
 
+  defp decode_caps(json, workspace) do
+    case decode_caps_checked(json, workspace) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
+    end
+  end
+
   defp decode_caps_checked(nil), do: {:ok, []}
   defp decode_caps_checked(""), do: {:ok, []}
 
   defp decode_caps_checked(json) do
     case Jason.decode(json) do
       {:ok, nil} -> {:ok, []}
-      {:ok, caps} when is_list(caps) -> {:ok, Enum.map(caps, &Capability.from_map/1)}
+      {:ok, caps} when is_list(caps) -> decode_artifact_maps(caps)
       _ -> {:error, :invalid_caps_json}
     end
   rescue
     _ -> {:error, :invalid_caps_json}
+  end
+
+  defp decode_caps_checked(json, workspace) do
+    with {:ok, caps} <- decode_caps_checked(json),
+         :ok <- RevocationLedger.ensure_unrevoked(workspace, caps) do
+      {:ok, caps}
+    end
+  end
+
+  defp decode_artifact_maps(serialized) do
+    serialized
+    |> Enum.reduce_while({:ok, []}, fn encoded, {:ok, artifacts} ->
+      case GrantArtifact.from_map(encoded) do
+        {:ok, artifact} -> {:cont, {:ok, [artifact | artifacts]}}
+        {:error, _reason} -> {:halt, {:error, :invalid_caps_json}}
+      end
+    end)
+    |> case do
+      {:ok, artifacts} -> {:ok, Enum.reverse(artifacts)}
+      {:error, :invalid_caps_json} = error -> error
+    end
   end
 
   defp now_usec, do: DateTime.utc_now() |> DateTime.truncate(:microsecond)

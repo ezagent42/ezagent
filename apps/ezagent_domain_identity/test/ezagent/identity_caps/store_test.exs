@@ -149,7 +149,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       assert {:error, :invalid_exact_revocation_artifact} = Store.revoke_cap(agent, stale)
     end
 
-    test "all cap-set writers reject an absorbing revoked v2 artifact" do
+    test "all cap-set writers reject an absorbing revoked artifact" do
       persist_agent = agent_uri("revoked-persist")
       persist_cap = issued_cap(persist_agent, :send)
       persist_grant_id = persist_cap.grant_id
@@ -224,6 +224,38 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       assert row.workspace_uri == "workspace://identity-caps-store"
       assert Store.has_row?(agent)
       assert Store.status(agent) == :active
+    end
+
+    test "one malformed persisted member rejects the entire Store read" do
+      agent = agent_uri("malformed-read")
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
+      assert :ok = Store.persist(agent, caps)
+
+      malformed = caps |> List.last() |> Map.put(:signature, nil) |> Capability.to_map()
+      encoded = Jason.encode!(Enum.map(caps, &Capability.to_map/1) ++ [malformed])
+
+      agent
+      |> Store.fetch()
+      |> Ecto.Changeset.change(caps_json: encoded)
+      |> Repo.update!()
+
+      assert Store.load(agent) == []
+      assert {:error, :invalid_caps_json} = Store.fetch_durable_caps(agent)
+    end
+
+    test "one revoked persisted member rejects the entire Store read" do
+      agent = agent_uri("revoked-read")
+      artifact = issued_cap(agent, :send)
+      caps = licensed_caps(agent, [artifact])
+      assert :ok = Store.persist(agent, caps)
+      assert :ok = revoke_cap(agent, artifact)
+
+      assert Store.load(agent) == []
+
+      assert {:error, {:revoked_capability_grants, [grant_id]}} =
+               Store.fetch_durable_caps(agent)
+
+      assert grant_id == artifact.grant_id
     end
 
     test "persist upserts, preserving status and receipt" do
@@ -1498,21 +1530,6 @@ defmodule Ezagent.IdentityCaps.StoreTest do
   # -------------------------------------------------------------------
   # Helpers (mirrors Ezagent.IdentityCapsTest)
   # -------------------------------------------------------------------
-
-  defp issued_cap(receiver, action) do
-    unsigned = %Capability{
-      kind: :session,
-      behavior: Ezagent.ActionSet.Session,
-      action: action,
-      instance: URI.new!("session://identity-caps-store/default/main"),
-      workspace_uri: @workspace,
-      granted_by: @issuer,
-      granted_at: DateTime.utc_now()
-    }
-
-    {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
-    authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
-  end
 
   defp issued_cap(receiver, action) do
     issued_cap(receiver, action, URI.new!("session://identity-caps-store/default/main"))

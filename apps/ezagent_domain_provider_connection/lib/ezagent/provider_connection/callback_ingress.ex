@@ -3,6 +3,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
 
   import Ecto.Query
 
+  alias Ezagent.Cap.{GrantArtifact, RevocationLedger}
+
   alias Ezagent.ProviderConnection.{
     AuthorizationAttempt,
     AuthorizationBackendRecord,
@@ -86,8 +88,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
            :ok <- callback_source_status(attempt.purpose, connection.status, operation),
            :ok <- connection_generation(attempt, connection, operation),
            {:ok, owner} <- parse_owner(connection.owner_uri),
-           %Ezagent.Capability{} = artifact <-
-             Ezagent.Capability.from_map(attempt.callback_artifact),
+           {:ok, artifact} <- GrantArtifact.from_map(attempt.callback_artifact),
            :ok <- validate_artifact(artifact, owner),
            true <-
              CallbackBinding.valid?(
@@ -121,7 +122,8 @@ defmodule Ezagent.ProviderConnection.CallbackIngress do
          true <- artifact.action == :consume_callback,
          true <- artifact.instance == Ezagent.URI.instance(owner),
          true <- artifact.workspace_uri == workspace,
-         true <- artifact.grantee_uri == owner do
+         true <- artifact.grantee_uri == owner,
+         :ok <- RevocationLedger.ensure_unrevoked(workspace, [artifact]) do
       :ok
     else
       {:error, _reason} = error -> error

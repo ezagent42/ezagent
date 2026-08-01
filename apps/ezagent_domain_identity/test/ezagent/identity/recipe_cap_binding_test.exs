@@ -2,6 +2,7 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.{Cap, Capability}
+  alias Ezagent.Cap.RevocationLedger
   alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.Identity.RecipeCapBinding.Sweeper
 
@@ -208,6 +209,21 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
 
       assert RecipeCapBinding.fetch(agent_uri) == :not_found
     end
+
+    test "fetch rejects the entire binding when one persisted grant is revoked" do
+      agent_uri = agent_uri()
+
+      assert {:ok, %{caps: [artifact], version: 1}} =
+               RecipeCapBinding.issue_and_upsert(
+                 agent_uri,
+                 "revoked-artifact",
+                 @admin_uri,
+                 [proposal(agent_uri)]
+               )
+
+      assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(agent_uri, artifact))
+      assert RecipeCapBinding.fetch(agent_uri) == :not_found
+    end
   end
 
   describe "failure compensation" do
@@ -282,6 +298,19 @@ defmodule Ezagent.Identity.RecipeCapBindingTest do
     :sha256
     |> :crypto.hash(:erlang.term_to_binary(logical_content, [:deterministic]))
     |> Base.encode16(case: :lower)
+  end
+
+  defp revocation_attrs(agent_uri, artifact) do
+    %{
+      grant_id: artifact.grant_id,
+      workspace_uri: agent_uri |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(agent_uri),
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(artifact))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(artifact.instance),
+      key_id: artifact.key_id
+    }
   end
 
   defp artifact_identity(cap) do

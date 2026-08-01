@@ -19,6 +19,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   import Ecto.Changeset
   import Ecto.Query
 
+  alias Ezagent.Cap.{GrantArtifact, RevocationLedger}
   alias Ezagent.Capability
   alias EzagentCore.Repo
 
@@ -62,7 +63,8 @@ defmodule Ezagent.Identity.RecipeCapBinding do
 
     with {:ok, workspace_uri} <- validate_binding_uris(agent_uri, issuer_uri),
          {:ok, issued} <- issue_all(agent_uri, issuer_uri, proposals),
-         :ok <- validate_issued_set(issued, agent_uri, workspace_uri, issuer_uri) do
+         :ok <- validate_issued_set(issued, agent_uri, workspace_uri, issuer_uri),
+         :ok <- RevocationLedger.ensure_unrevoked(workspace_uri, issued) do
       persist_issued(agent_uri, workspace_uri, recipe_name, issuer_uri, issued)
     end
   end
@@ -267,14 +269,19 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   end
 
   defp validate_issued_set(caps, agent_uri, workspace_uri, issuer_uri) do
-    caps
-    |> Enum.with_index()
-    |> Enum.reduce_while(:ok, fn {cap, index}, :ok ->
-      case validate_artifact(cap, agent_uri, workspace_uri, issuer_uri) do
-        :ok -> {:cont, :ok}
-        {:error, reason} -> {:halt, {:error, {:invalid_artifact, index, reason}}}
-      end
-    end)
+    with {:ok, _artifacts} <- GrantArtifact.validate_set(caps, :recipe_cap_binding) do
+      caps
+      |> Enum.with_index()
+      |> Enum.reduce_while(:ok, fn {cap, index}, :ok ->
+        case validate_artifact(cap, agent_uri, workspace_uri, issuer_uri) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {:invalid_artifact, index, reason}}}
+        end
+      end)
+    else
+      {:error, {:invalid_grant_artifact, _, index, reason}} ->
+        {:error, {:invalid_artifact, index, reason}}
+    end
   end
 
   defp validate_artifact(%Capability{} = cap, agent_uri, workspace_uri, issuer_uri) do
@@ -419,6 +426,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
          true <- binding.version > 0 and binding.recipe_name != "",
          {:ok, caps} <- decode_caps(binding.artifacts),
          :ok <- validate_issued_set(caps, agent_uri, workspace_uri, issuer_uri),
+         :ok <- RevocationLedger.ensure_unrevoked(workspace_uri, caps),
          true <- canonical_caps(caps) == caps,
          expected_attrs = %{
            agent_uri: binding.agent_uri,
@@ -434,9 +442,17 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   end
 
   defp decode_caps(%{"caps" => serialized}) when is_list(serialized) do
-    {:ok, Enum.map(serialized, &Capability.from_map/1)}
-  rescue
-    _ -> {:error, :invalid_artifacts}
+    serialized
+    |> Enum.reduce_while({:ok, []}, fn encoded, {:ok, caps} ->
+      case GrantArtifact.from_map(encoded) do
+        {:ok, cap} -> {:cont, {:ok, [cap | caps]}}
+        {:error, _reason} -> {:halt, {:error, :invalid_artifacts}}
+      end
+    end)
+    |> case do
+      {:ok, caps} -> {:ok, Enum.reverse(caps)}
+      {:error, :invalid_artifacts} = error -> error
+    end
   end
 
   defp decode_caps(_artifacts), do: {:error, :invalid_artifacts}
