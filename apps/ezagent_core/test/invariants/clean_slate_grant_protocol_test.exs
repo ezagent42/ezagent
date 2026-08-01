@@ -30,6 +30,11 @@ defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
     "apps/ezagent_core/priv/repo_pg/migrations/20260729130000_create_identity_cutover.exs",
     "apps/ezagent_core/priv/repo_pg/migrations/20260801000300_remove_identity_cap_compatibility.exs"
   ]
+  @verification_exceptions [
+    # This gate must name the retired schema objects in order to assert that a
+    # database migrated from zero does not contain them.
+    "apps/ezagent_core/lib/mix/tasks/ezagent.cap_revocation.verify_clean_start.ex"
+  ]
 
   test "runtime source contains no protocol-version or cutover compatibility plane" do
     violations =
@@ -66,7 +71,9 @@ defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
 
   defp exception?(absolute_path) do
     relative = Path.relative_to(absolute_path, @root)
-    relative == @self or relative in @historical_exceptions
+
+    relative == @self or relative in @historical_exceptions or
+      relative in @verification_exceptions
   end
 
   defp violations(absolute_path) do
