@@ -1,0 +1,203 @@
+name: CI
+
+# Forgejo Actions mirror of the ezagent merge gate, targeting the org-scoped
+# Docker runners at code.hyprial.com (labels: docker, ubuntu-latest, ...). This
+# is the low-risk step toward making Forgejo the SSOT with an enforced merge
+# gate; GitHub's `.github/workflows/` is left untouched during the transition.
+#
+# Three jobs, all on `ubuntu-latest` (a Forgejo Docker runner):
+#   gate      — the DETERMINISTIC backend merge gate. Byte-for-byte the chain
+#               `docker/ci-runner.sh gate` runs (the authoritative gate chain):
+#               deps.get -> compile --warnings-as-errors --force ->
+#               world.e2e.fixtures --check -> format --check-formatted ->
+#               ecto.create/migrate -> check_invariants -> socialware.check ->
+#               gate.arch (arch/invariant ExUnit subset) -> reflow-rehearsal.
+#               NOT the full suite (`mix ci.local`) on purpose: the full suite
+#               is ubuntu-flake-prone (#108) and was deliberately kept on the
+#               native macOS runner. A flaky REQUIRED check is worse than none.
+#   gitleaks  — working-tree secret scan (mirrors the GitHub gitleaks job),
+#               using the gitleaks linux binary (no docker-in-docker).
+#   frontend  — the frontend regression gate (mirrors frontend-ci.yml: lint,
+#               typecheck, unit, Tier-1 Chromium E2E), inlined here because the
+#               reusable `.github/` workflow must stay untouched.
+
+on: [push, pull_request]
+
+concurrency:
+  # Cancel a stale run when the same ref is re-pushed, so the iterate loop never
+  # queues redundant work onto the shared runners.
+  group: forgejo-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (deterministic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MIX_ENV: test
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      # On a Forgejo Docker runner the job runs INSIDE a container on the job's
+      # docker network, so Postgres is reached by SERVICE NAME (not 127.0.0.1 as
+      # a GitHub-hosted runner would use with port mapping).
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      # erlexec's exec-port refuses to start without $SHELL set.
+      SHELL: /bin/bash
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ezagent_pg_compat
+          POSTGRES_PASSWORD: ezagent_pg_compat
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ezagent_pg_compat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      # Diagnostic: learn the runner container (arch, OS, user, preinstalled
+      # tools) from the very first run so subsequent iterations are informed.
+      - name: Environment probe
+        shell: bash
+        run: |
+          echo "whoami=$(whoami) uid=$(id -u)"
+          uname -a
+          (cat /etc/os-release 2>/dev/null | head -3) || true
+          echo "git=$(git --version 2>/dev/null)"
+          echo "node=$(node --version 2>/dev/null) npm=$(npm --version 2>/dev/null)"
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Elixir/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "28"
+          elixir-version: "1.19"
+
+      - name: Wait for Postgres
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if (echo > "/dev/tcp/${POSTGRES_HOST}/${POSTGRES_PORT}") >/dev/null 2>&1; then
+              echo "postgres reachable at ${POSTGRES_HOST}:${POSTGRES_PORT}"; exit 0
+            fi
+            echo "waiting for postgres ($i) ..."; sleep 2
+          done
+          echo "!! postgres never became reachable" >&2; exit 1
+
+      - name: Fetch Elixir deps
+        run: mix deps.get
+
+      - name: Compile (warnings-as-errors)
+        run: mix compile --warnings-as-errors --force
+
+      - name: World E2E fixtures drift check
+        run: mix world.e2e.fixtures --check
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Create + migrate test DB
+        run: |
+          mix ecto.create --quiet
+          mix ecto.migrate --quiet
+
+      - name: check_invariants
+        run: mix ezagent.check_invariants
+
+      - name: socialware.check
+        run: mix ezagent.socialware.check
+
+      # Arch/invariant ExUnit subset. `mix gate.arch` reads
+      # @arch_invariant_test_paths in mix.exs (the SINGLE source shared with
+      # `mix ci.fast`), so this step can never drift from the local gate.
+      - name: Arch/invariant ExUnit subset (gate.arch)
+        run: mix gate.arch
+
+      # Reflow-rehearsal gate: third-state seed contract (deterministic).
+      - name: Reflow-rehearsal (third-state seed contract)
+        run: >-
+          mix test --include reflow_rehearsal
+          apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
+          apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+
+  gitleaks:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # Bare gitleaks CLI (MIT), not gitleaks-action (paid for orgs) and not
+      # docker-in-docker (the job is already containerized). Pin the version;
+      # detect the container arch so this works whether the runner container is
+      # linux/amd64 or linux/arm64. Directory (no-git) scan, semantics identical
+      # to the GitHub job's `gitleaks dir . --config .gitleaks.toml --redact`.
+      - name: Scan working tree for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=8.21.2
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH=x64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)"; exit 1 ;;
+          esac
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_${ARCH}.tar.gz"
+          echo "downloading $url"
+          curl -sSfL "$url" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks version
+          /tmp/gitleaks dir . --config .gitleaks.toml --redact --no-banner
+
+  frontend:
+    name: frontend regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable pnpm
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.23.0 --activate
+
+      - name: Frontend lint, typecheck and unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for assets_dir in \
+            apps/ezagent_web/assets \
+            apps/ezagent_plugin_world/assets \
+            apps/ezagent_plugin_hello/assets
+          do
+            pnpm --dir "$assets_dir" install --frozen-lockfile
+            pnpm --dir "$assets_dir" lint
+            pnpm --dir "$assets_dir" typecheck
+            pnpm --dir "$assets_dir" test
+          done
+
+      # On linux the Chromium system libraries are not preinstalled, so
+      # `--with-deps` (apt) is required (unlike the macOS job which drops it).
+      - name: Install Tier-1 Chromium
+        run: pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium
+
+      - name: Frontend Tier-1 Playwright
+        run: pnpm --dir apps/ezagent_plugin_world/assets test:e2e
