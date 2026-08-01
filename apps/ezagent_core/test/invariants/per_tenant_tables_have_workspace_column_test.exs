@@ -147,6 +147,9 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # Entity capability grant/revoke delivery is scoped to the grantee's
     # workspace. The singleton sweeper is the documented system-scope reader.
     {Ezagent.Cap.Delivery, "cap_delivery_outbox"},
+    # P2 per-cap revocation — an absorbing marker is always queried inside the
+    # holder's workspace boundary, even though grant_id is globally unique.
+    {Ezagent.Ecto.CapRevocation, "cap_revocations"},
     # Git task workspace lifecycle rows contain canonical checkout and Agent
     # retirement coordinates for exactly one workspace generation.
     {Ezagent.Workspace.TaskWorkspace.Provision, "git_task_workspace_provisions"},
@@ -216,6 +219,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
       "#189 PR-1 single-use nonce ledger for provisioning receipts — a global security dedupe keyed by opaque nonce (a nonce must be consumed exactly once regardless of which workspace's entity it provisions); no tenant-scoped queries exist.",
     "identity_cutover" =>
       "#189 PR-3 FIX 5 — the identity-plane cutover EPOCH: a global singleton row (fixed id \"identity\") recording whether the store-authoritative read-flip is active fleet-wide. It is a system-scoped deployment marker, not tenant data — there is exactly one row and no per-workspace query.",
+    "cap_revocation_epoch" =>
+      "P2 per-cap revocation protocol epoch: one fleet-wide monotone singleton controls the v2-only cutover and is not tenant data.",
     "workspaces" => "Workspace IS the tenant; trivially scoped by row id.",
     "routing_rules" =>
       "Already has workspace_uri (Phase 6 PR 8 / PR #146-149) — pre-dated this migration.",
