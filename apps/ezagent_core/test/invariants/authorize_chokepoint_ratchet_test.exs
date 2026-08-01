@@ -111,7 +111,19 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # durable self-license under a DEFINITIVE `:inactive` epoch (a no-op
         # post-epoch and for every non-admin principal). Mirrors the
         # entity_caps.ex / store.ex homes above.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex"
+        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
+        # P3 (cap-revocation hardening): `caps_match?/2`'s per-call TARGET-axis
+        # re-verify. NOT a principal-gate bypass — the principal gate runs
+        # INSIDE `EntityCaps.load/1` (its `verified/2` G-3 self-license check
+        # loads a gen-bumped holder EMPTY), which every caller passes through;
+        # this call only re-checks each shape-matching artifact against its
+        # target's CURRENT generation (the same target gate authorize/3's
+        # `verified_candidate?/2` applies), so a target regenesis AFTER the
+        # load denies. Ordered after `matches?/2` so the batch caller
+        # (`Domain.Agent.read_credential_statuses/3`, SPEC §6.3) stays
+        # O(authorized-caps) — routing through full `authorize/3` instead
+        # would reload the holder store per candidate (O(agents×caps)).
+        "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
       ]
     },
     %{

@@ -98,4 +98,85 @@ defmodule Ezagent.IdentityTest do
       refute Ezagent.Identity.admin?(42)
     end
   end
+
+  # P3 (cap-revocation hardening): `caps_match?/2` must re-verify each
+  # artifact's TARGET axis per call — `EntityCaps.load/1`'s `verified/2` gate
+  # is principal-axis, so a target regenesis AFTER the load must NOT leave a
+  # stale cap "matching".
+  describe "caps_match?/2 per-call target re-verify" do
+    import Ezagent.Test.CapHelper,
+      only: [install_test_authority!: 2, authority_signed_cap!: 3, self_license_cap!: 1]
+
+    alias Ezagent.Cap.Authority
+
+    test "a cap whose target was regenesis'd after EntityCaps.load is NOT matched" do
+      suffix = System.unique_integer([:positive])
+      holder = Ezagent.URI.new!("entity://team-alpha/user/p3-holder-#{suffix}")
+      target = Ezagent.URI.new!("entity://team-alpha/agent/p3-target-#{suffix}")
+
+      needed = %{
+        kind: :agent,
+        behavior: Ezagent.ActionSet.Manage,
+        action: :read_cascade,
+        instance: Ezagent.URI.instance(target),
+        workspace_uri: Ezagent.Capability.workspace_of(target)
+      }
+
+      authority = install_test_authority!(target, :agent)
+
+      manage_cap =
+        authority_signed_cap!(
+          authority,
+          holder,
+          Ezagent.Capability.cap(
+            :agent,
+            Ezagent.ActionSet.Manage,
+            :read_cascade,
+            Ezagent.URI.instance(target),
+            Ezagent.Capability.workspace_of(target)
+          )
+        )
+
+      {:ok, _user} =
+        Ezagent.Users.create_read_only(holder, [self_license_cap!(holder), manage_cap])
+
+      loaded = Ezagent.EntityCaps.load(holder)
+      assert Enum.any?(loaded, &(&1 == manage_cap)), "precondition: the store load yields the cap"
+
+      # Current-generation target: the loaded cap MATCHES (re-verify passes).
+      assert Ezagent.Identity.caps_match?(loaded, needed)
+
+      # Target regenesis AFTER the load: the stale (old-generation) cap must
+      # NOT match anymore — the load-time principal-axis verification cannot
+      # see the target's generation bump.
+      {:ok, _generation_two} = Authority.regenesis(target, :agent)
+
+      refute Ezagent.Identity.caps_match?(loaded, needed),
+             "a cap whose target was regenesis'd after EntityCaps.load MUST NOT match"
+    end
+
+    test "fail-closed: an unsigned shape-matching cap is NOT matched" do
+      suffix = System.unique_integer([:positive])
+      target = Ezagent.URI.new!("entity://team-alpha/agent/p3-unsigned-#{suffix}")
+
+      needed = %{
+        kind: :agent,
+        behavior: Ezagent.ActionSet.Manage,
+        action: :read_cascade,
+        instance: Ezagent.URI.instance(target),
+        workspace_uri: Ezagent.Capability.workspace_of(target)
+      }
+
+      unsigned =
+        Ezagent.Capability.cap(
+          :agent,
+          Ezagent.ActionSet.Manage,
+          :read_cascade,
+          Ezagent.URI.instance(target),
+          Ezagent.Capability.workspace_of(target)
+        )
+
+      refute Ezagent.Identity.caps_match?([unsigned], needed)
+    end
+  end
 end
