@@ -114,6 +114,30 @@ defmodule EzagentCore.AstScan do
   @doc "The source line recorded in call metadata (0 when absent)."
   def line_of(meta), do: Keyword.get(meta, :line, 0)
 
+  @doc """
+  True for a path that belongs to an ExUnit `@tag :tmp_dir` fixture rather than
+  to the source tree.
+
+  ExUnit roots `:tmp_dir` at `<cwd>/tmp/<Module>/<test name>`, which inside this
+  umbrella lands under `apps/<app>/tmp/`. Several architecture gates glob
+  `apps/**/*.ex`, so those fixtures are enumerated as if they were production
+  source. `apps/ezagent_core/.gitignore` already excludes the directory — the
+  scanners are reading files version control does not track.
+
+  Two things go wrong when they do, and the second is the reason this is not
+  merely a tidiness fix:
+
+    * **Crash.** The fixture is created and removed by a concurrently running
+      test, so the window between `Path.wildcard/1` and `File.read!/1` is enough
+      for `File.Error`. That is the intermittent red these gates have been
+      showing.
+    * **False positive.** `GitAdapterBoundaryTest` PLANTS deliberate bypass
+      samples in its fixtures — that is what it is testing. Win the race instead
+      of losing it and a gate reports a violation that exists only inside
+      another test's scratch directory.
+  """
+  def tmp_fixture?(path) when is_binary(path), do: String.contains?(path, "/tmp/")
+
   defp drop_elixir_prefix([:"Elixir" | rest]) when rest != [], do: rest
   defp drop_elixir_prefix(parts), do: parts
 end

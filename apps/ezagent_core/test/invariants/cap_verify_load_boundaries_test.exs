@@ -462,6 +462,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     |> Path.join("apps/**/*.ex")
     |> Path.wildcard()
     |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.reject(&EzagentCore.AstScan.tmp_fixture?/1)
     |> Enum.map(&{String.replace_prefix(&1, root <> "/", ""), &1})
   end
 

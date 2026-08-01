@@ -546,7 +546,8 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     ["apps/**/*.ex", "apps/**/*.exs"]
     |> Enum.flat_map(&(root |> Path.join(&1) |> Path.wildcard()))
     |> Enum.reject(
-      &(String.contains?(&1, "/test/") or String.contains?(&1, "/priv/repo/migrations/"))
+      &(String.contains?(&1, "/test/") or String.contains?(&1, "/priv/repo/migrations/") or
+          EzagentCore.AstScan.tmp_fixture?(&1))
     )
     |> Enum.flat_map(fn absolute ->
       relative = String.replace_prefix(absolute, root <> "/", "")
