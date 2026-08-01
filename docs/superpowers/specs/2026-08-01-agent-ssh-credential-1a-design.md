@@ -112,6 +112,12 @@ action(:revoke_ssh_key,
 
 ### 3.4 `known_hosts` 不在本模块
 
+> **范围修正（实施时）：`known_hosts` 移出 1a，归 1b。** 1a 不发起任何 git
+> 连接，known_hosts 在 1a 内没有可验证的对象 —— 放进来等于交付一段未经
+> 验证的配置写入代码。它是 1b / 任务 2 的前置，跟着消费者走。本节描述的
+> 做法（部署配置 + 刷新用 mix task + 不做运行时网络调用）**不变**，只是
+> 落在 1b。
+
 `known_hosts` 是 **provider/主机事实**（github.com 的主机公钥），与用户无关，**不是 User 数据**。
 
 **做法：部署配置 + 一个刷新用的 mix task**（从 `https://api.github.com/meta` 的 `ssh_keys` 拉，写进部署目录）。**用 key 时不做运行时网络调用。**
@@ -293,6 +299,7 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 - 导入已有私钥（可选的次要入口，若做需额外确保私钥不进日志/错误信息）
 - per-repo deploy key 管理、审计归属补救、ssh-agent 进程管理
 - at-rest 封存（§6，归统一安全轨）
+- `known_hosts` 配置与刷新 mix task（移到 1b —— 见 §3.4 范围修正）
 
 ---
 
