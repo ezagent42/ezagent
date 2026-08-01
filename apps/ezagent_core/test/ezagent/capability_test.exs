@@ -974,18 +974,22 @@ defmodule Ezagent.CapabilityTest do
              "a scope tuple MUST NOT merge with the equivalent bare instance URI"
     end
 
-    test "identity_key/1 is TOTAL on a non-canonical / unregistered nested scope URI (no raise)" do
+    test "identity_key/1 is TOTAL on any type-valid nested scope URI (no raise)" do
       # `Capability.cap/5` stores the instance UNVALIDATED and the exported
-      # `scope_tuple()` type admits ANY `URI.t()`, so an authority-bearing or
-      # unregistered-scheme URI can legally reach `identity_key/1`. It MUST NOT
-      # raise — an earlier draft round-tripped through `Ezagent.URI.new!/1`,
-      # which rejects e.g. `https` (codex review BLOCKER 2026-08-01). The nested
-      # URI is keyed by the TOTAL `URI.to_string/1`.
+      # `scope_tuple()` type admits ANY `URI.t()`, so authority-bearing,
+      # unregistered-scheme, AND host+relative-path URIs can legally reach
+      # `identity_key/1`. It MUST NOT raise — EVERY serializer raises on some
+      # such input: `Ezagent.URI.new!/1` on an unregistered scheme,
+      # `stable_key/1` on an authority-bearing URI, and `URI.to_string/1` on a
+      # host+relative-path URI (codex review 2026-08-01). The nested URI is
+      # keyed by a TOTAL structural tuple instead.
       for uri <- [
             # authority-bearing registered scheme (URI.parse form)
             URI.parse("session://team-alpha/default/main"),
             # unregistered scheme — `Ezagent.URI.new!/1` would REJECT this
-            URI.parse("https://example.com/session")
+            URI.parse("https://example.com/session"),
+            # host + RELATIVE path — `URI.to_string/1` itself RAISES on this
+            %URI{scheme: "session", host: "team-alpha", path: "relative"}
           ] do
         cap = scoped_cap(:within_session, uri)
 
@@ -993,13 +997,15 @@ defmodule Ezagent.CapabilityTest do
           try do
             Capability.identity_key(cap)
           rescue
-            e -> flunk("identity_key/1 must be total, raised #{inspect(e)} on #{URI.to_string(uri)}")
+            e -> flunk("identity_key/1 must be total, raised #{inspect(e)} on #{inspect(uri)}")
           end
 
-        assert {:within_session, str} = elem(key, 3),
-               "nested scope URI must normalize to a {scope, String.t()} key"
+        assert {:within_session, {scheme, _userinfo, host, _port, path, _query, _fragment}} =
+                 elem(key, 3),
+               "nested scope URI must normalize to a {scope, structural-tuple} key"
 
-        assert str == URI.to_string(uri)
+        assert {scheme, host, path} == {uri.scheme, uri.host, uri.path},
+               "the structural key must retain the URI's logical components"
       end
     end
   end
