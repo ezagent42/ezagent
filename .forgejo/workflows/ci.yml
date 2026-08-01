@@ -112,41 +112,51 @@ jobs:
           done
           echo "!! postgres never became reachable" >&2; exit 1
 
-      - name: Fetch Elixir deps
-        run: mix deps.get
-
-      - name: Compile (warnings-as-errors)
-        run: mix compile --warnings-as-errors --force
-
-      - name: World E2E fixtures drift check
-        run: mix world.e2e.fixtures --check
-
-      - name: Check formatting
-        run: mix format --check-formatted
-
-      - name: Create + migrate test DB
+      # erlexec's exec-port REFUSES to run as root ("Not allowed to run as root
+      # without setting effective user"). The app boot starts :erlexec (it is in
+      # ezagent_core's `extra_applications`) at the check_invariants / gate.arch
+      # steps, so the whole mix chain must run NON-ROOT — exactly how the
+      # dockerized CI does it: docker/Dockerfile.ci does `chown -R ezagent:ezagent`
+      # + `USER ezagent` and docker/ci-runner.sh runs the `gate` chain as uid 1000.
+      # Mirror that here. checkout + setup-beam had to run as root, so hand the
+      # workspace (deps/_build) + a writable HOME/MIX_HOME to uid 1000 (the image's
+      # `node` user) and run the deterministic gate chain — byte-identical to
+      # docker/ci-runner.sh `gate` — as that user via runuser. (Clean long-term
+      # fix stays runner-side: run the job non-root from the start.)
+      - name: Run deterministic gate (non-root; erlexec refuses root)
+        shell: bash
         run: |
-          mix ecto.create --quiet
-          mix ecto.migrate --quiet
-
-      - name: check_invariants
-        run: mix ezagent.check_invariants
-
-      - name: socialware.check
-        run: mix ezagent.socialware.check
-
-      # Arch/invariant ExUnit subset. `mix gate.arch` reads
-      # @arch_invariant_test_paths in mix.exs (the SINGLE source shared with
-      # `mix ci.fast`), so this step can never drift from the local gate.
-      - name: Arch/invariant ExUnit subset (gate.arch)
-        run: mix gate.arch
-
-      # Reflow-rehearsal gate: third-state seed contract (deterministic).
-      - name: Reflow-rehearsal (third-state seed contract)
-        run: >-
-          mix test --include reflow_rehearsal
-          apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs
-          apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+          set -euo pipefail
+          # uid 1000 = `node` in node:22-bullseye (HOME=/home/node). Give it the
+          # workspace + its home so it can fetch/compile/run mix + write _build.
+          chown -R node:node "$PWD" /home/node
+          # setup-beam extracted OTP/Elixir under /tmp/.setup-beam and put them on
+          # PATH via $GITHUB_PATH (already in $PATH here). Make them traversable by
+          # the non-root user, then forward PATH + DB env into the runuser shell.
+          chmod -R a+rX /tmp/.setup-beam 2>/dev/null || true
+          /sbin/runuser -u node -- env \
+            PATH="$PATH" \
+            HOME=/home/node \
+            MIX_ENV=test \
+            MIX_HOME=/home/node/.mix \
+            HEX_HOME=/home/node/.hex \
+            SHELL=/bin/bash \
+            POSTGRES_HOST="$POSTGRES_HOST" POSTGRES_PORT="$POSTGRES_PORT" \
+            POSTGRES_USER="$POSTGRES_USER" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            bash -euo pipefail -c '
+              git config --global --add safe.directory "*"
+              mix local.hex --force
+              mix local.rebar --force
+              echo "== deps.get =="                    ; mix deps.get
+              echo "== compile --warnings-as-errors ==" ; mix compile --warnings-as-errors --force
+              echo "== world.e2e.fixtures --check =="   ; mix world.e2e.fixtures --check
+              echo "== format --check-formatted =="     ; mix format --check-formatted
+              echo "== ecto.create/migrate =="          ; mix ecto.create --quiet && mix ecto.migrate --quiet
+              echo "== check_invariants =="             ; mix ezagent.check_invariants
+              echo "== socialware.check =="             ; mix ezagent.socialware.check
+              echo "== gate.arch =="                    ; mix gate.arch
+              echo "== reflow-rehearsal =="             ; mix test --include reflow_rehearsal apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+            '
 
   gitleaks:
     name: gitleaks secret scan
