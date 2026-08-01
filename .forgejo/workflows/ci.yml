@@ -48,6 +48,12 @@ jobs:
       POSTGRES_PORT: "5432"
       # erlexec's exec-port refuses to start without $SHELL set.
       SHELL: /bin/bash
+      # setup-beam treats a Forgejo Actions runner as "self-hosted" and cannot
+      # auto-detect the OS, so ImageOS must be set explicitly. The runner
+      # container is Debian bookworm (glibc 2.36); a ubuntu-22.04 arm64 OTP
+      # build (glibc 2.35) runs on it, and arm64 ubuntu-22.04 OTP-28 +
+      # Elixir 1.19.x-otp-28 prebuilts both exist on builds.hex.pm.
+      ImageOS: ubuntu22
     services:
       postgres:
         image: postgres:16
@@ -76,8 +82,12 @@ jobs:
 
       - uses: actions/checkout@v4
 
+      # Full github.com URL: this Forgejo runner's DEFAULT_ACTIONS_URL is
+      # data.forgejo.org, which mirrors only the `actions/*` org — `erlef/*` is
+      # not there (a bare `erlef/setup-beam` 404s). github.com egress is
+      # available from the runner, so the explicit URL resolves.
       - name: Set up Elixir/OTP
-        uses: erlef/setup-beam@v1
+        uses: https://github.com/erlef/setup-beam@v1
         with:
           otp-version: "28"
           elixir-version: "1.19"
@@ -146,7 +156,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VER=8.21.2
+          # Pin to the version the GitHub gitleaks job's `ghcr.io/gitleaks/gitleaks:latest`
+          # currently resolves to, so the default ruleset matches main's (an older
+          # pin flagged 2 false positives the current .gitleaks.toml allowlist,
+          # written for the newer ruleset, does not cover).
+          VER=8.30.1
           case "$(uname -m)" in
             x86_64|amd64) ARCH=x64 ;;
             aarch64|arm64) ARCH=arm64 ;;
@@ -168,8 +182,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Full github.com URL: the data.forgejo.org mirror flaked mid-clone on
+      # this action (HTTP/2 stream reset). github.com egress is available and is
+      # the canonical source, so resolve directly to avoid the flaky mirror.
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: https://github.com/actions/setup-node@v4
         with:
           node-version: "22"
 
