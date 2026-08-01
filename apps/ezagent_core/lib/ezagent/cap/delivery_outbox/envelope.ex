@@ -3,6 +3,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
 
   alias Ezagent.{Capability, Invocation}
   alias Ezagent.Cap.Delivery
+  alias Ezagent.Capability.Normalize
 
   @version 4
   @delivery_actions [:absorb_cap, :revoke_cap]
@@ -125,8 +126,17 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @doc false
   @spec semantic_identity(Capability.t()) :: String.t()
   def semantic_identity(%Capability{} = cap) do
+    cap = Normalize.fill_defaults(cap)
+
+    identity =
+      if cap.signing_version == 2 do
+        {Capability.identity_key(cap), cap.key_id, cap.grant_id}
+      else
+        {Capability.identity_key(cap), cap.key_id}
+      end
+
     digest =
-      {Capability.identity_key(cap), cap.key_id}
+      identity
       |> :erlang.term_to_binary([:deterministic])
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.encode16(case: :lower)
@@ -229,9 +239,12 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
               op in @delivery_actions and is_binary(target_uri) and is_list(caps) do
     expected_producer = if op == :absorb_cap, do: :identity_absorb, else: :identity_revoke
 
+    cap = Normalize.fill_defaults(cap)
+
     if producer == expected_producer and target_uri == delivery.target_uri and
          op == delivery.op and delivery.payload_version == @version and
-         payload_identity(cap) == delivery.payload_identity and caller == presenter and
+         payload_identity(cap) == delivery.payload_identity and cap.grant_id == delivery.grant_id and
+         caller == presenter and
          valid_caller?(presenter) and match?(%URI{}, authenticated_principal) and
          Enum.all?(caps, &match?(%Capability{}, &1)) do
       :ok

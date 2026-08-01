@@ -5,7 +5,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
 
   alias Ezagent.{Cap, Capability}
-  alias Ezagent.Cap.{Authority, Delivery}
+  alias Ezagent.Cap.{Authority, Delivery, RevocationLedger}
   alias Ezagent.Cap.DeliveryOutbox
   alias Ezagent.Cap.DeliveryOutbox.Sweeper
   alias Ezagent.Invocation
@@ -123,6 +123,55 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
              )
 
     assert delivery_count(target) == 1
+    terminate(target, pid)
+  end
+
+  test "v2 grants with the same logical identity keep distinct pending rows by grant_id" do
+    {target, pid} = spawn_target("grant-id-semantic")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    first = v2_capability(target)
+    second = v2_capability(target)
+
+    assert Capability.identity_key(first) == Capability.identity_key(second)
+    assert first.key_id == second.key_id
+    refute first.grant_id == second.grant_id
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, first))
+    assert :ok = Invocation.dispatch(absorb_invocation(target, second))
+
+    deliveries =
+      Repo.all(
+        from(delivery in Delivery,
+          where: delivery.target_uri == ^URI.to_string(target),
+          order_by: [asc: delivery.id]
+        )
+      )
+
+    assert Enum.map(deliveries, & &1.grant_id) == [first.grant_id, second.grant_id]
+    terminate(target, pid)
+  end
+
+  test "enqueue and retry both block an absorbing grant_id after revocation" do
+    {target, pid} = spawn_target("revoked-grant")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    pending_cap = v2_capability(target)
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, pending_cap))
+    delivery = one_delivery!(target)
+    assert delivery.grant_id == pending_cap.grant_id
+
+    assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(target, pending_cap))
+
+    assert {:error, :capability_revoked} = DeliveryOutbox.attempt(delivery.id)
+    assert Repo.get(Delivery, delivery.id) == nil
+
+    later = v2_capability(target)
+    assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(target, later))
+
+    assert {:error, :capability_revoked} =
+             Invocation.dispatch(absorb_invocation(target, later))
+
+    assert delivery_count(target) == 0
     terminate(target, pid)
   end
 
@@ -564,6 +613,32 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       :list_caps,
       target
     )
+  end
+
+  defp v2_capability(target) do
+    base = capability(target)
+    {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
+
+    base
+    |> Map.merge(%{
+      signing_version: 2,
+      grant_id: Ecto.UUID.generate(),
+      signature: nil
+    })
+    |> then(&Authority.sign(authority, &1))
+  end
+
+  defp revocation_attrs(target, cap) do
+    %{
+      grant_id: cap.grant_id,
+      workspace_uri: target |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(target),
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(cap.instance),
+      key_id: cap.key_id
+    }
   end
 
   defp same_semantic_cap(target, cap) do

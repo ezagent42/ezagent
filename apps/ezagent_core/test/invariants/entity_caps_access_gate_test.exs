@@ -76,6 +76,11 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :fetch_durable_identity, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :load, 1},
+                             # P2 per-cap revocation reads the complete locked
+                             # Store set solely to resolve the trusted stored
+                             # grant_id before removing it in the same txn.
+                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                              :locked_caps, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
                               :persist_changes, 3},
                              {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",

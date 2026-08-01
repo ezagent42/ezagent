@@ -433,6 +433,34 @@ defmodule Ezagent.EntityCapsTest do
   end
 
   describe "persist/2, grant/2, and revoke/2" do
+    test "live revoke trusts the stored grant_id and a legitimate re-grant gets a fresh identity" do
+      agent = agent_uri("live-v2-revoke")
+      original = v2_issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [original]})
+
+      wait_until_ready(agent)
+      assert cap_present?(EntityCaps.load(agent), original)
+
+      caller_supplied = %{original | grant_id: Ecto.UUID.generate()}
+      random_id = caller_supplied.grant_id
+      assert :ok = EntityCaps.revoke(agent, caller_supplied)
+
+      assert {:ok, revoked} =
+               RevocationLedger.revoked_grant_ids(@workspace, [original.grant_id, random_id])
+
+      assert revoked == MapSet.new([original.grant_id])
+      refute cap_present?(EntityCaps.load(agent), original)
+
+      regranted = v2_issued_cap(agent, :send)
+      refute regranted.grant_id == original.grant_id
+      assert :ok = EntityCaps.grant(agent, regranted)
+      assert cap_present?(EntityCaps.load(agent), regranted)
+
+      :ok = Ezagent.Kind.terminate(agent)
+    end
+
     test "fresh-user concurrent mutations wait for startup and survive restart" do
       user = user_uri("startup-race")
       first = issued_cap(user, :send)

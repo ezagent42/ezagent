@@ -672,13 +672,15 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   @doc "VM-internal atomic single-artifact removal used by `Ezagent.EntityCaps.revoke/2`."
   def handle_remove_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
     current_caps = ctx[:read].(:caps, MapSet.new())
+    receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, updated} <- Ezagent.Capability.revoke(current_caps, cap),
+    with {:ok, resolved} <- Ezagent.EntityCaps.Store.revoke_cap(receiver, cap),
+         {:ok, updated} <- Ezagent.Capability.revoke(current_caps, resolved),
          {:ok, persistable} <-
-           Ezagent.EntityCaps.prepare_for_storage(updated, Map.get(ctx, :self_uri), true) do
+           Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
+      with :ok <- persist_entity_caps(receiver, new_caps) do
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -776,29 +778,29 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   def handle_revoke_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
     current_caps = ctx[:read].(:caps, MapSet.new())
+    receiver = Map.get(ctx, :self_uri)
 
-    case Ezagent.Capability.revoke(current_caps, cap_struct) do
-      {:ok, new_caps} ->
-        notify_cap_change(
-          ctx,
-          :cap_revoked,
-          "A capability was revoked from you.",
-          cap_struct
-        )
+    with {:ok, resolved} <- Ezagent.EntityCaps.Store.revoke_cap(receiver, cap_struct),
+         {:ok, new_caps} <- Ezagent.Capability.revoke(current_caps, resolved) do
+      notify_cap_change(
+        ctx,
+        :cap_revoked,
+        "A capability was revoked from you.",
+        resolved
+      )
 
-        {:ok, %{caps: MapSet.to_list(new_caps)},
-         [
-           set_caps_effect(new_caps),
-           {:emit, :cap_revoked,
-            %{
-              target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-              cap: cap_struct,
-              at: DateTime.utc_now()
-            }}
-         ]}
-
-      {:error, :cannot_revoke_admin} = err ->
-        err
+      {:ok, %{caps: MapSet.to_list(new_caps)},
+       [
+         set_caps_effect(new_caps),
+         {:emit, :cap_revoked,
+          %{
+            target_uri: receiver |> uri_to_str(),
+            cap: resolved,
+            at: DateTime.utc_now()
+          }}
+       ]}
+    else
+      {:error, reason} -> {:error, reason}
     end
   end
 

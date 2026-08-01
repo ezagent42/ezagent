@@ -10,12 +10,14 @@ defmodule Ezagent.EntityCaps.StoreTest do
   use EzagentCore.DataCase, async: false
 
   import ExUnit.CaptureLog
+  import Ecto.Query
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.{Capability, EntityCaps, SnapshotStore}
-  alias Ezagent.Cap.RevocationLedger
+  alias Ezagent.Cap.{Delivery, RevocationLedger}
   alias Ezagent.EntityCaps.{Store, UserStore}
   alias Ezagent.Identity.ProvisioningReceipt
+  alias EzagentCore.Repo
 
   @workspace URI.new!("workspace://identity-caps-store")
   @issuer URI.new!("entity://identity-caps-store/user/issuer")
@@ -80,6 +82,73 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   describe "round-trip" do
+    test "durable revoke resolves the stored grant_id, cancels pending delivery, and reindexes" do
+      agent = agent_uri("durable-revoke-stored")
+      stored = v2_issued_cap(agent, :send)
+      caps = licensed_caps(agent, [stored])
+
+      assert :ok = Store.persist(agent, caps)
+      assert :ok = Ezagent.Identity.absorb_cap(agent, stored)
+
+      pending =
+        Repo.one!(
+          from(delivery in Delivery,
+            where: delivery.grant_id == ^stored.grant_id and delivery.status == :pending
+          )
+        )
+
+      caller_supplied = %{stored | grant_id: Ecto.UUID.generate()}
+      random_id = caller_supplied.grant_id
+
+      assert {:ok, resolved} = Store.revoke_cap(agent, caller_supplied)
+      assert resolved.grant_id == stored.grant_id
+
+      assert {:ok, revoked} =
+               RevocationLedger.revoked_grant_ids(@workspace, [stored.grant_id, random_id])
+
+      assert revoked == MapSet.new([stored.grant_id])
+      refute cap_present?(Store.load(agent), stored)
+      assert Repo.get(Delivery, pending.id) == nil
+
+      refute Repo.exists?(
+               from(row in Ezagent.EntityCaps.GranteeIndex,
+                 where:
+                   row.grantee_uri == ^Ezagent.URI.stable_key(agent) and
+                     row.target_uri == ^Ezagent.URI.stable_key(stored.instance)
+               )
+             )
+    end
+
+    test "absent-from-Store revoke requires an exact current artifact for this holder" do
+      agent = agent_uri("durable-revoke-absent")
+      assert :ok = Store.persist(agent, licensed_caps(agent, []))
+
+      exact = v2_issued_cap(agent, :send)
+      assert {:ok, ^exact} = Store.revoke_cap(agent, exact)
+
+      assert {:ok, revoked} = RevocationLedger.revoked_grant_ids(@workspace, [exact.grant_id])
+      assert revoked == MapSet.new([exact.grant_id])
+
+      unsigned = %{v2_issued_cap(agent, :join) | signature: nil}
+      assert {:error, :invalid_exact_revocation_artifact} = Store.revoke_cap(agent, unsigned)
+
+      other_holder = agent_uri("durable-revoke-wrong-holder")
+      wrong_holder = v2_issued_cap(other_holder, :history)
+
+      assert {:error, :invalid_exact_revocation_artifact} =
+               Store.revoke_cap(agent, wrong_holder)
+
+      stale_target =
+        URI.new!(
+          "session://identity-caps-store/default/stale-#{System.unique_integer([:positive])}"
+        )
+
+      stale = v2_issued_cap(agent, :manage, stale_target)
+      assert {:ok, _next_generation} = Ezagent.Cap.Authority.regenesis(stale_target, :session)
+
+      assert {:error, :invalid_exact_revocation_artifact} = Store.revoke_cap(agent, stale)
+    end
+
     test "all cap-set writers reject an absorbing revoked v2 artifact" do
       persist_agent = agent_uri("revoked-persist")
       persist_cap = v2_issued_cap(persist_agent, :send)
@@ -1446,13 +1515,17 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   defp v2_issued_cap(receiver, action) do
+    v2_issued_cap(receiver, action, URI.new!("session://identity-caps-store/default/main"))
+  end
+
+  defp v2_issued_cap(receiver, action, target) do
     grant_id = Ecto.UUID.generate()
 
     unsigned = %Capability{
       kind: :session,
       behavior: Ezagent.ActionSet.Session,
       action: action,
-      instance: URI.new!("session://identity-caps-store/default/main"),
+      instance: target,
       workspace_uri: @workspace,
       granted_by: @issuer,
       granted_at: DateTime.utc_now(),

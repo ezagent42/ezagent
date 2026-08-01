@@ -128,7 +128,8 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     assert store =~ "set_caps_effect(new_caps)"
     assert revoke =~ "set_caps_effect(new_caps)"
     assert writer =~ "{:set, :caps, caps}"
-    assert revoke =~ "Ezagent.Capability.revoke(current_caps, cap_struct)"
+    assert revoke =~ "Ezagent.EntityCaps.Store.revoke_cap(receiver, cap_struct)"
+    assert revoke =~ "Ezagent.Capability.revoke(current_caps, resolved)"
     refute revoke =~ "MapSet.put"
   end
 
@@ -181,7 +182,12 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # (non-active) row for an authority-history URI that has no store row. It writes
     # NO caps (the literal `"[]"`), so it grants nothing and cannot authorize; it is
     # strictly absent-only (never touches an existing row).
-    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 8,
+    #
+    # P2 per-cap revocation: 8 → 9 because `locked_caps/1` adds one
+    # `%{caps_json: caps_json}` READ pattern while holding the row lock. The
+    # scanner intentionally counts AST map keys, so this read increments the
+    # count even though all writes still converge through `persist_changes/3`.
+    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 9,
 
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
     # preserves authority rather than broadening it, and grants nothing new.

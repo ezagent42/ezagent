@@ -59,7 +59,9 @@ defmodule Ezagent.EntityCaps.Store do
 
   require Logger
 
+  alias Ezagent.Cap.RevocationLedger
   alias Ezagent.Capability
+  alias Ezagent.Capability.Normalize
   alias Ezagent.Identity.ProvisioningReceipt
   alias EzagentCore.Repo
 
@@ -544,6 +546,124 @@ defmodule Ezagent.EntityCaps.Store do
       {:error, reason} -> Repo.rollback(reason)
     end
   end
+
+  @doc """
+  Atomically make one signed grant_id durably revoked for `uri`.
+
+  A logical Store match always wins and supplies the trusted signed artifact;
+  caller-controlled protocol metadata is ignored. Without a logical match, the
+  caller must provide an exact current signed artifact issued to this holder.
+  The marker, Store removal, pending-delivery cancellation, and reverse-index
+  rebuild commit in one Repo transaction.
+  """
+  @spec revoke_cap(URI.t() | String.t(), Capability.t()) ::
+          {:ok, Capability.t()} | {:error, term()}
+  def revoke_cap(uri, %Capability{} = caller_cap) do
+    uri = uri_struct(uri)
+    uri_key = key(uri)
+    workspace = workspace_key(uri)
+
+    case Ezagent.Identity.Cutover.status() do
+      :unknown ->
+        {:error, :identity_epoch_unreadable}
+
+      _definitive_state ->
+        case Repo.transaction(fn -> revoke_cap_locked(uri, uri_key, workspace, caller_cap) end) do
+          {:ok, %Capability{} = resolved} -> {:ok, resolved}
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp revoke_cap_locked(uri, uri_key, workspace, caller_cap) do
+    row = lock_row(uri_key)
+
+    with {:ok, stored_caps} <- locked_caps(row),
+         {:ok, resolved} <- resolve_revocation_artifact(uri, stored_caps, caller_cap),
+         {:ok, updated} <- Capability.revoke(MapSet.new(stored_caps), resolved),
+         :ok <- mark_revoked_grant(workspace, uri_key, resolved),
+         :ok <- persist_revoked_caps(row, uri, MapSet.to_list(updated)),
+         :ok <-
+           Ezagent.Cap.DeliveryOutbox.cancel_pending_grant_in_txn(
+             workspace,
+             uri_key,
+             Map.get(resolved, :grant_id) || ""
+           ) do
+      resolved
+    else
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp locked_caps(nil), do: {:ok, []}
+  defp locked_caps(%__MODULE__{caps_json: caps_json}), do: decode_caps_checked(caps_json)
+
+  defp resolve_revocation_artifact(uri, stored_caps, %Capability{} = caller_cap) do
+    caller_cap = Normalize.fill_defaults(caller_cap)
+    caller_identity = Capability.identity_key(caller_cap)
+
+    case Enum.find(stored_caps, &(Capability.identity_key(&1) == caller_identity)) do
+      %Capability{} = stored ->
+        {:ok, Normalize.fill_defaults(stored)}
+
+      nil ->
+        verify_exact_revocation_artifact(uri, caller_cap)
+    end
+  rescue
+    _ -> {:error, :invalid_exact_revocation_artifact}
+  end
+
+  defp verify_exact_revocation_artifact(uri, %Capability{} = cap) do
+    with {:ok, target} <- Ezagent.Cap.Authority.target_uri(cap),
+         true <- Ezagent.Cap.Authority.verify_against_current(cap, uri, target) do
+      {:ok, cap}
+    else
+      _ -> {:error, :invalid_exact_revocation_artifact}
+    end
+  end
+
+  defp mark_revoked_grant(_workspace, _holder_uri, %Capability{signing_version: 1}),
+    do: :ok
+
+  defp mark_revoked_grant(workspace, holder_uri, %Capability{signing_version: 2} = cap) do
+    attrs = %{
+      grant_id: cap.grant_id,
+      workspace_uri: workspace,
+      holder_uri: holder_uri,
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: concrete_target_key(cap),
+      key_id: cap.key_id
+    }
+
+    case RevocationLedger.mark(attrs) do
+      {:ok, _marker} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp mark_revoked_grant(_workspace, _holder_uri, _cap),
+    do: {:error, :invalid_exact_revocation_artifact}
+
+  defp persist_revoked_caps(nil, uri, caps) do
+    Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps)
+  end
+
+  defp persist_revoked_caps(%__MODULE__{} = row, uri, caps) do
+    licensed? = licensed_under_lock?(uri, caps)
+    changes = persist_changes(row, encode_caps(caps), licensed?)
+
+    case row |> Ecto.Changeset.change(changes) |> Repo.update() do
+      {:ok, _updated} -> Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp concrete_target_key(%Capability{instance: %URI{} = target}),
+    do: Ezagent.URI.stable_key(target)
+
+  defp concrete_target_key(_cap), do: nil
 
   defp ensure_row(uri_key, workspace) do
     %__MODULE__{}
