@@ -2,7 +2,7 @@
 
 **日期：** 2026-07-31
 **状态：** 形态已定 = **B2′**（Allen）；实施划分已定 = **最简 B2′ → A1（provision 归 A1）**（gaga，见 §8.4）。本文仍不实施任何形态。
-**基线：** `c0cb35e69`（main，2026-07-31 FF）
+**基线：** `c0cb35e69`；**修订基线：** `4edd3cfed`（PR #1677 合入后，2026-07-31）
 **决策人：** Allen
 **触发：** Allen 提出方向转为「走 git ssh，走 CLI」；重估前先把证据摆齐
 
@@ -570,20 +570,58 @@ Allen 说「跨租户泄露这些都不是 git plugin 要解决的事情」—�
 - `OsProcess` 中 `uid` / `gid` / `namespace` / `bwrap` / `unshare` / `setuid` / `sandbox` / `cgroup` 命中数 **0**
 - Plan A 当年四个隔离候选（独立 OS user / 容器沙箱 / 远程 signer / 不做）最终选定 **"不做"**（broker-options:26），当时判 NO-GO 的四条理由（无 provisioning、无 runtime uid/gid 选项、无 service unit、无 CI fixture）**今天一条都没变**
 
-#### 结论：B2′ 隐含了「单租户」前提
+#### 结论（**已于 2026-07-31 修订，见 §8.2.1**）
 
-**B2′ 在单租户下完全合理；在多租户下不可接受。** 该选择隐含了单租户前提——需明确确认，而非默认。
+初稿结论为「B2′ 隐含单租户前提，需确认，否则是设计缺陷」，并把 §9.3 升级为阻塞项。
 
-而 ezagent 的产品方向（socialware、`public_view`、匿名用户、外部插件）**明显指向多租户**。若该线要走，B2′ 的这个缺口会从「理论风险」变为「设计缺陷」。
+**该结论过重。** 部署形态调研（§8.2.1）显示：租户隔离在本项目**本就靠「不共享部署」实现**，且已文档化。B2′ 的前提与既有部署契约**一致**，不是被忽略的缺口。§9.3 相应**从阻塞项降回「实施时须显式引用的部署契约」**。
 
-#### 若既要多租户又要 B2′
+#### 8.2.1 修订依据 — 租户隔离靠「不共享部署」，不是容器内隔离
 
-唯一的解是**真隔离**：per-tenant OS user，或容器 / namespace 隔离——即 Plan A 的候选 A。这是周级、跨部署面的工作，且**独立于本文的形态选择**。
+`docs/notes/workspace-as-deployment-unit.zh_cn.md` 的定位就是「**workspace = 部署单元**」，并列出两种形态：
 
-**因此 §9.3「租户模型」从待答问题升级为阻塞项**：它不再是偏好，而是决定 B2′ 能否使用的前提。
+> - **跑在不同主机上（multi-tenant SaaS）** —— 不同 DB、不同 Phoenix endpoint、不同 routing rules
+> - **同主机共存（单机 operator 跑多个环境 —— staging / prod / demo）** —— 独立 workspace 记录，共享 backend
 
-- **确定只服务单租户 / 自用** → B2′ 按现计划走
-- **确定或可能走多租户** → 要么先建隔离轨，要么在多租户到来前用 **A1**（结构性免疫，且无需 remote 侧配置）
+**关键在第二条的用例限定**：同主机多 workspace 服务的是「**同一 operator 的多个环境**」，**不是互不信任的租户**；互不信任的租户走第一条——不同主机、不同 DB、不同 endpoint。
+
+实物佐证：`docker/docker-compose.dev.yml` 只有**一个 `ezagent` service**（另两个是 cloudflared 隧道与 e2e 用的 chromium），**无 per-tenant / per-workspace 容器**。
+
+| 部署形态 | 跨租户偷 key |
+|---|---|
+| 一租户一部署（不同主机 / 容器）| **不存在** —— 不同机器，谈不上同 UID |
+| 同部署多 workspace（同一 operator 的 staging / prod / demo）| 存在，但**都是自己的环境**，不构成威胁 |
+
+**因此 §8.2 路径二（偷他人 key）在既有部署契约下不成立。** 实施时须把该契约**显式写入**，而非默认：
+
+> **部署契约**：互不信任的租户各自一套 ezagent 部署。同部署内的多 workspace 仅用于同一 operator 的多环境。**SSH key 的隔离依赖这条契约。**
+
+**仍需留意三点**：
+
+1. **代码里没有任何东西强制这条契约** —— 它是运维约定，不是结构保证。
+2. **同部署内 workspace 之间的隔离比「部署单元」这名字听起来的弱** —— 该笔记自列 gap（Phase 8c 时点，其中「共享 SQLite」已 stale，现为 Postgres）：entity 非 per-workspace、cap 非 per-workspace scoped、跨 workspace dispatch 未强制。这反而印证「互不信任的租户不该同部署」。
+3. **socialware / 匿名用户是另一条线，见 §8.2.2。**
+
+#### 8.2.2 socialware / 匿名用户 — 属 caps 分配层，不属凭据模型
+
+socialware / `public_view` 的匿名参与者**不是「另一个租户的 workspace」**，而是**同一部署内的参与者**。风险形态因此不同：不是「偷 key」，而是「**通过消息操纵持有 key 的 agent**」（prompt injection）。
+
+**A1 同样挡不住「被操纵」本身** —— 两个形态都挡不住。差别只在**后果上限**：
+
+| | 注入能让 agent 做什么 |
+|---|---|
+| B2′ | agent 手里有 key → force-push 到 main、删分支、碰该 key 可达的任何仓库 |
+| A1 | agent 手里无 key → 至多写进自己那条钉死的 ref，产出**一个待人 review 的 PR** |
+
+> **凭据模型决定「后果上限」，不决定「能否被操纵」。**
+
+**真正该挡这条的是 caps 分配，且两个形态下都成立**：`GitTaskAccess` 的全部 action 都要 cap，**不发 git cap 的 agent 完全碰不到 git**。
+
+> **配置层防线：不要把持有 git 能力的 agent 放进匿名用户能影响的 session。**
+
+socialware 的前台 / 客服类 agent 本就不需要 git cap。**「哪个 agent 能碰 git」这一层 CapBAC 始终有效**；失效的是「碰到之后能碰哪个仓库 / 哪条 ref」那一层（B2′ 下移交 remote）。
+
+因此三条防线是**正交**的：① caps 分配（决定谁有 git 能力）② 凭据模型（决定后果上限）③ 人 review PR（决定改动能否落地）。**socialware 撞的是①，不是②，故不构成 A1 vs B2′ 的差别点。**
 
 ### 8.3 A1 与 B2′ 能否并存 — 成本、重叠与叠加禁忌
 
@@ -666,9 +704,34 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 | 物化进 agent 目录 | `HomeRuntime.create_agent_config_dir`（现成路径——cc 的 `.credentials.json` 就是这么进去的）|
 | 给 agent 传 env | `cmd_env` → `EZAGENT_CC_SDK_ENV`（现成通道，sdk_sidecar.ex:279）|
 
-**真正新建的只有三件**：key 导入入口（cap-checked 写路径，抄 `UserDefaultSource` 的模式）、`known_hosts` pinning（拉 `api.github.com/meta` 的 `ssh_keys`）、以及把 `GIT_SSH_COMMAND` 接进 `cmd_env` 的那处接线。
+**真正新建的只有三件**：key 供给入口（cap-checked 写路径，抄 `UserDefaultSource` 的模式，形态见 §8.4.1）、`known_hosts` pinning（拉 `api.github.com/meta` 的 `ssh_keys`）、以及把 `GIT_SSH_COMMAND` 接进 `cmd_env` 的那处接线。
 
-**不做**（按「自己负责」原则砍掉）：key 生成、key 轮转、per-repo deploy key 管理、审计归属补救、ssh-agent 进程管理。
+**不做**（按「自己负责」原则砍掉）：key 轮转、per-repo deploy key 管理、审计归属补救、ssh-agent 进程管理。
+
+#### 8.4.1 key 从哪来 — **web 应用下「生成」优先于「导入」**（2026-07-31 修订）
+
+初稿把「key 生成」列入砍掉项，理由是「用户本来就有 key」。**该理由建立在「operator 用 CLI / mix task 导入本机已有 key」的假设上，而 ezagent 是 web 应用——用户只能从 world UI 交互，operator 无法代每个用户导入其个人 key。** 故该假设不成立，结论随之修订。
+
+**web 场景下两条路的实际对比**：
+
+| | 用户上传私钥 | **平台生成密钥对**（推荐）|
+|---|---|---|
+| 用户操作 | 自己 `ssh-keygen` → 粘贴/上传私钥 | 点一下生成 → **复制公钥**贴到 GitHub |
+| 私钥是否过浏览器 / 网络 | **是** —— 新增一条真实暴露面（需确保不进日志） | **否** —— 私钥从不离开服务器 |
+| 需处理的格式 | 各种私钥格式与错误输入的解析验证 | 无 —— 自己生成，格式自己定 |
+| 与「key 归属 user/agent」冲突？ | 否 | **否** —— key 仍归该 user，只是由平台代为生成与保管 |
+
+**生成路线同时更简单且更安全**，且是业界标准做法（CI / GitHub Actions 均如此）。
+
+**实现方式：`ssh-keygen` 子进程**（已有 `Ezagent.Runtime.OsProcess` 可用）。实测（2026-07-31）：
+
+- OTP 能**解析** OpenSSH 私钥 —— `:ssh_file.decode(key, :openssh_key_v1)` 成功（§2 NO-GO ② 的依据）
+- 但**编码**方向，我试过的几种 key 表示（`{:ed_pub, :ed25519, pub}` / `{:ed_pri, :ed25519, pub, priv}` × `:openssh_key` / `:ssh2_pubkey` / `:openssh_key_v1`）**均未成功**——不排除还有正确形状未试到，但结论不受影响：
+- `ssh-keygen -t ed25519 -N "" -C <comment> -f <tmpfile>` **一行即得**标准 `-----BEGIN OPENSSH PRIVATE KEY-----` 私钥与 `ssh-ed25519 AAAA…` 公钥，正确性无疑
+
+**因此任务 1 的 key 供给入口 = 生成为主**：world UI 一个「生成 SSH 密钥」动作 → cap-checked action → `ssh-keygen` 子进程 → 私钥经 `SealedEnvelope` 封存进 `UserDefaultSource`（flavor `"ssh"`）→ **只回显公钥与指纹**，供用户粘贴到 GitHub。
+
+「导入已有私钥」作为**可选的次要入口**，若做需额外确保私钥不进日志 / 不进错误信息。
 
 **不碰**：`GitRunner`（771 行）、`Provisioner` / `Paths` / `ChangeCollector`、`StageRunner` / `ExecutionSeam` / 整个 git_workflow——**连 provision 触发入口（E2-B）都不需要**，因为没有 provision 这个动作了。
 
@@ -705,7 +768,7 @@ A1 的其余增量：push stage + **agent 完成信号**（今天不存在，见
 
 1. **形态**：**A1 / A2 / B1 / B2** 之一。（A0 已因「私有仓库为确定需求」出局——见文首「已定输入」。）
 2. **传输**：HTTPS token 还是 SSH key。**与形态正交** —— 请分别决定。
-3. **租户模型**：ezagent 是否会在同一节点承载互不信任的租户？**⚠️ 阻塞项，非偏好 —— 见 §8.2。** 答「是」则 B2′ 不可接受：存在「agent 偷他人 key → 破坏他人仓库」的路径，而 per-repo deploy key 与 branch protection **均挡不住**（它们限制一把 key 能干什么，不限制能否偷到别人的 key）。此时须先建隔离轨，或改用结构性免疫的 A1。
+3. **租户模型**：ezagent 是否会在同一节点承载互不信任的租户？**已由部署契约回答（§8.2.1）——不会：互不信任的租户各自一套部署。** 故本条从阻塞项降为「实施时须显式引用的部署契约」。以下为初稿论述，保留供追溯： 答「是」则 B2′ 不可接受：存在「agent 偷他人 key → 破坏他人仓库」的路径，而 per-repo deploy key 与 branch protection **均挡不住**（它们限制一把 key 能干什么，不限制能否偷到别人的 key）。此时须先建隔离轨，或改用结构性免疫的 A1。
 4. **是否存在无 API 的目标 git 主机**？这是 SSH 的唯一独占理由。
 
 ---
