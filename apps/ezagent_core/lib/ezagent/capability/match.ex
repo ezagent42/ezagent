@@ -63,7 +63,10 @@ defmodule Ezagent.Capability.Match do
   @doc """
   The logical-identity 5-tuple of a cap — `{kind, behavior, action, instance,
   workspace_uri}`, with the two URI axes normalized via
-  `Ezagent.URI.stable_key/1`. Deliberately EXCLUDES `granted_by`/`granted_at`
+  `Ezagent.URI.stable_key/1` and URIs NESTED inside `instance` scope tuples
+  (`{:within_session | :within_workspace | :spawned_by, URI.t()}`)
+  canonicalized to their `Ezagent.URI.new!/1` form, so logically-equal scoped
+  URIs key equal. Deliberately EXCLUDES `granted_by`/`granted_at`
   provenance so revoke can match a held cap despite a different grant
   timestamp (codex review HIGH-1, 2026-05-26 — full-struct equality silently
   failed revoke). Backs `Ezagent.Capability.identity_key/1`.
@@ -152,5 +155,23 @@ defmodule Ezagent.Capability.Match do
   defp workspace_match?(_, _), do: false
 
   defp normalize_uri_for_key(%URI{} = u), do: Ezagent.URI.stable_key(u)
+
+  # Scope-tuple instance axes (`{:within_session | :within_workspace |
+  # :spawned_by, URI.t()}` — the three shapes of `Capability.scope_tuple()`)
+  # carry a NESTED %URI{} the top-level clause never sees. Canonicalize it so
+  # two logically-equal scoped URIs — e.g. a `URI.parse/1`-built
+  # authority-bearing struct and its `Ezagent.URI.new!/1` canonical twin,
+  # already equal under `URI.to_string/1` — yield EQUAL identity_keys. A raw
+  # struct passthrough silently mismatches the MapSet/digest/revoke lookups
+  # identity_key feeds. Match SEMANTICS are untouched: this only rewrites the
+  # identity KEY. The `canonical?/1` fast path returns the tuple unchanged so
+  # already-canonical caps pay no reparse.
+  defp normalize_uri_for_key({scope, %URI{} = u} = tuple)
+       when scope in [:within_session, :within_workspace, :spawned_by] do
+    if Ezagent.URI.canonical?(u),
+      do: tuple,
+      else: {scope, u |> URI.to_string() |> Ezagent.URI.new!()}
+  end
+
   defp normalize_uri_for_key(other), do: other
 end

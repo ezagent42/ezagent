@@ -907,4 +907,71 @@ defmodule Ezagent.CapabilityTest do
       assert {:ok, _json} = Jason.encode(payload)
     end
   end
+
+  # P1 (cap-revocation hardening): `identity_key/1` must canonicalize URIs
+  # NESTED inside instance scope tuples, not just the top-level URI axes —
+  # otherwise two logically-equal scoped caps (e.g. one built from a
+  # `URI.parse/1` authority-bearing struct, one from `Ezagent.URI.new!/1`,
+  # equal under `URI.to_string/1`) key DIFFERENTLY and downstream
+  # digests/matching/revocation silently miss the scoped cap.
+  describe "identity_key/1 scoped-URI canonicalization" do
+    @tag_instances [
+      within_session: "session://team-alpha/default/main",
+      within_workspace: "workspace://team-alpha",
+      spawned_by: "entity://team-alpha/agent/orchestrator"
+    ]
+
+    defp scoped_cap(tag, %URI{} = uri) do
+      %Capability{
+        kind: :session,
+        behavior: Ezagent.ActionSet.Session,
+        action: :send,
+        instance: {tag, uri},
+        workspace_uri: @ws_default,
+        granted_by: @user_uri,
+        granted_at: @now
+      }
+    end
+
+    test "logically-equal but structurally-different scoped URIs yield EQUAL identity_keys" do
+      for {tag, uri_string} <- @tag_instances do
+        canonical = scoped_cap(tag, Ezagent.URI.new!(uri_string))
+        # `URI.parse/1` yields the RFC-3986 authority-bearing struct —
+        # structurally different from the canonical `Ezagent.URI.new!/1`
+        # twin (`authority: nil`), logically identical (same URI.to_string).
+        authority_bearing = scoped_cap(tag, URI.parse(uri_string))
+
+        refute canonical.instance == authority_bearing.instance,
+               "precondition: the scoped instances must differ STRUCTURALLY"
+
+        assert Capability.identity_key(canonical) == Capability.identity_key(authority_bearing),
+               "{#{tag}, URI} caps equal under URI.to_string MUST share one identity_key"
+      end
+    end
+
+    test "logically-different scoped identities stay UNEQUAL (no over-broadening)" do
+      for {tag, uri_string} <- @tag_instances do
+        base = scoped_cap(tag, Ezagent.URI.new!(uri_string))
+        other_session = scoped_cap(tag, Ezagent.URI.new!("session://team-alpha/default/other"))
+
+        refute Capability.identity_key(base) == Capability.identity_key(other_session),
+               "different scope URIs MUST NOT collapse onto one identity_key"
+      end
+
+      # Same URI, different scope tag — a within_session cap is not a
+      # within_workspace cap even when the nested URI strings match.
+      within = scoped_cap(:within_session, Ezagent.URI.new!("workspace://team-alpha"))
+      around = scoped_cap(:within_workspace, Ezagent.URI.new!("workspace://team-alpha"))
+
+      refute Capability.identity_key(within) == Capability.identity_key(around),
+             "the scope tag is part of the identity — tags MUST NOT merge"
+
+      # A scoped instance and its bare URI are different identities.
+      scoped = scoped_cap(:within_workspace, Ezagent.URI.new!("workspace://team-alpha"))
+      bare = %{scoped | instance: Ezagent.URI.new!("workspace://team-alpha")}
+
+      refute Capability.identity_key(scoped) == Capability.identity_key(bare),
+             "a scope tuple MUST NOT merge with the equivalent bare instance URI"
+    end
+  end
 end
