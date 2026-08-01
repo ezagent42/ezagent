@@ -529,7 +529,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
              workers,
              spawned_by_uri,
              workspace_uri,
-             Map.get(instantiate_meta, :creation_attempt_id)
+             Map.get(instantiate_meta, :creation_attempt_id),
+             creation_inventory_mode(instantiate_meta)
            ) do
         {:ok, ownership_receipts} ->
           case establish_fresh_spawn_obligations(
@@ -736,6 +737,10 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn do
   defp put_respawn_flavor(meta, template_content_map) do
     Ezagent.Entity.Agent.TemplateSpawn.Cascade.put_respawn_flavor(meta, template_content_map)
   end
+
+  defp creation_inventory_mode(%{created?: false}), do: :skip
+  defp creation_inventory_mode(%{created?: true}), do: :replace_stale
+  defp creation_inventory_mode(_instantiate_meta), do: :record
 
   # codex round-6 HIGH-1 + PR3 2026-05-24 — call the plugin Template
   # Class's `instantiate/3` and normalize its return to `{:ok, workers,

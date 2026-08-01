@@ -34,6 +34,12 @@ defmodule EzagentCore.Invariants.ArchScannersIgnoreTmpFixturesTest do
       refute AstScan.tmp_fixture?("/repo/apps/ezagent_core/lib/ezagent/uri.ex")
       refute AstScan.tmp_fixture?("/repo/apps/ezagent_plugin_github/lib/x/github_adapter.ex")
     end
+
+    test "does not reject real source when the repository itself is under tmp" do
+      refute AstScan.tmp_fixture?(
+               "/tmp/worktree/apps/ezagent_domain_identity/lib/ezagent/identity.ex"
+             )
+    end
   end
 
   # The behavioural half: a file planted where a `:tmp_dir` fixture lands must
