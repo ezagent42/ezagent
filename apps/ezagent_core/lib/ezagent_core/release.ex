@@ -16,6 +16,7 @@ defmodule EzagentCore.Release do
   # moduledoc for the `undeclared_umbrella_dep_test` rationale. Do NOT
   # "simplify" this into a direct call.
   @cutover_runbook Ezagent.Identity.Cutover.Runbook
+  @cap_revocation_cutover Ezagent.Identity.CapRevocationCutover
 
   @doc "Run all pending migrations for every configured repo (idempotent)."
   def migrate do
@@ -70,6 +71,27 @@ defmodule EzagentCore.Release do
 
       {:refused, reason} ->
         raise "#189 identity cutover REFUSED — epoch NOT activated: #{inspect(reason)}"
+    end
+  end
+
+  @doc """
+  Prestart release entrypoint for the stopped-node per-cap revocation v2
+  cutover. The identity domain is started without the web Endpoint; deployment
+  must invoke this after migrations and before `bin/ezagent start`.
+
+      bin/ezagent eval "EzagentCore.Release.cap_revocation_cutover(dry_run: true)"
+      bin/ezagent eval "EzagentCore.Release.cap_revocation_cutover(approved_manifest_hash: \"...\")"
+
+  Raises on refusal so the entrypoint cannot continue to the listener.
+  """
+  def cap_revocation_cutover(opts \\ []) do
+    {:ok, _} = Application.ensure_all_started(:ezagent_domain_identity)
+    opts = Keyword.put_new(opts, :io, &IO.puts/1)
+
+    case apply(@cap_revocation_cutover, :run, [opts]) do
+      {:ok, report} -> {:ok, report}
+      {:dry_run, report} -> {:dry_run, report}
+      {:error, reason} -> raise "per-cap revocation cutover REFUSED: #{inspect(reason)}"
     end
   end
 

@@ -84,6 +84,26 @@ defmodule Ezagent.Ecto.KindCapAuthority do
   end
 
   @doc false
+  @spec lock_all_active() :: [%__MODULE__{}]
+  def lock_all_active do
+    from(row in __MODULE__,
+      where: row.active == true,
+      order_by: [asc: row.uri],
+      lock: "FOR UPDATE"
+    )
+    |> Repo.all()
+  end
+
+  @doc false
+  @spec replace_anchor(%__MODULE__{}, binary()) ::
+          {:ok, %__MODULE__{}} | {:error, Ecto.Changeset.t()}
+  def replace_anchor(%__MODULE__{} = row, anchor) when is_binary(anchor) do
+    row
+    |> Ecto.Changeset.change(anchor: anchor)
+    |> Repo.update()
+  end
+
+  @doc false
   @spec with_key_id(String.t()) :: %__MODULE__{} | nil
   def with_key_id(key_id) when is_binary(key_id) do
     from(row in __MODULE__, where: row.key_id == ^key_id)

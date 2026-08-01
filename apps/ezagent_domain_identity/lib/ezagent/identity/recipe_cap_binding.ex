@@ -87,7 +87,9 @@ defmodule Ezagent.Identity.RecipeCapBinding do
   @doc "Reconcile an active binding into an already-live agent Identity slice."
   @spec sync_live(URI.t()) :: :ok | {:error, term()}
   def sync_live(%URI{} = agent_uri) do
-    target = Ezagent.URI.with_action(Ezagent.URI.instance(agent_uri), :identity, :sync_recipe_binding)
+    target =
+      Ezagent.URI.with_action(Ezagent.URI.instance(agent_uri), :identity, :sync_recipe_binding)
+
     reply =
       if Ezagent.ReadyGate.status(Ezagent.URI.instance(agent_uri)) == :ready,
         do: {:caller_inbox, self()},
@@ -162,6 +164,69 @@ defmodule Ezagent.Identity.RecipeCapBinding do
       ]
     )
     |> elem(0)
+  end
+
+  @doc false
+  @spec remint_artifacts_in_txn(%{optional(String.t()) => [Capability.t()]}) ::
+          :ok | {:error, term()}
+  def remint_artifacts_in_txn(reminted_by_holder) when is_map(reminted_by_holder) do
+    if Repo.in_transaction?() do
+      from(binding in __MODULE__, order_by: [asc: binding.agent_uri], lock: "FOR UPDATE")
+      |> Repo.all()
+      |> Enum.reduce_while(:ok, fn binding, :ok ->
+        case remint_binding(binding, reminted_by_holder) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, {binding.agent_uri, reason}}}
+        end
+      end)
+    else
+      {:error, :transaction_required}
+    end
+  end
+
+  defp remint_binding(%__MODULE__{tombstoned_at: tombstoned_at} = binding, _by_holder)
+       when not is_nil(tombstoned_at) do
+    binding
+    |> Ecto.Changeset.change(artifacts: %{"caps" => []}, content_hash: "cutover-wiped")
+    |> Repo.update()
+    |> case do
+      {:ok, _updated} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp remint_binding(%__MODULE__{} = binding, by_holder) do
+    with {:ok, old_caps} <- decode_caps(binding.artifacts) do
+      replacements =
+        by_holder
+        |> Map.get(binding.agent_uri, [])
+        |> Map.new(&{Capability.identity_key(&1), &1})
+
+      caps =
+        old_caps
+        |> Enum.map(&Map.get(replacements, Capability.identity_key(&1)))
+        |> Enum.reject(&is_nil/1)
+        |> canonical_caps()
+
+      attrs = %{
+        agent_uri: binding.agent_uri,
+        workspace_uri: binding.workspace_uri,
+        recipe_name: binding.recipe_name,
+        issuer_uri: binding.issuer_uri
+      }
+
+      binding
+      |> Ecto.Changeset.change(
+        artifacts: %{"caps" => Enum.map(caps, &Capability.to_map/1)},
+        content_hash: content_hash(attrs, caps),
+        version: binding.version + 1
+      )
+      |> Repo.update()
+      |> case do
+        {:ok, _updated} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    end
   end
 
   defp issue_all(agent_uri, issuer_uri, proposals) do
@@ -249,7 +314,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
     # Both fields therefore vary on a retry even when the recipe proposal is
     # logically identical. Binding idempotence is about that proposal, not
     # the cryptographic envelope selected for a particular issuance attempt.
-    |> Map.drop(["granted_at", "signature"])
+    |> Map.drop(["granted_at", "signature", "signing_version", "grant_id"])
     |> :erlang.term_to_binary([:deterministic])
   end
 

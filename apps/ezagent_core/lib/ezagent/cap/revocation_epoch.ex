@@ -91,6 +91,23 @@ defmodule Ezagent.Cap.RevocationEpoch do
   @doc "Idempotently activate the monotone epoch."
   @spec activate() :: :ok | {:error, term()}
   def activate do
+    case insert_epoch() do
+      :ok ->
+        maybe_promote()
+        :ok
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @doc "Insert the epoch row without promoting process-local state until the outer txn commits."
+  @spec activate_in_txn() :: :ok | {:error, term()}
+  def activate_in_txn do
+    if Repo.in_transaction?(), do: insert_epoch(), else: {:error, :transaction_required}
+  end
+
+  defp insert_epoch do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
 
     %CapRevocationEpoch{}
@@ -98,7 +115,6 @@ defmodule Ezagent.Cap.RevocationEpoch do
     |> Repo.insert(on_conflict: :nothing, conflict_target: :id)
     |> case do
       {:ok, _row} ->
-        maybe_promote()
         :ok
 
       {:error, reason} ->
