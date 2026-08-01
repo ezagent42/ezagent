@@ -190,16 +190,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # count even though all ordinary writes still converge through
     # `persist_changes/3`.
     #
-    # P2b: 9 → 10 for the fenced cutover's `insert_cutover_row/2`. It accepts
-    # only freshly re-signed, ledger-checked artifacts inside the one rebuild
-    # transaction and re-validates the active-self-license invariant before the
-    # insert; it is not callable as a live grant path.
-    "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex" => 10,
-
-    # P2b's stopped-node one-shot rewrites `users.caps_json` only as a legacy
-    # projection of the already-derived v2 Store set, under the same table locks
-    # and transaction that activate the epoch. It cannot issue arbitrary caps.
-    "apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex" => 1,
+    "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex" => 9,
 
     # Rewrites the retired Chat behavior name inside EXISTING artifacts. It
     # preserves authority rather than broadening it, and grants nothing new.

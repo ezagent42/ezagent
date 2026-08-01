@@ -8,8 +8,6 @@ defmodule Ezagent.Cap.Signing do
   """
 
   alias Ezagent.{Cap, Capability}
-  alias Ezagent.Capability.Normalize
-
   @key_id_max_size 512
   @key_id_pattern ~r/\Av([0-9]+)\|([A-Za-z0-9_-]+)\z/
 
@@ -72,23 +70,6 @@ defmodule Ezagent.Cap.Signing do
 
   def parse_key_id(_key_id), do: :error
 
-  @doc false
-  @spec valid_protocol?(Capability.t()) :: boolean()
-  def valid_protocol?(%Capability{} = cap) do
-    case Normalize.fill_defaults(cap) do
-      %Capability{signing_version: 1, grant_id: nil} ->
-        true
-
-      %Capability{signing_version: 2, grant_id: grant_id} when is_binary(grant_id) ->
-        grant_id != ""
-
-      %Capability{} ->
-        false
-    end
-  rescue
-    _ -> false
-  end
-
   @doc "Return RFC 8785 JCS bytes for the signed capability payload."
   @spec signing_payload(Capability.t()) :: binary()
   def signing_payload(%Capability{grantee_uri: grantee_uri} = cap),
@@ -99,7 +80,6 @@ defmodule Ezagent.Cap.Signing do
   def signing_payload(%Capability{grantee_uri: grantee_uri} = cap, grantee_uri) do
     cap
     |> signing_fields(grantee_uri)
-    |> versioned_fields(cap)
     |> jcs_encode()
   end
 
@@ -107,21 +87,16 @@ defmodule Ezagent.Cap.Signing do
     %{
       "action" => canon_atom(Capability.action_of(cap)),
       "behavior" => canon_module(cap.behavior),
+      "grant_id" => canon_string(cap.grant_id),
       "granted_at" => canon_timestamp(cap.granted_at),
       "granted_by" => canon_uri(cap.granted_by),
       "grantee" => canon_uri(grantee_uri),
       "instance" => canon_instance(cap.instance),
       "key_id" => canon_string(cap.key_id),
       "kind" => canon_atom(cap.kind),
-      "v" => cap.signing_version,
       "workspace_uri" => canon_workspace(cap.workspace_uri)
     }
   end
-
-  defp versioned_fields(fields, %Capability{signing_version: 2, grant_id: grant_id}),
-    do: Map.put(fields, "grant_id", canon_string(grant_id))
-
-  defp versioned_fields(fields, %Capability{}), do: fields
 
   defp configured_key_version?(version) do
     signing_config()

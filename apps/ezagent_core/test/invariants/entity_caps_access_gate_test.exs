@@ -74,12 +74,6 @@ defmodule Ezagent.Invariants.IdentityCapsAccessGateTest do
                               :fetch_durable_identities, 1},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :fetch_durable_identity, 1},
-                             # P2b's fenced maintenance transaction rebuilds the
-                             # physical Store from the checked durable-effective
-                             # set. This is a write adapter helper, not a runtime
-                             # authority read.
-                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
-                              :insert_cutover_row, 2},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :load, 1},
                              # P2 per-cap revocation reads the complete locked
@@ -113,13 +107,7 @@ defmodule Ezagent.Invariants.IdentityCapsAccessGateTest do
                              # backfill WORK runs from a Mix-less release node too.
                              # Same read-only access, same site, new file.
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/backfill.ex",
-                              :backfill_users, 1},
-                             # P2b rewrites the legacy users projection from the
-                             # freshly re-minted Store plane inside the stopped-
-                             # node atomic cutover. The effective set was read
-                             # and verified before the destructive rewrite.
-                             {"apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex",
-                              :rewrite_users, 1}
+                              :backfill_users, 1}
                            ])
 
   # `identity_caps.ex :snapshot_caps/1` is NO LONGER a raw-snapshot reader after

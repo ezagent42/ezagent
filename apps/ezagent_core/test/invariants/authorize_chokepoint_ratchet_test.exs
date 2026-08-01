@@ -477,16 +477,15 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
 
     assert constructor_files == [
              "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex",
-             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex",
-             "apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex"
+             "apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex"
            ]
 
     # Z-1 TIGHTENING (#189 PR-3, disposition item): assert the EXACT HIT COUNT,
     # not just the deduplicated file set. The previous filename-dedup check would
     # have passed a SECOND (hidden) constructor added to an already-approved file
     # — exactly one create-gated `Capability.cap(_, _, :self_license, _, _)` in
-    # each runtime file plus the single maintenance constructor ⇒ three hits.
-    assert length(constructor_hits) == 3
+    # each runtime file and no maintenance bypass ⇒ two hits.
+    assert length(constructor_hits) == 2
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")

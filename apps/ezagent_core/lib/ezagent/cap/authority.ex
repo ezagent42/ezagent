@@ -11,7 +11,7 @@ defmodule Ezagent.Cap.Authority do
   already executing maliciously inside the BEAM is explicitly out of scope.
   """
 
-  alias Ezagent.Cap.Signing
+  alias Ezagent.Cap.{GrantArtifact, Signing}
   alias Ezagent.Capability
   alias Ezagent.Capability.Normalize
   alias Ezagent.Ecto.KindCapAuthority
@@ -189,140 +189,6 @@ defmodule Ezagent.Cap.Authority do
       )
 
     %{cap | signature: signature}
-  end
-
-  @doc """
-  Re-mint a current-valid capability as a fresh v2 artifact under the target's
-  existing active authority generation.
-
-  This is the narrow maintenance-cutover seam: it is available only inside an
-  open Repo transaction while the per-cap epoch is definitively inactive. The
-  original artifact must already verify for `receiver`; only protocol metadata,
-  timestamp, and signature are replaced, so its logical identity and authority
-  generation cannot change.
-  """
-  @spec remint_current_in_txn(Capability.t(), URI.t()) ::
-          {:ok, Capability.t()} | {:error, term()}
-  def remint_current_in_txn(%Capability{} = cap, %URI{} = receiver) do
-    with true <- Repo.in_transaction?() || {:error, :transaction_required},
-         :inactive <- Ezagent.Cap.RevocationEpoch.status(),
-         {:ok, row} <- lock_artifact_authority(cap),
-         authority = from_row(row),
-         true <-
-           verify(authority, Normalize.fill_defaults(cap), receiver) ||
-             {:error, :artifact_not_current} do
-      {:ok, remint(authority, cap, receiver)}
-    else
-      :active -> {:error, :epoch_already_active}
-      :unknown -> {:error, :epoch_unreadable}
-      nil -> {:error, :authority_not_found}
-      {:error, _reason} = error -> error
-      false -> {:error, :artifact_not_current}
-      _ -> {:error, :artifact_not_current}
-    end
-  end
-
-  @doc """
-  Mint the canonical admin's structural self-license during the fenced v2
-  maintenance cutover.
-
-  The root restriction, inactive-epoch check, and transaction requirement keep
-  this from becoming a general-purpose issuance bypass.
-  """
-  @spec mint_root_self_license_in_txn(Capability.t(), URI.t()) ::
-          {:ok, Capability.t()} | {:error, term()}
-  def mint_root_self_license_in_txn(%Capability{} = requested, %URI{} = root) do
-    with true <- Repo.in_transaction?() || {:error, :transaction_required},
-         :inactive <- Ezagent.Cap.RevocationEpoch.status(),
-         true <- root?(root) || {:error, :not_root_authority},
-         true <-
-           Capability.action_of(requested) == :self_license ||
-             {:error, :invalid_self_license_intent},
-         {:ok, target} <- target_uri(requested),
-         true <- same_uri?(target, root) || {:error, :invalid_self_license_intent},
-         %KindCapAuthority{} = row <-
-           KindCapAuthority.lock_active(Ezagent.URI.stable_key(Ezagent.URI.instance(root))) do
-      authority = from_row(row)
-      {:ok, remint(authority, requested, root, root)}
-    else
-      :active -> {:error, :epoch_already_active}
-      :unknown -> {:error, :epoch_unreadable}
-      nil -> {:error, :authority_not_found}
-      {:error, _reason} = error -> error
-      _ -> {:error, :invalid_self_license_intent}
-    end
-  end
-
-  @doc "Re-sign every active authority anchor as v2 inside the cutover transaction."
-  @spec remint_all_anchors_in_txn() :: :ok | {:error, term()}
-  def remint_all_anchors_in_txn do
-    with true <- Repo.in_transaction?() || {:error, :transaction_required},
-         :inactive <- Ezagent.Cap.RevocationEpoch.status() do
-      KindCapAuthority.lock_all_active()
-      |> Enum.reduce_while(:ok, fn row, :ok ->
-        with {:ok, anchor} <- decode_anchor(row.anchor),
-             %URI{} = receiver <- Normalize.fill_defaults(anchor).grantee_uri,
-             authority = from_row(row),
-             reminted = remint(authority, anchor, receiver),
-             {:ok, _updated} <-
-               KindCapAuthority.replace_anchor(
-                 row,
-                 :erlang.term_to_binary(reminted, [:deterministic])
-               ) do
-          {:cont, :ok}
-        else
-          error -> {:halt, {:error, {:anchor_remint_failed, row.uri, error}}}
-        end
-      end)
-    else
-      :active -> {:error, :epoch_already_active}
-      :unknown -> {:error, :epoch_unreadable}
-      {:error, _reason} = error -> error
-      _ -> {:error, :transaction_required}
-    end
-  end
-
-  defp remint(authority, cap, receiver, granter \\ nil) do
-    cap = Normalize.fill_defaults(cap)
-
-    %{
-      cap
-      | granted_by: granter || cap.granted_by,
-        granted_at: DateTime.utc_now(),
-        grantee_uri: receiver,
-        signing_version: 2,
-        grant_id: Ecto.UUID.generate(),
-        signature: nil
-    }
-    |> then(&sign(authority, &1))
-  end
-
-  defp decode_anchor(anchor) when is_binary(anchor) do
-    case :erlang.binary_to_term(anchor, [:safe]) do
-      %Capability{} = cap -> {:ok, cap}
-      _ -> {:error, :invalid_anchor}
-    end
-  rescue
-    _ -> {:error, :invalid_anchor}
-  end
-
-  defp lock_artifact_authority(%Capability{} = cap) do
-    case target_uri(cap) do
-      {:ok, target} ->
-        case KindCapAuthority.lock_active(Ezagent.URI.stable_key(Ezagent.URI.instance(target))) do
-          %KindCapAuthority{} = row -> {:ok, row}
-          nil -> {:error, :authority_not_found}
-        end
-
-      {:error, :concrete_target_required} ->
-        with key_id when is_binary(key_id) <- Map.get(cap, :key_id),
-             %KindCapAuthority{active: true, uri: uri} <- KindCapAuthority.with_key_id(key_id),
-             %KindCapAuthority{key_id: ^key_id} = row <- KindCapAuthority.lock_active(uri) do
-          {:ok, row}
-        else
-          _ -> {:error, :artifact_not_current}
-        end
-    end
   end
 
   @doc false
@@ -654,7 +520,7 @@ defmodule Ezagent.Cap.Authority do
        when is_binary(public_key) and is_binary(signature) do
     cap = Normalize.fill_defaults(cap)
 
-    Ezagent.Cap.RevocationEpoch.protocol_allowed?(cap) and
+    match?({:ok, %Capability{}}, GrantArtifact.validate(cap)) and
       :crypto.verify(
         :eddsa,
         :none,
@@ -754,7 +620,6 @@ defmodule Ezagent.Cap.Authority do
         granted_by: admin_uri(),
         granted_at: DateTime.utc_now(),
         grantee_uri: admin_uri(),
-        signing_version: 2,
         grant_id: Ecto.UUID.generate()
       }
       |> then(&sign(authority, &1))

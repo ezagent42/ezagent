@@ -601,7 +601,6 @@ defmodule Ezagent.Cap.DeliveryOutbox do
               :delivery_dead,
               :capability_revoked,
               :cap_revocation_ledger_unreadable,
-              :cap_revocation_epoch_unreadable,
               :invalid_capability_protocol
             ],
        do: {:error, reason}

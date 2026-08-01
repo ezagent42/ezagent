@@ -19,13 +19,7 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
-    Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
-
-    on_exit(fn ->
-      Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
-    end)
-
     :ok
   end
 
@@ -91,65 +85,25 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
     refute Authority.verify_against_current(other_signed, grantee, uri)
   end
 
-  test "normalizes a legacy signed struct before protocol verification" do
-    {uri, pid, grantee} = start_target("legacy-protocol")
-    authority = :sys.get_state(pid).authority
-    cap = authority_signed_cap!(authority, grantee, action_cap(uri))
-    assert cap.signing_version == 1
+  test "missing or noncanonical grant identities deny without raising" do
+    {uri, _pid, grantee} = start_target("illegal-grant-id")
+    artifact = mint_signed_cap_for(uri, grantee)
 
-    legacy_cap =
-      cap
-      |> Map.from_struct()
-      |> Map.drop([:signing_version, :grant_id])
-      |> Map.put(:__struct__, Capability)
-
-    assert Authority.verify_against_current(legacy_cap, grantee, uri)
-  end
-
-  test "epoch inactive admits signed v1 and v2, active requires v2, and unknown denies both" do
-    {uri, pid, grantee} = start_target("epoch-protocol")
-    authority = :sys.get_state(pid).authority
-    v1 = authority_signed_cap!(authority, grantee, action_cap(uri))
-    v2 = mint_signed_cap_for(uri, grantee)
-
-    assert Authority.verify_against_current(v1, grantee, uri)
-    assert Authority.verify_against_current(v2, grantee, uri)
-
-    Application.put_env(:ezagent_core, :cap_revocation_epoch_override, :active)
-    refute Authority.verify_against_current(v1, grantee, uri)
-    assert Authority.verify_against_current(v2, grantee, uri)
-
-    Application.put_env(:ezagent_core, :cap_revocation_epoch_override, :unknown)
-    refute Authority.verify_against_current(v1, grantee, uri)
-    refute Authority.verify_against_current(v2, grantee, uri)
-  end
-
-  test "illegal signing-version and grant-id combinations deny without raising" do
-    {uri, pid, grantee} = start_target("illegal-protocol")
-    authority = :sys.get_state(pid).authority
-    v1 = authority_signed_cap!(authority, grantee, action_cap(uri))
-    v2 = mint_signed_cap_for(uri, grantee)
-
-    illegal = [
-      %{v1 | grant_id: "v1-must-not-have-an-id"},
-      %{v2 | grant_id: nil},
-      %{v2 | signing_version: 99}
-    ]
-
-    for artifact <- illegal do
+    for invalid <- [nil, "", String.upcase(artifact.grant_id), "not-a-uuid"] do
+      artifact = %{artifact | grant_id: invalid}
       refute Authority.verify_against_current(artifact, grantee, uri)
     end
   end
 
-  test "issue overwrites caller protocol metadata with a fresh v2 grant id" do
+  test "issue overwrites caller grant identity with a fresh canonical UUID" do
     {uri, _pid, grantee} = start_target("framework-stamp")
-    requested = %{action_cap(uri) | signing_version: 99, grant_id: "caller-controlled"}
+    requested = %{action_cap(uri) | grant_id: "caller-controlled"}
 
     assert {:ok, first} = Cap.issue({:admin, admin()}, grantee, requested)
     assert {:ok, second} = Cap.issue({:admin, admin()}, grantee, requested)
 
-    assert first.signing_version == 2
-    assert is_binary(first.grant_id) and first.grant_id != ""
+    assert Ezagent.Cap.GrantArtifact.valid_grant_id?(first.grant_id)
+    assert Ezagent.Cap.GrantArtifact.valid_grant_id?(second.grant_id)
     refute first.grant_id == "caller-controlled"
     refute second.grant_id == first.grant_id
     assert Authority.verify_against_current(first, grantee, uri)

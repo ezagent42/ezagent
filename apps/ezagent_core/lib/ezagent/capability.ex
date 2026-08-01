@@ -47,7 +47,6 @@ defmodule Ezagent.Capability do
             signature: nil,
             key_id: nil,
             grantee_uri: nil,
-            signing_version: 1,
             grant_id: nil
 
   @type scope_tuple ::
@@ -66,7 +65,6 @@ defmodule Ezagent.Capability do
           signature: binary() | nil,
           key_id: String.t() | nil,
           grantee_uri: URI.t() | nil,
-          signing_version: pos_integer(),
           grant_id: String.t() | nil
         }
 
@@ -604,7 +602,6 @@ defimpl Jason.Encoder, for: Ezagent.Capability do
             signature when is_binary(signature) -> Base.url_encode64(signature, padding: false)
           end,
         key_id: cap.key_id,
-        signing_version: cap.signing_version,
         grant_id: cap.grant_id,
         grantee_uri:
           case cap.grantee_uri do

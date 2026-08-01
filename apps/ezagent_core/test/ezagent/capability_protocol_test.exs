@@ -1,45 +1,52 @@
 defmodule Ezagent.CapabilityProtocolTest do
   use ExUnit.Case, async: true
 
+  alias Ezagent.Cap.GrantArtifact
   alias Ezagent.Capability
 
-  test "legacy capability shape defaults to signing v1 without a grant id" do
-    capability = legacy_capability()
+  test "capability requests have no protocol version and may omit a grant id" do
+    request = capability_request()
+    protocol_version_field = String.to_atom("signing" <> "_version")
 
-    assert Map.fetch!(capability, :signing_version) == 1
-    assert Map.fetch!(capability, :grant_id) == nil
+    refute Map.has_key?(request, protocol_version_field)
+    assert request.grant_id == nil
+    assert {:error, :missing_grant_id} = GrantArtifact.validate(request)
   end
 
-  test "v2 protocol fields round-trip without changing logical identity" do
-    legacy = legacy_capability()
-    v2 = %{legacy | signing_version: 2, grant_id: "grant-018fbc96"}
+  test "the sole issued-artifact wire shape round-trips grant identity" do
+    request = capability_request()
 
-    wire = Capability.to_map(v2)
-    decoded = Capability.from_map(wire)
-    json = v2 |> Jason.encode!() |> Jason.decode!()
+    artifact = %{
+      request
+      | grant_id: Ecto.UUID.generate(),
+        signature: <<1, 2, 3>>,
+        key_id: "kind-g1:test-key",
+        grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/alice")
+    }
 
-    assert wire["signing_version"] == 2
-    assert wire["grant_id"] == "grant-018fbc96"
-    assert decoded.signing_version == 2
-    assert decoded.grant_id == "grant-018fbc96"
-    assert json["signing_version"] == 2
-    assert json["grant_id"] == "grant-018fbc96"
-    assert Capability.identity_key(decoded) == Capability.identity_key(legacy)
+    wire = Capability.to_map(artifact)
+    json = artifact |> Jason.encode!() |> Jason.decode!()
+    protocol_version_field = "signing" <> "_version"
+
+    assert {:ok, decoded} = GrantArtifact.from_map(wire)
+    assert decoded == artifact
+    assert wire["grant_id"] == artifact.grant_id
+    assert json["grant_id"] == artifact.grant_id
+    refute Map.has_key?(wire, protocol_version_field)
+    refute Map.has_key?(json, protocol_version_field)
+    assert Capability.identity_key(decoded) == Capability.identity_key(request)
   end
 
-  test "missing protocol fields decode as legacy v1" do
-    wire =
-      legacy_capability()
-      |> Capability.to_map()
-      |> Map.drop(["signing_version", "grant_id"])
-
+  test "request decode does not invent a protocol version or grant identity" do
+    wire = capability_request() |> Capability.to_map() |> Map.delete("grant_id")
     decoded = Capability.from_map(wire)
+    protocol_version_field = String.to_atom("signing" <> "_version")
 
-    assert decoded.signing_version == 1
+    refute Map.has_key?(decoded, protocol_version_field)
     assert decoded.grant_id == nil
   end
 
-  defp legacy_capability do
+  defp capability_request do
     %Capability{
       kind: :session,
       behavior: Ezagent.ActionSet.Session,

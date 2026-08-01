@@ -314,7 +314,7 @@ defmodule Ezagent.Identity.RecipeCapBinding do
     # Both fields therefore vary on a retry even when the recipe proposal is
     # logically identical. Binding idempotence is about that proposal, not
     # the cryptographic envelope selected for a particular issuance attempt.
-    |> Map.drop(["granted_at", "signature", "signing_version", "grant_id"])
+    |> Map.drop(["granted_at", "signature", "grant_id"])
     |> :erlang.term_to_binary([:deterministic])
   end
 

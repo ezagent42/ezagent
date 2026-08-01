@@ -128,12 +128,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   def semantic_identity(%Capability{} = cap) do
     cap = Normalize.fill_defaults(cap)
 
-    identity =
-      if cap.signing_version == 2 do
-        {Capability.identity_key(cap), cap.key_id, cap.grant_id}
-      else
-        {Capability.identity_key(cap), cap.key_id}
-      end
+    identity = {Capability.identity_key(cap), cap.key_id, cap.grant_id}
 
     digest =
       identity
@@ -141,7 +136,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.encode16(case: :lower)
 
-    "cap-v2:#{digest}"
+    "cap:#{digest}"
   end
 
   defp producer_parts(%Invocation{

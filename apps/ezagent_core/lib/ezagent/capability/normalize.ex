@@ -48,7 +48,6 @@ defmodule Ezagent.Capability.Normalize do
       "signature" => encode_signature(cap.signature),
       "key_id" => cap.key_id,
       "grantee_uri" => uri_or_nil_to_string(cap.grantee_uri),
-      "signing_version" => cap.signing_version,
       "grant_id" => cap.grant_id
     }
   end
@@ -163,7 +162,6 @@ defmodule Ezagent.Capability.Normalize do
       signature: decode_signature(Map.get(m, "signature")),
       key_id: Map.get(m, "key_id"),
       grantee_uri: string_to_uri_or_nil(Map.get(m, "grantee_uri")),
-      signing_version: Map.get(m, "signing_version", 1),
       grant_id: Map.get(m, "grant_id")
     }
   end

@@ -212,64 +212,6 @@ defmodule Ezagent.IdentityCaps.Store do
     _, _ -> []
   end
 
-  @doc false
-  @spec cutover_rows_in_txn() :: [%__MODULE__{}]
-  def cutover_rows_in_txn do
-    from(row in __MODULE__, order_by: [asc: row.uri], lock: "FOR UPDATE")
-    |> Repo.all()
-  end
-
-  @doc false
-  @spec replace_all_for_cutover_in_txn([map()]) :: :ok | {:error, term()}
-  def replace_all_for_cutover_in_txn(entries) when is_list(entries) do
-    if Repo.in_transaction?() do
-      Repo.delete_all(__MODULE__)
-
-      Enum.reduce_while(entries, :ok, fn entry, :ok ->
-        caps = Map.fetch!(entry, :caps) |> Enum.to_list()
-        workspace = Map.fetch!(entry, :workspace_uri)
-
-        with :ok <- revoked_artifacts_guard(workspace, caps),
-             :ok <- validate_cutover_status(entry, caps),
-             {:ok, _row} <- insert_cutover_row(entry, caps) do
-          Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(Map.fetch!(entry, :uri), caps)
-          {:cont, :ok}
-        else
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-      end)
-    else
-      {:error, :transaction_required}
-    end
-  end
-
-  defp validate_cutover_status(%{identity_status: "active", uri: uri}, caps) do
-    if has_current_self_license?(caps, uri),
-      do: :ok,
-      else: {:error, {:active_without_current_self_license, uri}}
-  end
-
-  defp validate_cutover_status(%{identity_status: status}, _caps)
-       when status in ["revoked_unprovisioned", "tombstoned"],
-       do: :ok
-
-  defp validate_cutover_status(entry, _caps),
-    do: {:error, {:invalid_identity_status, Map.get(entry, :identity_status)}}
-
-  defp insert_cutover_row(entry, caps) do
-    attrs = %{
-      uri: Map.fetch!(entry, :uri),
-      workspace_uri: Map.fetch!(entry, :workspace_uri),
-      caps_json: encode_caps(caps),
-      identity_status: Map.fetch!(entry, :identity_status),
-      provisioning_receipt: Map.get(entry, :provisioning_receipt)
-    }
-
-    %__MODULE__{}
-    |> Ecto.Changeset.change(attrs)
-    |> Repo.insert()
-  end
-
   @doc "The identity lifecycle status for `uri`, or `nil` when no row exists."
   @spec status(URI.t() | String.t()) :: status() | nil
   def status(uri) do
@@ -680,10 +622,7 @@ defmodule Ezagent.IdentityCaps.Store do
     end
   end
 
-  defp mark_revoked_grant(_workspace, _holder_uri, %Capability{signing_version: 1}),
-    do: :ok
-
-  defp mark_revoked_grant(workspace, holder_uri, %Capability{signing_version: 2} = cap) do
+  defp mark_revoked_grant(workspace, holder_uri, %Capability{} = cap) do
     attrs = %{
       grant_id: cap.grant_id,
       workspace_uri: workspace,
@@ -700,9 +639,6 @@ defmodule Ezagent.IdentityCaps.Store do
       {:error, reason} -> {:error, reason}
     end
   end
-
-  defp mark_revoked_grant(_workspace, _holder_uri, _cap),
-    do: {:error, :invalid_exact_revocation_artifact}
 
   defp persist_revoked_caps(nil, uri, caps) do
     Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps)

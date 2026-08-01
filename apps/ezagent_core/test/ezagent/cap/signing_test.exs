@@ -9,6 +9,7 @@ defmodule Ezagent.Cap.SigningTest do
   @grantee Ezagent.URI.new!("entity://team-alpha/user/alice")
   @other_grantee Ezagent.URI.new!("entity://team-alpha/user/bob")
   @instance Ezagent.URI.new!("session://team-alpha/default/chat")
+  @grant_id "018fbc96-3e3f-7413-a60b-8ed48338fc18"
 
   setup do
     previous = Application.get_env(:ezagent_core, Cap, [])
@@ -28,7 +29,8 @@ defmodule Ezagent.Cap.SigningTest do
         granted_by: @issuer,
         granted_at: ~U[2026-07-14 12:34:56.789123Z],
         key_id: "kind-g1|cafe\u0301",
-        grantee_uri: @grantee
+        grantee_uri: @grantee,
+        grant_id: @grant_id
       }
 
       payload = Signing.signing_payload(cap)
@@ -78,21 +80,14 @@ defmodule Ezagent.Cap.SigningTest do
 
     test "pins the cross-language canonical payload independently from storage encoders" do
       assert Signing.signing_payload(golden_cap()) ==
-               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"kind-g1:test-key","kind":"session","v":1,"workspace_uri":"workspace://team-alpha"})
+               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","grant_id":"018fbc96-3e3f-7413-a60b-8ed48338fc18","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"kind-g1:test-key","kind":"session","workspace_uri":"workspace://team-alpha"})
     end
 
-    test "v2 covers grant_id while v1 preserves the legacy payload" do
-      v1_payload = Signing.signing_payload(golden_cap())
+    test "always covers grant_id and carries no protocol version field" do
+      payload = Signing.signing_payload(golden_cap())
 
-      v2_payload =
-        golden_cap()
-        |> Map.merge(%{signing_version: 2, grant_id: "grant-018fbc96"})
-        |> Signing.signing_payload()
-
-      assert v2_payload =~ ~s("grant_id":"grant-018fbc96")
-      assert v2_payload =~ ~s("v":2)
-      refute v1_payload =~ "grant_id"
-      assert v1_payload =~ ~s("v":1)
+      assert payload =~ ~s("grant_id":"#{@grant_id}")
+      refute payload =~ ~s("v":)
     end
   end
 
@@ -106,20 +101,6 @@ defmodule Ezagent.Cap.SigningTest do
 
       assert_raise ArgumentError, fn -> Signing.trust_domain(nil) end
       assert_raise ArgumentError, fn -> Signing.trust_domain(:not_a_workspace) end
-    end
-  end
-
-  describe "valid_protocol?/1" do
-    test "accepts only legal v1 and v2 grant-id combinations" do
-      v1 = golden_cap()
-      v2 = %{v1 | signing_version: 2, grant_id: "grant-018fbc96"}
-
-      assert Signing.valid_protocol?(v1)
-      assert Signing.valid_protocol?(v2)
-      refute Signing.valid_protocol?(%{v1 | grant_id: "illegal-v1-id"})
-      refute Signing.valid_protocol?(%{v2 | grant_id: nil})
-      refute Signing.valid_protocol?(%{v2 | grant_id: ""})
-      refute Signing.valid_protocol?(%{v2 | signing_version: 99})
     end
   end
 
@@ -166,7 +147,8 @@ defmodule Ezagent.Cap.SigningTest do
       granted_by: @issuer,
       granted_at: ~U[2026-07-14 12:34:56.789123Z],
       key_id: "kind-g1:test-key",
-      grantee_uri: @grantee
+      grantee_uri: @grantee,
+      grant_id: @grant_id
     }
   end
 end

@@ -348,24 +348,6 @@
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
     },
     %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
-      note: "P2b stopped-node atomic snapshot rewrite; retire via governed migration facade"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "c3a22a8c128ad447208999773723f5ef7bf534752f9dba95007867d0607dc680",
-      note: "P2b stopped-node atomic snapshot rewrite; retire via governed migration facade"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/cap_revocation_cutover.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "6a9853eb654b6983e1e0bf8f512202950ad24d5aaa4ab53e0b3ebf186ef05e06",
-      note: "P2b stopped-node atomic snapshot rewrite; retire via governed migration facade"
-    },
-    %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
