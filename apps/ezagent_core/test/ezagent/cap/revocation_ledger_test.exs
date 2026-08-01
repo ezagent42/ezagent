@@ -1,10 +1,20 @@
 defmodule Ezagent.Cap.RevocationLedgerTest do
-  use EzagentCore.DataCase, async: true
+  use EzagentCore.DataCase, async: false
 
   alias Ezagent.Cap.RevocationLedger
 
   @workspace Ezagent.URI.new!("workspace://revocation-ledger")
   @other_workspace Ezagent.URI.new!("workspace://other-ledger")
+
+  setup do
+    Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
+    end)
+
+    :ok
+  end
 
   test "markers are idempotent, absorbing, and workspace scoped" do
     attrs = marker_attrs("grant-1")
@@ -28,6 +38,13 @@ defmodule Ezagent.Cap.RevocationLedgerTest do
   test "empty grant-id batches avoid a database query and return empty" do
     assert {:ok, revoked} = RevocationLedger.revoked_grant_ids(@workspace, [])
     assert revoked == MapSet.new()
+  end
+
+  test "a ledger read failure stays distinct so authorization callers can deny" do
+    Application.put_env(:ezagent_core, :cap_revocation_ledger_force_read_error, true)
+
+    assert {:error, :forced_ledger_read_error} =
+             RevocationLedger.revoked_grant_ids(@workspace, ["grant-unreadable"])
   end
 
   defp marker_attrs(grant_id) do

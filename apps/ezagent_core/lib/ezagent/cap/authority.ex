@@ -495,7 +495,7 @@ defmodule Ezagent.Cap.Authority do
        when is_binary(public_key) and is_binary(signature) do
     cap = Normalize.fill_defaults(cap)
 
-    Signing.valid_protocol?(cap) and
+    Ezagent.Cap.RevocationEpoch.protocol_allowed?(cap) and
       :crypto.verify(
         :eddsa,
         :none,

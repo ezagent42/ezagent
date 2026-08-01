@@ -4,6 +4,7 @@ defmodule Ezagent.EntityCapsTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.{Cap, Capability, EntityCaps, SnapshotStore}
+  alias Ezagent.Cap.RevocationLedger
   alias Ezagent.EntityCaps.{Store, UserStore}
   alias EzagentCore.Repo
 
@@ -25,6 +26,7 @@ defmodule Ezagent.EntityCapsTest do
   end
 
   setup do
+    Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.EntityCapsReadyBarrier)
     :ok = Ezagent.EntityCapsReadyBarrier.clear()
 
@@ -40,7 +42,11 @@ defmodule Ezagent.EntityCapsTest do
         )
     end
 
-    on_exit(&Ezagent.EntityCapsReadyBarrier.clear/0)
+    on_exit(fn ->
+      Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
+      Ezagent.EntityCapsReadyBarrier.clear()
+    end)
+
     :ok
   end
 
@@ -142,6 +148,28 @@ defmodule Ezagent.EntityCapsTest do
         assert cap_present?(loaded, bound)
         refute cap_present?(loaded, wrong_receiver)
       end)
+    end
+
+    test "live and durable reads filter a v2 artifact after its grant_id is revoked" do
+      agent = agent_uri("per-cap-revoked")
+      cap = v2_issued_cap(agent, :send)
+
+      assert {:ok, _pid} =
+               Ezagent.Kind.spawn(IdentityHostKind, %{
+                 uri: agent,
+                 initial_caps: [cap]
+               })
+
+      wait_until_ready(agent)
+      assert cap_present?(EntityCaps.load(agent), cap)
+      assert cap_present?(EntityCaps.load_persisted(agent), cap)
+
+      assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(agent, cap))
+
+      refute cap_present?(EntityCaps.load(agent), cap)
+      refute cap_present?(EntityCaps.load_persisted(agent), cap)
+
+      :ok = Ezagent.Kind.terminate(agent)
     end
 
     test "a transient live read fails closed instead of falling back to stale durable caps" do
@@ -960,6 +988,36 @@ defmodule Ezagent.EntityCapsTest do
 
     {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
+  end
+
+  defp v2_issued_cap(receiver, action) do
+    unsigned = %Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: action,
+      instance: URI.new!("session://entity-caps/default/main"),
+      workspace_uri: @workspace,
+      granted_by: @issuer,
+      granted_at: DateTime.utc_now(),
+      signing_version: 2,
+      grant_id: Ecto.UUID.generate()
+    }
+
+    {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
+    authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
+  end
+
+  defp revocation_attrs(receiver, cap) do
+    %{
+      grant_id: cap.grant_id,
+      workspace_uri: receiver |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(receiver),
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(cap.instance),
+      key_id: cap.key_id
+    }
   end
 
   defp reissue_cap(authority, receiver, cap) do

@@ -438,9 +438,8 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> persist_locked(uri, uri_key, workspace, encoded, caps_list) end) do
+    case Repo.transaction(fn -> persist_locked(uri, uri_key, workspace, caps_list) end) do
       {:ok, :ok} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -451,11 +450,12 @@ defmodule Ezagent.EntityCaps.Store do
   # `Authority.regenesis/2` cannot rotate the generation between the verify and
   # this write (codex impl-review finding 1 — the verify/write race). A row is
   # never `active` unless a current-valid self-license holds at write time.
-  defp persist_locked(uri, uri_key, workspace, encoded, caps_list) do
+  defp persist_locked(uri, uri_key, workspace, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         :ok <- revoked_artifacts_guard(workspace, caps_list),
          licensed? <- licensed_under_lock?(uri, caps_list),
-         changes <- persist_changes(row, encoded, licensed?),
+         changes <- persist_changes(row, encode_caps(caps_list), licensed?),
          {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       # URI-share A2-2 (codex ⓪): the reverse cap index derives from THIS
       # authoritative held-cap write, IN the same transaction — atomic, so a
@@ -520,14 +520,21 @@ defmodule Ezagent.EntityCaps.Store do
          row when not is_nil(row) <- lock_row(uri_key),
          {:ok, caps} <- fun.(decode_caps(row.caps_json)) do
       caps_list = Enum.to_list(caps)
-      licensed? = licensed_under_lock?(uri, caps_list)
-      changes = persist_changes(row, encode_caps(caps_list), licensed?)
 
-      case row |> Ecto.Changeset.change(changes) |> Repo.update() do
-        {:ok, _row} ->
-          # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
-          Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
-          :ok
+      case revoked_artifacts_guard(workspace, caps_list) do
+        :ok ->
+          licensed? = licensed_under_lock?(uri, caps_list)
+          changes = persist_changes(row, encode_caps(caps_list), licensed?)
+
+          case row |> Ecto.Changeset.change(changes) |> Repo.update() do
+            {:ok, _row} ->
+              # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
+              Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+              :ok
+
+            {:error, reason} ->
+              Repo.rollback(reason)
+          end
 
         {:error, reason} ->
           Repo.rollback(reason)
@@ -886,9 +893,8 @@ defmodule Ezagent.EntityCaps.Store do
     uri_key = key(uri)
     workspace = workspace_key(uri)
     caps_list = Enum.to_list(caps)
-    encoded = encode_caps(caps_list)
 
-    case Repo.transaction(fn -> backfill_locked(uri, uri_key, workspace, encoded, caps_list) end) do
+    case Repo.transaction(fn -> backfill_locked(uri, uri_key, workspace, caps_list) end) do
       {:ok, status} -> {:ok, status}
       {:error, reason} -> {:error, reason}
     end
@@ -903,11 +909,12 @@ defmodule Ezagent.EntityCaps.Store do
   # concurrent regenesis cannot race a stale license back to `active`). The
   # backfill is a DISTINCT entry point (its own transaction + status return) as
   # the review requires.
-  defp backfill_locked(uri, uri_key, workspace, encoded, caps_list) do
+  defp backfill_locked(uri, uri_key, workspace, caps_list) do
     with :ok <- ensure_row(uri_key, workspace),
          row when not is_nil(row) <- lock_row(uri_key),
+         :ok <- revoked_artifacts_guard(workspace, caps_list),
          licensed? <- licensed_under_lock?(uri, caps_list),
-         changes <- persist_changes(row, encoded, licensed?),
+         changes <- persist_changes(row, encode_caps(caps_list), licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
       Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
@@ -1068,6 +1075,7 @@ defmodule Ezagent.EntityCaps.Store do
            with :ok <- ensure_row(uri_key, workspace),
                 row when not is_nil(row) <- lock_row(uri_key),
                 :ok <- precheck_fun.(row),
+                :ok <- revoked_artifacts_guard(workspace, caps_list),
                 true <-
                   licensed_under_lock?(uri, caps_list) || {:error, :no_current_self_license},
                 :ok <- maybe_consume(receipt),
@@ -1146,6 +1154,13 @@ defmodule Ezagent.EntityCaps.Store do
 
   defp maybe_consume(nil), do: :ok
   defp maybe_consume(%ProvisioningReceipt{} = receipt), do: ProvisioningReceipt.consume(receipt)
+
+  # P2 per-cap revocation: the ONE shared validator for every cap-set writer.
+  # Every caller invokes it only after taking the holder row's `FOR UPDATE`
+  # lock and before encoding, updating, or reindexing the new set.
+  defp revoked_artifacts_guard(workspace, caps_list) do
+    Ezagent.Cap.RevocationLedger.ensure_unrevoked(workspace, caps_list)
+  end
 
   # ====================================================================
   # Internals

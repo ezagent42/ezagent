@@ -558,9 +558,15 @@ defmodule Ezagent.EntityCaps do
   defp verified_checked(caps, uri) do
     verified = caps |> verified_set(uri) |> MapSet.to_list()
 
-    if Enum.any?(verified, &current_self_license?(&1, uri)),
-      do: {:ok, verified},
-      else: {:ok, []}
+    with {:ok, unrevoked} <-
+           Ezagent.Cap.RevocationLedger.filter_unrevoked(
+             Ezagent.URI.workspace_of(uri),
+             verified
+           ) do
+      if Enum.any?(unrevoked, &current_self_license?(&1, uri)),
+        do: {:ok, unrevoked},
+        else: {:ok, []}
+    end
   rescue
     error -> {:error, {:cap_verification_failed, Exception.message(error)}}
   catch

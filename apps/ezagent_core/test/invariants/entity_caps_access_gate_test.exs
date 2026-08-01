@@ -46,7 +46,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # resurrection guard — `active iff current-valid
                              # self-license`). `do_persist/2` no longer touches the
                              # column (it now delegates to the row-locked
-                             # `persist_locked/5` → `persist_changes/3`); the raw-cap
+                             # `persist_locked/4` → `persist_changes/3`); the raw-cap
                              # seam is `persist_changes/3` instead. Still the adapter's
                              # own storage seam — no new external reader.
                              #

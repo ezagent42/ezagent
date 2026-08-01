@@ -8,6 +8,7 @@ defmodule Ezagent.Cap.RevocationEpoch do
   """
 
   alias Ezagent.Ecto.CapRevocationEpoch
+  alias Ezagent.{Cap.Signing, Capability}
   alias EzagentCore.Repo
 
   @singleton_id "per_cap"
@@ -21,6 +22,19 @@ defmodule Ezagent.Cap.RevocationEpoch do
   @doc "Return true only when the epoch is definitively active."
   @spec active?() :: boolean()
   def active?, do: status() == :active
+
+  @doc "Whether an artifact's signed protocol is admitted by the current epoch."
+  @spec protocol_allowed?(Capability.t()) :: boolean()
+  def protocol_allowed?(%Capability{} = cap), do: protocol_allowed?(cap, status())
+
+  @doc false
+  @spec protocol_allowed?(Capability.t(), :inactive | :active | :unknown) :: boolean()
+  def protocol_allowed?(%Capability{} = cap, :inactive), do: Signing.valid_protocol?(cap)
+
+  def protocol_allowed?(%Capability{signing_version: 2} = cap, :active),
+    do: Signing.valid_protocol?(cap)
+
+  def protocol_allowed?(%Capability{}, state) when state in [:active, :unknown], do: false
 
   if @test_seams do
     defp override_or_runtime_status do

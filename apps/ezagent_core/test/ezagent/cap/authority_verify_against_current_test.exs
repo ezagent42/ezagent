@@ -19,7 +19,13 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
+
+    on_exit(fn ->
+      Application.delete_env(:ezagent_core, :cap_revocation_epoch_override)
+    end)
+
     :ok
   end
 
@@ -98,6 +104,41 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
       |> Map.put(:__struct__, Capability)
 
     assert Authority.verify_against_current(legacy_cap, grantee, uri)
+  end
+
+  test "epoch inactive admits signed v1 and v2, active requires v2, and unknown denies both" do
+    {uri, pid, grantee} = start_target("epoch-protocol")
+    authority = :sys.get_state(pid).authority
+    v1 = authority_signed_cap!(authority, grantee, action_cap(uri))
+    v2 = mint_signed_cap_for(uri, grantee)
+
+    assert Authority.verify_against_current(v1, grantee, uri)
+    assert Authority.verify_against_current(v2, grantee, uri)
+
+    Application.put_env(:ezagent_core, :cap_revocation_epoch_override, :active)
+    refute Authority.verify_against_current(v1, grantee, uri)
+    assert Authority.verify_against_current(v2, grantee, uri)
+
+    Application.put_env(:ezagent_core, :cap_revocation_epoch_override, :unknown)
+    refute Authority.verify_against_current(v1, grantee, uri)
+    refute Authority.verify_against_current(v2, grantee, uri)
+  end
+
+  test "illegal signing-version and grant-id combinations deny without raising" do
+    {uri, pid, grantee} = start_target("illegal-protocol")
+    authority = :sys.get_state(pid).authority
+    v1 = authority_signed_cap!(authority, grantee, action_cap(uri))
+    v2 = mint_signed_cap_for(uri, grantee)
+
+    illegal = [
+      %{v1 | grant_id: "v1-must-not-have-an-id"},
+      %{v2 | grant_id: nil},
+      %{v2 | signing_version: 99}
+    ]
+
+    for artifact <- illegal do
+      refute Authority.verify_against_current(artifact, grantee, uri)
+    end
   end
 
   test "issue overwrites caller protocol metadata with a fresh v2 grant id" do

@@ -13,6 +13,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.{Capability, EntityCaps, SnapshotStore}
+  alias Ezagent.Cap.RevocationLedger
   alias Ezagent.EntityCaps.{Store, UserStore}
   alias Ezagent.Identity.ProvisioningReceipt
 
@@ -54,6 +55,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   setup do
+    Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
     :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.EntityCapsReadyBarrier)
     :ok = Ezagent.EntityCapsReadyBarrier.clear()
 
@@ -69,11 +71,77 @@ defmodule Ezagent.EntityCaps.StoreTest do
         )
     end
 
-    on_exit(&Ezagent.EntityCapsReadyBarrier.clear/0)
+    on_exit(fn ->
+      Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
+      Ezagent.EntityCapsReadyBarrier.clear()
+    end)
+
     :ok
   end
 
   describe "round-trip" do
+    test "all cap-set writers reject an absorbing revoked v2 artifact" do
+      persist_agent = agent_uri("revoked-persist")
+      persist_cap = v2_issued_cap(persist_agent, :send)
+      persist_grant_id = persist_cap.grant_id
+      :ok = revoke_cap(persist_agent, persist_cap)
+
+      assert {:error, {:revoked_capability_grants, [^persist_grant_id]}} =
+               Store.persist(persist_agent, licensed_caps(persist_agent, [persist_cap]))
+
+      refute Store.has_row?(persist_agent)
+
+      update_agent = agent_uri("revoked-update")
+      baseline = licensed_caps(update_agent, [issued_cap(update_agent, :send)])
+      update_cap = v2_issued_cap(update_agent, :join)
+      update_grant_id = update_cap.grant_id
+      assert :ok = Store.persist(update_agent, baseline)
+      :ok = revoke_cap(update_agent, update_cap)
+
+      assert {:error, {:revoked_capability_grants, [^update_grant_id]}} =
+               Store.update(update_agent, fn current -> {:ok, current ++ [update_cap]} end)
+
+      assert identity_keys(Store.load(update_agent)) == identity_keys(baseline)
+
+      backfill_agent = agent_uri("revoked-backfill")
+      backfill_cap = v2_issued_cap(backfill_agent, :send)
+      backfill_grant_id = backfill_cap.grant_id
+      :ok = revoke_cap(backfill_agent, backfill_cap)
+
+      assert {:error, {:revoked_capability_grants, [^backfill_grant_id]}} =
+               Store.backfill(
+                 backfill_agent,
+                 licensed_caps(backfill_agent, [backfill_cap])
+               )
+
+      refute Store.has_row?(backfill_agent)
+
+      provision_agent = agent_uri("revoked-provision")
+      provision_cap = v2_issued_cap(provision_agent, :send)
+      provision_grant_id = provision_cap.grant_id
+      provision_caps = licensed_caps(provision_agent, [provision_cap])
+
+      receipt =
+        ProvisioningReceipt.issue(provision_agent, @system_actor, :provision, provision_caps)
+
+      :ok = revoke_cap(provision_agent, provision_cap)
+
+      assert {:error, {:revoked_capability_grants, [^provision_grant_id]}} =
+               Store.provision(provision_agent, provision_caps, receipt, actor: @system_actor)
+
+      refute Store.has_row?(provision_agent)
+    end
+
+    test "the shared write gate rolls back when the revocation ledger is unreadable" do
+      agent = agent_uri("ledger-unreadable")
+      caps = licensed_caps(agent, [v2_issued_cap(agent, :send)])
+
+      Application.put_env(:ezagent_core, :cap_revocation_ledger_force_read_error, true)
+
+      assert {:error, :cap_revocation_ledger_unreadable} = Store.persist(agent, caps)
+      refute Store.has_row?(agent)
+    end
+
     test "persist then load returns the complete cap set" do
       agent = agent_uri("round-trip")
       caps = licensed_caps(agent, [issued_cap(agent, :send), issued_cap(agent, :join)])
@@ -272,12 +340,18 @@ defmodule Ezagent.EntityCaps.StoreTest do
       caps = licensed_caps(agent, [])
 
       assert {:error, :invalid_provisioning_receipt} =
-               Store.provision(agent, caps, ProvisioningReceipt.issue(agent, @system_actor, :reprovision, caps),
+               Store.provision(
+                 agent,
+                 caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :reprovision, caps),
                  actor: @system_actor
                )
 
       assert {:error, :invalid_provisioning_receipt} =
-               Store.provision(agent, caps, ProvisioningReceipt.issue(other, @system_actor, :provision, caps),
+               Store.provision(
+                 agent,
+                 caps,
+                 ProvisioningReceipt.issue(other, @system_actor, :provision, caps),
                  actor: @system_actor
                )
 
@@ -298,19 +372,28 @@ defmodule Ezagent.EntityCaps.StoreTest do
       new_caps = licensed_caps(agent, [issued_cap(agent, :join)])
 
       assert :ok =
-               Store.provision(agent, old_caps, ProvisioningReceipt.issue(agent, @system_actor, :provision, old_caps),
+               Store.provision(
+                 agent,
+                 old_caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :provision, old_caps),
                  actor: @system_actor
                )
 
       assert :ok = Store.revoke_provisioning(agent)
 
       assert {:error, :invalid_provisioning_receipt} =
-               Store.reprovision(agent, new_caps, ProvisioningReceipt.issue(agent, @system_actor, :provision, new_caps),
+               Store.reprovision(
+                 agent,
+                 new_caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :provision, new_caps),
                  actor: @system_actor
                )
 
       assert :ok =
-               Store.reprovision(agent, new_caps, ProvisioningReceipt.issue(agent, @system_actor, :reprovision, new_caps),
+               Store.reprovision(
+                 agent,
+                 new_caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :reprovision, new_caps),
                  actor: @system_actor
                )
 
@@ -318,7 +401,10 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert identity_keys(Store.load(agent)) == identity_keys(new_caps)
 
       assert {:error, :already_active} =
-               Store.reprovision(agent, new_caps, ProvisioningReceipt.issue(agent, @system_actor, :reprovision, new_caps),
+               Store.reprovision(
+                 agent,
+                 new_caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :reprovision, new_caps),
                  actor: @system_actor
                )
     end
@@ -328,7 +414,10 @@ defmodule Ezagent.EntityCaps.StoreTest do
       caps = licensed_caps(agent, [issued_cap(agent, :send)])
 
       assert :ok =
-               Store.provision(agent, caps, ProvisioningReceipt.issue(agent, @system_actor, :provision, caps),
+               Store.provision(
+                 agent,
+                 caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :provision, caps),
                  actor: @system_actor
                )
 
@@ -340,12 +429,18 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert {:error, :tombstoned} = Store.revoke_provisioning(agent)
 
       assert {:error, :tombstoned} =
-               Store.provision(agent, caps, ProvisioningReceipt.issue(agent, @system_actor, :provision, caps),
+               Store.provision(
+                 agent,
+                 caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :provision, caps),
                  actor: @system_actor
                )
 
       assert :ok =
-               Store.reprovision(agent, caps, ProvisioningReceipt.issue(agent, @system_actor, :reprovision, caps),
+               Store.reprovision(
+                 agent,
+                 caps,
+                 ProvisioningReceipt.issue(agent, @system_actor, :reprovision, caps),
                  actor: @system_actor
                )
 
@@ -382,7 +477,9 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       assert {:error, :invalid_receipt} = ProvisioningReceipt.from_json(nil)
       assert {:error, :invalid_receipt} = ProvisioningReceipt.from_json("not json")
-      assert {:error, :invalid_receipt} = ProvisioningReceipt.from_json(~s({"transition": "bogus"}))
+
+      assert {:error, :invalid_receipt} =
+               ProvisioningReceipt.from_json(~s({"transition": "bogus"}))
     end
 
     test "receipts are single-use — a replay is rejected" do
@@ -416,7 +513,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       stale =
         ProvisioningReceipt.issue(agent, @system_actor, :provision, caps,
-          issued_at: DateTime.utc_now() |> DateTime.add(-3_600, :second) |> DateTime.truncate(:microsecond)
+          issued_at:
+            DateTime.utc_now() |> DateTime.add(-3_600, :second) |> DateTime.truncate(:microsecond)
         )
 
       refute ProvisioningReceipt.fresh?(stale)
@@ -490,7 +588,10 @@ defmodule Ezagent.EntityCaps.StoreTest do
       # (store-authoritative — covered by the FIX 1 regressions below), so force
       # PRE-epoch here (the suite otherwise forces the epoch active).
       Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, false)
-      on_exit(fn -> Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true) end)
+
+      on_exit(fn ->
+        Application.put_env(:ezagent_domain_identity, :identity_cutover_active_override, true)
+      end)
 
       user = user_uri("shadow-failure")
       first = issued_cap(user, :send)
@@ -544,7 +645,9 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
   describe "#189 PR-3 FIX 1 (post-epoch: the identity store write is AUTHORITATIVE)" do
     setup do
-      on_exit(fn -> Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris) end)
+      on_exit(fn ->
+        Application.delete_env(:ezagent_domain_identity, :p1_forced_shadow_failure_uris)
+      end)
     end
 
     test "a forced store failure FAILS a user GRANT from a present row — no silent success" do
@@ -1047,7 +1150,9 @@ defmodule Ezagent.EntityCaps.StoreTest do
       cap = issued_cap(user, :send)
 
       assert :ok =
-               Store.sync_committed_identity(user, nil, %{caps: MapSet.new(licensed_caps(user, [cap]))})
+               Store.sync_committed_identity(user, nil, %{
+                 caps: MapSet.new(licensed_caps(user, [cap]))
+               })
 
       refute Store.has_row?(user)
 
@@ -1173,7 +1278,10 @@ defmodule Ezagent.EntityCaps.StoreTest do
       good = licensed_caps(agent, [issued_cap(agent, :send)])
 
       assert :ok =
-               Store.provision(agent, good, ProvisioningReceipt.issue(agent, @system_actor, :provision, good),
+               Store.provision(
+                 agent,
+                 good,
+                 ProvisioningReceipt.issue(agent, @system_actor, :provision, good),
                  actor: @system_actor
                )
 
@@ -1337,6 +1445,43 @@ defmodule Ezagent.EntityCaps.StoreTest do
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
 
+  defp v2_issued_cap(receiver, action) do
+    grant_id = Ecto.UUID.generate()
+
+    unsigned = %Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: action,
+      instance: URI.new!("session://identity-caps-store/default/main"),
+      workspace_uri: @workspace,
+      granted_by: @issuer,
+      granted_at: DateTime.utc_now(),
+      signing_version: 2,
+      grant_id: grant_id
+    }
+
+    {:ok, authority} = Ezagent.Cap.Authority.open(unsigned.instance, :session)
+    authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
+  end
+
+  defp revoke_cap(receiver, cap) do
+    attrs = %{
+      grant_id: cap.grant_id,
+      workspace_uri: receiver |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(receiver),
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(cap.instance),
+      key_id: cap.key_id
+    }
+
+    case RevocationLedger.mark(attrs) do
+      {:ok, _marker} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp licensed_caps(receiver, caps), do: [self_license(receiver) | caps]
 
   defp self_license(receiver) do
@@ -1364,11 +1509,16 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   defp user_uri(suffix),
-    do: URI.new!("entity://identity-caps-store/user/#{suffix}-#{System.unique_integer([:positive])}")
+    do:
+      URI.new!(
+        "entity://identity-caps-store/user/#{suffix}-#{System.unique_integer([:positive])}"
+      )
 
   defp agent_uri(suffix),
     do:
-      URI.new!("entity://identity-caps-store/agent/#{suffix}-#{System.unique_integer([:positive])}")
+      URI.new!(
+        "entity://identity-caps-store/agent/#{suffix}-#{System.unique_integer([:positive])}"
+      )
 
   defp identity_keys(caps) do
     caps
