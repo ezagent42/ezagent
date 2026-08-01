@@ -183,13 +183,18 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   读取本 User 的 SSH 公钥与指纹。
 
   不敏感——这是用户要贴进 provider 的东西，与 `:read_ssh_key`(私钥读取)
-  有意分成两条不同的 cap，不 emit 审计(高频、非敏感)。无身份时返回
-  `{:error, :ssh_identity_absent}`。
+  有意分成两条不同的 cap，不 emit 审计(高频、非敏感)。判定与 `:read_ssh_key`
+  同源(见 `any_identity_field?/1`)：五个身份字段全部缺失时返回
+  `{:error, :ssh_identity_absent}`；任一身份字段存在，但 `public_key` /
+  `fingerprint` 缺失时返回 `{:error, :ssh_identity_unavailable}`——绝不
+  返回一个 `fingerprint: nil` 的残缺结果，那会违反本 action 自己
+  `returns: %{fingerprint: :string}` 的声明(C3 修正)。
   """
   def handle_read_ssh_public_key(_args, ctx) do
-    case ctx[:read].(:public_key, nil) do
-      nil -> {:error, :ssh_identity_absent}
-      pub -> {:ok, %{public_key: pub, fingerprint: ctx[:read].(:fingerprint, nil)}, []}
+    case public_key_state(ctx) do
+      :absent -> {:error, :ssh_identity_absent}
+      :unavailable -> {:error, :ssh_identity_unavailable}
+      {:ok, pub, fp} -> {:ok, %{public_key: pub, fingerprint: fp}, []}
     end
   end
 
@@ -226,14 +231,17 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   @doc """
   撤销本 User 的 SSH 身份，清除全部相关 state 字段。
 
-  幂等——本来就没有身份时返回 `revoked: false` 且不产生任何 state 变更，
-  不是错误。清除的是**全部**身份字段(公钥/私钥/指纹/comment/created_at)
-  而非只清私钥，确保撤销之后的读取得到 `:ssh_identity_absent` 而非
-  `:ssh_identity_unavailable`——只清私钥会留下"有公钥无私钥"的形状，正好
-  落进 unavailable。
+  幂等——五个身份字段(见 `any_identity_field?/1`)全部缺失时视为"本来就
+  没有身份"，返回 `revoked: false` 且不产生任何 state 变更，不是错误。
+  判定不能只看 `public_key`/`private_key`(C4 修正)——只剩
+  `fingerprint`/`comment`/`created_at` 的 metadata-only 状态也必须触发
+  真实撤销，否则用户没有办法把这种状态清干净。清除的是**全部**身份字段
+  (公钥/私钥/指纹/comment/created_at)而非只清私钥，确保撤销之后的读取
+  得到 `:ssh_identity_absent` 而非 `:ssh_identity_unavailable`——只清私钥
+  会留下"有公钥无私钥"的形状，正好落进 unavailable。
   """
   def handle_revoke_ssh_key(_args, ctx) do
-    if ctx[:read].(:public_key, nil) || ctx[:read].(:private_key, nil) do
+    if any_identity_field?(ctx) do
       {:ok, %{revoked: true},
        [
          {:set, :public_key, nil},
@@ -252,28 +260,90 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # =================================================================
   # absent ≠ unavailable —— 这个区分必须从第一天就有
   #
-  # absent   = 完全没有身份 → 调用方可决定 fall-through 还是报错
-  # unavailable = 有身份记录但私钥缺失/形状不合法（部分写入、迁移遗留；
-  #               统一安全轨接手 at-rest 加密后，解封失败也归这一类）
+  # absent   = state 中五个身份字段(public_key / private_key / fingerprint /
+  #            comment / created_at)**全部**为 nil → 调用方可决定
+  #            fall-through 还是报错
+  # unavailable = 五个字段中**任一存在**，但本 action 需要的字段缺失/形状
+  #               不合法（部分写入、迁移遗留；统一安全轨接手 at-rest 加密
+  #               后，解封失败也归这一类）
+  #
+  # C1 (2026-08-02 review 修正)：早期实现只读 public_key/private_key 两个
+  # 字段判定 absent —— 一份只剩 fingerprint/comment/created_at(两个 key
+  # 字段都缺，但仍是"曾经有过身份"的记录，例如迁移遗留/部分恢复)的 state
+  # 会被误判成 absent。收紧为"五个字段皆 nil 才是 absent"，任一字段在场
+  # 即视为"有身份记录"，交给 unavailable 分支。
   #
   # 若把 unavailable 降级成 absent，将来接入既有的覆盖策略
   # (Ezagent.Credential.Resolver.pick_credential_source/1: explicit >
   # user > workspace-shared) 时会出现静默降权 —— 一个损坏的身份被误当成
   # "没配"而 fall through 到下一层。错误名刻意对齐既有的
   # :user_source_unavailable。
+  #
+  # `:read_ssh_public_key`(见 `public_key_state/1`)用同一个
+  # `any_identity_field?/1` 谓词判定 absent/unavailable 边界，只是把"本
+  # action 需要的字段"换成 public_key + fingerprint —— 边界判定必须两个
+  # action 共用一份，不能各写各的（C1 与 C4 同理，见下方 handler）。
   # =================================================================
+  @identity_fields [:public_key, :private_key, :fingerprint, :comment, :created_at]
   @private_key_header "-----BEGIN OPENSSH PRIVATE KEY-----"
+
+  # C1/C4 共用谓词——identity_state/1、public_key_state/1、
+  # handle_revoke_ssh_key/2 都要回答"这份 state 里有没有身份记录"，只写
+  # 一次，不要三份各写各的判断（读哪几个字段一旦漂移，三处必然不同步）。
+  defp any_identity_field?(ctx) do
+    Enum.any?(@identity_fields, fn key -> not is_nil(ctx[:read].(key, nil)) end)
+  end
 
   defp identity_state(ctx) do
     priv = ctx[:read].(:private_key, nil)
-    pub = ctx[:read].(:public_key, nil)
 
     cond do
-      is_binary(priv) and String.starts_with?(priv, @private_key_header) -> {:ok, priv}
-      is_nil(priv) and is_nil(pub) -> :absent
-      true -> :unavailable
+      valid_private_key?(priv) -> {:ok, priv}
+      any_identity_field?(ctx) -> :unavailable
+      true -> :absent
     end
   end
+
+  # C3 (2026-08-02 review 修正)：`:read_ssh_public_key` 曾经只看
+  # `public_key` 一个字段——为空即 absent，非空一律成功且不校验
+  # fingerprint，藏了两个真实 bug：① `private_key` 在但 `public_key` 缺失
+  # (部分写入)时误判 absent，而身份其实存在；② `public_key` 在但
+  # `fingerprint` 缺失时返回一个 `fingerprint: nil` 的结果，违反本 action
+  # 自己 `returns: %{fingerprint: :string}` 的声明。改成与
+  # `identity_state/1` 同构的三态判定：`public_key` 与 `fingerprint` 都是
+  # 合法字符串才成功；任一身份字段存在但这两者不全 → unavailable；完全
+  # 没有身份字段 → absent。
+  defp public_key_state(ctx) do
+    pub = ctx[:read].(:public_key, nil)
+    fp = ctx[:read].(:fingerprint, nil)
+
+    cond do
+      is_binary(pub) and is_binary(fp) -> {:ok, pub, fp}
+      any_identity_field?(ctx) -> :unavailable
+      true -> :absent
+    end
+  end
+
+  # C7 投入产出复核(2026-08-02，本轮 review)：OTP 的 `:ssh_file.decode/2`
+  # 确实能解析真实 OpenSSH 私钥——针对一份真实生成的 ed25519 私钥 + 多组
+  # 对抗性输入(截断、非 UTF-8 垃圾字节、错误 key 类型、超长垃圾)做过实测，
+  # 全部不抛异常，非法输入干净地返回 `{:error, :key_decode_failed}`。但
+  # **没有采用**：`:ssh_file` 属于 OTP 的 `:ssh` application，而这个仓库
+  # 任何一个 `mix.exs` 的 `extra_applications` 都不含 `:ssh`(不同于
+  # `:crypto`/`:ssl`/`:public_key`——那几个靠 `ezagent_plugin_github` 等
+  # release 内的兄弟 app 传递带进来)，根目录 `mix.exs` 的 `releases/0` 也
+  # 没有任何路径会把 `:ssh` app 打进生产 release。要采用就要在
+  # `ezagent_domain_identity` 的 `extra_applications` 里显式加
+  # `:ssh`，而这一改动的 release 装箱正确性，本任务现有工具无法构建/启动
+  # 真实 `mix release` 去验证——这正是"测试全绿、生产才炸"这个最怕的失败
+  # 类别，在没有把握验证的前提下不引入。下方仍是**前缀判定**(只看
+  # header 开头)，是一个已知、如实记录的弱点：一把"header 开头正确但被
+  # 截断/损坏"的私钥依然会被判成合法——测试 fixture 因此改用一把真实
+  # 生成、可解析的私钥(C7 的必做部分)，不代表分类器本身做了真解析。
+  defp valid_private_key?(priv) when is_binary(priv),
+    do: String.starts_with?(priv, @private_key_header)
+
+  defp valid_private_key?(_), do: false
 
   # I1: `comment` reaches `ssh-keygen -C <comment>` verbatim. A newline lets
   # a caller-controlled comment terminate the .pub file's first line early

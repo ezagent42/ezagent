@@ -199,11 +199,15 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 
 三者均在调用 `ssh-keygen` **之前**拒绝，不依赖后续解析兜底（防御深度：`keygen/1` 内部另外只取 `.pub` 输出首行，见实现注释）。
 
-**⑤ `:read_ssh_public_key` / `:read_ssh_key` 的 absent/unavailable 判定落实**（Task 2，2026-08-01 补）
+**⑤ `:read_ssh_public_key` / `:read_ssh_key` 的 absent/unavailable 判定落实**（Task 2，2026-08-01 补；2026-08-02 订正——原文与 §5.1 矛盾，见下）
 
-`:read_ssh_public_key` 只检查 `public_key` 字段：为空返回 `{:error, :ssh_identity_absent}`；否则返回公钥与指纹，**不做 unavailable 细分**——公钥字段本身要么完整要么不存在，没有"公钥损坏"的中间态需要覆盖。
+两个 action 都应用 §5.1 的判定依据：**是否存在任一身份字段**（`public_key` / `private_key` / `fingerprint` / `comment` / `created_at`），**不是**「两个 key 字段是否都缺」。五个字段皆为 nil → `{:error, :ssh_identity_absent}`；任一字段存在，但本 action 需要的字段缺失或形状不合法 → `{:error, :ssh_identity_unavailable}`。
 
-`:read_ssh_key` 应用 §5.1 的完整三态判定：私钥是合法形状（以 OpenSSH 私钥头开头）→ 返回私钥；私钥与公钥皆缺失 → `{:error, :ssh_identity_absent}`；其余任何形状（有公钥无私钥、私钥内容不合法等）→ `{:error, :ssh_identity_unavailable}`。两个错误原子均已在 §5.1 声明；这里是把该判定落实到具体 action 的实现条件，没有引入新原子。
+`:read_ssh_public_key` 需要的字段是 `public_key` 与 `fingerprint`——两者都是合法字符串才成功返回；任一缺失、但存在其它身份字段（例如只有 `private_key`，部分写入）时归 unavailable，**不是** absent。（订正：之前这里错误地断言"公钥字段本身要么完整要么不存在，没有公钥损坏的中间态"——这个前提不成立，`private_key` 在而 `public_key` 缺失就是一种真实可达的中间态，且原判定不校验 `fingerprint`，会返回违反本 action `returns` 声明的残缺结果。）
+
+`:read_ssh_key` 需要的字段是 `private_key`（合法形状 = 以 OpenSSH 私钥头开头）。
+
+两个错误原子均已在 §5.1 声明；这里是把该判定落实到具体 action 的实现条件，没有引入新原子。
 
 **⑥ `:revoke_ssh_key` 无错误路径，幂等返回 `revoked` 布尔值**（Task 2，2026-08-01 补）
 

@@ -11,6 +11,23 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
 
   alias Ezagent.ActionSet.UserSshIdentity
 
+  # C7: a REAL, parseable ed25519 OpenSSH private key (generated once via
+  # `ssh-keygen -t ed25519`, embedded as a fixture) — NOT the earlier
+  # `header <> "x"` placeholder. That placeholder made "starts with the
+  # right header" look like a sufficient validity check when it never
+  # actually exercised anything parseable — a truncated/corrupted real key
+  # is a materially different shape than a hand-typed fake one. Throwaway
+  # test-only key, unrelated to any real host or account.
+  @real_private_key """
+  -----BEGIN OPENSSH PRIVATE KEY-----
+  b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+  QyNTUxOQAAACBFs0FwGXChjFi1JEbjGXn96L/9h0IfAcyzSz72LG3mCwAAAJj1/+AZ9f/g
+  GQAAAAtzc2gtZWQyNTUxOQAAACBFs0FwGXChjFi1JEbjGXn96L/9h0IfAcyzSz72LG3mCw
+  AAAEAZZGbQeyRg9BLQ/ocC1dCTSQwvWKdwWOhoYmA9jrY7GkWzQXAZcKGMWLUkRuMZef3o
+  v/2HQh8BzLNLPvYsbeYLAAAAFHRlc3QtZml4dHVyZUBlemFnZW50AQ==
+  -----END OPENSSH PRIVATE KEY-----
+  """
+
   # Lifecycle handler 是纯 (args, ctx) 函数，可直接单测，无需起 Kind 进程。
   # ctx 只需提供 handler 实际用到的键：:self_uri 与 :read。
   defp ctx(state \\ %{}) do
@@ -248,13 +265,40 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     test "返回公钥与指纹" do
       state = %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"}
 
-      assert {:ok, %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"}, []} =
-               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+      assert {:ok, %{public_key: "ssh-ed25519 AAAAC3 alice", fingerprint: "SHA256:abc"} = result,
+              []} = UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+
+      # O1: assert the EXACT key set (same technique as I4, line 35) — Elixir
+      # map patterns are PARTIAL matches, so the assert above alone would
+      # still pass if the handler tacked extra keys (e.g. :private_key) onto
+      # the result, silently handing a low-sensitivity public-read cap
+      # holder the private key.
+      assert Map.keys(result) |> Enum.sort() == [:fingerprint, :public_key]
     end
 
     test "无身份时 absent" do
       assert {:error, :ssh_identity_absent} =
                UserSshIdentity.handle_read_ssh_public_key(%{}, ctx())
+    end
+
+    # C3: private_key present but public_key missing (partial write) must NOT
+    # be misreported as "no identity" — the identity DOES exist, just not in
+    # the shape this read needs.
+    test "私钥存在但公钥缺失时 unavailable，不是 absent" do
+      state = %{private_key: @real_private_key}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+    end
+
+    # C3: public_key present but fingerprint missing must NOT silently return
+    # a result with `fingerprint: nil` — that would violate this action's own
+    # `returns: %{fingerprint: :string}` declaration.
+    test "公钥存在但指纹缺失时 unavailable，不违反 returns 声明" do
+      state = %{public_key: "ssh-ed25519 AAAAC3 alice"}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
     end
   end
 
@@ -262,15 +306,30 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     test "返回私钥并留审计" do
       state = %{
         public_key: "ssh-ed25519 AAAAC3 alice",
-        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+        private_key: @real_private_key,
         fingerprint: "SHA256:abc"
       }
 
-      assert {:ok, %{private_key: priv}, effects} =
-               UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
+      assert {:ok, result, effects} = UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
 
-      assert String.starts_with?(priv, "-----BEGIN OPENSSH PRIVATE KEY-----")
-      assert Enum.any?(effects, &match?({:emit, :ssh_identity_read, _}, &1))
+      # C6: assert the returned private key is BYTE-EXACT the one placed in
+      # state, not merely "some string starting with the OpenSSH header" — a
+      # handler returning a DIFFERENT key sharing that header (e.g. another
+      # user's) would still pass a bare starts_with? check.
+      assert result.private_key == @real_private_key
+
+      # O1: assert the EXACT key set (same technique as I4, line 35).
+      assert Map.keys(result) |> Enum.sort() == [:private_key]
+
+      # C8: the audit emit must carry the RIGHT user_uri and a real
+      # timestamp, not just exist — "谁在什么时候取走了私钥" is the entire
+      # reason this emit exists; `match?(..., _)` alone would still pass with
+      # an empty/wrong payload.
+      assert {:emit, :ssh_identity_read, payload} =
+               Enum.find(effects, &match?({:emit, :ssh_identity_read, _}, &1))
+
+      assert payload.user_uri == URI.to_string(ctx(state).self_uri)
+      assert %DateTime{} = payload.at
     end
 
     test "无身份时 absent" do
@@ -290,13 +349,27 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
       assert {:error, :ssh_identity_unavailable} =
                UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
     end
+
+    # C1: a state carrying ONLY metadata (fingerprint/created_at — no
+    # public_key, no private_key) is a genuinely reachable shape (migration
+    # leftover, partial restore — the snapshot reload path merges a plain map
+    # with no field-combination validation). It must classify as
+    # :unavailable ("there WAS an identity record"), never silently downgrade
+    # to :absent ("nothing configured") — spec §5.1's precise absent
+    # definition ("state 中无任何身份字段").
+    test "只有 metadata 字段(无 public_key/private_key)时 unavailable，不降级成 absent" do
+      state = %{fingerprint: "SHA256:abc", created_at: DateTime.utc_now()}
+
+      assert {:error, :ssh_identity_unavailable} =
+               UserSshIdentity.handle_read_ssh_key(%{}, ctx(state))
+    end
   end
 
   describe "revoke_ssh_key" do
     test "清除全部身份字段并留审计" do
       state = %{
         public_key: "ssh-ed25519 AAAAC3 alice",
-        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
+        private_key: @real_private_key,
         fingerprint: "SHA256:abc",
         comment: "alice",
         created_at: DateTime.utc_now()
@@ -310,21 +383,53 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
                "revoke 必须清除 #{key}"
       end
 
-      assert Enum.any?(effects, &match?({:emit, :ssh_identity_revoked, _}, &1))
+      # C8: the audit emit must carry the RIGHT user_uri and a real
+      # timestamp, not just exist.
+      assert {:emit, :ssh_identity_revoked, payload} =
+               Enum.find(effects, &match?({:emit, :ssh_identity_revoked, _}, &1))
+
+      assert payload.user_uri == URI.to_string(ctx(state).self_uri)
+      assert %DateTime{} = payload.at
     end
 
     test "无身份时幂等返回 revoked: false" do
       assert {:ok, %{revoked: false}, []} = UserSshIdentity.handle_revoke_ssh_key(%{}, ctx())
     end
 
+    # C4: a state carrying ONLY metadata (no public_key, no private_key) must
+    # still be revocable — the old guard (`public_key || private_key`)
+    # ignored fingerprint/comment/created_at entirely, so this shape could
+    # never be cleared by the user: revoke silently reported "nothing to
+    # revoke" (revoked: false, no effects) and left the metadata sitting in
+    # state forever.
+    test "只有 metadata 字段(无 public_key/private_key)时也能撤销" do
+      state = %{fingerprint: "SHA256:abc", comment: "alice", created_at: DateTime.utc_now()}
+
+      assert {:ok, %{revoked: true}, effects} =
+               UserSshIdentity.handle_revoke_ssh_key(%{}, ctx(state))
+
+      for key <- [:public_key, :private_key, :fingerprint, :comment, :created_at] do
+        assert Enum.any?(effects, &match?({:set, ^key, nil}, &1)),
+               "revoke 必须清除 #{key}"
+      end
+    end
+
     # spec §8 明确要求：revoke 之后 read 必须得 :absent 而非 :unavailable。
     # 这是 revoke 必须清除**全部**身份字段（而非只清私钥）的原因 —— 只清
     # 私钥会留下"有公钥无私钥"的形状，正好落进 :unavailable。
+    #
+    # C5: fixture 补齐全部 5 个身份字段(含 comment/created_at)，与上面"清除
+    # 全部身份字段"测试用的同一份完整 fixture一致——不要用一份本来就不完整
+    # 的 state 去验证"清除是否完整"这件事（一份缺 comment/created_at 的
+    # 前置 state 无法证明 revoke 真的清了这两个字段，即便它们本就不在其中
+    # 因而"看起来"被清了）。
     test "revoke 之后 read 得 absent 而非 unavailable" do
       state = %{
         public_key: "ssh-ed25519 AAAAC3 alice",
-        private_key: "-----BEGIN OPENSSH PRIVATE KEY-----\nx\n",
-        fingerprint: "SHA256:abc"
+        private_key: @real_private_key,
+        fingerprint: "SHA256:abc",
+        comment: "alice",
+        created_at: DateTime.utc_now()
       }
 
       assert {:ok, %{revoked: true}, effects} =
