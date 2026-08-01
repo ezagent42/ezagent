@@ -43,11 +43,20 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
 
       assert String.starts_with?(private, "-----BEGIN OPENSSH PRIVATE KEY-----")
 
-      # I4: the raw private key bytes must not appear anywhere in the
-      # SERIALIZED return value, not merely absent under a :private_key
-      # key. Jason.encode!/1 is what actually crosses the wire to a
-      # GUI/CLI consumer.
-      refute Jason.encode!(result) =~ private
+      # R1 (round-2 review): the I4 fix above — asserting against
+      # Jason.encode!(result) — PROVES NOTHING. OpenSSH private keys
+      # contain literal newlines; Jason.encode!/1 JSON-escapes every `\n`
+      # to the two-character sequence `\`+`n`, so the raw key's byte
+      # sequence is NEVER a substring of the encoded JSON, even when a
+      # field genuinely carries the private key verbatim. Both regressions
+      # this assertion is meant to catch (private key smuggled into
+      # :public_key or :fingerprint) were independently reproduced by two
+      # reviewers and PASSED the old `refute Jason.encode!(result) =~
+      # private` — see task-1-report.md for the red-demonstration
+      # transcript proving the NEW assertion below actually catches both.
+      # Assert against the RAW map values instead — no serialization step
+      # to hide behind.
+      refute Enum.any?(Map.values(result), &(is_binary(&1) and String.contains?(&1, private)))
 
       # 审计
       assert Enum.any?(effects, &match?({:emit, :ssh_identity_generated, _}, &1))
@@ -98,6 +107,26 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     test "comment 含 CR 时同样拒绝" do
       assert {:error, :invalid_comment} =
                UserSshIdentity.handle_generate_ssh_key(%{comment: "a\rb"}, ctx())
+    end
+
+    # R2 (round-2 review): verified empirically (elixir -e probe against
+    # this OTP 28 pair, see user_ssh_identity.ex's validate_comment/1
+    # comment) that System.cmd/3 does NOT raise for a NUL-containing argv
+    # element here — it silently truncates the argument at the NUL before
+    # exec. Pre-fix, `handle_generate_ssh_key/2` would therefore SUCCEED
+    # with a comment of `"a\0b"`, persisting that full string via the
+    # `{:set, :comment, _}` effect while the actual generated key's
+    # embedded comment (what ssh-keygen wrote to the .pub file) is only
+    # `"a"` — a silent mismatch between persisted state and the real key
+    # contents. Must be rejected before ssh-keygen ever runs, same as
+    # `\n`/`\r`.
+    test "comment 含 NUL 时同样拒绝（R2）" do
+      before = tmp_entries()
+
+      assert {:error, :invalid_comment} =
+               UserSshIdentity.handle_generate_ssh_key(%{comment: "a\0b"}, ctx())
+
+      assert tmp_entries() == before
     end
 
     # 任务 1a 补充（dispatcher 要求）: System.cmd/3 在可执行文件缺失时经
@@ -216,9 +245,12 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
   end
 
   defp tmp_entries do
+    # R6: derive from the module's own constant instead of repeating the
+    # literal — a rename of @keygen_tmp_prefix would otherwise desync
+    # silently and this leak check would go blind without ever going red.
     System.tmp_dir!()
     |> File.ls!()
-    |> Enum.filter(&String.starts_with?(&1, "ezagent-sshkeygen-"))
+    |> Enum.filter(&String.starts_with?(&1, UserSshIdentity.tmp_prefix()))
     |> Enum.sort()
   end
 end

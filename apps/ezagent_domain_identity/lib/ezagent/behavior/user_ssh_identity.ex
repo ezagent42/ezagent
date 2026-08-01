@@ -48,6 +48,12 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # run_ssh_keygen/2 对孤儿进程取舍的说明。
   @keygen_timeout_ms 5_000
 
+  # R6 (round-2 review): exposed so tests derive the prefix instead of
+  # repeating the literal — a rename here would otherwise silently desync
+  # from a hardcoded string in the test's tmp-dir-leak checks.
+  @doc false
+  def tmp_prefix, do: @keygen_tmp_prefix
+
   action(:generate_ssh_key,
     args: %{comment: {:option, :string}},
     returns: %{public_key: :string, fingerprint: :string},
@@ -144,8 +150,25 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   # first-line-only parsing in `keygen/1` (defense in depth — both are
   # cheap and independent; this is argument validation, not a new security
   # mechanism).
+  #
+  # R2 (round-2 review): also reject NUL (`\0`). Checked empirically on
+  # this OTP 28 / Elixir 1.19 pair (`elixir -e`, System.cmd/3 and a real
+  # ssh-keygen invocation both probed directly): System.cmd does NOT raise
+  # for a NUL-containing argv element here — it silently truncates that
+  # argument at the NUL before exec (confirmed: an `"a\0b"` comment reaches
+  # ssh-keygen as plain `"a"`). That is a DIFFERENT, still-real bug: the
+  # persisted :comment field (written via a `:set` effect) would keep the
+  # FULL untruncated `"a\0b"` while the key ssh-keygen actually generated
+  # carries only `"a"` as its embedded comment — a silent mismatch between
+  # persisted state and the real key contents, exactly the class of
+  # silent failure CLAUDE.md rules out. (An ArgumentError-raising
+  # System.cmd on some other BEAM/libc combination would additionally hit
+  # the same gap run_ssh_keygen/2's inner rescue leaves open for anything
+  # outside `File.Error`/`ErlangError` — belt-and-suspenders either way.)
+  # Reject before ssh-keygen ever runs, same as `\n`/`\r` — there's no
+  # argv contract where a NUL comment could ever be meaningful.
   defp validate_comment(comment) do
-    if String.contains?(comment, ["\n", "\r"]) do
+    if String.contains?(comment, ["\n", "\r", "\0"]) do
       {:error, :invalid_comment}
     else
       :ok
@@ -236,15 +259,45 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
   #
   # Task.async (not Task.Supervisor.async_nolink) per the human decision.
   # Task.async LINKS the spawned process to this one — so the System.cmd
-  # call is wrapped in its OWN try/rescue INSIDE the task. Verified
-  # empirically: without that inner rescue, a raise in the task (e.g. the
-  # :enoent case below) kills THIS process too via the link before
-  # Task.yield ever gets a chance to turn it into a graceful
-  # `{:exit, reason}` — which would be strictly worse than the hang I2
-  # exists to fix (a crashed User actor vs. one blocked call). Catching
-  # inside the task keeps it exiting NORMALLY (carrying an `{:error, _}`
-  # value) for every case we can anticipate; the `{:exit, reason}` clause
-  # below is a last-resort net for anything else.
+  # call is wrapped in its OWN try/rescue INSIDE the task.
+  #
+  # R3 correction (2026-08-01, round-2 review): a prior version of this
+  # comment claimed an uncaught raise here would "crash the User actor" in
+  # production. That is WRONG and has been retracted — verified against
+  # `Ezagent.Kind.Server`, which sets `Process.flag(:trap_exit, true)`
+  # (server.ex:106) around the process that runs this handler. Read
+  # elixir's own Task source (lib/elixir/lib/task.ex — `async/3`'s
+  # `build_alias/1` and `yield_receive/3`) to confirm the actual
+  # mechanism: `Task.async` establishes BOTH a link (spawn_link) AND a
+  # genuine `:erlang.monitor/3` from the OWNER's process, and
+  # `Task.yield/2` detects task completion/crash purely via that
+  # monitor's `{ref, reply}` / `{:DOWN, ref, ...}` messages — NOT via the
+  # link. So in production, an uncaught task crash does not kill the
+  # (trapping) actor at all: the monitor still delivers `:DOWN` and
+  # `Task.yield` still returns a clean `{:exit, reason}`, exactly as if
+  # this inner rescue weren't here. The actual, verified reason the inner
+  # rescue matters: this handler is ALSO called DIRECTLY in this module's
+  # own unit tests (user_ssh_identity_test.exs), with no Kind.Server in
+  # between — there, the "caller" IS a plain ExUnit test process that
+  # does NOT trap exits, and an uncaught raise inside the task WOULD
+  # cross the link and crash that test process outright (before
+  # Task.yield's monitor-based receive ever runs), rather than failing
+  # the assertion cleanly. Catching inside the task keeps it exiting
+  # NORMALLY (carrying an `{:error, _}` value) for every case we can
+  # anticipate, which keeps both the production actor AND a direct-call
+  # unit test well-behaved; the `{:exit, reason}` clause below is a
+  # last-resort net for anything else. (The link itself
+  # is still load-bearing for a DIFFERENT reason, unrelated to this
+  # rescue: if the OWNER dies while the task is running, the link tears
+  # the orphaned task down too — that's why `Task.async`, not
+  # `Task.Supervisor.async_nolink`, is the right call per the human
+  # decision.)
+  #
+  # One known, accepted residual of the link: on the SUCCESS path, the
+  # task's normal exit still delivers an `{:EXIT, task_pid, :normal}`
+  # message into the (trapping) actor's mailbox — invisible to a
+  # non-trapping caller, but real for Kind.Server. See the drain
+  # immediately below (R4).
   defp run_ssh_keygen(comment, key_path) do
     task =
       Task.async(fn ->
@@ -260,8 +313,30 @@ defmodule Ezagent.ActionSet.UserSshIdentity do
         end
       end)
 
+    task_pid = task.pid
+
     case Task.yield(task, keygen_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
       {:ok, result} ->
+        # R4 (round-2 review, human decision — option 1, priority order):
+        # drain the `{:EXIT, task_pid, :normal}` message the task's own
+        # normal exit just delivered into a trapping caller's mailbox (see
+        # the comment above this function). Best-effort by design: exit
+        # signal delivery is a separate, asynchronous step from the reply
+        # send Task.yield/2 already consumed, so the message may not have
+        # landed yet at this exact point — the 0 timeout does not wait for
+        # it. When it doesn't land in time, the (harmless) residual still
+        # reaches the catch-all handle_info/Lifecycle default handle_signal
+        # path described in the finding; that is an accepted cost, not a
+        # correctness bug. Deliberately NOT introducing Task.Supervisor or
+        # any other new infrastructure to close this last sliver
+        # deterministically (human decision: small, self-contained, no new
+        # infra > a fully airtight guarantee).
+        receive do
+          {:EXIT, ^task_pid, :normal} -> :ok
+        after
+          0 -> :ok
+        end
+
         result
 
       {:exit, reason} ->

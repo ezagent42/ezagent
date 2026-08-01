@@ -179,7 +179,7 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 
 1a 只有 user 一层、没有 fall-through，但**这个区分必须从第一天就有** —— 否则将来接入覆盖策略（§2.1）时会出现静默降权：一个损坏的身份会被误当成"没配"而 fall through 到下一层，正是既有 `pick_credential_source` 明令禁止的静默降权。错误名刻意对齐既有的 `:user_source_unavailable`。
 
-### 5.2 三条具体处理
+### 5.2 四条具体处理
 
 **① `ssh-keygen` 失败 → `{:error, {:keygen_failed, reason}}`**
 命令不存在 / 非零退出 / 输出不合预期，全部显式返回。**绝不返回 `:ok` 而实际没生成**（CLAUDE.md「不要 silent 失败」）。
@@ -190,6 +190,14 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 
 **③ 临时目录**
 每次调用一个随机名临时目录；读出内容后**立刻 `File.rm_rf`**，不依赖进程退出或 GC；异常路径同样清理（`try/after`）。
+
+**④ `comment` 含控制字符 → 拒绝，`{:error, :invalid_comment}`**（task-1 round-2 review 补，2026-08-01）
+
+`comment` 原样传给 `ssh-keygen -C <comment>`，在调用前校验，判定条件是含 `\n` / `\r` / `\0` 三者之一：
+- 含 `\n` / `\r`：会在 `.pub` 文件里提前结束首行并追加调用方可控的第二行 —— 一条语法合法但未被指纹覆盖的额外 `authorized_keys` 记录。
+- 含 `\0`：不同 BEAM/libc 组合下行为不一致（实测 OTP 28 + Elixir 1.19 上 `System.cmd/3` 静默把该 argv 元素截到 NUL 处，而非抛错）；即便不抛错，也会导致持久化的 `comment` 字段与 ssh-keygen 实际写入公钥文件的注释不一致 —— 同属「不要 silent 失败」要挡的一类。
+
+三者均在调用 `ssh-keygen` **之前**拒绝，不依赖后续解析兜底（防御深度：`keygen/1` 内部另外只取 `.pub` 输出首行，见实现注释）。
 
 ### 5.3 审计
 

@@ -644,3 +644,390 @@ All five changed files + the new test file are one commit (findings span
 production code, tests, an architecture-manifest comment, and a design
 doc — splitting further didn't seem to help a reviewer here, per the
 task's "split only if it genuinely helps a reviewer").
+
+---
+
+# Task 1 review-fix round 2 report (2026-08-01)
+
+Fixing all findings from `.superpowers/sdd/task-1-findings-round2.md` — 1
+Important (R1) + 5 Minor (R2-R6), plus the pre-resolved disagreement
+(no action needed — Allen already ruled "opus 对", the two follow-ups it
+still required are R1 and R3 below).
+
+Files touched:
+
+- `apps/ezagent_domain_identity/lib/ezagent/behavior/user_ssh_identity.ex`
+  (R2, R3, R4, R6 — production code)
+- `apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs`
+  (R1, R2, R6 — tests)
+- `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md`
+  (R5 — spec §5.2)
+
+Untouched, as instructed: `arch_baseline_manifest.exs` (ratchet stays
+`136`), `cap_signing_architecture_test.exs`, and the cold-load test's
+round-trip mechanics.
+
+## R1 (Important) — private-key-leak assertion, with the required red demonstration
+
+**Fix**: replaced the round-1 assertion (`refute Jason.encode!(result) =~
+private`) with the reviewers' prescribed raw-value check, in
+`user_ssh_identity_test.exs`'s `"生成密钥对..."` test (line 24; the new
+assertion is at line ~59):
+
+```elixir
+refute Enum.any?(Map.values(result), &(is_binary(&1) and String.contains?(&1, private)))
+```
+
+**Why the old one proved nothing** (now recorded in a code comment at the
+same spot): OpenSSH private keys contain literal `\n` bytes;
+`Jason.encode!/1` escapes every `\n` to the two-character sequence
+`\`+`n`, so the raw key's byte sequence can never be a substring of the
+encoded JSON — even when a field genuinely carries the key verbatim. The
+new assertion checks the RAW map values directly, no serialization step
+to hide behind.
+
+### Required verification — broke the implementation two ways, ran the NEW assertion, captured real red output, restored
+
+Both breaks were applied directly to `handle_generate_ssh_key/2`'s
+success-branch return value (`user_ssh_identity.ex` line 118), one at a
+time, each followed by `POSTGRES_PORT=15432 mix test
+apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs:24`,
+then reverted before the next.
+
+**Regression A — `public_key: pub <> priv`:**
+
+```elixir
+{:ok, %{public_key: pub <> priv, fingerprint: fp}, [...]}
+```
+
+```
+  1) test generate_ssh_key 生成密钥对，返回公钥与指纹，且不返回私钥 (Ezagent.ActionSet.UserSshIdentityTest)
+     apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs:24
+     Expected false or nil, got true
+     code: refute Enum.any?(Map.values(result), &(is_binary(&1) and String.contains?(&1, private)))
+     arguments:
+
+         # 1
+         ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHJQcgZHE6ItMp58Mk2Z/CBaLRwwGeTqjyvbBJPJLgwt alice@ezagent-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACByUHIGRxOiLTKefDJNmfwgWi0cMBnk6o8r2wSTyS4MLQAAAJApvzU/Kb81\nPwAAAAtzc2gtZWQyNTUxOQAAACByUHIGRxOiLTKefDJNmfwgWi0cMBnk6o8r2wSTyS4MLQ\nAAAEA+mEE7LFlBpZzrf1+zdai3ewI87ttNohCvgPzF6gRjE3JQcgZHE6ItMp58Mk2Z/CBa\nLRwwGeTqjyvbBJPJLgwtAAAADWFsaWNlQGV6YWdlbnQ=\n-----END OPENSSH PRIVATE KEY-----\n",
+          "SHA256:aO2vqHJPt9Zl0Gccu9UnWb7t8kwahtXOOVbgGZEH1dM"]
+
+         # 2
+         #Function<4.118527708/1 in Ezagent.ActionSet.UserSshIdentityTest."test generate_ssh_key 生成密钥对，返回公钥与指纹，且不返回私钥"/1>
+
+     stacktrace:
+       test/ezagent/behavior/user_ssh_identity_test.exs:59: (test)
+
+
+Finished in 0.2 seconds (0.00s async, 0.2s sync)
+1 test, 1 failure (12 excluded)
+```
+
+RED confirmed — `Map.values(result)` includes the smuggled
+`public_key <> private_key` string, `String.contains?` finds the private
+key inside it, `Enum.any?` is `true`, `refute` fails.
+
+**Regression B — `fingerprint: priv`:**
+
+```elixir
+{:ok, %{public_key: pub, fingerprint: priv}, [...]}
+```
+
+```
+  1) test generate_ssh_key 生成密钥对，返回公钥与指纹，且不返回私钥 (Ezagent.ActionSet.UserSshIdentityTest)
+     apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs:24
+     Expected false or nil, got true
+     code: refute Enum.any?(Map.values(result), &(is_binary(&1) and String.contains?(&1, private)))
+     arguments:
+
+         # 1
+         ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICmlIwOMMCb2JTxaHWOiTRB3iWvQldjsWra1qATQ5cuE alice@ezagent",
+          "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACAppSMDjDAm9iU8Wh1jok0Qd4lr0JXY7Fq2tagE0OXLhAAAAJCPJZJ3jyWS\ndwAAAAtzc2gtZWQyNTUxOQAAACAppSMDjDAm9iU8Wh1jok0Qd4lr0JXY7Fq2tagE0OXLhA\nAAAEDnonsC4mYy8SX0xIe4qi3ybDWJd87Kk4fYh6AsBEosMymlIwOMMCb2JTxaHWOiTRB3\niWvQldjsWra1qATQ5cuEAAAADWFsaWNlQGV6YWdlbnQ=\n-----END OPENSSH PRIVATE KEY-----\n"]
+
+         # 2
+         #Function<4.118527708/1 in Ezagent.ActionSet.UserSshIdentityTest."test generate_ssh_key 生成密钥对，返回公钥与指纹，且不返回私钥"/1>
+
+     stacktrace:
+       test/ezagent/behavior/user_ssh_identity_test.exs:59: (test)
+
+
+Finished in 0.1 seconds (0.00s async, 0.1s sync)
+1 test, 1 failure (12 excluded)
+```
+
+RED confirmed again — same mechanism, `fingerprint` now literally IS the
+private key.
+
+**Restore verified byte-exact**: after reverting line 118 back to
+`{:ok, %{public_key: pub, fingerprint: fp}, [...]}`, `git diff` on that
+line showed no change at all (confirming the restore matched the
+pre-break original exactly, not just "close enough"), and the test went
+back to green:
+
+```
+POSTGRES_PORT=15432 mix test apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs:24
+...
+1 test, 0 failures (12 excluded)
+```
+
+**R1 demonstration: CONFIRMED.** The new assertion catches both named
+regressions with real, captured red output; the old one (proven in
+round 2's findings doc) caught neither.
+
+## R2 (Minor) — `validate_comment/1` now rejects NUL
+
+**Fix**: `user_ssh_identity.ex`'s `validate_comment/1` (line 170) now
+checks `String.contains?(comment, ["\n", "\r", "\0"])` (was `["\n",
+"\r"]`). Test added: `"comment 含 NUL 时同样拒绝（R2）"`
+(`user_ssh_identity_test.exs:123`).
+
+**A discrepancy I found and want to flag explicitly**: the finding's
+stated mechanism — "`System.cmd/3` 对含 NUL 的 argv 元素抛
+`ArgumentError`" — does **not** reproduce on this repo's actual
+Erlang/OTP 28 + Elixir 1.19.2 pair. I probed it directly:
+
+```
+$ elixir -e 'IO.inspect(System.cmd("echo", ["a" <> <<0>> <> "b"]))'
+{"a\n", 0}
+```
+
+`System.cmd` silently **truncates** the argument at the NUL instead of
+raising (confirmed identically against a real `ssh-keygen -C "a\0b"`
+invocation — the generated key's embedded comment came back as plain
+`"a"`). I verified this by temporarily reverting just the NUL check (put
+`validate_comment/1` back to `["\n", "\r"]`) and running the new test —
+it went red via an ordinary `MatchError` (not a process crash):
+
+```
+  1) test generate_ssh_key comment 含 NUL 时同样拒绝（R2） (Ezagent.ActionSet.UserSshIdentityTest)
+     apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs:111
+     match (=) failed
+     code:  assert {:error, :invalid_comment} = UserSshIdentity.handle_generate_ssh_key(%{comment: "a\0b"}, ctx())
+     left:  {:error, :invalid_comment}
+     right: {:ok,
+             %{
+               public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIND3f9hjfIPgKR1gwA4QqpaqneyUrZIPq55uyM7eAi4P a",
+               fingerprint: "SHA256:UGU48mEQSA1S3DRm6uzvDNc2Q/tWCFhJquacC0kvkoo"
+             },
+             [
+               ...
+               {:set, :comment, <<97, 0, 98>>},
+               ...
+             ]}
+     stacktrace:
+       test/ezagent/behavior/user_ssh_identity_test.exs:114: (test)
+
+Finished in 0.1 seconds (0.00s async, 0.1s sync)
+1 test, 1 failure (12 excluded)
+```
+
+Then restored the fix and re-ran — green:
+`1 test, 0 failures (12 excluded)`.
+
+The fix (reject NUL) is still fully justified — just for a different,
+still-real reason than the finding stated: silent truncation means the
+persisted `{:set, :comment, _}` state field (`"a\0b"`) would silently
+diverge from the comment actually embedded in the generated key
+(`"a"`) — a silent state/reality mismatch, exactly the class of bug
+CLAUDE.md's "不要 silent 失败" rules out. I recorded this corrected
+mechanism in both the production comment and the test comment (not the
+finding's original `ArgumentError` claim) so a future reader isn't misled
+by an unverified premise — the same discipline R3 asked for elsewhere in
+this round.
+
+## R3 (Minor) — corrected the wrong "would crash the User actor" comment
+
+**Fix**: rewrote the `run_ssh_keygen/2` comment block in
+`user_ssh_identity.ex` (now lines 260-300). Retracted the false claim and
+replaced it with a mechanism I verified against Elixir's own `Task`
+source (`.../lib/elixir/lib/task.ex`, `async/3` + `build_alias/1` +
+`yield_receive/3`) rather than re-asserting the resolution doc's prose
+verbatim:
+
+- `Task.async` establishes **both** a link (`spawn_link`) and a genuine
+  `:erlang.monitor/3` from the owner's process (`build_alias/1` —
+  `:erlang.monitor(:process, pid, alias: :demonitor)`), and the monitor
+  is established **before** the task is signaled to run the actual
+  function — no start-up race.
+- `Task.yield/2`'s `yield_receive/3` detects completion/crash purely via
+  that monitor's `{ref, reply}` / `{:DOWN, ref, ...}` messages, never via
+  the link. So in production, an uncaught task crash does **not** kill
+  `Ezagent.Kind.Server` (which traps exits, `server.ex:106`) — the
+  monitor still delivers cleanly regardless of trap_exit.
+- The inner rescue's real justification: this handler is also called
+  DIRECTLY by this module's own unit tests, with no `Kind.Server` in
+  between — there, the "caller" is a plain, non-trapping ExUnit process,
+  where an uncaught raise inside the task genuinely would cross the link
+  and crash the test process before `Task.yield` ever runs.
+- Named the accepted residual (the R4 topic) inline as a forward
+  reference instead of leaving it implicit.
+
+No test needed for a comment-only fix; verified via `mix compile` +
+re-running the full target test files (unchanged behavior, prose only).
+
+## R4 (Minor) — drain the residual `{:EXIT, task_pid, :normal}` on the success path
+
+**Chose option 1** (selective 0-timeout receive), per the finding's
+stated priority. In `run_ssh_keygen/2` (`user_ssh_identity.ex`
+lines 301-340): bound `task_pid = task.pid` right after `Task.async`
+returns (note: `^task.pid` does **not** compile as a pin target in a
+receive pattern — Elixir's pin operator requires a bound variable, not a
+field-access expression; confirmed via `elixir -e` probe before writing
+the real code, same discipline as the rest of this module), then in the
+`{:ok, result} ->` branch:
+
+```elixir
+receive do
+  {:EXIT, ^task_pid, :normal} -> :ok
+after
+  0 -> :ok
+end
+```
+
+**Why no dedicated regression test**: the drain is explicitly
+best-effort/racy by the finding's own framing ("带 0 超时，拿不到就算了")
+— exit-signal delivery to the linked, trapping caller is a separate
+asynchronous step from the reply message `Task.yield` already consumed,
+so there's no guarantee the `:EXIT` message has landed by the time the
+0-timeout receive runs. A test asserting "the message is never present
+after the call returns" would be flaked by timing, not by a real
+regression — worse than no test. I confirmed the fix is at least
+inert/safe in the existing non-trapping unit-test context (a non-trapping
+process never receives `:EXIT` for a `:normal`-reason linked exit at
+all, so the `receive/after 0` there is always a harmless immediate
+no-op) by re-running the full target test files — still 14 tests, 0
+failures. The already-existing I3 dispatch/cold-load integration test
+(which runs through the real, trapping `Kind.Server`) is the only
+practical way this path gets exercised end-to-end, matching what the
+finding itself already cites as having "证实" the benign-ness of the
+residual.
+
+## R5 (Minor) — `:invalid_comment` added to the spec's failure-semantics table
+
+**Fix**: `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md`
+§5.2, renamed "三条具体处理" → "四条具体处理", added **④** documenting
+`{:error, :invalid_comment}` and its three trigger conditions (`\n` /
+`\r` / `\0`), including the corrected NUL mechanism from R2 (empirically
+verified truncation-not-raise on this OTP/Elixir pair, not the
+originally-assumed `ArgumentError`).
+
+## R6 (Minor) — tmp-dir prefix no longer hardcoded in the test
+
+**Fix**: `user_ssh_identity.ex` now exposes `def tmp_prefix, do:
+@keygen_tmp_prefix` (line 55, `@doc false`, same testability-seam pattern
+as `cleanup_tmp_dir/1`/`fingerprint/1` from round 1).
+`user_ssh_identity_test.exs`'s `tmp_entries/0` helper now calls
+`UserSshIdentity.tmp_prefix()` instead of repeating the literal
+`"ezagent-sshkeygen-"`.
+
+## Self-inflicted bug caught and fixed before it shipped
+
+While writing R2's production comment, I wrote the literal text
+`` `{:set, :comment, comment}` `` in prose — the exact same class of
+mistake the round-1 report documented catching once already (the
+`set_effect_sites` scanner is a plain per-line regex,
+`~r/\{:set,\s*:[a-z_]+,/`, not AST-aware, so it matches doc prose
+identically to a real effect tuple). Caught it this time by re-running
+`grep -noE '\{:set,[[:space:]]*:[a-z_]+,' user_ssh_identity.ex` after
+every edit to the file (not just at the end) — found the 6th spurious
+match, reworded the comment to avoid the literal bracket-tuple syntax
+(same fix pattern as round 1), re-grepped down to exactly 5 (all real),
+then confirmed with the actual gate:
+
+```
+POSTGRES_PORT=15432 mix test apps/ezagent_core/test/architecture/effect_discipline_test.exs apps/ezagent_core/test/architecture/doc_coverage_test.exs apps/ezagent_core/test/architecture/manifest_ratchet_test.exs apps/ezagent_core/test/architecture/cap_signing_architecture_test.exs
+...
+27 tests, 0 failures
+```
+
+(Also confirmed, separately, that `test/` files are entirely outside the
+scanner's reach —`lib_files/0` in `ezagent.arch.scan.ex` globs only
+`apps/*/lib/**/*.ex` — so the same literal tuple text appearing in the
+*test* file's R2 comment, which I left as-is, was never at risk.)
+
+`arch_baseline_manifest.exs` and `cap_signing_architecture_test.exs`
+confirmed untouched throughout (`git diff` on both is empty).
+
+## Test commands run + real output (round 2)
+
+Target files:
+
+```
+POSTGRES_PORT=15432 mix test apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_lifecycle_cold_load_test.exs
+```
+```
+Finished in 0.2 seconds (0.00s async, 0.2s sync)
+14 tests, 0 failures
+```
+(13 in the unit test file — 12 from round 1 + R2's new NUL test — plus 1
+in the untouched cold-load file.)
+
+Full identity-domain suite (run once, as instructed):
+
+```
+POSTGRES_PORT=15432 mix test apps/ezagent_domain_identity/test
+```
+```
+Finished in 50.5 seconds (2.0s async, 48.5s sync)
+666 tests, 3 failures
+```
+The 3 failures are exactly the task prompt's named pre-existing
+DB-seed flakiness — `Ezagent.Identity.Cutover.RunbookTest` ×2
+(`runbook_test.exs:128`, `runbook_test.exs:113`) and
+`Ezagent.Identity.CutoverTest` ×1 (`cutover_test.exs:137`). Grepped the
+full log for "ssh" (case-insensitive): zero hits outside the worktree's
+own directory path. **No new red.**
+
+Fast CI gate:
+
+```
+POSTGRES_PORT=15432 mix ci.fast
+```
+```
+==> ezagent_core
+697 tests, 4 failures
+==> ezagent_domain_identity
+4 tests, 0 failures
+==> ezagent_domain_external_mirror
+39 tests, 0 failures
+==> ezagent_domain_session
+8 tests, 0 failures
+EXIT_CODE=2
+```
+The 4 failures are exactly the task prompt's other named pre-existing
+group — `PluginWorkspaceLocalityContractTest` ×2,
+`SensitiveSliceReadTest` ×1, `CapCheckOnlyAtChokepointTest` ×1, all in
+`apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/official_site_seed.ex`.
+Grepped the full log for "ssh": zero hits outside the worktree's own
+directory path. **`mix ci.fast` is still red on exactly the same
+pre-existing 4 failures it was red on before this round — no new red.**
+
+Architecture gates specifically touched by this round's edits
+(`set_effect_sites` via the R2 comment, `undocumented_public_defs` via
+the new `tmp_prefix/0`, plus the untouched-but-adjacent
+`cap_signing_architecture_test.exs` and the ratchet-annotation gate):
+
+```
+POSTGRES_PORT=15432 mix test apps/ezagent_core/test/architecture/effect_discipline_test.exs apps/ezagent_core/test/architecture/doc_coverage_test.exs apps/ezagent_core/test/architecture/manifest_ratchet_test.exs apps/ezagent_core/test/architecture/cap_signing_architecture_test.exs
+```
+```
+Finished in 13.5 seconds (12.0s async, 1.4s sync)
+27 tests, 0 failures
+```
+
+`mix format --check-formatted` on both touched Elixir files: exit 0
+(no changes needed after the final polish edit).
+
+## What I could not fix
+
+Nothing from the round-2 findings list was left unfixed. One thing worth
+a human glance even though I judged it safe to proceed on (documented
+above, not hidden): R2's fix is justified by a different, empirically
+verified mechanism (silent truncation → persisted-state/real-key
+mismatch) than the finding originally stated (`ArgumentError`) — the
+*fix* itself (reject NUL before `ssh-keygen` runs) is unchanged and still
+exactly what was asked for.
+
+## Commit
+
+All three changed files (production code, test, spec doc) are one commit
+per the task's "One commit is fine."
