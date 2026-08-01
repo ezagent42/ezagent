@@ -66,6 +66,7 @@ defmodule Ezagent.World.PtyReadExitsTest do
       @creator
     )
     |> Map.put(:grantee_uri, @creator)
+    |> Map.put(:grant_id, Ecto.UUID.generate())
     |> then(&Ezagent.Cap.Authority.sign(authority, &1))
   end
 
@@ -140,6 +141,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
         @creator
       )
       |> Map.put(:grantee_uri, @creator)
+      |> Map.put(:grant_id, Ecto.UUID.generate())
       |> then(&Ezagent.Cap.Authority.sign(authority, &1))
 
     Application.put_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{

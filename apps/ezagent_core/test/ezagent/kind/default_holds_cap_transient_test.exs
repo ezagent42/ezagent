@@ -27,7 +27,7 @@ defmodule Ezagent.Kind.DefaultHoldsCapTransientTest do
     refute Kind.default_holds_cap?(uri, @needed)
   end
 
-  test "legacy identity-slice authorization is closed even when a live entity stores a wildcard" do
+  test "an unsigned wildcard is rejected before it can enter the holder store" do
     uri_string = "entity://team-alpha/user/closed-live-#{unique()}"
 
     unsigned_wildcard = %{
@@ -35,11 +35,8 @@ defmodule Ezagent.Kind.DefaultHoldsCapTransientTest do
       | grantee_uri: Ezagent.URI.new!(uri_string)
     }
 
-    assert {:ok, _} = Users.create(uri_string, nil, [unsigned_wildcard])
-    uri = Ezagent.URI.new!(uri_string)
-    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
-
-    refute Kind.default_holds_cap?(uri, @needed)
+    assert {:error, :invalid_capability_protocol} =
+             Users.create(uri_string, nil, [unsigned_wildcard])
   end
 
   test "legacy helper may fail loud, but the target verifier never calls it" do

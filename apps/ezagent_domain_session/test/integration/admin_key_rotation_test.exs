@@ -7,7 +7,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AdminKeyRotationTest do
   transaction under the authority-row lock) — no stale-generation admin window.
 
   This spawns + rotates + terminates the VM-GLOBAL genesis-admin singleton, so it
-  runs ALONE in the isolated `session_boot_seed` CI shard (`@moduletag
+  runs ALONE in the isolated `session_admin_rotation` CI shard (`@moduletag
   :real_boot_seed_path`, excluded from the default suite) rather than corrupting
   sibling tests that depend on the live admin.
   """

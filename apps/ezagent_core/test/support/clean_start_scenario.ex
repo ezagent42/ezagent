@@ -5,9 +5,6 @@ defmodule Ezagent.Test.CleanStartScenario do
   alias Ezagent.Capability
   alias EzagentCore.Repo
 
-  @proof_holder "entity://clean-start/agent/revocation-proof"
-  @proof_target "session://clean-start/default/revocation-proof"
-
   @doc false
   def run_first_boot! do
     holder = proof_holder()
@@ -168,9 +165,9 @@ defmodule Ezagent.Test.CleanStartScenario do
     }
   end
 
-  defp proof_holder, do: Ezagent.URI.new!(@proof_holder)
-  defp proof_target, do: Ezagent.URI.new!(@proof_target)
-  defp proof_workspace, do: Ezagent.URI.new!("workspace://clean-start")
+  defp proof_holder, do: Ezagent.URI.agent("clean-start", "revocation-proof")
+  defp proof_target, do: Ezagent.URI.session("clean-start", "default", "revocation-proof")
+  defp proof_workspace, do: Ezagent.URI.workspace("clean-start")
   defp identity_action_set, do: Module.concat([Ezagent, ActionSet, Identity])
   defp session_action_set, do: Module.concat([Ezagent, ActionSet, Session])
   defp identity_store_call(function, args), do: apply(identity_store(), function, args)

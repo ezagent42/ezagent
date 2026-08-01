@@ -369,9 +369,8 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
       assert Capability.matches?(restored, needed)
     end
 
-    test "from_map injects `:any` for missing `action` key (pre-SPEC tolerance)" do
-      # Pre-action-axis caps_json rows lack the field; from_map defaults to "any".
-      legacy_map = %{
+    test "from_map rejects a missing `action` key" do
+      incomplete_map = %{
         "kind" => "session",
         "behavior" => "Ezagent.ActionSet.Session",
         "instance" => URI.to_string(@session_a),
@@ -380,10 +379,7 @@ defmodule Ezagent.E2E.Category05.Scenario14GrantCapActionAxisTest do
         "granted_at" => "2026-05-01T00:00:00Z"
       }
 
-      cap = Capability.from_map(legacy_map)
-
-      assert cap.action == :any,
-             "legacy caps_json missing `action` MUST default to `:any` (SPEC §3.4)"
+      assert_raise KeyError, fn -> Capability.from_map(incomplete_map) end
     end
   end
 end

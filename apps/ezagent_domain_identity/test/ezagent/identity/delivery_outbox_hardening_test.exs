@@ -287,7 +287,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
-  test "concurrent equivalent absorbs create one pending delivery" do
+  test "concurrent equivalent axes with distinct grant IDs create distinct pending deliveries" do
     {target, pid} = spawn_target("concurrent-semantic-absorb")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
     first = capability(target)
@@ -311,7 +311,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     end)
 
     assert Enum.map(tasks, &Task.await(&1, 5_000)) == [:ok, :ok]
-    assert pending_delivery_count(target) == 1
+    assert pending_delivery_count(target) == 2
 
     terminate(target, pid)
   end
@@ -702,7 +702,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     issuer = Ezagent.URI.user("team-alpha", unique("semantic-issuer"))
     {:ok, artifact} = Cap.prepare_provenance({:held_by, issuer}, target, requested)
-    Authority.sign(authority, artifact)
+    Authority.sign(authority, %{artifact | grant_id: Ecto.UUID.generate()})
   end
 
   defp one_delivery!(target) do

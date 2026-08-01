@@ -203,7 +203,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         exact_module?(module, [:Ezagent, :IdentityCaps]) and function in [:persist, :grant] ->
           :capability_holder
 
-        exact_module?(module, [:Ezagent, :IdentityCaps, :UserStore]) and function == :persist ->
+        exact_module?(module, [:Ezagent, :IdentityCaps, :Store]) and function == :persist ->
           :capability_holder
 
         exact_module?(module, [:Ezagent, :Identity]) and function == :grant_cap ->

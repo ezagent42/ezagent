@@ -35,6 +35,7 @@ defmodule Ezagent.Architecture.CapVerifierDominanceTest do
     authority = :sys.get_state(pid).authority
 
     unsigned = %Capability{
+      grant_id: Ecto.UUID.generate(),
       kind: :test,
       behavior: TestBehavior,
       action: :noop,

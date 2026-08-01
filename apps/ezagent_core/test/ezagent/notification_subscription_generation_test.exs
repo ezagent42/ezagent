@@ -26,6 +26,7 @@ defmodule Ezagent.NotificationSubscriptionGenerationTest do
 
     cap =
       %Capability{
+        grant_id: Ecto.UUID.generate(),
         kind: :user,
         behavior: Ezagent.ActionSet.Notifications,
         action: :subscribe,

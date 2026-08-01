@@ -105,7 +105,7 @@ defmodule Ezagent.E2E.CapSigningAcceptanceTest do
     assert {:ok, pid_a} = Ezagent.KindRegistry.lookup(uri_a)
     authority_a = :sys.get_state(pid_a).authority
 
-    b_shaped_cap = unsigned_cap(uri_b, presenter)
+    b_shaped_cap = %{unsigned_cap(uri_b, presenter) | grant_id: Ecto.UUID.generate()}
     wrong_key_cap = Authority.sign(authority_a, b_shaped_cap)
 
     assert wrong_key_cap.instance == uri_b

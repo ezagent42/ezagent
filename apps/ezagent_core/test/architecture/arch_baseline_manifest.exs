@@ -1,5 +1,5 @@
 %{
-  # IdentityCaps.Store is the sole durable authority and the transaction boundary
+  # arch-cap-bump: 0→1 — IdentityCaps.Store is the sole durable authority and the transaction boundary
   # coupling its cap row, exact-revocation ledger, delivery outbox, and grantee
   # index. Burn-down must preserve that single transaction owner.
   oversized_modules_gt_1500: 1,

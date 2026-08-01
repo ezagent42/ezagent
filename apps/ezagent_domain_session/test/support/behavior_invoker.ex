@@ -206,7 +206,7 @@ defmodule EzagentDomainInstanceMessage.Test.BehaviorInvoker do
         cap
       )
 
-    Ezagent.Cap.Authority.sign(authority, artifact)
+    Ezagent.Cap.Authority.sign(authority, %{artifact | grant_id: Ecto.UUID.generate()})
   end
 
   defp caps_to_list(%MapSet{} = caps), do: MapSet.to_list(caps)

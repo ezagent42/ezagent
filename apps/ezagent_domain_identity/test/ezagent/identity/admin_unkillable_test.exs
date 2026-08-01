@@ -7,7 +7,7 @@ defmodule Ezagent.Identity.AdminUnkillableTest do
   (The sanctioned `AdminKeyRotation` rotate + re-mint is proven end-to-end in the
   isolated `apps/ezagent_domain_session/test/integration/admin_key_rotation_test.exs`
   — it mutates the VM-global admin singleton, so it runs ALONE in the
-  `session_boot_seed` CI shard rather than corrupting this suite.)
+  `session_admin_rotation` CI shard rather than corrupting this suite.)
   """
 
   use EzagentCore.DataCase, async: false

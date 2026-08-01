@@ -66,12 +66,12 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
 
   defp uniq(prefix), do: "#{prefix}_#{System.unique_integer([:positive])}"
 
-  defp spawn_alice(caps \\ []) do
+  defp spawn_alice do
     uri_str = "entity://team-alpha/user/" <> uniq("alice")
-    {:ok, _} = Users.create(uri_str, nil, caps)
+    {:ok, _} = Users.create(uri_str, nil, [])
     uri = Ezagent.URI.new!(uri_str)
     {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
-    {uri, MapSet.new(caps)}
+    {uri, MapSet.new()}
   end
 
   defp default_session(workspace_uri \\ URI.new!("workspace://system")) do
@@ -195,8 +195,9 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
           workspace_uri: URI.new!("workspace://system")
         )
 
-      {alice_uri, alice_caps} = spawn_alice([wrong_cap])
+      {alice_uri, _empty} = spawn_alice()
       session = default_session()
+      alice_caps = MapSet.new([signed_cap!(session, alice_uri, wrong_cap)])
 
       assert_denied!(
         dispatch_send(alice_uri, alice_caps, session, "hi"),
@@ -215,8 +216,9 @@ defmodule Ezagent.E2E.Category05.Scenario15RevokeCapDenialTest do
           workspace_uri: URI.new!("workspace://system")
         )
 
-      {alice_uri, alice_caps} = spawn_alice([wrong_action_cap])
+      {alice_uri, _empty} = spawn_alice()
       session = default_session()
+      alice_caps = MapSet.new([signed_cap!(session, alice_uri, wrong_action_cap)])
 
       assert_denied!(
         dispatch_send(alice_uri, alice_caps, session, "hi"),

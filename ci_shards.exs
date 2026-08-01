@@ -50,16 +50,13 @@
     {"e2e", ["/test/e2e/"]},
     {"actor", ["apps/ezagent_actor/test/"]},
     {"core", ["apps/ezagent_core/test/"]},
-    # Isolated ONE-file legs for the tag-excluded tests that mutate the VM-GLOBAL
-    # genesis admin (#1627). Each mutation (rotate-without-remint + escaping
-    # SessionTemplate persist; rotate + re-mint + terminate the live admin) corrupts
-    # sibling tests that depend on the live admin — AND each other — so each runs
-    # ALONE in its OWN BEAM + DB partition, carved BEFORE `session` (first-match-
-    # wins). `run_shard_tests` passes `--include real_boot_seed_path` so their
+    # Isolated ONE-file leg for the tag-excluded test that mutates the VM-GLOBAL
+    # genesis admin (#1627). Rotate + re-mint + terminating the live admin corrupts
+    # sibling tests that depend on it, so this test runs ALONE in its OWN BEAM + DB
+    # partition, carved BEFORE `session` (first-match-wins). `run_shard_tests`
+    # passes `--include real_boot_seed_path` so its
     # `@moduletag :real_boot_seed_path` (excluded by default in the session
     # test_helper) actually RUNS here.
-    {"session_boot_seed",
-     ["apps/ezagent_domain_session/test/integration/stale_admin_pre_epoch_seed_test.exs"]},
     {"session_admin_rotation",
      ["apps/ezagent_domain_session/test/integration/admin_key_rotation_test.exs"]},
     {"session", ["apps/ezagent_domain_session/test/"]},
@@ -75,7 +72,9 @@
     # `_lifecycle` suffix is load-bearing: `NodeGlobalTeardownIsolationTest`
     # treats every `*_lifecycle` shard as a carved isolation leg.
     {"domain_provider_connection_lifecycle",
-     ["apps/ezagent_domain_provider_connection/test/ezagent_domain_provider_connection/application_test.exs"]},
+     [
+       "apps/ezagent_domain_provider_connection/test/ezagent_domain_provider_connection/application_test.exs"
+     ]},
     {"domain_git_lifecycle",
      ["apps/ezagent_domain_git/test/ezagent_domain_git/application_boot_test.exs"]},
     {"domain_workspace_lifecycle",

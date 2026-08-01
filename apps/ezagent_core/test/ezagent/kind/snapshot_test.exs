@@ -213,7 +213,7 @@ defmodule Ezagent.Kind.SnapshotTest do
     assert MapSet.equal?(loaded_caps, caps)
   end
 
-  test "snapshot rehydration drops unsigned caps before the identity slice loads" do
+  test "snapshot rehydration never restores capability authority from the projection" do
     uri =
       Ezagent.URI.new!(
         "entity://team-alpha/user/snap-verify-#{System.unique_integer([:positive])}"
@@ -238,7 +238,7 @@ defmodule Ezagent.Kind.SnapshotTest do
     %{identity: %{state: %{caps: loaded_caps}}} =
       Snapshot.load_or_init(uri, Ezagent.Entity.User, %{uri: uri})
 
-    assert MapSet.equal?(loaded_caps, MapSet.new([valid]))
+    assert loaded_caps == MapSet.new()
   end
 
   test "load_or_init merges fresh init with loaded state (Q5: new Behavior path)" do

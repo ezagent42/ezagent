@@ -230,7 +230,7 @@ defmodule Mix.Tasks.Ezagent.CapRevocation.VerifyCleanStart do
     result =
       sql!(
         "SELECT count(*), count(*) FILTER (WHERE generation < 1 OR sealed IS NOT TRUE OR " <>
-          "key_id IS NULL OR public_key IS NULL OR private_key IS NULL OR anchor IS NULL) " <>
+          "key_id IS NULL OR public_key IS NULL OR anchor IS NULL) " <>
           "FROM kind_cap_authorities"
       )
 
