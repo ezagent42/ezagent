@@ -43,6 +43,7 @@ defmodule Ezagent.Invariants.CapAbsorbReachabilityTest do
       |> Path.join("apps/**/*.ex")
       |> Path.wildcard()
       |> Enum.reject(&String.contains?(&1, "/test/"))
+      |> Enum.reject(&EzagentCore.AstScan.tmp_fixture?/1)
       |> Enum.filter(fn file ->
         source = File.read!(file)
 

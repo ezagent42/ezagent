@@ -259,6 +259,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     (Path.wildcard(Path.join(root, "apps/**/*.ex")) ++
        Path.wildcard(Path.join(root, "scripts/**/*.exs")))
     |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.reject(&EzagentCore.AstScan.tmp_fixture?/1)
     |> Enum.map(&{String.replace_prefix(&1, root <> "/", ""), &1})
   end
 
@@ -353,6 +354,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     |> Path.join("apps/**/*.ex")
     |> Path.wildcard()
     |> Enum.reject(&String.contains?(&1, "/test/"))
+    |> Enum.reject(&EzagentCore.AstScan.tmp_fixture?/1)
     |> Enum.map(&{String.replace_prefix(&1, root <> "/", ""), &1})
   end
 
