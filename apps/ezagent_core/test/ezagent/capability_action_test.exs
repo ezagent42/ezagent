@@ -130,7 +130,7 @@ defmodule Ezagent.CapabilityActionTest do
     # freshly-created users each held ONE workspace cap that differed between the
     # two identity planes — `users.caps_json` (durable) carried
     # `action: :create_session` (signature VALID), while the
-    # `Ezagent.EntityCaps.Store` mirror serialized the SAME signed cap as
+    # `Ezagent.IdentityCaps.Store` mirror serialized the SAME signed cap as
     # `action: :any` (workspace-admin, signature now INVALID). `:any` on Workspace
     # is workspace-admin; `:create_session` is an ordinary member — a PRIVILEGE
     # divergence the `FleetParity.caps_parity/3` barrier correctly refused on.
@@ -282,7 +282,7 @@ defmodule Ezagent.CapabilityActionTest do
     # users each held ONE workspace cap that differed between the two identity
     # planes — `users.caps_json` (durable) carried
     # `action: :create_session` with a VALID signature, while the
-    # `Ezagent.EntityCaps.Store` mirror carried the SAME signed cap serialized as
+    # `Ezagent.IdentityCaps.Store` mirror carried the SAME signed cap serialized as
     # `action: :any` (workspace-admin) with a now-INVALID signature. The
     # `FleetParity.caps_parity/3` barrier compares the full signed cap-set and
     # refused the cutover on `{:caps_mismatch}`. `:any` on Workspace is

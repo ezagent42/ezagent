@@ -122,7 +122,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
           caller: agent_uri,
           authenticated_principal: agent_uri,
           # The authenticated agent presents only authority already issued by
-          # the target Kind and held in its durable EntityCaps store. Bridge
+          # the target Kind and held in its durable IdentityCaps store. Bridge
           # code is not a signing site and must never synthesize an envelope
           # capability from the requested destination.
           caps: held_caps(agent_uri),
@@ -137,7 +137,7 @@ defmodule EzagentPluginCodex.BridgeAdapter do
 
   defp held_caps(%URI{} = agent_uri) do
     if Ezagent.LocalRuntime.kind_alive?(agent_uri) do
-      Module.concat([Ezagent, EntityCaps])
+      Module.concat([Ezagent, IdentityCaps])
       |> apply(:load, [agent_uri])
       |> MapSet.new()
     else

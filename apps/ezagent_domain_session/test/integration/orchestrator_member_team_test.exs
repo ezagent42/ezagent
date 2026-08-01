@@ -143,7 +143,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorMemberTeamTest do
         User.admin_uri()
       )
 
-    caps = orchestrator_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
+    caps = orchestrator_uri |> Ezagent.IdentityCaps.load() |> MapSet.new()
 
     # PR-8 (transport #53): `Tools` is now driven directly with the
     # orchestrator's caller `opts` — the exact context the session-side

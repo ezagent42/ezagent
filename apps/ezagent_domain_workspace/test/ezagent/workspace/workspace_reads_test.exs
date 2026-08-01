@@ -199,7 +199,7 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: cap_outsider, initial_caps: MapSet.new()})
 
     :ok =
-      Ezagent.EntityCaps.grant(
+      Ezagent.IdentityCaps.grant(
         cap_outsider,
         signed_session_send_cap(session_x, workspace_uri, cap_outsider)
       )
@@ -262,7 +262,7 @@ defmodule Ezagent.Workspace.WorkspaceReadsTest do
       )
 
     cap = Ezagent.Test.CapHelper.signed_cap!(workspace_uri, outsider_uri, requested)
-    :ok = Ezagent.EntityCaps.grant(outsider_uri, cap)
+    :ok = Ezagent.IdentityCaps.grant(outsider_uri, cap)
 
     assert WorkspaceReads.authorized_workspace?(outsider_uri, workspace_uri)
 

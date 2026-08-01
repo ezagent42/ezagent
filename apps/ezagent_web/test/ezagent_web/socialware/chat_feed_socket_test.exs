@@ -133,7 +133,7 @@ defmodule EzagentWeb.Socialware.ChatFeedSocketTest do
 
   defp converge_member_projection(session, member) do
     wait_until(fn ->
-      held = Ezagent.EntityCaps.load_persisted(member)
+      held = Ezagent.IdentityCaps.load_persisted(member)
       Ezagent.Session.MemberReceive.holds_member_cap_over?(member, held, session)
     end)
 

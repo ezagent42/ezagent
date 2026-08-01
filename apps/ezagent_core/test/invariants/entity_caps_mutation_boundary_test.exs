@@ -1,11 +1,11 @@
-defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
+defmodule Ezagent.Invariants.IdentityCapsMutationBoundaryTest do
   @moduledoc """
-  Pins the VM-internal EntityCaps mutation protocol to one constructor and
+  Pins the VM-internal IdentityCaps mutation protocol to one constructor and
   rejects direct storage consumers that could bypass issue-before-grant.
   """
   use ExUnit.Case, async: true
 
-  @facade "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+  @facade "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
   @cascade_hook "apps/ezagent_actor/lib/ezagent/kind/cascade_hook.ex"
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
@@ -73,7 +73,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     end
   end
 
-  test "production has zero EntityCaps.grant consumers" do
+  test "production has zero IdentityCaps.grant consumers" do
     assert entity_caps_grant_calls(production_asts()) == []
   end
 
@@ -81,7 +81,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
     {:ok, ast} =
       Code.string_to_quoted("""
       defmodule Escape do
-        alias Ezagent.EntityCaps, as: EC
+        alias Ezagent.IdentityCaps, as: EC
         import EC, only: [grant: 2]
 
         def direct(uri, cap), do: EC.grant(uri, cap)
@@ -92,7 +92,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
       end
       """)
 
-    {:ok, script_ast} = Code.string_to_quoted("Ezagent.EntityCaps.grant(uri, cap)")
+    {:ok, script_ast} = Code.string_to_quoted("Ezagent.IdentityCaps.grant(uri, cap)")
 
     assert length(entity_caps_grant_calls([{"fixture.ex", ast}, {"fixture.exs", script_ast}])) ==
              6
@@ -278,7 +278,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
 
   defp entity_caps_module?(module, aliases) do
     name = Macro.to_string(module)
-    name == "Ezagent.EntityCaps" or Map.get(aliases, name) == "Ezagent.EntityCaps"
+    name == "Ezagent.IdentityCaps" or Map.get(aliases, name) == "Ezagent.IdentityCaps"
   end
 
   defp aliases(ast) do
@@ -428,7 +428,7 @@ defmodule Ezagent.Invariants.EntityCapsMutationBoundaryTest do
   defp embedded_boundary_code?(node) when is_binary(node) do
     Enum.any?(
       [
-        "EntityCaps",
+        "IdentityCaps",
         "persist_caps",
         "store_cap",
         "remove_cap",

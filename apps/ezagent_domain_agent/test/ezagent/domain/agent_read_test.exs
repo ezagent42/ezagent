@@ -243,7 +243,7 @@ defmodule Ezagent.Domain.AgentReadTest do
     user_caller = user("logged-in")
     # Persist the cap into the COLD caller's caps_json; pass NO inline caps. This is
     # the bug bare `holds_cap?` (slice-only, denies cold) would have produced —
-    # EntityCaps' durable User fallback authorizes the cold caller.
+    # IdentityCaps' durable User fallback authorizes the cold caller.
     :ok = seed_caller_slice_caps(user_caller, [sandbox_cap(agent, manager, user_caller)])
     ctx = %{caller: user_caller, authenticated_principal: user_caller, caps: MapSet.new()}
 

@@ -100,7 +100,7 @@ defmodule Ezagent.IdentityTest do
   end
 
   # P3 (cap-revocation hardening): `caps_match?/2` must re-verify each
-  # artifact's TARGET axis per call — `EntityCaps.load/1`'s `verified/2` gate
+  # artifact's TARGET axis per call — `IdentityCaps.load/1`'s `verified/2` gate
   # is principal-axis, so a target regenesis AFTER the load must NOT leave a
   # stale cap "matching".
   describe "caps_match?/2 per-call target re-verify" do
@@ -109,7 +109,7 @@ defmodule Ezagent.IdentityTest do
 
     alias Ezagent.Cap.Authority
 
-    test "a cap whose target was regenesis'd after EntityCaps.load is NOT matched" do
+    test "a cap whose target was regenesis'd after IdentityCaps.load is NOT matched" do
       suffix = System.unique_integer([:positive])
       holder = Ezagent.URI.new!("entity://team-alpha/user/p3-holder-#{suffix}")
       target = Ezagent.URI.new!("entity://team-alpha/agent/p3-target-#{suffix}")
@@ -140,7 +140,7 @@ defmodule Ezagent.IdentityTest do
       {:ok, _user} =
         Ezagent.Users.create_read_only(holder, [self_license_cap!(holder), manage_cap])
 
-      loaded = Ezagent.EntityCaps.load(holder)
+      loaded = Ezagent.IdentityCaps.load(holder)
       assert Enum.any?(loaded, &(&1 == manage_cap)), "precondition: the store load yields the cap"
 
       # Current-generation target: the loaded cap MATCHES (re-verify passes).
@@ -152,7 +152,7 @@ defmodule Ezagent.IdentityTest do
       {:ok, _generation_two} = Authority.regenesis(target, :agent)
 
       refute Ezagent.Identity.caps_match?(loaded, needed),
-             "a cap whose target was regenesis'd after EntityCaps.load MUST NOT match"
+             "a cap whose target was regenesis'd after IdentityCaps.load MUST NOT match"
     end
 
     test "fail-closed: an unsigned shape-matching cap is NOT matched" do

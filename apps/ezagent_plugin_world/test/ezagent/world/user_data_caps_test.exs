@@ -15,12 +15,12 @@ defmodule Ezagent.World.UserDataCapsTest do
     on_exit(fn -> Ezagent.Kind.terminate(user) end)
 
     assert row_for(user, workspace)["cap_count"] ==
-             MapSet.size(Ezagent.EntityCaps.verified_set(Ezagent.EntityCaps.load(user), user))
+             MapSet.size(Ezagent.IdentityCaps.verified_set(Ezagent.IdentityCaps.load(user), user))
 
     assert row_for(user, workspace)["cap_count"] > 0
     durable_caps = Ezagent.Users.get_by_uri(user).caps
 
-    assert MapSet.new(durable_caps) == MapSet.new(Ezagent.EntityCaps.load(user))
+    assert MapSet.new(durable_caps) == MapSet.new(Ezagent.IdentityCaps.load(user))
     assert durable_caps != []
   end
 
@@ -36,7 +36,7 @@ defmodule Ezagent.World.UserDataCapsTest do
 
     on_exit(fn -> Ezagent.Kind.terminate(user) end)
 
-    expected = length(Ezagent.EntityCaps.load(user))
+    expected = length(Ezagent.IdentityCaps.load(user))
     assert expected != length(Ezagent.Users.get_by_uri(user).caps)
     assert row_for(user, workspace)["cap_count"] == expected
   end
@@ -48,7 +48,7 @@ defmodule Ezagent.World.UserDataCapsTest do
     assert :ok = declare_workspace_member(workspace, user)
     assert :ok = Ezagent.Entity.spawn_principal(user)
 
-    verified = Ezagent.EntityCaps.verified_set(Ezagent.EntityCaps.load(user), user)
+    verified = Ezagent.IdentityCaps.verified_set(Ezagent.IdentityCaps.load(user), user)
 
     assert row_for(user, workspace)["cap_count"] == MapSet.size(verified)
     assert MapSet.size(verified) == 1
@@ -59,7 +59,7 @@ defmodule Ezagent.World.UserDataCapsTest do
     source = File.read!(Path.expand("../../../lib/ezagent/world/user_data.ex", __DIR__))
 
     refute source =~ "length(user.caps)"
-    assert source =~ "Ezagent.EntityCaps.load"
+    assert source =~ "Ezagent.IdentityCaps.load"
   end
 
   # The users-table roster is caller-authorized (read-plane PR-4 rework):

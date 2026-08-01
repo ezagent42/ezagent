@@ -1,6 +1,6 @@
-defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
+defmodule Ezagent.Invariants.IdentityCapsAccessGateTest do
   @moduledoc """
-  D arch gate: inbound entity capabilities cross `Ezagent.EntityCaps`.
+  D arch gate: inbound entity capabilities cross `Ezagent.IdentityCaps`.
 
   Existing physical SSOT adapters and explicit migration/core-framework code
   remain visible in a function-level allowlist. New application consumers may
@@ -18,9 +18,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # exposes a tagged checked read so effective-cap
                              # callers can fail closed instead of collapsing a
                              # malformed row to `[]`.
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/user_store.ex",
                               :load_checked, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/user_store.ex",
                               :update_locked, 2},
                              # #189 PR-3 FIX 1 — the POST-epoch Store-first user
                              # path: `read_current_caps/1` READS the current legacy
@@ -30,9 +30,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # own seam (parallel to `load/1` + `update_locked/2`);
                              # neither mints/grants and a projection failure changes no
                              # authz outcome (reads are store-authoritative post-epoch).
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/user_store.ex",
                               :read_current_caps, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/user_store.ex",
                               :write_caps_json_locked, 2},
                              # #189 PR-1 — the unified identity-caps store is a NEW
                              # physical cap adapter (parallel to `user_store.ex`) for
@@ -59,39 +59,39 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                              # transform (hence still on THIS read-side allowlist) but no
                              # longer writes the column directly — see the
                              # `cap_issue_chokepoint` assignment count (8 → 7).
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :activate_changes, 2},
                              # #189 PR-3 FIX 3 — `adopt_absent_authority_history/1`
                              # writes an EMPTY (`caps_json: "[]"`) `revoked_unprovisioned`
                              # row for an authority-history URI with no store row. It
                              # writes NO caps and is strictly absent-only — the adapter's
                              # own storage seam, no new external reader.
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :adopt_absent_authority_history, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :fetch_durable_caps, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :fetch_durable_identities, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :fetch_durable_identity, 1},
                              # P2b's fenced maintenance transaction rebuilds the
                              # physical Store from the checked durable-effective
                              # set. This is a write adapter helper, not a runtime
                              # authority read.
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :insert_cutover_row, 2},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :load, 1},
                              # P2 per-cap revocation reads the complete locked
                              # Store set solely to resolve the trusted stored
                              # grant_id before removing it in the same txn.
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :locked_caps, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :persist_changes, 3},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :tombstone, 1},
-                             {"apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
+                             {"apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
                               :update_locked, 4},
                              {"apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
                               :gate, 0},
@@ -122,7 +122,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                               :rewrite_users, 1}
                            ])
 
-  # `entity_caps.ex :snapshot_caps/1` is NO LONGER a raw-snapshot reader after
+  # `identity_caps.ex :snapshot_caps/1` is NO LONGER a raw-snapshot reader after
   # actor-extraction C1: it projects the durable `:identity` slice through the
   # public `Ezagent.Kind.read_durable/3` read surface (no `SnapshotStore.latest`
   # + `Map.get(:identity)` reach-in), so it drops off this allowlist.
@@ -147,7 +147,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
                                :spawn_with_hydrated_caps, 1},
                               {"apps/ezagent_domain_identity/lib/ezagent/entity/user.ex",
                                :initial_caps_for_spawn, 1},
-                              # PR #1501 shrank this allowlist: the EntityCaps
+                              # PR #1501 shrank this allowlist: the IdentityCaps
                               # facade now owns the checked persisted/effective
                               # composition, and MemberCap consumes that public
                               # tagged API instead of calling the legacy loader.
@@ -164,7 +164,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     assert violations(:raw_user_caps) == @raw_user_caps_allowlist
   end
 
-  test "no executable consumer calls Identity.read_entity_caps/1" do
+  test "no executable consumer calls Identity.read_identity_caps/1" do
     assert violations(:identity_compat_consumer) == MapSet.new()
   end
 
@@ -197,15 +197,15 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
       def fetched_user(uri), do: U.get_by_uri(uri) |> Map.fetch!(:caps)
       def nested_user(uri), do: get_in(U.get_by_uri(uri), [:caps])
       def bracket_user(uri), do: U.get_by_uri(uri)[:caps]
-      def compatibility(uri), do: I.read_entity_caps(uri)
+      def compatibility(uri), do: I.read_identity_caps(uri)
       def imported_compatibility(uri) do
-        import Ezagent.Identity, only: [read_entity_caps: 1]
-        read_entity_caps(uri)
+        import Ezagent.Identity, only: [read_identity_caps: 1]
+        read_identity_caps(uri)
       end
-      def captured_compatibility, do: &I.read_entity_caps/1
-      def function_capture, do: Function.capture(I, :read_entity_caps, 1)
-      def applied_compatibility(uri), do: apply(I, :read_entity_caps, [uri])
-      def persisted(uri), do: Ezagent.EntityCaps.load_persisted(uri)
+      def captured_compatibility, do: &I.read_identity_caps/1
+      def function_capture, do: Function.capture(I, :read_identity_caps, 1)
+      def applied_compatibility(uri), do: apply(I, :read_identity_caps, [uri])
+      def persisted(uri), do: Ezagent.IdentityCaps.load_persisted(uri)
 
       def snapshot(snapshot) do
         %{state: %{identity: %{state: %{caps: caps}}}} = snapshot
@@ -234,9 +234,9 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
         %{caps: caps} = Unrelated.get_by_uri(uri)
         caps
       end
-      def unrelated_compatibility(uri), do: Unrelated.read_entity_caps(uri)
+      def unrelated_compatibility(uri), do: Unrelated.read_identity_caps(uri)
       def unrelated_persisted(uri), do: Unrelated.load_persisted(uri)
-      def local_compatibility(uri), do: read_entity_caps(uri)
+      def local_compatibility(uri), do: read_identity_caps(uri)
       def local_persisted(uri), do: load_persisted(uri)
       def local_user(uri), do: get_by_uri(uri) |> Map.get(:caps)
       def local_snapshot(uri) do
@@ -326,7 +326,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     do:
       ast_any?(
         definition.body,
-        &named_call?(&1, :load_persisted, ["Ezagent.EntityCaps"], definition)
+        &named_call?(&1, :load_persisted, ["Ezagent.IdentityCaps"], definition)
       )
 
   defp raw_caps_json?({{:., _, [_owner, :caps_json]}, _, []}), do: true
@@ -383,7 +383,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
   end
 
   defp identity_compat_call?(node, definition),
-    do: named_call?(node, :read_entity_caps, ["Ezagent.Identity"], definition)
+    do: named_call?(node, :read_identity_caps, ["Ezagent.Identity"], definition)
 
   defp users_caps_source?(node, definition),
     do:
@@ -401,6 +401,14 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
     Macro.to_string(capture_module) == "Function" and
       target_module?(target, target_modules, definition.aliases)
   end
+
+  defp named_call?(
+         {:&, _, [{:/, _, [{{:., _, [target, name]}, _, []}, _arity]}]},
+         name,
+         target_modules,
+         definition
+       ),
+       do: target_module?(target, target_modules, definition.aliases)
 
   defp named_call?(
          {{:., _, [apply_module, :apply]}, _, [target, name, _args]},
@@ -547,7 +555,7 @@ defmodule Ezagent.Invariants.EntityCapsAccessGateTest do
   defp embedded_code_candidate?(node) when is_binary(node) do
     known_boundary? =
       Enum.any?(
-        ["Ezagent.", "read_entity_caps", "load_persisted", "caps_json", "SnapshotStore"],
+        ["Ezagent.", "read_identity_caps", "load_persisted", "caps_json", "SnapshotStore"],
         &String.contains?(node, &1)
       )
 

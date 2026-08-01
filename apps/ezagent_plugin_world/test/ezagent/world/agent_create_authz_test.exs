@@ -62,7 +62,7 @@ defmodule Ezagent.World.AgentCreateAuthzTest do
     operator_ctx = Ezagent.Test.CapHelper.signed_workspace_ctx!(workspace_uri, operator)
 
     Enum.each(operator_ctx.caps, fn cap ->
-      :ok = Ezagent.EntityCaps.grant(operator, cap)
+      :ok = Ezagent.IdentityCaps.grant(operator, cap)
     end)
 
     agent_name = "created-#{uniq()}"

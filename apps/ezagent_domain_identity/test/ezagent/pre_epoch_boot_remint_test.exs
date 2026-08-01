@@ -31,7 +31,7 @@ defmodule Ezagent.PreEpochBootRemintTest do
 
   alias Ezagent.Capability
   alias Ezagent.Cap.Authority
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.Offboarding.RevocationFence
   alias EzagentCore.Repo
 
@@ -190,7 +190,7 @@ defmodule Ezagent.PreEpochBootRemintTest do
   defp with_root(uri, fun),
     do: with_app_env(:pre_epoch_remint_root_uri, uri, fun)
 
-  # Force `EntityCaps.Store` reads for `uri` to error (the FIX-2 test seam).
+  # Force `IdentityCaps.Store` reads for `uri` to error (the FIX-2 test seam).
   defp with_forced_store_read_error(uri, fun) do
     key = uri |> Ezagent.URI.instance() |> URI.to_string()
     with_app_env(:p2_forced_read_error_uris, [key], fun)

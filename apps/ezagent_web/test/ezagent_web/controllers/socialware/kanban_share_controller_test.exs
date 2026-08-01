@@ -365,7 +365,7 @@ defmodule EzagentWeb.Socialware.KanbanShareControllerTest do
 
   defp converge_member_projection(session_uri, member_uri, role_name) do
     assert eventually(fn ->
-             held = Ezagent.EntityCaps.load_persisted(member_uri)
+             held = Ezagent.IdentityCaps.load_persisted(member_uri)
              Ezagent.Session.MemberReceive.holds_member_cap_over?(member_uri, held, session_uri)
            end)
 

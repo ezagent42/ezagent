@@ -2,7 +2,7 @@ defmodule Mix.Tasks.Ezagent.Identity.Backfill do
   @shortdoc "#189 PR-2 — backfill the unified identity-caps store from the legacy sources"
   @moduledoc """
   #189 PR-2 D1 — the EXPLICIT, operator-triggered, idempotent migration that
-  populates `Ezagent.EntityCaps.Store` from the LEGACY authoritative sources
+  populates `Ezagent.IdentityCaps.Store` from the LEGACY authoritative sources
   for every existing durable principal, so PR-3 can atomically cut reads over
   to the store.
 

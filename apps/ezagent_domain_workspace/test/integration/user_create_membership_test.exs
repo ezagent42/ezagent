@@ -180,7 +180,7 @@ defmodule Ezagent.Integration.UserCreateMembershipTest do
   end
 
   defp visible?(ws_name, %URI{} = caller_uri, caps) do
-    current_caps = Ezagent.EntityCaps.load(caller_uri)
+    current_caps = Ezagent.IdentityCaps.load(caller_uri)
 
     caller_uri
     |> Workspace.list_workspaces_for(Enum.concat(current_caps, caps))

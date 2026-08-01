@@ -216,7 +216,7 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       assert artifact.behavior == TransportGatedRoleBehavior
       assert Ezagent.Capability.action_of(artifact) == :ping
 
-      assert Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+      refute Enum.any?(Ezagent.Identity.read_identity_caps(agent_uri), fn cap ->
                cap.behavior == TransportGatedRoleBehavior and
                  Ezagent.Capability.action_of(cap) == :ping
              end)

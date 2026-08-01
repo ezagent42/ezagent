@@ -50,10 +50,10 @@ defmodule Ezagent.Socialware.MountCapSurvivesRespawnTest do
   # --- helpers (subset of mount_reconcile_test) ----------------------------
 
   defp durable_holds_cap?(grantee, target, action) do
-    # EntityCaps.load reads the durable store (users.caps_json / agent snapshot)
+    # IdentityCaps.load reads the durable store (users.caps_json / agent snapshot)
     # — the same source list_caps_for uses — without depending on a live process.
     grantee
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> Enum.any?(&cap_matches?(&1, target, action))
   end
 

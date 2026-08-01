@@ -159,7 +159,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     on_exit(fn -> Ezagent.Kind.terminate(user_uri) end)
     assert :ok = Ezagent.ReadyGate.await(user_uri, 5_000)
     assert_mount_has_cap(user_uri, workspace_uri, cap)
-    assert :ok = Ezagent.EntityCaps.revoke(user_uri, cap)
+    assert :ok = Ezagent.IdentityCaps.revoke(user_uri, cap)
     assert_mount_lacks_cap(user_uri, workspace_uri, cap)
 
     assert :ok = Ezagent.Kind.terminate(user_uri)
@@ -194,7 +194,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     refute_cap_present(socket.assigns.current_caps, wrong_receiver)
   end
 
-  test "an empty EntityCaps store assigns an empty MapSet" do
+  test "an empty IdentityCaps store assigns an empty MapSet" do
     unique = System.unique_integer([:positive])
     workspace_uri = Ezagent.URI.workspace("live-auth-reader-failure-#{unique}")
     user_uri = Ezagent.URI.user("live-auth-reader-failure-#{unique}", "user")
@@ -208,7 +208,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     source = File.read!(Path.expand("../../lib/ezagent_web/live_auth.ex", __DIR__))
     [load_caps_source] = Regex.run(~r/defp load_caps\(%URI\{}.*?defp load_caps\(_\)/s, source)
 
-    assert load_caps_source =~ "Ezagent.EntityCaps.load()"
+    assert load_caps_source =~ "Ezagent.IdentityCaps.load()"
     refute load_caps_source =~ "Users.get_by_uri"
     refute load_caps_source =~ "caps_json"
     refute load_caps_source =~ "SnapshotStore"

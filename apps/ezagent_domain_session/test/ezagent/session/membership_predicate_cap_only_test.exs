@@ -3,7 +3,7 @@ defmodule Ezagent.Session.MembershipPredicateCapOnlyTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, EntityCaps}
+  alias Ezagent.{Capability, IdentityCaps}
   alias Ezagent.Session.Membership
 
   test "a current cap-holder absent from the roster is authorized" do
@@ -34,7 +34,7 @@ defmodule Ezagent.Session.MembershipPredicateCapOnlyTest do
     owner = confirmed_user("owner-without-cap")
     session = session_uri()
 
-    assert EntityCaps.load(owner) != []
+    assert IdentityCaps.load(owner) != []
 
     assert {:error, :unauthorized} =
              Membership.authorize(chat(owner, %{}), owner, session, owner)

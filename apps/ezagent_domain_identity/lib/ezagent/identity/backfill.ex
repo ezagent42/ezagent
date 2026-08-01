@@ -1,7 +1,7 @@
 defmodule Ezagent.Identity.Backfill do
   @moduledoc """
   #189 PR-2 D1 (release-runnable extraction) — the EXPLICIT, operator-triggered,
-  idempotent migration that populates `Ezagent.EntityCaps.Store` from the LEGACY
+  idempotent migration that populates `Ezagent.IdentityCaps.Store` from the LEGACY
   authoritative sources for every existing durable principal, so the cutover can
   atomically cut reads over to the store.
 
@@ -17,7 +17,7 @@ defmodule Ezagent.Identity.Backfill do
   ## What it does (the resurrection guard — codex spec-review F1)
 
   For each legacy principal it calls the DEDICATED, row-locked
-  `Ezagent.EntityCaps.Store.backfill/2` transition (NOT the generic shadow
+  `Ezagent.IdentityCaps.Store.backfill/2` transition (NOT the generic shadow
   `persist/2`), which:
 
     * freshly verifies the legacy self-license against the URI's CURRENT
@@ -47,7 +47,7 @@ defmodule Ezagent.Identity.Backfill do
       PR-3 read-cutover. See `Ezagent.Identity.AuthenticatedHolders`.
   """
 
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
 
   @type io_fn :: (String.t() -> any())
 

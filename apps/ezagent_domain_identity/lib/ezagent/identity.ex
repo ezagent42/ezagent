@@ -6,7 +6,7 @@ defmodule Ezagent.Identity do
   to derive `ctx.caps` from the session cookie's `current_entity_uri`
   (renamed from `current_user_uri` in PR #142 — works for any Entity).
 
-  Capability loading is dependency-inverted through `Ezagent.EntityCaps.load/1`.
+  Capability loading is dependency-inverted through `Ezagent.IdentityCaps.load/1`.
   That facade applies the principal-generation self-license gate before any
   caller can use the returned set as authority.
   """
@@ -25,7 +25,7 @@ defmodule Ezagent.Identity do
   def list_caps_for(uri) do
     uri
     |> parse_uri()
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> MapSet.new()
   end
 
@@ -212,7 +212,7 @@ defmodule Ezagent.Identity do
   def read_held_caps(actor_uri) do
     actor_uri
     |> parse_uri()
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> MapSet.new()
   end
 
@@ -254,7 +254,7 @@ defmodule Ezagent.Identity do
   def caps_authorize?(_holder, _caps, _needed), do: false
 
   @doc """
-  Match an ALREADY-LOADED cap set (from `Ezagent.EntityCaps.load/1`) against a
+  Match an ALREADY-LOADED cap set (from `Ezagent.IdentityCaps.load/1`) against a
   runtime `needed`-cap map, WITHOUT re-loading the holder's store.
 
   Same shape predicate as `caps_authorize?/3` (`granted_by_entity?/1` AND
@@ -262,7 +262,7 @@ defmodule Ezagent.Identity do
   each shape-matching artifact is verified against its target's CURRENT
   active authority row via `Ezagent.Cap.Authority.verify_against_current/3`
   — the same target gate the `Ezagent.Cap.authorize/3` chokepoint applies
-  (`Cap.Authorize.verified_candidate?/2`). `EntityCaps.load/1`'s `verified/2`
+  (`Cap.Authorize.verified_candidate?/2`). `IdentityCaps.load/1`'s `verified/2`
   gate is PRINCIPAL-axis (the holder's self-license generation); it does NOT
   re-check each artifact's TARGET generation at match time, so a target
   regenesis AFTER the load would otherwise leave a stale cap "matching"
@@ -301,7 +301,7 @@ defmodule Ezagent.Identity do
   # The target gate of the `Ezagent.Cap.authorize/3` chokepoint, per artifact.
   # The presenter is the artifact's own `grantee_uri` — sound here (NOT a
   # grantee-check bypass) because every caller passes caps from
-  # `EntityCaps.load(holder)`, whose `verified_set/2` storage filter already
+  # `IdentityCaps.load(holder)`, whose `verified_set/2` storage filter already
   # binds `grantee_uri == holder` (`Cap.storable_for?/2`); the load-time
   # binding is what the per-call re-verify adds the fresh TARGET-generation
   # check on top of.
@@ -313,7 +313,7 @@ defmodule Ezagent.Identity do
   # "unauthorized"). A genuine stale / tampered / wrong-generation cap returns
   # `{:ok, false}` → not matched. A non-concrete target (scope-tuple / `:any`)
   # → `false` (a shape issue, not a transient error — such caps are already
-  # excluded from `EntityCaps.load/1` by `Cap.storable_for?/2`). No blanket
+  # excluded from `IdentityCaps.load/1` by `Cap.storable_for?/2`). No blanket
   # `rescue`/`catch`: `target_uri/1` and `verify_against_current_checked/3`
   # both return tagged results, so anything else genuinely unexpected must
   # crash (let-it-crash), not silently deny.
@@ -350,7 +350,7 @@ defmodule Ezagent.Identity do
   defp normalize_caps(caps) when is_list(caps), do: MapSet.new(caps)
   defp normalize_caps(_), do: MapSet.new()
 
-  @doc "Compatibility delegate; new callers use `Ezagent.EntityCaps.load/1`."
-  @spec read_entity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
-  defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load
+  @doc "Compatibility delegate; new callers use `Ezagent.IdentityCaps.load/1`."
+  @spec read_identity_caps(URI.t() | String.t()) :: [Ezagent.Capability.t()]
+  defdelegate read_identity_caps(entity_uri), to: Ezagent.IdentityCaps, as: :load
 end

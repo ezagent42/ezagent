@@ -1,4 +1,4 @@
-defmodule Ezagent.EntityCaps.StoreBackfillTest do
+defmodule Ezagent.IdentityCaps.StoreBackfillTest do
   @moduledoc """
   #189 PR-2 D1 — the dedicated, row-locked `Store.backfill/2` migration
   transition + its resurrection guard (codex spec-review F1).
@@ -16,7 +16,7 @@ defmodule Ezagent.EntityCaps.StoreBackfillTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.Capability
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.ProvisioningReceipt
 
   @workspace URI.new!("workspace://identity-caps-backfill")

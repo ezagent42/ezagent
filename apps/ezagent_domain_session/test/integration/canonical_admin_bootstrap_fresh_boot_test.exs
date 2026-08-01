@@ -5,7 +5,7 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
   The canonical admin (`entity://system/user/admin`) holds NO persisted
   capability: its `users.caps_json` is born empty and its `:self_license` is
   deliberately kept OUT of that durable store
-  (`Ezagent.EntityCaps.clear_self_license_persisted/1`). Its currency as a
+  (`Ezagent.IdentityCaps.clear_self_license_persisted/1`). Its currency as a
   principal is proven only by the live `:identity`-slice self-license the
   `:identity` Behavior mints while the admin Kind is running.
 
@@ -75,7 +75,7 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
   defp put_admin_in_fresh_boot_state do
     on_exit(fn -> _ = Ezagent.LocalRuntime.ensure_started(User.admin_uri()) end)
 
-    :ok = Ezagent.EntityCaps.UserStore.persist(admin(), [])
+    :ok = Ezagent.IdentityCaps.UserStore.persist(admin(), [])
     _ = Ezagent.Kind.terminate!(admin())
     Process.sleep(50)
 
@@ -140,7 +140,7 @@ defmodule EzagentDomainInstanceMessage.Integration.CanonicalAdminBootstrapFreshB
         )
       )
 
-    :ok = Ezagent.EntityCaps.UserStore.persist(admin(), [])
+    :ok = Ezagent.IdentityCaps.UserStore.persist(admin(), [])
     _ = Ezagent.Kind.terminate!(admin())
     Process.sleep(50)
 

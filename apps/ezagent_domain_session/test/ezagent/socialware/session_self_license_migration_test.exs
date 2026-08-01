@@ -14,8 +14,8 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
   alias Ezagent.Cap
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.EntityCaps
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Socialware.SessionSelfLicenseMigration, as: Migration
 
   # A GENUINELY pre-cutover captured behavior list — built EXPLICITLY without
@@ -34,7 +34,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
 
     # The buried session was NOT resurrected — no store row, no self-license.
     refute Store.has_row?(uri)
-    assert EntityCaps.load_persisted(uri) == []
+    assert IdentityCaps.load_persisted(uri) == []
   end
 
   test "PRE-CUTOVER round-trip: a pre-carrier session becomes a principal" do
@@ -52,7 +52,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
 
     refute SelfLicense in captured_behaviors(uri)
     refute Store.has_row?(uri)
-    assert EntityCaps.load_persisted(uri) == []
+    assert IdentityCaps.load_persisted(uri) == []
 
     assert {:ok, :migrated} = Migration.migrate_row(fetch(uri), false)
 
@@ -67,7 +67,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
     # 3. the durable store row is `active` and the principal reads non-empty on
     #    the store-authoritative persisted plane (what the principal gate reads).
     assert Store.status(uri) == :active
-    refute EntityCaps.load_persisted(uri) == []
+    refute IdentityCaps.load_persisted(uri) == []
   end
 
   test "IDEMPOTENT: re-running on a migrated session mints nothing more" do
@@ -107,7 +107,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
     # Recorded inert, NOT resurrected: revoked_unprovisioned, no self-license,
     # and the snapshot was left un-augmented.
     assert Store.status(uri) == :revoked_unprovisioned
-    assert EntityCaps.load_persisted(uri) == []
+    assert IdentityCaps.load_persisted(uri) == []
     refute SelfLicense in captured_behaviors(uri)
   end
 
@@ -147,7 +147,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigrationTest do
     assert [license] = identity_caps(uri)
     assert Capability.action_of(license) == :self_license
     assert Store.status(uri) == :active
-    refute EntityCaps.load_persisted(uri) == []
+    refute IdentityCaps.load_persisted(uri) == []
   end
 
   # ---- helpers --------------------------------------------------------------

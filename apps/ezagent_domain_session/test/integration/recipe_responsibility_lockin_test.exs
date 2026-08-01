@@ -210,7 +210,7 @@ defmodule EzagentDomainInstanceMessage.Integration.RecipeResponsibilityLockinTes
         User.admin_uri()
       )
 
-    caps = orchestrator_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
+    caps = orchestrator_uri |> Ezagent.IdentityCaps.load() |> MapSet.new()
 
     mcp = [
       caller: orchestrator_uri,

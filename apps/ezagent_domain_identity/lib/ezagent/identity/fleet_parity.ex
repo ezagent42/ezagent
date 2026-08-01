@@ -2,7 +2,7 @@ defmodule Ezagent.Identity.FleetParity do
   @moduledoc """
   #189 PR-2 D2 (codex spec-review F2) — the fleet-completion barrier.
 
-  A verifiable predicate answering: *is `Ezagent.EntityCaps.Store` a complete,
+  A verifiable predicate answering: *is `Ezagent.IdentityCaps.Store` a complete,
   parity-correct mirror of the LEGACY self-license set for every live durable
   principal?* PR-3's atomic read-cutover is GATED on this returning complete.
 
@@ -52,7 +52,7 @@ defmodule Ezagent.Identity.FleetParity do
   > cutover instant.
   """
 
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.AuthenticatedHolders
 
   @type discrepancy :: {atom(), String.t()}

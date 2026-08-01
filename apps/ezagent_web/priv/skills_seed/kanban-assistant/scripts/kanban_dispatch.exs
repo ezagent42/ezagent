@@ -20,7 +20,7 @@ node = :"ezagent_runtime@127.0.0.1"
 code = ~S"""
 case Ezagent.Authentication.authenticate(token) do
   {:ok, caller} ->
-    caps = caller |> Ezagent.EntityCaps.load() |> MapSet.new()
+    caps = caller |> Ezagent.IdentityCaps.load() |> MapSet.new()
 
     # board 解析:BOARD_URI env 优先;未设 → 从 caller 自持的 kanban board cap 解。
     board_result =

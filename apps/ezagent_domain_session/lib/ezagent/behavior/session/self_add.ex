@@ -41,7 +41,7 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
     # has already committed. `load_persisted/1` verifies receiver/signature and
     # generation, so it remains fail-closed without coupling projection progress
     # to holder liveness.
-    held = Ezagent.EntityCaps.load_persisted(holder)
+    held = Ezagent.IdentityCaps.load_persisted(holder)
 
     if Ezagent.Session.MemberReceive.holds_member_cap_over?(holder, held, session_uri) do
       add_projection(holder, facets, ctx, source_module)

@@ -11,7 +11,7 @@ defmodule Ezagent.Identity.FleetParityTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
   alias Ezagent.Capability
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.FleetParity
 
   @workspace URI.new!("workspace://fleet-parity")
@@ -70,7 +70,7 @@ defmodule Ezagent.Identity.FleetParityTest do
     admin = Ezagent.URI.user(:system, :admin)
     # Drive the (seeded) admin to the fresh-boot empty-caps_json contract: no
     # durable license, currency supplied by the live slice.
-    assert :ok = Ezagent.EntityCaps.UserStore.persist(admin, [])
+    assert :ok = Ezagent.IdentityCaps.UserStore.persist(admin, [])
     refute Store.has_current_self_license?([], admin)
 
     result = FleetParity.check()
@@ -104,7 +104,7 @@ defmodule Ezagent.Identity.FleetParityTest do
     licensed = licensed_caps(admin, [])
 
     # Give the admin a CURRENT-valid license at BOTH legacy + store (active row).
-    assert :ok = Ezagent.EntityCaps.UserStore.persist(admin, licensed)
+    assert :ok = Ezagent.IdentityCaps.UserStore.persist(admin, licensed)
     assert Store.status(admin) == :active
 
     # Rotate the admin authority WITHOUT re-minting (the only reachable stale-admin
@@ -129,7 +129,7 @@ defmodule Ezagent.Identity.FleetParityTest do
 
     # Clean the store within this sandbox transaction (rolled back after the
     # test) so the assertion is deterministic in a seeded dev DB.
-    EzagentCore.Repo.delete_all(Ezagent.EntityCaps.Store)
+    EzagentCore.Repo.delete_all(Ezagent.IdentityCaps.Store)
 
     # Partial (empty) store + a non-empty legacy population ⇒ INCOMPLETE
     # (enumerated from legacy, so an empty store is never "done").

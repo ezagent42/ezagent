@@ -15,7 +15,7 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
   import Ecto.Query
 
   alias Ezagent.Cap.{Authority, AuthorityCache}
-  alias Ezagent.{Cap, Capability, EntityCaps}
+  alias Ezagent.{Cap, Capability, IdentityCaps}
   alias Ezagent.Ecto.{KindCapAuthority, KindSnapshot}
   alias Ezagent.Test.TestBehavior
 
@@ -52,18 +52,18 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
     holder = provision_holder("dormant")
     cap = issue!(holder, target)
 
-    assert :ok = EntityCaps.grant(holder, cap)
-    assert cap in EntityCaps.load(holder)
+    assert :ok = IdentityCaps.grant(holder, cap)
+    assert cap in IdentityCaps.load(holder)
     assert {:ok, ^cap} = Cap.authorize(holder, [cap], needed_for(target))
 
     assert {:ok, bumped} = Authority.regenesis(target, :agent)
 
     # The stale artifact remains physically present in the holder slice, but
     # neither that source nor a direct inline presentation can authorize.
-    assert cap in EntityCaps.load(holder)
+    assert cap in IdentityCaps.load(holder)
 
     assert {:error, :no_matching_cap} =
-             Cap.authorize(holder, EntityCaps.load(holder), needed_for(target))
+             Cap.authorize(holder, IdentityCaps.load(holder), needed_for(target))
 
     assert {:error, :no_matching_cap} = Cap.authorize(holder, [cap], needed_for(target))
     assert bumped.generation == 2
@@ -73,7 +73,7 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
     target = spawn_target("reuse")
     holder = licensed_holder("reuse")
     old_cap = issue!(holder, target)
-    [old_license] = self_licenses(EntityCaps.load(target))
+    [old_license] = self_licenses(IdentityCaps.load(target))
     old_generation = generation(target)
 
     assert :ok = Ezagent.Lifecycle.destroy(target, :g4_recreate)
@@ -88,7 +88,7 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
 
     wait_until_ready(target)
 
-    [new_license] = self_licenses(EntityCaps.load(target))
+    [new_license] = self_licenses(IdentityCaps.load(target))
     assert generation(target) == old_generation + 1
     refute old_license.key_id == new_license.key_id
     assert Authority.verify_against_current(new_license, target, target)
@@ -173,7 +173,7 @@ defmodule Ezagent.UnifiedRevocationAcceptanceTest do
     }
 
     assert Cap.verified_set([scope_cap], holder) == MapSet.new()
-    assert EntityCaps.verified_set([scope_cap], holder) == MapSet.new()
+    assert IdentityCaps.verified_set([scope_cap], holder) == MapSet.new()
 
     assert {:error, :no_matching_cap} =
              Cap.authorize(holder, [scope_cap], needed_for(target))

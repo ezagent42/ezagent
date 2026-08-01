@@ -132,7 +132,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         kb_seed.kb_agent_uri
       )
 
-    held_caps = Ezagent.Identity.read_entity_caps(orchestrator.uri)
+    held_caps = Ezagent.Identity.read_identity_caps(orchestrator.uri)
 
     assert Enum.any?(held_caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Kb and cap.action == :query
@@ -634,7 +634,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
   end
 
   # #189 P10 harness fix: actor-extraction C1 (#1548) made world actions re-derive
-  # caps FRESH via PresenterCaps.load → EntityCaps.load (the mount `current_caps`
+  # caps FRESH via PresenterCaps.load → IdentityCaps.load (the mount `current_caps`
   # snapshot is no longer trusted). So a caller must DURABLY hold its signed workspace
   # caps at spawn (the spawn mints the self-license the fresh load needs), mirroring the
   # migrated sibling save_session_template_public_scope_gate_test. P10 was the missed straggler.

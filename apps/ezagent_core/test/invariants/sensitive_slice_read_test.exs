@@ -91,8 +91,8 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
   # exempt structurally and need no entry. Grow ONLY with a reviewed justification.
   @allowlist %{
     # --- identity domain: the sanctioned caps read/grant facade ---
-    {"apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex", :identity} =>
-      "EntityCaps is the sanctioned live-first facade for entity capability storage",
+    {"apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex", :identity} =>
+      "IdentityCaps is the sanctioned live-first facade for entity capability storage",
     {"apps/ezagent_domain_identity/lib/ezagent/identity.ex", :identity} =>
       "Identity facade list_caps_for/grant authority resolution — the sanctioned caps read path",
     # --- operator CLI ---

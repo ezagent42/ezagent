@@ -13,7 +13,7 @@ defmodule Ezagent.Identity.CapRevocationCutover do
   alias Ezagent.Cap.{Authority, DeliveryOutbox, RevocationEpoch}
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.RecipeCapBinding
   alias EzagentCore.Repo
 
@@ -146,7 +146,7 @@ defmodule Ezagent.Identity.CapRevocationCutover do
       Map.new(holder_uris, fn holder_uri ->
         holder = Ezagent.URI.new!(holder_uri)
 
-        case Ezagent.EntityCaps.effective_caps_persisted(holder) do
+        case Ezagent.IdentityCaps.effective_caps_persisted(holder) do
           {:ok, caps} -> {holder_uri, caps}
           {:error, reason} -> Repo.rollback({:effective_read_failed, holder_uri, reason})
         end

@@ -1,4 +1,4 @@
-defmodule Ezagent.EntityCaps.StoreTest do
+defmodule Ezagent.IdentityCaps.StoreTest do
   @moduledoc """
   #189 PR-1 — unit tests for the unified per-entity identity-caps store
   (cutover step 1, ADDITIVE write-shadow): round-trip, dual-write shadow
@@ -13,9 +13,9 @@ defmodule Ezagent.EntityCaps.StoreTest do
   import Ecto.Query
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4]
 
-  alias Ezagent.{Capability, EntityCaps, SnapshotStore}
+  alias Ezagent.{Capability, IdentityCaps, SnapshotStore}
   alias Ezagent.Cap.{Delivery, RevocationLedger}
-  alias Ezagent.EntityCaps.{Store, UserStore}
+  alias Ezagent.IdentityCaps.{Store, UserStore}
   alias Ezagent.Identity.ProvisioningReceipt
   alias EzagentCore.Repo
 
@@ -58,8 +58,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
   setup do
     Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
-    :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.EntityCapsReadyBarrier)
-    :ok = Ezagent.EntityCapsReadyBarrier.clear()
+    :ok = Ezagent.ReadyGate.register_external_gate(Ezagent.IdentityCapsReadyBarrier)
+    :ok = Ezagent.IdentityCapsReadyBarrier.clear()
 
     for action <- [:list_caps, :has_cap?, :persist_caps, :store_cap, :remove_cap] do
       :ok =
@@ -75,7 +75,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
     on_exit(fn ->
       Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
-      Ezagent.EntityCapsReadyBarrier.clear()
+      Ezagent.IdentityCapsReadyBarrier.clear()
     end)
 
     :ok
@@ -111,7 +111,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert Repo.get(Delivery, pending.id) == nil
 
       refute Repo.exists?(
-               from(row in Ezagent.EntityCaps.GranteeIndex,
+               from(row in Ezagent.IdentityCaps.GranteeIndex,
                  where:
                    row.grantee_uri == ^Ezagent.URI.stable_key(agent) and
                      row.target_uri == ^Ezagent.URI.stable_key(stored.instance)
@@ -297,12 +297,12 @@ defmodule Ezagent.EntityCaps.StoreTest do
   describe "store-authoritative durable reads (#189 PR-3 read-cutover)" do
     # PR-1/PR-2 kept legacy (`users.caps_json` / snapshot `:identity`)
     # authoritative and the store a write-shadow; PR-3 flips
-    # `EntityCaps.load_persisted/1` (the cold/self durable read behind the
+    # `IdentityCaps.load_persisted/1` (the cold/self durable read behind the
     # principal-axis gate) to the STORE as authoritative, with a legacy fallback
     # ONLY for an ABSENT row. The security property that PR-1's "legacy wins"
     # tests protected — a divergent/invalid shadow must not grant authority — is
     # now preserved by (a) the write-boundary guard (an `active` row carries a
-    # current-valid self-license) and (b) `EntityCaps.verified/2` gen-gating
+    # current-valid self-license) and (b) `IdentityCaps.verified/2` gen-gating
     # every read, exercised by the anti-resurrection regression.
 
     test "a present active store row is authoritative for a user (store-preferred over legacy caps_json)" do
@@ -318,8 +318,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert :ok = Store.persist(user, licensed_caps(user, [store_cap]))
       assert Store.status(user) == :active
 
-      assert cap_present?(EntityCaps.load_persisted(user), store_cap)
-      refute cap_present?(EntityCaps.load_persisted(user), legacy_cap)
+      assert cap_present?(IdentityCaps.load_persisted(user), store_cap)
+      refute cap_present?(IdentityCaps.load_persisted(user), legacy_cap)
     end
 
     test "a present active store row is authoritative for a snapshot-backed agent (store-preferred over the snapshot)" do
@@ -337,8 +337,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert :ok = Store.persist(agent, licensed_caps(agent, [store_cap]))
       assert Store.status(agent) == :active
 
-      assert cap_present?(EntityCaps.load_persisted(agent), store_cap)
-      refute cap_present?(EntityCaps.load_persisted(agent), legacy_cap)
+      assert cap_present?(IdentityCaps.load_persisted(agent), store_cap)
+      refute cap_present?(IdentityCaps.load_persisted(agent), legacy_cap)
     end
 
     test "a present NON-active store row is authoritative-EMPTY — it denies without falling back to legacy" do
@@ -354,7 +354,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       # A present non-active (revoked) row is authoritative about the holder
       # being EMPTY — it does NOT fall back to the legacy caps_json, which still
       # carries the cap. This is the inert-until-reprovision guarantee.
-      assert EntityCaps.load_persisted(user) == []
+      assert IdentityCaps.load_persisted(user) == []
     end
 
     test "POST-epoch a mirror-write failure is authoritative ({:error}), logged, and never changes an authz read" do
@@ -380,7 +380,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert log =~ "identity write"
 
       # The failed write changed nothing — the authoritative read is untouched.
-      assert cap_present?(EntityCaps.load_persisted(agent), cap)
+      assert cap_present?(IdentityCaps.load_persisted(agent), cap)
     end
   end
 
@@ -704,8 +704,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
       # shadow failure…
       assert cap_present?(UserStore.load(user), second)
       refute cap_present?(UserStore.load(user), first)
-      # …and so did the authoritative EntityCaps read.
-      assert cap_present?(EntityCaps.load_persisted(user), second)
+      # …and so did the authoritative IdentityCaps read.
+      assert cap_present?(IdentityCaps.load_persisted(user), second)
 
       # The shadow diverged (its write failed) — observable, not silent.
       refute Store.has_row?(user)
@@ -839,7 +839,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       # The reported success matches the authoritative plane the self-authz read
       # (post-epoch, store-authoritative) consults.
       assert cap_present?(Store.load(agent), added)
-      assert cap_present?(EntityCaps.load_persisted(agent), added)
+      assert cap_present?(IdentityCaps.load_persisted(agent), added)
     end
 
     test "REMOVAL: store commits + snapshot projection fails => caller sees :ok AND the store reflects the removal" do
@@ -869,7 +869,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
                )
 
       refute cap_present?(Store.load(agent), drop)
-      refute cap_present?(EntityCaps.load_persisted(agent), drop)
+      refute cap_present?(IdentityCaps.load_persisted(agent), drop)
     end
   end
 
@@ -945,9 +945,9 @@ defmodule Ezagent.EntityCaps.StoreTest do
       {:ok, %{state: live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
       assert cap_present?(MapSet.to_list(live.caps), added)
       # 3. Persisted read (post-epoch store-authoritative).
-      assert cap_present?(EntityCaps.load_persisted(agent), added)
+      assert cap_present?(IdentityCaps.load_persisted(agent), added)
       # 4. Authorization (live-first, verified/2).
-      assert cap_present?(EntityCaps.load(agent), added)
+      assert cap_present?(IdentityCaps.load(agent), added)
       # Non-vacuous: the base cap (and the self-license) are still present.
       assert cap_present?(Store.load(agent), keep)
 
@@ -996,8 +996,8 @@ defmodule Ezagent.EntityCaps.StoreTest do
       refute cap_present?(Store.load(agent), drop)
       {:ok, %{state: live}} = Ezagent.Kind.SliceAccess.get_raw_slice(agent, :identity)
       refute cap_present?(MapSet.to_list(live.caps), drop)
-      refute cap_present?(EntityCaps.load_persisted(agent), drop)
-      refute cap_present?(EntityCaps.load(agent), drop)
+      refute cap_present?(IdentityCaps.load_persisted(agent), drop)
+      refute cap_present?(IdentityCaps.load(agent), drop)
       # Non-vacuous: the kept cap survived the reload.
       assert cap_present?(Store.load(agent), keep)
 
@@ -1057,7 +1057,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       #    and reconciles — the committed grant survives on every plane.
       {:ok, _pid2} = Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent})
       wait_until_ready(agent)
-      assert cap_present?(EntityCaps.load(agent), added)
+      assert cap_present?(IdentityCaps.load(agent), added)
 
       :ok = Ezagent.Kind.terminate(agent)
     end
@@ -1098,7 +1098,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       # The mutation is REFUSED (the durable identity write fails closed) — never
       # reported as success.
-      assert {:error, _} = EntityCaps.grant(agent, added)
+      assert {:error, _} = IdentityCaps.grant(agent, added)
 
       # 1. Store unchanged — no row write under `:unknown` (epoch resolved BEFORE
       #    `persist/2`).
@@ -1135,7 +1135,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       Application.put_env(:ezagent_domain_identity, :identity_cutover_force_read_error, true)
       assert Ezagent.Identity.Cutover.status() == :unknown
 
-      assert {:error, _} = EntityCaps.revoke(agent, target)
+      assert {:error, _} = IdentityCaps.revoke(agent, target)
 
       # The cap is STILL present on all three planes — the revoke was refused.
       # 1. Store unchanged.
@@ -1169,7 +1169,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert Store.has_row?(agent)
       assert cap_present?(Store.load(agent), cap)
       # The authoritative durable read serves the same cap from the snapshot.
-      assert cap_present?(EntityCaps.load_persisted(agent), cap)
+      assert cap_present?(IdentityCaps.load_persisted(agent), cap)
     end
 
     test "SnapshotStore.delete clears the shadow row too" do
@@ -1187,7 +1187,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
 
       assert :ok = SnapshotStore.delete(agent)
       refute Store.has_row?(agent)
-      assert EntityCaps.load_persisted(agent) == []
+      assert IdentityCaps.load_persisted(agent) == []
     end
 
     test "a committed :identity mutation on a live Kind mirrors into the store" do
@@ -1204,10 +1204,10 @@ defmodule Ezagent.EntityCaps.StoreTest do
       assert Store.has_row?(agent)
       assert cap_present?(Store.load(agent), first)
 
-      assert :ok = EntityCaps.grant(agent, second)
+      assert :ok = IdentityCaps.grant(agent, second)
       assert cap_present?(Store.load(agent), second)
 
-      assert :ok = EntityCaps.revoke(agent, first)
+      assert :ok = IdentityCaps.revoke(agent, first)
       refute cap_present?(Store.load(agent), first)
       assert cap_present?(Store.load(agent), second)
 
@@ -1496,7 +1496,7 @@ defmodule Ezagent.EntityCaps.StoreTest do
   end
 
   # -------------------------------------------------------------------
-  # Helpers (mirrors Ezagent.EntityCapsTest)
+  # Helpers (mirrors Ezagent.IdentityCapsTest)
   # -------------------------------------------------------------------
 
   defp issued_cap(receiver, action) do

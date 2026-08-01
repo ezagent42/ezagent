@@ -1080,7 +1080,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, %{ok: true}} = owner_cap_gated_probe(session_uri)
     assert Ezagent.ReadyGate.status(orchestrator_uri) == :ready
 
-    stored = Ezagent.Identity.read_entity_caps(orchestrator_uri)
+    stored = Ezagent.Identity.read_identity_caps(orchestrator_uri)
     {membership_caps, delegated_caps} = Enum.split_with(stored, &tier1_membership_cap?/1)
     delegated_cap_identities = Enum.uniq_by(delegated_caps, &Ezagent.Capability.identity_key/1)
 
@@ -1136,7 +1136,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     revoked_scope_caps = session_caps ++ workspace_caps
 
     refute Enum.any?(
-             Ezagent.Identity.read_entity_caps(orchestrator_uri),
+             Ezagent.Identity.read_identity_caps(orchestrator_uri),
              &scoped_orchestrator_cap?/1
            )
 
@@ -1157,7 +1157,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert eventually(fn ->
              orchestrator_uri
-             |> Ezagent.Identity.read_entity_caps()
+             |> Ezagent.Identity.read_identity_caps()
              |> Enum.any?(fn held ->
                Enum.any?(revoked_scope_caps, fn expected ->
                  Ezagent.Capability.identity_key(held) ==
@@ -1299,7 +1299,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     on_exit(fn -> terminate(orchestrator_uri) end)
 
     refute Enum.any?(
-             Ezagent.Identity.read_entity_caps(orchestrator_uri),
+             Ezagent.Identity.read_identity_caps(orchestrator_uri),
              &scoped_orchestrator_cap?/1
            )
   end

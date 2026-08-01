@@ -3,7 +3,7 @@ defmodule Ezagent.World.PresenterCaps do
   Single source for capabilities carried by World-originated dispatches.
 
   `load/1` re-derives the presenter's caps FRESH from the live/durable Identity
-  store on every action — it is exactly `EntityCaps.load(presenter)`, full stop.
+  store on every action — it is exactly `IdentityCaps.load(presenter)`, full stop.
   LiveView's `current_caps` assign is a mount-time bootstrap snapshot and is NO
   LONGER trusted: merging it let a bootstrap-only authority artifact survive a
   mid-session grant/revoke/demotion (a demoted admin kept publish/admin rights
@@ -70,7 +70,7 @@ defmodule Ezagent.World.PresenterCaps do
 
   defp fresh_caps(assigns) do
     case Map.get(assigns, :current_entity_uri) do
-      %URI{} = presenter -> Ezagent.EntityCaps.load(presenter)
+      %URI{} = presenter -> Ezagent.IdentityCaps.load(presenter)
       _ -> []
     end
   end

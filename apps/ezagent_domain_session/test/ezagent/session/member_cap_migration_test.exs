@@ -53,7 +53,7 @@ defmodule Ezagent.Session.MemberCapMigrationTest do
 
   defp holds_member_cap?(member, session) do
     member
-    |> Ezagent.Identity.read_entity_caps()
+    |> Ezagent.Identity.read_identity_caps()
     |> Enum.any?(&member_cap_over?(&1, session))
   end
 

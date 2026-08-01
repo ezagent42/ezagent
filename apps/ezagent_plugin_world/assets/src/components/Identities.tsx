@@ -254,7 +254,7 @@ export function IdentitiesSurface({state, onCreateAgent, onCreateUser, onSaveUse
     )
   }
   if (state.component === "agents_table") return <AgentsTable state={state} />
-  if (state.component === "entity_caps") return <EntityCaps state={state} />
+  if (state.component === "entity_caps") return <IdentityCaps state={state} />
   if (state.component === "agent_detail") return <AgentDetail state={state} onDeleteAgent={onDeleteAgent} />
   if (state.component === "agent_new_form") return <AgentNewForm state={state} onCreateAgent={onCreateAgent} />
   if (state.component === "agent_api_keys") return <AgentApiKeys state={state} onPutApiKey={onPutApiKey} onDeleteApiKey={onDeleteApiKey} />
@@ -686,7 +686,7 @@ function AgentsTable({state}: {state: IdentitiesState}) {
   )
 }
 
-function EntityCaps({state}: {state: IdentitiesState}) {
+function IdentityCaps({state}: {state: IdentitiesState}) {
   const caps = Array.isArray(state.caps) ? state.caps : []
   const error = !Array.isArray(state.caps) ? state.caps?.error : undefined
 

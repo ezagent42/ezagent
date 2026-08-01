@@ -47,7 +47,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    case Ezagent.EntityCaps.effective_caps_persisted(member_uri) do
+    case Ezagent.IdentityCaps.effective_caps_persisted(member_uri) do
       {:ok, caps} ->
         grant_from_effective_caps(caps, member_uri, session_uri, workspace_uri, ctx)
 

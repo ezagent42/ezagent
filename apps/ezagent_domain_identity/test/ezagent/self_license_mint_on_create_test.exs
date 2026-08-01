@@ -11,7 +11,7 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
 
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Cap, Capability, EntityCaps}
+  alias Ezagent.{Cap, Capability, IdentityCaps}
   alias Ezagent.Cap.Authority
 
   defmodule PrincipalKind do
@@ -38,8 +38,8 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
     assert {:ok, _pid} = Ezagent.Kind.spawn(PrincipalKind, %{uri: principal, initial_caps: []})
     wait_until_ready(principal)
 
-    assert [license] = self_licenses(EntityCaps.load(principal))
-    assert [persisted_license] = self_licenses(EntityCaps.load_persisted(principal))
+    assert [license] = self_licenses(IdentityCaps.load(principal))
+    assert [persisted_license] = self_licenses(IdentityCaps.load_persisted(principal))
     assert Capability.identity_key(license) == Capability.identity_key(persisted_license)
     assert Authority.verify_against_current(license, principal, principal)
 
@@ -64,8 +64,8 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
     refute Authority.verify_against_current(stale_remint, principal, principal)
 
     # Live process retains only its stale cached generation-N signer.
-    assert EntityCaps.load(principal) == []
-    assert EntityCaps.load_persisted(principal) == []
+    assert IdentityCaps.load(principal) == []
+    assert IdentityCaps.load_persisted(principal) == []
 
     assert :ok = Ezagent.Kind.terminate(principal)
     assert :ok = Ezagent.SnapshotStore.delete(principal)
@@ -75,8 +75,8 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
 
     # Cold restore is :existed and activate only re-unions the same stale
     # artifact; neither path mints a generation-(N+1) replacement.
-    assert EntityCaps.load(principal) == []
-    assert EntityCaps.load_persisted(principal) == []
+    assert IdentityCaps.load(principal) == []
+    assert IdentityCaps.load_persisted(principal) == []
   end
 
   test "ordinary grant issuance cannot construct the reserved self-license action" do
@@ -148,13 +148,13 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
              end)
 
     assert [_license] = self_licenses(caps)
-    assert Ezagent.EntityCaps.UserStore.load(principal) == []
+    assert Ezagent.IdentityCaps.UserStore.load(principal) == []
 
     assert {:ok, %{}} = Ezagent.ActionSet.Identity.activate(state, %{self_uri: principal})
 
     assert [_license] =
              principal
-             |> Ezagent.EntityCaps.UserStore.load()
+             |> Ezagent.IdentityCaps.UserStore.load()
              |> self_licenses()
   end
 

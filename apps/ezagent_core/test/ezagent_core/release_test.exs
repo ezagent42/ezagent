@@ -26,7 +26,7 @@ defmodule EzagentCore.ReleaseTest do
 
   alias Ezagent.Cap
   alias Ezagent.Capability
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.Cutover
 
   test "REFUSED cutover RAISES (release has no Mix exit-status hook)" do

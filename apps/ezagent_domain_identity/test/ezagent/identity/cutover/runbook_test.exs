@@ -21,7 +21,7 @@ defmodule Ezagent.Identity.Cutover.RunbookTest do
   alias Ezagent.Cap
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.{Cutover, FleetParity}
   alias Ezagent.Identity.Cutover.Runbook
 
@@ -73,7 +73,7 @@ defmodule Ezagent.Identity.Cutover.RunbookTest do
 
   test "REFUSE on forced session-migration error — aborts BEFORE the parity barrier" do
     # Reuse the EXISTING `p1_forced_shadow_failure_uris` seam
-    # (`Ezagent.EntityCaps.Store.persist/2`, already exercised cross-domain by
+    # (`Ezagent.IdentityCaps.Store.persist/2`, already exercised cross-domain by
     # `Ezagent.Socialware.SessionSelfLicenseMigrationTest`'s "RETRYABLE" test)
     # rather than adding a new seam: it forces the session migration's
     # AUTHORITATIVE store write to fail for one URI, which surfaces as a

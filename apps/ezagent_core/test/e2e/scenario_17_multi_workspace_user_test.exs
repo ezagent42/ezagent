@@ -195,7 +195,7 @@ defmodule EzagentCore.E2E.Scenario17MultiWorkspaceUserTest do
       {:ok, _} = Workspace.Store.update_members(ctx.alpha_name, [u])
       {:ok, _} = Workspace.Store.update_members(ctx.beta_name, [u])
 
-      current_caps = Ezagent.EntityCaps.load(u)
+      current_caps = Ezagent.IdentityCaps.load(u)
 
       by_holder =
         Application.get_env(:ezagent_core, EzagentCore.Test.CapAuthorityLoaderStub, %{})

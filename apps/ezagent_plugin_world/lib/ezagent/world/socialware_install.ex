@@ -160,7 +160,7 @@ defmodule Ezagent.World.SocialwareInstall do
 
     Ezagent.Entity.SessionTemplate.create(name, content,
       caller: caller,
-      caps: apply(Module.concat([Ezagent, EntityCaps]), :load, [caller]),
+      caps: apply(Module.concat([Ezagent, IdentityCaps]), :load, [caller]),
       workspace: workspace
     )
   end

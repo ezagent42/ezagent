@@ -34,7 +34,7 @@ defmodule EzagentCore.Repo.Migrations.CreateCapGranteeIndex do
 
     # codex ①: seed the projection from the authoritative store so existing
     # grants are visible now (empty on a fresh DB — a no-op).
-    Ezagent.EntityCaps.GranteeIndex.backfill_all()
+    Ezagent.IdentityCaps.GranteeIndex.backfill_all()
   end
 
   def down do

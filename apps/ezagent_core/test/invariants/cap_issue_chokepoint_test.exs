@@ -128,7 +128,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     assert store =~ "set_caps_effect(new_caps)"
     assert revoke =~ "set_caps_effect(new_caps)"
     assert writer =~ "{:set, :caps, caps}"
-    assert revoke =~ "Ezagent.EntityCaps.Store.revoke_cap(receiver, cap_struct)"
+    assert revoke =~ "Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap_struct)"
     assert revoke =~ "Ezagent.Capability.revoke(current_caps, resolved)"
     refute revoke =~ "MapSet.put"
   end
@@ -151,7 +151,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # allowlist below governs.
     "apps/ezagent_domain_identity/lib/ezagent/users.ex" => 2,
 
-    # EntityCaps is the sole post-create storage facade. It replaces the full
+    # IdentityCaps is the sole post-create storage facade. It replaces the full
     # verified set and cannot mint or authorize a grant by itself.
     #
     # #189 PR-3 FIX 1: 1 → 2. Post-epoch the store is authoritative, so
@@ -160,7 +160,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # adds the second `caps_json:` write form). It mirrors the store's verified
     # set — it cannot mint, grant, or authorize by itself, and a projection
     # failure never changes an authz outcome (reads are store-authoritative).
-    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/user_store.ex" => 2,
+    "apps/ezagent_domain_identity/lib/ezagent/identity_caps/user_store.ex" => 2,
 
     # #189 PR-1 — the unified identity-caps store writes its OWN `identity_caps`
     # table column (a separate table from `users.caps_json`). In PR-1 it is a
@@ -193,7 +193,7 @@ defmodule Ezagent.Invariants.CapIssueChokepointTest do
     # only freshly re-signed, ledger-checked artifacts inside the one rebuild
     # transaction and re-validates the active-self-license invariant before the
     # insert; it is not callable as a live grant path.
-    "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex" => 10,
+    "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex" => 10,
 
     # P2b's stopped-node one-shot rewrites `users.caps_json` only as a legacy
     # projection of the already-derived v2 Store set, under the same table locks

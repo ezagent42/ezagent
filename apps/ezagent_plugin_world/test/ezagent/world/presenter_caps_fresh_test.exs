@@ -7,12 +7,12 @@ defmodule Ezagent.World.PresenterCapsFreshTest do
   bootstrap snapshot (`assigns.current_caps`) over the live set, so a
   bootstrap-only authority artifact survived a mid-session demotion (a demoted
   admin kept publish/admin rights until re-login). After C1, `load/1` is exactly
-  `EntityCaps.load(presenter)` — no mount snapshot is trusted, so the stale
+  `IdentityCaps.load(presenter)` — no mount snapshot is trusted, so the stale
   artifact is gone on the very next action.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.{Capability, EntityCaps}
+  alias Ezagent.{Capability, IdentityCaps}
   alias Ezagent.World.PresenterCaps
   alias Ezagent.World.PresenterCaps.EphemeralCaps
 
@@ -22,7 +22,7 @@ defmodule Ezagent.World.PresenterCapsFreshTest do
     presenter =
       Ezagent.URI.agent("presenter-fresh", "demoted-#{System.unique_integer([:positive])}")
 
-    fresh = MapSet.new(EntityCaps.load(presenter))
+    fresh = MapSet.new(IdentityCaps.load(presenter))
 
     # The mount-time bootstrap snapshot still carries an authority cap the
     # principal no longer holds. It must NOT survive into a later action.
@@ -57,7 +57,7 @@ defmodule Ezagent.World.PresenterCapsFreshTest do
     presenter =
       Ezagent.URI.agent("presenter-ephemeral", "jit-#{System.unique_integer([:positive])}")
 
-    assert MapSet.new(EntityCaps.load(presenter)) == MapSet.new()
+    assert MapSet.new(IdentityCaps.load(presenter)) == MapSet.new()
 
     jit = stale_cap(presenter)
     socket = %{assigns: %{current_entity_uri: presenter}}

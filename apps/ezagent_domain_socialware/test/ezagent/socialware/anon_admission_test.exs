@@ -123,11 +123,11 @@ defmodule Ezagent.Socialware.AnonAdmissionTest do
       assert {:ok, %{anon_uri: anon}} = AnonAdmission.admit_anonymous_participant(session)
 
       assert wait_until(fn ->
-               Enum.any?(Ezagent.EntityCaps.load(anon), &(&1.action == :receive)) and
-                 not Enum.any?(Ezagent.EntityCaps.load(anon), &(&1.action == :join))
+               Enum.any?(Ezagent.IdentityCaps.load(anon), &(&1.action == :receive)) and
+                 not Enum.any?(Ezagent.IdentityCaps.load(anon), &(&1.action == :join))
              end)
 
-      caps = Ezagent.EntityCaps.load(anon)
+      caps = Ezagent.IdentityCaps.load(anon)
 
       cap =
         Enum.find(caps, fn cap ->

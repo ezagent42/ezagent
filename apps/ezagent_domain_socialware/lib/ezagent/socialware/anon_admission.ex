@@ -103,7 +103,7 @@ defmodule Ezagent.Socialware.AnonAdmission do
 
     join_caps =
       anon_uri
-      |> Ezagent.EntityCaps.load()
+      |> Ezagent.IdentityCaps.load()
       |> Enum.filter(&join_cap_for?(&1, session_uri))
 
     if Enum.empty?(join_caps) do

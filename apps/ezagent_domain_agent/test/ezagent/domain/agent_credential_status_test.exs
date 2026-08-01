@@ -465,7 +465,7 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
 
   # The caller holds its Manage caps IN THE STORE (`users.caps_json`) alongside a
   # current self-license — so the batch authorizes from the FRESH store
-  # (`EntityCaps.load/1`), NEVER from the caller-supplied inline caps.
+  # (`IdentityCaps.load/1`), NEVER from the caller-supplied inline caps.
   defp owner_with_store_caps(owner, manage_caps) do
     {:ok, _} = Ezagent.Users.create_read_only(owner, [self_license_cap!(owner) | manage_caps])
     :ok
@@ -489,11 +489,11 @@ defmodule Ezagent.Domain.AgentCredentialStatusTest do
          %{flavor: file_flavor, slice_flavor: slice_flavor} do
       owner = user("dir-owner")
 
-      # AUTHORIZED set (→ the caller's cap count → EntityCaps.load cost) is held FIXED
+      # AUTHORIZED set (→ the caller's cap count → IdentityCaps.load cost) is held FIXED
       # at 3 (file → :missing, slice → :authenticated, unresolved-flavor → :unknown,
       # which also exercises finding-1: a prefetched nil flavor never falls back to a
       # per-agent read); only the DENIED set grows. Constant-as-denied-grows IS "no
-      # per-denied reload" — and it sidesteps the EntityCaps.load-scales-with-cap-count
+      # per-denied reload" — and it sidesteps the IdentityCaps.load-scales-with-cap-count
       # trap that a growing AUTHORIZED set would introduce.
       authorized =
         [

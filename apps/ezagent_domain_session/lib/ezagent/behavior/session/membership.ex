@@ -189,7 +189,7 @@ defmodule Ezagent.ActionSet.Session.Membership do
   defp holds_spawned_member_authority?(%URI{} = caller, %URI{} = member_uri) do
     Ezagent.AgentLineage.spawned_in_lineage?(member_uri, caller) and
       caller
-      |> Ezagent.EntityCaps.load()
+      |> Ezagent.IdentityCaps.load()
       |> Enum.any?(&concrete_caller_cap_covers?(&1, caller, member_uri))
   end
 

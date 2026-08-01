@@ -19,7 +19,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AdminKeyRotationTest do
   alias Ezagent.Cap.Authority
   alias Ezagent.Capability
   alias Ezagent.Entity.User
-  alias Ezagent.EntityCaps
+  alias Ezagent.IdentityCaps
   alias Ezagent.Identity.AdminKeyRotation
 
   defp admin, do: User.admin_uri()
@@ -45,7 +45,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AdminKeyRotationTest do
 
     # The re-minted self-license is durable AND current under the new generation
     # (rotate + re-mint were atomic — no stale-gen window).
-    assert [license] = self_licenses(EntityCaps.load_persisted(admin()))
+    assert [license] = self_licenses(IdentityCaps.load_persisted(admin()))
     assert Authority.verify_against_current(license, admin(), admin())
 
     # codex r3 hardening 2 (Landmine A): the AUTHORITATIVE identity-caps store row
@@ -53,7 +53,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AdminKeyRotationTest do
     # rotated authority (same connection) and did NOT strand the license as
     # `revoked_unprovisioned` (which would `:holder_revoked`-brick a post-epoch boot
     # while every other assertion here still passed).
-    assert EntityCaps.Store.status(admin()) == :active
+    assert IdentityCaps.Store.status(admin()) == :active
   end
 
   test "a persist failure INSIDE the rotation txn rolls the WHOLE rotation back (atomicity)" do
@@ -67,7 +67,7 @@ defmodule EzagentDomainInstanceMessage.Integration.AdminKeyRotationTest do
     # currently-valid self-license, then take the admin offline.
     _ = Ezagent.Cap.authorization_context({:admin, admin()})
     assert {:ok, gen0} = Authority.current_generation(admin())
-    assert [old_license] = self_licenses(EntityCaps.load_persisted(admin()))
+    assert [old_license] = self_licenses(IdentityCaps.load_persisted(admin()))
     assert Authority.verify_against_current(old_license, admin(), admin())
     _ = Ezagent.Kind.terminate!(admin())
 

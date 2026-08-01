@@ -4,7 +4,7 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
   alias Ezagent.Cap.{Authority, Grant}
   alias Ezagent.Identity.Offboarding.RevocationFence
   alias Ezagent.Identity.Test.DeleteUserAgentKind
-  alias Ezagent.{Capability, EntityCaps, SnapshotStore, Users}
+  alias Ezagent.{Capability, IdentityCaps, SnapshotStore, Users}
 
   test "delete_user fences first, bumps the user and every derived agent, and leaves peers current" do
     user = unique_user("owner")
@@ -59,8 +59,8 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     assert {:ok, user_generation} = Authority.current_generation(user)
     assert {:ok, derived_generation} = Authority.current_generation(derived)
     assert {:ok, independent_generation} = Authority.current_generation(independent)
-    assert [_ | _] = EntityCaps.load_persisted(derived)
-    assert [_ | _] = EntityCaps.load_persisted(independent)
+    assert [_ | _] = IdentityCaps.load_persisted(derived)
+    assert [_ | _] = IdentityCaps.load_persisted(independent)
 
     assert :ok = Users.delete(user)
 
@@ -73,10 +73,10 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     assert {:ok, ^independent_generation} = Authority.current_generation(independent)
 
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
-    assert EntityCaps.load(derived) == []
-    assert EntityCaps.load_persisted(derived) == []
+    assert IdentityCaps.load(derived) == []
+    assert IdentityCaps.load_persisted(derived) == []
     refute Process.alive?(derived_pid)
-    assert [_ | _] = EntityCaps.load_persisted(independent)
+    assert [_ | _] = IdentityCaps.load_persisted(independent)
 
     refute RevocationFence.fenced?(user)
     refute RevocationFence.fenced?(derived)

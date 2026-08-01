@@ -6,7 +6,7 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
   alias Ezagent.Cap.{Authority, Delivery, RevocationEpoch, RevocationLedger}
   alias Ezagent.Capability
   alias Ezagent.Ecto.{CapRevocationEpoch, KindSnapshot}
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.{CapRevocationCutover, RecipeCapBinding}
   alias EzagentCore.Repo
 
@@ -164,7 +164,7 @@ defmodule Ezagent.Identity.CapRevocationCutoverTest do
     refute Capability.identity_key(revoked) in identities(Store.load(holder))
 
     refute Capability.identity_key(revoked) in identities(
-             Ezagent.EntityCaps.load_persisted(holder)
+             Ezagent.IdentityCaps.load_persisted(holder)
            )
   end
 

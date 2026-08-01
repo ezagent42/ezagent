@@ -22,7 +22,7 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
-  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
   @snapshot "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex"
@@ -76,13 +76,13 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
              "{:set, :caps, caps}"
 
     assert definition_source(@identity_facade, :list_caps_for, 1) =~
-             "Ezagent.EntityCaps.load"
+             "Ezagent.IdentityCaps.load"
 
     assert definition_source(@identity_facade, :read_held_caps, 1) =~
-             "Ezagent.EntityCaps.load"
+             "Ezagent.IdentityCaps.load"
 
     assert source(@identity_facade) =~
-             "defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load"
+             "defdelegate read_identity_caps(entity_uri), to: Ezagent.IdentityCaps, as: :load"
 
     refute source(@identity_facade) =~ "defp verified_cap_set"
 

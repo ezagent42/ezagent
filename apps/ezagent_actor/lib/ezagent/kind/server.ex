@@ -181,7 +181,7 @@ defmodule Ezagent.Kind.Server do
         # roll back the committed mutation and the live slice cross-Kind authz
         # reads is correct. Config-injected store seam (no compile-time
         # actor→domain dependency); a no-op pre-epoch / for users / ephemeral /
-        # fresh creation. See `EntityCaps.Store.reconcile_cold_load_identity/3`.
+        # fresh creation. See `IdentityCaps.Store.reconcile_cold_load_identity/3`.
         with {:ok, slice_state} <-
                maybe_reconcile_cold_load_identity(
                  uri,
@@ -292,7 +292,7 @@ defmodule Ezagent.Kind.Server do
     end
   end
 
-  # #189 PR-3 FINAL (ITEM 1) — see `EntityCaps.Store.reconcile_cold_load_identity/3`.
+  # #189 PR-3 FINAL (ITEM 1) — see `IdentityCaps.Store.reconcile_cold_load_identity/3`.
   # Only durable snapshot-backed Kinds mirror their `:identity` slice back through
   # `save_now`, so the reconcile is scoped to them (ephemeral/external re-read
   # their durable identity in `ActionSet.Identity.create/1` and are EXCLUDED here,

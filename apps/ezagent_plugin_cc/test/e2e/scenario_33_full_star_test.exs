@@ -253,7 +253,7 @@ defmodule EzagentDomainInstanceMessage.E2E.Scenario33_FullStarTest do
 
     on_exit(fn -> SessionManager.stop(orchestrator_uri) end)
 
-    current_caps = Ezagent.EntityCaps.load(orchestrator_uri)
+    current_caps = Ezagent.IdentityCaps.load(orchestrator_uri)
 
     preflight =
       Ezagent.Orchestrator.Tools.preflight_within_session_cap(

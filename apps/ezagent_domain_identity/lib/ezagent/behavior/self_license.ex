@@ -8,7 +8,7 @@ defmodule Ezagent.ActionSet.SelfLicense do
   "the self-license carrier must not be an ordinary cap-only Behavior — registers
   a CapabilityRegistry subject even when non-dispatchable"). It owns the
   `:identity` slice (`%{caps: MapSet.t()}` — the exact shape the identity-caps
-  store, the `Kind.read_durable(:identity)` projection, and `EntityCaps` already
+  store, the `Kind.read_durable(:identity)` projection, and `IdentityCaps` already
   read), minting the self-license ONCE at genuine creation (`:created`).
 
   ## Restart = re-read, never re-mint
@@ -19,7 +19,7 @@ defmodule Ezagent.ActionSet.SelfLicense do
   on both the store-authoritative cold/self path AND the live-slice read. `create/1`
   is not called on `:existed` (the snapshot is loaded + `activate/2` runs), so the
   license is never re-minted; a revoked / generation-bumped principal is caught by
-  `EntityCaps.verified/2` gen-gating on every read.
+  `IdentityCaps.verified/2` gen-gating on every read.
 
   ## kind axis
 
@@ -27,7 +27,7 @@ defmodule Ezagent.ActionSet.SelfLicense do
   e.g. `:session`), NOT `Ezagent.URI.type/1` — for a Session `URI.type/1` is the
   TEMPLATE axis, and `String.to_existing_atom/1` on an arbitrary template name would
   crash (the exact hazard the handoff/brief names). The principal gate
-  (`EntityCaps.verified/2`) checks only `action == :self_license` plus a
+  (`IdentityCaps.verified/2`) checks only `action == :self_license` plus a
   current-generation signature (a fresh-read generation check), so the `kind` /
   `behavior` axes carry no authority and are free to be the carrier's own.
   Fail-loud: if no authority is in scope, the mint fails and init stops (a principal

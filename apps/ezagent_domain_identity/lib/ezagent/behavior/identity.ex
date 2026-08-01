@@ -227,7 +227,7 @@ defmodule Ezagent.ActionSet.Identity do
   # `activate/2`, so its `create/1` isn't called on `:existed`).
   defp maybe_reread_durable_self_license(caps, %{create_freshness: :existed, uri: %URI{} = uri}) do
     uri
-    |> Ezagent.EntityCaps.Store.load()
+    |> Ezagent.IdentityCaps.Store.load()
     |> Enum.find(&(Ezagent.Capability.action_of(&1) == :self_license))
     |> case do
       %Ezagent.Capability{} = license -> MapSet.put(caps, license)
@@ -273,7 +273,7 @@ defmodule Ezagent.ActionSet.Identity do
     original_state = state
 
     user_caps =
-      if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
+      if Ezagent.URI.type?(uri, :user), do: Ezagent.IdentityCaps.UserStore.load(uri), else: []
 
     state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
 
@@ -307,8 +307,8 @@ defmodule Ezagent.ActionSet.Identity do
   # here prevents a crash between `create/1` and that marker-bearing commit
   # from leaving a self-license that a later retry cannot safely mint.
   defp persist_user_caps_after_marker(uri, caps) do
-    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
-      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
+    if Ezagent.URI.type?(uri, :user) and Ezagent.IdentityCaps.UserStore.exists?(uri) do
+      Ezagent.IdentityCaps.UserStore.persist(uri, MapSet.to_list(caps))
     else
       :ok
     end
@@ -631,12 +631,12 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal storage action used by `Ezagent.EntityCaps.persist/2` for a live entity."
+  @doc "VM-internal storage action used by `Ezagent.IdentityCaps.persist/2` for a live entity."
   def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do
     receiver = Map.get(ctx, :self_uri)
 
-    with :ok <- Ezagent.EntityCaps.validate_issued_caps(caps, receiver),
-         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
+    with :ok <- Ezagent.IdentityCaps.validate_issued_caps(caps, receiver),
+         {:ok, persistable} <- Ezagent.IdentityCaps.prepare_for_storage(caps, receiver, true) do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
@@ -651,13 +651,13 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_persist_caps(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal atomic single-artifact storage used by `Ezagent.EntityCaps.grant/2`."
+  @doc "VM-internal atomic single-artifact storage used by `Ezagent.IdentityCaps.grant/2`."
   def handle_store_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
     receiver = Map.get(ctx, :self_uri)
     updated = replace_cap(ctx[:read].(:caps, MapSet.new()), cap)
 
-    with :ok <- Ezagent.EntityCaps.validate_issued_caps([cap], receiver),
-         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
+    with :ok <- Ezagent.IdentityCaps.validate_issued_caps([cap], receiver),
+         {:ok, persistable} <- Ezagent.IdentityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
@@ -669,15 +669,15 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_store_cap(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal atomic single-artifact removal used by `Ezagent.EntityCaps.revoke/2`."
+  @doc "VM-internal atomic single-artifact removal used by `Ezagent.IdentityCaps.revoke/2`."
   def handle_remove_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
     current_caps = ctx[:read].(:caps, MapSet.new())
     receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, resolved} <- Ezagent.EntityCaps.Store.revoke_cap(receiver, cap),
+    with {:ok, resolved} <- Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap),
          {:ok, updated} <- Ezagent.Capability.revoke(current_caps, resolved),
          {:ok, persistable} <-
-           Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
+           Ezagent.IdentityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
@@ -780,7 +780,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
     current_caps = ctx[:read].(:caps, MapSet.new())
     receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, resolved} <- Ezagent.EntityCaps.Store.revoke_cap(receiver, cap_struct),
+    with {:ok, resolved} <- Ezagent.IdentityCaps.Store.revoke_cap(receiver, cap_struct),
          {:ok, new_caps} <- Ezagent.Capability.revoke(current_caps, resolved) do
       notify_cap_change(
         ctx,
@@ -808,8 +808,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp uri_to_str(other), do: inspect(other)
 
   defp persist_entity_caps(%URI{} = uri, caps) do
-    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
-      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
+    if Ezagent.URI.type?(uri, :user) and Ezagent.IdentityCaps.UserStore.exists?(uri) do
+      Ezagent.IdentityCaps.UserStore.persist(uri, MapSet.to_list(caps))
     else
       :ok
     end

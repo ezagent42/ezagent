@@ -47,7 +47,7 @@ defmodule Ezagent.Socialware.SessionSelfLicenseMigration do
   alias Ezagent.ActionSet.{KindBase, SelfLicense}
   alias Ezagent.Cap
   alias Ezagent.Ecto.KindSnapshot
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
 
   @session_kind_type "session"
 

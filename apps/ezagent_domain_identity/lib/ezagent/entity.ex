@@ -95,7 +95,7 @@ defmodule Ezagent.Entity do
   end
 
   defp spawn_with_hydrated_caps(%URI{} = uri) do
-    case Ezagent.EntityCaps.load_persisted(uri) do
+    case Ezagent.IdentityCaps.load_persisted(uri) do
       caps_list when is_list(caps_list) and caps_list != [] ->
         # Reach past the generic spawn fn so we can pass initial_caps.
         # The spawn fn registered in EzagentDomainIdentity.Application

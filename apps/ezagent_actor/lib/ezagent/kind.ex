@@ -839,7 +839,7 @@ defmodule Ezagent.Kind do
 
   @doc """
   Am I (the calling process) the target URI's own Kind process? (§2.2) — the
-  self-detection the `EntityCaps` self-read case needs to avoid a self-call
+  self-detection the `IdentityCaps` self-read case needs to avoid a self-call
   deadlock. `false` when no live process is registered for `uri`.
   """
   @spec self?(URI.t() | String.t()) :: boolean()

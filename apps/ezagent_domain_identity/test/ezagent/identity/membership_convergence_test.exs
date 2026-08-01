@@ -36,7 +36,7 @@ defmodule Ezagent.Identity.MembershipConvergenceTest do
 
     on_exit(fn -> :telemetry.detach(handler_id) end)
 
-    state = %{caps: MapSet.new(Ezagent.EntityCaps.load(member))}
+    state = %{caps: MapSet.new(Ezagent.IdentityCaps.load(member))}
 
     result = Ezagent.ActionSet.Identity.activate(state, %{self_uri: member})
 
@@ -59,7 +59,7 @@ defmodule Ezagent.Identity.MembershipConvergenceTest do
 
     assert wait_member_online(session, member, false)
 
-    held_caps = Ezagent.EntityCaps.load(member)
+    held_caps = Ezagent.IdentityCaps.load(member)
 
     assert [
              {:dispatch_after_commit, %Ezagent.Cmd{action: :add_self, args: %{member: ^member}}}

@@ -1,10 +1,10 @@
-defmodule Ezagent.EntityCaps.GranteeIndex do
+defmodule Ezagent.IdentityCaps.GranteeIndex do
   @moduledoc """
   Reverse cap index — "who currently holds a cap toward target T" (URI-share A2-2).
 
   A **derived, read-only projection** of the authoritative cap store. It is
   written from the ONE place a held-cap becomes durable — inside
-  `Ezagent.EntityCaps.Store`'s write transaction (`persist_locked` /
+  `Ezagent.IdentityCaps.Store`'s write transaction (`persist_locked` /
   `update_locked` / `backfill_locked`), via `reindex_in_txn/2`. That is the sole
   downstream confluence of EVERY conferral path (grant, `initial_caps`, cold-load
   reconcile, backfill, activate, and the agent authoritative write
@@ -40,7 +40,7 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
   alias EzagentCore.Repo
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindCapAuthority
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
 
   @primary_key {:id, :string, autogenerate: false}
   schema "cap_grantee_index" do

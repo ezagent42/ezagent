@@ -41,7 +41,7 @@ defmodule Ezagent.Identity.AdminKeyRotation do
 
   alias Ezagent.Cap.Authority
   alias Ezagent.Entity.User
-  alias Ezagent.EntityCaps.UserStore
+  alias Ezagent.IdentityCaps.UserStore
   alias EzagentCore.Repo
 
   @doc """
@@ -133,13 +133,13 @@ defmodule Ezagent.Identity.AdminKeyRotation do
   if @persist_failure_seam do
     defp persist_authoritative(admin, caps_list) do
       case Application.get_env(:ezagent_domain_identity, :admin_rotation_forced_persist_error) do
-        nil -> Ezagent.EntityCaps.Store.persist(admin, caps_list)
+        nil -> Ezagent.IdentityCaps.Store.persist(admin, caps_list)
         reason -> {:error, reason}
       end
     end
   else
     defp persist_authoritative(admin, caps_list) do
-      Ezagent.EntityCaps.Store.persist(admin, caps_list)
+      Ezagent.IdentityCaps.Store.persist(admin, caps_list)
     end
   end
 

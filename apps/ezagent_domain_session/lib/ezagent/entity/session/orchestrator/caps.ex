@@ -58,7 +58,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     # transport may still be settling. The effective view combines the held
     # Identity slice with durable pending absorbs without dispatching through
     # the readiness gate.
-    with {:ok, current} <- Ezagent.EntityCaps.effective_caps(orchestrator_uri),
+    with {:ok, current} <- Ezagent.IdentityCaps.effective_caps(orchestrator_uri),
          to_grant =
            Enum.reject(desired, fn want ->
              Enum.any?(current, &same_cap_identity?(&1, want))

@@ -3,7 +3,7 @@ defmodule Ezagent.Identity.DeleteUserBusyTimeoutTest do
 
   alias Ezagent.Cap.{Authority, Grant}
   alias Ezagent.Identity.Test.BusyDeleteUserAgentKind
-  alias Ezagent.{Cap, Capability, EntityCaps, SnapshotStore, Users}
+  alias Ezagent.{Cap, Capability, IdentityCaps, SnapshotStore, Users}
 
   test "a still-live owned agent is inert after delete_user and queued for reap" do
     user = unique_user("owner")
@@ -31,7 +31,7 @@ defmodule Ezagent.Identity.DeleteUserBusyTimeoutTest do
              )
 
     {pat, _token} = Ezagent.Entity.Token.mint(agent, label: "before-delete")
-    assert [_ | _] = caps = EntityCaps.load(agent)
+    assert [_ | _] = caps = IdentityCaps.load(agent)
     license = Enum.find(caps, &(&1.action == :self_license))
     needed = Map.take(license, [:kind, :behavior, :action, :instance, :workspace_uri])
 
@@ -41,8 +41,8 @@ defmodule Ezagent.Identity.DeleteUserBusyTimeoutTest do
     assert :ok = Users.delete(user)
 
     assert Process.alive?(pid)
-    assert EntityCaps.load(agent) == []
-    assert EntityCaps.load_persisted(agent) == []
+    assert IdentityCaps.load(agent) == []
+    assert IdentityCaps.load_persisted(agent) == []
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
     assert {:error, :holder_revoked} = Cap.authorize(agent, [license], needed)
     assert agent in Ezagent.Identity.ReapQueue.pending()

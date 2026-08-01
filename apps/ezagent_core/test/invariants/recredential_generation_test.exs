@@ -46,7 +46,7 @@ defmodule Ezagent.Invariants.RecredentialGenerationTest do
     bridge_token =
       source("apps/ezagent_domain_agent_bridge/lib/ezagent/agent_bridge/token_store.ex")
 
-    entity_caps = source("apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex")
+    entity_caps = source("apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex")
 
     assert cap =~ "current_process_generation"
     assert cap =~ "current_generation"

@@ -1,4 +1,4 @@
-defmodule Ezagent.EntityCaps.StoreStatusDecodeTest do
+defmodule Ezagent.IdentityCaps.StoreStatusDecodeTest do
   @moduledoc """
   #189 cutover — the identity-caps status decode-on-read regression (canary
   catch).
@@ -36,7 +36,7 @@ defmodule Ezagent.EntityCaps.StoreStatusDecodeTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Capability
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
 
   describe "Store self-interns its own status enum (structural red-check)" do
     # This is THE fail-before / pass-after check. It reads the on-disk compiled
@@ -53,7 +53,7 @@ defmodule Ezagent.EntityCaps.StoreStatusDecodeTest do
 
       for status_string <- ~w(active revoked_unprovisioned tombstoned) do
         assert status_string in interned,
-               "loading Ezagent.EntityCaps.Store must intern the status atom " <>
+               "loading Ezagent.IdentityCaps.Store must intern the status atom " <>
                  "#{inspect(status_string)} (a compile-time literal in decode_status/1) " <>
                  "so the store's decode-on-read never depends on another module " <>
                  "having been loaded first — the #189 cutover canary crash"

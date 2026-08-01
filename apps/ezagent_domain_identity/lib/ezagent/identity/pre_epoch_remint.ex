@@ -8,7 +8,7 @@ defmodule Ezagent.Identity.PreEpochRemint do
   ## Why a re-mint at all
 
   The default-SessionTemplate `§3` boot seed dispatches AS the genesis admin. The
-  principal gate (`EntityCaps.verified/2`) gen-gates the admin's self-license
+  principal gate (`IdentityCaps.verified/2`) gen-gates the admin's self-license
   against its CURRENT authority generation; on a REFLOWED prod DB whose admin
   authority was rotated (or that predates the self-license) the persisted license
   is stale/absent → the gate yields `[]` → `:holder_revoked` → boot hard-fails.
@@ -69,7 +69,7 @@ defmodule Ezagent.Identity.PreEpochRemint do
   alias Ezagent.Capability
   alias Ezagent.Cap.Authority
   alias Ezagent.Entity.User
-  alias Ezagent.EntityCaps.Store
+  alias Ezagent.IdentityCaps.Store
   alias Ezagent.Identity.Cutover
   alias Ezagent.Identity.Offboarding.RevocationFence
   alias EzagentCore.Repo

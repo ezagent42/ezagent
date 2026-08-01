@@ -4,7 +4,7 @@ defmodule Mix.Tasks.Ezagent.Identity.FleetParity do
   #189 PR-2 D2 — run the fleet-completion barrier
   (`Ezagent.Identity.FleetParity.check/0`) and print the result.
 
-  Answers "is `Ezagent.EntityCaps.Store` a complete, bidirectionally
+  Answers "is `Ezagent.IdentityCaps.Store` a complete, bidirectionally
   parity-correct mirror of the legacy durable-holder self-license set?" — the
   predicate PR-3's atomic read-cutover is gated on. Enumerates the closed
   durable-holder worklist from the LEGACY source, so an empty store reports

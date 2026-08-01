@@ -201,7 +201,7 @@ config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
 # mutation into the store (a WRITE-SHADOW). Reads stay LEGACY-authoritative
 # in PR-1 — the store is NEVER consulted for an authz read; the
 # store-preferred read + parity check + atomic writes land at the cutover PR.
-config :ezagent_actor, :identity_caps_store, Ezagent.EntityCaps.Store
+config :ezagent_actor, :identity_caps_store, Ezagent.IdentityCaps.Store
 
 # #189 PR-1 — HMAC secret for authenticated provisioning receipts
 # (`Ezagent.Identity.ProvisioningReceipt`). The dev/test default is set ONLY in

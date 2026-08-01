@@ -1,4 +1,4 @@
-defmodule Ezagent.EntityCaps do
+defmodule Ezagent.IdentityCaps do
   @moduledoc """
   Storage facade for an entity's inbound capability set.
 
@@ -8,7 +8,7 @@ defmodule Ezagent.EntityCaps do
   UI, or orchestration code.
 
   #189 PR-1 (ADDITIVE): the unified per-entity identity-caps store
-  (`Ezagent.EntityCaps.Store`) is populated as a WRITE-SHADOW of BOTH legacy
+  (`Ezagent.IdentityCaps.Store`) is populated as a WRITE-SHADOW of BOTH legacy
   stores via dual-write (`users.caps_json` writes, the Kind snapshot write
   chokepoints, and direct `SnapshotStore` writes).
 
@@ -54,7 +54,7 @@ defmodule Ezagent.EntityCaps do
     SpawnRegistry
   }
 
-  alias Ezagent.EntityCaps.{Store, UserStore}
+  alias Ezagent.IdentityCaps.{Store, UserStore}
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
 
@@ -81,8 +81,8 @@ defmodule Ezagent.EntityCaps do
         # marker-bearing snapshot / user projection is the independently stored
         # copy of the same Identity slice and avoids that self-call without
         # trusting the presented candidate caps. (`Kind.read/3` §2.2 point 4 names
-        # exactly this `EntityCaps` self case; it serves the durable projection —
-        # but EntityCaps needs `verified/2` filtering, so it routes through
+        # exactly this `IdentityCaps` self case; it serves the durable projection —
+        # but IdentityCaps needs `verified/2` filtering, so it routes through
         # `load_persisted/1`, whose `read_durable/3` never calls the live process.)
         load_persisted_checked(uri)
 
@@ -128,9 +128,9 @@ defmodule Ezagent.EntityCaps do
   end
 
   # #189 PR-3 read-cutover, EPOCH-GATED (FIX 5): the unified
-  # `Ezagent.EntityCaps.Store` becomes the AUTHORITATIVE durable holder source
+  # `Ezagent.IdentityCaps.Store` becomes the AUTHORITATIVE durable holder source
   # for the principal-axis cap read (`Cap.Authorize.principal_current?` →
-  # `Identity.read_held_caps/1` → `EntityCaps.load/1` → this cold path on
+  # `Identity.read_held_caps/1` → `IdentityCaps.load/1` → this cold path on
   # self-dispatch) ONLY once the cutover epoch is active
   # (`Ezagent.Identity.Cutover.status/0`). Only a DEFINITIVE `:inactive` epoch
   # (a genuine pre-cutover node) reads the PR-1 legacy-authoritative source, so
@@ -235,7 +235,7 @@ defmodule Ezagent.EntityCaps do
   end
 
   defp log_effective_read_failure(uri, reason) do
-    Logger.error("EntityCaps effective read failed for #{URI.to_string(uri)}: #{inspect(reason)}")
+    Logger.error("IdentityCaps effective read failed for #{URI.to_string(uri)}: #{inspect(reason)}")
   end
 
   @doc "Replace the entity's complete cap set in its selected physical store and live slice."

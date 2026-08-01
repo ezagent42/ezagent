@@ -49,7 +49,7 @@ defmodule Ezagent.Socialware.SessionReads do
   Authorization delegates to the shared `Ezagent.Session.Membership.authorize/4`
   predicate — the SAME one the feeds (`ChatFeed` / `ExternalFeed`) and
   `SocialwarePublisherRead` use. It is **live-first**: it reads the live
-  `:session` slice and the caller's live caps (`EntityCaps.load/1`), so an
+  `:session` slice and the caller's live caps (`IdentityCaps.load/1`), so an
   async at-join member-cap grant that is not yet persisted is still seen —
   a fresh join is NOT falsely denied. Cost is one predicate call **per read**
   (not per row).
@@ -70,7 +70,7 @@ defmodule Ezagent.Socialware.SessionReads do
   ## Row-policy ownership (spec §3.1 step 2 — moved INTO the chokepoint)
 
   The `:read_unfiltered` decision (visible-only vs unfiltered rows) is sourced
-  HERE from the caller's own live caps (`EntityCaps.load/1`) — it is NEVER a
+  HERE from the caller's own live caps (`IdentityCaps.load/1`) — it is NEVER a
   caller-supplied flag (that would re-open a caller-selectable bypass). Only a
   caller holding the session's `Ezagent.ActionSet.Session :read_unfiltered` cap
   reads `:internal` messages; everyone else gets the `:external_visible` view.
@@ -524,7 +524,7 @@ defmodule Ezagent.Socialware.SessionReads do
   """
   @spec read_unfiltered?(URI.t() | term(), URI.t()) :: boolean()
   def read_unfiltered?(%URI{} = caller, %URI{} = session_uri) do
-    caps = Ezagent.EntityCaps.load(caller)
+    caps = Ezagent.IdentityCaps.load(caller)
 
     match?(
       {:ok, %Ezagent.Capability{}},

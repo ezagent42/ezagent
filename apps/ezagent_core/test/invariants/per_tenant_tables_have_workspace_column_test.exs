@@ -164,8 +164,8 @@ defmodule EzagentCore.Invariants.PerTenantTablesHaveWorkspaceColumnTest do
     # are tenant/entity data: each row carries the entity URI's workspace
     # (`workspace_uri` NOT NULL, populated from `Ezagent.URI.workspace_of/1`
     # on every write).
-    {Ezagent.EntityCaps.Store, "identity_caps"},
-    {Ezagent.EntityCaps.GranteeIndex, "cap_grantee_index"},
+    {Ezagent.IdentityCaps.Store, "identity_caps"},
+    {Ezagent.IdentityCaps.GranteeIndex, "cap_grantee_index"},
     # Forgejo provider V1 slice F0 — per-tenant OAuth application
     # registrations (design
     # docs/superpowers/specs/2026-07-29-forgejo-provider-v1-design.md §5.1).

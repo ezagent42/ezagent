@@ -91,7 +91,7 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
   end
 
   defp grant_live(entity, cap) do
-    Ezagent.EntityCaps.grant(entity, cap)
+    Ezagent.IdentityCaps.grant(entity, cap)
   end
 
   defp wait_until(fun, retries \\ 200) do

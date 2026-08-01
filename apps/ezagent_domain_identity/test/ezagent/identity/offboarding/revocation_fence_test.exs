@@ -4,7 +4,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFenceTest do
   alias Ezagent.Cap.{Authority, Grant}
   alias Ezagent.Identity.Offboarding.RevocationFence
   alias Ezagent.Identity.Test.RevocationFenceAuthorityLoader
-  alias Ezagent.{Cap, Capability, EntityCaps}
+  alias Ezagent.{Cap, Capability, IdentityCaps}
 
   setup do
     previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
@@ -53,12 +53,12 @@ defmodule Ezagent.Identity.Offboarding.RevocationFenceTest do
     )
 
     needed = needed_cap(target)
-    assert [_ | _] = EntityCaps.load_persisted(holder)
+    assert [_ | _] = IdentityCaps.load_persisted(holder)
     assert {:ok, ^cap} = Cap.authorize(holder, [cap], needed)
 
     assert :ok = RevocationFence.enroll([holder])
-    assert EntityCaps.load(holder) == []
-    assert EntityCaps.load_persisted(holder) == []
+    assert IdentityCaps.load(holder) == []
+    assert IdentityCaps.load_persisted(holder) == []
     assert {:error, :holder_revoked} = Cap.authorize(holder, [cap], needed)
   end
 

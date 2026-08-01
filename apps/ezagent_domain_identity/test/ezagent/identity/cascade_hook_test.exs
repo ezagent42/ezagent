@@ -43,7 +43,7 @@ defmodule Ezagent.Identity.CascadeHookTest do
       Ezagent.URI.new!("session://#{x.host}/default/cascade-#{uniq()}")
 
     cap = signed_fixture_cap!(target, :session, Ezagent.ActionSet.Session, :receive, x)
-    Ezagent.EntityCaps.grant(x, cap)
+    Ezagent.IdentityCaps.grant(x, cap)
   end
 
   test "grant to X notifies X's manager Y content-free; payload is exactly {uri, slice_key, cursor, event_at} (18)" do
@@ -94,7 +94,7 @@ defmodule Ezagent.Identity.CascadeHookTest do
     # cascade runs on a LATER DeferredDispatch turn and can never roll it back.
     held? =
       x
-      |> Ezagent.Identity.read_entity_caps()
+      |> Ezagent.Identity.read_identity_caps()
       |> Enum.any?(fn
         %Capability{kind: :session} = c -> Capability.action_of(c) == :receive
         _ -> false

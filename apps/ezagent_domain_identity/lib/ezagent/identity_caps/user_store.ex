@@ -1,9 +1,9 @@
-defmodule Ezagent.EntityCaps.UserStore do
+defmodule Ezagent.IdentityCaps.UserStore do
   @moduledoc """
   The legacy user cap store (`users.caps_json`).
 
   Every write here ALSO writes the unified identity-caps store
-  (`Ezagent.EntityCaps.Store`). Which of the two is AUTHORITATIVE is gated on
+  (`Ezagent.IdentityCaps.Store`). Which of the two is AUTHORITATIVE is gated on
   the cutover epoch (`Ezagent.Identity.Cutover`):
 
     * **Pre-epoch** (#189 PR-1 F2 contract) — `caps_json` is authoritative and
@@ -101,7 +101,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   # never leave a stale cap in the authoritative read plane. The caller receives
   # `:ok` ONLY when the store commit succeeded.
   #
-  # The mutation path (`EntityCaps.grant/revoke/persist` -> IdentityAdmin ->
+  # The mutation path (`IdentityCaps.grant/revoke/persist` -> IdentityAdmin ->
   # `persist_entity_caps` -> `persist/2`) supplies a STATELESS fun (the new caps
   # are already computed from the live slice), so the current-caps read is only
   # consulted by the rare stateful callers (e.g. `clear_self_license_persisted`);
@@ -110,7 +110,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   defp update_store_authoritative(uri, fun) do
     with {:ok, current} <- read_current_caps(uri),
          {:ok, new_caps} <- fun.(current) do
-      case Ezagent.EntityCaps.Store.persist(uri, new_caps) do
+      case Ezagent.IdentityCaps.Store.persist(uri, new_caps) do
         :ok ->
           project_caps_json(uri, new_caps)
           :ok
@@ -122,7 +122,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   end
 
   # `{:error, :not_found}` when there is no `users` row — preserving the
-  # mutation contract (`EntityCaps.grant` on a user without a row is not_found).
+  # mutation contract (`IdentityCaps.grant` on a user without a row is not_found).
   defp read_current_caps(%URI{} = uri) do
     case Ezagent.Users.get_by_uri(uri) do
       nil -> {:error, :not_found}
@@ -143,7 +143,7 @@ defmodule Ezagent.EntityCaps.UserStore do
 
       other ->
         Logger.error(
-          "EntityCaps.UserStore: post-epoch caps_json projection FAILED for " <>
+          "IdentityCaps.UserStore: post-epoch caps_json projection FAILED for " <>
             "#{inspect(uri)} (#{inspect(other)}) — store row is authoritative; " <>
             "projection reconciles on the next mutation / parity barrier"
         )
@@ -153,7 +153,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.UserStore: post-epoch caps_json projection RAISED for " <>
+        "IdentityCaps.UserStore: post-epoch caps_json projection RAISED for " <>
           "#{inspect(uri)}: #{Exception.message(e)}"
       )
 
@@ -205,13 +205,13 @@ defmodule Ezagent.EntityCaps.UserStore do
   end
 
   defp mirror_identity_caps(uri, caps) do
-    case Ezagent.EntityCaps.Store.persist(uri, caps) do
+    case Ezagent.IdentityCaps.Store.persist(uri, caps) do
       :ok ->
         :ok
 
       {:error, reason} ->
         Logger.error(
-          "EntityCaps.UserStore: identity-caps shadow write FAILED for " <>
+          "IdentityCaps.UserStore: identity-caps shadow write FAILED for " <>
             "#{inspect(uri)} (reason=#{inspect(reason)}) — caps_json committed; " <>
             "shadow row diverges until the next mirrored write or the migration backfill"
         )
@@ -221,7 +221,7 @@ defmodule Ezagent.EntityCaps.UserStore do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.UserStore: identity-caps shadow write RAISED for " <>
+        "IdentityCaps.UserStore: identity-caps shadow write RAISED for " <>
           "#{inspect(uri)}: #{Exception.message(e)}"
       )
 

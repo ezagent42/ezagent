@@ -25,7 +25,7 @@ defmodule Ezagent.Identity.CapAbsorbAwait do
   end
 
   defp do_await_exact(entity_uri, issued_caps, deadline) do
-    stored_caps = Ezagent.EntityCaps.load(entity_uri)
+    stored_caps = Ezagent.IdentityCaps.load(entity_uri)
     missing = Enum.reject(issued_caps, &Enum.member?(stored_caps, &1))
 
     cond do

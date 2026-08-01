@@ -34,7 +34,7 @@ defmodule Ezagent.Identity.OperatorReads do
   `workspace://system` member) is accepted, not just the bootstrap admin
   URI (F5, read-plane PR-4 rework: the old `Identity.admin?/1`
   exact-URI-equality gate locked promoted operators out). The caller's
-  caps are loaded LIVE (`Ezagent.EntityCaps.load/1`) so a fresh promotion
+  caps are loaded LIVE (`Ezagent.IdentityCaps.load/1`) so a fresh promotion
   is seen immediately and a revoked one stops authorizing at once.
   """
 

@@ -1,4 +1,4 @@
-defmodule Ezagent.EntityCapsReadyBarrier do
+defmodule Ezagent.IdentityCapsReadyBarrier do
   @moduledoc false
 
   @key {__MODULE__, :armed}

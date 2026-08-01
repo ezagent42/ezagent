@@ -611,7 +611,7 @@ defmodule EzagentWeb.WorldHostRoutingTest do
 
   defp holds_member_cap?(caller_uri, session_uri) do
     caller_uri
-    |> Ezagent.EntityCaps.load_persisted()
+    |> Ezagent.IdentityCaps.load_persisted()
     |> then(&Ezagent.Session.MemberReceive.holds_member_cap_over?(caller_uri, &1, session_uri))
   end
 

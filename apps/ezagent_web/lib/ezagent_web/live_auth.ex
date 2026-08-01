@@ -363,15 +363,15 @@ defmodule EzagentWeb.LiveAuth do
   # Runtime grant/revoke stores into the live Identity slice; `users.caps_json`
   # is provisioning input and may lag behind that state. Reading Users here
   # made authenticated LiveViews deny newly granted authority and could expose
-  # stale authority after a revoke. `read_entity_caps/1` owns the live-slice →
+  # stale authority after a revoke. `read_identity_caps/1` owns the live-slice →
   # durable-snapshot fallback and applies receiver-aware `Cap.verified_set/2`
   # at that boundary.
   defp load_caps(%URI{} = caller_uri) do
     try do
-      if Code.ensure_loaded?(Ezagent.EntityCaps) and
-           function_exported?(Ezagent.EntityCaps, :load, 1) do
+      if Code.ensure_loaded?(Ezagent.IdentityCaps) and
+           function_exported?(Ezagent.IdentityCaps, :load, 1) do
         caller_uri
-        |> Ezagent.EntityCaps.load()
+        |> Ezagent.IdentityCaps.load()
         |> MapSet.new()
       else
         MapSet.new()

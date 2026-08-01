@@ -80,7 +80,7 @@ defmodule Ezagent.Identity.AdminAuthority do
   loaded LIVE?
 
   The one-call convenience over `admin?/2`: loads the caller's caps via
-  `Ezagent.EntityCaps.load/1` (live-first, so a fresh promotion/demotion
+  `Ezagent.IdentityCaps.load/1` (live-first, so a fresh promotion/demotion
   is seen immediately) and delegates to the 4-predicate union. This is
   the SAME predicate the read-plane chokepoints (`OperatorReads`,
   `UserReads`, `TemplateReads`) gate on — the load-and-check pair is
@@ -90,7 +90,7 @@ defmodule Ezagent.Identity.AdminAuthority do
   @spec admin?(URI.t() | term()) :: boolean()
   def admin?(%URI{} = caller_uri) do
     caller_uri
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> then(&admin?(caller_uri, &1))
   rescue
     _ -> false

@@ -169,14 +169,14 @@ defmodule Ezagent.Identity.AuthorityTest do
   defp grant_to_identity(entity, cap) do
     {:ok, authority} = Ezagent.Cap.Authority.open(cap.instance, cap.kind)
     signed = authority_signed_cap_as!(authority, cap.granted_by, entity, cap)
-    assert :ok = Ezagent.EntityCaps.grant(entity, signed)
+    assert :ok = Ezagent.IdentityCaps.grant(entity, signed)
     wait_cap(entity, signed)
   end
 
   defp wait_cap(entity, cap, retries \\ 200) do
     held? =
       entity
-      |> Ezagent.Identity.read_entity_caps()
+      |> Ezagent.Identity.read_identity_caps()
       |> Enum.any?(&(Capability.identity_key(&1) == Capability.identity_key(cap)))
 
     cond do

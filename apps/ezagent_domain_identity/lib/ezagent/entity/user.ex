@@ -64,7 +64,7 @@ defmodule Ezagent.Entity.User do
 
   ## Boot-order tolerance
 
-  The `EntityCaps.UserStore` adapter is wrapped so an early-boot call (before
+  The `IdentityCaps.UserStore` adapter is wrapped so an early-boot call (before
   `Ezagent.Users` is callable) degrades to `MapSet.new()` rather than crashing the
   spawn — the post_init reconcile path in
   `Ezagent.ActionSet.Identity` repairs the slice on the next spawn
@@ -75,7 +75,7 @@ defmodule Ezagent.Entity.User do
   def initial_caps_for_spawn(%URI{} = uri) do
     # The canonical admin root is represented by each target Kind's sealed
     # authority-row anchor, never by an ambient wildcard in a User slice.
-    uri |> Ezagent.EntityCaps.load_persisted() |> MapSet.new()
+    uri |> Ezagent.IdentityCaps.load_persisted() |> MapSet.new()
   end
 
   # SPEC caps-cleanup-v1 §4 / §4.6 (PR-CC-1): `admin_caps/0` DELETED.

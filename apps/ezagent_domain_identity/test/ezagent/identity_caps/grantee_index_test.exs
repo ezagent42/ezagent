@@ -1,9 +1,9 @@
-defmodule Ezagent.EntityCaps.GranteeIndexTest do
+defmodule Ezagent.IdentityCaps.GranteeIndexTest do
   @moduledoc """
   URI-share (A2-2) — the reverse cap index `grantees_of`.
 
   A projection of "who currently holds a cap toward target T", derived IN the
-  authoritative `EntityCaps.Store` write transaction (codex ⓪ — the single
+  authoritative `IdentityCaps.Store` write transaction (codex ⓪ — the single
   confluence of every conferral path, including the AGENT authoritative write that
   bypassed the old `persist_entity_caps` funnel), authorized by a PRESENTED
   unforgeable cap witness (codex ②), and filtered at read by the target's current
@@ -14,7 +14,7 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
   import Ezagent.Test.CapHelper, only: [authority_signed_cap_as!: 4, self_license_cap!: 2]
 
   alias Ezagent.Capability
-  alias Ezagent.EntityCaps.{GranteeIndex, Store}
+  alias Ezagent.IdentityCaps.{GranteeIndex, Store}
 
   @workspace URI.new!("workspace://team-alpha")
   @issuer URI.new!("entity://team-alpha/user/issuer")

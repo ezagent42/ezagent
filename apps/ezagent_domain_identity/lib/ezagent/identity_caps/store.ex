@@ -1,9 +1,9 @@
-defmodule Ezagent.EntityCaps.Store do
+defmodule Ezagent.IdentityCaps.Store do
   @moduledoc """
   #189 / #185 PR-1 (identity-plane cutover step 1, ADDITIVE) — the unified
   per-entity identity-caps store.
 
-  This is the generalization of `Ezagent.EntityCaps.UserStore`
+  This is the generalization of `Ezagent.IdentityCaps.UserStore`
   (`users.caps_json`) to EVERY entity URI: one row per canonical entity URI
   holds
 
@@ -232,7 +232,7 @@ defmodule Ezagent.EntityCaps.Store do
         with :ok <- revoked_artifacts_guard(workspace, caps),
              :ok <- validate_cutover_status(entry, caps),
              {:ok, _row} <- insert_cutover_row(entry, caps) do
-          Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(Map.fetch!(entry, :uri), caps)
+          Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(Map.fetch!(entry, :uri), caps)
           {:cont, :ok}
         else
           {:error, reason} -> {:halt, {:error, reason}}
@@ -314,7 +314,7 @@ defmodule Ezagent.EntityCaps.Store do
 
   @doc """
   Cutover-facing dual-read entry point for `load_persisted/1` (the
-  `Ezagent.EntityCaps` persisted-cap read). Three DISTINCT outcomes (FIX 2 —
+  `Ezagent.IdentityCaps` persisted-cap read). Three DISTINCT outcomes (FIX 2 —
   read failure is not absence):
 
     * `{:ok, caps}` — a PRESENT row: the complete cap set for an `active` row,
@@ -523,7 +523,7 @@ defmodule Ezagent.EntityCaps.Store do
       # durably landed. This is the single confluence of every conferral path
       # (grant / initial_caps / cold-load reconcile / backfill / activate / the
       # agent `sync_committed_identity` write), so no writer is missed.
-      Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+      Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
       :ok
     else
       nil -> Repo.rollback(:not_found)
@@ -589,7 +589,7 @@ defmodule Ezagent.EntityCaps.Store do
           case row |> Ecto.Changeset.change(changes) |> Repo.update() do
             {:ok, _row} ->
               # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
-              Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+              Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
               :ok
 
             {:error, reason} ->
@@ -705,7 +705,7 @@ defmodule Ezagent.EntityCaps.Store do
     do: {:error, :invalid_exact_revocation_artifact}
 
   defp persist_revoked_caps(nil, uri, caps) do
-    Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps)
+    Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps)
   end
 
   defp persist_revoked_caps(%__MODULE__{} = row, uri, caps) do
@@ -713,7 +713,7 @@ defmodule Ezagent.EntityCaps.Store do
     changes = persist_changes(row, encode_caps(caps), licensed?)
 
     case row |> Ecto.Changeset.change(changes) |> Repo.update() do
-      {:ok, _updated} -> Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps)
+      {:ok, _updated} -> Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps)
       {:error, reason} -> {:error, reason}
     end
   end
@@ -793,7 +793,7 @@ defmodule Ezagent.EntityCaps.Store do
       case Ezagent.Identity.Cutover.status() do
         :unknown ->
           Logger.error(
-            "EntityCaps.Store: identity write REFUSED for #{inspect(uri)} — " <>
+            "IdentityCaps.Store: identity write REFUSED for #{inspect(uri)} — " <>
               "identity epoch unreadable (:unknown)"
           )
 
@@ -806,7 +806,7 @@ defmodule Ezagent.EntityCaps.Store do
 
             {:error, reason} ->
               Logger.error(
-                "EntityCaps.Store: identity write FAILED for #{inspect(uri)} " <>
+                "IdentityCaps.Store: identity write FAILED for #{inspect(uri)} " <>
                   "(reason=#{inspect(reason)})"
               )
 
@@ -819,7 +819,7 @@ defmodule Ezagent.EntityCaps.Store do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity write RAISED for #{inspect(uri)}: " <>
+        "IdentityCaps.Store: identity write RAISED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
@@ -827,7 +827,7 @@ defmodule Ezagent.EntityCaps.Store do
   catch
     kind, reason ->
       Logger.error(
-        "EntityCaps.Store: identity write FAILED for #{inspect(uri)}: " <>
+        "IdentityCaps.Store: identity write FAILED for #{inspect(uri)}: " <>
           "#{kind} #{inspect(reason)}"
       )
 
@@ -969,7 +969,7 @@ defmodule Ezagent.EntityCaps.Store do
   rescue
     e ->
       Logger.error(
-        "EntityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
+        "IdentityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
           Exception.message(e)
       )
 
@@ -979,7 +979,7 @@ defmodule Ezagent.EntityCaps.Store do
   catch
     kind, reason ->
       Logger.error(
-        "EntityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
+        "IdentityCaps.Store: identity delete FAILED for #{inspect(uri)}: " <>
           "#{kind} #{inspect(reason)}"
       )
 
@@ -1095,7 +1095,7 @@ defmodule Ezagent.EntityCaps.Store do
          changes <- persist_changes(row, encode_caps(caps_list), licensed?),
          {:ok, updated} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
       # A2-2 codex ⓪ — same-txn reverse-index derive (see `persist_locked`).
-      Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+      Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
       decode_status(updated.identity_status)
     else
       nil -> Repo.rollback(:not_found)
@@ -1263,7 +1263,7 @@ defmodule Ezagent.EntityCaps.Store do
              # conferral path too; derive the reverse index IN this txn so an
              # activate (esp. a reprovision with a REDUCED set) never leaves a
              # stale/over-reporting index row. Same-txn as the other 3 writers.
-             Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
+             Ezagent.IdentityCaps.GranteeIndex.reindex_in_txn(uri, caps_list)
              :ok
            else
              {:error, reason} -> Repo.rollback(reason)
@@ -1446,7 +1446,7 @@ defmodule Ezagent.EntityCaps.Store do
 
   defp decode_status(other) do
     raise ArgumentError,
-          "Ezagent.EntityCaps.Store: unknown identity_status #{inspect(other)} " <>
+          "Ezagent.IdentityCaps.Store: unknown identity_status #{inspect(other)} " <>
             "(expected \"active\" | \"revoked_unprovisioned\" | \"tombstoned\")"
   end
 
@@ -1459,7 +1459,7 @@ defmodule Ezagent.EntityCaps.Store do
   # URI's CURRENT authority generation — the ONE predicate that distinguishes a
   # genuinely-current holder from a revoked one whose stale license still sits
   # in the legacy source. Mirrors the legacy reader gate
-  # (`EntityCaps.current_self_license?/2`) so the store never trusts a license
+  # (`IdentityCaps.current_self_license?/2`) so the store never trusts a license
   # the authorization plane would reject. Fail-closed on any error.
   #
   # PURE PREDICATE — lock-free, so it is safe to call OUTSIDE a transaction (the

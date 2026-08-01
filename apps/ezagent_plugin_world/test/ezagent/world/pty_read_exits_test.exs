@@ -195,7 +195,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
   test "the creator's existing manage cap opens it and subscribes" do
     cap = creator_cap()
     # Actor-extraction C1: switch_to_pty re-derives caps FRESH via
-    # PresenterCaps.load → EntityCaps.load(@creator); the creator must DURABLY
+    # PresenterCaps.load → IdentityCaps.load(@creator); the creator must DURABLY
     # hold the signed manage cap (the spawn mints the current self-license).
     {:ok, _pid} =
       Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: @creator, initial_caps: [cap]})

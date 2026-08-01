@@ -232,7 +232,7 @@ defmodule EzagentPluginCc.BridgeAdapter do
 
   defp held_caps(%URI{} = agent_uri) do
     if Ezagent.LocalRuntime.kind_alive?(agent_uri) do
-      Module.concat([Ezagent, EntityCaps])
+      Module.concat([Ezagent, IdentityCaps])
       |> apply(:load, [agent_uri])
       |> MapSet.new()
     else
