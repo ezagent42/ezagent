@@ -212,28 +212,6 @@ defmodule Ezagent.Cap.DeliveryOutbox do
       {:error, :pending_absorb_read_failed}
   end
 
-  @doc "Distinct holders named by pending absorb deliveries, for the fenced v2 cutover."
-  @spec pending_absorb_target_uris_in_txn() :: [String.t()]
-  def pending_absorb_target_uris_in_txn do
-    from(delivery in Delivery,
-      where: delivery.op == :absorb_cap and delivery.status == :pending,
-      select: delivery.target_uri,
-      distinct: true,
-      order_by: [asc: delivery.target_uri]
-    )
-    |> Repo.all()
-  end
-
-  @doc "Delete all pending deliveries inside the fenced rebuild transaction."
-  @spec clear_pending_in_txn() :: non_neg_integer()
-  def clear_pending_in_txn do
-    {count, _} =
-      from(delivery in Delivery, where: delivery.status == :pending)
-      |> Repo.delete_all()
-
-    count
-  end
-
   @doc "Delete pending deliveries for a revoked grant inside the caller's transaction."
   @spec cancel_pending_grant_in_txn(String.t(), String.t(), String.t()) :: :ok
   def cancel_pending_grant_in_txn(workspace_uri, target_uri, grant_id)

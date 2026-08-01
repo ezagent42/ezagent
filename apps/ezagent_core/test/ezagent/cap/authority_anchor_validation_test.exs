@@ -90,7 +90,9 @@ defmodule Ezagent.Cap.AuthorityAnchorValidationTest do
   end
 
   defp replace_anchor!(row, encoded) do
-    {:ok, _row} = KindCapAuthority.replace_anchor(row, encoded)
+    row
+    |> Ecto.Changeset.change(anchor: encoded)
+    |> Repo.update!()
   end
 
   defp revocation_attrs(%Capability{} = anchor) do
