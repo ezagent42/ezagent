@@ -173,15 +173,13 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   end
 
   # (a) The DeepSeek credential on the llm greeter agent, mirroring the
-  # live-prod `:put_api_key` dispatch. Anti-clobber is STRUCTURAL: the
-  # `:put_api_key_if_absent` COMPARE-AND-SET runs the present/absent check
-  # INSIDE the agent's own serialized action path (returns `set: false`, no
-  # effects, when a key is already stored — never overwrites an
-  # operator-rotated key), so this seed needs NO pre-read of the agent's
-  # (sensitive) `:api_keys` slice to decide whether to dispatch. A cold /
-  # rehydrating agent is handled by the `:not_ready`+`:call` fail-fast (hard
-  # invariant #3) surfacing as a dispatch error the `best_effort` boundary
-  # swallows — the next boot's `ensure/0` retries. A missing env key skips
+  # live-prod credential dispatch. The bounded TRI-STATE read preserves the
+  # deploy-time readiness contract: only a successful read can classify the
+  # provider key as present/absent; an unreadable or not-ready slice skips the
+  # credential leg without entering dispatch's longer WAIT-then-serve path.
+  # When absent, the `:put_api_key_if_absent` COMPARE-AND-SET performs the final
+  # check inside the agent's serialized action path, so racing seeders still
+  # cannot overwrite an operator-rotated key. A missing env key skips
   # gracefully (keyless dev stays keyless). The whole leg runs inside a
   # secret-aware boundary: the key must never reach a log line, and a failure
   # must never fail the seed.
@@ -189,7 +187,21 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     best_effort("llm credential wiring", [secret?: true], fn ->
       case System.get_env(@llm_api_key_env) do
         key when is_binary(key) and key != "" ->
-          put_llm_api_key_if_absent(llm_uri, key)
+          case llm_key_state(llm_uri) do
+            :present ->
+              :ok
+
+            :absent ->
+              put_llm_api_key_if_absent(llm_uri, key)
+
+            :unreadable ->
+              Logger.warning(
+                "hello official-site seed: the #{@llm_role} agent's :api_keys slice is " <>
+                  "unreadable (agent rehydrating / not ready) — skipped the #{@llm_provider} " <>
+                  "credential wiring rather than risk changing credentials without a bounded " <>
+                  "pre-read; the next boot's ensure/0 retries"
+              )
+          end
 
         _ ->
           Logger.warning(
@@ -198,6 +210,25 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
           )
       end
     end)
+  end
+
+  # A read failure is NOT absence. `Kind.read/2` preserves the original bounded
+  # live/cold read contract; only a successful read may authorize the CAS
+  # dispatch. This keeps slow/unreadable agents on the skip path.
+  defp llm_key_state(%URI{} = llm_uri) do
+    case Ezagent.Kind.read(llm_uri, :api_keys) do
+      {:ok, slice} when is_map(slice) ->
+        slice
+        |> Map.get(:keys, %{})
+        |> Map.get(@llm_provider)
+        |> case do
+          key when is_binary(key) and key != "" -> :present
+          _ -> :absent
+        end
+
+      {:error, _} ->
+        :unreadable
+    end
   end
 
   # The same dispatch shape the curl flavor's own credential cascade uses

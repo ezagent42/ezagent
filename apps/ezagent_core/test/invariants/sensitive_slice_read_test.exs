@@ -111,6 +111,10 @@ defmodule Ezagent.Invariants.SensitiveSliceReadTest do
     # --- curl template: credential provisioning surface ---
     {"apps/ezagent_plugin_curl_agent/lib/ezagent/template/curl_agent.ex", :api_keys} =>
       "curl Template Class copies a source agent's :api_keys at provisioning (cap-gated create flow)",
+    # --- hello official-site seed: bounded credential-readiness guard ---
+    {"apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/official_site_seed.ex", :api_keys} =>
+      "OfficialSiteSeed boundedly reads its llm member's own :api_keys to tri-state skip " <>
+        "unreadable/not-ready agents before the race-safe CAS credential dispatch",
     # --- dynamic-key get_slice: the generic URI-query slice resolver ---
     {"apps/ezagent_domain_session/lib/ezagent_domain_instance_message/uri_query_resolvers.ex",
      @dynamic_key} =>
