@@ -1,7 +1,7 @@
 defmodule Ezagent.CapabilityActionTest do
   @moduledoc """
   SPEC 2026-05-27 capability-action-axis §5 — acceptance criteria
-  A1-A4 + C1 + the matcher-tolerance regression test (B3 lives in
+  A1-A4 + C1 + the strict matcher regression test (B3 lives in
   `test/integration/cap_action_axis_snapshot_restore_test.exs`).
 
   Pure-data assertions on the matcher's action-axis semantics — no
@@ -86,9 +86,9 @@ defmodule Ezagent.CapabilityActionTest do
     end
   end
 
-  describe "A4 — old JSON row (6 fields, no action) loads as :any" do
-    test "from_map shim defaults missing \"action\" to \"any\" before atomization" do
-      old_row = %{
+  describe "complete action axis" do
+    test "from_map rejects a row without action" do
+      incomplete_row = %{
         "kind" => "chat",
         "behavior" => "Ezagent.ActionSet.Session",
         "instance" => "any",
@@ -97,13 +97,8 @@ defmodule Ezagent.CapabilityActionTest do
         "granted_at" => "2026-01-01T00:00:00Z"
       }
 
-      refute Map.has_key?(old_row, "action"),
-             "test fixture invariant: the old row genuinely lacks an `\"action\"` key"
-
-      cap = Capability.from_map(old_row)
-
-      assert cap.action == :any,
-             "Capability.from_map/1 MUST inject `\"action\" => \"any\"` before atomization for pre-action-axis JSON rows (SPEC §3.4 backward-compat read path)"
+      refute Map.has_key?(incomplete_row, "action")
+      assert_raise KeyError, fn -> Capability.from_map(incomplete_row) end
     end
 
     test "round-trip: from_map(to_map(cap)) preserves action" do
@@ -114,14 +109,11 @@ defmodule Ezagent.CapabilityActionTest do
              "to_map/from_map must be lossless on the action axis"
     end
 
-    test "action_of/1 returns :any for caps with no :action key" do
-      legacy = Map.delete(build_held_cap(:any), :action)
+    test "action_of/1 rejects caps with no :action key" do
+      incomplete = Map.delete(build_held_cap(:any), :action)
 
-      refute Map.has_key?(legacy, :action),
-             "test fixture invariant: the legacy cap genuinely lacks :action"
-
-      assert Capability.action_of(legacy) == :any,
-             "action_of/1 MUST be missing-key tolerant per §3.3.1"
+      refute Map.has_key?(incomplete, :action)
+      assert_raise KeyError, fn -> Capability.action_of(incomplete) end
     end
   end
 
@@ -182,30 +174,26 @@ defmodule Ezagent.CapabilityActionTest do
       # `%Capability{action: :any, signature: <preserved>}` — the exact escalated,
       # signature-mismatched artifact that reached the store mirror. PASSES-AFTER:
       # the fail-closed guard raises rather than widening.
-      assert_raise ArgumentError, ~r/signed capability map is missing its `"action"`/i, fn ->
+      assert_raise KeyError, fn ->
         Capability.from_map(corrupted)
       end
     end
 
-    test "legacy tolerance preserved: an UNSIGNED map missing \"action\" still decodes to :any" do
-      # A genuinely pre-#1399 row carries NO signature, so a missing "action" is
-      # honest legacy (it predates the axis) — tolerantly decode to :any, do NOT
-      # raise (the SPEC §3.4 / A4 backward-compat read path must not regress).
-      unsigned_legacy =
+    test "an unsigned map missing action is also rejected" do
+      unsigned_incomplete =
         signed_create_session_json() |> Map.delete("action") |> Map.delete("signature")
 
-      assert is_nil(Map.get(unsigned_legacy, "signature"))
-      assert Capability.from_map(unsigned_legacy).action == :any
+      assert is_nil(Map.get(unsigned_incomplete, "signature"))
+      assert_raise KeyError, fn -> Capability.from_map(unsigned_incomplete) end
     end
 
     test "the two identity planes cannot diverge through decode on the same signed cap" do
-      # `to_map/1` ALWAYS serializes a concrete "action"; only the corrupted
-      # (action-key-dropped) map produces the escalated variant, which decode now
-      # refuses — so no `caps_json` ⇄ store round-trip can widen the signed cap.
+      # `to_map/1` always serializes a concrete action; an action-key-dropped map
+      # is rejected, so no carrier can widen the signed artifact.
       intact = signed_create_session_json()
       assert Capability.from_map(intact).action == :create_session
 
-      assert_raise ArgumentError, fn ->
+      assert_raise KeyError, fn ->
         Capability.from_map(Map.delete(intact, "action"))
       end
     end
@@ -244,18 +232,8 @@ defmodule Ezagent.CapabilityActionTest do
              "admin_invariant?/1 must accept the new 5-axis wildcard shape"
     end
 
-    test "Capability.admin_invariant?/1 does NOT match legacy 4-axis wildcard (snapshot-restored)" do
-      # SPEC 2026-05-27 capability-action-axis r4 option-B:
-      # the legacy fallback was deliberately REMOVED from
-      # `admin_invariant?/1`. Pre-SPEC admin caps missing `:action`
-      # are no longer recognised at this layer — operators must
-      # re-grant admin authority via `Identity.grant_cap` (which
-      # goes through `normalize!/2` and writes `action: :any`
-      # explicitly). Matcher-boundary tolerance for legacy snapshot
-      # caps is still in place at dispatch step 5.5 (SPEC §3.3) —
-      # so dispatch keeps working — but the admin-cap recogniser
-      # is intentionally strict.
-      legacy =
+    test "Capability.admin_invariant?/1 rejects an incomplete 4-axis wildcard" do
+      incomplete =
         Map.delete(
           %Capability{
             kind: :any,
@@ -269,11 +247,9 @@ defmodule Ezagent.CapabilityActionTest do
           :action
         )
 
-      refute Map.has_key?(legacy, :action),
-             "test fixture invariant: the legacy cap genuinely lacks :action"
+      refute Map.has_key?(incomplete, :action)
 
-      refute Capability.admin_invariant?(legacy),
-             "admin_invariant?/1 must REJECT pre-SPEC caps missing :action (codex r4 SPEC option-B — legacy fallback removed)"
+      refute Capability.admin_invariant?(incomplete)
     end
   end
 
@@ -324,21 +300,17 @@ defmodule Ezagent.CapabilityActionTest do
       cap |> Map.from_struct() |> Map.delete(:action) |> Map.put(:__struct__, Capability)
     end
 
-    test "the widening MECHANISM: action_of/1 silently defaults a lost `:action` key to `:any`" do
+    test "action_of/1 rejects a lost action key" do
       corrupted = action_key_lost(signed_create_session_cap())
 
       refute Map.has_key?(corrupted, :action)
-      # This is the escalation: a create_session cap reads back as workspace-admin.
-      assert Capability.action_of(corrupted) == :any
+      assert_raise KeyError, fn -> Capability.action_of(corrupted) end
     end
 
     test "to_map/1 REFUSES to serialize a signed cap that lost its `:action` (no silent `:any` widening)" do
       corrupted = action_key_lost(signed_create_session_cap())
 
-      # FAILS-BEFORE (current main): `to_map/1` returns `%{"action" => "any", ...}`,
-      # the exact escalated bytes persisted to the store mirror. PASSES-AFTER: the
-      # fail-closed guard in `fill_defaults/1` raises rather than widening.
-      assert_raise ArgumentError, ~r/signed capability is missing its `:action`/i, fn ->
+      assert_raise KeyError, fn ->
         Capability.to_map(corrupted)
       end
     end
@@ -346,15 +318,14 @@ defmodule Ezagent.CapabilityActionTest do
     test "Jason.Encoder REFUSES the same corruption (the two serializers cannot drift)" do
       corrupted = action_key_lost(signed_create_session_cap())
 
-      assert_raise ArgumentError, ~r/signed capability is missing its `:action`/i, fn ->
+      assert_raise KeyError, fn ->
         Jason.encode!(corrupted)
       end
     end
 
     test "the two identity planes serialize the SAME signed cap IDENTICALLY (parity)" do
-      # The durable plane (`users.caps_json`) holds the intact struct; the store
-      # mirror must not diverge. With the intact object both planes agree; the ONLY
-      # way to diverge was the silent widening the guard now forbids.
+      # Both serializers consume the same intact artifact and cannot produce a
+      # widened missing-action variant.
       intact = signed_create_session_cap()
 
       durable_wire = Capability.to_map(intact) |> Map.delete("granted_at")
@@ -363,14 +334,11 @@ defmodule Ezagent.CapabilityActionTest do
       assert durable_wire == store_wire
       assert durable_wire["action"] == "create_session"
       # And the escalated variant can never be produced from the same signed cap:
-      assert_raise ArgumentError, fn -> Capability.to_map(action_key_lost(intact)) end
+      assert_raise KeyError, fn -> Capability.to_map(action_key_lost(intact)) end
     end
 
-    test "legacy tolerance preserved: an UNSIGNED pre-action-axis cap still reprojects a missing action to `:any`" do
-      # A genuinely pre-#1399 cap carries NO signature, so a missing `:action` is
-      # honest legacy (it predates the axis) — reproject to `:any`, do NOT raise
-      # (the #213 canary cutover-backfill tolerance must not regress).
-      unsigned_legacy =
+    test "an unsigned capability missing action is rejected" do
+      unsigned_incomplete =
         %Capability{
           kind: :session,
           behavior: Ezagent.ActionSet.Session,
@@ -384,8 +352,8 @@ defmodule Ezagent.CapabilityActionTest do
         |> Map.delete(:action)
         |> Map.put(:__struct__, Capability)
 
-      assert is_nil(Map.get(unsigned_legacy, :signature))
-      assert Capability.to_map(unsigned_legacy)["action"] == "any"
+      assert is_nil(Map.get(unsigned_incomplete, :signature))
+      assert_raise KeyError, fn -> Capability.to_map(unsigned_incomplete) end
     end
   end
 

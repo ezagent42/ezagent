@@ -541,7 +541,7 @@ defmodule Ezagent.ActionSet.Session do
       case ctx do
         %{self_uri: %URI{} = session_uri} ->
           # Runtime-mount survival needs no re-mint on restart: a mount cap lives
-          # in the grantee's OWN durable store (users.caps_json / agent snapshot),
+          # in the grantee's own durable identity-capability store,
           # which a cold rebuild re-reads, so the cap outlives a session restart on
           # its own (cap-as-truth; proven by `MountCapSurvivesRespawnTest`). The old
           # `Mount.reconcile_session_mounts/1` re-mint from the `MountRow` ledger was

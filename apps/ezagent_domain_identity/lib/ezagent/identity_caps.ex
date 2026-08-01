@@ -1,28 +1,11 @@
 defmodule Ezagent.IdentityCaps do
   @moduledoc """
-  Storage facade for an entity's inbound capability set.
+  Facade for an entity's inbound capability set.
 
-  The physical stores remain intentionally split: User caps are durable in
-  `users.caps_json`; every other entity uses its snapshot-backed `:identity`
-  slice. Callers use this module so that split cannot leak into authorization,
-  UI, or orchestration code.
-
-  #189 PR-1 (ADDITIVE): the unified per-entity identity-caps store
-  (`Ezagent.IdentityCaps.Store`) is populated as a WRITE-SHADOW of BOTH legacy
-  stores via dual-write (`users.caps_json` writes, the Kind snapshot write
-  chokepoints, and direct `SnapshotStore` writes).
-
-  #189 PR-3 (read-cutover): `load_persisted/1` — the COLD durable read behind
-  the principal-axis authorization gate (`Cap.Authorize.principal_current?` →
-  `Identity.read_held_caps/1`) — consults the store as AUTHORITATIVE
-  (`Store.fetch_durable_caps/1`) ONLY once the cutover epoch is active
-  (`Ezagent.Identity.Cutover.active?/0`; FIX 5). A legacy fallback applies ONLY
-  to a SUCCESSFULLY-ABSENT row; a PRESENT non-active store row is authoritative-
-  empty (no fallback); a store READ ERROR DENIES (`[]`), never falls back (FIX
-  2). Before the epoch — and on any unreadable epoch (fail-closed) — the read is
-  PR-1 legacy-authoritative and never consults the store. The live-first
-  `load/1` slice read is unchanged (self-dispatch routes through
-  `load_persisted/1`; both remain gen-gated by `verified/2`).
+  `Ezagent.IdentityCaps.Store` is the only durable authority for users and all
+  other entities. Live identity slices and snapshots are projections. A
+  missing, corrupt, or unreadable Store row fails closed and is never repaired
+  from a projection.
 
   `load/1` is receiver-aware and live-first. It reads a live Identity slice when
   one exists, then falls back to the durable store selected by the entity type.
@@ -50,11 +33,10 @@ defmodule Ezagent.IdentityCaps do
     Lifecycle,
     ReadyGate,
     Router,
-    SnapshotStore,
     SpawnRegistry
   }
 
-  alias Ezagent.IdentityCaps.{Store, UserStore}
+  alias Ezagent.IdentityCaps.Store
 
   @type caps :: [Capability.t()] | MapSet.t(Capability.t())
 
@@ -127,61 +109,13 @@ defmodule Ezagent.IdentityCaps do
     end
   end
 
-  # #189 PR-3 read-cutover, EPOCH-GATED (FIX 5): the unified
-  # `Ezagent.IdentityCaps.Store` becomes the AUTHORITATIVE durable holder source
-  # for the principal-axis cap read (`Cap.Authorize.principal_current?` →
-  # `Identity.read_held_caps/1` → `IdentityCaps.load/1` → this cold path on
-  # self-dispatch) ONLY once the cutover epoch is active
-  # (`Ezagent.Identity.Cutover.status/0`). Only a DEFINITIVE `:inactive` epoch
-  # (a genuine pre-cutover node) reads the PR-1 legacy-authoritative source, so
-  # merging PR-3 flips no production read until the operator activates the epoch
-  # after the fenced backfill + barrier.
-  #
-  # #189 PR-3 FINAL — an UNREADABLE epoch (`:unknown`) DENIES (`[]`), it does NOT
-  # fall back to legacy: a freshly started post-cutover node whose epoch read
-  # errors must never re-authorize a cap whose lagging legacy projection missed
-  # a post-epoch revoke. Only `:inactive` (DB reachable, definitively no epoch
-  # row) takes the legacy path.
   defp load_persisted_checked(uri) do
     if fenced?(uri) do
       {:ok, []}
     else
-      case Ezagent.Identity.Cutover.status() do
-        :active -> load_persisted_cutover_checked(uri)
-        :inactive -> load_legacy_persisted_checked(uri)
-        :unknown -> {:error, :identity_epoch_unreadable}
+      with {:ok, store_caps} <- Store.fetch_durable_caps(uri) do
+        verified_checked(store_caps, uri)
       end
-    end
-  end
-
-  # POST-EPOCH: store-authoritative. Store-preferred with a legacy fallback ONLY
-  # for a SUCCESSFULLY-ABSENT row (`:absent`): a PRESENT non-active row is
-  # authoritative-empty (`{:ok, []}`) and NEVER falls back — the store's guarded
-  # active-ness (§2, active iff a current-valid self-license) is the source of
-  # truth. A store READ ERROR (`{:error, _}`) DENIES (`[]`) — it is NEVER a
-  # legacy fallback (FIX 2: read failure is not absence). `verified/2` ALWAYS
-  # gen-gates the result regardless of source, so a stale/rotated license — a
-  # store-active row left behind by a `regenesis` that only bumped the
-  # generation, or a stale legacy license — still loads EMPTY.
-  defp load_persisted_cutover_checked(uri) do
-    case Store.fetch_durable_caps(uri) do
-      {:ok, store_caps} -> verified_checked(store_caps, uri)
-      :absent -> load_legacy_persisted_checked(uri)
-      {:error, reason} -> {:error, {:identity_store_read_failed, reason}}
-    end
-  end
-
-  defp load_legacy_persisted_checked(uri) do
-    with {:ok, caps} <- legacy_persisted_caps_checked(uri) do
-      verified_checked(caps, uri)
-    end
-  end
-
-  defp legacy_persisted_caps_checked(uri) do
-    if user_uri?(uri) do
-      UserStore.load_checked(uri)
-    else
-      snapshot_caps_checked(uri)
     end
   end
 
@@ -284,13 +218,9 @@ defmodule Ezagent.IdentityCaps do
   def clear_self_license_persisted(uri) do
     uri = parse_uri(uri)
 
-    if user_uri?(uri) do
-      case UserStore.update(uri, fn caps -> {:ok, reject_self_license(caps)} end) do
-        {:error, :not_found} -> :ok
-        result -> result
-      end
-    else
-      clear_snapshot_self_license(uri)
+    case Store.update(uri, fn caps -> {:ok, reject_self_license(caps)} end) do
+      {:error, :not_found} -> :ok
+      result -> result
     end
   end
 
@@ -355,7 +285,7 @@ defmodule Ezagent.IdentityCaps do
 
   defp ensure_live(uri) do
     if user_uri?(uri) do
-      if UserStore.exists?(uri) do
+      if Ezagent.Users.get_by_uri(uri) do
         Ezagent.Entity.spawn_principal(uri)
       else
         {:error, :not_found}
@@ -366,36 +296,16 @@ defmodule Ezagent.IdentityCaps do
           :ok
 
         :error ->
-          with {:ok, _snapshot} <- SnapshotStore.latest(uri) do
+          if Store.has_row?(uri) do
             case SpawnRegistry.ensure_live(uri) do
               {:ok, _status} -> :ok
               {:error, {:already_registered, _winner}} -> :ok
               {:error, _reason} = error -> error
             end
           else
-            {:error, :not_found} -> {:error, :not_found}
-            {:error, _reason} = error -> error
+            {:error, :not_found}
           end
       end
-    end
-  end
-
-  defp snapshot_caps(uri) do
-    # The sanctioned durable projection of the `:identity` slice (§2.2
-    # `Kind.read_durable/3`): snapshot decode + `normalize_slice_view/1`, never
-    # the live process. Replaces the `SnapshotStore.latest` reach-in.
-    case Kind.read_durable(uri, :identity) do
-      {:ok, identity, _meta} when is_map(identity) -> caps_from_slice(identity)
-      _ -> []
-    end
-  end
-
-  defp snapshot_caps_checked(uri) do
-    case Kind.read_durable(uri, :identity) do
-      {:ok, identity, _meta} when is_map(identity) -> caps_from_slice_checked(identity)
-      {:ok, _non_map, _meta} -> {:error, :invalid_identity_slice}
-      {:error, :not_created} -> {:ok, []}
-      {:error, reason} -> {:error, {:durable_identity_read_failed, reason}}
     end
   end
 
@@ -439,47 +349,7 @@ defmodule Ezagent.IdentityCaps do
     end
   end
 
-  defp raw_persisted_caps(uri) do
-    if user_uri?(uri), do: UserStore.load(uri), else: snapshot_caps(uri)
-  end
-
-  defp clear_snapshot_self_license(uri) do
-    case SnapshotStore.latest(uri) do
-      {:ok, %{state: state, version: version}} when is_map(state) ->
-        with {:ok, updated} <- remove_snapshot_self_license(state),
-             {:ok, _written} <-
-               SnapshotStore.write(uri, updated,
-                 kind_type: snapshot_kind_type(uri),
-                 version: version + 1
-               ) do
-          :ok
-        end
-
-      {:error, :not_found} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp remove_snapshot_self_license(state) do
-    case Map.get(state, :identity) do
-      %{state: identity_state} = container when is_map(identity_state) ->
-        updated = Map.update(identity_state, :caps, MapSet.new(), &reject_self_license/1)
-        {:ok, Map.put(state, :identity, Map.put(container, :state, updated))}
-
-      identity when is_map(identity) ->
-        updated = Map.update(identity, :caps, MapSet.new(), &reject_self_license/1)
-        {:ok, Map.put(state, :identity, updated)}
-
-      nil ->
-        {:ok, state}
-
-      _invalid ->
-        {:error, :invalid_identity_snapshot}
-    end
-  end
+  defp raw_persisted_caps(uri), do: Store.load(uri)
 
   defp reject_self_license(%MapSet{} = caps) do
     caps
@@ -492,26 +362,6 @@ defmodule Ezagent.IdentityCaps do
   end
 
   defp reject_self_license(_caps), do: MapSet.new()
-
-  defp snapshot_kind_type(%URI{scheme: "entity"} = uri) do
-    case Ezagent.URI.type(uri) do
-      {:ok, "agent"} -> :agent
-      {:ok, "user"} -> :user
-      _ -> :entity
-    end
-  end
-
-  defp snapshot_kind_type(%URI{scheme: "session"}), do: :session
-
-  defp snapshot_kind_type(%URI{scheme: "template"} = uri) do
-    case Ezagent.URI.type(uri) do
-      {:ok, "agent"} -> :agent_template
-      {:ok, "session"} -> :session_template
-      _ -> :template
-    end
-  end
-
-  defp snapshot_kind_type(_uri), do: :unknown
 
   defp issued_for?(
          %Capability{signature: signature, key_id: key_id, grantee_uri: %URI{} = grantee},
@@ -536,14 +386,6 @@ defmodule Ezagent.IdentityCaps do
     |> Enum.reject(&(Capability.identity_key(&1) == Capability.identity_key(cap)))
     |> MapSet.new()
     |> MapSet.put(cap)
-  end
-
-  defp caps_from_slice(slice) do
-    case Map.get(slice, :caps) do
-      %MapSet{} = caps -> MapSet.to_list(caps)
-      caps when is_list(caps) -> caps
-      _ -> []
-    end
   end
 
   defp caps_from_slice_checked(slice) do

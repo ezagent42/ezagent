@@ -132,7 +132,7 @@ defmodule EzagentPluginKb.E2E.SocialwareP10CodexGateTest do
         kb_seed.kb_agent_uri
       )
 
-    held_caps = Ezagent.Identity.read_identity_caps(orchestrator.uri)
+    held_caps = Ezagent.IdentityCaps.load(orchestrator.uri)
 
     assert Enum.any?(held_caps, fn cap ->
              cap.behavior == Ezagent.ActionSet.Kb and cap.action == :query

@@ -72,20 +72,8 @@ defmodule Ezagent.Invariants.LifecyclePersistenceAccessTest do
         # top-level `:chat`→`:session` slice key on EXISTING session rows in
         # place. Same direct-`upsert` rationale as kind_base_backfill (core, no
         # dependency on the domain session Kind modules `save_now/3` resolves).
-        "apps/ezagent_core/lib/ezagent/session/slice_migration.ex",
-        # chat→session one-shot grant MIGRATION (TEST/sandbox only): rewrites
-        # persisted `Behavior.Chat`→`Behavior.Session` caps in the `:identity`
-        # slice of EXISTING snapshot rows. Framework-internal row-level rewrite,
-        # not a domain/Behavior write path.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-        # #189 PR-3 FIX 4 one-shot GOVERNED migration: augments an EXISTING
-        # pre-carrier session snapshot's `:kind_base` with SelfLicense and mints
-        # its `:identity` self-license in place. Same direct-`upsert` rationale as
-        # the other one-shot migrations (it repairs the very rows a dispatch/
-        # commit path would cold-load, and cold-load without the carrier is the
-        # exact bug it fixes); it lives in the session domain because it
-        # references `ActionSet.SelfLicense`, which core/actor cannot.
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
+        "apps/ezagent_core/lib/ezagent/session/slice_migration.ex"
+        # Other domain code has no direct snapshot-table write exception.
       ],
       guidance:
         "Domain/Behavior/plugin state persists via the normal dispatch → " <>

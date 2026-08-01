@@ -3,10 +3,9 @@ defmodule EzagentCore.Repo.Migrations.CreateCapGranteeIndex do
   Reverse cap index — "who currently holds a cap toward target T" (URI-share A2-2).
 
   A derived, read-only projection of the authoritative `identity_caps` store,
-  written IN the store's write transaction (`GranteeIndex.reindex_in_txn/2`).
-  This migration creates the table AND backfills it from existing store rows
-  (codex ①) so already-granted caps appear immediately, not only after each
-  grantee's next cap change.
+  written in the Store's write transaction (`GranteeIndex.reindex_in_txn/2`).
+  This migration creates the empty projection table; normal Store writes are
+  its only population path.
   """
   use Ecto.Migration
 
@@ -29,12 +28,6 @@ defmodule EzagentCore.Repo.Migrations.CreateCapGranteeIndex do
     create index(:cap_grantee_index, [:target_uri, :key_id])
     create index(:cap_grantee_index, [:grantee_uri])
     create index(:cap_grantee_index, [:workspace_uri])
-
-    flush()
-
-    # codex ①: seed the projection from the authoritative store so existing
-    # grants are visible now (empty on a fresh DB — a no-op).
-    Ezagent.IdentityCaps.GranteeIndex.backfill_all()
   end
 
   def down do

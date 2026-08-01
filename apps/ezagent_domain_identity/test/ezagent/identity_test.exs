@@ -38,7 +38,7 @@ defmodule Ezagent.IdentityTest do
   end
 
   describe "verified durable cap loading" do
-    test "I5 read_held_caps filters an invalid caps_json artifact" do
+    test "I5 creation rejects an invalid durable grant batch atomically" do
       uri =
         Ezagent.URI.new!(
           "entity://team-alpha/user/verify-loader-#{System.unique_integer([:positive])}"
@@ -55,14 +55,13 @@ defmodule Ezagent.IdentityTest do
 
       invalid = %{valid | grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/other")}
 
-      assert {:ok, _user} = Ezagent.Users.create(uri, nil, [valid, invalid])
-      assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+      assert {:error, :invalid_capability_protocol} =
+               Ezagent.Users.create(uri, nil, [valid, invalid])
 
-      held = Ezagent.Identity.read_held_caps(uri)
+      assert Ezagent.Users.get_by_uri(uri) == nil
 
-      assert MapSet.member?(held, valid)
-      refute MapSet.member?(held, invalid)
-      assert Enum.any?(held, &(Ezagent.Capability.action_of(&1) == :self_license))
+      assert {:error, :identity_caps_missing} =
+               Ezagent.IdentityCaps.Store.fetch_durable_caps(uri)
     end
   end
 

@@ -844,7 +844,7 @@ defmodule EzagentDomainInstanceMessage.Application do
             # `system://bootstrap` — `SystemPrincipal.caps/1` mints the
             # equivalent MapSet from the closed Catalog.
             #
-            # Non-admin users: hydrate from `users.caps_json` so the
+            # Non-admin users: hydrate from the durable identity-capability store so the
             # initial slice carries the same cap set the bootstrap row
             # was created with (wildcard-cap-fix 2026-05-26). The
             # earlier `MapSet.new()` default produced a slice without

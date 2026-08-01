@@ -16,8 +16,8 @@ defmodule Ezagent.Entity.User do
   - Provisioned via `mix ezagent.user.create entity://user/<workspace>/X --password Y --caps ...`
   - Authenticated via `/login` (`EzagentWeb.SessionController` +
     `Ezagent.Users.verify_password/2`)
-  - Their caps live in `Ezagent.Users.caps_json` Postgres column AND mirror
-    into Identity slice via `init_slice/1`
+  - Their caps live only in `Ezagent.IdentityCaps.Store`; the Identity slice
+    is a live projection.
   """
 
   # Phase 9 PR-2 (SPEC v3 §3): entity URIs carry a workspace segment.
@@ -40,42 +40,22 @@ defmodule Ezagent.Entity.User do
   `EzagentDomainInstanceMessage.Application`). Both fns delegate here so the
   policy stays in ONE place.
 
-  Two cases:
-
-  1. **User with a `users.caps_json` row** — caps_json
-     contents (which include `User.default_caps(workspace)` ++ any
-     caller-supplied caps from `mix ezagent.user.create --caps ...`
-     or `Behavior.WorkspaceUserAdmin.create_user`). This is the fix
-     for the wildcard-cap-fix regression: pre-fix the spawn fn
-     defaulted to `MapSet.new()` so wildcard caps written to
-     caps_json never reached the slice — snapshot then froze that
-     empty state, denying dispatch step 5.5 forever.
-
-  2. **User with NO caps_json row** — empty MapSet. This
-     covers test fixtures that demand-spawn a URI without a backing
-     DB row, and the brief boot-order window before
-     `Ezagent.Users.get_by_uri/1` is callable. The User Kind will
-     have ONLY the structural self-Identity cap (auto-added by
-     `Behavior.Identity.init_slice/1` via `add_owner_identity_cap/2`),
-     which is intentional — a principal with no DB row should not
-     gain dispatch authority via spawn alone.
+  Reads the sole Store authority. During the clean first-spawn window, staged
+  initial grants are visible before the first authority generation exists.
+  Once authority history exists, non-active rows expose no capabilities.
 
   Returns `MapSet.t(Ezagent.Capability.t())`.
 
-  ## Boot-order tolerance
-
-  The `IdentityCaps.UserStore` adapter is wrapped so an early-boot call (before
-  `Ezagent.Users` is callable) degrades to `MapSet.new()` rather than crashing the
-  spawn — the post_init reconcile path in
-  `Ezagent.ActionSet.Identity` repairs the slice on the next spawn
-  once the DB is available (and `mix ezagent.user.create` runs
-  outside boot anyway).
+  A missing or unreadable Store row returns an empty argument projection; the
+  actor readiness path independently refuses established cold starts without
+  Store authority.
   """
   @spec initial_caps_for_spawn(URI.t()) :: MapSet.t(Ezagent.Capability.t())
   def initial_caps_for_spawn(%URI{} = uri) do
-    # The canonical admin root is represented by each target Kind's sealed
-    # authority-row anchor, never by an ambient wildcard in a User slice.
-    uri |> Ezagent.IdentityCaps.load_persisted() |> MapSet.new()
+    case Ezagent.IdentityCaps.Store.load_initial(uri) do
+      {:ok, caps} -> MapSet.new(caps)
+      {:error, _reason} -> MapSet.new()
+    end
   end
 
   # SPEC caps-cleanup-v1 §4 / §4.6 (PR-CC-1): `admin_caps/0` DELETED.

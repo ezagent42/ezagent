@@ -128,7 +128,7 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
              end)
   end
 
-  test "user self-license is not written before the marker-bearing snapshot commit" do
+  test "user self-license becomes authoritative at the creation boundary" do
     principal =
       Ezagent.URI.user(
         "self-license",
@@ -148,13 +148,12 @@ defmodule Ezagent.SelfLicenseMintOnCreateTest do
              end)
 
     assert [_license] = self_licenses(caps)
-    assert Ezagent.IdentityCaps.UserStore.load(principal) == []
-
-    assert {:ok, %{}} = Ezagent.ActionSet.Identity.activate(state, %{self_uri: principal})
+    assert Ezagent.IdentityCaps.Store.load(principal) == []
+    assert :ok = Ezagent.IdentityCaps.Store.provision_created_identity(principal, state)
 
     assert [_license] =
              principal
-             |> Ezagent.IdentityCaps.UserStore.load()
+             |> Ezagent.IdentityCaps.Store.load()
              |> self_licenses()
   end
 

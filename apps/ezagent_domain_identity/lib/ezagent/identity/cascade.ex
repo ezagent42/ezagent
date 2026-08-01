@@ -11,8 +11,8 @@ defmodule Ezagent.Identity.Cascade do
     1. `ws = workspace_of(X)` — O(1) from the URI.
     2. candidates = `Ezagent.Users.list_in_workspace(ws)` (bounded per-workspace;
        Users ONLY — agents can't be notified yet, spec §11/S2).
-    3. per candidate, read **LIVE** caps via `Ezagent.IdentityCaps.load/1`
-       (K5 — NOT `users.caps_json`), apply `Capability.granted_by_entity?/1` (K4 —
+    3. per candidate, read **LIVE** caps via `Ezagent.IdentityCaps.load/1`, apply
+       `Capability.granted_by_entity?/1` (K4 —
        so a stale/system-granted cap does not over-match), then match a
        `Manage`-over-`X` cap OR a workspace-admin cap via `Ezagent.Identity.Authority`.
     4. dedupe.

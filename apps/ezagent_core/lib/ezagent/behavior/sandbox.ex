@@ -329,8 +329,7 @@ defmodule Ezagent.ActionSet.Sandbox do
   WITHOUT activating the agent.
 
   This is the NON-DISPATCHING read surface for the agent-detail / extension
-  panels (`Ezagent.World.IdentityData`), the sandbox sibling of
-  `Ezagent.Identity.read_identity_caps/1`. It composes the §2.2 read surface in
+  panels (`Ezagent.World.IdentityData`). It composes the §2.2 read surface in
   its sanctioned live-preferred form (§2.2): `Ezagent.Kind.read/3` with
   `spawn: :never` for the normalized live `:sandbox` slice, falling back to
   `Ezagent.Kind.read_durable/3` — the durable snapshot-row projection — when
@@ -343,8 +342,8 @@ defmodule Ezagent.ActionSet.Sandbox do
   allowlist entry is needed and no new cross-app dependency is introduced
   (`Kind` lives in core, alongside this Behavior).
 
-  Authorization is NOT performed here — this is a pure read, mirroring
-  `read_identity_caps/1`. The CALLER (the world facade) preserves the
+  Authorization is NOT performed here — this is a pure read. The CALLER (the
+  world facade) preserves the
   `:sandbox/:read` dispatch gate via `Ezagent.Identity.caps_authorize?/2`
   BEFORE calling this; an unauthorized caller never reaches it. The live
   `:read` dispatch path is unchanged.

@@ -13,9 +13,9 @@ defmodule Ezagent.Capability.Match do
   a wildcard request. `workspace_uri` is the exception — `:any` on EITHER side
   matches (`workspace_match?/2`). `instance` additionally honors the held
   cap's `{:within_session | :within_workspace | :spawned_by, _}` scope tuples
-  for scope-bounded delegation. The second clause defaults a missing `:action`
-  key to `:any` (pre-action-axis callers). No process calls — it is the pure
-  decision dispatch step 5.5 reuses. Backs `Ezagent.Capability.matches?/2`.
+  for scope-bounded delegation. Every axis is mandatory. No process calls — it
+  is the pure decision dispatch step 5.5 reuses. Backs
+  `Ezagent.Capability.matches?/2`.
   """
   @spec matches?(Capability.t(), %{
           required(:kind) => atom(),
@@ -38,27 +38,12 @@ defmodule Ezagent.Capability.Match do
       workspace_match?(cap.workspace_uri, w)
   end
 
-  def matches?(
-        %Capability{} = cap,
-        %{
-          kind: _,
-          behavior: _,
-          instance: _,
-          workspace_uri: _
-        } = needed
-      )
-      when not is_map_key(needed, :action) do
-    matches?(cap, Map.put(needed, :action, :any))
-  end
-
   @doc """
-  Read a cap's `:action` axis, defaulting to `:any` for caps loaded from
-  pre-action-axis snapshots that lack the key (SPEC 2026-05-27
-  capability-action-axis §3.3.1 — the single missing-key-tolerance
-  chokepoint). Backs `Ezagent.Capability.action_of/1`.
+  Read a cap's mandatory `:action` axis. Missing protocol state raises.
+  Backs `Ezagent.Capability.action_of/1`.
   """
   @spec action_of(Capability.t() | map()) :: atom()
-  def action_of(cap), do: Map.get(cap, :action, :any)
+  def action_of(cap), do: Map.fetch!(cap, :action)
 
   @doc """
   The logical-identity 5-tuple of a cap — `{kind, behavior, action, instance,
@@ -95,8 +80,8 @@ defmodule Ezagent.Capability.Match do
   Build the runtime `needed`-cap map for a `(kind_module, action,
   target_uri)` triple: `behavior` via `BehaviorRegistry.lookup/2` (`:unknown`
   on miss), `instance` as the target's bare instance URI, `workspace_uri` via
-  `Scope.workspace_of/1`. The legacy needed-shape builder dispatch step 5.5
-  falls back to when a Behavior hasn't declared `required_caps/0`. Backs
+  `Scope.workspace_of/1`. Dispatch step 5.5 uses this default builder when a
+  Behavior has not declared `required_caps/0`. Backs
   `Ezagent.Capability.cap_for_action/3`.
   """
   @spec cap_for_action(module(), atom(), URI.t()) :: %{

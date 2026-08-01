@@ -25,7 +25,7 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     end)
 
     await_ready(derived)
-    write_agent_caps(independent, [independent_license])
+    assert :ok = IdentityCaps.Store.persist(independent, [independent_license])
 
     shared_workspace = Ezagent.URI.workspace("delete-user-generation")
 
@@ -102,15 +102,6 @@ defmodule Ezagent.Identity.DeleteUserGenerationTest do
     intent = Grant.freeze(principal, principal, principal, requested)
     assert {:ok, license} = Grant.issue_self_license(authority, intent)
     license
-  end
-
-  defp write_agent_caps(uri, caps) do
-    assert {:ok, _version} =
-             SnapshotStore.write(
-               uri,
-               %{identity: %{state: %{caps: MapSet.new(caps)}, transients: %{}}},
-               kind_type: :agent
-             )
   end
 
   defp unique_user(suffix) do

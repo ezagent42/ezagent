@@ -112,7 +112,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   cap identity-key (kind/behavior/instance/workspace_uri), so revoking
   an absent cap is a clean no-op. A dispatch failure is swallowed (the
   orchestrator Kind + its `:identity` snapshot are torn down anyway —
-  this is belt-and-suspenders for the durable `caps_json` projection).
+  this is belt-and-suspenders for the durable Store authority).
 
   `workspace_uri` is taken explicitly (not via `WorkspaceRegistry`)
   because the binding may already have been unbound by the time rollback

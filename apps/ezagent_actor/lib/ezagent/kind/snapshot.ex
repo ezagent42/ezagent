@@ -481,46 +481,24 @@ defmodule Ezagent.Kind.Snapshot do
         _ -> []
       end
 
-    # #189 PR-3 FIX 1 — the identity `:identity`-slice write is AUTHORITATIVE
-    # post-epoch, so it runs FIRST (Store-first) and GATES the snapshot upsert.
-    # A post-epoch store failure aborts the whole commit BEFORE the legacy
-    # snapshot is touched, so a cap mutation never reports success on a failed
-    # store write and a revoke never leaves a stale cap in the authoritative
-    # store. Pre-epoch the store returns `:ok` (best-effort shadow) and this is a
-    # no-op gate that preserves the PR-1 ordering-independent behavior.
-    #
-    # #189 PR-3 FINAL (ITEM 1) — the store hands back `{:ok, :authoritative}`
-    # when THIS was the authoritative post-epoch commit. In that case the
-    # mutation IS committed the instant the store row lands, so a SECOND-WRITE
-    # snapshot failure must NOT be reported as a mutation failure (that would
-    # diverge the reported outcome from the store-authoritative plane the
-    # self-authz read consults). See `commit_snapshot/7`.
-    case maybe_dual_write_identity_caps(uri_str, state) do
-      :ok ->
-        commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts, false)
+    # Identity snapshots are projections of the already-committed Store row.
+    # A projection failure is observable but cannot roll back or contradict the
+    # authoritative mutation.
+    authoritative? = Map.has_key?(state, :identity)
 
-      {:ok, :authoritative} ->
-        commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts, true)
-
-      {:error, reason} ->
-        Logger.warning(
-          "Ezagent.Kind.Snapshot: authoritative identity store write failed for " <>
-            "#{uri_str}: #{inspect(reason)}"
-        )
-
-        :telemetry.execute(
-          [:ezagent, :persistence, :failed],
-          %{},
-          %{uri: uri_str, kind_type: kind_type_str, reason: inspect(reason)}
-        )
-
-        {:error, {:identity_store_write_failed, reason}}
-    end
+    commit_snapshot(
+      uri_str,
+      kind_type_str,
+      binary,
+      version,
+      workspace_uri_str,
+      upsert_opts,
+      authoritative?
+    )
   end
 
-  # #189 PR-3 FINAL (ITEM 1) — persist the snapshot projection AFTER the
-  # Store-first authoritative identity write. `authoritative?` is true iff the
-  # store confirmed a post-epoch authoritative commit (`{:ok, :authoritative}`).
+  # Persist an identity snapshot projection AFTER the Store-first authority
+  # write. `authoritative?` means identity state is already durable in Store.
   #
   #   * upsert OK — durably projected, return `:ok`.
   #   * upsert FAILS + authoritative? — the mutation is ALREADY committed in the
@@ -529,13 +507,28 @@ defmodule Ezagent.Kind.Snapshot do
   #     from the store-authoritative plane. Report SUCCESS so the caller advances
   #     live state — NEVER report failure while the authoritative store holds the
   #     mutation.
-  #   * upsert FAILS + NOT authoritative? — pre-epoch/shadow: the snapshot IS the
-  #     durable authority for this write, so a failure is real; return `{:error}`.
-  defp commit_snapshot(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts, authoritative?) do
+  #   * upsert FAILS + NOT authoritative? — this is a non-identity snapshot, so
+  #     the failure is real; return `{:error}`.
+  defp commit_snapshot(
+         uri_str,
+         kind_type_str,
+         binary,
+         version,
+         workspace_uri_str,
+         upsert_opts,
+         authoritative?
+       ) do
     upsert_result =
       case forced_snapshot_failure(uri_str) do
         :proceed ->
-          KindSnapshot.upsert(uri_str, kind_type_str, binary, version, workspace_uri_str, upsert_opts)
+          KindSnapshot.upsert(
+            uri_str,
+            kind_type_str,
+            binary,
+            version,
+            workspace_uri_str,
+            upsert_opts
+          )
 
         {:error, _} = forced ->
           forced
@@ -591,32 +584,15 @@ defmodule Ezagent.Kind.Snapshot do
   if @p3_forced_snapshot_failure_seam do
     defp forced_snapshot_failure(uri_str) do
       case Application.get_env(:ezagent_actor, :p3_forced_snapshot_failure_uris) do
-        nil -> :proceed
-        uris -> if uri_str in uris, do: {:error, {:p3_forced_snapshot_failure, uri_str}}, else: :proceed
+        nil ->
+          :proceed
+
+        uris ->
+          if uri_str in uris, do: {:error, {:p3_forced_snapshot_failure, uri_str}}, else: :proceed
       end
     end
   else
     defp forced_snapshot_failure(_uri_str), do: :proceed
-  end
-
-  # #189 PR-1 dual-write (identity-plane cutover step 1, ADDITIVE): every
-  # durable snapshot write through THIS chokepoint (init persist, post-init
-  # commit, on-change dispatch commit, Writer flush, terminate) mirrors its
-  # `:identity` slice into the unified identity-caps store (config-injected
-  # via `:ezagent_actor, :identity_caps_store` — no compile-time reference
-  # from the actor layer to the domain store). The domain store module
-  # never raises (best-effort write-shadow; failures are logged at :error
-  # there) and decides what to skip (user URIs mirror via `users.caps_json`;
-  # slices without a caps set are ignored).
-  defp maybe_dual_write_identity_caps(uri_str, state) do
-    with %{identity: identity_slice} <- state,
-         store when not is_nil(store) <-
-           Application.get_env(:ezagent_actor, :identity_caps_store),
-         true <- Code.ensure_loaded?(store) do
-      store.sync_committed_identity(uri_str, nil, identity_slice)
-    else
-      _ -> :ok
-    end
   end
 
   # Phase 9 PR-6 + SPEC #324 rev 3 (Allen 2026-05-25) + r1 codex

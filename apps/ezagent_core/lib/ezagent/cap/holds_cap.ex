@@ -85,9 +85,8 @@ defmodule Ezagent.Cap.HoldsCap do
 
     # Read + CLASSIFY the entity's `:identity` slice (bounded-retry on a
     # transient read) via the §2.2 public read surface
-    # `Ezagent.Kind.read_classified/2` — the same fail-LOUD classification
-    # the old `SliceAccess.read_identity_caps/1` applied (bounded retry +
-    # `:not_found` durable-disambiguation), reached WITHOUT touching actor
+    # `Ezagent.Kind.read_classified/2` — bounded retry plus `:not_found`
+    # durable-disambiguation, reached WITHOUT touching actor
     # internals (§4.2 forward gate; this spine module is core-side). The
     # SECURITY decision (predicate-A match / clean-deny / fail-loud raise)
     # stays HERE. The read returns one of:

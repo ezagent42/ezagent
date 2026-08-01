@@ -84,12 +84,8 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
       assert cap.action == :known_loaded_action
     end
 
-    test "legacy tolerance preserved: an UNSIGNED map missing the action KEY still decodes to :any" do
-      # The pre-action-axis round-trip (a genuinely legacy, UNSIGNED cap with no
-      # action key) is UNCHANGED by this fix — the missing-KEY path is orthogonal
-      # to the present-but-unresolvable path fixed here (and is what #1656 hardens
-      # for the SIGNED case).
-      legacy_unsigned =
+    test "an unsigned map missing the action key is rejected" do
+      unsigned_incomplete =
         %{
           "kind" => "any",
           "behavior" => "any",
@@ -99,9 +95,7 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
           "granted_at" => "2026-07-31T00:00:00.000000Z"
         }
 
-      cap = Capability.from_map(legacy_unsigned)
-      assert cap.action == :any
-      assert cap.signature == nil
+      assert_raise KeyError, fn -> Capability.from_map(unsigned_incomplete) end
     end
   end
 end

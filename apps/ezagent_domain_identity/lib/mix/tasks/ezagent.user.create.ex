@@ -224,7 +224,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   end
 
   # Decision #162 (ISSUE → STORE → VERIFY): every capability that lands in
-  # `users.caps_json` goes through `Ezagent.Cap.issue/3`. This task used to
+  # durable identity state goes through `Ezagent.Cap.issue/3`. This task used to
   # parse the operator's cap string, stamp it `granted_by: admin` by hand, and
   # write it straight to the row — forging admin provenance BEHIND the
   # chokepoint's back, so `authorize_grant/3` never ran.
@@ -289,8 +289,8 @@ defmodule Mix.Tasks.Ezagent.User.Create do
           Mix.shell().info("  spawned live User Kind at #{URI.to_string(uri)}")
           # Post wildcard-cap-fix (2026-05-26): the entity SpawnRegistry
           # fn now delegates to `Ezagent.Entity.User.initial_caps_for_spawn/1`,
-          # which hydrates the User Kind's `:identity` slice from
-          # `users.caps_json`. The previous "caps in DB but not in live
+          # which hydrates the User Kind's `:identity` slice from the durable
+          # identity-capability store. The previous "caps in DB but not in live
           # Identity slice — restart picks them up via Loader" message
           # was stale (and Loader never existed for this); caps ARE in
           # the live slice now.
@@ -309,7 +309,7 @@ defmodule Mix.Tasks.Ezagent.User.Create do
   defp log_live_caps_count([]), do: :ok
 
   defp log_live_caps_count(caps) when is_list(caps) do
-    Mix.shell().info("  live Identity slice hydrated with #{length(caps)} cap(s) from caps_json")
+    Mix.shell().info("  live Identity slice hydrated with #{length(caps)} grant artifact(s)")
     :ok
   end
 end

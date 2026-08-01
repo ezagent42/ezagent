@@ -319,75 +319,9 @@
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "3e6fcf45ef18fa1de19b71991bb9a5ff12d24cd9c707d4aa7b0585cf71dc0491",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "532cd379a99ad772a2fcc0d15b8967d47f338a32056ae7344d785985eff968d4",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "6802115044ba88a03b103310309c568d890d0c27b5a0b27a8a23ee67d0289b1c",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
-      target: "Ezagent.SnapshotStore",
-      sha: "a690bdf90814f0fbb3346866350976c2fb48489ff13b7e4991c00fe6060b4244",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
       target: "ReadyGate.await",
       sha: "2b334508065e45667305662d0697396175edef3d25e0ddc0572ee91862c86b49",
       note: "ReadyGate reach-in → read/3 + dispatch await (C3)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "90314de9d4604d50f621e6af9ce513872c0527c217e22aed74156e92ba9675f1",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "a1efcb105ca1a58f57a701fe3259fc52e9f8f06efdf9231b9b16188345624e0e",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "a1efcb105ca1a58f57a701fe3259fc52e9f8f06efdf9231b9b16188345624e0e",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "cd3ab850bea1a46baa29d3646d30d25166923870f533a82d06f2fe05a552d83a",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "cd3ab850bea1a46baa29d3646d30d25166923870f533a82d06f2fe05a552d83a",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-      target: "Ezagent.Kind.Snapshot",
-      sha: "4247f9f0eb2d5e552782e7de1ec801400c2a7d4a75e7d68d8b65bc8ba03e9f8c",
-      note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
     },
     %{
       path: "apps/ezagent_domain_identity/lib/ezagent/identity/offboarding/reaper.ex",
@@ -771,69 +705,6 @@
       target: "Ezagent.Ecto.KindSnapshot",
       sha: "fece7ad67f512dca90895a843b51543445a6081ced6d3d8cdb8bae770e661e91",
       note: "durable/snapshot reach-in → read_durable/3 + read/3 (C2)"
-    },
-    # #189 PR-3 FIX 4 — the GOVERNED Session self-license migration
-    # (`SessionSelfLicenseMigration`) and the barrier's session principal-gap
-    # scan. A low-level snapshot ENUMERATE/REWRITE/PERSIST migration has no §2.2
-    # write-surface equivalent (read/3 + read_durable/3 are read-only), and
-    # marker-only detection needs the raw state emptiness `read_durable` normalizes
-    # away — the same rationale as the `kind_base_backfill` one-shot migration
-    # (which is framework-located; this one lives in the session domain because it
-    # references `ActionSet.SelfLicense`). +7 sites (see the LifecyclePersistence /
-    # ActorInternals allowlists + arch_baseline_manifest bump).
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "08167378fcdc013266bcf988883cc9b50cca37997c19019d3cc12a5941cb7e5b",
-      note:
-        "#189 PR-3 FIX 4 — governed Session self-license migration (alias; low-level snapshot enumerate/rewrite/persist, no §2.2 write surface)"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
-      target: "Ezagent.Kind.Snapshot",
-      sha: "4247f9f0eb2d5e552782e7de1ec801400c2a7d4a75e7d68d8b65bc8ba03e9f8c",
-      note:
-        "#189 PR-3 FIX 4 — governed Session self-license migration (strip_transients before the durable upsert)"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "90314de9d4604d50f621e6af9ce513872c0527c217e22aed74156e92ba9675f1",
-      note:
-        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.upsert persist)"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "cd3ab850bea1a46baa29d3646d30d25166923870f533a82d06f2fe05a552d83a",
-      note:
-        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.list_all enumerate)"
-    },
-    %{
-      path:
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "a1efcb105ca1a58f57a701fe3259fc52e9f8f06efdf9231b9b16188345624e0e",
-      note:
-        "#189 PR-3 FIX 4 — governed Session self-license migration (KindSnapshot.decode_state)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "fece7ad67f512dca90895a843b51543445a6081ced6d3d8cdb8bae770e661e91",
-      note:
-        "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.list_all; marker-only detection has no §2.2 equivalent)"
-    },
-    %{
-      path: "apps/ezagent_domain_identity/lib/ezagent/identity/fleet_parity.ex",
-      target: "Ezagent.Ecto.KindSnapshot",
-      sha: "1567ebd2fdeb22340fea9aadf7bea91cf7f54d91d2e18439b8c772074fbac2b5",
-      note:
-        "#189 PR-3 FIX 4 — session principal-gap barrier (KindSnapshot.decode_state raw state emptiness)"
     }
   ],
   # §4.2 fixed process-generation consumers that SURVIVE C4 (cap.ex, entity/token.ex).

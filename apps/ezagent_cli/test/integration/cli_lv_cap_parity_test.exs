@@ -117,7 +117,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
     {plain, _row} = Token.mint(agent_uri)
 
     assert {:ok, ^agent_uri} = Authentication.authenticate(plain)
-    caps = Ezagent.Identity.read_identity_caps(agent_uri)
+    caps = Ezagent.IdentityCaps.load(agent_uri)
 
     refute Enum.any?(caps, fn c ->
              c.kind == :any and c.behavior == :any and c.instance == :any

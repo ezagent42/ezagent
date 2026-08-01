@@ -207,7 +207,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       # agent's identity slice with issuer provenance = admin.
       assert eventually(fn ->
                agent_uri
-               |> Ezagent.Identity.read_identity_caps()
+               |> Ezagent.IdentityCaps.load()
                |> Enum.any?(fn
                  %Ezagent.Capability{behavior: Ezagent.ActionSet.Session, granted_by: gb} = c ->
                    Ezagent.Capability.action_of(c) == :send and gb == User.admin_uri()
@@ -275,7 +275,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
           )
         )
 
-      refute Enum.any?(Ezagent.Identity.read_identity_caps(agent_uri), fn cap ->
+      refute Enum.any?(Ezagent.IdentityCaps.load(agent_uri), fn cap ->
                cap.behavior == Ezagent.ActionSet.Session and cap.action == :send
              end)
 
@@ -286,7 +286,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
                )
 
       assert eventually(fn ->
-               Enum.any?(Ezagent.Identity.read_identity_caps(agent_uri), fn cap ->
+               Enum.any?(Ezagent.IdentityCaps.load(agent_uri), fn cap ->
                  cap.behavior == Ezagent.ActionSet.Session and
                    cap.action == :send and
                    cap.instance == Ezagent.URI.instance(proposal.instance) and
@@ -359,7 +359,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
       assert {:ok, %Ezagent.Capability{instance: ^agent_uri}} =
                Ezagent.Cap.issue({:held_by, caller}, agent_uri, owner_permitted)
 
-      caps_before = Ezagent.Identity.read_identity_caps(agent_uri)
+      caps_before = Ezagent.IdentityCaps.load(agent_uri)
       buffer_size_before = Ezagent.PendingDelivery.buffer_size(agent_uri)
 
       assert {:error,
@@ -379,7 +379,7 @@ defmodule Ezagent.Integration.CreateAgentDispatchTest do
 
       assert missing_target_string == URI.to_string(missing_target)
 
-      assert Ezagent.Identity.read_identity_caps(agent_uri) == caps_before
+      assert Ezagent.IdentityCaps.load(agent_uri) == caps_before
       assert Ezagent.PendingDelivery.buffer_size(agent_uri) == buffer_size_before
     end
   end

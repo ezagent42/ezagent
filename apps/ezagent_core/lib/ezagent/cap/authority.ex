@@ -13,7 +13,6 @@ defmodule Ezagent.Cap.Authority do
 
   alias Ezagent.Cap.{GrantArtifact, RevocationLedger, Signing}
   alias Ezagent.Capability
-  alias Ezagent.Capability.Normalize
   alias Ezagent.Ecto.KindCapAuthority
   alias EzagentCore.Repo
 
@@ -410,8 +409,7 @@ defmodule Ezagent.Cap.Authority do
   `:error` on a read failure. Unlike `has_authority_history?/1` (which fails OPEN
   — an unreadable history resolves to `true` so a genesis is never licensed on a
   transient read error), callers that must FAIL CLOSED on an unreadable history
-  (e.g. `Ezagent.Identity.PreEpochRemint`, which permits a re-mint only for a
-  principal with confirmed authority history) use THIS and require `{:ok, true}`.
+  use THIS and require `{:ok, true}`.
   """
   @spec has_authority_history_result?(URI.t()) :: {:ok, boolean()} | :error
   def has_authority_history_result?(%URI{} = uri) do
@@ -523,8 +521,6 @@ defmodule Ezagent.Cap.Authority do
 
   defp verify_signature(public_key, %Capability{signature: signature} = cap, %URI{})
        when is_binary(public_key) and is_binary(signature) do
-    cap = Normalize.fill_defaults(cap)
-
     match?({:ok, %Capability{}}, GrantArtifact.validate(cap)) and
       :crypto.verify(
         :eddsa,
@@ -591,25 +587,9 @@ defmodule Ezagent.Cap.Authority do
     Repo.transaction(fn ->
       case KindCapAuthority.list(uri_string) do
         [] when create_freshness == :existed ->
-          # #189 PR-2 fail-closed (codex spec-review F1): a URI that presents
-          # itself as ALREADY-EXISTING (`:existed` — an ordinary open / cold
-          # restart) but whose authority history is EMPTY must NOT have a
-          # generation minted at runtime. Silently inserting generation 1 here
-          # would birth signing authority for a principal whose creation was
-          # never authorized (or whose authority was intentionally purged) —
-          # exactly the regenesis-resurrection vector. Genesis stays reserved
-          # for genuine creation (`:created`) and the legacy `:unknown` open.
-          #
-          # DEPLOY PRECONDITION (codex impl-review finding 2 — FLAGGED, unresolved
-          # here): this guard REGRESSES a pre-authority durable entity
-          # (`ever_created` snapshot, NO `kind_cap_authorities` row — created
-          # before the #1457 cap-signing rollout and not re-opened since): its
-          # cold restart hits this rollback and the Kind terminates. It is safe
-          # to deploy ONLY if every durable Lifecycle entity in the target DB has
-          # already acquired an authority row (opened once since #1457). If that
-          # cannot be evidenced, a GOVERNED authority-history adoption is required
-          # first, or this guard must land with PR-3's cutover instead. See
-          # docs/superpowers/plans/2026-07-29-189-pr2-migration.md → "FIX 3".
+          # An established URI with no authority history must not mint generation
+          # one at runtime. That would resurrect signing authority after its
+          # history was intentionally removed. Genesis is reserved for creation.
           Repo.rollback(:no_authority_for_existing)
 
         [] ->

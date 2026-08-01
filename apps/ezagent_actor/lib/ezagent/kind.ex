@@ -156,10 +156,9 @@ defmodule Ezagent.Kind do
   When a Kind does not export `holds_cap?/2`, dispatch uses
   `Ezagent.Kind.default_holds_cap?/2` which:
 
-  1. Reads the entity's `:identity` slice via the framework-internal
-     `Kind.SliceAccess` live read (NOT
-     `Invocation.dispatch/1` — breaks the self-list-caps recursion), through
-     the classifying + bounded-retry read `SliceAccess.read_identity_caps/1`.
+  1. Reads the entity's `:identity` slice through the classifying,
+     bounded-retry `Kind.read_classified/2` public surface (NOT
+     `Invocation.dispatch/1`, which would recurse through authorization).
   2. Converts the `needed` `%Capability{}` into the 4-field map
      `Capability.matches?/2` consumes.
   3. Returns `true` iff any held cap matches (per #154 predicate A). A GENUINE
@@ -722,9 +721,9 @@ defmodule Ezagent.Kind do
   @doc """
   The authz-grade read (§2.2) — 3-way classification with bounded retry and
   `:not_found` durable-existence disambiguation. The generalization of
-  `SliceAccess.read_identity_caps/1`; preserves the fail-LOUD-not-deny contract
-  as a public primitive so the cap layer stops needing private slice/snapshot
-  access. Does NOT spawn. Delegates to `Ezagent.Kind.SliceAccess`.
+  It preserves the fail-LOUD-not-deny contract as a public primitive so the cap
+  layer does not need private slice/snapshot access. Does NOT spawn. Delegates
+  to `Ezagent.Kind.SliceAccess`.
   """
   @spec read_classified(URI.t() | String.t(), atom()) ::
           {:ok, term()} | :absent | {:transient, term()}

@@ -45,15 +45,7 @@ defmodule Ezagent.Invariants.NoChatBehaviorTest do
       # prefix, and its nested modules (`Behavior.Chat.Delivery` etc). The
       # trailing boundary stops a false hit on a longer word.
       regex: ~r/\bBehavior\.Chat\b/,
-      allowlist: [
-        # The chat→session grant MIGRATION + its mix task name the OLD
-        # `Behavior.Chat` ON PURPOSE — they exist to FIND and rewrite persisted
-        # `Behavior.Chat` caps to `Behavior.Session`. The old name appears as a
-        # string literal (`@old_behavior_string`) + moduledoc, never as a live
-        # module reference.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/grant_migration.ex",
-        "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.session.migrate_grants.ex"
-      ],
+      allowlist: [],
       guidance: "Use `Ezagent.ActionSet.Session` — the Chat Behavior was renamed."
     },
     %{

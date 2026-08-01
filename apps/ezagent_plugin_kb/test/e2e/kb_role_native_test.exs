@@ -261,7 +261,7 @@ defmodule EzagentPluginKb.E2E.KbRoleNativeTest do
         Ezagent.AgentFlavorAttributes.delete(orch)
       end)
 
-      assert Enum.any?(Ezagent.Identity.read_identity_caps(orch), fn cap ->
+      assert Enum.any?(Ezagent.IdentityCaps.load(orch), fn cap ->
                cap.behavior == Ezagent.ActionSet.Kb and cap.action == :ingest
              end)
 

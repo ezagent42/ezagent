@@ -64,20 +64,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # public surface; lifecycle_case's two raw reach-ins collapse into ONE private
   # `raw_slice!/2` helper calling `Ezagent.Kind.SliceAccess.get_raw_slice/2`
   # directly (−1 site).
-  # #189 PR-3 FIX 4 raised forward 157→164 (+7): the GOVERNED Session
-  # self-license migration (`SessionSelfLicenseMigration`, 5 sites) + the
-  # barrier's session principal-gap scan (`fleet_parity.ex`, 2 sites). A
-  # low-level snapshot enumerate/rewrite/persist migration has no §2.2
-  # write-surface equivalent, and marker-only detection needs the raw state
-  # emptiness `read_durable` normalizes away — same rationale as the ledgered
-  # `kind_base_backfill` one-shot migration. Burn-down when a governed
-  # snapshot-migration facade lands.
-  # P2b raised forward 164→167 (+3): the stopped-node, crash-atomic per-cap
-  # revocation cutover locks, decodes, and rewrites raw KindSnapshot rows in the
-  # same Repo transaction as Store/outbox/epoch activation. The public read
-  # surface cannot provide an in-transaction destructive rewrite, so these are
-  # governed migration debt with the same burn-down as the prior one-shots.
-  @forward_frozen 167
+  # Clean-slate grant storage removed 18 migration and snapshot-projection
+  # reach-ins: identity snapshot projection (4), grant migration (7), session
+  # self-license migration (5), and fleet parity scanning (2).
+  @forward_frozen 149
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved

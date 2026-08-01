@@ -1,5 +1,7 @@
 defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
-  use ExUnit.Case, async: true
+  use EzagentCore.DataCase, async: false
+
+  alias EzagentCore.Repo
 
   @root Path.expand("../../../..", __DIR__)
   @self "apps/ezagent_core/test/invariants/clean_slate_grant_protocol_test.exs"
@@ -12,8 +14,13 @@ defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
     "CapRevocationCutover",
     "cap_revocation_cutover",
     "Identity.Cutover",
+    "Identity.Backfill",
+    "Identity.FleetParity",
+    "PreEpochRemint",
+    "pre_epoch_remint",
     "identity_cutover_active_override",
-    "IdentityCaps.UserStore"
+    "IdentityCaps.UserStore",
+    "users.caps_json"
   ]
 
   @historical_exceptions [
@@ -37,9 +44,19 @@ defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
              end)
   end
 
+  test "retired identity capability storage and cutover schema are absent" do
+    refute table_exists?("identity_cutover")
+    refute column_exists?("users", "caps_json")
+  end
+
+  test "grant identity is a required UUID in every durable carrier" do
+    assert %{nullable: "NO", type: "uuid"} = column("cap_revocations", "grant_id")
+    assert %{nullable: "NO", type: "uuid"} = column("cap_delivery_outbox", "grant_id")
+  end
+
   defp source_files do
     [
-      Path.join(@root, "apps/**/*.{ex,exs}"),
+      Path.join(@root, "apps/**/lib/**/*.{ex,exs}"),
       Path.join(@root, "config/*.{ex,exs}"),
       Path.join(@root, "mix.exs")
     ]
@@ -59,5 +76,35 @@ defmodule Ezagent.Invariants.CleanSlateGrantProtocolTest do
     for identifier <- @forbidden,
         String.contains?(source, identifier),
         do: {relative, identifier}
+  end
+
+  defp table_exists?(table_name) do
+    {:ok, %{rows: [[exists?]]}} =
+      Repo.query(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)",
+        [table_name]
+      )
+
+    exists?
+  end
+
+  defp column_exists?(table_name, column_name) do
+    {:ok, %{rows: [[exists?]]}} =
+      Repo.query(
+        "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2)",
+        [table_name, column_name]
+      )
+
+    exists?
+  end
+
+  defp column(table_name, column_name) do
+    {:ok, %{rows: [[nullable, type]]}} =
+      Repo.query(
+        "SELECT is_nullable, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1 AND column_name = $2",
+        [table_name, column_name]
+      )
+
+    %{nullable: nullable, type: type}
   end
 end

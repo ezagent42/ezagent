@@ -2,45 +2,23 @@ defmodule Ezagent.Capability.Normalize do
   @moduledoc false
 
   alias Ezagent.Capability
-  alias Ezagent.Capability.Match
 
   @doc """
-  Serialize a `%Capability{}` to a JSON-safe STRING-keyed map for
-  `users.caps_json` storage: atoms/modules → strings, URIs → strings, `:any`
+  Serialize a `%Capability{}` to a JSON-safe STRING-keyed map: atoms/modules →
+  strings, URIs → strings, `:any`
   → `"any"`, `granted_at` → ISO8601. Inverse of `from_map/1`. Backs
   `Ezagent.Capability.to_map/1`.
 
-  ## Legacy-shape tolerance (#213 — canary cutover-backfill catch #2)
-
-  Routes the cap through `fill_defaults/1` first, which re-projects it onto a
-  fresh defstruct so fields added AFTER it was serialized are present with their
-  `nil` defaults. A durable Kind's `:identity` slice snapshotted before the
-  #1399 cap-signing trio (`signature` / `key_id` / `grantee_uri`, 2026-07-14)
-  stores a `%Capability{}` via `:erlang.term_to_binary/1`; `binary_to_term`
-  reconstructs it as a struct-shaped map that MATCHES `%Capability{}` (struct
-  matching only checks `:__struct__`) yet LACKS the trio's keys — so a strict
-  `cap.signature` field access raised `(KeyError) key :signature not found`,
-  crashing the cutover backfill's `encode_caps/1`
-  (`EzagentCore.Release.identity_cutover/1` Step 1/3). Re-projection fills the
-  missing keys so serialization is total. It NEVER widens an authorization axis:
-  a genuinely-absent `workspace_uri` fills with `nil` and fails LOUD in
-  `workspace_to_wire/1` — it is not smoothed to `:any`. A legacy unsigned cap
-  serializes with `"signature" => nil` (still non-licensing: the self-license
-  verify fails closed on a non-binary signature).
-
-  A non-`%Capability{}` input is a bug (every serialize-path cap is a struct —
-  users decode via `from_map/1`, snapshots via `binary_to_term`); it is left to
-  crash rather than silently coerced, since `from_map/1` would default a missing
-  `workspace_uri` to `:any` (cross-workspace).
+  Missing grant-protocol fields are corruption and raise at the strict field
+  reads below. Durable carriers validate through `GrantArtifact` before calling
+  this serializer.
   """
   @spec to_map(Capability.t()) :: map()
   def to_map(%Capability{} = cap) do
-    cap = fill_defaults(cap)
-
     %{
       "kind" => atom_or_module_to_string(cap.kind),
       "behavior" => atom_or_module_to_string(cap.behavior),
-      "action" => atom_or_module_to_string(Match.action_of(cap)),
+      "action" => atom_or_module_to_string(cap.action),
       "instance" => instance_to_wire(cap.instance),
       "workspace_uri" => workspace_to_wire(cap.workspace_uri),
       "granted_by" => granted_by_to_wire(cap.granted_by),
@@ -53,110 +31,22 @@ defmodule Ezagent.Capability.Normalize do
   end
 
   @doc """
-  Re-project a `%Capability{}` onto a fresh defstruct so every CURRENT field is
-  present, filling fields added after the struct was serialized (the #1399
-  cap-signing trio `signature` / `key_id` / `grantee_uri`) with their `nil`
-  defaults.
-
-  `struct/2` starts from `%Capability{}` (all defaults) and overlays only the
-  legacy map's recognized fields, so a pre-#1399 `binary_to_term`'d cap
-  (struct-shaped map missing the trio's keys) becomes a complete, strict-field-
-  accessible struct. It does NOT invent authorization: a missing `workspace_uri`
-  fills with the `nil` defstruct default (which fails LOUD at serialize time),
-  never `:any`; and `@enforce_keys` legacy fields (kind/behavior/instance/
-  workspace_uri/granted_by/granted_at, all pre-#1399) are already present.
-
-  Shared by `to_map/1` and the `Jason.Encoder` impl so the two serializers
-  cannot drift on legacy-shape tolerance.
-
-  ## Fail-CLOSED on a signed cap that lost its `:action` axis (#189 divergence)
-
-  `struct/2` fills a MISSING `:action` KEY with the defstruct default `:any`
-  (workspace-admin). For a `binary_to_term`'d / mis-shaped struct-map that lacks
-  the key that is a SILENT PRIVILEGE ESCALATION: the cap's SIGNATURE still covers
-  its true concrete action (e.g. `:create_session`), so the widened `:any` copy
-  is a signature-INVALID artifact that nonetheless serializes into the
-  identity-caps store as workspace-admin — the exact `{:caps_mismatch}` the #189
-  fleet-parity barrier caught (`create_session` in `users.caps_json`, `any` in
-  the store mirror, SAME signature). The capability-action-axis (SPEC 2026-05-27)
-  predates the #1399 cap-signing trio (2026-07-14), so ANY cap carrying a
-  `signature` was minted WITH the action axis and MUST carry a concrete
-  `:action`; a signed cap whose `:action` key is absent is therefore corruption,
-  never legacy, and is REFUSED here (the same fail-LOUD contract this helper
-  already honors for a missing `workspace_uri`). A genuinely pre-action-axis cap
-  is UNSIGNED (pre-#1399), so its missing action still honestly reprojects to
-  `:any` (the #213 legacy tolerance is preserved).
-  """
-  @spec fill_defaults(Capability.t()) :: Capability.t()
-  def fill_defaults(%Capability{} = cap) do
-    refuse_signed_action_widening!(cap)
-    struct(Capability, Map.from_struct(cap))
-  end
-
-  # A cap carrying a `signature` post-dates the action-axis, so a missing
-  # `:action` KEY is corruption — refuse to widen it to `:any` at serialize time.
-  defp refuse_signed_action_widening!(cap) do
-    if not Map.has_key?(cap, :action) and not is_nil(Map.get(cap, :signature)) do
-      raise ArgumentError,
-            "Ezagent.Capability.Normalize: a SIGNED capability is missing its " <>
-              "`:action` axis — refusing to serialize it. Reprojecting would widen the " <>
-              "absent action to `:any` (workspace-admin), a SILENT privilege escalation " <>
-              "whose signature still covers the true concrete action (the #189 " <>
-              "identity-plane divergence). A signature post-dates the " <>
-              "capability-action-axis, so a signed cap MUST carry a concrete `:action`; " <>
-              "a missing one is corruption, not legacy. Got: #{inspect(cap)}"
-    end
-
-    :ok
-  end
-
-  @doc """
-  Deserialize a JSON-decoded STRING-keyed map back to `%Capability{}`. This is
-  the TOLERANT read-side decode (contrast the strict `normalize!/2` grant
-  chokepoint): a missing `"action"`/`"workspace_uri"` KEY defaults to `:any`, so
-  a row authored before the action-axis / `workspace_uri` field still round-trips.
-  A PRESENT atom/module NAME is resolved via `String.to_atom/1` (create-if-absent,
-  see `string_to_atom_or_module/1`), so it round-trips to its concrete value
-  regardless of which modules are loaded on the decoding node — closing the #189
-  cold-node silent-widening where a valid `"create_session"` collapsed to `:any`
-  merely because the defining app was unstarted on a partial `bin/ezagent eval`
-  cutover node. (A well-formed but genuinely unknown name becomes its own concrete
-  atom, authorization-inert, never the `:any` wildcard.)
-  CAUTION: because a missing `"workspace_uri"` becomes `:any` (cross-workspace),
-  this decode does NOT itself reject a field-less row — the durable
-  `users.caps_json` path relies on every persisted cap actually carrying the
-  field (post-PR-3 grant code always writes it via `normalize!/2`). Inverse of
-  `to_map/1`; backs `Ezagent.Capability.from_map/1`.
-
-  ## Fail-CLOSED on a SIGNED map that lost its `"action"` (#189 divergence — READ side)
-
-  The tolerant `Map.put_new("action", "any")` below silently defaults a MISSING
-  `"action"` to `:any` (workspace-admin) while `decode_signature/1` decodes and
-  PRESERVES the map's `"signature"` verbatim. For a JSON map that carries a
-  `"signature"` but LACKS `"action"` that is a SILENT PRIVILEGE ESCALATION — the
-  exact `{:caps_mismatch}` the #189 fleet-parity barrier caught (a workspace cap
-  read back as `:any` with a signature that still covers the true concrete action,
-  e.g. `:create_session`). This is the READ-side (deserialize) symmetric twin of
-  `fill_defaults/1`'s WRITE-side (serialize) guard: the capability-action-axis
-  (SPEC 2026-05-27) predates the #1399 cap-signing trio (2026-07-14), so ANY
-  cap carrying a `"signature"` was minted WITH the action axis and MUST carry a
-  concrete `"action"`; a signed map whose `"action"` key is absent is therefore
-  corruption, never legacy, and is REFUSED here rather than round-tripped into an
-  `:any` cap. A genuinely pre-action-axis cap is UNSIGNED (pre-#1399), so its
-  missing action still tolerantly decodes to `:any` — the documented legacy
-  round-trip tolerance is preserved.
+  Deserialize a complete JSON-decoded STRING-keyed map back to `%Capability{}`.
+  Missing protocol axes raise; no compatibility defaults are applied. A present
+  atom or module name is resolved independently of module load state. A genuinely
+  unknown name becomes its own concrete, authorization-inert atom rather than
+  widening to the `:any` wildcard. Issued-artifact completeness is enforced by
+  `Ezagent.Cap.GrantArtifact`. Inverse of `to_map/1`; backs
+  `Ezagent.Capability.from_map/1`.
   """
   @spec from_map(map()) :: Capability.t()
   def from_map(%{} = m) do
-    refuse_signed_action_widening_on_decode!(m)
-    m = Map.put_new(m, "action", "any")
-
     %Capability{
       kind: string_to_atom_or_module(Map.get(m, "kind")),
       behavior: string_to_atom_or_module(Map.get(m, "behavior")),
-      action: string_to_atom_or_module(Map.get(m, "action")),
+      action: string_to_atom_or_module(Map.fetch!(m, "action")),
       instance: instance_from_wire(Map.get(m, "instance")),
-      workspace_uri: workspace_from_wire(Map.get(m, "workspace_uri", "any")),
+      workspace_uri: workspace_from_wire(Map.fetch!(m, "workspace_uri")),
       granted_by: granted_by_from_wire(Map.get(m, "granted_by")),
       granted_at: parse_datetime(Map.get(m, "granted_at")),
       signature: decode_signature(Map.get(m, "signature")),
@@ -164,27 +54,6 @@ defmodule Ezagent.Capability.Normalize do
       grantee_uri: string_to_uri_or_nil(Map.get(m, "grantee_uri")),
       grant_id: Map.get(m, "grant_id")
     }
-  end
-
-  # A decoded map carrying a non-nil `"signature"` post-dates the action-axis, so
-  # a missing `"action"` KEY is corruption — refuse to widen it to `:any` at
-  # DECODE time (the read-side twin of `fill_defaults/1`'s write-side guard).
-  # Only the SIGNED + action-less shape is refused; an unsigned legacy map still
-  # tolerantly decodes a missing action to `:any` (round-trip tolerance intact).
-  defp refuse_signed_action_widening_on_decode!(m) do
-    if not Map.has_key?(m, "action") and not is_nil(Map.get(m, "signature")) do
-      raise ArgumentError,
-            "Ezagent.Capability.Normalize.from_map/1: a SIGNED capability map is " <>
-              "missing its `\"action\"` field — refusing to decode it. Defaulting the " <>
-              "absent action to `:any` (workspace-admin) would silently widen the true " <>
-              "concrete action while preserving the (now-mismatched) signature verbatim — " <>
-              "the #189 identity-plane divergence (a workspace `:create_session` cap read " <>
-              "back as `:any`). A signature post-dates the capability-action-axis, so a " <>
-              "signed cap MUST carry a concrete `\"action\"`; a missing one is corruption, " <>
-              "not legacy. Got: #{inspect(m)}"
-    end
-
-    :ok
   end
 
   @doc """
@@ -357,37 +226,10 @@ defmodule Ezagent.Capability.Normalize do
 
   defp string_to_atom_or_module("any"), do: :any
 
-  # Resolve a serialized axis value (kind / behavior / action) back to its
-  # concrete atom or module.
-  #
-  # #189 cold-node fix — use `String.to_atom/1` (create-if-absent), NOT
-  # `String.to_existing_atom/1` + `rescue -> :any`. `to_existing_atom` couples
-  # cap-decode correctness to the CALLING NODE'S MODULE-LOAD STATE: on a PARTIAL
-  # release node (a `bin/ezagent eval` cutover node that only started
-  # `:ezagent_domain_identity` + deps, per `EzagentCore.Release.identity_cutover/1`)
-  # the module that defines an action atom like `:create_session` (the Workspace
-  # Kind, in `:ezagent_domain_workspace`, NOT a dep of identity) is never loaded,
-  # so its atom is absent from the table, `to_existing_atom` raised, and the
-  # rescue SILENTLY WIDENED the concrete action to `:any` (workspace-admin) while
-  # `decode_signature/1` preserved the signature verbatim — the #189 identity-plane
-  # divergence (`create_session` in `users.caps_json`, `any` in the Store mirror,
-  # SAME signature) that the fleet-parity barrier caught. Verified live 2026-07-31:
-  # the identical `caps_json` decodes to `:create_session` via warm `rpc` (full app,
-  # atom loaded) but `:any` via cold `eval` (partial app, atom absent).
-  # `grant_migration.ex` already flags this same rescue-to-`:any` as a
-  # silent-broadening hazard for a renamed module string.
-  #
-  # `to_atom` yields the SAME global atom the warm node resolves, so the decode is
-  # load-state-INDEPENDENT — a valid `create_session` never collapses to `:any`
-  # just because the defining app is unstarted. It is also strictly SAFER than the
-  # old rescue: a genuinely unknown/defunct name now becomes its own concrete atom
-  # (authorization-inert — it matches nothing) instead of the `:any` WILDCARD (which
-  # matches everything). Atom-exhaustion is not a concern: every `from_map/1` caller
-  # decodes OUR OWN bounded, minted cap vocabulary — durable `users.caps_json` /
-  # `identity_caps` rows and the digest-bound `%Capability{}` `callback_artifact`,
-  # all written by `to_map/1` — never arbitrary unbounded external input. The `cond`
-  # still classifies module (`Elixir.`-prefixed / bare-capitalized) vs plain-atom
-  # shape so the reconstructed atom is correct.
+  # Resolve a serialized axis value back to its concrete atom or module without
+  # coupling correctness to which applications happen to be loaded. All callers
+  # decode bounded, internally minted grant vocabulary; carrier boundaries reject
+  # arbitrary external maps before this function is reached.
   defp string_to_atom_or_module(s) when is_binary(s) do
     cond do
       String.starts_with?(s, "Elixir.") ->

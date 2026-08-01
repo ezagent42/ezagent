@@ -1,6 +1,6 @@
 defmodule Ezagent.ActionSet.SelfLicense do
   @moduledoc """
-  #189 PR-3 — minimal, NON-DISPATCHABLE self-license carrier.
+  Minimal, non-dispatchable self-license carrier.
 
   Gives a principal that carries no `Ezagent.ActionSet.Identity` (the Session) a
   DURABLE, URI-tied self-license WITHOUT the Identity behavior's cap surface.
@@ -8,15 +8,14 @@ defmodule Ezagent.ActionSet.SelfLicense do
   "the self-license carrier must not be an ordinary cap-only Behavior — registers
   a CapabilityRegistry subject even when non-dispatchable"). It owns the
   `:identity` slice (`%{caps: MapSet.t()}` — the exact shape the identity-caps
-  store, the `Kind.read_durable(:identity)` projection, and `IdentityCaps` already
+  Store and `IdentityCaps` already
   read), minting the self-license ONCE at genuine creation (`:created`).
 
   ## Restart = re-read, never re-mint
 
-  The Session is a DURABLE Kind (`{:snapshot, :on_change}`): on restart it
-  re-loads this persisted `:identity` slice (with its license) from the snapshot,
-  and the store mirrors it via the snapshot dual-write — so the license is re-read
-  on both the store-authoritative cold/self path AND the live-slice read. `create/1`
+  The Session is a durable Kind (`{:snapshot, :on_change}`): on restart the
+  actor replaces its snapshot projection from Store before readiness, so the
+  license is re-read from the sole durable authority. `create/1`
   is not called on `:existed` (the snapshot is loaded + `activate/2` runs), so the
   license is never re-minted; a revoked / generation-bumped principal is caught by
   `IdentityCaps.verified/2` gen-gating on every read.
@@ -43,7 +42,13 @@ defmodule Ezagent.ActionSet.SelfLicense do
   def create(%{create_freshness: :created, uri: %URI{} = uri}) do
     with {:ok, kind_type} <- Ezagent.Cap.Authority.current_kind_type(),
          requested <-
-           Capability.cap(kind_type, __MODULE__, :self_license, uri, Ezagent.URI.workspace_of(uri)),
+           Capability.cap(
+             kind_type,
+             __MODULE__,
+             :self_license,
+             uri,
+             Ezagent.URI.workspace_of(uri)
+           ),
          intent <- Ezagent.Cap.Grant.freeze(uri, uri, uri, requested),
          {:ok, license} <- Ezagent.Cap.Authority.issue_self_license_current(intent) do
       {:ok, %{caps: MapSet.new([license])}}

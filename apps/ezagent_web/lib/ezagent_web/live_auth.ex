@@ -360,12 +360,11 @@ defmodule EzagentWeb.LiveAuth do
   end
 
   # Load the caller's verified, current caps through the Entity-cap read facade.
-  # Runtime grant/revoke stores into the live Identity slice; `users.caps_json`
-  # is provisioning input and may lag behind that state. Reading Users here
+  # Runtime grant/revoke stores into the live Identity slice and the sole durable
+  # identity-capability store. Reading the user row here
   # made authenticated LiveViews deny newly granted authority and could expose
-  # stale authority after a revoke. `read_identity_caps/1` owns the live-slice →
-  # durable-snapshot fallback and applies receiver-aware `Cap.verified_set/2`
-  # at that boundary.
+  # stale authority after a revoke. `IdentityCaps.load/1` reads and verifies the
+  # sole durable Store authority at that boundary.
   defp load_caps(%URI{} = caller_uri) do
     try do
       if Code.ensure_loaded?(Ezagent.IdentityCaps) and

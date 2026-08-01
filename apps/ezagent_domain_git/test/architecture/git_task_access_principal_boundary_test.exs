@@ -303,7 +303,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
           "alias Ezagent.{IdentityCaps, Entity.Token}\nIdentityCaps.persist(receiver, caps)",
         capability_holder: "alias Ezagent.IdentityCaps\nIdentityCaps.grant(receiver, cap)",
         capability_holder:
-          "alias Ezagent.IdentityCaps.UserStore\nUserStore.persist(receiver, caps)",
+          "alias Ezagent.IdentityCaps.Store\nStore.persist(receiver, caps)",
         capability_holder: "alias Ezagent.Identity\nIdentity.grant_cap(receiver, cap, grantor)",
         capability_holder:
           "alias Ezagent.Identity.Grant\nGrant.grant_cap_via_router(receiver, cap, authorization, :sync)"
@@ -327,7 +327,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         capability_holder: "alias Ezagent.IdentityCaps\nreceiver |> IdentityCaps.persist(caps)",
         capability_holder: "alias Ezagent.IdentityCaps\nreceiver |> IdentityCaps.grant(cap)",
         capability_holder:
-          "alias Ezagent.IdentityCaps.UserStore\nreceiver |> UserStore.persist(caps)",
+          "alias Ezagent.IdentityCaps.Store\nreceiver |> Store.persist(caps)",
         capability_holder: "alias Ezagent.Identity\nreceiver |> Identity.grant_cap(cap, grantor)",
         capability_holder:
           "alias Ezagent.Identity.Grant\nreceiver |> Grant.grant_cap_effect(cap, authorization)"
@@ -349,7 +349,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
           "Ezagent.Entity.Profile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
         capability_holder: "Ezagent.IdentityCaps.persist(receiver, caps)",
         capability_holder: "Ezagent.IdentityCaps.grant(receiver, cap)",
-        capability_holder: "Ezagent.IdentityCaps.UserStore.persist(receiver, caps)",
+        capability_holder: "Ezagent.IdentityCaps.Store.persist(receiver, caps)",
         capability_holder: "Ezagent.Identity.grant_cap(receiver, cap, grantor)",
         capability_holder:
           "Ezagent.Identity.Grant.grant_cap_returning_effect(receiver, cap, authorization, :fixture)"
@@ -404,7 +404,7 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         {:token_identity, "Ezagent.Entity.Token", "mint(receiver, label: \"fixture\")"},
         {:capability_holder, "Ezagent.IdentityCaps", "persist(receiver, caps)"},
         {:capability_holder, "Ezagent.IdentityCaps", "grant(receiver, cap)"},
-        {:capability_holder, "Ezagent.IdentityCaps.UserStore", "persist(receiver, caps)"},
+        {:capability_holder, "Ezagent.IdentityCaps.Store", "persist(receiver, caps)"},
         {:capability_holder, "Ezagent.Identity", "grant_cap(receiver, cap, grantor)"},
         {:capability_holder, "Ezagent.Identity.Grant", "grant_cap(receiver, cap, auth)"},
         {:capability_holder, "Ezagent.Identity.Grant",

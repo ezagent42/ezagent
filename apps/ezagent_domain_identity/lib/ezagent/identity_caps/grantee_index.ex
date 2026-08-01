@@ -5,10 +5,9 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
   A **derived, read-only projection** of the authoritative cap store. It is
   written from the ONE place a held-cap becomes durable — inside
   `Ezagent.IdentityCaps.Store`'s write transaction (`persist_locked` /
-  `update_locked` / `backfill_locked`), via `reindex_in_txn/2`. That is the sole
-  downstream confluence of EVERY conferral path (grant, `initial_caps`, cold-load
-  reconcile, backfill, activate, and the agent authoritative write
-  `sync_committed_identity/3` → `persist`), so no writer is missed — and because
+  `update_locked` and activation paths), via `reindex_in_txn/2`. That is the sole
+  downstream confluence of every conferral path (grant, initialization,
+  cold-load reconcile, and activation), so no writer is missed — and because
   it runs IN the same transaction, the index commits ATOMICALLY with the cap row:
   a rolled-back commit never leaves the index over-reporting a cap that never
   durably landed. Direction is strictly cap → row, never row → key (re-minting
@@ -20,7 +19,7 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
   FROM this same store, so deriving the reverse index from store writes makes
   "index has grantee G for T" ⟺ "authorize will accept G holding a cap toward T"
   — index and authz read share one truth source. The grant point would miss every
-  non-grant arrival (initial_caps / backfill / reconcile / activate).
+  non-grant arrival (initialization / reconcile / activation).
 
   Revocation needs no delete: each row stamps the `key_id` (generation) of the
   cap that produced it, and `grantees_of/4` filters to the target's CURRENT active
@@ -59,7 +58,7 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
   Replace `grantee`'s reverse-index rows with the concrete-target caps in `caps`.
 
   **MUST be called from inside the authoritative `Store` write transaction**
-  (`persist_locked`/`update_locked`/`backfill_locked`) — it opens NO transaction
+  (`persist_locked` / `update_locked` / activation) — it opens NO transaction
   of its own, so it commits atomically with the cap-row write and rolls back with
   it. `caps` is the grantee's FULL new cap set (the store always persists the
   complete set), so a delete-all-by-grantee + re-insert is correct and never
@@ -73,9 +72,7 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
     grantee_key = grantee_key(uri)
 
     rows =
-      Enum.flat_map(caps, fn cap ->
-        cap |> normalize_legacy_shape() |> row_attrs(grantee_key)
-      end)
+      Enum.flat_map(caps, &row_attrs(&1, grantee_key))
 
     Repo.delete_all(from(r in __MODULE__, where: r.grantee_uri == ^grantee_key))
 
@@ -141,22 +138,6 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
 
   defp grantee_active?(grantee_key), do: Store.status(grantee_key) == :active
 
-  @doc """
-  One-time backfill of the reverse index from the authoritative store (codex ①).
-  Called by the create-table migration so existing grants appear immediately,
-  not only after each grantee's next cap change. Idempotent — re-running replaces
-  each grantee's rows.
-  """
-  @spec backfill_all() :: :ok
-  def backfill_all do
-    Enum.each(Store.active_uris(), fn grantee_uri ->
-      caps = Store.load(grantee_uri)
-      Repo.transaction(fn -> reindex_in_txn(grantee_uri, caps) end)
-    end)
-
-    :ok
-  end
-
   defp maybe_filter_behavior(query, :any), do: query
 
   defp maybe_filter_behavior(query, behavior) do
@@ -171,31 +152,6 @@ defmodule Ezagent.IdentityCaps.GranteeIndex do
       _ -> nil
     end
   end
-
-  # #189 canary rehearsal catch #3 — legacy-shape tolerance at the reindex
-  # boundary. A pre-#1399 durable `:identity` slice snapshotted a `%Capability{}`
-  # before the cap-signing trio (`signature` / `key_id` / `grantee_uri`,
-  # 2026-07-14); `binary_to_term` reconstructs it as a struct-shaped map that
-  # MATCHES `%Capability{}` (struct matching only checks `:__struct__`) yet LACKS
-  # those keys. `row_attrs/2`'s strict `cap.key_id` read then raised
-  # `(KeyError) key :key_id not found`, and because this reindex runs INSIDE the
-  # authoritative Store write transaction with NO rescue (by design — it commits
-  # atomically with the cap row), the whole cutover backfill rolled back and the
-  # epoch refused to activate. Re-project every cap onto a fresh defstruct HERE —
-  # the sole confluence of every reindex caller (persist / update / backfill /
-  # activate / backfill_all) — so `row_attrs` and every strict field read only
-  # ever sees a complete struct: the trio's missing keys fill with their `nil`
-  # defaults. This is the SAME shared helper (`Capability.Normalize.fill_defaults/1`)
-  # `Capability.to_map/1` and the `Jason.Encoder` impl route through (#213), so
-  # the serialize and index paths cannot drift on legacy tolerance; it is
-  # idempotent on already-complete structs (no double-normalize harm). Fail-closed
-  # holds: it NEVER fabricates a signature or widens an authorization axis — a
-  # legacy cap normalizes to an UNSIGNED cap (`key_id: nil`), whose nil `key_id`
-  # folds cleanly into `row_id/5` and is naturally EXCLUDED by the `active_key_id`
-  # read filter (an unsigned legacy cap is not an active holder). A non-struct
-  # input is passed through untouched to the `_non_concrete` `row_attrs` sink.
-  defp normalize_legacy_shape(%Capability{} = cap), do: Capability.Normalize.fill_defaults(cap)
-  defp normalize_legacy_shape(other), do: other
 
   # Only concrete-target caps are indexed; wildcard (`:any` / scope-tuple)
   # instances have no single target to key on.

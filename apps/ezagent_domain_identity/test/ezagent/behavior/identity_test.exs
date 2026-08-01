@@ -51,7 +51,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
       assert caps == MapSet.new()
     end
 
-    test "I5 keeps a born-signed receiver-bound cap and drops a tampered artifact" do
+    test "I5 rejects the complete initial carrier when one artifact is tampered" do
       receiver = Ezagent.URI.new!("entity://team-alpha/user/initial-cap")
       target = Ezagent.URI.new!("session://team-alpha/default/main")
 
@@ -69,7 +69,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
       assert {:ok, %{caps: caps}} =
                Identity.create(%{uri: receiver, initial_caps: [valid, invalid]})
 
-      assert MapSet.equal?(caps, MapSet.new([valid]))
+      assert caps == MapSet.new()
     end
   end
 
@@ -96,6 +96,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.ActionSet.Session,
+        action: :any,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
@@ -109,6 +110,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.ActionSet.Session,
+        action: :any,
         instance: URI.new!("session://system/default/main"),
         workspace_uri: URI.new!("workspace://team-alpha")
       }
@@ -161,6 +163,7 @@ defmodule Ezagent.ActionSet.IdentityTest do
       assert Capability.matches?(admin_cap, %{
                kind: :anything,
                behavior: SomeMod,
+               action: :any,
                instance: URI.new!("entity://team-alpha/agent/test_X"),
                workspace_uri: URI.new!("workspace://team-alpha")
              })

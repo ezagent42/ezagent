@@ -125,7 +125,7 @@ defmodule Ezagent.Domain.Agent do
   # exactly as the live dispatch step-5.5 does:
   #   route 1 — the caller's INLINE `ctx.caps` (inline self-authority, #154)
   #   route 2 — the caller's slice-backed caps, read NON-ACTIVATINGLY
-  #             (`read_identity_caps/1`: live slice → snapshot fallback)
+  #             (`IdentityCaps.load/1`: verified Store authority)
   # Implementing only one route would silently lock out one caller class
   # (an inline-self-authority worker, or a logged-in user with a cold Kind).
 

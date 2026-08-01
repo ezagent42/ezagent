@@ -26,8 +26,8 @@ defmodule Ezagent.Socialware.Mount do
 
   ## 重启存活 = cap-as-truth,不再照表重发(reconcile 已删)
 
-  一把 mount 钥匙落在 grantee **自己**的 durable cap store(`users.caps_json` / agent
-  snapshot);session 或 grantee 冷重启时,slice 重建会**从 durable store 重新读回**这把
+  一把 mount 钥匙落在 grantee **自己**的 durable identity-capability store;
+  session 或 grantee 冷重启时,slice 重建会**从 durable store 重新读回**这把
   钥匙,故它靠自身存活,无需照 `MountRow` 重 mint。旧的 `reconcile_session_mounts/1` /
   `reconcile_person_mounts/1`「照挂载表重发钥匙」是冗余的第二真理源扫描,已移除
   (实证见 `MountCapSurvivesRespawnTest`:冷 terminate grantee 后钥匙仍在)。`MountRow`

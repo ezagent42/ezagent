@@ -176,7 +176,7 @@ defmodule Ezagent.Identity.AuthorityTest do
   defp wait_cap(entity, cap, retries \\ 200) do
     held? =
       entity
-      |> Ezagent.Identity.read_identity_caps()
+      |> Ezagent.IdentityCaps.load()
       |> Enum.any?(&(Capability.identity_key(&1) == Capability.identity_key(cap)))
 
     cond do

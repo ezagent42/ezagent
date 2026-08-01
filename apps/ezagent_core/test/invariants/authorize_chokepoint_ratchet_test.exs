@@ -101,17 +101,6 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         # authz decision — reads stay legacy in PR-2; this only decides the
         # durable row's status. Mirrors the identity_caps.ex home above.
         "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
-        # Canary boot regression (deploy 30456630379): the PRE-EPOCH gen-reboot
-        # self-license RE-MINT runs the SAME G-3 principal-axis check
-        # (`verify_against_current`) TWICE — to decide re-mint ELIGIBILITY (is the
-        # slice's self-license already current) and to re-verify the freshly minted
-        # license against the current generation under the FOR SHARE authority lock.
-        # Reviewed, NOT an authz decision: the actual authorization still flows
-        # through `authorize/3`; this only refreshes the canonical genesis admin's
-        # durable self-license under a DEFINITIVE `:inactive` epoch (a no-op
-        # post-epoch and for every non-admin principal). Mirrors the
-        # identity_caps.ex / store.ex homes above.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
         # P3 (cap-revocation hardening): `caps_match?/2`'s per-call TARGET-axis
         # re-verify. NOT a principal-gate bypass — the principal gate runs
         # INSIDE `IdentityCaps.load/1` (its `verified/2` G-3 self-license check
@@ -338,17 +327,14 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       id: :public_self_license_minter,
       desc:
         "the public Identity self-license minter `Ezagent.ActionSet.Identity." <>
-          "mint_self_license/2` (#1627 — made public so `PreEpochRemint` + " <>
-          "`AdminKeyRotation` call it) invoked cross-module outside its two " <>
-          "sanctioned callers — a THIRD external caller is an un-gated re-credential " <>
+          "mint_self_license/2` invoked cross-module outside `AdminKeyRotation` — " <>
+          "another external caller is an un-gated re-credential " <>
           "path the whole-file `identity.ex` allowlist would miss. Matches the " <>
           "QUALIFIED `Identity.mint_self_license(` call form (identity.ex's own " <>
           "unqualified internal calls + unrelated same-named private helpers, e.g. " <>
           "`session_self_license_migration.ex`, are intentionally not matched).",
       pattern: ~r/Identity\.mint_self_license\(/,
       reviewed_paths: [
-        # the PRE-EPOCH admin re-mint (gated on the un-killable authority root).
-        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
         # the MANUAL admin key-rotation operator command (atomic rotate + re-mint).
         "apps/ezagent_domain_identity/lib/ezagent/identity/admin_key_rotation.ex"
       ]
@@ -457,18 +443,10 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(&self_license_cap_constructors/1)
 
-    # #189 PR-3 FINAL (ITEM 4): the two runtime self-license minters remain
-    # create-gated. P2b adds one stopped-node maintenance constructor for the
-    # canonical admin only; its core signer requires the root URI, an open Repo
-    # transaction, and a definitively inactive cap-revocation epoch.
+    # The two runtime self-license minters remain create-gated.
     #   1. `ActionSet.Identity` (User/Agent) — create-gated;
     #   2. `ActionSet.SelfLicense` carrier (the Session) — create-gated.
-    # The GOVERNED FIX-4 `SessionSelfLicenseMigration` adopts pre-carrier Session
-    # INSTANCES during the cutover, but it mints THROUGH minter #2
-    # (`SelfLicense.create/1`) — it is NOT a third construction site. A partial
-    # earlier revision allowlisted it as a third file; routing through the
-    # existing minter restores the runtime ratchet to exactly two constructors.
-    # Any fourth constructor, or an un-gated one, fails this.
+    # Any third constructor, or an un-gated one, fails this.
     constructor_files =
       constructor_hits
       |> Enum.map(&(&1 |> String.split(":") |> hd()))
@@ -490,11 +468,6 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
 
-    migration =
-      source(
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
-      )
-
     cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
     grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")
 
@@ -503,14 +476,6 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
              "maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri})"
 
     assert self_license =~ "def create(%{create_freshness: :created, uri: %URI{} = uri})"
-
-    # The governed migration mints THROUGH minter #2 (`SelfLicense.create/1`) — no
-    # third construction site — and keeps its OWN anti-resurrection gate: it
-    # refuses a marker-only (destroyed) session and a previously-revoked
-    # (regenesis'd) one.
-    assert migration =~ "SelfLicense.create(%{create_freshness: :created, uri: uri})"
-    assert migration =~ "marker_only?"
-    assert migration =~ "Cap.Authority.generation_count(uri) > 1"
 
     assert cap =~ "%Capability{action: :self_license}"
     assert cap =~ "do: {:error, :reserved_action}"

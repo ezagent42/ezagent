@@ -94,7 +94,7 @@ defmodule Ezagent.Identity.CascadeHookTest do
     # cascade runs on a LATER DeferredDispatch turn and can never roll it back.
     held? =
       x
-      |> Ezagent.Identity.read_identity_caps()
+      |> Ezagent.IdentityCaps.load()
       |> Enum.any?(fn
         %Capability{kind: :session} = c -> Capability.action_of(c) == :receive
         _ -> false

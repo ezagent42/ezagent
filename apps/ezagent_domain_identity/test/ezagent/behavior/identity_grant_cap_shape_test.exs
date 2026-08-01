@@ -327,6 +327,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.ActionSet.ExternalMirror,
+        action: :any,
         instance: @session_uri,
         workspace_uri: @workspace_uri
       }
@@ -346,6 +347,7 @@ defmodule Ezagent.ActionSet.IdentityGrantCapShapeTest do
       needed = %{
         kind: :session,
         behavior: Ezagent.ActionSet.ExternalMirror,
+        action: :any,
         instance: @session_uri,
         workspace_uri: @workspace_uri
       }

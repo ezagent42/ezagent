@@ -450,9 +450,8 @@ defmodule Ezagent.Cap do
   end
 
   # #195 canonical-admin bootstrap on fresh boot. The canonical admin holds NO
-  # persisted capability (its `users.caps_json` is deliberately born empty and
-  # its `:self_license` is explicitly kept out of that durable store —
-  # `IdentityCaps.clear_self_license_persisted/1`). Its currency as a principal
+  # persisted self-license (`IdentityCaps.clear_self_license_persisted/1`). Its
+  # currency as a principal
   # is proven ONLY by the live `:identity`-slice self-license the `:identity`
   # Behavior mints when the admin Kind is running (or the durable per-Kind
   # authority compartment while executing in-process).
