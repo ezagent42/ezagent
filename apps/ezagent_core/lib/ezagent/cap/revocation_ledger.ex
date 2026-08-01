@@ -8,9 +8,9 @@ defmodule Ezagent.Cap.RevocationLedger do
 
   import Ecto.Query
 
+  alias Ezagent.Cap.GrantArtifact
   alias Ezagent.Ecto.CapRevocation
-  alias Ezagent.{Cap.RevocationEpoch, Capability}
-  alias Ezagent.Capability.Normalize
+  alias Ezagent.Capability
   alias EzagentCore.Repo
 
   @test_seams Mix.env() == :test
@@ -20,7 +20,8 @@ defmodule Ezagent.Cap.RevocationLedger do
   def mark(attrs) when is_map(attrs) do
     grant_id = Map.get(attrs, :grant_id) || Map.get(attrs, "grant_id")
 
-    with {:ok, _row} <-
+    with true <- GrantArtifact.valid_grant_id?(grant_id) || {:error, :invalid_grant_id},
+         {:ok, _row} <-
            %CapRevocation{}
            |> CapRevocation.changeset(attrs)
            |> Repo.insert(on_conflict: :nothing, conflict_target: :grant_id),
@@ -42,7 +43,10 @@ defmodule Ezagent.Cap.RevocationLedger do
   def revoked_grant_ids(_workspace_uri, []), do: {:ok, MapSet.new()}
 
   def revoked_grant_ids(workspace_uri, grant_ids) when is_list(grant_ids) do
-    with :ok <- maybe_force_read_error() do
+    with true <-
+           Enum.all?(grant_ids, &GrantArtifact.valid_grant_id?/1) ||
+             {:error, :invalid_grant_id},
+         :ok <- maybe_force_read_error() do
       workspace_uri = stable_workspace_key(workspace_uri)
       grant_ids = Enum.uniq(grant_ids)
 
@@ -62,26 +66,19 @@ defmodule Ezagent.Cap.RevocationLedger do
     kind, reason -> {:error, {kind, reason}}
   end
 
-  @doc "Filter denied protocols and revoked v2 grants from a read-side batch."
+  @doc "Filter invalid or revoked issued artifacts from a read-side batch."
   @spec filter_unrevoked(URI.t() | String.t(), [Capability.t()]) ::
           {:ok, [Capability.t()]} | {:error, term()}
   def filter_unrevoked(workspace_uri, caps) when is_list(caps) do
-    caps = Enum.map(caps, &Normalize.fill_defaults/1)
+    with {:ok, _validated} <- GrantArtifact.validate_set(caps, :revocation_read),
+         {:ok, revoked} <- revoked_ids_for_caps(workspace_uri, caps) do
+      {:ok, Enum.reject(caps, &MapSet.member?(revoked, &1.grant_id))}
+    else
+      {:error, {:invalid_grant_artifact, _, _, _}} ->
+        {:error, :invalid_capability_protocol}
 
-    case RevocationEpoch.status() do
-      :unknown ->
-        {:error, :cap_revocation_epoch_unreadable}
-
-      state when state in [:inactive, :active] ->
-        allowed = Enum.filter(caps, &RevocationEpoch.protocol_allowed?(&1, state))
-
-        case revoked_ids_for_caps(workspace_uri, allowed) do
-          {:ok, revoked} ->
-            {:ok, Enum.reject(allowed, &MapSet.member?(revoked, Map.get(&1, :grant_id)))}
-
-          {:error, _reason} ->
-            {:error, :cap_revocation_ledger_unreadable}
-        end
+      {:error, _reason} ->
+        {:error, :cap_revocation_ledger_unreadable}
     end
   rescue
     error -> {:error, error}
@@ -92,27 +89,18 @@ defmodule Ezagent.Cap.RevocationLedger do
   @doc "Reject a write-side batch unless every artifact is admitted and unrevoked."
   @spec ensure_unrevoked(URI.t() | String.t(), [Capability.t()]) :: :ok | {:error, term()}
   def ensure_unrevoked(workspace_uri, caps) when is_list(caps) do
-    caps = Enum.map(caps, &Normalize.fill_defaults/1)
+    with {:ok, _validated} <- GrantArtifact.validate_set(caps, :revocation_write),
+         {:ok, revoked} <- revoked_ids_for_caps(workspace_uri, caps) do
+      case revoked |> MapSet.to_list() |> Enum.sort() do
+        [] -> :ok
+        grant_ids -> {:error, {:revoked_capability_grants, grant_ids}}
+      end
+    else
+      {:error, {:invalid_grant_artifact, _, _, _}} ->
+        {:error, :invalid_capability_protocol}
 
-    case RevocationEpoch.status() do
-      :unknown ->
-        {:error, :cap_revocation_epoch_unreadable}
-
-      state when state in [:inactive, :active] ->
-        if Enum.all?(caps, &RevocationEpoch.protocol_allowed?(&1, state)) do
-          case revoked_ids_for_caps(workspace_uri, caps) do
-            {:ok, revoked} ->
-              case revoked |> MapSet.to_list() |> Enum.sort() do
-                [] -> :ok
-                grant_ids -> {:error, {:revoked_capability_grants, grant_ids}}
-              end
-
-            {:error, _reason} ->
-              {:error, :cap_revocation_ledger_unreadable}
-          end
-        else
-          {:error, :invalid_capability_protocol}
-        end
+      {:error, _reason} ->
+        {:error, :cap_revocation_ledger_unreadable}
     end
   rescue
     error -> {:error, error}
@@ -121,11 +109,7 @@ defmodule Ezagent.Cap.RevocationLedger do
   end
 
   defp revoked_ids_for_caps(workspace_uri, caps) do
-    grant_ids =
-      for %Capability{signing_version: 2, grant_id: grant_id} <- caps,
-          is_binary(grant_id),
-          grant_id != "",
-          do: grant_id
+    grant_ids = Enum.map(caps, & &1.grant_id)
 
     revoked_grant_ids(workspace_uri, grant_ids)
   end

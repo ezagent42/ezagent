@@ -3,7 +3,7 @@ defmodule EzagentCore.Repo.Migrations.CreateCapRevocations do
 
   def change do
     create table(:cap_revocations, primary_key: false) do
-      add :grant_id, :string, primary_key: true
+      add :grant_id, :uuid, primary_key: true, null: false
       add :workspace_uri, :string, null: false
       add :holder_uri, :string
       add :cap_identity_key, :binary

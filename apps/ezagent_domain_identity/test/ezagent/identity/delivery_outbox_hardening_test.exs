@@ -126,11 +126,11 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
-  test "v2 grants with the same logical identity keep distinct pending rows by grant_id" do
+  test "separate grants with the same logical identity keep distinct pending rows by grant_id" do
     {target, pid} = spawn_target("grant-id-semantic")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
-    first = v2_capability(target)
-    second = v2_capability(target)
+    first = issued_capability(target)
+    second = issued_capability(target)
 
     assert Capability.identity_key(first) == Capability.identity_key(second)
     assert first.key_id == second.key_id
@@ -154,7 +154,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   test "enqueue and retry both block an absorbing grant_id after revocation" do
     {target, pid} = spawn_target("revoked-grant")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
-    pending_cap = v2_capability(target)
+    pending_cap = issued_capability(target)
 
     assert :ok = Invocation.dispatch(absorb_invocation(target, pending_cap))
     delivery = one_delivery!(target)
@@ -165,7 +165,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     assert {:error, :capability_revoked} = DeliveryOutbox.attempt(delivery.id)
     assert Repo.get(Delivery, delivery.id) == nil
 
-    later = v2_capability(target)
+    later = issued_capability(target)
     assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(target, later))
 
     assert {:error, :capability_revoked} =
@@ -615,13 +615,12 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     )
   end
 
-  defp v2_capability(target) do
+  defp issued_capability(target) do
     base = capability(target)
     {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
 
     base
     |> Map.merge(%{
-      signing_version: 2,
       grant_id: Ecto.UUID.generate(),
       signature: nil
     })
@@ -694,6 +693,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       op: Keyword.get(opts, :op, :absorb_cap),
       payload: :erlang.term_to_binary(envelope),
       payload_identity: "poison-#{System.unique_integer([:positive])}",
+      grant_id: Keyword.get(opts, :grant_id, Ecto.UUID.generate()),
       status: :pending,
       attempts: 0,
       next_retry_at: next_retry_at

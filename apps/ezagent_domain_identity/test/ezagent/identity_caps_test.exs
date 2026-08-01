@@ -152,7 +152,7 @@ defmodule Ezagent.IdentityCapsTest do
 
     test "live and durable reads filter a v2 artifact after its grant_id is revoked" do
       agent = agent_uri("per-cap-revoked")
-      cap = v2_issued_cap(agent, :send)
+      cap = issued_cap(agent, :send)
 
       assert {:ok, _pid} =
                Ezagent.Kind.spawn(IdentityHostKind, %{
@@ -435,7 +435,7 @@ defmodule Ezagent.IdentityCapsTest do
   describe "persist/2, grant/2, and revoke/2" do
     test "live revoke trusts the stored grant_id and a legitimate re-grant gets a fresh identity" do
       agent = agent_uri("live-v2-revoke")
-      original = v2_issued_cap(agent, :send)
+      original = issued_cap(agent, :send)
 
       assert {:ok, _pid} =
                Ezagent.Kind.spawn(IdentityHostKind, %{uri: agent, initial_caps: [original]})
@@ -453,7 +453,7 @@ defmodule Ezagent.IdentityCapsTest do
       assert revoked == MapSet.new([original.grant_id])
       refute cap_present?(IdentityCaps.load(agent), original)
 
-      regranted = v2_issued_cap(agent, :send)
+      regranted = issued_cap(agent, :send)
       refute regranted.grant_id == original.grant_id
       assert :ok = IdentityCaps.grant(agent, regranted)
       assert cap_present?(IdentityCaps.load(agent), regranted)
@@ -1018,7 +1018,7 @@ defmodule Ezagent.IdentityCapsTest do
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
 
-  defp v2_issued_cap(receiver, action) do
+  defp issued_cap(receiver, action) do
     unsigned = %Capability{
       kind: :session,
       behavior: Ezagent.ActionSet.Session,
@@ -1027,7 +1027,6 @@ defmodule Ezagent.IdentityCapsTest do
       workspace_uri: @workspace,
       granted_by: @issuer,
       granted_at: DateTime.utc_now(),
-      signing_version: 2,
       grant_id: Ecto.UUID.generate()
     }
 

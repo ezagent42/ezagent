@@ -84,7 +84,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
   describe "round-trip" do
     test "durable revoke resolves the stored grant_id, cancels pending delivery, and reindexes" do
       agent = agent_uri("durable-revoke-stored")
-      stored = v2_issued_cap(agent, :send)
+      stored = issued_cap(agent, :send)
       caps = licensed_caps(agent, [stored])
 
       assert :ok = Store.persist(agent, caps)
@@ -123,17 +123,17 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       agent = agent_uri("durable-revoke-absent")
       assert :ok = Store.persist(agent, licensed_caps(agent, []))
 
-      exact = v2_issued_cap(agent, :send)
+      exact = issued_cap(agent, :send)
       assert {:ok, ^exact} = Store.revoke_cap(agent, exact)
 
       assert {:ok, revoked} = RevocationLedger.revoked_grant_ids(@workspace, [exact.grant_id])
       assert revoked == MapSet.new([exact.grant_id])
 
-      unsigned = %{v2_issued_cap(agent, :join) | signature: nil}
+      unsigned = %{issued_cap(agent, :join) | signature: nil}
       assert {:error, :invalid_exact_revocation_artifact} = Store.revoke_cap(agent, unsigned)
 
       other_holder = agent_uri("durable-revoke-wrong-holder")
-      wrong_holder = v2_issued_cap(other_holder, :history)
+      wrong_holder = issued_cap(other_holder, :history)
 
       assert {:error, :invalid_exact_revocation_artifact} =
                Store.revoke_cap(agent, wrong_holder)
@@ -143,7 +143,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
           "session://identity-caps-store/default/stale-#{System.unique_integer([:positive])}"
         )
 
-      stale = v2_issued_cap(agent, :manage, stale_target)
+      stale = issued_cap(agent, :manage, stale_target)
       assert {:ok, _next_generation} = Ezagent.Cap.Authority.regenesis(stale_target, :session)
 
       assert {:error, :invalid_exact_revocation_artifact} = Store.revoke_cap(agent, stale)
@@ -151,7 +151,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
 
     test "all cap-set writers reject an absorbing revoked v2 artifact" do
       persist_agent = agent_uri("revoked-persist")
-      persist_cap = v2_issued_cap(persist_agent, :send)
+      persist_cap = issued_cap(persist_agent, :send)
       persist_grant_id = persist_cap.grant_id
       :ok = revoke_cap(persist_agent, persist_cap)
 
@@ -162,7 +162,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
 
       update_agent = agent_uri("revoked-update")
       baseline = licensed_caps(update_agent, [issued_cap(update_agent, :send)])
-      update_cap = v2_issued_cap(update_agent, :join)
+      update_cap = issued_cap(update_agent, :join)
       update_grant_id = update_cap.grant_id
       assert :ok = Store.persist(update_agent, baseline)
       :ok = revoke_cap(update_agent, update_cap)
@@ -173,7 +173,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       assert identity_keys(Store.load(update_agent)) == identity_keys(baseline)
 
       backfill_agent = agent_uri("revoked-backfill")
-      backfill_cap = v2_issued_cap(backfill_agent, :send)
+      backfill_cap = issued_cap(backfill_agent, :send)
       backfill_grant_id = backfill_cap.grant_id
       :ok = revoke_cap(backfill_agent, backfill_cap)
 
@@ -186,7 +186,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       refute Store.has_row?(backfill_agent)
 
       provision_agent = agent_uri("revoked-provision")
-      provision_cap = v2_issued_cap(provision_agent, :send)
+      provision_cap = issued_cap(provision_agent, :send)
       provision_grant_id = provision_cap.grant_id
       provision_caps = licensed_caps(provision_agent, [provision_cap])
 
@@ -203,7 +203,7 @@ defmodule Ezagent.IdentityCaps.StoreTest do
 
     test "the shared write gate rolls back when the revocation ledger is unreadable" do
       agent = agent_uri("ledger-unreadable")
-      caps = licensed_caps(agent, [v2_issued_cap(agent, :send)])
+      caps = licensed_caps(agent, [issued_cap(agent, :send)])
 
       Application.put_env(:ezagent_core, :cap_revocation_ledger_force_read_error, true)
 
@@ -1514,11 +1514,11 @@ defmodule Ezagent.IdentityCaps.StoreTest do
     authority_signed_cap_as!(authority, @issuer, receiver, unsigned)
   end
 
-  defp v2_issued_cap(receiver, action) do
-    v2_issued_cap(receiver, action, URI.new!("session://identity-caps-store/default/main"))
+  defp issued_cap(receiver, action) do
+    issued_cap(receiver, action, URI.new!("session://identity-caps-store/default/main"))
   end
 
-  defp v2_issued_cap(receiver, action, target) do
+  defp issued_cap(receiver, action, target) do
     grant_id = Ecto.UUID.generate()
 
     unsigned = %Capability{
@@ -1529,7 +1529,6 @@ defmodule Ezagent.IdentityCaps.StoreTest do
       workspace_uri: @workspace,
       granted_by: @issuer,
       granted_at: DateTime.utc_now(),
-      signing_version: 2,
       grant_id: grant_id
     }
 

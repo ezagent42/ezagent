@@ -40,7 +40,7 @@ defmodule Ezagent.Cap.Delivery do
     field :payload_version, :integer, default: 1
     field :payload_identity, :string
     field :semantic_identity, :string
-    field :grant_id, :string
+    field :grant_id, :binary_id
     field :idempotency_key, :string
     field :status, Ecto.Enum, values: [:pending, :applied, :dead], default: :pending
     field :attempts, :integer, default: 0
@@ -84,6 +84,7 @@ defmodule Ezagent.Cap.Delivery do
       :payload,
       :payload_version,
       :payload_identity,
+      :grant_id,
       :status,
       :attempts,
       :next_retry_at

@@ -11,7 +11,7 @@ defmodule Ezagent.Ecto.CapRevocation do
 
   import Ecto.Changeset
 
-  @primary_key {:grant_id, :string, autogenerate: false}
+  @primary_key {:grant_id, :binary_id, autogenerate: false}
   schema "cap_revocations" do
     field :workspace_uri, :string
     field :holder_uri, :string
