@@ -169,23 +169,6 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       recipe = "s7-transport-gated-role-#{unique}"
       name = "never-joined-#{unique}"
 
-      # test.exs widens the generic Kind.spawn ready-observation budget to the
-      # same 5 s as Invocation's outer call deadline. This fixture is
-      # intentionally never ready, so pin the production-like bounded budget
-      # locally; the assertion is that the 30 s transport gate does not become
-      # a second blocking grant wait. Restore the application env after the
-      # non-async test so no neighboring test inherits the override.
-      previous_spawn_budget = Application.get_env(:ezagent_core, :spawn_await_ready_ms)
-      Application.put_env(:ezagent_core, :spawn_await_ready_ms, 200)
-
-      on_exit(fn ->
-        if is_nil(previous_spawn_budget) do
-          Application.delete_env(:ezagent_core, :spawn_await_ready_ms)
-        else
-          Application.put_env(:ezagent_core, :spawn_await_ready_ms, previous_spawn_budget)
-        end
-      end)
-
       :ok =
         AgentFlavorRegistry.register(%{
           flavor: flavor,
@@ -225,13 +208,15 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       assert agent_uri == Ezagent.URI.agent(ws_name, name)
       assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
       assert Process.alive?(agent_pid)
-      assert Ezagent.ReadyGate.status(agent_uri) == :not_ready
+      assert Ezagent.ReadyGate.status(agent_uri) == :ready
+      refute Ezagent.Agent.TransportReadiness.transport_joined?(agent_uri)
 
-      assert [artifact] = pending_absorb_artifacts(agent_uri)
+      assert eventually(fn -> match?([_], absorb_artifacts(agent_uri, :applied)) end)
+      assert [artifact] = absorb_artifacts(agent_uri, :applied)
       assert artifact.behavior == TransportGatedRoleBehavior
       assert Ezagent.Capability.action_of(artifact) == :ping
 
-      refute Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+      assert Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
                cap.behavior == TransportGatedRoleBehavior and
                  Ezagent.Capability.action_of(cap) == :ping
              end)
@@ -257,12 +242,10 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       # empty result is the setup's unchanged, semantically correct slice.
       assert {:ok, %{members: []}} = Ezagent.Router.dispatch(list_cmd)
 
-      # A definitive never-ready failure drains only the legacy ETS transport.
-      # Capability authority remains durably pending for retry; it is never
-      # converted into a diagnostic-only DLQ drop.
-      assert :ok = Ezagent.Kind.ReadyTransition.mark_failed(agent_uri)
-      assert Ezagent.PendingDelivery.buffer_size(agent_uri) == 0
-      assert [^artifact] = pending_absorb_artifacts(agent_uri)
+      # Transport readiness remains observable but does not downgrade the Kind's
+      # lifecycle readiness or strand its capability delivery.
+      assert Ezagent.ReadyGate.status(agent_uri) == :ready
+      refute Ezagent.Agent.TransportReadiness.transport_joined?(agent_uri)
 
       :ok = Ezagent.Agent.TransportReadiness.clear(agent_uri)
       _ = Ezagent.Kind.terminate(agent_uri)
@@ -305,6 +288,18 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     end)
   end
 
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
+  end
+
   # KindRegistry deregistration is monitor-driven (async) after terminate;
   # poll until the URI is gone so the cold-restart assertion truly reads the
   # snapshot, not the still-live Kind slice.
@@ -322,11 +317,11 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
     end
   end
 
-  defp pending_absorb_artifacts(uri) do
+  defp absorb_artifacts(uri, status) do
     from(delivery in Delivery,
       where: delivery.target_uri == ^URI.to_string(uri),
       where: delivery.op == :absorb_cap,
-      where: delivery.status == :pending,
+      where: delivery.status == ^status,
       order_by: [asc: delivery.id],
       select: delivery.payload
     )

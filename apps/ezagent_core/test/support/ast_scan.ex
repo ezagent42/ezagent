@@ -136,7 +136,8 @@ defmodule EzagentCore.AstScan do
       of losing it and a gate reports a violation that exists only inside
       another test's scratch directory.
   """
-  def tmp_fixture?(path) when is_binary(path), do: String.contains?(path, "/tmp/")
+  def tmp_fixture?(path) when is_binary(path),
+    do: Regex.match?(~r{(?:^|/)apps/[^/]+/tmp(?:/|$)}, path)
 
   defp drop_elixir_prefix([:"Elixir" | rest]) when rest != [], do: rest
   defp drop_elixir_prefix(parts), do: parts

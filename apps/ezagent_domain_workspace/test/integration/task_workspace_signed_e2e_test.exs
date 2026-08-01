@@ -109,23 +109,26 @@ defmodule Ezagent.Workspace.TaskWorkspace.SignedE2ETest do
 
     start_task =
       Task.async(fn ->
-        AgentStart.start(
-          %{flavor: fixture.flavor, project_cwd: "/untrusted"},
-          agent_uri,
-          context.owner,
-          context.workspace_uri,
-          %{
-            provision_id: ready.provision_id,
-            task_access_uri: context.task_access_uri,
-            task_uri: context.task_uri,
-            generation: ready.generation
-          }
-        )
+        receive do
+          :run_start ->
+            AgentStart.start(
+              %{flavor: fixture.flavor, project_cwd: "/untrusted"},
+              agent_uri,
+              context.owner,
+              context.workspace_uri,
+              %{
+                provision_id: ready.provision_id,
+                task_access_uri: context.task_access_uri,
+                task_uri: context.task_uri,
+                generation: ready.generation
+              }
+            )
+        end
       end)
 
     Ecto.Adapters.SQL.Sandbox.allow(Repo, self(), start_task.pid)
-
-    assert_receive {:launch_receipt_committed, facts, init_pid}
+    send(start_task.pid, :run_start)
+    assert_receive {:launch_receipt_committed, facts, init_pid}, 5_000
     provision = Repo.get_by!(Provision, provision_id: ready.provision_id)
     assert facts.attempt_id == provision.creation_attempt_id
     assert facts.agent_uri == agent_uri
