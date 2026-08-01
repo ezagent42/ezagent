@@ -37,23 +37,29 @@ jobs:
     name: gate (deterministic)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # act_runner force-injects `ImageOS=ubuntu20` into every step's env and it
+    # OVERRIDES job-level env, step-level env, AND a $GITHUB_ENV write (all three
+    # verified ignored). So setup-beam ALWAYS installs the ubuntu-20.04 arm64 OTP,
+    # whose crypto NIF links libcrypto.so.1.1 (OpenSSL 1.1). The runner's DEFAULT
+    # image (node:22-bookworm) ships OpenSSL 3 only -> the NIF can't load -> mix
+    # loses TLS -> setup-beam's `mix local.rebar` dies. Rather than fight the
+    # un-overridable ImageOS, run this job in a Debian BULLSEYE container, which
+    # ships OpenSSL 1.1.1 (libcrypto.so.1.1) + node (for the JS actions) + git,
+    # and whose glibc 2.31 matches the ubuntu-20.04 OTP build. (Clean long-term
+    # fix is runner-side: set the runner's ImageOS to ubuntu22 to match a
+    # bookworm/OpenSSL-3 image — that's runner config, out of this workflow's scope.)
+    container:
+      image: node:22-bullseye
     env:
       MIX_ENV: test
       POSTGRES_USER: ezagent_pg_compat
       POSTGRES_PASSWORD: ezagent_pg_compat
-      # On a Forgejo Docker runner the job runs INSIDE a container on the job's
-      # docker network, so Postgres is reached by SERVICE NAME (not 127.0.0.1 as
-      # a GitHub-hosted runner would use with port mapping).
+      # The job runs INSIDE a container on the job's docker network, so Postgres
+      # is reached by SERVICE NAME (not 127.0.0.1 with a port mapping).
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       # erlexec's exec-port refuses to start without $SHELL set.
       SHELL: /bin/bash
-      # setup-beam treats a Forgejo Actions runner as "self-hosted" and cannot
-      # auto-detect the OS, so ImageOS must be set explicitly. The runner
-      # container is Debian bookworm (glibc 2.36); a ubuntu-22.04 arm64 OTP
-      # build (glibc 2.35) runs on it, and arm64 ubuntu-22.04 OTP-28 +
-      # Elixir 1.19.x-otp-28 prebuilts both exist on builds.hex.pm.
-      ImageOS: ubuntu22
     services:
       postgres:
         image: postgres:16
@@ -82,29 +88,15 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # act_runner injects ImageOS=ubuntu20 into the step env and it OVERRIDES a
-      # job-level `env: ImageOS` (verified: job-level ubuntu22 was ignored). The
-      # ubuntu-20.04 OTP build links libcrypto.so.1.1 (OpenSSL 1.1), which is
-      # ABSENT on this Debian bookworm runner (it ships OpenSSL 3 / libcrypto.so.3)
-      # -> the crypto NIF fails to load -> mix can't do TLS -> setup-beam's
-      # `mix local.rebar` dies. Force ubuntu22 via $GITHUB_ENV (highest-precedence
-      # override, applied to all subsequent steps) so setup-beam installs the
-      # ubuntu-22.04 arm64 OTP built against libcrypto.so.3, which IS present here.
-      - name: Pin setup-beam target OS (override runner ImageOS)
-        shell: bash
-        run: |
-          echo "runner-provided ImageOS='${ImageOS:-<unset>}'"
-          echo "ImageOS=ubuntu22" >> "$GITHUB_ENV"
-
       # Full github.com URL: this Forgejo runner's DEFAULT_ACTIONS_URL is
       # data.forgejo.org, which mirrors only the `actions/*` org — `erlef/*` is
       # not there (a bare `erlef/setup-beam` 404s). github.com egress is
-      # available from the runner, so the explicit URL resolves.
-      # Step-level env also pins ImageOS (belt-and-suspenders with $GITHUB_ENV).
+      # available from the runner, so the explicit URL resolves. The runner's
+      # injected ImageOS=ubuntu20 makes setup-beam install the ubuntu-20.04 arm64
+      # OTP; the bullseye container (see job `container:`) satisfies its
+      # libcrypto.so.1.1 dependency.
       - name: Set up Elixir/OTP
         uses: https://github.com/erlef/setup-beam@v1
-        env:
-          ImageOS: ubuntu22
         with:
           otp-version: "28"
           elixir-version: "1.19"
