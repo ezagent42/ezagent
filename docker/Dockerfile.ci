@@ -2,9 +2,9 @@
 # ezagent LOCAL UBUNTU CI image — THIN per-PR layer on top of `ezagent-ci-base`
 # (docker/Dockerfile.ci-base: OS deps + Node 25 + pnpm 10.33.0 + hex/rebar +
 # mix deps.get + pnpm install + mix deps.compile, all keyed on lockfiles).
-# This file adds ONLY the source — the single layer that changes per PR — so a
-# source-only change rebuilds in seconds. Build via docker/build-ci-image.sh,
-# which rebuilds the base only when mix.lock / an asset lockfile changes.
+# This file adds the cached Playwright browser runtime plus the per-PR source layer.
+# Source-only changes still rebuild in seconds because the browser layer precedes
+# `COPY . .`. Build via docker/build-ci-image.sh.
 #
 # The image runs `mix ci.local` (the alias that mirrors the CI step chain end-to-end:
 # deps.get -> pnpm install -> ecto.create/migrate -> precommit -> check_invariants);
@@ -28,6 +28,16 @@ FROM ${CI_BASE}
 LABEL ezagent.ephemeral="true"
 
 WORKDIR /app
+
+# Bake the lockfile-pinned Playwright Chromium runtime after the base image's asset
+# installs but before source, so ordinary PR changes retain this expensive layer.
+# `--with-deps` needs root for apt; the runtime browser remains readable by ezagent.
+ENV PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers
+USER root
+RUN pnpm --dir apps/ezagent_plugin_world/assets exec playwright install --with-deps chromium \
+    && chown -R ezagent:ezagent "${PLAYWRIGHT_BROWSERS_PATH}" \
+    && rm -rf /var/lib/apt/lists/*
+
 # Source now — this is the ONLY layer that changes per PR.
 COPY . .
 # The arch/invariant ExUnit suite locates the repo root via
