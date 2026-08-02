@@ -434,6 +434,30 @@ defmodule Ezagent.ActionSet.SandboxTest do
     end
   end
 
+  describe "destroy/2 (Lifecycle cleanup hook, SPEC §5 step 6 — 整支终审 K3)" do
+    # codex 独有：`destroy/2`（这条 Lifecycle 清理 HOOK，`sandbox.ex:561-567`）
+    # 与 `handle_destroy/2`（那条 ACTION，`sandbox.ex:412-426`）是两个不同的
+    # 生产调用点，各自独立调 `GitIdentityRuntime.wipe/1`。J1 补的两条回归测试
+    # （TemplateSpawn rollback + RetirementSweeper）打的是另外两个各自独立的
+    # wipe 调用点，都不经过这里——这条钉住的是 destroy/2 hook 自己那一行。
+    # ctx 形状与本文件其它 handler 直调测试一致（`self_uri` + `read` 函数）；
+    # config_dir_path/template_class 都留空，短路掉 invoke_destroy_config_dir/3
+    # 的文件系统清理分支，只专注这一条 git-identity 断言。
+    test "wipes the agent's git-identity directory even with no config_dir/template_class" do
+      agent_uri = uniq_uri()
+      git_identity_dir = Ezagent.Sandbox.GitIdentityDir.path(agent_uri)
+      File.mkdir_p!(git_identity_dir)
+      File.write!(Path.join(git_identity_dir, "id_ed25519"), "fake-private-key")
+      assert File.exists?(Path.join(git_identity_dir, "id_ed25519"))
+      on_exit(fn -> File.rm_rf(git_identity_dir) end)
+
+      ctx = %{self_uri: agent_uri, read: fn _key, default -> default end}
+
+      assert :ok = Sandbox.destroy(:test_reason, ctx)
+      refute File.exists?(git_identity_dir)
+    end
+  end
+
   # Unique URI per call so each `activate/2` subscribes to a distinct
   # PubSub topic (the test process subscribes; distinct topics avoid
   # cross-test interference under async).

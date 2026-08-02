@@ -145,6 +145,23 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       assert :gone = wait_until_gone(uri)
     end
 
+    # 整支终审 K3 (codex 独有) — J1 补的两条 wipe 回归测试打的是 TemplateSpawn
+    # rollback 与 RetirementSweeper（各自独立的 GitIdentityRuntime.wipe/1 调用
+    # 点），不是这个 handle_destroy/2 ACTION 里 `sandbox.ex:426` 的那一行。日后
+    # 那一行被删掉，前两条测试仍然全绿——这条才是钉住它的红演示。
+    test "destroy wipes the agent's git-identity directory (no template_class needed)" do
+      uri = spawn_agent_kind()
+      git_identity_dir = Ezagent.Sandbox.GitIdentityDir.path(uri)
+      File.mkdir_p!(git_identity_dir)
+      File.write!(Path.join(git_identity_dir, "id_ed25519"), "fake-private-key")
+      assert File.exists?(Path.join(git_identity_dir, "id_ed25519"))
+      on_exit(fn -> File.rm_rf(git_identity_dir) end)
+
+      assert {:ok, %{destroyed: true}} = dispatch(uri, "destroy", %{})
+
+      refute File.exists?(git_identity_dir)
+    end
+
     test "destroy invokes template_class.destroy_config_dir/2 with (agent_uri, config_dir)" do
       uri = spawn_agent_kind()
       config_dir = "/tmp/stubbed-#{uniq()}"
