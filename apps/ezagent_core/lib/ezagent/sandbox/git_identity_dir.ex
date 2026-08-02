@@ -49,8 +49,12 @@ defmodule Ezagent.Sandbox.GitIdentityDir do
   租户隔离靠**不共享部署**（workspace = 部署单元），代码无强制。
 
   **同一部署内，两个 agent 是否隔离，完全取决于有没有各自发那条 `read_ssh_key`
-  cap。** 本模块把目录移出 `config_dir`，就是为了让这句话在结构上成立 —— 否则
-  cascade 复制会在运维不知情的情况下把它变成假话。
+  cap。** 本模块把目录移出 `config_dir`，为的是让这句话**不必依赖**
+  `resolver.ex:95-108` 那份四层 cascade 清单（`:flavor_base`/`:workspace`/
+  `:user`/`:session`，见上面"Why NOT inside config_dir"第③点）未来也保持
+  现状——今天那份清单里没有一层是 agent URI，不存在可复现的泄漏路径，但那
+  只是清单当前恰好如此，不是结构性保证。把身份放在这套复制机制管不着的
+  地方，让隔离这句话从"系于一处硬编码清单"升级成不依赖该清单的结构保证。
   """
 
   alias Ezagent.Resource.FsResolver

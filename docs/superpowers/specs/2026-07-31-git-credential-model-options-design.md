@@ -735,6 +735,20 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 
 **不做**（按「自己负责」原则砍掉）：key 轮转、per-repo deploy key 管理、审计归属补救、ssh-agent 进程管理。
 
+> **⚠️ 已被取代（2026-08-02，整支终审）**：上表「物化进 agent 目录」行
+> （`HomeRuntime.create_agent_config_dir`）与本段「`known_hosts` pinning
+> （拉 `api.github.com/meta` 的 `ssh_keys`）」均已被
+> `2026-08-02-agent-ssh-credential-1b-design.md` 推翻。**最终实现**：git
+> 身份写进独立的 `Ezagent.Sandbox.GitIdentityDir`
+> （`resource://<ws>/git-identity/<agent>`），**不进** `config_dir`（1b design
+> §1.2 有三条理由，主要是 config_dir 已被现有机制按"config vs secret"两类
+> 分类，SSH 私钥两类都不是，且生命周期不同——config_dir 在 CREATE 时物化
+> 一次，git 身份每次 spawn 重写）；`known_hosts` 用节点级部署配置 +
+> `ssh-keyscan`（`mix ezagent.git.known_hosts <host> --out <path>`，1b design
+> §4.1），**不拉** GitHub Meta API——那是 GitHub-only 的主机发现，1b 选了
+> 主机无关的方案（GitHub / Forgejo / 自建主机通用）。上表其余各行（key
+> at-rest 加密、key 归属 user、cap 授权读取）已被更上方 M4 标注单独更正过。
+
 #### 8.4.1 key 从哪来 — **web 应用下「生成」优先于「导入」**（2026-07-31 修订）
 
 初稿把「key 生成」列入砍掉项，理由是「用户本来就有 key」。**该理由建立在「operator 用 CLI / mix task 导入本机已有 key」的假设上，而 ezagent 是 web 应用——用户只能从 world UI 交互，operator 无法代每个用户导入其个人 key。** 故该假设不成立，结论随之修订。
@@ -776,6 +790,15 @@ A1 的全部价值命题是「凭据从不进入 agent 进程」——argv 钉�
 
 key 写进 agent 的 config_dir + `GIT_SSH_COMMAND` 指过去——这套机制**不应依赖 cwd 是 agent 自己 clone 的还是平台 provision 的**。
 
+> **⚠️ 载体已被取代，解耦这条约束本身仍然有效（2026-08-02，整支终审）**：
+> 「key 写进 agent 的 config_dir」这个具体说法已被 1b 落地否决——见上方
+> M4 标注，最终 git 身份写进独立的 `Ezagent.Sandbox.GitIdentityDir`，不进
+> `config_dir`。但**本条约束的精神被 1b 完整遵守**：1b §1.3 查证 `create_agent_config_dir`
+> 只在 create 时跑一次，而 git 身份**每次 spawn 都重写**（来源是 User Kind
+> 的一个 slice，不是 cascade 的任何一层），跟 cwd/工作目录来源没有任何耦合
+> ——1b §9 明写"repo 从哪来"完全在范围外，`GitRunner`/`Provisioner`/
+> `ChangeCollector`/`StageRunner`/`git_workflow` 均未触碰。
+
 **若把两者耦合，任务 2 建好 provision 后 B2′ 将用不上它**，「provision 也能为 B2′ 服务」这个设计意图会失效。这是任务 1 唯一的前瞻性要求，成本为零，但漏掉就要返工。
 
 #### 任务 2 — A1（后续，可选）
@@ -795,6 +818,11 @@ A1 的其余增量：push stage + **agent 完成信号**（今天不存在，见
 | **1a — key 存储 + 归属 + cap-gated read** | ✅ | ✅ **共享底座** |
 | **1b — 物化进 agent config_dir + 给 agent 的 `GIT_SSH_COMMAND` + cascade/grant** | ✅ | ❌ 作废 |
 | 任务 2 — provision 入口 + push stage + 完成信号 + 给平台 git 的 `GIT_SSH_COMMAND` | ❌ | ✅ |
+
+> **⚠️ 1b 行的载体已被取代（2026-08-02，整支终审）**：同上方 M4 / 8.4.1
+> 之后的标注——1b 最终不用 config_dir、不经 cascade/grant，而是独立的
+> `Ezagent.Sandbox.GitIdentityDir`。这一行的**定性**（"给 agent 一份可用
+> 凭据"这类工作，B2′ 用、A1 作废）不受影响，只是**载体**变了。
 
 - **1a 是实打实的共享底座**（凭据面的全部主体），A1 与 B2′ 都要。**故「不为 A1 预建底座」这句作废。**
 - **真正不共享的是 1b** —— 它是「把 key 交给 agent」这个决定的落地，也是 agent 权限变大的那一步，因此单列为一个**可独立决定的开关**：若中途转向 A1，1b 不做，直接接任务 2。
@@ -826,6 +854,14 @@ A1 的其余增量：push stage + **agent 完成信号**（今天不存在，见
 1. **凭据必须 per-repo**（deploy key 或单仓库 installation token）。禁止账号级凭据。
 2. **remote 侧 branch protection 先行开启**：保护 main、禁 force-push、禁删分支、强制 PR。这是 agent 跑飞时唯一仍有效的防线。
 3. **凭据生命周期绑 task**，任务结束即失效。installation token 天然满足；SSH key 无法满足。
+
+> **⚠️ 本节的适用范围（2026-08-02，整支终审）**：本节标题明写「选定 B1 或
+> B2 时」——最终落地的是 **User 级 B2′**（1a §2「归属 User，不归 Agent」），
+> **不是**本节讨论的 B1/B2。第 1、3 两条（per-repo 凭据、凭据生命周期绑
+> task）是 B2′ **明确否决**的做法：key 归 User（跨该 user 的所有仓库），
+> 生命周期绑 agent 的 spawn（1b §1.3/§6），不绑单个 task。第 2 条
+> （remote 侧 branch protection）与形态无关，**仍然适用**，不受本条影响。
+> 不要把第 1、3 条当成 B2′ 也要遵守的前置条件去实施。
 
 ---
 

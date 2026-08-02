@@ -1,7 +1,7 @@
 # Agent SSH 凭据 — 任务 1a 设计（User SSH 身份）
 
 **日期：** 2026-08-01
-**状态：** 设计，待实施
+**状态：** 已实施（见分支 `feat/agent-ssh-credential`，整支终审 2026-08-02）
 **基线：** `4edd3cfed`（main）
 **上游 spec：** `docs/superpowers/specs/2026-07-31-git-credential-model-options-design.md` §8.4（形态 B2′、任务划分）
 **决策人：** gaga（形态 B2′ 由 Allen 定）
@@ -25,6 +25,14 @@
 | **① key 存储 + 归属 + cap-gated read**（= 本文 1a） | ✅ | ✅ |
 | ② 物化进 agent config_dir + 给 agent 的 `GIT_SSH_COMMAND` + cascade/grant（= 1b） | ✅ | ❌ 作废 |
 | ③ provision 入口 + push stage + 完成信号 + 给平台 git 的 `GIT_SSH_COMMAND`（= 任务 2） | ❌ | ✅ |
+
+> **⚠️ 已被取代（2026-08-02，整支终审）**：上面②行"物化进 agent config_dir
+> + cascade/grant"的说法已被 1b 落地否决——`2026-08-02-agent-ssh-credential-1b-design.md`
+> §1.2 查证后判定 git 身份**不进** `config_dir`，改用独立的
+> `Ezagent.Sandbox.GitIdentityDir`（`resource://<ws>/git-identity/<agent>`，
+> 三条理由见该文 §1.2），也不经既有 cascade/grant 铸造机制。②行的"物化进
+> agent 目录"这个**定性**（1b 属于"给 agent 一份可用凭据"这一类工作）仍然
+> 成立，只是**载体**变了。
 
 **①是真正的共享底座。** 上游 spec §8.4 写的「最简 B2′ 不为 A1 预建底座」在这个切分下**不再成立** —— 需回填修订。②才是"把 key 交给 agent"这个决定的落地，也是 agent 权限变大的那一步，因此值得单独成为一个可独立决定的开关。
 
@@ -121,6 +129,14 @@ action(:revoke_ssh_key,
 `known_hosts` 是 **provider/主机事实**（github.com 的主机公钥），与用户无关，**不是 User 数据**。
 
 **做法：部署配置 + 一个刷新用的 mix task**（从 `https://api.github.com/meta` 的 `ssh_keys` 拉，写进部署目录）。**用 key 时不做运行时网络调用。**
+
+> **⚠️ 已被取代（2026-08-02，整支终审）**：刷新 mix task 最终**不拉**
+> `api.github.com/meta`——那是 GitHub-only 的主机发现，1b 落地时选了
+> 主机无关的方案：`mix ezagent.git.known_hosts <host> --out <path>` 跑
+> `ssh-keyscan`（`2026-08-02-agent-ssh-credential-1b-design.md` §4.1），支持
+> 任意 git 主机（GitHub / Forgejo / 自建），不锁定单一 provider。「部署配置
+> + 刷新用 mix task + 用 key 时不做运行时网络调用」这个**形态**结论不变，
+> 只是**拉取源**变了。
 
 两条理由：
 
@@ -292,7 +308,10 @@ argv 中只有路径与 `-N ""`（空 passphrase 标志，不是密钥），**�
 
 ## 9. 明确不在 1a 范围内
 
-- 物化进 agent config_dir、`GIT_SSH_COMMAND`、cascade/grant 铸造（= **1b**）
+- 物化进 agent 专属目录、`GIT_SSH_COMMAND`（= **1b**；**⚠️ 已被取代
+  （2026-08-02，整支终审）**：具体载体不是 config_dir、也不经 cascade/grant
+  铸造——1b 落地用独立的 `Ezagent.Sandbox.GitIdentityDir`，见上文 §1 表格
+  ②行的订正）
 - provision 入口、push stage、agent 完成信号（= **任务 2 / A1**）
 - `GitRunner` / `Provisioner` / `ChangeCollector` / `StageRunner` / 整个 `git_workflow` 的任何改动
 - key 轮转（个人 key，秉持 user/agent 自己负责）

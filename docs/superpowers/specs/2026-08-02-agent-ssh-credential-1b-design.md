@@ -1,7 +1,7 @@
 # Agent SSH 凭据 — 任务 1b 设计（物化进 agent）
 
 **日期：** 2026-08-02
-**状态：** 设计，待实施
+**状态：** 已实施（见分支 `feat/agent-ssh-credential`，整支终审 2026-08-02）
 **基线：** `d77f94f65`（分支 `feat/agent-ssh-credential`，1a 已完成）
 **上游 spec：** `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md` §1（1b 范围定义）、`docs/superpowers/specs/2026-07-31-git-credential-model-options-design.md` §8.3/§8.4
 **决策人：** gaga（形态 B2′ 由 Allen 定）
@@ -267,7 +267,17 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 
 租户隔离靠**不共享部署**（workspace = 部署单元），代码无强制。
 
-1b 新增一条**同部署内**的说明：**同一部署内，两个 agent 是否隔离，完全取决于有没有各自发那条 cap。** §1.2 之所以把目录移出 `config_dir`，就是为了让这句话**在结构上成立** —— 否则 cascade 复制会在运维不知情的情况下把它变成假话。
+1b 新增一条**同部署内**的说明：**同一部署内，两个 agent 是否隔离，完全取决于有没有各自发那条 cap。**
+
+> **精确措辞（2026-08-02，整支终审 K4）**：上一句"否则 cascade 复制会在运维
+> 不知情的情况下把它变成假话"曾经写得像是在断言**今天**就有一条可复现的
+> 泄漏路径——不是。§1.2 第③点已查证：`resolver.ex:95-108` 枚举的四层
+> （`:flavor_base`/`:workspace`/`:user`/`:session`）没有一层是 agent URI，
+> 今天不存在"agent A 的 config_dir 被当作 agent B 的参考目录"这条路径。
+> §1.2 把目录移出 `config_dir`，为的是让"隔离完全取决于有没有发那条 cap"
+> 这句话**不必依赖 `resolver.ex` 那份清单未来也保持现状**就能成立——是把
+> 一个今天正确、但系于一处硬编码清单的事实，升级成一个不依赖该清单的
+> 结构保证，不是在堵一个已经打开的洞。
 
 写进 ① 与 ③ 的 moduledoc。
 
