@@ -167,9 +167,24 @@ defmodule Ezagent.Credential.GitIdentityRuntimeTest do
     # known_hosts 的目录，使 write_file(known_hosts) 必然以 :eisdir 失败。
     # known_hosts 现在先写、私钥最后写（design §6.1 point 2），所以私钥不应
     # 该在这次调用里被创建过。
+    #
+    # K2 更新：write/2 现在一进来就先 `wipe(agent_uri)`（design §6.1「一进来
+    # 就先清目录」）。单纯预置一个障碍目录不再够用——wipe 会把它连同 dir
+    # 一起删掉，障碍消失，写入转而成功，原本的红演示不再红。这里额外把
+    # dir 本身 chmod 成 0500（只读、无写）：wipe 的 `rm_rf` 因为拿不到 dir
+    # 的写权限而删不掉里面的 "known_hosts" 障碍目录（rm_rf 只记警告、当作
+    # "尽力而为"成功返回，见 wipe/1 的 best-effort 语义）；随后
+    # `GitIdentityDir.allocate/1` 无条件把 dir chmod 回 0700，但只改 dir
+    # 自己的 mode，不递归清障碍目录本身——所以 write_file(known_hosts)
+    # 依旧会撞上同一个 :eisdir。手法同构于本仓库既有先例
+    # （`user_ssh_identity_test.exs` M1、`cc_agent_cascade_materialize_test.exs`
+    # 的 "cleanup failure → composite blocking error"：chmod 掉容器目录的
+    # 写权限，使里面的条目删不掉）。
     test "known_hosts 目标路径预先被一个同名目录占住", ctx do
       dir = GitIdentityDir.path(ctx.agent_uri)
       File.mkdir_p!(Path.join(dir, "known_hosts"))
+      File.chmod!(dir, 0o500)
+      on_exit(fn -> File.chmod(dir, 0o700) end)
 
       assert {:error, {:git_identity_write_failed, {"known_hosts", :eisdir}}} =
                GitIdentityRuntime.write(ctx.agent_uri, @key_a)
@@ -220,6 +235,23 @@ defmodule Ezagent.Credential.GitIdentityRuntimeTest do
 
       assert String.contains?(dir, "$(id)")
       assert String.contains?(cmd, "-i '#{Path.join(dir, "id_ed25519")}'")
+    end
+  end
+
+  describe "K2 —— write/2 一进来先清目录，杂散文件不会在成功写入后存活" do
+    # 整支终审 K2，codex 复审真跑复现：早期版本可能用过别的 key basename，
+    # 或一次中断/手工操作在目录里留下了另一个凭据文件——旧实现只覆写
+    # known_hosts 与 id_ed25519 两个固定文件名，清理只在失败分支发生，所以
+    # 杂散文件会在每一次成功 write/2 之后继续存活。design §6.1: "write/2
+    # 一进来就先清目录"，语义是"目录里恰好装着这份身份，要么什么都没有"。
+    test "预置一个杂散文件，成功 write/2 后目录内容恰好是两个已知文件", ctx do
+      {:ok, dir} = GitIdentityDir.allocate(ctx.agent_uri)
+      File.write!(Path.join(dir, "stale-private-key"), "leftover-from-an-earlier-version")
+
+      assert {:ok, _env} = GitIdentityRuntime.write(ctx.agent_uri, @key_a)
+
+      entries = dir |> File.ls!() |> Enum.sort()
+      assert entries == ["id_ed25519", "known_hosts"]
     end
   end
 

@@ -75,14 +75,32 @@ defmodule Ezagent.Credential.GitIdentityRuntime do
   """
   @spec write(URI.t(), String.t()) :: {:ok, %{String.t() => String.t()}} | {:error, term()}
   def write(%URI{} = agent_uri, key_pem) when is_binary(key_pem) do
+    # 整支终审 K2 — design §6.1: "write/2 一进来就先清目录". Without this,
+    # a SUCCESSFUL write only ever overwrites the two fixed basenames
+    # (`id_ed25519` / `known_hosts`) — any THIRD file already sitting in the
+    # dir (an earlier version's basename, a leftover from an interrupted
+    # write) survives every subsequent successful write forever. The `else`
+    # wipe below only fires on FAILURE, which never covered the success
+    # path. codex 复审真跑复现: pre-seed a `stale-private-key` file, call
+    # `write/2` successfully, and the stale file was still there. This
+    # makes the directory invariant unconditional: the dir holds EXACTLY
+    # what this call wrote, from the very first line of the function, not
+    # just on the error paths.
+    :ok = wipe(agent_uri)
+
     # known_hosts BEFORE the key: everything that CAN fail must fail before
     # the private key touches disk (design §6.1 point 2 — a missing/unreadable
     # node known_hosts file, or an allocate failure, must not leave a key
-    # behind). And ANY failure below wipes the whole dir (point 3) through
-    # this ONE `else` clause rather than each branch remembering to — that
-    # single choke point is what makes a STALE key from an earlier
+    # behind). And ANY failure below wipes the whole dir again (point 3)
+    # through this ONE `else` clause rather than each branch remembering to
+    # — that single choke point is what makes a STALE key from an earlier
     # successful `write/2` call disappear when THIS call fails early (e.g.
     # known_hosts got unconfigured after a prior write already succeeded).
+    # Redundant with the leading wipe above only when THIS call fails before
+    # writing anything; it is NOT redundant when this call fails AFTER
+    # `GitIdentityDir.allocate/1` has already written a partial file (e.g.
+    # known_hosts written, then the key write fails) — that partial residue
+    # still needs clearing.
     with {:ok, known_hosts} <- read_known_hosts(),
          {:ok, dir} <- GitIdentityDir.allocate(agent_uri),
          :ok <-
