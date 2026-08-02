@@ -103,18 +103,24 @@ defmodule Ezagent.Sandbox.GitIdentityDir do
   Destroy-time guard: the path being removed MUST equal the canonical `path/1`
   for this agent, so cleanup can never be handed a bogus or shared path.
 
-  Total function (F5 复审发现): a `(binary candidate, non-agent URI)` pair
-  would otherwise reach `path/1`, which RAISES `ArgumentError` on a non-agent
-  URI — turning a destroy-time guard into a crash instead of a `false`. If
-  destroy handling ever calls this and lets the exception propagate, cleanup
-  aborts with the private key left on disk. Caught here so every input shape
-  gets a boolean, per the `@spec`.
+  Total function (F5 复审发现,G4 复审补全): a `(binary candidate, non-agent
+  URI)` pair reaches `path/1`, which RAISES `ArgumentError` on a non-agent
+  URI (`workspace_segment/1` / `name_segment/1`) — but an agent URI with an
+  UNSAFE name segment (e.g. `".."` — `Ezagent.URI.segment!/1` does not
+  reject `.`/`..`) passes those checks and instead makes `path/1` itself
+  raise `RuntimeError` when `FsResolver.resolve/2` rejects the resolved
+  `resource://` URI (same shape issue independently found in
+  `Ezagent.Credential.GitIdentityRuntime.wipe/1`). Either would turn a
+  destroy-time guard into a crash instead of a `false`; if destroy handling
+  ever calls this and lets the exception propagate, cleanup aborts with the
+  private key left on disk. Both are caught here so every input shape gets a
+  boolean, per the `@spec`.
   """
   @spec safe_to_destroy?(term(), URI.t()) :: boolean()
   def safe_to_destroy?(candidate, %URI{} = agent_uri) when is_binary(candidate) do
     Path.expand(candidate) == Path.expand(path(agent_uri))
   rescue
-    ArgumentError -> false
+    _e in [ArgumentError, RuntimeError] -> false
   end
 
   def safe_to_destroy?(_candidate, _agent_uri), do: false

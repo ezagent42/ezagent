@@ -106,6 +106,15 @@ defmodule Ezagent.Sandbox.GitIdentityDirTest do
       non_agent = Ezagent.URI.entity(:acme, :user, "someone")
       refute GitIdentityDir.safe_to_destroy?("/some/path", non_agent)
     end
+
+    test "agent 名为 \"..\" 时为 false，不 raise（G4：path/1 此时抛 RuntimeError，非 ArgumentError）" do
+      # opus 复审真跑复现，与 GitIdentityRuntime.wipe/1 是同型问题：
+      # Ezagent.URI.entity/3 不拒绝 "."/".." 段，这条 URI 构造成功；
+      # FsResolver 的 unsafe-segment 拒绝让 path/1 抛 RuntimeError，不是
+      # workspace_segment!/name_segment! 那条 ArgumentError 路径。
+      dotdot_agent = agent(:acme, "..")
+      refute GitIdentityDir.safe_to_destroy?("/some/path", dotdot_agent)
+    end
   end
 
   describe "结构保证：git-identity 不得被认作 config-dir 家族" do
