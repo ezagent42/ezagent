@@ -39,6 +39,48 @@ P1(roster 派生改读 `effective_caps`,把在途的钥匙算进来)/ P1.5(#1665
 
 ---
 
+## 🔗 A 线交付什么 → #1474 怎么改 → Group B 何时够格(2026-08-02 定稿口径)
+
+**A 线跑完后,插件能依赖的原语集(这就是"infra 稳定"的具体含义)**
+
+| # | 原语 | 来源 | 状态 |
+|---|---|---|---|
+| 1 | **发钥匙** `CompositionCaps.mint_cap/4`(唯一 chokepoint,granter ≡ data_owner) | 既有 | ✅ |
+| 2 | **撤钥匙** `Cap.revoke_all_to/2`(generation bump)+ **退出时撤全部参与档** | A4-1 + **#1665** | ✅ / 🔵 #1655 待合 |
+| 3 | **正向可见性** `caps_toward/2`("我能操作哪些资源",带 current-gen 验证) | A2-1 #1596 | ✅ |
+| 4 | **反向可见性** `grantees_of/5` + 机制入口("谁能操作我",action/provenance 维齐) | A2-2 #1606 + **P2** | ✅ / 🔵 #1655 待合 |
+| 5 | **分享开关** `ShareSetting`(per-resource,owner 翻;link_login / link_anon)+ `/socialware/claim` | A1 #1594 | ✅ |
+| 6 | **申请→审批** `CompositionConsent`(泛化成 URI-share 超集) | A3 #1597 | ✅ |
+| 7 | **宿主 + 绑定**(provision 一个宿主 session + 把资源绑进去 + 铸钥匙) | 既有 `Mount`(**通用件,零 kanban 字面**) | ✅(改名归后续) |
+| 8 | **匿名只读**(专属公开 session + **cap-gated 资源投影**) | **A5 #1619** | ⏳ **A 线唯一未完成件** |
+
+**⇒ #1474 改成什么(Allen #1587 已写明,这里只是落到条目)**
+
+#1474 现在自带三件"当年 infra 没有、只好自己搓"的东西,A 线立好原语后**逐件指向新接缝**:
+
+| #1474 里的自造件 | 换成 | 出处 |
+|---|---|---|
+| 自造 bearer token(`Phoenix.Token`,salt `world_kanban_share`,散在 controller + world_share_actions) | **A1 的 `ShareSetting` + `/socialware/claim`** | #1587 piece #1 |
+| 手搓 request/approve(`approve_edit_result`,mint 对但**绕过** `CompositionConsent`) | **A3 的 `CompositionConsent`** | #1587 piece #4 |
+| `union_cap_boards`(硬编码 `behavior: Kanban`) | **A2-1 的 `caps_toward`** | #1587 piece #2 |
+| 自己那套"挂载/发钥匙"用法 | **原语 7**(provision + 绑定 + `mint_cap`);kanban 侧只留策略 | #1587「复用底座」 |
+| kanban 分享给外部只读看 | **A5 的匿名只读**(原语 8) | #1594 批准的形状 |
+
+**"Mount 删不删"是结果不是决策**:#1474 改成消费原语 7 之后,它原来直调 `Mount` 的地方自然被原语 API 取代;老名字是否消失,取决于后续的 **`Mount`→`Provision`/`Share` 改名 + 删 `MountRow` 表**(团队已对齐、写进 main 的计划)。**#1474 不必等改名** —— 现名 API 语义稳定,先消费、后改名。
+
+**⇒ Group B 的开工条件**
+
+| 条件 | 满足? |
+|---|---|
+| 原语 1-7 齐备且已合 main | 🔵 **除 #1655(原语 2 的完整撤销 + 原语 4 的补齐)待合外,其余已合** |
+| 原语 8(匿名只读)可用 —— kanban"分享给外部看板"要它 | ❌ **A5 未实现 = 当前唯一真正的卡点** |
+| kanban 策略层(`board_provision`,16 处 kanban 字面)搬进插件 | 这是 **#1474 自己要做的事**,不是前置 |
+| `:read`/`:operate` 档位怎么表达(删表前置) | 不挡 #1474 —— 它继续用现名 API;**只挡"删 MountRow 表"那一步** |
+
+**结论:合掉 #1655 + 做完 A5,Group B 即够格开工。** 在那之前不动 #1474。
+
+---
+
 ## Group B —— kanban 纯化 + sw 声明化(下一阶段)
 
 > 目标:证明 infra(Group A + 既有 Mount/socialware 声明化)足以支撑一个业务插件**完全自包含**。
@@ -49,6 +91,36 @@ P1(roster 派生改读 `effective_caps`,把在途的钥匙算进来)/ P1.5(#1665
 |---|---|---|
 | **B1** kanban 插件纯化成自包含 + 热插拔 | ⏳ 待开 | 业务侧**已手测过**;把残留 infra 侵入清零(见 skill-1 kanban⇄infra 解耦路线图残留清单) |
 | **B2** kanban socialware 纯配置/声明预装 | ⏳ 待开 | **未手测**;预期会撞其它 agent-runtime 问题 → 归下一阶段修 |
+
+---
+
+## ⚖️ 决策来源与因果方向(用户 2026-08-02 重申 —— 违反过多次,记此备查)
+
+**规则 1 —— 什么算"决策"**
+> **只有「用户 ↔ Allen ping-pong 之后的结论」或「用户明确给我的指示」才是决策。**
+
+推论(我犯过的错):
+- **未合并分支的做法 ≠ 决策**。我曾拿 #1474(OPEN/draft/0 review)当"架构方向"去推翻 Allen 已批准的形状。
+- **我自己的推理 ≠ 决策**。我曾用"手段 vs 目的"的重构把 Allen 明文要求的 `Membership.members_of` 换源判成"不必做"。
+- 权威性排序:**用户/Allen 的明文结论 > 已合入 main 的代码与注释 > 已合入 main 的计划文档 >> 未合并分支的主张 >> 我的推理**。
+
+**规则 2 —— 因果方向:infra 决定 #1474,不是反过来**
+> **#1474 是在 infra 机制稳定之后,再依据 infra 的样子去纯化。当前对 infra 的每一处改动,都是"业务层先发现缺口、再回来补 infra"。**
+
+所以:
+- "Mount 要不要删"**不是 #1474 能回答的问题** —— A 线把通用原语立成什么样,#1474 就改成消费那个原语;老名字消不消失是**结果**,不是决策。
+- 我反复在"删/不删"之间摇摆,根因就是把 #1474 当成了方向的**来源**。
+
+**Allen 在 A 线合并期间给过的成体系意见(有据可查,不必重贴)**
+| 出处 | 内容 |
+|---|---|
+| **#1583**(2026-07-28,两条) | codex 整批 FIX-NEEDED(M1-M4/H1-H3);**Allen 拍板 D1/D2/D3**:D1 = A1 链接模式与 A3 审批模式**并列的两种模式**、令牌必须携带并校验 issuer 权威;**D2 = anon 领取与 user 领取统一、不做独立实现**(先物化只读 anon entity,再走同一套领取);D3 = 令牌一次性 vs 可复用交 jjkysy |
+| **#1596** | H3:`caps_toward/2` 要与反向一致,做 current-generation 验证 |
+| **#1597** | M3/M4:审批要验请求者、绑当前 owner、绑 behavior/actions;migration 要 exactly-one-shape CHECK |
+| **#1594**(2026-07-29) | **A1 ShareSetting 方向批准**(分享=资源上的 owner 开关,取代 token 带 issuer);**匿名分享设计批准**(每资源专属公开 session + 仅 mount 该资源 + `web_anon_access`),细节留 A4 后的 link_anon 接线 PR |
+| **#1587**(Allen 亲写 handoff) | (甲) cap-as-truth;(乙) access = 持有指向 URI 的 cap;**复用底座 = `mint_cap` + `Mount`/`MountRow`,"gaps are peripheral glue"**;**kanban 残留三件**(bearer token→piece#1 / rule-8 approval 手搓绕过 CompositionConsent→piece#4 / `union_cap_boards` 硬编码 behavior→piece#2);**#1474 your call,建议次序 = 先立原语 → rebase #1474 → 合** |
+| **#1606**(2026-07-30) | A2-2 复审 SOUND + 两处 in-PR 补完;重申"A4-2 才 wire `grantees_of`" |
+| **07-31 五条裁决** | 见下方 A4-2 段 |
 
 ---
 
