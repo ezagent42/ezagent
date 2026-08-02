@@ -46,12 +46,12 @@ defmodule Ezagent.Resource.FsResolver.Registry do
 
   ## Ordering — core registers first (plugin-resource SPEC §5)
 
-  `init/1` applies core `boot_registrations/0` (`uploads`) when `ezagent_core`
-  starts, BEFORE any plugin boots (plugins depend on core → start later). So
-  core backends are claimed first and a plugin can never alias a core backend
-  (backend-uniqueness). Core `boot_registrations/0` flows through the SAME
-  precheck as plugin `register_all/1`, so the write-once-on-both property holds
-  uniformly.
+  `init/1` applies core `boot_registrations/0` (`uploads`, `git-identity` — SSH
+  凭据 1b) when `ezagent_core` starts, BEFORE any plugin boots (plugins depend
+  on core → start later). So core backends are claimed first and a plugin can
+  never alias a core backend (backend-uniqueness). Core `boot_registrations/0`
+  flows through the SAME precheck as plugin `register_all/1`, so the
+  write-once-on-both property holds uniformly.
 
   ## Restart resilience (lifecycle rebuild-from-source on every start)
 

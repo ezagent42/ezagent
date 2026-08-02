@@ -239,13 +239,18 @@ defmodule Ezagent.Resource.FsResolver do
   `scope.workspace` — identical logic to `config_dir_authority/2`, but a
   **distinct named function on purpose**.
 
+  Sharing `config_dir_authority/2` here would violate this module's existing
+  family invariant (:301-304 below: "families must NOT share one fn reference"
+  — `uploads_authority/2` at :291-294 is the same rule's existing precedent).
   The Registry keys config-dir family membership on `authority` IDENTITY
-  (`config_dir_type?/1`). Sharing `config_dir_authority/2` would make the
-  git-identity directory a config-dir layer, exposing it to the #17 credential
-  cascade — whose semantics are "copy between agents by policy". An agent that
-  was never granted the `read_ssh_key` cap would then receive another User's SSH
-  private key through `cp_r`. Keeping the function distinct is what makes
-  "同部署内两个 agent 是否隔离，完全取决于有没有各自发那条 cap" structurally true.
+  (`config_dir_type?/1`); today's concrete consequence of violating it is that
+  `resolve_config_dir/1`
+  (`ezagent_domain_session/.../uri_query_resolvers.ex:136`) would classify
+  git-identity as a config-dir resource type and return `{:error,
+  :config_dir_resource_requires_scope}`, which `CascadeRuntime.layer_dirs/1`
+  treats as a FATAL cascade abort (not "skip this layer") — spawn fails loud.
+  Keeping the function distinct is what makes "同部署内两个 agent 是否隔离，
+  完全取决于有没有各自发那条 cap" structurally true.
   """
   @spec git_identity_authority(URI.t(), scope()) :: :ok | {:error, term()}
   def git_identity_authority(%URI{} = uri, %{workspace: scope_ws}) do

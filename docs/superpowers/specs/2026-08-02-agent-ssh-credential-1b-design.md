@@ -41,13 +41,13 @@
 
 ### 1.2 写在哪 —— 独立的 per-agent 目录，**不进 config_dir**
 
-直觉是写进 `config_dir`（已 0700、per-agent、destroy 时清）。**否决。**
+直觉是写进 `config_dir`（已 0700、per-agent、destroy 时清）。**否决**，理由有三（下面是查证后的版本 —— 早前一版在这里写"会经 cp_r 泄漏私钥、后果具体且可复现"，Task 1 两道独立复审 + 我自己复核后确认那条路径在当前代码下**不可达**，见③）：
 
-`config_dir` 是 **flavor 凭据轨（#17 cascade）**的家，其语义是**在 agent 之间按策略复制**：`materialize_single_reference` 整目录 `cp_r` 参考目录，`materialize_cascade` 走 `merge_layers` + `secret_relpaths` 定向拷贝（`home_runtime.ex:490-520`）。
+1. **不同的复制策略归属。** `config_dir` 的内容已被既有机制分成两类：「config（`materialize_cascade` 逐层 merge）」与「secret（`secret_relpaths` 定向拷贝）」（`home_runtime.ex:490-520`）。SSH 私钥两类都不是 —— 放进去要么被误归一类，要么要求引入第三类。
+2. **不同的生命周期与来源。** `config_dir` 由凭据轨在 agent CREATE 时物化一次；git 身份每次 spawn 重写（§1.3），来源是另一个 Kind（User）上的一个 slice，不是 cascade 的任何一层。
+3. **今天没有可复现的泄漏路径，但那只是靠 `resolver.ex:95-108` 一个函数里硬编码的四层清单维持的，不是结构性保证。** `Ezagent.Credential.Resolver.resolve_layers/1`（`apps/ezagent_core/lib/ezagent/credential/resolver.ex:95-108`）枚举的四层写死为 `:flavor_base` / `:workspace` / `:user` / `:session`，没有一层是 agent URI —— 所以今天不存在"agent A 的 config_dir 被当作 agent B 的参考目录"这条路径；`materialize_single_reference` 的整目录 `cp_r`（`home_runtime.ex:629` 起）也只跑在这四层上，收的是显式 `reference_dir`（`home_runtime.ex:470`），不是任意 agent 的 config_dir。但这份"安全"完全系于这一个函数当前的四层清单，没有任何结构性的东西阻止将来某一层的 source 变成 agent URI。
 
-把 SSH 身份放进去，就把它交给了**一套为别的凭据类设计的复制策略**。后果具体且可复现：agent A 的 config_dir 作为参考目录物化 agent B 时，B 拿到 A 的 SSH 身份 —— **而 B 从未被授予那条 cap**。这正是 memory `feedback-gate-targets-accidents-not-attackers` 说的那类事故：不是攻击，是代码逻辑把两类生命周期混在一起导致的无意扩散。
-
-**结论：`Ezagent.Sandbox.ConfigDir` 的路径机制是按 namespace 参数化的**（`config_dir.ex:48-67`，走 `resource://<ws>/<ns>-agents/<name>` + `FsResolver`）。1b 复用这套机制，但**用一个独立的 resource type**，并且**给它自己的 authority 函数** —— 因为 `FsResolver` 的 `config_dir_type?/1` 是按 **authority 函数的身份**判定 config-dir 家族成员的（`fs_resolver.ex:270-274` 明写此意图）。用同一个函数会让 git-identity 目录被 cascade 层机制认领，等于绕回上面刚否决的问题。
+**结论不变，只是论证换了：** `Ezagent.Sandbox.ConfigDir` 的路径机制是按 namespace 参数化的（`config_dir.ex:48-67`，走 `resource://<ws>/<ns>-agents/<name>` + `FsResolver`）。1b 复用这套机制，但**用一个独立的 resource type**，并且**给它自己的 authority 函数** —— 因为 `FsResolver` 的 `config_dir_type?/1` 是按 **authority 函数的身份**判定 config-dir 家族成员的（`fs_resolver.ex:301-304` 明写此不变式:"families must NOT share one fn reference"）。用同一个函数会让 git-identity 目录被 `resolve_config_dir/1` 判成 config-dir 类型，返回 `{:error, :config_dir_resource_requires_scope}`，被 `CascadeRuntime.layer_dirs/1` 当致命中止 —— 不是泄漏，是 spawn 失败；但把身份放在这套复制机制管不着的地方，是让"同部署内两个 agent 是否隔离，完全取决于有没有各自发那条 cap"这句话**不依赖 `resolver.ex` 那份清单将来会不会变**。
 
 ### 1.3 什么时候写 —— 每次 spawn，不是 create
 

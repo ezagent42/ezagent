@@ -5,7 +5,9 @@ defmodule Ezagent.Sandbox.GitIdentityDir do
 
   Mirrors `Ezagent.Sandbox.ConfigDir` in shape, but is a DELIBERATELY SEPARATE
   directory family. See `Ezagent.Resource.FsResolver.git_identity_authority/2`
-  for why sharing the config-dir authority function would be a credential leak.
+  for why sharing the config-dir authority function would misclassify this as
+  a config-dir resource type (and see "Why NOT inside the agent's config_dir"
+  below for why the directory itself is kept separate).
 
   ## Layout
 
@@ -15,14 +17,32 @@ defmodule Ezagent.Sandbox.GitIdentityDir do
 
   ## Why NOT inside the agent's config_dir
 
-  `config_dir` is the home of the **flavor credential rail** (#17 cascade), whose
-  semantics are "copy between agents by policy" — `materialize_single_reference`
-  `cp_r`s a whole reference dir, `materialize_cascade` merges layers plus
-  `secret_relpaths`. Putting an SSH identity there hands it to a copy policy
-  designed for a different credential class: agent A's config_dir used as the
-  reference for agent B would give B a private key B was never granted a cap for.
-  That is a code-logic accident, not an attack — exactly the class the project's
-  gates exist to prevent.
+  `config_dir` is the home of the **flavor credential rail** (#17 cascade).
+  Three reasons this identity does not live there (verified against today's
+  code, not asserted):
+
+  1. **Different copy-policy ownership.** The existing machinery already
+     classifies everything under `config_dir` as either "config" (merged layer
+     by layer) or "secret" (targeted copy via `secret_relpaths`). An SSH
+     private key is neither — filing it under `config_dir` would force a false
+     classification into one of the two, or require inventing a third
+     copy-policy class just for this one file.
+  2. **Different lifecycle and source.** `config_dir` content is materialized
+     by the credential rail once, at agent CREATE. A git identity is
+     rewritten on EVERY spawn (§1.3 of the design doc), sourced from a slice
+     on a different Kind entirely (User) — not from any of the cascade's
+     layers.
+  3. **No reproducible leak exists today, but only because of a hardcoded
+     list, not a structural guarantee.** `Ezagent.Credential.Resolver.
+     resolve_layers/1` (`ezagent/credential/resolver.ex:95-108`) hardcodes
+     exactly four config layers — `:flavor_base`, `:workspace`, `:user`,
+     `:session` — and NONE of them is ever an agent URI, so there is no path
+     today where one agent's config_dir is `cp_r`'d into another's. But that
+     safety lives entirely in that one function's current layer list — nothing
+     stops a future layer's source from becoming an agent URI. Filing the
+     identity outside the reach of that copy machinery is what makes "同部署
+     内两个 agent 是否隔离，完全取决于有没有各自发那条 cap" true WITHOUT
+     depending on `resolver.ex`'s current four-layer list staying that way.
 
   ## 部署契约（继承 1a §7，1b 增一条）
 
@@ -82,10 +102,19 @@ defmodule Ezagent.Sandbox.GitIdentityDir do
   @doc """
   Destroy-time guard: the path being removed MUST equal the canonical `path/1`
   for this agent, so cleanup can never be handed a bogus or shared path.
+
+  Total function (F5 复审发现): a `(binary candidate, non-agent URI)` pair
+  would otherwise reach `path/1`, which RAISES `ArgumentError` on a non-agent
+  URI — turning a destroy-time guard into a crash instead of a `false`. If
+  destroy handling ever calls this and lets the exception propagate, cleanup
+  aborts with the private key left on disk. Caught here so every input shape
+  gets a boolean, per the `@spec`.
   """
   @spec safe_to_destroy?(term(), URI.t()) :: boolean()
   def safe_to_destroy?(candidate, %URI{} = agent_uri) when is_binary(candidate) do
     Path.expand(candidate) == Path.expand(path(agent_uri))
+  rescue
+    ArgumentError -> false
   end
 
   def safe_to_destroy?(_candidate, _agent_uri), do: false
