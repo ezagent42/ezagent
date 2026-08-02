@@ -36,11 +36,20 @@ defmodule Ezagent.Architecture.CapSigningArchitectureTest do
   # structurally unrelated keypair (SSH auth material, not a capability
   # signature). It never touches `Cap.Signing`/`Authority.sign`/
   # `Authority.verify`, so those hard-fail checks below still apply to it.
+  #
+  # Task 1b (2026-08-02): `agent_git_identity.ex` reads that SAME 1a-minted SSH
+  # private key one hop downstream (dispatches `:read_ssh_key`, binds the PEM
+  # result to a local `private_key`, and hands it to
+  # `Ezagent.Credential.GitIdentityRuntime.write/2`) so it can materialize it
+  # onto an agent's filesystem for `GIT_SSH_COMMAND`. Same external-credential
+  # class, same exemption — never touches `Cap.Signing`/`Authority.sign`/
+  # `Authority.verify` either.
   @allowed_external_private_key MapSet.new([
                                   "apps/ezagent_plugin_github/lib/ezagent_plugin_github/config.ex",
                                   "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_app_jwt.ex",
                                   "apps/ezagent_plugin_github/lib/ezagent_plugin_github/github_credential_backend.ex",
-                                  "apps/ezagent_domain_identity/lib/ezagent/behavior/user_ssh_identity.ex"
+                                  "apps/ezagent_domain_identity/lib/ezagent/behavior/user_ssh_identity.ex",
+                                  "apps/ezagent_domain_identity/lib/ezagent/identity/agent_git_identity.ex"
                                 ])
 
   test "the central verifier decision dominates an executed handler" do

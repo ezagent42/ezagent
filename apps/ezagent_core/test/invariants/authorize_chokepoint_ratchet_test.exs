@@ -312,7 +312,16 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "apps/ezagent_plugin_feishu/lib/ezagent/plugin_feishu/sender_resolver.ex",
         # display: operator CLI (mix task) cap listing — admin-definition, not
         # ACCESS. Frozen (a NEW mix bypass is still caught), per advisor #3.
-        "apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex"
+        "apps/ezagent_domain_external_mirror/lib/mix/tasks/ezagent_external_mirror_cli.ex",
+        # ctx: Task 1b (2026-08-02) `AgentGitIdentity.dispatch_caps/1` reads the
+        # AGENT'S OWN held caps to (a) decide whether to dispatch at all (the
+        # cap-is-the-switch invariant — no cap, no dispatch) and (b) select the
+        # single narrow cap to place in the `Ezagent.Invocation.dispatch/1` ctx
+        # it is about to build. Exactly the "ctx-construction for the credential
+        # cascade" class this probe already exempts elsewhere in this list — the
+        # dispatch that follows still goes through the normal step-5.5
+        # `authorize/3`-backed cap gate on the TARGET (the User Kind).
+        "apps/ezagent_domain_identity/lib/ezagent/identity/agent_git_identity.ex"
       ]
     },
     %{
