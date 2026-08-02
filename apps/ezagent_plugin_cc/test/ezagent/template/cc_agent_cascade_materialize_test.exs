@@ -74,7 +74,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
     tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} =
+             CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
     assert target == ctx.target
 
     # whole-file-replace: user (higher) wins
@@ -280,7 +282,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       tmpl = cascade_tmpl(ctx, [%{dir: base}, %{dir: user}])
 
-      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} =
+               CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
       # the tombstone wins — the file must NOT be resurrected from the prior target.
       refute File.exists?(Path.join(target, "plugins/old.json"))
       refute File.exists?(Path.join(target, "plugins/old.json.tombstone"))
@@ -309,7 +313,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
         }
       }
 
-      assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+      assert {:ok, target, {:grant, _, _, _, _}} =
+               CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
       # the stale secret from the prior target must NOT survive — the merge tree has no
       # secret and the source supplied none, so the agent has no credential file.
       refute File.exists?(Path.join(target, ".credentials.json"))
@@ -332,7 +338,9 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
     write!(base, "settings.json", "BASE")
     tmpl = cascade_tmpl(ctx, [%{dir: base}])
 
-    assert {:ok, target, {:grant, _, _, _, _}} = CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+    assert {:ok, target, {:grant, _, _, _, _}} =
+             CcAgent.create_agent_config_dir(ctx.agent_uri, tmpl)
+
     assert target == ctx.target
     # recovery consumed the orphan `.bak` (entry-point self-heal ran)
     refute File.exists?(bak)
@@ -493,7 +501,10 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
 
       # nil witness → unchanged (a rehydrating winner never mints).
       assert %{"cascade" => %{}} =
-               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(%{"cascade" => %{}}, nil)
+               Ezagent.Credential.HomeRuntime.put_cascade_created_witness(
+                 %{"cascade" => %{}},
+                 nil
+               )
 
       # no cascade map → unchanged (a non-cascade agent mints nothing).
       assert %{"other" => 1} =
@@ -620,6 +631,81 @@ defmodule Ezagent.PluginCc.Template.CcAgentCascadeMaterializeTest do
       # DELETES the legacy grant.
       assert %GrantRow{incarnation_id: ^legacy_incarnation} =
                GrantRow.get_for_agent(agent_uri_str)
+    end
+  end
+
+  # 整支终审 K1 (codex 独有，opus 漏掉) — a spawn that successfully
+  # materializes the agent's git identity (`Ezagent.Sandbox.GitIdentityDir`,
+  # OUTSIDE `config_dir` by design) and THEN fails to launch (PTY
+  # `Pty.start/2` returning an error, or a raise from either flavor's launch
+  # step) previously left the private key on disk forever — the plain
+  # config_dir rollback never touched it, and a failed-to-launch agent never
+  # spawns again and is never destroy/swept. `rollback_agent_config_dir/3`
+  # (the SHARED convergence point both `handle_spawn_failure/4` and
+  # `on_launch_raise/3` funnel through) now wipes it too — see
+  # `Ezagent.Credential.HomeRuntime`. One fix, two flavors: PTY reaches it via
+  # `CcAgent.handle_spawn_failure/2`; cc-headless reaches the IDENTICAL
+  # function (`cc_headless_agent.ex`'s private `handle_spawn_failure/2` just
+  # delegates to `CcAgent.handle_spawn_failure/2`) — and both flavors' own
+  # LAUNCH step wraps in `HomeRuntime.launch_under_grant_compensation/5`,
+  # which also converges on the same `rollback_agent_config_dir/3`.
+  describe "K1: spawn-failure teardown ALSO wipes the agent's git-identity dir" do
+    alias Ezagent.Sandbox.GitIdentityDir
+
+    defp seed_git_identity!(agent_uri) do
+      dir = GitIdentityDir.path(agent_uri)
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "id_ed25519"), "fake-private-key")
+      assert File.exists?(Path.join(dir, "id_ed25519"))
+      dir
+    end
+
+    test "PTY flavor: CcAgent.handle_spawn_failure/2 (returned {:error,_} arm) wipes it", ctx do
+      dir = seed_git_identity!(ctx.agent_uri)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      reason = {:pty_start_failed, :boom}
+      assert {:error, ^reason} = CcAgent.handle_spawn_failure(ctx.agent_uri, reason)
+
+      refute File.exists?(dir)
+    end
+
+    test "cc-headless flavor: HomeRuntime.compensate_spawn_failure/5 (headless template_module) wipes it" do
+      fresh_agent = URI.new!("entity://team-a/agent/cc_headless_gitid-#{uniq()}")
+      dir = seed_git_identity!(fresh_agent)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      assert {:error, :sdk_sidecar_boom} =
+               Ezagent.Credential.HomeRuntime.compensate_spawn_failure(
+                 fresh_agent,
+                 nil,
+                 :sdk_sidecar_boom,
+                 Ezagent.PluginCc.Template.CcHeadlessAgent,
+                 "cc-headless.agent"
+               )
+
+      refute File.exists?(dir)
+    end
+
+    test "a LAUNCH raise (on_launch_raise/3, shared by both flavors) also wipes it", ctx do
+      dir = seed_git_identity!(ctx.agent_uri)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      agent_uri_str = URI.to_string(ctx.agent_uri)
+      g = GrantRow.get_for_agent(agent_uri_str)
+      grant_ctx = {:grant, agent_uri_str, g.incarnation_id, g.version, g.incarnation_id}
+
+      assert_raise RuntimeError, "sidecar-launch-boom-k1", fn ->
+        Ezagent.Credential.HomeRuntime.launch_under_grant_compensation(
+          ctx.agent_uri,
+          grant_ctx,
+          CcAgent,
+          "cc.agent",
+          fn -> raise "sidecar-launch-boom-k1" end
+        )
+      end
+
+      refute File.exists?(dir)
     end
   end
 end
