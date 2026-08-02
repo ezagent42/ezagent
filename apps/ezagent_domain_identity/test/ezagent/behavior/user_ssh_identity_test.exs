@@ -278,6 +278,35 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
     test "line whose second segment isn't valid base64 returns :error" do
       assert :error = UserSshIdentity.fingerprint("ssh-ed25519 not-base64!!!")
     end
+
+    # 整支终审 K5 (opus follow-up, 提级 must-fix) — the ONLY assertion above
+    # ("valid pubkey line returns {:ok, "SHA256:" <> _}") checks the
+    # "SHA256:" PREFIX, which is itself a hardcoded literal on the success
+    # branch (`user_ssh_identity.ex`) — it is satisfied by ANY correctly
+    # shaped string, not specifically the RIGHT hash. opus verified empirically:
+    # swapping `:sha256` for `:sha`, hashing the base64 STRING `b64` instead
+    # of the DECODED bytes `raw`, or using `Base.encode64/2` WITH padding —
+    # all three regressions still pass every pre-existing test in this
+    # describe block. This test pins the byte-exact value against a REAL
+    # `ssh-keygen -lf` run (not re-derived via this module's own formula,
+    # which would only prove self-consistency, not correctness against
+    # OpenSSH) — a fingerprint users compare against what GitHub/GitLab show,
+    # and what the `:ssh_identity_read` audit emit carries, must match
+    # OpenSSH byte-for-byte.
+    #
+    # Fixture provenance: generated ONCE via `ssh-keygen -t ed25519 -N ""
+    # -C k5-fixture@ezagent-test -f k5_fixture`, then `ssh-keygen -lf
+    # k5_fixture.pub` run against the resulting pubkey — both values below
+    # are copied verbatim from that real invocation, not computed by this
+    # module's code or by re-deriving the SHA256 formula by hand.
+    test "matches a REAL ssh-keygen -lf output byte-for-byte (K5 — value was never pinned before)" do
+      pub_line =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPUvD8uKZgMF9C+yYZBuiFStkrhL3nG78rREM8wjxVw2 " <>
+          "k5-fixture@ezagent-test"
+
+      assert {:ok, "SHA256:PshJLuR+nQ5AZRg2DNeajllPqNc+VP/k/+xql+snWME"} =
+               UserSshIdentity.fingerprint(pub_line)
+    end
   end
 
   describe "read_ssh_public_key" do
@@ -331,6 +360,37 @@ defmodule Ezagent.ActionSet.UserSshIdentityTest do
 
       assert {:error, :ssh_identity_unavailable} =
                UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+    end
+
+    # 整支终审 K6 (opus follow-up, 提级 must-fix) — the "exact key set"
+    # assertion above (O1, `Map.keys(result) |> Enum.sort() == [:fingerprint,
+    # :public_key]`) catches a private key smuggled in as an EXTRA map key,
+    # but none of the five `read_ssh_public_key` fixtures in this describe
+    # block carry a legitimate `public_key` + `fingerprint` + `private_key`
+    # ALL THREE at once — so a regression that concatenates/smuggles the
+    # private key's VALUE into the returned `public_key` (or `fingerprint`)
+    # STRING, rather than adding a new key, would pass every existing test
+    # here. `generate_ssh_key`'s own test (line ~77, "I4") already guards
+    # this exact failure mode with a value-level `refute
+    # Enum.any?(Map.values(result), &String.contains?(&1, private))` check —
+    # this test carries that same technique over to `read_ssh_public_key`.
+    test "私钥不会被拼进返回值的任何字段（value 走私防护，K6）" do
+      private = @real_private_key
+
+      state = %{
+        public_key: "ssh-ed25519 AAAAC3 alice",
+        fingerprint: "SHA256:abc",
+        private_key: private
+      }
+
+      assert {:ok, result, []} = UserSshIdentity.handle_read_ssh_public_key(%{}, ctx(state))
+
+      assert Map.keys(result) |> Enum.sort() == [:fingerprint, :public_key]
+
+      refute Enum.any?(
+               Map.values(result),
+               &(is_binary(&1) and String.contains?(&1, private))
+             )
     end
   end
 
