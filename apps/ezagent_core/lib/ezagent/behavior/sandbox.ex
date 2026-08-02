@@ -420,6 +420,10 @@ defmodule Ezagent.ActionSet.Sandbox do
     #    round-2 HIGH-1). Inline because the return value gates which
     #    state fields get cleared vs preserved (codex round-4 HIGH-2).
     cleanup_result = invoke_destroy_config_dir(self_uri, config_dir, template_class)
+    # SSH 凭据 1b — git 身份住在 config_dir 之外的独立目录(见
+    # Ezagent.Sandbox.GitIdentityDir 的 moduledoc),所以必须在这里单独清。
+    # 幂等、best-effort、从不抛异常 —— 绝不能让清理失败挡住 destroy。
+    _ = Ezagent.Credential.GitIdentityRuntime.wipe(self_uri)
 
     # 2. State update — branches on cleanup result (codex round-4 HIGH-2).
     set_effects =
@@ -560,6 +564,7 @@ defmodule Ezagent.ActionSet.Sandbox do
     template_class = ctx.read.(:template_class, nil)
 
     _ = invoke_destroy_config_dir(self_uri, config_dir, template_class)
+    _ = Ezagent.Credential.GitIdentityRuntime.wipe(self_uri)
     :ok
   end
 

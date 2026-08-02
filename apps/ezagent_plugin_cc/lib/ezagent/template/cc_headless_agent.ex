@@ -418,6 +418,10 @@ defmodule Ezagent.PluginCc.Template.CcHeadlessAgent do
     tmpl
     |> provider_cmd_env()
     |> Ezagent.PluginCc.Template.SpawnPlan.maybe_put_cli_identity_env(agent_uri, tmpl)
+    # SSH 凭据 1b — 与 PTY 路径同一个 seam。
+    |> Ezagent.PluginCc.Template.SpawnPlan.merge_git_identity_env(
+      Ezagent.Identity.AgentGitIdentity.materialize(agent_uri)
+    )
   end
 
   defp provider_cmd_env(tmpl) do

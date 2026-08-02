@@ -153,10 +153,31 @@ defmodule Ezagent.PluginCc.Template.SpawnPlan do
         # `agent_bridge:cc-custom:<uri>` (matching its resolved flavor) instead
         # of the sidecar's `agent_bridge:cc:` default. Empty for anthropic.
         |> Map.merge(Ezagent.PluginCc.Provider.bridge_topic_env(tmpl, agent_uri))
+        # SSH 凭据 1b — 持有 read_ssh_key cap 的 agent 拿到 GIT_SSH_COMMAND;
+        # 没有该 cap 的(绝大多数)env 逐字节不变。
+        |> merge_git_identity_env(Ezagent.Identity.AgentGitIdentity.materialize(agent_uri))
 
       {:ok, {argv, cmd_env}}
     end
   end
+
+  @doc """
+  SSH 凭据 1b — merge the git-identity env into `env`, tolerating every
+  non-materialized outcome.
+
+  A git identity is a CAPABILITY of the agent, not a precondition for its
+  existence: an unconfigured `known_hosts` must not stop the agent from
+  starting. `Ezagent.Identity.AgentGitIdentity` has already logged + emitted
+  telemetry for the error cases, so swallowing them here is not a silent drop.
+
+  `{:ok, :none}` is the DEFAULT for nearly every agent and returns `env`
+  byte-identically.
+  """
+  @spec merge_git_identity_env(map(), term()) :: map()
+  def merge_git_identity_env(env, {:ok, git_env}) when is_map(git_env),
+    do: Map.merge(env, git_env)
+
+  def merge_git_identity_env(env, _outcome), do: env
 
   @doc """
   The `claude` resume flag (`--continue`). Public for the respawn-path caller
