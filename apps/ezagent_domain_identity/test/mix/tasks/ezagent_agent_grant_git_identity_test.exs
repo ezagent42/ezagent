@@ -56,9 +56,16 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentityTest do
                GrantGitIdentity.plan(["entity://ws/agent/a", "entity://ws/agent/b"])
     end
 
-    test "合法参数解析出两个 URI" do
-      assert {:ok, %{agent: %URI{}, user: %URI{}}} =
+    test "合法参数解析出两个 URI，且各自落进对的 key（不是形状-only）" do
+      # M1（Task 5 复审）：原断言只钉形状（`%{agent: %URI{}, user: %URI{}}`），
+      # 把 plan/1 的返回改成 `%{agent: user, user: agent}`（key 对调）四条
+      # 参数解析测试依旧全绿。直接断言两个具体 URI，钉住"哪个解析结果落进
+      # 哪个 key"。
+      assert {:ok, %{agent: agent, user: user}} =
                GrantGitIdentity.plan(["entity://ws/agent/a", "entity://ws/user/u"])
+
+      assert agent == Ezagent.URI.new!("entity://ws/agent/a")
+      assert user == Ezagent.URI.new!("entity://ws/user/u")
     end
   end
 
@@ -76,6 +83,11 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentityTest do
       assert cap.action == :read_ssh_key
       assert cap.kind == :user
       assert cap.instance == Ezagent.URI.instance(ctx.user_uri)
+
+      # M7（Task 5 复审）：`MapSet.difference` 只查增不查删 —— 一个顺手删掉
+      # 别的 cap 的 grant/2 仍会让上面的断言全绿。钉住 held set 的总数恰好
+      # +1，不只是"新增的那条形状对"。
+      assert MapSet.size(after_caps) == MapSet.size(before) + 1
     end
 
     test "发放后 AgentGitIdentity 认得这条 cap（与 Task 3 的选择器对齐）", ctx do
@@ -109,6 +121,24 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentityTest do
       assert [held] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
       assert held.instance == Ezagent.URI.instance(ctx.user_uri)
       assert held == cap2
+    end
+  end
+
+  describe "phantom user（Task 5 复审 H3）" do
+    test "user_uri 从未 Users.create 时拒绝发放，不静默铸出 phantom User Kind", ctx do
+      phantom_user_uri =
+        Ezagent.URI.entity(:gitid, :user, "phantom-#{System.unique_integer([:positive])}")
+
+      assert {:error, {:user_not_startable, :not_created}} =
+               GrantGitIdentity.grant(ctx.agent_uri, phantom_user_uri)
+
+      # Refused before ever absorbing anything — the agent holds no cap
+      # pointing at the phantom URI.
+      assert [] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
+
+      # And no phantom Kind was left alive for the next test/process to trip
+      # over.
+      refute Ezagent.LocalRuntime.kind_alive?(phantom_user_uri)
     end
   end
 end

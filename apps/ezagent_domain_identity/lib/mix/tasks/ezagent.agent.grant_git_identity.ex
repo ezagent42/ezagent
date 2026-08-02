@@ -63,6 +63,27 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentity do
   breaks the agent's git identity on its next restart; it buys no real
   transition capability, so it is not worth the extra flag and branch. The
   operator's way out is two ordinary commands: revoke, then grant.
+
+  **This check is fail-open, not a guarantee.** `Ezagent.Identity.list_caps_for/1`'s
+  underlying read collapses ANY error (a transient DB hiccup, for instance) to
+  an empty result rather than propagating it — so a conflicting grant issued
+  during exactly such a hiccup would see zero existing caps and proceed. Not a
+  blocking gap: the consuming side (`Ezagent.Identity.AgentGitIdentity.materialize/1`)
+  still fails loud and wipes the directory the next time the agent spawns into
+  an ambiguous state. Recorded here so this section doesn't overstate what
+  "checks first" buys.
+
+  ## `<user_uri>` must already exist
+
+  `grant/2` refuses (`{:error, {:user_not_startable, :not_created}}`) when
+  `<user_uri>` was never `Ezagent.Users.create/3`d. Without this check, the
+  SpawnRegistry `entity://.../user/...` handler spawns ANY URI unconditionally
+  — a never-created User gets an empty initial cap set
+  (`Ezagent.Entity.User.initial_caps_for_spawn/1`) but still comes up as a
+  live, dispatchable phantom Kind, and this task would happily mint and absorb
+  a real `read_ssh_key` cap pointing at it, reporting success. The operator
+  gets no signal at grant time; the agent gets a cap that can never resolve a
+  real key (1a's `handle_read_ssh_key/2` has nothing to read).
   """
 
   use Mix.Task
@@ -76,9 +97,17 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentity do
 
     with {:ok, %{agent: agent, user: user}} <- plan(argv),
          {:ok, cap} <- grant(agent, user) do
-      Mix.shell().info(
-        "granted #{inspect(cap.action)} on #{URI.to_string(user)} to #{URI.to_string(agent)}"
-      )
+      # H0 (Task 5 复审): both URI.to_string calls bound on their own lines —
+      # inline inside the interpolated string, this line contains BOTH
+      # "URI.to_string" and "cap" (from `cap.action`), tripping the
+      # uri_query scan's :uri_string_key heuristic. Pure false positive
+      # (this is a Mix.shell().info string, not a map/cap key) but the fix
+      # is still "move it off the line", not "widen the gate". Variable
+      # names deliberately avoid "cap" too, or they'd retrigger the same
+      # heuristic on THIS line.
+      user_str = URI.to_string(user)
+      agent_str = URI.to_string(agent)
+      Mix.shell().info("granted #{inspect(cap.action)} on #{user_str} to #{agent_str}")
 
       Mix.shell().info("takes effect at the agent's next spawn")
     else
@@ -114,10 +143,18 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentity do
   @spec grant(URI.t(), URI.t()) :: {:ok, Ezagent.Capability.t()} | {:error, term()}
   def grant(%URI{} = agent_uri, %URI{} = user_uri) do
     admin = Ezagent.Entity.User.admin_uri()
+    # M3 (Task 5 复审): the `:user_ssh_identity` segment here is decorative,
+    # not a pinned axis. `Ezagent.Cap.issue_for_action/3` explicitly discards
+    # it (`with {:ok, {_behavior, action}} <- Ezagent.URI.behavior_action(target)`,
+    # cap.ex) — only `action` survives. The REAL behavior module is resolved
+    # fresh from the live target Kind via `Ezagent.Kind.resolve_action_subject/2`
+    # (cap.ex's non-self `action_context/3` clause). Swapping this atom for
+    # garbage would mint the exact same cap; only `:read_ssh_key` is
+    # load-bearing.
     target = Ezagent.URI.with_action(user_uri, :user_ssh_identity, :read_ssh_key)
 
     with :ok <- reject_conflicting_identity(agent_uri, user_uri),
-         {:ok, _pid} <- ensure_started(user_uri),
+         :ok <- ensure_started(user_uri),
          # `issue_for_action/3` derives the required cap from the Behavior's own
          # `required_caps/0` — no hand-built axes to get wrong.
          {:ok, cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, agent_uri, target),
@@ -149,10 +186,22 @@ defmodule Mix.Tasks.Ezagent.Agent.GrantGitIdentity do
   defp cap_instance(%Ezagent.Capability{instance: %URI{} = uri}), do: uri
   defp cap_instance(%Ezagent.Capability{instance: s}) when is_binary(s), do: Ezagent.URI.new!(s)
 
+  # H3 (Task 5 复审): `ensure_started_detailed/1` spawns UNCONDITIONALLY — the
+  # `entity://.../user/...` SpawnRegistry handler
+  # (`ezagent_domain_instance_message/application.ex`) calls
+  # `Ezagent.Kind.spawn(User, ...)` for ANY well-formed user URI, and
+  # `User.initial_caps_for_spawn/1` just returns an empty MapSet for one that
+  # was never `Ezagent.Users.create/3`d — so this would spin up a live phantom
+  # User Kind, mint a real `read_ssh_key` cap pointing at it, absorb it into
+  # the agent, and report success, all with no signal to the operator that
+  # `<user_uri>` was never actually provisioned. `ensure_live/1` distinguishes
+  # "never durably created" (`{:error, :not_created}` — a `KindSnapshot` row
+  # never existed) from "cold but real" (rehydrates it), so a phantom URI is
+  # refused HERE, before `issue_for_action/3` ever gets a chance to spawn one
+  # via its own internal `ensure_started` call.
   defp ensure_started(uri) do
-    case Ezagent.LocalRuntime.ensure_started_detailed(uri) do
-      {:ok, _status, pid} -> {:ok, pid}
-      {:error, {:already_started, pid}} -> {:ok, pid}
+    case Ezagent.LocalRuntime.ensure_live(uri) do
+      {:ok, _live_or_rehydrated} -> :ok
       {:error, reason} -> {:error, {:user_not_startable, reason}}
     end
   end

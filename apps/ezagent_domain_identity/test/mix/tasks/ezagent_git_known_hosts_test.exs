@@ -51,4 +51,52 @@ defmodule Mix.Tasks.Ezagent.Git.KnownHostsTest do
       refute File.exists?(out)
     end
   end
+
+  describe "missing_hosts/2（H1/M6，Task 5 复审）" do
+    test "全部请求的 host 都在 scan 输出里 —— 无缺失" do
+      scanned = "github.com ssh-ed25519 AAAA\ngitlab.com ssh-ed25519 BBBB\n"
+      assert [] = KnownHosts.missing_hosts(["github.com", "gitlab.com"], scanned)
+    end
+
+    # H1 红演示场景：请求两个 host、scan 输出只含其一（`ssh-keyscan` 对"部分
+    # 主机不可达"的真实退出码语义是 exit 0 —— 不需要真的去 keyscan 一个不可
+    # 达主机，直接喂这个函数一份"看起来正常但缺一行"的输出）。
+    test "scan 输出只含其一 —— 缺失的那个被点名" do
+      scanned = "github.com ssh-ed25519 AAAA\n"
+
+      assert ["gitlab.internal"] =
+               KnownHosts.missing_hosts(["github.com", "gitlab.internal"], scanned)
+    end
+
+    test "scan 输出为空 —— 全部请求的 host 都算缺失" do
+      assert ["github.com", "gitlab.com"] =
+               KnownHosts.missing_hosts(["github.com", "gitlab.com"], "")
+    end
+
+    test "scan 输出含额外的 host（未请求）不影响缺失判定" do
+      scanned = "github.com ssh-ed25519 AAAA\nsome-other-host.example ssh-ed25519 CCCC\n"
+      assert [] = KnownHosts.missing_hosts(["github.com"], scanned)
+    end
+  end
+
+  describe "run_keyscan/1（H2，Task 5 复审）" do
+    # 与 apps/ezagent_domain_identity/test/ezagent/behavior/user_ssh_identity_test.exs
+    # 的 "ssh-keygen 缺失时返回 keygen_failed，不 crash" 同一手法（该文件本身
+    # 引用为先例）：清空 PATH 让 System.cmd 真实抛 :enoent，而不是 mock 行为。
+    # 修复前，这条断言无法通过——不是因为返回值错，而是因为 EXIT 信号经
+    # Task.async 的 link 把这个测试进程本身也拖死，断言根本没机会跑。
+    test "ssh-keyscan 缺失时返回 {:error, {:ssh_keyscan_unavailable, _}}，不 crash 调用进程" do
+      original_path = System.get_env("PATH")
+      System.put_env("PATH", "/nonexistent-#{System.unique_integer([:positive])}")
+
+      try do
+        assert {:error, {:ssh_keyscan_unavailable, _reason}} =
+                 KnownHosts.run_keyscan(["github.com"])
+      after
+        if original_path,
+          do: System.put_env("PATH", original_path),
+          else: System.delete_env("PATH")
+      end
+    end
+  end
 end
