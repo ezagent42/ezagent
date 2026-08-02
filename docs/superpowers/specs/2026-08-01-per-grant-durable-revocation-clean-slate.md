@@ -1,7 +1,7 @@
 # Clean-Slate Per-Grant Durable Revocation Design
 
 **Status:** implemented on the target branch after three adversarial review rounds;
-final delivery verification is pending
+delivery return recorded and final PR remains open for coordinator review
 
 **Decision date:** 2026-08-01
 
