@@ -257,7 +257,9 @@ ssh -i <dir>/id_ed25519
 
 **⑤ 发放 task**
 - 发完后 `list_caps_for(agent)` 里有且仅有那一条新 cap，且 `instance == user_uri`
-- 非 admin 调用被拒
+- ~~非 admin 调用被拒~~ —— **2026-08-02 撤回，这行是错的。** 它描述了一个**没有参数可查、也没有先例**的检查。运维 mix task 在本仓库的既定形态是 **admin 等价**：直接先例 `apps/ezagent_domain_agent/lib/mix/tasks/ezagent.agent.grant_recipe_caps.ex:338` 同样用 `Ezagent.Entity.User.admin_uri()` 作签发者且不查调用方，其 moduledoc 明写认可的面就是「Behavior / admin LV / **mix tasks**」。（`host_login_adopt.ex` 之所以有 `require_host_operator/1`，是因为它从**运行时路径**接收 `installer_uri` 参数 —— 有一个外来主体可查；mix task 没有。）
+  **真正的边界是"谁能在这台机器上跑 mix task"，即宿主 shell 访问权**，不是 VM 内的 cap 检查。这与当前安全姿态一致（不防 in-VM 恶意代码）。
+- **已持有指向别的 User 的 `read_ssh_key` cap 时不得静默发放**（Task 3 复审顺出的事故场景：运维换身份忘了先撤旧的 → agent 以错误身份 push 且全程静默）。消费侧 Task 3 已 fail loud（`{:error, {:ambiguous_git_identity, _}}` 且清盘），发放侧再挡一道。指向**同一个** User 的重复发放是幂等的，不算冲突
 
 **⑥ 接线**
 - cc PTY 与 cc headless 两条 `cmd_env` 构建路径，在 ③ 返回 `:none` 时 env **逐字节不变**（钉住关闭态零影响）
