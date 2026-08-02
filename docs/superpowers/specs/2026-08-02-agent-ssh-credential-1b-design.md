@@ -1,0 +1,270 @@
+# Agent SSH 凭据 — 任务 1b 设计（物化进 agent）
+
+**日期：** 2026-08-02
+**状态：** 设计，待实施
+**基线：** `d77f94f65`（分支 `feat/agent-ssh-credential`，1a 已完成）
+**上游 spec：** `docs/superpowers/specs/2026-08-01-agent-ssh-credential-1a-design.md` §1（1b 范围定义）、`docs/superpowers/specs/2026-07-31-git-credential-model-options-design.md` §8.3/§8.4
+**决策人：** gaga（形态 B2′ 由 Allen 定）
+
+---
+
+## 0. 一句话
+
+把 1a 存下的 User SSH 私钥，在 agent 启动时**写进一个 agent 专属目录**，并通过 `GIT_SSH_COMMAND` 让该 agent 的 `git` 用上它。
+
+**开关 = agent 是否持有一条指名道姓的 cap。** 不持有 → 什么都不发生，spawn 路径完全不变。
+
+---
+
+## 1. 三个决定，以及它们为什么长这样
+
+1b 的全部设计空间被三个问题占满。以下是结论与实证依据。
+
+### 1.1 谁拿到 key —— cap 本身既是开关，也是指针
+
+上一轮讨论倾向"recipe 声明"。**查证后否决**：`Ezagent.Agent.Recipe.CapMint.mint/3`（`apps/ezagent_core/lib/ezagent/agent/recipe/cap_mint.ex:74-83`）**写死** `kind: :agent, instance: agent_uri` —— recipe 能铸出的 cap 只能指向 agent 自己。而 `:read_ssh_key` 的 cap 必须是 `cap(:user, UserSshIdentity, :read_ssh_key, <某个 user>, <ws>)`。**recipe 通道在结构上表达不了这条 cap**，扩 `CapMint` 的实例轴是每条 recipe cap 都要过的 core 改动，与"尽量简化"不成比例。
+
+同时查证：`Ezagent.WorkspacePlacement.owner_of/1`（`local_resolver.ex:9-11`）返回的是**节点 `RuntimeIdentity`**，即联邦放置身份，**不是 workspace 的属主用户**。所以"从 agent URI 推出属主 user"这条路**不存在**，不要去建。
+
+**结论（这两条否决合起来指向同一个答案）：不推导归属，让 cap 自己说。**
+
+> **一条 cap 同时承担三件事**：
+> - **开关** —— 持有即启用，不持有即完全关闭
+> - **授权** —— 就是 1a 那条 `:read_ssh_key` cap，走既有 step-5.5
+> - **指针** —— cap 的 `instance` 字段**就是**要读哪个 user 的 key
+
+运行期算法因此退化成：读 agent 自己的 cap 集 → 找 `behavior == UserSshIdentity ∧ action == :read_ssh_key` 的那条 → 拿它的 `instance` 当 dispatch target。**没有归属推导，没有新概念，不可能漂移**（开关与被读对象是同一个事实，无法各说各话）。
+
+发放 = 运维显式动作：`mix ezagent.agent.grant_git_identity <agent_uri> <user_uri>`。人类明确说"agent X 可以读 user Y 的 SSH key"。
+
+**这也正是 B2′/A1 的切换点**：A1 = 不发这条 cap（平台自己持 key，见任务 2）。切换机制不需要额外建设。
+
+### 1.2 写在哪 —— 独立的 per-agent 目录，**不进 config_dir**
+
+直觉是写进 `config_dir`（已 0700、per-agent、destroy 时清）。**否决。**
+
+`config_dir` 是 **flavor 凭据轨（#17 cascade）**的家，其语义是**在 agent 之间按策略复制**：`materialize_single_reference` 整目录 `cp_r` 参考目录，`materialize_cascade` 走 `merge_layers` + `secret_relpaths` 定向拷贝（`home_runtime.ex:490-520`）。
+
+把 SSH 身份放进去，就把它交给了**一套为别的凭据类设计的复制策略**。后果具体且可复现：agent A 的 config_dir 作为参考目录物化 agent B 时，B 拿到 A 的 SSH 身份 —— **而 B 从未被授予那条 cap**。这正是 memory `feedback-gate-targets-accidents-not-attackers` 说的那类事故：不是攻击，是代码逻辑把两类生命周期混在一起导致的无意扩散。
+
+**结论：`Ezagent.Sandbox.ConfigDir` 的路径机制是按 namespace 参数化的**（`config_dir.ex:48-67`，走 `resource://<ws>/<ns>-agents/<name>` + `FsResolver`）。1b 复用这套机制，但**用一个独立的 resource type**，并且**给它自己的 authority 函数** —— 因为 `FsResolver` 的 `config_dir_type?/1` 是按 **authority 函数的身份**判定 config-dir 家族成员的（`fs_resolver.ex:270-274` 明写此意图）。用同一个函数会让 git-identity 目录被 cascade 层机制认领，等于绕回上面刚否决的问题。
+
+### 1.3 什么时候写 —— 每次 spawn，不是 create
+
+实证：`create_agent_config_dir` **只在 `{:started, true, created_witness}` 这条臂上跑**（`cc_agent/spawn.ex:186-190`），即逻辑创建的赢家；respawn / rehydrate / adopt 都不跑。而 `build_claude_cmd` **每次 spawn 都跑**。
+
+若在 create 时写，key 就与 agent 同寿：**撤销永远不生效**。若每次 spawn 写，撤销在下次重启生效 —— 这是本形态能提供的最强撤销语义，且不额外花一分钱。
+
+顺带解决时序：create 时 `create_agent_config_dir`（含 `swap_into_place`）先跑完，PTY 参数构建在后（`spawn.ex:190` → 后续 `ensure_pty_server`），**无竞态**。
+
+---
+
+## 2. 模块与 tier
+
+| # | 模块 | tier / app | 职责 |
+|---|---|---|---|
+| ① | `Ezagent.Sandbox.GitIdentityDir` | core / `ezagent_core` | per-agent git-identity 目录的**路径权威**：`path/1`、`allocate/1`、`safe_to_destroy?/2`。镜像 `Sandbox.ConfigDir`，独立 resource type |
+| ② | `Ezagent.Credential.GitIdentityRuntime` | core / `ezagent_core` | **纯机制**：给定私钥内容 + 目录 → 写文件、chmod、拼 `GIT_SSH_COMMAND`。不认识 User Kind，不 dispatch |
+| ③ | `Ezagent.Identity.AgentGitIdentity` | domain / `ezagent_domain_identity` | **编排**：读 agent cap 集 → 找 cap → dispatch `:read_ssh_key` → 调 ② → 返回 env map |
+| ④ | `mix ezagent.git.known_hosts` | domain / `ezagent_domain_identity` | `ssh-keyscan` 写节点级 `known_hosts` |
+| ⑤ | `mix ezagent.agent.grant_git_identity` | domain / `ezagent_domain_identity` | issue + absorb 那条窄 cap |
+| ⑥ | cc flavor 接线 | plugin / `ezagent_plugin_cc` | 两处各 merge 一次 env |
+| ⑦ | destroy 清理 | core / `ezagent_core` | `Ezagent.ActionSet.Sandbox` destroy 时 wipe git-identity 目录 |
+
+**③ 为什么在 `ezagent_domain_identity` 而不是 `ezagent_domain_agent`：** 它读两样东西 —— agent 的 cap 集、User 的 SSH 身份 —— **都是 identity 域数据**（P9「reads what data decides tier ownership」）。且 `Ezagent.Identity.list_caps_for/1` 就住这里，既有约定「cap 读留在 Identity 域 / display / tooling 内」（`host_login_adopt.ex:194-197` 注释里的 invariant p6）不被破坏。
+
+**依赖方向已验证**：`ezagent_plugin_cc/mix.exs:51` 已依赖 `ezagent_domain_identity`；`ezagent_domain_identity/mix.exs` 只依赖 `ezagent_core` + `ezagent_actor`。**无循环依赖**，⑥ 直接调 ③ 即可。
+
+---
+
+## 3. 运行期流程
+
+```
+spawn（每次）
+  │
+  ├─ ③ AgentGitIdentity.materialize(agent_uri)
+  │    │
+  │    ├─ Identity.list_caps_for(agent_uri)
+  │    │    找 behavior == Ezagent.ActionSet.UserSshIdentity
+  │    │      ∧ action == :read_ssh_key
+  │    │    ├─ 没有  → {:ok, :none}            ← 关闭态，默认，绝大多数 agent
+  │    │    └─ 有    → user_uri = cap.instance
+  │    │
+  │    ├─ dispatch read_ssh_key（caller = agent_uri, caps = MapSet[那条 cap]）
+  │    │    ├─ {:error, :ssh_identity_absent} → {:error, :owner_has_no_key}   ← 配错，要吵
+  │    │    └─ {:ok, %{private_key: pem}}
+  │    │
+  │    └─ ② GitIdentityRuntime.write(agent_uri, pem)
+  │         ├─ 节点级 known_hosts 未配置 → {:error, :known_hosts_unconfigured} ← 要吵
+  │         └─ {:ok, %{"GIT_SSH_COMMAND" => "..."}}
+  │
+  └─ ⑥ Map.merge(cmd_env, env)
+```
+
+### 3.1 三种"没有身份"必须可区分
+
+| 情形 | 返回 | 处置 |
+|---|---|---|
+| agent 没那条 cap | `{:ok, :none}` | **静默**。这是默认态，不是错误，不打日志（否则每个 agent 每次启动都刷一行） |
+| 有 cap 但 user 没 key（1a `:ssh_identity_absent`） | `{:error, :owner_has_no_key}` | **吵**：Logger.warning + telemetry。运维发了 cap 却没生成 key = 配错，agent 会莫名其妙 clone 失败 |
+| 有 cap 但 user 的 key 状态损坏（1a `:ssh_identity_unavailable`） | `{:error, {:owner_key_unavailable, reason}}` | **吵**：Logger.error + telemetry。与上一行**必须分开**：一个是"没配"，一个是"配了但坏了"，处置动作不同 |
+| 有 cap、有 key，但节点没配 known_hosts | `{:error, :known_hosts_unconfigured}` | **吵**：Logger.error + telemetry，消息里带**具体修复命令** |
+
+**沿用 1a §5.1 的 absent≠unavailable 语义：缺席才 fall through，配了但不可用一律 fail loud。** 1a 已把这两种状态在 action 返回值上分开，1b **不得把它们合并**成一个错误 —— 那会把 1a 花了一整轮 review 才修对的区分丢掉。
+
+### 3.1.1 dispatch 的 ctx 怎么构造（实现要点）
+
+1a 的授权测试用 `signed_invocation!/2` 走通 dispatch，容易被误读成"invocation 需要签名"。**实际不是**：该 helper 做的是往 `ctx` 里放 `:authenticated_principal`（`cap_helper.ex:258-260`）。cap 本身在 Path A 下**出生即签名**。
+
+所以 ③ 的生产 dispatch ctx 是：
+
+```
+%{
+  caller: agent_uri,
+  authenticated_principal: agent_uri,   # 持 cap 的就是 agent 自己
+  caps: MapSet.new([那一条 cap]),        # 只放这一条，不放 agent 的全部 cap
+  reply: {:caller_inbox, self()}
+}
+```
+
+**`caps` 只放找到的那一条**，不是 `list_caps_for/1` 的全集：全集会让这次读携带 agent 的其它所有权限，违背既有的窄授权惯例（`GrantCap` moduledoc：「caller 把这**单条** cap 作为 dispatch caps —— 绝不给一个宽集合」）。
+
+### 3.2 失败不阻断 spawn
+
+三种情形都**不让 agent 起不来**。理由：git 身份是 agent 能力的一部分，不是 agent 存在的前提；让一个 known_hosts 配置问题变成 agent 起不来，是把可恢复故障升级成不可用。
+
+但**必须响**（invariant #9「no silent drops」的同源要求）：后两种走 Logger + telemetry。
+
+---
+
+## 4. `GIT_SSH_COMMAND` 的四个开关，逐条给理由
+
+```
+ssh -i <dir>/id_ed25519
+    -o IdentitiesOnly=yes
+    -o IdentityAgent=none
+    -o UserKnownHostsFile=<dir>/known_hosts
+    -o StrictHostKeyChecking=yes
+```
+
+| 开关 | 不加会怎样 |
+|---|---|
+| `IdentitiesOnly=yes` | ssh 会把它能找到的**所有** key 挨个试。私有仓库场景下这会用错身份认证成功，审计归属直接错掉（后果④） |
+| `IdentityAgent=none` | 落到宿主的 ssh-agent —— **那是运维本人的 key**。这是 1b 最大的一条意外提权路径，且完全静默 |
+| `UserKnownHostsFile=<per-agent>` | 落到 `~/.ssh/known_hosts`（宿主的），agent 之间互相污染 |
+| `StrictHostKeyChecking=yes` | TOFU：首次连接无条件接受任何主机 key |
+
+**这四条都不是"防攻击者"，是防"代码/配置走到默认路径就悄悄用错身份"** —— 正是 memory `feedback-gate-targets-accidents-not-attackers` 界定的 gate 类别，也是 CLAUDE.md 安全姿态允许的那类（caps 正确性 + 防漂移）。**不引入任何其它安全代码。**
+
+### 4.1 known_hosts 的来源
+
+节点级一份，`Application.get_env(:ezagent_core, :git_known_hosts_path)` 指向它；④ 负责生成并打印该配置行。
+
+**不走 `Ezagent.Home.path/1`** —— 那条路有 `HomePathBaseline` 架构 gate（`home_path_baseline.ex`），为一个运维文件去动 gate 不值得。④ 接受 `--out <path>`（未给则取配置值，两者皆无则报错要求显式给出）。
+
+**不预置 GitHub/GitLab 主机 key 进仓库**：会轮转，仓库里的 key 过期后表现为全局 clone 失败且无人知道该改哪。
+
+---
+
+## 5. 目录与文件
+
+```
+<FsResolver 解析 resource://<ws>/git-identity/<agent-name>>/    0700
+├── id_ed25519      0600   私钥
+└── known_hosts     0644   从节点级文件复制
+```
+
+- resource type 名 `"git-identity"`，`backend_component` 同名
+- **独立的 authority 函数** `git_identity_authority/2`（断言与 `config_dir_authority/2` 相同的 workspace 一致性，但**函数身份不同**）—— 依据 `fs_resolver.ex:270-274`：家族成员按 authority 函数身份判定，共用会让本目录被 config-dir 层机制认领
+- 注册在 **core**（不是 plugin 的 `resource_types/0`）：这不是 flavor 概念，是 agent 通用概念
+
+**每次 spawn 覆写**：先写 staging 再 rename，或直接覆写 —— 此处**不需要**原子换入（没有并发读者：写发生在子进程启动之前）。**故意保持简单**，并在实现里写明为什么不需要，免得后人照 `stage_and_swap` 抄一套。
+
+---
+
+## 6. 撤销语义（如实记录，不粉饰）
+
+| 动作 | 何时生效 |
+|---|---|
+| 撤销 agent 的 cap | **下次 spawn**。已在跑的 agent 手里的 key 文件不受影响 |
+| `revoke_ssh_key`（1a） | 同上。且此后各 agent 拿到 `:owner_has_no_key` |
+| 想立刻断掉 | 删 agent 的 git-identity 目录 + 重启该 agent。**1b 不提供一键命令** |
+
+**这是 B2′ 的固有属性，不是本实现的缺陷**：key 一旦落到 agent 能读的文件系统上，平台就失去了对它的控制（上游 spec §5.4 后果③已记录）。写在这里是为了让运维**知道**撤销不是即时的，而不是以为是。
+
+---
+
+## 7. 部署契约（继承 1a §7）
+
+租户隔离靠**不共享部署**（workspace = 部署单元），代码无强制。
+
+1b 新增一条**同部署内**的说明：**同一部署内，两个 agent 是否隔离，完全取决于有没有各自发那条 cap。** §1.2 之所以把目录移出 `config_dir`，就是为了让这句话**在结构上成立** —— 否则 cascade 复制会在运维不知情的情况下把它变成假话。
+
+写进 ① 与 ③ 的 moduledoc。
+
+---
+
+## 8. 测试
+
+**① 路径权威**
+- `path/1` 对同一 agent 幂等；不同 agent / 不同 workspace 互不相等
+- 非 agent URI → raise（镜像 `ConfigDir` 的 `raise_agent_uri!`）
+- `safe_to_destroy?/2` 对非规范路径返回 false
+- **git-identity type 的 authority 函数与 `config_dir_authority/2` 不是同一个函数**（这条是 §1.2 的结构保证，必须钉住；红演示：改成共用 → 断言必须红）
+
+**② 写入机制**
+- 写完后私钥 mode == 0o600、目录 mode == 0o700
+- `GIT_SSH_COMMAND` 含全部四个开关（逐条断言，不是整串比对 —— 整串比对在加开关时会连带改测试，掩盖删开关）
+- known_hosts 未配置 → `{:error, :known_hosts_unconfigured}`，且**目录里没有私钥残留**
+- 覆写：连写两次不同 key，第二次内容生效
+
+**③ 编排**
+- 无 cap → `{:ok, :none}`，且**没有发生任何 dispatch**
+- 有 cap → dispatch target 的 instance **等于 cap 的 instance**（钉住"cap 即指针"）
+- 持 `:read_ssh_public_key` cap **不**触发物化（钉住不是"任意 ssh 相关 cap"都算）
+- agent 另持若干无关 cap 时，dispatch 的 `ctx.caps` **只含那一条**（钉住 §3.1.1 的窄授权，红演示：改成传全集 → 断言必须红）
+- user 无 key → `{:error, :owner_has_no_key}`；user key 状态损坏 → `{:error, {:owner_key_unavailable, _}}`，**两者互不相等**（钉住 §3.1 不得合并）
+- 各条错误路径都**不抛异常**（调用方 spawn 不能被它掀翻）
+
+**⑤ 发放 task**
+- 发完后 `list_caps_for(agent)` 里有且仅有那一条新 cap，且 `instance == user_uri`
+- 非 admin 调用被拒
+
+**⑥ 接线**
+- cc PTY 与 cc headless 两条 `cmd_env` 构建路径，在 ③ 返回 `:none` 时 env **逐字节不变**（钉住关闭态零影响）
+
+**Gate**：`mix ci.fast`（显式 `timeout: 300000`，`POSTGRES_PORT=15432`；**被 kill 的运行不算通过**）。
+
+---
+
+## 9. 明确不在 1b 范围内
+
+- **codex / py / curl flavor 接线** —— 机制在 core，各 flavor 一行接入，按需再做
+- **World UI 发放入口** —— 1b 只有 mix task
+- **一键撤销命令**（见 §6）
+- **repo 从哪来** —— 1a 立的约束：key 投递与工作目录来源**解耦**。1b 只管身份，不碰 `GitRunner` / `Provisioner` / `ChangeCollector` / `StageRunner` / `git_workflow`
+- **per-repo deploy key**、key 轮转、导入已有私钥（1a §9 已排除，此处不复活）
+- **at-rest 封存** —— 1a §6，归统一安全轨
+- **A1 与 B2′ 的运行期切换机制** —— 见 §10
+
+---
+
+## 10. 一条留给 A1 的已知约束（现在不建，但必须记下）
+
+用户提出 B2′ 与 A1 应当是两种**可切换**的策略。上游 spec §8.3 的结论是：**可以按任务/按仓库二选一，绝不叠加**。
+
+1b 增加一条硬约束：
+
+> **切换粒度不能低于 key 的作用域。**
+
+1a 已定 key 归 **User**。因此只要一个 session 里有**一个**仓库走 B2′，key 就进了该 agent 的文件系统 —— 此刻它手里的 key 覆盖**该 user 的所有仓库**。那些"本次走 A1"的仓库，隔离**同时失效**。
+
+所以 A1 落地时，**按仓库切换是假的**；真实的最小切换粒度是 **agent**（= 那条 cap 的粒度，正好就是 §1.1 建的开关）。
+
+**1b 不建切换机制**（A1 尚不存在，YAGNI）。只留这条约束，并且 §1.1 的 cap 开关天然就是正确粒度 —— A1 落地时不需要改开关，只需要不发。
+
+---
+
+## 11. 需回填上游 spec
+
+`docs/superpowers/specs/2026-07-31-git-credential-model-options-design.md` §8.3 讨论共存/切换时，**未指出"切换粒度 ≥ key 作用域"**。按 §10 回填一段。
