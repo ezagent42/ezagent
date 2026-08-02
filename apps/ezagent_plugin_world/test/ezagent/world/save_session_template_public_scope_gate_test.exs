@@ -24,10 +24,10 @@ defmodule Ezagent.World.SaveSessionTemplatePublicScopeGateTest do
   defp uniq, do: System.unique_integer([:positive])
 
   # Actor-extraction C1: world actions re-derive the caller's caps FRESH via
-  # `PresenterCaps.load/1` → `EntityCaps.load(caller)` (no mount snapshot). Spawn
+  # `PresenterCaps.load/1` → `IdentityCaps.load(caller)` (no mount snapshot). Spawn
   # the caller's Identity Kind HOLDING the signed workspace caps a real logged-in
   # operator would (the spawn mints the current self-license), so the fresh load
-  # returns them — mirroring production, where `current_caps` == `EntityCaps.load`
+  # returns them — mirroring production, where `current_caps` == `IdentityCaps.load`
   # at mount (live_auth.ex:234).
   defp spawn_user(uri, caps \\ []) do
     case Ezagent.Kind.spawn(User, %{uri: uri, initial_caps: Enum.to_list(caps)}) do

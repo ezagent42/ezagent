@@ -60,7 +60,7 @@ defmodule Ezagent.Session.OffboardingTransferTest do
     refute RevocationFence.fenced?(session_uri)
     assert session_uri in DerivationEdges.descendants(workspace_owner)
 
-    assert Enum.any?(Ezagent.EntityCaps.load(workspace_owner), fn cap ->
+    assert Enum.any?(Ezagent.IdentityCaps.load(workspace_owner), fn cap ->
              cap.kind == :session and cap.behavior == Ezagent.ActionSet.Session and
                Ezagent.Capability.action_of(cap) == :receive and cap.instance == session_uri
            end)
@@ -132,7 +132,7 @@ defmodule Ezagent.Session.OffboardingTransferTest do
     refute RevocationFence.fenced?(template_uri)
     assert template_uri in DerivationEdges.descendants(workspace_owner)
 
-    assert Enum.any?(Ezagent.EntityCaps.load(workspace_owner), fn cap ->
+    assert Enum.any?(Ezagent.IdentityCaps.load(workspace_owner), fn cap ->
              cap.instance == template_uri
            end)
   end

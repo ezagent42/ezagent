@@ -30,8 +30,8 @@ defmodule Ezagent.Identity.Authority do
   ## `manages?/2` — durable-identity, admin-UNION (K2)
 
   `manages?(caller, target)` resolves the caller's DURABLE identity caps by URI
-  via `Ezagent.EntityCaps.load/1` (K5 — the live `:identity` slice, NOT
-  `ctx.caps`, NOT `users.caps_json`) and is true iff the caller:
+  via `Ezagent.IdentityCaps.load/1` (K5 — the live `:identity` slice, not
+  caller-supplied `ctx.caps`) and is true iff the caller:
 
     * holds a `Manage`-over-`target` cap, OR
     * is an admin per the FULL admin union (`AdminAuthority.admin?/2` — bootstrap
@@ -113,7 +113,7 @@ defmodule Ezagent.Identity.Authority do
   """
   @spec manages?(URI.t(), URI.t()) :: boolean()
   def manages?(%URI{} = caller, %URI{} = target) do
-    caps = Ezagent.EntityCaps.load(caller)
+    caps = Ezagent.IdentityCaps.load(caller)
 
     holds_manage_over_target?(caps, target) or
       AdminAuthority.admin?(caller, caps) or

@@ -2,7 +2,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @moduledoc false
 
   alias Ezagent.{Capability, Invocation}
-  alias Ezagent.Cap.Delivery
+  alias Ezagent.Cap.{Delivery, GrantArtifact}
 
   @version 4
   @delivery_actions [:absorb_cap, :revoke_cap]
@@ -36,6 +36,7 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec encode(Invocation.t()) :: {:ok, map()} | {:error, :invalid_delivery_envelope}
   def encode(%Invocation{} = invocation) do
     with {:ok, {producer, op, cap}} <- producer_parts(invocation),
+         {:ok, cap} <- GrantArtifact.validate(cap),
          {:ok, caller, holder, caps} <- allowlisted_context(invocation.ctx, invocation.target) do
       {:ok,
        %{
@@ -101,8 +102,10 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @spec invocation_identity(Invocation.t()) ::
           {:ok, String.t()} | {:error, :invalid_delivery_envelope}
   def invocation_identity(%Invocation{args: args}) do
-    case Map.get(args, :artifact) || Map.get(args, :cap) do
-      %Capability{} = cap -> {:ok, payload_identity(cap)}
+    with %Capability{} = cap <- Map.get(args, :artifact) || Map.get(args, :cap),
+         {:ok, cap} <- GrantArtifact.validate(cap) do
+      {:ok, payload_identity(cap)}
+    else
       _ -> {:error, :invalid_delivery_envelope}
     end
   end
@@ -125,13 +128,15 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   @doc false
   @spec semantic_identity(Capability.t()) :: String.t()
   def semantic_identity(%Capability{} = cap) do
+    identity = {Capability.identity_key(cap), cap.key_id, cap.grant_id}
+
     digest =
-      {Capability.identity_key(cap), cap.key_id}
+      identity
       |> :erlang.term_to_binary([:deterministic])
       |> then(&:crypto.hash(:sha256, &1))
       |> Base.encode16(case: :lower)
 
-    "cap-v2:#{digest}"
+    "cap:#{digest}"
   end
 
   defp producer_parts(%Invocation{
@@ -180,16 +185,13 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
   defp allowlisted_context(_, _target), do: :error
 
   defp validate_context(caller, holder, caps) do
-    caps =
-      caps
-      |> MapSet.to_list()
-      |> Enum.sort_by(&:erlang.term_to_binary(&1, [:deterministic]))
-
-    if valid_caller?(caller) and match?(%URI{}, holder) and
-         Enum.all?(caps, &match?(%Capability{}, &1)) do
-      {:ok, caller, holder, caps}
+    with true <- valid_caller?(caller),
+         true <- match?(%URI{}, holder),
+         {:ok, artifacts} <- GrantArtifact.validate_set(caps, :delivery_context) do
+      sorted = Enum.sort_by(artifacts, &:erlang.term_to_binary(&1, [:deterministic]))
+      {:ok, caller, holder, sorted}
     else
-      :error
+      _ -> :error
     end
   end
 
@@ -229,14 +231,20 @@ defmodule Ezagent.Cap.DeliveryOutbox.Envelope do
               op in @delivery_actions and is_binary(target_uri) and is_list(caps) do
     expected_producer = if op == :absorb_cap, do: :identity_absorb, else: :identity_revoke
 
-    if producer == expected_producer and target_uri == delivery.target_uri and
-         op == delivery.op and delivery.payload_version == @version and
-         payload_identity(cap) == delivery.payload_identity and caller == presenter and
-         valid_caller?(presenter) and match?(%URI{}, authenticated_principal) and
-         Enum.all?(caps, &match?(%Capability{}, &1)) do
+    with {:ok, ^cap} <- GrantArtifact.validate(cap),
+         {:ok, _artifacts} <- GrantArtifact.validate_set(caps, :delivery_envelope),
+         true <- producer == expected_producer,
+         true <- target_uri == delivery.target_uri,
+         true <- op == delivery.op,
+         true <- delivery.payload_version == @version,
+         true <- payload_identity(cap) == delivery.payload_identity,
+         true <- cap.grant_id == delivery.grant_id,
+         true <- caller == presenter,
+         true <- valid_caller?(presenter),
+         true <- match?(%URI{}, authenticated_principal) do
       :ok
     else
-      {:error, :field_mismatch}
+      _ -> {:error, :field_mismatch}
     end
   end
 

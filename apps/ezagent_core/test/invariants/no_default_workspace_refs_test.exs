@@ -39,7 +39,7 @@ defmodule EzagentCore.Invariants.NoDefaultWorkspaceRefsTest do
   # `{table, [columns]}` — every URI-shaped column. Add new entries
   # here when a future migration introduces additional URI columns.
   @uri_columns [
-    {"users", ["uri", "workspace_uri", "caps_json"]},
+    {"users", ["uri", "workspace_uri"]},
     {"kind_snapshots", ["uri", "workspace_uri"]},
     {"external_mirror_bindings", ["session_uri", "workspace_uri"]},
     {"feishu_user_bindings", ["user_uri"]},

@@ -108,7 +108,7 @@ defmodule Ezagent.Workspace.WorkspaceReads do
        fallback) — the same predicate `IdentityData`'s manage affordances
        already use;
     2. MANAGES — the caller's live-loaded caps
-       (`Ezagent.EntityCaps.load/1`, live-first like
+       (`Ezagent.IdentityCaps.load/1`, live-first like
        `workspace_visible?/2`) satisfy the SAME instance-scoped Manage
        gate `Ezagent.Domain.Agent.read_config/3` enforces
        (`cap(:agent, Manage, :read_cascade)` — satisfied by the
@@ -197,7 +197,7 @@ defmodule Ezagent.Workspace.WorkspaceReads do
     target = URI.to_string(workspace_uri)
 
     caller
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> then(&Listing.list_workspaces_for(caller, &1))
     |> Enum.any?(fn ws -> uri_string(Map.get(ws, :uri)) == target end)
   rescue
@@ -367,7 +367,7 @@ defmodule Ezagent.Workspace.WorkspaceReads do
       workspace_uri: Ezagent.Capability.workspace_of(agent_uri)
     }
 
-    caps = Ezagent.EntityCaps.load(caller)
+    caps = Ezagent.IdentityCaps.load(caller)
     Ezagent.Identity.caps_authorize?(caller, caps, needed)
   rescue
     _ -> false

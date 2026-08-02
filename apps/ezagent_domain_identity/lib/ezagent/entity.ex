@@ -82,10 +82,9 @@ defmodule Ezagent.Entity do
   # may not be live yet. Idempotently ensure spawn here so the caps
   # lookup returns the real cap set.
   #
-  # When we have to spawn the Kind ourselves, we also hydrate its
-  # initial caps from the DB row's `caps_json` — otherwise the
-  # demand-spawn path would silently produce an empty MapSet for any
-  # user provisioned after boot.
+  # When we have to spawn the Kind ourselves, we hydrate its initial grants
+  # from the durable capability Store so demand-spawn cannot silently produce
+  # an empty authority set for a user provisioned after boot.
   defp ensure_spawned(%URI{} = uri) do
     if Ezagent.Kind.alive?(uri) do
       :ok
@@ -95,7 +94,7 @@ defmodule Ezagent.Entity do
   end
 
   defp spawn_with_hydrated_caps(%URI{} = uri) do
-    case Ezagent.EntityCaps.load_persisted(uri) do
+    case Ezagent.IdentityCaps.load_persisted(uri) do
       caps_list when is_list(caps_list) and caps_list != [] ->
         # Reach past the generic spawn fn so we can pass initial_caps.
         # The spawn fn registered in EzagentDomainIdentity.Application

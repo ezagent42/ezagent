@@ -200,10 +200,10 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         exact_module?(module, [:Ezagent, :Entity, :Token]) and function == :mint ->
           :token_identity
 
-        exact_module?(module, [:Ezagent, :EntityCaps]) and function in [:persist, :grant] ->
+        exact_module?(module, [:Ezagent, :IdentityCaps]) and function in [:persist, :grant] ->
           :capability_holder
 
-        exact_module?(module, [:Ezagent, :EntityCaps, :UserStore]) and function == :persist ->
+        exact_module?(module, [:Ezagent, :IdentityCaps, :Store]) and function == :persist ->
           :capability_holder
 
         exact_module?(module, [:Ezagent, :Identity]) and function == :grant_cap ->
@@ -300,10 +300,10 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         member_identity:
           "alias Ezagent.Entity.Profile, as: IdentityProfile\nIdentityProfile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
         capability_holder:
-          "alias Ezagent.{EntityCaps, Entity.Token}\nEntityCaps.persist(receiver, caps)",
-        capability_holder: "alias Ezagent.EntityCaps\nEntityCaps.grant(receiver, cap)",
+          "alias Ezagent.{IdentityCaps, Entity.Token}\nIdentityCaps.persist(receiver, caps)",
+        capability_holder: "alias Ezagent.IdentityCaps\nIdentityCaps.grant(receiver, cap)",
         capability_holder:
-          "alias Ezagent.EntityCaps.UserStore\nUserStore.persist(receiver, caps)",
+          "alias Ezagent.IdentityCaps.Store\nStore.persist(receiver, caps)",
         capability_holder: "alias Ezagent.Identity\nIdentity.grant_cap(receiver, cap, grantor)",
         capability_holder:
           "alias Ezagent.Identity.Grant\nGrant.grant_cap_via_router(receiver, cap, authorization, :sync)"
@@ -324,10 +324,10 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
         token_identity: "alias Ezagent.Entity.Token\nreceiver |> Token.mint(label: \"fixture\")",
         member_identity:
           "alias Ezagent.Entity.Profile\n%{entity_uri: receiver, display_name: \"Fixture\"} |> Profile.upsert()",
-        capability_holder: "alias Ezagent.EntityCaps\nreceiver |> EntityCaps.persist(caps)",
-        capability_holder: "alias Ezagent.EntityCaps\nreceiver |> EntityCaps.grant(cap)",
+        capability_holder: "alias Ezagent.IdentityCaps\nreceiver |> IdentityCaps.persist(caps)",
+        capability_holder: "alias Ezagent.IdentityCaps\nreceiver |> IdentityCaps.grant(cap)",
         capability_holder:
-          "alias Ezagent.EntityCaps.UserStore\nreceiver |> UserStore.persist(caps)",
+          "alias Ezagent.IdentityCaps.Store\nreceiver |> Store.persist(caps)",
         capability_holder: "alias Ezagent.Identity\nreceiver |> Identity.grant_cap(cap, grantor)",
         capability_holder:
           "alias Ezagent.Identity.Grant\nreceiver |> Grant.grant_cap_effect(cap, authorization)"
@@ -347,9 +347,9 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
   for {category, fixture} <- [
         member_identity:
           "Ezagent.Entity.Profile.upsert(%{entity_uri: receiver, display_name: \"Fixture\"})",
-        capability_holder: "Ezagent.EntityCaps.persist(receiver, caps)",
-        capability_holder: "Ezagent.EntityCaps.grant(receiver, cap)",
-        capability_holder: "Ezagent.EntityCaps.UserStore.persist(receiver, caps)",
+        capability_holder: "Ezagent.IdentityCaps.persist(receiver, caps)",
+        capability_holder: "Ezagent.IdentityCaps.grant(receiver, cap)",
+        capability_holder: "Ezagent.IdentityCaps.Store.persist(receiver, caps)",
         capability_holder: "Ezagent.Identity.grant_cap(receiver, cap, grantor)",
         capability_holder:
           "Ezagent.Identity.Grant.grant_cap_returning_effect(receiver, cap, authorization, :fixture)"
@@ -381,8 +381,8 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
     user_uri = Ezagent.URI.user("acme", "owner")
     Ezagent.Entity.Token.mint(user_uri, label: "fixture")
     Ezagent.Entity.Profile.upsert(%{entity_uri: user_uri, display_name: "Owner"})
-    Ezagent.EntityCaps.persist(user_uri, caps)
-    Ezagent.EntityCaps.grant(user_uri, cap)
+    Ezagent.IdentityCaps.persist(user_uri, caps)
+    Ezagent.IdentityCaps.grant(user_uri, cap)
     """
 
     assert Detector.scan_source(source, "fixture.ex") == []
@@ -402,9 +402,9 @@ defmodule Ezagent.DomainGit.GitTaskAccessPrincipalBoundaryTest do
 
   for {category, import_module, call} <- [
         {:token_identity, "Ezagent.Entity.Token", "mint(receiver, label: \"fixture\")"},
-        {:capability_holder, "Ezagent.EntityCaps", "persist(receiver, caps)"},
-        {:capability_holder, "Ezagent.EntityCaps", "grant(receiver, cap)"},
-        {:capability_holder, "Ezagent.EntityCaps.UserStore", "persist(receiver, caps)"},
+        {:capability_holder, "Ezagent.IdentityCaps", "persist(receiver, caps)"},
+        {:capability_holder, "Ezagent.IdentityCaps", "grant(receiver, cap)"},
+        {:capability_holder, "Ezagent.IdentityCaps.Store", "persist(receiver, caps)"},
         {:capability_holder, "Ezagent.Identity", "grant_cap(receiver, cap, grantor)"},
         {:capability_holder, "Ezagent.Identity.Grant", "grant_cap(receiver, cap, auth)"},
         {:capability_holder, "Ezagent.Identity.Grant",

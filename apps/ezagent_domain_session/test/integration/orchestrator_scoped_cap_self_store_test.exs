@@ -120,7 +120,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
              )
            ) == session_cap_count()
 
-    refute Enum.any?(Ezagent.Identity.read_entity_caps(orchestrator_uri), fn cap ->
+    refute Enum.any?(Ezagent.IdentityCaps.load(orchestrator_uri), fn cap ->
              Enum.any?(
                pending,
                &(Ezagent.Capability.identity_key(&1) ==
@@ -139,7 +139,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorScopedCapSelfStor
              )
 
     assert eventually(fn ->
-             caps = Ezagent.Identity.read_entity_caps(orchestrator_uri)
+             caps = Ezagent.IdentityCaps.load(orchestrator_uri)
 
              Enum.all?(pending, fn expected ->
                Enum.any?(

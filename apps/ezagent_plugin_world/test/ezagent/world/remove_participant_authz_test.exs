@@ -68,7 +68,7 @@ defmodule Ezagent.World.RemoveParticipantAuthzTest do
   defp socket_with_cap(caller, session_uri, target_action) do
     target = Ezagent.URI.with_action(session_uri, :session, target_action)
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
-    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    :ok = Ezagent.IdentityCaps.grant(caller, cap)
 
     %Phoenix.LiveView.Socket{}
     |> assign(:current_entity_uri, caller)

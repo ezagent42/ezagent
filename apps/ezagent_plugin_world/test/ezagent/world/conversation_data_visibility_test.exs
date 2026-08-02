@@ -58,7 +58,7 @@ defmodule Ezagent.World.ConversationDataVisibilityTest do
     :ok = ensure_user(user_uri)
 
     Enum.each(caps, fn cap ->
-      assert :ok = Ezagent.EntityCaps.grant(user_uri, cap)
+      assert :ok = Ezagent.IdentityCaps.grant(user_uri, cap)
     end)
 
     :ok

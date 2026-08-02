@@ -337,9 +337,9 @@ defmodule Mix.Tasks.Ezagent.Arch.Scan do
   # `AgentRecipeAttributes`) were renamed to `Ezagent.Agent.Recipe*` (they join
   # the existing dotted `Ezagent.Agent.Recipe*` cluster), so cap is 0.
   @concatenated_namespace_allowlist [
-    # EntityCaps — the locked storage-facade name and namespace ROOT for its
+    # IdentityCaps — the locked storage-facade name and namespace ROOT for its
     # user/agent store adapters; it is not Entity.Caps parent-child glue.
-    "Ezagent.EntityCaps",
+    "Ezagent.IdentityCaps",
     # AgentFlavor* — "agent flavor" is itself the unit (a flavor OF agent); the
     # flavor cluster is deliberately glued (Registry/Attributes/Resolver), NOT
     # dotted under Ezagent.Agent.

@@ -197,7 +197,7 @@ defmodule Ezagent.Session.MemberCapMigration do
     ws = Ezagent.Capability.workspace_of(session_uri)
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
-    case Ezagent.EntityCaps.effective_caps(member_uri) do
+    case Ezagent.IdentityCaps.effective_caps(member_uri) do
       {:ok, caps} ->
         {:ok,
          Enum.any?(caps, fn

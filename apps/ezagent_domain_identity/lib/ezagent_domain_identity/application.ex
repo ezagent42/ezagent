@@ -121,12 +121,6 @@ defmodule EzagentDomainIdentity.Application do
         # the spawn itself.
         :ok = maybe_seed_admin_kind_for_tests()
 
-        # #189 PR-3 FIX 5 — prime the identity-plane cutover epoch cache at boot
-        # so the steady-state authorization read is a single `:persistent_term`
-        # hit. Fail-safe: a no-op when pt caching is disabled (test) or the epoch
-        # is not yet active / unreadable (fail-closed — nothing to cache).
-        :ok = Ezagent.Identity.Cutover.prime()
-
         {:ok, sup_pid}
 
       other ->
@@ -144,8 +138,8 @@ defmodule EzagentDomainIdentity.Application do
 
   # Strict per-Kind authority bootstrap still needs the canonical admin's
   # durable identity row before a target can return a signed cap to that
-  # grantee. The authority anchor lives in `kind_cap_authorities`, not in
-  # `users.caps_json`, so the row is deliberately born with no capabilities.
+  # grantee. The authority anchor lives in `kind_cap_authorities`; the user and
+  # Store rows are deliberately born with no ambient capabilities.
   # Tests skip password/profile repair but no longer skip this identity root.
   defp ensure_admin_user_row do
     admin_uri = User.admin_uri()
@@ -280,7 +274,7 @@ defmodule EzagentDomainIdentity.Application do
           nil ->
             # The per-Kind admin anchor is sealed in the target authority row
             # and loaded on demand by the framework. It must never be copied as
-            # an unsigned ambient wildcard into `users.caps_json`.
+            # an unsigned ambient wildcard into the identity authority.
             case Ezagent.Users.create(admin_uri, nil, []) do
               {:ok, _decoded} ->
                 repair_admin_user()
@@ -386,24 +380,14 @@ defmodule EzagentDomainIdentity.Application do
           {:ok, "user"} ->
             # SPEC caps-cleanup-v1 §4.4 — admin's bootstrap caps come
             # from `Ezagent.SystemPrincipal` (closed Catalog). Non-admin
-            # users have their caps hydrated from `users.caps_json` (the
-            # durable bootstrap record written by `Ezagent.Users.create/3`)
+            # users have their caps hydrated from the Store row initialized by
+            # `Ezagent.Users.create/3`
             # so EVERY demand-spawn path (mix tasks, LV admin
             # `Behavior.WorkspaceUserAdmin.create_user`, login-mediated
             # `Entity.ensure_spawned/1`) lands the same cap set into the
             # User Kind's `:identity` slice — independent of which spawn
             # entry point ran first.
             #
-            # Pre-fix (wildcard-cap-fix regression, 2026-05-26): non-admin
-            # users defaulted to `MapSet.new()`, so a `mix ezagent.user.create`
-            # that wrote a wildcard cap to `caps_json` produced a slice
-            # WITHOUT that wildcard — the slice was snapshotted in the
-            # default-only state, and `Kind.Snapshot.load_or_init/3`
-            # then preferred snapshot over `args[:initial_caps]` on every
-            # subsequent boot. The wildcard never reached dispatch step
-            # 5.5's `holds_cap?` lookup. PR-CC-2-v2 (#354) + #358
-            # unmasked this by removing the transitional bridge that
-            # was masking the divergence for `system://` principals.
             initial_caps = User.initial_caps_for_spawn(uri)
 
             # V1 prevention (Allen 2026-05-21): route via Ezagent.Kind.spawn/2.

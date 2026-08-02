@@ -120,11 +120,11 @@ defmodule Ezagent.World.AdmissionGateWorldInviteTest do
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, inviter)
 
     # Actor-extraction C1: invite_member re-derives caps FRESH via
-    # PresenterCaps.load → EntityCaps.load(inviter) (no mount snapshot). A
+    # PresenterCaps.load → IdentityCaps.load(inviter) (no mount snapshot). A
     # confirmed user already holds a self-license; durably grant it the signed
     # join cap so it clears the `:join` CapBAC gate — the admission decision
     # still reads the inviter's DURABLE `manages?/2`, not this cap.
-    :ok = Ezagent.EntityCaps.grant(inviter, cap)
+    :ok = Ezagent.IdentityCaps.grant(inviter, cap)
 
     %Phoenix.LiveView.Socket{}
     |> assign(:current_entity_uri, inviter)

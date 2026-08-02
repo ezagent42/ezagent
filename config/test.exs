@@ -37,16 +37,6 @@ config :ezagent_domain_identity,
        :provisioning_receipt_secret,
        "test-only-provisioning-receipt-secret"
 
-# #189 PR-3 FIX 5 — the identity-plane cutover EPOCH is forced ACTIVE in test so
-# the suite exercises the POST-cutover store-authoritative semantics (the 9
-# `holder_revoked` reds are green only post-cutover). Epoch-specific tests
-# (`Ezagent.Identity.CutoverTest`, and the pre-epoch/read-error regressions)
-# flip this override to `false` (or delete it) with `async: false` to drive the
-# real DB-backed `active?/0`. `:identity_cutover_pt_cache` false keeps the
-# VM-global `:persistent_term` sticky-`true` from ever leaking across the suite.
-config :ezagent_domain_identity, :identity_cutover_active_override, true
-config :ezagent_domain_identity, :identity_cutover_pt_cache, false
-
 # Keep TEST host routing aligned with local development: world routes are still
 # scoped to world.localhost/world.* unless a test deliberately overrides it.
 config :ezagent_web, :world_host_scope, "world."
@@ -56,12 +46,14 @@ config :ezagent_web, :world_host_scope, "world."
 # The MIX_TEST_PARTITION environment variable can be used
 # to provide built-in test partitioning in CI environment.
 # Run `mix help test` for more information.
+default_database = "ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}"
+
 config :ezagent_core, EzagentCore.Repo,
   username: System.get_env("POSTGRES_USER", "ezagent_pg_compat"),
   password: System.get_env("POSTGRES_PASSWORD", "ezagent_pg_compat"),
   hostname: System.get_env("POSTGRES_HOST", "127.0.0.1"),
   port: String.to_integer(System.get_env("POSTGRES_PORT", "55432")),
-  database: "ezagent_pg_compat_test#{System.get_env("MIX_TEST_PARTITION")}",
+  database: System.get_env("EZAGENT_TEST_DATABASE", default_database),
   priv: "priv/repo_pg",
   # Phase 9 (Allen 2026-05-21): integration tests that exercise the
   # full dispatch pipeline now hit the Repo from:

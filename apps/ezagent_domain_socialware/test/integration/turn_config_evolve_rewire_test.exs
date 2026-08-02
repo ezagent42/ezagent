@@ -205,7 +205,7 @@ defmodule EzagentDomainSocialware.Integration.TurnConfigEvolveRewireTest do
     # holds the concrete session-scoped Turn caps — plus the agent's manage-cap
     # that authorizes the agent-side apply. (PR-甲-2: no broad default baseline.)
     caps = MapSet.new([manage_cap | turn_drive_caps(session, manager)])
-    :ok = Ezagent.EntityCaps.grant(manager, manage_cap)
+    :ok = Ezagent.IdentityCaps.grant(manager, manage_cap)
     %{uri: manager, caps: caps}
   end
 

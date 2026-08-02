@@ -85,11 +85,29 @@ defmodule Ezagent.NotificationSubscriptionsTest do
     }
   end
 
+  defp signed_notifications_admin_cap(%URI{} = caller, %URI{} = stream) do
+    {:ok, authority} = Authority.open(stream, :user)
+
+    %Capability{
+      grant_id: Ecto.UUID.generate(),
+      kind: :user,
+      behavior: Ezagent.ActionSet.Notifications,
+      action: :subscribe,
+      instance: stream,
+      workspace_uri: :any,
+      granted_by: caller,
+      granted_at: DateTime.utc_now(),
+      grantee_uri: caller
+    }
+    |> then(&Authority.sign(authority, &1))
+  end
+
   defp subscribe_ctx(%URI{} = caller, %URI{} = stream, extra_caps \\ []) do
     {:ok, authority} = Authority.open(stream, :user)
 
     cap =
       %Capability{
+        grant_id: Ecto.UUID.generate(),
         kind: :user,
         behavior: Ezagent.ActionSet.Notifications,
         action: :subscribe,
@@ -124,7 +142,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
       Subs.register_subscription(
         entity,
         stream,
-        subscribe_ctx(admin, stream, [notifications_admin_cap()])
+        subscribe_ctx(admin, stream, [signed_notifications_admin_cap(admin, stream)])
       )
   end
 
@@ -828,7 +846,7 @@ defmodule Ezagent.NotificationSubscriptionsTest do
                Subs.register_subscription(
                  entity,
                  stream,
-                 subscribe_ctx(admin, stream, [notifications_admin_cap()])
+                 subscribe_ctx(admin, stream, [signed_notifications_admin_cap(admin, stream)])
                )
 
       assert [{_, _}] = Subs.list_subscriptions(entity)

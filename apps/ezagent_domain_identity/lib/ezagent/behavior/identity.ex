@@ -43,10 +43,7 @@ defmodule Ezagent.ActionSet.Identity do
 
   Migrated to the new `use Ezagent.ActionSet` action/handler contract
   per SPEC #445 §4 + §6.2. Legacy `invoke/4` replaced by
-  `handle_list_caps/2` and `handle_has_cap?/2`. Lifecycle callbacks
-  (`init_slice/1`, `post_init/2`, `handle_continue/3`) are preserved
-  per §6.2 step 9 — the Kind.Server still calls them directly. The
-  caps_json reconcile mechanism stays intact.
+  `handle_list_caps/2` and `handle_has_cap?/2`.
 
   ## Phase B migration (2026-05-29) — `use Ezagent.Lifecycle`
 
@@ -56,18 +53,10 @@ defmodule Ezagent.ActionSet.Identity do
   PID/ref/ETS transients exist. The conversion:
 
   - `init_slice/1` → `create/1` (build the caps set + owner identity cap).
-  - The `post_init/2` + `handle_continue/3` caps_json reconcile is a
-    DB-PROJECTION reconcile (OQ-8); it FOLDS into `activate/2`'s 3-arity
-    return — `activate` re-reads `users.caps_json`, unions it into the
-    persistent `state`, and returns the reconciled state. Idempotent
-    set-union by `MapSet` (invariant 20). Runs on EVERY start (fresh +
-    cold-load), subsuming the old post-init-only path.
+  - Cold activation receives a Store-derived replacement from the actor layer;
+    snapshots never seed authority.
 
-  No transients → the `activate` rebuild is purely the reconcile read
-  (returns `{:ok, %{}, reconciled_state}` for user URIs, `{:ok, %{}}`
-  otherwise). Auto-derived `state_slice` is `:identity` (matches the old
-  explicit one). Handler bodies byte-identical. `required_caps/0` +
-  `data_owner/1` pass through verbatim.
+  No transients → `activate/2` only reconciles recipe bindings and membership.
   """
 
   use Ezagent.Lifecycle
@@ -160,8 +149,6 @@ defmodule Ezagent.ActionSet.Identity do
     caps = Ezagent.Cap.verified_set(caps, Map.get(args, :uri))
 
     with {:ok, caps} <- maybe_mint_self_license(caps, args) do
-      caps = maybe_reread_durable_self_license(caps, args)
-
       state =
         case recipe_binding do
           {:active, version, keys} ->
@@ -189,9 +176,7 @@ defmodule Ezagent.ActionSet.Identity do
   # The SINGLE sanctioned self-license constructor for the Identity carrier (Z-1
   # construction ratchet: exactly this file + `self_license.ex`). Mints under the
   # in-scope authority, so it is valid only inside the principal's own compartment:
-  # `create/1` and the pre-ready `activate/2` continuation (the latter via the
-  # gated `Ezagent.Identity.PreEpochRemint`) both run under `Kind.Server`'s
-  # `with_authority`.
+  # `create/1` runs under `Kind.Server`'s `with_authority`.
   @spec mint_self_license(Enumerable.t(), URI.t()) :: {:ok, MapSet.t()} | {:error, term()}
   def mint_self_license(caps, %URI{} = uri) do
     with {:ok, type} <- Ezagent.URI.type(uri),
@@ -210,32 +195,6 @@ defmodule Ezagent.ActionSet.Identity do
       {:ok, licensed}
     end
   end
-
-  # #189 PR-3 cutover (Axis B — "re-read on restart", NEVER re-mint). A
-  # NON-snapshot (`:ephemeral`) principal (the ExternalMirrorWorker) rebuilds an
-  # EMPTY `:identity` slice on restart — no snapshot to load, and no mint on
-  # `:existed` — so re-read its DURABLE self-license (written once at `:created`)
-  # from the store INTO the live slice. Needed for the LIVE NON-self read path: a
-  # worker authorized inside the SESSION's process during `subscribe_from`
-  # (`Kind.self?(worker_uri)` false → live-first loader reads the worker's LIVE
-  # slice, not the store), which would otherwise find an empty slice and deny
-  # (`:holder_revoked`) on rehydrate/resubscribe. `Store.load/1` yields caps ONLY
-  # for an `active` row (revoked/tombstoned/absent → `[]`) and the union is
-  # gen-gated by the loader's `verified/2` on every read, so a revoked /
-  # gen-bumped principal still loads EMPTY (no resurrection). Only reached for a
-  # non-snapshot principal (a durable Kind loads its snapshot slice + runs
-  # `activate/2`, so its `create/1` isn't called on `:existed`).
-  defp maybe_reread_durable_self_license(caps, %{create_freshness: :existed, uri: %URI{} = uri}) do
-    uri
-    |> Ezagent.EntityCaps.Store.load()
-    |> Enum.find(&(Ezagent.Capability.action_of(&1) == :self_license))
-    |> case do
-      %Ezagent.Capability{} = license -> MapSet.put(caps, license)
-      _ -> caps
-    end
-  end
-
-  defp maybe_reread_durable_self_license(caps, _args), do: caps
 
   defp hydrate_recipe_binding(caps, %URI{} = uri) do
     if Ezagent.URI.type?(uri, :agent) do
@@ -260,32 +219,14 @@ defmodule Ezagent.ActionSet.Identity do
   def data_owner(:any), do: :any
   def data_owner(_), do: :no_owner
 
-  # `activate/2` — caps_json reconcile, folded from the old
-  # `post_init/2` + `handle_continue/3` (Phase B / OQ-8: a DB-projection
-  # reconcile moves into `activate`'s 3-arity return). Runs on EVERY
-  # start (fresh + cold-load), re-reading `users.caps_json` and unioning
-  # it into the persistent `state.caps` (idempotent set-union, invariant
-  # 20). No transients to rebuild → the 2-arity `{:ok, %{}}` no-op is
-  # returned when there is no reconcile (non-user URI, empty caps_json,
-  # or the union is a no-op).
+  # The actor layer replaces cold identity caps from the sole Store authority
+  # before activation. Activation only reconciles recipe bindings and derived
+  # membership state; it never reads another capability home.
   @impl Ezagent.Lifecycle
   def activate(%{caps: _existing_caps} = state, %{self_uri: %URI{scheme: "entity"} = uri}) do
     original_state = state
 
-    user_caps =
-      if Ezagent.URI.type?(uri, :user), do: Ezagent.EntityCaps.UserStore.load(uri), else: []
-
-    state = Map.update!(state, :caps, &merge_caps_by_identity(&1, user_caps))
-
-    # Canary boot regression (deploy 30456630379): PRE-EPOCH restore the genesis
-    # admin's stale/absent self-license so the §3 boot seed authorizes. The
-    # security-sensitive, resurrection-proof eligibility predicate lives in
-    # `Ezagent.Identity.PreEpochRemint` (a no-op post-epoch / for every non-admin);
-    # BEFORE `persist_user_caps_after_marker` so it rides the fail-closed projection.
-    state = Ezagent.Identity.PreEpochRemint.remint(state, uri)
-
-    with :ok <- persist_user_caps_after_marker(uri, state.caps),
-         {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
+    with {:ok, reconciled} <- reconcile_recipe_binding_state(state, uri) do
       :ok =
         Ezagent.Identity.MembershipConvergence.converge(
           uri,
@@ -301,18 +242,6 @@ defmodule Ezagent.ActionSet.Identity do
   end
 
   def activate(_state, _ctx), do: {:ok, %{}}
-
-  # `activate/2` runs only after Kind.Server has atomically stored the initial
-  # snapshot together with `ever_created`. Keeping the user projection write
-  # here prevents a crash between `create/1` and that marker-bearing commit
-  # from leaving a self-license that a later retry cannot safely mint.
-  defp persist_user_caps_after_marker(uri, caps) do
-    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
-      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
-    else
-      :ok
-    end
-  end
 
   @doc false
   @spec reconcile_recipe_binding_state(map(), URI.t()) :: {:ok, map()} | {:error, term()}
@@ -497,8 +426,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   escape hatch (SPEC §5 / §7 OQ-7) and carries the
   `# lifecycle:state_slice_override` marker. `init_slice/1` → `create/1`
   (delegates to `Identity.create/1`, the shared slice shape). The
-  caps_json reconcile lives on `Identity.activate/2`, so IdentityAdmin's
-  `activate/2` is the macro no-op (omitted). Handler bodies
+  IdentityAdmin's `activate/2` is the macro no-op (omitted). Handler bodies
   byte-identical. `required_caps/0` + `data_owner/1` + `workspace_scoped?/0`
   pass through.
   """
@@ -583,9 +511,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # =================================================================
   # Lifecycle state — `create/1` delegates to `Identity.create/1`, the
   # shared `:identity` slice shape (Phase B; was `init_slice/1`). The
-  # `state_slice:` override pins the key to `:identity`. The caps_json
-  # reconcile lives on `Identity.activate/2`; IdentityAdmin's `activate`
-  # is the macro no-op.
+  # `state_slice:` override pins the key to `:identity`; IdentityAdmin's
+  # `activate` is the macro no-op.
   # =================================================================
 
   @impl Ezagent.Lifecycle
@@ -631,12 +558,12 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_absorb_cap(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal storage action used by `Ezagent.EntityCaps.persist/2` for a live entity."
+  @doc "VM-internal storage action used by `Ezagent.IdentityCaps.persist/2` for a live entity."
   def handle_persist_caps(%{caps: caps}, %{caller: :vm_internal} = ctx) when is_list(caps) do
     receiver = Map.get(ctx, :self_uri)
 
-    with :ok <- Ezagent.EntityCaps.validate_issued_caps(caps, receiver),
-         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(caps, receiver, true) do
+    with :ok <- Ezagent.IdentityCaps.validate_issued_caps(caps, receiver),
+         {:ok, persistable} <- Ezagent.IdentityCaps.prepare_for_storage(caps, receiver, true) do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
@@ -651,13 +578,13 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_persist_caps(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal atomic single-artifact storage used by `Ezagent.EntityCaps.grant/2`."
+  @doc "VM-internal atomic single-artifact storage used by `Ezagent.IdentityCaps.grant/2`."
   def handle_store_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
     receiver = Map.get(ctx, :self_uri)
     updated = replace_cap(ctx[:read].(:caps, MapSet.new()), cap)
 
-    with :ok <- Ezagent.EntityCaps.validate_issued_caps([cap], receiver),
-         {:ok, persistable} <- Ezagent.EntityCaps.prepare_for_storage(updated, receiver, true) do
+    with :ok <- Ezagent.IdentityCaps.validate_issued_caps([cap], receiver),
+         {:ok, persistable} <- Ezagent.IdentityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(receiver, new_caps) do
@@ -669,16 +596,20 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
   def handle_store_cap(_args, _ctx), do: {:error, :unauthorized}
 
-  @doc "VM-internal atomic single-artifact removal used by `Ezagent.EntityCaps.revoke/2`."
+  @doc "VM-internal atomic single-artifact removal used by `Ezagent.IdentityCaps.revoke/2`."
   def handle_remove_cap(%{cap: %Ezagent.Capability{} = cap}, %{caller: :vm_internal} = ctx) do
     current_caps = ctx[:read].(:caps, MapSet.new())
+    receiver = Map.get(ctx, :self_uri)
 
-    with {:ok, updated} <- Ezagent.Capability.revoke(current_caps, cap),
+    with {:ok, revocation_artifact} <- revocation_artifact(current_caps, cap),
+         {:ok, resolved} <-
+           Ezagent.IdentityCaps.Store.revoke_cap(receiver, revocation_artifact),
+         {:ok, updated} <- Ezagent.Capability.revoke(current_caps, resolved),
          {:ok, persistable} <-
-           Ezagent.EntityCaps.prepare_for_storage(updated, Map.get(ctx, :self_uri), true) do
+           Ezagent.IdentityCaps.prepare_for_storage(updated, receiver, true) do
       new_caps = MapSet.new(persistable)
 
-      with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
+      with :ok <- persist_entity_caps(receiver, new_caps) do
         {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
       end
     else
@@ -703,7 +634,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          {:ok, reconciled} <-
            Ezagent.ActionSet.Identity.reconcile_recipe_binding_state(state, receiver),
          version when is_integer(version) <- Map.get(reconciled, :recipe_binding_version),
-         %MapSet{} = keys <- Map.get(reconciled, :recipe_binding_keys) do
+         %MapSet{} = keys <- Map.get(reconciled, :recipe_binding_keys),
+         :ok <- persist_entity_caps(receiver, reconciled.caps) do
       {:ok, %{caps: MapSet.to_list(reconciled.caps)},
        [
          set_caps_effect(reconciled.caps),
@@ -736,11 +668,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.put(deduped, cap_struct)
       receiver = Map.get(ctx, :self_uri)
 
-      # User authority is physically projected in `users.caps_json`, whereas
-      # non-user identities are snapshot-backed. Persist the user projection
-      # before scheduling holder-driven convergence so `add_self`'s independent
-      # durable read can observe the committed grant. The VM-internal
-      # `store_cap` path already has this ordering; absorb/grant must match it.
+      # Commit the Store authority before scheduling projections or convergence
+      # so independent durable reads observe the grant.
       with :ok <- persist_entity_caps(receiver, new_caps) do
         notify_cap_change(ctx, :cap_granted, "A new capability was granted to you.", cap_struct)
 
@@ -776,29 +705,52 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   def handle_revoke_cap(%{cap: cap}, ctx) do
     cap_struct = Ezagent.Capability.normalize!(cap, granter_from_ctx(ctx))
     current_caps = ctx[:read].(:caps, MapSet.new())
+    receiver = Map.get(ctx, :self_uri)
 
-    case Ezagent.Capability.revoke(current_caps, cap_struct) do
-      {:ok, new_caps} ->
-        notify_cap_change(
-          ctx,
-          :cap_revoked,
-          "A capability was revoked from you.",
-          cap_struct
-        )
+    with {:ok, revocation_artifact} <- revocation_artifact(current_caps, cap_struct),
+         {:ok, resolved} <-
+           Ezagent.IdentityCaps.Store.revoke_cap(receiver, revocation_artifact),
+         {:ok, new_caps} <- Ezagent.Capability.revoke(current_caps, resolved) do
+      notify_cap_change(
+        ctx,
+        :cap_revoked,
+        "A capability was revoked from you.",
+        resolved
+      )
 
-        {:ok, %{caps: MapSet.to_list(new_caps)},
-         [
-           set_caps_effect(new_caps),
-           {:emit, :cap_revoked,
-            %{
-              target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-              cap: cap_struct,
-              at: DateTime.utc_now()
-            }}
-         ]}
+      {:ok, %{caps: MapSet.to_list(new_caps)},
+       [
+         set_caps_effect(new_caps),
+         {:emit, :cap_revoked,
+          %{
+            target_uri: receiver |> uri_to_str(),
+            cap: resolved,
+            at: DateTime.utc_now()
+          }}
+       ]}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-      {:error, :cannot_revoke_admin} = err ->
-        err
+  # A revoke envelope historically carried only the logical cap shape. P2's
+  # ledger needs the exact signed grant artifact when the durable Store has no
+  # matching row (for example, while an absorb is still pending). The live
+  # identity slice is trusted holder state, so prefer its matching artifact and
+  # leave Store responsible for exact signature/current-generation validation.
+  # Preserve the genesis invariant before touching either Store or the ledger.
+  defp revocation_artifact(current_caps, %Ezagent.Capability{} = caller_cap) do
+    if Ezagent.Capability.admin_invariant?(caller_cap) do
+      {:error, :cannot_revoke_admin}
+    else
+      identity = Ezagent.Capability.identity_key(caller_cap)
+
+      artifact =
+        Enum.find(current_caps, fn held ->
+          Ezagent.Capability.identity_key(held) == identity
+        end)
+
+      {:ok, artifact || caller_cap}
     end
   end
 
@@ -806,11 +758,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp uri_to_str(other), do: inspect(other)
 
   defp persist_entity_caps(%URI{} = uri, caps) do
-    if Ezagent.URI.type?(uri, :user) and Ezagent.EntityCaps.UserStore.exists?(uri) do
-      Ezagent.EntityCaps.UserStore.persist(uri, MapSet.to_list(caps))
-    else
-      :ok
-    end
+    Ezagent.IdentityCaps.Store.persist(uri, MapSet.to_list(caps))
   end
 
   defp persist_entity_caps(_uri, _caps), do: :ok
@@ -830,10 +778,9 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   defp normalize_artifact(%Ezagent.Capability{} = artifact), do: {:ok, artifact}
 
   defp normalize_artifact(%{} = artifact) do
-    try do
-      {:ok, Ezagent.Capability.from_map(artifact)}
-    rescue
-      _ -> {:error, :invalid}
+    case Ezagent.Cap.GrantArtifact.from_map(artifact) do
+      {:ok, capability} -> {:ok, capability}
+      {:error, _reason} -> {:error, :invalid}
     end
   end
 
@@ -866,20 +813,6 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
 
     :ok
   end
-
-  @doc """
-  Structural bound a `{:rule, …}` grant must satisfy (SPEC 2026-06-17 §3.3).
-
-  A rule may NOT mint `kind: :any` / `behavior: :any`; and an
-  `action: :any` cap is allowed ONLY when the instance is scope-bounded
-  (`{:within_session/within_workspace/spawned_by, %URI{}}`) — a concrete
-  `%URI{}` instance is allowed only with a concrete action.
-
-  The implementation lives in core beside `Cap.issue/3`; this public delegate
-  is retained for compatibility with existing callers and tests.
-  """
-  @spec rule_cap_bounded?(Ezagent.Capability.t()) :: boolean()
-  defdelegate rule_cap_bounded?(cap), to: Ezagent.CapabilityRegistry
 
   # SPEC 2026-06-16 §4 (Decision #88) — manager-provenance predicate for the
   # `:cap_granted` audit emit. True iff the grant was authorized via the NEW

@@ -320,8 +320,13 @@ defmodule Ezagent.Socialware.CompositionCapsTest do
     assert :ok = CompositionCaps.deactivate_session(session)
     refute eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end, 5)
 
-    # Model a lagging STORE that lands after the first reconciliation attempt.
-    assert :ok = Ezagent.Identity.absorb_cap(source, artifact)
+    # A revoked v2 grant_id can never be resurrected. Model the lagging STORE
+    # race with a newly issued, logically equivalent grant generation instead.
+    assert {:ok, lagging_artifact} =
+             Ezagent.Identity.Grant.issue_cap(source, artifact, {:held_by, owner})
+
+    refute lagging_artifact.grant_id == artifact.grant_id
+    assert :ok = Ezagent.Identity.absorb_cap(source, lagging_artifact)
     assert eventually(fn -> holds_operate_cap?(source, target, :composition_owned_probe) end)
 
     assert {:ok, %{active: 0, degraded: 0}} =

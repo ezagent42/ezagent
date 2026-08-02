@@ -742,14 +742,8 @@ defmodule Ezagent.CapabilityTest do
       assert Capability.from_map(legacy).grantee_uri == nil
     end
 
-    test "a pre-#1399 legacy struct (missing the signature/key_id/grantee_uri keys) serializes without KeyError (#213)" do
-      # A durable Kind's `:identity` slice snapshotted before the #1399
-      # cap-signing trio (2026-07-14) stores a `%Capability{}` via
-      # `term_to_binary`; `binary_to_term` reconstructs it as a struct-shaped
-      # map that MATCHES `%Capability{}` (only `:__struct__` is checked) yet
-      # LACKS those three keys. `Map.drop/2` on a current struct reproduces
-      # that EXACT shape (keeps `:__struct__`, drops the trio).
-      legacy_struct =
+    test "a capability missing signing fields is rejected by both serializers" do
+      incomplete_struct =
         Map.drop(
           %Capability{
             kind: :agent,
@@ -763,25 +757,9 @@ defmodule Ezagent.CapabilityTest do
           [:signature, :key_id, :grantee_uri]
         )
 
-      # Pre-fix these three raised `(KeyError) key :signature not found` — the
-      # canary cutover-backfill crash (encode_caps → to_map).
-      refute Map.has_key?(legacy_struct, :signature)
-
-      stored = Capability.to_map(legacy_struct)
-      assert stored["signature"] == nil
-      assert stored["key_id"] == nil
-      assert stored["grantee_uri"] == nil
-
-      # The direct `Jason.Encoder` (EventLog emit path) must be equally robust.
-      assert {:ok, _json} = Jason.encode(legacy_struct)
-
-      restored = stored |> Jason.encode!() |> Jason.decode!() |> Capability.from_map()
-      assert restored.signature == nil
-      assert restored.key_id == nil
-      assert restored.grantee_uri == nil
-      # A signature-less legacy cap round-trips as a fully-formed unsigned cap.
-      assert restored.kind == :agent
-      assert restored.workspace_uri == @ws_default
+      refute Map.has_key?(incomplete_struct, :signature)
+      assert_raise KeyError, fn -> Capability.to_map(incomplete_struct) end
+      assert_raise KeyError, fn -> Jason.encode!(incomplete_struct) end
     end
 
     test "raw signature, key id, and grantee URI round-trip through caps_json fields" do

@@ -68,6 +68,7 @@ defmodule Ezagent.Domain.Pty.AccessTest do
 
     cap =
       %Capability{
+        grant_id: Ecto.UUID.generate(),
         kind: :agent,
         behavior: Ezagent.ActionSet.Pty,
         action: :any,
@@ -104,6 +105,7 @@ defmodule Ezagent.Domain.Pty.AccessTest do
       )
 
     cap
+    |> Map.put(:grant_id, Ecto.UUID.generate())
     |> Map.put(:grantee_uri, holder)
     |> then(&Authority.sign(authority, &1))
   end
@@ -125,5 +127,4 @@ defmodule Ezagent.Domain.Pty.AccessTest do
       "entity://team-alpha/user/f4-#{suffix}-#{System.unique_integer([:positive])}"
     )
   end
-
 end

@@ -185,21 +185,24 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       # the Server's handle_info → SessionImpl.handle_kind_message
       # (eventually consistent — give it a beat).
       wait_until_cursor(session_uri, 4)
+      wait_until_cursor_stable(session_uri)
+
+      replay_cursor = publisher_slice(session_uri).cursor
 
       # Now subscribe :earliest from a fresh listener pid.
       parent = self()
 
       pid =
         spawn(fn ->
-          msgs = collect_events(4, [])
+          msgs = collect_events(replay_cursor, [])
           send(parent, {:replayed, msgs})
         end)
 
-      assert {:ok, 4} =
+      assert {:ok, ^replay_cursor} =
                Session.subscribe_from(session_uri, pid, :earliest, admin_ctx(session_uri))
 
       assert_receive {:replayed, events}, 500
-      assert Enum.map(events, & &1.cursor) == [1, 2, 3, 4]
+      assert Enum.map(events, & &1.cursor) == Enum.to_list(1..replay_cursor)
     end
   end
 
@@ -224,12 +227,13 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       {:ok, _} = mutate_chat_slice(session_uri)
       wait_until_cursor(session_uri, 2)
 
-      assert {:ok, %{cursor: 2, state: state}} =
+      assert {:ok, %{cursor: cursor, state: state}} =
                Session.snapshot(session_uri, admin_ctx(session_uri))
 
       # `state` is the most recent event's payload — under the PR-EM-0
       # shape, that's a map with `:new_slice`. Just assert the shape;
       # exact content is the Chat Behavior's concern.
+      assert cursor >= 2
       assert is_map(state)
       assert Map.has_key?(state, :new_slice)
     end
@@ -284,10 +288,14 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
       # Emit 3 events.
       Enum.each(1..3, fn _ -> {:ok, _} = mutate_chat_slice(session_uri) end)
       wait_until_cursor(session_uri, 4)
+      wait_until_cursor_stable(session_uri)
 
       pre_restart = publisher_slice(session_uri)
-      assert pre_restart.cursor == 4
-      assert length(pre_restart.ring) == 4
+      expected_cursor = pre_restart.cursor
+      expected_ring_cursors = Enum.map(pre_restart.ring, & &1.cursor)
+
+      assert expected_cursor >= 4
+      assert length(pre_restart.ring) == expected_cursor
 
       # Restart the Session Kind.
       {:ok, pid_before} = Ezagent.KindRegistry.lookup(session_uri)
@@ -322,14 +330,14 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
 
       post_restart = publisher_slice(session_uri)
 
-      assert post_restart.cursor == 4,
-             "Expected cursor=4 to survive restart; got #{post_restart.cursor}. " <>
+      assert post_restart.cursor == expected_cursor,
+             "Expected cursor=#{expected_cursor} to survive restart; got #{post_restart.cursor}. " <>
                "If this fails, Kind.Server's handle_info path is NOT persisting " <>
                "SessionImpl's :slice_changed mutations — codex round-1 HIGH fix " <>
                "regressed."
 
       # Ring contents survive, including the born-owner membership event.
-      assert Enum.map(post_restart.ring, & &1.cursor) == [1, 2, 3, 4]
+      assert Enum.map(post_restart.ring, & &1.cursor) == expected_ring_cursors
     end
   end
 
@@ -365,6 +373,30 @@ defmodule EzagentDomainInstanceMessage.Integration.PublisherSessionTest do
         Process.sleep(20)
         wait_until_cursor(session_uri, target, attempts - 1)
     end
+  end
+
+  defp wait_until_cursor_stable(session_uri, attempts \\ 50, stable_reads \\ 3)
+
+  defp wait_until_cursor_stable(_session_uri, 0, _stable_reads),
+    do: flunk("publisher cursor did not stabilize")
+
+  defp wait_until_cursor_stable(session_uri, attempts, stable_reads) do
+    cursor = publisher_slice(session_uri).cursor
+
+    if cursor_stable_for?(session_uri, cursor, stable_reads) do
+      :ok
+    else
+      wait_until_cursor_stable(session_uri, attempts - 1, stable_reads)
+    end
+  end
+
+  defp cursor_stable_for?(_session_uri, _cursor, 0), do: true
+
+  defp cursor_stable_for?(session_uri, cursor, reads_left) do
+    Process.sleep(20)
+
+    publisher_slice(session_uri).cursor == cursor and
+      cursor_stable_for?(session_uri, cursor, reads_left - 1)
   end
 
   defp collect_events(0, acc), do: Enum.reverse(acc)

@@ -38,6 +38,7 @@ defmodule Ezagent.Entity.UserTest do
     assert Capability.matches?(cap, %{
              kind: :random,
              behavior: SomeMod,
+             action: :any,
              instance: Ezagent.URI.new!("entity://team-alpha/agent/test_anything"),
              workspace_uri: URI.new!("workspace://anything")
            })

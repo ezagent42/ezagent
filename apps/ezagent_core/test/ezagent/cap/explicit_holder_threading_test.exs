@@ -36,7 +36,8 @@ defmodule Ezagent.Cap.ExplicitHolderThreadingTest do
 
     unsigned = %{
       action_cap(target)
-      | granted_by: admin(),
+      | grant_id: Ecto.UUID.generate(),
+        granted_by: admin(),
         granted_at: DateTime.utc_now(),
         grantee_uri: holder
     }

@@ -175,7 +175,10 @@ defmodule Ezagent.Test.CapHelper do
           Capability.t()
   def authority_signed_cap!(authority, %URI{} = grantee, %Capability{} = cap) do
     {:ok, artifact} = Ezagent.Cap.prepare_provenance({:admin, admin_uri()}, grantee, cap)
-    Ezagent.Cap.Authority.sign(authority, artifact)
+
+    artifact
+    |> Map.put(:grant_id, Ecto.UUID.generate())
+    |> then(&Ezagent.Cap.Authority.sign(authority, &1))
   end
 
   @doc "Sign an explicit artifact while preserving a concrete fixture issuer."
@@ -187,7 +190,10 @@ defmodule Ezagent.Test.CapHelper do
         ) :: Capability.t()
   def authority_signed_cap_as!(authority, %URI{} = issuer, %URI{} = grantee, %Capability{} = cap) do
     {:ok, artifact} = Ezagent.Cap.prepare_provenance({:held_by, issuer}, grantee, cap)
-    Ezagent.Cap.Authority.sign(authority, artifact)
+
+    artifact
+    |> Map.put(:grant_id, Ecto.UUID.generate())
+    |> then(&Ezagent.Cap.Authority.sign(authority, &1))
   end
 
   @doc "Issue a current-generation self-license for a test principal."

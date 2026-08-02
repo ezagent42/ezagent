@@ -12,6 +12,7 @@ defmodule Ezagent.Cap do
   authorization happens only in the target Kind's central verifier.
   """
 
+  alias Ezagent.Cap.GrantArtifact
   alias Ezagent.Capability
 
   @type artifact :: Capability.t()
@@ -294,18 +295,19 @@ defmodule Ezagent.Cap do
   @doc """
   Return born-signed, receiver-bound artifacts that may enter a cap store.
 
-  This is deliberately a structural storage filter, not an authorization
-  decision. Only the target Kind's central verifier performs cryptographic
-  verification, using its private live key immediately before handler entry.
-  Unsigned legacy artifacts and artifacts bound to another receiver are
-  discarded; malformed or tampered signed artifacts may remain opaque at rest
-  but can never authorize an action because the central verifier rejects them.
+  This is deliberately a structural storage boundary, not an authorization
+  decision. The entire carrier is rejected when any artifact is malformed or
+  bound to another receiver. Only the target Kind's central verifier performs
+  cryptographic verification immediately before handler entry.
   """
   @spec verified_set(term(), term()) :: MapSet.t(Capability.t())
   def verified_set(caps, %URI{} = receiver_uri) when is_list(caps) or is_struct(caps, MapSet) do
-    Enum.reduce(caps, MapSet.new(), fn cap, verified ->
-      if storable_for?(cap, receiver_uri), do: MapSet.put(verified, cap), else: verified
-    end)
+    with {:ok, artifacts} <- GrantArtifact.validate_set(caps, :receiver_storage),
+         true <- Enum.all?(artifacts, &storable_for?(&1, receiver_uri)) do
+      artifacts
+    else
+      _ -> MapSet.new()
+    end
   end
 
   def verified_set(_caps, _receiver_uri), do: MapSet.new()
@@ -350,12 +352,13 @@ defmodule Ezagent.Cap do
           key_id: key_id,
           grantee_uri: %URI{} = grantee,
           instance: %URI{}
-        },
+        } = artifact,
         %URI{} = receiver
       )
       when is_binary(signature) and byte_size(signature) > 0 and is_binary(key_id) and
              byte_size(key_id) > 0 do
-    Ezagent.URI.stable_key(grantee) == Ezagent.URI.stable_key(receiver)
+    match?({:ok, %Capability{}}, GrantArtifact.validate(artifact)) and
+      Ezagent.URI.stable_key(grantee) == Ezagent.URI.stable_key(receiver)
   end
 
   def storable_for?(_artifact, _receiver), do: false
@@ -447,9 +450,8 @@ defmodule Ezagent.Cap do
   end
 
   # #195 canonical-admin bootstrap on fresh boot. The canonical admin holds NO
-  # persisted capability (its `users.caps_json` is deliberately born empty and
-  # its `:self_license` is explicitly kept out of that durable store —
-  # `EntityCaps.clear_self_license_persisted/1`). Its currency as a principal
+  # persisted self-license (`IdentityCaps.clear_self_license_persisted/1`). Its
+  # currency as a principal
   # is proven ONLY by the live `:identity`-slice self-license the `:identity`
   # Behavior mints when the admin Kind is running (or the durable per-Kind
   # authority compartment while executing in-process).

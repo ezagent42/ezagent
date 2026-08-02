@@ -49,7 +49,7 @@ defmodule Ezagent.World.UserActionsTest do
   defp non_admin, do: URI.new!("entity://team-alpha/user/plain-#{uniq()}")
 
   # A REAL (persisted + spawned) admin row — needed only where the test must
-  # durably GRANT the admin a concrete cap (`Ezagent.EntityCaps.grant/2`
+  # durably GRANT the admin a concrete cap (`Ezagent.IdentityCaps.grant/2`
   # requires its mutation target to already exist as a live/creatable
   # entity). `disposable_admin/0` stays a bare, never-persisted URI for every
   # test that only needs the structural `home_is_system?/1` admin check.
@@ -286,7 +286,7 @@ defmodule Ezagent.World.UserActionsTest do
         Ezagent.URI.with_action(target, :user_credentials, :set_password)
 
       cap = Ezagent.Test.CapHelper.signed_action_cap!(set_password_target, admin)
-      :ok = Ezagent.EntityCaps.grant(admin, cap)
+      :ok = Ezagent.IdentityCaps.grant(admin, cap)
 
       {:noreply, out} =
         UserActions.handle_dispatch(socket_for(admin), "users.password.set", %{

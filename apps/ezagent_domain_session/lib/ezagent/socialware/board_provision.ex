@@ -257,7 +257,7 @@ defmodule Ezagent.Socialware.BoardProvision do
   defp session_holds_board_cap?(assistant_uri, behavior, board_uri) do
     target = Ezagent.URI.with_action(board_uri, behavior.state_slice(), :get_tree)
 
-    caps = assistant_uri |> Ezagent.EntityCaps.load() |> MapSet.new()
+    caps = assistant_uri |> Ezagent.IdentityCaps.load() |> MapSet.new()
 
     case Ezagent.Invocation.dispatch(%Ezagent.Invocation{
            target: target,

@@ -3,32 +3,9 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
 
   alias Ezagent.Capability
 
-  # #189 COLD-NODE cap-widening — the UPSTREAM PRODUCER (this PR), distinct from
-  # the missing-key GUARDS #1654 (`fill_defaults`, write side) / #1656
-  # (`from_map`, read side).
-  #
-  # ROOT CAUSE (proven live on the stable node, 2026-07-31): the identity cutover
-  # runs `Ezagent.Identity.Backfill.run/1` on a `bin/ezagent eval` node that only
-  # started `:ezagent_domain_identity` + deps (`EzagentCore.Release.identity_cutover/1`).
-  # `Backfill` decodes `users.caps_json` via `Ezagent.Capability.from_map/1`
-  # (`Users.list_all/0` → `UserStore.decode_caps`). `from_map/1` resolves the
-  # `"action"` STRING with `string_to_atom_or_module/1`, which pre-fix used
-  # `String.to_existing_atom/1` + `rescue -> :any`. The action atom `:create_session`
-  # is defined by the Workspace Kind (`:ezagent_domain_workspace`, NOT a dep of
-  # identity), so on the partial eval node that atom is ABSENT from the table:
-  # `to_existing_atom` raised and the rescue SILENTLY WIDENED `:create_session` →
-  # `:any` (workspace-admin) while the signature was preserved verbatim — the
-  # `{:caps_mismatch}` the fleet-parity barrier caught.
-  #
-  # THE KEY DISTINCTION FROM #1654/#1656: the `"action"` KEY is PRESENT the whole
-  # time (raw JSON = `"action" => "create_session"` on both planes). The missing-key
-  # guards never fire — the widening is a RESOLUTION failure, not a missing key.
-  #
-  # This suite reproduces the cold-node condition IN ISOLATION with a well-formed
-  # action name whose atom has NEVER been loaded into this VM (a unique runtime
-  # suffix) — i.e. an atom absent from the table, exactly as `:create_session` is
-  # absent on the eval node. It must FAIL on origin/main (decodes to `:any`) and
-  # PASS with the fix (decodes to the concrete action).
+  # A well-formed action string may be decoded before its atom has otherwise been
+  # loaded in this VM. Resolution failure must never widen that concrete action to
+  # the privileged `:any` wildcard while preserving the artifact signature.
 
   # A JSON-decoded (string-keyed), SIGNED workspace cap map, minus the action —
   # which the caller supplies. URI-registry-free (`granted_by: "plugin_declared"`,
@@ -48,7 +25,7 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
     }
   end
 
-  describe "#189 cold-node producer — from_map/1 must preserve a PRESENT action whose atom is not loaded" do
+  describe "from_map/1 preserves a present action whose atom is not loaded" do
     test "a well-formed action string whose atom is absent round-trips to the concrete atom, NOT :any" do
       # Never referenced anywhere → guaranteed absent from the atom table until
       # `from_map/1` resolves it. This is the cold node's `:create_session` in
@@ -84,12 +61,8 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
       assert cap.action == :known_loaded_action
     end
 
-    test "legacy tolerance preserved: an UNSIGNED map missing the action KEY still decodes to :any" do
-      # The pre-action-axis round-trip (a genuinely legacy, UNSIGNED cap with no
-      # action key) is UNCHANGED by this fix — the missing-KEY path is orthogonal
-      # to the present-but-unresolvable path fixed here (and is what #1656 hardens
-      # for the SIGNED case).
-      legacy_unsigned =
+    test "an unsigned map missing the action key is rejected" do
+      unsigned_incomplete =
         %{
           "kind" => "any",
           "behavior" => "any",
@@ -99,9 +72,7 @@ defmodule Ezagent.CapabilityColdNodeActionTest do
           "granted_at" => "2026-07-31T00:00:00.000000Z"
         }
 
-      cap = Capability.from_map(legacy_unsigned)
-      assert cap.action == :any
-      assert cap.signature == nil
+      assert_raise KeyError, fn -> Capability.from_map(unsigned_incomplete) end
     end
   end
 end

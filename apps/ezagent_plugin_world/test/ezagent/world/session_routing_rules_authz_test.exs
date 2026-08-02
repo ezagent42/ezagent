@@ -91,7 +91,7 @@ defmodule Ezagent.World.SessionRoutingRulesAuthzTest do
   defp socket_with_routing_cap(caller, session_uri, action) do
     target = Ezagent.URI.with_action(session_uri, :routing, action)
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
-    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    :ok = Ezagent.IdentityCaps.grant(caller, cap)
 
     %Phoenix.LiveView.Socket{}
     |> assign(:current_entity_uri, caller)

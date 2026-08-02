@@ -216,7 +216,10 @@ defmodule Ezagent.Integration.CreateRoleAgentTest do
       assert artifact.behavior == TransportGatedRoleBehavior
       assert Ezagent.Capability.action_of(artifact) == :ping
 
-      assert Enum.any?(Ezagent.Identity.read_entity_caps(agent_uri), fn cap ->
+      # The delivery is applied before create returns, so the sole durable
+      # capability authority must already contain the exact role grant even
+      # though transport readiness remains independently false.
+      assert Enum.any?(Ezagent.IdentityCaps.load(agent_uri), fn cap ->
                cap.behavior == TransportGatedRoleBehavior and
                  Ezagent.Capability.action_of(cap) == :ping
              end)

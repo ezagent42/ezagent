@@ -51,7 +51,7 @@ defmodule Ezagent.Identity.Offboarding.DeleteUser do
 
   defp invalidate_one(uri, kind_type) do
     with {:ok, _authority} <- Authority.regenesis(uri, kind_type),
-         :ok <- Ezagent.EntityCaps.clear_self_license_persisted(uri),
+         :ok <- Ezagent.IdentityCaps.clear_self_license_persisted(uri),
          :ok <- RevocationFence.clear(uri) do
       :ok
     end

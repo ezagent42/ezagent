@@ -1,5 +1,8 @@
 %{
-  oversized_modules_gt_1500: 0,
+  # arch-cap-bump: 0→1 — IdentityCaps.Store is the sole durable authority and the transaction boundary
+  # coupling its cap row, exact-revocation ledger, delivery outbox, and grantee
+  # index. Burn-down must preserve that single transaction owner.
+  oversized_modules_gt_1500: 1,
   # #25 Phase-3 burn-down (ratchets DOWN toward 0):
   #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)
   #   PR-3O: 8 → 7 (extracted ExternalMirrorWorker.SendKey, worker 1010 → 963)
@@ -108,7 +111,7 @@
   #   burn-down is a module split (extract the §2.2 read surface into a sibling
   #   `Ezagent.Kind.Read` once callers have migrated), tracked for a later chunk.
   #   8→9.
-  # arch-cap-bump: +1 #189 PR-3 cutover — `entity_caps/store.ex` was 984 LOC and
+  # arch-cap-bump: +1 #189 PR-3 cutover — `identity_caps/store.ex` was 984 LOC and
   #   the security-critical cutover additions (FIX 1 epoch-aware authoritative
   #   `sync_committed_identity`/`identity_snapshot_cleared`, FIX 2 three-way
   #   `fetch_durable_caps` + `fetch_result` error-distinction seam, FIX 3

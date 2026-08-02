@@ -18,6 +18,7 @@ defmodule Ezagent.EventLogTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.EventLog
+  alias Ezagent.Capability
   # `Repo` is aliased by `use EzagentCore.DataCase`; no explicit alias needed (#92).
 
   @aggregate_a "entity://team-alpha/agent/test_event-log-a"
@@ -63,6 +64,28 @@ defmodule Ezagent.EventLogTest do
         EventLog.append(@aggregate_a, :no_ws, %{}, %{caller: @caller})
       end
     end
+
+    test "round-trips explicit capability fields through GrantArtifact" do
+      cap = artifact()
+      ctx = %{caller: @caller, workspace_uri: @workspace_x}
+
+      assert {:ok, _event_id} =
+               EventLog.append(@aggregate_a, :cap_granted, %{cap: cap, caps: [cap]}, ctx)
+
+      [event] = EventLog.stream_by_aggregate(@aggregate_a)
+      assert event.payload == %{"cap" => cap, "caps" => [cap]}
+    end
+
+    test "rejects the whole event when one explicit capability is malformed" do
+      cap = artifact()
+      malformed = %{cap | grant_id: nil}
+      ctx = %{caller: @caller, workspace_uri: @workspace_x}
+
+      assert {:error, {:invalid_grant_artifact, _, _, :missing_grant_id}} =
+               EventLog.append(@aggregate_a, :cap_granted, %{caps: [cap, malformed]}, ctx)
+
+      assert EventLog.stream_by_aggregate(@aggregate_a) == []
+    end
   end
 
   describe "stream_by_aggregate/2" do
@@ -89,6 +112,31 @@ defmodule Ezagent.EventLogTest do
 
       [event] = EventLog.stream_by_aggregate(@aggregate_a)
       assert event.payload == payload
+    end
+
+    test "fails the whole read closed for a malformed persisted capability field" do
+      malformed = artifact() |> Capability.to_map() |> Map.put("grant_id", nil)
+
+      {1, _rows} =
+        Repo.insert_all("invocations", [
+          %{
+            trace_id: nil,
+            caller: @caller,
+            target: @aggregate_a,
+            action: "cap_granted",
+            args: Jason.encode!(%{"cap" => malformed}),
+            result: nil,
+            duration_us: 0,
+            authz: "n/a",
+            exception: nil,
+            workspace_uri: @workspace_x,
+            inserted_at: DateTime.utc_now()
+          }
+        ])
+
+      assert_raise ArgumentError, ~r/invalid capability event payload/, fn ->
+        EventLog.stream_by_aggregate(@aggregate_a)
+      end
     end
 
     test "(inserted_at, id) tie-breaker: same-timestamp rows order by id asc" do
@@ -193,5 +241,21 @@ defmodule Ezagent.EventLogTest do
       assert length(events) == 2
       assert Enum.map(events, & &1.event_name) == ["w4", "w3"]
     end
+  end
+
+  defp artifact do
+    %Capability{
+      kind: :session,
+      behavior: Ezagent.ActionSet.Session,
+      action: :send,
+      instance: Ezagent.URI.new!("session://team-alpha/default/chat"),
+      workspace_uri: Ezagent.URI.new!(@workspace_x),
+      granted_by: Ezagent.URI.new!("entity://team-alpha/user/issuer"),
+      granted_at: ~U[2026-08-01 00:00:00Z],
+      signature: <<1, 2, 3>>,
+      key_id: "kind-g1:test-key",
+      grantee_uri: Ezagent.URI.new!("entity://team-alpha/user/alice"),
+      grant_id: Ecto.UUID.generate()
+    }
   end
 end

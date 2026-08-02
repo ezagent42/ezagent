@@ -51,7 +51,8 @@ defmodule Ezagent.TestSupport.TemplateAgentSpawn do
     bootstrap_flavor = bootstrap_flavor()
     spawned_by = Keyword.get(opts, :spawned_by, User.admin_uri())
 
-    with :ok <- ensure_flavor_registered(bootstrap_flavor, noop_decl()),
+    with :ok <- Ezagent.IdentityCaps.Store.initialize(agent_uri, []),
+         :ok <- ensure_flavor_registered(bootstrap_flavor, noop_decl()),
          :ok <- ensure_target_flavor_registered(flavor),
          {:ok, %{workers: workers}} <-
            Agent.spawn_from_template_content(

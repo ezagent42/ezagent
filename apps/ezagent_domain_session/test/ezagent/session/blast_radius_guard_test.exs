@@ -29,7 +29,7 @@ defmodule Ezagent.Session.BlastRadiusGuardTest do
     refute send_src =~ "list_in_workspace",
            "the send path must not enumerate the workspace per message (reverse scan)"
 
-    refute delivery_src =~ "read_entity_caps",
+    refute delivery_src =~ "read_identity_caps",
            "delivery fan-out must not reverse-scan held caps per recipient — the " <>
              "recipient authorizes on its OWN pre-loaded :identity sibling in-handler"
   end

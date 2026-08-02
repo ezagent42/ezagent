@@ -47,7 +47,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    case Ezagent.EntityCaps.effective_caps_persisted(member_uri) do
+    case Ezagent.IdentityCaps.effective_caps_for_delivery_persisted(member_uri) do
       {:ok, caps} ->
         grant_from_effective_caps(caps, member_uri, session_uri, workspace_uri, ctx)
 
@@ -111,7 +111,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
   defp consume_join_entitlement(%URI{} = member_uri, ctx) do
     session_uri = ctx[:self_uri]
 
-    join_cap =
+    logical_join_cap =
       Ezagent.Capability.cap(
         :session,
         Ezagent.ActionSet.Session,
@@ -120,9 +120,30 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
         Ezagent.Capability.workspace_of(session_uri)
       )
 
+    # Do not synchronously enter the member Kind from inside this Session Kind:
+    # startup can have the admin Kind waiting on this join, creating a call
+    # cycle. P2's durable effective view covers both Store and pending absorbs.
+    case Ezagent.Identity.Grant.resolve_revocation_artifact_for_delivery(
+           member_uri,
+           logical_join_cap
+         ) do
+      {:ok, artifact} ->
+        revoke_join_entitlement(member_uri, artifact, ctx)
+
+      {:error, :cap_not_held} ->
+        # Admin/wildcard authorization can satisfy JOIN without a concrete
+        # single-use entitlement. There is then no grant_id to tombstone.
+        :ok
+
+      {:error, :effective_caps_read_failed} = error ->
+        error
+    end
+  end
+
+  defp revoke_join_entitlement(member_uri, artifact, ctx) do
     case Ezagent.Identity.Grant.revoke_cap_via_router(
            member_uri,
-           join_cap,
+           artifact,
            grant_authorization(ctx),
            :async
          ) do

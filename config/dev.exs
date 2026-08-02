@@ -11,13 +11,6 @@ config :ezagent_domain_identity,
        :provisioning_receipt_secret,
        "dev-only-insecure-provisioning-receipt-secret"
 
-# #1627 MAJOR-3 — the `:identity_cutover_active_override` is now a COMPILE-TIME
-# `MIX_ENV=test`-ONLY seam (`Ezagent.Identity.Cutover` compiles the override read
-# OUT of dev/prod/release builds, so it can't de-activate a persisted epoch). Dev
-# therefore runs the DB-backed epoch (pre-epoch until an operator runs the fenced
-# `mix ezagent.identity.cutover`); setting the override here would be DEAD config
-# (silently ignored), so it is removed.
-
 # Show debug info in the branded 500 error page when it renders (in dev,
 # Plug.Debugger usually catches first; this controls the fallback case).
 config :ezagent_web, :show_error_debug, true

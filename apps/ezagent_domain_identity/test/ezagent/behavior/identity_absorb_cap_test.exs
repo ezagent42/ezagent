@@ -92,7 +92,7 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
     refute MapSet.member?(state.caps, artifact)
   end
 
-  test "identity activate keeps the receiver's signed artifact and drops another receiver's" do
+  test "identity activate rejects the complete carrier when any artifact names another receiver" do
     alice_artifact = signed_artifact(@user)
     agent_artifact = signed_artifact(@agent)
 
@@ -102,8 +102,9 @@ defmodule Ezagent.ActionSet.IdentityAbsorbCapTest do
                %{self_uri: @user}
              )
 
-    assert MapSet.member?(reconciled.caps, alice_artifact)
+    refute MapSet.member?(reconciled.caps, alice_artifact)
     refute MapSet.member?(reconciled.caps, agent_artifact)
+    assert reconciled.caps == MapSet.new()
   end
 
   test "absorbing the same identity twice replaces metadata without growing the set" do

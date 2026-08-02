@@ -8,7 +8,6 @@ defmodule Ezagent.Cap.Signing do
   """
 
   alias Ezagent.{Cap, Capability}
-
   @key_id_max_size 512
   @key_id_pattern ~r/\Av([0-9]+)\|([A-Za-z0-9_-]+)\z/
 
@@ -79,19 +78,24 @@ defmodule Ezagent.Cap.Signing do
   @doc false
   @spec signing_payload(Capability.t(), URI.t()) :: binary()
   def signing_payload(%Capability{grantee_uri: grantee_uri} = cap, grantee_uri) do
+    cap
+    |> signing_fields(grantee_uri)
+    |> jcs_encode()
+  end
+
+  defp signing_fields(cap, grantee_uri) do
     %{
       "action" => canon_atom(Capability.action_of(cap)),
       "behavior" => canon_module(cap.behavior),
+      "grant_id" => canon_string(cap.grant_id),
       "granted_at" => canon_timestamp(cap.granted_at),
       "granted_by" => canon_uri(cap.granted_by),
       "grantee" => canon_uri(grantee_uri),
       "instance" => canon_instance(cap.instance),
       "key_id" => canon_string(cap.key_id),
       "kind" => canon_atom(cap.kind),
-      "v" => 1,
       "workspace_uri" => canon_workspace(cap.workspace_uri)
     }
-    |> jcs_encode()
   end
 
   defp configured_key_version?(version) do

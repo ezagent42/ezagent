@@ -14,10 +14,10 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
         (whitelist is same-source with tab visibility — not switchable either);
     (d) a caller HOLDING the render cap sees the tab AND can switch to it;
     (e) P2 test-supplement — the REVOKE transition: a caller who held the
-        render cap and lost it (`Ezagent.EntityCaps.revoke/2`, the same
+        render cap and lost it (`Ezagent.IdentityCaps.revoke/2`, the same
         mutation a real membership/role change drives) loses the tab on the
         VERY NEXT read — `authorize_view/3` re-derives the caller's caps LIVE
-        (`Ezagent.Identity.list_caps_for/1` → `EntityCaps.load/1`) rather than
+        (`Ezagent.Identity.list_caps_for/1` → `IdentityCaps.load/1`) rather than
         trusting a cached/mount-time snapshot, so there is no stale-grant
         window. Driven through the SAME public read surface as (a)-(d)
         (`ConversationData.state_for/2`), not the registry internals.
@@ -189,11 +189,11 @@ defmodule Ezagent.World.ViewCapGateRegressionTest do
     # Before the grant: no tab (same as (a)).
     refute "test_locked" in view_ids_in_state(session, caller)
 
-    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    :ok = Ezagent.IdentityCaps.grant(caller, cap)
     assert "test_locked" in view_ids_in_state(session, caller),
            "setup failed: the grant did not surface the tab"
 
-    :ok = Ezagent.EntityCaps.revoke(caller, cap)
+    :ok = Ezagent.IdentityCaps.revoke(caller, cap)
 
     refute "test_locked" in view_ids_in_state(session, caller),
            "a revoked render cap must drop the tab on the very next read — " <>

@@ -67,7 +67,12 @@ defmodule EzagentCore.Umbrella.MixProject do
       # socialware.check, the arch/invariant ExUnit subset), so they MUST run in
       # `:test` — auto-select it so a dev/agent can just `mix ci.fast` without
       # remembering `MIX_ENV=test` (the CI `gate` job sets `MIX_ENV=test` itself).
-      preferred_envs: [precommit: :test, "ci.fast": :test, "gate.arch": :test]
+      preferred_envs: [
+        precommit: :test,
+        "ci.fast": :test,
+        "ci.clean_per_grant": :test,
+        "gate.arch": :test
+      ]
     ]
   end
 
@@ -156,6 +161,7 @@ defmodule EzagentCore.Umbrella.MixProject do
         "compile --warnings-as-errors --force",
         "deps.unlock --unused",
         "format",
+        "ci.clean_per_grant",
         "test",
         # cc-headless SDK worker pure-helper suite (stdlib-only, no SDK needed) —
         # codex review of PR #1452 flagged it was not wired into any gate. Run as
@@ -271,6 +277,7 @@ defmodule EzagentCore.Umbrella.MixProject do
         &run_socialware_check/1,
         "gate.arch"
       ],
+      "ci.clean_per_grant": ["ezagent.cap_revocation.verify_clean_start"],
       # ci-shard-full-suite — the DETERMINISTIC-gate shard of the full-suite split.
       # The full-suite (`mix ci.local`) is sharded (see `ci_shard_test_aliases/0`
       # below + `EzagentCore.CiShards` + the `.github/workflows/ci.yml` full-suite
@@ -377,8 +384,8 @@ defmodule EzagentCore.Umbrella.MixProject do
     Mix.shell().info("==> ci.shard.#{name}: #{length(files)} test files")
     # `--include real_boot_seed_path` un-excludes the tag-gated real-boot-seed
     # regression (default-excluded in the session test_helper because it mutates
-    # the VM-global admin). It is carved into its OWN one-file `session_boot_seed`
-    # shard, so this global flag only ever activates that leg; every other shard
+    # the VM-global admin). Such tests are carved into isolated one-file shards,
+    # currently `session_admin_rotation`, so this global flag only activates those legs; every other shard
     # has no such-tagged test and the flag is a no-op.
     Mix.Task.run("test", files ++ ["--include", "real_boot_seed_path"])
   end

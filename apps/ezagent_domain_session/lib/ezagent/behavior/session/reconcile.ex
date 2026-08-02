@@ -28,7 +28,7 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
   #      ∪ `InternalReads.agents_in_workspace(ws)` (agent + worker URIs backed by
   #      the Agent Kind). The raw enumeration primitives are reached only through
   #      the InternalReads gateway — read-plane §3.4.
-  #   3. per candidate: read LIVE caps (`read_entity_caps/1`), apply the K4
+  #   3. per candidate: read verified Store caps (`IdentityCaps.load/1`), apply the K4
   #      `granted_by_entity?/1` provenance filter BEFORE the EXACT-identity test
   #      (`identity_key/1` equality, NOT `matches?/2` — see `member_cap_holder?/3`)
   #      for the concrete member-cap over S.
@@ -114,7 +114,7 @@ defmodule Ezagent.ActionSet.Session.Reconcile do
     target_key = Ezagent.Capability.identity_key(member_cap(session_uri, ws))
 
     candidate
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> Enum.filter(&Ezagent.Capability.granted_by_entity?/1)
     |> Enum.any?(fn cap -> Ezagent.Capability.identity_key(cap) == target_key end)
   rescue

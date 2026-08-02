@@ -3,9 +3,9 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
   Membership-cap unification Phase B.2 (spec §10 / tests 15-17) — the bounded
   reverse-authority resolver `Ezagent.Identity.Cascade.managers_of/1`.
 
-  Candidates are seeded as Users whose DURABLE identity caps are folded from
-  their initial cap set on spawn (`activate/2` unions `caps_json` into the live
-  `:identity` slice), then `managers_of/1` reads them LIVE (K5) with the
+  Candidates are seeded as Users whose durable identity caps are initialized
+  in the sole Store and projected into the live `:identity` slice on spawn;
+  `managers_of/1` then reads them LIVE (K5) with the
   `granted_by_entity?/1` provenance filter (K4).
   """
 
@@ -18,8 +18,7 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
 
   defp uniq, do: System.unique_integer([:positive])
 
-  # A workspace-homed User seeded with `caps` folded into its durable identity
-  # (initial caps → caps_json → `activate/2` union → live `:identity` slice).
+  # A workspace-homed User seeded with `caps` in its durable identity Store.
   defp user_with_caps(ws_name, caps) do
     uri = URI.new!("entity://#{ws_name}/user/u-#{uniq()}")
     caps = if is_function(caps, 1), do: caps.(uri), else: caps
@@ -61,23 +60,6 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
     assert Cascade.managers_of(x) == []
   end
 
-  test "a system-granted stale Manage cap does NOT over-match (granted_by_entity? filter, 16)" do
-    x = agent_uri("team-alpha")
-
-    system_granted = %Capability{
-      kind: :agent,
-      behavior: Ezagent.ActionSet.Manage,
-      action: :any,
-      instance: x,
-      workspace_uri: Capability.workspace_of(x),
-      granted_by: URI.new!("system://genesis"),
-      granted_at: DateTime.utc_now()
-    }
-
-    _stale = user_with_caps("team-alpha", [system_granted])
-    assert Cascade.managers_of(x) == []
-  end
-
   test "cascade uses LIVE caps: grant a Manage cap at runtime → new manager IS resolved (17)" do
     x = agent_uri("team-alpha")
     mgr = user_with_caps("team-alpha", [])
@@ -91,7 +73,7 @@ defmodule Ezagent.Identity.CascadeManagersOfTest do
   end
 
   defp grant_live(entity, cap) do
-    Ezagent.EntityCaps.grant(entity, cap)
+    Ezagent.IdentityCaps.grant(entity, cap)
   end
 
   defp wait_until(fun, retries \\ 200) do

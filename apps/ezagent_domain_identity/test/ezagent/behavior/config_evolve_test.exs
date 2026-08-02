@@ -46,6 +46,7 @@ defmodule Ezagent.ActionSet.ConfigEvolveTest do
         agent
       )
 
+    :ok = Ezagent.IdentityCaps.Store.initialize(agent, [sandbox_cap])
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: [sandbox_cap]})
     # Workspace-bind so manage-cap workspace matching resolves.
     :ok = Ezagent.WorkspaceRegistry.bind(agent, workspace)

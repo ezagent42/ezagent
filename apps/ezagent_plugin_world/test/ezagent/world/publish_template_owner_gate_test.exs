@@ -90,7 +90,7 @@ defmodule Ezagent.World.PublishTemplateOwnerGateTest do
   defp socket_with_join_cap(caller, workspace_uri, session_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
-    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    :ok = Ezagent.IdentityCaps.grant(caller, cap)
     bare_socket(caller, workspace_uri)
   end
 

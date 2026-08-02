@@ -11,7 +11,7 @@ defmodule Ezagent.Cap.Authority do
   already executing maliciously inside the BEAM is explicitly out of scope.
   """
 
-  alias Ezagent.Cap.Signing
+  alias Ezagent.Cap.{GrantArtifact, RevocationLedger, Signing}
   alias Ezagent.Capability
   alias Ezagent.Ecto.KindCapAuthority
   alias EzagentCore.Repo
@@ -48,12 +48,17 @@ defmodule Ezagent.Cap.Authority do
   end
 
   @doc false
-  @spec anchor(URI.t()) :: {:ok, Capability.t()} | {:error, :not_found}
+  @spec anchor(URI.t()) ::
+          {:ok, Capability.t()} | {:error, :not_found | :invalid_authority_anchor}
   def anchor(%URI{} = uri) do
     case KindCapAuthority.active(Ezagent.URI.stable_key(uri)) do
-      %KindCapAuthority{anchor: anchor} -> {:ok, :erlang.binary_to_term(anchor, [:safe])}
+      %KindCapAuthority{} = row -> validate_anchor(row)
       nil -> {:error, :not_found}
     end
+  rescue
+    _ -> {:error, :invalid_authority_anchor}
+  catch
+    _, _ -> {:error, :invalid_authority_anchor}
   end
 
   @doc false
@@ -274,13 +279,7 @@ defmodule Ezagent.Cap.Authority do
     with {:ok, current_key_id} <- current_key_id(target),
          true <- cap.key_id == current_key_id,
          {:ok, public_key} <- Ezagent.Cap.AuthorityCache.public_key(current_key_id) do
-      :crypto.verify(
-        :eddsa,
-        :none,
-        Signing.signing_payload(cap),
-        signature,
-        [public_key, :ed25519]
-      )
+      verify_signature(public_key, cap, presenter)
     else
       _ -> false
     end
@@ -332,7 +331,11 @@ defmodule Ezagent.Cap.Authority do
           end
 
         {:error, :concrete_target_required} ->
-          {:cont, {:ok, [cap | current]}}
+          case verify_key_against_current_checked(cap, receiver) do
+            {:ok, true} -> {:cont, {:ok, [cap | current]}}
+            {:ok, false} -> {:cont, {:ok, current}}
+            {:error, :authority_read_failed} = error -> {:halt, error}
+          end
       end
     end)
     |> case do
@@ -340,6 +343,27 @@ defmodule Ezagent.Cap.Authority do
       {:error, :authority_read_failed} = error -> error
     end
   end
+
+  defp verify_key_against_current_checked(%Capability{key_id: key_id} = cap, receiver)
+       when is_binary(key_id) do
+    case KindCapAuthority.with_key_id(key_id) do
+      %KindCapAuthority{active: true} = row ->
+        authority = from_row(row)
+        {:ok, verify(authority, cap, receiver)}
+
+      %KindCapAuthority{} ->
+        {:ok, false}
+
+      nil ->
+        {:ok, false}
+    end
+  rescue
+    _ -> {:error, :authority_read_failed}
+  catch
+    _, _ -> {:error, :authority_read_failed}
+  end
+
+  defp verify_key_against_current_checked(%Capability{}, %URI{}), do: {:ok, false}
 
   @doc """
   Row-lock the TARGET's current active authority generation inside the caller's
@@ -385,8 +409,7 @@ defmodule Ezagent.Cap.Authority do
   `:error` on a read failure. Unlike `has_authority_history?/1` (which fails OPEN
   — an unreadable history resolves to `true` so a genesis is never licensed on a
   transient read error), callers that must FAIL CLOSED on an unreadable history
-  (e.g. `Ezagent.Identity.PreEpochRemint`, which permits a re-mint only for a
-  principal with confirmed authority history) use THIS and require `{:ok, true}`.
+  use THIS and require `{:ok, true}`.
   """
   @spec has_authority_history_result?(URI.t()) :: {:ok, boolean()} | :error
   def has_authority_history_result?(%URI{} = uri) do
@@ -498,16 +521,65 @@ defmodule Ezagent.Cap.Authority do
 
   defp verify_signature(public_key, %Capability{signature: signature} = cap, %URI{})
        when is_binary(public_key) and is_binary(signature) do
-    :crypto.verify(
-      :eddsa,
-      :none,
-      Signing.signing_payload(cap),
-      signature,
-      [public_key, :ed25519]
-    )
+    match?({:ok, %Capability{}}, GrantArtifact.validate(cap)) and
+      :crypto.verify(
+        :eddsa,
+        :none,
+        Signing.signing_payload(cap),
+        signature,
+        [public_key, :ed25519]
+      )
+  rescue
+    _ -> false
   end
 
   defp verify_signature(_public_key, %Capability{}, %URI{}), do: false
+
+  defp validate_anchor(%KindCapAuthority{} = row) do
+    with {:ok, artifact} <- GrantArtifact.from_term(row.anchor),
+         :ok <- verify_anchor_row_binding(row, artifact),
+         {:ok, true} <-
+           verify_against_current_checked(artifact, artifact.grantee_uri, artifact.instance),
+         {:ok, revoked} <-
+           RevocationLedger.revoked_grant_ids(artifact.workspace_uri, [artifact.grant_id]),
+         false <- MapSet.member?(revoked, artifact.grant_id) do
+      {:ok, artifact}
+    else
+      _ -> {:error, :invalid_authority_anchor}
+    end
+  rescue
+    _ -> {:error, :invalid_authority_anchor}
+  catch
+    _, _ -> {:error, :invalid_authority_anchor}
+  end
+
+  defp verify_anchor_row_binding(
+         %KindCapAuthority{} = row,
+         %Capability{
+           kind: kind,
+           behavior: :any,
+           action: :grant,
+           instance: %URI{} = target,
+           workspace_uri: workspace_uri,
+           granted_by: %URI{} = granted_by,
+           grantee_uri: %URI{} = grantee_uri,
+           key_id: key_id
+         }
+       ) do
+    expected_workspace = Capability.workspace_of(target)
+
+    if row.sealed == true and row.active == true and row.uri == Ezagent.URI.stable_key(target) and
+         row.kind_type == Atom.to_string(kind) and row.key_id == key_id and
+         same_uri?(workspace_uri, expected_workspace) and same_uri?(granted_by, admin_uri()) and
+         same_uri?(grantee_uri, admin_uri()) do
+      :ok
+    else
+      {:error, :anchor_row_mismatch}
+    end
+  end
+
+  defp verify_anchor_row_binding(%KindCapAuthority{}, %Capability{}),
+    do: {:error, :anchor_row_mismatch}
 
   defp genesis(uri, kind_type, create_freshness) do
     uri_string = Ezagent.URI.stable_key(uri)
@@ -515,25 +587,9 @@ defmodule Ezagent.Cap.Authority do
     Repo.transaction(fn ->
       case KindCapAuthority.list(uri_string) do
         [] when create_freshness == :existed ->
-          # #189 PR-2 fail-closed (codex spec-review F1): a URI that presents
-          # itself as ALREADY-EXISTING (`:existed` — an ordinary open / cold
-          # restart) but whose authority history is EMPTY must NOT have a
-          # generation minted at runtime. Silently inserting generation 1 here
-          # would birth signing authority for a principal whose creation was
-          # never authorized (or whose authority was intentionally purged) —
-          # exactly the regenesis-resurrection vector. Genesis stays reserved
-          # for genuine creation (`:created`) and the legacy `:unknown` open.
-          #
-          # DEPLOY PRECONDITION (codex impl-review finding 2 — FLAGGED, unresolved
-          # here): this guard REGRESSES a pre-authority durable entity
-          # (`ever_created` snapshot, NO `kind_cap_authorities` row — created
-          # before the #1457 cap-signing rollout and not re-opened since): its
-          # cold restart hits this rollback and the Kind terminates. It is safe
-          # to deploy ONLY if every durable Lifecycle entity in the target DB has
-          # already acquired an authority row (opened once since #1457). If that
-          # cannot be evidenced, a GOVERNED authority-history adoption is required
-          # first, or this guard must land with PR-3's cutover instead. See
-          # docs/superpowers/plans/2026-07-29-189-pr2-migration.md → "FIX 3".
+          # An established URI with no authority history must not mint generation
+          # one at runtime. That would resurrect signing authority after its
+          # history was intentionally removed. Genesis is reserved for creation.
           Repo.rollback(:no_authority_for_existing)
 
         [] ->
@@ -594,7 +650,8 @@ defmodule Ezagent.Cap.Authority do
         workspace_uri: Ezagent.Capability.workspace_of(uri),
         granted_by: admin_uri(),
         granted_at: DateTime.utc_now(),
-        grantee_uri: admin_uri()
+        grantee_uri: admin_uri(),
+        grant_id: Ecto.UUID.generate()
       }
       |> then(&sign(authority, &1))
 
@@ -637,7 +694,12 @@ defmodule Ezagent.Cap.Authority do
   end
 
   defp admin_uri, do: Ezagent.URI.user(:system, :admin)
-  defp same_uri?(left, right), do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+  defp same_uri?(:any, :any), do: true
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+
+  defp same_uri?(_left, _right), do: false
 
   # The authority root — the canonical genesis admin, structurally un-killable
   # (#1627 B1-hybrid). Hardcoded to `admin_uri/0` (no config seam).

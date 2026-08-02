@@ -6,16 +6,15 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
   `identity.list_caps` (`:call`), which lazy-spawns + force-activates a cold
   agent — a cold `cc` agent needs >5s to launch claude, blowing the ReadyGate
   budget → the caps panel showed `:activate_timeout`. The fix reads the entity's
-  caps from the durable `:identity` slice (live registry lookup first, then the
-  persisted snapshot) WITHOUT activation, after preserving the caller gate.
+  caps from the durable IdentityCaps Store WITHOUT activation, after preserving
+  the caller gate.
 
-  This test seeds a SNAPSHOT for a COLD agent (Kind never spawned) and asserts
-  the caps render from the snapshot AND the agent is never activated, plus the
+  This test seeds the authoritative Store for a COLD agent (Kind never spawned)
+  and asserts the caps render from durable state AND the agent is never activated, plus the
   caller gate still rejects an uncapped caller.
   """
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.SnapshotStore
   alias Ezagent.World.IdentityData
 
   setup do
@@ -43,22 +42,18 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
         Ezagent.Test.CapHelper.authority_signed_cap!(authority, agent, requested)
       end)
 
-    # Persist a snapshot whose `:identity` slice carries the cap — the COLD-path
-    # state the read must resolve. NO Ezagent.Kind.spawn → the agent is cold.
-    {:ok, _} =
-      SnapshotStore.write(
-        agent,
-        %{identity: %{caps: MapSet.new([self_license, cap])}},
-        kind_type: :agent
-      )
+    # Persist the sole authoritative capability carrier. NO Ezagent.Kind.spawn
+    # → the agent remains cold while the read resolves durable state.
+    :ok = Ezagent.IdentityCaps.Store.initialize(agent, [self_license, cap])
 
     assert :error = Ezagent.KindRegistry.lookup(URI.to_string(agent))
 
     %{agent: agent, granter: granter}
   end
 
-  test "entity caps render from the snapshot WITHOUT activating the cold agent", %{agent: agent} do
+  test "entity caps render from the Store WITHOUT activating the cold agent", %{agent: agent} do
     admin = Ezagent.URI.user(:system, :admin)
+
     admin_caps =
       MapSet.new([
         Ezagent.Test.CapHelper.signed_fixture_cap!(
@@ -82,7 +77,7 @@ defmodule Ezagent.World.IdentityCapsNoActivationTest do
       )
 
     caps = state["caps"]
-    assert is_list(caps), "expected the snapshot caps list, got #{inspect(caps)}"
+    assert is_list(caps), "expected the Store caps list, got #{inspect(caps)}"
     assert Enum.any?(caps, &(&1["behavior"] =~ "Chat" and &1["action"] == ":send"))
 
     # THE INVARIANT: rendering the caps did NOT start the agent Kind.

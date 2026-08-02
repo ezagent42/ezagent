@@ -26,7 +26,9 @@ defmodule Ezagent.Invariants.CapProvenanceChokepointTest do
     source = File.read!(Path.join(repo_root(), @grant_path))
 
     assert source =~ "Cap.issue(authorization, target, cap)"
-    assert source =~ ":revoke_cap -> {:ok, cap}"
+    assert source =~ ":revoke_cap -> revocation_artifact(target, cap)"
+    assert source =~ "resolve_revocation_artifact(target, logical_cap)"
+    refute source =~ ":revoke_cap -> Cap.issue"
   end
 
   defp grep(pattern) do

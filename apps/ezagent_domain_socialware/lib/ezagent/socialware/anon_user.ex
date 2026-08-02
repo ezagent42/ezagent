@@ -16,8 +16,8 @@ defmodule Ezagent.Socialware.AnonUser do
   **membership-only** (no new "non-member can read" permission), the viewer must be
   one of those three entity types, and `user` is the honest fit for a human
   visitor. The User Kind lazily demand-spawns via the `entity://` SpawnRegistry fn
-  and hydrates caps from `users.caps_json` via
-  `Ezagent.Entity.User.initial_caps_for_spawn/1` — so a row with an EMPTY caps_json
+  and hydrates caps from the durable identity-capability store via
+  `Ezagent.Entity.User.initial_caps_for_spawn/1` — so an identity with no grants
   demand-spawns with no session cap.
 
   ## Read-only by CONSTRUCTION
@@ -54,7 +54,7 @@ defmodule Ezagent.Socialware.AnonUser do
 
   Returns `{:ok, anon_user_uri}` — a canonical
   `entity://<viewed-workspace>/user/anon-<random>` `%URI{}` whose backing `users`
-  row has an EMPTY caps_json (read-only by construction). `<random>` is a 128-bit
+  Store row has an empty grant set (read-only by construction). `<random>` is a 128-bit
   URL-safe token, so the name is unguessable and collision-free.
 
   The workspace segment is derived from `session_uri` via
@@ -89,10 +89,9 @@ defmodule Ezagent.Socialware.AnonUser do
   authority is NOT routed through `Behavior.IdentityAdmin.grant_cap`'s
   `{self, admin, manager}` chokepoint (the anonymous HTTP path is none of those
   — all three branches fail closed), and NO `system://` principal is involved.
-  Instead the grant is born WITH the identity, written into the anon's
-  `caps_json` at create time (the same create-time mechanism `default_caps/1`
-  uses), so the anon hydrates the cap on demand-spawn and joins ONLY its own
-  session under its OWN authority.
+  Instead the grant is born WITH the identity and committed to the capability
+  Store at create time, so the anon hydrates the grant on demand-spawn and joins
+  ONLY its own session under its OWN authority.
 
   Returns:
 
@@ -111,7 +110,7 @@ defmodule Ezagent.Socialware.AnonUser do
   — exactly the needed-instance dispatch derives for a `session.join` on this
   session), strictly tighter than a `{:within_session, _}` scope tuple: it
   authorizes this session ONLY (not its sub-resources, never another session) and
-  is JSON-serializable for `caps_json` (a scope tuple is not — see
+  is artifact-serializable (a scope tuple is not — see
   `Ezagent.Capability.Normalize.to_map/1`).
   """
   @spec mint_for_public_session(URI.t()) :: {:ok, URI.t()} | {:error, term()}
@@ -144,13 +143,13 @@ defmodule Ezagent.Socialware.AnonUser do
 
   # The single narrow participation grant the anon is born with. Concrete-URI
   # instance (NOT a `{:within_session, _}` tuple — see the @doc) so it matches
-  # ONLY this session's `session.join` need + serializes into caps_json.
+  # ONLY this session's `session.join` need and serializes as a grant artifact.
   # `granted_by` = the canonical admin entity that actually authorizes this
   # rule-driven issuance through the target Kind's sealed authority. Recording
   # an arbitrary session owner here would be issuer impersonation.
   # Decision #162 (ISSUE → STORE → VERIFY): `Users.create_read_only/2` writes
-  # straight into `users.caps_json`, and `Behavior.Identity.post_init/2`
-  # reconciles the user Kind's cap slice FROM that column — so anything put
+  # straight into the durable identity-capability store, and `Behavior.Identity.post_init/2`
+  # reconciles the user Kind's cap slice from that store — so anything put
   # there IS authority granted. These caps used to go in without ever passing
   # `Ezagent.Cap.issue/3`, i.e. without `authorize_grant/3` ever running.
   #

@@ -648,11 +648,11 @@ defmodule Ezagent.Lifecycle do
   # Framework destroy primitive (SPEC §2 destroy path). PERMANENT
   # deletion: (1) run each Lifecycle Behavior's `destroy/2` cleanup hook
   # while the Kind is still LIVE (so the author can tear down subprocess
-  # handles / external mirrors with access to its `state`), THEN (2) clear
-  # the durable `state` + ever-created marker (delete the snapshot row),
-  # THEN (3) terminate the Kind process. A respawn at the same URI goes
-  # through `create/1` again. This is distinct from `deactivate` (graceful
-  # stop — the entity persists; runs through OTP `terminate/3`).
+  # handles / external mirrors with access to its `state`), THEN (2) tombstone
+  # the identity Store and clear the actor snapshot, THEN (3) terminate the
+  # Kind process. URI reuse requires explicit identity reprovisioning; deleting
+  # the actor snapshot alone cannot reactivate it. This is distinct from
+  # `deactivate` (graceful stop — the entity persists).
   # ---------------------------------------------------------------
 
   @doc """
@@ -664,8 +664,8 @@ defmodule Ezagent.Lifecycle do
      against the LIVE Kind (subprocess teardown, ExternalMirror release,
      etc.) — BEFORE durable state is cleared, so the hook can read its
      own `state`. Best-effort + per-Behavior isolated (§OTP).
-  2. Clear durable `state` + the ever-created marker (delete the
-     `kind_snapshots` row) so a future spawn re-runs `create/1`.
+  2. Tombstone the identity Store, then clear durable actor `state` + the
+     ever-created marker. URI reuse requires explicit identity reprovisioning.
   3. Terminate the Kind process.
 
   Idempotent — an already-absent URI clears nothing and returns `:ok`.
@@ -782,6 +782,12 @@ defmodule Ezagent.Lifecycle do
     #    rejected self-destroy leaves the row + process untouched.
     with :ok <- run_developer_destroy_hooks(uri_str, reason),
          :ok <- terminate_live(uri_str) do
+      # Identity authority is independent of the actor snapshot. Tombstone it
+      # before retiring the signing authority or deleting actor state, so a
+      # partial destroy remains fail-closed and snapshot deletion cannot later
+      # masquerade as identity reprovisioning.
+      :ok = tombstone_identity(uri)
+
       # A live target retires its authority while draining developer destroy
       # hooks in Kind.Server. A cold target has no hook process, so retire the
       # active row here as well. Idempotency makes this the single post-
@@ -794,6 +800,13 @@ defmodule Ezagent.Lifecycle do
       :ok = Ezagent.Ecto.KindSnapshot.delete(uri_str)
 
       :ok
+    end
+  end
+
+  defp tombstone_identity(uri) do
+    case Application.get_env(:ezagent_actor, :identity_caps_store) do
+      nil -> :ok
+      store -> store.tombstone(uri)
     end
   end
 

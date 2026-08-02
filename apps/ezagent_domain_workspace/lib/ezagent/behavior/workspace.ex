@@ -153,6 +153,7 @@ defmodule Ezagent.ActionSet.Workspace do
   use Ezagent.Lifecycle
 
   alias Ezagent.ActionSet.Workspace.Members
+  alias Ezagent.Workspace.MemberCaps
 
   # ---------------------------------------------------------------
   # Action declarations (SPEC §4.3 — per-action grammar)
@@ -449,7 +450,7 @@ defmodule Ezagent.ActionSet.Workspace do
 
       effects =
         [{:set, :members, new_members}] ++
-          grant_member_create_session_cap_effects(workspace_uri, uri)
+          MemberCaps.grant_effects(workspace_uri, uri)
 
       {:ok, %{}, effects}
     end
@@ -467,11 +468,11 @@ defmodule Ezagent.ActionSet.Workspace do
     workspace_uri = Map.get(ctx, :self_uri)
     members = ctx[:read].(:members, MapSet.new())
 
-    effects =
-      [{:set, :members, MapSet.delete(members, uri)}] ++
-        revoke_member_create_session_cap_effects(workspace_uri, uri)
-
-    {:ok, %{}, effects}
+    with {:ok, revoke_effects} <-
+           MemberCaps.revoke_effects(workspace_uri, uri) do
+      effects = [{:set, :members, MapSet.delete(members, uri)}] ++ revoke_effects
+      {:ok, %{}, effects}
+    end
   end
 
   @doc "Validate a workspace responsibility assignment. The facade persists it and binds caps after this cap-gated action succeeds."
@@ -873,121 +874,4 @@ defmodule Ezagent.ActionSet.Workspace do
 
   @doc false
   defdelegate __cascade_content_for_test__(tmpl), to: Ezagent.ActionSet.Workspace.AgentCreate
-
-  # codex PR #408 review round-2 MED-2 — grant the workspace
-  # `:create_session` cap to a newly-added user member via a
-  # `{:dispatch, %Cmd{}}` effect (runs AFTER the `:set :members`
-  # effect commits per apply_effects order). Skipped for agent
-  # members (agents don't drive create_session).
-  #
-  # The effect dispatches `identity.grant_cap` against the member's
-  # User Kind, carrying the `:create_session` Capability struct as
-  # the cap to grant. The Cmd's ctx.reply is `:ignore`, which
-  # Router.derive_mode interprets as `:cast` — the User Kind
-  # buffers via `PendingDelivery` if its `ReadyGate` is still
-  # `:not_ready` (the empirical Allen-observed bug; task #46's
-  # actual cause). The grant lands automatically when the User
-  # Kind transitions to `:ready`.
-  #
-  # Allen 2026-05-28 migration note: in the legacy contract this
-  # was a synchronous `Invocation.dispatch/1` call inside the
-  # action body, with a try/rescue + warning log around it. In the
-  # new contract the dispatch is an EFFECT — apply_effects already
-  # has the dispatch-failure logging path (see runtime.ex
-  # `execute_dispatches/2`), so the per-call rescue + telemetry
-  # would duplicate observability. Behavioural equivalent:
-  # `execute_dispatches/2` aborts subsequent effects on dispatch
-  # error and logs a warning, which matches the previous "log + ok"
-  # semantics minus the explicit `:telemetry.execute` for the
-  # `member_create_session_grant_failed` event. The telemetry
-  # event remained the only test fixture flagging this branch
-  # (no production consumer); if needed it can be re-added by
-  # the runtime as a generic `[:ezagent, :effect_dispatch, :failed]`
-  # event in a follow-up.
-  #
-  # KNOWN OVER-GRANT (codex PR #408 round-3 HIGH; see
-  # `docs/futures/todo.md` for the full discussion + planned fix).
-  defp grant_member_create_session_cap_effects(
-         %URI{scheme: "workspace"} = workspace_uri,
-         %URI{scheme: "entity"} = member_uri
-       ) do
-    unless Ezagent.URI.type?(member_uri, :user) do
-      []
-    else
-      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #4 — the BLOCKER-3
-      # variable-action builder is GONE; grant + revoke now call distinct
-      # chokepoint wrappers). The async `{:dispatch, %Cmd{}}` grant.
-      [
-        Ezagent.Identity.Grant.grant_cap_effect(
-          member_uri,
-          member_create_session_cap(workspace_uri),
-          member_create_session_authorization()
-        )
-      ]
-    end
-  end
-
-  # Non-user member (agent) or missing workspace URI — no grant.
-  defp grant_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
-
-  # SPEC §7 Part B — symmetric sweep of the cap `:add_member` granted.
-  # codex review HIGH: a SECURITY revoke must be synchronous +
-  # failure-propagating (NOT the grant's buffered cast).
-  # `:dispatch_returning` runs `:revoke_cap` inline and short-circuits
-  # `handle_remove_member/2` on error, so the slice mutation (and the
-  # facade's `Store.update_members/2`) does NOT commit while the cap is
-  # still live. The member's User Kind is already alive at remove time,
-  # so the `:call` reply can't stall on a not-ready gate.
-  defp revoke_member_create_session_cap_effects(
-         %URI{scheme: "workspace"} = workspace_uri,
-         %URI{scheme: "entity"} = member_uri
-       ) do
-    if Ezagent.URI.type?(member_uri, :user) do
-      # Grant chokepoint (SPEC 2026-06-17 §3.5 site #4) — the synchronous,
-      # failure-propagating `{:dispatch_returning, %Cmd{}, bind_as:}` revoke.
-      [
-        Ezagent.Identity.Grant.revoke_cap_returning_effect(
-          member_uri,
-          member_create_session_cap(workspace_uri),
-          member_create_session_authorization(),
-          :member_create_session_revoke
-        )
-      ]
-    else
-      []
-    end
-  end
-
-  defp revoke_member_create_session_cap_effects(_workspace_uri, _member_uri), do: []
-
-  # Shared cap shape for the add/remove pair: the workspace-scoped
-  # `:create_session` grant. `granted_by`/`granted_at` are OVERWRITTEN by
-  # the chokepoint (`Ezagent.Identity.Grant.prepare/4`) per the
-  # authorization tag, so the placeholder values here are inert (revoke
-  # matches by identity_key, which excludes `granted_at`/`granted_by`).
-  defp member_create_session_cap(%URI{scheme: "workspace"} = workspace_uri) do
-    %Ezagent.Capability{
-      kind: :workspace,
-      behavior: __MODULE__,
-      action: :create_session,
-      instance: workspace_uri,
-      workspace_uri: workspace_uri,
-      granted_by: Ezagent.Entity.User.admin_uri(),
-      granted_at: DateTime.utc_now()
-    }
-  end
-
-  # Authorization tag (SPEC 2026-06-17 §4 PR-2, site #4). The cap is
-  # `workspace/Workspace/:create_session/<concrete workspace URI>` —
-  # concrete kind + behavior, concrete `%URI{}` instance, concrete action
-  # `:create_session` — so `IdentityAdmin.rule_cap_bounded?/1` is true →
-  # the `{:rule, …}` branch authorizes it (Decision #154).
-  # `template-materialize` is no longer the authorizer. No workspace-owner
-  # field is threaded to this Behavior handler, so the configurer (and
-  # entity `granted_by`) is the documented Decision #154 extreme-case
-  # fallback `entity://system/user/admin` — the accountable entity for the
-  # workspace-membership rule. (KNOWN OVER-GRANT note above unchanged.)
-  defp member_create_session_authorization do
-    {:admin, Ezagent.Entity.User.admin_uri()}
-  end
 end

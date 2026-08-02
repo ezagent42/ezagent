@@ -157,7 +157,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   The cap is `session/Session/:remove_participant/<session_uri>` —
   `granted_by: owner_uri` (the session owner is the #154-clean granter, same
   play as `grant_owner_orchestrator_admin_cap/3`). Concrete instance + concrete
-  action → `IdentityAdmin.rule_cap_bounded?/1` is true, so the grant is
+  action → `CapabilityRegistry.rule_cap_bounded?/1` is true, so the grant is
   authorized via the `{:rule, …}` branch (Decision #154). Idempotent: a logical
   re-grant on the same session is skipped.
 
@@ -253,7 +253,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
 
   Both `granted_by: owner_uri` — the owner IS the lineage root, so this is
   self-rooted and #154-clean (no forged/unowned cap). `{:spawned_by, %URI{}}` is
-  scope-bounded → `IdentityAdmin.rule_cap_bounded?/1` is true → authorized via
+  scope-bounded → `CapabilityRegistry.rule_cap_bounded?/1` is true → authorized via
   the `{:rule, …}` branch, the SAME legality class as the orchestrator's cap #2.
 
   ## Why this is the lever (SPEC §2.2)
@@ -340,7 +340,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
     else
       # Grant chokepoint (SPEC 2026-06-17 §4 PR-2, site #6). The cap is
       # `session/OrchestratorAdmin/:restart/<session_uri>` — concrete
-      # instance + concrete action, so `IdentityAdmin.rule_cap_bounded?/1`
+      # instance + concrete action, so `CapabilityRegistry.rule_cap_bounded?/1`
       # is true → authorized via the `{:rule, …}` branch (Decision #154).
       # `template-materialize` is no longer the authorizer; the configurer
       # of the orchestrator-template-materialization rule is the session

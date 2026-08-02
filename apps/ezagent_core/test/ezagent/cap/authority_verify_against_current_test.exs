@@ -13,6 +13,7 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
 
   import Ezagent.Test.CapHelper, only: [authority_signed_cap!: 3]
 
+  alias Ezagent.Cap
   alias Ezagent.Cap.Authority
   alias Ezagent.Capability
   alias Ezagent.Test.{TestBehavior, TestKind}
@@ -82,6 +83,31 @@ defmodule Ezagent.Cap.AuthorityVerifyAgainstCurrentTest do
 
     other_signed = mint_signed_cap_for(other_uri, grantee)
     refute Authority.verify_against_current(other_signed, grantee, uri)
+  end
+
+  test "missing or noncanonical grant identities deny without raising" do
+    {uri, _pid, grantee} = start_target("illegal-grant-id")
+    artifact = mint_signed_cap_for(uri, grantee)
+
+    for invalid <- [nil, "", String.upcase(artifact.grant_id), "not-a-uuid"] do
+      artifact = %{artifact | grant_id: invalid}
+      refute Authority.verify_against_current(artifact, grantee, uri)
+    end
+  end
+
+  test "issue overwrites caller grant identity with a fresh canonical UUID" do
+    {uri, _pid, grantee} = start_target("framework-stamp")
+    requested = %{action_cap(uri) | grant_id: "caller-controlled"}
+
+    assert {:ok, first} = Cap.issue({:admin, admin()}, grantee, requested)
+    assert {:ok, second} = Cap.issue({:admin, admin()}, grantee, requested)
+
+    assert Ezagent.Cap.GrantArtifact.valid_grant_id?(first.grant_id)
+    assert Ezagent.Cap.GrantArtifact.valid_grant_id?(second.grant_id)
+    refute first.grant_id == "caller-controlled"
+    refute second.grant_id == first.grant_id
+    assert Authority.verify_against_current(first, grantee, uri)
+    assert Authority.verify_against_current(second, grantee, uri)
   end
 
   defp start_target(suffix) do

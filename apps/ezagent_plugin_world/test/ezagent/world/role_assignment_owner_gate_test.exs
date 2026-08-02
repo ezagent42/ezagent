@@ -65,7 +65,7 @@ defmodule Ezagent.World.RoleAssignmentOwnerGateTest do
   defp socket_with_join_cap(caller, session_uri) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)
     cap = Ezagent.Test.CapHelper.signed_action_cap!(target, caller)
-    :ok = Ezagent.EntityCaps.grant(caller, cap)
+    :ok = Ezagent.IdentityCaps.grant(caller, cap)
     bare_socket(caller)
   end
 

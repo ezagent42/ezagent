@@ -317,12 +317,12 @@ defmodule EzagentPluginGitWorkflow.ArchitectureTest do
       end
     end
 
-    test "no EntityCaps/PresenterCaps reference" do
+    test "no IdentityCaps/PresenterCaps reference" do
       lib_files = Path.join(@lib_dir, "**/*.ex") |> Path.wildcard()
 
       for file <- lib_files do
         content = File.read!(file)
-        refute content =~ "EntityCaps"
+        refute content =~ "IdentityCaps"
         refute content =~ "PresenterCaps"
       end
     end

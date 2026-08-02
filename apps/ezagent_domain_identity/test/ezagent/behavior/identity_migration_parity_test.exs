@@ -17,7 +17,12 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
   use EzagentCore.DataCase, async: false
 
   import Ezagent.Test.CapHelper,
-    only: [signed_fixture_cap!: 5, signed_invocation!: 2, signed_required_cap!: 5]
+    only: [
+      self_license_cap!: 2,
+      signed_fixture_cap!: 5,
+      signed_invocation!: 2,
+      signed_required_cap!: 5
+    ]
 
   alias Ezagent.{BehaviorRegistry, Invocation}
   alias Ezagent.ActionSet.{Identity, IdentityAdmin}
@@ -46,10 +51,11 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
     n = System.unique_integer([:positive])
     user_uri = Ezagent.URI.new!("entity://identity-parity/user/alice-#{n}")
 
-    admin_caps = MapSet.new([Ezagent.Capability.admin_genesis_cap()])
-    state = %{identity: %{caps: admin_caps}}
+    initial_caps = MapSet.new([self_license_cap!(user_uri, :user)])
+    :ok = Ezagent.IdentityCaps.Store.persist(user_uri, initial_caps)
+    state = %{identity: %{caps: initial_caps}}
 
-    {:ok, user_uri: user_uri, state: state, admin_caps: admin_caps}
+    {:ok, user_uri: user_uri, state: state, initial_caps: initial_caps}
   end
 
   defp build_invocation(user_uri, action, args) do
@@ -75,7 +81,7 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
 
   describe "Identity — Level 1 dispatch parity" do
     test "list_caps dispatch returns the slice cap list (no slice mutation)",
-         %{user_uri: user_uri, state: state, admin_caps: admin_caps} do
+         %{user_uri: user_uri, state: state, initial_caps: initial_caps} do
       inv = build_invocation(user_uri, :list_caps, %{})
 
       assert {:ok, new_state, %{caps: caps_list}, nil, _deferred} =
@@ -83,15 +89,16 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
 
       # No slice mutation — read-only action.
       assert new_state == state
-      assert length(caps_list) == MapSet.size(admin_caps)
+      assert length(caps_list) == MapSet.size(initial_caps)
     end
 
     test "has_cap? dispatch returns true for admin all-cap match",
          %{user_uri: user_uri, state: state} do
       needed = %{
-        kind: :session,
-        behavior: Ezagent.ActionSet.Session,
-        instance: URI.new!("session://system/default/main"),
+        kind: :user,
+        behavior: Ezagent.ActionSet.Identity,
+        action: :self_license,
+        instance: user_uri,
         workspace_uri: @workspace_uri
       }
 
@@ -120,9 +127,8 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
 
   describe "IdentityAdmin — Level 1 dispatch parity" do
     test "grant_cap dispatch adds cap to the shared :identity slice",
-         %{user_uri: user_uri, admin_caps: admin_caps} do
-      # Start with a slice that only has admin's cross-cutting caps.
-      state = %{identity: %{caps: admin_caps}}
+         %{user_uri: user_uri, initial_caps: initial_caps} do
+      state = %{identity: %{caps: initial_caps}}
 
       new_cap =
         signed_fixture_cap!(
@@ -139,12 +145,12 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
 
       # Slice gained one cap.
-      assert MapSet.size(new_state.identity.caps) == MapSet.size(admin_caps) + 1
+      assert MapSet.size(new_state.identity.caps) == MapSet.size(initial_caps) + 1
       assert new_cap in cap_list
     end
 
     test "revoke_cap dispatch removes a cap from the shared :identity slice",
-         %{user_uri: user_uri, admin_caps: admin_caps} do
+         %{user_uri: user_uri, initial_caps: initial_caps} do
       cap =
         signed_fixture_cap!(
           Ezagent.URI.new!("session://identity-parity/default/revoke-target"),
@@ -154,14 +160,14 @@ defmodule Ezagent.ActionSet.IdentityMigrationParityTest do
           user_uri
         )
 
-      state = %{identity: %{caps: MapSet.put(admin_caps, cap)}}
+      state = %{identity: %{caps: MapSet.put(initial_caps, cap)}}
 
       inv = build_invocation(user_uri, :revoke_cap, %{cap: cap})
 
       assert {:ok, new_state, %{caps: _cap_list}, _evt, _deferred} =
                Ezagent.Kind.Runtime.handle_dispatch(inv, state, StubUserKind, user_uri)
 
-      assert MapSet.size(new_state.identity.caps) == MapSet.size(admin_caps)
+      assert MapSet.size(new_state.identity.caps) == MapSet.size(initial_caps)
       refute cap in new_state.identity.caps
     end
   end

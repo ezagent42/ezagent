@@ -46,7 +46,8 @@ defmodule Ezagent.Capability do
             granted_at: nil,
             signature: nil,
             key_id: nil,
-            grantee_uri: nil
+            grantee_uri: nil,
+            grant_id: nil
 
   @type scope_tuple ::
           {:within_session, URI.t()}
@@ -63,7 +64,8 @@ defmodule Ezagent.Capability do
           granted_at: DateTime.t() | :compile_time,
           signature: binary() | nil,
           key_id: String.t() | nil,
-          grantee_uri: URI.t() | nil
+          grantee_uri: URI.t() | nil,
+          grant_id: String.t() | nil
         }
 
   # Sentinel values for declarative caps (e.g. those returned by
@@ -171,18 +173,8 @@ defmodule Ezagent.Capability do
   def matches?(%__MODULE__{} = cap, needed), do: Match.matches?(cap, needed)
 
   @doc """
-  Read the action axis of a cap, defaulting to `:any` for caps loaded
-  from pre-action-axis snapshots (missing `:action` key).
-
-  SPEC 2026-05-27 capability-action-axis §3.3.1 — single chokepoint for
-  missing-key tolerance. All cap readers (matcher, serializer, LV
-  display) route through this helper so the rule is encoded ONCE.
-
-  Returns `:any` for raw maps without `:action`, the field value
-  otherwise. `Map.get/3` on a struct map is equivalent to direct field
-  access when the key is present, and returns the default when it's
-  not — covering both fresh structs and pre-SPEC binary_to_term'd
-  snapshots in one expression.
+  Read the mandatory action axis of a capability. Incomplete protocol state
+  raises instead of widening to `:any`.
   """
   @spec action_of(t() | map()) :: atom()
   def action_of(cap), do: Match.action_of(cap)
@@ -279,14 +271,7 @@ defmodule Ezagent.Capability do
       }),
       do: same_uri?(granted_by, admin_genesis_granter())
 
-  # codex r4 SPEC option-B: legacy fallback REMOVED. Pre-SPEC admin caps
-  # missing `:action` no longer recognized — operators MUST re-grant
-  # admin authority via `Identity.grant_cap` (which goes through
-  # `normalize!/2` and writes `action: :any` explicitly).
-  # Rationale: `Map.delete(cap, :action)` produces a shape structurally
-  # indistinguishable from a real legacy snapshot, so the legacy
-  # fallback was redundant defense at this layer (matcher-boundary
-  # tolerance per SPEC §3.3 still handles legacy at dispatch step 5.5).
+  # Any other shape is not the protected admin grant.
   def admin_invariant?(%__MODULE__{}), do: false
 
   @doc """
@@ -431,17 +416,14 @@ defmodule Ezagent.Capability do
   def workspace_of(%URI{} = uri), do: Scope.workspace_of(uri)
 
   @doc """
-  Serialize a Capability to a JSON-safe map (for `users.caps_json`
-  storage per Phase 4-completion Spec 05 Part A).
+  Serialize a Capability to a JSON-safe map for signed grant artifacts.
 
   Atoms become strings; modules become strings; URIs become strings.
   `workspace_uri` is serialized via `uri_or_any_to_string/1` (SPEC v3
   §4 — `:any` round-trips as `"any"`). Inverse of `from_map/1`.
 
-  Tolerant of a legacy `%Capability{}` deserialized from a pre-#1399 snapshot
-  (a struct-shaped map that still matches `%Capability{}` but lacks the
-  `signature` / `key_id` / `grantee_uri` keys) — those are re-projected to
-  `nil` defaults, never a `KeyError` (#213).
+  Grant-protocol fields are serialized exactly; incomplete artifacts are
+  rejected at the `GrantArtifact` carrier boundary.
   """
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = cap), do: Normalize.to_map(cap)
@@ -449,13 +431,9 @@ defmodule Ezagent.Capability do
   @doc """
   Deserialize a Capability from a JSON-decoded map.
 
-  SPEC v3 §4 — pre-PR-3 caps_json rows lack the `workspace_uri`
-  key; per the "no back-compat shim" rule (memory
-  `feedback_let_it_crash_no_workarounds` + SPEC v3 §8 wipe-and-
-  rebuild), the DB is reset on Phase 9 migration. To preserve
-  round-trip soundness on test fixtures however, a missing key
-  defaults to `:any` (the cap won't be authored without the field
-  in any post-PR-3 code path).
+  The action and workspace axes are mandatory. Missing axes raise rather than
+  widening authority with a default. Durable carriers additionally validate
+  every issued-artifact field through `Ezagent.Cap.GrantArtifact`.
   """
   @spec from_map(map()) :: t()
   def from_map(%{} = m), do: Normalize.from_map(m)
@@ -579,12 +557,6 @@ end
 # fields stringify, scope tuples become lists, atoms/DateTime pass through.
 defimpl Jason.Encoder, for: Ezagent.Capability do
   def encode(%Ezagent.Capability{} = cap, opts) do
-    # #213: re-project a possibly-legacy struct (pre-#1399 snapshot missing the
-    # signature/key_id/grantee_uri keys) so the strict field reads below can't
-    # KeyError — same legacy-shape tolerance as `Capability.to_map/1`, via the
-    # shared helper so the two serializers cannot drift.
-    cap = Ezagent.Capability.Normalize.fill_defaults(cap)
-
     Jason.Encode.map(
       %{
         kind: cap.kind,
@@ -600,6 +572,7 @@ defimpl Jason.Encoder, for: Ezagent.Capability do
             signature when is_binary(signature) -> Base.url_encode64(signature, padding: false)
           end,
         key_id: cap.key_id,
+        grant_id: cap.grant_id,
         grantee_uri:
           case cap.grantee_uri do
             nil -> nil

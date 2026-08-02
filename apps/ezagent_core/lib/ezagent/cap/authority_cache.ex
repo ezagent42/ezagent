@@ -1,7 +1,7 @@
 defmodule Ezagent.Cap.AuthorityCache do
   @moduledoc """
   ETS memo of the IMMUTABLE `key_id -> public_key` mapping for per-Kind
-  capability authorities (unified-revocation Phase F-1, v2/MF4).
+  capability authorities.
 
   A `key_id` (`kind-g<generation>:<fingerprint>`, see
   `Ezagent.Cap.Authority`) binds exactly one public key forever, so a memo

@@ -43,7 +43,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     },
     "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/materializer.ex" =>
       %{{:grant_cap, 3} => 4},
-    "apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace.ex" => %{
+    "apps/ezagent_domain_workspace/lib/ezagent/workspace/member_caps.ex" => %{
       {:grant_cap_effect, 3} => 1
     },
     "apps/ezagent_domain_workspace/lib/ezagent/workspace/responsibility_assignments.ex" => %{
@@ -87,7 +87,10 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     # PR #1501 — the core outbox's validated pending-cap reader matches the
     # single absorb operation it is permitted to decode. This is a read-side
     # discriminator, not a new dispatch constructor or producer.
-    @cap_delivery_outbox => 1,
+    # P2 per-cap revocation leaves one query predicate over durable absorb
+    # deliveries (revoked-delivery fencing). It inspects the existing op; it does
+    # not construct or dispatch a second absorb.
+    @cap_delivery_outbox => 2,
     @cap_delivery_envelope => 6,
     @cap_verifier => 1,
     @config_evolve => 2,

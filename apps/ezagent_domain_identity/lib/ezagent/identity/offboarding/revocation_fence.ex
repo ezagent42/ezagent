@@ -25,7 +25,7 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
   def enroll(uris) when is_list(uris) do
     # #1627 B1-hybrid: the genesis admin (authority root) is structurally
     # un-killable — an offboarding fence on it is a SOFT kill (it blocks the
-    # pre-epoch re-mint → boot crashes on the §3 seed). Reject enrolling the root.
+    # root authority rotation would brick bootstrap. Reject enrolling the root.
     if Enum.any?(uris, &admin_uri?/1) do
       {:error, :root_authority_immutable}
     else
@@ -41,7 +41,9 @@ defmodule Ezagent.Identity.Offboarding.RevocationFence do
   end
 
   defp uri_to_instance(%URI{} = uri), do: Ezagent.URI.instance(uri)
-  defp uri_to_instance(uri) when is_binary(uri), do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance()
+
+  defp uri_to_instance(uri) when is_binary(uri),
+    do: uri |> Ezagent.URI.new!() |> Ezagent.URI.instance()
 
   defp do_enroll(uris) do
     now = DateTime.utc_now()

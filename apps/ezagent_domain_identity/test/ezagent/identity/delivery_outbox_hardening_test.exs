@@ -5,7 +5,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
   import Ezagent.Test.CapHelper, only: [signed_fixture_cap!: 5]
 
   alias Ezagent.{Cap, Capability}
-  alias Ezagent.Cap.{Authority, Delivery}
+  alias Ezagent.Cap.{Authority, Delivery, RevocationLedger}
   alias Ezagent.Cap.DeliveryOutbox
   alias Ezagent.Cap.DeliveryOutbox.Sweeper
   alias Ezagent.Invocation
@@ -54,6 +54,22 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     refute Ezagent.Idempotency.seen?(key)
     assert {:error, :invalid_delivery_envelope} = result
+    assert delivery_count(target) == 0
+  end
+
+  test "enqueue rejects the whole envelope when its artifact carrier is malformed" do
+    target = Ezagent.URI.user("team-alpha", unique("malformed-artifact-carrier"))
+    valid = capability(target)
+    malformed = %{valid | signature: nil}
+
+    assert {:error, :invalid_delivery_envelope} =
+             Invocation.dispatch(absorb_invocation(target, malformed))
+
+    assert {:error, :invalid_delivery_envelope} =
+             Invocation.dispatch(
+               absorb_invocation(target, valid, caps: MapSet.new([valid, malformed]))
+             )
+
     assert delivery_count(target) == 0
   end
 
@@ -123,6 +139,55 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
              )
 
     assert delivery_count(target) == 1
+    terminate(target, pid)
+  end
+
+  test "separate grants with the same logical identity keep distinct pending rows by grant_id" do
+    {target, pid} = spawn_target("grant-id-semantic")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    first = issued_capability(target)
+    second = issued_capability(target)
+
+    assert Capability.identity_key(first) == Capability.identity_key(second)
+    assert first.key_id == second.key_id
+    refute first.grant_id == second.grant_id
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, first))
+    assert :ok = Invocation.dispatch(absorb_invocation(target, second))
+
+    deliveries =
+      Repo.all(
+        from(delivery in Delivery,
+          where: delivery.target_uri == ^URI.to_string(target),
+          order_by: [asc: delivery.id]
+        )
+      )
+
+    assert Enum.map(deliveries, & &1.grant_id) == [first.grant_id, second.grant_id]
+    terminate(target, pid)
+  end
+
+  test "enqueue and retry both block an absorbing grant_id after revocation" do
+    {target, pid} = spawn_target("revoked-grant")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    pending_cap = issued_capability(target)
+
+    assert :ok = Invocation.dispatch(absorb_invocation(target, pending_cap))
+    delivery = one_delivery!(target)
+    assert delivery.grant_id == pending_cap.grant_id
+
+    assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(target, pending_cap))
+
+    assert {:error, :capability_revoked} = DeliveryOutbox.attempt(delivery.id)
+    assert Repo.get(Delivery, delivery.id) == nil
+
+    later = issued_capability(target)
+    assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(target, later))
+
+    assert {:error, :capability_revoked} =
+             Invocation.dispatch(absorb_invocation(target, later))
+
+    assert delivery_count(target) == 0
     terminate(target, pid)
   end
 
@@ -222,7 +287,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     terminate(target, pid)
   end
 
-  test "concurrent equivalent absorbs create one pending delivery" do
+  test "concurrent equivalent axes with distinct grant IDs create distinct pending deliveries" do
     {target, pid} = spawn_target("concurrent-semantic-absorb")
     :ok = Ezagent.ReadyGate.put(target, :not_ready)
     first = capability(target)
@@ -246,7 +311,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     end)
 
     assert Enum.map(tasks, &Task.await(&1, 5_000)) == [:ok, :ok]
-    assert pending_delivery_count(target) == 1
+    assert pending_delivery_count(target) == 2
 
     terminate(target, pid)
   end
@@ -439,6 +504,35 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     assert id == delivery.id
   end
 
+  test "one malformed context grant makes the entire persisted envelope unreadable" do
+    {target, pid} = spawn_target("malformed-context-carrier")
+    :ok = Ezagent.ReadyGate.put(target, :not_ready)
+    cap = capability(target)
+
+    assert :ok =
+             Invocation.dispatch(absorb_invocation(target, cap, caps: MapSet.new([cap])))
+
+    delivery = one_delivery!(target)
+    envelope = :erlang.binary_to_term(delivery.payload, [:safe])
+    malformed = %{cap | key_id: nil}
+
+    delivery
+    |> Ecto.Changeset.change(
+      payload:
+        Ezagent.Cap.DeliveryOutbox.Envelope.canonical_binary(%{
+          envelope
+          | caps: [cap, malformed]
+        })
+    )
+    |> Repo.update!()
+
+    assert {:error, {:invalid_pending_delivery, id, _reason}} =
+             DeliveryOutbox.list_pending_absorb_caps(target)
+
+    assert id == delivery.id
+    terminate(target, pid)
+  end
+
   test "a permanent authorization failure is audited as dead by the target handler" do
     {target, pid} = spawn_target("permanent-auth")
     cap = capability(target)
@@ -566,6 +660,31 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
     )
   end
 
+  defp issued_capability(target) do
+    base = capability(target)
+    {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
+
+    base
+    |> Map.merge(%{
+      grant_id: Ecto.UUID.generate(),
+      signature: nil
+    })
+    |> then(&Authority.sign(authority, &1))
+  end
+
+  defp revocation_attrs(target, cap) do
+    %{
+      grant_id: cap.grant_id,
+      workspace_uri: target |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(target),
+      cap_identity_key:
+        :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(cap.instance),
+      key_id: cap.key_id
+    }
+  end
+
   defp same_semantic_cap(target, cap) do
     {:ok, authority} = Authority.open(Ezagent.URI.instance(target), :user)
     same_semantic_cap(target, cap, authority)
@@ -583,7 +702,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
 
     issuer = Ezagent.URI.user("team-alpha", unique("semantic-issuer"))
     {:ok, artifact} = Cap.prepare_provenance({:held_by, issuer}, target, requested)
-    Authority.sign(authority, artifact)
+    Authority.sign(authority, %{artifact | grant_id: Ecto.UUID.generate()})
   end
 
   defp one_delivery!(target) do
@@ -619,6 +738,7 @@ defmodule Ezagent.Identity.DeliveryOutboxHardeningTest do
       op: Keyword.get(opts, :op, :absorb_cap),
       payload: :erlang.term_to_binary(envelope),
       payload_identity: "poison-#{System.unique_integer([:positive])}",
+      grant_id: Keyword.get(opts, :grant_id, Ecto.UUID.generate()),
       status: :pending,
       attempts: 0,
       next_retry_at: next_retry_at

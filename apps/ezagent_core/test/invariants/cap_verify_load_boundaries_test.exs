@@ -22,11 +22,12 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
 
   @identity_behavior "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @identity_facade "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
-  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+  @entity_caps "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex"
   @recipe_cap_binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @outbound_grant "apps/ezagent_domain_identity/lib/ezagent/outbound_grant.ex"
   @snapshot "apps/ezagent_actor/lib/ezagent/kind/snapshot.ex"
   @authority_adapter "apps/ezagent_core/lib/ezagent/kind/adapters/authority_adapter.ex"
+  @store "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex"
   @cap "apps/ezagent_core/lib/ezagent/cap.ex"
   @cli_dispatch "apps/ezagent_cli/lib/ezagent_cli/dispatch.ex"
   @provider_connection "apps/ezagent_domain_provider_connection/lib/ezagent/behavior/provider_connection.ex"
@@ -36,12 +37,13 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     @entity_caps => 1,
     @recipe_cap_binding => 1,
     @outbound_grant => 1,
+    @store => 1,
     # C5 §3.4 AuthorityPort — snapshot's `verified_set` call moved behind the
     # config-resolved port; the core ADAPTER is the reviewed storage-boundary
     # home now (the literal `Cap.verified_set` call lives here).
     @authority_adapter => 1
   }
-  @storage_home_count 7
+  @storage_home_count 8
 
   test "I5 structural storage boundary calls are exact, ratcheted, and at most eight" do
     actual = cap_storage_calls()
@@ -76,13 +78,12 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
              "{:set, :caps, caps}"
 
     assert definition_source(@identity_facade, :list_caps_for, 1) =~
-             "Ezagent.EntityCaps.load"
+             "Ezagent.IdentityCaps.load"
 
     assert definition_source(@identity_facade, :read_held_caps, 1) =~
-             "Ezagent.EntityCaps.load"
+             "Ezagent.IdentityCaps.load"
 
-    assert source(@identity_facade) =~
-             "defdelegate read_entity_caps(entity_uri), to: Ezagent.EntityCaps, as: :load"
+    refute source(@identity_facade) =~ "read_identity_caps"
 
     refute source(@identity_facade) =~ "defp verified_cap_set"
 
@@ -109,7 +110,8 @@ defmodule Ezagent.Invariants.CapVerifyLoadBoundariesTest do
     assert definition_source(@authority_adapter, :verified_set, 2) =~
              "Ezagent.Cap.verified_set"
 
-    assert definition_source(@cap, :verified_set, 2) =~ "storable_for?(cap, receiver_uri)"
+    assert definition_source(@cap, :verified_set, 2) =~
+             "Enum.all?(artifacts, &storable_for?(&1, receiver_uri))"
 
     verifier = source("apps/ezagent_core/lib/ezagent/cap/verifier.ex")
     assert verifier =~ "Authority.verify_current(cap, presenter)"

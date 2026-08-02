@@ -27,6 +27,7 @@ defmodule Ezagent.Credential.ResolverGenerationTest do
       source
       |> Ezagent.Credential.GrantCap.read_cap_for()
       |> Map.merge(%{
+        grant_id: Ecto.UUID.generate(),
         granted_by: holder,
         granted_at: DateTime.utc_now(),
         grantee_uri: holder

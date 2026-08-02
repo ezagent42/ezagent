@@ -12,7 +12,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       pass `principal_current?` ONLY via the deleted process-generation branch
       (an internal/ephemeral/autonomous principal authorizing ITSELF while
       inside its own authority compartment, where the DURABLE holder store is
-      the source `EntityCaps.load` consults for the self-case) already holds a
+      the source `IdentityCaps.load` consults for the self-case) already holds a
       DURABLE current-generation self-license at ready — so the branch is dead
       code. The worklist is EMPTY (asserted per principal type);
     * the **transition tests t1–t5** the spec requires.
@@ -22,7 +22,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
   `autonomous_current?/1` was the ONLY `principal_current?` branch that could
   admit a holder whose independently-loaded cap set is empty. That set is empty
   for a self-authorizing principal exactly when its DURABLE holder store lacks a
-  current-generation self-license (`EntityCaps.load`'s self-case reads
+  current-generation self-license (`IdentityCaps.load`'s self-case reads
   `load_persisted/1`). The creation-time mint (`maybe_mint_self_license`,
   gated `create_freshness: :created`) is persisted on the PRE-READY, FAIL-CLOSED
   boot path — snapshot-backed principals via `Kind.Server`'s
@@ -44,7 +44,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Cap.Authority
-  alias Ezagent.{Cap, Capability, EntityCaps}
+  alias Ezagent.{Cap, Capability, IdentityCaps}
   alias Ezagent.Ecto.KindSnapshot
 
   defmodule PrincipalKind do
@@ -68,7 +68,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       spawn_ready_agent(agent)
 
       # The durable store the in-turn self-case reads holds a CURRENT self-license.
-      assert [lic] = self_licenses(EntityCaps.load_persisted(agent))
+      assert [lic] = self_licenses(IdentityCaps.load_persisted(agent))
       assert Authority.verify_against_current(lic, agent, agent)
 
       # Inside its OWN authority compartment (what the deleted branch keyed on),
@@ -89,7 +89,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       assert :ok = Ezagent.Entity.spawn_principal(user)
       wait_ready(user)
 
-      assert [ulic] = self_licenses(EntityCaps.load_persisted(user))
+      assert [ulic] = self_licenses(IdentityCaps.load_persisted(user))
       assert Authority.verify_against_current(ulic, user, user)
 
       {:ok, authority} = Authority.open(user, :user)
@@ -113,7 +113,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       # Bump the durable generation: the persisted self-license is now stale, so
       # the holder store loads EMPTY (G-3 gate).
       {:ok, bumped} = Authority.regenesis(agent, :agent)
-      assert [] == self_licenses(EntityCaps.load_persisted(agent))
+      assert [] == self_licenses(IdentityCaps.load_persisted(agent))
 
       # `with_current(bumped)` == "executing in the current-generation authority
       # compartment" — the pre-C4 branch would ADMIT here. Post-C4: denied.
@@ -136,7 +136,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
 
       spawn_ready_agent(agent)
 
-      assert [] == self_licenses(EntityCaps.load_persisted(agent)),
+      assert [] == self_licenses(IdentityCaps.load_persisted(agent)),
              "an :existed restart of a gen-bumped principal must NOT re-mint"
     end
   end
@@ -149,7 +149,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
     test "t1: live generation bump makes a live principal inert (self-authorized gate denied)" do
       agent = unique_agent("t1")
       spawn_ready_agent(agent)
-      assert [_lic] = self_licenses(EntityCaps.load(agent))
+      assert [_lic] = self_licenses(IdentityCaps.load(agent))
 
       # Standalone durable bump under the LIVE principal.
       {:ok, bumped} = Authority.regenesis(agent, :agent)
@@ -162,7 +162,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
                end)
     end
 
-    test "t2: cold `:created` reprovision → ready holding a valid current-generation self-license (independent renew)" do
+    test "t2: deleting an actor snapshot cannot impersonate an explicit identity reprovision" do
       agent = unique_agent("t2")
       spawn_ready_agent(agent)
       {:ok, first_gen} = Authority.current_generation(agent)
@@ -174,14 +174,14 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       :ok = KindSnapshot.delete(URI.to_string(agent))
       assert Ezagent.Lifecycle.fresh_create?(agent), "marker cleared → :created reprovision"
 
+      # The actor marker alone is not the identity lifecycle authority. The
+      # established Store row makes this an `:existed` restart, so no new
+      # self-license is minted and the principal stays inert.
       spawn_ready_agent(agent)
 
-      # Reaches ready holding a self-license valid against the CURRENT (bumped)
-      # generation — minted fresh, with no dependence on the pre-bump license.
       {:ok, current_gen} = Authority.current_generation(agent)
       assert current_gen == first_gen + 1
-      assert [lic] = self_licenses(EntityCaps.load_persisted(agent))
-      assert Authority.verify_against_current(lic, agent, agent)
+      assert self_licenses(IdentityCaps.load_persisted(agent)) == []
     end
 
     test "t3: the self-license is durable BEFORE readiness (ordering, not sleep-based)" do
@@ -206,7 +206,7 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
 
       # ...and it is committed no later than the moment ready becomes observable.
       wait_ready(agent)
-      assert [ready_lic] = self_licenses(EntityCaps.load_persisted(agent))
+      assert [ready_lic] = self_licenses(IdentityCaps.load_persisted(agent))
       assert Authority.verify_against_current(ready_lic, agent, agent)
     end
 
@@ -261,19 +261,11 @@ defmodule Ezagent.Cap.AutonomousCurrentRemovalTest do
       assert commit_post_init =~ "rescue"
       refute commit_post_init =~ "self_license"
 
-      # (d) the user-backed self-license persist rides `activate/2`'s marker-gated
-      #     projection persist (a failure crashes the pre-ready continuation),
-      #     NOT a post-ready cast.
-      identity =
-        File.read!(
-          Path.join(
-            repo_root(),
-            "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
-          )
-        )
-
-      assert identity =~ "persist_user_caps_after_marker(uri, state.caps)"
-      assert identity =~ "with :ok <- persist_user_caps_after_marker(uri, state.caps)"
+      # (d) a newly-created identity is provisioned in the sole durable Store
+      #     from the same fail-closed pre-ready snapshot path. There is no
+      #     post-ready projection or compatibility write to fall back to.
+      assert server =~ "maybe_provision_created_identity(uri, slice_state, create_freshness)"
+      assert server =~ "store.provision_created_identity(uri, identity_slice)"
     end
   end
 

@@ -35,18 +35,21 @@ defmodule Ezagent.ActionSet.Session.SelfAdd do
 
   defp authorize_and_add(holder, facets, ctx, source_module) do
     session_uri = ctx[:self_uri]
-    # This is deliberately a DURABLE read. A newly materialized agent may still
-    # be busy in its own activation/receive turn when the absorb hook casts back
-    # here; a live `GenServer.call` would time out and falsely reject a cap that
-    # has already committed. `load_persisted/1` verifies receiver/signature and
-    # generation, so it remains fail-closed without coupling projection progress
-    # to holder liveness.
-    held = Ezagent.EntityCaps.load_persisted(holder)
+    # This is deliberately a DURABLE effective read. The absorb delivery and its
+    # hook are decoupled by the durable outbox, so the hook may cast back while
+    # the grant is still pending projection into the Store. Include that durable
+    # pending intent without calling the live holder; missing/corrupt Store state
+    # remains fail-closed through the ordinary (non-delivery) effective reader.
+    case Ezagent.IdentityCaps.effective_caps_persisted(holder) do
+      {:ok, held} ->
+        if Ezagent.Session.MemberReceive.holds_member_cap_over?(holder, held, session_uri) do
+          add_projection(holder, facets, ctx, source_module)
+        else
+          {:error, :unauthorized}
+        end
 
-    if Ezagent.Session.MemberReceive.holds_member_cap_over?(holder, held, session_uri) do
-      add_projection(holder, facets, ctx, source_module)
-    else
-      {:error, :unauthorized}
+      {:error, :effective_caps_read_failed} ->
+        {:error, :unauthorized}
     end
   end
 

@@ -68,7 +68,8 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
         requested
       )
 
-    cap = Ezagent.Cap.Authority.sign(authority, issued)
+    cap =
+      Ezagent.Cap.Authority.sign(authority, %{issued | grant_id: Ecto.UUID.generate()})
 
     case Ezagent.KindRegistry.lookup(caller) do
       {:ok, _pid} ->
@@ -87,12 +88,42 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
     }
   end
 
+  defp seed_member_cap(session_uri, member) do
+    kind = if Ezagent.URI.type?(member, :agent), do: :agent, else: :user
+
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        Ezagent.ActionSet.Session,
+        :receive,
+        session_uri,
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    {:ok, authority} =
+      Ezagent.Cap.Authority.open(Ezagent.URI.instance(session_uri), :session, :created)
+
+    {:ok, issued} =
+      Ezagent.Cap.prepare_provenance(
+        {:admin, Ezagent.Entity.User.admin_uri()},
+        member,
+        requested
+      )
+
+    member_cap =
+      Ezagent.Cap.Authority.sign(authority, %{issued | grant_id: Ecto.UUID.generate()})
+
+    self_license = self_license_cap!(member, kind)
+    :ok = Ezagent.IdentityCaps.Store.persist(member, [self_license, member_cap])
+  end
+
   describe "USER participant removal (the §5.1 gap this PR closes)" do
     test "owner removes a user participant → membership gone, torn_down: :membership_only" do
       session = session_uri("user-remove")
       bind_to_default(session)
       owner = user_uri("owner")
       member = user_uri("member")
+      seed_member_cap(session, member)
 
       slice = slice_with_user(owner, member)
 
@@ -116,6 +147,7 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
       bind_to_default(session)
       owner = user_uri("owner")
       member = user_uri("member")
+      seed_member_cap(session, member)
 
       slice = slice_with_user(owner, member)
 
@@ -145,6 +177,7 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
       bind_to_default(session)
       owner = user_uri("owner")
       agent = agent_uri("invited")
+      seed_member_cap(session, agent)
 
       # Invited agent: a member with NO :source_template_uri facet.
       slice = slice_with_user(owner, agent, %{online: true})
@@ -219,6 +252,7 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
       bind_to_default(session)
       owner = user_uri("owner")
       member = user_uri("member")
+      seed_member_cap(session, member)
 
       slice = slice_with_user(owner, member)
 
@@ -256,6 +290,7 @@ defmodule Ezagent.ActionSet.RemoveParticipantTest do
       bind_to_default(session)
       owner = user_uri("owner")
       worker = agent_uri("worker")
+      seed_member_cap(session, worker)
 
       tmpl = Ezagent.URI.new!("template://team-alpha/agent/some-role")
 

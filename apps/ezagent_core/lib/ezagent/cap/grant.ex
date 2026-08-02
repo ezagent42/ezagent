@@ -115,7 +115,8 @@ defmodule Ezagent.Cap.Grant do
       intent.cap
       | granted_by: intent.presenter,
         granted_at: DateTime.utc_now(),
-        grantee_uri: intent.grantee
+        grantee_uri: intent.grantee,
+        grant_id: Ecto.UUID.generate()
     }
 
     Authority.sign(authority, artifact)

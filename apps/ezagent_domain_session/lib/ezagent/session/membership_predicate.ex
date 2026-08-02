@@ -56,7 +56,7 @@ defmodule Ezagent.Session.Membership do
   defp holds_member_cap?(_caller, nil), do: false
 
   defp holds_member_cap?(%URI{} = caller, %URI{} = session_uri) do
-    held = Ezagent.EntityCaps.load(caller)
+    held = Ezagent.IdentityCaps.load(caller)
     Ezagent.Session.MemberReceive.holds_member_cap_over?(caller, held, session_uri)
   end
 

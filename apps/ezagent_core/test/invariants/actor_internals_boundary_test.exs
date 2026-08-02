@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
 
   # Committed ledger sizes — the ratchet asserts the live ledger never GROWS past
   # these. Later chunks LOWER them as reach-ins migrate / ports land.
-  # C1 lowered forward 259→255: EntityCaps load path off actor internals
+  # C1 lowered forward 259→255: IdentityCaps load path off actor internals
   # (KindRegistry self-detect → self?/1; get_slice → read/3 spawn: :never;
   # snapshot_caps SnapshotStore → read_durable/3), −4 sites.
   # C2 lowered forward 255→244: cold/durable reads onto Kind.read/3 +
@@ -64,15 +64,10 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   # public surface; lifecycle_case's two raw reach-ins collapse into ONE private
   # `raw_slice!/2` helper calling `Ezagent.Kind.SliceAccess.get_raw_slice/2`
   # directly (−1 site).
-  # #189 PR-3 FIX 4 raised forward 157→164 (+7): the GOVERNED Session
-  # self-license migration (`SessionSelfLicenseMigration`, 5 sites) + the
-  # barrier's session principal-gap scan (`fleet_parity.ex`, 2 sites). A
-  # low-level snapshot enumerate/rewrite/persist migration has no §2.2
-  # write-surface equivalent, and marker-only detection needs the raw state
-  # emptiness `read_durable` normalizes away — same rationale as the ledgered
-  # `kind_base_backfill` one-shot migration. Burn-down when a governed
-  # snapshot-migration facade lands.
-  @forward_frozen 164
+  # Clean-slate grant storage removed 18 migration and snapshot-projection
+  # reach-ins: identity snapshot projection (4), grant migration (7), session
+  # self-license migration (5), and fleet parity scanning (2).
+  @forward_frozen 149
   @forward_fixed_frozen 2
   # C5 chunk-1 lowered reverse 123→110: repo injection (§3.4) — snapshot_store
   # + ecto/kind_snapshot `EzagentCore.Repo` refs → the config-resolved
@@ -177,8 +172,8 @@ defmodule EzagentCore.Invariants.ActorInternalsBoundaryTest do
   end
 
   test "FORWARD enforcement is SITE-level — a NEW reach-in in an allowlisted FILE REDs" do
-    # entity_caps.ex is already in the forward ledger (existing reach-ins).
-    allowlisted = "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex"
+    # identity_caps.ex is already in the forward ledger (existing reach-ins).
+    allowlisted = "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex"
     assert Enum.any?(Scanner.forward_ratchet(), &(&1.path == allowlisted))
 
     ledger = Scanner.forward_ratchet() ++ Scanner.forward_fixed()

@@ -60,7 +60,7 @@ send_member = cap.(member_uri, :send, session)
 
 # E2E session caps MUST ride the creation payload: `Cap.issue` returns the
 # signed artifact but does NOT deliver it to the user's durable cap store
-# (users.caps_json / EntityCaps). Web sends load caps from that store, so
+# (users.caps_json / IdentityCaps). Web sends load caps from that store, so
 # e2e-session caps issued later would still verify as :missing_cap.
 e2e_join_founder = cap.(founder_uri, :join, g5_session)
 e2e_send_founder = cap.(founder_uri, :send, g5_session)

@@ -71,15 +71,21 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
 
   test "CLI-resolved caps == LV-resolved caps for the same user (V3.4 parity)",
        %{user_uri: user_uri} do
-    workspace_cap = %Capability{
-      kind: :workspace,
-      behavior: :any,
-      instance: :any,
-      # Phase 9 PR-3 (SPEC v3 §4): explicit workspace scope.
-      workspace_uri: URI.new!("workspace://team-alpha"),
-      granted_by: Ezagent.URI.new!("entity://system/user/admin"),
-      granted_at: ~U[2026-05-18 00:00:00Z]
-    }
+    workspace_uri = URI.new!("workspace://team-alpha")
+
+    requested =
+      Capability.cap(
+        :workspace,
+        Ezagent.ActionSet.Workspace,
+        :list_members,
+        workspace_uri,
+        workspace_uri
+      )
+
+    workspace_cap =
+      Ezagent.Test.CapHelper.with_test_authority(workspace_uri, :workspace, fn authority ->
+        Ezagent.Test.CapHelper.authority_signed_cap!(authority, user_uri, requested)
+      end)
 
     :ok = create_user_with_caps(user_uri, [workspace_cap])
 
@@ -117,7 +123,7 @@ defmodule EzagentCli.Integration.CliLvCapParityTest do
     {plain, _row} = Token.mint(agent_uri)
 
     assert {:ok, ^agent_uri} = Authentication.authenticate(plain)
-    caps = Ezagent.Identity.read_entity_caps(agent_uri)
+    caps = Ezagent.IdentityCaps.load(agent_uri)
 
     refute Enum.any?(caps, fn c ->
              c.kind == :any and c.behavior == :any and c.instance == :any

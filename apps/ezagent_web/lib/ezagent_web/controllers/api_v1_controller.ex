@@ -139,7 +139,7 @@ defmodule EzagentWeb.ApiV1Controller do
       ["Bearer " <> token] ->
         case Ezagent.Authentication.authenticate(token) do
           {:ok, uri} ->
-            {:ok, uri, uri |> Ezagent.EntityCaps.load() |> MapSet.new()}
+            {:ok, uri, uri |> Ezagent.IdentityCaps.load() |> MapSet.new()}
 
           {:error, reason} ->
             {:error, 401, "invalid_token", inspect(reason)}

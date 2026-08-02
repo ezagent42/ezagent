@@ -15,7 +15,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   import Ecto.Query
 
   alias Ezagent.{Capability, Invocation, Persistence}
-  alias Ezagent.Cap.Delivery
+  alias Ezagent.Cap.{Delivery, RevocationLedger}
   alias Ezagent.Cap.DeliveryOutbox.Envelope
   alias Ezagent.Cap.DeliveryOutbox.State
   alias Ezagent.Persistence.TransientRetry
@@ -74,6 +74,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   @spec enqueue_and_attempt(Invocation.t()) :: term()
   def enqueue_and_attempt(%Invocation{} = invocation) do
     with {:ok, envelope} <- Envelope.encode(invocation),
+         :ok <- enqueue_revocation_gate(envelope),
          {:ok, delivery, disposition} <- insert_or_reuse(invocation, envelope),
          :ok <- verify_reused_payload(delivery, envelope, disposition) do
       result = dispatch_accepted(delivery, disposition, invocation)
@@ -211,6 +212,21 @@ defmodule Ezagent.Cap.DeliveryOutbox do
       {:error, :pending_absorb_read_failed}
   end
 
+  @doc "Delete pending deliveries for a revoked grant inside the caller's transaction."
+  @spec cancel_pending_grant_in_txn(String.t(), String.t(), String.t()) :: :ok
+  def cancel_pending_grant_in_txn(workspace_uri, target_uri, grant_id)
+      when is_binary(workspace_uri) and is_binary(target_uri) and is_binary(grant_id) do
+    from(delivery in Delivery,
+      where:
+        delivery.workspace_uri == ^workspace_uri and delivery.target_uri == ^target_uri and
+          delivery.grant_id == ^grant_id and delivery.status == :pending and
+          (delivery.op == :absorb_cap or is_nil(delivery.claim_token))
+    )
+    |> Repo.delete_all()
+
+    :ok
+  end
+
   @doc false
   @spec retry_base_ms() :: pos_integer()
   def retry_base_ms, do: Keyword.get(config(), :retry_base_ms, @default_retry_base_ms)
@@ -233,14 +249,16 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   defp dispatch_accepted(delivery, :inserted, invocation), do: do_attempt(delivery, invocation)
 
   defp do_attempt(%Delivery{} = delivery, initial_invocation) do
-    remember_target(delivery.target_uri)
+    with :ok <- delivery_revocation_gate(delivery) do
+      remember_target(delivery.target_uri)
 
-    case State.claim(delivery.id, lease_ms()) do
-      {:ok, claimed} -> dispatch_claimed(claimed, initial_invocation)
-      {:error, :claimed_elsewhere} = error -> error
-      {:error, :delivery_dead} = error -> error
-      {:error, :delivery_applied} -> :ok
-      {:error, _} = error -> error
+      case State.claim(delivery.id, lease_ms()) do
+        {:ok, claimed} -> dispatch_claimed(claimed, initial_invocation)
+        {:error, :claimed_elsewhere} = error -> error
+        {:error, :delivery_dead} = error -> error
+        {:error, :delivery_applied} -> :ok
+        {:error, _} = error -> error
+      end
     end
   end
 
@@ -367,6 +385,7 @@ defmodule Ezagent.Cap.DeliveryOutbox do
       payload_version: Envelope.version(),
       payload_identity: Envelope.payload_identity(envelope.cap),
       semantic_identity: semantic_identity(envelope),
+      grant_id: normalized_grant_id(envelope.cap),
       idempotency_key: Map.get(invocation.ctx, :idempotency_key),
       status: :pending,
       attempts: 0,
@@ -539,7 +558,8 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   defp verify_reused_payload(%Delivery{} = delivery, envelope, :reused_semantic) do
     with {:ok, %{cap: %Capability{} = stored_cap}} <- Envelope.decode(delivery),
          true <- Capability.identity_key(stored_cap) == Capability.identity_key(envelope.cap),
-         true <- stored_cap.key_id == envelope.cap.key_id do
+         true <- stored_cap.key_id == envelope.cap.key_id,
+         true <- normalized_grant_id(stored_cap) == normalized_grant_id(envelope.cap) do
       :ok
     else
       _ -> {:error, :idempotency_conflict}
@@ -556,7 +576,10 @@ defmodule Ezagent.Cap.DeliveryOutbox do
               :idempotency_conflict,
               :invalid_delivery_envelope,
               :durable_accept_failed,
-              :delivery_dead
+              :delivery_dead,
+              :capability_revoked,
+              :cap_revocation_ledger_unreadable,
+              :invalid_capability_protocol
             ],
        do: {:error, reason}
 
@@ -578,6 +601,46 @@ defmodule Ezagent.Cap.DeliveryOutbox do
   defp remember_target(target_uri) when is_binary(target_uri) do
     :ets.insert(@target_hint_table, {target_uri, true})
     :ok
+  end
+
+  defp enqueue_revocation_gate(%{target_uri: target_uri, cap: %Capability{} = cap}) do
+    target_uri
+    |> Persistence.workspace_uri_for!()
+    |> RevocationLedger.ensure_unrevoked([cap])
+    |> normalize_revocation_gate()
+  end
+
+  defp delivery_revocation_gate(%Delivery{} = delivery) do
+    case Envelope.decode(delivery) do
+      {:ok, %{cap: %Capability{} = cap}} ->
+        case delivery.workspace_uri
+             |> RevocationLedger.ensure_unrevoked([cap])
+             |> normalize_revocation_gate() do
+          {:error, :capability_revoked} = error ->
+            Repo.delete_all(from(row in Delivery, where: row.id == ^delivery.id))
+            maybe_forget_target(delivery.target_uri)
+            error
+
+          result ->
+            result
+        end
+
+      {:error, _reason} ->
+        # Preserve the existing poison-envelope path: claim it, then classify it
+        # dead with the durable decode error.
+        :ok
+    end
+  end
+
+  defp normalize_revocation_gate(:ok), do: :ok
+
+  defp normalize_revocation_gate({:error, {:revoked_capability_grants, _grant_ids}}),
+    do: {:error, :capability_revoked}
+
+  defp normalize_revocation_gate({:error, reason}), do: {:error, reason}
+
+  defp normalized_grant_id(%Capability{} = cap) do
+    cap.grant_id
   end
 
   defp retry_delay_ms(attempts) do

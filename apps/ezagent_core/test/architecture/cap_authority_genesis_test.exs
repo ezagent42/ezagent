@@ -1,7 +1,7 @@
 defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
   use EzagentCore.DataCase, async: false
 
-  alias Ezagent.Cap.Authority
+  alias Ezagent.Cap.{Authority, GrantArtifact}
   alias Ezagent.Ecto.KindCapAuthority
 
   test "genesis is one sealed insert and admin self-anchors without prior authority" do
@@ -20,6 +20,7 @@ defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
     assert {:ok, anchor} = Authority.anchor(uri)
     assert anchor.instance == uri
     assert anchor.grantee_uri == admin
+    assert {:ok, ^anchor} = GrantArtifact.validate(anchor)
     assert Authority.verify(first, anchor, admin)
 
     assert %KindCapAuthority{sealed: true, active: true} =
@@ -43,6 +44,9 @@ defmodule Ezagent.Architecture.CapAuthorityGenesisTest do
     assert {:ok, second} = Authority.regenesis(uri, :agent)
     assert second.generation == first.generation + 1
     refute second.key_id == first.key_id
+
+    assert {:ok, second_anchor} = Authority.anchor(uri)
+    assert {:ok, ^second_anchor} = GrantArtifact.validate(second_anchor)
 
     assert [old, current] = KindCapAuthority.list(Ezagent.URI.stable_key(uri))
     refute old.active

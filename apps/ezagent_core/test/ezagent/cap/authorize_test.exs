@@ -11,10 +11,12 @@ defmodule Ezagent.Cap.AuthorizeTest do
   use EzagentCore.DataCase, async: false
 
   alias Ezagent.Cap.Authority
+  alias Ezagent.Cap.RevocationLedger
   alias Ezagent.Capability
   alias Ezagent.Test.{TestBehavior, TestKind}
 
   setup do
+    Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
     :ok = Ezagent.BehaviorRegistry.register(TestKind, :noop, TestBehavior)
 
     previous = Application.get_env(:ezagent_core, Ezagent.Cap, [])
@@ -25,7 +27,10 @@ defmodule Ezagent.Cap.AuthorizeTest do
       Keyword.put(previous, :authority_loader, EzagentCore.Test.CapAuthorityLoaderStub)
     )
 
-    on_exit(fn -> Application.put_env(:ezagent_core, Ezagent.Cap, previous) end)
+    on_exit(fn ->
+      Application.put_env(:ezagent_core, Ezagent.Cap, previous)
+      Application.delete_env(:ezagent_core, :cap_revocation_ledger_force_read_error)
+    end)
 
     # Every test starts revoked (empty independent load) unless it explicitly
     # licenses the holder — the stub env is BEAM-global and tests shuffle.
@@ -50,6 +55,50 @@ defmodule Ezagent.Cap.AuthorizeTest do
 
     assert {:ok, authorized} = Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
     assert authorized == cap
+  end
+
+  test "authorize/3 rejects the whole candidate carrier when one artifact is malformed" do
+    {uri, _pid, holder} = start_target("malformed-carrier")
+    valid = mint_signed_cap_for(uri, holder)
+    malformed = %{valid | grant_id: nil}
+    license_holder(MapSet.new([valid]))
+
+    assert {:error, :no_matching_cap} =
+             Ezagent.Cap.authorize(holder, [valid, malformed], needed_for(uri))
+  end
+
+  test "authorize/3 immediately denies a current live-slice cap after its grant_id is revoked" do
+    {uri, _pid, holder} = start_target("per-cap-revoked")
+    cap = mint_signed_cap_for(uri, holder)
+    license_holder(MapSet.new([cap]))
+
+    assert {:ok, _authorized} = Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
+
+    assert {:ok, _marker} =
+             RevocationLedger.mark(%{
+               grant_id: cap.grant_id,
+               workspace_uri: cap.workspace_uri |> Ezagent.URI.stable_key(),
+               holder_uri: Ezagent.URI.stable_key(holder),
+               cap_identity_key:
+                 :crypto.hash(:sha256, :erlang.term_to_binary(Capability.identity_key(cap))),
+               revoked_at: DateTime.utc_now(),
+               target_uri: Ezagent.URI.stable_key(uri),
+               key_id: cap.key_id
+             })
+
+    assert {:error, :no_matching_cap} =
+             Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
+  end
+
+  test "authorize/3 fails closed when the revocation ledger is unreadable" do
+    {uri, _pid, holder} = start_target("ledger-unreadable")
+    cap = mint_signed_cap_for(uri, holder)
+    license_holder(MapSet.new([cap]))
+
+    Application.put_env(:ezagent_core, :cap_revocation_ledger_force_read_error, true)
+
+    assert {:error, :no_matching_cap} =
+             Ezagent.Cap.authorize(holder, [cap], needed_for(uri))
   end
 
   test "authorize/3 denies with :no_matching_cap when no verified candidate matches" do

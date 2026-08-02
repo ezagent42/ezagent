@@ -12,6 +12,7 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
     Operation
   }
 
+  alias Ezagent.Cap.RevocationLedger
   alias EzagentCore.Repo
 
   setup do
@@ -233,6 +234,39 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
                authorization_ref: "authorization-ref-#{attempt_ref}"
              ).callback_ciphertext
            )
+  end
+
+  test "ingress rejects a revoked stored callback artifact before staging" do
+    owner = Ezagent.URI.user("acme", "revoked-artifact-owner")
+    workspace = Ezagent.URI.workspace("acme")
+    connection_id = Ecto.UUID.generate()
+    attempt_ref = Ecto.UUID.generate()
+    raw_state = "test-v1.revoked-artifact-state"
+
+    assert {:ok, _user} = Ezagent.Users.create(owner, nil, [])
+    assert {:ok, pid} = Ezagent.SpawnRegistry.spawn(owner)
+    _state = :sys.get_state(pid)
+    insert_connection!(connection_id, owner, workspace)
+    {:ok, digest} = LocalAuthorizationBackend.state_digest(raw_state)
+    artifact = callback_artifact(owner)
+
+    insert_attempt!(%{
+      attempt_ref: attempt_ref,
+      connection_id: connection_id,
+      workspace_uri: URI.to_string(workspace),
+      backend_pair_id: "pair-alpha-v1",
+      authorization_ref: "authorization-ref-#{attempt_ref}",
+      state_digest: digest,
+      callback_artifact: Ezagent.Capability.to_map(artifact)
+    })
+
+    backend = insert_backend_record!(attempt_ref, connection_id, owner)
+    assert {:ok, _marker} = RevocationLedger.mark(revocation_attrs(owner, artifact))
+
+    assert {:error, :callback_invalid} =
+             CallbackIngress.consume("callback-v1", raw_state, %{code: "secret-code"})
+
+    refute is_binary(Repo.reload!(backend).callback_ciphertext)
   end
 
   test "terminal connection rejects before staging, claim, or effects" do
@@ -585,6 +619,22 @@ defmodule Ezagent.ProviderConnection.CallbackIngressTest do
       Ezagent.Cap.issue({:admin, Ezagent.Entity.User.admin_uri()}, owner, requested)
 
     artifact
+  end
+
+  defp revocation_attrs(owner, artifact) do
+    %{
+      grant_id: artifact.grant_id,
+      workspace_uri: owner |> Ezagent.URI.workspace_of() |> Ezagent.URI.stable_key(),
+      holder_uri: Ezagent.URI.stable_key(owner),
+      cap_identity_key:
+        :crypto.hash(
+          :sha256,
+          :erlang.term_to_binary(Ezagent.Capability.identity_key(artifact))
+        ),
+      revoked_at: DateTime.utc_now(),
+      target_uri: Ezagent.URI.stable_key(artifact.instance),
+      key_id: artifact.key_id
+    }
   end
 
   defp collect_trace(parent, count) do

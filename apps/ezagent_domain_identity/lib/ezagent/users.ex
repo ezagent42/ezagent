@@ -3,15 +3,9 @@ defmodule Ezagent.Users do
   Facade for the `users` Postgres table — provisioning + login lookup
   (Phase 4-completion Spec 05 Part A).
 
-  Distinct from User-Kind snapshot:
-  - `users` is **provisioning config** — "these credentials exist, here
-    are their initial caps."
-  - User Kind's `:identity` slice is **runtime state** — "the live cap
-    set, possibly mutated by ops."
-
-  Boot flow: plugin Application.start reads `users.list_all/0` → for
-  each row, spawns the User Kind via SpawnRegistry with `initial_caps:`
-  decoded from `caps_json`.
+  The table owns login and profile-adjacent provisioning facts only.
+  Capabilities are initialized and read exclusively through
+  `Ezagent.IdentityCaps.Store`.
 
   Per Spec 05 Q-MU-4: passwords are bcrypt-hashed via `:bcrypt_elixir`.
   """
@@ -24,15 +18,9 @@ defmodule Ezagent.Users do
   schema "users" do
     field(:uri, :string)
     field(:password_hash, :string)
-    field(:caps_json, :string)
     # Phase 9 PR-6 (SPEC v3 §7) — per-tenant data isolation. NOT NULL.
     # Derived from `uri` at create-time (the 3-segment entity URI
     # carries the workspace name as its first path segment). The
-    # serialized caps in `caps_json` inherit scope via this column —
-    # we do not split caps into a separate per-cap workspace column
-    # because every cap minted for a user is bounded by the user's
-    # workspace (admin's cross-workspace cap is the documented
-    # exception per SPEC §4.4, stored on admin's row).
     field(:workspace_uri, :string)
     # #154 spec 甲 (2026-06-19) — `confirmed` is the REAL source of truth for
     # anon-ness (replaces the `anon-` URI name-prefix hack). `false` = an
@@ -117,7 +105,6 @@ defmodule Ezagent.Users do
       |> Ecto.Changeset.change(%{
         uri: uri_str,
         password_hash: hash,
-        caps_json: encode_caps(final_caps),
         # Phase 9 PR-6 (SPEC v3 §7) — derive the workspace_uri column
         # from the entity URI so SELECTs can scope by workspace.
         workspace_uri: URI.to_string(user_workspace),
@@ -133,12 +120,18 @@ defmodule Ezagent.Users do
     parent_uri = Keyword.get(opts, :created_by, user_workspace)
     edge_kind = if Keyword.has_key?(opts, :created_by), do: :created_by, else: :workspace_member
 
-    insert_with_derivation(changeset, Ezagent.URI.new!(uri_str), parent_uri, edge_kind)
+    insert_with_derivation(
+      changeset,
+      Ezagent.URI.new!(uri_str),
+      parent_uri,
+      edge_kind,
+      final_caps
+    )
   end
 
   @doc """
-  Create a **read-only** User row — NO password and a caps_json of EXACTLY the
-  supplied `caps` (default `[]`, the empty-caps read-only-by-construction shape).
+  Create a **read-only** User row with no password and exactly the supplied
+  initial Store capabilities.
 
   Unlike `create/3`, this path does NOT prepend `Ezagent.Entity.User.default_caps/1`
   (the broad `{kind: :session, behavior: :any, action: :any}` baseline cap that lets
@@ -146,7 +139,7 @@ defmodule Ezagent.Users do
   anonymous external user (issue #51): an entity that may only READ a session it is
   a member of, and whose read-only-ness IS the absence of any session WRITE cap. The
   User Kind demand-spawns this row via `Ezagent.Entity.User.initial_caps_for_spawn/1`,
-  which hydrates from `caps_json` — an empty caps_json yields no session cap, so the
+  which hydrates from the Store — an empty capability set yields no session cap, so the
   spawned anon-User holds only the structural self-Identity cap.
 
   `caps` defaults to `[]` (the historical empty-caps invariant). The
@@ -157,7 +150,7 @@ defmodule Ezagent.Users do
   `system://` principal in the dispatch ctx. NOTE the caps MUST be
   `to_map/1`-serializable. Concrete `%URI{}` / `:any` instance axes and the
   closed scope-tuple forms (`:within_session`, `:within_workspace`, and
-  `:spawned_by`) round-trip through the same `caps_json` wire shape.
+  `:spawned_by`) round-trip through the Store's grant-artifact encoding.
 
   The row carries no `password_hash`, so `verify_password/2` refuses login for it
   (a read-only viewer is never a login principal).
@@ -173,9 +166,6 @@ defmodule Ezagent.Users do
       |> Ecto.Changeset.change(%{
         uri: uri_str,
         password_hash: nil,
-        # NO default_caps — read-only-by-construction. The only caps written are
-        # the explicit narrow grants the caller supplies (default none).
-        caps_json: encode_caps(caps),
         workspace_uri: URI.to_string(user_workspace),
         # #154 spec 甲 — the anonymous-viewer mint is UNCONFIRMED. This (not the
         # `anon-` URI name) is the source of truth for anon-ness.
@@ -187,15 +177,22 @@ defmodule Ezagent.Users do
       changeset,
       Ezagent.URI.new!(uri_str),
       user_workspace,
-      :workspace_member
+      :workspace_member,
+      caps
     )
   end
 
-  defp insert_with_derivation(changeset, child_uri, parent_uri, edge_kind) do
+  defp insert_with_derivation(changeset, child_uri, parent_uri, edge_kind, initial_caps) do
     attempt_id = Ezagent.Provenance.DerivationEdges.new_attempt_id()
 
     Ecto.Multi.new()
     |> Ecto.Multi.insert(:user, changeset)
+    |> Ecto.Multi.run(:identity_caps, fn _repo, _changes ->
+      case Ezagent.IdentityCaps.Store.initialize(child_uri, initial_caps) do
+        :ok -> {:ok, :initialized}
+        {:error, reason} -> {:error, reason}
+      end
+    end)
     |> Ecto.Multi.run(:derivation_edge, fn _repo, _changes ->
       case Ezagent.Provenance.DerivationEdges.record_derivation_edge(
              child_uri,
@@ -211,6 +208,7 @@ defmodule Ezagent.Users do
     |> case do
       {:ok, %{user: row}} -> {:ok, decode(row)}
       {:error, :user, changeset, _changes} -> {:error, changeset}
+      {:error, :identity_caps, reason, _changes} -> {:error, reason}
       {:error, :derivation_edge, reason, _changes} -> {:error, reason}
     end
   end
@@ -466,20 +464,12 @@ defmodule Ezagent.Users do
   # entity-agnostic via `Ezagent.Entity.Token` (`entity_tokens` table).
   # See also `mix ezagent.user.token --mint|--list|--revoke`.
 
-  # --- encoding helpers ---------------------------------------------
-
-  defp encode_caps(caps) when is_list(caps) do
-    caps
-    |> Enum.map(&Ezagent.Capability.to_map/1)
-    |> Jason.encode!()
-  end
-
   defp decode(%__MODULE__{} = row) do
     %{
       id: row.id,
       uri: Ezagent.URI.new!(row.uri),
       password_hash: row.password_hash,
-      caps: decode_caps(row.caps_json),
+      caps: load_initial_caps(row.uri),
       # `confirmed` may be absent on a row read before the column existed
       # (defensive): treat nil as false (unconfirmed).
       confirmed: row.confirmed == true,
@@ -500,16 +490,10 @@ defmodule Ezagent.Users do
 
   defp normalize_reason(_), do: nil
 
-  defp decode_caps(nil), do: []
-  defp decode_caps(""), do: []
-
-  defp decode_caps(json) when is_binary(json) do
-    case Jason.decode(json) do
-      {:ok, list} when is_list(list) ->
-        Enum.map(list, &Ezagent.Capability.from_map/1)
-
-      _ ->
-        []
+  defp load_initial_caps(uri) do
+    case Ezagent.IdentityCaps.Store.load_initial(uri) do
+      {:ok, caps} -> caps
+      {:error, _reason} -> []
     end
   end
 

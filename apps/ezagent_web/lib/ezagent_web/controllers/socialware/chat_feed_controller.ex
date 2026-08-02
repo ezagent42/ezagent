@@ -42,7 +42,7 @@ defmodule EzagentWeb.Socialware.ChatFeedController do
      instance: <session>)` whose `granted_by` is the session owner (GLOSSARY
      Decision #154 — no unowned permissions, no `system://` principal);
      `Entity.spawn_principal/1` brings up its Kind AND hydrates that cap from
-     caps_json into the live `:caps` slice (so it is a registered member-target for
+     the capability Store into the live `:caps` slice (so it is a registered member-target for
      the join — Session `:join` requires a LIVE registered Kind, else
      `{:member_not_registered}` — AND holds the join authority); `AnonBinding.touch/3`
      records the binding; `session.join` is dispatched AS THE ANON ITSELF — step 5.5

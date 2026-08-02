@@ -68,7 +68,7 @@ defmodule Ezagent.Session.MemberReceiveTest do
     cap =
       session
       |> member_cap(owner)
-      |> Map.merge(%{grantee_uri: holder})
+      |> Map.merge(%{grant_id: Ecto.UUID.generate(), grantee_uri: holder})
       |> then(&Ezagent.Cap.Authority.sign(authority, &1))
 
     license(holder, [cap])

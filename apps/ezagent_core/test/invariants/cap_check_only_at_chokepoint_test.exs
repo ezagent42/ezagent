@@ -69,7 +69,7 @@ defmodule EzagentCore.Invariants.CapCheckOnlyAtChokepointTest do
         "apps/ezagent_domain_ui/lib/ezagent_domain_ui/session_view.ex",
         # C2 §6.3 — `Domain.Agent.read_credential_statuses/3` renders the agent
         # DIRECTORY's credential-status column: it matches the caller's FRESH held
-        # caps (`EntityCaps.load/1`) against each agent's Manage need to decide what
+        # caps (`IdentityCaps.load/1`) against each agent's Manage need to decide what
         # to RENDER (it returns a status map; nothing dispatches). Same PROJECTION-
         # BYPASS read class as `SessionView` (SPEC §3.2.1), NOT a dispatch cap-gate —
         # the list plane loads the holder's caps ONCE and matches in-memory instead of

@@ -58,7 +58,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
     session_uri
   end
 
-  # Spawn a live User Kind so `EntityCaps.load/1` returns its caps and it is a
+  # Spawn a live User Kind so `IdentityCaps.load/1` returns its caps and it is a
   # registered member-target for `session.join`.
   defp spawn_user(%URI{} = user_uri, caps) do
     {:ok, _pid} = Ezagent.Kind.spawn(User, %{uri: user_uri, initial_caps: caps})
@@ -246,7 +246,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
       unfiltered_cap =
         CapHelper.signed_cap!(session, internal_reader, read_unfiltered_cap(session))
 
-      :ok = Ezagent.EntityCaps.grant(internal_reader, unfiltered_cap)
+      :ok = Ezagent.IdentityCaps.grant(internal_reader, unfiltered_cap)
 
       write(session, "public", visibility: :external_visible)
       write(session, "internal", visibility: :internal)
@@ -323,7 +323,7 @@ defmodule Ezagent.Socialware.SessionReadsTest do
 
       session = spawn_session(reader)
       cap = CapHelper.signed_cap!(session, reader, read_unfiltered_cap(session))
-      :ok = Ezagent.EntityCaps.grant(reader, cap)
+      :ok = Ezagent.IdentityCaps.grant(reader, cap)
       assert SessionReads.read_unfiltered?(reader, session)
 
       assert {:ok, _new_authority} =

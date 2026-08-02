@@ -1363,7 +1363,7 @@ defmodule EzagentCore.TestSupport.LegacyDynamicReceiverBaseline do
      "title/0", "019fc4347a7430098ec8684169d333920da386be2ed4a7d01f3fd733f933673a"},
     {"apps/ezagent_plugin_world/lib/ezagent/world/socialware_install.ex",
      {:persist_install_template, 4}, :remote, "load/1",
-     "f27cfa6efc3ca7f0d60af745896909aaf90207f7d7b14584d4c311d5ab268a2b"},
+     "2c61952c688d9eabe416bd6731a7e7816ba9a44247382e564ded0e0e675d2805"},
     {"apps/ezagent_plugin_world/lib/ezagent/world/socialware_install.ex", {:when, 2}, :remote,
      "content_hash/0", "da2135bc49916863757edff02b679ed9d0e428a28c442a8dd68fdb0d9cdafe70"},
     {"apps/ezagent_plugin_world/lib/ezagent/world/socialware_install.ex", {:when, 2}, :remote,

@@ -72,6 +72,25 @@ defmodule Ezagent.Identity.GrantTest do
     assert cmd.ctx.cap_delivery_producer == :identity_revoke
   end
 
+  test "logical revoke resolves the exact artifact from a pending absorb", ctx do
+    assert {:ok, artifact} =
+             Ezagent.Cap.issue({:admin, admin_uri()}, ctx.grantee, ctx.cap)
+
+    assert :ok = Ezagent.ReadyGate.put(ctx.grantee, :not_ready)
+    assert :ok = Ezagent.Identity.absorb_cap(ctx.grantee, artifact)
+
+    assert {:dispatch_returning, %Ezagent.Cmd{} = cmd, bind_as: :removed} =
+             Grant.revoke_cap_returning_effect(
+               ctx.grantee,
+               ctx.cap,
+               {:admin, admin_uri()},
+               :removed
+             )
+
+    assert cmd.args.cap.grant_id == artifact.grant_id
+    assert cmd.args.cap.signature == artifact.signature
+  end
+
   test "targetless grants fail closed before any artifact is delivered", ctx do
     targetless = %{ctx.cap | instance: :any}
 

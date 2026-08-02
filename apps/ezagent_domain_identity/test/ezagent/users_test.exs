@@ -37,7 +37,7 @@ defmodule Ezagent.UsersTest do
       assert decoded.password_hash == nil
     end
 
-    test "caller caps round-trip through JSON (no session baseline added — #154 甲-2)" do
+    test "create rejects an unsigned caller capability" do
       uri = "entity://team-alpha/user/caps-#{System.unique_integer([:positive])}"
 
       cap = %Ezagent.Capability{
@@ -50,20 +50,7 @@ defmodule Ezagent.UsersTest do
         granted_at: ~U[2026-05-16 00:00:00.000000Z]
       }
 
-      {:ok, decoded} = Users.create(uri, "x", [cap])
-
-      assert Enum.any?(decoded.caps, fn c ->
-               c.kind == :workspace and c.behavior == Ezagent.ActionSet.Workspace
-             end)
-
-      # PR-甲-2: default_caps is [], so the ONLY cap is the caller-supplied one
-      # — no broad session baseline is prepended.
-      refute Enum.any?(decoded.caps, fn c ->
-               c.kind == :session and c.behavior == :any
-             end),
-             "no session baseline should be added to the caller's caps"
-
-      assert length(decoded.caps) == 1, "exactly the one caller-supplied cap"
+      assert {:error, :invalid_capability_protocol} = Users.create(uri, "x", [cap])
     end
 
     test "duplicate uri returns error" do

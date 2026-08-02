@@ -287,8 +287,10 @@ defmodule Ezagent.ActionSet.Session.MemberCapJoinTest do
     other = URI.new!("entity://system/user/other-wrong-receiver-#{uniq()}")
     wrong_receiver = issued_member_cap(owner, other, session)
 
-    assert {:ok, _row} =
+    assert {:error, :invalid_capability_protocol} =
              Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [wrong_receiver])
+
+    assert {:ok, _row} = Ezagent.Users.create(member, "pw-not-secret-#{uniq()}", [])
 
     assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(member)
 

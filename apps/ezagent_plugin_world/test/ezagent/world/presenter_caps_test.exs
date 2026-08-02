@@ -5,7 +5,7 @@ defmodule Ezagent.World.PresenterCapsTest do
   alias Ezagent.World.PresenterCaps
   alias Ezagent.World.PresenterCaps.EphemeralCaps
 
-  # No presenter in assigns → fresh `EntityCaps.load` is []; this isolates the
+  # No presenter in assigns → fresh `IdentityCaps.load` is []; this isolates the
   # ephemeral-tag behavior without a DB. The DB-backed fresh-vs-ephemeral union
   # (and the staleness fail-before/pass-after) live in `presenter_caps_fresh_test.exs`.
   @no_presenter %{assigns: %{}}

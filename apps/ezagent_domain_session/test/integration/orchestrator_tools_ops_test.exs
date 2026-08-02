@@ -354,7 +354,7 @@ defmodule EzagentDomainInstanceMessage.Integration.OrchestratorToolsOpsTest do
   defp await_join_authority(session_uri, orchestrator_uri, attempts) do
     case Ezagent.Orchestrator.Tools.preflight_within_session_cap(
            orchestrator_uri,
-           Ezagent.EntityCaps.load(orchestrator_uri),
+           Ezagent.IdentityCaps.load(orchestrator_uri),
            session_uri,
            :join
          ) do

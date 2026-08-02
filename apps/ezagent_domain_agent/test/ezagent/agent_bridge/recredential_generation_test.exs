@@ -37,6 +37,7 @@ defmodule Ezagent.AgentBridge.RecredentialGenerationTest do
         "bridge-recreate-#{System.unique_integer([:positive])}"
       )
 
+    assert :ok = Ezagent.IdentityCaps.Store.initialize(uri, [])
     assert {:ok, first_authority} = Ezagent.Cap.Authority.open(uri, :agent)
     assert {:ok, stale_token} = TokenStore.mint(uri)
 

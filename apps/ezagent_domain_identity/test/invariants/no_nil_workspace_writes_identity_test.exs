@@ -20,8 +20,7 @@ defmodule Ezagent.Invariants.NoNilWorkspaceWritesIdentityTest do
       row =
         %Ezagent.Users{
           uri: "entity://team-alpha/user/no-ws-test",
-          password_hash: nil,
-          caps_json: "[]"
+          password_hash: nil
           # workspace_uri intentionally omitted
         }
 

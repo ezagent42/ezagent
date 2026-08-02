@@ -154,14 +154,17 @@ defmodule Ezagent.CapTest do
                Cap.validate_for_current_target(artifact, context.grantee)
     end
 
-    test "retains only structurally born-signed artifacts for the named receiver", context do
+    test "accepts a carrier only when every artifact is structurally valid for the receiver",
+         context do
       assert {:ok, signed} =
                Cap.issue({:admin, context.admin}, context.grantee, action_cap(context.uri))
 
       unsigned = %{signed | signature: nil, key_id: nil}
       other = Ezagent.URI.new!("entity://team-alpha/user/cap-unit-other")
 
-      assert Cap.verified_set([signed, unsigned, :junk], context.grantee) == MapSet.new([signed])
+      assert Cap.verified_set([signed], context.grantee) == MapSet.new([signed])
+      assert Cap.verified_set([signed, unsigned], context.grantee) == MapSet.new()
+      assert Cap.verified_set([signed, :junk], context.grantee) == MapSet.new()
       assert Cap.verified_set([signed], other) == MapSet.new()
       assert Cap.verified_set([signed], nil) == MapSet.new()
     end

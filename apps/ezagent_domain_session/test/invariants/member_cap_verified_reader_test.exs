@@ -14,10 +14,11 @@ defmodule Ezagent.Invariants.MemberCapVerifiedReaderTest do
                        __DIR__
                      )
 
-  test "member capability idempotency reads only through EntityCaps" do
+  test "member capability idempotency reads only through IdentityCaps" do
     source = File.read!(@member_cap)
 
-    assert source =~ "Ezagent.EntityCaps.effective_caps_persisted(member_uri)"
+    assert source =~
+             "Ezagent.IdentityCaps.effective_caps_for_delivery_persisted(member_uri)"
     assert source =~ "{:ok, caps}"
     assert source =~ "{:error, _reason}"
     refute source =~ "defp member_snapshot_caps"
@@ -30,9 +31,9 @@ defmodule Ezagent.Invariants.MemberCapVerifiedReaderTest do
     migration = File.read!(@member_cap_migration)
     orchestrator = File.read!(@orchestrator_caps)
 
-    assert migration =~ "Ezagent.EntityCaps.effective_caps(member_uri)"
+    assert migration =~ "Ezagent.IdentityCaps.effective_caps(member_uri)"
     assert migration =~ "{:error, reason}"
-    assert orchestrator =~ "Ezagent.EntityCaps.effective_caps(orchestrator_uri)"
+    assert orchestrator =~ "Ezagent.IdentityCaps.effective_caps(orchestrator_uri)"
     assert orchestrator =~ "with {:ok, current}"
   end
 end

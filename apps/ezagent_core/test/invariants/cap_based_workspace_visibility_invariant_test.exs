@@ -106,7 +106,7 @@ defmodule EzagentCore.Invariants.CapBasedWorkspaceVisibilityInvariantTest do
 
   defp current_caps(caller, extra \\ []) do
     caller
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> MapSet.new()
     |> MapSet.union(MapSet.new(extra))
   end

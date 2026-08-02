@@ -308,8 +308,8 @@ defmodule Ezagent.Socialware.Installation do
   (`cap(:session, view_actionset, action, <session>, <ws>)`), so the mint and the
   gate agree by construction. `granted_by` = the session owner (the configurer of
   the public_view rule), falling back to the admin entity — Decision #154's named
-  granter, never a `system://` principal. JSON-serializable (concrete instance) so
-  it lands in the anon's `caps_json`.
+  granter, never a `system://` principal. The concrete instance is serializable
+  as a grant artifact and lands in the anon's capability Store row.
   """
   @spec anon_view_caps(URI.t()) :: [Ezagent.Capability.t()]
   def anon_view_caps(%URI{scheme: "session"} = session_uri) do

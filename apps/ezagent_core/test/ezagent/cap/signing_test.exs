@@ -9,6 +9,7 @@ defmodule Ezagent.Cap.SigningTest do
   @grantee Ezagent.URI.new!("entity://team-alpha/user/alice")
   @other_grantee Ezagent.URI.new!("entity://team-alpha/user/bob")
   @instance Ezagent.URI.new!("session://team-alpha/default/chat")
+  @grant_id "018fbc96-3e3f-7413-a60b-8ed48338fc18"
 
   setup do
     previous = Application.get_env(:ezagent_core, Cap, [])
@@ -28,7 +29,8 @@ defmodule Ezagent.Cap.SigningTest do
         granted_by: @issuer,
         granted_at: ~U[2026-07-14 12:34:56.789123Z],
         key_id: "kind-g1|cafe\u0301",
-        grantee_uri: @grantee
+        grantee_uri: @grantee,
+        grant_id: @grant_id
       }
 
       payload = Signing.signing_payload(cap)
@@ -78,7 +80,14 @@ defmodule Ezagent.Cap.SigningTest do
 
     test "pins the cross-language canonical payload independently from storage encoders" do
       assert Signing.signing_payload(golden_cap()) ==
-               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"kind-g1:test-key","kind":"session","v":1,"workspace_uri":"workspace://team-alpha"})
+               ~s({"action":"send","behavior":"Ezagent.ActionSet.Session","grant_id":"018fbc96-3e3f-7413-a60b-8ed48338fc18","granted_at":"2026-07-14T12:34:56.789Z","granted_by":"entity://team-alpha/user/issuer","grantee":"entity://team-alpha/user/alice","instance":"session://team-alpha/default/chat","key_id":"kind-g1:test-key","kind":"session","workspace_uri":"workspace://team-alpha"})
+    end
+
+    test "always covers grant_id and carries no protocol version field" do
+      payload = Signing.signing_payload(golden_cap())
+
+      assert payload =~ ~s("grant_id":"#{@grant_id}")
+      refute payload =~ ~s("v":)
     end
   end
 
@@ -138,7 +147,8 @@ defmodule Ezagent.Cap.SigningTest do
       granted_by: @issuer,
       granted_at: ~U[2026-07-14 12:34:56.789123Z],
       key_id: "kind-g1:test-key",
-      grantee_uri: @grantee
+      grantee_uri: @grantee,
+      grant_id: @grant_id
     }
   end
 end

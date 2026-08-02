@@ -58,7 +58,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
     # transport may still be settling. The effective view combines the held
     # Identity slice with durable pending absorbs without dispatching through
     # the readiness gate.
-    with {:ok, current} <- Ezagent.EntityCaps.effective_caps(orchestrator_uri),
+    with {:ok, current} <- Ezagent.IdentityCaps.effective_caps(orchestrator_uri),
          to_grant =
            Enum.reject(desired, fn want ->
              Enum.any?(current, &same_cap_identity?(&1, want))
@@ -112,7 +112,7 @@ defmodule Ezagent.Entity.Session.Orchestrator.Caps do
   cap identity-key (kind/behavior/instance/workspace_uri), so revoking
   an absent cap is a clean no-op. A dispatch failure is swallowed (the
   orchestrator Kind + its `:identity` snapshot are torn down anyway —
-  this is belt-and-suspenders for the durable `caps_json` projection).
+  this is belt-and-suspenders for the durable Store authority).
 
   `workspace_uri` is taken explicitly (not via `WorkspaceRegistry`)
   because the binding may already have been unbound by the time rollback

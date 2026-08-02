@@ -194,14 +194,11 @@ config :swoosh, :api_client, false
 # identity domain supplies its existing live + durable held-cap loader.
 config :ezagent_core, Ezagent.Cap, authority_loader: Ezagent.Identity
 
-# #189 PR-1 (identity-plane cutover step 1, ADDITIVE) — the unified
-# per-entity identity-caps store. Config-injected into the ACTOR layer
-# (which must not compile-depend on the domain layer): the Kind commit
-# chokepoint + SnapshotStore write/delete dual-write every `:identity`
-# mutation into the store (a WRITE-SHADOW). Reads stay LEGACY-authoritative
-# in PR-1 — the store is NEVER consulted for an authz read; the
-# store-preferred read + parity check + atomic writes land at the cutover PR.
-config :ezagent_actor, :identity_caps_store, Ezagent.EntityCaps.Store
+# The sole durable per-entity capability store. It is config-injected into the
+# actor layer so that actor creation and cold reconciliation can use it without
+# introducing an actor -> identity-domain compile dependency. Kind snapshots
+# are projections and never act as an authorization source.
+config :ezagent_actor, :identity_caps_store, Ezagent.IdentityCaps.Store
 
 # #189 PR-1 — HMAC secret for authenticated provisioning receipts
 # (`Ezagent.Identity.ProvisioningReceipt`). The dev/test default is set ONLY in

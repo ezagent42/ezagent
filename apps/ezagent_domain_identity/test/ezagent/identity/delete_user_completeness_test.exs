@@ -14,7 +14,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
   alias Ezagent.Identity.Offboarding.RevocationFence
   alias Ezagent.Identity.Test.{BusyDeleteUserAgentKind, DeleteUserAgentKind}
   alias Ezagent.Provenance.DerivationEdges
-  alias Ezagent.{Cap, Capability, EntityCaps, Invocation, SnapshotStore, Users}
+  alias Ezagent.{Cap, Capability, IdentityCaps, Invocation, SnapshotStore, Users}
 
   test "an owned agent is revoked at load, authenticate, authorize, and dispatch" do
     user = create_user("owned")
@@ -23,7 +23,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     record_edge(agent, user)
 
     assert Process.alive?(pid)
-    assert [_ | _] = EntityCaps.load(agent)
+    assert [_ | _] = IdentityCaps.load(agent)
     assert {:ok, ^agent} = Ezagent.Entity.Token.authenticate(pat)
     assert {:ok, ^cap} = Cap.authorize(agent, [cap], needed_for_agent(agent))
     assert_dispatches(agent, cap)
@@ -31,7 +31,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     assert :ok = Users.delete(user)
 
     refute Process.alive?(pid)
-    assert EntityCaps.load(agent) == []
+    assert IdentityCaps.load(agent) == []
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
     assert {:error, :holder_revoked} = Cap.authorize(agent, [cap], needed_for_agent(agent))
     assert {:error, _reason} = dispatch(agent, cap)
@@ -66,14 +66,14 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     Enum.each(derived, fn uri ->
       fixture = fixtures[uri]
       assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(fixture.pat)
-      assert EntityCaps.load(uri) == []
+      assert IdentityCaps.load(uri) == []
       assert latest_generation(uri) == generations[uri] + 1
       refute Process.alive?(fixture.pid)
     end)
 
     independent_fixture = fixtures[independent]
     assert {:ok, ^independent} = Ezagent.Entity.Token.authenticate(independent_fixture.pat)
-    assert [_ | _] = EntityCaps.load(independent)
+    assert [_ | _] = IdentityCaps.load(independent)
     assert generation(independent) == generations[independent]
     assert Process.alive?(independent_fixture.pid)
     assert_dispatches(independent, independent_fixture.action_cap)
@@ -91,7 +91,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     assert :ok = Users.delete(user)
 
     assert Process.alive?(first_pid)
-    assert EntityCaps.load(agent) == []
+    assert IdentityCaps.load(agent) == []
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
 
     assert {:error, :holder_revoked} =
@@ -108,7 +108,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     assert {:error, {:authority_load_failed, :regenesis_required}} =
              Ezagent.Kind.spawn(BusyDeleteUserAgentKind, %{uri: agent, initial_caps: []})
 
-    assert EntityCaps.load(agent) == []
+    assert IdentityCaps.load(agent) == []
     assert {:error, :authority_unavailable} = Ezagent.Entity.Token.mint(agent)
 
     assert {:error, :holder_revoked} =
@@ -150,14 +150,14 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
     assert :ok = RevocationFence.enroll([user, agent])
     assert generation(agent) == agent_generation
     assert RevocationFence.fenced?(agent)
-    assert EntityCaps.load(agent) == []
+    assert IdentityCaps.load(agent) == []
     assert {:error, :invalid_credentials} = Ezagent.Entity.Token.authenticate(pat)
 
     assert {:error, :holder_revoked} =
              Cap.authorize(agent, [cap], needed_for_agent(agent))
 
     assert {:ok, _bumped_user} = Authority.regenesis(user, :user)
-    assert :ok = EntityCaps.clear_self_license_persisted(user)
+    assert :ok = IdentityCaps.clear_self_license_persisted(user)
     assert :ok = RevocationFence.clear(user)
     refute RevocationFence.fenced?(user)
     assert RevocationFence.fenced?(agent)
@@ -182,6 +182,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
 
   defp spawn_agent(uri, kind \\ DeleteUserAgentKind) do
     action_cap = action_cap(uri)
+    assert :ok = Ezagent.IdentityCaps.Store.initialize(uri, [action_cap])
     assert {:ok, pid} = Ezagent.Kind.spawn(kind, %{uri: uri, initial_caps: [action_cap]})
     track_pid(pid)
     await_ready(uri)

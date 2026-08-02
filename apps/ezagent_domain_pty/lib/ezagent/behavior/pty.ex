@@ -20,9 +20,8 @@ defmodule Ezagent.ActionSet.Pty do
   PtyServer (now `Ezagent.Domain.Pty.Server`) moved out of the cc
   plugin into the Tier-2 `ezagent_domain_pty` app in PR-A. PR-B
   (this PR) moves this Behavior module into the same app — the
-  module atom name `Ezagent.ActionSet.Pty` is unchanged, so all
-  existing DB cap grants (`caps_json` references the string
-  `"Elixir.Ezagent.ActionSet.Pty"`) continue to resolve.
+  module atom name `Ezagent.ActionSet.Pty` is unchanged, so issued grant
+  artifacts continue to resolve the same action-set identifier.
 
   The Behavior MODULE lives in `ezagent_domain_pty`; the
   REGISTRATION (binding Agent Kind → each action → this module, in a

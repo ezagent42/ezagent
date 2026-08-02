@@ -182,7 +182,7 @@ defmodule Ezagent.World.UserData do
 
   defp verified_cap_count(%URI{} = user_uri) do
     user_uri
-    |> Ezagent.EntityCaps.load()
+    |> Ezagent.IdentityCaps.load()
     |> length()
   rescue
     _ -> 0

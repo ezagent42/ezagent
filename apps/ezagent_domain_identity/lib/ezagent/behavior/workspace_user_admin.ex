@@ -401,7 +401,7 @@ defmodule Ezagent.ActionSet.WorkspaceUserAdmin do
   #
   # — it parsed ARBITRARY caller-supplied cap text, stamped it
   # `granted_by: admin` regardless of who was actually calling, and wrote it
-  # straight into `users.caps_json`. `Ezagent.Cap.issue/3` was never called, so
+  # straight into durable identity state. `Ezagent.Cap.issue/3` was never called, so
   # `CapabilityRegistry.authorize_grant/3` never ran: neither the
   # wildcard-action guard nor the owner/delegation guard could fire. A holder of
   # `workspace_user_admin.create_user` could therefore conjure a user holding

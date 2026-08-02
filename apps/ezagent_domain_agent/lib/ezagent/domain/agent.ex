@@ -111,7 +111,7 @@ defmodule Ezagent.Domain.Agent do
   # activating it". A thin AUTHORIZE-then-DELEGATE layer (D2): the actual slice
   # reads stay in their owning, already-non-activating facades —
   #   config  → Ezagent.Agent.Config.read_cascade/4  (pure-DB ConfigEvolve)
-  #   caps    → Ezagent.EntityCaps.load/1             (live slice → snapshot)
+  #   caps    → Ezagent.IdentityCaps.load/1             (live slice → snapshot)
   #   sandbox → Ezagent.ActionSet.Sandbox.read_persisted_state/1 (live → snapshot)
   #   status  → lifecycle_status/1 (KindRegistry.lookup + guarded Domain.Pty)
   # so the de-activation machinery is DRY at one site per slice and every
@@ -125,7 +125,7 @@ defmodule Ezagent.Domain.Agent do
   # exactly as the live dispatch step-5.5 does:
   #   route 1 — the caller's INLINE `ctx.caps` (inline self-authority, #154)
   #   route 2 — the caller's slice-backed caps, read NON-ACTIVATINGLY
-  #             (`read_entity_caps/1`: live slice → snapshot fallback)
+  #             (`IdentityCaps.load/1`: verified Store authority)
   # Implementing only one route would silently lock out one caller class
   # (an inline-self-authority worker, or a logged-in user with a cold Kind).
 
@@ -171,7 +171,7 @@ defmodule Ezagent.Domain.Agent do
   Preserves the `identity.list_caps` dispatch gate (`cap(<entity_kind>, Identity,
   :list_caps)`, instance-scoped) via the two-route authz, PLUS the self-read
   exemption the dispatch honored (`caller == entity` → `:ok` even with no cap).
-  Delegates the read to the sanctioned storage facade `Ezagent.EntityCaps.load/1`.
+  Delegates the read to the sanctioned storage facade `Ezagent.IdentityCaps.load/1`.
   """
   @spec read_caps(URI.t(), read_ctx()) :: {:ok, [Ezagent.Capability.t()]} | {:error, term()}
   def read_caps(%URI{} = entity_uri, %{authenticated_principal: %URI{}} = ctx) do
@@ -184,7 +184,7 @@ defmodule Ezagent.Domain.Agent do
     }
 
     if self_read?(ctx, entity_uri) or authorized?(needed, ctx) do
-      {:ok, Ezagent.EntityCaps.load(entity_uri)}
+      {:ok, Ezagent.IdentityCaps.load(entity_uri)}
     else
       {:error, :unauthorized}
     end
@@ -375,7 +375,7 @@ defmodule Ezagent.Domain.Agent do
       )
       when is_list(agent_uris) do
     # SECURITY (codex round-4): authorize against the caller's CURRENT caps, loaded
-    # fresh ONCE — the scalar path's OWN `EntityCaps.load/1` (generation-verified via
+    # fresh ONCE — the scalar path's OWN `IdentityCaps.load/1` (generation-verified via
     # `verified/2`, and reflecting single-cap store REMOVALS), with the scalar's own
     # predicate applied by the chokepoint owner `Ezagent.Identity.caps_match?/2`
     # (SPEC §8.9 — the `matches?` call lives at the owner, NOT hand-rolled here).
@@ -386,7 +386,7 @@ defmodule Ezagent.Domain.Agent do
     # ONE load of the caller's current, already-verified caps + pure in-memory matching
     # via the owner → CONSTANT in the denied count. Filter FIRST so a denied agent's
     # slices are never batch-read.
-    current_caps = Ezagent.EntityCaps.load(holder)
+    current_caps = Ezagent.IdentityCaps.load(holder)
 
     authorized =
       Enum.filter(agent_uris, fn uri ->
@@ -580,7 +580,7 @@ defmodule Ezagent.Domain.Agent do
       match?(%URI{}, holder) and
           Ezagent.Identity.caps_authorize?(
             holder,
-            Ezagent.EntityCaps.load(holder),
+            Ezagent.IdentityCaps.load(holder),
             needed
           ) ->
         true
@@ -596,7 +596,7 @@ defmodule Ezagent.Domain.Agent do
   # owner re-checks the same predicate against the same needed cap.
   defp two_route_caps(%{authenticated_principal: %URI{} = holder} = ctx) do
     inline = ctx |> Map.get(:caps, []) |> Enum.to_list()
-    slice = Ezagent.EntityCaps.load(holder)
+    slice = Ezagent.IdentityCaps.load(holder)
     MapSet.union(MapSet.new(inline), MapSet.new(slice))
   end
 

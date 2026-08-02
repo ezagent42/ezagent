@@ -89,7 +89,7 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
     # dispatch is denied `:holder_revoked` at the principal gate BEFORE the
     # workspace-isolation check the test targets. Establish currency the
     # non-spawning durable way — a real user row carrying its own self-license
-    # (`Users.create_read_only`) so `EntityCaps.load(member) ≠ []`.
+    # (`Users.create_read_only`) so `IdentityCaps.load(member) ≠ []`.
     {:ok, _} = Ezagent.Users.create_read_only(member, [self_license_cap!(member)])
 
     # The member HOLDS the caps (issued under admin authority — modeling a

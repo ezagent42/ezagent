@@ -11,7 +11,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
   **Z-1** gate proves — empty-allowlist — that no site bypasses `authorize/3`.
   But Z-1 lands LAST. During the days #195 is developed on its branch, other
   PRs merging to `main` can introduce NEW authorization bypasses (new bare-match
-  verifies, new raw cap-verify calls, new `EntityCaps.load`/`read_held_caps`/
+  verifies, new raw cap-verify calls, new `IdentityCaps.load`/`read_held_caps`/
   `list_caps_for` cap-obtaining consumers) that go uncaught until Z-1 lands red.
 
   This is a **RATCHET** version of Z-1: it FREEZES the current set of
@@ -32,7 +32,7 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       (these three, named in the plan `kind.ex:288-297` / `identity.ex:303` /
       `authorization.ex:24-29`, are the dormant-cap bypasses F-2 routes through
       `authorize/3`);
-    * **cap-obtaining consumers** — `EntityCaps.load`/`load_persisted`,
+    * **cap-obtaining consumers** — `IdentityCaps.load`/`load_persisted`,
       `read_held_caps`, `Identity.list_caps_for`.
 
   ## ACCESS vs GRANT/ADMIN classification (Phase F "Scope discipline")
@@ -90,31 +90,20 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
         "apps/ezagent_core/lib/ezagent/cap/authority.ex",
         "apps/ezagent_core/lib/ezagent/cap.ex",
         "apps/ezagent_core/lib/ezagent/cap/authorize.ex",
-        # home: G-3's principal-axis gate. EntityCaps.load(holder) validates
+        # home: G-3's principal-axis gate. IdentityCaps.load(holder) validates
         # the holder's independently stored self-license against the current
         # holder authority before authorize/3 considers inline candidates.
-        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
+        "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
         # #189 PR-2: the identity-caps store's WRITE-boundary resurrection guard
         # runs the SAME G-3 principal-axis check (`verify_against_current` of the
         # mirrored self-license vs the holder's current generation) so a stale
         # post-revocation license can never be written `active`. Reviewed, not an
         # authz decision — reads stay legacy in PR-2; this only decides the
-        # durable row's status. Mirrors the entity_caps.ex home above.
-        "apps/ezagent_domain_identity/lib/ezagent/entity_caps/store.ex",
-        # Canary boot regression (deploy 30456630379): the PRE-EPOCH gen-reboot
-        # self-license RE-MINT runs the SAME G-3 principal-axis check
-        # (`verify_against_current`) TWICE — to decide re-mint ELIGIBILITY (is the
-        # slice's self-license already current) and to re-verify the freshly minted
-        # license against the current generation under the FOR SHARE authority lock.
-        # Reviewed, NOT an authz decision: the actual authorization still flows
-        # through `authorize/3`; this only refreshes the canonical genesis admin's
-        # durable self-license under a DEFINITIVE `:inactive` epoch (a no-op
-        # post-epoch and for every non-admin principal). Mirrors the
-        # entity_caps.ex / store.ex homes above.
-        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
+        # durable row's status. Mirrors the identity_caps.ex home above.
+        "apps/ezagent_domain_identity/lib/ezagent/identity_caps/store.ex",
         # P3 (cap-revocation hardening): `caps_match?/2`'s per-call TARGET-axis
         # re-verify. NOT a principal-gate bypass — the principal gate runs
-        # INSIDE `EntityCaps.load/1` (its `verified/2` G-3 self-license check
+        # INSIDE `IdentityCaps.load/1` (its `verified/2` G-3 self-license check
         # loads a gen-bumped holder EMPTY), which every caller passes through;
         # this call only re-checks each shape-matching artifact against its
         # target's CURRENT generation (the same target gate authorize/3's
@@ -228,13 +217,13 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
     %{
       id: :cap_obtaining_entitycaps_load,
       desc:
-        "EntityCaps.load/1 or load_persisted/1 consumed outside its home — the " <>
+        "IdentityCaps.load/1 or load_persisted/1 consumed outside its home — the " <>
           "principal-axis cap-load path (G-3 self-license gate site). A new " <>
           "consumer must source caps from this fail-closed load, never re-derive",
-      pattern: ~r/EntityCaps\.load/,
+      pattern: ~r/IdentityCaps\.load/,
       reviewed_paths: [
         # home: the fail-closed cap-load path itself.
-        "apps/ezagent_domain_identity/lib/ezagent/entity_caps.ex",
+        "apps/ezagent_domain_identity/lib/ezagent/identity_caps.ex",
         # ctx/GRANT: identity-domain internals that load a principal's caps to
         # BUILD authority/cascade/absorb ctx (grant-side + admin-definition).
         "apps/ezagent_domain_identity/lib/ezagent/entity.ex",
@@ -338,17 +327,14 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       id: :public_self_license_minter,
       desc:
         "the public Identity self-license minter `Ezagent.ActionSet.Identity." <>
-          "mint_self_license/2` (#1627 — made public so `PreEpochRemint` + " <>
-          "`AdminKeyRotation` call it) invoked cross-module outside its two " <>
-          "sanctioned callers — a THIRD external caller is an un-gated re-credential " <>
+          "mint_self_license/2` invoked cross-module outside `AdminKeyRotation` — " <>
+          "another external caller is an un-gated re-credential " <>
           "path the whole-file `identity.ex` allowlist would miss. Matches the " <>
           "QUALIFIED `Identity.mint_self_license(` call form (identity.ex's own " <>
-          "unqualified internal calls + unrelated same-named private helpers, e.g. " <>
-          "`session_self_license_migration.ex`, are intentionally not matched).",
+          "unqualified internal calls and unrelated same-named private helpers " <>
+          "are intentionally not matched).",
       pattern: ~r/Identity\.mint_self_license\(/,
       reviewed_paths: [
-        # the PRE-EPOCH admin re-mint (gated on the un-killable authority root).
-        "apps/ezagent_domain_identity/lib/ezagent/identity/pre_epoch_remint.ex",
         # the MANUAL admin key-rotation operator command (atomic rotate + re-mint).
         "apps/ezagent_domain_identity/lib/ezagent/identity/admin_key_rotation.ex"
       ]
@@ -457,15 +443,10 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
       Path.wildcard(Path.join(@umbrella_root, "apps/*/lib/**/*.ex"))
       |> Enum.flat_map(&self_license_cap_constructors/1)
 
-    # #189 PR-3 FINAL (ITEM 4): exactly TWO sanctioned self-license minters —
+    # The two runtime self-license minters remain create-gated.
     #   1. `ActionSet.Identity` (User/Agent) — create-gated;
     #   2. `ActionSet.SelfLicense` carrier (the Session) — create-gated.
-    # The GOVERNED FIX-4 `SessionSelfLicenseMigration` adopts pre-carrier Session
-    # INSTANCES during the cutover, but it mints THROUGH minter #2
-    # (`SelfLicense.create/1`) — it is NOT a third construction site. A partial
-    # earlier revision allowlisted it as a third file; routing through the
-    # existing minter restores the ratchet to exactly two constructors. Any THIRD
-    # constructor, or an un-gated one, fails this.
+    # Any third constructor, or an un-gated one, fails this.
     constructor_files =
       constructor_hits
       |> Enum.map(&(&1 |> String.split(":") |> hd()))
@@ -481,16 +462,11 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
     # not just the deduplicated file set. The previous filename-dedup check would
     # have passed a SECOND (hidden) constructor added to an already-approved file
     # — exactly one create-gated `Capability.cap(_, _, :self_license, _, _)` in
-    # each of the TWO files ⇒ two hits.
+    # each runtime file and no maintenance bypass ⇒ two hits.
     assert length(constructor_hits) == 2
 
     identity = source("apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex")
     self_license = source("apps/ezagent_domain_identity/lib/ezagent/behavior/self_license.ex")
-
-    migration =
-      source(
-        "apps/ezagent_domain_session/lib/ezagent/socialware/session_self_license_migration.ex"
-      )
 
     cap = source("apps/ezagent_core/lib/ezagent/cap.ex")
     grant = source("apps/ezagent_core/lib/ezagent/cap/grant.ex")
@@ -500,14 +476,6 @@ defmodule EzagentCore.Invariants.AuthorizeChokepointRatchetTest do
              "maybe_mint_self_license(caps, %{create_freshness: :created, uri: %URI{} = uri})"
 
     assert self_license =~ "def create(%{create_freshness: :created, uri: %URI{} = uri})"
-
-    # The governed migration mints THROUGH minter #2 (`SelfLicense.create/1`) — no
-    # third construction site — and keeps its OWN anti-resurrection gate: it
-    # refuses a marker-only (destroyed) session and a previously-revoked
-    # (regenesis'd) one.
-    assert migration =~ "SelfLicense.create(%{create_freshness: :created, uri: uri})"
-    assert migration =~ "marker_only?"
-    assert migration =~ "Cap.Authority.generation_count(uri) > 1"
 
     assert cap =~ "%Capability{action: :self_license}"
     assert cap =~ "do: {:error, :reserved_action}"
