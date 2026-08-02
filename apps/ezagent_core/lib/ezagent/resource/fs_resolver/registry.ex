@@ -379,6 +379,8 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # claims uploads.
   @uploads_type "uploads"
 
+  @git_identity_type "git-identity"
+
   @spec boot_registrations() :: [{String.t(), map()}]
   defp boot_registrations do
     uploads =
@@ -388,7 +390,16 @@ defmodule Ezagent.Resource.FsResolver.Registry do
          authority: &FsResolver.uploads_authority/2
        }}
 
-    [uploads]
+    # SSH 凭据 1b — per-agent git 身份目录。core 注册（不是 plugin 的
+    # `resource_types/0`）：这不是 flavor 概念，是 agent 通用概念。
+    git_identity =
+      {@git_identity_type,
+       %{
+         backend_component: @git_identity_type,
+         authority: &FsResolver.git_identity_authority/2
+       }}
+
+    [uploads, git_identity]
   end
 
   # All `handle_call/3` clauses grouped here (the production `:register_all` and,

@@ -233,6 +233,26 @@ defmodule Ezagent.Resource.FsResolver do
   end
 
   @doc """
+  Authority for the per-agent `git-identity` type (SSH 凭据 1b).
+
+  Asserts the URI's structural `<ws>` segment equals the caller's authenticated
+  `scope.workspace` — identical logic to `config_dir_authority/2`, but a
+  **distinct named function on purpose**.
+
+  The Registry keys config-dir family membership on `authority` IDENTITY
+  (`config_dir_type?/1`). Sharing `config_dir_authority/2` would make the
+  git-identity directory a config-dir layer, exposing it to the #17 credential
+  cascade — whose semantics are "copy between agents by policy". An agent that
+  was never granted the `read_ssh_key` cap would then receive another User's SSH
+  private key through `cp_r`. Keeping the function distinct is what makes
+  "同部署内两个 agent 是否隔离，完全取决于有没有各自发那条 cap" structurally true.
+  """
+  @spec git_identity_authority(URI.t(), scope()) :: :ok | {:error, term()}
+  def git_identity_authority(%URI{} = uri, %{workspace: scope_ws}) do
+    assert_workspace_segment(uri, scope_ws)
+  end
+
+  @doc """
   Builds FsResolver resource-type declarations for per-agent config-dir template
   classes.
 
