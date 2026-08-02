@@ -736,6 +736,12 @@ StrictHostKeyChecking。known_hosts 未配置时 fail loud 且不留私钥。"
 3. **窄授权**：dispatch 的 `ctx.caps` **只放找到的那一条 cap**，不是 agent 的全部 cap
 4. **不抛异常**：任何路径都返回元组，spawn 不能被它掀翻
 
+**Task 2 复审带过来的三条（务必先读）：**
+
+1. **`{:ok, :none}` 与每一条错误路径都必须清目录**（设计 **§6.1**，本 task 落地）。两道复审独立指出：没有它，「撤销 agent 的 cap → 下次 spawn 生效」对 key 文件是**假的** —— 只有环境变量消失，key 还在 agent 的文件系统上、且它自己跑 `git -c core.sshCommand='ssh -i <那个路径> -o StrictHostKeyChecking=no'` 照样能用。
+2. **`private_key` 这个字面量在 `ezagent_domain_identity` 里可以用。** `apps/ezagent_core/test/architecture/cap_authority_confinement_test.exs` 的 `@core_lib` 只扫 `apps/ezagent_core/lib`。Task 2 因为在 core 里，被迫把参数改名 `key_pem` —— **那是 gate 规避，不是风格偏好，不要抄过来**。本 task 直接用 `private_key`（它就是 1a action 返回值的字段名）。
+3. **`GitIdentityRuntime` 的错误 shape**：`{:error, {:known_hosts_unreadable, {path, reason}}}`（是 `{path, reason}` 二元组，不是裸 reason）。本 task 不需要逐个 match 它 —— 直接透传即可。
+
 **实现要点（1a 踩过的坑，别重蹈）：** 1a 的授权测试用 `signed_invocation!/2` 走通 dispatch，容易被误读成"invocation 需要签名"。**实际不是**：该 helper 做的是往 `ctx` 里放 `:authenticated_principal`（`apps/ezagent_core/test/support/cap_helper.ex:258-260`）。cap 在 cap-signing Path A 下**出生即签名**。生产 ctx 形如：
 
 ```elixir
@@ -812,6 +818,26 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
     cap
   end
 
+  defp revoke_key_for(user_uri, admin) do
+    target = Ezagent.URI.with_action(user_uri, :user_ssh_identity, :revoke_ssh_key)
+    cap = signed_required_cap!(target, :user, UserSshIdentity, :revoke_ssh_key, admin)
+
+    {:ok, _} =
+      %Ezagent.Invocation{
+        origin: :trusted_internal,
+        target: target,
+        mode: :call,
+        args: %{},
+        ctx: %{
+          caller: admin,
+          authenticated_principal: admin,
+          caps: MapSet.new([cap]),
+          reply: {:caller_inbox, self()}
+        }
+      }
+      |> Ezagent.Invocation.dispatch()
+  end
+
   defp generate_key_for(user_uri, admin) do
     target = Ezagent.URI.with_action(user_uri, :user_ssh_identity, :generate_ssh_key)
     cap = signed_required_cap!(target, :user, UserSshIdentity, :generate_ssh_key, admin)
@@ -840,6 +866,27 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
     test "不写任何文件", ctx do
       {:ok, :none} = AgentGitIdentity.materialize(ctx.agent_uri)
       refute File.exists?(GitIdentityDir.path(ctx.agent_uri))
+    end
+
+    # 设计 §6.1 —— 这条是让 cap 撤销真正生效的那一步。没有它，撤销只是
+    # 让环境变量消失，key 还在 agent 的文件系统上且完全可用。
+    test "撤销生效：先成功物化一次，撤掉 cap 后再物化 → 盘上的 key 必须被清掉", ctx do
+      generate_key_for(ctx.user_uri, ctx.admin)
+      cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
+
+      assert {:ok, %{"GIT_SSH_COMMAND" => _}} = AgentGitIdentity.materialize(ctx.agent_uri)
+      key_path = Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519")
+      assert File.exists?(key_path)
+
+      # `Ezagent.EntityCaps.revoke/2`（`entity_caps.ex:272`）—— 与本文件
+      # 授予侧用的 `Ezagent.Identity.absorb_cap/2` 对称的直接入口。
+      # （`Ezagent.Identity.revoke_cap/2` **不存在**；带授权的 chokepoint 版本
+      # 是 `Ezagent.Identity.Grant.revoke_cap/3`，测试里不需要。）
+      :ok = Ezagent.EntityCaps.revoke(ctx.agent_uri, cap)
+      assert [] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
+
+      assert {:ok, :none} = AgentGitIdentity.materialize(ctx.agent_uri)
+      refute File.exists?(key_path)
     end
 
     test "只持 read_ssh_public_key cap 不算 —— 仍是关闭态", ctx do
@@ -923,6 +970,23 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
 
       assert {:error, :owner_has_no_key} = AgentGitIdentity.materialize(ctx.agent_uri)
       refute File.exists?(Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519"))
+    end
+
+    # 设计 §6.1 —— read 失败发生在 `GitIdentityRuntime.write/2` **被调用之前**，
+    # 所以 write 自己的清理兜不住这一格：必须由 materialize/1 清。
+    # 上面那条用的是全新目录，测不到这个状态迁移。
+    test "读失败也清盘：先成功物化一次，再让 User 撤销 key，第二次必须把旧 key 清掉", ctx do
+      generate_key_for(ctx.user_uri, ctx.admin)
+      grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
+
+      assert {:ok, %{"GIT_SSH_COMMAND" => _}} = AgentGitIdentity.materialize(ctx.agent_uri)
+      key_path = Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519")
+      assert File.exists?(key_path)
+
+      revoke_key_for(ctx.user_uri, ctx.admin)
+
+      assert {:error, :owner_has_no_key} = AgentGitIdentity.materialize(ctx.agent_uri)
+      refute File.exists?(key_path)
     end
 
     test "known_hosts 未配置 → :known_hosts_unconfigured", ctx do
@@ -1034,6 +1098,12 @@ defmodule Ezagent.Identity.AgentGitIdentity do
   def materialize(%URI{} = agent_uri) do
     case dispatch_caps(agent_uri) do
       [] ->
+        # 设计 §6.1 —— THE step that makes cap revocation take effect. Without
+        # this wipe, revoking the cap only removes the env var while the key
+        # stays on the agent's filesystem, fully usable via its own
+        # `git -c core.sshCommand=...`. Cheap: an rm_rf on a path that does
+        # not exist for nearly every agent, every spawn.
+        GitIdentityRuntime.wipe(agent_uri)
         {:ok, :none}
 
       [cap | _] ->
@@ -1041,7 +1111,13 @@ defmodule Ezagent.Identity.AgentGitIdentity do
              {:ok, env} <- GitIdentityRuntime.write(agent_uri, private_key) do
           {:ok, env}
         else
-          {:error, reason} -> report(agent_uri, cap, reason)
+          {:error, reason} ->
+            # `GitIdentityRuntime.write/2` wipes on its OWN failures, but a
+            # `read_private_key/2` failure happens BEFORE write is ever called
+            # — nothing would clear a key left by an earlier successful spawn.
+            # 设计 §6.1: every outcome except `{:ok, env}` clears the dir.
+            GitIdentityRuntime.wipe(agent_uri)
+            report(agent_uri, cap, reason)
         end
     end
   rescue
@@ -1173,11 +1249,14 @@ end
 Run: `POSTGRES_PORT=15432 mix test apps/ezagent_domain_identity/test/ezagent/identity/agent_git_identity_test.exs`
 Expected: 全部通过。
 
-- [ ] **Step 5: 红演示（三条核心不变式各一轮）**
+- [ ] **Step 5: 红演示（四条核心不变式各一轮）**
 
 1. **cap 即开关** —— 把 `ssh_read_cap?/1` 的 `action: @action` 去掉（改成只匹配 behavior），跑"只持 read_ssh_public_key cap 仍是关闭态"那条，贴红 → 还原 → `git diff` 空 → 贴绿
 2. **窄授权** —— 把 `caps: MapSet.new([cap])` 改成 `caps: Ezagent.Identity.list_caps_for(agent_uri)`，跑"窄授权"那条，贴红 → 还原 → 贴绿
 3. **错误不合并** —— 把 `{:error, :ssh_identity_unavailable}` 那个 clause 删掉（让它落到通用 clause），跑"配错了"那组，贴红 → 还原 → 贴绿
+4. **撤销真的生效** —— 把 `[] ->` 分支里的 `GitIdentityRuntime.wipe(agent_uri)` 删掉，跑"撤销生效"那条，贴红 → 还原 → 贴绿。**再单独删一次错误分支里的 `wipe`**，跑"读失败也清盘"那条，贴红 → 还原 → 贴绿
+
+> **Task 2 的实现者在这一步报回一条真实发现**：他按 findings 只回退了两个子修复中的一个，测试**仍然是绿的**（两条修复互为冗余），他如实报告而没有粉饰。**如果你按上面某一条改坏之后测试仍然绿，那是真实发现，立即报告，不要硬凑。** 前三个 task 每一个都靠这条抓出了我计划里的一处错。
 
 - [ ] **Step 6: 提交**
 
