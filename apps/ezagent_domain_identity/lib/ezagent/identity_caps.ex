@@ -142,6 +142,35 @@ defmodule Ezagent.IdentityCaps do
     effective_read(uri, &load_persisted_checked/1)
   end
 
+  @doc """
+  Load the durable effective set for capability delivery to a recipient that
+  may not have been provisioned yet.
+
+  An exactly missing Store row is treated as an empty held set because the
+  delivery outbox is allowed to retain grants for an offline, not-yet-created
+  recipient. Store read failures, malformed rows, and invalid artifacts remain
+  explicit fail-closed errors. Ordinary authorization reads must use
+  `effective_caps_persisted/1` and continue to reject a missing Store row.
+  """
+  @spec effective_caps_for_delivery_persisted(URI.t() | String.t()) ::
+          {:ok, [Capability.t()]} | {:error, :effective_caps_read_failed}
+  def effective_caps_for_delivery_persisted(uri) do
+    uri = parse_uri(uri)
+    effective_read(uri, &load_persisted_for_delivery_checked/1)
+  end
+
+  defp load_persisted_for_delivery_checked(uri) do
+    if fenced?(uri) do
+      {:ok, []}
+    else
+      case Store.fetch_durable_caps(uri) do
+        {:ok, store_caps} -> verified_checked(store_caps, uri)
+        {:error, :identity_caps_missing} -> {:ok, []}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
   defp effective_read(uri, held_reader) do
     with {:ok, pending} <- Ezagent.Cap.DeliveryOutbox.list_pending_absorb_caps(uri),
          {:ok, held} <- held_reader.(uri),
@@ -169,7 +198,9 @@ defmodule Ezagent.IdentityCaps do
   end
 
   defp log_effective_read_failure(uri, reason) do
-    Logger.error("IdentityCaps effective read failed for #{URI.to_string(uri)}: #{inspect(reason)}")
+    Logger.error(
+      "IdentityCaps effective read failed for #{URI.to_string(uri)}: #{inspect(reason)}"
+    )
   end
 
   @doc "Replace the entity's complete cap set in its selected physical store and live slice."

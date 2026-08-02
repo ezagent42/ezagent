@@ -200,19 +200,17 @@ defmodule Ezagent.Identity do
 
   This is the `{:held_by, actor}` / `{:admin, admin}` authorizer source
   for `Ezagent.Identity.Grant.prepare/4`: the actor's REAL held caps
-  (the same set dispatch step 5.5 authorizes against). Reads the live
-  `:identity` slice via `Ezagent.Kind.get_slice/2`, falling back to the sole
-  durable identity-capability store when the Kind is not live (boot-order gap).
-  Returns an EMPTY MapSet for an unknown URI — dispatch CapBAC
-  then rejects cleanly rather than nil-deref'ing. Neither path is
-  spoofable (the DB row was written under the §5.2 grant gate).
+  (the same set dispatch step 5.5 authorizes against). Reads the sole durable
+  identity-capability Store directly: a live `:identity` slice is only a
+  projection and must never override newer Store authority. Returns an EMPTY
+  MapSet for an unknown or unreadable URI, so dispatch CapBAC fails closed.
   """
   @spec read_held_caps(URI.t() | String.t()) :: MapSet.t(Ezagent.Capability.t())
   @impl Ezagent.Cap.AuthorityLoader
   def read_held_caps(actor_uri) do
     actor_uri
     |> parse_uri()
-    |> Ezagent.IdentityCaps.load()
+    |> Ezagent.IdentityCaps.load_persisted()
     |> MapSet.new()
   end
 

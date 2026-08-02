@@ -24,35 +24,25 @@ defmodule Ezagent.World.UserDataCapsTest do
     assert durable_caps != []
   end
 
-  test "unsigned artifacts left in serialized data do not determine the count" do
+  test "the capability carrier rejects unsigned artifacts" do
     {workspace, user} = identities("revoked")
     stale_one = unsigned_cap(user, workspace, "stale-one")
     stale_two = unsigned_cap(user, workspace, "stale-two")
-    assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [stale_one, stale_two])
-    assert :ok = declare_workspace_member(workspace, user)
 
-    assert {:ok, _pid} =
-             Ezagent.Kind.spawn(Ezagent.Entity.User, %{uri: user, initial_caps: []})
+    assert {:error, :invalid_capability_protocol} =
+             Ezagent.Users.create(user, "test-password", [stale_one, stale_two])
 
-    on_exit(fn -> Ezagent.Kind.terminate(user) end)
-
-    expected = length(Ezagent.IdentityCaps.load(user))
-    assert expected != length(Ezagent.Users.get_by_uri(user).caps)
-    assert row_for(user, workspace)["cap_count"] == expected
+    assert Ezagent.Users.get_by_uri(user) == nil
   end
 
-  test "an unsigned serialized artifact is ignored while the current self-license remains" do
+  test "an unsigned artifact cannot be smuggled beside generated defaults" do
     {workspace, user} = identities("failure")
     cap = unsigned_cap(user, workspace, "target")
-    assert {:ok, _row} = Ezagent.Users.create(user, "test-password", [cap])
-    assert :ok = declare_workspace_member(workspace, user)
-    assert :ok = Ezagent.Entity.spawn_principal(user)
 
-    verified = Ezagent.IdentityCaps.verified_set(Ezagent.IdentityCaps.load(user), user)
+    assert {:error, :invalid_capability_protocol} =
+             Ezagent.Users.create(user, "test-password", [cap])
 
-    assert row_for(user, workspace)["cap_count"] == MapSet.size(verified)
-    assert MapSet.size(verified) == 1
-    refute cap in verified
+    assert Ezagent.Users.get_by_uri(user) == nil
   end
 
   test "World capability counts have no raw-store fallback" do

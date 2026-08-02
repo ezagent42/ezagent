@@ -12,7 +12,7 @@ defmodule Ezagent.Invariants.IdentityCapsAccessGateTest do
 
   @persisted_only_allowlist MapSet.new([
                               "apps/ezagent_domain_identity/lib/ezagent/entity.ex",
-                              "apps/ezagent_domain_session/lib/ezagent/behavior/session/self_add.ex"
+                              "apps/ezagent_domain_identity/lib/ezagent/identity.ex"
                             ])
 
   test "raw caps_json storage exists only inside IdentityCaps.Store" do

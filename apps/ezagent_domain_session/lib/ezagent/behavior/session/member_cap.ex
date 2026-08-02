@@ -47,7 +47,7 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     session_uri = ctx[:self_uri]
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    case Ezagent.IdentityCaps.effective_caps_persisted(member_uri) do
+    case Ezagent.IdentityCaps.effective_caps_for_delivery_persisted(member_uri) do
       {:ok, caps} ->
         grant_from_effective_caps(caps, member_uri, session_uri, workspace_uri, ctx)
 
@@ -123,7 +123,10 @@ defmodule Ezagent.ActionSet.Session.MemberCap do
     # Do not synchronously enter the member Kind from inside this Session Kind:
     # startup can have the admin Kind waiting on this join, creating a call
     # cycle. P2's durable effective view covers both Store and pending absorbs.
-    case Ezagent.Identity.Grant.resolve_revocation_artifact(member_uri, logical_join_cap) do
+    case Ezagent.Identity.Grant.resolve_revocation_artifact_for_delivery(
+           member_uri,
+           logical_join_cap
+         ) do
       {:ok, artifact} ->
         revoke_join_entitlement(member_uri, artifact, ctx)
 

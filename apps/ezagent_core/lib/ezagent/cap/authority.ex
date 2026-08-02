@@ -560,7 +560,7 @@ defmodule Ezagent.Cap.Authority do
            behavior: :any,
            action: :grant,
            instance: %URI{} = target,
-           workspace_uri: %URI{} = workspace_uri,
+           workspace_uri: workspace_uri,
            granted_by: %URI{} = granted_by,
            grantee_uri: %URI{} = grantee_uri,
            key_id: key_id
@@ -694,7 +694,12 @@ defmodule Ezagent.Cap.Authority do
   end
 
   defp admin_uri, do: Ezagent.URI.user(:system, :admin)
-  defp same_uri?(left, right), do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+  defp same_uri?(:any, :any), do: true
+
+  defp same_uri?(%URI{} = left, %URI{} = right),
+    do: Ezagent.URI.stable_key(left) == Ezagent.URI.stable_key(right)
+
+  defp same_uri?(_left, _right), do: false
 
   # The authority root — the canonical genesis admin, structurally un-killable
   # (#1627 B1-hybrid). Hardcoded to `admin_uri/0` (no config seam).

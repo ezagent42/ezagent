@@ -226,6 +226,7 @@ defmodule Ezagent.World.PtyConversationExitTest do
     # uses (`Ezagent.AgentFlavorAttributes.put/2`) so resolution is a plain
     # ETS hit and never touches the live Kind.
     Ezagent.AgentFlavorAttributes.put(@agent, "cc")
+    :ok = Ezagent.IdentityCaps.Store.initialize(@agent, [])
     {:ok, _agent_pid} = Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: @agent})
 
     on_exit(fn ->

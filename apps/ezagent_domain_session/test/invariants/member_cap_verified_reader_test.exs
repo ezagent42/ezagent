@@ -17,7 +17,8 @@ defmodule Ezagent.Invariants.MemberCapVerifiedReaderTest do
   test "member capability idempotency reads only through IdentityCaps" do
     source = File.read!(@member_cap)
 
-    assert source =~ "Ezagent.IdentityCaps.effective_caps_persisted(member_uri)"
+    assert source =~
+             "Ezagent.IdentityCaps.effective_caps_for_delivery_persisted(member_uri)"
     assert source =~ "{:ok, caps}"
     assert source =~ "{:error, _reason}"
     refute source =~ "defp member_snapshot_caps"

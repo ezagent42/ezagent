@@ -129,12 +129,8 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     assert {:ok, _row} =
              Ezagent.Users.create(user_uri, "test-password", [user_license, user_cap])
 
-    assert {:ok, _snapshot} =
-             Ezagent.SnapshotStore.write(
-               agent_uri,
-               %{identity: %{state: %{caps: MapSet.new([agent_license, agent_cap])}}},
-               kind_type: :agent
-             )
+    assert :ok =
+             Ezagent.IdentityCaps.Store.initialize(agent_uri, [agent_license, agent_cap])
 
     assert :error = Ezagent.KindRegistry.lookup(user_uri)
     assert :error = Ezagent.KindRegistry.lookup(agent_uri)
@@ -167,7 +163,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     assert_mount_lacks_cap(user_uri, workspace_uri, cap)
   end
 
-  test "storage keeps receiver-bound opaque artifacts and excludes another receiver" do
+  test "storage rejects invalid or wrong-receiver artifacts at the carrier boundary" do
     unique = System.unique_integer([:positive])
     workspace_uri = Ezagent.URI.workspace("live-auth-invalid-#{unique}")
     user_uri = Ezagent.URI.user("live-auth-invalid-#{unique}", "user")
@@ -177,7 +173,7 @@ defmodule EzagentWeb.LiveAuthCapsTest do
     wrong_receiver = issued_manage_cap(other_uri, workspace_uri, "wrong-target")
     self_license = Ezagent.Test.CapHelper.self_license_cap!(user_uri, :user)
 
-    assert {:ok, _row} =
+    assert {:error, :invalid_capability_protocol} =
              Ezagent.Users.create(user_uri, "test-password", [
                self_license,
                valid,
@@ -185,12 +181,12 @@ defmodule EzagentWeb.LiveAuthCapsTest do
                wrong_receiver
              ])
 
+    assert {:ok, _row} =
+             Ezagent.Users.create(user_uri, "test-password", [self_license, valid])
+
     {:cont, socket} = mount(user_uri, workspace_uri)
     assert_cap_present(socket.assigns.current_caps, valid)
-    # Storage is deliberately structural: a receiver-bound signed-looking
-    # artifact may remain opaque at rest. The target verifier rejects this
-    # mutated signature when it is presented for authorization.
-    assert_cap_present(socket.assigns.current_caps, invalid)
+    refute_cap_present(socket.assigns.current_caps, invalid)
     refute_cap_present(socket.assigns.current_caps, wrong_receiver)
   end
 
@@ -250,6 +246,8 @@ defmodule EzagentWeb.LiveAuthCapsTest do
   end
 
   defp ensure_agent_authority(agent_uri) do
+    :ok = Ezagent.IdentityCaps.Store.initialize(agent_uri, [])
+
     case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{uri: agent_uri}) do
       {:ok, _pid} -> on_exit(fn -> Ezagent.Kind.terminate(agent_uri) end)
       {:error, {:already_started, _pid}} -> :ok

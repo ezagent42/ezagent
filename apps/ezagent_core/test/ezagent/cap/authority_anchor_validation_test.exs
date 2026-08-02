@@ -59,6 +59,17 @@ defmodule Ezagent.Cap.AuthorityAnchorValidationTest do
     assert {:error, :invalid_authority_anchor} = Authority.anchor(target)
   end
 
+  test "anchor loading accepts the :any workspace axis of a system target" do
+    target =
+      Ezagent.URI.system(
+        "routing",
+        "anchor-system-#{System.unique_integer([:positive])}"
+      )
+
+    assert {:ok, _authority} = Authority.open(target, :system)
+    assert {:ok, %Capability{workspace_uri: :any, instance: ^target}} = Authority.anchor(target)
+  end
+
   test "anchor loading rejects stale and revoked grants" do
     target = unique_target("freshness")
     {:ok, _generation_one} = Authority.open(target, :agent)

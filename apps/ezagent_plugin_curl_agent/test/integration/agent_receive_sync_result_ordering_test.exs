@@ -69,6 +69,8 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
         "entity://team-alpha/agent/curl_#{tag}-#{System.unique_integer([:positive])}"
       )
 
+    :ok = Ezagent.IdentityCaps.Store.initialize(uri, [])
+
     {:ok, _pid} =
       Kind.spawn(Ezagent.Entity.Agent, %{
         uri: uri,
@@ -110,6 +112,7 @@ defmodule EzagentPluginCurlAgent.Integration.AgentReceiveSyncResultOrderingTest 
       uri = spawn_curl_agent("structroot")
       session_uri = Ezagent.URI.new!("session://team-alpha/default/main")
       sender = Ezagent.URI.new!("entity://team-alpha/user/alice")
+      :ok = Ezagent.IdentityCaps.Store.initialize(session_uri, [])
 
       msg = Message.new(sender, %{text: "first", attachments: []})
 

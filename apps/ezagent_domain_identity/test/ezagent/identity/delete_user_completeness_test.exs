@@ -182,6 +182,7 @@ defmodule Ezagent.Identity.DeleteUserCompletenessTest do
 
   defp spawn_agent(uri, kind \\ DeleteUserAgentKind) do
     action_cap = action_cap(uri)
+    assert :ok = Ezagent.IdentityCaps.Store.initialize(uri, [action_cap])
     assert {:ok, pid} = Ezagent.Kind.spawn(kind, %{uri: uri, initial_caps: [action_cap]})
     track_pid(pid)
     await_ready(uri)

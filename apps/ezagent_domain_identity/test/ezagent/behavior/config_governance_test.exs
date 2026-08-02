@@ -41,6 +41,7 @@ defmodule Ezagent.ActionSet.ConfigGovernanceTest do
         agent
       )
 
+    :ok = Ezagent.IdentityCaps.Store.initialize(agent, [sandbox_cap])
     {:ok, _pid} = Ezagent.Kind.spawn(Agent, %{uri: agent, initial_caps: [sandbox_cap]})
     :ok = Ezagent.WorkspaceRegistry.bind(agent, workspace)
 

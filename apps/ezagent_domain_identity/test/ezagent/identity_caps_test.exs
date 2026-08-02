@@ -141,6 +141,20 @@ defmodule Ezagent.IdentityCapsTest do
     :ok = Ezagent.Kind.terminate(agent)
   end
 
+  test "principal authorization reads Store when the live projection lags" do
+    agent = agent_uri("store-authoritative-principal")
+    original = issued_cap(agent, :send)
+    added = issued_cap(agent, :join)
+    spawn_agent(agent, [original])
+
+    assert {:ok, current} = Store.fetch_durable_caps(agent)
+    assert :ok = Store.persist(agent, [added | current])
+    refute cap_present?(IdentityCaps.load(agent), added)
+    assert cap_present?(Ezagent.Identity.read_held_caps(agent), added)
+
+    :ok = Ezagent.Kind.terminate(agent)
+  end
+
   test "snapshot projection failure leaves Store committed and cold restart repairs live state" do
     agent = agent_uri("projection-failure")
     original = issued_cap(agent, :send)
@@ -192,6 +206,25 @@ defmodule Ezagent.IdentityCapsTest do
   test "missing Store authority makes effective reads explicit failures" do
     assert {:error, :effective_caps_read_failed} =
              IdentityCaps.effective_caps_persisted(agent_uri("effective-missing"))
+  end
+
+  test "delivery effective reads treat an unprovisioned recipient as holding no caps" do
+    assert {:ok, []} =
+             IdentityCaps.effective_caps_for_delivery_persisted(
+               agent_uri("delivery-effective-missing")
+             )
+  end
+
+  test "delivery effective reads still fail closed for a corrupt Store row" do
+    agent = agent_uri("delivery-effective-corrupt")
+    spawn_agent(agent, [])
+    :ok = Ezagent.Kind.terminate(agent)
+
+    from(row in Store, where: row.uri == ^Ezagent.URI.stable_key(agent))
+    |> Repo.update_all(set: [caps_json: "null"])
+
+    assert {:error, :effective_caps_read_failed} =
+             IdentityCaps.effective_caps_for_delivery_persisted(agent)
   end
 
   defp spawn_agent(uri, initial_caps) do

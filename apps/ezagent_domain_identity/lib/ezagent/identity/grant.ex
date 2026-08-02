@@ -151,9 +151,45 @@ defmodule Ezagent.Identity.Grant do
       do: {:ok, cap}
 
   def resolve_revocation_artifact(%URI{} = target, %Capability{} = logical_cap) do
+    resolve_logical_revocation_artifact(
+      target,
+      logical_cap,
+      &Ezagent.IdentityCaps.effective_caps_persisted/1
+    )
+  end
+
+  @doc """
+  Resolve a logical revoke shape while settling capability delivery for a
+  recipient that may not have been provisioned yet.
+
+  This differs from `resolve_revocation_artifact/2` only for an exactly missing
+  holder Store row, where pending delivery artifacts remain a valid durable
+  source. Corrupt or unreadable Store state still fails closed.
+  """
+  @spec resolve_revocation_artifact_for_delivery(URI.t(), Capability.t()) ::
+          {:ok, Capability.t()} | {:error, :cap_not_held | :effective_caps_read_failed}
+  def resolve_revocation_artifact_for_delivery(
+        _target,
+        %Capability{signature: signature} = cap
+      )
+      when is_binary(signature) and byte_size(signature) > 0,
+      do: {:ok, cap}
+
+  def resolve_revocation_artifact_for_delivery(
+        %URI{} = target,
+        %Capability{} = logical_cap
+      ) do
+    resolve_logical_revocation_artifact(
+      target,
+      logical_cap,
+      &Ezagent.IdentityCaps.effective_caps_for_delivery_persisted/1
+    )
+  end
+
+  defp resolve_logical_revocation_artifact(target, logical_cap, effective_reader) do
     identity = Capability.identity_key(logical_cap)
 
-    with {:ok, caps} <- Ezagent.IdentityCaps.effective_caps_persisted(target) do
+    with {:ok, caps} <- effective_reader.(target) do
       case Enum.find(caps, &(Capability.identity_key(&1) == identity)) do
         nil -> {:error, :cap_not_held}
         artifact -> {:ok, artifact}
