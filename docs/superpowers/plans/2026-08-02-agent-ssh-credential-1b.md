@@ -107,6 +107,25 @@ defmodule Ezagent.Sandbox.GitIdentityDirTest do
   end
 
   describe "结构保证：git-identity 不得被认作 config-dir 家族" do
+    # ⚠️ 已被取代（2026-08-02，Task 1 复审 F1/F3 + 整支终审 Important-2）
+    #
+    # 下面这一整块**两处都被本支自己否决了，不要照抄**：
+    #
+    # 1. 那条 `refute Function.capture(...) == Function.capture(...)` 是
+    #    **恒真断言** —— 两个不同的具名函数捕获永远不相等，它从不触碰
+    #    自己声称要钉住的 ETS 注册。已从 git_identity_dir_test.exs 删除，
+    #    换成直接断言真实消费者用的谓词：
+    #        refute FsResolver.config_dir_type?(GitIdentityDir.type())
+    #
+    # 2. "会经 cp_r 拿到别人的 SSH 私钥"这个论证在当前代码下**不可达**
+    #    （cascade 的四层写死为 flavor_base/workspace/user/session，
+    #     没有一层是 agent URI）。共用 authority 函数今天的真实后果是
+    #    resolve_config_dir/1 判它为 config-dir 类型 → cascade 致命中止。
+    #    设计 §1.2 已整段重写为诚实版本。
+    #
+    # 保留原文是为了记录决策演进；**最终实现见 git_identity_dir_test.exs
+    # 与设计 §1.2**。
+    #
     # 这条是 spec §1.2 的结构保证。config_dir_type?/1 按 authority 函数
     # 的**身份**判定家族成员；一旦两者共用同一个函数，git-identity 目录
     # 就会被 credential-cascade 的层机制认领，未获授权的 agent 会经
@@ -1060,6 +1079,14 @@ defmodule Ezagent.Identity.AgentGitIdentity do
   (`Ezagent.Agent.Recipe.CapMint.mint/3` hardwires `kind: :agent, instance:
   agent_uri`). Making the cap the pointer means the switch and the subject are
   the same fact and cannot drift apart.
+
+  <!-- ⚠️ 上面括号里那句已被取代（2026-08-02，整支终审 Important-1）：
+       `CapMint.mint/3` 本身是**泛型**的 —— 它从第二个参数解构
+       `%{kind:, instance:, ...}`（cap_mint.ex:43-48）。写死发生在它
+       **唯一的生产调用点** `role_step.ex:194-200`。结论（cap 即指针）不变，
+       只是论据换了。最终正确表述见 `agent_git_identity.ex` 的 moduledoc
+       与设计 §1.1。 -->
+
 
   Grant it with `mix ezagent.agent.grant_git_identity <agent_uri> <user_uri>`.
 

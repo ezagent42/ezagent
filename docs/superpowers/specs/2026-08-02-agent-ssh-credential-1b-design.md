@@ -22,7 +22,14 @@
 
 ### 1.1 谁拿到 key —— cap 本身既是开关，也是指针
 
-上一轮讨论倾向"recipe 声明"。**查证后否决**：`Ezagent.Agent.Recipe.CapMint.mint/3`（`apps/ezagent_core/lib/ezagent/agent/recipe/cap_mint.ex:74-83`）**写死** `kind: :agent, instance: agent_uri` —— recipe 能铸出的 cap 只能指向 agent 自己。而 `:read_ssh_key` 的 cap 必须是 `cap(:user, UserSshIdentity, :read_ssh_key, <某个 user>, <ws>)`。**recipe 通道在结构上表达不了这条 cap**，扩 `CapMint` 的实例轴是每条 recipe cap 都要过的 core 改动，与"尽量简化"不成比例。
+上一轮讨论倾向"recipe 声明"。**查证后否决 —— 但下面是订正后的论据**（2026-08-02 整支终审 Important-1：早前一版写「`CapMint.mint/3` **写死** `kind: :agent, instance: agent_uri`」，**这句是错的**，见下）：
+
+- `Ezagent.Agent.Recipe.CapMint.mint/3`（`apps/ezagent_core/lib/ezagent/agent/recipe/cap_mint.ex:43-48`）**本身是泛型的** —— 它从第二个参数**解构** `%{kind: kind, instance: %URI{} = inst, workspace_uri: ws, granter: granter}`，`:74-83` 的 `build_needed/4` 只是把**传进来的**轴注入。
+- **写死发生在它唯一的生产调用点**：`Ezagent.ActionSet.Workspace.AgentCreate.RoleStep.mint_and_grant_caps/4`（`apps/ezagent_domain_workspace/lib/ezagent/behavior/workspace/agent_create/role_step.ex:194-200`）对每一个 recipe 物化出来的 agent 都传 `kind: :agent, instance: agent_uri`。
+
+而 `:read_ssh_key` 的 cap 必须是 `cap(:user, UserSshIdentity, :read_ssh_key, <某个 user>, <ws>)`。所以**今天的 recipe 通道铸不出指向 User 的 cap** —— 但那是**调用点**的约束，不是 `CapMint` 的结构约束。要走 recipe 通道，需要给 `role_step` 增加"这条 requested_cap 指向别的主体"的表达，那是每条 recipe cap 都要过的路径上的改动，与"尽量简化"不成比例。
+
+> **这处订正本身值得记**：本支实现者在 `agent_git_identity.ex:20-26` 的 moduledoc 里写的是**正确版本**，而设计文档一直是错的 —— 两者当面矛盾了整整五个 task 没人发现，直到整支终审逐条去读 `cap_mint.ex` 才抓出来。参见 `docs/notes/2026-08-02-ssh-identity-1b-friction-log.zh_cn.md` §4.4「论证错了但结论对了」。
 
 同时查证：`Ezagent.WorkspacePlacement.owner_of/1`（`local_resolver.ex:9-11`）返回的是**节点 `RuntimeIdentity`**，即联邦放置身份，**不是 workspace 的属主用户**。所以"从 agent URI 推出属主 user"这条路**不存在**，不要去建。
 
