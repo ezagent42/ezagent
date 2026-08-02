@@ -286,7 +286,22 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Rollback do
 
       true ->
         Enum.flat_map(config_dirs, fn %{worker_uri: worker_uri, path: path} ->
-          case checked(fn -> template_class.destroy_config_dir(worker_uri, path) end) do
+          result = checked(fn -> template_class.destroy_config_dir(worker_uri, path) end)
+
+          # SSH 凭据 1b (Task 5 复审 J1) — this rollback path terminates the
+          # worker via `terminate_workers/1` above, which calls
+          # `Ezagent.Kind.terminate!/1` ("This terminates ONLY the Kind
+          # process" — kind.ex). It never runs the Sandbox `:destroy` action
+          # or the Lifecycle `destroy/2` hook, so `Sandbox`'s own git-identity
+          # wipe (behavior/sandbox.ex) never fires on this path. Git identity
+          # lives in a directory OUTSIDE config_dir (see
+          # `Ezagent.Sandbox.GitIdentityDir` moduledoc), so it must be wiped
+          # here too, independently. Idempotent, best-effort, never raises —
+          # unconditional (not gated on `result`) so a config_dir cleanup
+          # failure never leaves a stale private key behind.
+          _ = Ezagent.Credential.GitIdentityRuntime.wipe(worker_uri)
+
+          case result do
             :ok ->
               if File.exists?(path), do: [{:config_dir_still_present, worker_uri, path}], else: []
 

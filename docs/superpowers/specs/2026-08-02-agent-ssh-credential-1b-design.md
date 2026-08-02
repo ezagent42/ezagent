@@ -209,6 +209,39 @@ ssh -i <dir>/id_ed25519
 
 **为什么"清掉一把能用的 key"是安全的**：key 每次 spawn 都从 User 的 slice 重新物化，**不存在状态丢失**。而反面（平台以为 agent 没有 key、实际盘上还躺着一把）严格更糟。
 
+#### 6.1.1 已知边界 —— 一次性瞬时错误可能清掉一个正在跑的 agent 的 key（Task 5 复审 M2，记录不改行为）
+
+`materialize/1` 由两条 cc 生产入口在**每次 spawn**（含 respawn/adopt）调用：PTY 侧
+`SpawnPlan.build_claude_cmd/3`、headless 侧 `CcHeadlessAgent.cmd_env/2`。稳态下
+`ensure_subprocess_alive/2` 在子进程已存活（`pty_server_alive?/1` / `SdkSidecar.alive?/1`）
+时直接短路成 `:ok`，根本不重新构建 launch 参数，也就不会重新调用 `materialize/1`。
+
+但两条入口各自的启动器都保留一条 adopt 分支，处理"目标进程其实已经在跑"的启动竞态：
+PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
+（`apps/ezagent_plugin_cc/lib/ezagent/template/cc_agent/spawn.ex:617`，注释自承是 #1096
+的异常路径）、headless 侧 `ensure_sdk_sidecar/2` 的同形 `{:error, {:already_started, _pid}}`
+分支。走到这两条分支时，`build_claude_cmd/3` / `sdk_sidecar_params/2` 已经在
+`Pty.start/2` / `SdkSidecar.start/2` **之前**跑完了（含它们内部各自的 `materialize/1`
+调用）。如果此刻 User Kind 正忙/超时（`AgentGitIdentity.materialize/1` 的
+`catch :exit` 分支，`apps/ezagent_domain_identity/lib/ezagent/identity/agent_git_identity.ex:150`）
+或数据库抖动，`materialize/1` 按上面 §6.1 的语义会 **wipe 掉目录并返回 error** ——
+而这次 adopt 采用的是**已经在跑**的那个 PTY/sidecar 进程（它的 `GIT_SSH_COMMAND` /
+子进程 env 指向的是它自己当初启动时那次 `materialize/1` 留下的目录），不是刚构建的
+这份新参数。结果是：一个正常运行、cap 从未被撤销的 agent，其 git 身份目录被一次瞬时
+错误清空，且它自己收不到任何信号。
+
+**这个窗口可达，但是异常路径**（启动竞态 + 恰好撞上 User Kind 忙/DB 抖动的双重巧合），
+不是稳态。后果是该 agent 的 `git` 操作从这一刻起开始失败（`GIT_SSH_COMMAND` 指向的私
+钥文件已不存在），直到它的**下一次 spawn** 重新走 `materialize/1` 成功物化为止 ——
+自愈，不需要人工介入，但期间是真实的功能中断。
+
+**裁定：不改行为。** wipe-on-error 是 §6.1 明确要求的语义（文首 2026-08-02 修订记录的
+教训就是"撤销必须真的生效"）；专门为这条异常路径开口子，会把 §6.1 从"每种非
+`{:ok, env}` 结局都清空目录"这条无条件规则，变成一条要考虑"是不是 adopt 竞态"的有
+条件规则，更难推理、更容易漏。这条路径本身也足够罕见（需要启动竞态与身份读失败两个
+独立的偶发条件同时撞上），不值得为此让核心不变式带上例外。这是设计取舍，记在这里而
+不是代码注释里。
+
 ### 6.2 修订后的生效时机
 
 | 动作 | 何时生效 |

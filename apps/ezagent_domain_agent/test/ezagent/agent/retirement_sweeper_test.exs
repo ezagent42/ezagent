@@ -32,6 +32,47 @@ defmodule Ezagent.Agent.RetirementSweeperTest do
     assert resolved.attempts == 1
   end
 
+  # SSH 凭据 1b (Task 5 复审 J1) — this sweeper retry step runs only after
+  # `sandbox_destroy` is already gone from `pending_steps`
+  # (`interpret_destroy_result`'s `{:error, :no_such_actor}` branch, or a
+  # `sandbox_destroy` that already ran once and left only cleanup pending),
+  # so the Sandbox `:destroy` action either never ran or already ran; either
+  # way this module cleans `config_dir` directly, bypassing Sandbox, and
+  # never triggers Sandbox's own git-identity wipe. Seeds a git-identity dir
+  # to prove `execute_cleanup/2` wipes it independently, not just that
+  # `destroy_config_dir/2` was called.
+  test "retrying sandbox cleanup also wipes the agent's git-identity directory" do
+    suffix = System.unique_integer([:positive])
+    agent_uri_str = "entity://team-alpha/agent/retry-gitid-#{suffix}"
+    agent_uri = Ezagent.URI.new!(agent_uri_str)
+    config_dir = "/tmp/retirement-retry-gitid-#{suffix}"
+
+    git_identity_dir = Ezagent.Sandbox.GitIdentityDir.path(agent_uri)
+    File.mkdir_p!(git_identity_dir)
+    File.write!(Path.join(git_identity_dir, "id_ed25519"), "fake-private-key")
+    assert File.exists?(Path.join(git_identity_dir, "id_ed25519"))
+    on_exit(fn -> File.rm_rf(git_identity_dir) end)
+
+    {:ok, obligation} =
+      RetirementObligations.create_pending(%{
+        agent_uri: agent_uri_str,
+        workspace_uri: "workspace://team-alpha",
+        provenance_root_uri: "entity://team-alpha/user/owner-#{suffix}",
+        creation_attempt_id: "attempt-gitid-#{suffix}",
+        retirement_reason: "rollback",
+        pending_steps: %{
+          "sandbox_cleanup" => %{
+            "config_dir_path" => config_dir,
+            "template_class" => inspect(__MODULE__.CleanupRecorder)
+          }
+        }
+      })
+
+    assert {:ok, :resolved} = RetirementSweeper.retry(obligation.id)
+    assert_receive {:cleanup_retried, ^agent_uri, ^config_dir}
+    refute File.exists?(git_identity_dir)
+  end
+
   test "replays a termination that was persisted before dispatch" do
     suffix = System.unique_integer([:positive])
     agent_uri = Ezagent.URI.new!("entity://system/agent/crash-window-#{suffix}")
