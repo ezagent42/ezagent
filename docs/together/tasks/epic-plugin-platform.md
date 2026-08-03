@@ -144,7 +144,7 @@ A4 收尾 + A5 收尾  →  Group B:kanban 纯化(#1474)  →  Socialware Protoc
 | # | 件 | 状态 |
 |---|---|---|
 | A4-1 | 删 Mount reconcile 重发 trap | ✅ 已合 `fb35003cf`(#1611) |
-| **A4-2** | `:members` roster → 纯投影(#192) | ✅ **已收口**:#1655 **已合 main**(merge `da8a26bc1`,2026-08-03,issue #1665 随之关闭)。**决策「甲」(用户↔Allen ping-pong,2026-08-03)**:正向 effective 现算(P1,含在途钥匙)即满足「roster 只由 caps 派生、无独立写者」—— **P4 反向换源不做**;若日后 #1501/outbox 收敛出「反查含在途」的能力,反向版作为优化再议。原 P3 已由 07-31 裁决消解折进 P2(机制入口 + 空白名单 ratchet 留给未来消费者)。 |
+| **A4-2** | `:members` roster → 纯投影(#192) | ✅ **已收口**:#1655 **已合 main**(merge `da8a26bc1`,2026-08-03,issue #1665 随之关闭)。**决策「甲」(用户↔Allen ping-pong,2026-08-03)**:正向 effective 现算(P1,含在途钥匙)即满足「roster 只由 caps 派生、无独立写者」—— **P4 反向换源不做**;若日后 #1501/outbox 收敛出「反查含在途」的能力,反向版作为优化再议。原 P3 已由 07-31 裁决消解折进 P2(机制入口 + 空白名单 ratchet 留给未来消费者)。 | **(甲) 已由 Allen 于 main 正式落盘**(merge return `docs/together/2026-08-03/returns/share-a4-2-192-roster-merge.md`,commit `ecc31f8f0`:「正向派生已满足 #192…P4 换源不做,勿再排期」)。**合并 review 三条 follow-ups**:F1 agent-at-join 发放仍硬编码 `[:send,:leave,:attach]` 未走共享清单(小改,待对齐);**F2 冷成员 remove 跳过撤销 + 在途 absorb 复活 → 已按要求单开 issue #1694**(与在途集成线 #1684 per-grant revocation 同域,落地时挂其后);F3 provenance 谓词是 `system://` 前缀匹配非结构判定(待改)。
 
 ### Mount 改名 / 删表 —— **归 Group B,不属 A4**
 `Mount→Provision/Share 改名 + 删 MountRow 表`、`unmount 取 actions 脱 MountRow`、`backfill 改派生`:计划文档原文即「碰 kanban 消费者…归后续(或 Group B 一起)」。且实证一个必须先解的点 —— **`access: :read` / `:operate` 只存在于挂载表的列**(`mount_row.ex:62`),cap 上没有该字段(`mint_cap` 只收 actions),两者在 cap 层只差"发了哪些动作",而那份只读动作清单住在 **kanban 策略层**(`board_provision.ex:83 @default_read_actions`)。所以"读挂载不扩散"这条规则**无法从 cap 派生**,删表前需先定 tier 怎么表达。**留到 Group B 一并处理。**
