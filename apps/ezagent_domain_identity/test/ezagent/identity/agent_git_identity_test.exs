@@ -768,9 +768,14 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
   # `set_caps_effect(reconciled.caps)` —— 整集替换，不是单条移除，所以 #1693 那两个
   # 按"被移除的那条 cap"模式匹配的 handler 永远不会在这条路上触发。
   #
-  # 判据是"比较替换前后"，不耦合到哪个内部机制丢的（`Ezagent.Cap.verified_set/2`
-  # 还是 `restore_structural_caps/3`，见 identity.ex 里 `read_ssh_key_cap_change?/2`
-  # 上方的大段行内注释）。
+  # 判据是"比较替换前后"，不耦合到哪个内部机制丢的 —— 早前一版这里也点名过
+  # `Ezagent.Cap.verified_set/2` 是可能的丢失机制，**该说法已撤回**：
+  # `Ezagent.Cap.storable_for?/2` 是纯结构判定，从不读 authority generation，
+  # 不存在"因签名/generation 变化而丢 cap"这回事（撤回详情见 identity.ex 里
+  # `maybe_add_recipe_binding_git_identity_wipe/4` 上方的 HONEST STATUS 注释，
+  # 以及 `read_ssh_key_cap_change?/2` 上方的大段行内注释）。今天唯一命中的真实
+  # 机制是 `restore_structural_caps/3`，且只在反事实输入下才可达（见下面第二个
+  # 测试的注释）。
   describe "sync_recipe_binding 整集替换 —— §6.2.1（#1693 未覆盖的缺口）" do
     # 真实端到端：走真实 RecipeCapBinding.sync_live/1 dispatch。这是绝大多数
     # reconcile 实际发生的样子——甚至在 recipe 内容真的发生变化时（agent-kind
@@ -958,6 +963,35 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
     test "同一条 cap 两边都在 —— 不变（钉住：不能退化成无条件擦）", ctx do
       cap = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
       refute IdentityAdmin.read_ssh_key_cap_change?(MapSet.new([cap]), MapSet.new([cap]))
+    end
+
+    # codex 复审(PR #1695)指出：上面那条测试两侧放的是**同一个 struct**（同一个
+    # `cap` 变量），只证明了"x == x"，证明不了任何关于 identity-key 比较语义的
+    # 事情——把实现悄悄换成比较过滤后的原始 `%Capability{}`/`MapSet`（而不是
+    # `identity_key/1`）也一样全绿。这条补上真正的反例：两侧是**不同的 struct**
+    # （signature/key_id 不同，因此原始 struct 不相等），但 identity_key 的五个轴
+    # （kind/behavior/action/instance/workspace_uri）完全相同——模拟同一条逻辑 cap
+    # 被重新签发（例如 authority 重签名）后的样子。前两个 assert 钉住"这确实是一对
+    # 合法反例"（不是同一个 term，但 identity_key 相同），第三个 assert 才是真正
+    # 要保的性质：重签名不算变化，不触发 wipe。
+    test "同一条逻辑 cap 换了 signature/key_id（重签名）—— 不变（钉住：比较的是 identity_key，不是原始 struct）",
+         ctx do
+      base = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+      resigned_a = %{base | signature: "sig-a", key_id: "key-a"}
+      resigned_b = %{base | signature: "sig-b", key_id: "key-b"}
+
+      # 前置条件：两侧确实是不同的 struct（否则这条测试退化回上面那条）。
+      refute resigned_a == resigned_b
+
+      # 前置条件：但 identity_key 的五个轴相同（signature/key_id 不参与
+      # identity_key，见 capability/match.ex 的 identity_key/1 moduledoc）。
+      assert Ezagent.Capability.identity_key(resigned_a) ==
+               Ezagent.Capability.identity_key(resigned_b)
+
+      refute IdentityAdmin.read_ssh_key_cap_change?(
+               MapSet.new([resigned_a]),
+               MapSet.new([resigned_b])
+             )
     end
 
     test "指向 User A → 指向 User B —— 变了（brief 的 escape hatch 覆盖这条）", ctx do
