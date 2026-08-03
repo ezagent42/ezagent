@@ -1,0 +1,214 @@
+# dev-together board.yaml — DISPLAY page for 2026-08-03.
+# Model: board for day N = PLAN(N) + DONE(N-1) + REVIEW(N-1).
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# Note: prev board = 2026-07-30 (07-31→08-02 无 board); 间隔期落定的在飞卡
+#       经 carryover_resolved 归档, 在飞卡全部结转(标题/PR token 对齐 gate)。
+# Note: 本板通过 board2html 硬门渲染(无 --no-check): 每卡 task: <id> →
+#       docs/together/tasks/<id>.md(含非空 '## Handoff prompt'); 07-29 在飞卡
+#       逐卡结转账目见 carryover_resolved + 今日卡片。#1688 已于 08-03 入 main
+#       (8ad5d3795), 卡片/进度/风险已同步; MFU 迁独立 repo 仍属 ezagent 工作
+#       (Allen 08-03), ruihua 回板跨 repo 跟踪。
+
+date: "2026-08-03"
+prev_date: "08-02"
+north_star: "agent 开发自举 + 企业自助 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "main 全绿 → canary 放行(#189 收口, Allen 轨道)", pct: 85, value: "#189 三段 cutover + 彩排 catch 已入 main; 分片 burn-down 全落地(arch-gate/web/domain/frontend 四 PR, 分片各自绿 13/14)。残留轮换 intra-suite 隔离 flake(#184)的系统性修复 = CI 隔离整合分支(ahead 33, 五块折入), 今日闸 = 一次完整 mix precommit 诚实绿 → push/PR/merge。"}
+  - {label: "企业自助: Group-A URI 通用分享(jjkysy)", pct: 90, value: "A1/A2/A3/A4-1/share-config(#1594/#1596/#1597/#1606/#1611/#1612)此前全入; A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复今晨入 main(#1655, da8a26bc1); Allen 拍板 A4-2 甲(forward effective_caps, 低频) → P4 关闭。"}
+  - {label: "git-provider 凭据模型(gaga)", pct: 90, value: "Forgejo Git Provider V1(#1643) + 错误分类 :provider_response_unrecognized 拆出 :provider_unavailable(#1668, 4359f4a6e)入 main; 五形态对比 + Plan A NO-GO 重核(#1677)交付后, B2′ 路线拍板并已落地(#1688 入 main, 8ad5d3795) —— 凭据模型线收口。"}
+  - {label: "Agent SSH 凭据 B2′(gaga)", pct: 80, value: "#1688 已入 main(08-03, 8ad5d3795): User SSH 身份 + 物化进 agent; 私钥明文形态 Allen 已 APPROVED; 撤销即擦除 follow-up feat/ssh-revoke-wipe(codex)已解除排序阻塞, 待评审合入以关闭撤销窗口。"}
+  - {label: "MFU 产品线(ruihua, 跨 repo)", pct: 70, value: "#1586 入 main(07-29); #1676(07-31)迁出至 Forgejo Prototype/mfu —— 独立 repo 产品线, 仍属 ezagent 工作(Allen 08-03), 本 board 继续跟踪; v0.15 landing package 续作在 Prototype/mfu 推进。"}
+  - {label: "C8 v5 use-side Kind-mailbox seal(暂缓)", pct: 30, value: "spec 收敛 + codex 评审 + 修订完成; DEV 继续暂缓至 CI 隔离整合落地, 避免并发返工。"}
+
+efficiency:
+  - {value: "#1655 入 main", label: "share-A4-2/#192 roster 收敛 + #1665 安全修复(jjkysy) —— da8a26bc1"}
+  - {value: "#1668 入 main", label: "git-provider 错误分类: :provider_response_unrecognized 拆出 :provider_unavailable(gaga) —— 4359f4a6e"}
+  - {value: "#1688 入 main", label: "Agent SSH 凭据 B2′: User SSH 身份 + 物化进 agent(gaga) —— 8ad5d3795"}
+  - {value: "整合分支 +33", label: "CI 隔离整合(#1684+DoD24+actor/env/parity)就位, 待一次完整 precommit —— 5cfb64256"}
+  - {value: "决策 ×4", label: "A4-2 甲(P4 关闭) · 私钥明文 OK · 撤销即擦除走 follow-up · 否掉 CI-retry stopgap"}
+efficiency_source: "今日效能 = 三条 PR 入 main(#1655 jjkysy / #1668 gaga / #1688 gaga) + CI 隔离整合分支就位(33 commits 折五块, 待一次完整 precommit)。昨日(08-02)四分片修复全落地后 main 到 13/14; 当前唯一关键路径 = 整合分支 precommit 闸 → main 真绿 → canary 放行。Allen 今日四决策清障: A4-2 甲(P4 关闭)、私钥明文 OK、撤销即擦除走 follow-up、否掉 CI-retry stopgap(系统性修复优先, 不打补丁式重试)。MFU 产品线(#1676 迁 Forgejo Prototype/mfu)按 Allen 裁定仍属 ezagent 工作, 回板跟踪。"
+
+deploy:
+  - {env: "canary", state: "⏳ 待整合分支 precommit 绿 + 合入 → main 真绿后放行。当前 main=8ad5d3795(#1688 已入); auto-reflow 已移除(#222, 07-31), 数据同步改手动。"}
+  - {env: "beta", state: "⏳ 待 canary 通过后推进(deploy 流单独推 pointer, 不由 dev-together 合入)。"}
+  - {env: "stable", state: "⏳ 待 canary 通过后推进。"}
+
+risks:
+  - "🔴 轮换 intra-suite 隔离 flake(#184 残留): 分片各自绿(13/14)但全套连跑时轮换红(domain 一次、web 下一次); 系统性修复 = 整合分支 actor/SQL 沙箱 owner-lifecycle。未合入前 main 不算真绿, canary 不放行。"
+  - "🟡 整合分支闸: 33 commits 折五块(#1684 + DoD24 + actor/env + parity 移除), 必须一次完整 mix precommit 诚实绿(不拆回源 PR、不 mask、不盲加 timeout); 绿前不 push/PR/merge。"
+  - "🟡 #1688 已合入(8ad5d3795)而 revoke-wipe 未跟: agent 物化凭据的撤销不即擦除窗口现已存在 —— feat/ssh-revoke-wipe(codex, 分支就绪 868ba5cba)需尽快评审合入。"
+  - "🟢 C8 v5 继续暂缓(焦点 CI 整合), spec 就绪无返工风险; Group-A 与 DeliveryOutbox 正交非阻塞。"
+
+people:
+  - {id: "allen", name: "Allen 轨道", track: "CI 隔离整合 / main 真绿 / gates", color: "#2563eb"}
+  - {id: "jjkysy", name: "jjkysy", track: "Group-A URI 通用分享", color: "#65a30d"}
+  - {id: "gaga", name: "gaga", track: "Agent SSH 凭据 / git-provider / Feishu 绑定", color: "#7c3aed"}
+  - {id: "ruihua", name: "ruihua", track: "MFU 产品线(Forgejo Prototype/mfu, 跨 repo)", color: "#db2777"}
+  - {id: "kimi", name: "kimi", track: "cap 撤销 / DeliveryOutbox", color: "#0891b2"}
+  - {id: "codex", name: "codex", track: "评审 + follow-up(撤销即擦除)", color: "#ea580c"}
+
+# ===== 07-29 在飞卡结转账目(gate: carry or resolve) =====
+# 已结转(今日有卡/PR token 对齐, 不在此列): 身份平面 #189 · C8 v5 use-side ·
+# Group-A · MFU(#1586, ruihua 今日有卡) · #189 test-defects E/F/D。
+carryover_resolved:
+  "Feishu 绑定修复 B1/B2": "B1 #1568(07-30 入 main) + B2 #1547 均落地 —— gaga 该卡完成归档; gaga 轨道今日转到 Agent SSH 凭据 #1688 / git-provider。"
+  "★ C8 obtain 侧 — URI-native 寻址（域代码零裸 pid）": "v5 family 继续暂缓至 CI 隔离整合落地(与今日 C8 v5 use-side 卡同一暂缓口径); 分支 feat/v5-pid-closure(19bfc7761)待 cross-track reconcile。"
+  "★ C8 收口: A2 census-freeze → cross-track reconcile → 双分支合 main": "依赖 obtain 侧 × use 侧双分支, 一并暂缓至 CI 隔离整合落地; 今日仅保留 use-side 卡作占位。"
+  "hello 官网部署迁移(hello-A PR-4)": "原被 #189 阻塞; #189 已落地但 canary 尚未放行(整合分支闸) —— 部署迁移待 canary 放行后执行, 今日不占卡。"
+  "#1552 签名-token 分享收敛（clarify_first 设计提案）": "仍待 Allen 写 DoD 答 5 设计问题; 07-30→08-02 无进展, 非今日焦点, 继续挂账(不丢)。"
+  "#1566 multi-repo split（umbrella → 6 repos）": "OPEN(docs 计划, 07-24 更新); 排在 actor extraction(C8)之后, C8 暂缓故本项同步暂缓。"
+  "#1267 活页面连接层缺口调研（standing proposal）": "已裁定 CLOSED(07-28) —— standing proposal 归档, 不再挂账。"
+  "#1501 held+pending caps 收敛幂等（rework）": "已入 main(merged 07-30) —— gaga 该卡完成归档。"
+  "#1498 system-closure 方法产品化 + 受控 Mix 执行": "已入 main(merged 07-30, Git Provider D1 复盘 + guarded Mix execution runner) —— 完成归档。"
+  "#1576 hello 模板 LLM 生成流恢复": "已入 main(merged 07-30) —— zyli 该卡完成归档。"
+  "#1474 kanban 协作改版二轮": "仍 OPEN(draft, 07-27 更新); jjkysy 轨道今日焦点在 Group-A 收口, 本卡继续挂账(不丢)。"
+  "#1301 dealscout 完整改版": "仍 OPEN(07-12 更新, 停滞); 非今日焦点, 继续挂账待排期。"
+  "#1376 通用挂载 infra（被 entity-caps 取代 · 保留）": "仍 OPEN(draft); 设计已被 entity-caps 取代, API/测试/kanban 契约显式保留, 不关不推。"
+  "#1533 Signature Interaction 原型": "仍 OPEN(draft, 07-23 更新); ruihua 轨道今日以 MFU 产品线(Prototype/mfu)为主, 本原型继续挂账。"
+  "test-supplement P3 执行排程(91 模块)": "P0–P2 已入 main(#1626/#1629/#1630, 07-30); P3 的 91 模块分诊清单已交付但执行排程未启动 —— 07-30 后 CI 焦点转向分片 burn-down + 隔离整合, 待 main 真绿后排期(挂账不丢, task: test-supplement)。"
+  "追跟 bug: tracker #204 + #205": "tracker 编号非 PR 号; 两项(Feishu webhook 签名校验 fail-closed / world 路由死特性处置)07-30 立项后未排期 —— 焦点在 CI 整合, 挂账待 main 真绿后处理(不丢, task: followup-bugs-204-205)。"
+
+# ===== YESTERDAY (08-02, CST) done — git 实证 =====
+done_prev:
+  - owner: "allen"
+    title: "main full-suite burn-down: web/domain 分片转绿 + CI 镜像"
+    goal: "分片各自绿(13/14); 残留轮换隔离 flake 转整合分支系统性修复"
+    status: "done"
+    task: "main-fullsuite-burndown"
+    who: "Allen 轨道 · CI burn-down · 三 PR 入 main"
+    acceptance:
+      - {text: "#1685 — web 分片: WorkspaceReads live+persisted 冷 session 列表 + async/baseline drift", done: true, evidence: "merged 08-02 03:12 CST, 571a12ef7"}
+      - {text: "#1686 — domain 分片: UriQuery flavor resolver + template_spawn creation-inventory + SignedE2E 沙箱竞态", done: true, evidence: "merged 08-02 04:07 CST, fe1fa6d0f"}
+      - {text: "#1687 — frontend: Playwright Chromium 烘入 docker/Dockerfile.ci(cc infra)", done: true, evidence: "merged 08-02 09:48 CST, 00f4b3f5b"}
+    review_note: "burn-down 后 main 13/14; 残留 #184 轮换 flake → 整合分支 actor/沙箱 owner-lifecycle 修复。"
+  - owner: "gaga"
+    title: "arch-gate tmp-fixture 扫描 flake 修复"
+    goal: "architecture gates 不再扫到别的测试的 tmp fixtures"
+    status: "done"
+    task: "1683-arch-gate-tmp-fixtures"
+    who: "gaga 轨道 · CI flake"
+    acceptance:
+      - {text: "#1683 — stop the architecture gates scanning another test's tmp fixtures", done: true, evidence: "merged 08-02 00:53 CST, 0c581e2d3"}
+
+# ===== TODAY (08-03) plan — status ∈ planned|wip|review|blocked =====
+cards:
+  - owner: "allen"
+    title: "身份平面 #189 收口 → main 真绿 → canary 放行"
+    goal: "轮换 CI 隔离 flake(#184)系统性修复 → main 真绿 → canary 放行"
+    status: "wip"
+    task: "ci-isolation-integration"
+    who: "Allen 轨道 · #189 收口 · CI 隔离整合分支(ahead 33)"
+    branch: "integrate/ci-isolation-dod24-20260803"
+    carryover: true
+    started: "08-02"
+    est_done: "08-03"
+    flag: "闸: 一次完整 mix precommit"
+    review_note: "整合五块: #1684 per-grant 撤销(merge 8bd91ec6a) + DoD24 SessionViewRegistry snapshot/restore(84a5afb32) + actor/SQL 沙箱 owner-lifecycle(fabd595a9, #184 systemic) + 全局 env/PATH 隔离(296f047c3) + 历史 parity 测试移除(5cfb64256)。源分支分项证据已齐; handoff DoD = 整合后一次完整 precommit 诚实绿, 不拆回源 PR。"
+    acceptance:
+      - {text: "#189 三段 cutover + canary 彩排 catch 修复入 main(#1638/#1646/#1652/#1654/#1656/#1658)", done: true, evidence: "07-30→08-01 陆续合入"}
+      - {text: "分片 burn-down: arch-gate/web/domain/frontend 四修复入 main(#1683/#1685/#1686/#1687), 分片各自绿 13/14", done: true, evidence: "08-02, 见 DONE 列"}
+      - {text: "整合分支就位: 五块折入, HEAD 5cfb64256, worktree clean, diff --check 过", done: true, evidence: "handoff 2026-08-03"}
+      - {text: "一次完整 mix precommit 于整合分支(诚实绿)", done: false, evidence: "今日闸 —— 旧跑已停、无残留 BEAM"}
+      - {text: "push + PR → 正常 merge → origin/main 含整合 HEAD; #1684 标 subsumed 关闭", done: false}
+      - {text: "main 真绿 → canary 放行评估", done: false}
+  - owner: "gaga"
+    title: "Agent SSH 凭据 B2′ (#1688)"
+    goal: "User SSH 身份 + 物化进 agent —— 已入 main; 撤销即擦除 follow-up 按序跟上"
+    status: "review"
+    task: "agent-ssh-credential-b2"
+    who: "gaga 轨道 · Agent SSH 凭据 · 已合入"
+    branch: "feat/agent-ssh-credential"
+    pr: {num: 1688, state: "merged"}
+    review_note: "#1688 已入 main(08-03, 8ad5d3795); 私钥明文形态 Allen 已 APPROVED(08-03); 撤销即擦除 follow-up 分支 feat/ssh-revoke-wipe(codex)已解除排序阻塞, 需尽快评审合入以关闭撤销窗口。"
+    acceptance:
+      - {text: "B2′ 实现 + PR open", done: true, evidence: "feat/agent-ssh-credential"}
+      - {text: "私钥明文形态决策: Allen APPROVED", done: true, evidence: "08-03 拍板"}
+      - {text: "cc 评审通过 → rebase main → gate+merge", done: true, evidence: "merged 08-03, 8ad5d3795"}
+      - {text: "撤销即擦除 follow-up 按序合入(codex)", done: false, evidence: "分支就绪 868ba5cba, #1688 已合 → 解除阻塞"}
+  - owner: "jjkysy"
+    title: "Group-A URI 通用分享 —— A4-2 收口 + P4 关闭"
+    goal: "A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复 —— 今晨入 main"
+    status: "review"
+    task: "group-a-uri-share"
+    who: "jjkysy 轨道 · socialware URI-share"
+    pr: {num: 1655, state: "merged"}
+    carryover: true
+    review_note: "A1/A2/A3/A4-1/share-config 此前全入; A4-2 今晨入 main。Allen 拍板 A4-2 甲(forward effective_caps, 低频) → P4 关闭。下一增量待 plan。"
+    acceptance:
+      - {text: "#1655 — 在途 cap 纳入投影 + 撤销完整性(#1665 安全修复) + 反向索引补齐", done: true, evidence: "merged 08-03 09:43 CST, da8a26bc1"}
+      - {text: "A4-2 甲方案拍板(forward effective_caps, low-freq) → P4 关闭", done: true, evidence: "08-03 决策"}
+      - {text: "Group-A 下一增量(handoff → plan)", done: false}
+  - owner: "kimi"
+    title: "per-grant cap 撤销 (#1684) —— 折入整合分支"
+    goal: "clean-slate per-grant revocation 随整合分支一次合入; #1684 标 subsumed"
+    status: "review"
+    task: "per-grant-cap-revocation"
+    who: "kimi 轨道 · cap 撤销 / DeliveryOutbox"
+    branch: "feat/p2-per-cap-revocation"
+    pr: {num: 1684, state: "open"}
+    deps: ["dep: 整合分支 precommit"]
+    review_note: "DeliveryOutbox final plan(#1670)已入 main(07-31); 实现切片待 plan。"
+    acceptance:
+      - {text: "#1684 clean-slate per-grant revocation 实现(head dbdf4ad76)", done: true}
+      - {text: "折入整合分支(merge 8bd91ec6a); parity-test 冲突按已定删除保留", done: true}
+      - {text: "整合 PR 合入 main → #1684 标 subsumed 关闭", done: false, evidence: "待 precommit 闸"}
+  - owner: "codex"
+    title: "撤销即擦除 follow-up —— feat/ssh-revoke-wipe"
+    goal: ":cap_revoked → GitIdentityRuntime.wipe hook, 补齐 #1688 撤销面"
+    status: "wip"
+    task: "ssh-revoke-wipe"
+    who: "codex 轨道 · 评审 + follow-up"
+    branch: "feat/ssh-revoke-wipe"
+    deps: ["dep: #1688 已合(08-03) —— 解除阻塞"]
+    acceptance:
+      - {text: "K3 — 钉住 Sandbox 两处 destroy 入口的 git-identity 清理", done: true, evidence: "84dba69b6"}
+      - {text: "K5+K6 — 指纹值钉死 + read_ssh_public_key value 走私防护", done: true, evidence: "85fb6414e"}
+      - {text: "K4 — spec/moduledoc 已被取代说法订正", done: true, evidence: "868ba5cba"}
+      - {text: "cc 评审 → 合入 main(#1688 已落地, 窗口开着, 优先跟上)", done: false}
+  - owner: "allen"
+    title: "C8 v5 use-side Kind-mailbox seal / pid 纪律"
+    goal: "use 侧 Kind-mailbox 封口 + pid 纪律"
+    status: "planned"
+    task: "c8-mailbox-seal"
+    who: "Allen 轨道 · v5 use 侧 · 暂缓"
+    branch: "feat/v5-use-side-mailbox"
+    carryover: true
+    flag: "DEV 暂缓至 CI 整合落地"
+    review_note: "spec 已收敛 + codex 评审 + 修订完成。#189 已入 main, 但当前焦点在 CI 隔离整合; 启动待整合分支合入, 避免并发返工。"
+    acceptance:
+      - {text: "spec 收敛 + codex 对抗评审 + 修订", done: true}
+      - {text: "DEV 启动", done: false, evidence: "暂缓中"}
+  - owner: "ruihua"
+    title: "MFU 产品线 —— v0.15 续作(Forgejo Prototype/mfu, 跨 repo 跟踪)"
+    goal: "MFU 产品工作在独立 repo 继续; 仍属 ezagent 工作(Allen 08-03), 本 board 跟踪"
+    status: "wip"
+    task: "mfu-v015"
+    started: "07-28"
+    who: "ruihua 轨道 · MFU 产品线 · Prototype/mfu"
+    carryover: true
+    review_note: "#1586(成长树修复 + 技能/经验框架)07-29 入 main; #1676(07-31)把 mfu-demo 移出本 repo, canonical home 改为 Forgejo Prototype/mfu —— 独立 repo 产品线, 不是离开/下线; 节奏在 Prototype/mfu 跟踪, ezagent board 保留状态卡。"
+    acceptance:
+      - {text: "成长树修复包 + 技能/经验框架落地(#1586)", done: true, evidence: "merged 07-29; 纯 demo/docs/skill 无 core 改动"}
+      - {text: "repo 迁移至 Forgejo Prototype/mfu(#1676)", done: true, evidence: "merged 07-31"}
+      - {text: "v0.15 landing package 续作(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)", done: false, evidence: "在 Prototype/mfu 推进"}
+
+# ===== YESTERDAY (08-02) review — 复盘 =====
+review:
+  method_deltas:
+    - "分片 burn-down 次序有效: 先各分片各自绿(arch-gate/web/domain), 再攻跨分片轮换隔离 flake —— 系统性修复走整合分支一次闸。"
+    - "整合 handoff 明文: 源分支分项证据不替代整合后一次完整 mix precommit; 不拆回源 PR、不 mask、不盲加 timeout。"
+    - "flake 归因到结构: #1683 证明 gate 会扫到别的测试的 tmp fixtures —— gate 与 fixture 目录隔离是结构解, 不是重试。"
+  incidents:
+    - "轮换 intra-suite 隔离 flake(#184 残留): 分片各自绿, 全套连跑时轮换红(domain 一次、web 下一次) —— 整合分支 actor/SQL 沙箱 owner-lifecycle 是系统性修复, 未合入前 main 不算真绿。"
+    - "canary auto-reflow 每次部署抹 DB —— 07-31 已移除(#222), 数据同步改手动。"
+  delivery:
+    - {owner: "allen", delivered: "web/domain 分片 burn-down(#1685/#1686) + frontend CI 镜像烘 Playwright(#1687)", acceptance_result: "三 PR 入 main; 分片各自绿(13/14)", carryover: "整合分支一次完整 precommit → main 真绿 → canary 放行"}
+    - {owner: "gaga", delivered: "#1683 arch-gate tmp-fixture 扫描 flake 修复", acceptance_result: "入 main 0c581e2d3", carryover: "#1688 SSH 凭据 B2′ 评审收口"}
+    - {owner: "jjkysy", delivered: "#1655 share-A4-2/#192 roster 收敛 + #1665 安全修复(今晨入 main)", acceptance_result: "da8a26bc1; A4-2 甲拍板 P4 关闭", carryover: "Group-A 下一增量"}
+    - {owner: "kimi", delivered: "#1684 clean-slate per-grant cap 撤销", acceptance_result: "折入整合分支(merge 8bd91ec6a)", carryover: "整合 PR 合入后 #1684 标 subsumed; DeliveryOutbox 实现切片"}
+    - {owner: "codex", delivered: "feat/ssh-revoke-wipe 撤销即擦除 hook(K3/K4/K5+K6)", acceptance_result: "分支就绪 868ba5cba", carryover: "随 #1688 后按序合入"}
+  next_day:
+    - "整合分支一次完整 mix precommit(诚实绿) → push + PR → 正常 merge → #1684 标 subsumed。"
+    - "#1688 cc 评审收口 → rebase main → gate+merge; revoke-wipe follow-up 按序跟上。"
+    - "main 真绿后评估 canary 放行(auto-reflow 已移除, 数据同步手动)。"

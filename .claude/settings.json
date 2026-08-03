@@ -16,7 +16,7 @@
   },
   "permissions": {
     "allow": [
-      "Edit(/Users/h2oslabs/Workspace/esr-ng/.claude/*)",
+      "Edit(/Users/h2oslabs/Workspace/ezagent/.claude/*)",
       "Bash(lsof:*)",
       "Bash(ps:*)",
       "Bash(pkill -f mix phx.server)",

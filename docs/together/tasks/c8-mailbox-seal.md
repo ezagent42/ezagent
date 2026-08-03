@@ -1,13 +1,13 @@
-# C8 — v5 use-side Kind-mailbox seal / pid 纪律（暂缓至 #189 落地）
+# C8 — v5 use-side Kind-mailbox seal / pid 纪律（暂缓至 CI 隔离整合落地）
 
 - **id**: `c8-mailbox-seal`
 - **owner**: Allen 轨道
-- **status**: planned(暂缓至 #189)
+- **status**: planned(暂缓至 CI 隔离整合落地)
 - **历史**: started - · est_done - · actual —
-- **关联**: branch feat/v5-use-side-mailbox(+32/−23) · codex spec: NEEDS-REVISION→已修订待 re-review
+- **关联**: branch feat/v5-use-side-mailbox(+32/−23) · codex spec: NEEDS-REVISION→已修订待 re-review · #189 三段 cutover 已入 main(07-30→08-01, #1638/#1646/#1652/#1654/#1656/#1658)
 
 - **branch**: `feat/v5-use-side-mailbox`（+32/−23 vs main）
-- **依赖**: #189 一次合入 main
+- **依赖**: `ci-isolation-integration` 合入 main(避免与 CI 隔离整改并发返工; 原依赖 #189 已于 07-30→08-01 落地)
 
 ## 目标
 `EzagentActor.Signal` 密封投递 + `Kind.Server` H3 fail-loud 邮箱封口（防漂移，非认证）落到 main。
