@@ -21,6 +21,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   alias Ezagent.Workspace
   alias Ezagent.ActionSet.KindBase
   alias Ezagent.Socialware.{AnonAdmission, ExternalFeed}
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
   alias EzagentPluginHello.{App, KanbanDelegation, Spec, TurnDriver}
 
   setup do
@@ -225,6 +226,41 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
            ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
   end
 
+  test "consecutive sessions require separate LLM agents and API-key setup" do
+    ws = "hello-e2e-isolated-auth-#{System.unique_integer([:positive])}"
+    {:ok, _ws_pid} = Workspace.create(ws, %{})
+    admin = Ezagent.Entity.User.admin_uri()
+    caps = Ezagent.Identity.list_caps_for(admin)
+
+    assert {:ok, first_session, _front_desk} = App.ensure_app(ws, "first")
+    assert [%{role_name: "llm", status: :pending_auth}] = AgentAdmission.list(first_session)
+    assert {:ok, first_attempt} = AgentAdmission.begin(first_session, "llm", admin, caps)
+    first_agent = Ezagent.URI.new!(first_attempt.provisional_agent_uri)
+
+    put_api_key!(first_agent, "deepseek", "test-session-local-key")
+
+    assert {:ok, %{status: :joined}} =
+             AgentAdmission.complete(
+               first_session,
+               "llm",
+               first_attempt.attempt_id,
+               {admin, caps}
+             )
+
+    assert {:ok, ^first_agent} = EzagentPluginHello.Members.role_uri(first_session, "llm")
+    assert is_nil(Ezagent.Credential.UserDefaultSource.resolve(URI.to_string(admin), ws, "curl"))
+
+    assert {:ok, second_session, _front_desk} = App.ensure_app(ws, "second")
+    assert :error = EzagentPluginHello.Members.role_uri(second_session, "llm")
+    assert [%{role_name: "llm", status: :pending_auth}] = AgentAdmission.list(second_session)
+
+    assert {:ok, second_attempt} = AgentAdmission.begin(second_session, "llm", admin, caps)
+    second_agent = Ezagent.URI.new!(second_attempt.provisional_agent_uri)
+
+    refute second_agent == first_agent
+    assert is_nil(Ezagent.Credential.UserDefaultSource.resolve(URI.to_string(admin), ws, "curl"))
+  end
+
   # --- helpers ---------------------------------------------------------------
 
   defp wait_for_page(session, caller, attempts \\ 150)
@@ -267,6 +303,26 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   defp text_of(message) do
     Map.get(message.body, "text") || Map.get(message.body, :text)
+  end
+
+  defp put_api_key!(agent_uri, provider, key) do
+    admin = Ezagent.Entity.User.admin_uri()
+    target = Ezagent.URI.with_action(agent_uri, :identity, :put_api_key)
+    cap = Ezagent.Test.CapHelper.signed_action_cap!(target, admin)
+
+    assert {:ok, %{ok: true, provider: ^provider}} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               origin: :trusted_internal,
+               target: target,
+               mode: :call,
+               args: %{provider: provider, key: key},
+               ctx: %{
+                 caller: admin,
+                 authenticated_principal: admin,
+                 caps: MapSet.new([cap]),
+                 reply: {:caller_inbox, self()}
+               }
+             })
   end
 
   defp seed_text(%{"children" => children, "props" => props}) do

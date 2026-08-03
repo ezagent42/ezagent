@@ -149,6 +149,27 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
     assert persisted_template_content(session_uri) == frozen_content
   end
 
+  test "same-owner retry fails closed when the frozen template revision is unreadable", %{ws: ws} do
+    name = "unreadable-frozen"
+
+    assert {:ok, session_uri} = App.create_app(ws, name)
+    working_copy = Session.read_template_working_copy(session_uri)
+
+    missing_revision =
+      Ezagent.URI.new!(
+        "template://#{Ezagent.URI.workspace_name!(Ezagent.URI.workspace(ws))}/session/missing@deadbeef"
+      )
+
+    assert {:ok, _} =
+             Ezagent.ActionSet.Session.system_set_working_copy(
+               session_uri,
+               Map.put(working_copy, :session_template_uri, missing_revision)
+             )
+
+    assert {:error, {:frozen_session_template_not_readable, ^missing_revision, _reason}} =
+             App.create_app(ws, name)
+  end
+
   defp eventually(fun, attempts \\ 100)
   defp eventually(_fun, 0), do: false
 

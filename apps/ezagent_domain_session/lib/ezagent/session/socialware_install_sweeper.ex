@@ -37,11 +37,7 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
   def retry(id, opts \\ []) do
     lease_seconds = Keyword.get(opts, :lease_seconds, 60)
 
-    case SocialwareInstallObligations.claim(
-           id,
-           allow_failed: Keyword.get(opts, :operator, false),
-           lease_seconds: lease_seconds
-         ) do
+    case SocialwareInstallObligations.claim(id, lease_seconds: lease_seconds) do
       {:ok, :already_resolved} ->
         {:ok, :resolved}
 
@@ -53,7 +49,14 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
             &SessionCreator.install_session_socialware/2
           )
 
-        execute_claimed_safely(obligation, install_fun, lease_seconds)
+        renew_fun =
+          Keyword.get(
+            opts,
+            :renew_fun,
+            &SocialwareInstallObligations.renew_claim/3
+          )
+
+        execute_claimed_safely(obligation, install_fun, renew_fun, lease_seconds)
 
       {:error, reason} ->
         {:error, reason}
@@ -85,8 +88,8 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
     {:noreply, state}
   end
 
-  defp execute_claimed_safely(obligation, install_fun, lease_seconds) do
-    heartbeat = start_lease_heartbeat(obligation, lease_seconds)
+  defp execute_claimed_safely(obligation, install_fun, renew_fun, lease_seconds) do
+    heartbeat = start_lease_heartbeat(obligation, renew_fun, lease_seconds)
 
     try do
       execute_claimed(obligation, install_fun)
@@ -103,7 +106,7 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
     end
   end
 
-  defp start_lease_heartbeat(obligation, lease_seconds) do
+  defp start_lease_heartbeat(obligation, renew_fun, lease_seconds) do
     stop_ref = make_ref()
     interval_ms = max(div(lease_seconds * 1_000, 3), 100)
 
@@ -113,12 +116,13 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
           renew_lease_until_stopped(
             obligation.id,
             obligation.claim_token,
+            renew_fun,
             lease_seconds,
             interval_ms,
             stop_ref
           )
         end,
-        [:link, :monitor]
+        [:monitor]
       )
 
     {pid, monitor_ref, stop_ref}
@@ -131,25 +135,56 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
       {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
     after
       5_000 ->
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+        end
+
         Process.demonitor(monitor_ref, [:flush])
         :ok
     end
   end
 
-  defp renew_lease_until_stopped(id, claim_token, lease_seconds, interval_ms, stop_ref) do
+  defp renew_lease_until_stopped(
+         id,
+         claim_token,
+         renew_fun,
+         lease_seconds,
+         interval_ms,
+         stop_ref
+       ) do
     receive do
       {:stop, ^stop_ref} ->
         :ok
     after
       interval_ms ->
-        case SocialwareInstallObligations.renew_claim(id, claim_token, lease_seconds) do
-          {:ok, _obligation} ->
-            renew_lease_until_stopped(id, claim_token, lease_seconds, interval_ms, stop_ref)
-
-          {:error, :stale_claim} ->
+        case renew_claim_safely(renew_fun, id, claim_token, lease_seconds) do
+          :stale_claim ->
             :ok
+
+          :continue ->
+            renew_lease_until_stopped(
+              id,
+              claim_token,
+              renew_fun,
+              lease_seconds,
+              interval_ms,
+              stop_ref
+            )
         end
     end
+  end
+
+  defp renew_claim_safely(renew_fun, id, claim_token, lease_seconds) do
+    case renew_fun.(id, claim_token, lease_seconds) do
+      {:error, :stale_claim} -> :stale_claim
+      _result -> :continue
+    end
+  rescue
+    _exception -> :continue
+  catch
+    _kind, _reason -> :continue
   end
 
   defp execute_claimed(obligation, install_fun) do

@@ -110,4 +110,83 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
 
     refute Map.get(resolved.cascade_resolution, :credential_source_uri)
   end
+
+  test "top-level session-local policy replaces a pre-authored credential cascade" do
+    old_source = Ezagent.URI.entity("system", :agent, "old-credential-source")
+
+    content = %{
+      name: "session-local-authored-cascade",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      cascade: %{
+        layer_dirs: [%{dir: "/tmp/reused-credential-layer"}],
+        source_dir_for: fn _ -> {:ok, "/tmp/reused-credential-source"} end,
+        pending_grant: %{source: old_source}
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    assert resolved.cascade.layer_dirs == []
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+    assert resolved.cascade_resolution.credential_source_policy == :session_local
+  end
+
+  test "top-level session-local policy sanitizes a nested authored resolution" do
+    old_source = Ezagent.URI.entity("system", :agent, "nested-old-credential-source")
+
+    content = %{
+      name: "session-local-authored-resolution",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      cascade_resolution: %{
+        owner_uri: @admin,
+        workspace_uri: @ws,
+        flavor: "curl",
+        credential_required?: true,
+        explicit_source: old_source,
+        credential_source_uri: old_source,
+        pending_grant: %{source: old_source},
+        user_source_lookup: fn -> flunk("user source must not be read") end,
+        workspace_shared_lookup: fn -> flunk("workspace source must not be read") end
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    resolution = resolved.cascade_resolution
+    assert resolution.credential_source_policy == :session_local
+    refute Map.has_key?(resolution, :explicit_source)
+    refute Map.has_key?(resolution, :credential_source_uri)
+    refute Map.has_key?(resolution, :pending_grant)
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+  end
+
+  test "session-local default resolution keeps non-secret cascade layers" do
+    content = %{
+      name: "session-local-default-layers",
+      flavor: "curl",
+      credential_optional: true,
+      credential_source_policy: :session_local
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    assert %{layer_dirs: [], source_dir_for: source_dir_for} = resolved.cascade
+    assert is_function(source_dir_for, 1)
+    assert resolved.cascade_resolution.workspace_layer_uri == @source_tmpl
+    assert resolved.cascade_resolution.credential_source_policy == :session_local
+    refute Map.has_key?(resolved.cascade_resolution, :credential_source_uri)
+  end
 end

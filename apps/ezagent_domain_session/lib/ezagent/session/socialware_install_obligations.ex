@@ -6,7 +6,9 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
   surface. Rows retain a required, indexed `workspace_uri`, while the global
   due scan intentionally crosses workspaces so one supervised sweeper can
   recover every tenant after node restart. Installation authorization is
-  reconstructed from each row's workspace and actor before dispatch.
+  reconstructed from each row's workspace and actor before dispatch. A failed
+  attempt always returns to `:pending` with exponential backoff capped at 60
+  seconds; legacy `:failed` rows are treated as due work rather than stranded.
   """
 
   import Ecto.Query
@@ -73,7 +75,7 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
           )
         )
 
-      claim_locked(obligation, now, lease_seconds, Keyword.get(opts, :allow_failed, false))
+      claim_locked(obligation, now, lease_seconds)
     end)
     |> case do
       {:ok, result} -> result
@@ -86,17 +88,14 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
           {:ok, SocialwareInstallObligation.t()} | {:error, term()}
   def record_failure(id, reason, claim_token) when is_binary(claim_token) do
     obligation = get!(id)
-    max_attempts = Application.get_env(:ezagent_domain_session, :install_max_attempts, 10)
-    exhausted? = obligation.attempts >= max_attempts
     exponent = obligation.attempts |> max(1) |> min(7) |> Kernel.-(1)
     delay_seconds = min(Integer.pow(2, exponent), 60)
 
     conditional_transition(id, claim_token, %{
-      status: if(exhausted?, do: :failed, else: :pending),
+      status: :pending,
       last_error: inspect(reason),
       claim_token: nil,
-      next_attempt_at:
-        if(exhausted?, do: nil, else: DateTime.add(DateTime.utc_now(), delay_seconds, :second))
+      next_attempt_at: DateTime.add(DateTime.utc_now(), delay_seconds, :second)
     })
   end
 
@@ -131,7 +130,7 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
 
     Repo.all(
       from(o in SocialwareInstallObligation,
-        where: o.status == :pending or o.status == :running,
+        where: o.status in [:pending, :running, :failed],
         where: is_nil(o.next_attempt_at) or o.next_attempt_at <= ^now,
         order_by: [asc: o.inserted_at],
         limit: ^limit
@@ -144,32 +143,26 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
     {:ok, obligation}
   end
 
-  defp claim_locked(nil, _now, _lease_seconds, _allow_failed), do: {:error, :not_found}
+  defp claim_locked(nil, _now, _lease_seconds), do: {:error, :not_found}
 
   defp claim_locked(
          %SocialwareInstallObligation{status: :resolved},
          _now,
-         _lease_seconds,
-         _allow_failed
+         _lease_seconds
        ),
        do: {:ok, :already_resolved}
-
-  defp claim_locked(%SocialwareInstallObligation{status: :failed}, _now, _seconds, false),
-    do: {:error, :failed}
 
   defp claim_locked(
          %SocialwareInstallObligation{status: :failed} = obligation,
          now,
-         seconds,
-         true
+         seconds
        ),
        do: claim_for_lease(obligation, now, seconds)
 
   defp claim_locked(
          %SocialwareInstallObligation{status: :running, next_attempt_at: lease} = obligation,
          now,
-         seconds,
-         _allow_failed
+         seconds
        )
        when not is_nil(lease) do
     if DateTime.compare(lease, now) == :gt,
@@ -180,8 +173,7 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
   defp claim_locked(
          %SocialwareInstallObligation{status: :pending, next_attempt_at: due} = obligation,
          now,
-         seconds,
-         _allow_failed
+         seconds
        )
        when not is_nil(due) do
     if DateTime.compare(due, now) == :gt,
@@ -189,7 +181,7 @@ defmodule Ezagent.Session.SocialwareInstallObligations do
       else: claim_for_lease(obligation, now, seconds)
   end
 
-  defp claim_locked(%SocialwareInstallObligation{} = obligation, now, seconds, _allow_failed),
+  defp claim_locked(%SocialwareInstallObligation{} = obligation, now, seconds),
     do: claim_for_lease(obligation, now, seconds)
 
   defp claim_for_lease(obligation, now, lease_seconds) do

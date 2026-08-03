@@ -94,6 +94,82 @@ defmodule Ezagent.Session.SocialwareInstallSweeperTest do
     assert {:ok, :resolved} = Task.await(task)
   end
 
+  test "heartbeat failures cannot kill the installer" do
+    Enum.each(
+      [
+        returned_error: fn -> {:error, :database_unavailable} end,
+        exception: fn -> raise "synthetic heartbeat exception" end,
+        exit: fn -> exit(:synthetic_heartbeat_exit) end
+      ],
+      fn {failure_kind, fail_renewal} ->
+        obligation = pending_obligation("heartbeat-#{failure_kind}")
+        parent = self()
+
+        install = fn _session_uri, _authorization ->
+          send(parent, {:installer_started, failure_kind})
+
+          receive do
+            {:finish_install, ^failure_kind} ->
+              {:ok, %{satisfied: ["front-desk"], skipped: []}}
+          end
+        end
+
+        renew = fn _id, _claim_token, _lease_seconds ->
+          send(parent, {:heartbeat_attempted, failure_kind})
+          fail_renewal.()
+        end
+
+        task =
+          Task.async(fn ->
+            SocialwareInstallSweeper.retry(obligation.id,
+              install_fun: install,
+              renew_fun: renew,
+              lease_seconds: 1
+            )
+          end)
+
+        assert :ok = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), task.pid)
+        assert_receive {:installer_started, ^failure_kind}, 1_000
+        assert_receive {:heartbeat_attempted, ^failure_kind}, 1_000
+        assert Process.alive?(task.pid)
+
+        send(task.pid, {:finish_install, failure_kind})
+        assert {:ok, :resolved} = Task.await(task)
+      end
+    )
+  end
+
+  test "heartbeat stops renewing before retry returns" do
+    obligation = pending_obligation("heartbeat-stop")
+    parent = self()
+
+    install = fn _session_uri, _authorization ->
+      receive do
+        :finish_install -> {:ok, %{satisfied: ["front-desk"], skipped: []}}
+      end
+    end
+
+    renew = fn _id, _claim_token, _lease_seconds ->
+      send(parent, :heartbeat_renewed)
+      {:ok, :renewed}
+    end
+
+    task =
+      Task.async(fn ->
+        SocialwareInstallSweeper.retry(obligation.id,
+          install_fun: install,
+          renew_fun: renew,
+          lease_seconds: 1
+        )
+      end)
+
+    assert :ok = Ecto.Adapters.SQL.Sandbox.allow(EzagentCore.Repo, self(), task.pid)
+    assert_receive :heartbeat_renewed, 1_000
+    send(task.pid, :finish_install)
+    assert {:ok, :resolved} = Task.await(task)
+    refute_receive :heartbeat_renewed, 500
+  end
+
   test "the supervised periodic sweeper resumes durable work present at startup" do
     parent = self()
     first = pending_obligation("periodic-before-restart")

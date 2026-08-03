@@ -124,7 +124,7 @@ defmodule EzagentDomainInstanceMessage.Application do
         # obligations. Session creation never waits for agent startup.
         {Task.Supervisor, name: Ezagent.Session.SocialwareInstallSupervisor}
       ] ++
-        socialware_install_recovery_children() ++
+        recovery_children() ++
         [
           {Ezagent.Session.DeliveryQueue, []}
         ]
@@ -339,8 +339,15 @@ defmodule EzagentDomainInstanceMessage.Application do
     _ -> false
   end
 
-  defp socialware_install_recovery_children do
-    if test_env?(), do: [], else: [Ezagent.Session.SocialwareInstallSweeper]
+  defp recovery_children do
+    if test_env?() do
+      []
+    else
+      [
+        Ezagent.Session.SocialwareInstallSweeper,
+        Ezagent.Session.AgentAdmissionSweeper
+      ]
+    end
   end
 
   defp system_create_session_cap do

@@ -69,12 +69,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
     case Map.get(wc, :session_template_uri) do
       %URI{} = recorded ->
-        resolve_exact_or_current(recorded, template_name, workspace_uri)
+        resolve_exact(recorded)
 
       _ ->
         case DerivationEdges.parent_for(session_uri, :parent_template) do
           {:ok, recorded} ->
-            resolve_exact_or_current(recorded, template_name, workspace_uri)
+            resolve_exact(recorded)
 
           :error ->
             resolve_session_template!(template_name, workspace_uri)
@@ -82,12 +82,12 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
     end
   end
 
-  defp resolve_exact_or_current(recorded, template_name, workspace_uri) do
+  defp resolve_exact(recorded) do
     with {:ok, _pid} <- Session.ensure_template_alive(recorded),
          {:ok, content} <- Session.read_template_content(recorded) do
       {:ok, recorded, content}
     else
-      _ -> resolve_session_template!(template_name, workspace_uri)
+      {:error, reason} -> {:error, {:frozen_session_template_not_readable, recorded, reason}}
     end
   end
 

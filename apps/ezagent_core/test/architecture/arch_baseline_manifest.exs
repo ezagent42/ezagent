@@ -1,7 +1,5 @@
 %{
-  # arch-cap-bump: +1 PR #1651 — World conversation admission handlers cross
-  #   the 1500-line threshold. 0→1.
-  oversized_modules_gt_1500: 1,
+  oversized_modules_gt_1500: 0,
   # #25 Phase-3 burn-down (ratchets DOWN toward 0):
   #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)
   #   PR-3O: 8 → 7 (extracted ExternalMirrorWorker.SendKey, worker 1010 → 963)
@@ -134,9 +132,7 @@
   #   >1000 as the eleventh oversized module. ACCEPTED documented debt. Burn-down:
   #   fold the read-only `IdentityAdmin` action-handler block (second module in this
   #   file) into a sibling once its callers migrate → identity.ex back under 1000. 10→11.
-  # arch-cap-bump: +3 PR #1651 — credential admission adds its coordinator and
-  #   expands DefinitionAgents and ConversationData beyond 1000 lines. 11→14.
-  oversized_modules_gt_1000: 14,
+  oversized_modules_gt_1000: 11,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the

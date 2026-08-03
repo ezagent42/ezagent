@@ -13,6 +13,7 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
   @binding "apps/ezagent_domain_identity/lib/ezagent/identity/recipe_cap_binding.ex"
   @identity "apps/ezagent_domain_identity/lib/ezagent/behavior/identity.ex"
   @materializer "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agents.ex"
+  @materializer_lifecycle "apps/ezagent_domain_session/lib/ezagent_domain_instance_message/session_creator/definition_agent_lifecycle.ex"
   @recipe_materializer "apps/ezagent_domain_agent/lib/ezagent/agent/recipe_materializer.ex"
   @template_rollback "apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn/rollback.ex"
   @identity_mix "apps/ezagent_domain_identity/mix.exs"
@@ -45,16 +46,16 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     materialize = definition_source(@materializer, :materialize_fresh_agent, 6)
     refute materialize =~ "bind_recipe_caps"
 
-    spawn = definition_source(@materializer, :spawn_bound_agent, 8)
+    spawn = definition_source(@materializer_lifecycle, :spawn_bound_agent, 8)
     assert ordered?(spawn, "spawn_agent", "finish_spawned_agent")
     assert spawn =~ "fresh_receipt"
     assert spawn =~ "rollback_failed_fresh"
 
-    finish = definition_source(@materializer, :finish_spawned_agent, 8)
+    finish = definition_source(@materializer_lifecycle, :finish_spawned_agent, 8)
     assert ordered?(finish, "bind_recipe_caps", "RecipeCapBinding.sync_live")
     assert ordered?(finish, "RecipeCapBinding.sync_live", "join_or_cleanup")
 
-    compensate = definition_source(@materializer, :rollback_failed_fresh, 5)
+    compensate = definition_source(@materializer_lifecycle, :rollback_failed_fresh, 5)
     assert compensate =~ "RecipeMaterializer.rollback_fresh_agent"
     assert compensate =~ "remove_fresh_member"
 
@@ -73,19 +74,19 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     assert ordered?(spawn_rollback, "unbind_workers", "rollback_receipts")
     assert ordered?(spawn_rollback, "rollback_receipts", "cleanup_config_dirs")
 
-    materializer_source = source(@materializer)
+    materializer_source = source(@materializer) <> source(@materializer_lifecycle)
     refute materializer_source =~ "sandbox.destroy"
     refute materializer_source =~ "terminate_worker"
   end
 
   test "I9 reused and already-materialized URIs upsert the durable binding" do
-    materializer = source(@materializer)
+    materializer = source(@materializer) <> source(@materializer_lifecycle)
     reuse = definition_source(@materializer, :reuse_existing_agent, 6)
 
     assert reuse =~ "bind_recipe_caps"
     assert ordered?(reuse, "Participants.add_participant", "bind_recipe_caps")
 
-    assert definition_source(@materializer, :refresh_existing_binding, 4) =~
+    assert definition_source(@materializer_lifecycle, :refresh_existing_binding, 4) =~
              "bind_recipe_caps"
 
     assert materializer =~ "RecipeCapBinding.issue_and_upsert"

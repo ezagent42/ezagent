@@ -25,6 +25,8 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
         opts
       )
       when is_map(content) do
+    content = enforce_session_local_policy(content)
+
     cond do
       is_map(content_field(content, :cascade)) ->
         {:ok, content}
@@ -121,13 +123,20 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
   defp put_default_cascade_if_source_present(
          content,
-         _cascade,
+         cascade,
          %{secret_source: nil},
          _agent,
          _opts,
-         _resolution
+         resolution
        ) do
-    {:ok, content}
+    if session_local_policy?(resolution) do
+      {:ok,
+       content
+       |> Map.put(:cascade_resolution, resolution)
+       |> Map.put(:cascade, cascade)}
+    else
+      {:ok, content}
+    end
   end
 
   defp put_default_cascade_if_source_present(
@@ -552,6 +561,42 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
     end
   end
 
+  defp enforce_session_local_policy(content) do
+    if session_local_policy?(content) do
+      content = Map.drop(content, [:cascade, "cascade"])
+
+      case content_field(content, :cascade_resolution) do
+        resolution when is_map(resolution) ->
+          sanitized =
+            resolution
+            |> Map.drop([
+              :explicit_source,
+              "explicit_source",
+              :credential_source_uri,
+              "credential_source_uri",
+              :pending_grant,
+              "pending_grant",
+              :credential_source_policy,
+              "credential_source_policy"
+            ])
+            |> Map.put(:credential_source_policy, :session_local)
+
+          content
+          |> Map.drop([:cascade_resolution, "cascade_resolution"])
+          |> Map.put(:cascade_resolution, sanitized)
+
+        _ ->
+          content
+      end
+    else
+      content
+    end
+  end
+
+  defp session_local_policy?(map) when is_map(map) do
+    content_field(map, :credential_source_policy) in [:session_local, "session_local"]
+  end
+
   @doc false
   def sanitize_respawn_template_data(respawn_data, template_content)
       when is_map(respawn_data) and is_map(template_content) do
@@ -592,12 +637,17 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
     ]
     |> Enum.reduce(%{}, fn key, acc ->
       case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
-        %URI{} = uri -> Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
-        value when is_binary(value) and value != "" -> Map.put(acc, Atom.to_string(key), value)
+        %URI{} = uri ->
+          Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
+
+        value when is_binary(value) and value != "" ->
+          Map.put(acc, Atom.to_string(key), value)
+
         value when key == :credential_source_policy and value == :session_local ->
           Map.put(acc, Atom.to_string(key), Atom.to_string(value))
 
-        _ -> acc
+        _ ->
+          acc
       end
     end)
   end

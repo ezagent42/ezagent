@@ -56,9 +56,10 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     # Isolate this test to the SITE-provisioning invariant. `ensure/0` also
     # wires the llm responder's DeepSeek credential (`:put_api_key` from
     # `DEEPSEEK_API_KEY`); with no key that leg skips with a warning and the
-    # `llm` member keyless-spawns — the page still provisions, which is all
+    # `llm` admission stays pending — the page still provisions, which is all
     # this invariant asserts. The credential + delivery-rule wiring has its
-    # own test below (it sets the env var explicitly).
+    # own test below; it completes admission with a fake local test key and
+    # never calls the external model API.
     prev_key = System.get_env("DEEPSEEK_API_KEY")
     System.delete_env("DEEPSEEK_API_KEY")
 
@@ -147,7 +148,7 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     table = Ezagent.Routing.Resolver.default_routing_table()
 
     assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
-    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+    llm_uri = admit_llm_with_test_key!(site_uri, key)
     assert {:ok, owner_uri} = Ezagent.Entity.Session.owner(site_uri)
 
     # VM-global hygiene: the llm Kind process and the RoutingRegistry ETS
@@ -221,7 +222,7 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     table = Ezagent.Routing.Resolver.default_routing_table()
 
     assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
-    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+    llm_uri = admit_llm_with_test_key!(site_uri, key)
 
     on_exit(fn ->
       terminate(llm_uri)
@@ -272,7 +273,7 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
     table = Ezagent.Routing.Resolver.default_routing_table()
 
     assert {:ok, {:provisioned, ^site_uri, _turn_id}} = OfficialSiteSeed.ensure()
-    assert {:ok, llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+    llm_uri = admit_llm_with_test_key!(site_uri, key)
 
     on_exit(fn ->
       terminate(llm_uri)
@@ -404,6 +405,75 @@ defmodule EzagentPluginHello.OfficialSiteSeedTest do
       retries > 0 -> Process.sleep(20) && wait_owner_send_cap(owner_uri, session_uri, retries - 1)
       true -> false
     end
+  end
+
+  # Complete the production credential-admission path with a deterministic
+  # fake key. Writing it only updates the candidate's local :api_keys slice;
+  # no completion request or external network call is made. The second ensure
+  # reconciles the responder rule after the LLM becomes a joined member.
+  defp admit_llm_with_test_key!(site_uri, key) do
+    assert {:ok, owner_uri} = Ezagent.Entity.Session.owner(site_uri)
+    caps = Ezagent.Identity.list_caps_for(owner_uri)
+
+    assert {:ok, admission} =
+             EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.begin(
+               site_uri,
+               "llm",
+               owner_uri,
+               caps
+             )
+
+    llm_uri = Ezagent.URI.new!(admission.provisional_agent_uri)
+    target = Ezagent.URI.with_action(llm_uri, :api_keys, :put_api_key_if_absent)
+
+    assert {:ok, key_cap} =
+             Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, llm_uri, target)
+
+    assert {:ok, %{ok: true, provider: "deepseek"}} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               target: target,
+               mode: :call,
+               args: %{provider: "deepseek", key: key},
+               ctx: %{
+                 caller: llm_uri,
+                 authenticated_principal: llm_uri,
+                 caps: [key_cap],
+                 reply: :sync
+               },
+               origin: :trusted_internal
+             })
+
+    default_source_target =
+      Ezagent.URI.with_action(
+        owner_uri,
+        :user_default_credential_source,
+        :set_default_credential_source
+      )
+
+    assert {:ok, default_source_cap} =
+             Ezagent.Cap.issue_for_action(
+               {:admin, User.admin_uri()},
+               owner_uri,
+               default_source_target
+             )
+
+    completion_caps =
+      owner_uri
+      |> Ezagent.Identity.list_caps_for()
+      |> MapSet.put(default_source_cap)
+
+    assert {:ok, %{status: :joined}} =
+             EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.complete(
+               site_uri,
+               "llm",
+               admission.attempt_id,
+               {owner_uri, completion_caps}
+             )
+
+    assert {:ok, {:already_provisioned, ^site_uri}} = OfficialSiteSeed.ensure()
+    assert {:ok, ^llm_uri} = EzagentPluginHello.Members.role_uri(site_uri, "llm")
+
+    llm_uri
   end
 
   # Mirrors `OfficialSiteSeed`'s internal absence gate.

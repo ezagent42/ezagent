@@ -15,20 +15,31 @@ defmodule Ezagent.Agent.CredentialNotifier do
   require Logger
 
   alias Ezagent.Domain.Pty.Server, as: PtyServer
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
   end
 
   @impl true
-  def init(_opts) do
+  def init(opts) do
     Phoenix.PubSub.subscribe(EzagentCore.PubSub, PtyServer.auth_failed_all_topic())
-    {:ok, %{}}
+
+    {:ok,
+     %{
+       reconcile_fun: Keyword.get(opts, :reconcile_fun, &AgentAdmission.reconcile_auth_failure/1)
+     }}
   end
 
   @impl true
-  def handle_info({:pty_auth_failed, %URI{} = agent_uri, observer}, state) do
-    case resolve_user_owner(agent_uri) do
+  def handle_info(
+        {:pty_auth_failed, %URI{} = agent_uri, observer},
+        %{reconcile_fun: reconcile_fun} = state
+      ) do
+    owner = resolve_user_owner(agent_uri)
+    reconcile_joined_admission(agent_uri, reconcile_fun)
+
+    case owner do
       %URI{} = owner_uri ->
         notify_owner(owner_uri, agent_uri, observer)
 
@@ -43,6 +54,34 @@ defmodule Ezagent.Agent.CredentialNotifier do
   end
 
   def handle_info(_other, state), do: {:noreply, state}
+
+  defp reconcile_joined_admission(agent_uri, reconcile_fun) do
+    case reconcile_fun.(agent_uri) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        log_reconciliation_failure(agent_uri, reason)
+
+      other ->
+        log_reconciliation_failure(agent_uri, {:unexpected_result, other})
+    end
+  rescue
+    error ->
+      log_reconciliation_failure(agent_uri, {:raised, error})
+  catch
+    kind, reason ->
+      log_reconciliation_failure(agent_uri, {kind, reason})
+  end
+
+  defp log_reconciliation_failure(agent_uri, reason) do
+    Logger.warning(
+      "CredentialNotifier: admission reconciliation for #{URI.to_string(agent_uri)} " <>
+        "failed with #{inspect(reason)}; owner notification will still be attempted."
+    )
+
+    :ok
+  end
 
   # codex PR-C2 review P2 — `ApiKeys.data_owner/1`'s lineage fallback can return a
   # non-user agent (a worker's `spawned_by` is the ORCHESTRATOR), and

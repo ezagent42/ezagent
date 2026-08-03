@@ -1014,8 +1014,8 @@ defmodule EzagentPluginWorld.WorldLive do
       {:ok, %{role_name: role_name, attempt_id: attempt_id, session_uri: session_uri}} ->
         case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
           {:ok, _joined} -> refresh_admission_conversation(socket, session_uri)
-          {:error, _reason} -> refresh_admission_conversation(socket, session_uri)
-          {:error, _reason, _failed} -> refresh_admission_conversation(socket, session_uri)
+          {:error, reason} -> refresh_admission_error(socket, session_uri, reason)
+          {:error, reason, _failed} -> refresh_admission_error(socket, session_uri, reason)
         end
 
       :not_an_admission ->
@@ -1094,6 +1094,11 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:last_dispatch_status, "ok")
      |> ConversationActions.push_members()
      |> push_event("world:state", state)}
+  end
+
+  defp refresh_admission_error(socket, %URI{} = session_uri, reason) do
+    {:noreply, refreshed} = refresh_admission_conversation(socket, session_uri)
+    {:noreply, assign(refreshed, :last_dispatch_status, "error:#{reason_to_string(reason)}")}
   end
 
   defp dispatch_pty_input(socket, %URI{} = agent_uri, bytes) do
