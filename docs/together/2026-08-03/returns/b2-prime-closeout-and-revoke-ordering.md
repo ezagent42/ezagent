@@ -43,9 +43,31 @@
 
 **本 PR 的处置**:按 CLAUDE.md「实施期发现架构问题 → 暂停 → 上报 → 等 Allen」,**只订正文档表述 + 显式标记待裁决**;**未扩文法、未把 wipe 改写成 `:dispatch` 绕过、未动 `ezagent_actor` runtime**。
 
-**请裁决**:这条 post-commit MFA 通道要不要建?
-- **建** → `#1693` 与本支两处都该迁过去。
-- **不建** → `ssh-revoke-wipe` 卡上的关注点 ② 需要改写 —— 当前文法给不出那条保证,卡上不该留一条实现不了的验收项。
+### 3.1 可行性摸底(已做,便于裁决 —— **未实施任何一种**)
+
+为了不把一道开放题扔出去,我把三条路的代价查清了:
+
+| 方案 | 改什么 | 代价 | 是否需新 Decision |
+|---|---|---|---|
+| **A. 扩 effect 文法** | 新增第 10 种 effect(如 `{:effect_after_commit, mfa, args}`);动 `ezagent_actor` 的 `effects.ex` 分桶 + `server.ex` 在 `commit_and_notify` 后执行 | runtime 改动,此后**每个 Behavior 作者都会看到**这个新 effect | **是** —— CLAUDE.md 的 9 种 effect 是权威集 |
+| **B. 走既有 deferred 通道** | 给 `Ezagent.ActionSet.Sandbox` 加一个 `:wipe_git_identity` action;两个 identity handler 把 `{:effect, ...}` 换成 `{:dispatch, ...}` | 一个 action + 其 cap;两处调用点(`#1693` 一处 + 本支一处) | **否** |
+| **C. 不改** | 改写 `ssh-revoke-wipe` 卡的关注点 ② | 零 | 否 |
+
+**B 的三条支撑事实**(均已核):
+
+1. `Ezagent.ActionSet.Sandbox` **已经挂在 Agent Kind 上**(`apps/ezagent_domain_agent/lib/ezagent/entity/agent.ex:154`),且**已经在自己的 destroy 路径里调 `GitIdentityRuntime.wipe/1`** —— 它本来就是拥有这份清理职责的 ActionSet,加一个 action 是**回归归属**而不是新造概念。
+2. `DeferredDispatch.enqueue/1` 在 `commit_and_notify` **成功之后**才被调用(`apps/ezagent_actor/lib/ezagent/kind/server.ex:947-955`);**提交失败则根本不会 enqueue** ⇒ 顺序保证天然成立,正是卡上关注点 ② 要的那条。
+3. **顺带修一个边界问题**:当前形状是 **Identity Kind 直接对 Agent 的 sandbox 目录做文件操作**。改成 dispatch 后,跨 Kind 的副作用走 P14 认可的唯一通道。(`GitIdentityRuntime` 在 core、domain 可调,所以今天不算硬违规;但**作用对象是另一个 Kind 的 sandbox**,B 让这件事名正言顺。)
+
+**B 的已知代价**:deferred 是 fire-and-forget,失败只记日志 —— 但**当前的 `:effect` 也是**(effect 异常被收集、不使 dispatch 失败),所以这一点**没有变差**。
+
+**请裁决**:走哪条?
+
+- **B(我推荐)** —— 不需新 Decision、顺序保证天然成立、顺带把跨 Kind 副作用放回 dispatch 通道。`#1693` 与本支两处一起迁。
+- **A** —— 语义最直白(「这个本地副作用不得先于持久化」),但要动 runtime 且扩权威 effect 集,值不值得由你定。
+- **C** —— 接受现状,但**卡上关注点 ② 必须改写**,当前文法给不出那条保证,不该留一条实现不了的验收项。
+
+**执行归属需一并明确**:该缺陷在 `#1693`(卡 owner = allen,codex 执行),而 `board.yaml:50` 里 gaga 的人轨描述含「**SSH 撤销面**」—— 两处口径不一致。若定 A 或 B,请指明由谁做。
 
 ## 4. 📋 上报:`tasks/ssh-revoke-wipe.md` 的 commit 归属记错了(**本 return 不改看板**)
 
