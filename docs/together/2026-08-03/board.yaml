@@ -165,12 +165,12 @@ cards:
       - {text: "#1684 clean-slate per-grant revocation 实现(head dbdf4ad76, kimi 执行)", done: true}
       - {text: "折入整合分支(merge 8bd91ec6a); parity-test 冲突按已定删除保留", done: true}
       - {text: "整合 PR 合入 main → #1684 标 subsumed 关闭", done: false, evidence: "待 precommit 闸"}
-  - owner: "gaga"
+  - owner: "allen"
     title: "撤销即擦除 follow-up —— feat/ssh-revoke-wipe"
     goal: ":cap_revoked → GitIdentityRuntime.wipe hook, 补齐 #1688 撤销面"
     status: "wip"
     task: "ssh-revoke-wipe"
-    who: "gaga 轨道 · SSH 凭据撤销面 · 执行: codex(agent)"
+    who: "allen/cc 轨道 · SSH 凭据撤销面 · 执行: codex(agent)"
     branch: "feat/ssh-revoke-wipe"
     started: "2026-08-03"
     est_done: "2026-08-04"
