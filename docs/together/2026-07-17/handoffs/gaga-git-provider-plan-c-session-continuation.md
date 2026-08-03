@@ -37,7 +37,7 @@ focused gates after integration.
 
 1. Root `AGENTS.md`.
 2. Skills: `using-superpowers`, `dev-together`, `brainstorming`,
-   `ezagent-developer`, `project-discussion-esr-ng`, `ezagent-socialware`,
+   `ezagent-developer`, `project-discussion-ezagent`, `ezagent-socialware`,
    `elixir-phoenix-helper`, `systematic-debugging`,
    `verification-before-completion`, and `using-git-worktrees` when changing
    worktree/branch state.
