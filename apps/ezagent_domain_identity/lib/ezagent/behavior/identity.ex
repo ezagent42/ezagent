@@ -859,11 +859,28 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # ONE identity at a time. `handle_sync_recipe_binding/2` is structurally
   # different: it performs a FULL-SET replacement
   # (`set_caps_effect(reconciled.caps)`), so there is no single "the cap that
-  # was removed" to match against — a `:read_ssh_key` cap can vanish (dropped
-  # by `Ezagent.Cap.verified_set/2` or `restore_structural_caps/3` inside
-  # `reconcile_recipe_binding_state/2`) or be silently replaced by a cap
-  # pointing at a DIFFERENT User, and #1693's single-cap hook never observes
-  # either. Design doc `2026-08-02-agent-ssh-credential-1b-design.md` §6.2.1.
+  # was removed" to match against. If a `:read_ssh_key` cap ever leaves the
+  # set here — or is replaced by one pointing at a DIFFERENT User — #1693's
+  # single-cap hook observes neither, and the materialized private key would
+  # stay on disk, fully usable.
+  #
+  # HONEST STATUS — this hook is DEFENSIVE, not a fix for a reachable bug.
+  # An earlier draft of this comment named `Ezagent.Cap.verified_set/2` and
+  # `restore_structural_caps/3` as the mechanisms that would drop the cap.
+  # That was WRONG and is retracted: `Ezagent.Cap.storable_for?/2`
+  # (`ezagent_core/lib/ezagent/cap.ex:347-359`) is purely STRUCTURAL — it
+  # checks a non-empty signature/key_id and `grantee == receiver`, and never
+  # reads the authority generation. Tracing every cap-write entry point found
+  # NO currently-reachable production path by which a healthily-held
+  # `:read_ssh_key` cap disappears or repoints through this reconcile; both
+  # test branches need a counterfactual input to construct.
+  #
+  # It is kept because the criterion below is deliberately decoupled from
+  # WHICH internal step changed the set, so it stays correct if such a path
+  # appears later. Design doc `2026-08-02-agent-ssh-credential-1b-design.md`
+  # §6.2.1 grades this against the sibling `EntityCaps.persist/2` gap (also
+  # unreachable today, deliberately NOT hooked — it has zero production
+  # callers, so there is no shape to keep the criterion honest against).
   defp maybe_add_recipe_binding_git_identity_wipe(
          effects,
          %URI{} = receiver,

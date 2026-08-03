@@ -265,16 +265,28 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 | `revoke_ssh_key`（1a，撤的是 User 侧的 key 本身） | **下次 spawn** | §6.1 的 `{:error, :owner_has_no_key}` 清理 |
 | agent 已被销毁 / spawn 失败回滚 / retire 清扫 | **立即** | 1b Task 5 + 整支终审 K1 的三处清理 |
 
-#### 6.2.1 本轮补齐：`:sync_recipe_binding` 的整集替换
+#### 6.2.1 两个未覆盖路径的分级（**两条今天都不可达**）
 
-`#1693` 的 commit message 自己点名了两个未覆盖路径。查证后：
+`#1693` 的 commit message 自己点名了两个未覆盖路径。**逐条查证后，两条今天都不可达** —— 下面是分级的理由，以及为什么仍对其中一条动了手。
 
-- **`:sync_recipe_binding`（`identity.ex:694`）—— 真缺口，已补。** 它做的是 `set_caps_effect(reconciled.caps)`，**整集替换**而非单条移除，所以 `#1693` 钩的两个 handler **都不触发**。触发路径实在：`RecipeCapBinding.sync_live/1` ← `definition_agents.ex:452 / 506 / 789`（session 创建、agent 定义）。
-- **`EntityCaps.persist/2` —— 今天不可达，不补。** 全仓 grep 零生产调用点（只有 `identity.ex:634` 的文档注释提到）。按项目安全姿态（不内联引入 caps 正确性以外的安全代码），等它真有调用点再说。**记为 follow-up。**
+> **先撤回一条我自己的错误断言。** 本节初稿（与实施 brief）写的是「`Ezagent.Cap.verified_set/2` 会因 authority generation 变化丢掉 cap，所以 `:sync_recipe_binding` 是**真缺口**」。**这句是错的**，由实现者复核推翻、我亲自复验确认：
+>
+> `Ezagent.Cap.storable_for?/2`（`apps/ezagent_core/lib/ezagent/cap.ex:347-359`）是**纯结构判定** —— 只查签名与 `key_id` 非空、以及 `grantee == receiver`，**从不读 generation**。追遍所有 cap 写入入口后，**没有找到任何当前可达的生产路径**能让一条健康持有的 `:read_ssh_key` cap 经这条 reconcile 消失或改指向。
+>
+> 这是本条线第七次「论证错了」（前六次见摩擦记录 §4.4）。**结论（该不该挂 hook）随之改变，不只是论据改变** —— 见下面的分级。
 
-判据与 `#1693` 不同：整集替换要比较**替换前后**该 agent 持有的 `:read_ssh_key` cap 集合，**只要发生变化就擦除** —— 既覆盖「有 → 无」（撤销），也覆盖「指向 User A → 指向 User B」（盘上那把是 A 的，此刻已不在授权范围内）。不变则不擦，绝大多数 reconcile 走这条路，零额外开销。
+| 路径 | 今天可达？ | 处置 | 理由 |
+|---|---|---|---|
+| `:sync_recipe_binding`（`identity.ex:694`） | ❌ 不可达 | **已挂 hook（防御性）** | 它是**整集替换**（`set_caps_effect(reconciled.caps)`），有真实的生产触发路径（`RecipeCapBinding.sync_live/1` ← `definition_agents.ex:452 / 506 / 789`），只是今天流经它的 cap 集不会丢掉这条 cap。**判据与"哪个内部机制改的"解耦**，所以将来真出现这样的路径时它自动成立 |
+| `EntityCaps.persist/2` | ❌ 不可达 | **不挂，记 follow-up** | 全仓 grep **零生产调用点**（只有 `identity.ex:634` 的文档注释提到）。**连触发形状都不存在**，挂上去无从写出诚实的判据，也无从验证 |
 
-擦除是安全的：key 每次 spawn 从 User slice 重新物化，**无状态丢失**（§6.1 已论证）。
+**分级的那条线是「有没有真实的触发形状」**，不是"可不可达"——两条都不可达。前者有活的调用链、只是数据流今天不会走到；后者连调用链都没有。按项目安全姿态（不内联引入 caps 正确性以外的安全代码），后者等它真有调用点再说。
+
+**判据**（与 `#1693` 的单条移除不同）：比较**替换前后**该 agent 持有的 `:read_ssh_key` cap 集合，**只要发生变化就擦除** —— 既覆盖「有 → 无」（撤销），也覆盖「指向 User A → 指向 User B」（盘上那把是 A 的，此刻已不在授权范围内）。不变则不擦，绝大多数 reconcile 走这条路，零额外开销。
+
+**测试如实标注**：两条分支都需要构造**反事实输入**才跑得起来（今天的真实 reconcile 到不了），这一点在代码与测试里就地写明，不要让后人以为它们复现了真实生产场景。
+
+擦除本身是安全的：key 每次 spawn 从 User slice 重新物化，**无状态丢失**（§6.1 已论证）。
 
 #### 6.2.2 仍然成立的那部分
 
