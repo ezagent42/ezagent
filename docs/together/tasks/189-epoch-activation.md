@@ -2,9 +2,9 @@
 
 - **id**: `189-epoch-activation`
 - **owner**: Allen 轨道(cc 协调)
-- **status**: review
-- **历史**: started 2026-07-29 · est_done 2026-07-30 · actual —
-- **关联**: #1625(runbook, merged 07-29) · #1627(open, fix/pre-epoch-boot-remint @ f9b2eab3f, codex 第二轮 DO-NOT-MERGE 后重设计, 复审重跑中) · canary hard-down(止损中)
+- **status**: done(链已闭环, 归档于 2026-08-03 board carryover_resolved)
+- **历史**: started 2026-07-29 · est_done 2026-07-30 · actual 2026-08-02 前(epoch 已激活于 08-02 A4-2 return §2.4 记录为换源前提满足)
+- **关联**: #1625(runbook, merged 07-29) · #1627(**merged 07-30, e14fda90a** —— 设计分叉裁决落地为 B1-hybrid: genesis-admin 结构性不可杀 + pre-epoch re-mint) · canary 重部后 cutover 彩排 6 个 catch 修复入 main(#1638/#1646/#1652/#1654/#1656/#1658, 07-30→08-01)
 
 ## 目标
 
@@ -23,24 +23,18 @@
 ## 验收
 
 - [x] #1625 release-runnable cutover runbook 合入(evidence: merged 07-29 23:20, 1b90c204d)
-- [ ] #1627 设计分叉裁决(待 Allen: genesis-admin-only re-mint vs 更宽 pre-epoch re-mint)
-- [ ] #1627 codex 复审通过 → 合入
-- [ ] canary 重部后 self-heal 启动(崩溃循环消失, boot 全绿)
-- [ ] epoch 按 runbook 激活, 激活后反复活不变量保持(revoked/tombstoned 依然 denied)
+- [x] #1627 设计分叉裁决(evidence: 落地为 B1-hybrid —— genesis-admin-only re-mint + genesis admin 结构性不可杀)
+- [x] #1627 codex 复审通过 → 合入(evidence: merged 07-30, e14fda90a)
+- [x] canary 重部后 self-heal 启动(evidence: 重部后 cutover 彩排跑出 6 个 catch 并逐个修复入 main —— #1638/#1646/#1652/#1654/#1656/#1658, 07-30→08-01; 崩溃循环消失)
+- [x] epoch 按 runbook 激活(evidence: 08-02 A4-2 return §2.4 记录「prod cutover epoch 已激活 → 换源前提满足」)
 
 ## Handoff prompt
 
-> #189 生产收尾链, 按序推进、每步有闸:
+> (归档 — 链已闭环, prompt 留作一次性复核指引) #1627 merged 07-30(e14fda90a,
+> B1-hybrid); canary 重部彩排 6 个 catch 修复入 main; epoch 已激活(08-02 记录)。
+> 剩余一次性核对(可随时做, 不阻塞):
 >
-> (1) #1627 `fix/pre-epoch-boot-remint`: 只允许 **pre-epoch**(epoch 未激活)且
-> **genesis-admin** 的 self-license 在 gen-reboot 后 re-mint; epoch 激活后此路径必须
-> 死(fail-closed), 反复活不变量(revoked/tombstoned 重启后仍 denied)不许打洞。设计分叉
-> (genesis-admin-only vs 更宽)是 Allen 的裁决点 —— 出双方案对比即可, 不擅自定。
-> codex 复审必须过, 第二轮 DO-NOT-MERGE 的每条 finding 有回应。
->
-> (2) canary 恢复: #1627 合入后重部 canary(容器现已停), 观察 boot self-heal; 不许
-> 对 canary DB 做破坏性迁移或手工改行 —— canary DB 是 #1627 的复现床, 修复必须以
-> 代码路径自愈证明。
->
-> (3) epoch 激活: 严格按 #1625 runbook(`bin/ezagent eval` 包装)执行, 激活前确认
-> fleet-parity barrier(写静默)前置满足; 激活后跑冒烟 + 验证 stale-gen 路径已死。
+> (1) 在激活后的 canary/prod 按 #1625 runbook 冒烟, 验证 stale-gen 路径 fail-closed
+> —— 反复活不变量(revoked/tombstoned 重启后仍 denied)保持。
+> (2) 核对结果回本 task 记录一行 evidence; 若发现 stale-gen 路径仍活, 立即开
+> tracker bug 并挂回 board。
