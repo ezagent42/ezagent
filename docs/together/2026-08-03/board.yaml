@@ -21,7 +21,7 @@ progress:
   - {label: "main 全绿 → canary 放行(#189 收口, Allen 轨道)", pct: 85, value: "#189 三段 cutover + 彩排 catch 已入 main; 分片 burn-down 全落地(arch-gate/web/domain/frontend 四 PR, 分片各自绿 13/14)。残留轮换 intra-suite 隔离 flake(#184)的系统性修复 = CI 隔离整合分支(ahead 33, 五块折入), 今日闸 = 一次完整 mix precommit 诚实绿 → push/PR/merge。"}
   - {label: "企业自助: Group-A URI 通用分享(jjkysy)", pct: 90, value: "A1/A2/A3/A4-1/share-config(#1594/#1596/#1597/#1606/#1611/#1612)此前全入; A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复今晨入 main(#1655, da8a26bc1); Allen 拍板 A4-2 甲(forward effective_caps, 低频) → P4 关闭。"}
   - {label: "git-provider 凭据模型(gaga)", pct: 90, value: "Forgejo Git Provider V1(#1643) + 错误分类 :provider_response_unrecognized 拆出 :provider_unavailable(#1668, 4359f4a6e)入 main; 五形态对比 + Plan A NO-GO 重核(#1677)交付后, B2′ 路线拍板并已落地(#1688 入 main, 8ad5d3795) —— 凭据模型线收口。"}
-  - {label: "Agent SSH 凭据 B2′(gaga)", pct: 80, value: "#1688 已入 main(08-03, 8ad5d3795): User SSH 身份 + 物化进 agent; 私钥明文形态 Allen 已 APPROVED; 撤销即擦除 follow-up feat/ssh-revoke-wipe(gaga 轨道, codex 执行)已解除排序阻塞, 待评审合入以关闭撤销窗口。"}
+  - {label: "Agent SSH 凭据 B2′(gaga)", pct: 80, value: "#1688 已入 main(08-03, 8ad5d3795): User SSH 身份 + 物化进 agent; 私钥明文形态 Allen 已 APPROVED; 撤销即擦除 follow-up feat/ssh-revoke-wipe(allen/cc 轨道, codex 执行)已解除排序阻塞, 待评审合入以关闭撤销窗口。"}
   - {label: "MFU 产品线(ruihua, 跨 repo)", pct: 70, value: "#1586 入 main(07-29); #1676(07-31)迁出至 Forgejo Prototype/mfu —— 独立 repo 产品线, 仍属 ezagent 工作(Allen 08-03), 本 board 继续跟踪; v0.15 landing package 续作在 Prototype/mfu 推进。"}
   - {label: "C8 v5 use-side Kind-mailbox seal(暂缓)", pct: 30, value: "spec 收敛 + codex 评审 + 修订完成; DEV 继续暂缓至 CI 隔离整合落地, 避免并发返工。"}
 
@@ -41,7 +41,7 @@ deploy:
 risks:
   - "🔴 轮换 intra-suite 隔离 flake(#184 残留): 分片各自绿(13/14)但全套连跑时轮换红(domain 一次、web 下一次); 系统性修复 = 整合分支 actor/SQL 沙箱 owner-lifecycle。未合入前 main 不算真绿, canary 不放行。"
   - "🟡 整合分支闸: 33 commits 折五块(#1684 + DoD24 + actor/env + parity 移除), 必须一次完整 mix precommit 诚实绿(不拆回源 PR、不 mask、不盲加 timeout); 绿前不 push/PR/merge。"
-  - "🟡 #1688 已合入(8ad5d3795)而 revoke-wipe 未跟: agent 物化凭据的撤销不即擦除窗口现已存在 —— feat/ssh-revoke-wipe(gaga 轨道, codex 执行, 分支就绪 868ba5cba)需尽快评审合入。"
+  - "🟡 #1688 已合入(8ad5d3795)而 revoke-wipe 未跟: agent 物化凭据的撤销不即擦除窗口现已存在 —— feat/ssh-revoke-wipe(allen/cc 轨道, codex 执行, 分支就绪 868ba5cba)需尽快评审合入。"
   - "🟢 C8 v5 继续暂缓(焦点 CI 整合), spec 就绪无返工风险; Group-A 与 DeliveryOutbox 正交非阻塞。"
 
 people:
@@ -127,12 +127,12 @@ cards:
     who: "gaga 轨道 · Agent SSH 凭据 · 已合入"
     branch: "feat/agent-ssh-credential"
     pr: {num: 1688, state: "merged"}
-    review_note: "#1688 已入 main(08-03, 8ad5d3795); 私钥明文形态 Allen 已 APPROVED(08-03); 撤销即擦除 follow-up 分支 feat/ssh-revoke-wipe(gaga 轨道, codex 执行)已解除排序阻塞, 需尽快评审合入以关闭撤销窗口。"
+    review_note: "#1688 已入 main(08-03, 8ad5d3795); 私钥明文形态 Allen 已 APPROVED(08-03); 撤销即擦除 follow-up 分支 feat/ssh-revoke-wipe(allen/cc 轨道, codex 执行)已解除排序阻塞, 需尽快评审合入以关闭撤销窗口。"
     acceptance:
       - {text: "B2′ 实现 + PR open", done: true, evidence: "feat/agent-ssh-credential"}
       - {text: "私钥明文形态决策: Allen APPROVED", done: true, evidence: "08-03 拍板"}
       - {text: "cc 评审通过 → rebase main → gate+merge", done: true, evidence: "merged 08-03, 8ad5d3795"}
-      - {text: "撤销即擦除 follow-up 按序合入(gaga 轨道, codex 执行)", done: false, evidence: "分支就绪 868ba5cba, #1688 已合 → 解除阻塞"}
+      - {text: "撤销即擦除 follow-up 按序合入(allen/cc 轨道, codex 执行)", done: false, evidence: "分支就绪 868ba5cba, #1688 已合 → 解除阻塞"}
   - owner: "jjkysy"
     title: "Group-A URI 通用分享 —— A4-2 收口 + P4 关闭"
     goal: "A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复 —— 今晨入 main"
@@ -223,7 +223,7 @@ review:
     - {owner: "gaga", delivered: "#1683 arch-gate tmp-fixture 扫描 flake 修复", acceptance_result: "入 main 0c581e2d3", carryover: "#1688 SSH 凭据 B2′ 评审收口"}
     - {owner: "jjkysy", delivered: "#1655 share-A4-2/#192 roster 收敛 + #1665 安全修复(今晨入 main)", acceptance_result: "da8a26bc1; A4-2 甲拍板 P4 关闭", carryover: "Group-A 下一增量"}
     - {owner: "allen", delivered: "#1684 clean-slate per-grant cap 撤销(kimi agent 实现)", acceptance_result: "折入整合分支(merge 8bd91ec6a)", carryover: "整合 PR 合入后 #1684 标 subsumed; DeliveryOutbox 实现切片"}
-    - {owner: "gaga", delivered: "feat/ssh-revoke-wipe 撤销即擦除 hook K3/K4/K5+K6(codex agent 执行)", acceptance_result: "分支就绪 868ba5cba", carryover: "随 #1688 后按序合入"}
+    - {owner: "allen", delivered: "feat/ssh-revoke-wipe 撤销即擦除 hook K3/K4/K5+K6(codex agent 执行)", acceptance_result: "分支就绪 868ba5cba", carryover: "随 #1688 后按序合入"}
   next_day:
     - "整合分支一次完整 mix precommit(诚实绿) → push + PR → 正常 merge → #1684 标 subsumed。"
     - "#1688 cc 评审收口 → rebase main → gate+merge; revoke-wipe follow-up 按序跟上。"

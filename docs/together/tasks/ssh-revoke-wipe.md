@@ -1,7 +1,7 @@
 # 撤销即擦除 follow-up —— feat/ssh-revoke-wipe (:cap_revoked → wipe)
 
 - **id**: `ssh-revoke-wipe`
-- **owner**: gaga(执行: codex agent)
+- **owner**: allen(执行: codex agent)
 - **status**: wip(分支就绪, #1688 已合 → 解除阻塞, 待评审合入)
 - **历史**: started 2026-08-03 · est_done 2026-08-04 · actual —
 - **关联**: 前置 `agent-ssh-credential-b2`(#1688 merged 08-03, 8ad5d3795) · branch `feat/ssh-revoke-wipe`(head 868ba5cba) · commits: K3 84dba69b6 · K5+K6 85fb6414e · K4 868ba5cba
