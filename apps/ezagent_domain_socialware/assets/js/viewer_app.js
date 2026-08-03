@@ -459,6 +459,34 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoi
     )
   }
 
+  // A5 — the anon-share resource projection. `snapshot.resources` is a UNIFORM
+  // key ([] for sessions with no share binding), so this block renders nothing
+  // on ordinary public pages and the shared thing on a dedicated share page.
+  const resources = Array.isArray(snapshot.resources) ? snapshot.resources : []
+  const resourcesBlock =
+    resources.length > 0
+      ? React.createElement(
+          "section",
+          {className: "mx-auto w-full max-w-3xl px-6 py-8", "data-shared-resources": "true"},
+          resources.map((r, i) =>
+            React.createElement(
+              "div",
+              {key: i, className: "rounded-lg border bg-card p-4 shadow-sm"},
+              React.createElement(
+                "h3",
+                {className: "mb-2 text-sm font-medium text-muted-foreground"},
+                "共享内容 · " + (r.action || "")
+              ),
+              React.createElement(
+                "pre",
+                {className: "overflow-x-auto whitespace-pre-wrap break-all text-xs leading-relaxed"},
+                JSON.stringify(r.data, null, 2)
+              )
+            )
+          )
+        )
+      : null
+
   // Viewer identity + actions for the fixed bottom preview bar. `snapshot.viewer`
   // (server-derived from the customer token) tells us whether the opener is
   // logged-in and a member; everything else stays read-only by construction.
@@ -504,6 +532,7 @@ function ViewerApp({sessionUri, token, socketPath, topicPrefix, delegationEndpoi
     null,
     React.createElement("style", {dangerouslySetInnerHTML: {__html: JR_HIGHLIGHT_CSS + PREVIEWBAR_CSS}}),
     content,
+    resourcesBlock,
     !IS_EMBEDDED && awaiting
       ? React.createElement(
           "div",

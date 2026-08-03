@@ -186,6 +186,10 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
       page: Map.get(snapshot, :page),
       shell: Map.get(snapshot, :shell),
       shell_css: Map.get(snapshot, :shell_css),
+      # A5 — the anon-share resource projection (UNIFORM key: `[]` for every
+      # session without a share binding). Added to this fail-closed whitelist
+      # deliberately: nothing reaches the anonymous wire unless listed here.
+      resources: Map.get(snapshot, :resources, []),
       viewer: viewer(socket)
     }
   end

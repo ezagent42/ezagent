@@ -27,6 +27,8 @@ defmodule Ezagent.Socialware.ExternalFeed do
   caller.
   """
 
+  require Logger
+
   alias Ezagent.ActionSet.Surface
   alias Ezagent.Session.ExternalDelivery
   alias Ezagent.Socialware.SessionReads
@@ -60,8 +62,145 @@ defmodule Ezagent.Socialware.ExternalFeed do
          messages: messages,
          page: external_page(surface, version),
          shell: external_shell(surface),
-         shell_css: external_shell_css(surface)
+         shell_css: external_shell_css(surface),
+         # A5 — UNIFORM key: every external snapshot carries `resources`
+         # (empty unless this session is an anon share's dedicated session).
+         # Runs AFTER the authorized reads above, so it is behind the same
+         # `authorize_external_read/2` gate as the rest of the snapshot.
+         resources: shared_resources(session_uri, caller)
        }}
+    end
+  end
+
+  # ── A5 (`link_anon`) — the shared-resource projection ─────────────────────
+  #
+  # If this session is the DEDICATED public session of an anon share
+  # (`ShareSetting.by_anon_session/1` — ENABLED rows only), project the shared
+  # target through a REAL cap-gated dispatch made AS THE VISITOR: an admitted
+  # anon is BORN WITH the share's read key (`AnonUser.anon_share_read_caps/1` —
+  # the same per-anon pattern as the view read-caps), so the dispatch carries
+  # true provenance and passes the full verifier chokepoint.
+  #
+  # The empty list is SEMANTIC fail-closed and covers, identically: no binding,
+  # the owner flipped the share off (row-gated — dark for everyone at once),
+  # the target is gone, the caller was never admitted (holds no key), or the
+  # caller's key died (target authority rotation). A dead key making the
+  # resource disappear IS the revocation semantics — never a leak, never a
+  # stale render.
+  defp shared_resources(%URI{} = session_uri, caller) do
+    case Ezagent.Socialware.ShareSetting.by_anon_session(session_uri) do
+      nil -> []
+      setting -> project_shared_target(session_uri, setting, caller)
+    end
+  rescue
+    error ->
+      Logger.warning(
+        "ExternalFeed.shared_resources: projection failed for " <>
+          "#{URI.to_string(session_uri)}: #{Exception.message(error)} (fail-closed)"
+      )
+
+      []
+  catch
+    kind, reason ->
+      Logger.warning(
+        "ExternalFeed.shared_resources: projection failed for " <>
+          "#{URI.to_string(session_uri)}: #{inspect({kind, reason})} (fail-closed)"
+      )
+
+      []
+  end
+
+  defp project_shared_target(_session_uri, setting, %URI{} = caller) do
+    target = EzURI.new!(setting.target_uri)
+    behavior = Ezagent.Socialware.ShareSetting.behavior_module(setting)
+
+    # EVERY declared action is projected, not just the first: admission mints the
+    # visitor a key per declared action, so rendering one of them would leave the
+    # rest as keys nobody can spend — mint and projection must describe the same
+    # surface. Each action is dispatched independently, so one denied/failing
+    # read drops only its own entry.
+    with true <- function_exported?(behavior, :state_slice, 0),
+         {:ok, _pid} <- Ezagent.LocalRuntime.ensure_started(target),
+         {:ok, caps} <- Ezagent.EntityCaps.effective_caps(caller) do
+      setting
+      |> Ezagent.Socialware.ShareSetting.actions()
+      |> Enum.flat_map(&project_one(setting, target, behavior, &1, caller, caps))
+    else
+      # "The visitor holds no key" is the EXPECTED outcome and stays quiet; a
+      # target that will not start, or an identity-store read that fails, is not
+      # — those would otherwise look identical to a fail-closed empty page.
+      {:error, reason} when reason not in [:not_found] ->
+        Logger.warning(
+          "ExternalFeed.project_shared_target: #{setting.target_uri} not projected " <>
+            "(#{inspect(reason)})"
+        )
+
+        []
+
+      _ ->
+        []
+    end
+  end
+
+  # A non-URI caller (never admitted) holds no key by construction.
+  defp project_shared_target(_session_uri, _setting, _caller), do: []
+
+  defp project_one(setting, target, behavior, action, caller, caps) do
+    with {:ok, data} <-
+           dispatch_shared_read(caller, target, behavior.state_slice(), action, caps),
+         {:ok, safe} <- json_safe(data) do
+      [
+        %{
+          "target" => setting.target_uri,
+          "behavior" => setting.behavior,
+          "action" => Atom.to_string(action),
+          "data" => safe
+        }
+      ]
+    else
+      _ -> []
+    end
+  end
+
+  # A REAL dispatch through the cap chokepoint — never a bare `Kind.read/3`
+  # (which has no caller and no authz). The caller IS the admitted visitor
+  # exercising their born-with read key; step-5.5 verifies it against the
+  # target's CURRENT authority, so revocation lands on the very next snapshot.
+  defp dispatch_shared_read(caller, target, prefix, action, caps) do
+    cmd = %Ezagent.Cmd{
+      target: EzURI.with_action(target, prefix, action),
+      action: action,
+      args: %{},
+      ctx: %{
+        caller: caller,
+        authenticated_principal: caller,
+        caps: MapSet.new(caps),
+        mode: :call
+      },
+      origin: :authenticated_external
+    }
+
+    case Ezagent.Router.dispatch(cmd) do
+      {:ok, data} -> {:ok, data}
+      other -> {:error, {:shared_read_denied, other}}
+    end
+  end
+
+  # The projection goes over the anon wire (Phoenix will `Jason.encode` it); a
+  # handler result that is not JSON-encodable (URI structs, pids, …) must drop
+  # the item rather than crash every viewer's snapshot.
+  defp json_safe(data) do
+    case Jason.encode(data) do
+      {:ok, _} ->
+        {:ok, data}
+
+      {:error, reason} ->
+        Logger.warning(
+          "ExternalFeed.shared_resources: handler result not JSON-encodable, " <>
+            "dropping (#{inspect(reason)})"
+        )
+
+        {:error, :not_json_encodable}
     end
   end
 
