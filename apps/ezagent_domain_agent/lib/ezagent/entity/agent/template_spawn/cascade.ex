@@ -29,7 +29,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
     cond do
       is_map(content_field(content, :cascade)) ->
-        {:ok, content}
+        {:ok, clear_grantless_bootstrap(content)}
 
       is_map(content_field(content, :cascade_resolution)) ->
         with {:ok, cascade, resolved} <-
@@ -51,6 +51,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
             content
             |> Map.put(:cascade, put_pending_grant(cascade, pending_grant))
             |> put_selected_credential_source(resolved.secret_source, pending_grant)
+            |> maybe_mark_grantless_bootstrap(template_class, resolved)
 
           {:ok, content}
         end
@@ -114,7 +115,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
                opts,
                resolution
              ) do
-        {:ok, content}
+        {:ok, maybe_mark_grantless_bootstrap(content, template_class, resolved)}
       end
     else
       {:ok, content}
@@ -172,6 +173,59 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
 
   defp credential_required_by_default?(:slice), do: true
   defp credential_required_by_default?(:file), do: false
+
+  defp maybe_mark_grantless_bootstrap(content, template_class, resolved) do
+    content = clear_grantless_bootstrap(content)
+    cascade = content_field(content, :cascade)
+
+    eligible? =
+      is_map(cascade) and
+        content_field(content, :credential_bootstrap) in [:pty, "pty"] and
+        content_field(content, :credential_optional) in [true, "true"] and
+        session_local_policy?(content) and
+        resolved.secret_source == nil and
+        not Map.has_key?(cascade, :pending_grant) and
+        not Map.has_key?(cascade, "pending_grant") and
+        pty_connection?(template_class, content)
+
+    if eligible? do
+      put_cascade_field(content, Map.put(cascade, :grantless_bootstrap, :pty))
+    else
+      content
+    end
+  end
+
+  defp clear_grantless_bootstrap(content) do
+    case content_field(content, :cascade) do
+      cascade when is_map(cascade) ->
+        put_cascade_field(
+          content,
+          Map.drop(cascade, [:grantless_bootstrap, "grantless_bootstrap"])
+        )
+
+      _ ->
+        content
+    end
+  end
+
+  defp put_cascade_field(content, cascade) do
+    content
+    |> Map.drop([:cascade, "cascade"])
+    |> Map.put(:cascade, cascade)
+  end
+
+  defp pty_connection?(template_class, content) do
+    Code.ensure_loaded(template_class)
+
+    if function_exported?(template_class, :credential_connection, 1) do
+      case template_class.credential_connection(role: content) do
+        {:pty, label} when is_binary(label) and label != "" -> true
+        _ -> false
+      end
+    else
+      false
+    end
+  end
 
   # A member may opt OUT of the required-by-default credential (e.g. a curl LLM
   # member declared credential_optional so it keyless-spawns in deployments with

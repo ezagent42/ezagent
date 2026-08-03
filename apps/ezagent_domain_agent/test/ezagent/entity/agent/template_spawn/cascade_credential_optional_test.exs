@@ -36,6 +36,26 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
     def materialize_credential_slice(_uri, _data), do: :ok
   end
 
+  defmodule PtyFileTC do
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    def credential_env_var, do: "TEST_CLI_HOME"
+    def credential_relpaths, do: ["auth.json"]
+    def secret_relpaths, do: ["auth.json"]
+    def auth_failure_signals, do: []
+    def credential_connection(_opts), do: {:pty, "Connect test CLI"}
+  end
+
+  defmodule ApiKeyFileTC do
+    @behaviour Ezagent.Agent.CredentialAdapter
+
+    def credential_env_var, do: "TEST_API_HOME"
+    def credential_relpaths, do: ["auth.json"]
+    def secret_relpaths, do: ["auth.json"]
+    def auth_failure_signals, do: []
+    def credential_connection(_opts), do: {:api_key, "test", "Configure API key"}
+  end
+
   @agent Ezagent.URI.entity("system", :agent, "cred-opt-demo")
   @admin Ezagent.Entity.User.admin_uri()
   @ws Ezagent.URI.workspace(:system)
@@ -188,5 +208,67 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
     assert resolved.cascade_resolution.workspace_layer_uri == @source_tmpl
     assert resolved.cascade_resolution.credential_source_policy == :session_local
     refute Map.has_key?(resolved.cascade_resolution, :credential_source_uri)
+  end
+
+  test "marks only a fully eligible PTY session-local cascade for grantless bootstrap" do
+    eligible = %{
+      name: "pty-bootstrap",
+      flavor: "test-cli",
+      config_dir: System.tmp_dir!(),
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      credential_bootstrap: :pty
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(eligible, PtyFileTC, @agent, @admin, @ws, "test-cli",
+               source_template_uri: @source_tmpl
+             )
+
+    assert resolved.cascade.grantless_bootstrap == :pty
+    refute Map.has_key?(resolved.cascade, :pending_grant)
+
+    for {template_class, override} <- [
+          {PtyFileTC, %{credential_optional: false}},
+          {PtyFileTC, %{credential_source_policy: nil}},
+          {PtyFileTC, %{credential_bootstrap: nil}},
+          {ApiKeyFileTC, %{}}
+        ] do
+      content = Map.merge(eligible, override)
+
+      assert {:ok, invalid} =
+               Cascade.resolve_content(
+                 content,
+                 template_class,
+                 @agent,
+                 @admin,
+                 @ws,
+                 "test-cli",
+                 source_template_uri: @source_tmpl
+               )
+
+      refute Map.get(invalid[:cascade] || %{}, :grantless_bootstrap) == :pty
+    end
+  end
+
+  test "authored sourced cascades cannot inject the internal grantless marker" do
+    pending_grant = %{source: Ezagent.URI.entity("system", :agent, "credential-source")}
+
+    content = %{
+      credential_optional: true,
+      credential_bootstrap: :pty,
+      cascade: %{
+        layer_dirs: [],
+        source_dir_for: fn _ -> {:ok, System.tmp_dir!()} end,
+        pending_grant: pending_grant,
+        grantless_bootstrap: :pty
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, PtyFileTC, @agent, @admin, @ws, "test-cli", [])
+
+    assert resolved.cascade.pending_grant == pending_grant
+    refute Map.has_key?(resolved.cascade, :grantless_bootstrap)
   end
 end
