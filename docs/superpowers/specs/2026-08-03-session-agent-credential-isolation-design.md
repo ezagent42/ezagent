@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-03
 
-**Status:** proposed
+**Status:** approved
 
 ## Goal
 
@@ -83,4 +83,3 @@ Regression coverage must prove:
 - cancel, failure, timeout, and retry preserve cleanup and isolation;
 - credential-free roles still materialize immediately;
 - PTY and API-key descriptors follow the same isolation policy.
-
