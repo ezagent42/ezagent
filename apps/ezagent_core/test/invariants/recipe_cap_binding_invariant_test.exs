@@ -46,11 +46,13 @@ defmodule EzagentCore.Invariants.RecipeCapBindingInvariantTest do
     refute materialize =~ "bind_recipe_caps"
 
     spawn = definition_source(@materializer, :spawn_bound_agent, 8)
-    assert ordered?(spawn, "spawn_agent", "bind_recipe_caps")
-    assert ordered?(spawn, "bind_recipe_caps", "RecipeCapBinding.sync_live")
-    assert ordered?(spawn, "RecipeCapBinding.sync_live", "join_or_cleanup")
+    assert ordered?(spawn, "spawn_agent", "finish_spawned_agent")
     assert spawn =~ "fresh_receipt"
     assert spawn =~ "rollback_failed_fresh"
+
+    finish = definition_source(@materializer, :finish_spawned_agent, 8)
+    assert ordered?(finish, "bind_recipe_caps", "RecipeCapBinding.sync_live")
+    assert ordered?(finish, "RecipeCapBinding.sync_live", "join_or_cleanup")
 
     compensate = definition_source(@materializer, :rollback_failed_fresh, 5)
     assert compensate =~ "RecipeMaterializer.rollback_fresh_agent"

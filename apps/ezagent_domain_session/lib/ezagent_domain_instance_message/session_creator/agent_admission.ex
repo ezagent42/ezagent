@@ -661,7 +661,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
       )
 
     caps =
-      if same_uri?(owner, Ezagent.Entity.User.admin_uri()) do
+      if Ezagent.Identity.admin?(owner) do
         case Ezagent.Cap.issue_for_action({:admin, owner}, owner, target) do
           {:ok, cap} -> MapSet.put(MapSet.new(caps), cap)
           {:error, _reason} -> MapSet.new(caps)

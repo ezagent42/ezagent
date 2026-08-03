@@ -1,5 +1,7 @@
 %{
-  oversized_modules_gt_1500: 0,
+  # arch-cap-bump: +1 PR #1651 — World conversation admission handlers cross
+  #   the 1500-line threshold. 0→1.
+  oversized_modules_gt_1500: 1,
   # #25 Phase-3 burn-down (ratchets DOWN toward 0):
   #   PR-3N: 9 → 8 (extracted ExternalMirror.Codec, external_mirror.ex 1004 → 936)
   #   PR-3O: 8 → 7 (extracted ExternalMirrorWorker.SendKey, worker 1010 → 963)
@@ -132,7 +134,9 @@
   #   >1000 as the eleventh oversized module. ACCEPTED documented debt. Burn-down:
   #   fold the read-only `IdentityAdmin` action-handler block (second module in this
   #   file) into a sibling once its callers migrate → identity.ex back under 1000. 10→11.
-  oversized_modules_gt_1000: 11,
+  # arch-cap-bump: +3 PR #1651 — credential admission adds its coordinator and
+  #   expands DefinitionAgents and ConversationData beyond 1000 lines. 11→14.
+  oversized_modules_gt_1000: 14,
   # arch-cap-bump: +1 #160 — cc_agent Template Class adds the `credential_status/2`
   #   enum adapter (the CredentialAdapter optional callback that maps the cc probe's
   #   File.exists?/expiresAt result into the normalized status enum for the
@@ -150,7 +154,9 @@
   #   single-sourced (NOT forked into the shim): `instantiate_for_flavor/4`
   #   (flavor-parameterized instantiate body) + `validate_after_class/1` (the
   #   class-agnostic validation checks). 52→54.
-  def_count_cc_agent: 54,
+  # arch-cap-bump: +1 PR #1651 — cc.agent declares its operator credential
+  #   connection as an optional CredentialAdapter callback. 54→55.
+  def_count_cc_agent: 55,
   def_count_orchestrator_tools: 35,
   # arch-cap-bump: PR #783 split steps 5-8 into `ensure_orchestrator_and_finalize/6`
   #   so the step-4.5 orchestrator pre-store can fail-fast ahead of the readiness
@@ -165,7 +171,9 @@
   #   imperative. Chain C was authored against base bf5e717b (28 heads → 33); on
   #   rebase onto #1294's create-decouple (which added one net head to this module,
   #   28→29 absorbing the prior 29-cap headroom), the stack measures 29→34. 29→34.
-  def_count_session_creator: 34,
+  # arch-cap-bump: +1 PR #1651 — session creation records a durable socialware
+  #   install obligation after the decoupled create path. 34→35.
+  def_count_session_creator: 35,
   # arch-cap-bump: #154 genesis collapse — the admin-entity trust root added
   #   `admin_genesis_cap/0` + `admin_genesis_granter/0` (Stage 1) and predicate-A's
   #   `granted_by_entity?/2` clauses + `admin_invariant?/2` clauses + `same_uri?/2`
@@ -488,7 +496,10 @@
   #   login` before a bridge thread can exist. Genuine new product surface (not
   #   extractable duplication — the branch is codex-specific; cc_agent.ex is
   #   unchanged at 1005). Measured 1851→1909.
-  cc_codex_template_class_combined_loc: 1909,
+  # arch-cap-bump: +6 PR #1651 — cc/codex Template Classes declare the optional
+  #   PTY credential-connection callback, including their delegating variants.
+  #   1909→1915.
+  cc_codex_template_class_combined_loc: 1915,
   # P3 (resource-unification, SPEC §10 OI-3): the population-3 outside-core
   # callers (agent_bridge token registry, identity smtp_config, feishu app-cred +
   # inbox + plugin config, python log) migrated behind the `UriQuery` seam

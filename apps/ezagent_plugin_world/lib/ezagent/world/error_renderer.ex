@@ -53,15 +53,16 @@ defmodule Ezagent.World.ErrorRenderer do
   def render(code, opts) when is_map(code) and is_map_key(code, :code) do
     user_can_fix = Keyword.get(opts, :user_can_fix, false)
     fix_owner_name = Keyword.get(opts, :fix_owner_display_name)
+    message = Map.fetch!(code, :message)
 
     fix_link =
-      fix_path_to_url(code.message.fix_path, Keyword.get(opts, :fix_target_uri))
+      fix_path_to_url(Map.get(message, :fix_path), Keyword.get(opts, :fix_target_uri))
 
     cond do
       user_can_fix and is_binary(fix_link) ->
         layer1_card(code, fix_link)
 
-      code.message.fix_owner != nil ->
+      Map.get(message, :fix_owner) != nil ->
         layer2_card(code, fix_owner_name)
 
       true ->
@@ -70,10 +71,12 @@ defmodule Ezagent.World.ErrorRenderer do
   end
 
   defp layer1_card(code, fix_link) do
+    message = Map.fetch!(code, :message)
+
     %{
       layer: 1,
-      what: code.message.what,
-      impact: code.message.impact,
+      what: Map.fetch!(message, :what),
+      impact: Map.fetch!(message, :impact),
       fix_link: fix_link,
       fix_owner_name: nil,
       notify_action: nil,
@@ -82,10 +85,12 @@ defmodule Ezagent.World.ErrorRenderer do
   end
 
   defp layer2_card(code, fix_owner_name) do
+    message = Map.fetch!(code, :message)
+
     %{
       layer: 2,
-      what: code.message.what,
-      impact: code.message.impact,
+      what: Map.fetch!(message, :what),
+      impact: Map.fetch!(message, :impact),
       fix_link: nil,
       fix_owner_name: fix_owner_name,
       notify_action: %{
@@ -93,8 +98,8 @@ defmodule Ezagent.World.ErrorRenderer do
         args: %{
           type: "error_fix_request",
           body: %{
-            error_code: code.code,
-            what: code.message.what
+            error_code: Map.fetch!(code, :code),
+            what: Map.fetch!(message, :what)
           }
         }
       },
@@ -104,11 +109,12 @@ defmodule Ezagent.World.ErrorRenderer do
 
   defp layer3_fallback(code, opts) do
     issue_id = register_issue(code, opts)
+    message = Map.fetch!(code, :message)
 
     %{
       layer: 3,
-      what: code.message.what,
-      impact: code.message.impact,
+      what: Map.fetch!(message, :what),
+      impact: Map.fetch!(message, :impact),
       fix_link: nil,
       fix_owner_name: nil,
       notify_action: nil,
@@ -117,7 +123,7 @@ defmodule Ezagent.World.ErrorRenderer do
   end
 
   defp register_issue(code_or_nil, opts) do
-    code_str = if code_or_nil, do: code_or_nil.code, else: "unregistered"
+    code_str = if code_or_nil, do: Map.fetch!(code_or_nil, :code), else: "unregistered"
 
     case Keyword.get(opts, :issue_ref) do
       ref when is_binary(ref) and ref != "" ->

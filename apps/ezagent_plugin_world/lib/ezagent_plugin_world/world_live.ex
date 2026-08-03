@@ -1027,18 +1027,20 @@ defmodule EzagentPluginWorld.WorldLive do
   end
 
   defp api_key_admission_for(socket, %URI{} = agent_uri, provider) do
-    with %URI{} = session_uri <- socket.assigns[:current_session_uri],
-         true <- URI.to_string(session_uri) == Map.get(socket.assigns.world_state, "session_uri"),
+    assigns = Map.fetch!(socket, :assigns)
+
+    with %URI{} = session_uri <- Map.get(assigns, :current_session_uri),
+         true <- URI.to_string(session_uri) == get_in(assigns, [:world_state, "session_uri"]),
          admission when not is_nil(admission) <-
            Enum.find(AgentAdmission.list(session_uri), fn admission ->
-             admission.provisional_agent_uri == URI.to_string(agent_uri)
+             Map.get(admission, :provisional_agent_uri) == URI.to_string(agent_uri)
            end),
          true <- api_key_admission_matches?(session_uri, agent_uri, provider, admission) do
       {:ok,
        %{
          session_uri: session_uri,
-         role_name: admission.role_name,
-         attempt_id: admission.attempt_id,
+         role_name: Map.fetch!(admission, :role_name),
+         attempt_id: Map.fetch!(admission, :attempt_id),
          candidate_uri: agent_uri
        }}
     else
@@ -1077,7 +1079,7 @@ defmodule EzagentPluginWorld.WorldLive do
   def api_key_admission_matches?(_session_uri, _candidate_uri, _provider, _admission), do: false
 
   defp refresh_admission_conversation(socket, %URI{} = session_uri) do
-    layout = socket.assigns.world_state["layout"]
+    layout = socket |> Map.fetch!(:assigns) |> get_in([:world_state, "layout"])
 
     state =
       session_uri

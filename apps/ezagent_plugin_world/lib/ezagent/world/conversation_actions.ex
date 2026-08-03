@@ -212,7 +212,7 @@ defmodule Ezagent.World.ConversationActions do
 
   defp with_current_session(socket, sid, fun) do
     with_session(socket, sid, fn session_uri ->
-      case socket.assigns[:current_session_uri] do
+      case socket |> Map.fetch!(:assigns) |> Map.get(:current_session_uri) do
         %URI{} = current_session_uri ->
           if same_uri?(current_session_uri, session_uri) do
             fun.(session_uri)
@@ -227,7 +227,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp begin_agent_admission(socket, %URI{} = session_uri, role_name) do
-    caller = socket.assigns.current_entity_uri
+    caller = socket |> Map.fetch!(:assigns) |> Map.fetch!(:current_entity_uri)
     caps = Ezagent.World.PresenterCaps.load(socket)
 
     case AgentAdmission.begin(session_uri, role_name, caller, caps) do
@@ -246,7 +246,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp complete_agent_admission(socket, %URI{} = session_uri, role_name, attempt_id) do
-    caller = socket.assigns.current_entity_uri
+    caller = socket |> Map.fetch!(:assigns) |> Map.fetch!(:current_entity_uri)
     caps = Ezagent.World.PresenterCaps.load(socket)
 
     case AgentAdmission.complete(session_uri, role_name, attempt_id, {caller, caps}) do
@@ -263,7 +263,7 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp cancel_agent_admission(socket, %URI{} = session_uri, role_name, attempt_id) do
-    caller = socket.assigns.current_entity_uri
+    caller = socket |> Map.fetch!(:assigns) |> Map.fetch!(:current_entity_uri)
     caps = Ezagent.World.PresenterCaps.load(socket)
 
     case AgentAdmission.cancel(session_uri, role_name, attempt_id, {caller, caps}) do
@@ -279,7 +279,7 @@ defmodule Ezagent.World.ConversationActions do
   defp pty_admission?(_admission), do: false
 
   defp switch_to_admission_pty(socket, %URI{} = session_uri, admission) do
-    with uri when is_binary(uri) <- admission.provisional_agent_uri,
+    with uri when is_binary(uri) <- Map.get(admission, :provisional_agent_uri),
          {:ok, candidate_uri} <- parse_agent_uri(uri),
          true <- current_candidate?(session_uri, admission, candidate_uri) do
       switch_to_pty(socket, session_uri, URI.to_string(candidate_uri))
@@ -291,11 +291,13 @@ defmodule Ezagent.World.ConversationActions do
 
   defp current_candidate?(session_uri, admission, %URI{} = candidate_uri) do
     candidate = URI.to_string(candidate_uri)
+    role_name = Map.fetch!(admission, :role_name)
+    attempt_id = Map.fetch!(admission, :attempt_id)
 
     Enum.any?(AgentAdmission.list(session_uri), fn current ->
-      current.role_name == admission.role_name and
-        current.attempt_id == admission.attempt_id and
-        current.provisional_agent_uri == candidate
+      Map.fetch!(current, :role_name) == role_name and
+        Map.fetch!(current, :attempt_id) == attempt_id and
+        Map.get(current, :provisional_agent_uri) == candidate
     end)
   end
 
@@ -849,8 +851,8 @@ defmodule Ezagent.World.ConversationActions do
       same_uri?(member_uri, agent_uri)
     end) or
       Enum.any?(AgentAdmission.list(session_uri), fn admission ->
-        admission.status in [:authenticating, :materializing] and
-          admission.provisional_agent_uri == agent_key
+        Map.fetch!(admission, :status) in [:authenticating, :materializing] and
+          Map.get(admission, :provisional_agent_uri) == agent_key
       end)
   end
 

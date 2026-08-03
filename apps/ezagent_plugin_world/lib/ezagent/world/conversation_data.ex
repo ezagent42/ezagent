@@ -166,13 +166,13 @@ defmodule Ezagent.World.ConversationData do
 
   defp admission_row(admission) do
     %{
-      "role_name" => admission.role_name,
-      "flavor" => admission.flavor,
-      "status" => Atom.to_string(admission.status),
-      "attempt_id" => admission.attempt_id,
-      "provisional_agent_uri" => admission.provisional_agent_uri,
-      "failure_code" => failure_code(admission.failure_code),
-      "connection" => connection_descriptor(admission.connection)
+      "role_name" => Map.fetch!(admission, :role_name),
+      "flavor" => Map.fetch!(admission, :flavor),
+      "status" => admission |> Map.fetch!(:status) |> Atom.to_string(),
+      "attempt_id" => Map.fetch!(admission, :attempt_id),
+      "provisional_agent_uri" => Map.get(admission, :provisional_agent_uri),
+      "failure_code" => failure_code(Map.get(admission, :failure_code)),
+      "connection" => admission |> Map.fetch!(:connection) |> connection_descriptor()
     }
   end
 
