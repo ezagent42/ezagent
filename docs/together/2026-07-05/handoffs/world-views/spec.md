@@ -1,6 +1,6 @@
 # Dev Spec — world 通用消费 SessionViewRegistry
 
-> Branch: `feat/sw-world-views` · Baseline: `bf5e03e9` (skill `project-discussion-esr-ng`)
+> Branch: `feat/sw-world-views` · Baseline: `bf5e03e9` (skill `project-discussion-ezagent`)
 > Owner tier: plugin (`ezagent_plugin_world`) + registry owner (`ezagent_domain_ui`, dep only)
 > 关联缺口: ezagent-scout Q8 T15(b)（world 注册了 view 但不消费）+ 更广的 registry 消费
 

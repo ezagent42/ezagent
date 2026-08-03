@@ -58,7 +58,7 @@ git status --short
 
 1. repo `AGENTS.md`；
 2. skills：`brainstorming`、`executing-plans`、`test-driven-development`、
-   `ezagent-developer`、`project-discussion-esr-ng`、`elixir-phoenix-helper`、
+   `ezagent-developer`、`project-discussion-ezagent`、`elixir-phoenix-helper`、
    `dev-together`、`verification-before-completion`、`commit-work`；
 3. `docs/superpowers/specs/2026-07-24-git-provider-v1-plan-e-simplified-execution-amendment.md`；
 4. `docs/superpowers/plans/2026-07-24-git-provider-v1-plan-e-simplified-implementation.md`

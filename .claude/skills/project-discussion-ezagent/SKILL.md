@@ -1,5 +1,5 @@
 ---
-name: project-discussion-esr-ng
+name: project-discussion-ezagent
 description: >-
   项目知识问答 skill（ezagent / esr-ng —— 25-app Elixir/OTP 消息路由 umbrella）。提供有实证支撑的项目知识——
   每个回答都附带 file:line 引用或 mix test 输出，而非凭记忆。覆盖：三层架构（core/domain/plugin）、

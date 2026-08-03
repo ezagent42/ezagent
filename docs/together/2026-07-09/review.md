@@ -13,7 +13,7 @@
 | #1277 | hello v2 seed page + rebuild guide + domain fixes（web_anon_access / manifest nil requires） | zhaomato；官网 hello 重建工具/指南 |
 | #1294 (`2d47475b2`) | create_session 根因（rev6 契约恢复 + cc PTY 早产修复 + A2 静态 gate） | gaga；本晨 rebase+绿+合入，**canary 实测 orchestrator 回话 = 唯余项** |
 | #1293 | #1255 三命名裁定（arch.scan allowlist 转正 + 理由 + return 文档） | jjkysy；纯注释无逻辑，07-10 02:08 合入 |
-| #1292 | 项目讨论 skill `project-discussion-esr-ng` 全量 re-bootstrap | jjkysy；skill markdown |
+| #1292 | 项目讨论 skill `project-discussion-ezagent` 全量 re-bootstrap | jjkysy；skill markdown |
 
 ## §2 开发效能（profile 更新据此）
 
@@ -41,7 +41,7 @@
 | 官网飞轮 handoff | ruihuachen-designer | **merged #1204**（走直接 PR） | 价值链梳理 + 可点击 demo + handoffs + scenarios（07-09/handoffs/ 即其产出） |
 | canary 走查 | zyli-developer | **无 return 归档 → 确认/结转** | 07-10 结转（zyli 主体在 #1276；走查 return 未归档） |
 | #1293 #1255 三命名裁定 | **jjkysy** | **merged**（07-10 02:08 coordinator admin-merge） | arch.scan.ex 三条 allowlist 从"sanctioned-pending-review"清成"已评审转正"+ 逐条理由 + **return 文档 `1255-naming-adjudication.md`**；纯注释无逻辑改动 |
-| #1292 项目讨论 skill re-bootstrap | **jjkysy** | **merged**（07-10 02:08） | `project-discussion-esr-ng` skill 全量重建到 main（2 文件 skill markdown） |
+| #1292 项目讨论 skill re-bootstrap | **jjkysy** | **merged**（07-10 02:08） | `project-discussion-ezagent` skill 全量重建到 main（2 文件 skill markdown） |
 
 > **台账 vs 实际合并的缺口**：zhaomato #1277 / ruihua #1204 走**直接 PR review→merge**，没进 returns/ 台账；jjkysy #1293 有 return 文档但在**未合并的 PR 分支上**（当时未落 main，故初版 review 漏记）——都已据 GitHub 更正。教训：review 对账必须**同时**扫 returns/ **与当日/隔夜 GitHub 合并 + open PR 的 returns/**，三源并核。仅剩 **zyli canary 走查**无归档无对应 PR → 真结转，07-10 确认。
 

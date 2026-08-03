@@ -6,7 +6,7 @@
 > E2-B 前不得派 E3。
 
 > **For agentic workers:** 每个切片必须先加载并遵循 `executing-plans`、
-> `test-driven-development`、`ezagent-developer`、`project-discussion-esr-ng`、
+> `test-driven-development`、`ezagent-developer`、`project-discussion-ezagent`、
 > `elixir-phoenix-helper`、`dev-together` 与 `verification-before-completion`。
 > Worker 只实施 handoff 明确分配的切片；不得自行扩展跨层依赖、CapBAC 豁免或
 > canary 权限。
