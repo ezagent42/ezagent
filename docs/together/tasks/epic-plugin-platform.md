@@ -25,7 +25,7 @@
 | A4-1 删 Mount reconcile 重发 trap | #1611 | ✅ 已合 main `fb35003cf` |
 | config role_plugins 挪 config.exs | #1612 | ✅ 已合 main `f7e99d82f` |
 | **A4-2** `:members` roster → 纯投影(#192) | **#1655**(接替 #1620) | ✅ **已合 main** `da8a26bc1`(2026-08-03);**(甲) 由 Allen 落盘**(return `ecc31f8f0`),P4 勿再排期;follow-ups F1/F3 记下方清单,F2 = **issue #1694** |
-| **A5** 匿名分享(link_anon) | #1619 | 🔵 **实现完成**:后端三片 + 19 测 + 真浏览器 e2e 截图(S1 可见/S2 隔离/S4 关即消失)+ CI 全绿(head `0fcfcf368`);剩 dev-together return |
+| **A5** 匿名分享(link_anon) | #1619 | ✅ **已转 ready for review**(2026-08-03):后端三片 + 21 条判别性测试 + 真浏览器 e2e 三步截图(含真卡片)+ **对抗复审四条实锤已修** + dev-together return 入库;两轮 CI 全绿 `dc5d9b47b`/`bdeaad1c1` |
 
 **A 系剩余两件的现状(2026-07-31)**
 
@@ -73,11 +73,18 @@ P1(roster 派生改读 `effective_caps`,把在途的钥匙算进来)/ P1.5(#1665
 | 条件 | 满足? |
 |---|---|
 | 原语 1-7 齐备且已合 main | ✅ **全部已合**(#1655 已于 2026-08-03 合入) |
-| 原语 8(匿名只读)可用 —— kanban"分享给外部看板"要它 | 🔵 **A5 实现完成、e2e 已证、CI 绿**;#1619 合入即满足 |
+| 原语 8(匿名只读)可用 —— kanban"分享给外部看板"要它 | ✅ **A5 已 ready、e2e 已证、CI 绿**;#1619 合入即满足 |
 | kanban 策略层(`board_provision`,16 处 kanban 字面)搬进插件 | 这是 **#1474 自己要做的事**,不是前置 |
 | `:read`/`:operate` 档位怎么表达(删表前置) | 不挡 #1474 —— 它继续用现名 API;**只挡"删 MountRow 表"那一步** |
 
 **结论:合掉 #1655 + 做完 A5,Group B 即够格开工。** 在那之前不动 #1474。
+
+**2026-08-03 状态**:#1655 **已合 main** `da8a26bc1`;A5 #1619 **已转 ready、两轮 CI 全绿**。**A 线八条原语就此闭合 —— #1619 合入即可开 Group B。**
+
+**A5 带出的、Group B 要接着面对的三条**(均写在 A5 的 return 里,不阻塞 #1619):
+1. **匿名页渲染成色** —— 当前是 `<pre>` 原始 JSON(开发级占位,证明数据带钥匙走通到浏览器);产品级应渲染插件自己的组件(world 已有 `plugin-page-renderers` manifest 机制)。**判属 Group B / socialware 协议**,请 lead 确认切分。
+2. **钥匙的 granted_by = canonical admin 而非分享属主** —— 与 #154「granter = data_owner」偏离,且不落 `MountRow` = mount 侧反查/unmount 看不到这类授权(第二真相源)。被基建逼出来的(会话持钥版已实证驳回),但语义该 Allen 定。**这条直接关系 Group B 怎么消费原语 7**。
+3. **框架无动作级读写分类** —— action 只有 `modes: [:call|:cast]`。所以只读保证是**档位级**(`access`),不是「actions 列表里不会混进写动作」。若要后者需 ActionSet 契约层新增声明 = 架构决策。
 
 ---
 
