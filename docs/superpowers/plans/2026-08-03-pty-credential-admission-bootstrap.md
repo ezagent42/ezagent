@@ -421,7 +421,7 @@ socialware phases, then one source-scanning architecture test exceeded ExUnit's
 60-second budget under full-suite load. That test passed alone in 15.5 seconds,
 and the exact `gate.arch` file set passed 757 tests with `--timeout 120000`.
 
-- [ ] **Step 4: Commit plan status and push**
+- [x] **Step 4: Commit plan status and push**
 
 ```bash
 git add docs/superpowers/plans/2026-08-03-pty-credential-admission-bootstrap.md
@@ -430,7 +430,7 @@ git commit -m "docs(session): record PTY bootstrap verification"
 git push origin HEAD:refs/heads/docs/hello-llm-connection-design
 ```
 
-- [ ] **Step 5: Restart the isolated service and verify the manual-test entry**
+- [x] **Step 5: Restart the isolated service and verify the manual-test entry**
 
 Restart only the process whose cwd is this worktree, preserving:
 
