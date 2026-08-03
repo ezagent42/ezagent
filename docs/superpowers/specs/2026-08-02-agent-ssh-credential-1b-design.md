@@ -253,9 +253,26 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 
 > **2026-08-03 重写 —— 本节此前整段作废。** 原文说「撤销 agent 的 cap → **下次 spawn** 生效，已在跑的 agent 手里的 key 文件不受影响」，并把这一点论证成「B2′ 的固有属性，不是本实现的缺陷」。
 >
-> **Allen 判定它值得修**，`#1693`（`ab12c63da`，2026-08-03）把撤销做成了**即时**的：在 `Ezagent.ActionSet.IdentityAdmin` 的两个 cap 移除 handler 上挂钩，被移除的 cap 恰为 `UserSshIdentity` 的 `:read_ssh_key` 且持有者是 agent 时，追加 `{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [uri]}`，caps 变更提交后立即擦除。
+> **Allen 判定它值得修**，`#1693`（`ab12c63da`，2026-08-03）把撤销做成了**即时**的：在 `Ezagent.ActionSet.IdentityAdmin` 的两个 cap 移除 handler 上挂钩，被移除的 cap 恰为 `UserSshIdentity` 的 `:read_ssh_key` 且持有者是 agent 时，追加 `{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [uri]}`。
 >
 > **`#1693` 未改动任何 `docs/superpowers` 文件**，所以本节曾与 main 的实际行为相反达数小时 —— 正是本条线反复出现的「结论过期的文档只会误导下一个读者」那一类。
+
+> **2026-08-03 三次订正 —— 上一段的排序表述反了，附一个未决架构问题。** codex 对 B2′ 收尾 PR（#1695）的独立复审指出，上一版这里写的「caps 变更提交后立即擦除」把顺序说反了。真实顺序：
+>
+> 1. `{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [uri]}` 是**同步 MFA effect**，随 handler 返回的其它 effect 一起，在 `Ezagent.Kind.Runtime.handle_dispatch` 内**同步执行**（bucketing 在 `apps/ezagent_actor/lib/ezagent/behavior/effects.ex:113-114`，实际 `apply(m, f, args)` 调用在同文件 `:248-263`）。
+> 2. caps 变更的**持久提交**（`Ezagent.Kind.Snapshot.commit/4`，经 `commit_and_notify/3`）发生在**之后** —— `apps/ezagent_actor/lib/ezagent/kind/server.ex:939-947` 的 `handle_call({:ezagent_dispatch, ...})` 先拿到 `handle_dispatch/4` 的完整返回（此时 wipe 已经跑完），才调用 `commit_and_notify/3`。
+>
+> 也就是说：**擦除发生在持久提交之前**，不是「提交后」。
+>
+> **失败场景**：reconcile 决定移除 `read_ssh_key` → wipe MFA 已经把盘上的私钥删了 → 随后 `commit_and_notify/3` 失败（例如快照写入抖动）→ `server.ex:959-971` 的 `{:error, reason}` 分支保留**旧的 in-memory 状态**（`new_slice_state` 不生效，只把失败原因回给调用方）⇒ **agent 仍然持有这条 cap（授权状态回滚了），但它的 key 文件已经被擦掉** —— 进行中的 git 操作会被打断。现有测试都是直接调用 handler/MFA，没有覆盖"提交失败"这个回滚边界。
+>
+> **失败方向是安全的，不阻塞**：
+> - key 每次 spawn 都从 User 的 slice 重新物化（§6.1「无状态丢失」），这个 agent 的**下一次 spawn** 会自愈 —— 不需要人工介入，代价只是这一次进行中的操作被打断。
+> - 反方向（提交成功、但 wipe 没跑或失败，盘上留着一把不该在的 key）不会发生：`{:effect, ...}` 的执行包了 `try/rescue`，异常只会被收集进 `errors` 列表，**不会让 dispatch 整体失败**（`effects.ex:251-263`）——即 wipe 本身失败也不会阻断 caps 变更。
+>
+> **这不是本轮（B2′ 收尾）引入的问题** —— `#1693`（`ab12c63da`）已经在 `main` 上，且是本分支的 merge-base（早于本分支分出），用的是**完全相同**的 `{:effect, {GitIdentityRuntime, :wipe}, [uri]}` 形状（`maybe_add_git_identity_wipe/3`）。本轮 §6.2.1 新增的 `maybe_add_recipe_binding_git_identity_wipe/4` 只是复用了这个既有形状，没有让排序问题变得更差，也没有变好。
+>
+> **需 Allen 裁决的架构问题**：当前 effect 文法**没有 post-commit 的 MFA 通道**。`Kind.Server` 唯一会在持久提交**之后**才运行的桶是 `dispatches_after_commit`（effect 类型 `{:dispatch_after_commit, %Ezagent.Cmd{}}` 定义在 `apps/ezagent_actor/lib/ezagent/behavior/effects.ex:19`，收集见同文件 `:124-125,171-176`，resolve 见 `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:172-178`，实际执行见 `kind/server.ex:955` 的 `DeferredDispatch.enqueue/1`）——它只收经 `Router.dispatch/1` 路由的 `%Ezagent.Cmd{}`，不收任意 MFA。要把 wipe 挪到提交之后跑，需要扩展 effect 文法（例如新增一个 post-commit MFA effect 类型），这是架构改动，按 CLAUDE.md「实施期发现架构问题 → 暂停 → 讨论 → Allen 改 → 继续」处理。**本轮不新增 effect 类型，也不把 wipe 改写成 `:dispatch`/`:dispatch_after_commit` 绕过去** —— `:dispatch_after_commit` 的目标是经 `Router.dispatch/1` 路由的一次 Kind 间 invocation，`GitIdentityRuntime.wipe/1` 是本地文件系统操作，不是一次 dispatch，形状对不上；硬套会悄悄破坏"post-commit 只跑 dispatch"这条今天成立的假设，引入新的语义歧义，代价比维持现状更大。这条留给 Allen 裁决是否值得为此扩文法；本节先如实记录现状。
 
 | 动作 | 何时生效 | 机制 |
 |---|---|---|
@@ -278,7 +295,7 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 | 路径 | 今天可达？ | 处置 | 理由 |
 |---|---|---|---|
 | `:sync_recipe_binding`（`identity.ex:694`） | ❌ 不可达 | **已挂 hook（防御性）** | 它是**整集替换**（`set_caps_effect(reconciled.caps)`），有真实的生产触发路径（`RecipeCapBinding.sync_live/1` ← `definition_agents.ex:452 / 506 / 789`），只是今天流经它的 cap 集不会丢掉这条 cap。**判据与"哪个内部机制改的"解耦**，所以将来真出现这样的路径时它自动成立 |
-| `EntityCaps.persist/2` | ❌ 不可达 | **不挂，记 follow-up** | 全仓 grep **零生产调用点**（只有 `identity.ex:634` 的文档注释提到）。**连触发形状都不存在**，挂上去无从写出诚实的判据，也无从验证 |
+| `EntityCaps.persist/2` | ❌ 不可达 | **不挂，记 follow-up** | 全仓 grep **零生产调用点**（只有 `identity.ex:634` 的文档注释提到）。**连触发形状都不存在**——不是"写不出诚实的判据"（`EntityCaps.persist/2` 本身仍然可调用、可测试，判据一样能写、能测）；不挂钩的真正理由是**零部署触发点**：没有任何生产路径会调用它，此刻挂钩没有实际意义，等它真有调用点再挂 |
 
 **分级的那条线是「有没有真实的触发形状」**，不是"可不可达"——两条都不可达。前者有活的调用链、只是数据流今天不会走到；后者连调用链都没有。按项目安全姿态（不内联引入 caps 正确性以外的安全代码），后者等它真有调用点再说。
 
