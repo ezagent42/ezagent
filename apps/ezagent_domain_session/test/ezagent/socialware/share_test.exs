@@ -124,12 +124,20 @@ defmodule Ezagent.Socialware.ShareTest do
              Share.enable(target, owner, Target, [:get_tree])
   end
 
-  test "link_anon is fail-closed until wired (A-series follow-up composing A4)" do
+  # A5: `link_anon` is no longer refused outright — it is refused WITHOUT the
+  # dedicated public session that gives an anon visitor somewhere to land. The
+  # persistence layer stays fail-closed on its own so a `link_anon` row can never
+  # exist in a half-working state; provisioning that session is orchestration
+  # (`Ezagent.Socialware.AnonShare`), which passes `:anon_session_uri` in.
+  test "link_anon without a provisioned public session is fail-closed" do
     owner = user_uri("la-owner")
     target = live_agent("la-board", owner, [Target])
 
-    assert {:error, :anon_share_not_yet_supported} =
+    assert {:error, :anon_share_requires_session} =
              Share.enable(target, owner, Target, [:get_tree], visibility: :link_anon)
+
+    # The row must NOT exist — a refused enable leaves no half-written state.
+    refute Ezagent.Socialware.ShareSetting.get(target)
 
     assert {:ok, _} = Share.enable(target, owner, Target, [:get_tree], visibility: :link_login)
   end

@@ -433,7 +433,11 @@ defmodule Ezagent.Socialware.SessionReadsExternalFeedTest do
         messages: MessageStore.committed_external_visible(session, 100),
         page: Surface.tree_for_version(live_surface, 1),
         shell: nil,
-        shell_css: nil
+        shell_css: nil,
+        # A5 — `resources` is a UNIFORM key on every external snapshot; a session
+        # with no anon-share binding is exactly `[]` (see
+        # external_feed_anon_share_test.exs for the populated/gated cases).
+        resources: []
       }
 
       assert {:ok, snapshot} = ExternalFeed.snapshot(session, owner())
