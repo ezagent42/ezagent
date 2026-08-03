@@ -4,7 +4,7 @@
 
 **Goal:** Let a Hello session admit its declared LLM only after the creator has completed and passed that flavor's credential configuration, while keeping the session usable with `front-desk` from the first render.
 
-**Architecture:** Extend a socialware agent role declaration with an explicit credential-admission policy. The existing post-create socialware-install transaction continues to create ordinary roles immediately, but records an admission candidate for a gated LLM role when no reusable credential source is valid. A candidate is a fresh, session-local agent with a durable lifecycle record but no `session.join` edge. Its flavor-owned connection surface (PTY or secret configuration) writes credentials; the domain re-probes credential status, persists the sanctioned user/workspace/flavor source pointer, then binds recipe/caps and joins that same candidate. World renders the durable admission record and dispatches only authorized start/complete/cancel actions.
+**Architecture:** Extend a socialware agent role declaration with credential admission, enforced by the Session domain for every flavor that declares a credential connection. The existing post-create socialware-install transaction continues to create credential-free roles immediately, but always records an admission candidate for a credential-requiring role. A candidate is a fresh, session-local agent with a durable lifecycle record but no `session.join` edge. Its flavor-owned connection surface (PTY or secret configuration) writes credentials; the domain re-probes credential status, then binds recipe/caps and joins that same candidate without registering it as a reusable credential source. World renders the durable admission record and dispatches only authorized start/complete/cancel actions.
 
 **Tech Stack:** Elixir/OTP, Phoenix LiveView, Ecto, TypeScript/React, Vitest, Playwright, Mix architecture gates.
 
@@ -12,9 +12,9 @@
 
 - Preserve the existing `create_session/3` invariant: it installs config and owner only; no agent creation, credential check, PTY operation, or login wait may run in that transaction.
 - The template/derived-template fixes `llm` flavor at creation time. No action may switch a live session's role flavor.
-- A role agent is always session-local and is never selected as a future session member. A validated user/workspace/flavor credential source is reusable by the existing credential cascade.
+- A role agent and its configured authentication are session-local. A new Session always requires a fresh connection and never resolves a prior user-default or workspace-shared credential source.
 - `session.join` remains the only membership admission action. Do not route the admission success path through `session.switch`; World must retain the `sessions.join` direct-action event shape that supplies layout state.
-- Do not copy credential files in World or in a session call site. Use the existing credential-source pointer and cascade, and use `Ezagent.Domain.Agent.read_credential_status/3` for validation.
+- Do not copy credential files in World or in a session call site. Configure credentials only through the provisional agent's flavor-owned connection surface, and use `Ezagent.Domain.Agent.read_credential_status/3` for validation. Session materialization must not resolve the existing credential-source pointer or cascade.
 - All World actions must be added to `Ezagent.World.DispatchContract`, checked at a server-side authorization boundary, and return a refreshed `world:state` / `members:update` projection.
 - Keep flavor details in flavor-owned adapter declarations. The core/session layer may consume a normalized connection descriptor but must not branch on `"codex"`, `"cc"`, or `"curl"`.
 
@@ -153,7 +153,7 @@
 
 - [ ] **Step 4: Implement candidate start, completion, and cleanup.**
 
-  `begin/4` creates a fresh role-shaped agent with the selected flavor and a creator manage cap, but deliberately omits `session.join` and normal credential-source gating. It records `:authenticating` only after the spawn receipt is durable. `complete/4` must call `Ezagent.Domain.Agent.read_credential_status/3` using the caller's authorized context; only `:authenticated` may set the user/workspace/flavor default source through the existing cap-checked `UserDefaultSource.set_via_dispatch/3`, then bind and join. `:missing`, `:expired`, `:unknown`, and `:n_a` are non-success states; the last one is valid only when the declared connection contract is `:not_required`.
+  `begin/4` creates a fresh role-shaped agent with the selected flavor and a creator manage cap, but deliberately omits `session.join` and credential-source resolution. It records `:authenticating` only after the spawn receipt is durable. `complete/4` must call `Ezagent.Domain.Agent.read_credential_status/3` using the caller's authorized context; only `:authenticated` may proceed to bind and join. It must not create or replace a user/workspace/flavor default source. `:missing`, `:expired`, `:unknown`, and `:n_a` are non-success states; the last one is valid only when the declared connection contract is `:not_required`.
 
   On every post-spawn failure, use the spawn receipt to compensate the provisional agent, write `:failed`, and preserve any pre-existing valid source pointer. Candidate cancellation and expiry use the same cleanup path and are idempotent.
 
@@ -298,7 +298,7 @@
 
 - [ ] **Step 1: Write failing Hello integration and browser tests.**
 
-  Cover a Hello session created with an LLM flavor requiring connection: `front-desk` is present; `llm` is absent; the message-list card names the template-selected connection; completing a mocked valid credential makes the *same provisional URI* the `llm` member; a second Hello session gets a new LLM URI but auto-admits via the validated source; a failed/cancelled attempt leaves no `llm` member. Retain the existing `world:dispatch` assertion for `sessions.join` and its layout payload.
+  Cover a Hello session created with an LLM flavor requiring connection: `front-desk` is present; `llm` is absent; the message-list card names the template-selected connection; completing a mocked valid credential makes the *same provisional URI* the `llm` member; a second Hello session gets a new LLM URI and a separate connection card even while an earlier credential source exists; a failed/cancelled attempt leaves no `llm` member. Retain the existing `world:dispatch` assertion for `sessions.join` and its layout payload.
 
   Run: `mise exec -- mix test apps/ezagent_plugin_hello/test/ezagent_plugin_hello/app_test.exs apps/ezagent_domain_session/test/ezagent/socialware/installation_test.exs`
 
@@ -367,6 +367,6 @@
 2. The session detail opens. `front-desk` is already a member; `llm` is shown as a connection card in the message list, not as a misleading active member.
 3. The user clicks the descriptor-derived action. A provisional session-local agent is created but has no `session.join` membership edge.
 4. Codex/Claude exposes the authorized PTY; API-backed flavors expose the secure key configuration path. The UI does not ask the user to understand PTYs or choose a flavor.
-5. On successful validation, the system stores/reuses the sanctioned credential source for that user/workspace/flavor, binds the role recipe/caps, and joins that same provisional URI as `llm`. The card disappears and the member list updates.
-6. A later Hello session creates a different `llm` agent URI and auto-admits it using the reusable source. It never reuses the earlier session's member agent.
+5. On successful validation, the system binds the role recipe/caps and joins that same provisional URI as `llm`. It does not register or replace a reusable credential source. The card disappears and the member list updates.
+6. A later Hello session creates a different `llm` agent URI and requires a new credential connection. It reuses neither the earlier member agent nor its authentication.
 7. On cancel, timeout, or failed validation, the candidate is cleaned up, `llm` remains absent, and the card gives a retry path. Existing valid credential sources remain untouched.
