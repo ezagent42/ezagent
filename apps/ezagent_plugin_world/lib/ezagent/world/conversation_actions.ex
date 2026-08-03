@@ -845,14 +845,14 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp pty_target_in_session?(%URI{} = session_uri, %URI{} = agent_uri) do
-    agent_key = URI.to_string(agent_uri)
+    agent_uri_str = URI.to_string(agent_uri)
 
     Enum.any?(Ezagent.Entity.Session.session_member_uris(session_uri), fn member_uri ->
       same_uri?(member_uri, agent_uri)
     end) or
       Enum.any?(AgentAdmission.list(session_uri), fn admission ->
         Map.fetch!(admission, :status) in [:authenticating, :materializing] and
-          Map.get(admission, :provisional_agent_uri) == agent_key
+          Map.get(admission, :provisional_agent_uri) == agent_uri_str
       end)
   end
 

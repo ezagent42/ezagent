@@ -1028,12 +1028,13 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp api_key_admission_for(socket, %URI{} = agent_uri, provider) do
     assigns = Map.fetch!(socket, :assigns)
+    agent_uri_str = URI.to_string(agent_uri)
 
     with %URI{} = session_uri <- Map.get(assigns, :current_session_uri),
          true <- URI.to_string(session_uri) == get_in(assigns, [:world_state, "session_uri"]),
          admission when not is_nil(admission) <-
            Enum.find(AgentAdmission.list(session_uri), fn admission ->
-             Map.get(admission, :provisional_agent_uri) == URI.to_string(agent_uri)
+             Map.get(admission, :provisional_agent_uri) == agent_uri_str
            end),
          true <- api_key_admission_matches?(session_uri, agent_uri, provider, admission) do
       {:ok,

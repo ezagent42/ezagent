@@ -410,11 +410,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
              actor_uri,
              declaration
            ) do
+      agent_uri_str = URI.to_string(agent_uri)
+
       authenticating =
         declaration
         |> admission_row(revision, connection, :authenticating)
         |> Map.put(:attempt_id, attempt_id)
-        |> Map.put(:provisional_agent_uri, URI.to_string(agent_uri))
+        |> Map.put(:provisional_agent_uri, agent_uri_str)
 
       case put_admission(session_uri, authenticating) do
         :ok ->
