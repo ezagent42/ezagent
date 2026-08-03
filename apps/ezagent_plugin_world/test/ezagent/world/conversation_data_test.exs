@@ -9,6 +9,24 @@ defmodule Ezagent.World.ConversationDataTest do
 
   alias Ezagent.World.ConversationData
 
+  test "ConversationMessages contains only the architecture-safe mention parser" do
+    assert Code.ensure_loaded?(Ezagent.World.ConversationMessages)
+
+    for {name, arity} <- [{:parse_mentions, 2}, {:parse_mentions, 3}] do
+      assert function_exported?(Ezagent.World.ConversationMessages, name, arity)
+    end
+
+    for {name, arity} <- [
+          {:load_older, 4},
+          {:build_message, 5},
+          {:rows, 3},
+          {:message_row, 2},
+          {:oldest_cursor_iso, 1}
+        ] do
+      refute function_exported?(Ezagent.World.ConversationMessages, name, arity)
+    end
+  end
+
   defp members do
     [
       %{"uri" => "entity://system/agent/codex-1", "display_name" => "Codex One"},
