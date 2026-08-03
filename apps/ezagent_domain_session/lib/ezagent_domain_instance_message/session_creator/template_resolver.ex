@@ -3,6 +3,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
   alias Ezagent.Entity.Session
   alias Ezagent.Entity.SessionTemplate
+  alias Ezagent.Provenance.DerivationEdges
   alias Ezagent.Socialware.DefinitionEditor
   alias Ezagent.TemplateTags
 
@@ -68,15 +69,25 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.TemplateResolver do
 
     case Map.get(wc, :session_template_uri) do
       %URI{} = recorded ->
-        with {:ok, _pid} <- Session.ensure_template_alive(recorded),
-             {:ok, content} <- Session.read_template_content(recorded) do
-          {:ok, recorded, content}
-        else
-          _ -> resolve_session_template!(template_name, workspace_uri)
-        end
+        resolve_exact_or_current(recorded, template_name, workspace_uri)
 
       _ ->
-        resolve_session_template!(template_name, workspace_uri)
+        case DerivationEdges.parent_for(session_uri, :parent_template) do
+          {:ok, recorded} ->
+            resolve_exact_or_current(recorded, template_name, workspace_uri)
+
+          :error ->
+            resolve_session_template!(template_name, workspace_uri)
+        end
+    end
+  end
+
+  defp resolve_exact_or_current(recorded, template_name, workspace_uri) do
+    with {:ok, _pid} <- Session.ensure_template_alive(recorded),
+         {:ok, content} <- Session.read_template_content(recorded) do
+      {:ok, recorded, content}
+    else
+      _ -> resolve_session_template!(template_name, workspace_uri)
     end
   end
 

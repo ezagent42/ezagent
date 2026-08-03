@@ -79,52 +79,55 @@ defmodule EzagentDomainInstanceMessage.Application do
     # coded `session://default/system/main` alive at boot to require setup migration in
     # a single PR. Dev / prod boot WITHOUT session://default/system/main; the wizard
     # populates it on first user visit.
-    children = [
-      # PR-9a (#53): the Agent + AgentTemplate DynamicSupervisors moved to
-      # `EzagentDomainAgent.Application` (frozen names — D1a). Only the Session
-      # supervisors remain in the session domain.
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.SessionSupervisor, strategy: :one_for_one},
-      # Phase 7 PR 38: supervisor for SessionTemplate Kinds. 0 children at
-      # boot, lazy spawn.
-      {DynamicSupervisor,
-       name: EzagentDomainInstanceMessage.SessionTemplateSupervisor, strategy: :one_for_one},
-      # Phase 6 PR 2: admin User spawn moved to EzagentDomainIdentity.Application
-      # (User Kind belongs to identity domain). Chat's start callback below
-      # still dispatches admin → join default Session in test env only.
+    children =
+      [
+        # PR-9a (#53): the Agent + AgentTemplate DynamicSupervisors moved to
+        # `EzagentDomainAgent.Application` (frozen names — D1a). Only the Session
+        # supervisors remain in the session domain.
+        {DynamicSupervisor,
+         name: EzagentDomainInstanceMessage.SessionSupervisor, strategy: :one_for_one},
+        # Phase 7 PR 38: supervisor for SessionTemplate Kinds. 0 children at
+        # boot, lazy spawn.
+        {DynamicSupervisor,
+         name: EzagentDomainInstanceMessage.SessionTemplateSupervisor, strategy: :one_for_one},
+        # Phase 6 PR 2: admin User spawn moved to EzagentDomainIdentity.Application
+        # (User Kind belongs to identity domain). Chat's start callback below
+        # still dispatches admin → join default Session in test env only.
 
-      # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` rev 3
-      # §8 + Decision Log #93 — fan out `Ezagent.Presence` diffs into
-      # per-session `:events` topics. Subscribes to
-      # `esr:session_membership:changes` (broadcast by
-      # `Ezagent.ActionSet.Session.broadcast_membership/2`) to maintain a
-      # reverse `user_uri → MapSet(session_uri)` index.
-      EzagentDomainInstanceMessage.PresenceFanout,
-      # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
-      # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
-      Ezagent.Agent.CredentialNotifier,
-      # Transport #53 Decision C — the per-orchestrator MCP executor
-      # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind): Registry keys
-      # it by orchestrator URI (cc reaches it by URI, no compile dep); the
-      # DynamicSupervisor owns the per-session processes.
-      {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
-      {DynamicSupervisor, name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one},
-      # send-echo-decouple (2026-07-08) — per-recipient message delivery runs
-      # OFF the Session Kind's hot path in an UNLINKED supervised Task, so one
-      # dead/slow member (e.g. a cold np-flavor agent whose `ensure_live` spawn
-      # blocks ~5s) never delays the sender echo, the pipeline, or other members.
-      # `Ezagent.ActionSet.Session.Delivery.deliver_async/5` enqueues into the
-      # DeliveryQueue (per-recipient FIFO, ONE in-flight job per key — codex
-      # HIGH-1 ordering fix), which runs each job as a Task under this
-      # supervisor. Supervisor first: the queue starts Tasks under it.
-      {Task.Supervisor, name: Ezagent.Session.DeliverySupervisor},
-      # rev6 / #912 — the post-create socialware-install transaction. Session
-      # creation is owner-only; agent role slots are materialized HERE, in a
-      # separate supervised transaction that can fail loudly without rolling
-      # the session back.
-      {Task.Supervisor, name: Ezagent.Session.SocialwareInstallSupervisor},
-      {Ezagent.Session.DeliveryQueue, []}
-    ]
+        # Presence SPEC `docs/superpowers/specs/2026-05-23-presence.md` rev 3
+        # §8 + Decision Log #93 — fan out `Ezagent.Presence` diffs into
+        # per-session `:events` topics. Subscribes to
+        # `esr:session_membership:changes` (broadcast by
+        # `Ezagent.ActionSet.Session.broadcast_membership/2`) to maintain a
+        # reverse `user_uri → MapSet(session_uri)` index.
+        EzagentDomainInstanceMessage.PresenceFanout,
+        # #17 PR-C2 — subscribes to the shared PTY auth-failure topic and notifies an
+        # agent's owner (creator_uri) to re-`/login`, instead of the silent mute.
+        Ezagent.Agent.CredentialNotifier,
+        # Transport #53 Decision C — the per-orchestrator MCP executor
+        # (`Ezagent.Session.SessionManager`, a GenServer NOT a Kind): Registry keys
+        # it by orchestrator URI (cc reaches it by URI, no compile dep); the
+        # DynamicSupervisor owns the per-session processes.
+        {Registry, keys: :unique, name: Ezagent.Session.SessionManagerRegistry},
+        {DynamicSupervisor,
+         name: Ezagent.Session.SessionManagerSupervisor, strategy: :one_for_one},
+        # send-echo-decouple (2026-07-08) — per-recipient message delivery runs
+        # OFF the Session Kind's hot path in an UNLINKED supervised Task, so one
+        # dead/slow member (e.g. a cold np-flavor agent whose `ensure_live` spawn
+        # blocks ~5s) never delays the sender echo, the pipeline, or other members.
+        # `Ezagent.ActionSet.Session.Delivery.deliver_async/5` enqueues into the
+        # DeliveryQueue (per-recipient FIFO, ONE in-flight job per key — codex
+        # HIGH-1 ordering fix), which runs each job as a Task under this
+        # supervisor. Supervisor first: the queue starts Tasks under it.
+        {Task.Supervisor, name: Ezagent.Session.DeliverySupervisor},
+        # The immediate wake-up lane for durable post-create socialware-install
+        # obligations. Session creation never waits for agent startup.
+        {Task.Supervisor, name: Ezagent.Session.SocialwareInstallSupervisor}
+      ] ++
+        socialware_install_recovery_children() ++
+        [
+          {Ezagent.Session.DeliveryQueue, []}
+        ]
 
     case Supervisor.start_link(children, strategy: :one_for_one, name: __MODULE__) do
       {:ok, sup_pid} ->
@@ -334,6 +337,10 @@ defmodule EzagentDomainInstanceMessage.Application do
     Code.ensure_loaded?(Mix) and Mix.env() == :test
   rescue
     _ -> false
+  end
+
+  defp socialware_install_recovery_children do
+    if test_env?(), do: [], else: [Ezagent.Session.SocialwareInstallSweeper]
   end
 
   defp system_create_session_cap do

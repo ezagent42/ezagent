@@ -13,9 +13,10 @@ defmodule EzagentPluginHello.App do
 
   alias Ezagent.Capability
   alias Ezagent.Entity.{Session, SessionTemplate, User}
+  alias Ezagent.Provenance.DerivationEdges
   alias Ezagent.Socialware.Installation
   alias EzagentDomainInstanceMessage.SessionCreator
-  alias EzagentDomainInstanceMessage.SessionCreator.Derivation
+  alias EzagentDomainInstanceMessage.SessionCreator.{Derivation, TemplateResolver}
   alias EzagentPluginHello.Members
 
   @doc """
@@ -67,8 +68,6 @@ defmodule EzagentPluginHello.App do
   @spec create_app(String.t(), String.t(), keyword()) :: {:ok, URI.t()} | {:error, term()}
   def create_app(ws, name, opts \\ []) when is_binary(ws) and is_binary(name) do
     session_uri = Ezagent.URI.session(ws, :hello, name)
-    workspace = Capability.workspace_of(session_uri)
-    content = hello_template_content(opts)
 
     # hello-A — the session OWNER is the caller principal: the home workspace's
     # founder for the boot 官网 seed (`OfficialSiteSeed`), the dispatch caller on
@@ -77,15 +76,25 @@ defmodule EzagentPluginHello.App do
     # entity for legacy test/tooling callers that pass no owner.
     owner = Keyword.get(opts, :owner, User.admin_uri())
 
-    with :ok <- validate_llm_template(opts),
-         # SPEC §4.4 (Decision A) — the anon-homesite create path is the SECOND
-         # production behavior_set_for_template/2 call site and is NOT retired in
-         # P0, so it MUST apply the SAME freeze helper: resolve the hello def to
-         # its current revision and bake the pin into the content's installs
-         # BEFORE persisting the template, resolving behaviors, and writing install
-         # records. Without this a later hello publish would silently change the
-         # running flagship — the surface the pin matters most for.
-         {:ok, content} <- Installation.freeze_template_installs(content, workspace),
+    with :ok <- validate_llm_template(opts) do
+      case Session.owner(session_uri) do
+        {:ok, %URI{} = existing_owner} ->
+          if URI.to_string(existing_owner) == URI.to_string(owner),
+            do: create_fresh_app(session_uri, ws, owner, opts),
+            else: {:error, :derivation_edge_conflict}
+
+        _ ->
+          create_fresh_app(session_uri, ws, owner, opts)
+      end
+    end
+  end
+
+  defp create_fresh_app(session_uri, ws, owner, opts) do
+    workspace = Capability.workspace_of(session_uri)
+    content = hello_template_content(opts)
+
+    with {:ok, tmpl, content} <-
+           resolve_or_persist_template(session_uri, workspace, ws, content),
          # hello-A — DERIVE the page owner from the hello def's `owner_policy`,
          # which is `:installer` (`hello_definition_attrs/1`), so this returns
          # the threaded caller VERBATIM (`Definition.owner_uri/2`). (The `:fixed`
@@ -95,7 +104,6 @@ defmodule EzagentPluginHello.App do
          # to `User.admin_uri()`.)
          {:ok, owner_uri} <-
            Installation.owner_uri_for_template(content, workspace, owner),
-         {:ok, tmpl} <- SessionTemplate.persist_version_as_system(content, ws),
          {:ok, behaviors} <- Installation.behavior_set_for_template(content, workspace),
          :ok <- Derivation.record(session_uri, {owner_uri, workspace, tmpl}),
          :ok <-
@@ -189,6 +197,24 @@ defmodule EzagentPluginHello.App do
       :ok
     else
       {:error, {:hello_llm_completion_unsupported, flavor}}
+    end
+  end
+
+  # A retried create is idempotent even if the live hello definition has moved:
+  # the immutable parent-template edge and working copy keep the original pin.
+  # Fresh sessions still freeze and persist the current definition.
+  defp resolve_or_persist_template(session_uri, workspace, ws, content) do
+    case DerivationEdges.parent_for(session_uri, :parent_template) do
+      {:ok, _recorded} ->
+        TemplateResolver.resolve_for_repair(session_uri, "hello", workspace)
+
+      :error ->
+        with {:ok, frozen_content} <-
+               Installation.freeze_template_installs(content, workspace),
+             {:ok, template_uri} <-
+               SessionTemplate.persist_version_as_system(frozen_content, ws) do
+          {:ok, template_uri, frozen_content}
+        end
     end
   end
 

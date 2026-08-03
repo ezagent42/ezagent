@@ -44,6 +44,33 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
+    test "workspace class creation asynchronously installs the declared team" do
+      ws = "hello-workspace-create-#{System.unique_integer([:positive])}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      caller = Ezagent.Entity.User.admin_uri()
+      short_name = "async-team-#{System.unique_integer([:positive])}"
+
+      assert {:ok, %{session_uri: session_uri}, []} =
+               Ezagent.ActionSet.Workspace.handle_create_session(
+                 %{short_name: short_name, template_name: "hello"},
+                 %{self_uri: workspace_uri, caller: caller}
+               )
+
+      assert %{status: status} =
+               Ezagent.Session.SocialwareInstallObligations.get_by_session(session_uri)
+
+      assert status in [:pending, :running, :resolved]
+
+      assert eventually(fn ->
+               match?(
+                 %{status: :resolved},
+                 Ezagent.Session.SocialwareInstallObligations.get_by_session(session_uri)
+               ) and
+                 match?({:ok, %URI{}}, Members.role_uri(session_uri, "front-desk"))
+             end)
+    end
+
     test "stands up a creatable hello app: session + declared (not spawned) team" do
       ws = "hello-tmpl-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
@@ -157,6 +184,18 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         refute Map.has_key?(llm, :provider)
         assert %{"provider" => "deepseek"} = llm.config
       end)
+    end
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(20)
+      eventually(fun, attempts - 1)
     end
   end
 end

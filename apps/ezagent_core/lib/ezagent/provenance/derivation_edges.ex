@@ -72,6 +72,15 @@ defmodule Ezagent.Provenance.DerivationEdges do
     end
   end
 
+  @doc "Return the immutable parent recorded for one child and edge kind."
+  @spec parent_for(URI.t() | String.t(), edge_kind()) :: {:ok, URI.t()} | :error
+  def parent_for(child_uri, edge_kind) when is_atom(edge_kind) or is_binary(edge_kind) do
+    case existing(uri_string(child_uri), to_string(edge_kind)) do
+      %__MODULE__{parent_uri: parent_uri} -> {:ok, Ezagent.URI.new!(parent_uri)}
+      nil -> :error
+    end
+  end
+
   @doc "Return the cycle-safe transitive closure over every recorded edge kind."
   @spec descendants(URI.t() | String.t()) :: [URI.t()]
   def descendants(root_uri) do

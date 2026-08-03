@@ -198,12 +198,12 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
   # ── R4: extend the gate to the INSTALL lane ────────────────────────────────
   #
   # The create gate above proves create spawns no agent. The install lane
-  # (`install_session_socialware/1`, run in a fire-and-forget supervised Task) is
-  # where agents ARE spawned — but it must obey the OTHER half of the #912
-  # contract: **a role member that fails to start never rolls the session back**.
-  # An install failure is LOUD (Logger.error + `…:socialware_install:failed`
-  # telemetry) and leaves the session alive + owner-only — never a rollback, never
-  # a hang. This static gate locks the "never rollback" half.
+  # (`install_session_socialware/1`, run from a durable obligation) is where
+  # agents ARE spawned — but it must obey both halves of the #912 contract:
+  # **a role member that fails to start never rolls the session back**, and a
+  # successful create never leaves an untracked owner-only Session. The
+  # obligation is persisted before create reports success; a supervised Task
+  # wakes it immediately and the periodic sweeper recovers it after restart.
   #
   # NOTE (Phase 3 split): S6 removes the recipe-cap readiness coupling and the
   # gate below locks that lane to binding/create or issue/absorb. The
@@ -229,6 +229,20 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
     # CREATE path (`verify_or_recreate` / the finalize failure branch).
     [install_lane | _] = String.split(from_install, "def demand_spawn_member(", parts: 2)
 
+    application_body =
+      app_root()
+      |> Path.join("lib/ezagent_domain_instance_message/application.ex")
+      |> File.read!()
+
+    assert application_body =~ "Ezagent.Session.SocialwareInstallSweeper",
+           "the Session application must supervise restart recovery for durable installs"
+
+    assert install_lane =~ "SocialwareInstallObligations.ensure_pending",
+           "the post-create install lane must persist a durable obligation before success"
+
+    assert install_lane =~ "socialware_install_not_persisted",
+           "obligation persistence failure must propagate instead of returning false success"
+
     refute install_lane =~ "rollback_session",
            """
            The post-create install lane calls `rollback_session`.
@@ -236,8 +250,9 @@ defmodule EzagentDomainInstanceMessage.Architecture.SessionCreateNoAgentSpawnTes
            #912 contract: a declared role member that fails to start must NOT roll
            the session back. `install_session_socialware/1` runs AFTER the
            owner-only session is durable; its failure is LOUD (Logger.error +
-           `[:ezagent, :session, :socialware_install, :failed]` telemetry) and
-           leaves the session alive + usable — never a rollback.
+           `[:ezagent, :session, :socialware_install, :failed]` telemetry), remains
+           represented by a retryable durable obligation, and never rolls back
+           the Session.
            """
   end
 

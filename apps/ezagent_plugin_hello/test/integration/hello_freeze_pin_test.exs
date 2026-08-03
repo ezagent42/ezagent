@@ -93,6 +93,20 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
 
     refute r2.id == r1.id
 
+    # Retrying the same create after the live definition moves must reuse the
+    # existing session's exact template pin instead of deriving it from R2,
+    # including after a process restart when the working copy is not live.
+    assert :ok = Ezagent.Kind.terminate(session_uri)
+    assert eventually(fn -> Session.owner(session_uri) == {:error, :not_found} end)
+
+    different_owner = Ezagent.URI.user(ws, "different-owner")
+
+    assert {:error, :derivation_edge_conflict} =
+             App.create_app(ws, name, owner: different_owner)
+
+    assert {:ok, ^session_uri} = App.create_app(ws, name)
+    assert persisted_template_content(session_uri) == content
+
     # the FROZEN persisted content still resolves R1 (no SupervisorApproval),
     # while an UNFROZEN live lookup would now follow R2 — the freeze holds.
     {:ok, frozen_behaviors} = Installation.behavior_set_for_template(content, workspace)
@@ -102,5 +116,48 @@ defmodule EzagentPluginHello.Integration.HelloFreezePinTest do
       Installation.behavior_set_for_template(%{installs: [hello_def]}, workspace)
 
     assert Ezagent.ActionSet.SupervisorApproval in live_behaviors
+  end
+
+  test "same-owner retry repairs post-spawn state without changing the frozen template", %{
+    ws: ws
+  } do
+    name = "partial"
+    workspace = Ezagent.URI.workspace(ws)
+
+    assert {:ok, session_uri} = App.create_app(ws, name)
+    frozen_content = persisted_template_content(session_uri)
+    working_copy = Session.read_template_working_copy(session_uri)
+    original_template_uri = working_copy.session_template_uri
+
+    assert :ok = Ezagent.WorkspaceRegistry.unbind(session_uri)
+
+    partial_working_copy =
+      Map.drop(working_copy, [:session_template_uri, :member_declarations])
+
+    assert {:ok, _} =
+             Ezagent.ActionSet.Session.system_set_working_copy(
+               session_uri,
+               partial_working_copy
+             )
+
+    assert {:ok, ^session_uri} = App.create_app(ws, name)
+    assert {:ok, ^workspace} = Ezagent.WorkspaceRegistry.lookup(session_uri)
+
+    repaired = Session.read_template_working_copy(session_uri)
+    assert repaired.session_template_uri == original_template_uri
+    assert [_ | _] = repaired.member_declarations
+    assert persisted_template_content(session_uri) == frozen_content
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 end

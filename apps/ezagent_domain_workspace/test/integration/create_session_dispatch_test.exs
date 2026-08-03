@@ -45,6 +45,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
 
       {:ok, session_uri, %{}}
     end
+
+    def install_session_socialware_async({_session_uri, _actor_uri}), do: :ok
   end
 
   setup do
@@ -333,7 +335,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
         URI.new!("#{URI.to_string(workspace_uri)}?action=workspace.add_member")
 
       result =
-        Ezagent.Invocation.dispatch(%Ezagent.Invocation{origin: :trusted_internal,
+        Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+          origin: :trusted_internal,
           target: target,
           mode: :call,
           args: %{member: member_uri},

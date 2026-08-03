@@ -89,6 +89,8 @@ defmodule Ezagent.ActionSet.WorkspaceMigrationParityTest do
 
       {:ok, session_uri, %{}}
     end
+
+    def install_session_socialware_async({_session_uri, _actor_uri}), do: :ok
   end
 
   defmodule FakeChatFacadeFailure do

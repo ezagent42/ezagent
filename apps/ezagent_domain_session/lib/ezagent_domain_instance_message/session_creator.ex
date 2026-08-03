@@ -57,8 +57,10 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
       SEPARATE transaction. `Workspace.create_session` fires it
       (`install_session_socialware_async/1`) the instant the owner-only session
       is durable, so the caller — and the UI — never block on an agent.
-    * An install failure is LOUD (log + telemetry) and leaves the session alive
-      (let-it-crash / fail-fast: no DEGRADED marker, no rollback).
+    * Before create reports success it persists a socialware-install obligation.
+      Install failures are LOUD (log + telemetry) and retry from that durable
+      record after Task failure or service restart; they never roll the session
+      back or disappear as an untracked owner-only Session.
 
   Enforced by `EzagentCore.Architecture.SessionCreateNoAgentSpawnTest` (static
   call-graph gate) + the restored runtime assertion in the decouple test.
@@ -283,15 +285,16 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
   defp reason_tag(_other), do: :unavailable
 
   @doc """
-  Fire-and-forget `install_session_socialware/1` under a supervised Task.
+  Persist a recoverable socialware-install obligation, then wake it immediately
+  under a supervised Task.
 
-  The caller (`Workspace.create_session`) returns the instant the owner-only
-  session is durable; role members appear as this transaction completes. A
-  failure NEVER propagates back into the create reply — it surfaces as a loud
-  `Logger.error` + `#{inspect(@install_telemetry)} :failed` telemetry event
-  (Invariant #9: no silent drops).
+  The database obligation is authoritative: `Workspace.create_session` reports
+  success only after it exists. The Task is a latency optimization; if it cannot
+  start or dies, `Ezagent.Session.SocialwareInstallSweeper` reclaims the lease
+  and retries the idempotent installation after restart.
   """
-  @spec install_session_socialware_async(URI.t() | {URI.t(), URI.t()}) :: :ok
+  @spec install_session_socialware_async(URI.t() | {URI.t(), URI.t()}) ::
+          :ok | {:error, term()}
   def install_session_socialware_async(session_or_authorization) do
     {session_uri, actor_uri} =
       case session_or_authorization do
@@ -299,137 +302,74 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
         {%URI{scheme: "session"} = session, %URI{} = actor} -> {session, actor}
       end
 
-    # Tolerate a missing supervisor (a deployment or test that boots only some
-    # apps). Raising here would blow up inside the Workspace Kind's
-    # `create_session` handler and fail the very create we just decoupled.
-    try do
-      case Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
-             run_install_loudly({session_uri, actor_uri})
-           end) do
-        {:ok, _pid} ->
-          :ok
+    working_copy = Session.read_template_working_copy(session_uri)
 
-        other ->
-          Logger.error(
-            "could not start the socialware-install transaction for " <>
-              "#{URI.to_string(session_uri)}: #{inspect(other)} — the session is alive " <>
-              "but owner-only. Run `SessionCreator.install_session_socialware/1`."
-          )
-
-          :telemetry.execute(
-            @install_telemetry ++ [:failed],
-            %{count: 1},
-            %{session_uri: session_uri, reason: {:task_start_failed, other}}
-          )
-
-          :ok
-      end
-    catch
-      :exit, reason ->
-        Logger.error(
-          "socialware-install supervisor unavailable for #{URI.to_string(session_uri)}: " <>
-            "#{inspect(reason)} — the session is alive but owner-only."
-        )
-
-        :telemetry.execute(
-          @install_telemetry ++ [:failed],
-          %{count: 1},
-          %{session_uri: session_uri, reason: {:supervisor_unavailable, reason}}
-        )
-
+    case working_copy do
+      %{session_template_uri: %URI{}, member_declarations: []} ->
         :ok
+
+      %{session_template_uri: %URI{}, member_declarations: [_ | _]} ->
+        persist_and_wake_socialware_install(session_uri, actor_uri)
+
+      _ ->
+        {:error, {:socialware_install_not_persisted, :incomplete_template_declaration}}
     end
   end
 
-  defp run_install_loudly({%URI{} = session_uri, actor_uri}) do
+  defp persist_and_wake_socialware_install(session_uri, actor_uri) do
     workspace_uri = Ezagent.Capability.workspace_of(session_uri)
 
-    case install_session_socialware(session_uri, {workspace_uri, actor_uri}) do
-      {:ok, %{skipped: []} = summary} ->
-        :telemetry.execute(@install_telemetry ++ [:ok], %{count: 1}, %{
-          session_uri: session_uri,
-          installed: summary.satisfied
-        })
-
-        :ok
-
-      {:ok, %{skipped: skipped} = summary} ->
-        # The batch completed; some declared roles have no agent. Each was already
-        # logged individually by `DefinitionAgents`; this is the transaction-level
-        # summary, and `unfilled_agent_role_slots/1` is the durable record the UI
-        # renders.
-        Logger.error(
-          "session socialware install completed with SKIPPED roles for " <>
-            "#{URI.to_string(session_uri)}: #{inspect(skipped)} — the session is alive " <>
-            "and usable, but those roles have no agent."
-        )
-
-        :telemetry.execute(@install_telemetry ++ [:partial], %{count: 1}, %{
-          session_uri: session_uri,
-          installed: summary.satisfied,
-          skipped: skipped
-        })
-
-        :ok
+    with %URI{} <- workspace_uri,
+         {:ok, obligation} <-
+           Ezagent.Session.SocialwareInstallObligations.ensure_pending(
+             session_uri,
+             workspace_uri,
+             actor_uri
+           ) do
+      wake_socialware_install(obligation.id, session_uri)
+      :ok
+    else
+      :any ->
+        {:error, :install_requires_workspace}
 
       {:error, reason} ->
         Logger.error(
-          "session socialware install FAILED for #{URI.to_string(session_uri)}: " <>
-            "#{inspect(reason)} — the session is alive but its declared role members " <>
-            "are NOT materialized. Retry via `SessionCreator.repair_orchestrator/1`."
+          "could not persist socialware-install obligation for " <>
+            "#{URI.to_string(session_uri)}: #{inspect(reason)}"
         )
 
         :telemetry.execute(
           @install_telemetry ++ [:failed],
           %{count: 1},
-          %{session_uri: session_uri, reason: reason}
+          %{session_uri: session_uri, reason: {:obligation_persist_failed, reason}}
         )
 
-        {:error, reason}
-
-      # A hard error from `materialize_definition_agents/4` carries a THIRD
-      # element — the partial `%{satisfied:, skipped:}` of roles processed before
-      # the halt (a TESTED contract: see `definition_agents_materialize_test.exs`
-      # "rejects a duplicate…"/"fails closed on an unknown recipe"). Before, this
-      # 3-tuple hit NO clause here and raised `CaseClauseError`, which the `catch`
-      # below turned into "install CRASHED" — masking the real reason AND dropping
-      # the roles that DID materialize from the durable record. Handle it as a
-      # loud PARTIAL failure: persist the skipped-so-far so the UI's
-      # `unfilled_agent_role_slots` is not silently lost (Invariant #9), then
-      # surface the same clean `{:error, reason}` the 2-tuple path returns.
-      {:error, reason, partial} when is_map(partial) ->
-        Logger.error(
-          "session socialware install FAILED (partial) for #{URI.to_string(session_uri)}: " <>
-            "#{inspect(reason)} — satisfied=#{inspect(Map.get(partial, :satisfied, []))}, " <>
-            "skipped=#{inspect(Map.get(partial, :skipped, []))}. The session is alive but its " <>
-            "declared role members are only PARTIALLY materialized. Retry via " <>
-            "`SessionCreator.repair_orchestrator/1`."
-        )
-
-        _ = record_unfilled_role_slots(session_uri, Map.get(partial, :skipped, []))
-
-        :telemetry.execute(
-          @install_telemetry ++ [:failed],
-          %{count: 1},
-          %{session_uri: session_uri, reason: reason}
-        )
-
-        {:error, reason}
+        {:error, {:socialware_install_not_persisted, reason}}
     end
-  catch
-    kind, reason ->
-      Logger.error(
-        "session socialware install CRASHED for #{URI.to_string(session_uri)}: " <>
-          "#{inspect(kind)} #{inspect(reason)}"
-      )
+  end
 
-      :telemetry.execute(
-        @install_telemetry ++ [:failed],
-        %{count: 1},
-        %{session_uri: session_uri, reason: {kind, reason}}
-      )
+  defp wake_socialware_install(obligation_id, session_uri) do
+    start_result =
+      try do
+        Task.Supervisor.start_child(Ezagent.Session.SocialwareInstallSupervisor, fn ->
+          Ezagent.Session.SocialwareInstallSweeper.retry(obligation_id)
+        end)
+      catch
+        :exit, reason -> {:error, {:supervisor_unavailable, reason}}
+      end
 
-      {:error, {kind, reason}}
+    case start_result do
+      {:ok, _pid} ->
+        :ok
+
+      other ->
+        Logger.warning(
+          "socialware-install immediate wake-up failed for #{URI.to_string(session_uri)}: " <>
+            "#{inspect(other)}; durable obligation #{obligation_id} remains pending"
+        )
+
+        :ok
+    end
   end
 
   @doc false
@@ -634,9 +574,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     # creates (`creator_uri == nil`).
     effective_owner = creator_uri || User.admin_uri()
 
-    # Step 1b — resolve `template_name` → a real SessionTemplate in the
-    # session's workspace, fail-loud if absent (SPEC §4 step 1).
-    case TemplateResolver.resolve_session_template!(template_name, workspace_uri) do
+    # Step 1b — preserve an existing session's exact template pin; otherwise
+    # resolve `template_name` in the session's workspace (SPEC §4 step 1).
+    case TemplateResolver.resolve_for_repair(session_uri, template_name, workspace_uri) do
       {:error, _} = err ->
         err
 

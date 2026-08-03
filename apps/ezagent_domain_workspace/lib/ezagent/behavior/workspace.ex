@@ -707,9 +707,8 @@ defmodule Ezagent.ActionSet.Workspace do
              session_uri,
              workspace_uri,
              caller
-           ) do
-      trigger_socialware_install(session_uri, caller)
-
+           ),
+         :ok <- trigger_socialware_install(session_uri, caller) do
       # Meta shape matches `create_session_via_facade/4`. The retired
       # `orchestrator_status: :ready` was already a misrepresentation once the
       # team materialized asynchronously, and the facade path never carried the
@@ -749,13 +748,13 @@ defmodule Ezagent.ActionSet.Workspace do
                    session_uri,
                    workspace_uri,
                    caller
-                 ) do
+                 ),
+               :ok <- trigger_socialware_install(session_uri, caller) do
             # rev6 / #912 — the session is now durable and owner-only. Its
             # declared agent role slots are an AGENT transaction: fire it off
-            # under its own supervisor and return immediately. A member that
-            # fails to start surfaces loudly there; it never fails this create
-            # nor rolls the session back.
-            trigger_socialware_install(session_uri, caller)
+            # under its own supervisor and return immediately. The enqueue call
+            # must first persist the recovery obligation; agent startup itself
+            # remains asynchronous and never rolls the session back.
             {:ok, %{session_uri: session_uri}, []}
           end
 
@@ -765,13 +764,16 @@ defmodule Ezagent.ActionSet.Workspace do
     end
   end
 
-  # The session is already durable, so install failure is observable but cannot
-  # roll back a successful create.
+  # The session is already durable. Persisting its install obligation is part of
+  # the create success boundary; executing that obligation remains asynchronous.
   defp trigger_socialware_install(%URI{} = session_uri, %URI{} = actor_uri) do
     with {:ok, facade} <- resolve_session_facade(),
          true <- function_exported?(facade, :install_session_socialware_async, 1) do
-      facade.install_session_socialware_async({session_uri, actor_uri})
-      :ok
+      case facade.install_session_socialware_async({session_uri, actor_uri}) do
+        :ok -> :ok
+        {:error, _reason} = error -> error
+        other -> {:error, {:unexpected_socialware_install_enqueue_result, other}}
+      end
     else
       other ->
         require Logger
@@ -788,7 +790,7 @@ defmodule Ezagent.ActionSet.Workspace do
           %{session_uri: session_uri, reason: other}
         )
 
-        :ok
+        {:error, {:socialware_install_not_persisted, other}}
     end
   end
 
