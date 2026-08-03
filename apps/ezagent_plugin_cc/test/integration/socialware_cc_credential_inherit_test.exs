@@ -29,6 +29,8 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
   alias Ezagent.KindRegistry
   alias Ezagent.PluginCc.Template.CcAgent
   alias EzagentCore.Repo
+  alias EzagentDomainInstanceMessage.SessionCreator.AgentAdmission
+  alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle
   alias EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents
 
   @workspace_uri URI.new!("workspace://system")
@@ -49,11 +51,17 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     dir
   end
 
-  defp live_session(n) do
+  defp live_session(n, owner_uri \\ nil) do
     session_uri = Ezagent.URI.session("system", "generic", "cred-inherit-#{n}")
 
+    params =
+      %{uri: session_uri, behaviors: Session.behaviors()}
+      |> then(fn params ->
+        if owner_uri, do: Map.put(params, :owner_uri, owner_uri), else: params
+      end)
+
     {:ok, _pid} =
-      Ezagent.Kind.spawn(Session, %{uri: session_uri, behaviors: Session.behaviors()})
+      Ezagent.Kind.spawn(Session, params)
 
     :ok = Ezagent.WorkspaceRegistry.bind(session_uri, @workspace_uri)
     on_exit(fn -> terminate(session_uri) end)
@@ -202,6 +210,81 @@ defmodule Ezagent.PluginCc.Integration.SocialwareCcCredentialInheritTest do
     assert %GrantRow{} = row = GrantRow.get_for_agent(URI.to_string(agent_uri))
     assert row.credential_source_uri == URI.to_string(source_uri)
     assert row.approved_by == URI.to_string(installer_uri)
+  end
+
+  test "Claude admission starts a session-local secret-free PTY before joining", %{
+    n: n,
+    installer_uri: installer_uri,
+    project_cwd: project_cwd
+  } do
+    session_uri = live_session("admission-#{n}", installer_uri)
+    recipe_name = seed_recipe("admission-#{n}", project_cwd)
+    role_name = "cc-admission-role-#{n}"
+
+    declaration = %{
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: "cc",
+      credential_admission: :before_session_join
+    }
+
+    working_copy =
+      SessionBehavior.default_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template("system", :session, "cc-admission@revision-#{n}")
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert {:ok, %{deferred: [^role_name]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               installer_uri,
+               [declaration]
+             )
+
+    caps = Ezagent.Identity.list_caps_for(installer_uri)
+
+    assert {:ok,
+            %{
+              status: :authenticating,
+              connection: {:pty, %{label: "Connect Claude"}}
+            } = admission} =
+             AgentAdmission.begin(session_uri, role_name, installer_uri, caps)
+
+    agent_uri = Ezagent.URI.new!(admission.provisional_agent_uri)
+    config_dir = CcAgent.agent_config_dir(agent_uri)
+    on_exit(fn -> File.rm_rf(config_dir) end)
+
+    assert Ezagent.Kind.alive?(agent_uri)
+    assert Ezagent.Domain.Pty.alive?(agent_uri)
+
+    assert SessionBehavior.role_name_to_uri(
+             DefinitionAgentLifecycle.read_members(session_uri),
+             role_name
+           ) == nil
+
+    assert GrantRow.get_for_agent(admission.provisional_agent_uri) == nil
+    assert File.exists?(Path.join(config_dir, ".ezagent-config-complete"))
+    refute File.exists?(Path.join(config_dir, ".credentials.json"))
+
+    assert {:error, :authentication_failed, %{status: :failed}} =
+             AgentAdmission.complete(
+               session_uri,
+               role_name,
+               admission.attempt_id,
+               {installer_uri, caps}
+             )
+
+    assert SessionBehavior.role_name_to_uri(
+             DefinitionAgentLifecycle.read_members(session_uri),
+             role_name
+           ) == nil
+
+    refute Ezagent.Kind.alive?(agent_uri)
   end
 
   # ── #1201 A② — the INVARIANT this branch exists for ──────────────────────
