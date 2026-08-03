@@ -670,8 +670,11 @@ defmodule Ezagent.Resource.FsResolverTest do
     # D7: a plugin-contributed <type> SHOULD be slug-prefixed (`world-layouts`),
     # so two plugins never collide. The lint is a TEST (not a runtime warning in
     # register_all, which now also carries core's bare names). Core types keep
-    # their bare names by design and are exempt.
-    @core_bare_types ["uploads"]
+    # their bare names by design and are exempt. (F6: this list documents the
+    # exemption set for the sanity check below — it is not iterated against
+    # the live registry, so a missing entry cannot flip any assertion; keep it
+    # in sync with `Registry.boot_registrations/0` as a courtesy to readers.)
+    @core_bare_types ["uploads", "git-identity"]
 
     test "non-config-dir plugin resource types are slug-prefixed in-tree" do
       # Enumerate every plugin's resource_types/0 in the umbrella and assert each

@@ -416,6 +416,77 @@ defmodule Ezagent.Entity.AgentTemplateSpawnSandboxMaterializationTest do
       assert agent_uri in Ezagent.Provenance.DerivationEdges.ownership_descendants(owner_uri)
     end
 
+    # SSH 凭据 1b (Task 5 复审 J1) — `Rollback.fresh_spawn/1` terminates the
+    # worker via `Ezagent.Kind.terminate!/1` ("This terminates ONLY the Kind
+    # process"), which never runs the Sandbox `:destroy` action/hook, so
+    # Sandbox's own git-identity wipe never fires on this path. Git identity
+    # lives outside `config_dir` (`Ezagent.Sandbox.GitIdentityDir`), so
+    # `cleanup_config_dirs/2` must wipe it independently. This test seeds a
+    # git-identity dir as if an earlier `build_claude_cmd/3` call had already
+    # materialized one at this URI (the design §6.1 wipe-on-revoke case),
+    # then drives the SAME real failure path as the sibling test above and
+    # asserts the key is gone afterward — not just that the cleanup function
+    # was invoked.
+    test "overlong profile failure also wipes the agent's git-identity directory" do
+      unique = System.unique_integer([:positive])
+      workspace_name = "display-profile-gitid-failure-#{unique}"
+      flavor = "display-profile-gitid-failure-#{unique}"
+      agent_uri = Ezagent.URI.agent(workspace_name, Ecto.UUID.generate())
+      owner_uri = Ezagent.URI.user(workspace_name, "owner")
+      workspace_uri = Ezagent.URI.workspace(workspace_name)
+      namespace = ProfileFailureTemplate.config_dir_namespace()
+
+      :ok =
+        Ezagent.AgentFlavorRegistry.register(%{
+          flavor: flavor,
+          kind: Ezagent.Entity.Agent,
+          template_class: ProfileFailureTemplate
+        })
+
+      resource_type = "#{namespace}-agents"
+
+      case Ezagent.Resource.FsResolver.register_type(resource_type, %{
+             backend_component: resource_type,
+             authority: &Ezagent.Resource.FsResolver.config_dir_authority/2
+           }) do
+        :ok ->
+          on_exit(fn -> Ezagent.Resource.FsResolver.unregister_type(resource_type) end)
+
+        {:error, {:already_registered, ^resource_type}} ->
+          :ok
+      end
+
+      config_dir = Ezagent.Sandbox.ConfigDir.path(agent_uri, namespace)
+      git_identity_dir = Ezagent.Sandbox.GitIdentityDir.path(agent_uri)
+      File.mkdir_p!(git_identity_dir)
+      File.write!(Path.join(git_identity_dir, "id_ed25519"), "fake-private-key")
+      assert File.exists?(Path.join(git_identity_dir, "id_ed25519"))
+
+      on_exit(fn ->
+        _ = Ezagent.Kind.terminate(agent_uri)
+        _ = Ezagent.Credential.GrantRow.delete(URI.to_string(agent_uri))
+        _ = File.rm_rf(config_dir)
+        _ = File.rm_rf(git_identity_dir)
+        :ok
+      end)
+
+      assert {:error, {:agent_display_profile_failed, %Ecto.Changeset{}}} =
+               TemplateSpawn.spawn_from_template_content(
+                 %{
+                   name: String.duplicate("x", 256),
+                   flavor: flavor,
+                   project_cwd: System.tmp_dir!(),
+                   config_dir: "profile-failure-source"
+                 },
+                 agent_uri,
+                 owner_uri,
+                 workspace_uri
+               )
+
+      refute File.exists?(config_dir)
+      refute File.exists?(git_identity_dir)
+    end
+
     test "failure after profile insertion rolls back every fresh-spawn artifact" do
       unique = System.unique_integer([:positive])
       workspace_name = "display-profile-post-insert-failure-#{unique}"

@@ -24,6 +24,7 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
   @config_evolve "apps/ezagent_domain_identity/lib/ezagent/behavior/config_evolve.ex"
   @target_authority "apps/ezagent_domain_identity/lib/ezagent/identity/target_authority.ex"
   @host_login_adopt "apps/ezagent_domain_agent/lib/ezagent/agent/host_login_adopt.ex"
+  @grant_git_identity_task "apps/ezagent_domain_identity/lib/mix/tasks/ezagent.agent.grant_git_identity.ex"
 
   @legacy_grant_drivers %{
     "apps/ezagent_domain_session/lib/ezagent/behavior/session/membership.ex" => %{
@@ -78,7 +79,14 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @member_cap => %{{:absorb_cap, 2} => 3},
     @workspace_facade => %{{:absorb_cap, 2} => 1},
     @target_authority => %{{:absorb_cap, 2} => 1},
-    @host_login_adopt => %{{:absorb_cap, 2} => 1}
+    @host_login_adopt => %{{:absorb_cap, 2} => 1},
+    # SSH credential 1b Task 4 — `mix ezagent.agent.grant_git_identity` issues
+    # the agent's `read_ssh_key` cap via `Ezagent.Cap.issue_for_action/3` then
+    # self-stores it with this exact same VM-internal facade, one call site,
+    # same shape as `@host_login_adopt`/`@recipe_grant_task` (an operator mix
+    # task issuing a narrow cap and self-storing it, not a new dispatch
+    # constructor).
+    @grant_git_identity_task => %{{:absorb_cap, 2} => 1}
   }
 
   @absorb_action_literals %{
@@ -99,7 +107,11 @@ defmodule Ezagent.Invariants.CapSelfStoreParadigmLockTest do
     @identity_facade => 2,
     @workspace_facade => 1,
     @target_authority => 1,
-    @host_login_adopt => 1
+    @host_login_adopt => 1,
+    # Same call site as the `@absorb_producers` entry above — the remote-call
+    # AST node's function-name element is the `:absorb_cap` atom this scan
+    # also counts as a bare literal.
+    @grant_git_identity_task => 1
   }
 
   test "remaining issuer-driven grant sites are shrink-only migration debt" do

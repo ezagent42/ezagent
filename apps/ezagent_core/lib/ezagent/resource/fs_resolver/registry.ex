@@ -46,12 +46,12 @@ defmodule Ezagent.Resource.FsResolver.Registry do
 
   ## Ordering — core registers first (plugin-resource SPEC §5)
 
-  `init/1` applies core `boot_registrations/0` (`uploads`) when `ezagent_core`
-  starts, BEFORE any plugin boots (plugins depend on core → start later). So
-  core backends are claimed first and a plugin can never alias a core backend
-  (backend-uniqueness). Core `boot_registrations/0` flows through the SAME
-  precheck as plugin `register_all/1`, so the write-once-on-both property holds
-  uniformly.
+  `init/1` applies core `boot_registrations/0` (`uploads`, `git-identity` — SSH
+  凭据 1b) when `ezagent_core` starts, BEFORE any plugin boots (plugins depend
+  on core → start later). So core backends are claimed first and a plugin can
+  never alias a core backend (backend-uniqueness). Core `boot_registrations/0`
+  flows through the SAME precheck as plugin `register_all/1`, so the
+  write-once-on-both property holds uniformly.
 
   ## Restart resilience (lifecycle rebuild-from-source on every start)
 
@@ -379,6 +379,8 @@ defmodule Ezagent.Resource.FsResolver.Registry do
   # claims uploads.
   @uploads_type "uploads"
 
+  @git_identity_type "git-identity"
+
   @spec boot_registrations() :: [{String.t(), map()}]
   defp boot_registrations do
     uploads =
@@ -388,7 +390,16 @@ defmodule Ezagent.Resource.FsResolver.Registry do
          authority: &FsResolver.uploads_authority/2
        }}
 
-    [uploads]
+    # SSH 凭据 1b — per-agent git 身份目录。core 注册（不是 plugin 的
+    # `resource_types/0`）：这不是 flavor 概念，是 agent 通用概念。
+    git_identity =
+      {@git_identity_type,
+       %{
+         backend_component: @git_identity_type,
+         authority: &FsResolver.git_identity_authority/2
+       }}
+
+    [uploads, git_identity]
   end
 
   # All `handle_call/3` clauses grouped here (the production `:register_all` and,

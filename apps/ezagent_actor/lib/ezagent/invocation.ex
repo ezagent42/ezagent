@@ -437,6 +437,24 @@ defmodule Ezagent.Invocation do
     case Ezagent.KindRegistry.lookup(instance_uri) do
       {:ok, ^expected_incarnation} when is_pid(expected_incarnation) ->
         pid = expected_incarnation
+        # M2 (final-review fix, 2026-08-02): this 5_000ms fallback is the
+        # CALLER-side half of a coupling with any Behavior's own internal
+        # protective timeout — concrete precedent:
+        # `Ezagent.ActionSet.UserSshIdentity`'s `@keygen_timeout_ms`
+        # (identity dispatch never sets `deadline_ms`, so this fallback
+        # always applies to it; see that module's comment on
+        # `@keygen_timeout_ms` for the full mechanism). Short version:
+        # THIS `GenServer.call` timeout starts before routing/cap-check
+        # overhead, so it always elapses no later than an equal-or-larger
+        # handler-internal timeout that only starts once the handler
+        # itself begins running — the caller then gets a raw `**
+        # (exit) :timeout` from `call_live_target/3` below instead of
+        # whatever mapped `{:error, _}` the handler would eventually have
+        # returned. A Behavior with its own internal protective timeout
+        # MUST keep it strictly below this fallback (or set
+        # `ctx[:deadline_ms]` itself) to honor the "failure is always a
+        # synchronous `{:error, reason}`" dispatch contract. Whoever
+        # changes this default MUST re-check every Behavior relying on it.
         timeout = inv.ctx[:deadline_ms] || 5_000
 
         case call_live_target(pid, {:ezagent_dispatch, inv}, timeout) do

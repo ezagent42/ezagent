@@ -334,7 +334,9 @@ defmodule Ezagent.Credential.HomeRuntime do
   This wraps `launch_fun`. A clean `{:ok, _}`/`{:error, _}` return passes through
   untouched (the plugin handles a clean launch error via its own
   `compensate_spawn_failure/5`). On a RAISE/THROW it best-effort tears down the
-  half-started Kind + the secret-bearing config dir, then CONFIRM-compensates
+  half-started Kind + the secret-bearing config dir + the agent's git-identity
+  dir (整支终审 K1 — see `rollback_agent_config_dir/3`; git identity is
+  secret-bearing too and lives outside `config_dir`), then CONFIRM-compensates
   exactly the minted incarnation and re-raises — surfacing an exhausted
   compensation as `GrantCompensationLeaked`, never discarding it. `grant_ctx`
   carries the minted incarnation (nil = this spawn minted nothing → the grant
@@ -384,8 +386,11 @@ defmodule Ezagent.Credential.HomeRuntime do
 
   # Best-effort teardown of the half-started spawn on a LAUNCH raise: stop the
   # Kind (so a partially-started agent does not linger) and remove the
-  # secret-bearing config dir (so no credential residue survives the abort). The
-  # MINTED grant is compensated separately by `GrantMint.reraise_compensating/4`.
+  # secret-bearing config dir AND the agent's git-identity dir (整支终审 K1 —
+  # `rollback_agent_config_dir/3` wipes both; git identity lives outside
+  # `config_dir` by design but is exactly as secret-bearing) so no credential
+  # residue survives the abort. The MINTED grant is compensated separately by
+  # `GrantMint.reraise_compensating/4`.
   defp on_launch_raise(%URI{} = agent_uri, template_module, log_prefix) do
     _ = Ezagent.Kind.terminate!(agent_uri)
     _ = rollback_agent_config_dir(agent_uri, template_module, log_prefix)
@@ -436,6 +441,23 @@ defmodule Ezagent.Credential.HomeRuntime do
   end
 
   defp rollback_agent_config_dir(agent_uri, template_module, log_prefix) do
+    # 整支终审 K1 — this is the SHARED convergence point every spawn-failure
+    # teardown path funnels through: both `handle_spawn_failure/4` clauses
+    # (the returned-`{:error, _}` arm every file-flavor plugin calls via
+    # `compensate_and_report/compensate_spawn_failure`) AND `on_launch_raise/3`
+    # (the raise/throw arm inside `launch_under_grant_compensation/5`). Git
+    # identity (`Ezagent.Sandbox.GitIdentityDir`) lives OUTSIDE `config_dir`
+    # by design (see that module's moduledoc) — a plain config_dir rollback
+    # never touched it, so a launch failure AFTER the private key was already
+    # materialized (PTY `Pty.start/2` or headless `SdkSidecar.start/2` failing,
+    # or raising, right after `AgentGitIdentity.materialize/1` succeeded)
+    # left the key on disk forever: the agent no longer exists, so it never
+    # spawns again and is never destroyed/swept. Wiping it HERE — the one
+    # place both the PTY and cc-headless flavors' failure paths already
+    # converge on — covers both without touching either plugin file.
+    # Idempotent, best-effort, never raises (`wipe/1`'s own contract).
+    _ = Ezagent.Credential.GitIdentityRuntime.wipe(agent_uri)
+
     dir = agent_config_dir(agent_uri, template_module)
 
     case File.rm_rf(dir) do

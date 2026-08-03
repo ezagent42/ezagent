@@ -145,15 +145,34 @@ defmodule Ezagent.Agent.RetirementSweeper do
           "template_class" => template_class
         }
       } ->
-        with {:ok, module} <- existing_module(template_class),
-             true <- function_exported?(module, :destroy_config_dir, 2),
-             :ok <- module.destroy_config_dir(Ezagent.URI.new!(agent_uri), config_dir) do
-          :ok
-        else
-          false -> {:error, {:cleanup_callback_missing, template_class}}
-          {:error, _reason} = error -> error
-          other -> {:error, {:cleanup_failed, other}}
-        end
+        agent = Ezagent.URI.new!(agent_uri)
+
+        result =
+          with {:ok, module} <- existing_module(template_class),
+               true <- function_exported?(module, :destroy_config_dir, 2),
+               :ok <- module.destroy_config_dir(agent, config_dir) do
+            :ok
+          else
+            false -> {:error, {:cleanup_callback_missing, template_class}}
+            {:error, _reason} = error -> error
+            other -> {:error, {:cleanup_failed, other}}
+          end
+
+        # SSH 凭据 1b (Task 5 复审 J1) — this retry step only runs once the
+        # target Kind is confirmed gone (`interpret_destroy_result`'s
+        # `{:error, :no_such_actor}` branch, retirement.ex, or the config_dir
+        # step left over after `sandbox_destroy` already ran on a Kind whose
+        # OWN cleanup failed). Either way the Sandbox `:destroy` action either
+        # never ran or already ran; this module cleans config_dir directly,
+        # bypassing Sandbox entirely, so it never triggers Sandbox's own
+        # git-identity wipe. Git identity lives outside config_dir (see
+        # `Ezagent.Sandbox.GitIdentityDir` moduledoc) and must be wiped here
+        # too. Idempotent, best-effort, never raises — unconditional (not
+        # gated on `result`) so a config_dir cleanup failure never leaves a
+        # stale private key behind.
+        _ = Ezagent.Credential.GitIdentityRuntime.wipe(agent)
+
+        result
 
       %{"sandbox_destroy" => _} ->
         :ok
