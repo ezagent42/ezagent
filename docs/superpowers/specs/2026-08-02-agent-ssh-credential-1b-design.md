@@ -249,17 +249,38 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 独立的偶发条件同时撞上），不值得为此让核心不变式带上例外。这是设计取舍，记在这里而
 不是代码注释里。
 
-### 6.2 修订后的生效时机
+### 6.2 生效时机
 
-| 动作 | 何时生效 |
-|---|---|
-| 撤销 agent 的 cap | **下次 spawn**（靠 §6.1 的 `{:ok, :none}` 清理）。**已在跑**的 agent 手里的 key 文件不受影响 |
-| `revoke_ssh_key`（1a） | 同上。且此后各 agent 拿到 `:owner_has_no_key`，并被清 |
-| 想立刻断掉 | 删 agent 的 git-identity 目录 + 重启该 agent。**1b 不提供一键命令** |
+> **2026-08-03 重写 —— 本节此前整段作废。** 原文说「撤销 agent 的 cap → **下次 spawn** 生效，已在跑的 agent 手里的 key 文件不受影响」，并把这一点论证成「B2′ 的固有属性，不是本实现的缺陷」。
+>
+> **Allen 判定它值得修**，`#1693`（`ab12c63da`，2026-08-03）把撤销做成了**即时**的：在 `Ezagent.ActionSet.IdentityAdmin` 的两个 cap 移除 handler 上挂钩，被移除的 cap 恰为 `UserSshIdentity` 的 `:read_ssh_key` 且持有者是 agent 时，追加 `{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [uri]}`，caps 变更提交后立即擦除。
+>
+> **`#1693` 未改动任何 `docs/superpowers` 文件**，所以本节曾与 main 的实际行为相反达数小时 —— 正是本条线反复出现的「结论过期的文档只会误导下一个读者」那一类。
 
-**"已在跑的 agent 不受影响"是 B2′ 的固有属性，不是本实现的缺陷**：key 一旦落到 agent 能读的文件系统上，平台就失去了对它的控制（上游 spec §5.4 后果③已记录）。写在这里是为了让运维**知道**撤销不是即时的，而不是以为是。
+| 动作 | 何时生效 | 机制 |
+|---|---|---|
+| 撤销 agent 的 cap（`EntityCaps.revoke/2` 与全部 Grant revoke 路径 → `:remove_cap`） | **立即** | `#1693` 的 `maybe_add_git_identity_wipe/3` |
+| delivery-outbox 的 `:revoke_cap` 重放 | **立即** | 同上 |
+| recipe-binding reconcile 掉该 cap（`:sync_recipe_binding` 整集替换） | **立即** | 本轮补齐（§6.2.1） |
+| `revoke_ssh_key`（1a，撤的是 User 侧的 key 本身） | **下次 spawn** | §6.1 的 `{:error, :owner_has_no_key}` 清理 |
+| agent 已被销毁 / spawn 失败回滚 / retire 清扫 | **立即** | 1b Task 5 + 整支终审 K1 的三处清理 |
 
-**但"下次 spawn 生效"必须真的生效** —— 那是 §6.1 的职责，且必须有一条会红的测试钉住它。
+#### 6.2.1 本轮补齐：`:sync_recipe_binding` 的整集替换
+
+`#1693` 的 commit message 自己点名了两个未覆盖路径。查证后：
+
+- **`:sync_recipe_binding`（`identity.ex:694`）—— 真缺口，已补。** 它做的是 `set_caps_effect(reconciled.caps)`，**整集替换**而非单条移除，所以 `#1693` 钩的两个 handler **都不触发**。触发路径实在：`RecipeCapBinding.sync_live/1` ← `definition_agents.ex:452 / 506 / 789`（session 创建、agent 定义）。
+- **`EntityCaps.persist/2` —— 今天不可达，不补。** 全仓 grep 零生产调用点（只有 `identity.ex:634` 的文档注释提到）。按项目安全姿态（不内联引入 caps 正确性以外的安全代码），等它真有调用点再说。**记为 follow-up。**
+
+判据与 `#1693` 不同：整集替换要比较**替换前后**该 agent 持有的 `:read_ssh_key` cap 集合，**只要发生变化就擦除** —— 既覆盖「有 → 无」（撤销），也覆盖「指向 User A → 指向 User B」（盘上那把是 A 的，此刻已不在授权范围内）。不变则不擦，绝大多数 reconcile 走这条路，零额外开销。
+
+擦除是安全的：key 每次 spawn 从 User slice 重新物化，**无状态丢失**（§6.1 已论证）。
+
+#### 6.2.2 仍然成立的那部分
+
+**平台无法追回已经被 agent 进程读进内存的 key。** `#1693` 与本轮补齐关闭的是「key 文件继续留在盘上、下次仍可用」这个窗口；**已经在跑的进程当下持有的内存副本追不回来**，这仍是 B2′ 的固有属性（上游 spec §5.4 后果③）。
+
+运维语义因此是：**撤销即刻切断后续使用，但不能保证正在进行中的那一次 git 操作失败。**
 
 ---
 
