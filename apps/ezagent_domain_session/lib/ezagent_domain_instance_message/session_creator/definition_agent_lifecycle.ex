@@ -256,8 +256,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
              recipe_name,
              role_name,
              flavor,
-             provider,
-             session_member_content_overrides()
+             provider
            ) do
       {:ok, planned_uri}
     end
@@ -279,8 +278,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
          recipe_name,
          role_name,
          flavor,
-         provider,
-         template_content_overrides
+         provider
        ) do
     workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
 
@@ -294,7 +292,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
              role_name,
              flavor,
              provider,
-             template_content_overrides
+             session_member_content_overrides()
            ) do
       finish_spawned_agent(
         session_uri,
