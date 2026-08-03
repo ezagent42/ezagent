@@ -49,15 +49,16 @@ defmodule Ezagent.World.ConversationData do
     # message/member reads authorize + row-policy through the `SessionReads`
     # chokepoint, which sources the caller's caps LIVE (never trusting the
     # passed set for authority).
-    viewer_ctx = fn -> ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri) end
-
     # The conversation read plane is authorized at the chokepoint FIRST: both the
     # message read AND the member read route through `SessionReads`, which shares
     # ONE live-first predicate. A non-member (e.g. a `?session=<uri>` deep-link)
     # is denied here — no message content and no roster leak — instead of the
     # pre-consolidation direct-store read that disclosed the conversation.
-    with {:ok, message_rows} <- authorized_messages(session_uri, caller_uri, viewer_ctx),
-         {:ok, members_map} <- SessionReads.members(caller_uri, session_uri) do
+    with {:ok, members_map} <- SessionReads.members(caller_uri, session_uri),
+         viewer_ctx = fn ->
+           ErrorCards.viewer_ctx(caller_uri, caller_caps, workspace_uri, members_map)
+         end,
+         {:ok, message_rows} <- authorized_messages(session_uri, caller_uri, viewer_ctx) do
       authorized_state(
         session_uri,
         caller_uri,

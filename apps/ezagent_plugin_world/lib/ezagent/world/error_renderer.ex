@@ -54,11 +54,14 @@ defmodule Ezagent.World.ErrorRenderer do
     user_can_fix = Keyword.get(opts, :user_can_fix, false)
     fix_owner_name = Keyword.get(opts, :fix_owner_display_name)
 
-    cond do
-      user_can_fix and code.message.fix_path != nil ->
-        layer1_card(code)
+    fix_link =
+      fix_path_to_url(code.message.fix_path, Keyword.get(opts, :fix_target_uri))
 
-      not user_can_fix and code.message.fix_owner != nil ->
+    cond do
+      user_can_fix and is_binary(fix_link) ->
+        layer1_card(code, fix_link)
+
+      code.message.fix_owner != nil ->
         layer2_card(code, fix_owner_name)
 
       true ->
@@ -66,12 +69,12 @@ defmodule Ezagent.World.ErrorRenderer do
     end
   end
 
-  defp layer1_card(code) do
+  defp layer1_card(code, fix_link) do
     %{
       layer: 1,
       what: code.message.what,
       impact: code.message.impact,
-      fix_link: fix_path_to_url(code.message.fix_path),
+      fix_link: fix_link,
       fix_owner_name: nil,
       notify_action: nil,
       issue_id: nil
@@ -136,8 +139,12 @@ defmodule Ezagent.World.ErrorRenderer do
   end
 
   @doc false
-  def fix_path_to_url(:agent_keys_page), do: "/identities/agents/api-keys"
-  def fix_path_to_url(_other), do: nil
+  def fix_path_to_url(:agent_keys_page, %URI{} = agent_uri) do
+    encoded_uri = agent_uri |> URI.to_string() |> URI.encode_www_form()
+    "/identities/agents/#{encoded_uri}/api-keys"
+  end
+
+  def fix_path_to_url(_other, _target_uri), do: nil
 
   @doc """
   Pushes a structured error card to the frontend via `world:state`.

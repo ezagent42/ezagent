@@ -217,7 +217,9 @@ declare global {
   interface Window {
     __WORLD_E2E__: {
       clearEvents: () => void
+      contract: typeof generatedFixtures
       contractViolation: () => string | null
+      emit: (event: string, payload: Record<string, unknown>) => void
       events: RecordedEvent[]
       transitionTo: (name: string) => void
     }

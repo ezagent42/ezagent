@@ -11,16 +11,17 @@ defmodule Ezagent.World.ErrorCode do
 
   @typedoc "Error code entry following SOP §2 Schema"
   @type t :: %{
-    code: String.t(),
-    trigger: term(),
-    category: atom(),
-    message: %{
-      what: String.t(),
-      impact: String.t(),
-      fix_path: atom() | nil,
-      fix_owner: atom() | nil
-    }
-  }
+          code: String.t(),
+          trigger: term(),
+          category: atom(),
+          message: %{
+            optional(:fix_role) => String.t(),
+            what: String.t(),
+            impact: String.t(),
+            fix_path: atom() | nil,
+            fix_owner: atom() | nil
+          }
+        }
 
   @doc "Returns all registered error codes."
   @spec all() :: [t()]
@@ -35,7 +36,8 @@ defmodule Ezagent.World.ErrorCode do
           what: "Agent 未配置凭证",
           impact: "无法调用 AI 模型，你的消息暂时无法得到回复",
           fix_path: :agent_keys_page,
-          fix_owner: :workspace_founder
+          fix_owner: :workspace_founder,
+          fix_role: "llm"
         }
       },
       # 3 — action_unauthorized
