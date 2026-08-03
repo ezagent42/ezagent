@@ -95,6 +95,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
           workspace_uri: workspace_uri,
           workspace_layer_uri: source_template_uri,
           flavor: flavor,
+          credential_source_policy: content_field(content, :credential_source_policy),
           credential_required?: credential_required?(credential_adapter, content),
           explicit_source: Keyword.get(opts, :explicit_source)
         }
@@ -473,6 +474,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       session_uri: session_uri,
       explicit_source: explicit_source,
       flavor: Map.get(resolution, :flavor) || Map.get(resolution, "flavor") || flavor,
+      credential_source_policy:
+        Map.get(resolution, :credential_source_policy) ||
+          Map.get(resolution, "credential_source_policy"),
       credential_required?: Map.get(resolution, :credential_required?, true)
     }
     |> maybe_put_uri_input(resolution, :workspace_layer_uri)
@@ -581,6 +585,7 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       :session_uri,
       :explicit_source,
       :credential_source_uri,
+      :credential_source_policy,
       :workspace_layer_uri,
       :user_layer_uri,
       :session_layer_uri
@@ -589,6 +594,9 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
         %URI{} = uri -> Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
         value when is_binary(value) and value != "" -> Map.put(acc, Atom.to_string(key), value)
+        value when key == :credential_source_policy and value == :session_local ->
+          Map.put(acc, Atom.to_string(key), Atom.to_string(value))
+
         _ -> acc
       end
     end)

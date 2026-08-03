@@ -84,4 +84,30 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.CascadeCredentialOptionalTest do
                source_template_uri: @source_tmpl
              )
   end
+
+  test "session-local source policy bypasses reusable credential lookups" do
+    content = %{
+      name: "session-local-demo",
+      flavor: "curl",
+      provider: "deepseek",
+      api_url: "https://api.deepseek.com/chat/completions",
+      model: "deepseek-chat",
+      cascade_resolution: %{
+        owner_uri: @admin,
+        workspace_uri: @ws,
+        flavor: "curl",
+        credential_required?: true,
+        credential_source_policy: :session_local,
+        user_source_lookup: fn -> flunk("user source must not be read") end,
+        workspace_shared_lookup: fn -> flunk("workspace source must not be read") end
+      }
+    }
+
+    assert {:ok, resolved} =
+             Cascade.resolve_content(content, SliceTC, @agent, @admin, @ws, "curl",
+               source_template_uri: @source_tmpl
+             )
+
+    refute Map.get(resolved.cascade_resolution, :credential_source_uri)
+  end
 end
