@@ -97,6 +97,92 @@ defmodule Ezagent.EntityCaps.GranteeIndexTest do
     assert GranteeIndex.grantees_of(t, @admin, admin_caps(), :other) == []
   end
 
+  # P2 ① — the action column was always WRITTEN and never READ, so a
+  # behavior-only reverse query could not tell "holds :receive" (a member) from
+  # "holds :join" (invited, never joined). Consumers that key off ONE concrete
+  # action need the axis.
+  test "P2: action filter narrows to one action — a :join-only holder is NOT returned for :receive" do
+    t = target("act")
+    member = active_agent("member")
+    invitee = active_agent("invitee")
+
+    grant_via_store!(t, member, :example, :receive)
+    grant_via_store!(t, invitee, :example, :join)
+
+    # behavior-only still returns BOTH — this is exactly the over-report the
+    # action axis closes (and proves the fixture really distinguishes them).
+    assert Enum.sort(GranteeIndex.grantees_of(t, @admin, admin_caps(), :example)) ==
+             Enum.sort([member, invitee])
+
+    assert GranteeIndex.grantees_of(t, @admin, admin_caps(), :example, :receive) == [member]
+    assert GranteeIndex.grantees_of(t, @admin, admin_caps(), :example, :join) == [invitee]
+  end
+
+  # P2 ② — K4 provenance. The consumers authorize on ENTITY-granted caps
+  # (`Capability.granted_by_entity?/1` is false ONLY for a `system://` granter);
+  # the index stored `granted_by` but never applied the predicate.
+  # NOTE on the fixture: the sanctioned mint path CANNOT produce a `system://`
+  # granter — `authority_signed_cap_as!` stamps provenance from
+  # `Cap.prepare_provenance({:held_by, issuer}, …)`, and a `system://` principal
+  # holds nothing to be `:held_by`; the system-mint convention uses the NAMED
+  # `user://system/admin` (scheme `user`, which IS entity-granted). So a
+  # system-granted row is not reachable through `Store.persist` today, and this
+  # filter is DEFENSIVE PARITY with `reconcile.ex`'s `granted_by_entity?/1`
+  # rather than a fix for observed rows. The read filter is therefore exercised
+  # at its own level: index the row directly, then assert the query drops it.
+  test "P2: a system-granted row is EXCLUDED by the read filter (K4 provenance parity)" do
+    t = target("prov")
+    by_entity = active_agent("by-entity")
+    by_system = active_agent("by-system")
+
+    grant_via_store!(t, by_entity, :example, :receive)
+
+    # Make `by_system` a live, ACTIVE grantee, then re-index it with the same
+    # signed cap re-stamped to a `system://` granter (only `granted_by` differs).
+    persist_with!(by_system, [sign_cap(t, by_system, :example, :receive, @workspace)])
+
+    assert by_system in GranteeIndex.grantees_of(t, @admin, admin_caps(), :example, :receive),
+           "precondition: the entity-granted form of the SAME row is returned"
+
+    system_stamped = %{
+      sign_cap(t, by_system, :example, :receive, @workspace)
+      | granted_by: system_granter()
+    }
+
+    {:ok, _} =
+      EzagentCore.Repo.transaction(fn ->
+        GranteeIndex.reindex_in_txn(by_system, [system_stamped])
+      end)
+
+    assert GranteeIndex.grantees_of(t, @admin, admin_caps(), :example, :receive) == [by_entity]
+  end
+
+  # P2 ③ — `revoke_provisioning/1` and `tombstone/1` are the only two Store
+  # writers that did NOT reindex: rows survived and correctness rested entirely
+  # on the READ-side `grantee_active?/1` filter. Assert the ROW is gone, not just
+  # filtered — a read-side assertion would pass either way.
+  test "P2: revoke_provisioning and tombstone CLEAR the grantee's index rows in-transaction" do
+    for {label, transition} <- [{"revoke", :revoke_provisioning}, {"tombstone", :tombstone}] do
+      t = target("clear-#{label}")
+      g = active_agent("cleared-#{label}")
+      grant_via_store!(t, g, :example, :receive)
+
+      assert index_row_count(g) > 0, "#{label}: precondition — the grantee must be indexed"
+
+      :ok = apply(Store, transition, [g])
+
+      assert index_row_count(g) == 0,
+             "#{label}: the rows must be cleared by the write path, not merely hidden by the read filter"
+    end
+  end
+
+  defp system_granter, do: Ezagent.URI.new!("system://bootstrap")
+
+  defp index_row_count(grantee) do
+    key = Ezagent.URI.stable_key(grantee)
+    EzagentCore.Repo.aggregate(from(r in GranteeIndex, where: r.grantee_uri == ^key), :count)
+  end
+
   # canary cutover-backfill rehearsal catch #3 (#189): a pre-#1399 legacy cap is
   # a struct-shaped map that MATCHES `%Capability{}` yet LACKS the cap-signing
   # trio (signature/key_id/grantee_uri, 2026-07-14). `reindex_in_txn`'s

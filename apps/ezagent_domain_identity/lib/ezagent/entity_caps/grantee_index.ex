@@ -110,25 +110,62 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
 
   Returns each distinct grantee once. Unknown target (no active authority) → `[]`.
   """
-  @spec grantees_of(URI.t(), URI.t(), Enumerable.t(), module() | atom()) :: [URI.t()]
-  def grantees_of(%URI{} = target, %URI{} = caller, caller_caps, behavior \\ :any) do
+  @spec grantees_of(URI.t(), URI.t(), Enumerable.t(), module() | atom(), atom()) :: [URI.t()]
+  def grantees_of(%URI{} = target, %URI{} = caller, caller_caps, behavior \\ :any, action \\ :any) do
+    if Ezagent.Identity.Authority.manages?(caller, target, caller_caps) do
+      query_grantees(target, behavior, action)
+    else
+      []
+    end
+  end
+
+  @doc """
+  PLATFORM-MECHANISM entry — the same reverse read WITHOUT the `manages?/3`
+  human-administrator gate.
+
+  Allen 2026-07-31: the caller of this arity is a MECHANISM computing a
+  projection **inside its own domain, over a SINGLE named target** (e.g.
+  `ActionSet.Session.Membership` deriving a session's member roster from the
+  caps held toward that session) — a platform-mechanism declaration, not an
+  external principal enumerating someone else's grantees. It therefore carries
+  no user-level cap witness, and correspondingly must NEVER be reachable from a
+  dispatch/transport path: the ENTITY must not read the cap table directly, only
+  its owning mechanism may.
+
+  `grantees_of/5` — the externally reachable arity — keeps `manages?/3`
+  unchanged; do not "simplify" the two into one.
+
+  The caller allowlist is frozen by
+  `test/invariants/grantee_index_mechanism_entry_test.exs` — adding a caller is
+  a deliberate, reviewed act.
+  """
+  @spec grantees_of_internal(URI.t(), module() | atom(), atom()) :: [URI.t()]
+  def grantees_of_internal(%URI{} = target, behavior \\ :any, action \\ :any) do
+    query_grantees(target, behavior, action)
+  end
+
+  defp query_grantees(%URI{} = target, behavior, action) do
     target_key = Ezagent.URI.stable_key(target)
-    active_key = active_key_id(target_key)
 
-    cond do
-      not Ezagent.Identity.Authority.manages?(caller, target, caller_caps) ->
+    case active_key_id(target_key) do
+      nil ->
         []
 
-      active_key == nil ->
-        []
-
-      true ->
+      active_key ->
         from(r in __MODULE__,
           where: r.target_uri == ^target_key and r.key_id == ^active_key,
-          select: r.grantee_uri
+          select: {r.grantee_uri, r.granted_by}
         )
         |> maybe_filter_behavior(behavior)
+        |> maybe_filter_action(action)
         |> Repo.all()
+        # K4 provenance — mirror `Capability.granted_by_entity?/1` (false ONLY
+        # for a `system://` granter). The consumers of this index authorize on
+        # ENTITY-granted caps; a system-granted row must not seed their
+        # projection. Applied in-app so the predicate stays byte-identical to
+        # the struct-level one instead of drifting into a SQL LIKE pattern.
+        |> Enum.filter(&entity_granted?/1)
+        |> Enum.map(fn {grantee_key, _granted_by} -> grantee_key end)
         |> Enum.uniq()
         # codex ④a: drop grantees whose OWN identity is no longer active
         # (offboarded/tombstoned) — filtered in-app against `Store.status/1`
@@ -138,6 +175,13 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
         |> Enum.map(&Ezagent.URI.new!/1)
     end
   end
+
+  defp entity_granted?({_grantee_key, nil}), do: true
+
+  defp entity_granted?({_grantee_key, granted_by}) when is_binary(granted_by),
+    do: not String.starts_with?(granted_by, "system://")
+
+  defp entity_granted?(_), do: false
 
   defp grantee_active?(grantee_key), do: Store.status(grantee_key) == :active
 
@@ -162,6 +206,19 @@ defmodule Ezagent.EntityCaps.GranteeIndex do
   defp maybe_filter_behavior(query, behavior) do
     b = behavior_string(behavior)
     from(r in query, where: r.behavior == ^b)
+  end
+
+  # Action-dimension filter (#1655 P2). The column has always been written
+  # (`row_attrs/2`) but was never read, so a behavior-only reverse query returned
+  # EVERY action toward the target — e.g. an invited-but-never-joined principal
+  # holding only `cap(:session, Session, :join, S)` came back indistinguishable
+  # from a `:receive` member. Consumers that key off ONE concrete action must
+  # pass it; `:any` preserves the previous behavior-only semantics.
+  defp maybe_filter_action(query, :any), do: query
+
+  defp maybe_filter_action(query, action) do
+    a = to_string(action)
+    from(r in query, where: r.action == ^a)
   end
 
   # Single, consistent read of the target's active-authority generation.

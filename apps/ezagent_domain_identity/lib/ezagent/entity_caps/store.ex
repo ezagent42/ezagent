@@ -1133,6 +1133,18 @@ defmodule Ezagent.EntityCaps.Store do
                 {:ok, changes} <- fun.(row),
                 :ok <- maybe_consume(receipt),
                 {:ok, _row} <- row |> Ecto.Changeset.change(changes) |> Repo.update() do
+             # #1655 P2 — REVOCATION/TOMBSTONE must also clear the reverse index.
+             # `persist/update/backfill/activate_locked` all reindex in-transaction,
+             # but the only two callers of this helper (`revoke_provisioning/1`,
+             # `tombstone/1`) did not: the rows survived, and correctness rested
+             # entirely on the READ-side `grantee_active?/1` filter. That made the
+             # Store moduledoc's "sole downstream confluence of EVERY conferral
+             # path" untrue on the write side and left the index unboundedly
+             # stale. Both transitions mean "this identity's caps are void", so
+             # the grantee's rows are replaced with the empty set — inside the
+             # SAME transaction as the status flip. `activate_locked/…` re-indexes
+             # on reactivation, so a revoked→active round-trip restores them.
+             _ = Ezagent.EntityCaps.GranteeIndex.reindex_in_txn(uri, [])
              :ok
            else
              {:error, reason} -> Repo.rollback(reason)
