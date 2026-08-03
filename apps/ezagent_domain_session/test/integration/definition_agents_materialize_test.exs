@@ -176,6 +176,88 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
+  defmodule PtyBootstrapStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.pty_bootstrap_stub"
+
+    def credential_connection(_opts), do: {:pty, "Connect test CLI"}
+
+    @impl Ezagent.Kind.Template
+    def template_data_extra(content) when is_map(content) do
+      case Ezagent.Kind.Template.content_field(content, :credential_bootstrap) do
+        nil -> %{}
+        bootstrap -> %{"credential_bootstrap" => bootstrap}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_pty_bootstrap_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, %{"credential_bootstrap" => bootstrap} = data, _workspace_uri)
+        when bootstrap in [:pty, "pty"] do
+      spawn_bare_agent(data)
+    end
+
+    def instantiate(_name, _data, _workspace_uri),
+      do: {:error, :missing_pty_bootstrap_marker}
+
+    defp spawn_bare_agent(data) do
+      uri = Ezagent.URI.new!(data["agent_uri"])
+
+      case Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+             uri: uri,
+             behaviors: Ezagent.Entity.Agent.base_behaviors(),
+             role: data["role"]
+           }) do
+        {:ok, _pid} -> {:ok, [uri], %{fresh?: true, config_dir_path: nil}}
+        {:error, {:already_started, _pid}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, {:already_registered, _}} -> {:ok, [uri], %{fresh?: false}}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defmodule ApiKeyNoBootstrapStubTemplate do
+    @moduledoc false
+    @behaviour Ezagent.Kind.Template
+
+    @impl Ezagent.Kind.Template
+    def template_name, do: "definition_agents.api_key_no_bootstrap_stub"
+
+    def credential_connection(_opts),
+      do: {:api_key, "test-provider", "Configure test API key"}
+
+    @impl Ezagent.Kind.Template
+    def template_data_extra(content) when is_map(content) do
+      case Ezagent.Kind.Template.content_field(content, :credential_bootstrap) do
+        nil -> %{}
+        bootstrap -> %{"credential_bootstrap" => bootstrap}
+      end
+    end
+
+    @impl Ezagent.Kind.Template
+    def validate(%{"agent_uri" => agent_uri}) when is_binary(agent_uri), do: :ok
+    def validate(_), do: {:error, :invalid_api_key_no_bootstrap_stub_template}
+
+    @impl Ezagent.Kind.Template
+    def instantiate(_name, data, workspace_uri) do
+      if Map.has_key?(data, "credential_bootstrap") do
+        {:error, :unexpected_pty_bootstrap_marker}
+      else
+        PtyBootstrapStubTemplate.instantiate(
+          template_name(),
+          Map.put(data, "credential_bootstrap", :pty),
+          workspace_uri
+        )
+      end
+    end
+  end
+
   # A SLICE-credentialled flavor (like curl: the key lives in the agent's
   # `:api_keys` slice — no config-home files, no env probe). Before #185 the
   # credential precondition waved every slice-backed flavor through, so a role
@@ -438,6 +520,25 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       {:error, {:already_registered, ^type}} ->
         :ok
     end
+
+    flavor
+  end
+
+  defp register_connection_capture_flavor(n, connection) do
+    {suffix, template_class} =
+      case connection do
+        :pty -> {"pty_bootstrap", PtyBootstrapStubTemplate}
+        :api_key -> {"api_key_no_bootstrap", ApiKeyNoBootstrapStubTemplate}
+      end
+
+    flavor = "definition_agents_#{suffix}_#{n}"
+
+    :ok =
+      Ezagent.AgentFlavorRegistry.register(%{
+        flavor: flavor,
+        kind: Ezagent.Entity.Agent,
+        template_class: template_class
+      })
 
     flavor
   end
@@ -1509,6 +1610,60 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     caps = Ezagent.Identity.list_caps_for(@owner_uri)
     assert {:ok, admission} = AgentAdmission.begin(session_uri, role_name, @owner_uri, caps)
     refute admission.provisional_agent_uri == URI.to_string(reusable)
+  end
+
+  test "provisional admission marks only PTY connections for credential bootstrap" do
+    for connection <- [:pty, :api_key] do
+      n = uniq()
+      session_uri = live_session(n)
+      recipe_name = seed_recipe(n)
+      role_name = "#{connection}-admission-#{n}"
+      flavor = register_connection_capture_flavor(n, connection)
+
+      declaration = %{
+        recipe: recipe_name,
+        role_name: role_name,
+        flavor: flavor,
+        credential_admission: :before_session_join
+      }
+
+      working_copy =
+        SessionBehavior.default_template_working_copy()
+        |> Map.put(
+          :session_template_uri,
+          Ezagent.URI.template("system", :session, "#{connection}-admission@revision-#{n}")
+        )
+        |> Map.put(:member_declarations, [declaration])
+
+      assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+      assert {:ok, %{deferred: [^role_name]}} =
+               DefinitionAgents.materialize_definition_agents(
+                 session_uri,
+                 @workspace_uri,
+                 @owner_uri,
+                 [declaration]
+               )
+
+      caps = Ezagent.Identity.list_caps_for(@owner_uri)
+
+      assert {:ok, %{status: :authenticating} = admission} =
+               AgentAdmission.begin(session_uri, role_name, @owner_uri, caps)
+
+      provisional_uri = Ezagent.URI.new!(admission.provisional_agent_uri)
+      assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+
+      on_exit(fn ->
+        AgentAdmission.cancel(
+          session_uri,
+          role_name,
+          admission.attempt_id,
+          {@owner_uri, caps}
+        )
+      end)
+
+      assert Ezagent.Kind.alive?(provisional_uri)
+    end
   end
 
   test "reuse install choice rejects an agent from a different recipe" do

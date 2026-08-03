@@ -113,6 +113,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
     planned_uri = planned_agent_uri(workspace_uri)
 
     with true <- credential_admission_of(declaration) == :before_session_join,
+         {:ok, connection} <-
+           Ezagent.Agent.CredentialConnection.for_flavor(flavor, role: declaration),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          recipe = merge_role_config(recipe, role_config(declaration)) do
       case spawn_agent(
@@ -123,7 +125,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
              recipe_name,
              role_name,
              flavor,
-             provider
+             provider,
+             provisional_content_overrides(connection)
            ) do
         {:ok, fresh_receipt} ->
           finish_provisional_spawn(
@@ -253,7 +256,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
              recipe_name,
              role_name,
              flavor,
-             provider
+             provider,
+             session_member_content_overrides()
            ) do
       {:ok, planned_uri}
     end
@@ -275,7 +279,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
          recipe_name,
          role_name,
          flavor,
-         provider
+         provider,
+         template_content_overrides
        ) do
     workspace_uri = Ezagent.Capability.workspace_of(planned_uri)
 
@@ -288,7 +293,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
              recipe_name,
              role_name,
              flavor,
-             provider
+             provider,
+             template_content_overrides
            ) do
       finish_spawned_agent(
         session_uri,
@@ -477,7 +483,8 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
          recipe_name,
          role_name,
          flavor,
-         provider
+         provider,
+         template_content_overrides
        ) do
     source_template_uri = Ezagent.URI.template(:system, :agent, recipe_name)
 
@@ -494,11 +501,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
       caps: SessionCreator.list_caps_for_materialization(granted_by),
       source_template_uri: source_template_uri,
       description: @agent_description,
-      template_content_overrides: %{
-        credential_optional: true,
-        credential_source_policy: :session_local,
-        session_template_member: true
-      }
+      template_content_overrides: template_content_overrides
     }
 
     spawn_opts =
@@ -517,6 +520,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgentLifecycle d
       {:error, reason} ->
         {:error, {:agent_spawn_failed, role_name, reason}}
     end
+  end
+
+  defp provisional_content_overrides({:pty, _descriptor}) do
+    session_member_content_overrides()
+    |> Map.put(:credential_bootstrap, :pty)
+  end
+
+  defp provisional_content_overrides(_connection), do: session_member_content_overrides()
+
+  defp session_member_content_overrides do
+    %{
+      credential_optional: true,
+      credential_source_policy: :session_local,
+      session_template_member: true
+    }
   end
 
   defp join_or_cleanup(session_uri, %URI{} = member_uri, role_name, recipe) do
