@@ -221,6 +221,7 @@ defmodule EzagentPluginHello.Generator do
   @doc false
   @spec error_signal_reason(term()) :: term()
   def error_signal_reason({:no_api_key, _provider} = reason), do: reason
+  def error_signal_reason({:transport, :timeout}), do: :generation_timeout
   def error_signal_reason(reason), do: {:generation_failed, reason}
 
   # Emit ONE "<label>…" line, then run the slow work inline. The client renders a
@@ -552,10 +553,6 @@ defmodule EzagentPluginHello.Generator do
       {:hello_completion, ^request_id, content} when is_binary(content) ->
         Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
         {:ok, %{content: content}}
-    after
-      120_000 ->
-        Registry.unregister(EzagentPluginHello.CompletionRegistry, request_id)
-        {:error, :llm_completion_timeout}
     end
   end
 

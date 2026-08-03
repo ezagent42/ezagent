@@ -123,6 +123,16 @@ defmodule Ezagent.World.ErrorCardsTest do
     assert %{layer: 2} = row["error_card"]
   end
 
+  test "generation timeout renders an explicit timeout card" do
+    body = ErrorSignal.reply_body(:generation_timeout)
+
+    row = ErrorCards.enrich(@row, body, ctx(false))
+
+    assert %{what: what, impact: impact} = row["error_card"]
+    assert what =~ "超时"
+    assert impact =~ "重新发送"
+  end
+
   test "unregistered reason renders Layer 3 with a message-deterministic issue id" do
     body = ErrorSignal.reply_body({:generation_failed, "boom"})
 

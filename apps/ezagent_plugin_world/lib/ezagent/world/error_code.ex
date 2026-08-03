@@ -51,6 +51,17 @@ defmodule Ezagent.World.ErrorCode do
           fix_path: nil,
           fix_owner: :workspace_founder
         }
+      },
+      %{
+        code: "agent_generation_timeout",
+        trigger: {:error, :generation_timeout},
+        category: :availability,
+        message: %{
+          what: "AI 页面生成超时",
+          impact: "模型未能在等待时间内完成生成，请重新发送你的请求",
+          fix_path: nil,
+          fix_owner: nil
+        }
       }
     ]
   end
