@@ -679,7 +679,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
       new_caps = MapSet.new(persistable)
 
       with :ok <- persist_entity_caps(Map.get(ctx, :self_uri), new_caps) do
-        {:ok, %{caps: MapSet.to_list(new_caps)}, [set_caps_effect(new_caps)]}
+        effects = maybe_add_git_identity_wipe([set_caps_effect(new_caps)], ctx, cap)
+        {:ok, %{caps: MapSet.to_list(new_caps)}, effects}
       end
     else
       {:error, reason} ->
@@ -786,16 +787,19 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
           cap_struct
         )
 
-        {:ok, %{caps: MapSet.to_list(new_caps)},
-         [
-           set_caps_effect(new_caps),
-           {:emit, :cap_revoked,
-            %{
-              target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
-              cap: cap_struct,
-              at: DateTime.utc_now()
-            }}
-         ]}
+        effects =
+          [
+            set_caps_effect(new_caps),
+            {:emit, :cap_revoked,
+             %{
+               target_uri: Map.get(ctx, :self_uri) |> uri_to_str(),
+               cap: cap_struct,
+               at: DateTime.utc_now()
+             }}
+          ]
+          |> maybe_add_git_identity_wipe(ctx, cap_struct)
+
+        {:ok, %{caps: MapSet.to_list(new_caps)}, effects}
 
       {:error, :cannot_revoke_admin} = err ->
         err
@@ -826,6 +830,24 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # Each caller has already either verified the complete set/artifact or proven
   # that the mutation is removal-only.
   defp set_caps_effect(caps), do: {:set, :caps, caps}
+
+  defp maybe_add_git_identity_wipe(
+         effects,
+         %{self_uri: %URI{} = target_uri},
+         %Ezagent.Capability{
+           behavior: Ezagent.ActionSet.UserSshIdentity,
+           action: :read_ssh_key
+         }
+       ) do
+    if Ezagent.URI.type?(target_uri, :agent) do
+      effects ++
+        [{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [target_uri]}]
+    else
+      effects
+    end
+  end
+
+  defp maybe_add_git_identity_wipe(effects, _ctx, _cap), do: effects
 
   defp normalize_artifact(%Ezagent.Capability{} = artifact), do: {:ok, artifact}
 
