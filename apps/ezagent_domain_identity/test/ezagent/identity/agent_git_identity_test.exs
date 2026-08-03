@@ -207,9 +207,9 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
       assert log == ""
     end
 
-    # 设计 §6.1 —— 这条是让 cap 撤销真正生效的那一步。没有它，撤销只是
-    # 让环境变量消失，key 还在 agent 的文件系统上且完全可用。
-    test "撤销生效：先成功物化一次，撤掉 cap 后再物化 → 盘上的 key 必须被清掉", ctx do
+    # Revocation is an immediate security boundary: removing the cap itself
+    # must wipe the materialized key, without waiting for another spawn/retire.
+    test "撤销 read_ssh_key cap 后立即清掉盘上的 key", ctx do
       generate_key_for(ctx.user_uri, ctx.admin)
       cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
 
@@ -217,15 +217,39 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
       key_path = Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519")
       assert File.exists?(key_path)
 
-      # `Ezagent.EntityCaps.revoke/2`（`entity_caps.ex:272`）—— 与本文件
-      # 授予侧用的 `Ezagent.Identity.absorb_cap/2` 对称的直接入口。
-      # （`Ezagent.Identity.revoke_cap/2` **不存在**；带授权的 chokepoint 版本
-      # 是 `Ezagent.Identity.Grant.revoke_cap/3`，测试里不需要。）
       :ok = Ezagent.EntityCaps.revoke(ctx.agent_uri, cap)
       assert [] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
-
-      assert {:ok, :none} = AgentGitIdentity.materialize(ctx.agent_uri)
       refute File.exists?(key_path)
+    end
+
+    test "撤销非 read_ssh_key cap 不清理已物化的 key", ctx do
+      generate_key_for(ctx.user_uri, ctx.admin)
+      read_cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
+      assert {:ok, %{"GIT_SSH_COMMAND" => _}} = AgentGitIdentity.materialize(ctx.agent_uri)
+
+      public_target =
+        Ezagent.URI.with_action(ctx.user_uri, :user_ssh_identity, :read_ssh_public_key)
+
+      public_cap =
+        signed_required_cap!(
+          public_target,
+          :user,
+          UserSshIdentity,
+          :read_ssh_public_key,
+          ctx.agent_uri
+        )
+
+      :ok = Ezagent.Identity.absorb_cap(ctx.agent_uri, public_cap)
+
+      :ok =
+        Ezagent.Identity.CapAbsorbAwait.await_exact(
+          ctx.agent_uri,
+          [read_cap, public_cap],
+          5_000
+        )
+
+      :ok = Ezagent.EntityCaps.revoke(ctx.agent_uri, public_cap)
+      assert File.exists?(Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519"))
     end
 
     test "只持 read_ssh_public_key cap 不算 —— 仍是关闭态", ctx do
