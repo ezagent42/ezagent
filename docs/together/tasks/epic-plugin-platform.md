@@ -144,12 +144,7 @@ A4 收尾 + A5 收尾  →  Group B:kanban 纯化(#1474)  →  Socialware Protoc
 | # | 件 | 状态 |
 |---|---|---|
 | A4-1 | 删 Mount reconcile 重发 trap | ✅ 已合 `fb35003cf`(#1611) |
-| **A4-2** | `:members` roster → 纯投影(#192) | 🔵 **#1655**:P1 ✅ / P1.5(#1665)✅ / P2 ✅,**CI 全绿**;剩收口确认(见下) |
-
-**A4-2 的剩余 delta(一个确认题,不是架构决定)**
-#192 的要求是 Allen 备忘里那句:「`:members` 今天仍是**单独存储、只是被 reconcile 一下**,要变成纯投影」——**要求是"别再当第二个真相源",没规定必须用反向索引**。
-既然 M-8 已把 reconcile 变成精确 cap-holder 投影、`MembershipConvergence`(`behavior/identity.ex:290`/`:767`)又在钥匙落地时从 caps 自愈、P1 让它连在途的钥匙也算得进,**正向派生已经满足"从 caps 派生"**。
-⇒ 待确认:这样是否即可判 #192 收口?(此前我写的"甲/乙/丙三选一"是**把手段〔用 grantees_of〕当成了要求**后自己制造的取舍,已撤回。)
+| **A4-2** | `:members` roster → 纯投影(#192) | ✅ **已收口**:#1655 **已合 main**(merge `da8a26bc1`,2026-08-03,issue #1665 随之关闭)。**决策「甲」(用户↔Allen ping-pong,2026-08-03)**:正向 effective 现算(P1,含在途钥匙)即满足「roster 只由 caps 派生、无独立写者」—— **P4 反向换源不做**;若日后 #1501/outbox 收敛出「反查含在途」的能力,反向版作为优化再议。原 P3 已由 07-31 裁决消解折进 P2(机制入口 + 空白名单 ratchet 留给未来消费者)。 |
 
 ### Mount 改名 / 删表 —— **归 Group B,不属 A4**
 `Mount→Provision/Share 改名 + 删 MountRow 表`、`unmount 取 actions 脱 MountRow`、`backfill 改派生`:计划文档原文即「碰 kanban 消费者…归后续(或 Group B 一起)」。且实证一个必须先解的点 —— **`access: :read` / `:operate` 只存在于挂载表的列**(`mount_row.ex:62`),cap 上没有该字段(`mint_cap` 只收 actions),两者在 cap 层只差"发了哪些动作",而那份只读动作清单住在 **kanban 策略层**(`board_provision.ex:83 @default_read_actions`)。所以"读挂载不扩散"这条规则**无法从 cap 派生**,删表前需先定 tier 怎么表达。**留到 Group B 一并处理。**
