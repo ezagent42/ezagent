@@ -84,7 +84,10 @@ cites are on #1583 and each PR's comment thread.
 上方全文（Allen 决策 D1–D3 + MUST-FIX M1–M4 + HARDENING H1–H3 + Per-PR map）即为 07-29
 派发的原始开工 prompt —— 一次写成, 不重生成。
 
-**进度追记(2026-08-03)**: M/H 修复随各 PR 复审合入, A1–A4-1 全段已入 main; A4-2/#192
-roster 收敛(在途 cap 纳入投影 + #1665 write-after-leave 撤销完整性安全修复 + 反向索引
-补齐)今晨以 **#1655** 入 main(da8a26bc1)。Allen 拍板 **A4-2 甲**(forward effective_caps,
-低频路径) → **P4 关闭**。下一增量(Group-A 后续)待 plan 排期。
+**进度追记(2026-08-03)**: M/H 修复随各 PR 复审合入; 07-30 收尾项 **#1594(A1)/**
+**#1606(A2-2)** 均于 07-30 入 main(14:52 / 20:47 CST); A4-2/#192 roster 收敛(在途
+cap 纳入投影 + #1665 write-after-leave 撤销完整性安全修复 + 反向索引补齐)今晨以
+**#1655** 入 main(da8a26bc1)。**#1620**(A4-2 roster design draft)随 #1606 合入
+base 分支被删而连带关闭, 由 #1655 实现取代; **#1619**(A5 匿名 link_anon)仍 OPEN
+design-first 待批。Allen 拍板 **A4-2 甲**(forward effective_caps, 低频路径) →
+**P4 关闭**。下一增量(Group-A 后续, 候选 #1619 A5)待 plan 排期。

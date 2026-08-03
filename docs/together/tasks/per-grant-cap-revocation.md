@@ -1,7 +1,7 @@
 # #1684 clean-slate per-grant cap 撤销 —— 折入 CI 隔离整合分支
 
 - **id**: `per-grant-cap-revocation`
-- **owner**: kimi
+- **owner**: Allen 轨道(实现: kimi agent)
 - **status**: review(已折入整合分支, 待随之合入)
 - **历史**: started 2026-07-31 · est_done 2026-08-03 · actual —
 - **关联**: PR #1684(open, head dbdf4ad76) · 折入 `integrate/ci-isolation-dod24-20260803`(merge 8bd91ec6a) → 随 `ci-isolation-integration` 一次合入 main · 后续线: DeliveryOutbox final plan #1670(merged 07-31), 实现切片待 plan
@@ -23,5 +23,13 @@ clean-slate per-grant revocation: grant Store 作唯一权威 + durable revocati
 
 ## Handoff prompt
 
-实现本体已由 kimi 完成并折入整合分支; 剩余动作是整合合入后的 reconcile(见
-`ci-isolation-integration` 验收第 4 条)。无新派发 prompt。
+> 整合合入后的 reconcile + 下一增量, 两步(实现本体已由 kimi 完成并折入整合分支,
+> 见 `ci-isolation-integration`):
+>
+> (1) 待整合 PR 合入 main 后: 核对 `origin/main` 含 merge 8bd91ec6a 折入的 per-grant
+> revocation 全部改动; 然后在 #1684 评论 "subsumed by <最终 main merge SHA>" 并关闭,
+> 不留重复 open PR(Close PR state 规则)。
+>
+> (2) DeliveryOutbox 实现切片: 以 #1670 final plan(merged 07-31)收敛的五问为准,
+> 切第一片 handoff —— 单 PR 可验收粒度, 走 clarify_first → build; 派发前与 lead
+> 对齐切片边界, 不与 `ci-isolation-integration` 在飞期间并发改同面。

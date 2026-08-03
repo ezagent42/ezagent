@@ -22,5 +22,9 @@ git-provider 的凭据模型定形: Forgejo Git Provider V1 落地后, 把不可
 
 ## Handoff prompt
 
-无 cc 派发 prompt —— gaga 自有轨道。五形态对比结论与 NO-GO 依据见 #1677 正文;
-B2′ 实现/评审见 #1688; 撤销面 follow-up 见 `ssh-revoke-wipe`。
+> (归档 — 已收敛为 B2′, prompt 留作可复演任务简报) 原任务三件套: ① #1643
+> Forgejo Git Provider V1 落地后, 把不可读 provider 响应从 `:provider_unavailable`
+> 拆出为 `:provider_response_unrecognized`(#1668, 错误分类诚实化); ② 五种凭据形态
+> 对比 + Plan A NO-GO 重核(#1677)交付 Allen; ③ 拍板 B2′(User SSH 身份 + 物化进
+> agent, 私钥明文形态 APPROVED)。后续: B2′ 实现见 `agent-ssh-credential-b2`(#1688
+> merged); 撤销面 follow-up 见 `ssh-revoke-wipe`。

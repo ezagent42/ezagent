@@ -22,5 +22,11 @@ Allen 08-03 APPROVED), 使 agent 能以用户身份对 Forgejo 做 git 操作 �
 
 ## Handoff prompt
 
-无 cc 派发 prompt —— gaga 自有轨道; B2′ 形态以 #1677 五形态对比结论 + Allen 决策为准。
-已合入; 后续窗口风险见 `ssh-revoke-wipe`。
+> B2′ 已入 main(#1688, 8ad5d3795)。剩余动作 = 收口验证 + follow-up 跟入:
+>
+> (1) 在含 #1688 的 main 上核对: agent 物化 User SSH 身份后能以用户身份对 Forgejo
+> 完成 git 操作(clone/push 冒烟), 私钥明文形态与 #1677 五形态对比结论 + Allen
+> 08-03 APPROVED 口径一致。
+> (2) 推动 `ssh-revoke-wipe`(gaga 轨道, codex 执行)评审合入 —— wipe 未合前,
+> agent 物化凭据存在撤销不即擦除窗口; 该窗口随 follow-up 合入关闭, 届时回勾
+> 本 task 验收第 4 条。

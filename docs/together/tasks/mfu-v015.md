@@ -13,6 +13,7 @@ v0.15 落地包(living doc 在原 `mfu-demo/doc/tree/skill-tree.md` §8.1, 已�
 
 ## 验收
 - [x] 成长树修复包 + 技能/经验框架落地(evidence: #1586 merged 07-29; 纯 demo/docs/skill 无 core 改动)
+- [x] #1618 协作卡牌阵列首个教学订单(evidence: merged 07-31 14:01 CST; 即 07-31 return `ruihua-mfu-multi-role-demo` 的 PR)
 - [x] repo 迁移: mfu-demo 移出本 repo, canonical home = Forgejo Prototype/mfu(evidence: #1676 merged 07-31)
 - [ ] 认证移出树：N-07/N-11 → 认证徽章架（公司页 + 个人页）
 - [ ] 经验条 UI：两页上半区进度条（订单/打工/作品/人脉计数）
@@ -20,7 +21,13 @@ v0.15 落地包(living doc 在原 `mfu-demo/doc/tree/skill-tree.md` §8.1, 已�
 - [ ] 目标 2：孵化器树 + 孵化器工作台（N-13 根 + grants 权限机制）
 
 ## Handoff prompt
-无 cc 派发 prompt——ruihua 自有轨道；范围以其 PR #1586 正文「接下来在本分支继续」+ living doc 为准。
-纯 demo/docs/skill、无 core 改动 → 合入走绿色通道(CI 绿即合, 无需 codex Cap 审)。
-迁移后开发与合入在 Forgejo `Prototype/mfu` 进行; ezagent board 按 Allen 08-03 裁定继续跟踪该
-产品线状态(跨 repo 跟踪, 不标"已离开 repo/下线")。
+> 在 Forgejo `Prototype/mfu` 继续 v0.15 landing package(本 repo 不再持有 mfu-demo
+> 代码, 勿在 ezagent 内改 mfu-demo 路径)。四块续作, 每块独立 PR、纯 demo/docs/skill
+> 无 core 改动 → 绿色通道(CI 绿即合, 无需 codex Cap 审):
+> ① 认证移出树: N-07/N-11 → 认证徽章架(公司页 + 个人页);
+> ② 经验条 UI: 两页上半区进度条(订单/打工/作品/人脉计数);
+> ③ 外部认证录入入口(D41);
+> ④ 目标 2: 孵化器树 + 孵化器工作台(N-13 根 + grants 权限机制)。
+> 范围口径 = living doc(原 `mfu-demo/doc/tree/skill-tree.md` §8.1, 已随迁移进
+> Prototype/mfu)。每块落地后在 ezagent board 本卡回勾并附 Prototype/mfu PR 链接 —
+> ezagent board 按 Allen 08-03 裁定继续跨 repo 跟踪该产品线(不标"已离开/下线")。

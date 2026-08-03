@@ -18,6 +18,9 @@ tmp fixtures, 产生轮换红 —— gate 与 fixture 目录隔离是结构解, 
 
 ## Handoff prompt
 
-无 cc 派发 prompt —— gaga 自有轨道; 修复方向以 #1683 正文与评审意见为准。
-方法沉淀(写回 08-03 board review): flake 归因到结构 —— gate 会扫到别的测试的 tmp
-fixtures, 目录隔离是结构解; 不打补丁式重试。
+> (归档 — 已合入, prompt 留作可复演任务简报) 原任务: architecture gates
+> (`gate.arch` 静态扫描)在 full-suite 连跑时扫到**别的测试**留下的 tmp fixtures,
+> 产生轮换红。修复方向 = gate 扫描面与测试 tmp fixture 目录做结构隔离(不是重试、
+> 不是加宽 allowlist); 改前 fail-before、改后 pass-after 各跑一次为证。
+> 方法沉淀(已写回 08-03 board review): flake 归因到结构 —— 目录隔离是结构解,
+> 不打补丁式重试。

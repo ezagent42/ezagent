@@ -26,14 +26,17 @@ flake(#184 残留)做**系统性修复**, 五块折入一支整合分支一次�
 - [ ] 整合分支上**一次完整 `mix precommit` 诚实绿**(不拆回源 PR、不 mask、不盲加 timeout; 红则只修 demonstrated integrated-state 失败后重跑)
 - [ ] push + 一个 PR → 正常 merge(无 force push) → `origin/main` 含整合 HEAD/merge
 - [ ] #1684 标 subsumed(注明最终 main merge SHA)关闭, 不留重复 open PR
+- [ ] #189 test-defects E/F/D 在整合后 main 验证绿(07-30 结转, 发布闸剩余项; 已绿则验证+记录回本项, 红则 systematic 小 PR 修复)
 - [ ] main 真绿 → canary 放行评估(auto-reflow 已移除 #222, 数据同步手动)
 
 ## Handoff prompt
 
 完整 continuation handoff(含当前状态/证据/DoD 七条)见
-`docs/together/2026-08-03/handoffs/integrated-ci-fixes-continuation.md`。核心约束:
+`docs/together/2026-08-03/handoffs/integrated-ci-fixes-continuation.md`(随 PR #1689
+入 main)。核心约束:
 
 > 确认目标 worktree `/Users/h2oslabs/Workspace/ezagent/.worktrees/integrate-ci-isolation-dod24-20260803`
 > HEAD=5cfb64256 未变且 clean; 确认无残留 `mix precommit`/BEAM 子进程; 从该 worktree 跑**恰好一次**
 > 完整 `mix precommit` 并留存完整 exit code/log; 红则系统性调试、只修整合态失败, 不 mask、不拆回源 PR;
 > 绿后 push → 一个 PR → 正常 merge → 核对 origin/main; 再把 #1684 标 subsumed 关闭。
+> 另: 合入后顺手验证 #189 test-defects E/F/D(见验收第 5 条, 07-30 结转)。
