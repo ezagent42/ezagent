@@ -278,6 +278,64 @@ defmodule EzagentPluginForgejo.ForgejoAdapterReadTest do
                ForgejoAdapter.list_reviews(ctx(), repo!(), id)
     end
 
+    # The mirror of the pagination test below, and the one that guards
+    # `map_error/3`'s pass-through.
+    #
+    # An unreadable page body is refused INSIDE `all_pages/5`, which means the
+    # atom leaves through this callback's `else` clause and is handed to
+    # `map_error/3`. That function's residue clause rewrites any marker it does
+    # not recognise, so dropping `:provider_response_unrecognized` from its
+    # pass-through list sends this case back to `:provider_unavailable` —
+    # retryable — which is the precise bug this change exists to remove.
+    #
+    # Nothing else catches that regression: `normalize_test` runs BEFORE
+    # `map_error/3`, `observation_test` injects the atom directly and never
+    # touches the adapter, and the pagination test below asserts
+    # `:provider_unavailable`, which a regression also produces. Silent green.
+    test "an unreadable page body survives map_error as :provider_response_unrecognized" do
+      stub(fn conn ->
+        assert conn.request_path == "/api/v1/repos/gagameow/ezagent-forgejo-test/pulls/42/reviews"
+
+        # A 2xx whose body is not the list this endpoint documents.
+        Req.Test.json(conn, %{"unexpected" => true})
+      end)
+
+      {:ok, id} = ChangeRequestId.new(%{external_id: "42"})
+
+      assert {:error, :provider_response_unrecognized} =
+               ForgejoAdapter.list_reviews(ctx(), repo!(), id)
+    end
+
+    # The pagination cap keeps `:provider_unavailable` while every PARSE refusal
+    # in this plugin moved to `:provider_response_unrecognized`, and that split
+    # is the point: nothing about these responses was unreadable — our own
+    # `@max_items` was reached while the instance was still answering. Reporting
+    # it as a provider schema problem would send an operator to the wrong system.
+    #
+    # Untested until now, which is how a later refactor would have swept it into
+    # the new atom with nothing going red.
+    test "hitting the pagination cap is a provider fault, not an unreadable response" do
+      stub(fn conn ->
+        entries =
+          for n <- 1..50 do
+            %{
+              "id" => n,
+              "state" => "APPROVED",
+              "dismissed" => false,
+              "user" => %{"login" => "alice"},
+              "submitted_at" => "2026-07-29T10:00:00Z"
+            }
+          end
+
+        Req.Test.json(conn, entries)
+      end)
+
+      {:ok, id} = ChangeRequestId.new(%{external_id: "42"})
+
+      assert {:error, :provider_unavailable} =
+               ForgejoAdapter.list_reviews(ctx(), repo!(), id)
+    end
+
     # `ListPullReviews` takes `page`/`limit` (target-instance swagger), so a
     # single unpaginated GET silently drops everything past the first page —
     # and the reviews it drops are the OLDEST, which is where an earlier

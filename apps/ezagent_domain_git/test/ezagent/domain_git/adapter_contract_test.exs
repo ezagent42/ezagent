@@ -33,6 +33,11 @@ defmodule EzagentDomainGit.AdapterContractTest do
     :change_request_conflict,
     :checks_unavailable,
     :provider_unavailable,
+    # Must stay in step with `FakeGitAdapterA`'s own list: the fixture driver
+    # looks each value up there (`error_from_key/1`) and answers `nil` for one
+    # it does not know, so a value added on only one side fails this test
+    # rather than silently going unexercised.
+    :provider_response_unrecognized,
     :authentication_rejected,
     {:provider_request_failed, :create_change_request, 503}
   ]

@@ -50,12 +50,39 @@ defmodule EzagentPluginForgejo.NormalizeTest do
       assert {:ok, %ChangeRequest{state: :closed}} = Normalize.change_request(closed)
     end
 
+    # The same defect the GitHub adapter's `map_pr_state/2` was fixed for
+    # earlier in this change, left behind here when the rest of this module was
+    # migrated. `merged` is only load-bearing on a CLOSED pull request, and
+    # there it is the whole answer — absent or non-boolean means we cannot tell
+    # a merge from a plain close, and `:closed` is not a safe guess: it erases
+    # the merge, the one fact a reviewer most needs.
+    test "a closed pull request with no usable merged discriminator is refused" do
+      for merged <- [nil, "true", 1] do
+        body = @pull |> Map.put("state", "closed") |> Map.put("merged", merged)
+
+        assert {:error, :provider_response_unrecognized} = Normalize.change_request(body),
+               "expected refusal for merged: #{inspect(merged)}"
+      end
+
+      without = @pull |> Map.put("state", "closed") |> Map.delete("merged")
+      assert {:error, :provider_response_unrecognized} = Normalize.change_request(without)
+    end
+
+    # An OPEN pull request is definitionally not merged, so the discriminator is
+    # not consulted — same asymmetry the GitHub side settled on, and the reason
+    # the pull-request LIST endpoint (which omits `merged`) still works.
+    test "an open pull request does not need the merged discriminator" do
+      without = @pull |> Map.put("state", "open") |> Map.delete("merged")
+      assert {:ok, %ChangeRequest{state: :open}} = Normalize.change_request(without)
+    end
+
     test "a response missing required fields is refused" do
-      assert {:error, :provider_unavailable} = Normalize.change_request(%{"number" => 42})
+      assert {:error, :provider_response_unrecognized} =
+               Normalize.change_request(%{"number" => 42})
     end
 
     test "a non-map response is refused" do
-      assert {:error, :provider_unavailable} = Normalize.change_request("nope")
+      assert {:error, :provider_response_unrecognized} = Normalize.change_request("nope")
     end
   end
 
@@ -137,7 +164,8 @@ defmodule EzagentPluginForgejo.NormalizeTest do
     end
 
     test "a malformed combined response is refused" do
-      assert {:error, :provider_unavailable} = Normalize.checks(%{"statuses" => "not-a-list"})
+      assert {:error, :provider_response_unrecognized} =
+               Normalize.checks(%{"statuses" => "not-a-list"})
     end
   end
 
@@ -221,7 +249,7 @@ defmodule EzagentPluginForgejo.NormalizeTest do
         %{"id" => 6, "state" => "TELEPORTED", "dismissed" => false, "user" => %{"login" => "a"}}
       ]
 
-      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+      assert {:error, :provider_response_unrecognized} = Normalize.reviews(body)
     end
 
     test "parses submitted_at when present" do
@@ -260,7 +288,7 @@ defmodule EzagentPluginForgejo.NormalizeTest do
     # "approved=1" with the objection erased.
     test "a review without an identifiable author is refused, not dropped" do
       body = [%{"id" => 10, "state" => "APPROVED", "dismissed" => false, "user" => %{}}]
-      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+      assert {:error, :provider_response_unrecognized} = Normalize.reviews(body)
     end
 
     test "empty reviews is an empty list, not a failure" do
@@ -268,7 +296,8 @@ defmodule EzagentPluginForgejo.NormalizeTest do
     end
 
     test "a non-list response is refused" do
-      assert {:error, :provider_unavailable} = Normalize.reviews(%{"unexpected" => true})
+      assert {:error, :provider_response_unrecognized} =
+               Normalize.reviews(%{"unexpected" => true})
     end
   end
 
@@ -294,13 +323,13 @@ defmodule EzagentPluginForgejo.NormalizeTest do
         %{"id" => 2, "state" => "REQUEST_CHANGES", "dismissed" => false, "user" => nil}
       ]
 
-      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+      assert {:error, :provider_response_unrecognized} = Normalize.reviews(body)
     end
 
     test "an unknown submitted state is refused, not dropped" do
       body = [%{"id" => 3, "state" => "SOMETHING_NEW", "user" => %{"login" => "bob"}}]
 
-      assert {:error, :provider_unavailable} = Normalize.reviews(body)
+      assert {:error, :provider_response_unrecognized} = Normalize.reviews(body)
     end
 
     # Still a filter, not a loss: these are not submitted reviews.
@@ -319,7 +348,7 @@ defmodule EzagentPluginForgejo.NormalizeTest do
     # same fail-open in a different costume: the caller reads it as "nothing
     # failed".
     test "a combined status missing the statuses key is refused" do
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                Normalize.checks(%{"state" => "failure", "total_count" => 1})
     end
 
@@ -333,12 +362,12 @@ defmodule EzagentPluginForgejo.NormalizeTest do
     # missing field says "this is not the shape we parse". Collapsing them would
     # silently downgrade every check on a schema change.
     test "a check entry with no status field is refused, not mapped to :other" do
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                Normalize.checks(%{"statuses" => [%{"id" => 1, "context" => "ci/x"}]})
     end
 
     test "a check entry whose status arrived under the wrong key is refused" do
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                Normalize.checks(%{
                  "statuses" => [%{"id" => 1, "context" => "ci/x", "state" => "failure"}]
                })

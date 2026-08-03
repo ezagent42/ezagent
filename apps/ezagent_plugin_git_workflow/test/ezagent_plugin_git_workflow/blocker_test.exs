@@ -5,33 +5,23 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
 
   @moduletag :blocker
 
-  # Every atom member of `Ezagent.DomainGit.Error.t()`
-  # (apps/ezagent_domain_git/lib/ezagent/domain_git/error.ex lines 5-22).
-  # Enumerated literally rather than read from the module because `t()` is a
-  # TYPE — there is nothing to read at runtime — and because this plugin must
-  # not grow a dependency on the GitHub owner's error vocabulary beyond
-  # consuming it. THIS is the test that catches a future domain_git addition:
-  # a new member added there without a mapping here lands on :internal_error.
-  @domain_git_errors [
-    :provider_account_not_connected,
-    :credential_backend_unavailable,
-    :repository_not_found,
-    :repository_read_denied,
-    :repository_write_denied,
-    :private_checkout_not_supported,
-    :base_ref_not_found,
-    :base_sha_mismatch,
-    :invalid_ref,
-    :invalid_file_change,
-    :change_limit_exceeded,
-    :change_request_conflict,
-    :checks_unavailable,
-    :provider_unavailable,
-    :authentication_rejected,
-    :installation_scope_mismatch,
-    :head_ref_conflict,
-    :provider_rate_limited
-  ]
+  # Every atom member of `Ezagent.DomainGit.Error.t()`, READ OFF THE TYPESPEC.
+  #
+  # This list used to be a literal copy, carrying a comment that called itself
+  # "the test that catches a future domain_git addition". It was not: a copy
+  # does not change when the original does, so a member added to `error.ex`
+  # sailed past it — measured, not assumed. The copy's stated reason ("`t()` is
+  # a TYPE — there is nothing to read at runtime") is also untrue; typespecs
+  # live in the BEAM chunk and `Code.Typespec.fetch_types/1` reads them, which
+  # is what `domain_git_errors/0` below does.
+  #
+  # Reading the type is not a new dependency either: this app already depends
+  # on `:ezagent_domain_git` (mix.exs) and consumes its values throughout. What
+  # it must not do is EXTEND that vocabulary — see the moduledoc — and reading
+  # is not extending.
+  #
+  # The tuple member `{:provider_request_failed, _, _}` is deliberately excluded
+  # here; it has its own test below because it maps by status class, not by name.
 
   # `Ezagent.Workspace.TaskWorkspace.ChangeCollector`'s moduledoc documents
   # seven error codes as its closed returned set; `:invalid_change_request`
@@ -53,9 +43,18 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
 
   describe "the vocabulary is total" do
     test "every Ezagent.DomainGit.Error atom member maps to a real code, not :internal_error" do
-      assert length(@domain_git_errors) == 18
+      errors = domain_git_errors()
 
-      for error <- @domain_git_errors do
+      # Proof the read WORKED, not a fingerprint of what it read. A silently
+      # empty or garbage list would otherwise make the loop below vacuous and
+      # this test would claim total coverage of nothing. The exact membership is
+      # `plan_a_contract_test`'s job; duplicating it here would just be a second
+      # copy to bump.
+      assert length(errors) >= 18
+      assert :provider_unavailable in errors
+      assert :provider_response_unrecognized in errors
+
+      for error <- errors do
         code = Blocker.from_error(error)
 
         refute code == :internal_error,
@@ -133,7 +132,7 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
 
     # Pins the vocabulary itself: adding or removing a code without saying so
     # fails here, so a vocabulary change cannot land unreviewed.
-    test "the vocabulary is exactly the 15 design codes plus the 13 documented extensions" do
+    test "the vocabulary is exactly the 15 design codes plus the 14 documented extensions" do
       assert Enum.sort(Blocker.codes()) == [
                :authorization_unavailable,
                :base_ref_not_found,
@@ -157,6 +156,7 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
                :provider_account_not_connected,
                :provider_permission_denied,
                :provider_rate_limited,
+               :provider_response_unrecognized,
                :provider_unavailable,
                :repository_not_found,
                :unsupported_workspace_change,
@@ -168,6 +168,40 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
 
     test "raises for a code outside the vocabulary rather than defaulting" do
       assert_raise FunctionClauseError, fn -> Blocker.classify(:made_up_code) end
+    end
+
+    # The runtime list and the exported type are two statements of the same
+    # vocabulary, and nothing else compares them: a code added to `@codes`
+    # without a `code()` member leaves every runtime test green while Dialyzer
+    # and the generated docs are told a returned value cannot occur. That is
+    # exactly what happened when `:provider_response_unrecognized` was added.
+    test "the exported code() type lists exactly the runtime vocabulary" do
+      {:ok, specs} = Code.Typespec.fetch_types(Blocker)
+
+      {:type, _, :union, members} =
+        Enum.find_value(specs, fn
+          {:type, {:code, definition, _args}} -> definition
+          _ -> nil
+        end)
+
+      typed =
+        Enum.map(members, fn
+          {:atom, _, atom} -> atom
+          other -> flunk("Blocker.code() gained a non-atom member: #{inspect(other)}")
+        end)
+
+      assert Enum.sort(typed) == Enum.sort(Blocker.codes())
+    end
+
+    # Asserted as a PAIR on purpose. Either half alone survives the failure this
+    # guards against — the two codes being collapsed back into one — because
+    # whichever code the collapse keeps still classifies the way its own
+    # assertion expects. The pair is what says they are different questions:
+    # "the provider gave us nothing" is worth re-asking, "the provider gave us
+    # something we cannot read" is not.
+    test "an unreadable response is terminal while an unavailable provider is retryable" do
+      assert Blocker.classify(:provider_response_unrecognized) == :terminal_blocker
+      assert Blocker.classify(:provider_unavailable) == :retryable
     end
 
     # §7.1's 2026-07-26 amendment calls this out precisely because the
@@ -283,5 +317,46 @@ defmodule EzagentPluginGitWorkflow.BlockerTest do
         Blocker.present(:made_up_code, :create_change_request, 1, %{})
       end
     end
+  end
+
+  # The atom members of `Ezagent.DomainGit.Error.t()`, read from the compiled
+  # typespec so this file cannot drift from the domain type the way a restated
+  # copy did.
+  defp domain_git_errors do
+    {:ok, specs} = Code.Typespec.fetch_types(Ezagent.DomainGit.Error)
+
+    {:type, _, :union, members} =
+      Enum.find_value(specs, fn
+        {:type, {:t, definition, _args}} -> definition
+        _ -> nil
+      end)
+
+    # Extraction is STRICT, not a filtering comprehension. `for {:atom, _, a} <-
+    # members` would silently skip any member with another representation — an
+    # alias, a nested union, a remote type — and this test would then report
+    # total coverage of a vocabulary it had never seen, which is the exact
+    # failure the literal copy this replaced already had once.
+    Enum.flat_map(members, fn
+      {:atom, _, atom} ->
+        [atom]
+
+      # The ONE non-atom member, matched by its tag rather than by "is a tuple".
+      # `{:type, _, :tuple, _}` would wave through a future
+      # `{:provider_response_invalid, field}` that nobody had mapped, and this
+      # test would go on claiming total coverage — the same hole as the literal
+      # copy and the filtering comprehension this file has now shed twice.
+      {:type, _, :tuple, [{:atom, _, :provider_request_failed} | _rest]} ->
+        []
+
+      other ->
+        flunk("""
+        Ezagent.DomainGit.Error.t() gained a member shape this gate cannot read,
+        so it can no longer prove every member is mapped:
+
+            #{inspect(other)}
+
+        Teach this function that shape, or the totality claim is false.
+        """)
+    end)
   end
 end

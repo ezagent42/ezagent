@@ -16,10 +16,13 @@ defmodule EzagentPluginGithub.GitHubInstallation do
        profile (`EzagentPluginGithub.InstallationPermissions`).
     4. Strictly validates the response's `token`, `repository_selection`,
        `repositories`, `permissions`, and `expires_at` against the request before
-       returning the token — a missing/empty/non-binary token, any scope
-       mismatch or widening, or a missing/malformed/already-past `expires_at`
-       fails closed with `{:error, :installation_scope_mismatch}` before any
-       repository HTTP call.
+       returning the token. Everything fails closed before any repository HTTP
+       call, under one of two codes: a field that is absent or of the wrong type
+       is `{:error, :provider_response_unrecognized}` (there was no scope to
+       read), while a readable field whose VALUE is wrong — an empty token, a
+       widened or narrowed permission set, an "all"-repositories grant, the
+       wrong repository, a malformed or already-past `expires_at` — is
+       `{:error, :installation_scope_mismatch}`.
 
   There is no cache: every call mints fresh. A token returned by this module is
   meant to live only on the caller's current call stack for one adapter callback
@@ -44,9 +47,18 @@ defmodule EzagentPluginGithub.GitHubInstallation do
 
   Returns `{:ok, token}` or `{:error, reason}` where `reason` is a stable
   `GitHubClient` error atom (`:authentication_rejected`, `:repository_not_found`,
-  `:provider_denied`, `:provider_unavailable`, …) or `:installation_scope_mismatch`
-  when GitHub's response does not exactly match the requested repository and
-  permissions. Raises (fail-loud) only if the App private key is missing or
+  `:provider_denied`, `:provider_unavailable`, …), `:installation_scope_mismatch`
+  when a readable response does not exactly match the requested repository and
+  permissions, or `:provider_response_unrecognized` when a 2xx response could not
+  be read at all — the installation lookup with no `id` key, or a mint body whose
+  scope fields are absent or wrongly typed. Only the transport-level answers are
+  worth retrying; the other two are terminal and say different things to an
+  operator ("scoped wrong" vs "shape changed").
+
+  Note the lookup checks for the PRESENCE of `id`, not its type: a wrongly-typed
+  one still reaches path interpolation. That is a live gap in the same family as
+  the rest of this module's readability guards, tracked separately rather than
+  claimed here. Raises (fail-loud) only if the App private key is missing or
   malformed — an operations misconfiguration, deliberately distinct from a
   GitHub-side rejection.
   """
@@ -71,7 +83,7 @@ defmodule EzagentPluginGithub.GitHubInstallation do
       validate_scope(response, repo_full_name, permissions)
     else
       {:error, reason} -> {:error, reason}
-      {:ok, _unexpected_shape} -> {:error, :provider_unavailable}
+      {:ok, _unexpected_shape} -> {:error, :provider_response_unrecognized}
     end
   end
 
@@ -88,19 +100,60 @@ defmodule EzagentPluginGithub.GitHubInstallation do
   # missing/malformed/already-past expires_at. Returns `{:ok, token}` only when
   # every field checks out.
 
+  # SHAPE first, SCOPE second — they are different answers to different
+  # questions, and one clause answering both collapsed them.
+  #
+  # A mint body carrying none of these fields used to be reported as
+  # `:installation_scope_mismatch`, which tells an operator the credential came
+  # back scoped wrong. Nothing was scoped: the response shape had changed. Both
+  # codes are terminal, so no run behaves differently — the CAUSE an operator
+  # reads does, and that is the whole point of the distinction.
   defp validate_scope(
          %{
            "token" => token,
-           "repository_selection" => "selected",
-           "repositories" => [%{"full_name" => full_name}],
+           "repository_selection" => repository_selection,
+           "repositories" => repositories,
            "permissions" => permissions,
            "expires_at" => expires_at
          },
          repo_full_name,
          requested_permissions
        )
-       when is_binary(token) and token != "" and full_name == repo_full_name and
-              permissions == requested_permissions and is_binary(expires_at) do
+       when is_binary(token) and is_binary(repository_selection) and is_list(repositories) and
+              is_map(permissions) and is_binary(expires_at) do
+    # `is_list/1` only vouches for the container. An entry that is not a map
+    # with a binary `full_name` is a repository we could not READ, not a
+    # repository that is the wrong one — and a guard cannot walk the list, so
+    # the check lives here.
+    if Enum.all?(repositories, &match?(%{"full_name" => name} when is_binary(name), &1)) do
+      scoped_as_requested(
+        {token, repository_selection, repositories, expires_at},
+        permissions,
+        repo_full_name,
+        requested_permissions
+      )
+    else
+      {:error, :provider_response_unrecognized}
+    end
+  end
+
+  # The five scope fields are not all present and of the right primitive type,
+  # so there is no scope here to agree or disagree with.
+  defp validate_scope(_response, _repo_full_name, _requested_permissions),
+    do: {:error, :provider_response_unrecognized}
+
+  # Readable — now is it what we asked for? A wrong value here IS a scope
+  # mismatch: an "all"-repositories grant, a repository other than the one
+  # requested, permissions that do not match, an empty token, or an expiry that
+  # will not parse or has already passed.
+  defp scoped_as_requested(
+         {token, "selected", [%{"full_name" => full_name}], expires_at},
+         permissions,
+         repo_full_name,
+         requested_permissions
+       )
+       when token != "" and full_name == repo_full_name and
+              permissions == requested_permissions do
     case DateTime.from_iso8601(expires_at) do
       {:ok, dt, _offset} ->
         if DateTime.compare(dt, DateTime.utc_now()) == :gt do
@@ -114,7 +167,7 @@ defmodule EzagentPluginGithub.GitHubInstallation do
     end
   end
 
-  defp validate_scope(_response, _repo_full_name, _requested_permissions),
+  defp scoped_as_requested(_readable, _permissions, _repo_full_name, _requested_permissions),
     do: {:error, :installation_scope_mismatch}
 
   # ── Config ───────────────────────────────────────────────────────────────

@@ -455,6 +455,11 @@ Contract tests prove:
 
 ## 10. Error model
 
+> **Amended 2026-07-31** by
+> `2026-07-31-git-provider-error-union-unreadable-response-amendment.md`, which
+> adds `:provider_response_unrecognized`. The union below is left as written —
+> it is the record of what was decided on 2026-07-16, not a live listing.
+
 `Ezagent.DomainGit.Error.t()` is the exact Plan A union:
 
 ```elixir
@@ -537,6 +542,10 @@ Task 2's `plan_a_contract_test.exs` will assert:
    states; provider check strings must normalize to the closed union;
 4. `Ezagent.DomainGit.Error.t()` contains exactly all 15 atom members and the
    `{:provider_request_failed, atom(), pos_integer()}` member in §10;
+   *(this count was already inaccurate before the 2026-07-31 amendment — the
+   union carried 18 atom members by the time V1-B shipped, and 19 after. The
+   live gate is `plan_a_contract_test`'s member-for-member assertion, not this
+   number. Left as written; see §10's amendment notice.)*
 5. source and compiled struct inspection reject fields matching token, secret,
    credential, credential reference/path, Req/client, checkout/local path,
    provider payload/request/response, environment, callback, or Cap.

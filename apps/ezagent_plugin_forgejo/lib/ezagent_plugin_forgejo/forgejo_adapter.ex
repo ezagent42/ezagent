@@ -50,7 +50,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
            ForgejoClient.get(base, "/repos/#{id}", token, req_opts()) do
       {:ok, repo}
     else
-      {:ok, _unexpected} -> {:error, :provider_unavailable}
+      {:ok, _unexpected} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, map_error(marker, :resolve_repository, :read)}
     end
   end
@@ -552,10 +552,31 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         # the exact match is made here. `/pulls/{base}/{head}` exists but
         # returns the OLDEST match regardless of state -- a trap, not a
         # shortcut (findings §2.2).
-        case Enum.filter(pulls, &exact_match?(&1, env)) do
-          [] -> create_pull(env, request)
-          [single] -> Normalize.change_request(single)
-          [_ | _] -> {:error, :change_request_conflict}
+        #
+        # An unreadable entry only endangers anything when the next action would
+        # be a WRITE. `exact_match?/2` compared `get_in(pull, ["head", "ref"])`,
+        # so an entry missing that field answered `nil == head_ref` → `false`
+        # and was filtered out; the list then looked empty and this function
+        # created a DUPLICATE pull request on the provider. Same failure the
+        # `@max_items` cap refuses a truncated read for, one level down.
+        #
+        # The refusal is scoped to the create branch, NOT to the whole list: if
+        # the match was found among the readable entries we reuse it and write
+        # nothing, so an unrelated unreadable sibling cannot produce a duplicate.
+        # Refusing there would trade the duplicate for a total failure of
+        # pull-request creation in any repository containing one odd open PR.
+        states = Enum.map(pulls, &match_state(&1, env))
+        matched = for {pull, :match} <- Enum.zip(pulls, states), do: pull
+
+        case {matched, :unknown in states} do
+          # Two PROVEN matches: already the anomalous state §6.2 fails closed on,
+          # and no opaque entry can make it less so.
+          {[_, _ | _], _} -> {:error, :change_request_conflict}
+          {[single], false} -> Normalize.change_request(single)
+          {[], false} -> create_pull(env, request)
+          # An opaque candidate is still on the table, so "exactly one" — the
+          # precondition for BOTH reuse and create — cannot be established.
+          {_, true} -> {:error, :provider_response_unrecognized}
         end
 
       {:error, marker} ->
@@ -563,11 +584,42 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
     end
   end
 
-  defp exact_match?(pull, %{head_ref: head_ref, base_ref: base_ref}) when is_map(pull) do
-    get_in(pull, ["head", "ref"]) == head_ref and get_in(pull, ["base", "ref"]) == base_ref
+  # THREE answers, not two. `exact_match?/2` originally had two — match or not —
+  # and `get_in/2` answering `nil` for a missing field made "we could not read
+  # this entry" arrive as "this entry is not the one", which filtered an
+  # unreadable candidate out and let find-or-create open a duplicate.
+  #
+  # Collapsing to readable/unreadable instead was the opposite error: an entry
+  # whose head ref is present and DIFFERENT is proven not to be ours, and
+  # blocking on it stops pull-request creation for the whole repository over a
+  # PR that demonstrably has nothing to do with this run.
+  #
+  #   :match    — both refs read, both equal
+  #   :nonmatch — a ref we could read is different; the other need not be read
+  #   :unknown  — neither ref proves it either way
+  @spec match_state(term(), map()) :: :match | :nonmatch | :unknown
+  defp match_state(pull, %{head_ref: head_ref, base_ref: base_ref}) when is_map(pull) do
+    head = ref_of(pull, "head")
+    base = ref_of(pull, "base")
+
+    cond do
+      head == head_ref and base == base_ref -> :match
+      is_binary(head) and head != head_ref -> :nonmatch
+      is_binary(base) and base != base_ref -> :nonmatch
+      true -> :unknown
+    end
   end
 
-  defp exact_match?(_pull, _env), do: false
+  defp match_state(_pull, _env), do: :unknown
+
+  # Total on purpose: `get_in/2` raises on a scalar under "head", and a nil here
+  # has to mean "not readable" rather than "absent ref equals absent ref".
+  defp ref_of(pull, key) do
+    case Map.get(pull, key) do
+      %{"ref" => ref} when is_binary(ref) -> ref
+      _ -> nil
+    end
+  end
 
   # `GET /pulls` has no head/base filter (findings §2.1), so the match is made
   # client-side over the whole open list -- which means the whole list has to be
@@ -594,6 +646,11 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   # why the cap REFUSES rather than returning what it has.
   defp all_pages(base, token, path), do: all_pages(base, token, path, 1, [])
 
+  # Deliberately NOT `:provider_response_unrecognized`. Every other refusal in
+  # this module is "the provider said something we cannot read"; this one is
+  # "the provider is still talking and WE stopped listening". Nothing about the
+  # response was unreadable — our own cap was reached. Classifying it as a
+  # provider schema problem would point an operator at the wrong system.
   defp all_pages(_base, _token, _path, _page, acc) when length(acc) >= @max_items,
     do: {:error, :provider_unavailable}
 
@@ -618,7 +675,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
         all_pages(base, token, path, page + 1, acc ++ items)
 
       {:ok, _other} ->
-        {:error, :provider_unavailable}
+        {:error, :provider_response_unrecognized}
 
       {:error, marker} ->
         {:error, marker}
@@ -643,7 +700,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp branch(env, ref) do
     case branch_commit(env, ref) do
       {:ok, %{"id" => sha}} when is_binary(sha) -> {:ok, sha}
-      {:ok, _other} -> {:error, :provider_unavailable}
+      {:ok, _other} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, marker}
     end
   end
@@ -656,7 +713,7 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
            req_opts()
          ) do
       {:ok, %{"commit" => commit}} when is_map(commit) -> {:ok, commit}
-      {:ok, _other} -> {:error, :provider_unavailable}
+      {:ok, _other} -> {:error, :provider_response_unrecognized}
       {:error, marker} -> {:error, marker}
     end
   end
@@ -735,11 +792,24 @@ defmodule EzagentPluginForgejo.ForgejoAdapter do
   defp map_error(:provider_denied, _operation, _kind), do: :repository_read_denied
 
   # Already a closed `DomainGit.Error` — `CredentialSource` returns those
-  # directly, so they pass through rather than being re-mapped.
+  # directly, and this module's own read helpers (`all_pages/5`'s cap and its
+  # non-list-body refusal, `branch/2`, `branch_commit/2`) return a classification
+  # they have ALREADY made. Re-mapping those would discard the answer: every one
+  # of them fell through to the residue clause below and came back out as
+  # `:provider_unavailable`, so a refusal this module raised on purpose was
+  # indistinguishable from a transport failure by the time a caller saw it.
   defp map_error(marker, _operation, _kind)
-       when marker in [:provider_account_not_connected, :credential_backend_unavailable],
+       when marker in [
+              :provider_account_not_connected,
+              :credential_backend_unavailable,
+              :provider_response_unrecognized,
+              :provider_unavailable
+            ],
        do: marker
 
+  # The transport/status residue, and it stays retryable: these markers come
+  # from a request that did not produce a readable 2xx at all, not from a body
+  # this code could not parse. Same split as the GitHub client's own fallback.
   defp map_error(_marker, _operation, _kind), do: :provider_unavailable
 
   defp req_opts, do: Application.get_env(:ezagent_plugin_forgejo, :adapter_req_opts, [])

@@ -89,6 +89,12 @@ defmodule EzagentDomainGit.Architecture.PlanAContractTest do
         | :change_request_conflict
         | :checks_unavailable
         | :provider_unavailable
+        # Added 2026-07-31 (see the dated amendment beside the V1-A/V1-B specs):
+        # splits "the provider answered with something we cannot read" out of
+        # `:provider_unavailable`, which the workflow layer retries. The union
+        # stays frozen — this line is the record that it was widened once, on
+        # purpose, rather than a suggestion that it may be widened casually.
+        | :provider_response_unrecognized
         | :authentication_rejected
         | :installation_scope_mismatch
         | :head_ref_conflict

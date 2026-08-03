@@ -322,7 +322,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"full_name" => "owner/repo", "default_branch" => "main"})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.resolve_repository(ctx(), repo())
   end
 
@@ -335,7 +335,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         ] do
       stub_with_mint(:metadata_read, fn conn -> Req.Test.json(conn, partial) end)
 
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                GitHubAdapter.resolve_repository(ctx(), repo()),
              "expected refusal for #{inspect(partial)}"
     end
@@ -555,6 +555,11 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
     assert tree_body["base_tree"] == "tree_base"
   end
 
+  # Asserted as a PAIR with the case below it. `:base_sha_mismatch` is an
+  # actionable diagnosis — it tells an operator the base branch moved and the
+  # work needs rebasing — and it is only true when two shas were actually
+  # COMPARED. Answering it for a body we could not read invents that diagnosis
+  # and sends someone to rebase against a base that may not have moved at all.
   test "create_change_request returns base_sha_mismatch when SHA doesn't match" do
     expect_mint(:change_request_write)
 
@@ -566,6 +571,22 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
+  test "create_change_request refuses an unreadable base ref instead of claiming a sha mismatch" do
+    for body <- [%{"unexpected" => true}, %{"object" => %{}}, %{"object" => "not-a-map"}] do
+      expect_mint(:change_request_write)
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
+  end
+
   test "create_change_request maps 404 on ref to base_ref_not_found" do
     expect_mint(:change_request_write)
 
@@ -575,6 +596,107 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
 
     assert {:error, :base_ref_not_found} =
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
+  end
+
+  # ── create_change_request: a malformed 2xx at each write/reconcile step ──
+  #
+  # The read path's parse refusals are covered further down. These pin the WRITE
+  # and reconciliation steps, which carry their own `{:ok, _unexpected}` clauses.
+  # Without them a later refactor could keep the read path classified correctly
+  # and quietly collapse these back onto `:provider_unavailable` — which is
+  # RETRYABLE, so a provider whose git-data payloads changed shape would be
+  # re-asked until the deadline instead of reported to an operator.
+  for {step, label} <- [
+        {4, "base-commit"},
+        {5, "blob"},
+        {6, "tree"},
+        {7, "commit"},
+        {9, "pull-request search"}
+      ] do
+    test "create_change_request refuses a malformed 2xx from the #{label} step" do
+      expect_mint(:change_request_write)
+      expect_create_steps_until(unquote(step))
+
+      # A 2xx whose body carries none of the keys this step reads.
+      expect_malformed_at(unquote(step))
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               )
+    end
+  end
+
+  @create_steps [
+    {"GET", "/repos/owner/repo/git/ref/heads/main"},
+    {"GET", "/repos/owner/repo/git/ref/heads/feature-branch"},
+    {"POST", "/repos/owner/repo/git/refs"},
+    {"GET", "/repos/owner/repo/git/commits/" <> String.duplicate("a", 40)},
+    {"POST", "/repos/owner/repo/git/blobs"},
+    {"POST", "/repos/owner/repo/git/trees"},
+    {"POST", "/repos/owner/repo/git/commits"},
+    {"PATCH", "/repos/owner/repo/git/refs/heads/feature-branch"},
+    {"GET", "/repos/owner/repo/pulls"}
+  ]
+
+  # The successful responses for create_change_request's ordered HTTP batch,
+  # steps 1..n-1, so the test above can arm exactly one malformed reply at step n.
+  #
+  # Every step asserts its own METHOD and PATH before answering. Without that the
+  # queue is positional only, and a production change that skips a call shifts
+  # every later reply one slot: the test named "malformed tree" would then feed
+  # the tree reply to the commit call, the malformed body would land on commit —
+  # which refuses with the same atom — and the assertion would pass green while
+  # the tree clause was never executed at all.
+  defp expect_create_steps_until(step) do
+    sha = String.duplicate("a", 40)
+
+    bodies = [
+      fn conn -> Req.Test.json(conn, %{"object" => %{"sha" => sha}}) end,
+      fn conn -> Plug.Conn.resp(conn, 404, ~s({"message": "Not Found"})) end,
+      fn conn ->
+        conn
+        |> Plug.Conn.put_status(201)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      end,
+      fn conn ->
+        Req.Test.json(conn, %{"sha" => sha, "tree" => %{"sha" => "tree_base"}, "parents" => []})
+      end,
+      fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "blob_sha_1"}) end,
+      fn conn -> conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "tree_sha_1"}) end,
+      fn conn ->
+        conn |> Plug.Conn.put_status(201) |> Req.Test.json(%{"sha" => "commit_sha_1"})
+      end,
+      fn conn ->
+        conn
+        |> Plug.Conn.put_status(200)
+        |> Req.Test.json(%{"ref" => "refs/heads/feature-branch"})
+      end
+    ]
+
+    bodies
+    |> Enum.zip(@create_steps)
+    |> Enum.take(step - 1)
+    |> Enum.each(fn {body, step_spec} -> expect_step(step_spec, body) end)
+  end
+
+  # The step under test asserts its method/path too, so a desync is caught AT the
+  # malformed reply rather than silently redirecting it to a different clause.
+  defp expect_malformed_at(step) do
+    expect_step(Enum.at(@create_steps, step - 1), fn conn ->
+      Req.Test.json(conn, %{"unexpected" => true})
+    end)
+  end
+
+  defp expect_step({method, path}, body) do
+    Req.Test.expect(@stub_name, fn conn ->
+      assert conn.method == method
+      assert conn.request_path == path
+      body.(conn)
+    end)
   end
 
   test "create_change_request maps a PR-create 422 to change_request_conflict" do
@@ -911,6 +1033,118 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
              GitHubAdapter.create_change_request(ctx(), repo(), [file_change()], create_request())
   end
 
+  # The three `:head_ref_conflict` tests below are the readable half: the
+  # provider's answer was understood and it genuinely disagrees with what this
+  # run expected. The two here are the unreadable half, and they used to answer
+  # `:head_ref_conflict` too — the clause that produced it was literally named
+  # `_mismatched_or_unexpected_shape`.
+  #
+  # That conflation invents a diagnosis. `:head_ref_conflict` tells an operator
+  # somebody else moved this branch, which is a specific, checkable claim about
+  # the repository. "We could not read the commit body" is a claim about the
+  # API, and the two send an operator to different places.
+  test "create_change_request refuses an unreadable head commit instead of claiming a conflict" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+
+    for body <- [
+          %{"unexpected" => true},
+          %{"tree" => %{"sha" => "tree_x"}},
+          %{"tree" => "not-a-map", "parents" => [%{"sha" => sha}]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => "not-a-list"},
+          # Correct parent, but the tree sha is not a string. This one reached
+          # `verify_tree_reuse/6`, where a non-binary tree simply differs from
+          # the recomputed one and came back `:head_ref_conflict` — the exact
+          # fabrication this change removes, surviving one level deeper.
+          %{"tree" => %{"sha" => 12_345}, "parents" => [%{"sha" => sha}]},
+          # Readable tree, but no usable parent sha to disagree WITH. "Is a
+          # list" was not enough to call the parents readable.
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => [%{}]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => ["bad"]},
+          %{"tree" => %{"sha" => "tree_x"}, "parents" => [%{"sha" => 999}]}
+        ] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
+  end
+
+  test "create_change_request refuses an unreadable head ref instead of claiming a conflict" do
+    sha = String.duplicate("a", 40)
+
+    for body <- [%{"unexpected" => true}, %{"object" => %{}}, %{"object" => %{"sha" => 12_345}}] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      # The head ref exists (200) but its body carries no usable sha.
+      Req.Test.expect(@stub_name, fn conn -> Req.Test.json(conn, body) end)
+
+      assert {:error, :provider_response_unrecognized} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected refusal for #{inspect(body)}"
+    end
+  end
+
+  # Cardinality alone settles this one. The commit this adapter creates has
+  # exactly ONE parent, so a two-parent commit is provably not it — whether or
+  # not the extra parent entry is readable. Checking every parent for a readable
+  # sha answered `:provider_response_unrecognized` here and threw away a fact
+  # the response had already established.
+  test "create_change_request treats a multi-parent head as a conflict even if one parent is malformed" do
+    sha = String.duplicate("a", 40)
+    head_sha = String.duplicate("b", 40)
+
+    for parents <- [[%{"sha" => sha}, %{}], [%{"sha" => sha}, %{"sha" => 999}]] do
+      expect_mint(:change_request_write)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"object" => %{"sha" => head_sha}})
+      end)
+
+      Req.Test.expect(@stub_name, fn conn ->
+        Req.Test.json(conn, %{"tree" => %{"sha" => "tree_x"}, "parents" => parents})
+      end)
+
+      assert {:error, :head_ref_conflict} =
+               GitHubAdapter.create_change_request(
+                 ctx(),
+                 repo(),
+                 [file_change()],
+                 create_request()
+               ),
+             "expected conflict for #{inspect(parents)}"
+    end
+  end
+
   test "create_change_request returns head_ref_conflict when the existing head's parent does not match the expected base" do
     sha = String.duplicate("a", 40)
     other_sha = String.duplicate("z", 40)
@@ -1117,7 +1351,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
   end
 
@@ -1161,7 +1395,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.read_change_request(ctx(), repo(), change_request_id())
   end
 
@@ -1279,7 +1513,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1297,7 +1531,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       })
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1326,7 +1560,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"total_count" => 0})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1404,7 +1638,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1424,7 +1658,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1443,7 +1677,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       ])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1457,7 +1691,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, %{"total_count" => 1, "check_runs" => ["unexpected"]})
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_checks(ctx(), repo(), commit_sha())
   end
 
@@ -1466,7 +1700,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
       Req.Test.json(conn, ["unexpected"])
     end)
 
-    assert {:error, :provider_unavailable} =
+    assert {:error, :provider_response_unrecognized} =
              GitHubAdapter.list_reviews(ctx(), repo(), change_request_id())
   end
 
@@ -1485,7 +1719,7 @@ defmodule EzagentPluginGithub.GitHubAdapterTest do
         ])
       end)
 
-      assert {:error, :provider_unavailable} =
+      assert {:error, :provider_response_unrecognized} =
                GitHubAdapter.list_reviews(ctx(), repo(), change_request_id()),
              "expected refusal for user: #{inspect(user)}"
     end
