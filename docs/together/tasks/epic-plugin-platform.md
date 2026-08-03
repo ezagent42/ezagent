@@ -24,8 +24,8 @@
 | A3 泛化 CompositionConsent 成 URI-share 超集 | #1597 | ✅ 已合 main `f04b2362b` |
 | A4-1 删 Mount reconcile 重发 trap | #1611 | ✅ 已合 main `fb35003cf` |
 | config role_plugins 挪 config.exs | #1612 | ✅ 已合 main `f7e99d82f` |
-| **A4-2** `:members` roster → 纯投影(#192) | **#1655**(接替 #1620) | 🔵 P1 ✅ / P1.5(#1665)✅ / P2 ✅,**CI 全绿**;剩一个收口确认 |
-| **A5** 匿名分享(link_anon) | #1619 | ⏳ design **v4** 待 Allen 过 —— **撤回三条错误主张**(见下) |
+| **A4-2** `:members` roster → 纯投影(#192) | **#1655**(接替 #1620) | ✅ **已合 main** `da8a26bc1`(2026-08-03);**(甲) 由 Allen 落盘**(return `ecc31f8f0`),P4 勿再排期;follow-ups F1/F3 记下方清单,F2 = **issue #1694** |
+| **A5** 匿名分享(link_anon) | #1619 | 🔵 **实现完成**:后端三片 + 19 测 + 真浏览器 e2e 截图(S1 可见/S2 隔离/S4 关即消失)+ CI 全绿(head `0fcfcf368`);剩 dev-together return |
 
 **A 系剩余两件的现状(2026-07-31)**
 
@@ -46,9 +46,9 @@ P1(roster 派生改读 `effective_caps`,把在途的钥匙算进来)/ P1.5(#1665
 | # | 原语 | 来源 | 状态 |
 |---|---|---|---|
 | 1 | **发钥匙** `CompositionCaps.mint_cap/4`(唯一 chokepoint,granter ≡ data_owner) | 既有 | ✅ |
-| 2 | **撤钥匙** `Cap.revoke_all_to/2`(generation bump)+ **退出时撤全部参与档** | A4-1 + **#1665** | ✅ / 🔵 #1655 待合 |
+| 2 | **撤钥匙** `Cap.revoke_all_to/2`(generation bump)+ **退出时撤全部参与档** | A4-1 + **#1665** | ✅ 已合(冷成员残余面 = issue #1694) |
 | 3 | **正向可见性** `caps_toward/2`("我能操作哪些资源",带 current-gen 验证) | A2-1 #1596 | ✅ |
-| 4 | **反向可见性** `grantees_of/5` + 机制入口("谁能操作我",action/provenance 维齐) | A2-2 #1606 + **P2** | ✅ / 🔵 #1655 待合 |
+| 4 | **反向可见性** `grantees_of/5` + 机制入口("谁能操作我",action/provenance 维齐) | A2-2 #1606 + **P2** | ✅ 已合 |
 | 5 | **分享开关** `ShareSetting`(per-resource,owner 翻;link_login / link_anon)+ `/socialware/claim` | A1 #1594 | ✅ |
 | 6 | **申请→审批** `CompositionConsent`(泛化成 URI-share 超集) | A3 #1597 | ✅ |
 | 7 | **宿主 + 绑定**(provision 一个宿主 session + 把资源绑进去 + 铸钥匙) | 既有 `Mount`(**通用件,零 kanban 字面**) | ✅(改名归后续) |
@@ -72,8 +72,8 @@ P1(roster 派生改读 `effective_caps`,把在途的钥匙算进来)/ P1.5(#1665
 
 | 条件 | 满足? |
 |---|---|
-| 原语 1-7 齐备且已合 main | 🔵 **除 #1655(原语 2 的完整撤销 + 原语 4 的补齐)待合外,其余已合** |
-| 原语 8(匿名只读)可用 —— kanban"分享给外部看板"要它 | ❌ **A5 未实现 = 当前唯一真正的卡点** |
+| 原语 1-7 齐备且已合 main | ✅ **全部已合**(#1655 已于 2026-08-03 合入) |
+| 原语 8(匿名只读)可用 —— kanban"分享给外部看板"要它 | 🔵 **A5 实现完成、e2e 已证、CI 绿**;#1619 合入即满足 |
 | kanban 策略层(`board_provision`,16 处 kanban 字面)搬进插件 | 这是 **#1474 自己要做的事**,不是前置 |
 | `:read`/`:operate` 档位怎么表达(删表前置) | 不挡 #1474 —— 它继续用现名 API;**只挡"删 MountRow 表"那一步** |
 
