@@ -899,11 +899,16 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # `AgentGitIdentity.interpret_read_result/1` is treated
   # (`agent_git_identity.ex`): exposed (not `defp`) and directly unit-tested
   # because the criterion is deliberately NOT coupled to which internal
-  # mechanism dropped/replaced the cap (today: `Ezagent.Cap.verified_set/2` or
-  # `restore_structural_caps/3` inside `reconcile_recipe_binding_state/2`;
-  # either could change shape later, or a third mechanism could appear) — it
-  # compares the agent's `:read_ssh_key` cap-identity-keys BEFORE the
-  # reconcile against AFTER. Any difference (present -> absent, or present ->
+  # mechanism dropped/replaced the cap. (An earlier draft named
+  # `Ezagent.Cap.verified_set/2` and `restore_structural_caps/3` here as the
+  # mechanisms that do so — RETRACTED, see the block above
+  # `maybe_add_recipe_binding_git_identity_wipe/4`: neither reaches that state
+  # today, and no currently-reachable production path does. The decoupling is
+  # what keeps this correct if one ever appears.) It compares the agent's
+  # `:read_ssh_key` cap-IDENTITY-KEYS — not the full structs, so re-signing a
+  # cap (same identity, new signature/key_id) is correctly NOT a change and
+  # does not wipe — BEFORE the reconcile against AFTER. Any difference
+  # (present -> absent, or present ->
   # a different `instance`, i.e. a different User) means whatever key is
   # materialized on disk may now be wrong or stale, so it must be wiped; ANY
   # key gets safely re-materialized from the User's own slice on the agent's
