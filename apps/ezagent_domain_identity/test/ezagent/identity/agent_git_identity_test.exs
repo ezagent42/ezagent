@@ -16,8 +16,10 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
   import Ezagent.Test.CapHelper
   import ExUnit.CaptureLog
 
+  alias Ezagent.ActionSet.IdentityAdmin
   alias Ezagent.ActionSet.UserSshIdentity
   alias Ezagent.Identity.AgentGitIdentity
+  alias Ezagent.Identity.RecipeCapBinding
   alias Ezagent.Identity.Test.GitIdentityFixtureAgentKind
   alias Ezagent.Sandbox.GitIdentityDir
 
@@ -728,6 +730,272 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
       # C1 附带：exit 分支也必须清盘（§6.1 第三格——除 {:ok, env} 外每种
       # 结局都清）。
       refute File.exists?(key_path)
+    end
+  end
+
+  # §6.2.1 fixture helper —— 任意一条 agent-kind cap 提案，用来撑起一条真实、
+  # 会变化的 RecipeCapBinding（镜像 recipe_cap_binding_lifecycle_test.exs 的
+  # `proposal/2`；选 Sandbox.read/Sandbox.destroy 没有别的理由，只是这个 app
+  # 测试套件里已经这么用过）。
+  defp agent_kind_proposal(agent_uri, action) do
+    Ezagent.Capability.cap(
+      :agent,
+      Ezagent.ActionSet.Sandbox,
+      action,
+      Ezagent.URI.instance(agent_uri),
+      Ezagent.Capability.workspace_of(agent_uri)
+    )
+  end
+
+  # 未签名、不走 verified_set 的裸 cap —— 只用于 read_ssh_key_cap_change?/2 的
+  # 纯函数单测（不 dispatch，不落盘），镜像本文件其它两处已有的同款裸 cap 字面量
+  # （"instance 为通配 :any 的 cap 不算开启" / user_uri_string/1 两组测试）。
+  defp bare_read_ssh_key_cap(user_uri, workspace_source_uri) do
+    %Ezagent.Capability{
+      kind: :user,
+      behavior: UserSshIdentity,
+      action: :read_ssh_key,
+      instance: Ezagent.URI.instance(user_uri),
+      workspace_uri: Ezagent.Capability.workspace_of(workspace_source_uri),
+      granted_by: :plugin_declared,
+      granted_at: :compile_time
+    }
+  end
+
+  # §6.2.1 —— #1693 自己的 commit message 点名的第一个未覆盖缺口："recipe-binding
+  # reconciliation" 也能在不经过 handle_remove_cap/2 或 handle_revoke_cap/2 的情况下
+  # 让 read_ssh_key 消失。`handle_sync_recipe_binding/2` 做的是
+  # `set_caps_effect(reconciled.caps)` —— 整集替换，不是单条移除，所以 #1693 那两个
+  # 按"被移除的那条 cap"模式匹配的 handler 永远不会在这条路上触发。
+  #
+  # 判据是"比较替换前后"，不耦合到哪个内部机制丢的（`Ezagent.Cap.verified_set/2`
+  # 还是 `restore_structural_caps/3`，见 identity.ex 里 `read_ssh_key_cap_change?/2`
+  # 上方的大段行内注释）。
+  describe "sync_recipe_binding 整集替换 —— §6.2.1（#1693 未覆盖的缺口）" do
+    # 真实端到端：走真实 RecipeCapBinding.sync_live/1 dispatch。这是绝大多数
+    # reconcile 实际发生的样子——甚至在 recipe 内容真的发生变化时（agent-kind
+    # cap 从 :read 换成 :destroy，证明 reconcile 真的在干活，不是空操作）
+    # read_ssh_key 依然分毫不动，盘上的 key 也原样还在。这是"不变则不擦，
+    # 零额外开销"的钉子测试——防止实现退化成"只要 sync_recipe_binding 跑过
+    # 就无条件擦"。
+    test "recipe binding 真实变化(agent-kind cap 被替换)时 read_ssh_key 不受影响，盘上 key 原样还在",
+         ctx do
+      generate_key_for(ctx.user_uri, ctx.admin)
+      grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
+
+      assert {:ok, %{"GIT_SSH_COMMAND" => _}} = AgentGitIdentity.materialize(ctx.agent_uri)
+      key_path = Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519")
+      assert File.exists?(key_path)
+
+      # issue_and_upsert 内部经 `Ezagent.Cap.issue({:admin, issuer_uri}, ...)`
+      # 需要 admin 是活的（recipe_cap_binding_lifecycle_test.exs 的 setup 同样
+      # 显式 spawn+await；本文件顶层 setup 只把 admin 当身份标记用，未起活）。
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.admin)
+      :ok = Ezagent.ReadyGate.await(ctx.admin, 5_000)
+
+      assert {:ok, %{version: 1}} =
+               RecipeCapBinding.issue_and_upsert(
+                 ctx.agent_uri,
+                 "reader",
+                 ctx.admin,
+                 [agent_kind_proposal(ctx.agent_uri, :read)]
+               )
+
+      assert :ok = RecipeCapBinding.sync_live(ctx.agent_uri)
+
+      assert Enum.any?(
+               Ezagent.Identity.list_caps_for(ctx.agent_uri),
+               &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
+             )
+
+      # 内容真实改变：version 2，:read → :destroy。
+      assert {:ok, %{version: 2}} =
+               RecipeCapBinding.issue_and_upsert(
+                 ctx.agent_uri,
+                 "reader",
+                 ctx.admin,
+                 [agent_kind_proposal(ctx.agent_uri, :destroy)]
+               )
+
+      assert :ok = RecipeCapBinding.sync_live(ctx.agent_uri)
+
+      caps_after = Ezagent.Identity.list_caps_for(ctx.agent_uri)
+
+      # recipe 部分真的变了 —— 不是空操作。
+      refute Enum.any?(
+               caps_after,
+               &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
+             )
+
+      assert Enum.any?(
+               caps_after,
+               &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :destroy)
+             )
+
+      # 但 read_ssh_key 分毫未动，盘上的 key 也原样还在。
+      assert Enum.any?(
+               caps_after,
+               &(&1.behavior == UserSshIdentity and &1.action == :read_ssh_key)
+             )
+
+      assert File.exists?(key_path)
+    end
+
+    # "有 → 无"这个方向，逐一排查过全部会把 cap 写进 agent `:caps` 槽位的生产
+    # 入口后（handle_absorb_cap/2、handle_grant_cap/2、
+    # Ezagent.EntityCaps.grant/2 → handle_store_cap/2、
+    # Ezagent.EntityCaps.persist/2 → handle_persist_caps/2），发现它们全部
+    # 门在同一个结构性判据上（Ezagent.Cap.storable_for?/2 /
+    # Ezagent.EntityCaps.issued_for?/2：已签名 + instance 具体 + grantee_uri ==
+    # receiver），且这个判据不认 authority generation（那个检查 ——
+    # Cap.Authority.current_target?/verify_current —— 只发生在真正 dispatch
+    # 使用这条 cap 授权某个 action 的那一刻，不在 reconcile 里）。一条已经合法
+    # absorb 进 agent 的 read_ssh_key cap，因此在 sync_recipe_binding 的
+    # verified_set 重验时永远会再次通过；`restore_structural_caps/3` 的
+    # old_binding_keys 也结构性地只可能装 kind: :agent 的 identity_key
+    # （RecipeCapBinding.issue_and_upsert/4 在写入和读出两端都拒绝
+    # cap.kind != :agent），而 identity_key/1 的第一个轴就是 kind，二者永远
+    # 不会碰撞。也就是说：今天没有一条纯靠真实 dispatch 累积出来的路径，能让
+    # 一条健康持有的 read_ssh_key 在 sync_recipe_binding 里消失。
+    #
+    # 因此这条改为直接调用真实、已导出的 handle_sync_recipe_binding/2（就是
+    # RecipeCapBinding.sync_live/1 dispatch 到的同一个函数），只在一个输入上
+    # 反事实：让 ctx[:read] 报告的 recipe_binding_keys 已经把 read_ssh_key
+    # 的 identity_key 算作"旧 recipe binding 拥有"的一部分（真实场景中这个
+    # 值只可能来自一次真实的 RecipeCapBinding fetch，结构上不可能包含它）。
+    # 其余全部真实：真实 absorb 的 cap、真实落盘的 key、真实存在于 DB 的
+    # RecipeCapBinding（version 1，agent-kind cap）、真实执行的
+    # restore_structural_caps/3（因为它的 identity_key 确实在
+    # old_binding_keys 里，被真实代码删掉）、真实的 wipe-effect 判定。最后手动
+    # 按 runtime 的效果解释器会做的方式应用返回的 wipe 效果，钉住"消失 → 立即
+    # 清盘"这条因果链的后半段也是真的。
+    test "反事实前置态下 read_ssh_key 消失时，返回的 caps 与 effects 都反映立即清理，应用后盘上 key 真的没了",
+         ctx do
+      generate_key_for(ctx.user_uri, ctx.admin)
+      cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
+
+      assert {:ok, %{"GIT_SSH_COMMAND" => _}} = AgentGitIdentity.materialize(ctx.agent_uri)
+      key_path = Path.join(GitIdentityDir.path(ctx.agent_uri), "id_ed25519")
+      assert File.exists?(key_path)
+
+      {:ok, _} = Ezagent.SpawnRegistry.spawn(ctx.admin)
+      :ok = Ezagent.ReadyGate.await(ctx.admin, 5_000)
+
+      assert {:ok, %{version: 1}} =
+               RecipeCapBinding.issue_and_upsert(
+                 ctx.agent_uri,
+                 "reader",
+                 ctx.admin,
+                 [agent_kind_proposal(ctx.agent_uri, :read)]
+               )
+
+      read_ssh_key_identity_key = Ezagent.Capability.identity_key(cap)
+
+      rigged_ctx = %{
+        caller: :vm_internal,
+        self_uri: ctx.agent_uri,
+        read: fn
+          :caps, _default -> MapSet.new([cap])
+          :recipe_binding_version, _default -> 0
+          :recipe_binding_keys, _default -> MapSet.new([read_ssh_key_identity_key])
+        end
+      }
+
+      assert {:ok, %{caps: after_caps}, effects} =
+               IdentityAdmin.handle_sync_recipe_binding(%{}, rigged_ctx)
+
+      # read_ssh_key 真的从返回的 caps 里消失了（restore_structural_caps/3
+      # 真实执行的 removal，不是我在测试里手动摘掉的）。
+      refute Enum.any?(
+               after_caps,
+               &(&1.behavior == UserSshIdentity and &1.action == :read_ssh_key)
+             )
+
+      # recipe 部分确实真实生效了（version 1 的 agent-kind cap 进来了）——
+      # 证明这不是一次"什么都没读到"的空 reconcile。
+      assert Enum.any?(
+               after_caps,
+               &(&1.behavior == Ezagent.ActionSet.Sandbox and &1.action == :read)
+             )
+
+      assert wipe_effect =
+               Enum.find(
+                 effects,
+                 &match?({:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, _}, &1)
+               )
+
+      assert {:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [wiped_uri]} = wipe_effect
+      assert Ezagent.URI.instance(wiped_uri) == Ezagent.URI.instance(ctx.agent_uri)
+
+      # 手动应用返回的效果 —— 与 runtime 的效果解释器对这个具体 tuple 会做的
+      # 事完全一致（MFA 直接调用）——钉住"消失 → 盘上 key 真的被清"这半条链路。
+      assert :ok = Ezagent.Credential.GitIdentityRuntime.wipe(wiped_uri)
+      refute File.exists?(key_path)
+    end
+  end
+
+  # brief 的 escape hatch："指向 A → 指向 B"这条端到端难构造（recipe 通道结构上
+  # 铸不出指向 User 的 cap，见上面 describe block 的大段行内注释），因此直接单测
+  # identity.ex 里导出的纯比较 seam `IdentityAdmin.read_ssh_key_cap_change?/2`。
+  # 这组测试不 dispatch、不落盘，只钉住比较语义本身——"有→无"/"无→有"/"A→B"都
+  # 判定为变了，同一条 cap 原样两边都在则判定为不变，且只看 read_ssh_key 这一个
+  # behavior/action 组合、不被其它无关 cap 干扰。
+  describe "read_ssh_key_cap_change?/2 —— §6.2.1 纯比较 seam 直接单测" do
+    test "两边都不含 read_ssh_key —— 不变" do
+      refute IdentityAdmin.read_ssh_key_cap_change?(MapSet.new(), MapSet.new())
+    end
+
+    test "有 → 无 —— 变了", ctx do
+      cap = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+      assert IdentityAdmin.read_ssh_key_cap_change?(MapSet.new([cap]), MapSet.new())
+    end
+
+    test "无 → 有 —— 变了", ctx do
+      cap = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+      assert IdentityAdmin.read_ssh_key_cap_change?(MapSet.new(), MapSet.new([cap]))
+    end
+
+    test "同一条 cap 两边都在 —— 不变（钉住：不能退化成无条件擦）", ctx do
+      cap = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+      refute IdentityAdmin.read_ssh_key_cap_change?(MapSet.new([cap]), MapSet.new([cap]))
+    end
+
+    test "指向 User A → 指向 User B —— 变了（brief 的 escape hatch 覆盖这条）", ctx do
+      suffix = System.unique_integer([:positive])
+      other_user_uri = Ezagent.URI.entity(:gitid, :user, "owner-b-#{suffix}")
+      refute Ezagent.URI.instance(other_user_uri) == Ezagent.URI.instance(ctx.user_uri)
+
+      cap_a = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+      cap_b = bare_read_ssh_key_cap(other_user_uri, ctx.user_uri)
+
+      assert IdentityAdmin.read_ssh_key_cap_change?(MapSet.new([cap_a]), MapSet.new([cap_b]))
+    end
+
+    test "不相关的 cap（其它 behavior/action）不参与比较，也不掩盖真正的变化", ctx do
+      read_cap = bare_read_ssh_key_cap(ctx.user_uri, ctx.user_uri)
+
+      public_key_cap = %{
+        read_cap
+        | action: :read_ssh_public_key
+      }
+
+      # 无关 cap 两边都在、read_ssh_key 两边都在 —— 不变。
+      refute IdentityAdmin.read_ssh_key_cap_change?(
+               MapSet.new([read_cap, public_key_cap]),
+               MapSet.new([read_cap, public_key_cap])
+             )
+
+      # 无关 cap 消失但 read_ssh_key 还在 —— 不该被无关 cap 的变化误报成变了。
+      refute IdentityAdmin.read_ssh_key_cap_change?(
+               MapSet.new([read_cap, public_key_cap]),
+               MapSet.new([read_cap])
+             )
+
+      # read_ssh_key 本身消失，即使无关 cap 还在 —— 必须判定为变了。
+      assert IdentityAdmin.read_ssh_key_cap_change?(
+               MapSet.new([read_cap, public_key_cap]),
+               MapSet.new([public_key_cap])
+             )
     end
   end
 end

@@ -693,9 +693,10 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   @doc "VM-internal reconcile after a live target has signed its recipe grants."
   def handle_sync_recipe_binding(_args, %{caller: :vm_internal} = ctx) do
     receiver = Map.get(ctx, :self_uri)
+    before_caps = ctx[:read].(:caps, MapSet.new())
 
     state = %{
-      caps: ctx[:read].(:caps, MapSet.new()),
+      caps: before_caps,
       recipe_binding_version: ctx[:read].(:recipe_binding_version, nil),
       recipe_binding_keys: ctx[:read].(:recipe_binding_keys, MapSet.new())
     }
@@ -705,12 +706,16 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
            Ezagent.ActionSet.Identity.reconcile_recipe_binding_state(state, receiver),
          version when is_integer(version) <- Map.get(reconciled, :recipe_binding_version),
          %MapSet{} = keys <- Map.get(reconciled, :recipe_binding_keys) do
+      effects =
+        [
+          set_caps_effect(reconciled.caps),
+          {:set, :recipe_binding_version, version},
+          {:set, :recipe_binding_keys, keys}
+        ]
+        |> maybe_add_recipe_binding_git_identity_wipe(receiver, before_caps, reconciled.caps)
+
       {:ok, %{caps: MapSet.to_list(reconciled.caps)},
-       [
-         set_caps_effect(reconciled.caps),
-         {:set, :recipe_binding_version, version},
-         {:set, :recipe_binding_keys, keys}
-       ] ++ membership_convergence_effects(receiver, reconciled.caps)}
+       effects ++ membership_convergence_effects(receiver, reconciled.caps)}
     else
       false -> {:error, :agent_required}
       nil -> {:error, :recipe_binding_not_found}
@@ -848,6 +853,88 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   end
 
   defp maybe_add_git_identity_wipe(effects, _ctx, _cap), do: effects
+
+  # #1693 (the handler above) fires on a REMOVED cap it can pattern-match
+  # directly — `handle_remove_cap/2`/`handle_revoke_cap/2` only ever mutate
+  # ONE identity at a time. `handle_sync_recipe_binding/2` is structurally
+  # different: it performs a FULL-SET replacement
+  # (`set_caps_effect(reconciled.caps)`), so there is no single "the cap that
+  # was removed" to match against — a `:read_ssh_key` cap can vanish (dropped
+  # by `Ezagent.Cap.verified_set/2` or `restore_structural_caps/3` inside
+  # `reconcile_recipe_binding_state/2`) or be silently replaced by a cap
+  # pointing at a DIFFERENT User, and #1693's single-cap hook never observes
+  # either. Design doc `2026-08-02-agent-ssh-credential-1b-design.md` §6.2.1.
+  defp maybe_add_recipe_binding_git_identity_wipe(
+         effects,
+         %URI{} = receiver,
+         before_caps,
+         after_caps
+       ) do
+    if read_ssh_key_cap_change?(before_caps, after_caps) do
+      effects ++ [{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [receiver]}]
+    else
+      effects
+    end
+  end
+
+  @doc false
+  # C-sync — this is `:sync_recipe_binding`'s OWN seam, mirroring how
+  # `AgentGitIdentity.interpret_read_result/1` is treated
+  # (`agent_git_identity.ex`): exposed (not `defp`) and directly unit-tested
+  # because the criterion is deliberately NOT coupled to which internal
+  # mechanism dropped/replaced the cap (today: `Ezagent.Cap.verified_set/2` or
+  # `restore_structural_caps/3` inside `reconcile_recipe_binding_state/2`;
+  # either could change shape later, or a third mechanism could appear) — it
+  # compares the agent's `:read_ssh_key` cap-identity-keys BEFORE the
+  # reconcile against AFTER. Any difference (present -> absent, or present ->
+  # a different `instance`, i.e. a different User) means whatever key is
+  # materialized on disk may now be wrong or stale, so it must be wiped; ANY
+  # key gets safely re-materialized from the User's own slice on the agent's
+  # next spawn (§6.1 of the design doc — "no state loss"), so wiping is never
+  # destructive. No difference — the overwhelming majority of reconciles,
+  # whether or not a recipe binding is even present — is `false` (zero extra
+  # cost on the hot path).
+  #
+  # Both the "present -> absent" AND the "instance A -> instance B" branches
+  # are, per repeated tracing (every cap-mutation entry point —
+  # `handle_absorb_cap/2`, `handle_grant_cap/2`,
+  # `Ezagent.EntityCaps.grant/2` -> `handle_store_cap/2`,
+  # `Ezagent.EntityCaps.persist/2` -> `handle_persist_caps/2` — gates on the
+  # identical structural predicate `Ezagent.Cap.storable_for?/2` /
+  # `Ezagent.EntityCaps.issued_for?/2` before a cap enters an agent's `:caps`
+  # slice, and that predicate is receiver/signature-shaped only, never
+  # authority-generation-aware) NOT reachable end-to-end through a real
+  # `:sync_recipe_binding` dispatch on a healthily-held `:read_ssh_key` cap
+  # TODAY — the direct-call test at
+  # `agent_git_identity_test.exs` documents exactly which single input it has
+  # to counterfactually control to reach the same removal code
+  # (`restore_structural_caps/3`) for real. This function is therefore the
+  # seam that stays testable regardless.
+  #
+  # Compares `identity_key/1` sets, NOT raw `%Capability{}`/`MapSet` value
+  # equality: `Ezagent.Capability.Match` documents a real prior bug class
+  # (codex review 2026-08-01) where two logically-identical `%URI{}` values
+  # differing only in the deprecated `:authority` field broke raw-struct
+  # equality and caused a silent MapSet/revoke miss — `identity_key/1` exists
+  # specifically to normalize that away. Using it here avoids reintroducing
+  # the same drift class as a false "unchanged" read.
+  @spec read_ssh_key_cap_change?(Enumerable.t(), Enumerable.t()) :: boolean()
+  def read_ssh_key_cap_change?(before_caps, after_caps) do
+    read_ssh_key_identity_keys(before_caps) != read_ssh_key_identity_keys(after_caps)
+  end
+
+  defp read_ssh_key_identity_keys(caps) do
+    caps
+    |> Enum.filter(fn
+      %Ezagent.Capability{behavior: Ezagent.ActionSet.UserSshIdentity, action: :read_ssh_key} ->
+        true
+
+      _ ->
+        false
+    end)
+    |> Enum.map(&Ezagent.Capability.identity_key/1)
+    |> MapSet.new()
+  end
 
   defp normalize_artifact(%Ezagent.Capability{} = artifact), do: {:ok, artifact}
 
