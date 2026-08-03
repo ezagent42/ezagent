@@ -92,3 +92,86 @@ Fresh second-correction verification after formatting:
   — Agent suite 11 tests, 0 failures; Session suite 6 tests, 0 failures.
 - `SHELL=/bin/bash MIX_ENV=test mix test apps/ezagent_core/test/invariants/kind_provenance_test.exs`
   — 1 test, 0 failures.
+
+---
+
+## Task 4 — World credential-admission surface
+
+### Implemented
+
+- Added `session.agent_admission.begin`, `.complete`, and `.cancel` to the
+  conversation dispatch allowlist. The handlers accept only the current session,
+  role name, and attempt id; flavor, source, and candidate identity remain
+  server-owned.
+- Projected sanitized admission rows into initial conversation state,
+  `world:state`, and `members:update`. The browser receives role, flavor,
+  status, attempt id, optional provisional agent URI, descriptor, and failure
+  code—never a credential source URI, config path, token, or raw status.
+- A PTY admission uses only the provisional URI returned by `AgentAdmission`.
+  It confirms the current durable role/attempt/URI relationship before entering
+  the existing `switch_to_pty/3` path, which retains `Pty.Access.may_read?/3`.
+- Added a message-list card for pending, in-progress, failed, and API-key
+  admissions. It derives text from the normalized descriptor rather than flavor
+  checks. API-key candidates reuse the existing secure agent-key form; after a
+  key is saved, World completes the matching server-owned admission and refreshes
+  the conversation.
+
+### RED → GREEN evidence
+
+- RED backend: `mise exec -- mix test apps/ezagent_plugin_world/test/ezagent/world/world_live_dispatch_routing_test.exs`
+  initially failed because all three admission actions were absent from the
+  conversation allowlist.
+- RED frontend: `mise exec node@22.23.1 -- pnpm --dir apps/ezagent_plugin_world/assets test -- Conversation.test.tsx`
+  initially failed because no pending/API-key/retry card was rendered.
+- GREEN backend: `mise exec -- mix test apps/ezagent_plugin_world/test/ezagent/world/world_live_dispatch_routing_test.exs apps/ezagent_plugin_world/test/ezagent/world/pty_read_exits_test.exs`
+  — 21 tests, 0 failures (the existing PTY fixture emits one known deferred
+  dispatch error log while its assertions pass).
+- GREEN frontend: `mise exec node@22.23.1 -- pnpm --dir apps/ezagent_plugin_world/assets lint`,
+  `... typecheck`, and `... test -- Conversation.test.tsx` — 43 tests, 0 failures.
+- `mise exec -- mix format --check-formatted` and `git diff --check` passed.
+
+### Shared blocker
+
+`mise exec -- mix compile --warnings-as-errors` is currently blocked before
+Task 4 compilation by two pre-existing `ezagent_actor` type warnings:
+`apps/ezagent_actor/lib/ezagent/snapshot_store.ex:283` and
+`apps/ezagent_actor/lib/ezagent/kind/snapshot.ex:540`. Both concern an
+unreachable `{:error, _}` clause after `forced_snapshot_failure/1`; no Task 4
+file is named by the compiler and this task leaves those files unchanged.
+
+### Review follow-up — API-key admission binding
+
+- API-key saves now inspect the current session's durable admission before the
+  identity write. A matching candidate must have a binary role/attempt, exact
+  provisional URI, an active `:authenticating` or `:materializing` state, and
+  a `{:api_key, %{provider: ...}}` descriptor matching the submitted provider.
+  Wrong-provider, inactive, and stale/mismatched candidate rows are rejected
+  before a key is stored or an admission completion can run.
+- The reused secure `AgentApiKeys` form accepts an optional declared provider;
+  the card supplies it as a prefilled, read-only value. Ordinary agent-key
+  pages remain editable.
+- The card heading and connection/retry/complete labels now include the
+  descriptor label; role name is contextual text only.
+- RED: the new backend matcher test failed with missing
+  `WorldLive.api_key_admission_matches?/4`; the frontend test failed because
+  the form did not prefill or lock the provider. GREEN: focused World backend
+  tests 22/0; lint/typecheck; Conversation tests 43/0; formatter and diff
+  checks passed.
+
+### Final review follow-up — public PTY and automatic API-key completion
+
+- `session.pty.open` now first requires the requested session to be the active
+  World session, then permits its target only when it is a current session
+  member or the same session's active (`:authenticating`/`:materializing`)
+  admission candidate. The existing `Pty.Access.may_read?/3` gate remains in
+  force before this relationship check.
+- The API-key card no longer renders a manual completion action. The only
+  completion path is the server-side verified save flow; cancel/retry remain.
+- RED: a live Agent with a valid manage cap could still be opened through an
+  unrelated `session.pty.open`; the API-key card still rendered the manual
+  completion label. GREEN: World focused backend tests 22/0 and Conversation
+  tests 43/0; frontend lint passed; formatter and diff checks passed.
+- Frontend typecheck is currently blocked by the separately assigned
+  `assets/e2e/world.spec.ts`: its test bridge calls `emit`/`contract`, but the
+  declared bridge type lacks both members (five TS2339 errors). Task 4 did not
+  modify that file or its E2E harness.
