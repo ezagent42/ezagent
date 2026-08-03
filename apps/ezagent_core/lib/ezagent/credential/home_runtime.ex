@@ -517,43 +517,17 @@ defmodule Ezagent.Credential.HomeRuntime do
              :ok <- materialize_plugin_manifest(staging, tmpl),
              :ok <- File.chmod(staging, 0o700),
              :ok <- File.write(Path.join(staging, Path.basename(marker)), "ok\n"),
-             # #201-cred (codex r2 HIGH-1 + NEW-HIGH-3) — THE DEFERRED MINT. The
-             # cascade may carry a `:pending_grant` descriptor (authorized at
-             # domain resolution time); the durable grant is minted HERE — inside
-             # the created-winner's materialization boundary — never earlier.
-             # `GrantMint.maybe_mint/3` REQUIRES the created-winner witness the
-             # plugin arm injected into the cascade map (`:created_witness`) from
-             # its `:started ∧ created?` spawn receipt; without it the mint
-             # fail-closes (`:missing_created_winner_witness`). Respawn/rehydrated
-             # cascades carry neither pending grant nor witness and mint nothing.
-             {:ok, minted} <-
-               Ezagent.Credential.GrantMint.maybe_mint(
+             {:ok, committed} <-
+               commit_cascade(
                  agent_uri,
-                 Map.get(cascade, :pending_grant),
-                 Map.get(cascade, :created_witness)
-               ),
-             {:ok, {^target, version, incarnation_id}} <-
-               materialize_and_compensate(agent_uri, minted, fn ->
-                 Ezagent.Agent.Materializer.materialize_with_grant(%{
-                   agent_uri: URI.to_string(agent_uri),
-                   staging: staging,
-                   secret_relpaths: template_module.secret_relpaths(),
-                   source_dir_for: source_dir_for,
-                   commit: fn {version, incarnation_id} ->
-                     with :ok <- chmod_credential_files(staging, template_module, opts),
-                          :ok <- swap_into_place(staging, target) do
-                       {:ok, {target, version, incarnation_id}}
-                     end
-                   end
-                 })
-               end) do
-          # #201-cred (codex r3 MEDIUM-5) — carry the MINTED incarnation (nil if
-          # this spawn minted nothing) SEPARATELY from the fetched
-          # `incarnation_id`. `version`/`incarnation_id` are the active grant the
-          # launch revalidates against (possibly a pre-existing row); the minted
-          # id is the ONLY thing a later spawn-failure may compensate.
-          {:ok, target, version, incarnation_id,
-           Ezagent.Credential.GrantMint.grant_incarnation(minted)}
+                 staging,
+                 target,
+                 cascade,
+                 source_dir_for,
+                 template_module,
+                 opts
+               ) do
+          committed
         end
       rescue
         # #201-cred (codex r2 NEW-HIGH-1) — a raise in the post-mint region has
@@ -571,6 +545,9 @@ defmodule Ezagent.Credential.HomeRuntime do
       end
 
     case result do
+      {:ok, :grantless_bootstrap} ->
+        {:ok, target, nil}
+
       {:ok, ^target, version, incarnation_id, minted_incarnation_id} ->
         {:ok, target,
          {:grant, URI.to_string(agent_uri), incarnation_id, version, minted_incarnation_id}}
@@ -578,6 +555,116 @@ defmodule Ezagent.Credential.HomeRuntime do
       {:error, reason} ->
         _ = File.rm_rf(staging)
         {:error, {:cascade_materialize_failed, reason}}
+    end
+  end
+
+  defp commit_cascade(
+         agent_uri,
+         staging,
+         target,
+         cascade,
+         source_dir_for,
+         template_module,
+         opts
+       ) do
+    if grantless_bootstrap?(cascade) do
+      commit_grantless_bootstrap(agent_uri, staging, target, cascade, template_module, opts)
+    else
+      commit_grant_backed_cascade(
+        agent_uri,
+        staging,
+        target,
+        cascade,
+        source_dir_for,
+        template_module,
+        opts
+      )
+    end
+  end
+
+  defp grantless_bootstrap?(cascade) do
+    Map.get(cascade, :grantless_bootstrap) == :pty and
+      not Map.has_key?(cascade, :pending_grant) and
+      not Map.has_key?(cascade, "pending_grant")
+  end
+
+  defp commit_grantless_bootstrap(
+         agent_uri,
+         staging,
+         target,
+         cascade,
+         template_module,
+         opts
+       ) do
+    with true <-
+           Ezagent.Kind.CreatedWitness.authorizes?(
+             Map.get(cascade, :created_witness),
+             agent_uri
+           ),
+         :ok <- ensure_secret_paths_absent(staging, template_module.secret_relpaths()),
+         :ok <- chmod_credential_files(staging, template_module, opts),
+         :ok <- swap_into_place(staging, target) do
+      {:ok, {:ok, :grantless_bootstrap}}
+    else
+      false -> {:error, :invalid_created_winner_witness}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp ensure_secret_paths_absent(staging, secret_relpaths) do
+    case Enum.find(secret_relpaths, &File.exists?(Path.join(staging, &1))) do
+      nil -> :ok
+      relpath -> {:error, {:grantless_bootstrap_secret_present, relpath}}
+    end
+  end
+
+  defp commit_grant_backed_cascade(
+         agent_uri,
+         staging,
+         target,
+         cascade,
+         source_dir_for,
+         template_module,
+         opts
+       ) do
+    # #201-cred (codex r2 HIGH-1 + NEW-HIGH-3) — THE DEFERRED MINT. The
+    # cascade may carry a `:pending_grant` descriptor (authorized at
+    # domain resolution time); the durable grant is minted HERE — inside
+    # the created-winner's materialization boundary — never earlier.
+    # `GrantMint.maybe_mint/3` REQUIRES the created-winner witness the
+    # plugin arm injected into the cascade map (`:created_witness`) from
+    # its `:started ∧ created?` spawn receipt; without it the mint
+    # fail-closes (`:missing_created_winner_witness`). Respawn/rehydrated
+    # cascades carry neither pending grant nor witness and mint nothing.
+    with {:ok, minted} <-
+           Ezagent.Credential.GrantMint.maybe_mint(
+             agent_uri,
+             Map.get(cascade, :pending_grant),
+             Map.get(cascade, :created_witness)
+           ),
+         {:ok, {^target, version, incarnation_id}} <-
+           materialize_and_compensate(agent_uri, minted, fn ->
+             Ezagent.Agent.Materializer.materialize_with_grant(%{
+               agent_uri: URI.to_string(agent_uri),
+               staging: staging,
+               secret_relpaths: template_module.secret_relpaths(),
+               source_dir_for: source_dir_for,
+               commit: fn {version, incarnation_id} ->
+                 with :ok <- chmod_credential_files(staging, template_module, opts),
+                      :ok <- swap_into_place(staging, target) do
+                   {:ok, {target, version, incarnation_id}}
+                 end
+               end
+             })
+           end) do
+      # #201-cred (codex r3 MEDIUM-5) — carry the MINTED incarnation (nil if
+      # this spawn minted nothing) SEPARATELY from the fetched
+      # `incarnation_id`. `version`/`incarnation_id` are the active grant the
+      # launch revalidates against (possibly a pre-existing row); the minted
+      # id is the ONLY thing a later spawn-failure may compensate.
+      {:ok,
+       {:ok, target, version, incarnation_id,
+        Ezagent.Credential.GrantMint.grant_incarnation(minted)}}
     end
   end
 

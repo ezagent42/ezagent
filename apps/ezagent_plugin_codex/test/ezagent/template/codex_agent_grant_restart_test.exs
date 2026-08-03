@@ -41,6 +41,61 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
     refute match?({:error, {:credential_grant_revoked, _}}, result)
   end
 
+  test "a created PTY bootstrap atomically installs a secret-free Codex home" do
+    agent_uri = URI.new!("entity://team-a/agent/codex_bootstrap-#{uniq()}")
+    target = CodexAgent.agent_config_dir(agent_uri)
+    base = Path.join(System.tmp_dir!(), "codex-bootstrap-base-#{uniq()}")
+    File.mkdir_p!(base)
+    File.write!(Path.join(base, "config.toml"), "model = \"test\"\n")
+    on_exit(fn -> File.rm_rf(base) end)
+    on_exit(fn -> File.rm_rf(target) end)
+
+    tmpl = %{
+      "config_dir" => base,
+      "allocated_config_dir" => target,
+      "cascade" => %{
+        layer_dirs: [%{dir: base}],
+        source_dir_for: fn _ -> flunk("grantless bootstrap must not resolve a secret source") end,
+        grantless_bootstrap: :pty,
+        created_witness: Ezagent.Kind.CreatedWitness.new(agent_uri)
+      }
+    }
+
+    assert {:ok, ^target, nil} = CodexAgent.create_agent_config_dir(agent_uri, tmpl)
+    assert File.exists?(Path.join(target, ".ezagent-config-complete"))
+    assert File.read!(Path.join(target, "config.toml")) == "model = \"test\"\n"
+    refute File.exists?(Path.join(target, "auth.json"))
+    assert GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+  end
+
+  test "a PTY bootstrap rejects secret material already present in its layers" do
+    agent_uri = URI.new!("entity://team-a/agent/codex_bootstrap_secret-#{uniq()}")
+    target = CodexAgent.agent_config_dir(agent_uri)
+    base = Path.join(System.tmp_dir!(), "codex-bootstrap-secret-base-#{uniq()}")
+    File.mkdir_p!(base)
+    File.write!(Path.join(base, "auth.json"), "MUST-NOT-COPY")
+    on_exit(fn -> File.rm_rf(base) end)
+    on_exit(fn -> File.rm_rf(target) end)
+
+    tmpl = %{
+      "config_dir" => base,
+      "allocated_config_dir" => target,
+      "cascade" => %{
+        layer_dirs: [%{dir: base}],
+        source_dir_for: fn _ -> {:ok, base} end,
+        grantless_bootstrap: :pty,
+        created_witness: Ezagent.Kind.CreatedWitness.new(agent_uri)
+      }
+    }
+
+    assert {:error,
+            {:cascade_materialize_failed, {:grantless_bootstrap_secret_present, "auth.json"}}} =
+             CodexAgent.create_agent_config_dir(agent_uri, tmpl)
+
+    refute File.exists?(target)
+    assert GrantRow.get_for_agent(URI.to_string(agent_uri)) == nil
+  end
+
   describe "grant-revoke rollback surfaces cleanup failure (codex H2 — FINDING 2)" do
     test "grant-revoked at launch removes the materialized config_dir" do
       agent_uri = URI.new!("entity://team-a/agent/codex_cleanup-#{uniq()}")
@@ -159,7 +214,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
     end
 
     test "create_agent_config_dir returns the materialize-time grant version", ctx do
-      assert {:ok, _target, {:grant, agent_uri_str, incarnation_id, version, minted_incarnation_id}} =
+      assert {:ok, _target,
+              {:grant, agent_uri_str, incarnation_id, version, minted_incarnation_id}} =
                CodexAgent.create_agent_config_dir(ctx.agent_uri, ctx.tmpl)
 
       assert agent_uri_str == URI.to_string(ctx.agent_uri)
@@ -184,7 +240,8 @@ defmodule Ezagent.PluginCodex.Template.CodexAgentGrantRestartTest do
 
       # the exact GrantRow call spawn_for_codex's pre-launch gate makes with the captured
       # version → aborts the sidecar/PTY launch (nothing launches with the revoked secret).
-      assert {:error, :grant_changed} = GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
+      assert {:error, :grant_changed} =
+               GrantRow.revalidate_version!(agent_uri_str, incarnation_id, version)
 
       # the abort path clears the just-materialized config_dir (rollback_agent_config_dir
       # removes agent_config_dir/1) — prove that targets the materialized dir.
