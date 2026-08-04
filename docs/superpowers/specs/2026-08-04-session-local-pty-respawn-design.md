@@ -22,6 +22,11 @@ credential material, or reusable credential-source references. For an admitted
 session-local PTY agent, `false` therefore survives subprocess healing and keeps
 the resolver on its existing keyless path.
 
+The snapshot already persists `credential_source_policy`; runtime rehydration
+must also pass that field back into the resolver. This prevents a healed
+session-local agent from consulting or adopting a user/workspace reusable source
+when one happens to exist.
+
 Do not bypass cascade resolution and do not convert the interactive PTY login
 into a shared credential source. Both alternatives broaden credential lifetime
 and violate the session-local isolation boundary.
@@ -40,7 +45,8 @@ check.
 3. The snapshot retains the optional-credential boolean alongside the existing
    owner, workspace, session, policy, and layer URIs.
 4. A later completion request may heal the subprocess bridge.
-5. `CascadeRuntime` rehydrates the snapshot and passes
+5. `CascadeRuntime` rehydrates the snapshot and passes both
+   `credential_source_policy: :session_local` and
    `credential_required?: false` to the resolver.
 6. The resolver permits the agent's already-authenticated local config home and
    the completion proceeds without looking for a reusable source.
@@ -59,7 +65,8 @@ check.
 - Add a focused regression test proving that sanitization retains both `true`
   and `false` boolean values and ignores malformed values.
 - Add or extend a runtime rehydration test proving that a persisted `false`
-  avoids `:no_credential_source`.
+  avoids `:no_credential_source`, and that the persisted session-local policy is
+  honored without reusable-source lookup.
 - Run the focused domain-agent/core tests, relevant admission tests, and
   `mix precommit`.
 - Restart the service on port 10042 and verify health, Hello Page authorization,
