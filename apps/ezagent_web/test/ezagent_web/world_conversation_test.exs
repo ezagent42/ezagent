@@ -895,6 +895,7 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     assert_push_event(view, "world:state", %{
+      "views" => views,
       "active_view" => "pty",
       "active_pty_agent_uri" => ^agent,
       "agent_status" => %{
@@ -906,6 +907,7 @@ defmodule EzagentWeb.WorldConversationTest do
       }
     })
 
+    assert Enum.any?(views, &(&1["id"] == "pty" and &1["mode"] == "pty"))
     assert is_binary(exec_pid)
     assert String.starts_with?(exec_pid, "#PID<")
     assert is_integer(os_pid)

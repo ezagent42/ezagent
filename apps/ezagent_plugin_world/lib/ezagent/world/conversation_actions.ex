@@ -724,7 +724,7 @@ defmodule Ezagent.World.ConversationActions do
             case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
               {:ok, _status} ->
                 subscribe_pty(agent_uri)
-                push_pty_view(socket, agent_uri)
+                push_pty_view(socket, session_uri, agent_uri)
 
               {:error, _reason} ->
                 {:noreply, assign(socket, :last_dispatch_status, "error:agent_unavailable")}
@@ -757,9 +757,12 @@ defmodule Ezagent.World.ConversationActions do
       )
   end
 
-  defp push_pty_view(socket, %URI{} = agent_uri) do
+  defp push_pty_view(socket, %URI{} = session_uri, %URI{} = agent_uri) do
+    caller = socket.assigns.current_entity_uri
+
     {:noreply,
      push_world_state(socket, %{
+       "views" => ConversationData.session_views(session_uri, caller),
        "active_view" => "pty",
        "active_pty_agent_uri" => uri_string(agent_uri),
        "agent_uri" => uri_string(agent_uri),

@@ -4,7 +4,9 @@ import {describe, expect, it, vi} from "vitest"
 
 import {Conversation, type ConversationState} from "./Conversation"
 
-vi.mock("./PtyTerminal", () => ({PtyTerminalSurface: () => null}))
+vi.mock("./PtyTerminal", () => ({
+  PtyTerminalSurface: () => <div data-world-test-pty-surface />,
+}))
 vi.mock("../generated/plugin-page-renderers", () => ({
   pluginPageRenderers: {},
   pluginUnfurlRenderers: [],
@@ -44,6 +46,22 @@ const state: ConversationState = {
   sessions: [{uri: "session://system/hello-codex/codex-1", name: "codex-1"}],
   views: [{id: "conversation", label: "Conversation", icon: "message-square", mode: "chat"}],
 }
+
+describe("terminal view activation", () => {
+  it("renders Terminal when the active PTY is present in server-enumerated views", () => {
+    const html = renderConversation({
+      ...state,
+      active_view: "pty",
+      active_pty_agent_uri: "entity://system/agent/codex-provisional",
+      views: [
+        ...state.views!,
+        {id: "pty", label: "Terminal", icon: "terminal", mode: "pty"},
+      ],
+    })
+
+    expect(html).toContain("data-world-test-pty-surface")
+  })
+})
 
 describe("credential-gated agent admission cards", () => {
   it("renders a pending PTY connection card in the message list from its descriptor label", () => {
