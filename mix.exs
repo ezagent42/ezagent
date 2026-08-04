@@ -7,7 +7,11 @@ defmodule EzagentCore.Umbrella.MixProject do
       version: "0.1.0",
       package: package(),
       name: "Ezagent",
-      start_permanent: Mix.env() == :prod,
+      # Keep test applications temporary so ExUnit can isolate and restart them.
+      # Dev/prod nodes must stop if any umbrella application exits; otherwise a
+      # live Phoenix endpoint can outlast a dead domain supervisor and answer
+      # requests with misleading `:noproc` failures.
+      start_permanent: Mix.env() != :test,
       deps: deps(),
       aliases: aliases(),
       docs: docs(),
