@@ -305,11 +305,13 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     working_copy = Session.read_template_working_copy(session_uri)
 
     case working_copy do
-      %{session_template_uri: %URI{}, member_declarations: []} ->
-        :ok
-
-      %{session_template_uri: %URI{}, member_declarations: [_ | _]} ->
-        persist_and_wake_socialware_install(session_uri, actor_uri)
+      %{session_template_uri: %URI{}, member_declarations: member_declarations}
+      when is_list(member_declarations) ->
+        if member_declarations != [] or Installation.declared_view_actions(session_uri) != [] do
+          persist_and_wake_socialware_install(session_uri, actor_uri)
+        else
+          :ok
+        end
 
       _ ->
         {:error, {:socialware_install_not_persisted, :incomplete_template_declaration}}

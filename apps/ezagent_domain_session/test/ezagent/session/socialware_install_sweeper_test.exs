@@ -45,6 +45,46 @@ defmodule Ezagent.Session.SocialwareInstallSweeperTest do
     Process.delete(attempt_key)
   end
 
+  test "a view-cap convergence failure remains pending and resolves on retry" do
+    obligation = pending_obligation("view-cap-convergence")
+    attempt_key = {__MODULE__, make_ref()}
+    Process.put(attempt_key, 0)
+
+    install = fn _session_uri, _authorization ->
+      attempt = Process.get(attempt_key) + 1
+      Process.put(attempt_key, attempt)
+
+      if attempt == 1 do
+        {:error,
+         {:member_view_cap_failed, Ezagent.URI.new!("entity://team-alpha/user/owner"),
+          Ezagent.ActionSet.HelloRender, :hello_render, :grant_timeout}}
+      else
+        {:ok, %{satisfied: [], skipped: []}}
+      end
+    end
+
+    assert {:error, {:member_view_cap_failed, _, _, :hello_render, :grant_timeout}} =
+             SocialwareInstallSweeper.retry(obligation.id, install_fun: install)
+
+    retryable = SocialwareInstallObligations.get!(obligation.id)
+    assert retryable.status == :pending
+    assert retryable.last_error =~ "member_view_cap_failed"
+
+    {:ok, _due} =
+      retryable
+      |> SocialwareInstallObligation.transition_changeset(%{
+        next_attempt_at: DateTime.add(DateTime.utc_now(), -1, :second)
+      })
+      |> EzagentCore.Repo.update()
+
+    assert {:ok, :resolved} =
+             SocialwareInstallSweeper.retry(obligation.id, install_fun: install)
+
+    assert SocialwareInstallObligations.get!(obligation.id).status == :resolved
+    assert Process.get(attempt_key) == 2
+    Process.delete(attempt_key)
+  end
+
   test "an installer crash is captured as retryable state" do
     obligation = pending_obligation("crash")
 

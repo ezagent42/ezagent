@@ -5,15 +5,16 @@ defmodule Ezagent.Socialware.SessionInstaller do
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.{DefinitionAgents, Materializer, TemplateTeam}
 
-  @spec install(URI.t(), URI.t(), map(), URI.t() | nil) ::
+  @spec install(URI.t(), URI.t(), map(), URI.t() | nil, keyword()) ::
           {:ok, DefinitionAgents.summary()} | {:error, term()}
   def install(
         %URI{scheme: "session"} = session_uri,
         %URI{} = workspace_uri,
         working_copy,
-        actor_uri
+        actor_uri,
+        opts \\ []
       )
-      when is_map(working_copy) do
+      when is_map(working_copy) and is_list(opts) do
     case Session.owner(session_uri) do
       {:ok, %URI{} = owner} ->
         agents =
@@ -43,7 +44,15 @@ defmodule Ezagent.Socialware.SessionInstaller do
                  install_authorized?: owner_authorized?
                ) do
             {:ok, summary} ->
-              with :ok <- SessionCreator.record_unfilled_role_slots(session_uri, summary.skipped) do
+              converge_view_caps =
+                Keyword.get(
+                  opts,
+                  :view_cap_converger,
+                  &Ezagent.Socialware.ViewCapConvergence.converge/2
+                )
+
+              with :ok <- SessionCreator.record_unfilled_role_slots(session_uri, summary.skipped),
+                   :ok <- converge_view_caps.(session_uri, []) do
                 {:ok, summary}
               end
 

@@ -6,6 +6,7 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   alias EzagentPluginHello.Application, as: HelloApp
   alias EzagentPluginHello.Members
   alias EzagentPluginHello.Template.HelloSession
+  alias Ezagent.World.ConversationData
 
   setup do
     :ok = EzagentPluginHello.TestCatalog.import!()
@@ -137,6 +138,74 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       # Idempotent: re-instantiating the same app reports not-fresh.
       assert {:ok, [^session_uri], %{fresh?: false}} =
                HelloSession.instantiate("session.hello", tmpl, workspace_uri)
+    end
+
+    test "initial install repairs a missing owner Page capability" do
+      suffix = System.unique_integer([:positive])
+      ws = "hello-page-install-#{suffix}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      owner = Ezagent.URI.new!("entity://#{ws}/user/owner")
+      {:ok, _} = Ezagent.Users.create(owner, "pw-not-secret", [])
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner)
+
+      template = %{"class" => "session.hello", "session_name" => "main"}
+
+      assert {:ok, [session_uri], %{fresh?: true}} =
+               HelloSession.instantiate("session.hello", template, workspace_uri, caller: owner)
+
+      assert :ok =
+               EzagentDomainInstanceMessage.SessionCreator.join_session_members(
+                 session_uri,
+                 [owner]
+               )
+
+      owner
+      |> Ezagent.Identity.list_caps_for()
+      |> Enum.filter(fn cap ->
+        cap.behavior == Ezagent.ActionSet.HelloRender and
+          cap.action == :hello_render and cap.instance == session_uri
+      end)
+      |> Enum.each(fn cap -> assert :ok = Ezagent.EntityCaps.revoke(owner, cap) end)
+
+      assert {:ok, members} = Ezagent.Entity.Session.session_member_uris_strict(session_uri)
+      assert owner in members
+      assert Ezagent.Users.confirmed?(owner)
+      assert Ezagent.ActionSet.Session.Membership.current_member_entitled?(session_uri, owner)
+
+      assert {Ezagent.ActionSet.HelloRender, :hello_render} in Ezagent.Socialware.Installation.declared_view_actions(
+               session_uri
+             )
+
+      refute Ezagent.UI.SessionView.authorize_view(
+               EzagentPluginHello.PageView,
+               owner,
+               session_uri
+             )
+
+      assert {:ok, _summary} =
+               EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
+                 session_uri,
+                 {workspace_uri, owner}
+               )
+
+      assert Ezagent.UI.SessionView.authorize_view(
+               EzagentPluginHello.PageView,
+               owner,
+               session_uri
+             )
+
+      view_ids =
+        session_uri
+        |> ConversationData.state_for(%{
+          caller_uri: owner,
+          workspace_uri: workspace_uri,
+          sessions: []
+        })
+        |> Map.fetch!("views")
+        |> Enum.map(& &1["id"])
+
+      assert "hello_page" in view_ids
     end
 
     test "rejects an invalid template" do

@@ -24,6 +24,11 @@ defmodule EzagentDomainInstanceMessage.Integration.InstallSessionSocialwareTest 
   alias Ezagent.ActionSet.Session, as: SessionBehavior
   alias EzagentDomainInstanceMessage.SessionCreator
 
+  defmodule InstallTestRender do
+    @moduledoc false
+    def actions, do: [:install_test_render]
+  end
+
   setup do
     _ = Ezagent.SpawnRegistry.spawn(User.admin_uri())
     :ok
@@ -124,6 +129,46 @@ defmodule EzagentDomainInstanceMessage.Integration.InstallSessionSocialwareTest 
 
       assert {:error, {:composition_install_not_owner_authorized, ^session_uri}} =
                SessionCreator.install_session_socialware(session_uri, {workspace_uri, stranger})
+    end
+  end
+
+  describe "initial view-cap postcondition" do
+    test "returns the strict convergence error after materialization succeeds" do
+      suffix = System.unique_integer([:positive])
+      owner = Ezagent.URI.user("system", "install-view-owner-#{suffix}")
+      session_uri = Ezagent.URI.session("system", "hello", "install-view-#{suffix}")
+      workspace_uri = Ezagent.URI.workspace(:system)
+
+      on_exit(fn -> terminate_if_alive(session_uri) end)
+
+      {:ok, _pid} =
+        Ezagent.Kind.spawn(Session, %{
+          uri: session_uri,
+          behaviors: Session.behaviors(),
+          owner_uri: owner
+        })
+
+      :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+
+      working_copy = %{
+        session_template_uri: Ezagent.URI.template(:system, :session, "hello"),
+        member_declarations: []
+      }
+
+      converge = fn ^session_uri, [] ->
+        {:error,
+         {:member_view_cap_failed, owner, InstallTestRender, :install_test_render, :timeout}}
+      end
+
+      assert {:error,
+              {:member_view_cap_failed, ^owner, InstallTestRender, :install_test_render, :timeout}} =
+               Ezagent.Socialware.SessionInstaller.install(
+                 session_uri,
+                 workspace_uri,
+                 working_copy,
+                 owner,
+                 view_cap_converger: converge
+               )
     end
   end
 
