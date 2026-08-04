@@ -66,14 +66,41 @@ After role materialization and the existing installation writes succeed,
 `Socialware.SessionInstaller` will converge declared-view capabilities for all
 eligible members already present in the session.
 
+The durable obligation is required when either of these conditions is true:
+
+1. the template declares one or more agent role members; or
+2. the installed socialware contributes one or more declared view actions.
+
+The second condition prevents a view-only socialware with
+`member_declarations: []` from bypassing the postcondition. A template with
+neither agent declarations nor declared view actions retains the current no-op
+path and does not create unnecessary obligation work.
+
 Member enumeration uses the session membership source of truth. The postcondition
 filters to confirmed user URIs; agents and anonymous users retain their existing
 provisioning rules.
+
+The convergence call is caller-side work owned by the durable obligation worker.
+It must never execute from a Session Kind handler: the strict path performs
+synchronous target-signed grants back to the Session, and invoking it from the
+Session process would deadlock on `GenServer.call(self())`.
 
 If convergence fails, the installer returns an error. The durable
 `SocialwareInstallObligation` therefore remains retryable and is not marked
 `resolved`. On the next retry, already valid grants are skipped and only missing
 capabilities are attempted.
+
+Convergence is fail-fast across members and declared view actions. Its error
+shape carries the exact missing postcondition:
+
+```elixir
+{:error,
+ {:member_view_cap_failed, member_uri, behavior_module, action, reason}}
+```
+
+Capabilities granted before the failure remain valid. The next retry skips them
+through the exact-identity and current-signature check, then resumes convergence
+at the remaining missing capability.
 
 ### UI convergence
 
@@ -89,8 +116,11 @@ hello-specific browser event or World branch is added.
 - A successful partial grant is safe: retries are exact-identity idempotent.
 - A stale roster entry is not sufficient authority; the existing current-member
   entitlement check remains mandatory.
-- Invalid, unconfirmed, anonymous, agent, removed, or non-member entries do not
-  receive new capabilities.
+- Invalid, unconfirmed, agent, removed, or non-member entries do not receive new
+  capabilities.
+- Anonymous-user capabilities are not added, removed, or modified by this
+  postcondition. Public anonymous access remains exclusively owned by the
+  existing anon provisioning flow.
 - Persistent failures remain visible through the existing obligation error,
   logs, and telemetry.
 
@@ -104,11 +134,23 @@ The implementation follows red-green TDD.
 2. The retry test removes the injected failure, reruns installation, and verifies
    the obligation resolves only after `SessionView.authorize_view/3` succeeds.
 3. The retry test verifies already successful grants are not duplicated.
-4. Eligibility tests verify agents, anonymous users, removed members, and
-   non-members receive no new view capabilities.
-5. A World projection assertion verifies the caller-visible view list contains
+4. A view-only socialware regression test uses `member_declarations: []` with a
+   declared view and verifies that creation persists and executes the obligation
+   instead of returning the no-op path.
+5. Eligibility tests verify agents, unconfirmed users, removed members, and
+   non-members receive no new view capabilities, while anonymous-user
+   capabilities remain unchanged.
+6. A World projection assertion verifies the caller-visible view list contains
    the declared view after convergence.
-6. Existing member-backfill, socialware-install sweeper, SessionInstaller, and
+7. A connected LiveView regression starts without the view cap, stores the cap,
+   receives the existing caller identity slice-change, and verifies the pushed
+   `world:state.views` now contains the declared view without reconnecting or
+   refreshing the browser.
+8. The failure test uses an explicit test seam around the existing grant funnel
+   to return one deterministic synchronous grant error. The seam must not add a
+   second production grant constructor, dispatch call site, or test-only branch
+   to runtime behavior.
+9. Existing member-backfill, socialware-install sweeper, SessionInstaller, and
    view-authorization suites remain green.
 
 ## Acceptance criteria
@@ -119,5 +161,7 @@ The implementation follows red-green TDD.
 - Retrying converges the missing capability without duplicating valid grants.
 - The fix applies to every socialware declared view and contains no hello-specific
   production condition.
+- A view-only socialware with no agent declarations still executes the durable
+  view-cap postcondition.
 - An already-open World conversation refreshes to include the newly authorized
   view through the existing identity slice-change contract.
