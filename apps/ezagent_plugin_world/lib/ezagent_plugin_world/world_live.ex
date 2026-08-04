@@ -12,6 +12,7 @@ defmodule EzagentPluginWorld.WorldLive do
   alias Ezagent.World.CommandPaletteActions
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ConversationActions
+  alias Ezagent.World.ConversationPtyRefresh
   alias Ezagent.World.ConversationSessionState
   alias Ezagent.World.LiveStateBuilder
   alias Ezagent.World.UserActions
@@ -20,7 +21,6 @@ defmodule EzagentPluginWorld.WorldLive do
   alias EzagentPluginWorld.{Layouts, WorldLoading}
 
   @refresh_ms 2_000
-
   @impl true
   def mount(_params, _session, socket) do
     caller = Map.get(socket.assigns, :current_entity_uri)
@@ -579,7 +579,11 @@ defmodule EzagentPluginWorld.WorldLive do
         workspace = socket.assigns.current_workspace_uri
         caller = socket.assigns.current_entity_uri
         layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
-        state = LiveStateBuilder.state_for_route(route, socket, layout)
+
+        state =
+          route
+          |> LiveStateBuilder.state_for_route(socket, layout)
+          |> reconcile_refreshed_conversation_pty(socket, caller)
 
         socket
         |> subscribe_conversation_pty_phases(state)
@@ -591,6 +595,14 @@ defmodule EzagentPluginWorld.WorldLive do
       _ ->
         socket
     end
+  end
+
+  defp reconcile_refreshed_conversation_pty(
+         refreshed_state,
+         %{assigns: %{world_state: current_state, current_caps: caps}},
+         caller
+       ) do
+    ConversationPtyRefresh.reconcile(refreshed_state, current_state, caller, caps)
   end
 
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
@@ -1419,17 +1431,10 @@ defmodule EzagentPluginWorld.WorldLive do
     }
 
     if Map.get(world_state, "active_view") == "pty" do
-      Map.put(updates, "active_view", fallback_session_view(views))
+      Map.put(updates, "active_view", ConversationPtyRefresh.fallback_view(views))
     else
       updates
     end
-  end
-
-  defp fallback_session_view(views) do
-    Enum.find_value(views, fn view ->
-      if Map.get(view, "id") == "conversation", do: "conversation"
-    end) ||
-      Enum.find_value(views, &Map.get(&1, "id"))
   end
 
   defp update_pty_state(socket, updates) when is_map(updates) do

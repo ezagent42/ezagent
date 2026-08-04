@@ -932,6 +932,27 @@ defmodule EzagentWeb.WorldConversationTest do
     assert is_integer(os_pid)
     assert Process.alive?(view.pid)
 
+    # Creating the provisional agent grants its creator Manage authority, which
+    # emits an identity SliceChange after the PTY-open payload.  A route refresh
+    # must not replace the server-side conversation state with a base projection
+    # that forgets the terminal while the React client keeps it mounted.
+    send(view.pid, {:slice_changed, %{uri: viewer_uri, slice_key: :identity}})
+
+    assert_push_event(
+      view,
+      "world:state",
+      %{"component" => "conversation"} = refreshed_state,
+      5_000
+    )
+
+    assert refreshed_state["active_view"] == "pty"
+    assert refreshed_state["active_pty_agent_uri"] == agent
+    assert refreshed_state["agent_uri"] == agent
+    assert refreshed_state["pty_alive"] == true
+
+    html = render_hook(view, "pty_input", %{"bytes" => "x"})
+    refute html =~ ~s(data-last-dispatch="error:not_pty_route")
+
     :ok = Ezagent.Domain.Pty.stop(agent_uri)
 
     assert_push_event(view, "world:state", %{
