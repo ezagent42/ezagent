@@ -211,7 +211,19 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
 
     # Revocation is an immediate security boundary: removing the cap itself
     # must wipe the materialized key, without waiting for another spawn/retire.
-    test "撤销 read_ssh_key cap 后立即清掉盘上的 key", ctx do
+    #
+    # B2' revoke-ordering fix (2026-08-04): the wipe now runs via
+    # `{:dispatch_after_commit, %Ezagent.Cmd{}}` — `Ezagent.Kind.DeferredDispatch`
+    # enqueues it to the agent's OWN mailbox (`send(self(), {:ezagent_run_deferred,
+    # _}}`) and it runs on a LATER `handle_info` turn, strictly AFTER
+    # `EntityCaps.revoke/2`'s underlying `:call` dispatch has already replied to
+    # THIS test process. So "revoke returned" no longer implies "wipe already
+    # ran" — poll instead of asserting immediately. `Ezagent.LifecycleCase.wait_until/2`
+    # (`apps/ezagent_core/lib/ezagent/lifecycle_case.ex`) is the repo's existing
+    # cross-app polling helper (deliberately in `lib/`, not `test/support/`, so
+    # non-owning apps' test suites can call it — same rationale as
+    # `EzagentCore.DataCase`), not a bare `Process.sleep` wait.
+    test "撤销 read_ssh_key cap 后（提交后异步）清掉盘上的 key", ctx do
       generate_key_for(ctx.user_uri, ctx.admin)
       cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
 
@@ -221,7 +233,7 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
 
       :ok = Ezagent.EntityCaps.revoke(ctx.agent_uri, cap)
       assert [] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
-      refute File.exists?(key_path)
+      Ezagent.LifecycleCase.wait_until(fn -> not File.exists?(key_path) end)
     end
 
     test "撤销非 read_ssh_key cap 不清理已物化的 key", ctx do
@@ -396,6 +408,43 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
       # 结构证据：实现暴露的 caps-selection 是纯函数，直接断言它。
       assert [selected] = AgentGitIdentity.dispatch_caps(ctx.agent_uri)
       assert selected == ctx.cap
+    end
+
+    # B2' revoke-ordering fix（2026-08-04）—— 结构断言：`handle_revoke_cap/2`
+    # （`#1693` 的原始路径，`maybe_add_git_identity_wipe/3`）现在产出的是
+    # `{:dispatch_after_commit, %Ezagent.Cmd{}}`，不是同步执行的
+    # `{:effect, {GitIdentityRuntime, :wipe}, _}`。这正是"不在 handler 内同步
+    # 执行，父 slice 提交后才跑"这条顺序保证本身的判据——端到端构造不了
+    # `commit_and_notify` 失败（没有可控注入点），所以退到这一层：直接调用
+    # handler（跳过真实 dispatch/commit）验证它产出的 EFFECT 形状。跟下面
+    # "sync_recipe_binding" describe block 里对 `maybe_add_recipe_binding_
+    # git_identity_wipe/4` 的同款结构断言对称——那条覆盖本轮新补的路径，这条
+    # 覆盖 `#1693` 的原始 hook。
+    test "handle_revoke_cap/2 撤销 read_ssh_key cap 时返回的 effects 是 {:dispatch_after_commit, _}，不是同步 {:effect, _, _}",
+         ctx do
+      rigged_ctx = %{
+        caller: ctx.admin,
+        self_uri: ctx.agent_uri,
+        read: fn :caps, _default -> MapSet.new([ctx.cap]) end
+      }
+
+      assert {:ok, %{caps: _}, effects} =
+               IdentityAdmin.handle_revoke_cap(%{cap: ctx.cap}, rigged_ctx)
+
+      refute Enum.any?(
+               effects,
+               &match?({:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, _}, &1)
+             )
+
+      assert wipe_effect =
+               Enum.find(
+                 effects,
+                 &match?({:dispatch_after_commit, %Ezagent.Cmd{action: :wipe_git_identity}}, &1)
+               )
+
+      assert {:dispatch_after_commit, %Ezagent.Cmd{} = cmd} = wipe_effect
+      assert cmd.action == :wipe_git_identity
+      assert Ezagent.URI.instance(cmd.target) == Ezagent.URI.instance(ctx.agent_uri)
     end
   end
 
@@ -871,10 +920,17 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
     # 其余全部真实：真实 absorb 的 cap、真实落盘的 key、真实存在于 DB 的
     # RecipeCapBinding（version 1，agent-kind cap）、真实执行的
     # restore_structural_caps/3（因为它的 identity_key 确实在
-    # old_binding_keys 里，被真实代码删掉）、真实的 wipe-effect 判定。最后手动
-    # 按 runtime 的效果解释器会做的方式应用返回的 wipe 效果，钉住"消失 → 立即
-    # 清盘"这条因果链的后半段也是真的。
-    test "反事实前置态下 read_ssh_key 消失时，返回的 caps 与 effects 都反映立即清理，应用后盘上 key 真的没了",
+    # old_binding_keys 里，被真实代码删掉）、真实的 wipe-effect 判定。最后
+    # 按 runtime 的效果解释器对 `{:dispatch_after_commit, cmd}` 会做的方式
+    # （`Router.dispatch/1`）应用返回的效果，钉住"消失 → dispatch 后清盘"这条
+    # 因果链的后半段也是真的。
+    #
+    # B2' revoke-ordering fix（2026-08-04）—— 判据从"是同步 MFA effect"改成
+    # "是 post-commit 的 dispatch"：`{:effect, {GitIdentityRuntime, :wipe},
+    # _}` 曾经在 handler 内同步执行；现在这两个 helper 产出的是
+    # `{:dispatch_after_commit, %Ezagent.Cmd{}}`，`Kind.Server` 只在父 slice
+    # 提交后才跑（见 identity.ex 的 `wipe_git_identity_dispatch_after_commit/1`）。
+    test "反事实前置态下 read_ssh_key 消失时，返回的 caps 与 effects 都反映延迟清理，dispatch 后盘上 key 真的没了",
          ctx do
       generate_key_for(ctx.user_uri, ctx.admin)
       cap = grant_read_ssh_key(ctx.agent_uri, ctx.user_uri, ctx.admin)
@@ -926,16 +982,24 @@ defmodule Ezagent.Identity.AgentGitIdentityTest do
       assert wipe_effect =
                Enum.find(
                  effects,
-                 &match?({:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, _}, &1)
+                 &match?({:dispatch_after_commit, %Ezagent.Cmd{action: :wipe_git_identity}}, &1)
                )
 
-      assert {:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [wiped_uri]} = wipe_effect
-      assert Ezagent.URI.instance(wiped_uri) == Ezagent.URI.instance(ctx.agent_uri)
+      assert {:dispatch_after_commit, %Ezagent.Cmd{} = cmd} = wipe_effect
+      assert cmd.action == :wipe_git_identity
+      assert Ezagent.URI.instance(cmd.target) == Ezagent.URI.instance(ctx.agent_uri)
 
-      # 手动应用返回的效果 —— 与 runtime 的效果解释器对这个具体 tuple 会做的
-      # 事完全一致（MFA 直接调用）——钉住"消失 → 盘上 key 真的被清"这半条链路。
-      assert :ok = Ezagent.Credential.GitIdentityRuntime.wipe(wiped_uri)
-      refute File.exists?(key_path)
+      # 手动按 runtime 的效果解释器对 `{:dispatch_after_commit, cmd}` 会做的
+      # 方式应用返回的效果——`Ezagent.Kind.DeferredDispatch.run/1` 对每个
+      # deferred cmd 就是调 `Router.dispatch/1`（这里跳过它的
+      # force-fire-and-forget 包装 + `with_admin_operator` 包装，因为两者
+      # 对这个 cmd 的 ctx 形状都是 no-op —— `mode` 已经由 `ctx.reply: :ignore`
+      # 派生成 `:cast`，`authenticated_principal` 不是 canonical admin）——
+      # 钉住"消失 → dispatch 后盘上 key 真的被清"这半条链路。`:cast` 的
+      # dispatch 在目标 Kind 的下一个 turn 才真正跑 handler，所以用
+      # `wait_until` 等，不用 `Process.sleep` 硬等。
+      assert :ok = Ezagent.Router.dispatch(cmd)
+      Ezagent.LifecycleCase.wait_until(fn -> not File.exists?(key_path) end)
     end
   end
 

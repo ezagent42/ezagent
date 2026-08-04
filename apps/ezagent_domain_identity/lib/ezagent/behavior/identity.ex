@@ -506,6 +506,8 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
   # lifecycle:state_slice_override
   use Ezagent.Lifecycle, state_slice: :identity
 
+  require Logger
+
   action(:grant_cap,
     args: %{cap: :map},
     returns: %{caps: {:list, :map}},
@@ -845,14 +847,106 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          }
        ) do
     if Ezagent.URI.type?(target_uri, :agent) do
-      effects ++
-        [{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [target_uri]}]
+      effects ++ wipe_git_identity_dispatch_after_commit(target_uri)
     else
       effects
     end
   end
 
   defp maybe_add_git_identity_wipe(effects, _ctx, _cap), do: effects
+
+  # B2' revoke-ordering fix (2026-08-04) — build the post-commit
+  # git-identity-wipe `{:dispatch_after_commit, %Ezagent.Cmd{}}` effect
+  # shared by both call sites above/below.
+  #
+  # PRIOR SHAPE (retracted): `{:effect, {GitIdentityRuntime, :wipe},
+  # [target_uri]}` ran the wipe SYNCHRONOUSLY inside THIS handler — i.e.
+  # BEFORE the parent `:identity` slice durably commits
+  # (`Kind.Server.commit_and_notify/3` runs AFTER effect execution,
+  # `apps/ezagent_actor/lib/ezagent/kind/server.ex:939-978`). A commit
+  # failure after that point left the key wiped but the OLD caps still
+  # authorized — exactly the ordering bug `docs/together/tasks/ssh-revoke-wipe.md`
+  # acceptance item ② forbids ("撤销先入 ledger 再触发 wipe，不允许 wipe 先于撤销
+  # 可见"). `{:dispatch_after_commit, %Ezagent.Cmd{}}` (`effects.ex:19`) is the
+  # channel that actually exists for this: `Kind.Server` runs it via
+  # `Ezagent.Kind.DeferredDispatch` ONLY after `commit_and_notify/3` returns
+  # `:ok`/`:not_durable`, and SKIPS it on `{:error, _}` — a failed commit can
+  # no longer be followed by a wipe. (An EARLIER draft of this comment/the
+  # design doc claimed no post-commit channel existed at all and that
+  # extending the effect grammar would be required — WRONG, retracted; the
+  # channel was already there, just without an MFA variant. See
+  # `docs/superpowers/specs/2026-08-02-agent-ssh-credential-1b-design.md`
+  # §6.2 for the corrected history.)
+  #
+  # `target_uri` IS the agent (both call sites gate on
+  # `Ezagent.URI.type?(_, :agent)` / a recipe binding, which is agent-only),
+  # so the deferred Cmd's target is the SAME Kind instance — a self-dispatch,
+  # not a cross-Kind hop.
+  #
+  # AUTHORIZATION: `Ezagent.ActionSet.Sandbox.wipe_git_identity` is an
+  # ORDINARY cap-gated action (NOT one of `Cap.Verifier`'s `@non_cap_actions`
+  # — that allowlist is deliberately "closed and exact",
+  # `cap_signing_architecture_test.exs` "the interim non-cap class is closed
+  # and exact", and widening it is an architecture-review surface this fix
+  # does not open). An empty `ctx.caps` — mirroring
+  # `Ezagent.Identity.MembershipConvergence.add_self_cmd/2`'s `:add_self`
+  # shape — would NOT authorize here; `:add_self` only works empty-caps
+  # because it IS one of those hardcoded exemptions with its own in-handler
+  # predicate. Instead this mints a REAL, receiver-bound, ed25519-signed cap
+  # inline via `Ezagent.Cap.issue_for_action({:admin, admin}, target_uri,
+  # action_uri)` — the SAME established pattern
+  # `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.agent.grant_git_identity.ex:160`
+  # and `apps/ezagent_domain_agent/lib/ezagent/entity/agent/template_spawn/sandbox_state.ex:113`
+  # already use to dispatch TO an agent's own Sandbox-hosted behavior.
+  # Called from INSIDE the target agent's own live dispatch (this handler
+  # runs under `Kind.Server`'s `with_authority`/`with_runtime_view` for that
+  # SAME instance), so `issue_for_action/3` resolves via the self-target,
+  # non-deadlocking runtime-view path (`cap.ex`'s `self_target_subject/2`),
+  # not a second `GenServer.call`. Minting is a pure in-memory sign
+  # (`Cap.Authority.sign/2`) — no durable write — so a mint that is built but
+  # never dispatched (parent commit fails; `DeferredDispatch.enqueue/1` never
+  # runs) leaves nothing to clean up.
+  @spec wipe_git_identity_dispatch_after_commit(URI.t()) :: [
+          {:dispatch_after_commit, Ezagent.Cmd.t()}
+        ]
+  defp wipe_git_identity_dispatch_after_commit(%URI{} = target_uri) do
+    admin = Ezagent.Entity.User.admin_uri()
+    action_uri = Ezagent.URI.with_action(target_uri, :sandbox, :wipe_git_identity)
+
+    case Ezagent.Cap.issue_for_action({:admin, admin}, target_uri, action_uri) do
+      {:ok, cap} ->
+        cmd = %Ezagent.Cmd{
+          target: Ezagent.URI.instance(target_uri),
+          action: :wipe_git_identity,
+          args: %{},
+          ctx: %{
+            caller: target_uri,
+            authenticated_principal: target_uri,
+            caps: MapSet.new([cap]),
+            reply: :ignore
+          },
+          origin: :trusted_internal
+        }
+
+        [{:dispatch_after_commit, cmd}]
+
+      {:error, reason} ->
+        # `uri_to_str/1` (not inline `URI.to_string/1`) — trips
+        # `uri_query.scan`'s `:uri_string_key` heuristic otherwise
+        # (capbac.md §9 pitfall 7); this file already defines the sanctioned
+        # helper for exactly this.
+        Logger.error(
+          "Ezagent.ActionSet.IdentityAdmin: failed to mint the post-commit " <>
+            "git-identity-wipe cap for #{uri_to_str(target_uri)}: #{inspect(reason)} — " <>
+            "the stale key (if any) will NOT be wiped by this dispatch; " <>
+            "Ezagent.Credential.GitIdentityRuntime.wipe/1 is idempotent and safe to " <>
+            "re-run out of band, and the next spawn re-materializes from the User's " <>
+            "own slice regardless (§6.1 no-state-loss)."
+        )
+
+        []
+    end
+  end
 
   # #1693 (the handler above) fires on a REMOVED cap it can pattern-match
   # directly — `handle_remove_cap/2`/`handle_revoke_cap/2` only ever mutate
@@ -888,7 +982,7 @@ defmodule Ezagent.ActionSet.IdentityAdmin do
          after_caps
        ) do
     if read_ssh_key_cap_change?(before_caps, after_caps) do
-      effects ++ [{:effect, {Ezagent.Credential.GitIdentityRuntime, :wipe}, [receiver]}]
+      effects ++ wipe_git_identity_dispatch_after_commit(receiver)
     else
       effects
     end

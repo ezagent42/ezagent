@@ -46,8 +46,8 @@ defmodule Ezagent.ActionSet.SandboxTest do
   end
 
   describe "Behavior contract surface" do
-    test "actions/0 returns [:read, :update_config, :destroy]" do
-      assert Sandbox.actions() == [:read, :update_config, :destroy]
+    test "actions/0 returns [:read, :update_config, :destroy, :wipe_git_identity]" do
+      assert Sandbox.actions() == [:read, :update_config, :destroy, :wipe_git_identity]
     end
 
     test "state_slice/0 is :sandbox" do
@@ -131,15 +131,32 @@ defmodule Ezagent.ActionSet.SandboxTest do
       assert {:ok, %{pty_phase: nil}} = Sandbox.create(%{pty_phase: 42})
     end
 
-    test "cap_subjects/0 carries all 3 subjects" do
+    test "cap_subjects/0 carries all 4 subjects" do
       subjects = Sandbox.cap_subjects() |> Enum.map(&elem(&1, 0))
-      assert subjects == [:read, :update_config, :destroy]
+      assert subjects == [:read, :update_config, :destroy, :wipe_git_identity]
     end
 
-    test "interface/0 declares all 3 actions, all :call mode" do
+    test "interface/0 declares all 4 actions — :read/:update_config/:destroy are :call, :wipe_git_identity is :cast" do
       iface = Sandbox.interface()
-      assert Map.keys(iface) |> Enum.sort() == [:destroy, :read, :update_config]
-      for {_action, def} <- iface, do: assert(def.modes == [:call])
+
+      assert Map.keys(iface) |> Enum.sort() == [
+               :destroy,
+               :read,
+               :update_config,
+               :wipe_git_identity
+             ]
+
+      for action <- [:read, :update_config, :destroy] do
+        assert iface[action].modes == [:call]
+      end
+
+      # B2' revoke-ordering fix — `:wipe_git_identity` is `:cast`-only: every
+      # `{:dispatch_after_commit, _}` Cmd is force-fire-and-forget by
+      # `Ezagent.Kind.DeferredDispatch.run/1` regardless of what the emitting
+      # handler set, so a `:call`-only action here could never actually be
+      # reached through that channel — matches `Session.add_self`'s identical
+      # `modes: [:cast]` (the other cap-gated `:dispatch_after_commit` target).
+      assert iface[:wipe_git_identity].modes == [:cast]
     end
   end
 

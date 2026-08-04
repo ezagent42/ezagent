@@ -272,15 +272,27 @@ PTY 侧 `start_pty/2` 的 `{:error, {:already_started, pid}}`
 >
 > **这不是本轮（B2′ 收尾）引入的问题** —— `#1693`（`ab12c63da`）已经在 `main` 上，且是本分支的 merge-base（早于本分支分出），用的是**完全相同**的 `{:effect, {GitIdentityRuntime, :wipe}, [uri]}` 形状（`maybe_add_git_identity_wipe/3`）。本轮 §6.2.1 新增的 `maybe_add_recipe_binding_git_identity_wipe/4` 只是复用了这个既有形状，没有让排序问题变得更差，也没有变好。
 >
-> **需 Allen 裁决的架构问题**：当前 effect 文法**没有 post-commit 的 MFA 通道**。`Kind.Server` 唯一会在持久提交**之后**才运行的桶是 `dispatches_after_commit`（effect 类型 `{:dispatch_after_commit, %Ezagent.Cmd{}}` 定义在 `apps/ezagent_actor/lib/ezagent/behavior/effects.ex:19`，收集见同文件 `:124-125,171-176`，resolve 见 `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:172-178`，实际执行见 `kind/server.ex:955` 的 `DeferredDispatch.enqueue/1`）——它只收经 `Router.dispatch/1` 路由的 `%Ezagent.Cmd{}`，不收任意 MFA。要把 wipe 挪到提交之后跑，需要扩展 effect 文法（例如新增一个 post-commit MFA effect 类型），这是架构改动，按 CLAUDE.md「实施期发现架构问题 → 暂停 → 讨论 → Allen 改 → 继续」处理。**本轮不新增 effect 类型，也不把 wipe 改写成 `:dispatch`/`:dispatch_after_commit` 绕过去** —— `:dispatch_after_commit` 的目标是经 `Router.dispatch/1` 路由的一次 Kind 间 invocation，`GitIdentityRuntime.wipe/1` 是本地文件系统操作，不是一次 dispatch，形状对不上；硬套会悄悄破坏"post-commit 只跑 dispatch"这条今天成立的假设，引入新的语义歧义，代价比维持现状更大。这条留给 Allen 裁决是否值得为此扩文法；本节先如实记录现状。
+> **~~需 Allen 裁决的架构问题~~：当前 effect 文法**没有 post-commit 的 MFA 通道**。`Kind.Server` 唯一会在持久提交**之后**才运行的桶是 `dispatches_after_commit`（effect 类型 `{:dispatch_after_commit, %Ezagent.Cmd{}}` 定义在 `apps/ezagent_actor/lib/ezagent/behavior/effects.ex:19`，收集见同文件 `:124-125,171-176`，resolve 见 `apps/ezagent_actor/lib/ezagent/kind/runtime/effects.ex:172-178`，实际执行见 `kind/server.ex:955` 的 `DeferredDispatch.enqueue/1`）——它只收经 `Router.dispatch/1` 路由的 `%Ezagent.Cmd{}`，不收任意 MFA。要把 wipe 挪到提交之后跑，需要扩展 effect 文法（例如新增一个 post-commit MFA effect 类型），这是架构改动，按 CLAUDE.md「实施期发现架构问题 → 暂停 → 讨论 → Allen 改 → 继续」处理。**本轮不新增 effect 类型，也不把 wipe 改写成 `:dispatch`/`:dispatch_after_commit` 绕过去** —— `:dispatch_after_commit` 的目标是经 `Router.dispatch/1` 路由的一次 Kind 间 invocation，`GitIdentityRuntime.wipe/1` 是本地文件系统操作，不是一次 dispatch，形状对不上；硬套会悄悄破坏"post-commit 只跑 dispatch"这条今天成立的假设，引入新的语义歧义，代价比维持现状更大。这条留给 Allen 裁决是否值得为此扩文法；本节先如实记录现状。~~（**下方 2026-08-04 订正：上面这段的"扩文法"结论是错的，划掉保留存档，不删除。**）~~
+>
+> **2026-08-04 四次订正 —— 已实施：wipe 改成 post-commit dispatch，上一段"需 Allen 裁决"判断有误。** 上一段说"当前 effect 文法没有 post-commit 的 MFA 通道，真修得扩文法"——**通道本来就存在**且上一段自己也点名了它（`{:dispatch_after_commit, %Ezagent.Cmd{}}`，`effects.ex:19`）；"它只收 `%Cmd{}`，不收 MFA，形状对不上"这句本身没错，**错的是由此得出"因此需要扩文法"**——不需要给 `GitIdentityRuntime.wipe/1` 找一个 post-commit MFA 出口，而是把"擦除"包成一次**真实 dispatch**：
+>
+> 1. 给 `Ezagent.ActionSet.Sandbox`（`apps/ezagent_core/lib/ezagent/behavior/sandbox.ex`；core，已经挂在 Agent Kind 上，且已经在自己的 `:destroy` action + `destroy/2` Lifecycle hook 两处调用同一个 `GitIdentityRuntime.wipe/1`）新增一个 cap-gated 的 `:wipe_git_identity` action（`kind: :agent` 轴，跟 `:read`/`:update_config`/`:destroy` 同轴）——这是"回归归属"，不是发明新概念。
+> 2. `maybe_add_git_identity_wipe/3`（`#1693` 原路径）与 `maybe_add_recipe_binding_git_identity_wipe/4`（本轮 §6.2.1 补的路径）不再直接构造 `{:effect, {GitIdentityRuntime, :wipe}, [uri]}`，而是构造 `{:dispatch_after_commit, %Ezagent.Cmd{target: <该 agent>, action: :wipe_git_identity, ...}}` 并只**收集**它——两处 handler 内不执行任何清理动作。
+> 3. `Kind.Server` 在 `commit_and_notify/3` 返回 `:ok`/`:not_durable` **之后**才把收集到的 Cmd 交给 `Ezagent.Kind.DeferredDispatch.enqueue/1`；`commit_and_notify/3` 失败时那句 `enqueue/1` 根本不会跑（`server.ex:947-955`）。上一版描述的失败场景——"wipe 已删 key，随后提交失败，agent 却仍持有该 cap"——**不再可能发生**：提交失败时 wipe 从未被 dispatch，遑论执行。
+>
+> **鉴权是本次改动里唯一需要新增机制的部分**：`:wipe_git_identity` 是普通 cap-gated action，**不是** `Ezagent.Cap.Verifier` 的 `@non_cap_actions` 豁免项——那份 allowlist 被 `cap_signing_architecture_test.exs`「the interim non-cap class is closed and exact」钉死为"闭集"，扩它是本次修复刻意没有打开的架构评审面（`Ezagent.Identity.MembershipConvergence.add_self_cmd/2` 的 `:add_self` 之所以能用空 `ctx.caps` dispatch，正是因为它是这份闭集里的一个硬编码豁免项，配自己的 in-handler 判据；这不是可以随手复用给新 action 的通用机制）。两个 helper 改为现场铸造一枚真实、receiver-bound、ed25519 签名的 cap（`Ezagent.Cap.issue_for_action({:admin, admin}, target_uri, action_uri)`）塞进 Cmd 的 `ctx.caps`——与 `apps/ezagent_domain_identity/lib/mix/tasks/ezagent.agent.grant_git_identity.ex:160` 已经在用、给同一个 agent 的 Sandbox-hosted behavior 授权时的手法完全一致。铸造是纯内存 ed25519 签名（`Cap.Authority.sign/2`），没有落盘副作用，所以一枚铸造出来但从未被 dispatch 的 cap（父提交失败的场景）不会留下任何要清理的东西。
+>
+> **既有测试如实标注**：`agent_git_identity_test.exs` 里直接调用 handler 的两条 rigged-ctx 测试（`handle_revoke_cap/2` 一条 + `handle_sync_recipe_binding/2` 一条）改成断言返回的 effect 形状是 `{:dispatch_after_commit, %Ezagent.Cmd{action: :wipe_git_identity}}` 而非 `{:effect, _, _}`——这是"不在 handler 内同步执行"的判据本身，因为端到端构造 `commit_and_notify/3` 失败没有可控注入点。端到端的"撤销后清盘"测试因 wipe 变成异步（父 slice 提交后的下一个 GenServer turn）而改用 `Ezagent.LifecycleCase.wait_until/2`（仓库既有的跨 app 轮询 helper）代替立即断言。
+
+**2026-08-04 订正**：下表"立即"对三行 dispatch 类清理仍是准确的高层描述（不是"下次 spawn"），但"机制"列已随 2026-08-04 订正更新——精确地说是**父 slice 提交后立即**（`{:dispatch_after_commit, %Ezagent.Cmd{action: :wipe_git_identity}}`，不再是提交前同步执行的 MFA）。
 
 | 动作 | 何时生效 | 机制 |
 |---|---|---|
-| 撤销 agent 的 cap（`EntityCaps.revoke/2` 与全部 Grant revoke 路径 → `:remove_cap`） | **立即** | `#1693` 的 `maybe_add_git_identity_wipe/3` |
-| delivery-outbox 的 `:revoke_cap` 重放 | **立即** | 同上 |
-| recipe-binding reconcile 掉该 cap（`:sync_recipe_binding` 整集替换） | **立即** | 本轮补齐（§6.2.1） |
+| 撤销 agent 的 cap（`EntityCaps.revoke/2` 与全部 Grant revoke 路径 → `:remove_cap`） | **提交后立即** | `maybe_add_git_identity_wipe/3` → `Sandbox.wipe_git_identity` dispatch |
+| delivery-outbox 的 `:revoke_cap` 重放 | **提交后立即** | 同上 |
+| recipe-binding reconcile 掉该 cap（`:sync_recipe_binding` 整集替换） | **提交后立即** | `maybe_add_recipe_binding_git_identity_wipe/4`（§6.2.1）→ 同一个 `Sandbox.wipe_git_identity` dispatch |
 | `revoke_ssh_key`（1a，撤的是 User 侧的 key 本身） | **下次 spawn** | §6.1 的 `{:error, :owner_has_no_key}` 清理 |
-| agent 已被销毁 / spawn 失败回滚 / retire 清扫 | **立即** | 1b Task 5 + 整支终审 K1 的三处清理 |
+| agent 已被销毁 / spawn 失败回滚 / retire 清扫 | **立即** | 1b Task 5 + 整支终审 K1 的三处清理（不经这条 post-commit 通道，未改动） |
 
 #### 6.2.1 两个未覆盖路径的分级（**两条今天都不可达**）
 

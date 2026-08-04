@@ -107,12 +107,17 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
       assert Ezagent.ActionSet.new_style?(Sandbox)
     end
 
-    test "__action_names__/0 lists [:read, :update_config, :destroy]" do
-      assert Enum.sort(Sandbox.__action_names__()) == [:destroy, :read, :update_config]
+    test "__action_names__/0 lists [:read, :update_config, :destroy, :wipe_git_identity]" do
+      assert Enum.sort(Sandbox.__action_names__()) == [
+               :destroy,
+               :read,
+               :update_config,
+               :wipe_git_identity
+             ]
     end
 
     test "every action has a handler exported" do
-      for action <- [:read, :update_config, :destroy] do
+      for action <- [:read, :update_config, :destroy, :wipe_git_identity] do
         handler = String.to_atom("handle_#{action}")
 
         assert function_exported?(Sandbox, handler, 2),
@@ -368,21 +373,37 @@ defmodule Ezagent.ActionSet.SandboxMigrationParityTest do
 
   describe "legacy callbacks remain available (framework wiring)" do
     test "actions/0, interface/0, cap_subjects/0 all defined" do
-      assert Enum.sort(Sandbox.actions()) == [:destroy, :read, :update_config]
+      # B2' revoke-ordering fix (2026-08-04) added a 4th action,
+      # `:wipe_git_identity` — unrelated to the pre-Lifecycle migration this
+      # file otherwise validates, but the exact-match assertions below need
+      # to know about it too.
+      assert Enum.sort(Sandbox.actions()) == [
+               :destroy,
+               :read,
+               :update_config,
+               :wipe_git_identity
+             ]
+
       iface = Sandbox.interface()
 
-      for action <- [:read, :update_config, :destroy] do
+      for action <- [:read, :update_config, :destroy, :wipe_git_identity] do
         assert Map.has_key?(iface, action), "interface missing #{action}"
       end
 
       subjects = Sandbox.cap_subjects() |> Enum.map(&elem(&1, 0))
-      assert Enum.sort(subjects) == [:destroy, :read, :update_config]
+
+      assert Enum.sort(subjects) == [
+               :destroy,
+               :read,
+               :update_config,
+               :wipe_git_identity
+             ]
     end
 
     test "required_caps/0 uses the :agent axis (Agent Kind registration)" do
       caps = Sandbox.required_caps()
 
-      for action <- [:read, :update_config, :destroy] do
+      for action <- [:read, :update_config, :destroy, :wipe_git_identity] do
         assert %Ezagent.Capability{kind: :agent, behavior: Sandbox, action: ^action} =
                  caps[action]
       end

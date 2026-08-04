@@ -98,7 +98,7 @@ defmodule Ezagent.ActionSet.Sandbox do
   dispatch to a terminated Kind cannot read stale state because there is
   no live process to dispatch to.
 
-  ## Actions — `:read` / `:update_config` / `:destroy`
+  ## Actions — `:read` / `:update_config` / `:destroy` / `:wipe_git_identity`
 
   - **`:read`** (`:call`) — return the state fields (config_dir_path,
     template_class, respawn_template_data, pty_phase). Plugin-agnostic LV
@@ -116,6 +116,12 @@ defmodule Ezagent.ActionSet.Sandbox do
     stale path + retry), and schedules Kind-process termination via the
     detached-Task pattern so the dispatch reply wins the race against
     process death.
+  - **`:wipe_git_identity`** (`:cast`) — B2' revoke-ordering fix
+    (2026-08-04). Idempotent git-identity-dir cleanup against a LIVE agent,
+    reached ONLY via `{:dispatch_after_commit, %Ezagent.Cmd{}}` emitted by
+    `Ezagent.ActionSet.IdentityAdmin` in `ezagent_domain_identity` after a
+    `read_ssh_key` cap change durably commits. See the `action/1` call site
+    below for the full ordering rationale.
 
   ## Boot self-heal (SPEC §10-R1 — pre-`:ready` work → `activate/2`)
 
@@ -180,6 +186,34 @@ defmodule Ezagent.ActionSet.Sandbox do
         "Kind-process termination"
   )
 
+  # B2' revoke-ordering fix (SSH 凭据 1b, 2026-08-04) — post-commit
+  # git-identity wipe. Dispatched via `{:dispatch_after_commit,
+  # %Ezagent.Cmd{}}` by `Ezagent.ActionSet.IdentityAdmin`'s
+  # `maybe_add_git_identity_wipe/3` / `maybe_add_recipe_binding_git_identity_wipe/4`
+  # (apps/ezagent_domain_identity) AFTER the identity-domain's OWN `:identity`
+  # slice durably commits — `Kind.Server` runs `dispatches_after_commit` ONLY
+  # once `commit_and_notify/3` returns `:ok`/`:not_durable`, and SKIPS it on
+  # `{:error, _}` (`Ezagent.Kind.DeferredDispatch`). This closes the ordering
+  # bug the pre-existing `{:effect, {GitIdentityRuntime, :wipe}, [uri]}` shape
+  # had: that ran the wipe SYNCHRONOUSLY inside the ORIGINAL handler, i.e.
+  # BEFORE `commit_and_notify/3` — a failed commit rolled the caps back to
+  # "still authorized" while the key was already gone.
+  #
+  # `:cast` mode because `Ezagent.Kind.DeferredDispatch.run/1` forces every
+  # deferred Cmd to fire-and-forget (`force_fire_and_forget/1`) regardless of
+  # what the emitting handler set — matches `Session.add_self`'s identical
+  # `modes: [:cast]` (the other cap-gated `:dispatch_after_commit` target in
+  # the codebase).
+  action(:wipe_git_identity,
+    args: %{},
+    returns: %{wiped: :boolean},
+    caps: [:wipe_git_identity],
+    modes: [:cast],
+    description:
+      "post-commit git-identity wipe — idempotent cleanup dispatched after " <>
+        "a read_ssh_key cap change durably commits"
+  )
+
   # SPEC `docs/superpowers/specs/2026-05-25-caps-cleanup-v1-r4-impl.md` §2.
   # Sandbox is registered on the Agent Kind — kind axis is `:agent`. The
   # macro-derived default would yield `:any`; we override to preserve the
@@ -189,7 +223,8 @@ defmodule Ezagent.ActionSet.Sandbox do
     %{
       read: Ezagent.Capability.cap(:agent, __MODULE__, :read),
       update_config: Ezagent.Capability.cap(:agent, __MODULE__, :update_config),
-      destroy: Ezagent.Capability.cap(:agent, __MODULE__, :destroy)
+      destroy: Ezagent.Capability.cap(:agent, __MODULE__, :destroy),
+      wipe_git_identity: Ezagent.Capability.cap(:agent, __MODULE__, :wipe_git_identity)
     }
   end
 
@@ -461,6 +496,24 @@ defmodule Ezagent.ActionSet.Sandbox do
          {:set_transient, :destroyed, true},
          {:effect, {__MODULE__, :schedule_termination}, [self_uri, kind_module]}
        ]}
+  end
+
+  # ---- :wipe_git_identity -----------------------------------------------
+
+  @doc """
+  Action handler for `:wipe_git_identity` — B2' revoke-ordering fix (see the
+  `action(:wipe_git_identity, ...)` moduledoc comment above for the full
+  ordering rationale). Idempotent, best-effort, never raises
+  (`GitIdentityRuntime.wipe/1`'s own @spec + rescue): mirrors the SAME wipe
+  call already made synchronously from `handle_destroy/2` above and from the
+  `destroy/2` Lifecycle hook below — this action is the identical cleanup,
+  reachable against a LIVE (non-terminating) agent instead of only on the
+  destroy path.
+  """
+  def handle_wipe_git_identity(_args, ctx) do
+    self_uri = Map.get(ctx, :self_uri)
+    _ = Ezagent.Credential.GitIdentityRuntime.wipe(self_uri)
+    {:ok, %{wiped: true}, []}
   end
 
   # Validate the update_config args + build the `:set` effects. Returns the

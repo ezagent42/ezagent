@@ -66,8 +66,11 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
   end
 
   describe "BehaviorRegistry resolution" do
-    test "all 3 Sandbox actions resolve on the Agent Kind" do
-      for action <- [:read, :update_config, :destroy] do
+    test "all 4 Sandbox actions resolve on the Agent Kind" do
+      # B2' revoke-ordering fix (2026-08-04) added a 4th action,
+      # `:wipe_git_identity` (the post-commit git-identity-wipe dispatch
+      # target).
+      for action <- [:read, :update_config, :destroy, :wipe_git_identity] do
         assert {:ok, Sandbox} = BehaviorRegistry.lookup(Agent, action),
                "Sandbox must register :#{action} on Agent Kind via register_chat_behaviors"
       end
@@ -78,7 +81,7 @@ defmodule EzagentDomainInstanceMessage.Integration.SandboxDestroyTest do
       # any registered action — that the boot didn't crash is the
       # proof. This test just exists to flag the dependency.
       assert is_list(Sandbox.cap_subjects())
-      assert length(Sandbox.cap_subjects()) == 3
+      assert length(Sandbox.cap_subjects()) == 4
     end
   end
 
