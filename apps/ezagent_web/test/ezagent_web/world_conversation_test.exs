@@ -865,6 +865,7 @@ defmodule EzagentWeb.WorldConversationTest do
       ])
 
     :ok = join_session(session_uri, viewer_uri)
+    :ok = join_session(session_uri, agent_uri)
 
     on_exit(fn ->
       _ = Ezagent.Domain.Pty.stop(agent_uri)
@@ -883,6 +884,8 @@ defmodule EzagentWeb.WorldConversationTest do
 
     {:ok, view, _html} =
       live(workspace_conn(conn, "system", viewer_uri), "/sessions?session=#{encoded}")
+
+    _html = render_async(view, 5_000)
 
     view
     |> element("#world-root")
