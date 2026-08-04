@@ -1,0 +1,66 @@
+name: Dev Together Return Advisory
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  return-file-advisory:
+    name: Return file advisory
+    # Forgejo Actions port (2026-08-04 cutover): runs on the org-scoped docker
+    # runner (ubuntu-latest label). The ezagent-ci image does not ship gh, so it
+    # is bootstrapped from the pinned release below (same binary-download idiom
+    # as the gitleaks job in ci.yml). GH_HOST points gh at the forgejo API.
+    # Advisory-only by design (always exits 0).
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out scripts
+        uses: actions/checkout@v4
+
+      - name: Bootstrap gh (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=2.52.0
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH=amd64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)"; exit 1 ;;
+          esac
+          url="https://github.com/cli/cli/releases/download/v${VER}/gh_${VER}_linux_${ARCH}.tar.gz"
+          curl -sSfL "$url" -o /tmp/gh.tgz
+          tar -xzf /tmp/gh.tgz -C /tmp "gh_${VER}_linux_${ARCH}/bin/gh"
+          install -m 0755 "/tmp/gh_${VER}_linux_${ARCH}/bin/gh" /usr/local/bin/gh
+          gh --version
+
+      - name: Check dev-together return file
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: code.hyprial.com
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          LABELS_JSON: ${{ toJson(github.event.pull_request.labels.*.name) }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          set -euo pipefail
+          # Enumerate changed files via the paginated files API (no 300-file cap;
+          # `gh pr diff --name-only` 406'd on PRs > 300 files). Capture into a
+          # variable and feed the script via a here-string rather than piping
+          # `--paginate` straight in: the advisory script exits early without
+          # draining stdin, so a direct pipe would let gh hit a closed pipe
+          # mid-pagination → SIGPIPE (141) → red check under -o pipefail, on
+          # exactly the large PRs this fixes.
+          changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" --paginate --jq '.[].filename')"
+          bash .github/scripts/dev-together-return-advisory.sh <<< "$changed"

@@ -1,0 +1,222 @@
+name: CI
+
+# Forgejo Actions mirror of the ezagent merge gate, targeting the org-scoped
+# Docker runners at code.hyprial.com (labels: docker, ubuntu-latest, ...). This
+# is the low-risk step toward making Forgejo the SSOT with an enforced merge
+# gate; GitHub's `.github/workflows/` is left untouched during the transition.
+#
+# Three jobs, all on `ubuntu-latest` (a Forgejo Docker runner):
+#   gate      — the DETERMINISTIC backend merge gate. Byte-for-byte the chain
+#               `docker/ci-runner.sh gate` runs (the authoritative gate chain):
+#               deps.get -> compile --warnings-as-errors --force ->
+#               world.e2e.fixtures --check -> format --check-formatted ->
+#               ecto.create/migrate -> check_invariants -> socialware.check ->
+#               gate.arch (arch/invariant ExUnit subset) -> reflow-rehearsal.
+#               NOT the full suite (`mix ci.local`) on purpose: the full suite
+#               is ubuntu-flake-prone (#108) and was deliberately kept on the
+#               native macOS runner. A flaky REQUIRED check is worse than none.
+#   gitleaks  — working-tree secret scan (mirrors the GitHub gitleaks job),
+#               using the gitleaks linux binary (no docker-in-docker).
+#   frontend  — the frontend regression gate (mirrors frontend-ci.yml: lint,
+#               typecheck, unit, Tier-1 Chromium E2E), inlined here because the
+#               reusable `.github/` workflow must stay untouched.
+
+on: [push, pull_request]
+
+concurrency:
+  # Cancel a stale run when the same ref is re-pushed, so the iterate loop never
+  # queues redundant work onto the shared runners.
+  group: forgejo-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (deterministic)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Runs in the pre-baked ezagent-ci image (docker/Dockerfile.ci, tagged by
+    # ezagent version — deps不变版本号不改). It carries its OWN OTP+Elixir (no
+    # setup-beam → no un-overridable-ImageOS/crypto fight), ALL hex deps already
+    # fetched+compiled under /app (→ the gate never touches hex.pm — kills the cold
+    # deps.get timeout class), node+git for the JS actions, and a non-root `ezagent`
+    # user. That retires all three prior env workarounds (bullseye / setup-beam /
+    # per-run deps.get). The image is loaded into each runner's DIND store
+    # out-of-band (docker save | dind docker load); container.force_pull stays false
+    # in runner-config so no registry pull is attempted. The container runs as root
+    # so actions/checkout can populate /workspace; the deterministic mix chain is
+    # then handed to `ezagent` via runuser (:erlexec refuses uid 0).
+    container:
+      image: ezagent-ci:0.1.0
+      options: --user 0:0
+    env:
+      MIX_ENV: test
+      POSTGRES_USER: ezagent_pg_compat
+      POSTGRES_PASSWORD: ezagent_pg_compat
+      # The job runs INSIDE a container on the job's docker network, so Postgres
+      # is reached by SERVICE NAME (not 127.0.0.1 with a port mapping).
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      # erlexec's exec-port refuses to start without $SHELL set.
+      SHELL: /bin/bash
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ezagent_pg_compat
+          POSTGRES_PASSWORD: ezagent_pg_compat
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ezagent_pg_compat"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Environment probe
+        shell: bash
+        run: |
+          echo "whoami=$(whoami) uid=$(id -u)"
+          echo "elixir=$(elixir --version 2>/dev/null | tail -1)"
+          echo "node=$(node --version 2>/dev/null) git=$(git --version 2>/dev/null)"
+          echo "baked deps: $(ls /app/deps 2>/dev/null | wc -l) dirs | baked _build: $(ls /app/_build 2>/dev/null | wc -l)"
+
+      - uses: actions/checkout@v4
+
+      - name: Wait for Postgres
+        shell: bash
+        run: |
+          for i in $(seq 1 60); do
+            if (echo > "/dev/tcp/${POSTGRES_HOST}/${POSTGRES_PORT}") >/dev/null 2>&1; then
+              echo "postgres reachable at ${POSTGRES_HOST}:${POSTGRES_PORT}"; exit 0
+            fi
+            echo "waiting for postgres ($i) ..."; sleep 2
+          done
+          echo "!! postgres never became reachable" >&2; exit 1
+
+      - name: Run deterministic gate (deps pre-baked; non-root ezagent)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The image bakes deps/ + compiled _build/ under /app (ezagent-owned).
+          # Symlink them into the freshly-checked-out workspace so mix resolves
+          # them from cwd and skips deps.get entirely — no hex.pm, no setup-beam.
+          ln -sfn /app/deps deps
+          ln -sfn /app/_build _build
+          # Enforce "deps不变版本号不改": the baked deps MUST match the branch's
+          # mix.lock. If they diverge, the image is stale — rebuild+reload it
+          # (bump the ezagent-ci tag) rather than silently gating on old deps.
+          img=$(shasum -a256 /app/mix.lock | awk '{print $1}')
+          br=$(shasum -a256 mix.lock | awk '{print $1}')
+          if [ "$img" != "$br" ]; then
+            echo "::error::ezagent-ci:0.1.0 deps are STALE (image mix.lock=$img != branch mix.lock=$br). Rebuild docker/Dockerfile.ci and reload the image into the runner DINDs."
+            exit 1
+          fi
+          # :erlexec refuses uid 0 and boots at check_invariants/gate.arch, so the
+          # deterministic chain runs as the image's non-root `ezagent`. checkout ran
+          # as root (container --user 0:0); hand it the (now ezagent-owned) workspace.
+          chown -R ezagent:ezagent "$PWD"
+          runuser -u ezagent -- env \
+            PATH="$PATH" HOME=/home/ezagent MIX_ENV=test MIX_HOME=/app/.mix SHELL=/bin/bash \
+            POSTGRES_HOST="$POSTGRES_HOST" POSTGRES_PORT="$POSTGRES_PORT" \
+            POSTGRES_USER="$POSTGRES_USER" POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            bash -euo pipefail -c '
+              git config --global --add safe.directory "*"
+              echo "== compile --warnings-as-errors ==" ; mix compile --warnings-as-errors --force
+              echo "== world.e2e.fixtures --check =="   ; mix world.e2e.fixtures --check
+              echo "== format --check-formatted =="     ; mix format --check-formatted
+              echo "== ecto.create/migrate =="          ; mix ecto.create --quiet && mix ecto.migrate --quiet
+              echo "== check_invariants =="             ; mix ezagent.check_invariants
+              echo "== socialware.check =="             ; mix ezagent.socialware.check
+              echo "== gate.arch =="                    ; mix gate.arch
+              echo "== reflow-rehearsal =="             ; mix test --include reflow_rehearsal apps/ezagent_domain_identity/test/ezagent/socialware/config_store_seed_upsert_test.exs apps/ezagent_domain_session/test/integration/reflow_rehearsal_test.exs
+            '
+
+  gitleaks:
+    name: gitleaks secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      # Bare gitleaks CLI (MIT), not gitleaks-action (paid for orgs) and not
+      # docker-in-docker (the job is already containerized). Pin the version;
+      # detect the container arch so this works whether the runner container is
+      # linux/amd64 or linux/arm64. Directory (no-git) scan, semantics identical
+      # to the GitHub job's `gitleaks dir . --config .gitleaks.toml --redact`.
+      - name: Scan working tree for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Pin to the version the GitHub gitleaks job's `ghcr.io/gitleaks/gitleaks:latest`
+          # currently resolves to, so the default ruleset matches main's (an older
+          # pin flagged 2 false positives the current .gitleaks.toml allowlist,
+          # written for the newer ruleset, does not cover).
+          VER=8.30.1
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH=x64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)"; exit 1 ;;
+          esac
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${VER}/gitleaks_${VER}_linux_${ARCH}.tar.gz"
+          echo "downloading $url"
+          curl -sSfL "$url" -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks version
+          /tmp/gitleaks dir . --config .gitleaks.toml --redact --no-banner
+
+  frontend:
+    name: frontend regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # Runs in the pre-baked ezagent-ci image (docker/Dockerfile.ci): node_modules
+    # for all 3 assets dirs AND the Playwright Chromium browser are baked at /app,
+    # so the job needs NO pnpm install, NO apt, and NO cdn.playwright.dev download
+    # (that download flaked run #51 with a dind `context deadline exceeded`). Run the
+    # container as root so actions/checkout can populate /workspace, then run the
+    # frontend commands as the image's `ezagent` user (which owns the baked
+    # node_modules + browsers) via runuser — matching the proven offline recipe.
+    container:
+      image: ezagent-ci:0.1.0
+      options: --user 0:0
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Frontend gate (deps + Playwright browser pre-baked; non-root ezagent)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dirs="apps/ezagent_web/assets apps/ezagent_plugin_world/assets apps/ezagent_plugin_hello/assets"
+          # Symlink the baked node_modules into the fresh checkout so pnpm resolves
+          # everything offline (no registry, no install).
+          for d in $dirs; do ln -sfn "/app/$d/node_modules" "$d/node_modules"; done
+          # pnpm-lock freshness: the baked node_modules MUST match the branch's
+          # lockfiles, else the image is stale — rebuild+reload it (mirrors the gate's
+          # mix.lock gate; enforces deps不变版本号不改 for the JS side).
+          for d in $dirs; do
+            if [ -f "/app/$d/pnpm-lock.yaml" ] && [ -f "$d/pnpm-lock.yaml" ]; then
+              a=$(shasum -a256 "/app/$d/pnpm-lock.yaml" | awk '{print $1}')
+              b=$(shasum -a256 "$d/pnpm-lock.yaml" | awk '{print $1}')
+              [ "$a" = "$b" ] || { echo "::error::ezagent-ci:0.1.0 assets deps STALE in $d (image=$a branch=$b) — rebuild docker/Dockerfile.ci + reload the runner DINDs."; exit 1; }
+            fi
+          done
+          chown -R ezagent:ezagent "$PWD"
+          runuser -u ezagent -- env \
+            PATH="$PATH" HOME=/home/ezagent SHELL=/bin/bash \
+            PLAYWRIGHT_BROWSERS_PATH=/app/.playwright-browsers \
+            bash -euo pipefail -c '
+              for d in apps/ezagent_web/assets apps/ezagent_plugin_world/assets apps/ezagent_plugin_hello/assets; do
+                echo "== $d: lint / typecheck / test =="
+                pnpm --dir "$d" lint
+                pnpm --dir "$d" typecheck
+                pnpm --dir "$d" test
+              done
+              echo "== Tier-1 Playwright e2e (baked Chromium — no download) =="
+              pnpm --dir apps/ezagent_plugin_world/assets test:e2e
+            '
