@@ -2,9 +2,9 @@
 
 - **id**: `group-a-uri-share`
 - **owner**: jjkysy
-- **status**: review(A4-2 已入 main、P4 关闭; 下一增量待 plan)
-- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —（A1–A4-2 全段 2026-08-03 收口; 下一增量未排期）
-- **关联**: merged: #1594(A1) · #1596(A2-1) · #1597(A3) · #1606(A2-2) · #1611(A4-1) · #1612(share-config) — 均入 main; **#1655(A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复 + 反向索引补齐, merged 08-03 09:43 CST, da8a26bc1)**; Allen 拍板 A4-2 甲(forward effective_caps, 低频) → P4 关闭; design-first drafts: #1619(A5 匿名) · #1620(A4-2 roster, 已被 #1655 实现取代)
+- **status**: done(**#1619 A5 merged 08-04 10:32 CST, 129b2facf —— Group-A 八条原语全部闭合**)
+- **历史**: started 2026-07-26 · est_done 2026-07-29 · actual —(A1–A4-2 2026-08-03 收口; A5 2026-08-04 10:32 合入 —— 全段闭合)
+- **关联**: merged: #1594(A1) · #1596(A2-1) · #1597(A3) · #1606(A2-2) · #1611(A4-1) · #1612(share-config) — 均入 main; **#1655(A4-2/#192 roster 收敛 + #1665 write-after-leave 安全修复 + 反向索引补齐, merged 08-03 09:43 CST, da8a26bc1)**; **#1619(A5 匿名 link_anon —— 设计 v4 获批 → 资源投影 + born-with 读钥匙, merged 08-04 10:32 CST, 129b2facf; codex 评审 MERGE-WITH-NITS, 4 follow-ups 立案为 Group-B 接线前置, 含 issue #1694)**; Allen 拍板 A4-2 甲(forward effective_caps, 低频) → P4 关闭; design-first drafts: #1620(A4-2 roster, 已被 #1655 实现取代)
 
 codex adversarial review of the 4 merged PRs (#1594 A1 / #1596 A2-1 / #1606 A2-2 / #1597 A3) =
 **FIX-NEEDED, merge blocked.** Compile + compose are clean; the blockers are Cap-security. Fix
@@ -90,4 +90,10 @@ cap 纳入投影 + #1665 write-after-leave 撤销完整性安全修复 + 反向�
 **#1655** 入 main(da8a26bc1)。**#1620**(A4-2 roster design draft)随 #1606 合入
 base 分支被删而连带关闭, 由 #1655 实现取代; **#1619**(A5 匿名 link_anon)仍 OPEN
 design-first 待批。Allen 拍板 **A4-2 甲**(forward effective_caps, 低频路径) →
-**P4 关闭**。下一增量(Group-A 后续, 候选 #1619 A5)待 plan 排期。
+**P4 关闭**。
+
+**进度追记(2026-08-04)**: **#1619 A5 匿名分享 merged 08-04 10:32 CST(129b2facf)**
+—— codex 评审 **MERGE-WITH-NITS**: 4 条 follow-ups 立案为 **Group-B 接线前置**
+blockers(含 issue **#1694** 冷成员撤销面 F2, 与 #1684 per-grant revocation 同域);
+唯一开放项(匿名页开发级 JSON 占位 → 产品级插件组件渲染)已裁决**归 Group B**。
+**Group-A 八条原语闭合** → #1474 kanban 纯化够格开工, 移交 `group-b-wiring` 卡。

@@ -2,10 +2,10 @@
 
 - **id**: `ssh-revoke-wipe`
 - **owner**: allen(执行: codex agent)
-- **status**: wip(分支就绪, #1688 已合 → 解除阻塞, 待评审合入)
-- **历史**: started 2026-08-03 · est_done 2026-08-04 · actual —
-- **关联**: 前置 `agent-ssh-credential-b2`(#1688 merged 08-03, 8ad5d3795) · branch `feat/ssh-revoke-wipe`(head 868ba5cba) · commits: K3 84dba69b6 · K5+K6 85fb6414e · K4 868ba5cba
-- **依赖**: #1688 已合入(08-03) —— 原排序约束已满足, 应尽快评审合入以关闭撤销不即擦除窗口
+- **status**: done(#1693 merged 08-03 12:47 CST, ab12c63da —— 撤销不即擦除窗口关闭)
+- **历史**: started 2026-08-03 · est_done 2026-08-04 · actual 2026-08-03
+- **关联**: 前置 `agent-ssh-credential-b2`(#1688 merged 08-03, 8ad5d3795) · **PR #1693(merged 08-03 12:47 CST, ab12c63da)** · branch `feat/ssh-revoke-wipe`(head 868ba5cba) · commits: K3 84dba69b6 · K5+K6 85fb6414e · K4 868ba5cba
+- **依赖**: #1688 已合入(08-03) —— 满足; 08-04 已随 #1693 合入而关闭
 
 ## 目标
 
@@ -18,7 +18,7 @@ SSH 凭据在撤销时即擦除; 钉住 Sandbox 两处 destroy 入口的 git-ide
 - [x] K3 — 钉住 Sandbox 两处 destroy 入口的 git-identity 清理(evidence: 84dba69b6)
 - [x] K5+K6 — 指纹值钉死 + read_ssh_public_key value 走私防护(evidence: 85fb6414e)
 - [x] K4 — spec/moduledoc "已被取代"说法订正(evidence: 868ba5cba)
-- [ ] cc 评审 → 合入 main(#1688 已落地, 窗口开着, 优先跟上)
+- [x] cc 评审 → 合入 main(#1688 已落地, 窗口开着, 优先跟上)(evidence: **#1693 merged 08-03 12:47 CST, ab12c63da** —— 撤销不即擦除窗口关闭; 回勾 `agent-ssh-credential-b2` 验收第 4 条)
 
 ## Handoff prompt
 
