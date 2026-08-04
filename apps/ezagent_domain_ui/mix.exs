@@ -56,6 +56,11 @@ defmodule EzagentDomainUi.MixProject do
       {:ezagent_actor, in_umbrella: true},
       {:ezagent_core, in_umbrella: true},
       {:ezagent_domain_pty, in_umbrella: true},
+      # TerminalView also reads durable AgentAdmission rows to expose a
+      # provisional live PTY before its agent joins session.members. Session
+      # depends on core/identity/workspace/pty, never domain_ui, so this
+      # sibling-domain edge is acyclic.
+      {:ezagent_domain_session, in_umbrella: true},
       {:ezagent_domain_identity, in_umbrella: true},
       # Read-plane PR-4 rework — `Ezagent.UI.UriOptions` enumerates
       # sessions/agents/users through the caller-authorizing chokepoints
