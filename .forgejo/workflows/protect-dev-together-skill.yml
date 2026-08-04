@@ -7,10 +7,13 @@ name: Protect dev-together skill
 # (space-separated allowlist; 2026-07-10 jjkysy added as skill co-owner per
 # dev-together method-writeback role — the daily plan's "skill 单一写者" seat).
 #
+# Forgejo Actions port (2026-08-04 cutover): runs on the org-scoped docker
+# runner (ubuntu-latest label); gh bootstrapped from the pinned release (the
+# ezagent-ci image does not ship it). GH_HOST points gh at the forgejo API.
 # NOTE: CI runs AFTER a push, so for *direct pushes* this only surfaces a red
 # check — it cannot block the push itself. Real enforcement needs branch
-# protection on `main` (require this check + disallow direct pushes / require PR
-# review). See the PR/commit that introduced this file for the rationale.
+# protection on `main` (require this check + disallow direct pushes / require
+# PR review).
 
 on:
   pull_request:
@@ -26,19 +29,33 @@ permissions:
 jobs:
   owner-only:
     name: Only repo owner may edit dev-together skill
-    # Moved off ubuntu-latest to the self-hosted macOS runner (Actions billing
-    # exhausted 2026-07-20). Uses only gh + git + POSIX grep/tr/sed, all present
-    # on the runner (BSD grep supports -qE and the {40} interval used above).
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: ubuntu-latest
     steps:
       - name: Check out
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      - name: Bootstrap gh (pinned)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VER=2.52.0
+          case "$(uname -m)" in
+            x86_64|amd64) ARCH=amd64 ;;
+            aarch64|arm64) ARCH=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)"; exit 1 ;;
+          esac
+          url="https://github.com/cli/cli/releases/download/v${VER}/gh_${VER}_linux_${ARCH}.tar.gz"
+          curl -sSfL "$url" -o /tmp/gh.tgz
+          tar -xzf /tmp/gh.tgz -C /tmp "gh_${VER}_linux_${ARCH}/bin/gh"
+          install -m 0755 "/tmp/gh_${VER}_linux_${ARCH}/bin/gh" /usr/local/bin/gh
+          gh --version
+
       - name: Guard .claude/skills/dev-together
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_HOST: code.hyprial.com
           OWNERS: allenwoods jjkysy
           GUARDED_PATH: .claude/skills/dev-together/
           EVENT_NAME: ${{ github.event_name }}
@@ -54,14 +71,14 @@ jobs:
           if [ "$EVENT_NAME" = "pull_request" ]; then
             # Enumerate changed files via the paginated "list pull request files"
             # API. The previous `gh pr diff --name-only` fetched the raw unified
-            # diff (Accept: application/vnd.github.v3.diff), which GitHub caps at
-            # 300 files and answers with HTTP 406 for larger PRs — falsely failing
-            # this REQUIRED check on any PR > 300 files (e.g. #1445, 419 files)
-            # even when it does not touch the guarded path. The files API has no
-            # such cap. We enumerate both the new path and the rename-source
-            # (previous_filename) so a guarded file *renamed out* of the dir is
-            # still caught. Fail closed: any enumeration error fails the check
-            # (never silently pass), independent of the shell's set -e nuances.
+            # diff, which GitHub caps at 300 files and answers with HTTP 406 for
+            # larger PRs — falsely failing this REQUIRED check on any PR > 300
+            # files (e.g. #1445, 419 files) even when it does not touch the
+            # guarded path. The files API has no such cap. We enumerate both the
+            # new path and the rename-source (previous_filename) so a guarded
+            # file *renamed out* of the dir is still caught. Fail closed: any
+            # enumeration error fails the check (never silently pass),
+            # independent of the shell's set -e nuances.
             changed="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files" \
               --paginate --jq '.[] | .filename, (.previous_filename // empty)')" \
               || { echo "::error::Could not enumerate changed files for PR #${PR_NUMBER} — failing closed."; exit 1; }
