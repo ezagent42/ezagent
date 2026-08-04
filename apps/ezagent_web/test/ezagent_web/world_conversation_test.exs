@@ -22,6 +22,25 @@ defmodule EzagentWeb.WorldConversationTest do
   alias Ezagent.ConfigGovernance.Socialware, as: SocialwareGovernance
   alias EzagentDomainInstanceMessage.Routing.MentionRouting
 
+  defmodule WorldRefreshRender do
+    @moduledoc false
+    def actions, do: [:world_refresh_render]
+  end
+
+  defmodule WorldRefreshView do
+    @moduledoc false
+    @behaviour Ezagent.UI.SessionView
+    use Phoenix.Component
+
+    def id, do: :world_refresh
+    def label, do: "Refresh"
+    def icon, do: "arrow-path"
+    def applies_to?(%URI{}), do: true
+    def applies_to?(_), do: false
+    def view_behavior, do: WorldRefreshRender
+    def render(assigns), do: ~H""
+  end
+
   setup do
     prior_home = System.get_env("EZAGENT_HOME")
 
@@ -1203,6 +1222,47 @@ defmodule EzagentWeb.WorldConversationTest do
     })
 
     assert pushed_uri == URI.to_string(session_uri)
+  end
+
+  test "a live identity cap grant refreshes the connected conversation views", %{conn: conn} do
+    :ok = Ezagent.UI.SessionViewRegistry.register(WorldRefreshView)
+    session_uri = world_session_uri()
+
+    viewer =
+      Ezagent.URI.new!("entity://system/user/world-refresh-#{System.unique_integer([:positive])}")
+
+    assert :ok = create_read_only_user(viewer, [])
+    assert :ok = join_session(session_uri, viewer)
+
+    encoded = session_uri |> URI.to_string() |> URI.encode_www_form()
+
+    {:ok, view, _html} =
+      live(workspace_conn(conn, "system", viewer), "/sessions?session=#{encoded}")
+
+    _html = render_async(view, 5_000)
+    drain_liveview_mailbox(view)
+    flush_liveview_events(view)
+
+    refute Enum.any?(world_state(view)["views"], &(&1["id"] == "world_refresh"))
+
+    requested =
+      Ezagent.Capability.cap(
+        :session,
+        WorldRefreshRender,
+        :world_refresh_render,
+        Ezagent.URI.instance(session_uri),
+        Ezagent.Capability.workspace_of(session_uri)
+      )
+
+    cap =
+      Ezagent.Test.CapHelper.with_test_authority(session_uri, :session, fn authority ->
+        Ezagent.Test.CapHelper.authority_signed_cap!(authority, viewer, requested)
+      end)
+
+    assert :ok = Ezagent.EntityCaps.grant(viewer, cap)
+
+    assert_push_event(view, "world:state", %{"views" => views}, 2_000)
+    assert Enum.any?(views, &(&1["id"] == "world_refresh"))
   end
 
   test "ConversationData.build_message embeds parsed mentions + verified attachments", %{
