@@ -685,14 +685,21 @@ defmodule Ezagent.Entity.Agent.TemplateSpawn.Cascade do
       :explicit_source,
       :credential_source_uri,
       :credential_source_policy,
+      :credential_required?,
       :workspace_layer_uri,
       :user_layer_uri,
       :session_layer_uri
     ]
     |> Enum.reduce(%{}, fn key, acc ->
-      case Map.get(resolution, key) || Map.get(resolution, Atom.to_string(key)) do
+      case Map.get(resolution, key, Map.get(resolution, Atom.to_string(key))) do
         %URI{} = uri ->
           Map.put(acc, Atom.to_string(key), uri_to_respawn_value(uri))
+
+        value when key == :credential_required? and is_boolean(value) ->
+          Map.put(acc, Atom.to_string(key), value)
+
+        _value when key == :credential_required? ->
+          acc
 
         value when is_binary(value) and value != "" ->
           Map.put(acc, Atom.to_string(key), value)

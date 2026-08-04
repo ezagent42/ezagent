@@ -63,6 +63,7 @@ defmodule Ezagent.Credential.CascadeRuntime do
          user_layer_uri: user_layer_uri,
          session_layer_uri: session_layer_uri,
          flavor: field(respawn_data, :flavor),
+         credential_source_policy: field(resolution, :credential_source_policy),
          credential_required?: field(resolution, :credential_required?) != false
        }}
     end

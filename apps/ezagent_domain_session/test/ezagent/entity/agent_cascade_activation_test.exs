@@ -144,6 +144,8 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
         owner_uri: @owner_uri,
         workspace_uri: @workspace_uri,
         credential_source_uri: URI.new!("entity://team-alpha/agent/alice-source"),
+        credential_source_policy: :session_local,
+        credential_required?: false,
         layer_dir_for: fn _ -> :skip end,
         source_dir_for: fn _ -> {:ok, "/tmp/source"} end
       }
@@ -156,8 +158,22 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
     assert sanitized["cascade_resolution"] == %{
              "owner_uri" => URI.to_string(@owner_uri),
              "workspace_uri" => URI.to_string(@workspace_uri),
-             "credential_source_uri" => "entity://team-alpha/agent/alice-source"
+             "credential_source_uri" => "entity://team-alpha/agent/alice-source",
+             "credential_source_policy" => "session_local",
+             "credential_required?" => false
            }
+  end
+
+  test "respawn_template_data omits malformed credential-required values" do
+    sanitized =
+      Agent.sanitize_respawn_template_data(%{}, %{
+        cascade_resolution: %{
+          owner_uri: @owner_uri,
+          credential_required?: "false"
+        }
+      })
+
+    refute Map.has_key?(sanitized["cascade_resolution"], "credential_required?")
   end
 
   # #201 defer-writes — the domain RESOLVES + AUTHORIZES the credential source
@@ -530,6 +546,26 @@ defmodule Ezagent.Entity.AgentCascadeActivationTest do
 
     assert [%{dir: "/tmp/workspace-v2"}] = rehydrated["cascade"].layer_dirs
     assert {:ok, "/tmp/source-v2"} = rehydrated["cascade"].source_dir_for.(@source_uri)
+  end
+
+  test "rehydrate_respawn_data restores session-local credential policy" do
+    agent_uri = Ezagent.URI.agent("team-alpha", "session-local-restart-#{uniq()}")
+
+    respawn_data = %{
+      "flavor" => "codex",
+      "cascade_resolution" => %{
+        "owner_uri" => URI.to_string(@owner_uri),
+        "workspace_uri" => URI.to_string(@workspace_uri),
+        "credential_source_policy" => "session_local",
+        "credential_required?" => true
+      }
+    }
+
+    assert {:ok, rehydrated} =
+             Ezagent.Credential.CascadeRuntime.rehydrate_respawn_data(agent_uri, respawn_data)
+
+    assert %{layer_dirs: [], source_dir_for: source_dir_for} = rehydrated["cascade"]
+    assert is_function(source_dir_for, 1)
   end
 
   test "F2/#1460 — a source template resolved from INSIDE its own dispatch is served from in-hand content, never a self-call" do
