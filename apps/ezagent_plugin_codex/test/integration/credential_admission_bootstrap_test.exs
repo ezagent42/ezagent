@@ -93,6 +93,13 @@ defmodule Ezagent.PluginCodex.Integration.CredentialAdmissionBootstrapTest do
     assert Ezagent.Kind.alive?(agent_uri)
     assert Ezagent.Domain.Pty.alive?(agent_uri)
 
+    assert EzagentDomainUi.Pty.TerminalView.applies_to?(session_uri)
+
+    assert Enum.any?(
+             Ezagent.World.ConversationData.session_views(session_uri, @owner_uri),
+             &(&1["id"] == "pty" and &1["mode"] == "pty")
+           )
+
     assert SessionBehavior.role_name_to_uri(
              DefinitionAgentLifecycle.read_members(session_uri),
              role_name
