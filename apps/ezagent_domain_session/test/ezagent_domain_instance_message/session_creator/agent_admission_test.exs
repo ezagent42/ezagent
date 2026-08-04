@@ -506,6 +506,61 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     assert other_attempt == other.attempt_id
   end
 
+  test "cancellation completes an authenticated candidate instead of retiring it", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined, provisional_agent_uri: candidate}} =
+             AgentAdmission.cancel(
+               session_uri,
+               "llm",
+               authenticating.attempt_id,
+               {@owner_uri, caps}
+             )
+
+    assert candidate == URI.to_string(candidate_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == candidate_uri
+    assert Ezagent.Kind.alive?(candidate_uri)
+  end
+
+  test "expiry completes an authenticated candidate instead of retiring it", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert {:ok, %{status: :joined, provisional_agent_uri: candidate}} =
+             AgentAdmission.expire(session_uri, authenticating.attempt_id)
+
+    assert candidate == URI.to_string(candidate_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == candidate_uri
+    assert Ezagent.Kind.alive?(candidate_uri)
+  end
+
   test "the supervised sweeper expires authenticating candidates and repeated sweeps are idempotent",
        %{
          session_uri: session_uri,
@@ -578,6 +633,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     first_uri = Ezagent.URI.new!(first.provisional_agent_uri)
     set_default_source!(first_uri, credential_flavor)
     source = first.provisional_agent_uri
+    Process.put({CredentialTemplate, :credential_status}, :missing)
 
     assert {:ok, cancelled} =
              AgentAdmission.cancel(

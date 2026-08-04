@@ -262,16 +262,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
            {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
            {:ok, current} <-
              cancellable_attempt(session_uri, declaration, revision, attempt_id),
-           {:ok, failed} <-
-             cancel_current(
+           {:ok, settled} <-
+             settle_or_cancel_current(
                session_uri,
+               declaration,
                current,
                actor_uri,
                caps,
                :connection_cancelled
              ) do
-        State.transition_ok(:cancel, session_uri, failed)
-        {:ok, failed}
+        State.transition_ok(:cancel, session_uri, settled)
+        {:ok, settled}
       else
         {:error, reason} = error ->
           State.transition_failed(:cancel, session_uri, role_name, reason)
@@ -337,16 +338,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
         {:current, _current} ->
           with {:ok, cancellable} <-
                  cancellable_attempt(session_uri, declaration, revision, attempt_id),
-               {:ok, failed} <-
-                 cancel_current(
+               {:ok, settled} <-
+                 settle_or_cancel_current(
                    session_uri,
+                   declaration,
                    cancellable,
                    owner_uri,
                    caps,
                    :connection_timed_out
                  ) do
-            State.transition_ok(:expire, session_uri, failed)
-            {:ok, failed}
+            State.transition_ok(:expire, session_uri, settled)
+            {:ok, settled}
           end
 
         {:stale, %{attempt_id: ^attempt_id} = stale} ->
@@ -601,6 +603,52 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
 
         _ ->
           {:error, :stale_agent_admission_attempt}
+      end
+    end
+  end
+
+  defp settle_or_cancel_current(
+         _session_uri,
+         _declaration,
+         %{status: :failed} = current,
+         _actor_uri,
+         _caps,
+         _failure_code
+       ),
+       do: {:ok, current}
+
+  defp settle_or_cancel_current(
+         session_uri,
+         declaration,
+         current,
+         actor_uri,
+         caps,
+         failure_code
+       ) do
+    with {:ok, agent_uri} <- provisional_uri(current),
+         {:ok, credential_status} <-
+           Ezagent.Domain.Agent.read_credential_status(
+             agent_uri,
+             actor_ctx(actor_uri, caps),
+             backend_profile: provider_of(declaration)
+           ) do
+      case credential_status.status do
+        :authenticated ->
+          complete_authenticated(
+            session_uri,
+            actor_uri,
+            caps,
+            declaration,
+            current,
+            agent_uri,
+            current.attempt_id
+          )
+
+        status when status in [:missing, :unknown] ->
+          cancel_current(session_uri, current, actor_uri, caps, failure_code)
+
+        status ->
+          {:error, {:unsupported_credential_status, status}}
       end
     end
   end
