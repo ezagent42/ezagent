@@ -280,8 +280,14 @@
   # PR-5 (market surface): market_actions.ex reuses the owner-gated
   # `ConversationActions.create_session/6` facade for install — one new call site
   # in one new module (a sanctioned facade reuse, not a raw spawn / bypass).
-  create_session_call_sites: 6,
-  create_session_modules: 6,
+  # arch-cap-bump: A5 AnonShare.enable provisions the dedicated per-target public
+  # share session through the same SessionCreator chokepoint (deliberate new
+  # caller AND new calling module — both siblings bumped together).
+  create_session_call_sites: 7,
+  # arch-cap-bump: same A5 AnonShare.enable caller as the sibling above — the
+  # annotation is repeated because a preceding comment block only covers the key
+  # immediately after it.
+  create_session_modules: 7,
   duplicated_resolve_template_class: 1,
   # FF-1 (cleanup-1): groups of ≥2 lib files sharing a byte-identical
   # (whitespace-normalized, ≥120-char) function. Functions are extracted per

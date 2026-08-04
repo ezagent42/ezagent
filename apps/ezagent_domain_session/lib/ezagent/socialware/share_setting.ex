@@ -25,13 +25,17 @@ defmodule Ezagent.Socialware.ShareSetting do
 
     * `:link_login` — an authenticated clicker who has the link gets a person-cap
       (implemented here);
-    * `:link_anon` — the most-open level (anonymous access). Its wiring — provision
-      a DEDICATED per-resource public session (one shared thing per session, so an
-      anon visitor never sees other people's shares), mount the target into it via
-      A4 Mount, and mark it `web_anon_access` (`Ezagent.Socialware.PublicView`) — is
-      a later A-series piece that composes A4 (not yet complete). `enable/5` FAILS
-      CLOSED on `:link_anon` (`:anon_share_not_yet_supported`) for now, so the enum
-      records the superset shape without a half-working value.
+    * `:link_anon` — the most-open level (anonymous access). A dedicated
+      per-resource PUBLIC session is provisioned for the target (one shared thing
+      per session, so an anon visitor can never reach anyone else's share), the
+      target is bound into it, and it is marked `web_anon_access`
+      (`Ezagent.Socialware.PublicView`). That provisioning is ORCHESTRATION and
+      lives in `Ezagent.Socialware.AnonShare`; this module only persists the
+      result and stays fail-closed on its own — `enable/5` refuses a `link_anon`
+      row without an `:anon_session_uri` (`:anon_share_requires_session`), so the
+      enum can never record a visibility that promises anonymous access with
+      nowhere for a visitor to land. `by_anon_session/1` is the reverse lookup the
+      anon read path uses.
 
   One row per target. Modeled on the per-session `web_anon_access` visibility
   policy, but per-target.
@@ -39,18 +43,24 @@ defmodule Ezagent.Socialware.ShareSetting do
   use Ecto.Schema
 
   import Ecto.Changeset
+  import Ecto.Query, only: [where: 3]
 
   alias EzagentCore.Repo
 
   @primary_key {:target_uri, :string, autogenerate: false}
   schema "socialware_share_settings" do
-    field :enabled, :boolean, default: false
-    field :visibility, :string, default: "link_login"
-    field :behavior, :string
-    field :actions_json, :string, default: "[]"
-    field :access, :string
-    field :granter_uri, :string
-    field :workspace_uri, :string
+    field(:enabled, :boolean, default: false)
+    field(:visibility, :string, default: "link_login")
+    field(:behavior, :string)
+    field(:actions_json, :string, default: "[]")
+    field(:access, :string)
+    field(:granter_uri, :string)
+    field(:workspace_uri, :string)
+    # A5 (`link_anon`) — the DEDICATED public session provisioned to show this
+    # target. NULL for every `link_login` row. Unique when set: one public
+    # session shows exactly one target, which is what makes the anon page
+    # structurally isolated (a visitor cannot reach anyone else's share).
+    field(:anon_session_uri, :string)
 
     timestamps(type: :utc_datetime_usec)
   end
@@ -77,13 +87,25 @@ defmodule Ezagent.Socialware.ShareSetting do
       visibility not in @visibilities ->
         {:error, :invalid_share_visibility}
 
-      # `link_anon` is the superset's most-open level, but its wiring (provision a
-      # DEDICATED per-resource public session — one shared thing per session so
-      # anon visitors never see other people's shares — and mount the target into
-      # it via A4 Mount + `web_anon_access`) is a later A-series piece. Fail closed
-      # until then so the enum value can't be set to a half-working state.
-      visibility == "link_anon" ->
-        {:error, :anon_share_not_yet_supported}
+      # `link_anon` is the superset's most-open level. Its wiring — provision a
+      # DEDICATED per-resource public session (one shared thing per session, so an
+      # anon visitor can never reach anyone else's share), bind the target into it
+      # and mark it `web_anon_access` — is ORCHESTRATION, not persistence, so it
+      # lives in `Ezagent.Socialware.AnonShare`. This module stays fail-closed on
+      # its own: a `link_anon` row is only writable once that session exists, so
+      # the enum value can never be persisted in a half-working state (a row whose
+      # visibility promises anonymous access with nowhere for a visitor to land).
+      visibility == "link_anon" and is_nil(Keyword.get(opts, :anon_session_uri)) ->
+        {:error, :anon_share_requires_session}
+
+      # …and it must be the session DERIVED FROM THIS TARGET. Without this, a row
+      # could point a share at any other public session — say the marketing site —
+      # which would render this target's data on that page AND mint its read key
+      # to every visitor admitted there. The unique partial index only stops two
+      # rows sharing one session; this stops one row borrowing someone else's.
+      visibility == "link_anon" and
+          not derived_anon_session?(target, Keyword.get(opts, :anon_session_uri)) ->
+        {:error, :anon_share_session_not_derived}
 
       true ->
         with :ok <- assert_current_owner(target, behavior, owner) do
@@ -95,9 +117,67 @@ defmodule Ezagent.Socialware.ShareSetting do
             actions_json: encode_actions(actions),
             access: to_string(access),
             granter_uri: uri_string(owner),
-            workspace_uri: uri_string(Ezagent.Capability.workspace_of(target))
+            workspace_uri: uri_string(Ezagent.Capability.workspace_of(target)),
+            anon_session_uri: opts |> Keyword.get(:anon_session_uri) |> maybe_uri_string()
           })
         end
+    end
+  end
+
+  @doc """
+  The ENABLED anon share whose dedicated public session is `session_uri`, or
+  `nil` — the REVERSE of `anon_session_uri`.
+
+  This is the anon read path's only question: "this public session is showing
+  which target, under what behavior/actions?". Kept as a single indexed lookup
+  (unique partial index) rather than a second binding table, so the share row
+  stays the one source of truth for an anon share.
+  """
+  @spec by_anon_session(URI.t()) :: t() | nil
+  def by_anon_session(%URI{} = session_uri) do
+    key = uri_string(session_uri)
+
+    __MODULE__
+    |> where([s], s.anon_session_uri == ^key and s.enabled == true)
+    |> Repo.one()
+  end
+
+  defp maybe_uri_string(nil), do: nil
+  defp maybe_uri_string(%URI{} = uri), do: uri_string(uri)
+  defp maybe_uri_string(str) when is_binary(str), do: str
+
+  # The stock template the dedicated public session is created from (see
+  # `AnonShare`) — part of the URI derivation, so it is pinned next to it.
+  @anon_template_name "default"
+
+  @doc """
+  The dedicated public session a `link_anon` row for `target` must point at —
+  a pure, no-I/O derivation: a session URI in the target's OWN workspace, on
+  the stock template, named `r-<sha256-16hex-of-target>`.
+
+  It lives HERE, with the row whose invariant it is, so persistence can enforce
+  "this row points at its OWN session" without reaching up into the provisioning
+  layer. `Ezagent.Socialware.AnonShare` provisions against it.
+  """
+  @spec anon_session_uri_for(URI.t()) :: URI.t()
+  def anon_session_uri_for(%URI{} = target) do
+    instance = Ezagent.URI.instance(target)
+
+    digest =
+      :crypto.hash(:sha256, Ezagent.URI.stable_key(instance))
+      |> Base.encode16(case: :lower)
+      |> binary_part(0, 16)
+
+    workspace_name =
+      instance |> Ezagent.Capability.workspace_of() |> Ezagent.URI.workspace_name!()
+
+    Ezagent.URI.session(workspace_name, @anon_template_name, "r-" <> digest)
+  end
+
+  defp derived_anon_session?(%URI{} = target, session) do
+    case maybe_uri_string(session) do
+      nil -> false
+      given -> given == uri_string(anon_session_uri_for(target))
     end
   end
 
@@ -172,11 +252,23 @@ defmodule Ezagent.Socialware.ShareSetting do
       :actions_json,
       :access,
       :granter_uri,
-      :workspace_uri
+      :workspace_uri,
+      :anon_session_uri
     ])
     |> validate_required([:target_uri, :enabled, :visibility, :workspace_uri])
     |> Repo.insert(
-      on_conflict: {:replace, [:enabled, :visibility, :behavior, :actions_json, :access, :granter_uri, :updated_at]},
+      on_conflict:
+        {:replace,
+         [
+           :enabled,
+           :visibility,
+           :behavior,
+           :actions_json,
+           :access,
+           :granter_uri,
+           :anon_session_uri,
+           :updated_at
+         ]},
       conflict_target: :target_uri
     )
   end

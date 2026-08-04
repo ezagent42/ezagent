@@ -44,6 +44,8 @@ defmodule Ezagent.Socialware.AnonUser do
   this module owns the URI minting + the read-only row + the predicates.
   """
 
+  require Logger
+
   alias Ezagent.Users
 
   @anon_prefix "anon-"
@@ -126,12 +128,19 @@ defmodule Ezagent.Socialware.AnonUser do
         # definition contributes no cap → the anon cannot render it
         # (`SessionView.authorize_view/3` denies). Two-layer gate: openness admits
         # the anon; view-caps decide which views it sees.
-        born_with = [
-          join_cap(session_uri) | Ezagent.Socialware.Installation.anon_view_caps(session_uri)
-        ]
+        # Two granters, deliberately: the session-participation caps are
+        # RULE-DRIVEN issuance the platform authorizes (granter = the canonical
+        # admin, the only accountable system principal), while an A5 share's read
+        # key is the OWNER's grant over the OWNER's resource — so the owner signs
+        # for it (`granted_by` = the share's `granter_uri`, matching #154's
+        # "granter ≡ data_owner").
+        rule_caps =
+          [join_cap(session_uri) | Ezagent.Socialware.Installation.anon_view_caps(session_uri)]
 
-        with {:ok, issued} <- issue_born_with(born_with, anon_uri, session_uri),
-             {:ok, _row} <- Users.create_read_only(anon_uri, issued) do
+        with {:ok, issued_rule} <-
+               issue_born_with(rule_caps, anon_uri, {:admin, Ezagent.URI.user(:system, :admin)}),
+             {:ok, issued_share} <- issue_share_read_caps(session_uri, anon_uri),
+             {:ok, _row} <- Users.create_read_only(anon_uri, issued_rule ++ issued_share) do
           {:ok, anon_uri}
         end
       end
@@ -166,14 +175,15 @@ defmodule Ezagent.Socialware.AnonUser do
   # of `authorize_grant/3` enforces `rule_cap_bounded?/1` — a concrete instance
   # AND a concrete action. So an anon can no longer be BORN with a wildcard,
   # structurally, whatever a future definition declares.
-  defp issue_born_with(caps, %URI{} = anon_uri, %URI{} = _session_uri) do
+  # `authorization` is passed IN, never inferred by comparing the granter to a
+  # fixed principal — each call site already knows which kind of grant it is
+  # (rule-driven platform issuance vs the owner's grant over its own resource),
+  # and inferring it by comparing the granter against a fixed principal is
+  # exactly the hardcoded admin-principal shape that #154 locked out.
+  defp issue_born_with(caps, %URI{} = anon_uri, authorization) do
     caps
     |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
-      case Ezagent.Cap.issue(
-             {:admin, Ezagent.URI.user(:system, :admin)},
-             anon_uri,
-             cap
-           ) do
+      case Ezagent.Cap.issue(authorization, anon_uri, cap) do
         {:ok, artifact} -> {:cont, {:ok, [artifact | acc]}}
         {:error, reason} -> {:halt, {:error, {:anon_cap_refused, reason}}}
       end
@@ -182,6 +192,83 @@ defmodule Ezagent.Socialware.AnonUser do
       {:ok, issued} -> {:ok, Enum.reverse(issued)}
       {:error, _} = error -> error
     end
+  end
+
+  # The share read key is issued BY THE SHARE'S OWNER — `AnonShare.enable/4` made
+  # sure the owner holds grant authority over its own target first, so
+  # `{:held_by, owner}` is a real, verifiable grant rather than a system-principal
+  # rubber stamp. No share bound to this session ⇒ nothing to issue.
+  defp issue_share_read_caps(%URI{} = session_uri, %URI{} = anon_uri) do
+    case anon_share_grant(session_uri) do
+      nil -> {:ok, []}
+      {owner, caps} -> issue_born_with(caps, anon_uri, {:held_by, owner})
+    end
+  end
+
+  # A5 (`link_anon`) — if this public session is an anon share's DEDICATED
+  # session (`ShareSetting.by_anon_session/1`, ENABLED rows only), the anon is
+  # additionally born with the share's declared read key(s) toward the target.
+  #
+  # Per-anon born-with is the ESTABLISHED anon pattern (exactly how the view
+  # read-caps above work) — and the empirically forced one: the dedicated
+  # session cannot hold the key itself, because the Session Kind mounts no
+  # Identity storage actions (`identity.absorb_cap` → `{:unknown_action, _}`;
+  # `entity/session.ex` `behaviors/0` carries `SelfLicense` only). The share
+  # ROW stays the policy switch: owner disables → this stops contributing for
+  # every NEW anon at once, and the projection (row-gated) goes dark for
+  # existing ones; already-born keys are untouched — the exact `link_login`
+  # revocation semantics (codex D3: flip kills the link, revoke per-person
+  # separately), with target authority rotation as the hard lever.
+  #
+  # Bounded like every born-with: concrete action × concrete target instance
+  # (`rule_cap_bounded?` shape) — an anon can never be born with a wildcard.
+  # Returns `{owner, [cap_request]}` — the OWNER is carried out so the caller can
+  # issue under the owner's own grant authority (#154: granter ≡ data_owner).
+  defp anon_share_grant(%URI{} = session_uri) do
+    case Ezagent.Socialware.ShareSetting.by_anon_session(session_uri) do
+      nil ->
+        nil
+
+      # The read-only TIER is enforced HERE, at the mint site — not left to the
+      # `access: :read` that `AnonShare.enable/4` happens to pass. A row at any
+      # other tier mints nothing, so a future caller that widens the tier leaves
+      # the anon powerless instead of silently write-capable.
+      %{access: access} when access != "read" ->
+        nil
+
+      setting ->
+        target = Ezagent.URI.new!(setting.target_uri)
+        owner = Ezagent.URI.new!(setting.granter_uri)
+        behavior = Ezagent.Socialware.ShareSetting.behavior_module(setting)
+
+        # Built via `Capability.cap/5` (the sanctioned request constructor), NOT a
+        # provenance-bearing struct literal: real provenance is stamped by
+        # `Cap.issue`'s `prepare_provenance` — a struct field set here would be
+        # overwritten anyway (empirically pinned by the A2-2 grantee-index tests).
+        caps =
+          for action <- Ezagent.Socialware.ShareSetting.actions(setting) do
+            Ezagent.Capability.cap(
+              :agent,
+              behavior,
+              action,
+              Ezagent.URI.instance(target),
+              Ezagent.Capability.workspace_of(target)
+            )
+          end
+
+        {owner, caps}
+    end
+  rescue
+    error ->
+      # "Who finds out if this fails?" — a bad target_uri, an actions_json atom
+      # that is not loaded, … would otherwise leave the visitor silently keyless
+      # and the page silently empty. Still fail-closed, but no longer silent.
+      Logger.warning(
+        "AnonUser.anon_share_grant: minting skipped for " <>
+          "#{URI.to_string(session_uri)} (#{inspect(error)}) — visitor gets no read key"
+      )
+
+      nil
   end
 
   defp join_cap(%URI{} = session_uri) do
