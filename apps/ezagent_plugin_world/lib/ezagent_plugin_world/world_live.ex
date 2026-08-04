@@ -238,12 +238,17 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  def handle_info({:pty_phase, %URI{} = agent_uri, phase, _meta}, socket)
+  def handle_info({:pty_phase, %URI{} = agent_uri, phase, meta}, socket)
       when phase in [:starting, :running, :dead] do
-    if active_pty_agent?(socket, agent_uri) do
-      {:noreply, update_active_pty_phase(socket, phase)}
-    else
-      {:noreply, socket}
+    cond do
+      definitive_pty_death?(phase, meta) and conversation_session_socket?(socket) ->
+        {:noreply, refresh_after_definitive_pty_death(socket, agent_uri)}
+
+      active_pty_agent?(socket, agent_uri) ->
+        {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
@@ -1269,40 +1274,57 @@ defmodule EzagentPluginWorld.WorldLive do
     end
   end
 
-  defp update_active_pty_phase(
+  defp refresh_after_definitive_pty_death(
          %{
            assigns: %{
-             world_state: %{"component" => "conversation", "active_view" => "pty"},
+             world_state: %{"component" => "conversation"},
              current_session_uri: %URI{} = session_uri,
-             current_entity_uri: caller
+             current_entity_uri: %URI{} = caller
            }
          } = socket,
-         :dead
+         %URI{} = agent_uri
        ) do
     views = Ezagent.World.ConversationData.session_views(session_uri, caller)
 
     updates =
-      if Enum.any?(views, &(Map.get(&1, "id") == "pty")) do
-        %{"views" => views, "pty_phase" => "dead"}
+      if active_pty_agent?(socket, agent_uri) do
+        clear_active_pty_updates(views)
       else
-        %{
-          "views" => views,
-          "active_view" => fallback_session_view(views),
-          "active_pty_agent_uri" => nil,
-          "agent_uri" => nil,
-          "agent_detail_path" => nil,
-          "agent_status" => nil,
-          "pty_alive" => false,
-          "pty_phase" => "dead",
-          "pty_initial_buffer" => ""
-        }
+        %{"views" => views}
       end
 
     update_pty_state(socket, updates)
   end
 
-  defp update_active_pty_phase(socket, phase),
-    do: update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})
+  defp conversation_session_socket?(%{
+         assigns: %{
+           world_state: %{"component" => "conversation"},
+           current_session_uri: %URI{},
+           current_entity_uri: %URI{}
+         }
+       }),
+       do: true
+
+  defp conversation_session_socket?(_socket), do: false
+
+  defp definitive_pty_death?(:dead, %{reason: :shutdown}), do: true
+  defp definitive_pty_death?(:dead, %{reason: {:shutdown, _reason}}), do: true
+  defp definitive_pty_death?(:dead, %{reason: {:respawn_halted, _reason}}), do: true
+  defp definitive_pty_death?(_phase, _meta), do: false
+
+  defp clear_active_pty_updates(views) do
+    %{
+      "views" => views,
+      "active_view" => fallback_session_view(views),
+      "active_pty_agent_uri" => nil,
+      "agent_uri" => nil,
+      "agent_detail_path" => nil,
+      "agent_status" => nil,
+      "pty_alive" => false,
+      "pty_phase" => "dead",
+      "pty_initial_buffer" => ""
+    }
+  end
 
   defp fallback_session_view(views) do
     Enum.find_value(views, fn view ->
