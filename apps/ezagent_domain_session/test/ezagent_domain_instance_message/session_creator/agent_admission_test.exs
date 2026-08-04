@@ -561,6 +561,55 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
     assert Ezagent.Kind.alive?(candidate_uri)
   end
 
+  test "the sweeper reconciles an authenticated active candidate", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert AgentAdmissionSweeper.run_due(DateTime.utc_now()) == []
+
+    assert [%{status: :joined, provisional_agent_uri: candidate}] =
+             AgentAdmission.list(session_uri)
+
+    assert candidate == URI.to_string(candidate_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == candidate_uri
+  end
+
+  test "the sweeper reconciles authentication before evaluating its deadline", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+    after_deadline = DateTime.add(DateTime.utc_now(), 1, :day)
+
+    assert AgentAdmissionSweeper.run_due(after_deadline) == []
+    assert [%{status: :joined}] = AgentAdmission.list(session_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == candidate_uri
+  end
+
   test "the supervised sweeper expires authenticating candidates and repeated sweeps are idempotent",
        %{
          session_uri: session_uri,

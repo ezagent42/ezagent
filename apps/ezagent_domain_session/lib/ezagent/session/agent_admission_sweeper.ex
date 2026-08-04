@@ -20,9 +20,7 @@ defmodule Ezagent.Session.AgentAdmissionSweeper do
   @spec run_due(DateTime.t()) :: [{URI.t(), String.t(), {:ok, map()} | {:error, term()}}]
   def run_due(%DateTime{} = now \\ DateTime.utc_now()) do
     sessions = SessionCreator.list_sessions()
-    results = Enum.flat_map(sessions, &expire_due(&1, now))
-    Enum.each(sessions, &reconcile_due/1)
-    results
+    run_due(now, sessions)
   end
 
   @impl GenServer
@@ -53,13 +51,29 @@ defmodule Ezagent.Session.AgentAdmissionSweeper do
         )
     end)
 
-    Enum.each(sessions, &reconcile_due/1)
-
     schedule(state.interval)
     {:noreply, state}
   end
 
-  defp run_due(now, sessions), do: Enum.flat_map(sessions, &expire_due(&1, now))
+  defp run_due(now, sessions), do: Enum.flat_map(sessions, &sweep_session(&1, now))
+
+  defp sweep_session(session_uri, now) do
+    log_reconciliation_result(session_uri, AgentAdmission.reconcile(session_uri))
+    expired = expire_due(session_uri, now)
+    reconcile_due(session_uri)
+    expired
+  end
+
+  defp log_reconciliation_result(_session_uri, :ok), do: :ok
+
+  defp log_reconciliation_result(session_uri, {:error, failures}) do
+    Enum.each(failures, fn {role_name, attempt_id, reason} ->
+      Logger.error(
+        "active agent admission #{attempt_id} for #{URI.to_string(session_uri)} " <>
+          "role #{role_name} could not be reconciled: #{inspect(reason)}"
+      )
+    end)
+  end
 
   defp reconcile_due(session_uri) do
     session_uri
