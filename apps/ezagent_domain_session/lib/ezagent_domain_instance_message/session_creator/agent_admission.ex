@@ -48,6 +48,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   @spec reconcile_auth_failure(URI.t()) :: :ok | {:error, term()}
   defdelegate reconcile_auth_failure(agent_uri), to: AgentAdmissionReconciliation
 
+  @doc "Reconcile every active credential admission owned by one session."
+  @spec reconcile(URI.t()) :: :ok | {:error, [{String.t(), String.t(), term()}]}
+  def reconcile(%URI{scheme: "session"} = session_uri) do
+    failures =
+      session_uri
+      |> list()
+      |> Enum.filter(&(&1.status in @active_statuses))
+      |> Enum.reduce([], fn admission, failures ->
+        case reconcile_attempt(session_uri, admission.role_name, admission.attempt_id) do
+          :ok -> failures
+          {:error, reason} -> [{admission.role_name, admission.attempt_id, reason} | failures]
+        end
+      end)
+
+    case Enum.reverse(failures) do
+      [] -> :ok
+      failures -> {:error, failures}
+    end
+  end
+
   @doc """
   Start or resume the one provisional agent for a gated role.
 
@@ -145,6 +165,87 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
 
   def complete(_session_uri, _role_name, _attempt_id, _actor_and_caps),
     do: {:error, :invalid_agent_admission_completion}
+
+  defp reconcile_attempt(session_uri, role_name, attempt_id) do
+    State.with_lock(session_uri, fn ->
+      with {:ok, declaration, revision} <- declared_gated_role(session_uri, role_name),
+           {:ok, attempt} <-
+             reconcilable_attempt(session_uri, declaration, revision, attempt_id) do
+        reconcile_current_attempt(session_uri, declaration, attempt)
+      end
+    end)
+  end
+
+  defp reconcile_current_attempt(_session_uri, _declaration, :settled), do: :ok
+
+  defp reconcile_current_attempt(session_uri, declaration, {:active, current}) do
+    with {:ok, owner_uri} <- Session.owner(session_uri),
+         {:ok, agent_uri} <- provisional_uri(current),
+         caps <-
+           EzagentDomainInstanceMessage.SessionCreator.list_caps_for_materialization(owner_uri),
+         {:ok, credential_status} <-
+           Ezagent.Domain.Agent.read_credential_status(
+             agent_uri,
+             actor_ctx(owner_uri, caps),
+             backend_profile: provider_of(declaration)
+           ) do
+      reconcile_credential_status(
+        credential_status,
+        session_uri,
+        owner_uri,
+        caps,
+        declaration,
+        current,
+        agent_uri
+      )
+    end
+  end
+
+  defp reconcile_credential_status(
+         %{status: :authenticated},
+         session_uri,
+         owner_uri,
+         caps,
+         declaration,
+         current,
+         agent_uri
+       ) do
+    case complete_authenticated(
+           session_uri,
+           owner_uri,
+           caps,
+           declaration,
+           current,
+           agent_uri,
+           current.attempt_id
+         ) do
+      {:ok, _joined} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp reconcile_credential_status(
+         %{status: status},
+         _session_uri,
+         _owner_uri,
+         _caps,
+         _declaration,
+         _current,
+         _agent_uri
+       )
+       when status in [:missing, :unknown],
+       do: :ok
+
+  defp reconcile_credential_status(
+         %{status: status},
+         _session_uri,
+         _owner_uri,
+         _caps,
+         _declaration,
+         _current,
+         _agent_uri
+       ),
+       do: {:error, {:unsupported_credential_status, status}}
 
   @doc "Cancel an active candidate. Repeated cancellation of the same attempt is idempotent."
   @spec cancel(URI.t(), String.t(), String.t(), {URI.t(), Enumerable.t()}) ::
@@ -455,6 +556,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
         {:current, %{status: status, attempt_id: ^attempt_id} = current}
         when status in @active_statuses ->
           {:ok, current}
+
+        {:stale, _retired} ->
+          {:error, :stale_agent_admission_declaration}
+
+        _ ->
+          {:error, :stale_agent_admission_attempt}
+      end
+    end
+  end
+
+  defp reconcilable_attempt(session_uri, declaration, revision, attempt_id) do
+    with {:ok, row_state} <- reconcile_row(session_uri, declaration, revision) do
+      case row_state do
+        {:current, %{status: status, attempt_id: ^attempt_id} = current}
+        when status in @active_statuses ->
+          {:ok, {:active, current}}
+
+        {:current, %{status: status, attempt_id: ^attempt_id}}
+        when status in [:joined, :failed] ->
+          {:ok, :settled}
 
         {:stale, _retired} ->
           {:error, :stale_agent_admission_declaration}

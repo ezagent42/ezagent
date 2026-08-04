@@ -410,6 +410,102 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmissionTest do
            )
   end
 
+  test "session reconciliation joins the authenticated original candidate", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+    candidate_uri = Ezagent.URI.new!(authenticating.provisional_agent_uri)
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+
+    assert :ok = AgentAdmission.reconcile(session_uri)
+
+    assert [%{status: :joined, provisional_agent_uri: candidate}] =
+             AgentAdmission.list(session_uri)
+
+    assert candidate == URI.to_string(candidate_uri)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), "llm") == candidate_uri
+  end
+
+  test "session reconciliation preserves missing and unknown candidates", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, authenticating} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    Process.put({CredentialTemplate, :credential_status}, :missing)
+    assert :ok = AgentAdmission.reconcile(session_uri)
+    assert AgentAdmission.list(session_uri) == [authenticating]
+
+    Process.put({CredentialTemplate, :credential_status}, :unknown)
+    assert :ok = AgentAdmission.reconcile(session_uri)
+    assert AgentAdmission.list(session_uri) == [authenticating]
+  end
+
+  test "session reconciliation never inspects another session's candidate", %{
+    session_uri: session_uri,
+    declarations: declarations
+  } do
+    assert {:ok, _summary} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               declarations
+             )
+
+    caps = Ezagent.Identity.list_caps_for(@owner_uri)
+    assert {:ok, current} = AgentAdmission.begin(session_uri, "llm", @owner_uri, caps)
+
+    other_session = live_session("reconcile-scope-#{System.unique_integer([:positive])}")
+    copy_declarations(other_session, declarations)
+
+    on_exit(fn ->
+      AgentAdmission.list(other_session)
+      |> Enum.each(fn
+        %{provisional_agent_uri: uri} when is_binary(uri) -> terminate(Ezagent.URI.new!(uri))
+        _admission -> :ok
+      end)
+
+      terminate(other_session)
+    end)
+
+    llm = Enum.find(declarations, &(&1.role_name == "llm"))
+    assert {:ok, %{status: :pending_auth}} = AgentAdmission.defer(other_session, llm)
+    assert {:ok, other} = AgentAdmission.begin(other_session, "llm", @owner_uri, caps)
+
+    Process.put({CredentialTemplate, :credential_status}, :authenticated)
+    assert :ok = AgentAdmission.reconcile(session_uri)
+
+    assert [%{status: :joined, attempt_id: current_attempt}] =
+             AgentAdmission.list(session_uri)
+
+    assert current_attempt == current.attempt_id
+
+    assert [%{status: :authenticating, attempt_id: other_attempt}] =
+             AgentAdmission.list(other_session)
+
+    assert other_attempt == other.attempt_id
+  end
+
   test "the supervised sweeper expires authenticating candidates and repeated sweeps are idempotent",
        %{
          session_uri: session_uri,
