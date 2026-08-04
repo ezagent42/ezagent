@@ -5,6 +5,7 @@ defmodule Ezagent.Socialware.SessionInstaller do
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.{DefinitionAgents, Materializer, TemplateTeam}
 
+  @doc false
   @spec install(URI.t(), URI.t(), map(), URI.t() | nil, keyword()) ::
           {:ok, DefinitionAgents.summary()} | {:error, term()}
   def install(
