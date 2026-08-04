@@ -497,7 +497,13 @@ defmodule Ezagent.Domain.Pty.Server do
         _ = RespawnPolicy.record_failure(state.agent_uri, {:spawn_failed, reason}, mode, fb?)
 
         new_state = %{state | phase: :dead, dead_broadcast?: true}
-        broadcast_phase(new_state, :dead, %{reason: reason, os_pid: nil})
+
+        broadcast_phase(new_state, :dead, %{
+          reason: reason,
+          os_pid: nil,
+          respawning: true
+        })
+
         {:stop, {:spawn_failed, reason}, new_state}
     end
   end
@@ -514,7 +520,12 @@ defmodule Ezagent.Domain.Pty.Server do
         os_pid: nil
     }
 
-    broadcast_phase(halted, :dead, %{reason: {:respawn_halted, info.reason}, os_pid: nil})
+    broadcast_phase(halted, :dead, %{
+      reason: {:respawn_halted, info.reason},
+      os_pid: nil,
+      respawning: false
+    })
+
     halted
   end
 
@@ -742,7 +753,12 @@ defmodule Ezagent.Domain.Pty.Server do
     # still alive enough to broadcast (terminate/2 would also fire,
     # but `dead_broadcast?: true` short-circuits the duplicate emit).
     new_state = %{state | phase: :dead, dead_broadcast?: true}
-    broadcast_phase(new_state, :dead, %{reason: reason, os_pid: state.os_pid})
+
+    broadcast_phase(new_state, :dead, %{
+      reason: reason,
+      os_pid: state.os_pid,
+      respawning: true
+    })
 
     {:stop, {:child_exited, reason}, new_state}
   end
@@ -1032,5 +1048,10 @@ defmodule Ezagent.Domain.Pty.Server do
   defp maybe_broadcast_dead_on_terminate(%__MODULE__{dead_broadcast?: true}, _reason), do: :ok
 
   defp maybe_broadcast_dead_on_terminate(%__MODULE__{} = state, reason),
-    do: broadcast_phase(state, :dead, %{reason: reason, os_pid: state.os_pid})
+    do:
+      broadcast_phase(state, :dead, %{
+        reason: reason,
+        os_pid: state.os_pid,
+        respawning: false
+      })
 end

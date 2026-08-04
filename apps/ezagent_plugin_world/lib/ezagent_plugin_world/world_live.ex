@@ -62,6 +62,7 @@ defmodule EzagentPluginWorld.WorldLive do
      |> assign(:world_bootstrap_loading?, false)
      |> assign(:surface_refresh_entity_uri, nil)
      |> assign(:pending_surface_refreshes, MapSet.new())
+     |> assign(:pty_phase_subscriptions, MapSet.new())
      |> assign(:current_session_uri, nil)
      |> assign(:current_session_uri_str, nil)
      |> assign(:last_dispatch_status, "idle")
@@ -97,7 +98,11 @@ defmodule EzagentPluginWorld.WorldLive do
     layout = LiveStateBuilder.layout_for_route(route, workspace, caller)
     socket = maybe_set_current_session(socket, route)
     state = LiveStateBuilder.state_for_route(route, socket, layout)
-    socket = maybe_subscribe_pty(socket, route)
+
+    socket =
+      socket
+      |> maybe_subscribe_pty(route)
+      |> subscribe_conversation_pty_phases(state)
 
     socket =
       socket
@@ -386,6 +391,7 @@ defmodule EzagentPluginWorld.WorldLive do
 
       {:noreply,
        socket
+       |> subscribe_conversation_pty_phases(state)
        |> assign(:layout_json, Jason.encode!(layout))
        |> assign(:plugin_nav_json, Jason.encode!(plugin_nav))
        |> assign(:caller_json, Jason.encode!(caller_payload))
@@ -574,6 +580,7 @@ defmodule EzagentPluginWorld.WorldLive do
         state = LiveStateBuilder.state_for_route(route, socket, layout)
 
         socket
+        |> subscribe_conversation_pty_phases(state)
         |> assign(:layout_json, Jason.encode!(layout))
         |> assign(:world_state, state)
         |> assign(:world_state_json, Jason.encode!(state))
@@ -587,6 +594,18 @@ defmodule EzagentPluginWorld.WorldLive do
   defp active_pty_agent?(socket, %URI{} = agent_uri) do
     pty_agent_uri_str(socket.assigns[:world_state] || %{}) == encode_uri(agent_uri)
   end
+
+  defp selected_pty_agent?(
+         %{assigns: %{world_state: state}},
+         %URI{} = agent_uri
+       ) do
+    selected = encode_uri(agent_uri)
+
+    Map.get(state, "agent_uri") == selected or
+      Map.get(state, "active_pty_agent_uri") == selected
+  end
+
+  defp selected_pty_agent?(_socket, %URI{}), do: false
 
   defp encode_uri(uri), do: LiveStateBuilder.encode_uri(uri)
 
@@ -1255,6 +1274,74 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp maybe_subscribe_pty(socket, _route), do: socket
 
+  defp subscribe_conversation_pty_phases(
+         socket,
+         %{"component" => "conversation"} = state
+       ) do
+    if connected?(socket) and Map.get(state, "access_denied") != true and
+         Enum.any?(Map.get(state, "views", []), &(Map.get(&1, "id") == "pty")) do
+      state
+      |> conversation_pty_phase_candidates()
+      |> Enum.reduce(socket, &subscribe_pty_phase/2)
+    else
+      socket
+    end
+  end
+
+  defp subscribe_conversation_pty_phases(socket, _state), do: socket
+
+  defp conversation_pty_phase_candidates(state) do
+    member_candidates =
+      for %{"kind" => "agent", "pty_alive" => true, "uri" => uri} <-
+            Map.get(state, "members", []),
+          do: uri
+
+    admission_candidates =
+      for %{
+            "status" => status,
+            "provisional_agent_uri" => uri
+          } <- Map.get(state, "agent_admissions", []),
+          status in ["authenticating", "materializing"],
+          do: uri
+
+    (member_candidates ++ admission_candidates)
+    |> Enum.reduce(MapSet.new(), fn uri_string, candidates ->
+      case parse_live_agent_uri(uri_string) do
+        {:ok, agent_uri} -> MapSet.put(candidates, agent_uri)
+        :error -> candidates
+      end
+    end)
+  end
+
+  defp subscribe_pty_phase(
+         %URI{} = agent_uri,
+         %{assigns: assigns} = socket
+       ) do
+    key = encode_uri(agent_uri)
+    subscriptions = Map.get(assigns, :pty_phase_subscriptions, MapSet.new())
+
+    if MapSet.member?(subscriptions, key) do
+      socket
+    else
+      :ok = Phoenix.PubSub.subscribe(EzagentCore.PubSub, "pty:phase:" <> key)
+      assign(socket, :pty_phase_subscriptions, MapSet.put(subscriptions, key))
+    end
+  end
+
+  defp parse_live_agent_uri(uri_string) when is_binary(uri_string) do
+    with {:ok, %URI{} = agent_uri} <- Ezagent.URI.parse(uri_string),
+         true <- Ezagent.URI.type?(agent_uri, :agent),
+         true <- Ezagent.Domain.Pty.alive?(agent_uri) do
+      {:ok, agent_uri}
+    else
+      _ -> :error
+    end
+  rescue
+    _ -> :error
+  end
+
+  defp parse_live_agent_uri(_uri_string), do: :error
+
   defp refresh_pty_state(socket) do
     case socket.assigns.world_state do
       %{"agent_uri" => agent_uri_str} ->
@@ -1287,8 +1374,8 @@ defmodule EzagentPluginWorld.WorldLive do
     views = Ezagent.World.ConversationData.session_views(session_uri, caller)
 
     updates =
-      if active_pty_agent?(socket, agent_uri) do
-        clear_active_pty_updates(views)
+      if selected_pty_agent?(socket, agent_uri) do
+        clear_selected_pty_updates(socket, views)
       else
         %{"views" => views}
       end
@@ -1307,15 +1394,19 @@ defmodule EzagentPluginWorld.WorldLive do
 
   defp conversation_session_socket?(_socket), do: false
 
+  defp definitive_pty_death?(:dead, %{respawning: false}), do: true
+  defp definitive_pty_death?(:dead, %{respawning: true}), do: false
   defp definitive_pty_death?(:dead, %{reason: :shutdown}), do: true
   defp definitive_pty_death?(:dead, %{reason: {:shutdown, _reason}}), do: true
   defp definitive_pty_death?(:dead, %{reason: {:respawn_halted, _reason}}), do: true
   defp definitive_pty_death?(_phase, _meta), do: false
 
-  defp clear_active_pty_updates(views) do
-    %{
+  defp clear_selected_pty_updates(
+         %{assigns: %{world_state: world_state}},
+         views
+       ) do
+    updates = %{
       "views" => views,
-      "active_view" => fallback_session_view(views),
       "active_pty_agent_uri" => nil,
       "agent_uri" => nil,
       "agent_detail_path" => nil,
@@ -1324,6 +1415,12 @@ defmodule EzagentPluginWorld.WorldLive do
       "pty_phase" => "dead",
       "pty_initial_buffer" => ""
     }
+
+    if Map.get(world_state, "active_view") == "pty" do
+      Map.put(updates, "active_view", fallback_session_view(views))
+    else
+      updates
+    end
   end
 
   defp fallback_session_view(views) do

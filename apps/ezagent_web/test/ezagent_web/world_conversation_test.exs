@@ -887,6 +887,25 @@ defmodule EzagentWeb.WorldConversationTest do
 
     _html = render_async(view, 5_000)
 
+    # The terminal has never been opened in this LiveView. Merely loading the
+    # conversation must subscribe to phase changes for its applicable PTYs, so
+    # a definitive stop can remove the now-stale tab without a reload.
+    drain_liveview_mailbox(view)
+    :ok = Ezagent.Domain.Pty.stop(agent_uri)
+
+    unopened_stopped_views = assert_world_views_without_pty(view)
+    refute Enum.any?(unopened_stopped_views, &(&1["id"] == "pty"))
+
+    {:ok, _restarted_pty_pid} =
+      Ezagent.Domain.Pty.start(agent_uri, %{
+        cwd: "/tmp",
+        cmd_override: ["/bin/sleep", "60"],
+        test_mode: false,
+        auto_prompts: []
+      })
+
+    assert is_pid(wait_for_pty_exec_pid(agent_uri))
+
     view
     |> element("#world-root")
     |> render_hook("world:dispatch", %{
@@ -1369,6 +1388,29 @@ defmodule EzagentWeb.WorldConversationTest do
     # can still be handling its mount audit work for longer than that.
     _state = :sys.get_state(view.pid, 30_000)
     :ok
+  end
+
+  defp assert_world_views_without_pty(%{proxy: {ref, _topic, _}}, timeout \\ 5_000) do
+    deadline = System.monotonic_time(:millisecond) + timeout
+    receive_world_views_without_pty(ref, deadline)
+  end
+
+  defp receive_world_views_without_pty(ref, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^ref, {:push_event, "world:state", %{"views" => views}}} ->
+        if Enum.any?(views, &(&1["id"] == "pty")) do
+          receive_world_views_without_pty(ref, deadline)
+        else
+          views
+        end
+
+      {^ref, _other_event} ->
+        receive_world_views_without_pty(ref, deadline)
+    after
+      remaining -> flunk("no world:state event removed the stopped unopened PTY")
+    end
   end
 
   test "world template save persists installs and created sessions allow web anon access", %{

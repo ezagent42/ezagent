@@ -10,10 +10,13 @@ defmodule Ezagent.Domain.Pty.PhaseBroadcast do
 
   A respawn HALT is deliberately **not** a fourth phase. The subprocess genuinely is
   `:dead`; "and no respawn is coming" rides on the SAME `:dead` broadcast, distinguished
-  by its `meta.reason` — `{:respawn_halted, cause}` for a halt versus the raw exit reason
-  for an ordinary death that a respawn will follow. A subscriber therefore learns both
-  facts from one message. (`Ezagent.Domain.Pty.Server.status/1` also exposes `halted?` +
-  `halt_reason`, and `Ezagent.Domain.Pty.halt_info/1` reads the durable ETS record.)
+  by `meta.respawning`: `true` means the permanent supervisor will replace the server;
+  `false` means the death is definitive (explicit termination or a halted respawn loop).
+  `meta.reason` remains diagnostic only — an ordinary child can itself exit with
+  `:shutdown`, so consumers MUST NOT infer restart intent from the raw reason. A
+  `{:respawn_halted, cause}` reason is paired with `respawning: false`.
+  (`Ezagent.Domain.Pty.Server.status/1` also exposes `halted?` + `halt_reason`, and
+  `Ezagent.Domain.Pty.halt_info/1` reads the durable ETS record.)
 
   Best-effort by contract: phase tracking is OPERATOR VISIBILITY plumbing and its failure
   MUST NOT block the primary PTY path (spawn / write / shutdown). A broadcast failure logs
@@ -27,14 +30,16 @@ defmodule Ezagent.Domain.Pty.PhaseBroadcast do
 
   @doc """
   PubSub topic for an agent's PTY phase transitions. Subscribers receive
-  `{:pty_phase, agent_uri, phase, meta}`.
+  `{:pty_phase, agent_uri, phase, meta}`. Every `:dead` event emitted by the current
+  server includes boolean `meta.respawning`; older producers may omit it.
   """
   @spec topic(URI.t()) :: String.t()
   def topic(%URI{} = agent_uri), do: "pty:phase:" <> URI.to_string(agent_uri)
 
   @doc """
   Broadcast a phase transition. `meta` carries `:os_pid`, `:reason` and `:at`; anything in
-  `extra_meta` overrides those defaults.
+  `extra_meta` overrides those defaults. Server-owned `:dead` call sites must supply the
+  boolean `:respawning` contract described in this module's moduledoc.
   """
   @spec emit(URI.t(), phase(), non_neg_integer() | nil, map() | nil) :: :ok
   def emit(%URI{} = agent_uri, phase, os_pid, extra_meta)

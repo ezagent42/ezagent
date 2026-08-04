@@ -363,6 +363,21 @@ defmodule Ezagent.World.PtyChunkBindingTest do
     assert running.assigns.world_state["pty_phase"] == "running"
   end
 
+  test "a shutdown-shaped respawning child death keeps the active PTY bound" do
+    session_uri = live_session!()
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown, respawning: true}},
+        conversation_socket_showing(@a, session_uri)
+      )
+
+    assert out.assigns.world_state["active_view"] == "pty"
+    assert out.assigns.world_state["active_pty_agent_uri"] == @a
+    assert out.assigns.world_state["agent_uri"] == @a
+    assert out.assigns.world_state["pty_phase"] == "dead"
+  end
+
   test "a respawn-halted death invalidates a no-longer-applicable PTY" do
     session_uri = live_session!()
 
@@ -421,6 +436,36 @@ defmodule Ezagent.World.PtyChunkBindingTest do
     assert out.assigns.world_state["active_pty_agent_uri"] == @b
     assert out.assigns.world_state["agent_uri"] == @b
     assert out.assigns.world_state["pty_phase"] == "running"
+  end
+
+  test "a definitive death clears a cached selected PTY without changing the current view" do
+    session_uri = live_session!()
+    other_agent = entity_uri("cached-other-live")
+    start_live_pty!(other_agent)
+
+    put_admissions!(session_uri, [
+      admission("dead", :materializing, Ezagent.URI.new!(@a)),
+      admission("other", :materializing, other_agent)
+    ])
+
+    input =
+      conversation_socket_showing(@a, session_uri)
+      |> Phoenix.Component.assign(:world_state, %{
+        conversation_socket_showing(@a, session_uri).assigns.world_state
+        | "active_view" => "conversation"
+      })
+
+    {:noreply, out} =
+      WorldLive.handle_info(
+        {:pty_phase, Ezagent.URI.new!(@a), :dead, %{reason: :shutdown, respawning: false}},
+        input
+      )
+
+    assert Enum.any?(out.assigns.world_state["views"], &(&1["id"] == "pty"))
+    assert out.assigns.world_state["active_view"] == "conversation"
+    assert out.assigns.world_state["active_pty_agent_uri"] == nil
+    assert out.assigns.world_state["agent_uri"] == nil
+    assert out.assigns.world_state["pty_alive"] == false
   end
 
   defp live_session! do
