@@ -51,6 +51,24 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
 
     :ok = Ezagent.ActionSet.Session.MemberCap.grant_owner_at_creation(session_uri, owner_uri)
 
+    admin = User.admin_uri()
+    target = Ezagent.URI.with_action(session_uri, :session, :join)
+    {:ok, join_cap} = Ezagent.Cap.issue_for_action({:admin, admin}, admin, target)
+
+    assert {:ok, _joined} =
+             Ezagent.Invocation.dispatch(%Ezagent.Invocation{
+               origin: :trusted_internal,
+               target: target,
+               mode: :call,
+               args: %{member: owner_uri},
+               ctx: %{
+                 caller: admin,
+                 authenticated_principal: admin,
+                 caps: MapSet.new([join_cap]),
+                 reply: :ignore
+               }
+             })
+
     on_exit(fn ->
       case KindRegistry.lookup(session_uri) do
         {:ok, pid} ->
@@ -158,6 +176,26 @@ defmodule EzagentDomainInstanceMessage.Integration.ChatSessionMembershipReadTest
 
       assert {:error, :missing_cap} =
                Session.subscribe_from(session_uri, self(), :latest, member_ctx(owner))
+    end
+  end
+
+  describe "strict live membership read" do
+    test "returns the current owner/member" do
+      owner = member_uri()
+      session_uri = spawn_owned_session(owner)
+
+      assert {:ok, members} = Session.session_member_uris_strict(session_uri)
+      assert owner in members
+    end
+
+    test "an unavailable Session is an error, not an empty roster" do
+      missing =
+        Ezagent.URI.new!(
+          "session://team-alpha/default/missing-roster-#{System.unique_integer([:positive])}"
+        )
+
+      assert {:error, _reason} = Session.session_member_uris_strict(missing)
+      assert Session.session_member_uris(missing) == []
     end
   end
 end

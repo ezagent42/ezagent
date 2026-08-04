@@ -388,6 +388,36 @@ defmodule Ezagent.Entity.Session.Orchestrator do
     :exit, _ -> []
   end
 
+  @doc false
+  @spec session_member_uris_strict(URI.t()) :: {:ok, [URI.t()]} | {:error, term()}
+  def session_member_uris_strict(%URI{} = session_uri) do
+    case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
+      {:ok, persistent} when is_map(persistent) ->
+        case Map.fetch(persistent, :members) do
+          {:ok, members} when is_map(members) ->
+            member_uris = Map.keys(members)
+
+            if Enum.all?(member_uris, &match?(%URI{}, &1)),
+              do: {:ok, member_uris},
+              else: {:error, :malformed_member_uri}
+
+          {:ok, _other} ->
+            {:error, :malformed_members}
+
+          :error ->
+            {:error, :members_missing}
+        end
+
+      {:ok, _other} ->
+        {:error, :malformed_session_state}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  catch
+    :exit, reason -> {:error, {:exit, reason}}
+  end
+
   @doc """
   Member URIs extracted from a DECODED durable snapshot state map (the
   `Ezagent.Ecto.KindSnapshot.decode_state/1` result) — the cold-Kind

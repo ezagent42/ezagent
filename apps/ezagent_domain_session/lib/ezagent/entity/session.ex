@@ -347,6 +347,9 @@ defmodule Ezagent.Entity.Session do
   defdelegate read_template_working_copy(template_uri), to: Ezagent.Entity.Session.Orchestrator
   defdelegate session_member_uris(session_uri), to: Ezagent.Entity.Session.Orchestrator
 
+  defdelegate session_member_uris_strict(session_uri),
+    to: Ezagent.Entity.Session.Orchestrator
+
   defdelegate member_uris_from_snapshot_state(state), to: Ezagent.Entity.Session.Orchestrator
 
   defdelegate session_legends(session_uri), to: Ezagent.Entity.Session.Orchestrator
