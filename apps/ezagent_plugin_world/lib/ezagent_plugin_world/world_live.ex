@@ -502,7 +502,9 @@ defmodule EzagentPluginWorld.WorldLive do
              target_uri,
              refresh_context(socket)
            ) do
-      push_event(socket, "world:surface_state", %{surface: id, state: state})
+      socket
+      |> subscribe_conversation_pty_phases(state)
+      |> push_event("world:surface_state", %{surface: id, state: state})
     else
       {:error, reason} ->
         raise ArgumentError, "invalid refresh surface #{inspect(id)}: #{inspect(reason)}"
