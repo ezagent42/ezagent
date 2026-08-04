@@ -912,6 +912,19 @@ defmodule EzagentWeb.WorldConversationTest do
     assert String.starts_with?(exec_pid, "#PID<")
     assert is_integer(os_pid)
     assert Process.alive?(view.pid)
+
+    :ok = Ezagent.Domain.Pty.stop(agent_uri)
+
+    assert_push_event(view, "world:state", %{
+      "views" => stopped_views,
+      "active_view" => "conversation",
+      "active_pty_agent_uri" => nil,
+      "agent_uri" => nil,
+      "pty_alive" => false,
+      "pty_phase" => "dead"
+    })
+
+    refute Enum.any?(stopped_views, &(&1["id"] == "pty"))
   end
 
   test "PR-4: restart_orchestrator denies a caller without the restart cap", %{conn: conn} do

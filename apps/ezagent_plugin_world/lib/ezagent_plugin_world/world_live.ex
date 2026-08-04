@@ -241,7 +241,7 @@ defmodule EzagentPluginWorld.WorldLive do
   def handle_info({:pty_phase, %URI{} = agent_uri, phase, _meta}, socket)
       when phase in [:starting, :running, :dead] do
     if active_pty_agent?(socket, agent_uri) do
-      {:noreply, update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})}
+      {:noreply, update_active_pty_phase(socket, phase)}
     else
       {:noreply, socket}
     end
@@ -1267,6 +1267,48 @@ defmodule EzagentPluginWorld.WorldLive do
       _ ->
         socket
     end
+  end
+
+  defp update_active_pty_phase(
+         %{
+           assigns: %{
+             world_state: %{"component" => "conversation", "active_view" => "pty"},
+             current_session_uri: %URI{} = session_uri,
+             current_entity_uri: caller
+           }
+         } = socket,
+         :dead
+       ) do
+    views = Ezagent.World.ConversationData.session_views(session_uri, caller)
+
+    updates =
+      if Enum.any?(views, &(Map.get(&1, "id") == "pty")) do
+        %{"views" => views, "pty_phase" => "dead"}
+      else
+        %{
+          "views" => views,
+          "active_view" => fallback_session_view(views),
+          "active_pty_agent_uri" => nil,
+          "agent_uri" => nil,
+          "agent_detail_path" => nil,
+          "agent_status" => nil,
+          "pty_alive" => false,
+          "pty_phase" => "dead",
+          "pty_initial_buffer" => ""
+        }
+      end
+
+    update_pty_state(socket, updates)
+  end
+
+  defp update_active_pty_phase(socket, phase),
+    do: update_pty_state(socket, %{"pty_phase" => Atom.to_string(phase)})
+
+  defp fallback_session_view(views) do
+    Enum.find_value(views, fn view ->
+      if Map.get(view, "id") == "conversation", do: "conversation"
+    end) ||
+      Enum.find_value(views, &Map.get(&1, "id"))
   end
 
   defp update_pty_state(socket, updates) when is_map(updates) do
