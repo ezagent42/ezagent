@@ -2,9 +2,9 @@
 
 - **id**: `ci-isolation-integration`
 - **owner**: Allen 轨道(cc 协调)
-- **status**: wip
-- **历史**: started 2026-08-02 · est_done 2026-08-03 · actual —
-- **关联**: branch `integrate/ci-isolation-dod24-20260803`(HEAD 5cfb64256, ahead 33, 本地未 push) · 折入 PR #1684(head dbdf4ad76, merge 8bd91ec6a) · 残留 flake #184(轮换 intra-suite 隔离) · handoff `docs/together/2026-08-03/handoffs/integrated-ci-fixes-continuation.md`
+- **status**: wip(08-04: supervisor-death 竞态已治愈, 待一次完整 precommit 闸)
+- **历史**: started 2026-08-02 · est_done 2026-08-03 · actual —(延 1d; 08-03 persistence_boundary 族四连 12:46–17:27, 08-04 待闸)
+- **关联**: branch `integrate/ci-isolation-dod24-20260803`(HEAD **8bb1dbe47**, ahead **37** vs origin/main 129b2facf —— 原五块 33 + persistence_boundary 族 4, 本地未 push) · 折入 PR #1684(head dbdf4ad76, merge 8bd91ec6a) · 残留 flake #184(轮换 intra-suite 隔离) · handoff `docs/together/2026-08-03/handoffs/integrated-ci-fixes-continuation.md` · worktree 未提交 diff 5 文件(kind/server.ex · snapshot_store.ex · identity_caps/store.ex · 新 persistence_boundary.ex · 新 sandbox_owner_persist_race_test.exs, 无 erl_crash.dump)
 - **依赖**: 无 —— 本分支是 main 真绿的唯一关键路径; C8 v5 / DeliveryOutbox 实现切片都暂缓等它落地
 
 ## 目标
@@ -22,8 +22,11 @@ flake(#184 残留)做**系统性修复**, 五块折入一支整合分支一次�
 
 ## 验收
 
-- [x] 五块折入, HEAD 5cfb64256, worktree clean, `git diff --check` 过(evidence: handoff 2026-08-03)
-- [ ] 整合分支上**一次完整 `mix precommit` 诚实绿**(不拆回源 PR、不 mask、不盲加 timeout; 红则只修 demonstrated integrated-state 失败后重跑)
+- [x] 五块折入 + persistence_boundary 族四连(b8bdfe808→bc88ac7c3→6cb3e69ef→8bb1dbe47), HEAD 8bb1dbe47(ahead 37), `git diff --check` 过(evidence: 2026-08-03 handoff + git log)
+- [x] supervisor-death 竞态修复实证: baseline-proven 分支引入 → persistence_boundary 族 cure, 0 disconnect storm(evidence: 08-03 17:27 止, 四连全落地)
+- [x] 回归测试绿(1/0; trigger 修 BEFORE INSERT OR UPDATE)+ 3 残量单独跑绿(suite-context flake 分类中; syncthing 已移除 08-04)(evidence: `sandbox_owner_persist_race_test`)
+- [ ] 整合分支上**一次完整 `mix precommit` 诚实绿**(08-04 闸; 不拆回源 PR、不 mask、不盲加 timeout; 红则先诚实分类噪声 vs demonstrated, 只修整合态失败后重跑)
+- [ ] cap×wipe semantic rebase(#1684 per-grant 撤销 × #1693 wipe 已入 main 的语义重叠, 合并前解)
 - [ ] push + 一个 PR → 正常 merge(无 force push) → `origin/main` 含整合 HEAD/merge
 - [ ] #1684 标 subsumed(注明最终 main merge SHA)关闭, 不留重复 open PR
 - [ ] #189 test-defects E/F/D 在整合后 main 验证绿(07-30 结转, 发布闸剩余项; 已绿则验证+记录回本项, 红则 systematic 小 PR 修复)

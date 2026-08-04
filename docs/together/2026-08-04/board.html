@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dev-together 看板 · 2026-08-04</title>
+<style>
+  :root{--ink:#1a1a1a;--line:#e2e8f0;--soft:#f8fafc;--blue:#2563eb;--blue-d:#1e40af;--green:#059669;--amber:#d97706;--red:#dc2626}
+  *{box-sizing:border-box}
+  body{font:14px/1.55 -apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);margin:0;background:#eef2f7}
+  .wrap{max-width:1460px;margin:0 auto;padding:18px}
+  .hero{background:linear-gradient(135deg,#1e293b,#334155);color:#fff;border-radius:12px;padding:16px 20px;margin-bottom:14px}
+  .hero .row{display:flex;flex-wrap:wrap;gap:20px;align-items:center}
+  .hero h1{font-size:19px;margin:0 0 3px}
+  .hero .north{font-size:12.5px;color:#cbd5e1;max-width:640px}
+  .hero .north b{color:#fbbf24}
+  .prog{flex:1;min-width:220px}
+  .prog .lab{font-size:11px;color:#94a3b8;display:flex;justify-content:space-between;margin-bottom:4px}
+  .bar{height:9px;background:#0f172a;border-radius:6px;overflow:hidden}
+  .bar i{display:block;height:100%;background:linear-gradient(90deg,#22c55e,#16a34a)}
+  .bar.b i{background:linear-gradient(90deg,#38bdf8,#2563eb)}
+  .eff{display:flex;gap:0;background:#0f172a;border-radius:9px;overflow:hidden;flex-wrap:wrap}
+  .eff div{padding:8px 13px;border-right:1px solid #1e293b;text-align:center}
+  .eff div:last-child{border-right:0}
+  .eff b{display:block;font-size:17px;color:#7dd3fc;line-height:1.1}
+  .eff span{font-size:10px;color:#94a3b8}
+  .hero .src{font-size:10.5px;color:#64748b;margin-top:8px}
+  .deploy{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#fff;margin:0 10px 8px 0;vertical-align:top}
+  .deploy div{padding:6px 12px;font-size:12px;border-right:1px solid #eef2f7}
+  .deploy div:last-child{border-right:0}
+  .deploy .s{display:block;font-size:10px;color:#94a3b8}
+  .risk{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:9px 14px;margin:2px 0 12px;font-size:12.5px}
+  .board{display:grid;grid-template-columns:repeat(4,minmax(220px,1fr));gap:10px;overflow-x:auto}
+  .colwrap{display:flex;flex-direction:column;min-width:0}
+  .colhead{font-weight:700;font-size:12px;text-align:center;padding:7px 4px;border-radius:6px 6px 0 0;color:#fff}
+  .colhead .cnt{background:rgba(255,255,255,.28);border-radius:8px;padding:0 6px;font-size:11px;margin-left:2px}
+  .c-plan{background:#94a3b8}.c-wip{background:var(--blue)}.c-rev{background:var(--amber)}.c-done{background:var(--green)}
+  .cell{display:flex;flex-direction:column;gap:7px;min-height:40px;padding:6px 2px}
+  .owner{font-size:10px;color:#64748b;font-weight:600;margin-bottom:4px}
+  .odot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:4px;vertical-align:middle}
+  .legend{margin:2px 0 12px;font-size:11.5px;color:#64748b}
+  .legend .lg{margin-right:14px;white-space:nowrap}
+  .recent{margin-top:8px;padding-top:8px;border-top:1px dashed #cbd5e1}
+  .rday{font-size:10.5px;font-weight:700;color:#94a3b8;margin:4px 0 4px}
+  .rchip{font-size:11px;color:#334155;background:#f6fefa;border:1px solid #d1fae5;border-left:3px solid var(--pc);border-radius:6px;padding:4px 8px;margin-bottom:4px}
+  .rchip .odot{margin-right:5px}
+  .card{background:#fff;border:1px solid var(--line);border-left:3px solid var(--pc);border-radius:7px;padding:8px 9px;cursor:pointer;transition:box-shadow .12s,transform .12s}
+  .card:hover{box-shadow:0 3px 10px rgba(0,0,0,.10);transform:translateY(-1px)}
+  .card.done{background:#f6fefa;border-left-color:var(--green)}
+  .card.done .t{color:#065f46}
+  .done-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--green);border-radius:4px;padding:1px 6px;float:right}
+  .late-rib{display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--red);border-radius:4px;padding:1px 6px;float:right}
+  .card.late{background:#fff8f8}
+  .sched{font-size:10.5px;color:#64748b;margin:1px 0 5px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+  .sched .cal{filter:grayscale(.2)}
+  .sched.late{color:#b91c1c;font-weight:600}
+  .decomp{font-size:10px;color:#b91c1c;background:#fef2f2;border:1px dashed #fecaca;border-radius:6px;padding:3px 7px;margin:0 0 6px;line-height:1.45}
+  .card .t{font-weight:600;font-size:12.5px;margin-bottom:3px}
+  .card .g{font-size:10.5px;color:#64748b;margin-bottom:6px}
+  .accm{font-size:11px;color:#475569;margin-bottom:6px}
+  .accm .d{color:var(--green)}.accm .o{color:#94a3b8}
+  .meta{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+  .pill{display:inline-block;padding:1px 7px;border-radius:10px;font-size:10.5px;font-weight:600}
+  .pr-merged{background:#dcfce7;color:#166534}.pr-open{background:#fef9c3;color:#854d0e}.pr-draft{background:#e0e7ff;color:#3730a3}
+  .dep{background:#fef3c7;color:#92400e}.carry{background:#f1f5f9;color:#475569}.more{background:#eff6ff;color:#1d4ed8}.blocked{background:#fee2e2;color:#991b1b}
+  .detail{display:none}
+  .review{margin-top:20px}
+  .review h2{font-size:17px;color:var(--blue-d);border-left:4px solid var(--blue);padding-left:10px;margin:18px 0 10px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .inc{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .good{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 13px;font-size:12.5px}
+  .review table{border-collapse:collapse;width:100%;font-size:12.5px;margin-top:6px}
+  .review th,.review td{border:1px solid #d1d5db;padding:6px 9px;text-align:left}
+  .review th{background:#eff6ff}
+  .review tr:nth-child(even){background:#f9fafb}
+  .modal{display:none;position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:50;align-items:center;justify-content:center;padding:20px}
+  .modal.on{display:flex}
+  .sheet{background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:86vh;overflow:auto;padding:20px 22px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+  .sheet h3{margin:0 0 4px;font-size:16px}.sheet .who{font-size:12px;color:#64748b;margin-bottom:12px}
+  .sheet .sec{font-size:11px;font-weight:700;color:var(--blue-d);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 5px}
+  .sheet ul.acc{list-style:none;margin:0;padding:0;font-size:13px}
+  .sheet ul.acc li{margin:4px 0;padding-left:20px;position:relative}
+  .sheet ul.acc li.done::before{content:"\2611";position:absolute;left:0;color:var(--green)}
+  .sheet ul.acc li.todo::before{content:"\2610";position:absolute;left:0;color:#94a3b8}
+  .sheet ul.acc li .ev{display:block;font-size:11px;color:var(--green)}
+  .sheet .rv{background:var(--soft);border-left:3px solid #94a3b8;padding:8px 12px;border-radius:0 6px 6px 0;font-size:12.5px;color:#475569}
+  .sheet .prompt{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:10px 12px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;margin-top:6px}
+  .btn{background:var(--green);color:#fff;border:0;border-radius:7px;padding:7px 14px;font-size:12.5px;font-weight:600;cursor:pointer;margin-top:8px}
+  .x{float:right;cursor:pointer;color:#94a3b8;font-size:20px;line-height:1;border:0;background:0}
+  .foot{margin-top:16px;padding-top:10px;border-top:1px solid var(--line);font-size:11.5px;color:#94a3b8}
+  @media(max-width:900px){.wrap{padding:10px}.grid2{grid-template-columns:1fr}.hero .row{gap:12px}.board{gap:6px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <div class="row">
+      <div style="flex:2;min-width:280px">
+        <h1>dev-together · 2026-08-04</h1>
+        <div class="north"><b>北极星：</b>agent 开发自举 + 企业自助 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。</div>
+      </div>
+      <div class="prog"><div class="lab"><span>main 全绿 → canary 放行(#189 收口, Allen 轨道)</span><span>整合分支 37 commits: supervisor-death 竞态已治愈(persistence_boundary 族四连 b8bdfe808→8bb1dbe47, 0 disconnect storm, baseline-proven 分支引入后 cure); 回归测试绿(trigger 修 BEFORE INSERT OR UPDATE); 剩 3 残量单独跑全绿(suite-context flake 分类中, syncthing 机器负载噪声已移除 08-04)。今日闸 = 一次完整 mix precommit 诚实绿 → cap×wipe semantic rebase → push/PR/merge。</span></div><div class="bar"><i style="width:90%"></i></div><div class="lab" style="margin-top:6px"><span>企业自助: Group-A URI 通用分享(jjkysy)</span><span>A1–A5 八条原语全部闭合: A5 #1619 匿名分享 08-04 10:32 入 main(129b2facf, codex 评审 MERGE-WITH-NITS, 4 follow-ups 立案为 Group-B 前置); 唯一开放项(匿名页产品级渲染组件)已裁决归 Group B。下一条 = Group-B 接线(kanban 纯化 #1474)。</span></div><div class="bar b"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>git-provider 凭据模型(gaga)</span><span>Forgejo Git Provider V1(#1643) + 错误分类(#1668, 4359f4a6e) + B2′ 路线拍板落地(#1688, 8ad5d3795) —— 08-03 全部入 main, 凭据模型线收口。</span></div><div class="bar b"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>Agent SSH 凭据 B2′ + 撤销面(allen/gaga)</span><span>#1688(User SSH 身份 + 物化进 agent, 08-03 10:16) + #1693(撤销即擦除 :cap_revoked → wipe, 08-03 12:47)双入 main —— 撤销不即擦除窗口 08-03 关闭(ab12c63da)。</span></div><div class="bar b"><i style="width:100%"></i></div><div class="lab" style="margin-top:6px"><span>MFU 产品线(ruihua, 跨 repo)</span><span>#1586(07-29) + #1618(07-31)入 main; #1676(07-31)迁出至 Forgejo Prototype/mfu —— 独立 repo 产品线, 仍属 ezagent 工作(Allen 08-03), 本 board 继续跟踪; v0.15 landing package 续作在 Prototype/mfu 推进。</span></div><div class="bar b"><i style="width:70%"></i></div><div class="lab" style="margin-top:6px"><span>C8 v5 use-side Kind-mailbox seal(暂缓)</span><span>spec 收敛 + codex 评审 + 修订完成; DEV 继续暂缓至 CI 隔离整合落地, 避免并发返工。</span></div><div class="bar b"><i style="width:30%"></i></div></div>
+    </div>
+    <div class="row" style="margin-top:12px"><div class="eff"><div><b>37.3h<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑37</span></b><span>08-03 活跃工时(git下界) · 昨 0.5h</span></div><div><b>8<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑7</span></b><span>08-03 merged PR · 昨 1</span></div><div><b>0.23<span style="color:#4ade80;font-size:11px;font-weight:700;margin-left:5px;vertical-align:1px">↑0.23</span></b><span>08-03 折算人月(160h) · 昨 0.00</span></div><div><b>#1693 入 main</b><span>撤销即擦除: :cap_revoked → GitIdentityRuntime.wipe(allen/cc · codex 执行) —— ab12c63da, 撤销不即擦除窗口关闭</span></div><div><b>#1688 入 main</b><span>Agent SSH 凭据 B2′: User SSH 身份 + 物化进 agent(gaga) —— 8ad5d3795</span></div><div><b>#1619 入 main</b><span>share-A5 匿名分享 link_anon(jjkysy) —— 129b2facf, Group-A 八条原语闭合</span></div><div><b>整合分支 +37</b><span>persistence_boundary 族四连(8bb1dbe47) —— supervisor-death 竞态修复, 回归测试绿, 待一次完整 precommit</span></div><div><b>文档 ×3</b><span>#1690 board+tasks 回填 · #1691 skill 改名 · #1692 spec 保留(allen) —— 均入 main</span></div><div><b>决策 ×6</b><span>隔离修复=整合分支(actor/沙箱+persistence_boundary) · kimi/codex 经 omp 派发 / sonnet 跑闸 · 旧 worktree &gt;2wk 退休 · syncthing 移除(08-04) · ruihua 留板跨 repo · 否 CI-retry stopgap</span></div></div></div>
+    <div class="src">总效能来源：08-03 实测 pr_session_hours.py(git-hours 下界 · ~1min 可复算); &#x27;Allen Woods&#x27; 作者=协调 agent 墙钟非人力; 当日产出或次日才合入、此法略低估。入 main 条目均 git 实证: #1688 8ad5d3795(10:16) · #1691 25aec158b(11:16) · #1692 1600c3fdc(11:47) · #1693 ab12c63da(12:47) · #1690 2a6b0579a(13:54) · #1619 129b2facf(08-04 10:32); 整合分支 37 commits 止于 8bb1dbe47(08-03 17:27)。</div>
+  </div>
+  <div><div class="deploy"><div><span class="s">canary</span>⏳ 待整合分支 precommit 绿 + 合入 → main 真绿后放行。当前 main=129b2facf(#1619 已入, Group-A 闭合); auto-reflow 已移除(#222, 07-31), 数据同步改手动。</div><div><span class="s">beta</span>⏳ 待 canary 通过后推进(deploy 流单独推 pointer, 不由 dev-together 合入)。</div><div><span class="s">stable</span>⏳ 待 canary 通过后推进。</div></div></div>
+  <div class="risk"><b>风险：</b>🔴 整合分支 precommit 闸(唯一关键路径): 37 commits(supervisor-death 竞态已治愈), 但一次完整 mix precommit 仍未出 —— 3 残量单独跑全绿、全套连跑轮换红疑似 suite-context 机器负载噪声(syncthing 已移除 08-04); 先诚实分类(噪声 vs demonstrated), 只修整合态失败, 不 mask、不拆回源 PR。绿前不 push/PR/merge。<br>🟡 #1684 仍 OPEN: 已被整合分支 subsumed —— 合入后评论注明最终 main merge SHA 再关闭, 不留重复 open PR。<br>🟡 撤销完整性 follow-up #1694(冷成员 remove 跳过撤销 + 在途 absorb 复活回 roster): 与 #1684 per-grant revocation 同域, 待整合线落地后排期(挂账不丢)。<br>🟢 C8 v5 继续暂缓(spec 就绪无返工风险); Group-B 与整合分支无并发面(URI-share/kanban 与 CI 隔离正交); MFU 独立 repo 不占 main 闸。</div>
+  <div class="legend">人：<span class="lg"><span class="odot" style="background:#2563eb"></span>Allen 轨道</span> <span class="lg"><span class="odot" style="background:#65a30d"></span>jjkysy</span> <span class="lg"><span class="odot" style="background:#7c3aed"></span>gaga</span> <span class="lg"><span class="odot" style="background:#db2777"></span>ruihua</span>　·　卡片 = 一任务；☐/☑ = 验收（plan 写 · review 勾）；停在非「完成」列 = 明日结转</div>
+  <div class="board">
+    <div class="colwrap"><div class="colhead c-plan">计划 <span class="cnt">2</span></div><div class="cell"><div class="card" style="--pc:#2563eb"><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">C8 v5 use-side Kind-mailbox seal / pid 纪律</div><div class="g">use 侧 Kind-mailbox 封口 + pid 纪律</div><div class="accm"><span class="d">☑</span> 1/2 验收 · <span style="color:var(--red)">DEV 暂缓至 CI 整合落地</span></div><div class="meta"><span class="pill pr-draft">feat/v5-use-side-mailbox</span><span class="pill carry">结转昨日</span><span class="pill dep">task:c8-mailbox-seal</span><span class="pill more">详情</span></div><div class="detail" data-title="C8 v5 use-side Kind-mailbox seal / pid 纪律" data-who="Allen 轨道 · v5 use 侧 · 暂缓" data-acc='[[&quot;done&quot;, &quot;spec 收敛 + codex 对抗评审 + 修订&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;DEV 启动&quot;, &quot;暂缓中&quot;]]' data-review="spec 已收敛 + codex 评审 + 修订完成。当前焦点在 CI 隔离整合; 启动待整合分支合入, 避免并发返工。" data-prompt="&gt; 启动前置: `ci-isolation-integration` 已合入 main(避免与 CI 隔离整改并发返工)。
+&gt; 启动时按序:
+&gt;
+&gt; (1) branch `feat/v5-use-side-mailbox`(+32/−23 vs main) rebase 到当时 main;
+&gt; `mix ci.fast` + 私有分区 `mix ci.local` 全绿(封口 ACTIVE, 0 UnsanctionedMailboxError)。
+&gt; (2) 三块验收逐条做(见上方验收区): B1 合并序回归(snapshot commit → identity
+&gt; dual-write → projection emit → sealed self-signal → cascade 五步顺序断言) /
+&gt; B2 owner-gated resolver(Codex-sidecar 两个 status 读恢复 OwnerGatedExecutor 语义
+&gt; + 跨 workspace 回归) / 封口 fail-before-pass-after(fixture raw send → dev/test
+&gt; raise, prod 遥测+丢弃)。
+&gt; (3) 完整 dev spec(codex 评审两 blocker + 修订 + 合并计划)原存本地 scratchpad、
+&gt; 未入 git —— 派发时由 lead 从 codex 评审记录重附全文, 不凭记忆重建 spec。"></div></div><div class="card" style="--pc:#65a30d"><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">Group-B 接线前置: A5 四 follow-ups + kanban 纯化 #1474</div><div class="g">Group-A 闭合后 Group-B 前置 blockers 立案 → #1474 从 draft 起 plan</div><div class="accm"><span class="o">☐</span> 0/4 验收</div><div class="sched"><span class="cal">🗓</span>2026-08-04 → 2026-08-04</div><div class="meta"><span class="pill dep">task:group-b-wiring</span><span class="pill more">详情</span></div><div class="detail" data-title="Group-B 接线前置: A5 四 follow-ups + kanban 纯化 #1474" data-who="jjkysy 轨道 · Group-B · 新开" data-acc='[[&quot;todo&quot;, &quot;A5 四 follow-ups(MERGE-WITH-NITS 评审产物, 含 issue #1694)逐条立案 handoff&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;匿名页产品级渲染组件接线(归 Group B, 已裁决)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;kanban 纯化 #1474 从 draft 起 plan + 切片(单日粒度)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;每片单 PR 可验收, gate 绿&quot;, &quot;&quot;]]' data-review="A5 #1619 codex 评审 MERGE-WITH-NITS: 4 条 follow-ups 立案为 Group-B 接线前置 blockers(含 issue #1694 冷成员撤销面 F2 —— 与 #1684 per-grant revocation 同域, 注意与整合线的顺序); 匿名页产品级渲染组件(开发级 JSON 占位 → 插件组件)已裁决归 Group B; #1474 kanban 纯化自 draft 起 plan(Group-A 八条原语闭合后够格开工)。" data-prompt="&gt; Group-A 八条原语已闭合(#1619 merged 129b2facf)。Group-B 开工前置 = 三块:
+&gt;
+&gt; (1) **A5 四 follow-ups 立案**: 从 #1619 的 codex MERGE-WITH-NITS 评审 + return doc
+&gt; (`docs/together/2026-08-03/returns/share-a5-anon-link.md`)取四条 follow-ups, 逐条写成
+&gt; 独立 handoff(单 PR 可验收, 走 clarify_first → build); issue #1694(冷成员撤销面 F2)
+&gt; 必须包含 —— 与 #1684 per-grant revocation 同域, 立案时不排期到整合线合入前。
+&gt; (2) **匿名页产品级渲染组件**: 匿名页当前渲染开发级 JSON 占位, 产品级应渲染插件自己的
+&gt; 组件(已裁决归 Group B); 设计接 A5 的资源投影 + born-with 读钥匙, 不另造读路径。
+&gt; (3) **kanban 纯化 #1474**: 从 draft 起写 plan, 切成单日粒度模块(依赖序), 每片独立
+&gt; PR、gate 绿、cc 评审合入。
+&gt; 每片落地后在 ezagent board `group-b-wiring` 卡回勾并附 PR/issue 链接。"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-wip">进行中 <span class="cnt">2</span></div><div class="cell"><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">身份平面 #189 收口 → main 真绿 → canary 放行</div><div class="g">轮换 CI 隔离 flake 系统性修复 → main 真绿 → canary 放行</div><div class="accm"><span class="d">☑</span> 3/8 验收 · <span style="color:var(--red)">闸: 一次完整 mix precommit</span></div><div class="sched late"><span class="cal">🗓</span>2026-08-02 → 2026-08-03</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-draft">integrate/ci-isolation-dod24-20260803</span><span class="pill carry">结转昨日</span><span class="pill dep">task:ci-isolation-integration</span><span class="pill more">详情</span></div><div class="detail" data-title="身份平面 #189 收口 → main 真绿 → canary 放行" data-who="Allen 轨道 · #189 收口 · CI 隔离整合分支(ahead 37)" data-acc='[[&quot;done&quot;, &quot;五块折入 + persistence_boundary 族四连, HEAD 8bb1dbe47(ahead 37), diff --check 过&quot;, &quot;git log 实证; worktree 仅 5 文件未提交 diff + 回归测试&quot;], [&quot;done&quot;, &quot;supervisor-death 竞态修复实证: baseline-proven 分支引入 → 0 disconnect storm&quot;, &quot;persistence_boundary 族四连, 08-03 17:27 止&quot;], [&quot;done&quot;, &quot;回归测试绿(1/0, trigger 修 BEFORE INSERT OR UPDATE); 3 残量单独跑绿&quot;, &quot;sandbox_owner_persist_race_test&quot;], [&quot;todo&quot;, &quot;一次完整 mix precommit 于整合分支(诚实绿; 红则诚实分类噪声 vs demonstrated, 只修整合态失败)&quot;, &quot;今日闸 —— syncthing 已移除 08-04&quot;], [&quot;todo&quot;, &quot;cap×wipe semantic rebase(#1684 per-grant 撤销 × #1693 wipe 语义重叠, 合并前解)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;push + PR → 正常 merge → origin/main 含整合 HEAD; #1684 标 subsumed 关闭&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;#189 test-defects E/F/D 在整合后 main 验证绿(07-30 结转, 发布闸剩余项)&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;main 真绿 → canary 放行评估&quot;, &quot;&quot;]]' data-review="supervisor-death 竞态已治愈: persistence_boundary 族四连(b8bdfe808→8bb1dbe47)把 Kind lifecycle 收容到 sandbox owner + session_complete? 结构性 bound + registry cache heal —— 0 disconnect storm, baseline-proven 分支引入后 cure; 回归测试钉住沙箱竞态(sandbox_owner_persist_race_test, trigger 修 BEFORE INSERT OR UPDATE)。剩 3 残量单独跑全绿(suite-context flake 分类中, syncthing 已移除 08-04)。worktree: 5 文件未提交 diff + 回归测试, 无 erl_crash.dump。" data-prompt="完整 continuation handoff(含当前状态/证据/DoD 七条)见
+`docs/together/2026-08-03/handoffs/integrated-ci-fixes-continuation.md`(随 PR #1689
+入 main)。核心约束:
+
+&gt; 确认目标 worktree `/Users/h2oslabs/Workspace/ezagent/.worktrees/integrate-ci-isolation-dod24-20260803`
+&gt; HEAD=5cfb64256 未变且 clean; 确认无残留 `mix precommit`/BEAM 子进程; 从该 worktree 跑**恰好一次**
+&gt; 完整 `mix precommit` 并留存完整 exit code/log; 红则系统性调试、只修整合态失败, 不 mask、不拆回源 PR;
+&gt; 绿后 push → 一个 PR → 正常 merge → 核对 origin/main; 再把 #1684 标 subsumed 关闭。
+&gt; 另: 合入后顺手验证 #189 test-defects E/F/D(见验收第 5 条, 07-30 结转)。"></div></div><div class="card" style="--pc:#db2777"><div class="owner"><span class="odot" style="background:#db2777"></span>ruihua</div><div class="t">MFU 产品线 —— feat(mvo-atlas): playable organization builder loop(Prototype/mfu, 跨 repo)</div><div class="g">v0.15 续作已合并完毕(ruihua 08-04 回报); 接棒可玩组织搭建循环: MVO 图鉴 + 世界集卡</div><div class="accm"><span class="d">☑</span> 1/3 验收</div><div class="sched"><span class="cal">🗓</span>2026-08-04 → 待定</div><div class="meta"><span class="pill dep">task:mvo-atlas</span><span class="pill more">详情</span></div><div class="detail" data-title="MFU 产品线 —— feat(mvo-atlas): playable organization builder loop(Prototype/mfu, 跨 repo)" data-who="ruihua 轨道 · Prototype/mfu · feat/mvo-atlas-playable-v01" data-acc='[[&quot;done&quot;, &quot;资源面板 MVO 图鉴功能&quot;, &quot;完成待合并(ruihua 08-04)&quot;], [&quot;todo&quot;, &quot;MVO 图鉴 concept demo(孵化器/创投展示)&quot;, &quot;进行中&quot;], [&quot;todo&quot;, &quot;世界 tab 集卡功能&quot;, &quot;方案设计中&quot;]]' data-review="分支 https://code.hyprial.com/Prototype/mfu/src/branch/feat/mvo-atlas-playable-v01(ruihua 08-04 回报); 两块: ① 资源面板 MVO 图鉴(真实订单验证过的 MVO 模板库)功能已完成待合并, 在做给孵化器/创投展示的 concept demo —— 收集 MVO 服务孵化器/创投员工 KPI; ② 世界 tab 集卡(提升用户主动支持其他企业的活跃度)方案设计中。" data-prompt="&gt; 在 Forgejo `Prototype/mfu` 分支 `feat/mvo-atlas-playable-v01` 继续（v0.15 续作
+&gt; mfu-v015 已合并完毕，本卡为其接棒；勿在 ezagent 内改 mfu 代码）。两块工作，
+&gt; 每块独立提交并在 ezagent board 本卡回勾并附 Prototype/mfu PR 链接：
+&gt; ① MVO 图鉴：功能已完成，待合并到总 demo；当前在做面向孵化器/创投等企业用户的
+&gt;    concept demo，核心卖点 = 收集 MVO 不是为了好玩，而是帮助孵化器/创投员工
+&gt;    更好地完成自己的 KPI。
+&gt; ② 世界 tab 集卡功能：提升用户在世界中主动为其他企业提供支持的活跃度；
+&gt;    当前为方案设计阶段。
+&gt; 范围口径 = Prototype/mfu 内 living doc；ezagent board 按 Allen 08-03 裁定
+&gt; 继续跨 repo 跟踪该产品线（不标&quot;已离开/下线&quot;）。"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-rev">待评审 / 验收 <span class="cnt">1</span></div><div class="cell"><div class="card late" style="--pc:#2563eb"><span class="late-rib">延期 1d</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">per-grant cap 撤销 (#1684) —— 折入整合分支</div><div class="g">clean-slate per-grant revocation 随整合分支一次合入; #1684 标 subsumed</div><div class="accm"><span class="d">☑</span> 2/4 验收</div><div class="sched late"><span class="cal">🗓</span>2026-07-31 → 2026-08-03</div><div class="decomp">延期 → 建议按依赖拆成日粒度子模块 (B1/B2/B3…), 每块 started/est_done 顺延一天</div><div class="meta"><span class="pill pr-open">#1684 open</span><span class="pill pr-draft">feat/p2-per-cap-revocation</span><span class="pill dep">dep: 整合分支 precommit + merge</span><span class="pill dep">task:per-grant-cap-revocation</span><span class="pill more">详情</span></div><div class="detail" data-title="per-grant cap 撤销 (#1684) —— 折入整合分支" data-who="Allen 轨道 · cap 撤销 / DeliveryOutbox · 实现: kimi(agent)" data-acc='[[&quot;done&quot;, &quot;#1684 clean-slate per-grant revocation 实现(head dbdf4ad76, kimi 执行)&quot;, &quot;&quot;], [&quot;done&quot;, &quot;折入整合分支(merge 8bd91ec6a); parity-test 冲突按已定删除保留&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;整合 PR 合入 main → #1684 评论标 subsumed(最终 main merge SHA)并关闭&quot;, &quot;&quot;], [&quot;todo&quot;, &quot;DeliveryOutbox(#1670 plan)实现切片 handoff → plan(整合落地后)&quot;, &quot;&quot;]]' data-review="实现本体已由 kimi 完成并折入整合分支(merge 8bd91ec6a); #1684 仍 OPEN, 待整合 PR 合入 main 后评论注明最终 merge SHA 并标 subsumed 关闭。DeliveryOutbox(#1670 final plan, merged 07-31)实现切片待整合落地后排期。" data-prompt="&gt; 整合合入后的 reconcile + 下一增量, 两步(实现本体已由 kimi 完成并折入整合分支,
+&gt; 见 `ci-isolation-integration`):
+&gt;
+&gt; (1) 待整合 PR 合入 main 后: 核对 `origin/main` 含 merge 8bd91ec6a 折入的 per-grant
+&gt; revocation 全部改动; 然后在 #1684 评论 &quot;subsumed by &lt;最终 main merge SHA&gt;&quot; 并关闭,
+&gt; 不留重复 open PR(Close PR state 规则)。
+&gt;
+&gt; (2) DeliveryOutbox 实现切片: 以 #1670 final plan(merged 07-31)收敛的五问为准,
+&gt; 切第一片 handoff —— 单 PR 可验收粒度, 走 clarify_first → build; 派发前与 lead
+&gt; 对齐切片边界, 不与 `ci-isolation-integration` 在飞期间并发改同面。"></div></div></div></div>
+    <div class="colwrap"><div class="colhead c-done">完成 · 昨日 08-03 <span class="cnt">3</span></div><div class="cell"><div class="card done" style="--pc:#2563eb"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#2563eb"></span>Allen 轨道</div><div class="t">撤销即擦除 follow-up —— feat/ssh-revoke-wipe</div><div class="g">:cap_revoked → GitIdentityRuntime.wipe hook, 补齐 #1688 撤销面</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="sched"><span class="cal">🗓</span>2026-08-03 → 2026-08-04</div><div class="meta"><span class="pill pr-merged">#1693 merged</span><span class="pill pr-draft">feat/ssh-revoke-wipe</span><span class="pill dep">task:ssh-revoke-wipe</span><span class="pill more">详情</span></div><div class="detail" data-title="撤销即擦除 follow-up —— feat/ssh-revoke-wipe" data-who="allen/cc 轨道 · SSH 凭据撤销面 · 执行: codex(agent)" data-acc='[[&quot;done&quot;, &quot;K3 — 钉住 Sandbox 两处 destroy 入口的 git-identity 清理&quot;, &quot;84dba69b6&quot;], [&quot;done&quot;, &quot;K5+K6 — 指纹值钉死 + read_ssh_public_key value 走私防护&quot;, &quot;85fb6414e&quot;], [&quot;done&quot;, &quot;K4 — spec/moduledoc 已被取代说法订正&quot;, &quot;868ba5cba&quot;], [&quot;done&quot;, &quot;cc 评审 → 合入 main(#1688 已落地, 窗口开着, 优先跟上)&quot;, &quot;merged 08-03 12:47 CST, ab12c63da (#1693)&quot;]]' data-review="#1693 已入 main(08-03 12:47 CST, ab12c63da) —— 撤销不即擦除窗口自此关闭; 回勾 agent-ssh-credential-b2 验收第 4 条。" data-prompt="&gt; 评审 + 合入 `feat/ssh-revoke-wipe`(head 868ba5cba; K3/K4/K5+K6 已由 codex 按子步
+&gt; 执行完毕)。步骤与闸:
+&gt;
+&gt; (1) cc 评审三个关注点: ① wipe 触发面是否覆盖所有物化凭据的 destroy 路径
+&gt; (Sandbox 两处 destroy 入口, K3 钉住); ② `:cap_revoked` 到达时序 —— 撤销与 wipe
+&gt; 的原子/顺序保证(撤销先入 ledger 再触发 wipe, 不允许 wipe 先于撤销可见);
+&gt; ③ 指纹值钉死 + `read_ssh_public_key` value 走私防护(K5+K6)无绕过面。
+&gt; (2) 评审过后: rebase 到含 #1688 的当前 main → 根目录 precommit 绿 → 开 PR →
+&gt; 正常 merge(不打补丁式重试、不 mask)。
+&gt; (3) 合入后回勾 `agent-ssh-credential-b2` 验收第 4 条 —— 撤销不即擦除窗口自此关闭,
+&gt; 并在 08-03 board 把本卡移入 DONE。"></div></div><div class="card done" style="--pc:#65a30d"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#65a30d"></span>jjkysy</div><div class="t">Group-A URI 通用分享 —— A4-2 收口 + P4 关闭</div><div class="g">Group-A 八条原语全部闭合 → Group-B 可开工</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="sched"><span class="cal">🗓</span>2026-07-26 → 2026-07-29</div><div class="meta"><span class="pill carry">结转昨日</span><span class="pill dep">task:group-a-uri-share</span><span class="pill more">详情</span></div><div class="detail" data-title="Group-A URI 通用分享 —— A4-2 收口 + P4 关闭" data-who="jjkysy 轨道 · socialware URI-share" data-acc='[[&quot;done&quot;, &quot;#1594(A1 bearer token) + #1606(A2-2 grantees_of) 复审合入 —— 07-30 收尾项&quot;, &quot;merged 07-30: #1594 14:52 CST / #1606 20:47 CST&quot;], [&quot;done&quot;, &quot;#1655 — 在途 cap 纳入投影 + 撤销完整性(#1665 安全修复) + 反向索引补齐&quot;, &quot;merged 08-03 09:43 CST, da8a26bc1&quot;], [&quot;done&quot;, &quot;A4-2 甲方案拍板(forward effective_caps, low-freq) → P4 关闭&quot;, &quot;08-03 决策&quot;], [&quot;done&quot;, &quot;Group-A 下一增量(handoff → plan; 候选 #1619 A5 匿名 design-first 待批)&quot;, &quot;#1619 A5 匿名分享 merged 08-04 10:32(129b2facf, MERGE-WITH-NITS) —— 八条原语闭合; 下一增量 = Group-B 接线, 已移交 group-b-wiring 卡&quot;]]' data-review="A1/A2-1/A3/A2-2/A4-1/share-config(#1594/#1596/#1597/#1606/#1611/#1612) + A4-2(#1655, 08-03 09:43, da8a26bc1)此前全入; A5 #1619 匿名分享 merged 08-04 10:32 CST(129b2facf) —— codex 评审 MERGE-WITH-NITS, 4 条 follow-ups 立案为 Group-B 接线前置 blockers(含 issue #1694); 匿名页产品级渲染组件已裁决归 Group B。Group-A 八条原语闭合 → #1474 够格开工, 移交今日 group-b-wiring 卡。" data-prompt="上方全文（Allen 决策 D1–D3 + MUST-FIX M1–M4 + HARDENING H1–H3 + Per-PR map）即为 07-29
+派发的原始开工 prompt —— 一次写成, 不重生成。
+
+**进度追记(2026-08-03)**: M/H 修复随各 PR 复审合入; 07-30 收尾项 **#1594(A1)/**
+**#1606(A2-2)** 均于 07-30 入 main(14:52 / 20:47 CST); A4-2/#192 roster 收敛(在途
+cap 纳入投影 + #1665 write-after-leave 撤销完整性安全修复 + 反向索引补齐)今晨以
+**#1655** 入 main(da8a26bc1)。**#1620**(A4-2 roster design draft)随 #1606 合入
+base 分支被删而连带关闭, 由 #1655 实现取代; **#1619**(A5 匿名 link_anon)仍 OPEN
+design-first 待批。Allen 拍板 **A4-2 甲**(forward effective_caps, 低频路径) →
+**P4 关闭**。
+
+**进度追记(2026-08-04)**: **#1619 A5 匿名分享 merged 08-04 10:32 CST(129b2facf)**
+—— codex 评审 **MERGE-WITH-NITS**: 4 条 follow-ups 立案为 **Group-B 接线前置**
+blockers(含 issue **#1694** 冷成员撤销面 F2, 与 #1684 per-grant revocation 同域);
+唯一开放项(匿名页开发级 JSON 占位 → 产品级插件组件渲染)已裁决**归 Group B**。
+**Group-A 八条原语闭合** → #1474 kanban 纯化够格开工, 移交 `group-b-wiring` 卡。"></div></div><div class="card done" style="--pc:#7c3aed"><span class="done-rib">DONE</span><div class="owner"><span class="odot" style="background:#7c3aed"></span>gaga</div><div class="t">Agent SSH 凭据 B2′ (#1688)</div><div class="g">User SSH 身份 + 物化进 agent —— 已入 main; 撤销面随 #1693 关闭</div><div class="accm"><span class="d">☑</span> 已验收 · 4/4</div><div class="sched"><span class="cal">🗓</span>2026-08-01 → 2026-08-03</div><div class="meta"><span class="pill pr-merged">#1688 merged</span><span class="pill pr-draft">feat/agent-ssh-credential</span><span class="pill dep">task:agent-ssh-credential-b2</span><span class="pill more">详情</span></div><div class="detail" data-title="Agent SSH 凭据 B2′ (#1688)" data-who="gaga 轨道 · Agent SSH 凭据" data-acc='[[&quot;done&quot;, &quot;B2′ 实现 + PR open&quot;, &quot;feat/agent-ssh-credential&quot;], [&quot;done&quot;, &quot;私钥明文形态决策: Allen APPROVED&quot;, &quot;08-03 拍板&quot;], [&quot;done&quot;, &quot;cc 评审通过 → rebase main → gate+merge&quot;, &quot;merged 08-03, 8ad5d3795&quot;], [&quot;done&quot;, &quot;撤销即擦除 follow-up 按序合入(allen/cc 轨道, codex 执行)&quot;, &quot;#1693 merged 08-03 12:47, ab12c63da —— 撤销不即擦除窗口关闭&quot;]]' data-review="#1688 入 main(08-03 10:16 CST, 8ad5d3795); 撤销即擦除 follow-up #1693 已合(08-03 12:47, ab12c63da) —— 撤销窗口关闭, 本卡四验收全过, B2′ 凭据线收口。" data-prompt="&gt; B2′ 已入 main(#1688, 8ad5d3795)。剩余动作 = 收口验证 + follow-up 跟入:
+&gt;
+&gt; (1) 在含 #1688 的 main 上核对: agent 物化 User SSH 身份后能以用户身份对 Forgejo
+&gt; 完成 git 操作(clone/push 冒烟), 私钥明文形态与 #1677 五形态对比结论 + Allen
+&gt; 08-03 APPROVED 口径一致。
+&gt; (2) 推动 `ssh-revoke-wipe`(allen/cc 轨道, codex 执行)评审合入 —— wipe 未合前,
+&gt; agent 物化凭据存在撤销不即擦除窗口; 该窗口随 follow-up 合入关闭, 届时回勾
+&gt; 本 task 验收第 4 条。"></div></div></div></div>
+  </div>
+  <div class="review">
+    <h2>昨日复盘（08-03） · 卡片验收结果 + 方法/事故</h2>
+    <div class="grid2">
+      <div class="good"><b>方法沉淀</b><br>• supervisor-death 竞态归因到结构并 cure: persistence_boundary 族把 Kind lifecycle 收容到 sandbox owner + session_complete? 结构性 bound + registry cache heal(b8bdfe808→bc88ac7c3→6cb3e69ef→8bb1dbe47) —— 0 disconnect storm, baseline-proven 分支引入后治愈; 回归测试钉住触发点(BEFORE INSERT OR UPDATE trigger 修)。<br>• 噪声与红分类纪律: 3 残量单独跑全绿 → 全套连跑轮换红先怀疑 suite-context 机器负载(syncthing 移除 08-04), 不预判 demonstrated failure; 一次完整 precommit 前不 push/PR/merge。<br>• 评审 MERGE-WITH-NITS 立案制: A5 codex 评审 4 条 follow-ups 不吞进合并, 立案为 Group-B 接线前置 blockers(含 issue #1694), 挂账不丢。<br>• 机器闸口径更正: 本仓 PR CI 只跑 gate 不跑 ExUnit —— &#x27;CI 绿&#x27; ≠ &#x27;测试跑过&#x27;; 测试证据以本地 per-app 实跑 + return doc 为准(#1619 return doc 明确记录)。</div>
+      <div class="inc"><b>风险/事故</b><br>• 整合分支 08-03 未出一次完整 precommit 诚实绿 —— 3 残量(单独绿)疑似 suite-context 机器负载噪声, syncthing 已于 08-04 移除, 今日重跑分类。<br>• #1619 A5 合并当天 codex 评审 MERGE-WITH-NITS —— 4 follow-ups 立案为 Group-B 接线 blockers, 不阻塞合并但阻塞 Group-B 开工。</div>
+    </div>
+    <table><tr><th>人</th><th>交付</th><th>验收结果</th><th>结转今日</th></tr><tr><td>allen</td><td>整合分支 persistence_boundary 族四连(b8bdfe808→8bb1dbe47) —— supervisor-death 竞态修复 + 回归测试绿</td><td>0 disconnect storm; baseline-proven 分支引入已治愈; 3 残量单独绿</td><td>一次完整 precommit 闸 → cap×wipe rebase → merge</td></tr><tr><td>allen</td><td>#1690 board+tasks 回填 · #1691 skill 改名 · #1692 spec 保留 · #1693 revoke-wipe 合入</td><td>四 PR 入 main(2a6b0579a / 25aec158b / 1600c3fdc / ab12c63da)</td><td>—</td></tr><tr><td>jjkysy</td><td>#1655(晨) A4-2 收口 + #1619 A5 匿名分享(设计 v4 获批 → 资源投影 + born-with 读钥匙)</td><td>#1655 已合(da8a26bc1); #1619 评审 MERGE-WITH-NITS → merged 08-04 10:32(129b2facf) —— Group-A 八条原语闭合</td><td>Group-B 接线前置(4 follow-ups + #1474)</td></tr><tr><td>gaga</td><td>#1668(晨) 错误分类 + #1688 SSH 凭据 B2′</td><td>双入 main(4359f4a6e / 8ad5d3795) —— 凭据模型 + SSH B2′ 双线收口</td><td>撤销面由 #1693(allen 轨道)关闭</td></tr></table>
+    <h3 style="font-size:14px;color:#374151;margin-top:14px">今日建议</h3>
+    <div style="font-size:12.5px;color:#475569">• 整合分支一次完整 mix precommit(诚实绿, syncthing 已移除) → 3 残量分类 → cap×wipe semantic rebase → push/PR/merge → #1684 标 subsumed 关闭 → main 真绿 → canary 放行评估。<br>• jjkysy: Group-B 接线前置 —— A5 四 follow-ups(含 #1694)立案 + 匿名页渲染组件 + #1474 plan。<br>• ruihua: MFU v0.15 续作(Prototype/mfu); C8 v5 继续暂缓; gaga 双线收口, 待排新增量。</div>
+  </div>
+  <div class="foot">一块 <b>plan+review 合一</b> 的活看板：顶部全局大局（目标·进度·总效能）常驻；卡片可点开看完整验收/复盘/prompt；底部复盘汇总。<b>确定性渲染</b>：board.yaml → board2html.py，样式只住模板。</div>
+</div>
+<div class="modal" id="modal">
+  <div class="sheet">
+    <button class="x" onclick="closeM()">×</button>
+    <h3 id="m-title"></h3><div class="who" id="m-who"></div>
+    <div class="sec">验收标准 / 结果</div><ul class="acc" id="m-acc"></ul>
+    <div class="sec">复盘 / 状态</div><div class="rv" id="m-rv"></div>
+    <div id="m-pw"></div>
+  </div>
+</div>
+<script>
+  var M=document.getElementById('modal');
+  function openM(d){
+    document.getElementById('m-title').textContent=d.dataset.title;
+    document.getElementById('m-who').textContent=d.dataset.who;
+    var acc=JSON.parse(d.dataset.acc||'[]'), ul=document.getElementById('m-acc'); ul.innerHTML='';
+    acc.forEach(function(a){var li=document.createElement('li');li.className=a[0];li.textContent=a[1];if(a[2]){var ev=document.createElement('span');ev.className='ev';ev.textContent=a[2];li.appendChild(ev);}ul.appendChild(li);});
+    document.getElementById('m-rv').textContent=d.dataset.review||'\u2014';
+    var pw=document.getElementById('m-pw');
+    if(d.dataset.prompt){pw.innerHTML='<div class="sec">\u5f00\u5de5 prompt</div><div class="prompt" id="m-prompt"></div><button class="btn" onclick="cp()">\u590d\u5236 prompt</button>';document.getElementById('m-prompt').textContent=d.dataset.prompt;}
+    else pw.innerHTML='';
+    M.classList.add('on');
+  }
+  function closeM(){M.classList.remove('on');}
+  function cp(){navigator.clipboard.writeText(document.getElementById('m-prompt').textContent);event.target.textContent='\u5df2\u590d\u5236 \u2713';}
+  document.querySelectorAll('.card').forEach(function(c){c.onclick=function(){var d=c.querySelector('.detail');if(d)openM(d);};});
+  M.onclick=function(ev){if(ev.target===M)closeM();};
+  document.addEventListener('keydown',function(ev){if(ev.key==='Escape')closeM();});
+</script>
+</body>
+</html>

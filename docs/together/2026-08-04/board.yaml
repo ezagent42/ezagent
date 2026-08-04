@@ -1,0 +1,239 @@
+# dev-together board.yaml — DISPLAY page for 2026-08-04.
+# Model: board for day N = PLAN(N) + DONE(N-1) + REVIEW(N-1).
+# Render: uv run --with pyyaml python board2html.py board.yaml board.html
+# Note: prev board = 2026-08-03(committed 2a6b0579a, #1690)。08-03 在飞七卡今日逐卡
+#       结转(git 实证): ssh-revoke-wipe(#1693 08-03 12:47 合入 → done) ·
+#       agent-ssh-credential-b2(#1688 已合 + wipe 关闭撤销窗口 → done) ·
+#       group-a-uri-share(#1619 08-04 10:32 合入, 八条原语闭合 → done) ·
+#       ci-isolation-integration(wip, 延 1d) · per-grant-cap-revocation(review, 延 1d) ·
+#       mfu-v015(wip, 延 6d) · c8-mailbox-seal(planned 暂缓)。
+# Note: owner 规则(Allen 08-03 裁定) —— 卡 owner 一律是绑定开发者/轨道
+#       (allen/jjkysy/gaga/ruihua); agent(codex/kimi/cc) 只记入 who/正文,
+#       永不做 owner, 也不进 people 图例。ssh-revoke-wipe = allen/cc 轨道(#1693 实证)。
+# Note: 本板通过 board2html 硬门渲染(无 --no-check): 每卡 task: <id> →
+#       docs/together/tasks/<id>.md(含非空、可粘贴执行的 '## Handoff prompt')。
+#       新卡 group-b-wiring 已建 task 文件; 五张结转卡 task 文件已同步进度
+#       (handoff prompt 只写一次, 不重生成)。
+
+date: "2026-08-04"
+prev_date: "08-03"
+north_star: "agent 开发自举 + 企业自助 —— 平台能被用来开发 agent、企业能自助开 workspace 跑 dev-loop。"
+
+progress:
+  - {label: "main 全绿 → canary 放行(#189 收口, Allen 轨道)", pct: 90, value: "整合分支 37 commits: supervisor-death 竞态已治愈(persistence_boundary 族四连 b8bdfe808→8bb1dbe47, 0 disconnect storm, baseline-proven 分支引入后 cure); 回归测试绿(trigger 修 BEFORE INSERT OR UPDATE); 剩 3 残量单独跑全绿(suite-context flake 分类中, syncthing 机器负载噪声已移除 08-04)。今日闸 = 一次完整 mix precommit 诚实绿 → cap×wipe semantic rebase → push/PR/merge。"}
+  - {label: "企业自助: Group-A URI 通用分享(jjkysy)", pct: 100, value: "A1–A5 八条原语全部闭合: A5 #1619 匿名分享 08-04 10:32 入 main(129b2facf, codex 评审 MERGE-WITH-NITS, 4 follow-ups 立案为 Group-B 前置); 唯一开放项(匿名页产品级渲染组件)已裁决归 Group B。下一条 = Group-B 接线(kanban 纯化 #1474)。"}
+  - {label: "git-provider 凭据模型(gaga)", pct: 100, value: "Forgejo Git Provider V1(#1643) + 错误分类(#1668, 4359f4a6e) + B2′ 路线拍板落地(#1688, 8ad5d3795) —— 08-03 全部入 main, 凭据模型线收口。"}
+  - {label: "Agent SSH 凭据 B2′ + 撤销面(allen/gaga)", pct: 100, value: "#1688(User SSH 身份 + 物化进 agent, 08-03 10:16) + #1693(撤销即擦除 :cap_revoked → wipe, 08-03 12:47)双入 main —— 撤销不即擦除窗口 08-03 关闭(ab12c63da)。"}
+  - {label: "MFU 产品线(ruihua, 跨 repo)", pct: 70, value: "#1586(07-29) + #1618(07-31)入 main; #1676(07-31)迁出至 Forgejo Prototype/mfu —— 独立 repo 产品线, 仍属 ezagent 工作(Allen 08-03), 本 board 继续跟踪; v0.15 landing package 续作在 Prototype/mfu 推进。"}
+  - {label: "C8 v5 use-side Kind-mailbox seal(暂缓)", pct: 30, value: "spec 收敛 + codex 评审 + 修订完成; DEV 继续暂缓至 CI 隔离整合落地, 避免并发返工。"}
+
+efficiency:
+  - {value: "37.3h", delta: "↑37", label: "08-03 活跃工时(git下界) · 昨 0.5h"}
+  - {value: "8", delta: "↑7", label: "08-03 merged PR · 昨 1"}
+  - {value: "0.23", delta: "↑0.23", label: "08-03 折算人月(160h) · 昨 0.00"}
+  - {value: "#1693 入 main", label: "撤销即擦除: :cap_revoked → GitIdentityRuntime.wipe(allen/cc · codex 执行) —— ab12c63da, 撤销不即擦除窗口关闭"}
+  - {value: "#1688 入 main", label: "Agent SSH 凭据 B2′: User SSH 身份 + 物化进 agent(gaga) —— 8ad5d3795"}
+  - {value: "#1619 入 main", label: "share-A5 匿名分享 link_anon(jjkysy) —— 129b2facf, Group-A 八条原语闭合"}
+  - {value: "整合分支 +37", label: "persistence_boundary 族四连(8bb1dbe47) —— supervisor-death 竞态修复, 回归测试绿, 待一次完整 precommit"}
+  - {value: "文档 ×3", label: "#1690 board+tasks 回填 · #1691 skill 改名 · #1692 spec 保留(allen) —— 均入 main"}
+  - {value: "决策 ×6", label: "隔离修复=整合分支(actor/沙箱+persistence_boundary) · kimi/codex 经 omp 派发 / sonnet 跑闸 · 旧 worktree >2wk 退休 · syncthing 移除(08-04) · ruihua 留板跨 repo · 否 CI-retry stopgap"}
+efficiency_source: "08-03 实测 pr_session_hours.py(git-hours 下界 · ~1min 可复算); 'Allen Woods' 作者=协调 agent 墙钟非人力; 当日产出或次日才合入、此法略低估。入 main 条目均 git 实证: #1688 8ad5d3795(10:16) · #1691 25aec158b(11:16) · #1692 1600c3fdc(11:47) · #1693 ab12c63da(12:47) · #1690 2a6b0579a(13:54) · #1619 129b2facf(08-04 10:32); 整合分支 37 commits 止于 8bb1dbe47(08-03 17:27)。"
+
+deploy:
+  - {env: "canary", state: "⏳ 待整合分支 precommit 绿 + 合入 → main 真绿后放行。当前 main=129b2facf(#1619 已入, Group-A 闭合); auto-reflow 已移除(#222, 07-31), 数据同步改手动。"}
+  - {env: "beta", state: "⏳ 待 canary 通过后推进(deploy 流单独推 pointer, 不由 dev-together 合入)。"}
+  - {env: "stable", state: "⏳ 待 canary 通过后推进。"}
+
+risks:
+  - "🔴 整合分支 precommit 闸(唯一关键路径): 37 commits(supervisor-death 竞态已治愈), 但一次完整 mix precommit 仍未出 —— 3 残量单独跑全绿、全套连跑轮换红疑似 suite-context 机器负载噪声(syncthing 已移除 08-04); 先诚实分类(噪声 vs demonstrated), 只修整合态失败, 不 mask、不拆回源 PR。绿前不 push/PR/merge。"
+  - "🟡 #1684 仍 OPEN: 已被整合分支 subsumed —— 合入后评论注明最终 main merge SHA 再关闭, 不留重复 open PR。"
+  - "🟡 撤销完整性 follow-up #1694(冷成员 remove 跳过撤销 + 在途 absorb 复活回 roster): 与 #1684 per-grant revocation 同域, 待整合线落地后排期(挂账不丢)。"
+  - "🟢 C8 v5 继续暂缓(spec 就绪无返工风险); Group-B 与整合分支无并发面(URI-share/kanban 与 CI 隔离正交); MFU 独立 repo 不占 main 闸。"
+
+people:
+  - {id: "allen", name: "Allen 轨道", track: "CI 隔离整合 / main 真绿 / cap 撤销线(#1684) / gates", color: "#2563eb"}
+  - {id: "jjkysy", name: "jjkysy", track: "Group-A 收口 → Group-B 接线(kanban 纯化 #1474 + A5 follow-ups)", color: "#65a30d"}
+  - {id: "gaga", name: "gaga", track: "Agent SSH 凭据 / git-provider —— 08-03 双线收口, 待排新增量", color: "#7c3aed"}
+  - {id: "ruihua", name: "ruihua", track: "MFU 产品线(Forgejo Prototype/mfu, 跨 repo)", color: "#db2777"}
+# agent(codex/kimi/cc) = off-plan 执行支持, 不进 people/owner; 执行事实记卡片 who/正文。
+
+# ===== 08-03 在飞卡结转账目(gate: carry or resolve; 七卡全部今日在役 ——
+# 三卡 done_prev(#1693/#1688/#1619 实证合入) + 四卡结转) =====
+carryover_resolved:
+  "#1474 kanban 协作改版二轮": "08-03 挂账 → 今日在役: Group-A 八条原语闭合(#1619 入 main)后 #1474 够格开工 —— 归入今日 group-b-wiring 卡(jjkysy)。"
+  "#1694 撤销完整性(冷成员面)": "08-03 新开(#1655 合并 review 遗留 F2, Allen 点名): remove 对冷成员跳过撤销 + 在途 absorb 可把被移除成员复活回 roster —— 与 #1684 per-grant revocation 同域, 待整合线落地后排期; 先挂账(不丢, 归 group-b-wiring 卡前置 blockers)。"
+  "#1301 dealscout 完整改版": "仍 OPEN(07-12 更新, 停滞); 非今日焦点, 继续挂账待排期。"
+  "#1376 通用挂载 infra(被 entity-caps 取代 · 保留)": "仍 OPEN(draft); 设计已被 entity-caps 取代, API/测试/kanban 契约显式保留, 不关不推。"
+  "#1533 Signature Interaction 原型": "仍 OPEN(draft, 07-23 更新); ruihua 轨道今日在 MFU 产品线(Prototype/mfu), 本原型继续挂账。"
+  "test-supplement P3 执行排程(91 模块)": "P0–P2 已入 main(#1626/#1629/#1630); P3 分诊清单已交付未排程 —— 待 main 真绿后排期(挂账不丢)。"
+  "追跟 bug: tracker #204 + #205": "#204 已处置(#1657, 07-31); #205(world 路由死特性处置)仍未排期 —— 待 main 真绿后处理(挂账不丢)。"
+  "#1566 multi-repo split(umbrella → 6 repos)": "OPEN(docs 计划); 排在 actor extraction(C8)之后, C8 暂缓故本项同步暂缓。"
+  "hello 官网部署迁移(hello-A PR-4)": "原被 #189 阻塞; #189 已落地但 canary 尚未放行(整合分支闸) —— 部署迁移待 canary 放行后执行, 今日不占卡。"
+  "C8 obtain 侧 v5-pid-closure + 收口 A2 census-freeze → cross-track reconcile": "与 use 侧同一暂缓口径(今日 c8-mailbox-seal 卡); 分支 feat/v5-pid-closure 待 cross-track reconcile。"
+
+# ===== YESTERDAY (08-03, CST) done — git 实证 =====
+done_prev:
+  - owner: "allen"
+    title: "撤销即擦除 follow-up —— feat/ssh-revoke-wipe"
+    goal: ":cap_revoked → GitIdentityRuntime.wipe hook, 补齐 #1688 撤销面"
+    status: "done"
+    task: "ssh-revoke-wipe"
+    who: "allen/cc 轨道 · SSH 凭据撤销面 · 执行: codex(agent)"
+    branch: "feat/ssh-revoke-wipe"
+    pr: {num: 1693, state: "merged"}
+    started: "2026-08-03"
+    est_done: "2026-08-04"
+    review_note: "#1693 已入 main(08-03 12:47 CST, ab12c63da) —— 撤销不即擦除窗口自此关闭; 回勾 agent-ssh-credential-b2 验收第 4 条。"
+    acceptance:
+      - {text: "K3 — 钉住 Sandbox 两处 destroy 入口的 git-identity 清理", done: true, evidence: "84dba69b6"}
+      - {text: "K5+K6 — 指纹值钉死 + read_ssh_public_key value 走私防护", done: true, evidence: "85fb6414e"}
+      - {text: "K4 — spec/moduledoc 已被取代说法订正", done: true, evidence: "868ba5cba"}
+      - {text: "cc 评审 → 合入 main(#1688 已落地, 窗口开着, 优先跟上)", done: true, evidence: "merged 08-03 12:47 CST, ab12c63da (#1693)"}
+  - owner: "gaga"
+    title: "Agent SSH 凭据 B2′ (#1688)"
+    goal: "User SSH 身份 + 物化进 agent —— 已入 main; 撤销面随 #1693 关闭"
+    status: "done"
+    task: "agent-ssh-credential-b2"
+    who: "gaga 轨道 · Agent SSH 凭据"
+    branch: "feat/agent-ssh-credential"
+    pr: {num: 1688, state: "merged"}
+    started: "2026-08-01"
+    est_done: "2026-08-03"
+    review_note: "#1688 入 main(08-03 10:16 CST, 8ad5d3795); 撤销即擦除 follow-up #1693 已合(08-03 12:47, ab12c63da) —— 撤销窗口关闭, 本卡四验收全过, B2′ 凭据线收口。"
+    acceptance:
+      - {text: "B2′ 实现 + PR open", done: true, evidence: "feat/agent-ssh-credential"}
+      - {text: "私钥明文形态决策: Allen APPROVED", done: true, evidence: "08-03 拍板"}
+      - {text: "cc 评审通过 → rebase main → gate+merge", done: true, evidence: "merged 08-03, 8ad5d3795"}
+      - {text: "撤销即擦除 follow-up 按序合入(allen/cc 轨道, codex 执行)", done: true, evidence: "#1693 merged 08-03 12:47, ab12c63da —— 撤销不即擦除窗口关闭"}
+  - owner: "jjkysy"
+    title: "Group-A URI 通用分享 —— A4-2 收口 + P4 关闭"
+    goal: "Group-A 八条原语全部闭合 → Group-B 可开工"
+    status: "done"
+    task: "group-a-uri-share"
+    who: "jjkysy 轨道 · socialware URI-share"
+    carryover: true
+    started: "2026-07-26"
+    est_done: "2026-07-29"
+    review_note: "A1/A2-1/A3/A2-2/A4-1/share-config(#1594/#1596/#1597/#1606/#1611/#1612) + A4-2(#1655, 08-03 09:43, da8a26bc1)此前全入; A5 #1619 匿名分享 merged 08-04 10:32 CST(129b2facf) —— codex 评审 MERGE-WITH-NITS, 4 条 follow-ups 立案为 Group-B 接线前置 blockers(含 issue #1694); 匿名页产品级渲染组件已裁决归 Group B。Group-A 八条原语闭合 → #1474 够格开工, 移交今日 group-b-wiring 卡。"
+    acceptance:
+      - {text: "#1594(A1 bearer token) + #1606(A2-2 grantees_of) 复审合入 —— 07-30 收尾项", done: true, evidence: "merged 07-30: #1594 14:52 CST / #1606 20:47 CST"}
+      - {text: "#1655 — 在途 cap 纳入投影 + 撤销完整性(#1665 安全修复) + 反向索引补齐", done: true, evidence: "merged 08-03 09:43 CST, da8a26bc1"}
+      - {text: "A4-2 甲方案拍板(forward effective_caps, low-freq) → P4 关闭", done: true, evidence: "08-03 决策"}
+      - {text: "Group-A 下一增量(handoff → plan; 候选 #1619 A5 匿名 design-first 待批)", done: true, evidence: "#1619 A5 匿名分享 merged 08-04 10:32(129b2facf, MERGE-WITH-NITS) —— 八条原语闭合; 下一增量 = Group-B 接线, 已移交 group-b-wiring 卡"}
+
+# ===== TODAY (08-04) plan — status ∈ planned|wip|review|blocked =====
+cards:
+  - owner: "allen"
+    title: "身份平面 #189 收口 → main 真绿 → canary 放行"
+    goal: "轮换 CI 隔离 flake 系统性修复 → main 真绿 → canary 放行"
+    status: "wip"
+    task: "ci-isolation-integration"
+    who: "Allen 轨道 · #189 收口 · CI 隔离整合分支(ahead 37)"
+    branch: "integrate/ci-isolation-dod24-20260803"
+    carryover: true
+    started: "2026-08-02"
+    est_done: "2026-08-03"
+    flag: "闸: 一次完整 mix precommit"
+    review_note: "supervisor-death 竞态已治愈: persistence_boundary 族四连(b8bdfe808→8bb1dbe47)把 Kind lifecycle 收容到 sandbox owner + session_complete? 结构性 bound + registry cache heal —— 0 disconnect storm, baseline-proven 分支引入后 cure; 回归测试钉住沙箱竞态(sandbox_owner_persist_race_test, trigger 修 BEFORE INSERT OR UPDATE)。剩 3 残量单独跑全绿(suite-context flake 分类中, syncthing 已移除 08-04)。worktree: 5 文件未提交 diff + 回归测试, 无 erl_crash.dump。"
+    acceptance:
+      - {text: "五块折入 + persistence_boundary 族四连, HEAD 8bb1dbe47(ahead 37), diff --check 过", done: true, evidence: "git log 实证; worktree 仅 5 文件未提交 diff + 回归测试"}
+      - {text: "supervisor-death 竞态修复实证: baseline-proven 分支引入 → 0 disconnect storm", done: true, evidence: "persistence_boundary 族四连, 08-03 17:27 止"}
+      - {text: "回归测试绿(1/0, trigger 修 BEFORE INSERT OR UPDATE); 3 残量单独跑绿", done: true, evidence: "sandbox_owner_persist_race_test"}
+      - {text: "一次完整 mix precommit 于整合分支(诚实绿; 红则诚实分类噪声 vs demonstrated, 只修整合态失败)", done: false, evidence: "今日闸 —— syncthing 已移除 08-04"}
+      - {text: "cap×wipe semantic rebase(#1684 per-grant 撤销 × #1693 wipe 语义重叠, 合并前解)", done: false}
+      - {text: "push + PR → 正常 merge → origin/main 含整合 HEAD; #1684 标 subsumed 关闭", done: false}
+      - {text: "#189 test-defects E/F/D 在整合后 main 验证绿(07-30 结转, 发布闸剩余项)", done: false}
+      - {text: "main 真绿 → canary 放行评估", done: false}
+  - owner: "allen"
+    title: "per-grant cap 撤销 (#1684) —— 折入整合分支"
+    goal: "clean-slate per-grant revocation 随整合分支一次合入; #1684 标 subsumed"
+    status: "review"
+    task: "per-grant-cap-revocation"
+    who: "Allen 轨道 · cap 撤销 / DeliveryOutbox · 实现: kimi(agent)"
+    branch: "feat/p2-per-cap-revocation"
+    pr: {num: 1684, state: "open"}
+    started: "2026-07-31"
+    est_done: "2026-08-03"
+    deps: ["dep: 整合分支 precommit + merge"]
+    review_note: "实现本体已由 kimi 完成并折入整合分支(merge 8bd91ec6a); #1684 仍 OPEN, 待整合 PR 合入 main 后评论注明最终 merge SHA 并标 subsumed 关闭。DeliveryOutbox(#1670 final plan, merged 07-31)实现切片待整合落地后排期。"
+    acceptance:
+      - {text: "#1684 clean-slate per-grant revocation 实现(head dbdf4ad76, kimi 执行)", done: true}
+      - {text: "折入整合分支(merge 8bd91ec6a); parity-test 冲突按已定删除保留", done: true}
+      - {text: "整合 PR 合入 main → #1684 评论标 subsumed(最终 main merge SHA)并关闭", done: false}
+      - {text: "DeliveryOutbox(#1670 plan)实现切片 handoff → plan(整合落地后)", done: false}
+  - owner: "jjkysy"
+    title: "Group-B 接线前置: A5 四 follow-ups + kanban 纯化 #1474"
+    goal: "Group-A 闭合后 Group-B 前置 blockers 立案 → #1474 从 draft 起 plan"
+    status: "planned"
+    task: "group-b-wiring"
+    who: "jjkysy 轨道 · Group-B · 新开"
+    started: "2026-08-04"
+    est_done: "2026-08-04"
+    review_note: "A5 #1619 codex 评审 MERGE-WITH-NITS: 4 条 follow-ups 立案为 Group-B 接线前置 blockers(含 issue #1694 冷成员撤销面 F2 —— 与 #1684 per-grant revocation 同域, 注意与整合线的顺序); 匿名页产品级渲染组件(开发级 JSON 占位 → 插件组件)已裁决归 Group B; #1474 kanban 纯化自 draft 起 plan(Group-A 八条原语闭合后够格开工)。"
+    acceptance:
+      - {text: "A5 四 follow-ups(MERGE-WITH-NITS 评审产物, 含 issue #1694)逐条立案 handoff", done: false}
+      - {text: "匿名页产品级渲染组件接线(归 Group B, 已裁决)", done: false}
+      - {text: "kanban 纯化 #1474 从 draft 起 plan + 切片(单日粒度)", done: false}
+      - {text: "每片单 PR 可验收, gate 绿", done: false}
+  - owner: "allen"
+    title: "C8 v5 use-side Kind-mailbox seal / pid 纪律"
+    goal: "use 侧 Kind-mailbox 封口 + pid 纪律"
+    status: "planned"
+    task: "c8-mailbox-seal"
+    who: "Allen 轨道 · v5 use 侧 · 暂缓"
+    branch: "feat/v5-use-side-mailbox"
+    carryover: true
+    flag: "DEV 暂缓至 CI 整合落地"
+    review_note: "spec 已收敛 + codex 评审 + 修订完成。当前焦点在 CI 隔离整合; 启动待整合分支合入, 避免并发返工。"
+    acceptance:
+      - {text: "spec 收敛 + codex 对抗评审 + 修订", done: true}
+      - {text: "DEV 启动", done: false, evidence: "暂缓中"}
+  - owner: "ruihua"
+    title: "MFU 产品线 —— v0.15 续作(Forgejo Prototype/mfu, 跨 repo 跟踪)"
+    goal: "MFU 产品工作在独立 repo 继续; 仍属 ezagent 工作(Allen 08-03), 本 board 跟踪"
+    status: "done"
+    task: "mfu-v015"
+    started: "2026-07-28"
+    est_done: "2026-07-29"
+    who: "ruihua 轨道 · MFU 产品线 · Prototype/mfu"
+    carryover: true
+    review_note: "#1586(成长树修复 + 技能/经验框架)07-29 入 main; #1618(协作卡牌阵列首个教学订单)07-31 入 main; #1676(07-31)把 mfu-demo 移出本 repo, canonical home 改为 Forgejo Prototype/mfu —— 独立 repo 产品线, 不是离开/下线; 08-03/08-04 无 return, 节奏在 Prototype/mfu 跟踪, ezagent board 保留状态卡。08-04 ruihua 回报: v0.15 续作四块内容均已合并完毕 → 本卡 done, 接棒卡 = mvo-atlas。"
+    acceptance:
+      - {text: "成长树修复包 + 技能/经验框架落地(#1586)", done: true, evidence: "merged 07-29; 纯 demo/docs/skill 无 core 改动"}
+      - {text: "#1618 协作卡牌阵列首个教学订单(07-31 return)", done: true, evidence: "merged 07-31 14:01 CST"}
+      - {text: "repo 迁移至 Forgejo Prototype/mfu(#1676)", done: true, evidence: "merged 07-31"}
+      - {text: "v0.15 landing package 四块续作(认证移出树 / 经验条 UI / 外部认证录入 / 孵化器树)", done: true, evidence: "merged（ruihua 08-04 回报）"}
+  - owner: "ruihua"
+    title: "MFU 产品线 —— feat(mvo-atlas): playable organization builder loop(Prototype/mfu, 跨 repo)"
+    goal: "v0.15 续作已合并完毕(ruihua 08-04 回报); 接棒可玩组织搭建循环: MVO 图鉴 + 世界集卡"
+    status: "wip"
+    task: "mvo-atlas"
+    started: "2026-08-04"
+    est_done: "待定"
+    who: "ruihua 轨道 · Prototype/mfu · feat/mvo-atlas-playable-v01"
+    carryover: false
+    review_note: "分支 https://code.hyprial.com/Prototype/mfu/src/branch/feat/mvo-atlas-playable-v01(ruihua 08-04 回报); 两块: ① 资源面板 MVO 图鉴(真实订单验证过的 MVO 模板库)功能已完成待合并, 在做给孵化器/创投展示的 concept demo —— 收集 MVO 服务孵化器/创投员工 KPI; ② 世界 tab 集卡(提升用户主动支持其他企业的活跃度)方案设计中。"
+    acceptance:
+      - {text: "资源面板 MVO 图鉴功能", done: true, evidence: "完成待合并(ruihua 08-04)"}
+      - {text: "MVO 图鉴 concept demo(孵化器/创投展示)", done: false, evidence: "进行中"}
+      - {text: "世界 tab 集卡功能", done: false, evidence: "方案设计中"}
+
+# ===== YESTERDAY (08-03) review — 复盘 =====
+review:
+  method_deltas:
+    - "supervisor-death 竞态归因到结构并 cure: persistence_boundary 族把 Kind lifecycle 收容到 sandbox owner + session_complete? 结构性 bound + registry cache heal(b8bdfe808→bc88ac7c3→6cb3e69ef→8bb1dbe47) —— 0 disconnect storm, baseline-proven 分支引入后治愈; 回归测试钉住触发点(BEFORE INSERT OR UPDATE trigger 修)。"
+    - "噪声与红分类纪律: 3 残量单独跑全绿 → 全套连跑轮换红先怀疑 suite-context 机器负载(syncthing 移除 08-04), 不预判 demonstrated failure; 一次完整 precommit 前不 push/PR/merge。"
+    - "评审 MERGE-WITH-NITS 立案制: A5 codex 评审 4 条 follow-ups 不吞进合并, 立案为 Group-B 接线前置 blockers(含 issue #1694), 挂账不丢。"
+    - "机器闸口径更正: 本仓 PR CI 只跑 gate 不跑 ExUnit —— 'CI 绿' ≠ '测试跑过'; 测试证据以本地 per-app 实跑 + return doc 为准(#1619 return doc 明确记录)。"
+  incidents:
+    - "整合分支 08-03 未出一次完整 precommit 诚实绿 —— 3 残量(单独绿)疑似 suite-context 机器负载噪声, syncthing 已于 08-04 移除, 今日重跑分类。"
+    - "#1619 A5 合并当天 codex 评审 MERGE-WITH-NITS —— 4 follow-ups 立案为 Group-B 接线 blockers, 不阻塞合并但阻塞 Group-B 开工。"
+  delivery:
+    - {owner: "allen", delivered: "整合分支 persistence_boundary 族四连(b8bdfe808→8bb1dbe47) —— supervisor-death 竞态修复 + 回归测试绿", acceptance_result: "0 disconnect storm; baseline-proven 分支引入已治愈; 3 残量单独绿", carryover: "一次完整 precommit 闸 → cap×wipe rebase → merge"}
+    - {owner: "allen", delivered: "#1690 board+tasks 回填 · #1691 skill 改名 · #1692 spec 保留 · #1693 revoke-wipe 合入", acceptance_result: "四 PR 入 main(2a6b0579a / 25aec158b / 1600c3fdc / ab12c63da)", carryover: "—"}
+    - {owner: "jjkysy", delivered: "#1655(晨) A4-2 收口 + #1619 A5 匿名分享(设计 v4 获批 → 资源投影 + born-with 读钥匙)", acceptance_result: "#1655 已合(da8a26bc1); #1619 评审 MERGE-WITH-NITS → merged 08-04 10:32(129b2facf) —— Group-A 八条原语闭合", carryover: "Group-B 接线前置(4 follow-ups + #1474)"}
+    - {owner: "gaga", delivered: "#1668(晨) 错误分类 + #1688 SSH 凭据 B2′", acceptance_result: "双入 main(4359f4a6e / 8ad5d3795) —— 凭据模型 + SSH B2′ 双线收口", carryover: "撤销面由 #1693(allen 轨道)关闭"}
+  next_day:
+    - "整合分支一次完整 mix precommit(诚实绿, syncthing 已移除) → 3 残量分类 → cap×wipe semantic rebase → push/PR/merge → #1684 标 subsumed 关闭 → main 真绿 → canary 放行评估。"
+    - "jjkysy: Group-B 接线前置 —— A5 四 follow-ups(含 #1694)立案 + 匿名页渲染组件 + #1474 plan。"
+    - "ruihua: MFU v0.15 续作(Prototype/mfu); C8 v5 继续暂缓; gaga 双线收口, 待排新增量。"
