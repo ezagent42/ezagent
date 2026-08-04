@@ -22,11 +22,14 @@ This was observed on `hello-codex-2`, `hello-codex-3`, and
 ## Goal
 
 Treat declared-view capability convergence for existing confirmed user members
-as a postcondition of successful socialware installation.
+as a postcondition of the initial session-template socialware installation that
+runs after a new session is created.
 
-An installation obligation may resolve only after every eligible existing
-member holds every declared-view capability for the session's installed
-definitions.
+An initial installation obligation may resolve only after every eligible member
+in the installer's strict current-member snapshot holds every declared-view
+capability for the session's installed definitions. This directly prevents a
+new hello session from resolving installation while its creator is still
+missing the capability required to see Page.
 
 ## Non-goals
 
@@ -36,6 +39,12 @@ definitions.
 - No permission expansion for agents, anonymous users, removed members, or
   non-members.
 - No change to socialware role materialization or credential admission.
+- No redesign of membership admission, join-time backfill, or concurrent member
+  lifecycle handling. Members joining after the installer takes its strict
+  snapshot continue through the existing join/backfill flow.
+- No support in this change for installing or upgrading additional socialware
+  after the initial session-template installation has already resolved. Such a
+  flow would require a separately versioned or reopened obligation.
 
 ## Design
 
@@ -64,7 +73,8 @@ dispatch site.
 
 After role materialization and the existing installation writes succeed,
 `Socialware.SessionInstaller` will converge declared-view capabilities for all
-eligible members already present in the session.
+eligible members returned by one strict membership snapshot taken at the start
+of the postcondition.
 
 The durable obligation is required when either of these conditions is true:
 
@@ -76,9 +86,21 @@ The second condition prevents a view-only socialware with
 neither agent declarations nor declared view actions retains the current no-op
 path and does not create unnecessary obligation work.
 
-Member enumeration uses the session membership source of truth. The postcondition
-filters to confirmed user URIs; agents and anonymous users retain their existing
-provisioning rules.
+Member enumeration reads the canonical live Session membership state after the
+existing installer has demand-spawned the Session Kind. The strict reader reuses
+the same canonical session-slice interpretation as
+`Ezagent.Entity.Session.session_member_uris/1`, but it returns
+`{:ok, member_uris}` or `{:error, reason}`. It must not reuse that convenience
+API's fail-closed `[]` fallback: an unavailable or malformed membership read is
+an installation failure, not proof that the session has no members.
+
+The successful strict read defines the membership snapshot for this initial
+installation attempt. The postcondition filters it to confirmed user URIs;
+agents and anonymous users retain their existing provisioning rules. This
+snapshot boundary is intentional and narrow: it guarantees the newly created
+session's already-present creator and other current members receive Page/view
+caps, without turning this fix into a membership-generation or join-lifecycle
+redesign.
 
 The convergence call is caller-side work owned by the durable obligation worker.
 It must never execute from a Session Kind handler: the strict path performs
@@ -89,6 +111,15 @@ If convergence fails, the installer returns an error. The durable
 `SocialwareInstallObligation` therefore remains retryable and is not marked
 `resolved`. On the next retry, already valid grants are skipped and only missing
 capabilities are attempted.
+
+A strict membership read failure returns:
+
+```elixir
+{:error, {:member_roster_read_failed, session_uri, reason}}
+```
+
+This error follows the same durable retry path; an empty member list is accepted
+only when the strict read itself succeeds.
 
 Convergence is fail-fast across members and declared view actions. Its error
 shape carries the exact missing postcondition:
@@ -149,8 +180,14 @@ The implementation follows red-green TDD.
 8. The failure test uses an explicit test seam around the existing grant funnel
    to return one deterministic synchronous grant error. The seam must not add a
    second production grant constructor, dispatch call site, or test-only branch
-   to runtime behavior.
-9. Existing member-backfill, socialware-install sweeper, SessionInstaller, and
+   to runtime behavior. The seam belongs to the internal strict convergence
+   runner: production supplies the existing Membership grant operation, while
+   the test supplies a callback that fails exactly once. `Identity.Grant` and
+   dispatch runtime behavior remain uninjected and unchanged.
+9. A strict-roster regression forces the Session membership read to fail and
+   verifies the installer returns `:member_roster_read_failed`, leaves the
+   obligation retryable, and does not treat the failure as an empty roster.
+10. Existing member-backfill, socialware-install sweeper, SessionInstaller, and
    view-authorization suites remain green.
 
 ## Acceptance criteria
@@ -158,6 +195,8 @@ The implementation follows red-green TDD.
 - A newly created hello session exposes Page without manual database repair.
 - A first-attempt view-cap timeout cannot result in a resolved installation with
   a missing view capability.
+- A failed membership read cannot result in a resolved installation by
+  masquerading as an empty member list.
 - Retrying converges the missing capability without duplicating valid grants.
 - The fix applies to every socialware declared view and contains no hello-specific
   production condition.
@@ -165,3 +204,6 @@ The implementation follows red-green TDD.
   view-cap postcondition.
 - An already-open World conversation refreshes to include the newly authorized
   view through the existing identity slice-change contract.
+- The implementation remains limited to the initial session-template install;
+  it does not introduce obligation generations, later socialware upgrade
+  handling, or a new join/membership workflow.
