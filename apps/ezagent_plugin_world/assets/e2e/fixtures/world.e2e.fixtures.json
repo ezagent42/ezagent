@@ -54,6 +54,7 @@
     "session.agent_admission.begin",
     "session.agent_admission.cancel",
     "session.agent_admission.complete",
+    "session.agent_admission.reconcile",
     "session.assign_role",
     "session.create",
     "session.fork_config",

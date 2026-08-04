@@ -191,6 +191,61 @@ test("credential admission uses public dispatch and joins the returned provision
   expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
 })
 
+test("PTY admission recovery reopens and checks the existing candidate", async ({page}) => {
+  const attemptId = "attempt-e2e-pty"
+  const provisionalAgentUri = "entity://acme/agent/codex-provisional"
+
+  await openFixture(page, "conversation")
+  await page.evaluate(
+    ({attemptId, provisionalAgentUri}) =>
+      window.__WORLD_E2E__.emit("world:state", {
+        ...window.__WORLD_E2E__.contract.fixtures.conversation.state,
+        agent_admissions: [
+          {
+            role_name: "llm",
+            status: "authenticating",
+            attempt_id: attemptId,
+            provisional_agent_uri: provisionalAgentUri,
+            connection: {kind: "pty", label: "Connect Codex"},
+          },
+        ],
+      }),
+    {attemptId, provisionalAgentUri},
+  )
+
+  const admission = page.locator('[data-world-agent-admission="llm"]')
+  await admission.getByRole("button", {name: "继续登录"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.pty.open",
+      args: {session_uri: conversationFixtureUri, agent: provisionalAgentUri},
+    },
+  })
+
+  await page.evaluate(() => window.__WORLD_E2E__.clearEvents())
+  await admission.getByRole("button", {name: "检查连接状态"}).click()
+
+  await expect.poll(() => lastEvent(page)).toEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.reconcile",
+      args: {session_uri: conversationFixtureUri},
+    },
+  })
+
+  const events = await recordedEvents(page)
+  expect(events).not.toContainEqual({
+    event: "world:dispatch",
+    payload: {
+      action: "session.agent_admission.begin",
+      args: {session_uri: conversationFixtureUri, role_name: "llm"},
+    },
+  })
+  expect(await page.evaluate(() => window.__WORLD_E2E__.contractViolation())).toBeNull()
+})
+
 test("registered plugin interaction emits an admitted kanban action", async ({page}) => {
   await openFixture(page, "kanban")
   await page.getByLabel("Access Token").fill("fixture-token")

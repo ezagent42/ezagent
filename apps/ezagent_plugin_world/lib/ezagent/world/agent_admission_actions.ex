@@ -59,6 +59,23 @@ defmodule Ezagent.World.AgentAdmissionActions do
     end)
   end
 
+  @doc "Immediately reconciles active admissions in the currently displayed session."
+  @spec reconcile(Phoenix.LiveView.Socket.t(), String.t()) ::
+          {:noreply, Phoenix.LiveView.Socket.t()}
+  def reconcile(socket, sid) do
+    with_current_session(socket, sid, fn session_uri ->
+      case AgentAdmission.reconcile(session_uri) do
+        :ok ->
+          {:noreply, push_admission_state(socket, session_uri)}
+
+        {:error, failures} ->
+          socket
+          |> push_admission_state(session_uri)
+          |> error({:agent_admission_reconciliation_failed, failures})
+      end
+    end)
+  end
+
   @doc "Cancels the active credential-admission attempt for a session role."
   @spec cancel(Phoenix.LiveView.Socket.t(), String.t(), String.t(), String.t()) ::
           {:noreply, Phoenix.LiveView.Socket.t()}

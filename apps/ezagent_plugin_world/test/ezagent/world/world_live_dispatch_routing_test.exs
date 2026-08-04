@@ -90,10 +90,20 @@ defmodule Ezagent.World.WorldLiveDispatchRoutingTest do
       assert "session.agent_admission.begin" in conversation_actions
       assert "session.agent_admission.complete" in conversation_actions
       assert "session.agent_admission.cancel" in conversation_actions
+      assert "session.agent_admission.reconcile" in conversation_actions
     end
   end
 
   describe "credential admission session binding" do
+    test "reconcile routes malformed session input to the admission handler" do
+      assert {:noreply, out} =
+               dispatch("session.agent_admission.reconcile", %{
+                 "session_uri" => "not-a-session-uri"
+               })
+
+      assert out.assigns.last_dispatch_status == "error:bad_session_uri"
+    end
+
     test "begin refuses a client request for a session other than the one on screen" do
       current = URI.new!("session://team-alpha/default/current-#{uniq()}")
       other = URI.new!("session://team-alpha/default/other-#{uniq()}")

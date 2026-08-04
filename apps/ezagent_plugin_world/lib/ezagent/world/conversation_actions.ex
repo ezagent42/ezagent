@@ -75,6 +75,14 @@ defmodule Ezagent.World.ConversationActions do
 
   def handle_dispatch(
         socket,
+        "session.agent_admission.reconcile",
+        %{"session_uri" => sid}
+      ) do
+    Ezagent.World.AgentAdmissionActions.reconcile(socket, sid)
+  end
+
+  def handle_dispatch(
+        socket,
         "session.agent_admission.cancel",
         %{"session_uri" => sid, "role_name" => role_name, "attempt_id" => attempt_id}
       )

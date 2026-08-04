@@ -406,6 +406,16 @@ export function Conversation({
     })
   }
 
+  const reconcileAdmissions = () => {
+    if (!sessionUri) return
+    onAgentAdmissionAction?.("session.agent_admission.reconcile", {session_uri: sessionUri})
+  }
+
+  const continueAdmissionLogin = (admission: AgentAdmission) => {
+    if (!sessionUri || !admission.provisional_agent_uri) return
+    onOpenPty(sessionUri, admission.provisional_agent_uri)
+  }
+
   React.useEffect(() => {
     setMembers(state.members || [])
     setHumanRoleSlots(state.human_role_slots || [])
@@ -1021,6 +1031,27 @@ export function Conversation({
                           onPutApiKey={onPutApiKey}
                           defaultProvider={admission.connection.provider || undefined}
                         />
+                      )}
+                      {admission.connection.kind === "pty" && admission.provisional_agent_uri && (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => continueAdmissionLogin(admission)}
+                            data-world-agent-admission-continue
+                          >
+                            继续登录
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={reconcileAdmissions}
+                            data-world-agent-admission-check
+                          >
+                            检查连接状态
+                          </Button>
+                        </>
                       )}
                       {admission.attempt_id && (
                         <Button type="button" size="sm" variant="secondary" onClick={() => cancelAdmission(admission)}>

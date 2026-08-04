@@ -124,6 +124,27 @@ describe("credential-gated agent admission cards", () => {
     expect(html).not.toContain("完成 配置 API key")
   })
 
+  it("renders recovery controls for the existing PTY candidate", () => {
+    const html = renderConversation({
+      ...state,
+      agent_admissions: [
+        {
+          role_name: "llm",
+          status: "authenticating",
+          attempt_id: "attempt-pty-1",
+          provisional_agent_uri: "entity://system/agent/codex-provisional",
+          failure_code: null,
+          connection: {kind: "pty", label: "连接 Codex"},
+        },
+      ],
+    })
+
+    expect(html).toContain("data-world-agent-admission-continue")
+    expect(html).toContain("继续登录")
+    expect(html).toContain("data-world-agent-admission-check")
+    expect(html).toContain("检查连接状态")
+  })
+
   it("renders a retry affordance for a failed attempt and no card after admission", () => {
     const retry = renderConversation({
       ...state,
