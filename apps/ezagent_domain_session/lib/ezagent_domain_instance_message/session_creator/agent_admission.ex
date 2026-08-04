@@ -48,7 +48,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.AgentAdmission do
   @spec reconcile_auth_failure(URI.t()) :: :ok | {:error, term()}
   defdelegate reconcile_auth_failure(agent_uri), to: AgentAdmissionReconciliation
 
-  @doc "Reconcile every active credential admission owned by one session."
   @spec reconcile(URI.t()) :: :ok | {:error, [{String.t(), String.t(), term()}]}
   def reconcile(%URI{scheme: "session"} = session_uri) do
     failures =
