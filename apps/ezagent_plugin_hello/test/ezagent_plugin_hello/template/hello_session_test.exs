@@ -1,6 +1,8 @@
 defmodule EzagentPluginHello.Template.HelloSessionTest do
   use EzagentCore.DataCase, async: false
 
+  import Phoenix.LiveViewTest, only: [render_component: 2]
+
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Workspace
   alias EzagentPluginHello.Application, as: HelloApp
@@ -206,6 +208,57 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         |> Enum.map(& &1["id"])
 
       assert "hello_page" in view_ids
+    end
+
+    test "installed hello Page remains applicable while the session is cold" do
+      suffix = System.unique_integer([:positive])
+      ws = "hello-page-cold-#{suffix}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      caller = Ezagent.URI.new!("entity://#{ws}/user/owner")
+      {:ok, _} = Ezagent.Users.create(caller, "pw-not-secret", [])
+      {:ok, _pid} = Ezagent.SpawnRegistry.spawn(caller)
+      template = %{"class" => "session.hello", "session_name" => "main"}
+
+      assert {:ok, [session_uri], %{fresh?: true}} =
+               HelloSession.instantiate("session.hello", template, workspace_uri, caller: caller)
+
+      assert :ok =
+               EzagentDomainInstanceMessage.SessionCreator.join_session_members(
+                 session_uri,
+                 [caller]
+               )
+
+      assert {:ok, _summary} =
+               EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
+                 session_uri,
+                 {workspace_uri, caller}
+               )
+
+      assert EzagentPluginHello.PageView.applies_to?(session_uri)
+      assert {:ok, session_pid} = Ezagent.KindRegistry.lookup(session_uri)
+
+      assert :ok =
+               DynamicSupervisor.terminate_child(
+                 Ezagent.Entity.Session.supervisor(),
+                 session_pid
+               )
+
+      refute match?({:ok, _}, Ezagent.Kind.read(session_uri, :surface, spawn: :never))
+
+      assert EzagentPluginHello.PageView.applies_to?(session_uri),
+             "an installed Page must not disappear merely because its session is cold"
+
+      assert Enum.any?(
+               Ezagent.UI.SessionViewRegistry.applicable_views(session_uri, caller),
+               &(&1.id == :hello_page)
+             )
+
+      _rendered =
+        render_component(&EzagentPluginHello.PageView.render/1, session_uri: session_uri)
+
+      assert {:ok, surface} = Ezagent.Kind.read(session_uri, :surface, spawn: :never)
+      assert is_map(surface)
     end
 
     test "rejects an invalid template" do

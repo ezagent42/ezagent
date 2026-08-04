@@ -38,8 +38,11 @@ defmodule EzagentPluginHello.PageView do
 
   @impl true
   def applies_to?(%URI{} = session_uri) do
-    hello_session?(session_uri) and
-      match?({:ok, surface} when is_map(surface), Ezagent.Kind.read(session_uri, :surface, spawn: :never))
+    # Applicability is configuration, not liveness. A persisted hello install
+    # must keep its Page tab while the session Kind is cold (for example after
+    # an application restart); reading the live-only surface here made the tab
+    # disappear until some unrelated action happened to wake the session.
+    hello_session?(session_uri)
   rescue
     _ -> false
   catch
@@ -101,7 +104,9 @@ defmodule EzagentPluginHello.PageView do
   end
 
   defp load_surface(%URI{} = session_uri) do
-    case Ezagent.Kind.read(session_uri, :surface, spawn: :never) do
+    # Rendering is the point where waking a cold session is appropriate. This
+    # rehydrates the persisted surface when the user actually opens the Page.
+    case Ezagent.Kind.read(session_uri, :surface) do
       {:ok, surface} -> surface
       _ -> %{}
     end
