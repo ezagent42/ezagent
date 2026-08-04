@@ -757,9 +757,11 @@ defmodule Ezagent.World.ConversationActions do
       )
   end
 
-  defp push_pty_view(socket, %URI{} = session_uri, %URI{} = agent_uri) do
-    caller = socket.assigns.current_entity_uri
-
+  defp push_pty_view(
+         %{assigns: %{current_entity_uri: caller}} = socket,
+         %URI{} = session_uri,
+         %URI{} = agent_uri
+       ) do
     {:noreply,
      push_world_state(socket, %{
        "views" => ConversationData.session_views(session_uri, caller),
