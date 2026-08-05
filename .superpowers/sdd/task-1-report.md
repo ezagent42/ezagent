@@ -1,113 +1,105 @@
-# Task 1 report — declarative credential admission and connection contracts
+# Task 1 Report — Active admission PTY Terminal SessionView
 
-## Implementation
+## Status
 
-- Added `Ezagent.Agent.CredentialConnection`, a flavor-neutral boundary that
-  resolves each flavor through `Ezagent.AgentFlavorRegistry`, calls only the
-  registered Template Class's optional `credential_connection/1`, and
-  normalizes supported declarations:
-  - `{:pty, label}` -> `{:pty, %{label: label}}`
-  - `{:api_key, provider, label}` ->
-    `{:api_key, %{provider: provider, label: label}}`
-  - no callback -> `:not_required`
-  - unknown or malformed declarations -> `{:error, :unsupported_connection}`
-- Added the optional, documented `credential_connection/1` callback to
-  `Ezagent.Agent.CredentialAdapter`; its documented default is `:not_required`.
-- Added `credential_admission` to normalized agent role declarations. Both atom
-  and string inputs are accepted; supported values are `:immediate` and
-  `:before_session_join`; omitted values normalize to `:immediate`.
-- Kept install-level role slot choices limited to flavor/install data, preserving
-  the declaration-level credential-admission policy.
+DONE_WITH_CONCERNS
 
-## TDD evidence
+## Changes
 
-1. RED:
+- Added the required admission-bootstrap regression assertions proving the PTY
+  session view is available while the provisional candidate is still absent from
+  `session.members`.
+- Extended `EzagentDomainUi.Pty.TerminalView.applies_to?/1` to accept either a
+  joined member with a live PTY or an `:authenticating` / `:materializing`
+  admission row whose parsed entity URI has a live PTY.
+- Malformed admission rows, non-entity URIs, other statuses, and non-live PTYs
+  safely return `false`.
 
-   ```sh
-   mise exec -- mix test apps/ezagent_domain_agent/test/ezagent/agent/credential_connection_test.exs
-   ```
+## RED
 
-   Result: 4 failures, all because
-   `Ezagent.Agent.CredentialConnection.for_flavor/1-2` was undefined.
+Command:
 
-2. GREEN / required focused verification:
+```bash
+mix test apps/ezagent_plugin_codex/test/integration/credential_admission_bootstrap_test.exs
+```
 
-   ```sh
-   mise exec -- mix test \
-     apps/ezagent_domain_agent/test/ezagent/agent/credential_connection_test.exs \
-     apps/ezagent_domain_session/test/ezagent/socialware/definition_test.exs \
-     apps/ezagent_domain_session/test/ezagent/socialware/definition_editor_test.exs
-   ```
+Result: failed exactly at the new
+`assert EzagentDomainUi.Pty.TerminalView.applies_to?(session_uri)` assertion;
+the preceding `Ezagent.Domain.Pty.alive?(agent_uri)` assertion passed.
 
-   Result: 33 tests, 0 failures (4 agent-domain tests; 29 session-domain tests).
+## GREEN
 
-## Changed files
+Commands:
 
-- `apps/ezagent_domain_agent/lib/ezagent/agent/credential_connection.ex`
-- `apps/ezagent_core/lib/ezagent/agent/credential_adapter.ex`
-- `apps/ezagent_domain_agent/test/ezagent/agent/credential_connection_test.exs`
-- `apps/ezagent_domain_session/lib/ezagent/socialware/definition.ex`
-- `apps/ezagent_domain_session/lib/ezagent/socialware/definition_editor.ex`
-- `apps/ezagent_domain_session/test/ezagent/socialware/definition_test.exs`
-- `apps/ezagent_domain_session/test/ezagent/socialware/definition_editor_test.exs`
+```bash
+mix test apps/ezagent_plugin_codex/test/integration/credential_admission_bootstrap_test.exs
+mix test apps/ezagent_domain_ui/test/ezagent_domain_ui/pty/terminal_view_test.exs
+```
+
+Result: passed with zero failures (1 Codex admission test; 7 TerminalView tests).
 
 ## Commit
 
-`6395a6daf35d7a4fbe963c739f30f1c7dab9d15f` —
-`feat(session): declare credential-gated role admission`
+`1472609a8 fix(ui): expose active admission terminals`
+
+## Self-review
+
+- The change keeps existing joined-member behavior intact.
+- Only the two explicitly allowed code/test files were committed.
+- `git diff --cached --check` passed before commit.
+- Touched files were formatted with `mix format`.
 
 ## Concerns
 
-- The brief names `apps/ezagent_domain_agent/lib/ezagent/agent/credential_adapter.ex`,
-  but the sole existing `Ezagent.Agent.CredentialAdapter` module is owned by
-  `apps/ezagent_core`. The callback was therefore added to that authoritative
-  module; creating the named domain-agent path would duplicate the module.
-- `mix precommit` was started and reached its clean forced compile phase, but was
-  stopped at the task owner's direction because Task 6 owns full precommit.
-  The Task 1 focused command above is fresh and passing.
+- `ezagent_domain_ui` does not declare a direct `:ezagent_domain_session`
+  dependency, so compiling the new direct `AgentAdmission.list/1` call emits an
+  undefined-module warning. The task explicitly restricted implementation to
+  the two committed files and required this alias/call shape, so `mix.exs` was
+  intentionally left unchanged. The two specified tests pass under the
+  umbrella's running applications.
+- Per task instruction, full `mix precommit` was not run.
 
----
+## Independent Review Follow-up
 
-## Review correction — unavailable template classes and admission serialization
+### Status
 
-### Root cause
-
-`CredentialConnection.template_connection/2` discarded the result of
-`Code.ensure_loaded/1`. An unavailable Template Class therefore had no exported
-callback and was incorrectly treated as `:not_required`.
-
-### TDD evidence
-
-1. RED:
-
-   ```sh
-   mise exec -- mix test apps/ezagent_domain_agent/test/ezagent/agent/credential_connection_test.exs
-   ```
-
-   Result: 5 tests, 1 failure. The unavailable registered class returned
-   `{:ok, :not_required}` instead of `{:error, :unsupported_connection}`.
-
-2. GREEN:
-
-   ```sh
-   mise exec -- mix test \
-     apps/ezagent_domain_agent/test/ezagent/agent/credential_connection_test.exs \
-     apps/ezagent_domain_session/test/ezagent/socialware/definition_test.exs \
-     apps/ezagent_domain_session/test/ezagent/socialware/definition_editor_test.exs \
-     apps/ezagent_domain_session/test/ezagent/socialware/role_slot_acceptance_test.exs
-   ```
-
-   Result: 38 tests, 0 failures (5 agent-domain tests; 33 session-domain tests).
+DONE
 
 ### Changes
 
-- Unavailable registered Template Classes now return
-  `{:error, :unsupported_connection}`.
-- `role_slot_acceptance_test` now asserts the serialized default
-  `"credential_admission" => "immediate"`.
-- Replaced nested test helper modules with one compiled top-level support module.
+- Declared `{:ezagent_domain_session, in_umbrella: true}` in
+  `ezagent_domain_ui` so `TerminalView` has an explicit compile-time dependency
+  on `AgentAdmission`; the adjacent comment records why the sibling edge is
+  acyclic.
+- Added public `TerminalView.applies_to?/1` coverage for a live
+  `:materializing` candidate and for rejected `:joined`, malformed, bad-URI,
+  non-entity, and non-live candidates.
 
-### Scope
+### Test-first record
 
-The correction commit excludes this shared report and the pre-existing plan
-document; both remain unstaged.
+The new behavior tests were added and run before changing `mix.exs`. They were
+green because the preceding Task 1 implementation already contained the
+admission-status and URI guards; the follow-up fix addresses the independent
+review's missing dependency declaration and adds durable regression coverage.
+
+### Verification
+
+```bash
+# from apps/ezagent_domain_ui
+mix compile
+
+# from umbrella root
+mix test apps/ezagent_plugin_codex/test/integration/credential_admission_bootstrap_test.exs
+mix test apps/ezagent_domain_ui/test/ezagent_domain_ui/pty/terminal_view_test.exs
+```
+
+Results: child app compile no longer reports the
+`AgentAdmission.list/1 is undefined` warning. The Codex admission regression
+passed (1 test, 0 failures) and TerminalView passed (9 tests, 0 failures).
+The compile emitted pre-existing warnings from `ezagent_actor` and
+`ezagent_domain_agent`, plus build-artifact mtime resets; none references the
+changed files.
+
+### Commit
+
+`130e88e8e fix(ui): declare terminal admission dependency`
