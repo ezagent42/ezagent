@@ -19,8 +19,8 @@
 
 **Files:** definition.ex, manifest_yaml.ex, conformance.ex and their Definition/YAML tests.
 
-- [ ] Add Definition.ingress as nil or %{behavior: module, action: atom, protected_roles: [String.t()]}; persist it, render it in canonical YAML, and validate behavior, action, and declared protected roles.
-- [ ] Write red tests for valid YAML round trip and unknown behavior/action/role rejection; run the two focused test files, implement, rerun, then commit feat(session): declare validated socialware ingress.
+- [x] Add Definition.ingress as nil or %{behavior: module, action: atom, protected_roles: [String.t()]}; persist it, render it in canonical YAML, and validate behavior, action, and declared protected roles.
+- [x] Write red tests for valid YAML round trip and unknown behavior/action/role rejection; run the two focused test files, implement, rerun, then commit feat(session): declare validated socialware ingress.
 
 ### Task 2: Generic ingress delivery and mention isolation
 
