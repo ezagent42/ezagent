@@ -1659,6 +1659,35 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
   end
 
+  test "reuse of an unavailable agent is skipped instead of aborting installation" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-unavailable-#{n}"
+    flavor = register_stub_flavor(n)
+    unavailable = Ezagent.URI.agent("system", "missing-reusable-#{n}")
+
+    assert {:ok,
+            %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}], deferred: []}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   flavor: flavor,
+                   install_mode: :reuse,
+                   reuse_agent_uri: unavailable
+                 }
+               ]
+             )
+
+    assert {:reuse_agent_unavailable, ^role_name, _} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+  end
+
   test "reuse accepts a matching flavor recovered only from durable state" do
     n = uniq()
     session_uri = live_session(n)
@@ -1708,6 +1737,35 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
 
     assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+  end
+
+  test "reuse provider-profile drift leaves a durable unfilled role" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-provider-mismatch-#{n}"
+    flavor = register_stub_flavor(n)
+    reusable = live_agent(n, recipe_name, flavor)
+
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
+             DefinitionAgents.materialize_definition_agents(
+               session_uri,
+               @workspace_uri,
+               @owner_uri,
+               [
+                 %{
+                   recipe: recipe_name,
+                   role_name: role_name,
+                   flavor: flavor,
+                   provider: "different-profile",
+                   install_mode: :reuse,
+                   reuse_agent_uri: reusable
+                 }
+               ]
+             )
+
+    assert {:reuse_agent_revalidation_failed, ^role_name, :provider_profile_mismatch} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
   test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
@@ -1779,7 +1837,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     refute_receive {:task_3_fresh_spawned, _uri, _config_dir}, 100
   end
 
-  test "reuse install choice joins the existing agent despite fresh-agent credential admission" do
+  test "reuse of a credential-ineligible agent leaves a durable unfilled role" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1791,7 +1849,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
       recipe: recipe_name,
       role_name: role_name,
       flavor: flavor,
-      provider: "kimi",
       install_mode: :reuse,
       reuse_agent_uri: reusable
     }
@@ -1806,7 +1863,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
 
-    assert {:ok, %{satisfied: [^role_name], skipped: [], deferred: []}} =
+    assert {:ok,
+            %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}], deferred: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -1814,7 +1872,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [declaration]
              )
 
-    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+    assert {:reuse_agent_revalidation_failed, ^role_name, :ineligible_credential_status} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
     assert AgentAdmission.list(session_uri) == []
   end
 

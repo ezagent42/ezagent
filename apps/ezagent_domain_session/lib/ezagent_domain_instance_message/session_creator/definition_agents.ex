@@ -419,7 +419,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
-         {:ok, _live_or_rehydrated} <- Ezagent.Domain.Agent.ensure_deliverable(agent_uri),
+         :ok <- ensure_reusable_agent(agent_uri, role_name),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
          # The declaration can drift after its installation preflight. Verify
          # the existing agent still fulfils the complete reuse contract at the
@@ -430,7 +430,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
              agent_uri,
              operator,
              recipe_name,
-             flavor_of(agent),
+             agent,
              role_name
            ),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
@@ -457,13 +457,33 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp revalidate_reuse_contract(agent_uri, operator, recipe_name, flavor, role_name) do
+  defp ensure_reusable_agent(agent_uri, role_name) do
+    case Ezagent.Domain.Agent.ensure_deliverable(agent_uri) do
+      {:ok, _live_or_rehydrated} -> :ok
+      {:error, reason} -> {:skip, {:reuse_agent_unavailable, role_name, reason}}
+    end
+  end
+
+  defp revalidate_reuse_contract(agent_uri, operator, recipe_name, agent, role_name) do
     reason =
       cond do
-        agent_recipe(agent_uri) != {:ok, recipe_name} -> :recipe_mismatch
-        Ezagent.UriQuery.resolve(:flavor, agent_uri) != {:ok, flavor} -> :flavor_mismatch
-        not Ezagent.Identity.Authority.manages?(operator, agent_uri) -> :unauthorized
-        true -> :ok
+        agent_recipe(agent_uri) != {:ok, recipe_name} ->
+          :recipe_mismatch
+
+        Ezagent.UriQuery.resolve(:flavor, agent_uri) != {:ok, flavor_of(agent)} ->
+          :flavor_mismatch
+
+        not Ezagent.Identity.Authority.manages?(operator, agent_uri) ->
+          :unauthorized
+
+        agent_provider_profile(agent_uri) != provider_of(agent) ->
+          :provider_profile_mismatch
+
+        not credential_eligible?(agent_uri, operator, agent) ->
+          :ineligible_credential_status
+
+        true ->
+          :ok
       end
 
     case reason do
@@ -474,6 +494,47 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp agent_recipe(%URI{} = agent_uri),
     do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
+
+  defp credential_eligible?(agent_uri, operator, agent) do
+    if credential_admission_of(agent) == :immediate do
+      true
+    else
+      case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{
+             caller: operator,
+             authenticated_principal: operator
+           }) do
+        {:ok, %{status: status}} when status in [:authenticated, :expiring, :n_a] -> true
+        _ -> false
+      end
+    end
+  end
+
+  defp agent_provider_profile(agent_uri) do
+    sandbox = read_reuse_slice(agent_uri, :sandbox)
+    state = Map.get(sandbox, :state) || Map.get(sandbox, "state") || sandbox
+
+    case Map.get(state, :respawn_template_data) || Map.get(state, "respawn_template_data") do
+      data when is_map(data) ->
+        Map.get(data, :provider) || Map.get(data, "provider")
+
+      _ ->
+        curl = read_reuse_slice(agent_uri, :curl_agent)
+        Map.get(curl, :provider) || Map.get(curl, "provider")
+    end
+  end
+
+  defp read_reuse_slice(agent_uri, slice_key) do
+    case Ezagent.Kind.read(agent_uri, slice_key, spawn: :never) do
+      {:ok, slice} when is_map(slice) ->
+        slice
+
+      _ ->
+        case Ezagent.Kind.read_durable(agent_uri, slice_key) do
+          {:ok, slice, _meta} when is_map(slice) -> slice
+          _ -> %{}
+        end
+    end
+  end
 
   defp reuse_caps(%URI{} = session_uri, %URI{} = operator) do
     target = Ezagent.URI.with_action(session_uri, :session, :join)

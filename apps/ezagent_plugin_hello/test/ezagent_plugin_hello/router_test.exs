@@ -20,6 +20,19 @@ defmodule EzagentPluginHello.RouterTest do
     end
   end
 
+  describe "owner?/2" do
+    test "treats an unreadable session owner as a visitor" do
+      session =
+        Ezagent.URI.session(
+          "hello-owner-read-#{System.unique_integer([:positive])}",
+          :hello,
+          "missing"
+        )
+
+      refute Router.owner?(session, Ezagent.URI.user("system", "admin"))
+    end
+  end
+
   describe "interpret_intent/1 — owner intent parsing" do
     test "KANBAN anywhere delegates to the kanban session action" do
       assert Generator.interpret_intent("KANBAN") == :delegate_to_kanban

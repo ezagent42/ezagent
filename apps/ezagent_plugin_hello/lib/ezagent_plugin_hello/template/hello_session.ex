@@ -87,13 +87,6 @@ defmodule EzagentPluginHello.Template.HelloSession do
   defp do_instantiate(_tmpl_name, tmpl, _workspace_uri, _caller),
     do: {:error, {:invalid_template, tmpl}}
 
-  defp maybe_llm_flavor(tmpl) do
-    case Map.get(tmpl, "llm_flavor") || Map.get(tmpl, :llm_flavor) do
-      flavor when is_binary(flavor) and flavor != "" -> [llm_flavor: flavor]
-      _ -> []
-    end
-  end
-
   defp reusable_llm_selection(tmpl) do
     flavor = Map.get(tmpl, "llm_flavor") || Map.get(tmpl, :llm_flavor)
     agent_uri = Map.get(tmpl, "llm_agent_uri") || Map.get(tmpl, :llm_agent_uri)
@@ -105,17 +98,8 @@ defmodule EzagentPluginHello.Template.HelloSession do
           {:ok, %{flavor: flavor, agent_uri: parsed_uri}}
         end
 
-      {nil, nil} ->
-        {:ok, :none}
-
-      {flavor, nil} when is_binary(flavor) and flavor != "" ->
-        # Flavor-only templates predate reusable selection and remain valid for
-        # direct/boot callers. Once a URI is supplied, the pair is mandatory
-        # and receives the synchronous preflight below.
-        {:ok, :none}
-
       {_flavor, nil} ->
-        {:ok, :none}
+        {:error, :llm_agent_required}
 
       {nil, _agent_uri} ->
         {:error, {:invalid_reusable_llm_selection, :missing_llm_flavor}}
@@ -137,8 +121,6 @@ defmodule EzagentPluginHello.Template.HelloSession do
   defp parse_agent_uri(agent_uri),
     do: {:error, {:invalid_reusable_llm_agent_uri, agent_uri}}
 
-  defp preflight_reusable_llm(:none, _caller, _workspace_uri), do: :ok
-
   defp preflight_reusable_llm(_selection, nil, _workspace_uri),
     do: {:error, {:invalid_reusable_llm_agent, :unauthorized}}
 
@@ -155,8 +137,6 @@ defmodule EzagentPluginHello.Template.HelloSession do
 
   defp llm_create_opts(_tmpl, %{flavor: flavor, agent_uri: agent_uri}),
     do: [llm_flavor: flavor, llm_agent_uri: agent_uri]
-
-  defp llm_create_opts(tmpl, :none), do: maybe_llm_flavor(tmpl)
 
   defp check_class(%{"class" => "session.hello"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}

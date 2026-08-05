@@ -47,79 +47,31 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
-    test "workspace class creation asynchronously installs the declared team" do
+    test "requires an explicit reusable LLM selection" do
+      workspace_uri =
+        Ezagent.URI.workspace("hello-tmpl-selection-#{System.unique_integer([:positive])}")
+
+      for template <- [
+            %{"class" => "session.hello", "session_name" => "main"},
+            %{"class" => "session.hello", "session_name" => "main", "llm_flavor" => "py"}
+          ] do
+        assert {:error, :llm_agent_required} =
+                 HelloSession.instantiate("session.hello", template, workspace_uri)
+      end
+    end
+
+    test "workspace class creation rejects an omitted reusable LLM" do
       ws = "hello-workspace-create-#{System.unique_integer([:positive])}"
       {:ok, _} = Workspace.create(ws, %{})
       workspace_uri = Ezagent.URI.workspace(ws)
       caller = Ezagent.Entity.User.admin_uri()
       short_name = "async-team-#{System.unique_integer([:positive])}"
 
-      assert {:ok, %{session_uri: session_uri}, []} =
+      assert {:error, :llm_agent_required} =
                Ezagent.ActionSet.Workspace.handle_create_session(
                  %{short_name: short_name, template_name: "hello"},
                  %{self_uri: workspace_uri, caller: caller}
                )
-
-      assert %{status: status} =
-               Ezagent.Session.SocialwareInstallObligations.get_by_session(session_uri)
-
-      assert status in [:pending, :running, :resolved]
-
-      assert eventually(fn ->
-               match?(
-                 %{status: :resolved},
-                 Ezagent.Session.SocialwareInstallObligations.get_by_session(session_uri)
-               )
-             end)
-
-      assert :error = Members.role_uri(session_uri, "front-desk")
-    end
-
-    test "stands up a creatable hello app: session + declared (not spawned) team" do
-      ws = "hello-tmpl-#{System.unique_integer([:positive])}"
-      {:ok, _} = Workspace.create(ws, %{})
-      workspace_uri = Ezagent.URI.workspace(ws)
-      tmpl = %{"class" => "session.hello", "session_name" => "main"}
-
-      assert {:ok, [session_uri], %{fresh?: true, vertical: :hello}} =
-               HelloSession.instantiate("session.hello", tmpl, workspace_uri)
-
-      assert session_uri == Ezagent.URI.session(ws, :hello, "main")
-
-      # rev6 / #912 — `instantiate/3` runs inside the `workspace.create_session`
-      # dispatch, so it creates the session + its config and RECORDS the declared
-      # team as `member_declarations`. It spawns nothing. Before this split it
-      # materialized role agents inside the create dispatch, which is why `hello`
-      # kept timing out after `default` had already been decoupled.
-      assert :error = Members.role_uri(session_uri, "front-desk")
-
-      declarations =
-        session_uri
-        |> Ezagent.Entity.Session.read_template_working_copy()
-        |> Map.get(:member_declarations, [])
-        |> Enum.map(&(Map.get(&1, :role_name) || Map.get(&1, "role_name")))
-
-      assert declarations == ["llm"]
-
-      # `Workspace.create_session` fires this transaction once the owner-only
-      # session is durable; drive it synchronously here.
-      assert {:ok, %{satisfied: [], skipped: [], deferred: ["llm"]}} =
-               EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
-
-      assert :error = Members.role_uri(session_uri, "front-desk")
-      assert :error = Members.role_uri(session_uri, "llm")
-
-      assert [
-               %{
-                 role_name: "llm",
-                 status: :pending_auth,
-                 connection: {:api_key, %{provider: "deepseek"}}
-               }
-             ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
-
-      # Idempotent: re-instantiating the same app reports not-fresh.
-      assert {:ok, [^session_uri], %{fresh?: false}} =
-               HelloSession.instantiate("session.hello", tmpl, workspace_uri)
     end
 
     test "initial install repairs a missing owner Page capability" do
@@ -131,7 +83,14 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       {:ok, _} = Ezagent.Users.create(owner, "pw-not-secret", [])
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(owner)
 
-      template = %{"class" => "session.hello", "session_name" => "main"}
+      reusable_llm = seed_reusable_py_agent(ws, workspace_uri, owner, cold: false)
+
+      template = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "py",
+        "llm_agent_uri" => URI.to_string(reusable_llm)
+      }
 
       assert {:ok, [session_uri], %{fresh?: true}} =
                HelloSession.instantiate("session.hello", template, workspace_uri, caller: owner)
@@ -198,7 +157,14 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       caller = Ezagent.URI.new!("entity://#{ws}/user/owner")
       {:ok, _} = Ezagent.Users.create(caller, "pw-not-secret", [])
       {:ok, _pid} = Ezagent.SpawnRegistry.spawn(caller)
-      template = %{"class" => "session.hello", "session_name" => "main"}
+      reusable_llm = seed_reusable_py_agent(ws, workspace_uri, caller, cold: false)
+
+      template = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "py",
+        "llm_agent_uri" => URI.to_string(reusable_llm)
+      }
 
       assert {:ok, [session_uri], %{fresh?: true}} =
                HelloSession.instantiate("session.hello", template, workspace_uri, caller: caller)
@@ -255,37 +221,20 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                HelloSession.instantiate("session.hello", %{}, workspace_uri)
     end
 
-    test "flavor overrides preserve admission without carrying Curl provider metadata" do
-      ws = "hello-tmpl-flavor-#{System.unique_integer([:positive])}"
-      {:ok, _} = Workspace.create(ws, %{})
-      workspace_uri = Ezagent.URI.workspace(ws)
+    test "flavor-only templates do not create a fresh LLM" do
+      workspace_uri =
+        Ezagent.URI.workspace("hello-tmpl-flavor-#{System.unique_integer([:positive])}")
 
-      Enum.each(["cc-headless", "codex"], fn flavor ->
-        tmpl = %{
-          "class" => "session.hello",
-          "session_name" => "main-#{flavor}",
-          "llm_flavor" => flavor
-        }
-
-        assert {:ok, [session_uri], _} =
-                 HelloSession.instantiate("session.hello", tmpl, workspace_uri)
-
-        declarations =
-          session_uri
-          |> Ezagent.Entity.Session.read_template_working_copy()
-          |> Map.get(:member_declarations, [])
-
-        llm =
-          Enum.find(declarations, fn role ->
-            (Map.get(role, :role_name) || Map.get(role, "role_name")) == "llm"
-          end)
-
-        assert %{role_name: "llm", flavor: ^flavor, credential_admission: :before_session_join} =
-                 llm
-
-        refute Map.has_key?(llm, :provider)
-        assert %{"provider" => "deepseek"} = llm.config
-      end)
+      assert {:error, :llm_agent_required} =
+               HelloSession.instantiate(
+                 "session.hello",
+                 %{
+                   "class" => "session.hello",
+                   "session_name" => "main",
+                   "llm_flavor" => "cc-headless"
+                 },
+                 workspace_uri
+               )
     end
 
     test "preflights a selected reusable LLM and freezes the reuse role slot" do

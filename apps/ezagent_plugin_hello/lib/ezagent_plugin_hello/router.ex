@@ -146,20 +146,19 @@ defmodule EzagentPluginHello.Router do
   end
 
   # Read the session's owner from its `:session` slice (same source
-  # `EzagentWeb.Socialware.SessionFeedChannel` uses). When an owner IS set, enforce
-  # it (a non-owner is the read-only concierge — the page-edit boundary). When the
-  # session is OWNERLESS (nil owner — e.g. a pre-owner_uri hello session), fail-OPEN
-  # and treat the sender as the owner.
-  defp owner?(session_uri, %URI{} = sender) do
+  # `EzagentWeb.Socialware.SessionFeedChannel` uses). An absent owner or an
+  # unavailable slice cannot establish page-edit authority, so both are visitors.
+  @doc false
+  def owner?(session_uri, %URI{} = sender) do
     case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, slice} when is_map(slice) ->
         case Map.get(slice, :owner_uri) || Map.get(slice, "owner_uri") do
-          nil -> true
+          nil -> false
           owner -> same_uri?(owner, sender)
         end
 
       _ ->
-        true
+        false
     end
   end
 
