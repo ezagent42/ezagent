@@ -231,3 +231,34 @@ Only the reuse revalidation, its two authorized integration-test files, and this
   ```
 
   completed with `6 tests, 0 failures (28 excluded)`.
+
+## Final review follow-up — canonical durable flavor resolution
+
+- Reuse revalidation now resolves the agent flavor through the canonical
+  `Ezagent.UriQuery.resolve(:flavor, agent_uri)` path rather than directly
+  reading the volatile `AgentFlavorAttributes` ETS table.
+- Added a cold-reuse regression that terminates the existing agent, writes a
+  valid durable snapshot carrying the expected sandbox flavor, clears the ETS
+  launch attribute, and proves the agent is rehydrated and joined successfully.
+
+### RED → GREEN evidence
+
+- RED: with the old direct ETS revalidation, the cold fixture resolved its
+  flavor from the durable snapshot before installation, but reuse was skipped
+  with `:flavor_mismatch` at the final join boundary.
+- GREEN:
+
+  ```sh
+  MIX_ENV=test POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
+  POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres \
+  mix test apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1634 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1662 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1713 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1782 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1875 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1910 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1944 \
+    --seed 0 --max-cases 1
+  ```
+
+  completed with `7 tests, 0 failures (28 excluded)`.

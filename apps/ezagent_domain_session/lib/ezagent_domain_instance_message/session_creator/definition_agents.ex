@@ -461,7 +461,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     reason =
       cond do
         agent_recipe(agent_uri) != {:ok, recipe_name} -> :recipe_mismatch
-        Ezagent.AgentFlavorAttributes.get(agent_uri) != {:ok, flavor} -> :flavor_mismatch
+        Ezagent.UriQuery.resolve(:flavor, agent_uri) != {:ok, flavor} -> :flavor_mismatch
         not Ezagent.Identity.Authority.manages?(operator, agent_uri) -> :unauthorized
         true -> :ok
       end

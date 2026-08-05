@@ -1659,6 +1659,57 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
   end
 
+  test "reuse accepts a matching flavor recovered only from durable state" do
+    n = uniq()
+    session_uri = live_session(n)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-durable-flavor-#{n}"
+    flavor = register_stub_flavor(n)
+    reusable = live_agent(n, recipe_name, flavor)
+
+    assert {:ok, %{state: state}} = Ezagent.SnapshotStore.latest(reusable)
+    terminate(reusable)
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(
+               reusable,
+               Map.put(state, :sandbox, %{
+                 config_dir_path: nil,
+                 template_class: nil,
+                 respawn_template_data: %{flavor: flavor},
+                 pty_phase: nil
+               }),
+               kind_type: :agent,
+               version: 0
+             )
+
+    :ok = Ezagent.AgentFlavorAttributes.delete(reusable)
+    assert {:ok, ^flavor} = Ezagent.AgentFlavorResolver.flavor_from_durable_snapshot(reusable)
+    assert {:ok, ^flavor} = Ezagent.UriQuery.resolve(:flavor, reusable)
+
+    result =
+      DefinitionAgents.materialize_definition_agents(
+        session_uri,
+        @workspace_uri,
+        @owner_uri,
+        [
+          %{
+            recipe: recipe_name,
+            role_name: role_name,
+            flavor: flavor,
+            install_mode: :reuse,
+            reuse_agent_uri: reusable
+          }
+        ]
+      )
+
+    assert :none = Ezagent.AgentFlavorAttributes.get(reusable)
+    assert {:ok, ^flavor} = Ezagent.UriQuery.resolve(:flavor, reusable)
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} = result
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+  end
+
   test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
     n = uniq()
     workspace_uri = Ezagent.URI.workspace("reuse-race-#{n}")
