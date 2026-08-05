@@ -8,10 +8,11 @@ Implement `docs/superpowers/plans/2026-08-05-hello-reuse-user-agent-and-session-
 
 - [x] Task 1 — Definition ingress contract
 - [x] Task 2 — Generic ingress delivery and mention isolation
-- [ ] Task 3 — Reusable LLM candidate API and preflight
+- [x] Task 3 — Reusable LLM candidate API and preflight
 - [ ] Task 4 — Race-safe, multi-session reuse
 - [ ] Task 5 — Hello ingress and front-desk removal
 - [ ] Task 6 — Retire relay names and wire UI
 
 Task 1: complete (commits 5ef000648..75c8ef951, review clean)
 Task 2: complete (commits 9e6134c4d..a611a3eda, review clean)
+Task 3: complete (commits 53a0d23c0..bcc8a4431, review clean)

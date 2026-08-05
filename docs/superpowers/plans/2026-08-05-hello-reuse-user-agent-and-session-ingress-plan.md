@@ -33,8 +33,8 @@
 
 **Files:** create reusable_llm_agent.ex; modify hello_session.ex and app.ex; add reusable_llm_agent_test.exs and extend hello_session_test.exs.
 
-- [ ] Implement list(caller, workspace, flavor) and validate(caller, workspace, flavor, agent_uri). Require Manage authority, hello.llm recipe, exact flavor/provider profile, and the eligibility policy.
-- [ ] Accept llm_flavor plus llm_agent_uri in session.hello, synchronously validate before App.create_app, then freeze role_slots llm with install_mode reuse and reuse_agent_uri. Test all App.llm_flavors, status cases, authority and stale URI. Commit feat(hello): preflight reusable LLM agents.
+- [x] Implement list(caller, workspace, flavor) and validate(caller, workspace, flavor, agent_uri). Require Manage authority, hello.llm recipe, exact flavor/provider profile, and the eligibility policy.
+- [x] Accept llm_flavor plus llm_agent_uri in session.hello, synchronously validate before App.create_app, then freeze role_slots llm with install_mode reuse and reuse_agent_uri. Test all App.llm_flavors, status cases, authority and stale URI. Commit feat(hello): preflight reusable LLM agents.
 
 ### Task 4: Race-safe, multi-session reuse
 
