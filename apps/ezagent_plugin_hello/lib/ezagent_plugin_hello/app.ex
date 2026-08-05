@@ -271,7 +271,7 @@ defmodule EzagentPluginHello.App do
   def llm_provider_config(flavor) when flavor in ["curl", "cc-headless-custom"],
     do: %{provider: "deepseek"}
 
-  def llm_provider_config(_flavor), do: %{}
+  def llm_provider_config(_flavor), do: %{provider: nil}
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the
   # Template Class create path) hits an already-bound session; that is success,

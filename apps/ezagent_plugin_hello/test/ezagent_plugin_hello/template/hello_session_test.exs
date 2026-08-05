@@ -50,7 +50,9 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
     test "freezes provider intent only for profile-bearing LLM flavors" do
       for flavor <- EzagentPluginHello.App.llm_flavors() do
         expected =
-          if flavor in ["curl", "cc-headless-custom"], do: %{provider: "deepseek"}, else: %{}
+          if flavor in ["curl", "cc-headless-custom"],
+            do: %{provider: "deepseek"},
+            else: %{provider: nil}
 
         assert EzagentPluginHello.App.llm_provider_config(flavor) == expected
       end
@@ -314,6 +316,14 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                  workspace_uri,
                  caller: owner
                )
+
+      llm_declaration =
+        session_uri
+        |> Ezagent.Entity.Session.read_template_working_copy()
+        |> Map.fetch!(:member_declarations)
+        |> Enum.find(&((Map.get(&1, :role_name) || Map.get(&1, "role_name")) == "llm"))
+
+      assert %{config: %{provider: nil}} = llm_declaration
 
       assert {:ok, %{satisfied: satisfied, deferred: []}} =
                EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
