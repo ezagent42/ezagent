@@ -1744,7 +1744,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
     role_name = "reuse-provider-mismatch-#{n}"
-    flavor = register_stub_flavor(n)
+    flavor = "curl"
     reusable = live_agent(n, recipe_name, flavor)
 
     assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
@@ -1766,6 +1766,15 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert {:reuse_agent_revalidation_failed, ^role_name, :provider_profile_mismatch} = reason
     assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+  end
+
+  test "only profile-bearing Hello flavors constrain reusable provider metadata" do
+    profile_flavors = MapSet.new(["curl", "cc-headless-custom"])
+
+    Enum.each(EzagentPluginHello.App.llm_flavors(), fn flavor ->
+      assert DefinitionAgents.provider_profile_flavor?(flavor) ==
+               MapSet.member?(profile_flavors, flavor)
+    end)
   end
 
   test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
