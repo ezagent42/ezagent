@@ -26,8 +26,8 @@
 
 **Files:** behavior/session.ex, behavior/session/delivery.ex, definition_editor.ex, chat_test.exs, mention_gated_routing_test.exs.
 
-- [ ] Materialize ingress into the Session working copy. After MessageStore.write, self-dispatch its declared action with %{message: stored_msg, session_uri: session_uri} and a target-issued capability limited to that action.
-- [ ] Filter recipients corresponding to protected_roles before fan-out. Test one ingress call, zero direct agent.receive for at-llm, and unchanged non-protected mention delivery. Commit feat(session): dispatch declared ingress before member fan-out.
+- [x] Materialize ingress into the Session working copy. After MessageStore.write, self-dispatch its declared action with %{message: stored_msg, session_uri: session_uri} and a target-issued capability limited to that action.
+- [x] Filter recipients corresponding to protected_roles before fan-out. Test one ingress call, zero direct agent.receive for at-llm, and unchanged non-protected mention delivery. Commit feat(session): dispatch declared ingress before member fan-out.
 
 ### Task 3: Reusable LLM candidate API and preflight
 
