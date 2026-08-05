@@ -56,7 +56,6 @@ defmodule Ezagent.Socialware.ManifestYaml do
   @spec render(Definition.t()) :: {:ok, binary()} | {:error, term()}
   def render(%Definition{} = definition) do
     body = Definition.body(definition)
-    ingress_yaml = ingress_yaml(body.ingress)
 
     with {:ok, views} <- render_views(definition.views) do
       body
@@ -65,7 +64,6 @@ defmodule Ezagent.Socialware.ManifestYaml do
       |> Map.put("shape", Enum.map(definition.shape, &module_name/1))
       |> canonical_map()
       |> yaml_encode()
-      |> then(&(ingress_yaml <> &1))
       |> then(&{:ok, &1})
     end
   end
@@ -209,11 +207,8 @@ defmodule Ezagent.Socialware.ManifestYaml do
   defp empty_value?(nil), do: true
   defp empty_value?(""), do: true
   defp empty_value?([]), do: true
-  defp empty_value?(%{}), do: true
+  defp empty_value?(map) when is_map(map), do: map_size(map) == 0
   defp empty_value?(_), do: false
-
-  defp ingress_yaml(nil), do: ""
-  defp ingress_yaml(ingress), do: encode_pair("ingress", ingress, 0)
 
   defp yaml_encode(map) when is_map(map) do
     map

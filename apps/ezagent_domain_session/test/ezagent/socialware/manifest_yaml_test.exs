@@ -190,6 +190,10 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     assert yaml =~ "ingress:"
     assert yaml =~ "Ezagent.Socialware.ManifestYamlTest.IngressBehavior"
 
+    assert yaml
+           |> String.split("\n")
+           |> Enum.count(&(&1 == "ingress:")) == 1
+
     assert {:ok, attrs} = ManifestYaml.parse(yaml)
     assert {:ok, resolved} = Ezagent.Socialware.ManifestResolver.resolve(attrs)
     assert resolved == original
