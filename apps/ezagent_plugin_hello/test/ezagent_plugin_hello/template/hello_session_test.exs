@@ -307,7 +307,158 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         assert %{"provider" => "deepseek"} = llm.config
       end)
     end
+
+    test "preflights a selected reusable LLM and freezes the reuse role slot" do
+      suffix = System.unique_integer([:positive])
+      ws = "hello-tmpl-reuse-#{suffix}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      owner = confirmed_user(ws, "owner")
+      reusable_llm = seed_reusable_py_agent(ws, workspace_uri, owner)
+
+      template = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "py",
+        "llm_agent_uri" => URI.to_string(reusable_llm)
+      }
+
+      assert {:ok, [session_uri], %{fresh?: true}} =
+               HelloSession.instantiate(
+                 "session.hello",
+                 template,
+                 workspace_uri,
+                 caller: owner
+               )
+
+      working_copy = Ezagent.Entity.Session.read_template_working_copy(session_uri)
+
+      llm =
+        working_copy
+        |> Map.fetch!(:member_declarations)
+        |> Enum.find(&(&1.role_name == "llm"))
+
+      assert %{
+               role_name: "llm",
+               flavor: "py",
+               install_mode: :reuse,
+               reuse_agent_uri: ^reusable_llm
+             } = llm
+
+      assert {:ok, manifest_content} =
+               Ezagent.Entity.Session.Orchestrator.read_template_content(
+                 working_copy.session_template_uri
+               )
+
+      refute contains_uri?(manifest_content, reusable_llm),
+             "the selected agent URI is per-session install data, not manifest data"
+    end
+
+    test "rejects a stale selected LLM before persisting the Hello app" do
+      suffix = System.unique_integer([:positive])
+      ws = "hello-tmpl-stale-reuse-#{suffix}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      owner = confirmed_user(ws, "owner")
+      stale = Ezagent.URI.agent(ws, "stale-llm")
+      session_uri = Ezagent.URI.session(ws, :hello, "main")
+
+      template = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "py",
+        "llm_agent_uri" => URI.to_string(stale)
+      }
+
+      assert {:error, {:invalid_reusable_llm_agent, :not_found}} =
+               HelloSession.instantiate(
+                 "session.hello",
+                 template,
+                 workspace_uri,
+                 caller: owner
+               )
+
+      assert {:error, :not_found} = Ezagent.SnapshotStore.latest(session_uri)
+      assert :error = Ezagent.KindRegistry.lookup(session_uri)
+    end
   end
+
+  defp seed_reusable_py_agent(ws, workspace_uri, owner) do
+    agent_uri =
+      Ezagent.URI.agent(ws, "reusable-py-#{System.unique_integer([:positive])}")
+
+    state = %{
+      sandbox: %{
+        state: %{
+          recipe: "hello.llm",
+          respawn_template_data: %{"flavor" => "py"}
+        }
+      }
+    }
+
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+               uri: agent_uri,
+               behaviors: Ezagent.Entity.Agent.base_behaviors(),
+               initial_caps: MapSet.new()
+             })
+
+    assert :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
+
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        agent_uri,
+        workspace_uri,
+        owner
+      )
+
+    assert :ok =
+             Ezagent.Identity.Grant.grant_cap_via_router(
+               owner,
+               cap,
+               {:admin, Ezagent.Entity.User.admin_uri()},
+               :sync
+             )
+
+    assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    assert :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
+    assert eventually(fn -> Ezagent.KindRegistry.lookup(agent_uri) == :error end)
+
+    assert {:ok, _} =
+             Ezagent.SnapshotStore.write(agent_uri, state,
+               kind_type: :agent,
+               workspace_uri: URI.to_string(workspace_uri)
+             )
+
+    agent_uri
+  end
+
+  defp confirmed_user(ws, prefix) do
+    uri =
+      Ezagent.URI.new!("entity://#{ws}/user/#{prefix}-#{System.unique_integer([:positive])}")
+
+    {:ok, _} = Ezagent.Users.create(uri, "pw-not-secret", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(uri)
+    uri
+  end
+
+  defp contains_uri?(%URI{} = value, target),
+    do: Ezagent.URI.stable_key(value) == Ezagent.URI.stable_key(target)
+
+  defp contains_uri?(value, target) when is_binary(value),
+    do: value == URI.to_string(target)
+
+  defp contains_uri?(value, target) when is_map(value),
+    do:
+      Enum.any?(value, fn {key, nested} ->
+        contains_uri?(key, target) or contains_uri?(nested, target)
+      end)
+
+  defp contains_uri?(value, target) when is_list(value),
+    do: Enum.any?(value, &contains_uri?(&1, target))
+
+  defp contains_uri?(_value, _target), do: false
 
   defp eventually(fun, attempts \\ 100)
   defp eventually(_fun, 0), do: false

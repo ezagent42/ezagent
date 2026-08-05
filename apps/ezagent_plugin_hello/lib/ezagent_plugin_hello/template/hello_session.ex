@@ -17,7 +17,7 @@ defmodule EzagentPluginHello.Template.HelloSession do
   @behaviour Ezagent.Kind.Template
 
   alias Ezagent.LocalRuntime
-  alias EzagentPluginHello.App
+  alias EzagentPluginHello.{App, ReusableLlmAgent}
 
   @impl Ezagent.Kind.Template
   def template_name, do: "session.hello"
@@ -55,7 +55,9 @@ defmodule EzagentPluginHello.Template.HelloSession do
          caller
        )
        when is_binary(session_name) and session_name != "" do
-    with :ok <- check_class(tmpl) do
+    with :ok <- check_class(tmpl),
+         {:ok, selection} <- reusable_llm_selection(tmpl),
+         :ok <- preflight_reusable_llm(selection, caller, workspace_uri) do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
       fresh? = not LocalRuntime.kind_alive?(session_uri)
@@ -67,9 +69,9 @@ defmodule EzagentPluginHello.Template.HelloSession do
       # composite, for boot seeding and tests.)
       create_opts =
         if caller do
-          [owner: caller] ++ maybe_llm_flavor(tmpl)
+          [owner: caller] ++ llm_create_opts(tmpl, selection)
         else
-          maybe_llm_flavor(tmpl)
+          llm_create_opts(tmpl, selection)
         end
 
       case App.create_app(workspace_name, session_name, create_opts) do
@@ -91,6 +93,70 @@ defmodule EzagentPluginHello.Template.HelloSession do
       _ -> []
     end
   end
+
+  defp reusable_llm_selection(tmpl) do
+    flavor = Map.get(tmpl, "llm_flavor") || Map.get(tmpl, :llm_flavor)
+    agent_uri = Map.get(tmpl, "llm_agent_uri") || Map.get(tmpl, :llm_agent_uri)
+
+    case {flavor, agent_uri} do
+      {flavor, agent_uri}
+      when is_binary(flavor) and flavor != "" and not is_nil(agent_uri) ->
+        with {:ok, parsed_uri} <- parse_agent_uri(agent_uri) do
+          {:ok, %{flavor: flavor, agent_uri: parsed_uri}}
+        end
+
+      {nil, nil} ->
+        {:ok, :none}
+
+      {flavor, nil} when is_binary(flavor) and flavor != "" ->
+        # Flavor-only templates predate reusable selection and remain valid for
+        # direct/boot callers. Once a URI is supplied, the pair is mandatory
+        # and receives the synchronous preflight below.
+        {:ok, :none}
+
+      {_flavor, nil} ->
+        {:ok, :none}
+
+      {nil, _agent_uri} ->
+        {:error, {:invalid_reusable_llm_selection, :missing_llm_flavor}}
+
+      {_flavor, _agent_uri} ->
+        {:error, {:invalid_reusable_llm_selection, :invalid_llm_flavor}}
+    end
+  end
+
+  defp parse_agent_uri(%URI{} = agent_uri), do: {:ok, agent_uri}
+
+  defp parse_agent_uri(agent_uri) when is_binary(agent_uri) do
+    case Ezagent.URI.parse(agent_uri) do
+      {:ok, %URI{} = parsed} -> {:ok, parsed}
+      _ -> {:error, {:invalid_reusable_llm_agent_uri, agent_uri}}
+    end
+  end
+
+  defp parse_agent_uri(agent_uri),
+    do: {:error, {:invalid_reusable_llm_agent_uri, agent_uri}}
+
+  defp preflight_reusable_llm(:none, _caller, _workspace_uri), do: :ok
+
+  defp preflight_reusable_llm(_selection, nil, _workspace_uri),
+    do: {:error, {:invalid_reusable_llm_agent, :unauthorized}}
+
+  defp preflight_reusable_llm(
+         %{flavor: flavor, agent_uri: agent_uri},
+         caller,
+         workspace_uri
+       ) do
+    case ReusableLlmAgent.validate(caller, workspace_uri, flavor, agent_uri) do
+      {:ok, _candidate} -> :ok
+      {:error, reason} -> {:error, {:invalid_reusable_llm_agent, reason}}
+    end
+  end
+
+  defp llm_create_opts(_tmpl, %{flavor: flavor, agent_uri: agent_uri}),
+    do: [llm_flavor: flavor, llm_agent_uri: agent_uri]
+
+  defp llm_create_opts(tmpl, :none), do: maybe_llm_flavor(tmpl)
 
   defp check_class(%{"class" => "session.hello"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}

@@ -91,10 +91,13 @@ defmodule EzagentPluginHello.App do
 
   defp create_fresh_app(session_uri, ws, owner, opts) do
     workspace = Capability.workspace_of(session_uri)
-    content = hello_template_content(opts)
+    # A reused agent URI belongs to this session's install record and working
+    # copy, never to the persisted SessionTemplate manifest.
+    manifest_content = hello_template_content(Keyword.delete(opts, :llm_agent_uri))
 
-    with {:ok, tmpl, content} <-
-           resolve_or_persist_template(session_uri, workspace, ws, content),
+    with {:ok, tmpl, frozen_manifest_content} <-
+           resolve_or_persist_template(session_uri, workspace, ws, manifest_content),
+         content = hello_session_install_content(frozen_manifest_content, opts),
          # hello-A — DERIVE the page owner from the hello def's `owner_policy`,
          # which is `:installer` (`hello_definition_attrs/1`), so this returns
          # the threaded caller VERBATIM (`Definition.owner_uri/2`). (The `:fixed`
@@ -192,11 +195,17 @@ defmodule EzagentPluginHello.App do
 
   defp validate_llm_template(opts) do
     flavor = Keyword.get(opts, :llm_flavor, "curl")
+    agent_uri = Keyword.get(opts, :llm_agent_uri)
 
-    if flavor in llm_flavors() do
-      :ok
-    else
-      {:error, {:hello_llm_completion_unsupported, flavor}}
+    cond do
+      flavor not in llm_flavors() ->
+        {:error, {:hello_llm_completion_unsupported, flavor}}
+
+      is_nil(agent_uri) or match?(%URI{}, agent_uri) ->
+        :ok
+
+      true ->
+        {:error, {:invalid_reusable_llm_agent_uri, agent_uri}}
     end
   end
 
@@ -225,6 +234,10 @@ defmodule EzagentPluginHello.App do
   defp hello_template_content(opts) do
     case Keyword.get(opts, :llm_flavor) do
       flavor when is_binary(flavor) ->
+        # Legacy callers may still select only a flavor. The session.hello
+        # creation path passes both values after preflighting reusable agents.
+        # Keeping the flavor-only declaration here avoids widening App into a
+        # second authority/credential gate.
         %{
           name: "hello",
           installs: [
@@ -234,6 +247,35 @@ defmodule EzagentPluginHello.App do
 
       _ ->
         %{name: "hello", installs: ["hello"]}
+    end
+  end
+
+  defp hello_session_install_content(content, opts) do
+    case {Keyword.get(opts, :llm_flavor), Keyword.get(opts, :llm_agent_uri)} do
+      {flavor, %URI{} = agent_uri} when is_binary(flavor) ->
+        install =
+          content
+          |> Installation.installs_from_template()
+          |> List.first()
+          |> case do
+            install when is_map(install) -> install
+            _ -> %{ref: "hello"}
+          end
+          |> Map.put(:config, %{
+            role_slots: [
+              %{
+                role_name: "llm",
+                flavor: flavor,
+                install_mode: :reuse,
+                reuse_agent_uri: URI.to_string(agent_uri)
+              }
+            ]
+          })
+
+        Map.put(content, :installs, [install])
+
+      _ ->
+        content
     end
   end
 
