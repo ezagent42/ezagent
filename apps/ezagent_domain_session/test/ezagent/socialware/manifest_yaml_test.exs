@@ -39,6 +39,27 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     def data_owner(_), do: :any
   end
 
+  defmodule IngressBehavior do
+    @moduledoc false
+    use Ezagent.Lifecycle
+
+    action(:yaml_ingress,
+      args: %{},
+      returns: %{ok: :boolean},
+      caps: [:yaml_ingress],
+      modes: [:call],
+      description: "YAML ingress"
+    )
+
+    @impl Ezagent.Lifecycle
+    def create(_args), do: {:ok, %{}}
+
+    @impl Ezagent.Lifecycle
+    def activate(_state, _ctx), do: {:ok, %{}}
+
+    def handle_yaml_ingress(_args, _ctx), do: {:ok, %{ok: true}, []}
+  end
+
   defmodule PageView do
     @moduledoc false
     @behaviour Ezagent.UI.SessionView
@@ -95,6 +116,13 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
         RenderBehavior
       )
 
+    :ok =
+      Ezagent.CapabilityRegistry.register(
+        Ezagent.Entity.Session,
+        :yaml_ingress,
+        IngressBehavior
+      )
+
     on_exit(fn -> Ezagent.PluginRegistry.unregister("manifest-yaml-fixture") end)
     :ok
   end
@@ -138,6 +166,34 @@ defmodule Ezagent.Socialware.ManifestYamlTest do
     assert {:ok, attrs} = ManifestYaml.parse(yaml)
     assert {:ok, resolved} = Ezagent.Socialware.ManifestResolver.resolve(attrs)
     assert resolved == original
+  end
+
+  test "render preserves a declared ingress in canonical YAML" do
+    {:ok, original} =
+      Definition.new(%{
+        name: "yaml-ingress-roundtrip",
+        roles: [%{role_name: "visitor", fill: :human}],
+        ingress: %{
+          behavior: IngressBehavior,
+          action: :yaml_ingress,
+          protected_roles: ["visitor"]
+        }
+      })
+
+    assert Definition.body(original).ingress == %{
+             "behavior" => "Elixir.Ezagent.Socialware.ManifestYamlTest.IngressBehavior",
+             "action" => "yaml_ingress",
+             "protected_roles" => ["visitor"]
+           }
+
+    assert {:ok, yaml} = ManifestYaml.render(original)
+    assert yaml =~ "ingress:"
+    assert yaml =~ "Ezagent.Socialware.ManifestYamlTest.IngressBehavior"
+
+    assert {:ok, attrs} = ManifestYaml.parse(yaml)
+    assert {:ok, resolved} = Ezagent.Socialware.ManifestResolver.resolve(attrs)
+    assert resolved == original
+    assert :ok = Conformance.check_candidate(resolved, @workspace)
   end
 
   test "check_candidate passes an unpublished valid definition while check still fails" do

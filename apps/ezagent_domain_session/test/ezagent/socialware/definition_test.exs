@@ -286,6 +286,60 @@ defmodule Ezagent.Socialware.DefinitionTest do
     end
   end
 
+  describe "ingress field" do
+    test "normalizes a declared ingress and round-trips it through body/1" do
+      attrs = %{
+        name: "ingress-definition",
+        roles: [%{role_name: "visitor", fill: :human}],
+        ingress: %{
+          behavior: Ezagent.ActionSet.Surface,
+          action: :approve,
+          protected_roles: ["visitor"]
+        }
+      }
+
+      assert {:ok, definition} = Definition.new(attrs)
+
+      assert definition.ingress == %{
+               behavior: Ezagent.ActionSet.Surface,
+               action: :approve,
+               protected_roles: ["visitor"]
+             }
+
+      assert {:ok, round_tripped} = definition |> Definition.body() |> Definition.new()
+      assert round_tripped.ingress == definition.ingress
+    end
+
+    test "rejects an unknown ingress behavior, action, or protected role" do
+      assert {:error, {:invalid_socialware_behavior, Enum}} =
+               Definition.new(%{
+                 name: "invalid-ingress-behavior",
+                 ingress: %{behavior: Enum, action: :approve, protected_roles: []}
+               })
+
+      assert {:error, {:invalid_socialware_ingress_action, Ezagent.ActionSet.Surface, "missing"}} =
+               Definition.new(%{
+                 name: "invalid-ingress-action",
+                 ingress: %{
+                   behavior: Ezagent.ActionSet.Surface,
+                   action: "missing",
+                   protected_roles: []
+                 }
+               })
+
+      assert {:error, {:invalid_socialware_ingress_protected_role, "missing"}} =
+               Definition.new(%{
+                 name: "invalid-ingress-role",
+                 roles: [%{role_name: "visitor", fill: :human}],
+                 ingress: %{
+                   behavior: Ezagent.ActionSet.Surface,
+                   action: :approve,
+                   protected_roles: ["missing"]
+                 }
+               })
+    end
+  end
+
   describe "manifest metadata and uses" do
     test "accepts catalog fields and explicit plugin uses" do
       assert {:ok, %Definition{} = definition} =

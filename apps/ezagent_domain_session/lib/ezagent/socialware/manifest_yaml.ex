@@ -34,6 +34,7 @@ defmodule Ezagent.Socialware.ManifestYaml do
     "legends",
     "orchestrator_template_uri",
     "adapters",
+    "ingress",
     "owner_policy"
   ]
 
@@ -54,14 +55,17 @@ defmodule Ezagent.Socialware.ManifestYaml do
   @doc "Render a Definition to canonical YAML content."
   @spec render(Definition.t()) :: {:ok, binary()} | {:error, term()}
   def render(%Definition{} = definition) do
+    body = Definition.body(definition)
+    ingress_yaml = ingress_yaml(body.ingress)
+
     with {:ok, views} <- render_views(definition.views) do
-      definition
-      |> Definition.body()
+      body
       |> Map.put("views", views)
       |> Map.put("bases", Enum.map(definition.bases, &module_name/1))
       |> Map.put("shape", Enum.map(definition.shape, &module_name/1))
       |> canonical_map()
       |> yaml_encode()
+      |> then(&(ingress_yaml <> &1))
       |> then(&{:ok, &1})
     end
   end
@@ -207,6 +211,9 @@ defmodule Ezagent.Socialware.ManifestYaml do
   defp empty_value?([]), do: true
   defp empty_value?(%{}), do: true
   defp empty_value?(_), do: false
+
+  defp ingress_yaml(nil), do: ""
+  defp ingress_yaml(ingress), do: encode_pair("ingress", ingress, 0)
 
   defp yaml_encode(map) when is_map(map) do
     map
