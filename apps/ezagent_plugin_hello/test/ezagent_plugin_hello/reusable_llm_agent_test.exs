@@ -164,6 +164,18 @@ defmodule EzagentPluginHello.ReusableLlmAgentTest do
     refute Enum.any?(candidates, &(&1.agent_uri == cross_workspace))
   end
 
+  test "rejects a canonical non-Agent URI with a typed error", ctx do
+    wrong_kind = Ezagent.URI.system(:routing, :default)
+
+    assert {:error, :invalid_agent_uri} =
+             ReusableLlmAgent.validate(
+               ctx.owner,
+               ctx.workspace_uri,
+               "py",
+               wrong_kind
+             )
+  end
+
   test "rejects unsupported flavors before scanning candidate state", ctx do
     assert {:error, {:unsupported_flavor, "native"}} =
              ReusableLlmAgent.list(ctx.owner, ctx.workspace_uri, "native")
@@ -202,6 +214,7 @@ defmodule EzagentPluginHello.ReusableLlmAgentTest do
     assert {:ok, _} =
              Ezagent.SnapshotStore.write(agent_uri, state,
                kind_type: :agent,
+               version: 0,
                workspace_uri: URI.to_string(ctx.workspace_uri)
              )
 

@@ -354,6 +354,39 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
              "the selected agent URI is per-session install data, not manifest data"
     end
 
+    test "socialware installation joins the selected reusable LLM" do
+      suffix = System.unique_integer([:positive])
+      ws = "hello-tmpl-reuse-install-#{suffix}"
+      {:ok, _} = Workspace.create(ws, %{})
+      workspace_uri = Ezagent.URI.workspace(ws)
+      owner = confirmed_user(ws, "owner")
+      reusable_llm = seed_reusable_py_agent(ws, workspace_uri, owner, cold: false)
+
+      template = %{
+        "class" => "session.hello",
+        "session_name" => "main",
+        "llm_flavor" => "py",
+        "llm_agent_uri" => URI.to_string(reusable_llm)
+      }
+
+      assert {:ok, [session_uri], %{fresh?: true}} =
+               HelloSession.instantiate(
+                 "session.hello",
+                 template,
+                 workspace_uri,
+                 caller: owner
+               )
+
+      assert {:ok, %{satisfied: satisfied, deferred: []}} =
+               EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(
+                 session_uri,
+                 {workspace_uri, owner}
+               )
+
+      assert "llm" in satisfied
+      assert {:ok, ^reusable_llm} = Members.role_uri(session_uri, "llm")
+    end
+
     test "rejects a stale selected LLM before persisting the Hello app" do
       suffix = System.unique_integer([:positive])
       ws = "hello-tmpl-stale-reuse-#{suffix}"
@@ -383,15 +416,19 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
     end
   end
 
-  defp seed_reusable_py_agent(ws, workspace_uri, owner) do
+  defp seed_reusable_py_agent(ws, workspace_uri, owner, opts \\ []) do
     agent_uri =
       Ezagent.URI.agent(ws, "reusable-py-#{System.unique_integer([:positive])}")
 
     state = %{
       sandbox: %{
         state: %{
+          config_dir_path: nil,
+          template_class: nil,
           recipe: "hello.llm",
-          respawn_template_data: %{"flavor" => "py"}
+          respawn_template_data: %{"flavor" => "py"},
+          pty_phase: nil,
+          passive: false
         }
       }
     }
@@ -421,15 +458,28 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                :sync
              )
 
-    assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
-    assert :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
-    assert eventually(fn -> Ezagent.KindRegistry.lookup(agent_uri) == :error end)
+    if Keyword.get(opts, :cold, true) do
+      assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
+      assert :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
+      assert eventually(fn -> Ezagent.KindRegistry.lookup(agent_uri) == :error end)
 
-    assert {:ok, _} =
-             Ezagent.SnapshotStore.write(agent_uri, state,
-               kind_type: :agent,
-               workspace_uri: URI.to_string(workspace_uri)
-             )
+      assert {:ok, _} =
+               Ezagent.SnapshotStore.write(agent_uri, state,
+                 kind_type: :agent,
+                 version: 0,
+                 workspace_uri: URI.to_string(workspace_uri)
+               )
+    else
+      assert :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, "hello.llm")
+      assert :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "py")
+
+      on_exit(fn ->
+        case Ezagent.KindRegistry.lookup(agent_uri) do
+          {:ok, _pid} -> Ezagent.Kind.terminate(agent_uri)
+          :error -> :ok
+        end
+      end)
+    end
 
     agent_uri
   end

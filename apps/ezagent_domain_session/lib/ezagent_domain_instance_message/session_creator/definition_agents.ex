@@ -245,23 +245,23 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       nil ->
         result =
           with {:ok, _recipe} <- lookup_recipe(workspace_uri, recipe_name) do
-            case credential_admission_of(agent) do
-              :before_session_join ->
-                materialize_gated_agent(session_uri, agent)
+            case install_mode_of(agent) do
+              :reuse ->
+                reuse_existing_agent(
+                  session_uri,
+                  workspace_uri,
+                  granted_by,
+                  agent,
+                  recipe_name,
+                  role_name
+                )
 
-              :immediate ->
-                case install_mode_of(agent) do
-                  :reuse ->
-                    reuse_existing_agent(
-                      session_uri,
-                      workspace_uri,
-                      granted_by,
-                      agent,
-                      recipe_name,
-                      role_name
-                    )
+              :fresh ->
+                case credential_admission_of(agent) do
+                  :before_session_join ->
+                    materialize_gated_agent(session_uri, agent)
 
-                  :fresh ->
+                  :immediate ->
                     materialize_fresh_agent(
                       session_uri,
                       workspace_uri,
@@ -420,6 +420,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
          :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
+         {:ok, _live_or_rehydrated} <- Ezagent.Domain.Agent.ensure_deliverable(agent_uri),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
          # must never tombstone or overwrite that agent's pre-existing binding.

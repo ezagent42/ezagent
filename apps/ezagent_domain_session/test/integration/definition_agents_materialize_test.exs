@@ -1569,7 +1569,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
   end
 
-  test "reuse install choice cannot bypass credential admission" do
+  test "reuse install choice joins the existing agent despite fresh-agent credential admission" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1596,7 +1596,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
 
-    assert {:ok, %{satisfied: [], skipped: [], deferred: [^role_name]}} =
+    assert {:ok, %{satisfied: [^role_name], skipped: [], deferred: []}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -1604,12 +1604,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                [declaration]
              )
 
-    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
-    assert [%{role_name: ^role_name, status: :pending_auth}] = AgentAdmission.list(session_uri)
-
-    caps = Ezagent.Identity.list_caps_for(@owner_uri)
-    assert {:ok, admission} = AgentAdmission.begin(session_uri, role_name, @owner_uri, caps)
-    refute admission.provisional_agent_uri == URI.to_string(reusable)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+    assert AgentAdmission.list(session_uri) == []
   end
 
   test "provisional admission marks only PTY connections for credential bootstrap" do

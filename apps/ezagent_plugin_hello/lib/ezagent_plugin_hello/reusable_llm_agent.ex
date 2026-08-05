@@ -65,6 +65,7 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
       )
       when is_binary(flavor) do
     with :ok <- validate_supported_flavor(flavor),
+         :ok <- validate_agent_uri(agent_uri),
          :ok <- validate_workspace_agent(workspace_uri, agent_uri),
          :ok <- validate_authority(caller, agent_uri),
          :ok <- validate_recipe(agent_uri),
@@ -88,6 +89,12 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
     if flavor in App.llm_flavors(),
       do: :ok,
       else: {:error, {:unsupported_flavor, flavor}}
+  end
+
+  defp validate_agent_uri(%URI{} = agent_uri) do
+    if Ezagent.URI.scheme?(agent_uri, :entity) and Ezagent.URI.type?(agent_uri, :agent),
+      do: :ok,
+      else: {:error, :invalid_agent_uri}
   end
 
   # The persisted agent directory is the live+dormant existence source and the
@@ -162,35 +169,33 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
     end
   end
 
-  defp provider_profile(agent_uri, flavor) when flavor in ["curl", "cc-headless-custom"] do
-    with {:ok, %{state: state}} <- Ezagent.SnapshotStore.latest(agent_uri) do
-      provider_profile_from_state(state, flavor)
-    else
-      _ -> nil
-    end
-  end
-
-  defp provider_profile(_agent_uri, _flavor), do: nil
-
-  defp provider_profile_from_state(state, "curl") do
-    state
-    |> slice_state(:curl_agent)
+  defp provider_profile(agent_uri, "curl") do
+    agent_uri
+    |> read_slice(:curl_agent)
     |> field(:provider)
     |> normalize_profile()
   end
 
-  defp provider_profile_from_state(state, "cc-headless-custom") do
-    state
-    |> slice_state(:sandbox)
+  defp provider_profile(agent_uri, "cc-headless-custom") do
+    agent_uri
+    |> read_slice(:sandbox)
     |> field(:respawn_template_data)
     |> field(:provider)
     |> normalize_profile()
   end
 
-  defp slice_state(state, key) when is_map(state) do
-    case Map.get(state, key) || Map.get(state, Atom.to_string(key)) do
-      slice when is_map(slice) -> Ezagent.Kind.normalize_slice_view(slice)
-      _ -> %{}
+  defp provider_profile(_agent_uri, _flavor), do: nil
+
+  defp read_slice(agent_uri, slice_key) do
+    case Ezagent.Kind.read(agent_uri, slice_key, spawn: :never) do
+      {:ok, slice} when is_map(slice) ->
+        slice
+
+      _ ->
+        case Ezagent.Kind.read_durable(agent_uri, slice_key) do
+          {:ok, slice, _meta} when is_map(slice) -> slice
+          _ -> %{}
+        end
     end
   end
 
