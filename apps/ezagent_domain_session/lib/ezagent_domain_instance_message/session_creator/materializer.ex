@@ -6,6 +6,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
   alias Ezagent.Session.OrchestratorBinding
   alias Ezagent.Socialware.DefinitionEditor
 
+  @doc false
   def materialize_template_declaration(
         %URI{} = session_uri,
         %URI{} = session_template_uri,
@@ -14,22 +15,26 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
       when is_map(template_content) do
     prior = Session.read_template_working_copy(session_uri)
 
-    working_copy =
-      prior
-      # `orchestrator_template_uri` is valid SessionTemplate DEFINITION data,
-      # but it was never a live working-copy binding. Remove old snapshot
-      # residue while preserving the authoritative `:orchestrator_uri` value.
-      |> Map.delete(:orchestrator_template_uri)
-      |> Map.put(:session_template_uri, session_template_uri)
-      |> Map.put(
-        :member_declarations,
-        member_declarations(template_content, session_template_uri)
-      )
+    with {:ok, config} <-
+           DefinitionEditor.config_for_template(
+             template_content,
+             Ezagent.URI.workspace_of(session_template_uri)
+           ) do
+      working_copy =
+        prior
+        # `orchestrator_template_uri` is valid SessionTemplate DEFINITION data,
+        # but it was never a live working-copy binding. Remove old snapshot
+        # residue while preserving the authoritative `:orchestrator_uri` value.
+        |> Map.delete(:orchestrator_template_uri)
+        |> Map.put(:session_template_uri, session_template_uri)
+        |> Map.put(:member_declarations, config.roles)
+        |> Map.put(:ingress, config.ingress)
 
-    case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-      other -> {:error, {:unexpected_set_working_copy_result, other}}
+      case Ezagent.ActionSet.Session.system_set_working_copy(session_uri, working_copy) do
+        {:ok, _} -> :ok
+        {:error, _} = err -> err
+        other -> {:error, {:unexpected_set_working_copy_result, other}}
+      end
     end
   end
 
@@ -468,15 +473,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.Materializer do
           {:halt, {:error, {:member_join_unexpected, member_uri, other}}}
       end
     end)
-  end
-
-  defp member_declarations(content, %URI{} = session_template_uri) when is_map(content) do
-    workspace_uri = Ezagent.URI.workspace_of(session_template_uri)
-
-    case DefinitionEditor.member_declarations_for_template(content, workspace_uri) do
-      {:ok, members} -> members
-      {:error, _} -> []
-    end
   end
 
   defp orchestrator_declaration?(declarations) when is_list(declarations) do
