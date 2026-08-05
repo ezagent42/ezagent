@@ -105,7 +105,14 @@ defmodule Ezagent.AgentBridge.CompleteTest do
                "hello-completion-2"
              )
 
-    assert_receive {:completion_ws_payload, %{message_id: "hello-completion-2"}}, 500
+    assert_receive {:completion_ws_payload,
+                    %{
+                      message_id: "hello-completion-2",
+                      meta: %{"completion_request_id" => "hello-completion-2"} = meta
+                    }},
+                   500
+
+    refute Map.has_key?(meta, "hello_completion_request_id")
   end
 
   defp put_flavor(uri, flavor) do

@@ -103,9 +103,9 @@ defmodule EzagentWeb.HomeLiveTest do
 
     # No redirect → wizard rendered inline (a redirect would return
     # `{:error, {:live_redirect, ...}}` and fail this match).
-    {:ok, _lv, html} = live(conn, ~p"/")
-    assert html =~ "first-session-wizard"
-    assert html =~ "Welcome to ezagent"
+    {:ok, lv, _html} = live(conn, ~p"/")
+    assert has_element?(lv, "#first-session-wizard")
+    assert has_element?(lv, "#hello-wizard-title")
   end
 
   # W0 — the landing scope PREFERS the session's selected
@@ -164,6 +164,23 @@ defmodule EzagentWeb.HomeLiveTest do
       workspace_uri = Ezagent.URI.workspace(workspace_name)
       ensure_workspace_seeded!(workspace_uri)
 
+      assert :ok =
+               Ezagent.UI.SessionViewRegistry.register(EzagentPluginHello.PageView)
+
+      case EzagentDomainInstanceMessage.UriQueryResolvers.register() do
+        :ok -> :ok
+        {:error, {:already_registered, _attribute}} -> :ok
+      end
+
+      Enum.each(EzagentPluginHello.Application.roles(), fn recipe ->
+        assert {:ok, _recipe} = Ezagent.Agent.RecipeRegistry.seed_role_if_absent(recipe)
+      end)
+
+      assert {:ok, %{name: "hello"}} =
+               Ezagent.Socialware.ManifestSeed.import_package(
+                 File.read!(Ezagent.Socialware.Demo.Hello.manifest_path())
+               )
+
       on_exit(fn -> _ = Ezagent.Kind.terminate(workspace_uri) end)
 
       %{workspace_uri: workspace_uri}
@@ -179,18 +196,28 @@ defmodule EzagentWeb.HomeLiveTest do
           "current_workspace_uri" => URI.to_string(workspace_uri)
         })
 
-      {:ok, _lv, html} = live(conn, ~p"/")
-      assert html =~ "Welcome to ezagent"
-      assert html =~ "first-session-wizard"
-      assert html =~ ~s(name="wizard[short_name]")
-      assert html =~ "main"
+      {:ok, lv, _html} = live(conn, ~p"/")
+
+      assert has_element?(lv, "#first-session-wizard")
+      assert has_element?(lv, "#wizard_short_name[value='main']")
+      assert has_element?(lv, "#wizard_llm_flavor")
+      assert has_element?(lv, "#wizard_llm_agent_uri")
+      assert has_element?(lv, "#hello-llm-empty")
+      assert has_element?(lv, "#first-session-submit[disabled]")
     end
 
-    test "submitting the wizard creates the session and navigates to /sessions", %{
+    test "changing flavor filters the dependent reusable-agent selector", %{
       conn: conn,
       workspace_uri: workspace_uri
     } do
-      short_name = "wizard-submit-#{System.unique_integer([:positive])}"
+      eligible = seed_reusable_py_agent(workspace_uri, Ezagent.Entity.User.admin_uri())
+
+      wrong_recipe =
+        seed_reusable_py_agent(
+          workspace_uri,
+          Ezagent.Entity.User.admin_uri(),
+          recipe: "other.recipe"
+        )
 
       conn =
         conn
@@ -201,19 +228,104 @@ defmodule EzagentWeb.HomeLiveTest do
 
       {:ok, lv, _html} = live(conn, ~p"/")
 
-      # Submitting the form triggers `push_navigate(/sessions)`.
-      # `render_submit/1` returns the redirect tuple in :error form.
-      assert {:error, {:live_redirect, %{to: "/sessions"}}} =
-               lv
-               |> form("#first-session-wizard", %{"wizard" => %{"short_name" => short_name}})
-               |> render_submit()
+      lv
+      |> form("#first-session-wizard", %{
+        "wizard" => %{
+          "short_name" => "main",
+          "llm_flavor" => "py"
+        }
+      })
+      |> render_change()
 
-      session_uri = Ezagent.URI.session(:system, :default, short_name)
+      assert has_element?(
+               lv,
+               "#wizard_llm_agent_uri option[value='#{URI.to_string(eligible)}']"
+             )
+
+      refute has_element?(
+               lv,
+               "#wizard_llm_agent_uri option[value='#{URI.to_string(wrong_recipe)}']"
+             )
+
+      refute has_element?(lv, "#hello-llm-empty")
+      assert has_element?(lv, "#first-session-submit[disabled]")
+    end
+
+    test "submitting the wizard creates Hello with the selected reusable LLM", %{
+      conn: conn,
+      workspace_uri: workspace_uri
+    } do
+      short_name = "wizard-submit-#{System.unique_integer([:positive])}"
+      creator = seed_workspace_user(workspace_uri)
+      selected = seed_reusable_py_agent(workspace_uri, creator)
+      agents_before = Ezagent.Entity.Agent.list_in_workspace(workspace_uri)
+
+      conn =
+        conn
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => URI.to_string(creator),
+          "current_workspace_uri" => URI.to_string(workspace_uri)
+        })
+
+      {:ok, lv, _html} = live(conn, ~p"/")
+
+      lv
+      |> form("#first-session-wizard", %{
+        "wizard" => %{
+          "short_name" => short_name,
+          "llm_flavor" => "py"
+        }
+      })
+      |> render_change()
+
+      lv
+      |> form("#first-session-wizard", %{
+        "wizard" => %{
+          "short_name" => short_name,
+          "llm_flavor" => "py",
+          "llm_agent_uri" => URI.to_string(selected)
+        }
+      })
+      |> render_change()
+
+      refute has_element?(lv, "#first-session-submit[disabled]")
+
+      lv
+      |> form("#first-session-wizard", %{
+        "wizard" => %{
+          "short_name" => short_name,
+          "llm_flavor" => "py",
+          "llm_agent_uri" => URI.to_string(selected)
+        }
+      })
+      |> render_submit()
+
+      assert_redirect(lv, "/sessions")
+
+      session_uri =
+        Ezagent.URI.session(
+          Ezagent.URI.workspace_name!(workspace_uri),
+          :hello,
+          short_name
+        )
+
       on_exit(fn -> _ = Ezagent.Kind.terminate(session_uri) end)
       assert {:ok, _pid} = Ezagent.KindRegistry.lookup(session_uri)
-      # The wizard intentionally creates in the admin's structural home workspace.
-      assert {:ok, %URI{scheme: "workspace", host: "system"}} =
-               Ezagent.WorkspaceRegistry.lookup(session_uri)
+      assert {:ok, ^workspace_uri} = Ezagent.WorkspaceRegistry.lookup(session_uri)
+
+      llm_declaration =
+        session_uri
+        |> Ezagent.Entity.Session.read_template_working_copy()
+        |> Map.fetch!(:member_declarations)
+        |> Enum.find(&(&1.role_name == "llm"))
+
+      assert %{
+               flavor: "py",
+               install_mode: :reuse,
+               reuse_agent_uri: ^selected
+             } = llm_declaration
+
+      assert Ezagent.Entity.Agent.list_in_workspace(workspace_uri) == agents_before
     end
   end
 
@@ -251,6 +363,109 @@ defmodule EzagentWeb.HomeLiveTest do
 
     assert :error =
              Ezagent.KindRegistry.lookup(URI.new!("session://auth-fail/default/#{session_name}"))
+  end
+
+  defp seed_reusable_py_agent(workspace_uri, owner, opts \\ []) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    suffix = System.unique_integer([:positive])
+    agent_uri = Ezagent.URI.agent(workspace_name, "home-reusable-py-#{suffix}")
+    recipe = Keyword.get(opts, :recipe, "hello.llm")
+
+    assert {:ok, _pid} =
+             Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+               uri: agent_uri,
+               behaviors: Ezagent.Entity.Agent.base_behaviors(),
+               initial_caps: MapSet.new()
+             })
+
+    assert :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
+
+    cap =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        agent_uri,
+        workspace_uri,
+        owner
+      )
+
+    assert :ok =
+             Ezagent.Identity.Grant.grant_cap_via_router(
+               owner,
+               cap,
+               {:admin, Ezagent.Entity.User.admin_uri()},
+               :sync
+             )
+
+    assert :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe)
+    assert :ok = Ezagent.AgentFlavorAttributes.put(agent_uri, "py")
+
+    assert {:ok, pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    assert :ok = DynamicSupervisor.terminate_child(Ezagent.Entity.Agent.supervisor(), pid)
+    assert eventually(fn -> Ezagent.KindRegistry.lookup(agent_uri) == :error end)
+
+    assert {:ok, _snapshot} =
+             Ezagent.SnapshotStore.write(
+               agent_uri,
+               %{
+                 sandbox: %{
+                   state: %{
+                     config_dir_path: nil,
+                     template_class: nil,
+                     recipe: recipe,
+                     respawn_template_data: %{"flavor" => "py"},
+                     pty_phase: nil,
+                     passive: false
+                   }
+                 }
+               },
+               kind_type: :agent,
+               version: 0,
+               workspace_uri: URI.to_string(workspace_uri)
+             )
+
+    on_exit(fn ->
+      case Ezagent.KindRegistry.lookup(agent_uri) do
+        {:ok, _pid} -> Ezagent.Kind.terminate(agent_uri)
+        :error -> :ok
+      end
+    end)
+
+    agent_uri
+  end
+
+  defp seed_workspace_user(workspace_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+
+    user_uri =
+      Ezagent.URI.user(
+        workspace_name,
+        "home-owner-#{System.unique_integer([:positive])}"
+      )
+
+    assert {:ok, _user} = Ezagent.Users.create(user_uri, "test-password", [])
+    assert {:ok, _pid} = Ezagent.SpawnRegistry.spawn(user_uri)
+    assert :ok = Ezagent.Workspace.add_member(workspace_name, user_uri)
+
+    on_exit(fn ->
+      case Ezagent.KindRegistry.lookup(user_uri) do
+        {:ok, _pid} -> Ezagent.Kind.terminate(user_uri)
+        :error -> :ok
+      end
+    end)
+
+    user_uri
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
+    end
   end
 
   defp trace_session_creation_calls(fun) do

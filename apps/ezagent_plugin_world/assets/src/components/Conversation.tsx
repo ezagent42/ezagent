@@ -335,10 +335,7 @@ export function Conversation({
   const activeId = views.find((v) => v.id === state.active_view)?.id ?? views[0]?.id ?? "conversation"
   const activeMode = views.find((v) => v.id === activeId)?.mode ?? "chat"
   const viewLabel = (view: ViewTab) => (view.id === "conversation" ? "对话" : view.label)
-  // The server's caller-authorized SessionView registry is the source of truth.
-  // Hello templates may use arbitrary template names (`hello-codex`, etc.), so
-  // inferring product type from a URI segment loses valid rendered pages.
-  const hasHelloPageView = views.some((view) => view.id === "hello_page")
+  const hasExternalView = views.some((view) => view.mode === "external")
   const createPending = state.session_create_pending === true
 
   const [members, setMembers] = React.useState<MemberRow[]>(state.members || [])
@@ -936,7 +933,7 @@ export function Conversation({
                 </div>
               )}
             </div>
-            {hasHelloPageView && sessionUri && (
+            {hasExternalView && sessionUri && (
               <Button type="button" size="sm" onClick={() => setPublishOpen(true)} aria-label="发布为模板" data-world-publish-template-button>
                 <Upload aria-hidden="true" />
                 发布
@@ -973,9 +970,9 @@ export function Conversation({
                 onAction: onKanbanAction,
               })}
             </div>
-          ) : activeId === "hello_page" && hasHelloPageView ? (
-            <div className="min-w-0 flex-1 overflow-hidden bg-white" data-world-subcomponent="hello-page">
-              <HelloPagePreview sessionUri={sessionUri} />
+          ) : activeMode === "external" ? (
+            <div className="min-w-0 flex-1 overflow-hidden bg-white" data-world-subcomponent="external-view">
+              <ExternalSessionViewPreview sessionUri={sessionUri} />
             </div>
           ) : activeMode === "pty" ? (
             <div className="min-w-0 flex-1 overflow-y-auto bg-[#fafafa] p-4" data-world-subcomponent="pty">
@@ -1256,11 +1253,6 @@ export function Conversation({
               </div>
             </form>
             </div>
-            {hasHelloPageView && (
-              <div className="hidden min-w-0 flex-1 border-l border-border lg:flex lg:flex-col">
-                <HelloPagePreview sessionUri={sessionUri} />
-              </div>
-            )}
             </>
           )}
           </div>
@@ -1919,14 +1911,10 @@ function kindLabel(kind: string, mine: boolean) {
   return "成员"
 }
 
-// TEMPORARY internal preview of a hello session's rendered page. Embeds the
-// public `/socialware/external` surface (the working renderer) in an iframe,
-// rather than the native @json-render island. The proper home for this is world
-// surfacing the registered `HelloPageView` (Phase 3 — world becomes a hello app);
-// until then this is a clearly-labelled stopgap so an internal reader can see the page
-// without leaving the console. Hello sessions are `public_view`, so the customer
-// URL renders with no token/login.
-function HelloPagePreview({sessionUri}: {sessionUri: string}) {
+// Generic iframe host for a registry-declared external SessionView. The server
+// decides whether a view has mode `external`; this client never infers product
+// behavior from a view id or session URI.
+function ExternalSessionViewPreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
 
   return (

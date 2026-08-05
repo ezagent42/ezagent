@@ -301,7 +301,11 @@ defmodule Ezagent.ActionSet.Workspace do
   )
 
   action(:create_session,
-    args: %{short_name: :string, template_name: :string},
+    args: %{
+      short_name: :string,
+      template_name: :string,
+      template_options: {:option, :map}
+    },
     returns: %{session_uri: :uri},
     caps: [:create_session],
     modes: [:call],
@@ -636,12 +640,20 @@ defmodule Ezagent.ActionSet.Workspace do
     workspace_uri = Map.get(ctx, :self_uri)
     caller = Map.get(ctx, :caller)
 
-    with {:ok, short_name, template_name} <- coerce_create_session_args(args),
+    with {:ok, short_name, template_name, template_options} <-
+           coerce_create_session_args(args),
          {:ok, %URI{} = workspace_uri} <- require_session_workspace_uri(workspace_uri),
          {:ok, %URI{} = caller} <- require_caller(caller) do
       case resolve_session_class(template_name) do
         {:ok, class_name, class_module} ->
-          create_session_via_class(class_name, class_module, short_name, workspace_uri, caller)
+          create_session_via_class(
+            class_name,
+            class_module,
+            short_name,
+            template_options,
+            workspace_uri,
+            caller
+          )
 
         :none ->
           create_session_via_facade(short_name, template_name, workspace_uri, caller)
@@ -667,8 +679,18 @@ defmodule Ezagent.ActionSet.Workspace do
     end)
   end
 
-  defp create_session_via_class(class_name, class_module, short_name, workspace_uri, caller) do
-    tmpl = %{"class" => class_name, "session_name" => short_name}
+  defp create_session_via_class(
+         class_name,
+         class_module,
+         short_name,
+         template_options,
+         workspace_uri,
+         caller
+       ) do
+    tmpl =
+      template_options
+      |> Map.drop([:class, "class", :session_name, "session_name"])
+      |> Map.merge(%{"class" => class_name, "session_name" => short_name})
 
     # hello-A — a Template Class that exports `instantiate/4` receives the
     # dispatch CALLER (`caller: caller`) so the created session's owner is the
@@ -813,6 +835,7 @@ defmodule Ezagent.ActionSet.Workspace do
   defp coerce_create_session_args(args) do
     short_name = Map.get(args, :short_name) || Map.get(args, :name)
     template_name = Map.get(args, :template_name) || Map.get(args, :template)
+    template_options = Map.get(args, :template_options) || %{}
 
     cond do
       not is_binary(short_name) or short_name == "" ->
@@ -821,8 +844,11 @@ defmodule Ezagent.ActionSet.Workspace do
       not is_binary(template_name) or template_name == "" ->
         {:error, :template_name_required}
 
+      not is_map(template_options) ->
+        {:error, :template_options_must_be_map}
+
       true ->
-        {:ok, String.trim(short_name), String.trim(template_name)}
+        {:ok, String.trim(short_name), String.trim(template_name), template_options}
     end
   end
 

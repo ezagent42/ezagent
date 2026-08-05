@@ -201,11 +201,7 @@ defmodule Ezagent.World.ConversationData do
         key
 
       _ ->
-        cond do
-          id in [:page, :hello_page] -> "external"
-          external_render_view?(mod) -> "external"
-          true -> "unsupported"
-        end
+        if external_render_view?(mod), do: "external", else: "unsupported"
     end
   end
 

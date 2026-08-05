@@ -47,6 +47,8 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     end
 
     def install_session_socialware_async({_session_uri, _actor_uri}), do: :ok
+    def grant_session_owner_membership(_session_uri, _caller), do: :ok
+    def join_session_members(_session_uri, _members), do: :ok
   end
 
   setup do
@@ -58,9 +60,12 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
     admin_ctx = signed_workspace_ctx!(workspace_uri)
 
     Application.put_env(:ezagent_domain_workspace, :session_facade, FakeSessionFacade)
+    Application.put_env(:ezagent_domain_workspace, :template_options_test_pid, self())
+    :ok = Ezagent.TemplateRegistry.register(Ezagent.Test.TemplateOptionsSessionClass)
 
     on_exit(fn ->
       Application.delete_env(:ezagent_domain_workspace, :session_facade)
+      Application.delete_env(:ezagent_domain_workspace, :template_options_test_pid)
     end)
 
     {:ok, ws_name: ws_name, workspace_uri: workspace_uri, admin_ctx: admin_ctx}
@@ -201,7 +206,39 @@ defmodule Ezagent.Integration.CreateSessionDispatchTest do
       assert iface[:create_session].modes == [:call]
 
       assert Map.keys(iface[:create_session].args) |> Enum.sort() ==
-               [:short_name, :template_name] |> Enum.sort()
+               [:short_name, :template_name, :template_options] |> Enum.sort()
+    end
+
+    test "registered session classes receive generic template options", %{
+      workspace_uri: workspace_uri,
+      admin_ctx: admin_ctx
+    } do
+      short_name = "options-#{System.unique_integer([:positive])}"
+      agent_uri = "entity://system/agent/reusable-llm"
+
+      assert {:ok, %{session_uri: %URI{}}} =
+               Workspace.create_session(
+                 workspace_uri,
+                 %{
+                   short_name: short_name,
+                   template_name: "template-options-test",
+                   template_options: %{
+                     "llm_flavor" => "py",
+                     "llm_agent_uri" => agent_uri,
+                     "class" => "untrusted.override",
+                     "session_name" => "untrusted-override"
+                   }
+                 },
+                 admin_ctx
+               )
+
+      assert_receive {:template_options,
+                      %{
+                        "class" => "session.template-options-test",
+                        "session_name" => ^short_name,
+                        "llm_flavor" => "py",
+                        "llm_agent_uri" => ^agent_uri
+                      }}
     end
 
     test "required_caps/0 entry uses MODULE reference (Invariant #2)" do

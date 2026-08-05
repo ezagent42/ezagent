@@ -123,7 +123,7 @@ defmodule Ezagent.AgentBridge do
       event_type: :system,
       meta: %{
         "agent_uri" => agent_uri_str,
-        "hello_completion_request_id" => request_id
+        "completion_request_id" => request_id
       }
     }
 

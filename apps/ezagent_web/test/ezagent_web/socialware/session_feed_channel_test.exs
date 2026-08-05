@@ -91,6 +91,19 @@ defmodule EzagentWeb.Socialware.SessionFeedChannelTest do
              {@session, @caller, "hello"}
   end
 
+  test "the generic post fallback does not inject a retired Hello front-desk mention" do
+    source =
+      File.read!(
+        Path.expand(
+          "../../../lib/ezagent_web/socialware/session_feed_channel.ex",
+          __DIR__
+        )
+      )
+
+    refute source =~ "front-desk"
+    refute source =~ "EzagentPluginHello.Members.role_uri"
+  end
+
   defp join_feed(adapter_id) do
     @endpoint
     |> socket("session_feed:#{adapter_id}", %{session_uri: @session, caller: @caller})

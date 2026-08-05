@@ -361,21 +361,8 @@ defmodule EzagentWeb.Socialware.SessionFeedChannel do
     end
   end
 
-  # EVERY user message goes to the invisible FRONT-DESK (the `hello.front-desk`
-  # chat relay agent). It — not this web layer — decides per message, by intent ×
-  # identity, whether to dispatch to the page builder (`:rebuild`) or the read-only
-  # concierge (`:answer`). The chat fan-out is mention-gated
-  # (`Behavior.Session` §:send); `Definition.routing_rules`'
-  # `{:always} -> {:role, "front-desk"}` rule is the primary delivery path — this
-  # mention is the belt to its suspenders.
   defp dispatch_post(session_uri, %URI{} = principal, text) do
-    mentions =
-      case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
-        {:ok, fd_uri} -> [fd_uri]
-        :error -> []
-      end
-
-    msg = Ezagent.Message.new(principal, %{text: text, attachments: []}, mentions: mentions)
+    msg = Ezagent.Message.new(principal, %{text: text, attachments: []})
 
     Ezagent.Invocation.dispatch(%Ezagent.Invocation{
       target: Ezagent.URI.with_action(session_uri, :session, :send),

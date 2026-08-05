@@ -64,3 +64,63 @@ data. The pre-existing untracked handoff file was preserved and excluded.
 Fresh verification: exact Task 6 command `32 tests, 0 failures`; core Template
 plus Task 5 transport regressions `86 tests, 0 failures`; touched files formatted
 and `git diff --check` clean.
+
+---
+
+# Hello reusable-agent UI and relay cleanup — Task 6 (2026-08-05)
+
+## Status
+
+Implemented on top of `c51864933` without modifying the unrelated Task 1 and
+Task 2 report changes already present in the worktree.
+
+## Implementation
+
+- Renamed the AgentBridge correlation metadata to the generic
+  `completion_request_id` and locked out the retired Hello-specific key.
+- Removed SessionFeedChannel's Hello `front-desk` mention injection. Generic
+  external posts now enter through `Session.send` without web-layer product
+  routing knowledge.
+- Removed World's server and React `:hello_page`/`:page` id fallbacks.
+  Non-native views render externally only when the session-view registry
+  declares `external_render?`, and the client hosts any resulting generic
+  `mode: "external"` without inspecting the view id or session URI.
+- Added optional generic `template_options` to Workspace `create_session` for
+  registered Template Classes. Workspace strips caller-provided `class` and
+  `session_name` overrides and supplies the canonical values itself.
+- Reworked authenticated `HomeLive` first-session creation into a Hello flow:
+  flavor selection drives `ReusableLlmAgent.list/3`, the agent selector shows
+  only eligible caller-managed `hello.llm` agents in the selected workspace,
+  empty results explain the prerequisite, and submit remains disabled until an
+  explicit candidate is selected.
+- Submit revalidates the selection, creates `session.hello` in the selected
+  workspace, and passes the exact flavor/agent pair through generic Template
+  data. The integration test verifies the working-copy role declaration uses
+  `install_mode: :reuse` and that no replacement agent is created.
+- The Hello sync-result mapping was already absent at the approved Task 5 HEAD;
+  the existing retired-relay architecture test continues to guard its absence.
+
+## Verification
+
+- Fresh focused command including the URI scanner: 83 tests, 0 failures
+  (`ezagent_core` 19, AgentBridge 6, Workspace 14, World 27, web 17).
+- World client suite: 48 tests, 0 failures. TypeScript typecheck and focused
+  ESLint for the changed Conversation files also pass.
+- `git diff --check`: clean.
+- `mix ci.fast`: blocked before its test phase by an unchanged malformed entry
+  in `apps/ezagent_core/lib/ezagent/actor_boundary_ledger.exs` for
+  `apps/ezagent_plugin_hello/lib/ezagent_plugin_hello/migrate.ex`; the invariant
+  task raises because that existing entry has no `:line` key.
+- `mix precommit`: compiled the umbrella and began the full suite. It exposed
+  existing architecture debt (oversized-module cap, HelloSessionActions
+  owner-bypass/dynamic-receiver baseline, ReusableLlmAgent sensitive-read
+  ledger, and stale migrate ledger). A Task 6 URI scanner finding was also
+  identified during that run, fixed, and then verified green by the fresh
+  19-test scanner suite above. The long runner was stopped after the accumulated
+  architecture failures; no broad-green claim is made.
+
+## Scope
+
+No broad invariant-ledger or architecture-baseline updates were folded into
+this feature commit. The unrelated dirty Task 1 and Task 2 reports remain
+unstaged and preserved.

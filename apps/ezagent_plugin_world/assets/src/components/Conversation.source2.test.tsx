@@ -13,16 +13,16 @@ vi.mock("../generated/plugin-page-renderers", () => ({
 const noop = () => undefined
 
 describe("G5 source-2 async agent error cards", () => {
-  it("opens the Hello preview for a template-derived Hello session", async () => {
+  it("opens an external preview from the registry-provided render mode", async () => {
     const {Conversation} = await import("./Conversation")
     const state: ConversationState = {
-      active_view: "hello_page",
+      active_view: "generated_page",
       caller_uri: "entity://system/user/admin",
       session_uri: "session://system/hello-codex/codex-1",
       sessions: [{uri: "session://system/hello-codex/codex-1", name: "codex-1"}],
       views: [
         {id: "conversation", label: "对话", icon: "message-square", mode: "chat"},
-        {id: "hello_page", label: "Page", icon: "panel-top", mode: "external"},
+        {id: "generated_page", label: "Page", icon: "panel-top", mode: "external"},
       ],
     }
 
@@ -49,9 +49,49 @@ describe("G5 source-2 async agent error cards", () => {
       />,
     )
 
-    expect(html).toContain('data-world-subcomponent="hello-page"')
+    expect(html).toContain('data-world-subcomponent="external-view"')
     expect(html).toContain('title="渲染页面预览"')
     expect(html).toContain("session%3A%2F%2Fsystem%2Fhello-codex%2Fcodex-1")
+  })
+
+  it("does not infer external rendering from the legacy hello_page id", async () => {
+    const {Conversation} = await import("./Conversation")
+    const state: ConversationState = {
+      active_view: "hello_page",
+      caller_uri: "entity://system/user/admin",
+      session_uri: "session://system/default/main",
+      sessions: [{uri: "session://system/default/main", name: "main"}],
+      views: [
+        {id: "conversation", label: "对话", icon: "message-square", mode: "chat"},
+        {id: "hello_page", label: "Legacy page", icon: "panel-top", mode: "unsupported"},
+      ],
+    }
+
+    const html = renderToStaticMarkup(
+      <Conversation
+        state={state}
+        onAddRoutingRule={noop}
+        onForkConfig={noop}
+        onOpenPty={noop}
+        onRestartOrchestrator={noop}
+        onSend={noop}
+        onSwitch={noop}
+        onSwitchView={noop}
+        onToggleRoutingRule={noop}
+        onLoadOlder={noop}
+        onMarkDisplayed={noop}
+        onInvite={noop}
+        onRemoveParticipant={noop}
+        onUninstallSocialware={noop}
+        onPtyInput={noop}
+        onPtyResize={noop}
+        onKanbanAction={noop}
+        onPublishTemplate={noop}
+      />,
+    )
+
+    expect(html).not.toContain('data-world-subcomponent="external-view"')
+    expect(html).not.toContain('title="渲染页面预览"')
   })
 
   it("renders a structured message error card without suppressing persisted text", async () => {
