@@ -29,6 +29,8 @@ domain-session 增加通用、声明式的 Session 入站投递机制。socialwa
 
 Hello 在其 definition 中声明该 handler。Hello plugin 的 action 调用现有意图与所有权路由，再对 Session dispatch `rebuild`、`answer`、`share`、`publish` 或 `delegate_to_kanban`。这取代当前“路由到 agent，再由 AgentBridge 处理”的路径。
 
+ingress 是默认用户消息的唯一入口。mention 被复用的 `llm` 成员不能直接投递，也不能绕过 owner/visitor 策略：它仍作为普通输入交由 ingress 处理。移除当前 web 层对 `front-desk` 的 mention 注入；通用 mention fan-out 也不能把 Hello 消息直接投递给内部 `llm` 成员。
+
 页面生成说明、问答和分享的发送者改为 Session，不再以 `front-desk` 作为 actor。发送者必须保持 session 范围和可审计性，不能引入伪造 agent 身份。
 
 ### Domain 边界清理
@@ -39,6 +41,7 @@ Hello 在其 definition 中声明该 handler。Hello plugin 的 action 调用现
 
 - domain-agent 中仅为即将退休的 `front-desk` 而存在的 `"hello" -> :hello_sync_result` AgentBridge 返回 action 映射；
 - domain-agent-bridge 中的 `hello_completion_request_id` payload key，改为通用 completion request identifier。
+- web Session-feed 对 `front-desk` 的 mention 注入。World view 中 `:hello_page` fallback 也改为只依赖通用 view registry。
 
 `Ezagent.Socialware.Demo.Hello` 只是读取已发布 manifest 的测试 fixture，不属于生产运行时的 Hello 行为。可以后续迁移，但不属于本次 ingress/reuse 的运行时设计。
 
@@ -69,3 +72,4 @@ Hello 在其 definition 中声明该 handler。Hello plugin 的 action 调用现
 4. 新 Hello session 没有 `front-desk` member，但用户消息仍到达声明的 Session ingress，并执行同样受保护的 action；
 5. 删除 session 或 member 不会退休复用 agent，且保持其 ownership 与凭证；
 6. 授权与防循环行为继续 fail-closed。
+7. `@llm-agent` 不能直接调用复用 agent，也不能绕过 owner/visitor 策略。

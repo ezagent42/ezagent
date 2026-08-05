@@ -47,6 +47,12 @@ plugin action invokes the existing intent and ownership routing logic, then
 dispatches `rebuild`, `answer`, `share`, `publish`, or `delegate_to_kanban` on
 the Session. This replaces the current route-to-agent-then-AgentBridge path.
 
+The ingress is the only default user-message entrypoint. A mention of the
+reused `llm` member is not direct delivery and cannot bypass the owner/visitor
+policy: it is handled by ingress as ordinary input. The existing web-layer
+injection of a `front-desk` mention is removed, and generic mention fan-out
+must not route a Hello message directly to its internal `llm` member.
+
 Session-originated output replaces every use of `front-desk` as an actor for
 generated-page narration, concierge replies, and sharing. Sender identity must
 remain session-scoped and auditable; no synthetic agent identity is introduced.
@@ -62,6 +68,8 @@ The following existing production special cases are removed or generalized:
   mapping, which exists only for the retiring front-desk agent;
 - the domain-agent-bridge `hello_completion_request_id` payload key, which
   becomes a generic completion request identifier.
+- the web Session-feed `front-desk` mention injection. The World view's
+  `:hello_page` fallback is also retired in favor of the generic view registry.
 
 `Ezagent.Socialware.Demo.Hello` is test-fixture support for loading the shipped
 manifest, not a production Hello behavior. It may be relocated later, but is
@@ -109,3 +117,5 @@ Tests must prove:
 5. Session deletion or member removal leaves the reused agent alive and keeps
    its ownership and credentials unchanged;
 6. authorization and anti-loop behavior remain fail-closed.
+7. an `@llm-agent` message cannot directly invoke the reused agent or bypass
+   the owner/visitor policy.
