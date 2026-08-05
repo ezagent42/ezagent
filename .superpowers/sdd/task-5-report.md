@@ -127,3 +127,36 @@ action set lacked `route_inbound`, and Session-authored messages were routable.
 
 The test environment continues to emit pre-existing asynchronous
 `cross_workspace_denied`/authorization log noise without assertion failures.
+
+## Review correction — retired direct LLM relay
+
+- `OfficialSiteSeed` still absence-gates the DeepSeek credential, but no longer
+  installs or requires an `in_session → llm` delivery rule. On every ensure it
+  removes seed-owned rows left by the retired `official-site-interim` workaround
+  and reloads the routing registry, so user messages have one entry path: the
+  manifest-declared Session ingress.
+- Removed the deleted Hello flavor's `:hello_sync_result` branch from
+  `Agent.Receive` and its stale capability-resolution example. A source-level
+  architecture regression prevents either reference from returning.
+- Upgraded the ingress integration to dispatch real `session.send` invocations
+  with exact target-issued caps. It installs an actual `llm` member, observes
+  successful authorization of the manifest-declared Session ingress, proves the
+  protected LLM receives no direct `agent.receive`, and covers owner rebuild,
+  visitor answer, and Session-authored loop rejection.
+
+RED evidence:
+
+- The architecture regression initially found
+  `sync_result_action("hello") -> :hello_sync_result` and the stale cap comment.
+- The updated seed contract initially found one seed-owned direct delivery row.
+
+GREEN evidence:
+
+- `MIX_ENV=test POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres mix test apps/ezagent_domain_agent/test/architecture/retired_hello_relay_test.exs apps/ezagent_plugin_hello/test/ezagent_plugin_hello/official_site_seed_test.exs apps/ezagent_plugin_hello/test/integration/hello_session_ingress_test.exs --seed 0`
+  - `ezagent_domain_agent`: 1 test, 0 failures.
+  - `ezagent_plugin_hello`: 11 tests, 0 failures.
+
+The focused run includes a simulated legacy `official-site-interim` row and
+proves the next seed run deletes it without recreating direct delivery. The test
+environment continues to emit pre-existing socialware-drift and asynchronous
+authorization warnings without assertion failures.

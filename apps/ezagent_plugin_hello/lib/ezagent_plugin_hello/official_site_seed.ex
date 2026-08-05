@@ -6,31 +6,12 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   seed configuration. This module never creates a user or falls back to a
   hard-coded principal.
 
-  ## INTERIM responder wiring (removed by the #1667 structural fix)
+  ## Responder credential wiring
 
-  Beyond provisioning, `ensure/0` durably re-wires the live-prod WORKAROUND
-  that keeps the 官网 answering after a reseed:
-
-    1. the `llm` greeter member's DeepSeek credential, dispatched via the
-       COMPARE-AND-SET `:put_api_key_if_absent` action from
-       `DEEPSEEK_API_KEY` (absent env → skipped with a warning, never a
-       crash, never a hardcoded key; unreadable agent → skipped with a
-       warning, NEVER a blind overwrite of an operator-rotated key);
-    2. a session-scoped `MentionRouting` delivery rule
-       (`in_session(官网) → [llm agent]`) so every message in the session
-       reaches the keyed responder directly — reconciled ATOMICALLY to
-       exactly one seed-owned row (`rule_set: "official-site-interim"`,
-       unique-index-guarded) through the site scope's OWN
-       `Ezagent.ActionSet.Routing` dispatch (admin-issued, action-specific
-       cap), never a direct `RuleStore` write.
-
-  This bypasses the native front-desk→concierge→`call_llm` chain, which is
-  broken (`call_llm` completes as `entity://system/user/admin`, who holds no
-  `Agent.Complete` cap → `:unauthorized`). The STRUCTURAL fix — native
-  front-desk→llm reply via a composition-cap, de-admin completion — lands
-  with the socialware answer-routing work (#1667, jjkysy); when it lands,
-  the direct `in_session` delivery rule (2) is removed. Do NOT build the
-  native chain here.
+  Beyond provisioning, `ensure/0` absence-gates the `llm` member's DeepSeek
+  credential through `:put_api_key_if_absent`. User messages enter through the
+  manifest-declared Session ingress; the seed removes any seed-owned legacy
+  `in_session → llm` rule left by the retired interim workaround.
   """
 
   require Logger
@@ -70,11 +51,10 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
           :absent -> provision(owner)
         end
 
-      # INTERIM workaround wiring (see the moduledoc): runs on EVERY ensure —
-      # provisioned AND already-provisioned — so a reseed that dropped the
-      # credential/rule, or a live site that never had them, self-heals on
-      # the next boot. Each leg is absence-gated; wiring failures degrade to
-      # a warning, never to a seed failure.
+      # Responder maintenance (see the moduledoc): runs on EVERY ensure —
+      # provisioned AND already-provisioned — so a missing credential is
+      # restored and any retired direct-delivery rule is removed on the next
+      # boot. Maintenance failures degrade to a warning, never a seed failure.
       case outcome do
         {:ok, {:provisioned, uri, _turn_id}} -> wire_responder(uri)
         {:ok, {:already_provisioned, uri}} -> wire_responder(uri)
@@ -143,23 +123,19 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     end
   end
 
-  # --- INTERIM responder wiring (removed by the #1667 structural fix) ------
+  # --- responder credential + retired-rule cleanup -------------------------
 
-  # Seed-owned routing-rule marker. Every delivery-rule row this workaround
-  # installs carries this `rule_set`, so a reseed can tell its OWN rows from
-  # operator/template rows and reconcile to EXACTLY ONE row. The same literal
-  # backs the partial unique index
-  # `routing_rules_official_site_interim_unique` (repo_pg migration
-  # 20260731000000) — the DB-level duplicate guard for concurrent deploy-node
-  # reseeds. Keep the two in sync.
+  # Marker used only to identify and remove rows installed by the retired direct
+  # delivery workaround. It matches the historical database migration literal.
   @delivery_rule_set "official-site-interim"
 
   defp wire_responder(%URI{} = site_uri) do
+    remove_direct_delivery_rules(site_uri)
+
     best_effort("responder wiring", fn ->
       case Members.role_uri(site_uri, @llm_role) do
         {:ok, %URI{} = llm_uri} ->
           ensure_llm_credential(llm_uri)
-          ensure_delivery_rule(site_uri, llm_uri)
 
         :error ->
           Logger.warning(
@@ -172,7 +148,7 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     :ok
   end
 
-  # (a) The DeepSeek credential on the llm greeter agent, mirroring the
+  # The DeepSeek credential on the llm greeter agent, mirroring the
   # live-prod credential dispatch. The bounded TRI-STATE read preserves the
   # deploy-time readiness contract: only a successful read can classify the
   # provider key as present/absent; an unreadable or not-ready slice skips the
@@ -281,61 +257,20 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
   # value the workspace-locality scanner cannot type-prove).
   defp exception_class(%mod{}), do: inspect(mod)
 
-  # (b) The session-scoped delivery rule: EVERY message in the 官网 session is
-  # delivered directly to the (keyed) llm agent. ATOMIC RECONCILE to exactly
-  # ONE seed-owned row (`rule_set: @delivery_rule_set`,
-  # `receivers == [llm_uri]`, `enabled: true`, `source: "admin"`): stale
-  # owned rows — incl. legacy pre-marker rows whose concrete receiver points
-  # at a since-changed/removed llm member — are deleted, the correct row is
-  # inserted when missing, and the live registry is ALWAYS rehydrated (a
-  # durable row without registry hydration is a non-delivering rule).
-  #
-  # All mutations dispatch through the site scope's OWN routing ActionSet
-  # (`Ezagent.ActionSet.Routing` on the session Kind) presenting an
-  # admin-issued, action-specific cap minted via `Cap.issue_for_action`
-  # (codex must-fix #3) — the mutation passes the scope-bound CapBAC
-  # chokepoint instead of laundering an admin-attributed row around it.
-  defp ensure_delivery_rule(%URI{} = site_uri, %URI{} = llm_uri) do
-    best_effort("official-site delivery-rule wiring", fn ->
+  # Delete every seed-owned row from the retired direct delivery workaround.
+  # Mutations still pass through the Session routing ActionSet with one exact
+  # target-issued cap; operator/template rules are not touched.
+  defp remove_direct_delivery_rules(%URI{} = site_uri) do
+    best_effort("retired official-site delivery-rule cleanup", fn ->
       table = Ezagent.Routing.Resolver.default_routing_table()
       matcher_json = Matcher.to_json(Matcher.in_session(site_uri))
-      receiver = uri_to_string(llm_uri)
 
-      owned =
-        table
-        |> RuleStore.list()
-        |> Enum.filter(&owned_delivery_rule?(&1, matcher_json))
+      table
+      |> RuleStore.list()
+      |> Enum.filter(&owned_delivery_rule?(&1, matcher_json))
+      |> Enum.each(&delete_delivery_rule(table, site_uri, &1))
 
-      admin_source = RuleStore.admin_source()
-
-      {good, stale} =
-        Enum.split_with(owned, fn
-          %{
-            rule_set: rule_set,
-            matcher_data: matcher_data,
-            receivers: receivers,
-            enabled: enabled,
-            source: source
-          } ->
-            rule_set == @delivery_rule_set and
-              matcher_data == matcher_json and
-              receivers == [receiver] and
-              enabled and
-              source == admin_source
-        end)
-
-      case good do
-        [_keep | duplicates] ->
-          Enum.each(duplicates ++ stale, &delete_delivery_rule(table, site_uri, &1))
-
-        [] ->
-          Enum.each(stale, &delete_delivery_rule(table, site_uri, &1))
-          add_delivery_rule(table, site_uri, llm_uri)
-      end
-
-      # ALWAYS rehydrate — also when a good row already existed (the registry
-      # ETS is per-boot; a reseed that changed nothing on disk still owes the
-      # live registry the row).
+      # Rehydrate after deletions so stale ETS delivery disappears this boot.
       :ok = RuleStore.load_into_registry(table)
     end)
   end
@@ -354,60 +289,6 @@ defmodule EzagentPluginHello.OfficialSiteSeed do
     rule_set == @delivery_rule_set or
       (is_nil(rule_set) and matcher_data == matcher_json and
          created_by == admin_created_by)
-  end
-
-  defp add_delivery_rule(table, %URI{} = site_uri, %URI{} = llm_uri) do
-    args = %{
-      table: table,
-      matcher_json: Matcher.to_json(Matcher.in_session(site_uri)),
-      receivers: [uri_to_string(llm_uri)],
-      opts: [
-        created_by: User.admin_uri(),
-        source: RuleStore.admin_source(),
-        rule_set: @delivery_rule_set
-      ]
-    }
-
-    case dispatch_rule_mutation(site_uri, :add_rule, args) do
-      {:ok, %{id: _id}} ->
-        :ok
-
-      {:error, reason} ->
-        # The `routing_rules_official_site_interim_unique` partial unique
-        # index turns a two-node concurrent insert into a ConstraintError on
-        # the loser — surfaced through dispatch as {:behavior_exception, …}.
-        # The winner's row is exactly the row we wanted; adopt it.
-        if delivery_rule_now_present?(table, site_uri, llm_uri) do
-          Logger.warning(
-            "hello official-site seed: official-site delivery-rule insert raced a concurrent seeder " <>
-              "(#{credential_error_class(reason)} — likely the unique-index guard); " <>
-              "adopted the existing row"
-          )
-        else
-          Logger.warning(
-            "hello official-site seed: failed to add the official-site delivery rule: " <>
-              "#{inspect(reason, limit: 6)}"
-          )
-        end
-    end
-  end
-
-  defp delivery_rule_now_present?(table, %URI{} = site_uri, %URI{} = llm_uri) do
-    matcher_json = Matcher.to_json(Matcher.in_session(site_uri))
-    receiver = uri_to_string(llm_uri)
-
-    table
-    |> RuleStore.list()
-    |> Enum.any?(fn
-      %{
-        rule_set: rule_set,
-        matcher_data: matcher_data,
-        receivers: receivers,
-        enabled: enabled
-      } ->
-        rule_set == @delivery_rule_set and matcher_data == matcher_json and
-          receivers == [receiver] and enabled
-    end)
   end
 
   defp delete_delivery_rule(table, %URI{} = site_uri, %{id: id}) do
