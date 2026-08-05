@@ -476,7 +476,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
         not Ezagent.Identity.Authority.manages?(operator, agent_uri) ->
           :unauthorized
 
-        agent_provider_profile(agent_uri) != provider_of(agent) ->
+        provider_profile_mismatch?(agent_uri, agent) ->
           :provider_profile_mismatch
 
         not credential_eligible?(agent_uri, operator, agent) ->
@@ -496,17 +496,41 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
 
   defp credential_eligible?(agent_uri, operator, agent) do
-    if credential_admission_of(agent) == :immediate do
-      true
-    else
-      case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{
-             caller: operator,
-             authenticated_principal: operator
-           }) do
-        {:ok, %{status: status}} when status in [:authenticated, :expiring, :n_a] -> true
-        _ -> false
-      end
+    case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{
+           caller: operator,
+           authenticated_principal: operator
+         }) do
+      {:ok, %{status: status}} -> credential_status_eligible?(flavor_of(agent), status)
+      _ -> false
     end
+  end
+
+  defp credential_status_eligible?(flavor, status) do
+    case Ezagent.AgentFlavorRegistry.lookup(flavor) do
+      {:ok, %{template_class: template_class}} when is_atom(template_class) ->
+        credentialled? =
+          Ezagent.Agent.CredentialAdapter.credentialled?(template_class) or
+            Ezagent.Agent.CredentialSliceAdapter.credentialled?(template_class)
+
+        if credentialled?, do: status in [:authenticated, :expiring], else: status == :n_a
+
+      _ ->
+        false
+    end
+  end
+
+  defp provider_profile_mismatch?(agent_uri, agent) do
+    case declared_provider_profile(agent) do
+      nil -> false
+      expected -> agent_provider_profile(agent_uri) != expected
+    end
+  end
+
+  defp declared_provider_profile(agent) do
+    provider_of(agent) ||
+      agent
+      |> role_config()
+      |> then(fn config -> Map.get(config, :provider) || Map.get(config, "provider") end)
   end
 
   defp agent_provider_profile(agent_uri) do

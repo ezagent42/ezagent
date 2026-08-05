@@ -49,6 +49,7 @@ defmodule Ezagent.ActionSet.HelloPublisher do
           with {:ok, name} <- resolve_template_name(session_uri, instruction),
                {:ok, %URI{} = tmpl_uri} <-
                  Ezagent.Orchestrator.Tools.Templates.save_template_as(name,
+                   session_uri: session_uri,
                    workspace_uri: Ezagent.Capability.workspace_of(session_uri),
                    caller: caller_uri,
                    caps: caps

@@ -1631,7 +1631,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members_of(session_uri), "orchestrator") == nil
   end
 
-  test "reuse install choice joins a credential-less existing agent" do
+  test "reuse with an unclassifiable credentialless flavor is skipped" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1639,7 +1639,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     flavor = register_stub_flavor(n)
     reusable = live_agent(n, recipe_name, flavor)
 
-    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
+    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
              DefinitionAgents.materialize_definition_agents(
                session_uri,
                @workspace_uri,
@@ -1655,8 +1655,8 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                ]
              )
 
-    members = members_of(session_uri)
-    assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
+    assert {:reuse_agent_revalidation_failed, ^role_name, :ineligible_credential_status} = reason
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
   test "reuse of an unavailable agent is skipped instead of aborting installation" do
@@ -1757,7 +1757,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                    recipe: recipe_name,
                    role_name: role_name,
                    flavor: flavor,
-                   provider: "different-profile",
+                   config: %{provider: "different-profile"},
                    install_mode: :reuse,
                    reuse_agent_uri: reusable
                  }

@@ -13,6 +13,14 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     :ok
   end
 
+  test "publisher forwards the addressed session into the template save call" do
+    source =
+      File.read!(Path.expand("../../lib/ezagent/behavior/hello_publisher.ex", __DIR__))
+
+    assert source =~ "Templates.save_template_as(name,"
+    assert source =~ "session_uri: session_uri"
+  end
+
   test ":publish dispatch is cap-gated — denied without the :publish cap" do
     n = System.unique_integer([:positive])
     ws_uri = Ezagent.URI.workspace("team-alpha")
@@ -48,7 +56,7 @@ defmodule EzagentPluginHello.HelloPublisherDispatchTest do
     # (`extract_explicit_name(_) -> :none` → session-name path) with no external
     # dependency, so the test stays hermetic. Do NOT restore a non-empty
     # instruction here — it reintroduces the subprocess hang.
-    args = %{session_uri: "session://team-alpha/hello/test", instruction: ""}
+    args = %{session_uri: "not-a-session-uri", instruction: ""}
 
     # F1: a caller WITHOUT the :publish cap is rejected.
     result_denied =
