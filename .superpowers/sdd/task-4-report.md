@@ -175,3 +175,24 @@ file is named by the compiler and this task leaves those files unchanged.
   `assets/e2e/world.spec.ts`: its test bridge calls `emit`/`contract`, but the
   declared bridge type lacks both members (five TS2339 errors). Task 4 did not
   modify that file or its E2E harness.
+
+---
+
+# Task 4 report — race-safe multi-session reuse
+
+## Delivered
+
+- Reuse joins now revalidate the installing operator's durable manage authority immediately before `Participants.add_participant/3`.
+- A revocation in the preflight-to-join window returns `{:reuse_agent_revalidation_failed, role_name, :unauthorized}`, which the installer records as the durable `:unavailable` unfilled slot instead of attempting fresh materialization.
+- Added coverage for the revocation path, including assertions that the reused agent stays alive and no fresh-spawn receipt is emitted.
+- Added reuse-lifetime coverage: one external agent can join sessions A and B; removing it from A, or destroying A, preserves its B membership and process.
+
+## Verification
+
+- Focused regression command (with the prescribed PostgreSQL test environment) passed: `5 tests, 0 failures (32 excluded)`.
+- A full two-file target run and `mix precommit` were started. Both remained actively CPU-bound and then exited, but their detached runners did not return final stdout/exit summaries through the tool interface.
+- The test environment emits pre-existing startup warnings about divergent built-in socialware definitions and fire-and-forget default-session dispatch denials; they did not fail the focused coverage.
+
+## Scope
+
+Only the reuse revalidation, its two authorized integration-test files, and this appended Task 4 report entry are part of this task. Existing Task 1 and Task 2 report changes remain untouched.

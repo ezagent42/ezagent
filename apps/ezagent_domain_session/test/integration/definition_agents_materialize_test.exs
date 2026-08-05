@@ -621,6 +621,31 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     session_uri
   end
 
+  defp live_session(n, %URI{} = workspace_uri, %URI{} = owner_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    session_uri = Ezagent.URI.session(workspace_name, "generic", "reuse-race-#{n}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Session, %{
+        uri: session_uri,
+        behaviors: Session.behaviors(),
+        owner_uri: owner_uri
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(session_uri, workspace_uri)
+    on_exit(fn -> terminate(session_uri) end)
+    session_uri
+  end
+
+  defp confirmed_user(%URI{} = workspace_uri, prefix) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    user_uri = Ezagent.URI.user(workspace_name, "#{prefix}-#{uniq()}")
+    {:ok, _row} = Ezagent.Users.create(user_uri, "pw-not-secret-#{uniq()}", [])
+    {:ok, _pid} = Ezagent.SpawnRegistry.spawn(user_uri)
+    on_exit(fn -> terminate(user_uri) end)
+    user_uri
+  end
+
   # Seed a recipe with requested_caps over behaviors LOADED in domain_session
   # (so GrantRecipeCaps' loaded-check resolves them).
   defp seed_recipe(n) do
@@ -728,6 +753,46 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
     on_exit(fn -> terminate(agent_uri) end)
     agent_uri
+  end
+
+  defp live_agent(n, recipe_name, %URI{} = workspace_uri) do
+    workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
+    agent_uri = Ezagent.URI.agent(workspace_name, "reusable-#{n}")
+
+    {:ok, _pid} =
+      Ezagent.Kind.spawn(Ezagent.Entity.Agent, %{
+        uri: agent_uri,
+        behaviors: Ezagent.Entity.Agent.base_behaviors()
+      })
+
+    :ok = Ezagent.WorkspaceRegistry.bind(agent_uri, workspace_uri)
+    :ok = Ezagent.Agent.RecipeAttributes.put(agent_uri, recipe_name)
+    on_exit(fn -> terminate(agent_uri) end)
+    agent_uri
+  end
+
+  defp grant_manage(grantee, target) do
+    proposed =
+      Ezagent.CreatorGrant.manage_cap(
+        :agent,
+        target,
+        Ezagent.Capability.workspace_of(target),
+        grantee
+      )
+
+    :ok =
+      Ezagent.Identity.Grant.grant_cap_via_router(
+        grantee,
+        proposed,
+        {:admin, @owner_uri},
+        :sync
+      )
+
+    wanted_key = Ezagent.Capability.identity_key(proposed)
+
+    Enum.find(Ezagent.Identity.list_caps_for(grantee), fn cap ->
+      Ezagent.Capability.identity_key(cap) == wanted_key
+    end)
   end
 
   defp activate_recipe_binding(agent_uri, recipe_name) do
@@ -1567,6 +1632,76 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
 
     members = members_of(session_uri)
     assert SessionBehavior.role_name_to_uri(members, role_name) == reusable
+  end
+
+  test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
+    n = uniq()
+    workspace_uri = Ezagent.URI.workspace("reuse-race-#{n}")
+    ensure_workspace_kind!(workspace_uri)
+    on_exit(fn -> terminate(workspace_uri) end)
+
+    operator = confirmed_user(workspace_uri, "reuse-operator")
+    session_uri = live_session(n, workspace_uri, operator)
+    recipe_name = seed_recipe(n)
+    role_name = "reuse-race-#{n}"
+    flavor = register_convergence_timeout_flavor(n)
+    reusable = live_agent(n, recipe_name, workspace_uri)
+    manage_cap = grant_manage(operator, reusable)
+
+    assert %Ezagent.Capability{} = manage_cap
+    assert Ezagent.Identity.Authority.manages?(operator, reusable)
+
+    declaration = %{
+      fill: :agent,
+      recipe: recipe_name,
+      role_name: role_name,
+      flavor: flavor,
+      install_mode: :reuse,
+      reuse_agent_uri: reusable
+    }
+
+    working_copy =
+      session_uri
+      |> Session.read_template_working_copy()
+      |> Map.put(
+        :session_template_uri,
+        Ezagent.URI.template(
+          Ezagent.URI.workspace_name!(workspace_uri),
+          :session,
+          "reuse-race@revision-#{n}"
+        )
+      )
+      |> Map.put(:member_declarations, [declaration])
+
+    assert {:ok, _} = SessionBehavior.system_set_working_copy(session_uri, working_copy)
+
+    assert :ok =
+             Ezagent.Identity.Grant.revoke_cap_via_router(
+               operator,
+               manage_cap,
+               {:admin, @owner_uri},
+               :sync
+             )
+
+    assert eventually(fn -> not Ezagent.Identity.Authority.manages?(operator, reusable) end)
+
+    assert {:ok,
+            %{
+              satisfied: [],
+              skipped: [
+                %{
+                  role_name: ^role_name,
+                  reason: {:reuse_agent_revalidation_failed, ^role_name, :unauthorized}
+                }
+              ]
+            }} = SessionCreator.install_session_socialware(session_uri, {workspace_uri, operator})
+
+    assert [%{role_name: ^role_name, reason: :unavailable}] =
+             SessionCreator.unfilled_agent_role_slots(session_uri)
+
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
+    assert {:ok, _pid} = KindRegistry.lookup(reusable)
+    refute_receive {:task_3_fresh_spawned, _uri, _config_dir}, 100
   end
 
   test "reuse install choice joins the existing agent despite fresh-agent credential admission" do

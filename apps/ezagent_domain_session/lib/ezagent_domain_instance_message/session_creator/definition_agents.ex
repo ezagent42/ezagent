@@ -422,6 +422,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          {:ok, _live_or_rehydrated} <- Ezagent.Domain.Agent.ensure_deliverable(agent_uri),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
+         # The role declaration may have passed its generic install preflight
+         # before this operator's manage authority was revoked. Re-check at the
+         # join boundary: reuse never falls through to fresh materialization,
+         # and this absence becomes a durable unfilled role.
+         :ok <- revalidate_reuse_authority(operator, agent_uri, role_name),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
          # must never tombstone or overwrite that agent's pre-existing binding.
          {:ok, ^agent_uri} <-
@@ -440,8 +445,17 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       {:ok, agent_uri}
     else
       nil -> {:error, {:invalid_reuse_agent_uri, role_name}}
+      {:skip, _reason} = skip -> skip
       {:error, _} = error -> error
       other -> {:error, {:reuse_agent_join_failed, role_name, other}}
+    end
+  end
+
+  defp revalidate_reuse_authority(%URI{} = operator, %URI{} = agent_uri, role_name) do
+    if Ezagent.Identity.Authority.manages?(operator, agent_uri) do
+      :ok
+    else
+      {:skip, {:reuse_agent_revalidation_failed, role_name, :unauthorized}}
     end
   end
 

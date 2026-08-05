@@ -10,6 +10,7 @@ defmodule Ezagent.Socialware.ReuseBindTest do
   alias Ezagent.Capability
   alias Ezagent.Identity.Authority
   alias Ezagent.Orchestrator.Tools.Participants
+  alias Ezagent.Session.Participants, as: SessionParticipants
   import Ezagent.Test.CapHelper, only: [signed_action_cap!: 2]
 
   defp uniq, do: System.unique_integer([:positive])
@@ -71,6 +72,16 @@ defmodule Ezagent.Socialware.ReuseBindTest do
     )
   end
 
+  defp remove_participant(session_uri, operator, member_uri) do
+    target = Ezagent.URI.with_action(session_uri, :session, :remove_participant)
+
+    SessionParticipants.remove_participant(session_uri, member_uri, %{
+      caller: operator,
+      authenticated_principal: operator,
+      caps: [signed_action_cap!(target, operator)]
+    })
+  end
+
   defp session_state(session_uri) do
     case Ezagent.Kind.read(session_uri, :session, spawn: :never) do
       {:ok, %{state: state}} when is_map(state) -> state
@@ -106,6 +117,18 @@ defmodule Ezagent.Socialware.ReuseBindTest do
 
       true ->
         nil
+    end
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(_fun, 0), do: false
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(10)
+      eventually(fun, attempts - 1)
     end
   end
 
@@ -145,5 +168,49 @@ defmodule Ezagent.Socialware.ReuseBindTest do
 
     entry = Map.fetch!(read_pending(session_uri), foreign_agent_uri)
     assert entry.requested_by == operator
+  end
+
+  test "one reused agent joins two sessions and removal from A preserves B and the agent" do
+    ws = new_ws()
+    operator = confirmed_user(ws, "operator")
+    session_a = new_session("multi-a", operator)
+    session_b = new_session("multi-b", operator)
+    agent_uri = agent_member(ws, "shared-agent")
+    grant_manage(operator, agent_uri)
+
+    assert {:ok, ^agent_uri} = add_participant(session_a, operator, agent_uri, "llm-a")
+    assert {:ok, ^agent_uri} = add_participant(session_b, operator, agent_uri, "llm-b")
+
+    assert %{^agent_uri => %{role_name: "llm-a"}} = read_members(session_a)
+    assert %{^agent_uri => %{role_name: "llm-b"}} = read_members(session_b)
+    assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+
+    assert {:ok, %{status: :removed, torn_down: :membership_only}} =
+             remove_participant(session_a, operator, agent_uri)
+
+    refute Map.has_key?(read_members(session_a), agent_uri)
+    assert %{^agent_uri => %{role_name: "llm-b"}} = read_members(session_b)
+    assert {:ok, ^agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    assert Process.alive?(agent_pid)
+  end
+
+  test "deleting session A preserves a reused agent and its session B membership" do
+    ws = new_ws()
+    operator = confirmed_user(ws, "operator")
+    session_a = new_session("delete-a", operator)
+    session_b = new_session("delete-b", operator)
+    agent_uri = agent_member(ws, "shared-agent")
+    grant_manage(operator, agent_uri)
+
+    assert {:ok, ^agent_uri} = add_participant(session_a, operator, agent_uri, "llm-a")
+    assert {:ok, ^agent_uri} = add_participant(session_b, operator, agent_uri, "llm-b")
+    assert {:ok, agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+
+    assert :ok = Ezagent.Lifecycle.destroy(session_a, :test_session_delete)
+    assert eventually(fn -> Ezagent.KindRegistry.lookup(session_a) == :error end)
+
+    assert %{^agent_uri => %{role_name: "llm-b"}} = read_members(session_b)
+    assert {:ok, ^agent_pid} = Ezagent.KindRegistry.lookup(agent_uri)
+    assert Process.alive?(agent_pid)
   end
 end
