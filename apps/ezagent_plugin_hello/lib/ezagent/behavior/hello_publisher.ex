@@ -1,12 +1,10 @@
 defmodule Ezagent.ActionSet.HelloPublisher do
   @moduledoc """
-  The hello PUBLISHER agent Behavior — wraps "publish as template" as a
-  dispatchable action so the front-desk relay can route a publish request here.
+  Wraps "publish as template" as a dispatchable Session operation.
 
-  Native-flavor (no bridge adapter) — reachable via dispatch, not chat delivery
-  (T2 I-1). On `:publish`, derives a unique template name from the session name
+  On `:publish`, derives a unique template name from the session name
   + timestamp (or user-specified name + timestamp), calls `save_template_as`,
-  and posts the result as the publisher agent itself (loop-guard-safe).
+  and posts the result as the Session itself (loop-guard-safe).
   """
 
   use Ezagent.Lifecycle
@@ -58,24 +56,18 @@ defmodule Ezagent.ActionSet.HelloPublisher do
             {:ok, "Template \"#{template_display_name(tmpl_uri)}\" published."}
           end
 
-        case result_actor(session_uri) do
-          {:ok, publisher_uri} ->
-            case result do
-              {:ok, text} ->
-                _ = EzagentPluginHello.TurnDriver.say(session_uri, publisher_uri, text)
+        case result do
+          {:ok, text} ->
+            _ = EzagentPluginHello.TurnDriver.say(session_uri, session_uri, text)
 
-              {:error, reason} ->
-                # G5 source 2 — structured error, no hand-written prose.
-                _ =
-                  EzagentPluginHello.TurnDriver.say_error(
-                    session_uri,
-                    publisher_uri,
-                    {:template_save_failed, reason}
-                  )
-            end
-
-          :error ->
-            :ok
+          {:error, reason} ->
+            # G5 source 2 — structured error, no hand-written prose.
+            _ =
+              EzagentPluginHello.TurnDriver.say_error(
+                session_uri,
+                session_uri,
+                {:template_save_failed, reason}
+              )
         end
 
       :error ->
@@ -177,12 +169,5 @@ defmodule Ezagent.ActionSet.HelloPublisher do
     end
   rescue
     ArgumentError -> :error
-  end
-
-  defp result_actor(session_uri) do
-    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
-      {:ok, uri} -> {:ok, uri}
-      :error -> EzagentPluginHello.Members.role_uri(session_uri, "publisher")
-    end
   end
 end

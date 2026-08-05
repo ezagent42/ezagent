@@ -69,9 +69,10 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                match?(
                  %{status: :resolved},
                  Ezagent.Session.SocialwareInstallObligations.get_by_session(session_uri)
-               ) and
-                 match?({:ok, %URI{}}, Members.role_uri(session_uri, "front-desk"))
+               )
              end)
+
+      assert :error = Members.role_uri(session_uri, "front-desk")
     end
 
     test "stands up a creatable hello app: session + declared (not spawned) team" do
@@ -88,9 +89,8 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       # rev6 / #912 — `instantiate/3` runs inside the `workspace.create_session`
       # dispatch, so it creates the session + its config and RECORDS the declared
       # team as `member_declarations`. It spawns nothing. Before this split it
-      # materialized four role agents (plus the `requires`-pulled cc orchestrator)
-      # right here, which is why `hello` kept timing out at the 5s dispatch budget
-      # after `default` had already been decoupled.
+      # materialized role agents inside the create dispatch, which is why `hello`
+      # kept timing out after `default` had already been decoupled.
       assert :error = Members.role_uri(session_uri, "front-desk")
 
       declarations =
@@ -99,16 +99,14 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         |> Map.get(:member_declarations, [])
         |> Enum.map(&(Map.get(&1, :role_name) || Map.get(&1, "role_name")))
 
-      assert "front-desk" in declarations
-      assert "llm" in declarations
-      assert length(declarations) == 2
+      assert declarations == ["llm"]
 
       # `Workspace.create_session` fires this transaction once the owner-only
       # session is durable; drive it synchronously here.
-      assert {:ok, %{satisfied: ["front-desk"], skipped: [], deferred: ["llm"]}} =
+      assert {:ok, %{satisfied: [], skipped: [], deferred: ["llm"]}} =
                EzagentDomainInstanceMessage.SessionCreator.install_session_socialware(session_uri)
 
-      assert {:ok, orch_uri} = Members.role_uri(session_uri, "front-desk")
+      assert :error = Members.role_uri(session_uri, "front-desk")
       assert :error = Members.role_uri(session_uri, "llm")
 
       assert [
@@ -118,24 +116,6 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                  connection: {:api_key, %{provider: "deepseek"}}
                }
              ] = EzagentDomainInstanceMessage.SessionCreator.AgentAdmission.list(session_uri)
-
-      assert match?({:ok, _}, Ezagent.KindRegistry.lookup(orch_uri)),
-             "the orchestrator should be live"
-
-      assert %{^orch_uri => %{role_name: "front-desk"}} =
-               Ezagent.Orchestrator.Tools.read_members(session_uri)
-
-      # The orchestrator holds no within-session orchestrator cap (it is a plain
-      # router member, not a session orchestrator).
-      {:ok, %{caps: caps}} = Ezagent.Kind.read(orch_uri, :identity, spawn: :never)
-
-      assert {:error, :unauthorized} =
-               Ezagent.Orchestrator.Tools.preflight_within_session_cap(
-                 orch_uri,
-                 caps,
-                 session_uri,
-                 :any
-               )
 
       # Idempotent: re-instantiating the same app reports not-fresh.
       assert {:ok, [^session_uri], %{fresh?: false}} =

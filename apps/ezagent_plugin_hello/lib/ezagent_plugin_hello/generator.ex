@@ -830,27 +830,8 @@ defmodule EzagentPluginHello.Generator do
 
   defp collect_types(_other, acc), do: acc
 
-  # Generated-page narration is emitted by the session's front-desk agent. The
-  # builder is a Session action, not an independently materialized member.
-  defp builder_uri(%URI{} = session_uri) do
-    case EzagentPluginHello.Members.role_uri(session_uri, "front-desk") do
-      {:ok, uri} -> uri
-      :error -> legacy_builder_uri(session_uri)
-    end
-  end
-
-  defp legacy_builder_uri(%URI{} = session_uri) do
-    ws = Ezagent.URI.workspace_name!(session_uri)
-
-    name =
-      session_uri
-      |> Map.get(:path, "")
-      |> to_string()
-      |> String.split("/", trim: true)
-      |> List.last()
-
-    Ezagent.URI.entity(ws, :agent, "hello_#{name}")
-  end
+  # Generated-page narration is Session-authored; no relay agent is materialized.
+  defp builder_uri(%URI{} = session_uri), do: session_uri
 
   # Console log of the @json-render data that ACTUALLY drives the page — the
   # validated spec landed on the Surface. This is the "what changed the page"

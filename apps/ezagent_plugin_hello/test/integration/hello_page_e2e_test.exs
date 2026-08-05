@@ -2,7 +2,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
   @moduledoc """
   The hello Phase-0 vertical slice, end to end on the substrate (no live LLM):
 
-      App.ensure_app (public_view session + joined orchestrator front desk)
+      App.ensure_app (public_view session + reusable LLM declaration)
         → TurnDriver.drive(session, spec)            # the page chokepoint
         → Behavior.Surface.put_version + approve     # via turn.compose/settle
         → ExternalFeed.snapshot(session, anon)       # what the anon visitor sees
@@ -26,10 +26,8 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
 
   setup do
     :ok = EzagentPluginHello.TestCatalog.import!()
-    # `ensure_app` creates the orchestrator via the RF-5a role-create path, which
-    # resolves `hello.orchestrator` through the "role-as-data" RecipeRegistry. Boot
-    # seeds it, but that write is outside this DataCase sandbox transaction (and the
-    # ETS cache can be flushed by another test) — so seed the roles here (idempotent).
+    # `ensure_app` resolves the LLM through the role-as-data RecipeRegistry. Boot
+    # seeds it outside this DataCase sandbox transaction, so seed the role here too.
     {:ok, _} = Application.ensure_all_started(:ezagent_domain_agent)
     # The `hello.llm` role materializes as a "curl" flavor agent — the flavor is
     # boot-registered by the curl_agent plugin's `agent_flavors/0`, so it must be
@@ -117,29 +115,9 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert "hello-coupling-boundary" in classes
   end
 
-  test "ensure_app joins the orchestrator front desk without minting a within-session cap", ctx do
-    orchestrator = ctx.orchestrator
-
-    assert %{^orchestrator => %{role_name: "front-desk"}} =
-             Ezagent.Orchestrator.Tools.read_members(ctx.session)
-
-    {:ok, %{caps: caps}} = Ezagent.Kind.read(ctx.orchestrator, :identity, spawn: :never)
-
-    refute Enum.any?(caps, fn
-             %Ezagent.Capability{kind: :session, instance: {:within_session, %URI{} = s}} ->
-               URI.to_string(s) == URI.to_string(ctx.session)
-
-             _ ->
-               false
-           end)
-
-    assert {:error, :unauthorized} =
-             Ezagent.Orchestrator.Tools.preflight_within_session_cap(
-               orchestrator,
-               caps,
-               ctx.session,
-               :any
-             )
+  test "ensure_app uses the Session sender and has no front-desk member", ctx do
+    assert ctx.orchestrator == ctx.session
+    assert :error = EzagentPluginHello.Members.role_uri(ctx.session, "front-desk")
   end
 
   test "ensure_app spawns the session through the socialware install set", ctx do
@@ -209,7 +187,7 @@ defmodule EzagentPluginHello.Integration.HelloPageE2ETest do
     assert artifact.kind == "hello_source"
   end
 
-  test "a keyless session defers the curl LLM without blocking the front-desk" do
+  test "a keyless session defers the curl LLM without blocking Session ingress" do
     # A fresh workspace in this test env has no DeepSeek credential source.
     ws = "hello-e2e-llm-#{System.unique_integer([:positive])}"
     {:ok, _ws_pid} = Workspace.create(ws, %{})

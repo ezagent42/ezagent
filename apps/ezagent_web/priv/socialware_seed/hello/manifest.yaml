@@ -1,7 +1,7 @@
 name: hello
 version: "0.1.0"
 title: "Hello website builder"
-description: "Build and publish a website through a two-agent Hello team."
+description: "Build and publish a website with a reusable LLM agent."
 uses:
   - hello
 bases:
@@ -14,10 +14,6 @@ shape:
 views:
   - hello_render
 roles:
-  - role_name: front-desk
-    fill: agent
-    recipe: hello.front-desk
-    flavor: hello
   - role_name: llm
     fill: agent
     recipe: hello.llm
@@ -27,16 +23,15 @@ roles:
       provider: deepseek
       api_url: https://api.deepseek.com/chat/completions
       model: deepseek-v4-flash
-routing_rules:
-  - matcher:
-      type: always
-    receivers:
-      - front-desk
-    rule_set: default
-    position: 0
+routing_rules: []
 visibility_policy:
   scope: public
   publish_policy: auto
   web_anon_access: true
 prompt_templates: {}
 legends: {}
+ingress:
+  behavior: Ezagent.ActionSet.HelloSessionActions
+  action: route_inbound
+  protected_roles:
+    - llm

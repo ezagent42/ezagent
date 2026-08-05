@@ -21,20 +21,11 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
   call-mode `session.join` returns `{:error, :cross_workspace_denied}`.
 
   Pass-after: `ezagent-official` in `ezagent` owned by an ezagent principal —
-  the anon is admitted through the REAL web ingress primitive
-  (`AnonAdmission.admit_anonymous_participant/1`: mint into `ezagent` → spawn →
-  bind → join with the born-with join_cap), and the `{always} -> front-desk`
-  relay fires through the genuine runtime receive primitive
-  (`Delivery.dispatch_receive_call/3`, the `hello_greeter_relay_repro_test`
-  pattern). Keyless by design: the acceptable
-  downstream stop is the concierge's `{:no_api_key, "deepseek"}` PAST the
-  resolver — that proves the workspace gate opened.
+  the anon is admitted through the real web ingress primitive and its genuine
+  `session.send` reaches Hello's declared Session ingress as a visitor answer.
   """
   use EzagentCore.DataCase, async: false
 
-  import ExUnit.CaptureLog
-
-  alias Ezagent.ActionSet.Session.Delivery
   alias Ezagent.Agent.RecipeRegistry
   alias Ezagent.Entity.User
   alias Ezagent.{Invocation, KindRegistry, Message, Workspace}
@@ -155,7 +146,7 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
              })
   end
 
-  test "PASS-AFTER: ezagent-official in ezagent — the ANON visitor path joins and the greeter relay fires" do
+  test "PASS-AFTER: ezagent-official in ezagent — anon session.send reaches Session ingress" do
     home = EzagentPluginHello.home_workspace()
     owner = Ezagent.URI.entity(home, :user, "lin_yilun")
     # The owner must be a REAL user (the member-cap grant flow absorbs caps
@@ -163,7 +154,8 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
     {:ok, _} = Ezagent.Users.create(owner, nil, [], email_verified: false)
     ensure_workspace(home, owner)
 
-    {:ok, session_uri, front_desk_uri} = App.ensure_app(home, "ezagent-official", owner: owner)
+    {:ok, session_uri, sender_uri} = App.ensure_app(home, "ezagent-official", owner: owner)
+    assert sender_uri == session_uri
 
     # The session is owned by the ezagent principal, NOT the system admin.
     assert {:ok, ^owner} = Ezagent.Entity.Session.owner(session_uri)
@@ -179,35 +171,43 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
     # The anon minted INTO the session's workspace — `caller_ws == target_ws`.
     assert Ezagent.Capability.workspace_of(anon_uri) == Ezagent.URI.workspace(home)
 
-    # The `{always} -> front-desk` relay fires for the anon's message, driven
-    # through the genuine runtime receive primitive (the greeter-relay-repro
-    # pattern). Keyless: the acceptable stop is `{:no_api_key, "deepseek"}`
-    # PAST the resolver — a crash or a workspace denial is NOT acceptable.
-    _ = Ezagent.Domain.Agent.ensure_deliverable(front_desk_uri)
-    {:ok, front_desk_pid} = KindRegistry.lookup(URI.to_string(front_desk_uri))
+    assert :error = EzagentPluginHello.Members.role_uri(session_uri, "front-desk")
+
+    test_pid = self()
+    previous = Application.get_env(:ezagent_plugin_hello, :concierge_start)
+
+    Application.put_env(:ezagent_plugin_hello, :concierge_start, fn session, text, actor ->
+      send(test_pid, {:visitor_answer, session, text, actor})
+      {:ok, self()}
+    end)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:ezagent_plugin_hello, :concierge_start, previous),
+        else: Application.delete_env(:ezagent_plugin_hello, :concierge_start)
+    end)
 
     msg = Message.new(anon_uri, %{text: "hello greeter", attachments: []})
+    send_target = Ezagent.URI.with_action(session_uri, :session, :send)
 
-    log =
-      capture_log(fn ->
-        _ = Delivery.dispatch_receive_call(front_desk_uri, msg, session_uri)
-        drain_mailbox(front_desk_pid)
-        # The `{always} -> front-desk` relay dispatches to the member in a
-        # supervised Task (`Router` → `EzagentPluginHello.TaskSupervisor`) that
-        # does a Repo-touching `Cap.issue`. Await it INSIDE the sandbox so its
-        # DB work (and its log) finishes within the test — otherwise the Task
-        # outlives the DataCase owner and races teardown (a pre-existing
-        # `DBConnection.OwnershipError`, unrelated to the cap-fixture fix).
-        await_relay_tasks()
-      end)
+    {:ok, send_cap} =
+      Ezagent.Cap.issue_for_action({:admin, User.admin_uri()}, anon_uri, send_target)
 
-    refute log =~ "cross_workspace_denied",
-           "the workspace gate still denies the anon relay:\n#{log}"
+    assert :ok =
+             Invocation.dispatch(%Invocation{
+               target: send_target,
+               mode: :cast,
+               args: %{message: msg},
+               ctx: %{
+                 caller: anon_uri,
+                 authenticated_principal: anon_uri,
+                 caps: MapSet.new([send_cap]),
+                 reply: :ignore
+               },
+               origin: :authenticated_external
+             })
 
-    refute log =~ "handle_receive/2 crashed",
-           "Agent.Receive.handle_receive/2 crashed during the anon relay:\n#{log}"
-
-    assert Process.alive?(front_desk_pid)
+    assert_receive {:visitor_answer, ^session_uri, "hello greeter", ^session_uri}, 5_000
   end
 
   defp ensure_workspace(name, created_by \\ nil) do
@@ -239,30 +239,6 @@ defmodule EzagentPluginHello.Integration.HelloWorkspaceIsolationTest do
     end
 
     :ok
-  end
-
-  # Three synchronous barriers (see HelloGreeterRelayReproTest): FIFO ordering
-  # guarantees the :receive + deferred :hello_sync_result casts ran before this
-  # returns — no sleeps, no flake.
-  defp drain_mailbox(pid) do
-    Enum.each(1..3, fn _ -> _ = :sys.get_state(pid) end)
-  end
-
-  # Wait for the relay's fire-and-forget supervised Tasks (member dispatch) to
-  # drain so their Repo work completes before the sandbox owner is reclaimed.
-  # Monitor each live child to completion — no sleeps.
-  defp await_relay_tasks(timeout \\ 2_000) do
-    EzagentPluginHello.TaskSupervisor
-    |> Task.Supervisor.children()
-    |> Enum.each(fn pid ->
-      ref = Process.monitor(pid)
-
-      receive do
-        {:DOWN, ^ref, :process, ^pid, _reason} -> :ok
-      after
-        timeout -> Process.demonitor(ref, [:flush])
-      end
-    end)
   end
 
   defp terminate(%URI{} = uri) do

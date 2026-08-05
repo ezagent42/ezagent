@@ -62,49 +62,10 @@ defmodule EzagentPluginHello.Application do
   @impl Ezagent.Plugin
   def template_classes, do: [EzagentPluginHello.Template.HelloSession]
 
-  # The `"hello"` agent FLAVOR — the host for hello's role agents that must RECEIVE
-  # chat and run custom Elixir (the orchestrator). Its in-process AgentBridge
-  # adapter (`BridgeAdapter`) is the seam `Agent.Receive` routes chat into; `native`
-  # has no adapter, so a native agent's chat is dropped. `cap_policy` reuses native's
-  # recipe-scoped fail-closed policy (mints exactly the role's requested caps).
+  # Hello materializes only the selected `llm`. Deterministic ingress and product
+  # operations live on the Session through `HelloSessionActions`.
   @impl Ezagent.Plugin
-  def agent_flavors do
-    [
-      %{
-        flavor: "hello",
-        kind: Ezagent.Entity.Agent,
-        instance_behaviors: fn ->
-          Ezagent.Entity.Agent.base_behaviors() ++ [Ezagent.ActionSet.HelloOrchestrator]
-        end,
-        template_class: EzagentPluginHello.Template.HelloAgent,
-        bridge_adapter: EzagentPluginHello.BridgeAdapter,
-        cap_policy: &EzagentPluginNative.CapPolicy.for_recipe/1
-      }
-    ]
-  end
-
-  # Hello materializes only two platform agents: `front-desk` is the chat
-  # bridge, and `llm` owns the chosen provider flavor and credentials. The other
-  # product operations are Session actions (HelloSessionActions), so they do not
-  # create agent identities, recipe bindings, or membership edges.
-  @impl Ezagent.Plugin
-  def roles,
-    do: [
-      hello_front_desk_recipe(),
-      hello_llm_recipe()
-    ]
-
-  @doc "The `hello.front-desk` role — the invisible per-session chat relay that dispatches deterministic operations to Hello Session actions."
-  @spec hello_front_desk_recipe() :: map()
-  def hello_front_desk_recipe do
-    %{
-      name: "hello.front-desk",
-      behaviors: [Ezagent.ActionSet.HelloOrchestrator],
-      requested_caps: [
-        %{behavior: Ezagent.ActionSet.HelloOrchestrator, action: :hello_sync_result}
-      ]
-    }
-  end
+  def roles, do: [hello_llm_recipe()]
 
   @doc "The `hello.llm` role — a flavor-selected platform agent Hello delegates generation to (credential-optional so the platform credential cascade decides readiness)."
   @spec hello_llm_recipe() :: map()
@@ -141,6 +102,7 @@ defmodule EzagentPluginHello.Application do
     # `{Session, :hello_render}` cap subject; there is no dispatch route. This is the
     # cap `authorize_view/3` (T2-2b) checks for a hello page view.
     [
+      {Ezagent.Entity.Session, :route_inbound, Ezagent.ActionSet.HelloSessionActions},
       {Ezagent.Entity.Session, :hello_render, Ezagent.ActionSet.HelloRender}
     ]
   end
@@ -156,8 +118,7 @@ defmodule EzagentPluginHello.Application do
     [
       {Registry, keys: :unique, name: EzagentPluginHello.CompletionRegistry},
       {Task.Supervisor, name: EzagentPluginHello.TaskSupervisor}
-    ] ++
-      official_site_children() ++ demo_seed_children() ++ migrate_children()
+    ] ++ official_site_children() ++ demo_seed_children()
   end
 
   defp official_site_children do
@@ -195,41 +156,6 @@ defmodule EzagentPluginHello.Application do
       {:error, reason} ->
         Logger.warning("hello official-site seed failed: #{inspect(reason)}")
     end
-  end
-
-  # `HELLO_MIGRATE_ORCHESTRATOR=1` → at boot (once the substrate settles), give every
-  # EXISTING hello session the orchestrator front desk it predates
-  # (`EzagentPluginHello.Migrate`). Idempotent + best-effort; a one-shot transient
-  # Task so it never blocks the supervisor. OFF by default.
-  defp migrate_children do
-    if System.get_env("HELLO_MIGRATE_ORCHESTRATOR") in ["1", "true"] do
-      [
-        Supervisor.child_spec({Task, &run_orchestrator_migration/0},
-          id: :hello_migrate,
-          restart: :transient
-        )
-      ]
-    else
-      []
-    end
-  end
-
-  defp run_orchestrator_migration do
-    # Let the session / socialware / identity supervisors settle before reviving +
-    # joining across sessions.
-    Process.sleep(5_000)
-    report = EzagentPluginHello.Migrate.migrate_all()
-
-    migrated = Map.get(report, :migrated, [])
-    skipped = Map.get(report, :skipped, [])
-    failed = Map.get(report, :failed, [])
-
-    Logger.info(
-      "hello orchestrator migration done — migrated=#{length(migrated)} " <>
-        "skipped=#{length(skipped)} failed=#{length(failed)}"
-    )
-
-    if failed != [], do: Logger.warning("hello migration failures: #{inspect(failed)}")
   end
 
   # `HELLO_DEMO_SEED=1` → at boot, instantiate a `public_view` hello app and land

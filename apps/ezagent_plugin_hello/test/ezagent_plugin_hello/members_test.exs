@@ -29,10 +29,11 @@ defmodule EzagentPluginHello.MembersTest do
     %{ws: ws}
   end
 
-  test "front-desk joins while the LLM is a credential-admission candidate", %{ws: ws} do
-    {:ok, session_uri, orch_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
+  test "no front-desk joins while the LLM is a credential-admission candidate", %{ws: ws} do
+    {:ok, session_uri, sender_uri} = App.ensure_app(ws, "members-demo", defer_orchestrator: false)
 
-    assert {:ok, ^orch_uri} = Members.role_uri(session_uri, "front-desk")
+    assert sender_uri == session_uri
+    assert :error = Members.role_uri(session_uri, "front-desk")
     assert :error = Members.role_uri(session_uri, "llm")
 
     assert [

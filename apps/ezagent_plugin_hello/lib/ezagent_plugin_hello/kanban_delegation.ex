@@ -13,7 +13,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
 
   alias Ezagent.{Capability, Invocation, Workspace}
   alias Ezagent.Agent.RecipeResolver
-  alias EzagentPluginHello.{KanbanPublishedRead, Members, TurnDriver}
+  alias EzagentPluginHello.{KanbanPublishedRead, TurnDriver}
 
   @canonical_name "hello-kanban"
   @max_instruction 500
@@ -227,17 +227,11 @@ defmodule EzagentPluginHello.KanbanDelegation do
   end
 
   defp report(session_uri, instruction, sender_uri) do
-    actor =
-      case Members.role_uri(session_uri, "front-desk") do
-        {:ok, uri} -> uri
-        _ -> sender_uri
-      end
-
     case delegate(session_uri, instruction, sender_uri) do
       {:ok, result} ->
         TurnDriver.say_nav(
           session_uri,
-          actor,
+          session_uri,
           gettext("Delegated to Kanban: %{instruction}", instruction: instruction),
           %{
             "type" => "open_url",
@@ -259,7 +253,7 @@ defmodule EzagentPluginHello.KanbanDelegation do
         # G5 source 2 — structured error (context tag + raw reason); the
         # shared error surface renders the per-viewer card (Layer 3 until a
         # code is registered for this tag).
-        TurnDriver.say_error(session_uri, actor, {:kanban_delegation_failed, reason})
+        TurnDriver.say_error(session_uri, session_uri, {:kanban_delegation_failed, reason})
     end
   end
 

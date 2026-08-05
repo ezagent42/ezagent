@@ -86,3 +86,44 @@ without a top-level provider.
   `agent.api_key.put` save event; the server response auto-admits the candidate.
 - `mise exec node@22.23.1 -- pnpm --dir apps/ezagent_plugin_world/assets test:e2e -- e2e/world.spec.ts`
   — 14 passed.
+
+---
+
+# Task 5 Report — Session ingress and front-desk removal
+
+## Implementation
+
+- The shipped Hello manifest now declares
+  `HelloSessionActions.route_inbound` as ingress, protects only the `llm` role,
+  and declares only that reusable LLM role.
+- Hello registers the ingress action on the Session, routes owner messages to
+  rebuild and all visitor messages to answer, and filters Session-authored and
+  LLM-authored messages from re-entry.
+- Generated narration, answers, share results, publish results, and Kanban
+  receipts use the Session as both sender and authenticated caller with one
+  target-specific `session.send` capability.
+- Removed the production Hello flavor, front-desk recipe, orchestrator behavior,
+  bridge adapter, boot migration, and their obsolete relay/migration tests.
+  Existing `ensure_app/3` callers retain their return shape, with the Session in
+  the compatibility sender position.
+
+## RED evidence
+
+Before the implementation, the focused manifest/registration/router run failed
+six assertions: the manifest still declared `front-desk`, had no ingress, the
+action set lacked `route_inbound`, and Session-authored messages were routable.
+
+## GREEN evidence
+
+- Focused manifest/registration/router run: Hello 15 tests, 0 failures; web 3
+  tests, 0 failures.
+- New Session-ingress integration: 3 tests, 0 failures, covering no front-desk,
+  owner rebuild, visitor answer, and narration/share loop safety.
+- Workspace ingress integration: 2 tests, 0 failures; the pass-after case now
+  drives a genuine anonymous `session.send` through declared Session ingress.
+- Updated stale member/template/page expectations: 4 selected tests, 0 failures.
+- Fresh combined Task-5 verification: Hello 40 tests, 0 failures; web 3 tests,
+  0 failures (`--seed 0`).
+
+The test environment continues to emit pre-existing asynchronous
+`cross_workspace_denied`/authorization log noise without assertion failures.

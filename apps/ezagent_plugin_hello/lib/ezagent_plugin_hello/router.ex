@@ -1,6 +1,6 @@
 defmodule EzagentPluginHello.Router do
   @moduledoc """
-  The hello front-desk routing logic: for each USER message, decide whether it
+  The Hello Session-ingress routing logic: for each user message, decide whether it
   is dispatched to a Session action: `:rebuild` (generate/edit the page),
   `:answer` (question / navigation), `:share`, `:publish`, or
   `:delegate_to_kanban`. The work does not require a separate agent identity.
@@ -50,7 +50,7 @@ defmodule EzagentPluginHello.Router do
         # owner?→true (fail-open for builder/concierge) but must NOT grant
         # admin-level publish/share. Downgrade to concierge.
         action = guard_admin_actions(action, session_uri)
-        dispatch_to_member(session_uri, action, user_text, sender)
+        dispatch_to_session(session_uri, action, user_text, sender)
       end)
     else
       :ignored
@@ -93,16 +93,16 @@ defmodule EzagentPluginHello.Router do
 
   defp guard_admin_actions(action, _session_uri), do: action
 
-  # Dispatch the selected deterministic operation on the Session itself. The
-  # front-desk and LLM remain members; build/answer/share/publish/delegate do
-  # not need per-operation agent identities.
-  defp dispatch_to_member(session_uri, action, user_text, sender) when is_atom(action) do
+  # Dispatch the selected deterministic operation on the Session itself with a
+  # target-issued cap scoped to that exact action.
+  defp dispatch_to_session(session_uri, action, user_text, sender) when is_atom(action) do
     target = Ezagent.URI.with_action(session_uri, :hello_session_actions, action)
 
     session_uri_str = URI.to_string(session_uri)
     admin = Ezagent.Entity.User.admin_uri()
 
-    with {:ok, signed_cap} <- Ezagent.Cap.issue_for_action({:admin, admin}, admin, target) do
+    with {:ok, signed_cap} <-
+           Ezagent.Cap.issue_for_action({:admin, admin}, session_uri, target) do
       Ezagent.Invocation.dispatch(%Ezagent.Invocation{
         target: target,
         mode: :cast,
@@ -113,8 +113,8 @@ defmodule EzagentPluginHello.Router do
           sender_uri: URI.to_string(sender)
         },
         ctx: %{
-          caller: admin,
-          authenticated_principal: admin,
+          caller: session_uri,
+          authenticated_principal: session_uri,
           caps: MapSet.new([signed_cap]),
           reply: :ignore
         },
@@ -124,10 +124,8 @@ defmodule EzagentPluginHello.Router do
   end
 
   @doc """
-  Loop + multi-agent guard. Route a message unless it was emitted by one of
-  Hello's own platform agents. The deterministic Hello operations are Session
-  actions, so the front-desk and LLM are the only worker-agent identities to
-  inspect. Every other sender — a user OR an external agent — is routed.
+  Loop + multi-agent guard. Session-authored narration/share output and the
+  protected LLM member never re-enter ingress. Every other sender is routed.
 
   Fails CLOSED: if the `:session` members slice cannot be read AT ALL (no live
   Kind / a read miss), we cannot identify our own workers and therefore cannot
@@ -137,9 +135,13 @@ defmodule EzagentPluginHello.Router do
   """
   @spec should_route?(URI.t(), URI.t()) :: boolean()
   def should_route?(%URI{} = session_uri, %URI{} = sender) do
-    case Members.role_uris(session_uri, ["front-desk", "llm"]) do
-      {:ok, own_agent_uris} -> Enum.all?(own_agent_uris, &(not same_uri?(&1, sender)))
-      :error -> false
+    if same_uri?(session_uri, sender) do
+      false
+    else
+      case Members.role_uris(session_uri, ["llm"]) do
+        {:ok, own_agent_uris} -> Enum.all?(own_agent_uris, &(not same_uri?(&1, sender)))
+        :error -> false
+      end
     end
   end
 

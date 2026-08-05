@@ -1,7 +1,7 @@
 defmodule EzagentPluginHello.RouterTest do
   @moduledoc """
-  The `hello.orchestrator` routing policy. Hello materializes only its chat bridge
-  and LLM; intent actions execute on the session itself.
+  Hello's Session-ingress routing policy. Only the reusable LLM is materialized;
+  intent actions execute on the session itself.
   """
   use EzagentCore.DataCase, async: false
 
@@ -53,13 +53,13 @@ defmodule EzagentPluginHello.RouterTest do
 
       ws = "hello-router-#{System.unique_integer([:positive])}"
       {:ok, _ws_pid} = Workspace.create(ws, %{})
-      {:ok, session, front_desk} = App.ensure_app(ws, "guard-demo")
+      {:ok, session, _sender} = App.ensure_app(ws, "guard-demo")
 
-      %{session: session, front_desk: front_desk}
+      %{session: session}
     end
 
-    test "ignores messages emitted by its front-desk bridge", ctx do
-      refute Router.should_route?(ctx.session, ctx.front_desk)
+    test "ignores messages emitted by the Session itself", %{session: session} do
+      refute Router.should_route?(session, session)
     end
 
     test "allows an external agent while the LLM connection is pending", %{session: session} do
@@ -85,7 +85,7 @@ defmodule EzagentPluginHello.RouterTest do
     end
   end
 
-  describe "should_route?/2 — fails closed when the front-desk bridge is unavailable" do
+  describe "should_route?/2 — fails closed when Session membership is unavailable" do
     test "a session URI with no live Kind is not routed" do
       ghost_session =
         Ezagent.URI.session(

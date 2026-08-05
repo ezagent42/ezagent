@@ -17,7 +17,6 @@ defmodule EzagentPluginHello.App do
   alias Ezagent.Socialware.Installation
   alias EzagentDomainInstanceMessage.SessionCreator
   alias EzagentDomainInstanceMessage.SessionCreator.{Derivation, TemplateResolver}
-  alias EzagentPluginHello.Members
 
   @doc """
   Idempotently create the hello app AND install its declared team — the composite
@@ -29,8 +28,8 @@ defmodule EzagentPluginHello.App do
   founder for the boot 官网 seed; the dispatch caller on the world-UI path).
   Defaults to the admin entity.
 
-  Returns `{:ok, session_uri, front_desk_uri}`, resolved by role
-  (`Members.role_uri/2`), NOT the retired `orch_<name>` URI convention.
+  Returns `{:ok, session_uri, session_uri}`. The third element is retained for
+  seed/tooling compatibility and now names the Session sender.
 
   **Do NOT call this from a session-create dispatch** — `HelloSession.instantiate/3`
   calls `create_app/3` and lets `Workspace.create_session` fire the install
@@ -42,11 +41,10 @@ defmodule EzagentPluginHello.App do
     with {:ok, %URI{} = session_uri} <- create_app(ws, name, opts),
          # `{:ok, summary}` — a role slot skipped for missing credentials (e.g. the
          # `requires`-pulled cc orchestrator, for a non-admin installer) does NOT
-         # fail the app; hello's own roles are credential-less. `resolve_front_desk/1`
-         # below is the fail-loud check that the roles hello ACTUALLY needs landed.
-         {:ok, _summary} <- SessionCreator.install_session_socialware(session_uri),
-         {:ok, front_desk_uri} <- resolve_front_desk(session_uri) do
-      {:ok, session_uri, front_desk_uri}
+         # fail the app; the selected LLM can remain an explicit admission
+         # candidate for legacy seed/tooling callers.
+         {:ok, _summary} <- SessionCreator.install_session_socialware(session_uri) do
+      {:ok, session_uri, session_uri}
     end
   end
 
@@ -171,17 +169,6 @@ defmodule EzagentPluginHello.App do
         )
 
       {:ok, session_uri}
-    end
-  end
-
-  # Resolve the front-desk member URI by its `role_name` facet (the framework
-  # materialization assigns a PLANNED UUID URI — it is NOT derivable from the
-  # session name). A missing front-desk after a successful materialize is a
-  # fail-loud bug, not a silent nil.
-  defp resolve_front_desk(%URI{} = session_uri) do
-    case Members.role_uri(session_uri, "front-desk") do
-      {:ok, %URI{} = uri} -> {:ok, uri}
-      :error -> {:error, {:front_desk_not_materialized, session_uri}}
     end
   end
 

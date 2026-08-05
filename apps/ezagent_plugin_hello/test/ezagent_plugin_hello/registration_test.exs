@@ -3,7 +3,7 @@ defmodule EzagentPluginHello.RegistrationTest do
 
   alias Ezagent.Agent.Recipe
   alias Ezagent.Agent.RecipeRegistry
-  alias Ezagent.ActionSet.{HelloOrchestrator, HelloSessionActions}
+  alias Ezagent.ActionSet.HelloSessionActions
   alias EzagentPluginHello.App
   alias EzagentPluginHello.Application, as: HelloApp
 
@@ -12,10 +12,10 @@ defmodule EzagentPluginHello.RegistrationTest do
     :ok
   end
 
-  test "only the front-desk and LLM role recipes are platform-materialized" do
-    assert HelloApp.hello_front_desk_recipe() in HelloApp.roles()
-    assert HelloApp.hello_llm_recipe() in HelloApp.roles()
-    assert length(HelloApp.roles()) == 2
+  test "only the LLM role recipe is platform-materialized" do
+    assert HelloApp.roles() == [HelloApp.hello_llm_recipe()]
+    refute function_exported?(HelloApp, :hello_front_desk_recipe, 0)
+    assert HelloApp.agent_flavors() == []
   end
 
   test "hello.llm recipe delegates provider and model configuration to the platform" do
@@ -28,15 +28,9 @@ defmodule EzagentPluginHello.RegistrationTest do
     assert App.llm_flavors() == ~w(curl cc-headless cc-headless-custom cc codex codex-remote py)
   end
 
-  test "front-desk remains the only chat-facing Hello agent recipe" do
-    assert {:ok, %Recipe{} = role} = Recipe.new(HelloApp.hello_front_desk_recipe())
-    assert role.name == "hello.front-desk"
-    assert role.behaviors == [HelloOrchestrator]
-    refute role.passive
-  end
-
   test "deterministic Hello operations are Session actions" do
     assert HelloSessionActions.actions() == [
+             :route_inbound,
              :rebuild,
              :answer,
              :share,
@@ -52,7 +46,6 @@ defmodule EzagentPluginHello.RegistrationTest do
 
     :ok = RecipeRegistry.flush_cache()
 
-    assert {:ok, %Recipe{name: "hello.front-desk", behaviors: [HelloOrchestrator]}} =
-             RecipeRegistry.lookup("hello.front-desk")
+    assert {:ok, %Recipe{name: "hello.llm"}} = RecipeRegistry.lookup("hello.llm")
   end
 end
