@@ -196,3 +196,38 @@ file is named by the compiler and this task leaves those files unchanged.
 ## Scope
 
 Only the reuse revalidation, its two authorized integration-test files, and this appended Task 4 report entry are part of this task. Existing Task 1 and Task 2 report changes remain untouched.
+
+## Review follow-up — complete reuse contract
+
+- Revalidation immediately before the reuse join now checks all three durable
+  contract axes together: recipe provenance, stored agent flavor, and the
+  installing operator's current Manage authority.
+- Each failed axis returns the non-fatal
+  `{:reuse_agent_revalidation_failed, role_name, reason}` skip, so the normal
+  installer records an `:unavailable` unfilled role and never substitutes a
+  fresh agent.
+- Reuse fixtures now persist their expected flavor. The revoke regression calls
+  the real composition-install preflight before revocation, then performs the
+  actual install; new recipe- and flavor-drift regressions prove the same
+  durable-unfilled behavior.
+
+### RED → GREEN evidence
+
+- RED: before this follow-up, the flavor-drift regression returned
+  `{:ok, %{satisfied: [role_name], skipped: []}}`, proving that the existing
+  agent joined despite a stored flavor different from the declaration.
+- GREEN:
+
+  ```sh
+  MIX_ENV=test POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
+  POSTGRES_USER=postgres POSTGRES_PASSWORD=postgres \
+  mix test apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1635 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1663 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1732 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1826 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1861 \
+    apps/ezagent_domain_session/test/integration/definition_agents_materialize_test.exs:1895 \
+    --seed 0 --max-cases 1
+  ```
+
+  completed with `6 tests, 0 failures (28 excluded)`.

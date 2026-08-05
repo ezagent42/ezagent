@@ -418,15 +418,21 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
 
   defp reuse_existing_agent(session_uri, workspace_uri, operator, agent, recipe_name, role_name) do
     with %URI{} = agent_uri <- reuse_agent_uri_of(agent),
-         :ok <- ensure_reuse_recipe_match(agent_uri, recipe_name, role_name),
          {:ok, recipe} <- lookup_recipe(workspace_uri, recipe_name),
          {:ok, _live_or_rehydrated} <- Ezagent.Domain.Agent.ensure_deliverable(agent_uri),
          {:ok, reuse_caps} <- reuse_caps(session_uri, operator),
-         # The role declaration may have passed its generic install preflight
-         # before this operator's manage authority was revoked. Re-check at the
-         # join boundary: reuse never falls through to fresh materialization,
-         # and this absence becomes a durable unfilled role.
-         :ok <- revalidate_reuse_authority(operator, agent_uri, role_name),
+         # The declaration can drift after its installation preflight. Verify
+         # the existing agent still fulfils the complete reuse contract at the
+         # final join boundary; failures become durable unfilled roles rather
+         # than a fatal install or a fresh replacement.
+         :ok <-
+           revalidate_reuse_contract(
+             agent_uri,
+             operator,
+             recipe_name,
+             flavor_of(agent),
+             role_name
+           ),
          # A reused agent already exists. Bind only after a successful join: an unrelated join failure
          # must never tombstone or overwrite that agent's pre-existing binding.
          {:ok, ^agent_uri} <-
@@ -451,18 +457,18 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp revalidate_reuse_authority(%URI{} = operator, %URI{} = agent_uri, role_name) do
-    if Ezagent.Identity.Authority.manages?(operator, agent_uri) do
-      :ok
-    else
-      {:skip, {:reuse_agent_revalidation_failed, role_name, :unauthorized}}
-    end
-  end
+  defp revalidate_reuse_contract(agent_uri, operator, recipe_name, flavor, role_name) do
+    reason =
+      cond do
+        agent_recipe(agent_uri) != {:ok, recipe_name} -> :recipe_mismatch
+        Ezagent.AgentFlavorAttributes.get(agent_uri) != {:ok, flavor} -> :flavor_mismatch
+        not Ezagent.Identity.Authority.manages?(operator, agent_uri) -> :unauthorized
+        true -> :ok
+      end
 
-  defp ensure_reuse_recipe_match(%URI{} = agent_uri, recipe_name, role_name) do
-    case agent_recipe(agent_uri) do
-      {:ok, ^recipe_name} -> :ok
-      _ -> {:error, {:reuse_agent_recipe_mismatch, role_name, agent_uri}}
+    case reason do
+      :ok -> :ok
+      reason -> {:skip, {:reuse_agent_revalidation_failed, role_name, reason}}
     end
   end
 
