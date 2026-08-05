@@ -1768,15 +1768,6 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == nil
   end
 
-  test "only profile-bearing Hello flavors constrain reusable provider metadata" do
-    profile_flavors = MapSet.new(["curl", "cc-headless-custom"])
-
-    Enum.each(EzagentPluginHello.App.llm_flavors(), fn flavor ->
-      assert DefinitionAgents.provider_profile_flavor?(flavor) ==
-               MapSet.member?(profile_flavors, flavor)
-    end)
-  end
-
   test "reuse revalidation revoked after preflight leaves a durable unfilled role and no fresh receipt" do
     n = uniq()
     workspace_uri = Ezagent.URI.workspace("reuse-race-#{n}")

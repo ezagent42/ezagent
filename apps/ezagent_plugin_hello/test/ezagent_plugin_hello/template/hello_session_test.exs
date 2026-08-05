@@ -47,6 +47,15 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
   end
 
   describe "instantiate/3" do
+    test "freezes provider intent only for profile-bearing LLM flavors" do
+      for flavor <- EzagentPluginHello.App.llm_flavors() do
+        expected =
+          if flavor in ["curl", "cc-headless-custom"], do: %{provider: "deepseek"}, else: %{}
+
+        assert EzagentPluginHello.App.llm_provider_config(flavor) == expected
+      end
+    end
+
     test "requires an explicit reusable LLM selection" do
       workspace_uri =
         Ezagent.URI.workspace("hello-tmpl-selection-#{System.unique_integer([:positive])}")

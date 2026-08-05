@@ -527,16 +527,11 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
   end
 
   defp declared_provider_profile(agent) do
-    if provider_profile_flavor?(flavor_of(agent)) do
-      provider_of(agent) ||
-        agent
-        |> role_config()
-        |> then(fn config -> Map.get(config, :provider) || Map.get(config, "provider") end)
-    end
+    provider_of(agent) ||
+      agent
+      |> role_config()
+      |> then(fn config -> Map.get(config, :provider) || Map.get(config, "provider") end)
   end
-
-  @doc false
-  def provider_profile_flavor?(flavor), do: flavor in ["curl", "cc-headless-custom"]
 
   defp agent_provider_profile(agent_uri) do
     sandbox = read_reuse_slice(agent_uri, :sandbox)

@@ -253,6 +253,7 @@ defmodule EzagentPluginHello.App do
               %{
                 role_name: "llm",
                 flavor: flavor,
+                config: llm_provider_config(flavor),
                 install_mode: :reuse,
                 reuse_agent_uri: URI.to_string(agent_uri)
               }
@@ -265,6 +266,12 @@ defmodule EzagentPluginHello.App do
         content
     end
   end
+
+  @doc false
+  def llm_provider_config(flavor) when flavor in ["curl", "cc-headless-custom"],
+    do: %{provider: "deepseek"}
+
+  def llm_provider_config(_flavor), do: %{}
 
   # Idempotent workspace bind — re-instantiating an existing hello app (the
   # Template Class create path) hits an already-bound session; that is success,
