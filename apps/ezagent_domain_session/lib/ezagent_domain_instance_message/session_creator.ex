@@ -690,41 +690,44 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
          %URI{} = session_template_uri,
          template_content
        ) do
-    if session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
-      case Installation.install_template_installs(
-             session_uri,
-             workspace_uri,
-             template_content,
-             effective_owner
-           ) do
-        :ok -> {:ok, session_uri, %{}}
-        {:error, reason} -> {:error, reason}
+    with {:ok, complete?} <-
+           session_complete?(session_uri, workspace_uri, effective_owner, template_content) do
+      if complete? do
+        case Installation.install_template_installs(
+               session_uri,
+               workspace_uri,
+               template_content,
+               effective_owner
+             ) do
+          :ok -> {:ok, session_uri, %{}}
+          {:error, reason} -> {:error, reason}
+        end
+      else
+        Logger.warning(
+          "EzagentDomainInstanceMessage.SessionCreator.create_session: existing session=" <>
+            "#{URI.to_string(session_uri)} is INCOMPLETE (half-create residue) — " <>
+            "rolling it back fully then recreating fresh (SPEC 2026-05-31 §4 " <>
+            "step 2, codex-review Q2)."
+        )
+
+        rollback_session(session_uri, nil,
+          owner_uri: effective_owner,
+          workspace_uri: workspace_uri
+        )
+
+        # Give the supervisor a moment to actually terminate the Session
+        # Kind so the re-spawn below gets a clean `:ok` (not another
+        # `:already_started`).
+        _ = await_terminated(session_uri, 2_000)
+
+        recreate_fresh(
+          session_uri,
+          workspace_uri,
+          effective_owner,
+          session_template_uri,
+          template_content
+        )
       end
-    else
-      Logger.warning(
-        "EzagentDomainInstanceMessage.SessionCreator.create_session: existing session=" <>
-          "#{URI.to_string(session_uri)} is INCOMPLETE (half-create residue) — " <>
-          "rolling it back fully then recreating fresh (SPEC 2026-05-31 §4 " <>
-          "step 2, codex-review Q2)."
-      )
-
-      rollback_session(session_uri, nil,
-        owner_uri: effective_owner,
-        workspace_uri: workspace_uri
-      )
-
-      # Give the supervisor a moment to actually terminate the Session
-      # Kind so the re-spawn below gets a clean `:ok` (not another
-      # `:already_started`).
-      _ = await_terminated(session_uri, 2_000)
-
-      recreate_fresh(
-        session_uri,
-        workspace_uri,
-        effective_owner,
-        session_template_uri,
-        template_content
-      )
     end
   end
 
@@ -766,7 +769,7 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
 
   # Completeness predicate for an already-existing Session. A complete
   # rev6 session is bound to a workspace, has the owner joined, and carries
-  # the durable template declaration record. Live role members are
+  # the full composed template declaration record. Live role members are
   # provisioned lazily by routing and are NOT part of create completeness.
   defp session_complete?(
          %URI{} = session_uri,
@@ -778,15 +781,15 @@ defmodule EzagentDomainInstanceMessage.SessionCreator do
     owner_member? = owner_uri in Session.session_member_uris(session_uri)
     wc = Session.read_template_working_copy(session_uri)
 
-    declarations =
-      case DefinitionEditor.member_declarations_for_template(template_content, workspace_uri) do
-        {:ok, list} -> Enum.filter(list, &template_member_declaration?/1)
-        {:error, _} -> []
-      end
+    with {:ok, config} <- DefinitionEditor.config_for_template(template_content, workspace_uri) do
+      declarations = Enum.filter(config.roles, &template_member_declaration?/1)
 
-    bound? and owner_member? and
-      match?(%URI{}, Map.get(wc, :session_template_uri)) and
-      Map.get(wc, :member_declarations, []) == declarations
+      {:ok,
+       bound? and owner_member? and
+         match?(%URI{}, Map.get(wc, :session_template_uri)) and
+         Map.get(wc, :member_declarations, []) == declarations and
+         Map.get(wc, :ingress) == config.ingress}
+    end
   end
 
   defp template_member_declaration?(member) when is_map(member) do
