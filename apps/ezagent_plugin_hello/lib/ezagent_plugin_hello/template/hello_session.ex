@@ -22,6 +22,28 @@ defmodule EzagentPluginHello.Template.HelloSession do
   @impl Ezagent.Kind.Template
   def template_name, do: "session.hello"
 
+  @doc "Declares the inputs required by the generic World session picker."
+  @impl Ezagent.Kind.Template
+  def config_schema do
+    [
+      %{
+        key: "llm_flavor",
+        type: :enum,
+        label: "LLM flavor",
+        options: ["curl"],
+        default: "curl",
+        hidden: true
+      },
+      %{
+        key: "llm_agent_uri",
+        type: :string,
+        label: "Authenticated LLM Agent",
+        required: true,
+        options_source: "reusable_llm_agents"
+      }
+    ]
+  end
+
   @impl Ezagent.Kind.Template
   def validate(tmpl) when is_map(tmpl) do
     with :ok <- check_class(tmpl),
@@ -57,7 +79,7 @@ defmodule EzagentPluginHello.Template.HelloSession do
        when is_binary(session_name) and session_name != "" do
     with :ok <- check_class(tmpl),
          {:ok, selection} <- reusable_llm_selection(tmpl),
-         :ok <- preflight_reusable_llm(selection, caller, workspace_uri) do
+         {:ok, selection} <- preflight_reusable_llm(selection, caller, workspace_uri) do
       workspace_name = Ezagent.URI.workspace_name!(workspace_uri)
       session_uri = Ezagent.URI.session(workspace_name, :hello, session_name)
       fresh? = not LocalRuntime.kind_alive?(session_uri)
@@ -125,18 +147,27 @@ defmodule EzagentPluginHello.Template.HelloSession do
     do: {:error, {:invalid_reusable_llm_agent, :unauthorized}}
 
   defp preflight_reusable_llm(
-         %{flavor: flavor, agent_uri: agent_uri},
+         %{flavor: flavor, agent_uri: agent_uri} = selection,
          caller,
          workspace_uri
        ) do
     case ReusableLlmAgent.validate(caller, workspace_uri, flavor, agent_uri) do
-      {:ok, _candidate} -> :ok
+      {:ok, candidate} -> {:ok, Map.merge(selection, candidate)}
       {:error, reason} -> {:error, {:invalid_reusable_llm_agent, reason}}
     end
   end
 
-  defp llm_create_opts(_tmpl, %{flavor: flavor, agent_uri: agent_uri}),
-    do: [llm_flavor: flavor, llm_agent_uri: agent_uri]
+  defp llm_create_opts(_tmpl, %{
+         flavor: flavor,
+         agent_uri: agent_uri,
+         provider_profile: provider_profile
+       }) do
+    [
+      llm_flavor: flavor,
+      llm_agent_uri: agent_uri,
+      llm_provider_profile: provider_profile
+    ]
+  end
 
   defp check_class(%{"class" => "session.hello"}), do: :ok
   defp check_class(%{"class" => other}), do: {:error, {:wrong_class, other}}

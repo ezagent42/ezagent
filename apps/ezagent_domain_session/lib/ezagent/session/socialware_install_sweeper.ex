@@ -194,13 +194,21 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
 
     case install_fun.(session_uri, {workspace_uri, actor_uri}) do
       {:ok, summary} ->
-        case SocialwareInstallObligations.resolve(obligation.id, obligation.claim_token) do
-          {:ok, _resolved} ->
-            emit_success(session_uri, summary)
-            {:ok, :resolved}
+        if retryable_skipped_roles?(summary) do
+          persist_failure(
+            obligation,
+            {:agent_roles_unavailable, Map.get(summary, :skipped, [])},
+            session_uri
+          )
+        else
+          case SocialwareInstallObligations.resolve(obligation.id, obligation.claim_token) do
+            {:ok, _resolved} ->
+              emit_success(session_uri, summary)
+              {:ok, :resolved}
 
-          {:error, reason} ->
-            {:error, reason}
+            {:error, reason} ->
+              {:error, reason}
+          end
         end
 
       {:error, reason} ->
@@ -219,6 +227,17 @@ defmodule Ezagent.Session.SocialwareInstallSweeper do
         persist_failure(obligation, {:unexpected_install_result, other}, session_uri)
     end
   end
+
+  defp retryable_skipped_roles?(summary) when is_map(summary) do
+    summary
+    |> Map.get(:skipped, [])
+    |> Enum.any?(fn
+      %{reason: {:reuse_agent_unavailable, _role_name, _reason}} -> true
+      _ -> false
+    end)
+  end
+
+  defp retryable_skipped_roles?(_summary), do: false
 
   defp persist_failure(obligation, reason) do
     session_uri = Ezagent.URI.new!(obligation.session_uri)

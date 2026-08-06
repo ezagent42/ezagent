@@ -76,6 +76,32 @@ defmodule Ezagent.World.ConversationActionsTest do
              )
   end
 
+  test "create_session_result passes template options for specialized templates" do
+    workspace_uri = Ezagent.URI.workspace(:system)
+    caller = Ezagent.Entity.User.admin_uri()
+
+    assert {:ok, _session_uri} =
+             ConversationActions.create_session_result(
+               workspace_uri,
+               caller,
+               "world-hello-options",
+               "hello",
+               fn _workspace_uri, params, _ctx ->
+                 assert params.template_options == %{
+                          "llm_flavor" => "curl",
+                          "llm_agent_uri" => "entity://system/agent/hello-curl-agent"
+                        }
+
+                 {:ok,
+                  %{session_uri: Ezagent.URI.session("system", "hello", "world-hello-options")}}
+               end,
+               %{
+                 "llm_flavor" => "curl",
+                 "llm_agent_uri" => "entity://system/agent/hello-curl-agent"
+               }
+             )
+  end
+
   test "session creation acknowledges completion but keeps session selection route-driven" do
     source =
       File.read!(Path.expand("../../../lib/ezagent/world/conversation_actions.ex", __DIR__))
@@ -107,10 +133,23 @@ defmodule Ezagent.World.ConversationActionsTest do
   # message (so the sessions table shows a banner instead of silently dropping).
   describe "session_create_error_message/1 (F3 no-silent-drop)" do
     test "named reasons get friendly messages" do
-      for reason <- [:short_name_required, :template_required, :invalid_workspace, :unauthorized] do
+      for reason <- [
+            :short_name_required,
+            :template_required,
+            :invalid_workspace,
+            :unauthorized,
+            :llm_agent_required
+          ] do
         msg = ConversationActions.session_create_error_message(reason)
         assert is_binary(msg) and msg != ""
       end
+    end
+
+    test "LLM agent failures do not expose internal reason atoms" do
+      msg = ConversationActions.session_create_error_message(:llm_agent_required)
+
+      assert msg == "请选择一个已认证且 flavor 匹配的 LLM Agent"
+      refute msg =~ "llm_agent_required"
     end
 
     test "the F3 wrong-template default failure ({:invalid_template, _}) is explained" do

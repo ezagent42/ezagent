@@ -110,18 +110,21 @@ defmodule EzagentPluginHello.ReusableLlmAgentTest do
              ReusableLlmAgent.validate(ctx.stranger, ctx.workspace_uri, "py", agent)
   end
 
-  test "requires exact hello.llm recipe and exact flavor", ctx do
+  test "accepts an agent without hello.llm recipe when flavor and credentials match", ctx do
     wrong_recipe = seed_candidate(ctx, "py", recipe: "other.recipe")
     wrong_flavor = seed_candidate(ctx, "codex", credential_status: :authenticated)
 
-    assert {:error, {:recipe_mismatch, "other.recipe"}} =
+    assert {:ok, %{flavor: "py", credential_status: :n_a}} =
              ReusableLlmAgent.validate(ctx.owner, ctx.workspace_uri, "py", wrong_recipe)
+
+    assert {:ok, candidates} = ReusableLlmAgent.list(ctx.owner, ctx.workspace_uri, "py")
+    assert Enum.any?(candidates, &(&1.agent_uri == wrong_recipe))
 
     assert {:error, {:flavor_mismatch, "codex"}} =
              ReusableLlmAgent.validate(ctx.owner, ctx.workspace_uri, "py", wrong_flavor)
   end
 
-  test "requires the exact Hello provider profile for profile-bearing flavors", ctx do
+  test "accepts any provider profile when the flavor and credentials match", ctx do
     wrong_curl =
       seed_candidate(ctx, "curl",
         credential_status: :authenticated,
@@ -134,10 +137,16 @@ defmodule EzagentPluginHello.ReusableLlmAgentTest do
         provider_profile: "kimi"
       )
 
-    for {flavor, agent} <- [{"curl", wrong_curl}, {"cc-headless-custom", wrong_cc}] do
-      assert {:error, {:provider_profile_mismatch, "deepseek", "kimi"}} =
-               ReusableLlmAgent.validate(ctx.owner, ctx.workspace_uri, flavor, agent)
-    end
+    assert {:ok, %{flavor: "curl", provider_profile: "kimi"}} =
+             ReusableLlmAgent.validate(ctx.owner, ctx.workspace_uri, "curl", wrong_curl)
+
+    assert {:ok, %{flavor: "cc-headless-custom", provider_profile: "kimi"}} =
+             ReusableLlmAgent.validate(
+               ctx.owner,
+               ctx.workspace_uri,
+               "cc-headless-custom",
+               wrong_cc
+             )
   end
 
   test "rejects stale and cross-workspace URIs without leaking them in list results", ctx do

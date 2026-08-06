@@ -63,6 +63,20 @@ describe("terminal view activation", () => {
   })
 })
 
+describe("external Page preview layout", () => {
+  it("lets the preview fill the available width and height", () => {
+    const html = renderConversation({
+      ...state,
+      active_view: "hello_page",
+      views: [{id: "hello_page", label: "Page", icon: "panel-top", mode: "external"}],
+    })
+
+    expect(html).toContain('data-world-subcomponent="external-view"')
+    expect(html).toContain('class="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col"')
+    expect(html).toContain('class="h-full min-h-0 w-full flex-1 border-0 bg-white"')
+  })
+})
+
 describe("credential-gated agent admission cards", () => {
   it("renders a pending PTY connection card in the message list from its descriptor label", () => {
     const html = renderConversation({

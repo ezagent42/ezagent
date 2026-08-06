@@ -242,7 +242,7 @@ defmodule EzagentWeb.HomeLiveTest do
                "#wizard_llm_agent_uri option[value='#{URI.to_string(eligible)}']"
              )
 
-      refute has_element?(
+      assert has_element?(
                lv,
                "#wizard_llm_agent_uri option[value='#{URI.to_string(wrong_recipe)}']"
              )
@@ -326,6 +326,28 @@ defmodule EzagentWeb.HomeLiveTest do
              } = llm_declaration
 
       assert Ezagent.Entity.Agent.list_in_workspace(workspace_uri) == agents_before
+    end
+
+    test "explains that an authenticated matching agent must be selected", %{
+      conn: conn,
+      workspace_uri: workspace_uri
+    } do
+      conn =
+        conn
+        |> Plug.Test.init_test_session(%{
+          "current_entity_uri" => "entity://system/user/admin",
+          "current_workspace_uri" => URI.to_string(workspace_uri)
+        })
+
+      {:ok, lv, _html} = live(conn, ~p"/")
+
+      lv
+      |> form("#first-session-wizard")
+      |> render_submit()
+
+      assert has_element?(lv, "#hello-wizard-error")
+      refute render(lv) =~ "llm_agent_required"
+      assert render(lv) =~ "Please select an authenticated LLM Agent with a matching flavor."
     end
   end
 

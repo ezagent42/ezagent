@@ -10,8 +10,30 @@ defmodule Ezagent.World.ConversationData do
   alias Ezagent.Socialware.SessionReads
   alias Ezagent.World.ErrorCards
   alias Ezagent.World.PluginPageRegistry
+  alias EzagentPluginHello.{App, ReusableLlmAgent}
 
   @message_limit 50
+
+  @doc "Returns non-secret reusable LLM Agent options for the current workspace."
+  @spec reusable_llm_agents(URI.t() | term(), URI.t() | term()) :: [map()]
+  def reusable_llm_agents(%URI{} = caller, %URI{scheme: "workspace"} = workspace_uri) do
+    App.llm_flavors()
+    |> Enum.flat_map(fn flavor ->
+      case ReusableLlmAgent.list(caller, workspace_uri, flavor) do
+        {:ok, candidates} -> candidates
+        {:error, _reason} -> []
+      end
+    end)
+    |> Enum.map(fn candidate ->
+      %{
+        "uri" => URI.to_string(candidate.agent_uri),
+        "flavor" => candidate.flavor,
+        "provider_profile" => candidate.provider_profile
+      }
+    end)
+  end
+
+  def reusable_llm_agents(_caller, _workspace_uri), do: []
 
   # world's OWN built-in React islands (SessionView id → render mode) that ship
   # inside world itself. Plugin-owned native surfaces are NOT listed here — they
@@ -76,8 +98,15 @@ defmodule Ezagent.World.ConversationData do
       "caller_uri" => encode_uri(caller_uri),
       "create_error" => nil,
       "access_denied" => false,
+      # Chat is always the initial session surface. An installed external view
+      # (for example Hello's Page preview) is available as a tab, but must not
+      # replace the conversation after every state refresh/message update.
+      "active_view" => default_active_view(session_uri, caller_uri),
       "templates" =>
         Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
+      "template_schemas" => Ezagent.World.WorkspacePluginData.session_template_schemas(),
+      "llm_flavors" => App.llm_flavors(),
+      "reusable_llm_agents" => reusable_llm_agents(caller_uri, workspace_uri),
       "messages" => messages,
       "oldest_cursor" => oldest_cursor_iso(messages),
       "members" => members,
@@ -121,6 +150,9 @@ defmodule Ezagent.World.ConversationData do
       "access_denied" => true,
       "templates" =>
         Ezagent.World.WorkspacePluginData.session_template_names(caller_uri, workspace_uri),
+      "template_schemas" => Ezagent.World.WorkspacePluginData.session_template_schemas(),
+      "llm_flavors" => App.llm_flavors(),
+      "reusable_llm_agents" => reusable_llm_agents(caller_uri, workspace_uri),
       "messages" => [],
       "oldest_cursor" => nil,
       "members" => [],
@@ -182,6 +214,8 @@ defmodule Ezagent.World.ConversationData do
   def session_view_ids(%URI{} = session_uri, caller_uri) do
     session_uri |> session_views(caller_uri) |> Enum.map(& &1["id"])
   end
+
+  defp default_active_view(%URI{} = _session_uri, _caller_uri), do: "conversation"
 
   # world's own built-in islands (`:conversation`/`:pty`) map directly; everything
   # else → `plugin_or_surface_mode/2` (plugin-native / external / unsupported).

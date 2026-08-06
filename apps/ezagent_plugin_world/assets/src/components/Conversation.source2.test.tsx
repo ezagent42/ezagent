@@ -16,13 +16,13 @@ describe("G5 source-2 async agent error cards", () => {
   it("opens an external preview from the registry-provided render mode", async () => {
     const {Conversation} = await import("./Conversation")
     const state: ConversationState = {
-      active_view: "generated_page",
+      active_view: "hello_page",
       caller_uri: "entity://system/user/admin",
-      session_uri: "session://system/hello-codex/codex-1",
-      sessions: [{uri: "session://system/hello-codex/codex-1", name: "codex-1"}],
+      session_uri: "session://system/hello/hello-1",
+      sessions: [{uri: "session://system/hello/hello-1", name: "hello-1"}],
       views: [
         {id: "conversation", label: "对话", icon: "message-square", mode: "chat"},
-        {id: "generated_page", label: "Page", icon: "panel-top", mode: "external"},
+        {id: "hello_page", label: "Page", icon: "panel-top", mode: "external"},
       ],
     }
 
@@ -51,7 +51,7 @@ describe("G5 source-2 async agent error cards", () => {
 
     expect(html).toContain('data-world-subcomponent="external-view"')
     expect(html).toContain('title="渲染页面预览"')
-    expect(html).toContain("session%3A%2F%2Fsystem%2Fhello-codex%2Fcodex-1")
+    expect(html).toContain("session%3A%2F%2Fsystem%2Fhello%2Fhello-1")
   })
 
   it("does not infer external rendering from the legacy hello_page id", async () => {

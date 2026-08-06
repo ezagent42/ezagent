@@ -3,27 +3,17 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
   Discovers and revalidates existing agents that may fill Hello's `llm` role.
 
   The list is only a convenience for selectors. `validate/4` is the synchronous
-  creation-time gate and re-reads durable recipe/flavor/profile state, current
-  caller authority, and the non-activating credential status.
+  creation-time gate and re-reads durable flavor state, current caller authority,
+  and the non-activating credential status.
   """
 
-  alias Ezagent.Agent.{
-    CredentialAdapter,
-    CredentialSliceAdapter,
-    RecipeAttributes,
-    RecipeResolver
-  }
+  alias Ezagent.Agent.{CredentialAdapter, CredentialSliceAdapter}
 
   alias Ezagent.Entity.Agent
   alias Ezagent.Identity.Authority
   alias EzagentPluginHello.App
 
-  @recipe "hello.llm"
   @credentialed_statuses [:authenticated, :expiring]
-  @provider_profiles %{
-    "curl" => "deepseek",
-    "cc-headless-custom" => "deepseek"
-  }
 
   @type candidate :: %{
           agent_uri: URI.t(),
@@ -32,14 +22,13 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
           credential_status: atom()
         }
 
-  @doc "List caller-managed, ready `hello.llm` agents for an exact flavor."
+  @doc "List caller-managed, ready agents for an exact Hello flavor."
   @spec list(URI.t(), URI.t(), String.t()) ::
           {:ok, [candidate()]} | {:error, term()}
   def list(%URI{} = caller, %URI{} = workspace_uri, flavor) when is_binary(flavor) do
     with :ok <- validate_supported_flavor(flavor) do
       candidates =
-        @recipe
-        |> RecipeResolver.list_by_recipe(workspace_uri)
+        Agent.list_in_workspace(workspace_uri)
         |> Enum.reduce([], fn agent_uri, acc ->
           case validate(caller, workspace_uri, flavor, agent_uri) do
             {:ok, candidate} -> [candidate | acc]
@@ -68,9 +57,8 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
          :ok <- validate_agent_uri(agent_uri),
          :ok <- validate_workspace_agent(workspace_uri, agent_uri),
          :ok <- validate_authority(caller, agent_uri),
-         :ok <- validate_recipe(agent_uri),
          :ok <- validate_flavor(agent_uri, flavor),
-         {:ok, provider_profile} <- validate_provider_profile(agent_uri, flavor),
+         {:ok, provider_profile} <- provider_profile_for(agent_uri, flavor),
          {:ok, status} <- validate_credential_status(caller, agent_uri, flavor) do
       {:ok,
        %{
@@ -116,14 +104,6 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
     if Authority.manages?(caller, agent_uri), do: :ok, else: {:error, :unauthorized}
   end
 
-  defp validate_recipe(agent_uri) do
-    case RecipeAttributes.fetch_or_resolve(agent_uri) do
-      {:ok, @recipe} -> :ok
-      {:ok, actual} -> {:error, {:recipe_mismatch, actual}}
-      :none -> {:error, {:recipe_mismatch, nil}}
-    end
-  end
-
   defp validate_flavor(agent_uri, expected) do
     case Ezagent.UriQuery.resolve(:flavor, agent_uri) do
       {:ok, ^expected} -> :ok
@@ -132,14 +112,7 @@ defmodule EzagentPluginHello.ReusableLlmAgent do
     end
   end
 
-  defp validate_provider_profile(agent_uri, flavor) do
-    expected = Map.get(@provider_profiles, flavor)
-    actual = provider_profile(agent_uri, flavor)
-
-    if actual == expected,
-      do: {:ok, actual},
-      else: {:error, {:provider_profile_mismatch, expected, actual}}
-  end
+  defp provider_profile_for(agent_uri, flavor), do: {:ok, provider_profile(agent_uri, flavor)}
 
   defp validate_credential_status(caller, agent_uri, flavor) do
     ctx = %{caller: caller, authenticated_principal: caller}

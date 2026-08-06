@@ -22,6 +22,12 @@ defmodule Ezagent.World.ErrorMatcherTest do
       assert result.code == "action_unauthorized"
     end
 
+    test "matches an invalid LLM configuration with its HTTP status" do
+      result = ErrorMatcher.match({:error, {:llm_configuration_invalid, 404}})
+      assert result != nil
+      assert result.code == "llm_configuration_invalid"
+    end
+
     test "returns nil for unregistered error" do
       assert ErrorMatcher.match({:error, :some_unregistered_error}) == nil
     end

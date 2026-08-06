@@ -449,6 +449,8 @@ function WorldApp({layout, state: initialState, pluginNav, caller, pushEvent, on
                   const args: Record<string, unknown> = {short_name: shortName, template_name: templateName}
                   if (socialwareRef) args.socialware_ref = socialwareRef
                   if (options?.role_slots) args.role_slots = options.role_slots
+                  if (options?.llm_flavor) args.llm_flavor = options.llm_flavor
+                  if (options?.llm_agent_uri) args.llm_agent_uri = options.llm_agent_uri
                   if (options?.socialware_config_id) args.socialware_config_id = options.socialware_config_id
                   if (options?.socialware_content_hash) args.socialware_content_hash = options.socialware_content_hash
                   setState((current) => ({...current, session_create_pending: true, create_error: null}))
@@ -1046,6 +1048,8 @@ type RenderContext = {
     socialwareRef?: string,
     options?: {
       role_slots?: Array<Record<string, unknown>>
+      llm_flavor?: string
+      llm_agent_uri?: string
       socialware_config_id?: string
       socialware_content_hash?: string
     },

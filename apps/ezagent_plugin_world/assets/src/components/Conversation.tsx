@@ -45,6 +45,11 @@ type MessageRow = {
   at?: string | null
 }
 
+type ReusableLlmAgent = {
+  uri: string
+  flavor: string
+}
+
 // A file uploaded to the cap-authed endpoint, held until the next send. `grant`
 // is the signed attach-token the server verifies before embedding the URI
 // (PR-2b anti-laundering). Removing a pending entry IS `cancel_upload` (purely
@@ -184,6 +189,9 @@ export type ConversationState = {
   routing_rules?: RoutingRule[]
   sessions?: SessionRow[]
   templates?: string[]
+  template_schemas?: Record<string, Array<{key?: string; options_source?: string; default?: string; hidden?: boolean}>>
+  llm_flavors?: string[]
+  reusable_llm_agents?: ReusableLlmAgent[]
   session_create_pending?: boolean
   members?: MemberRow[]
   invite_candidates?: InviteCandidateRow[]
@@ -209,7 +217,12 @@ export type ConversationState = {
 type Props = {
   state: ConversationState
   onAddRoutingRule: (sessionUri: string, rule: Record<string, string>) => void
-  onCreate?: (shortName: string, templateName: string) => void
+  onCreate?: (
+    shortName: string,
+    templateName: string,
+    socialwareRef?: string,
+    options?: {llm_flavor?: string; llm_agent_uri?: string},
+  ) => void
   onForkConfig: (sessionUri: string) => void
   onOpenPty: (sessionUri: string, agent: string) => void
   onRestartOrchestrator: (sessionUri: string) => void
@@ -352,6 +365,8 @@ export function Conversation({
   const [creating, setCreating] = React.useState(false)
   const [newSessionName, setNewSessionName] = React.useState("")
   const [newSessionTemplate, setNewSessionTemplate] = React.useState(templates[0])
+  const [newLlmFlavor, setNewLlmFlavor] = React.useState(state.llm_flavors?.[0] || "")
+  const [newLlmAgentUri, setNewLlmAgentUri] = React.useState("")
   const [inviteOpen, setInviteOpen] = React.useState(false)
   const [inviteValue, setInviteValue] = React.useState("")
   const [debugOpen, setDebugOpen] = React.useState(false)
@@ -385,6 +400,12 @@ export function Conversation({
   const sessionMeta = [countLabel(members.length, "成员"), countLabel(messages.length, "轮次")].join(" · ")
   const ptyMembers = members.filter((member) => member.kind === "agent" && member.pty_alive === true)
   const activePtyAgentUri = state.agent_uri || state.active_pty_agent_uri || null
+  const llmFlavors = state.llm_flavors || []
+  const templateSchema = state.template_schemas?.[newSessionTemplate] || []
+  const llmFlavorField = templateSchema.find((field) => field.key === "llm_flavor")
+  const llmConfigEnabled = templateSchema.some((field) => field.key === "llm_agent_uri" && field.options_source === "reusable_llm_agents")
+  const fixedLlmFlavor = llmFlavorField?.default || newLlmFlavor
+  const llmAgents = (state.reusable_llm_agents || []).filter((agent) => agent.flavor === fixedLlmFlavor)
 
   const beginAdmission = (admission: AgentAdmission) => {
     if (!sessionUri) return
@@ -426,6 +447,8 @@ export function Conversation({
     setUploadError(null)
     setCreating(false)
     setNewSessionName("")
+    setNewLlmFlavor(state.llm_flavors?.[0] || "")
+    setNewLlmAgentUri("")
     setInviteOpen(false)
     setInviteValue("")
     setMembersOpen(false)
@@ -441,9 +464,22 @@ export function Conversation({
   }, [newSessionTemplate, templates])
 
   React.useEffect(() => {
+    if (llmFlavorField?.default) setNewLlmFlavor(llmFlavorField.default)
+    else if (!llmFlavors.includes(newLlmFlavor)) setNewLlmFlavor(llmFlavors[0] || "")
+  }, [llmFlavors, newLlmFlavor, llmFlavorField])
+
+  React.useEffect(() => {
+    if (!llmAgents.some((agent) => agent.uri === newLlmAgentUri)) {
+      setNewLlmAgentUri(llmAgents[0]?.uri || "")
+    }
+  }, [llmAgents, newLlmAgentUri])
+
+  React.useEffect(() => {
     if (!createPending && state.last_dispatch_status === "ok") {
       setNewSessionName("")
       setNewSessionTemplate(templates[0])
+      setNewLlmFlavor(llmFlavors[0] || "")
+      setNewLlmAgentUri("")
       setCreating(false)
     }
   }, [createPending, state.last_dispatch_status, templates])
@@ -637,7 +673,13 @@ export function Conversation({
     const trimmed = newSessionName.trim()
     const template = newSessionTemplate.trim() || "default"
     if (!trimmed || createPending) return
-    onCreate?.(trimmed, template)
+    if (llmConfigEnabled && (!newLlmFlavor || !newLlmAgentUri)) return
+    onCreate?.(
+      trimmed,
+      template,
+      undefined,
+      llmConfigEnabled ? {llm_flavor: newLlmFlavor, llm_agent_uri: newLlmAgentUri} : undefined,
+    )
   }
 
   const doPublish = () => {
@@ -783,7 +825,31 @@ export function Conversation({
                 ))}
               </Select>
             </label>
-            <Button type="submit" size="sm" disabled={createPending || !newSessionName.trim()}>
+            {llmConfigEnabled && (
+              <div className="grid gap-2 border-t border-border pt-2.5" data-world-hello-llm-picker>
+                <label className="grid gap-1 text-[11px] font-medium text-muted-foreground" htmlFor="world-conversation-llm-agent">
+                  已认证的 LLM Agent
+                  <Select
+                    id="world-conversation-llm-agent"
+                    value={newLlmAgentUri}
+                    onChange={(event) => setNewLlmAgentUri(event.target.value)}
+                    disabled={llmAgents.length === 0}
+                  >
+                    <option value="">
+                      {llmAgents.length === 0 ? "没有匹配的已认证 Agent" : "请选择 Agent"}
+                    </option>
+                    {llmAgents.map((agent) => (
+                      <option key={agent.uri} value={agent.uri}>{agent.uri}</option>
+                    ))}
+                  </Select>
+                </label>
+              </div>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              disabled={createPending || !newSessionName.trim() || (llmConfigEnabled && (!newLlmFlavor || !newLlmAgentUri))}
+            >
               {createPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
               {createPending ? "创建中" : "创建"}
             </Button>
@@ -829,7 +895,7 @@ export function Conversation({
         </div>
       </aside>
 
-      <section className="flex min-h-0 flex-col overflow-hidden bg-card text-card-foreground">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-card text-card-foreground">
         <div
           data-world-session-header
           className="flex min-h-[58px] flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3 sm:flex-nowrap sm:items-center"
@@ -971,7 +1037,7 @@ export function Conversation({
               })}
             </div>
           ) : activeMode === "external" ? (
-            <div className="min-w-0 flex-1 overflow-hidden bg-white" data-world-subcomponent="external-view">
+            <div className="h-full min-h-0 min-w-0 w-full flex-1 overflow-hidden bg-white" data-world-subcomponent="external-view">
               <ExternalSessionViewPreview sessionUri={sessionUri} />
             </div>
           ) : activeMode === "pty" ? (
@@ -1918,7 +1984,7 @@ function ExternalSessionViewPreview({sessionUri}: {sessionUri: string}) {
   const src = `/socialware/external?session_uri=${encodeURIComponent(sessionUri)}`
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 flex-1 flex-col">
       {/* operator-only overlay control — never rendered on the public share page */}
       <div className="absolute right-2.5 top-2.5 z-10 flex flex-col items-end gap-1.5">
         <a
@@ -1933,7 +1999,7 @@ function ExternalSessionViewPreview({sessionUri}: {sessionUri: string}) {
         </a>
       </div>
 
-      <iframe title="渲染页面预览" src={src} className="min-h-0 flex-1 border-0 bg-white" />
+      <iframe title="渲染页面预览" src={src} className="h-full min-h-0 w-full flex-1 border-0 bg-white" />
     </div>
   )
 }

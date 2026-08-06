@@ -20,7 +20,7 @@ defmodule EzagentPluginHello.GeneratorTest do
 
     test "wraps an unclassified generation failure for Layer 3 handling" do
       reason = {:http, 502, "bad gateway"}
-      assert Generator.error_signal_reason(reason) == {:generation_failed, reason}
+      assert Generator.error_signal_reason(reason) == {:llm_configuration_invalid, 502}
     end
 
     test "wraps lookalike missing-key errors that are not the supported two-tuple" do

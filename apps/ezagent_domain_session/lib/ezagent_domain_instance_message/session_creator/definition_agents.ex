@@ -464,12 +464,9 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
     end
   end
 
-  defp revalidate_reuse_contract(agent_uri, operator, recipe_name, agent, role_name) do
+  defp revalidate_reuse_contract(agent_uri, operator, _recipe_name, agent, role_name) do
     reason =
       cond do
-        agent_recipe(agent_uri) != {:ok, recipe_name} ->
-          :recipe_mismatch
-
         Ezagent.UriQuery.resolve(:flavor, agent_uri) != {:ok, flavor_of(agent)} ->
           :flavor_mismatch
 
@@ -491,9 +488,6 @@ defmodule EzagentDomainInstanceMessage.SessionCreator.DefinitionAgents do
       reason -> {:skip, {:reuse_agent_revalidation_failed, role_name, reason}}
     end
   end
-
-  defp agent_recipe(%URI{} = agent_uri),
-    do: Ezagent.Agent.RecipeAttributes.fetch_or_resolve(agent_uri)
 
   defp credential_eligible?(agent_uri, operator, agent) do
     case Ezagent.Domain.Agent.read_credential_status(agent_uri, %{

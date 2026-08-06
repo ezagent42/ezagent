@@ -286,6 +286,32 @@ defmodule Ezagent.World.WorkspacePluginData do
 
   def session_template_names(_caller, _), do: ["default"]
 
+  @doc "Return JSON-safe creation schemas declared by registered session classes."
+  @spec session_template_schemas() :: %{optional(String.t()) => [map()]}
+  def session_template_schemas do
+    Ezagent.TemplateRegistry.registered_template_names()
+    |> Enum.filter(&String.starts_with?(&1, "session."))
+    |> Enum.reduce(%{}, fn class_name, acc ->
+      case Ezagent.TemplateRegistry.lookup(class_name) do
+        {:ok, module} when is_atom(module) ->
+          if function_exported?(module, :config_schema, 0) do
+            Map.put(
+              acc,
+              String.replace_prefix(class_name, "session.", ""),
+              Ezagent.World.Jsonable.to_json(module.config_schema())
+            )
+          else
+            acc
+          end
+
+        _ ->
+          acc
+      end
+    end)
+  rescue
+    _ -> %{}
+  end
+
   @doc "Installable socialware definitions visible to a workspace."
   @spec socialware_rows(URI.t() | term()) :: [map()]
   def socialware_rows(%URI{} = workspace_uri) do

@@ -9,7 +9,8 @@ defmodule EzagentWeb.HomeLive do
     redirect `/sessions` (the default app surface, unchanged from Phase 8).
   - **Authenticated AND no sessions in the caller's workspace** → render
     the first-login wizard inline. The operator picks a short name and one
-    caller-managed reusable `hello.llm` agent, then creates a Hello session
+    caller-managed authenticated LLM Agent with a matching flavor, then creates
+    a Hello session
     through `Ezagent.Workspace.create_session/3`.
 
   ## W0 tenant-isolation (2026-07-03)
@@ -206,7 +207,7 @@ defmodule EzagentWeb.HomeLive do
          assign(
            socket,
            :flash_error,
-           gettext("Create failed: %{reason}", reason: inspect(reason))
+           create_error_message(reason)
          )}
     end
   end
@@ -234,6 +235,32 @@ defmodule EzagentWeb.HomeLive do
 
   defp require_session_name(""), do: {:error, :session_name_required}
   defp require_session_name(_short_name), do: :ok
+
+  defp create_error_message(:llm_agent_required),
+    do: gettext("Please select an authenticated LLM Agent with a matching flavor.")
+
+  defp create_error_message(:session_name_required),
+    do: gettext("Please enter a session name.")
+
+  defp create_error_message(:invalid_llm_agent_uri),
+    do: gettext("The selected LLM Agent is invalid. Please choose another one.")
+
+  defp create_error_message({:invalid_reusable_llm_agent, :not_found}),
+    do: gettext("The selected LLM Agent no longer exists. Please choose another one.")
+
+  defp create_error_message({:invalid_reusable_llm_agent, :unauthorized}),
+    do: gettext("You are not allowed to use the selected LLM Agent.")
+
+  defp create_error_message({:invalid_reusable_llm_agent, {:flavor_mismatch, _flavor}}),
+    do: gettext("The selected LLM Agent does not match the chosen flavor.")
+
+  defp create_error_message(
+         {:invalid_reusable_llm_agent, {:ineligible_credential_status, _status}}
+       ),
+       do: gettext("The selected LLM Agent is not authenticated or its credentials have expired.")
+
+  defp create_error_message(_reason),
+    do: gettext("Session creation failed. Check the LLM Agent configuration and try again.")
 
   defp parse_llm_agent_uri(""), do: {:error, :llm_agent_required}
 
@@ -419,7 +446,7 @@ defmodule EzagentWeb.HomeLive do
                 class="rounded-[var(--radius)] border border-dashed border-border bg-muted/40 px-4 py-3 text-xs leading-5 text-muted-foreground"
               >
                 {gettext(
-                  "No eligible agent is available for this flavor. Create or authenticate a hello.llm agent you manage, then return here."
+                  "No eligible agent is available for this flavor. Create or authenticate an LLM Agent with the matching flavor, then return here."
                 )}
               </div>
             </div>

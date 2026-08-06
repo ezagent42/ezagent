@@ -22,7 +22,7 @@ roles:
     config:
       provider: deepseek
       api_url: https://api.deepseek.com/chat/completions
-      model: deepseek-v4-flash
+      model: deepseek-chat
 routing_rules: []
 visibility_policy:
   scope: public

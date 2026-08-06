@@ -364,7 +364,14 @@ defmodule Ezagent.World.ConversationActions do
                install_config
              ) do
           {:ok, create_template_name} ->
-            do_create_session(socket, workspace_uri, caller, short_name, create_template_name)
+            do_create_session(
+              socket,
+              workspace_uri,
+              caller,
+              short_name,
+              create_template_name,
+              install_config
+            )
 
           {:error, reason} ->
             {:noreply, push_session_create_error(socket, reason)}
@@ -388,13 +395,34 @@ defmodule Ezagent.World.ConversationActions do
   end
 
   defp socialware_install_config(args) when is_map(args) do
-    case Map.get(args, "role_slots") do
-      role_slots when is_list(role_slots) -> %{"role_slots" => role_slots}
-      _ -> %{}
+    %{}
+    |> maybe_put_list(args, "role_slots")
+    |> maybe_put_binary(args, "llm_flavor")
+    |> maybe_put_binary(args, "llm_agent_uri")
+  end
+
+  defp maybe_put_list(config, args, key) do
+    case Map.get(args, key) do
+      value when is_list(value) -> Map.put(config, key, value)
+      _ -> config
     end
   end
 
-  defp do_create_session(socket, workspace_uri, caller, short_name, template_name) do
+  defp maybe_put_binary(config, args, key) do
+    case Map.get(args, key) do
+      value when is_binary(value) and value != "" -> Map.put(config, key, value)
+      _ -> config
+    end
+  end
+
+  defp do_create_session(
+         socket,
+         workspace_uri,
+         caller,
+         short_name,
+         template_name,
+         install_config
+       ) do
     caller_caps = Ezagent.World.PresenterCaps.load(socket)
     create_session = &Ezagent.Workspace.create_session/3
 
@@ -411,7 +439,8 @@ defmodule Ezagent.World.ConversationActions do
            caller,
            short_name,
            template_name,
-           create_with_caller_caps
+           create_with_caller_caps,
+           install_config
          ) do
       {:ok, %URI{} = session_uri} ->
         # rev6 / #912 — the session returned here is OWNER-ONLY. Its declared team
@@ -561,6 +590,26 @@ defmodule Ezagent.World.ConversationActions do
   def session_create_error_message(:unauthorized), do: "没有创建会话的权限"
   def session_create_error_message(:cross_workspace_denied), do: "跨工作区操作被拒绝"
 
+  def session_create_error_message(:llm_agent_required),
+    do: "请选择一个已认证且 flavor 匹配的 LLM Agent"
+
+  def session_create_error_message(:invalid_llm_agent_uri),
+    do: "所选 LLM Agent 无效，请重新选择"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, :not_found}),
+    do: "所选 LLM Agent 已不存在，请重新选择"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, :unauthorized}),
+    do: "你无权使用所选 LLM Agent"
+
+  def session_create_error_message({:invalid_reusable_llm_agent, {:flavor_mismatch, _flavor}}),
+    do: "所选 LLM Agent 的 flavor 与当前选择不一致"
+
+  def session_create_error_message(
+        {:invalid_reusable_llm_agent, {:ineligible_credential_status, _status}}
+      ),
+      do: "所选 LLM Agent 尚未完成认证，或认证已过期"
+
   def session_create_error_message(reason) do
     if unsupported_claude_dev_channels?(reason) do
       "创建会话失败：当前 Claude Code 不支持 cc orchestrator 所需的开发通道参数，请升级 Claude Code 或改用 codex flavor。"
@@ -614,9 +663,36 @@ defmodule Ezagent.World.ConversationActions do
           {:ok, URI.t()} | {:error, term()}
   def create_session_result(workspace_uri, caller, short_name, template_name, create)
       when is_function(create, 3) do
+    create_without_options = fn target_workspace, args, ctx ->
+      create.(target_workspace, Map.delete(args, :template_options), ctx)
+    end
+
+    create_session_result(
+      workspace_uri,
+      caller,
+      short_name,
+      template_name,
+      create_without_options,
+      %{}
+    )
+  end
+
+  def create_session_result(
+        workspace_uri,
+        caller,
+        short_name,
+        template_name,
+        create,
+        template_options
+      )
+      when is_function(create, 3) and is_map(template_options) do
     case create.(
            workspace_uri,
-           %{short_name: short_name, template_name: template_name},
+           %{
+             short_name: short_name,
+             template_name: template_name,
+             template_options: template_options
+           },
            %{caller: caller, authenticated_principal: caller, caps: MapSet.new()}
          ) do
       {:ok, %{session_uri: %URI{} = session_uri}} -> {:ok, session_uri}

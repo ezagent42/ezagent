@@ -58,6 +58,13 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
       end
     end
 
+    test "uses the selected reusable agent provider profile" do
+      assert %{provider: "kimi"} = EzagentPluginHello.App.llm_provider_config("curl", "kimi")
+
+      assert %{provider: "moonshot"} =
+               EzagentPluginHello.App.llm_provider_config("cc-headless-custom", "moonshot")
+    end
+
     test "requires an explicit reusable LLM selection" do
       workspace_uri =
         Ezagent.URI.workspace("hello-tmpl-selection-#{System.unique_integer([:positive])}")
@@ -158,6 +165,15 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
         |> Enum.map(& &1["id"])
 
       assert "hello_page" in view_ids
+
+      state =
+        ConversationData.state_for(session_uri, %{
+          caller_uri: owner,
+          workspace_uri: workspace_uri,
+          sessions: []
+        })
+
+      assert state["active_view"] == "conversation"
     end
 
     test "installed hello Page remains applicable while the session is cold" do
@@ -210,6 +226,11 @@ defmodule EzagentPluginHello.Template.HelloSessionTest do
                Ezagent.UI.SessionViewRegistry.applicable_views(session_uri, caller),
                &(&1.id == :hello_page)
              )
+
+      assert Ezagent.UI.SessionViewRegistry.external_render?(EzagentPluginHello.PageView)
+
+      views = ConversationData.session_views(session_uri, caller)
+      assert Enum.any?(views, &(&1["id"] == "hello_page" and &1["mode"] == "external"))
 
       _rendered =
         render_component(&EzagentPluginHello.PageView.render/1, session_uri: session_uri)

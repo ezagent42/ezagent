@@ -62,6 +62,18 @@ defmodule Ezagent.World.ErrorCode do
           fix_path: nil,
           fix_owner: nil
         }
+      },
+      %{
+        code: "llm_configuration_invalid",
+        trigger: {:error, {:llm_configuration_invalid, :_}},
+        category: :configuration,
+        message: %{
+          what: "LLM 配置无效",
+          impact: "当前模型或 API 地址无法访问（HTTP 状态码已记录），请检查 Agent 的 provider、API URL 和 model 配置",
+          fix_path: :agent_keys_page,
+          fix_owner: :workspace_founder,
+          fix_role: "llm"
+        }
       }
     ]
   end

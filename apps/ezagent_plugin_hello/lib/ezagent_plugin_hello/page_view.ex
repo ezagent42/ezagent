@@ -20,6 +20,7 @@ defmodule EzagentPluginHello.PageView do
   use Phoenix.Component
 
   alias Ezagent.ActionSet.Surface
+  alias Ezagent.Socialware.SessionReads
 
   # T2-2b — this view is cap-gated: its visibility requires the caller to hold
   # the `{Session, :hello_render}` cap (declared by HelloRender). The unified
@@ -95,9 +96,27 @@ defmodule EzagentPluginHello.PageView do
     """
   end
 
-  # Internal-only: the external surface renders the approved tree through the
-  # socialware external SPA, not this SessionView. (external_render?/0 +
-  # external_render/1 are optional callbacks — omitted → internal-only.)
+  # The world conversation shell uses this declaration to route the Page tab
+  # to its generic external-preview iframe. The preview itself is rendered by
+  # the same approved Surface projection as the public socialware page.
+  @impl true
+  def external_render?, do: true
+
+  @impl true
+  def external_render(%URI{} = session_uri), do: external_render(session_uri, nil)
+
+  def external_render(_), do: nil
+
+  @doc "Caller-aware approved Surface projection for the generic preview path."
+  @spec external_render(URI.t(), URI.t() | term()) :: map() | nil
+  def external_render(%URI{} = session_uri, caller) do
+    case SessionReads.external_surface(caller, session_uri) do
+      {:ok, surface} -> Surface.external_tree(surface)
+      {:error, _} -> nil
+    end
+  end
+
+  def external_render(_, _), do: nil
 
   defp module_url do
     Application.get_env(:ezagent_plugin_hello, :hello_module_url, "/assets/hello/main.js")

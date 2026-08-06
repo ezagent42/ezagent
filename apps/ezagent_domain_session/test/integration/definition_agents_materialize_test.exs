@@ -1931,7 +1931,7 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
     end
   end
 
-  test "reuse recipe drift leaves a durable unfilled role" do
+  test "reuse recipe drift is allowed when the flavor and credential contract match" do
     n = uniq()
     session_uri = live_session(n)
     recipe_name = seed_recipe(n)
@@ -1955,15 +1955,11 @@ defmodule EzagentDomainInstanceMessage.Integration.DefinitionAgentsMaterializeTe
                reuse_working_copy(@workspace_uri, n, declaration)
              )
 
-    assert {:ok, %{satisfied: [], skipped: [%{role_name: ^role_name, reason: reason}]}} =
+    assert {:ok, %{satisfied: [^role_name], skipped: []}} =
              SessionCreator.install_session_socialware(session_uri, {@workspace_uri, @owner_uri})
 
-    assert {:reuse_agent_revalidation_failed, ^role_name, :recipe_mismatch} = reason
-
-    assert [%{role_name: ^role_name, reason: :unavailable}] =
-             SessionCreator.unfilled_agent_role_slots(session_uri)
-
-    refute Map.has_key?(members_of(session_uri), reusable)
+    assert SessionBehavior.role_name_to_uri(members_of(session_uri), role_name) == reusable
+    assert SessionCreator.unfilled_agent_role_slots(session_uri) == []
   end
 
   test "reuse flavor drift leaves a durable unfilled role" do

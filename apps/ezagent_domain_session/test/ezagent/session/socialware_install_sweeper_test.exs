@@ -45,6 +45,30 @@ defmodule Ezagent.Session.SocialwareInstallSweeperTest do
     Process.delete(attempt_key)
   end
 
+  test "an unavailable reusable agent remains retryable instead of resolving partially" do
+    obligation = pending_obligation("reusable-agent-unavailable")
+
+    install = fn _session_uri, _authorization ->
+      {:ok,
+       %{
+         satisfied: [],
+         skipped: [
+           %{
+             role_name: "llm",
+             reason: {:reuse_agent_unavailable, "llm", :not_ready}
+           }
+         ]
+       }}
+    end
+
+    assert {:error, {:agent_roles_unavailable, [%{role_name: "llm"}]}} =
+             SocialwareInstallSweeper.retry(obligation.id, install_fun: install)
+
+    retryable = SocialwareInstallObligations.get!(obligation.id)
+    assert retryable.status == :pending
+    assert retryable.last_error =~ "agent_roles_unavailable"
+  end
+
   test "a view-cap convergence failure remains pending and resolves on retry" do
     obligation = pending_obligation("view-cap-convergence")
     attempt_key = {__MODULE__, make_ref()}
